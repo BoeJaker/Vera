@@ -22,6 +22,13 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
   t('Larger raises it further', d1.fontSize === '12px' && d2.fontSize === '12px', d1.fontSize);
   ctx.set('compact'); [d1, d2].forEach(ctx.adj);
   t('Compact puts back exactly what was there', d1.fontSize === '8px' && d2.fontSize === '9.5px', d1.fontSize + ' ' + d2.fontSize);
+  // the font SHORTHAND with a variable in it has no readable font-size (pending substitution): its size is read off its text
+  const sh = (f0) => ({ fontSize: '', font: f0, pri: '', getPropertyPriority() { return this.pri; }, getPropertyValue(k) { return k === 'font' ? this.font : ''; }, setProperty(k, v) { if (k === 'font') this.font = v; else this.fontSize = v; } });
+  const s1 = sh('600 9.5px/1.2 var(--b-mono)'), s2 = sh('14px var(--sans)'), s3 = sh('inherit');
+  ctx.set('larger'); [s1, s2, s3].forEach(ctx.adj);
+  t('the font shorthand follows the Text setting too', s1.font === '600 12px/1.2 var(--b-mono)' && s2.font === '14px var(--sans)' && s3.font === 'inherit', s1.font + ' | ' + s2.font);
+  ctx.set('compact'); ctx.adj(s1);
+  t('and Compact puts its own text back', s1.font === '600 9.5px/1.2 var(--b-mono)', s1.font);
 }
 t('it reaches shadow roots (the widgets) as they are made', /Element\.prototype\.attachShadow = function\(\)/.test(UI));
 t('and new markup as it arrives', /function _textQueue\(nodes\)/.test(UI) && /_textMO\.observe\(document\.documentElement, \{ childList:true, subtree:true \}\)/.test(UI));

@@ -286,10 +286,19 @@
   function _fsAdjust(decl){
     if(!decl) return;
     var o = _fsOrig.get(decl);
-    if(o === undefined){ var v = decl.fontSize; o = (v && /^[\d.]+px$/.test(v)) ? parseFloat(v) : null; _fsOrig.set(decl, o); }
+    if(o === undefined){ var v = decl.fontSize; o = (v && /^[\d.]+px$/.test(v)) ? parseFloat(v) : null;
+      // the FONT SHORTHAND with a variable in it (font:600 9.5px var(--mono)) has no font-size the CSSOM can read - it
+      // stays "pending substitution" - so the rewrite never saw it, and every widget and Loop Lab face written that way
+      // ignored the Text setting (owner, 2026-09-28). Its own text is readable: its size is the first px token.
+      if(o == null && !v && decl.getPropertyValue){ var sh = ''; try{ sh = decl.getPropertyValue('font') || ''; }catch(e){}
+        var m = /(^|\s)([\d.]+)px/.exec(sh); if(m) o = { font: sh, px: parseFloat(m[2]) }; }
+      _fsOrig.set(decl, o); }
     if(o == null) return;
-    var n = o >= 13 ? o : Math.max(_textStep.floor, o * _textStep.factor);
+    var px = typeof o === 'object' ? o.px : o;
+    var n = px >= 13 ? px : Math.max(_textStep.floor, px * _textStep.factor);
     n = Math.round(n * 10) / 10;
+    if(typeof o === 'object'){ var nv = o.font.replace(/(^|\s)([\d.]+)px/, '$1' + n + 'px');
+      try{ if(decl.getPropertyValue('font') !== nv) decl.setProperty('font', nv, decl.getPropertyPriority('font')); }catch(e){} return; }
     if(parseFloat(decl.fontSize) !== n){ try{ decl.setProperty('font-size', n + 'px', decl.getPropertyPriority('font-size')); }catch(e){} }
   }
   function _walkRules(rules){ if(!rules) return; for(var i = 0; i < rules.length; i++){ var r = rules[i]; if(r.style) _fsAdjust(r.style); if(r.cssRules) _walkRules(r.cssRules); } }
@@ -297,13 +306,13 @@
     var sheets = []; try{ sheets = Array.prototype.slice.call(root.styleSheets || []); }catch(e){}
     try{ if(root.adoptedStyleSheets) sheets = sheets.concat(Array.prototype.slice.call(root.adoptedStyleSheets)); }catch(e){}
     sheets.forEach(function(sh){ try{ _walkRules(sh.cssRules); }catch(e){ /* a cross-origin sheet: not ours to read */ } });
-    try{ Array.prototype.forEach.call(root.querySelectorAll('[style*="font-size"]'), function(el){ _fsAdjust(el.style); }); }catch(e){}
+    try{ Array.prototype.forEach.call(root.querySelectorAll('[style*="font"]'), function(el){ _fsAdjust(el.style); }); }catch(e){}
   }
   var _shadowRoots = [];
-  try{ var _as = Element.prototype.attachShadow; if(_as && !_as.__veraText){ Element.prototype.attachShadow = function(){ var r = _as.apply(this, arguments); try{ _shadowRoots.push(r); setTimeout(function(){ _textRoot(r); }, 0); setTimeout(function(){ _textRoot(r); }, 600); }catch(e){} return r; }; Element.prototype.attachShadow.__veraText = true; } }catch(e){}
+  try{ var _as = Element.prototype.attachShadow; if(_as && !_as.__veraText){ Element.prototype.attachShadow = function(){ var r = _as.apply(this, arguments); try{ _shadowRoots.push(r); if(_textMO) _textObserveRoot(r); setTimeout(function(){ _textRoot(r); }, 0); setTimeout(function(){ _textRoot(r); }, 600); }catch(e){} return r; }; Element.prototype.attachShadow.__veraText = true; } }catch(e){}
   function _textAll(){
     _textRoot(document);
-    try{ Array.prototype.forEach.call(document.querySelectorAll('*'), function(el){ if(el.shadowRoot && _shadowRoots.indexOf(el.shadowRoot) < 0) _shadowRoots.push(el.shadowRoot); }); }catch(e){}
+    try{ Array.prototype.forEach.call(document.querySelectorAll('*'), function(el){ if(el.shadowRoot && _shadowRoots.indexOf(el.shadowRoot) < 0){ _shadowRoots.push(el.shadowRoot); if(_textMO) _textObserveRoot(el.shadowRoot); } }); }catch(e){}
     _shadowRoots.forEach(_textRoot);
   }
   // new markup: its inline sizes, a new stylesheet, a new shadow root - handled as it arrives, in one batch per frame
@@ -312,14 +321,18 @@
     Array.prototype.push.apply(_textQ, nodes); if(_textT) return;
     _textT = setTimeout(function(){ _textT = 0; var q = _textQ; _textQ = []; var sheets = false;
       q.forEach(function(n){ if(!n || n.nodeType !== 1) return;
-        if(n.tagName === 'STYLE' || n.tagName === 'LINK'){ sheets = true; if(n.tagName === 'LINK') n.addEventListener('load', function(){ _textRoot(document); }, { once:true }); return; }
-        if(n.style && n.getAttribute && /font-size/.test(n.getAttribute('style') || '')) _fsAdjust(n.style);
-        try{ Array.prototype.forEach.call(n.querySelectorAll('[style*="font-size"]'), function(el){ _fsAdjust(el.style); }); }catch(e){}
-        try{ if(n.shadowRoot){ if(_shadowRoots.indexOf(n.shadowRoot) < 0) _shadowRoots.push(n.shadowRoot); _textRoot(n.shadowRoot); } }catch(e){} });
+        if(n.tagName === 'STYLE' || n.tagName === 'LINK'){ var rt = n.getRootNode ? n.getRootNode() : document; if(rt && rt !== document){ _textRoot(rt); return; } sheets = true; if(n.tagName === 'LINK') n.addEventListener('load', function(){ _textRoot(document); }, { once:true }); return; }
+        if(n.style && n.getAttribute && /font/.test(n.getAttribute('style') || '')) _fsAdjust(n.style);
+        try{ Array.prototype.forEach.call(n.querySelectorAll('[style*="font"]'), function(el){ _fsAdjust(el.style); }); }catch(e){}
+        try{ if(n.shadowRoot){ if(_shadowRoots.indexOf(n.shadowRoot) < 0) _shadowRoots.push(n.shadowRoot); _textObserveRoot(n.shadowRoot); _textRoot(n.shadowRoot); } }catch(e){} });
       if(sheets) _textRoot(document); }, 120);
   }
   var _textMO = null;
-  function _textWatch(){ if(_textMO || !window.MutationObserver) return; try{ _textMO = new MutationObserver(function(ms){ var add = []; ms.forEach(function(m){ if(m.addedNodes) Array.prototype.push.apply(add, m.addedNodes); }); if(add.length) _textQueue(add); }); _textMO.observe(document.documentElement, { childList:true, subtree:true }); }catch(e){} }
+  function _textWatch(){ if(_textMO || !window.MutationObserver) return; try{ _textMO = new MutationObserver(function(ms){ var add = []; ms.forEach(function(m){ if(m.addedNodes) Array.prototype.push.apply(add, m.addedNodes); }); if(add.length) _textQueue(add); }); _textMO.observe(document.documentElement, { childList:true, subtree:true }); _shadowRoots.forEach(_textObserveRoot); }catch(e){} }
+  // a shadow root's own redraws (an element that rebuilds its <style> and markup every render - the commit graph, the
+  // task matrix, the loop output) arrive inside it, where the document's observer cannot see them: each root is
+  // watched too, once
+  function _textObserveRoot(r){ if(!r || r.__veraTextMO || !window.MutationObserver) return; try{ r.__veraTextMO = new MutationObserver(function(ms){ var add = []; ms.forEach(function(m){ if(m.addedNodes) Array.prototype.push.apply(add, m.addedNodes); }); if(add.length) _textQueue(add); }); r.__veraTextMO.observe(r, { childList:true, subtree:true }); }catch(e){} }
   var CONTRAST_CSS = 'html[data-contrast="clear"] body{--dim:color-mix(in srgb,var(--text,#d8dce4) 54%,var(--bg0,#0e0f12));--dim2:color-mix(in srgb,var(--text,#d8dce4) 70%,var(--bg0,#0e0f12));--t3:color-mix(in srgb,var(--t1,var(--text,#d8dce4)) 54%,var(--bg,var(--bg0,#0e0f12)));--t2:color-mix(in srgb,var(--t1,var(--text,#d8dce4)) 74%,var(--bg,var(--bg0,#0e0f12)))}'
     + 'html[data-contrast="high"] body{--dim:color-mix(in srgb,var(--text,#d8dce4) 68%,var(--bg0,#0e0f12));--dim2:color-mix(in srgb,var(--text,#d8dce4) 84%,var(--bg0,#0e0f12));--t3:color-mix(in srgb,var(--t1,var(--text,#d8dce4)) 68%,var(--bg,var(--bg0,#0e0f12)));--t2:color-mix(in srgb,var(--t1,var(--text,#d8dce4)) 86%,var(--bg,var(--bg0,#0e0f12)))}';
   function _ensureContrastCss(){ try{ if(document.getElementById('veraContrastCss')) return; var st = document.createElement('style'); st.id = 'veraContrastCss'; st.textContent = CONTRAST_CSS; (document.head || document.documentElement).appendChild(st); }catch(e){} }

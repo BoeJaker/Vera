@@ -58,6 +58,9 @@
   function fontScale(css) {
     const f = (n) => 'calc(max(var(--vw-fmin, 10px), ' + n + 'px) * var(--vw-fx, 1))';
     return String(css).replace(/font-size:\s*([0-9.]+)px/g, (m, n) => (+n >= 13 ? m : 'font-size:' + f(n)))
+      // the font SHORTHAND too (font:600 9.5px var(--b-mono)): its size is the first px token after the style/weight
+      // words; the Loop Lab faces are written that way and ignored the Text setting (owner, 2026-09-28)
+      .replace(/(font:\s*(?:[a-z0-9-]+\s+)*?)([0-9.]+)px/g, (m, pre, n) => (+n >= 13 ? m : pre + f(n)))
       .replace(/font-size:\s*clamp\(([0-9.]+)px,/g, (m, n) => 'font-size:clamp(' + f(n) + ',');
   }
   const TEXT_SCALE_CSS = 'html{--vw-fmin:10px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:11px;--vw-fx:1.1}html[data-text="larger"]{--vw-fmin:12px;--vw-fx:1.22}';
