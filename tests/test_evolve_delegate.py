@@ -237,3 +237,65 @@ def test_the_worktree_code_never_prunes(monkeypatch):
 def test_a_delegated_session_is_recorded_with_its_origin():
     from Vera.vera.evolve import loop_record_core as R
     assert R.origin_of("delegate:dg1") == "delegate"
+
+
+# J1 (2026-09-28): each delegated job logged in Loop Lab, on its loop's record.
+REPORT = """## Summary
+Short words never score.
+
+## Findings
+- `vera/dag/cap_relevance_core.py:54` - the token regex needs 3+ letters
+- dag_store.py:210 calls relevance_search
+- vera/dag/cap_relevance_core.py:54 again (same ref)
+
+## Structure
+- not a finding: vera/dag/dag_workshop_capabilities.py:4577
+"""
+
+
+def test_report_metrics_count_findings_and_distinct_path_line_refs():
+    m = D.report_metrics(REPORT)
+    assert m["findings"] == 3
+    assert m["path_line_refs"] == 3          # cap_relevance_core:54 counted once
+    assert m["report_chars"] == len(REPORT)
+    assert D.report_metrics("")["findings"] == 0
+
+
+def test_record_fields_carry_the_job_and_its_report():
+    f = D.record_fields({"id": "dg1", "title": "T", "mode": "report", "effort": "max",
+                         "ref": "main", "head": "abc", "plan_style": "stepwise",
+                         "status": "done", "goal_chars": 2065, "report": REPORT})
+    assert f["job_id"] == "dg1" and f["title"] == "T" and f["status"] == "done"
+    assert f["brief_chars"] == 2065 and f["findings"] == 3 and f["path_line_refs"] == 3
+
+
+@needs_app
+def test_a_run_marks_its_loop_record_and_rebuilds_it_at_the_end(monkeypatch):
+    seen, store = _fake_env(monkeypatch, result={"deliverable": REPORT})
+    marks, records = [], []
+
+    async def fake_mark(job):
+        marks.append((job["status"], len(job.get("report") or "")))
+
+    async def fake_record(sid):
+        records.append(sid)
+    monkeypatch.setattr(DC, "_mark_run", fake_mark)
+    monkeypatch.setattr(DC, "_record_run", fake_record)
+    asyncio.run(DC._run(_job(), "GOAL"))
+    assert marks[0] == ("running", 0)
+    assert marks[-1][0] == "done" and marks[-1][1] > 0     # the final mark carries the report
+    assert records == ["delegate:dgR"]
+
+
+def test_the_loop_record_carries_the_job_and_its_title():
+    from vera.evolve import loop_record_core as R
+    events = [{"type": "agent_loop_v6.start", "ts": "2026-09-28T16:00:00Z"},
+              {"type": "agent_loop_v6.done", "ts": "2026-09-28T16:05:00Z"}]
+    import json as _json
+    rs = {"goal": "DELEGATED TASK (from a coding agent): ...", "started_at": "2026-09-28T16:00:00Z",
+          "delegate": _json.dumps({"job_id": "dg1", "title": "Catalogue report", "findings": 3})}
+    compact, detail = R.run_record_from_events("delegate:dg1", events, {}, run_state=rs)
+    assert compact["origin"] == "delegate" and compact["label"] == "Catalogue report"
+    assert compact["delegate"]["findings"] == 3 and detail["delegate"]["job_id"] == "dg1"
+    plain, _ = R.run_record_from_events("chat-1", events, {}, run_state={"goal": "g"})
+    assert "delegate" not in plain
