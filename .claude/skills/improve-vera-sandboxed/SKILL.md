@@ -687,3 +687,42 @@ purpose on the row: it should say WHAT ran and WHY, not carry the script.
 
 Loading is best-effort by design — a missing or malformed manifest yields no
 helpers rather than failing a census over bookkeeping.
+
+### 11.8 The Loop Lab schedule — what is due, and how to run a census through it
+
+Censuses are scheduled in Loop Lab, not only launched by hand. Read the schedule
+BEFORE any GPU work and before a release: `/health` says what is running now,
+the schedule says what will start inside its window even when the box looks
+idle.
+
+    evolve.schedule.list                      every entry: kind, target, days,
+                                              start/end, timezone, enabled,
+                                              last_started_at / last_result
+    evolve.schedule.get / history / events    one entry, its runs, its log
+    evolve.schedule.upsert                    create or change an entry
+    evolve.schedule.enable id=… enabled=…     switch one on/off
+    evolve.schedule.run_now id=…              start it now
+
+A census entry is `kind: census`, `target: {template, mode: harness,
+plan_style?}`, with `repeat: continuous`, `exclusive: true` (never starts while
+another census is in flight) and `at_window_end: yield` (the goal in flight
+finishes, then the census parks — nothing runs past the window). Standing
+entries (2026-09-28): the default census weekdays 07:00-17:00 Europe/London,
+operator-family 05:00-07:00.
+
+- **A style series goes through `target.plan_style`**: it is validated against
+  the loop's planning styles and sets `CENSUS_PLAN_STYLE`, so the run archives
+  in its own series (`default-style-<style>-runN`) — prefer this to a
+  hand-launched `run_census.py` for anything you want compared in Loop Lab.
+- **Switching a standing schedule off is the user's decision**, and switching
+  it back on is a manual call: a schedule of `kind: cap` refuses denied
+  capabilities (`may not run from a schedule`), so a schedule cannot re-enable
+  another one. If you were allowed to disable one, record the re-enable in
+  your notes with its deadline.
+- Other kinds exist: `task` (a Loop Lab task), `pipeline` (test/adopt/promote),
+  `board` (board.dispatch), `cap` (one capability).
+
+**When no census is scheduled or running**, the GPU is free for development:
+one test at a time (§0), or a code report delegated to Vera
+(`evolve.delegate.*`, see the improve-vera skill §8 — prod only, report mode,
+not restart-safe yet).

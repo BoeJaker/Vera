@@ -283,3 +283,44 @@ that was easy to miss purely from re-reading trace JSON after the fact.
 A live human's "this doesn't look right" is a stronger, cheaper signal
 than another round of log archaeology; treat it as an instruction to
 re-open the investigation, not as something to reassure past.
+
+## 8. OPTIONAL — hand a code report to Vera when no census is scheduled
+
+When the box is free, a code-reporting task (find where something is built,
+map a data flow, list the change points) can be delegated to a Vera agentic
+loop instead of spending your own context on it. It is ONE GPU consumer, so §0
+applies to it like any test.
+
+**Only when no census is running or due.** Check both, not just one:
+- `evolve.schedule.list` — the Loop Lab schedule: enabled `kind: census`
+  entries, their `days`, `start`/`end` window and `timezone` (e.g. the default
+  census weekdays 07:00-17:00 Europe/London, operator-family 05:00-07:00). A
+  census starts inside its window even when the box looks idle now.
+- `GET /health` — `census.busy` (a goal in flight) and `gpu_gate` (`busy`,
+  `owners`).
+
+**The calls** (over `/mcp/call`, results under `content`):
+
+    evolve.delegate.start  title, brief (the handover, as you would brief an
+                           agent), plan (rough steps), suggest_caps,
+                           suggest_commands, paths, ref (default bleeding-edge),
+                           effort (standard|max), max_steps, plan_style
+                           -> {job_id, session_id, worktree, head} at once
+    evolve.delegate.status job_id -> {job: status, loop: events, recent_steps}
+    evolve.delegate.result job_id -> the markdown report
+    evolve.delegate.cancel job_id
+
+**What it can and cannot do.** Report mode only: the loop gets jailed read tools
+over its OWN detached worktree of `ref` (`evolve.delegate.fs.grep/list/read/
+outline`) plus `board.comment`, and nothing else. It runs on PROD only —
+`start` refuses inside a dev sandbox (2026-09-28: a delegate job run in a
+sandbox container pruned 252 worktree registrations from the shared .git).
+
+**It is not restart-safe yet.** Any prod restart — including another session's
+release — ends the job as `interrupted` (first prod job, 2026-09-28, killed 7
+minutes in by a release). `cancel` then only sets a flag; the job's worktree
+`.loop-lab-worktrees/delegate-<id>` stays registered and its loop still reads
+`running`. Check `evolve.delegate.list` before a release or restart.
+
+**The report is evidence, not a finding.** Open every cited `path:line` before
+relying on it (§3).
