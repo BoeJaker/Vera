@@ -1565,6 +1565,16 @@
         return;
       }
 
+      // ── per-run role models + effort preset ──
+      if(t === 'agent_loop_v6.role_models'){
+        const rows = Object.entries(ev.overrides||{}).map(([k,v])=>`<div>${_esc(k.split('/').pop())}: <b>${_esc(v.model||'')}</b> <span style="color:var(--dim,#a89f92)">@ ${_esc(v.node||'auto')}</span></div>`).join('');
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">⚙ Effort · ${_esc(ev.effort||'standard')}${ev.plan_style?(' · style → '+_esc(ev.plan_style)):''}</span>
+          <span class="alo-cycle-status" title="this run's own model choices - a CPU role is slower than the GPU">role models</span>
+        </div>${rows?`<div class="alo-cycle-preview">${rows}</div>`:''}`, 'plan');
+        return;
+      }
+
       // ── stepwise-reviewed: the CPU critic's review of a finished step ──
       if(t === 'agent_loop_v6.step_critique'){
         const ok = !ev.note;
