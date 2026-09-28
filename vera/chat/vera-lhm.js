@@ -705,10 +705,17 @@ function _ebar(title, onAdd, onDone){
 
   // ── owner ↔ host (the panel bridge's messages) ─────────────────────────
   var _lastSig = '';
+  /* The nav this page's menu publishes - null unless this page OWNS an embedded menu. The panel bridge reads it too
+     (its DOM snapshot is a second vera:panel:state from the same frame): the host takes a state without nav as "this
+     panel has no menu", so a snapshot that left it out dropped the chat's menu out of the harness whenever it landed
+     after this one - which is what made the chat's context menu load only some of the time. */
+  function navState(){
+    if(!_embedded || !_cfg) return null;
+    var s = spec(); if(!s) return null;
+    return { items: s.menus.map(function(m){ return { id: m.id, label: m.label }; }), active: s.active.menu, lhm: s };
+  }
   function _publish(force){
-    if(!_embedded || !_cfg) return;
-    var s = spec(); if(!s) return;
-    var nav = { items: s.menus.map(function(m){ return { id: m.id, label: m.label }; }), active: s.active.menu, lhm: s };
+    var nav = navState(); if(!nav) return;
     var sig = JSON.stringify(nav) + '|' + _pid;
     if(!force && sig === _lastSig) return; _lastSig = sig;
     try{ window.parent.postMessage({ type: 'vera:panel:state', panel_id: _pid, session_id: _cfg.sessionId ? String(_cfg.sessionId() || '') : '', state: { nav: nav, lhm: true } }, '*'); }catch(e){}
@@ -978,7 +985,7 @@ function _ebar(title, onAdd, onDone){
     return row;
   }
 
-  window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, absorb: absorb, side: side, sideEdit: sideEdit, sideAdd: sideAdd, strips: strips, css: _css,
+  window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, navState: navState, absorb: absorb, side: side, sideEdit: sideEdit, sideAdd: sideAdd, strips: strips, css: _css,
     openRecord: openRecord, closeRecord: closeRecord, saveAsTemplate: saveAsTemplate, placeInto: placeInto,
     compose: compose, composeUndo: composeUndo, saveAsMenu: saveAsMenu, addMenus: addMenus, deep: deep, openPicker: openPicker, closePicker: closePicker,
     get active(){ return { menu: _active, tab: _activeTab, top: _topMode, editing: _editing, hosted: _hosted, embedded: _embedded }; } };
