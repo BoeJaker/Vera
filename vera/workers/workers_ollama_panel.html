@@ -447,6 +447,7 @@ html.view-models #secNav [data-view="models"]{display:block}
     <div class="navdiv" data-view="models"></div>
     <div class="snav" data-pane="mimic" data-view="models" onclick="P.show('mimic',this)">Mimic</div>
     <div class="snav" data-pane="vllm" data-view="models" onclick="P.show('vllm',this)">vLLM</div>
+    <div class="snav" data-pane="specialist" data-view="models" onclick="P.show('specialist',this)" title="Non-LLM models: NLP, STT/TTS, diffusion, host NER">Specialist</div>
     <div class="snav" data-pane="api" data-view="models" onclick="P.show('api',this)">API</div>
   </div>
 
@@ -1935,6 +1936,10 @@ html.view-models #secNav [data-view="models"]{display:block}
     </div>
     <div class="pane" id="pane-vllm" style="padding:0;overflow:hidden">
       <iframe id="vllm-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+    <!-- Specialist: the <vera-specialist-models> element (specialist.status) -->
+    <div class="pane" id="pane-specialist" style="padding:0;overflow:hidden">
+      <iframe id="specialist-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
     </div>
 
     <div class="pane" id="pane-api" style="padding:0;overflow:hidden">
@@ -6329,6 +6334,7 @@ function showPane(name, el){
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
+  if(name==='specialist'){ _mountFrame('specialist-frame', BASE+'/specialist/panel'); }
   if(name==='api'){ _mountFrame('api-frame', BASE+'/providers/panel'); }
   if(name==='provision'){ provSub(_prvSub); }
   if(name==='storage'){ _mountFrame('storage-frame', BASE+'/pxstore/panel'); }

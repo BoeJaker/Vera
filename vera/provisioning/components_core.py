@@ -297,3 +297,34 @@ def compare_versions(host: Dict[str, object], node: Dict[str, object]) -> Dict[s
     nf = node.get("files") or {}
     changed = sorted(k for k in set(hf) | set(nf) if hf.get(k) != nf.get(k))
     return {"state": "behind", "changed": changed}
+
+
+#: The version record's entry for what a deploy installs (not a file).
+DEPS_ENTRY = "<deps>"
+
+
+def component_sync_plan(rows) -> list:
+    """What bringing each node to the host's version takes.
+
+    rows: [{host_id, host, state, changed, running}] from a version read and a
+    status read per node. A node already current is left alone; one where the
+    component is neither versioned nor running was never given it, and a sync
+    brings nodes UP TO DATE - it does not spread a component to new nodes.
+    Dependencies are reinstalled only when they changed, or when nothing says
+    what is installed (an unversioned deploy): a pip install of the NLP server
+    is ~2 GB, and a code-only change needs none of it."""
+    plan = []
+    for r in rows:
+        state = r.get("state") or "unversioned"
+        base = {"host_id": r.get("host_id", ""), "host": r.get("host", ""), "state": state}
+        if state == "current":
+            plan.append({**base, "action": "skip", "why": "already on the host's version"})
+        elif state in ("absent", "unversioned") and not r.get("running"):
+            plan.append({**base, "action": "skip", "why": "not deployed on this node"})
+        else:
+            deps = state == "unversioned" or DEPS_ENTRY in (r.get("changed") or [])
+            plan.append({**base, "action": "deploy", "install_deps": deps,
+                         "why": ("files changed: " + ", ".join(r.get("changed") or [])
+                                 if state == "behind" else
+                                 "running a version this host cannot verify")})
+    return plan
