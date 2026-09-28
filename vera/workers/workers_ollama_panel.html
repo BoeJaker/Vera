@@ -462,33 +462,35 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
       <!-- Sub-pane: Nodes -->
       <div id="wk-sub-nodes">
       <div class="dash-grid" id="w-grid">
-        <!-- KPI widgets -->
-        <div class="widget w-w2 w-h1" data-wid="w-total">
+        <!-- KPI widgets - two rows each: the dashboard's rows are fixed 58 px units
+             (vera-dashboard.js, "the span IS the height"), and a head plus a value
+             is ~115 px, so one row clipped every value out of sight -->
+        <div class="widget w-w2 w-h2" data-wid="w-total">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Workers</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-total')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val" id="k-w-total">—</div><div class="kpi-sub" id="k-w-total-sub">loading</div></div></div>
           <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-w2 w-h1" data-wid="w-busy">
+        <div class="widget w-w2 w-h2" data-wid="w-busy">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Busy</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-busy')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-warn" id="k-w-busy">—</div><div class="kpi-sub" id="k-w-busy-sub">active</div></div></div>
           <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-w2 w-h1" data-wid="w-caps">
+        <div class="widget w-w2 w-h2" data-wid="w-caps">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Capabilities</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-caps')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val" id="k-w-caps">—</div><div class="kpi-sub">unique caps</div></div></div>
           <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-w2 w-h1" data-wid="w-tasks">
+        <div class="widget w-w2 w-h2" data-wid="w-tasks">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Tasks Done</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-tasks')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-ok" id="k-w-done">—</div><div class="kpi-sub" id="k-w-done-sub">completed</div></div></div>
           <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-w2 w-h1" data-wid="w-queue">
+        <div class="widget w-w2 w-h2" data-wid="w-queue">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Queue</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-queue')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-warn" id="k-w-queue">—</div><div class="kpi-sub" id="k-w-queue-sub">pending</div></div></div>
           <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-w2 w-h1" data-wid="w-ollama">
+        <div class="widget w-w2 w-h2" data-wid="w-ollama">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Ollama Nodes</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-ollama')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-gpu" id="k-w-oll">—</div><div class="kpi-sub" id="k-w-oll-sub">nodes</div></div></div>
           <span class="w-resize" data-resize></span>

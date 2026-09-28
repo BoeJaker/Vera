@@ -17,7 +17,7 @@
    12
   ]
  },
- "note": "Every widget of the workers grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here. The widget review (2026-09-27): the figures, the ollama ring and the resources heat map read obs.cluster (and obs.health) and draw as records; the queue, the detail and the cards stay the page's - each record says why.",
+ "note": "Every widget of the workers grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here. The widget review (2026-09-27): the figures, the ollama ring and the resources heat map read obs.cluster (and obs.health) and draw as records; the queue, the detail and the cards stay the page's - each record says why. 2026-09-28: the six figures are two rows tall - one 58 px row left a head and no room for the value, so the row read as hidden behind Cluster Resources.",
  "widgets": [
   {
    "record": {
@@ -37,7 +37,7 @@
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
@@ -58,7 +58,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "15s",
@@ -89,7 +89,7 @@
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
@@ -110,7 +110,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "15s",
@@ -133,7 +133,7 @@
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
@@ -154,7 +154,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "60s",
@@ -178,7 +178,7 @@
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
@@ -199,7 +199,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "15s",
@@ -219,7 +219,7 @@
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
@@ -240,7 +240,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "5s",
@@ -271,7 +271,7 @@
      "size": "s",
      "span": [
       2,
-      1
+      2
      ],
      "max_body": null
     },
@@ -291,7 +291,7 @@
    ],
    "span": [
     2,
-    1
+    2
    ],
    "hidden": false,
    "refresh": "15s",
@@ -337,7 +337,7 @@
    },
    "at": [
     0,
-    1
+    2
    ],
    "span": [
     6,
@@ -379,7 +379,7 @@
    },
    "at": [
     6,
-    1
+    2
    ],
    "span": [
     6,
@@ -420,7 +420,7 @@
    },
    "at": [
     0,
-    3
+    4
    ],
    "span": [
     12,
