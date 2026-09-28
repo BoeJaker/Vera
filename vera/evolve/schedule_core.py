@@ -26,7 +26,11 @@ import uuid
 from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-KINDS = ("census", "suite", "task", "pipeline", "board", "cap")
+KINDS = ("census", "suite", "task", "pipeline", "board", "loop", "tests", "cap")
+# Kinds whose work outlives the tick that started it: run in the background, the run record closed when it ends,
+# and the next start held while one is still going.
+BACKGROUND_KINDS = ("loop", "tests")
+STILL_RUNNING_HOURS = 6                 # a background run older than this no longer holds the next one back
 REPEATS = ("continuous", "once_per_window", "every")
 WINDOW_END = ("finish", "yield", "drop")
 DEFAULT_TZ = "Europe/London"
@@ -35,7 +39,30 @@ MAX_STARTS_PER_TICK = 3
 MAX_PROJECTED_EVENTS = 600
 
 COLORS = {"census": "#c9a35a", "suite": "#6db87a", "task": "#8fb87a",
-          "pipeline": "#7aa2f7", "board": "#a78bfa", "cap": "#9aa0a6"}
+          "pipeline": "#7aa2f7", "board": "#a78bfa", "loop": "#f472b6", "tests": "#38bdf8",
+          "cap": "#9aa0a6"}
+
+# The calendar's layers: what an event is, so a viewer can switch each on and off. A board item's schedule is its own
+# layer - the work a board item asked for, whatever kind it is.
+LAYERS = ("windows", "runs", "results", "board", "calendar")
+
+
+def layer_of(ev: Dict[str, Any]) -> str:
+    src = ev.get("source") or ""
+    if src == "results":
+        return "results"
+    if src in ("loop-lab", "loop-lab-run"):
+        if ev.get("board_id") or ev.get("kind") == "board":
+            return "board"
+        return "runs" if src == "loop-lab-run" else "windows"
+    return "calendar"
+
+
+def for_board(schedules: Iterable[Dict[str, Any]], board_id: str) -> List[Dict[str, Any]]:
+    """The schedules tied to one board item (its own board-kind schedules and any other work linked to it)."""
+    b = (board_id or "").strip()
+    return [s for s in schedules if b and (s.get("board_id") == b
+                                          or (s.get("kind") == "board" and (s.get("target") or {}).get("id") == b))]
 
 # Capabilities a schedule may never run through the generic `cap` kind: the
 # same fence the idle queue keeps, plus the one action that reaches prod.
@@ -157,6 +184,9 @@ def normalize(rec: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[st
     r["exclusive"] = bool(r.get("exclusive", True))
     r["cooldown_minutes"] = max(0, int(r.get("cooldown_minutes") or 2))
     r["notes"] = str(r.get("notes") or "")
+    # The board item this work is for: a board-kind schedule's own item, or any schedule linked to one (a census run
+    # for an item that asked for one, a loop working an item's goal). The scheduler notes each start on the item.
+    r["board_id"] = str(r.get("board_id") or (r["target"].get("id") if kind == "board" else "") or "").strip()
     stamp = iso(now) if now else ""
     r["created"] = str(r.get("created") or stamp)
     r["updated"] = stamp or str(r.get("updated") or "")
@@ -210,6 +240,19 @@ def _normalize_target(kind: str, t: Dict[str, Any]) -> Dict[str, Any]:
         t["id"] = str(t["id"]).strip()
         t["executor"] = str(t.get("executor") or "deterministic")
         t["agent"] = str(t.get("agent") or "orchestrator")
+    elif kind == "loop":
+        # An agentic loop on a goal (loops.run): the profile picks the loop's shape (default coding).
+        if not str(t.get("goal") or "").strip():
+            raise ValueError("a loop schedule needs target.goal")
+        t["goal"] = str(t["goal"]).strip()
+        t["profile"] = str(t.get("profile") or "coding").strip()
+        t["model"] = str(t.get("model") or "").strip()
+    elif kind == "tests":
+        # A branch's unit tests in an ephemeral container (evolve.unittest.run): the red/green the matrices show.
+        t["branch"] = str(t.get("branch") or "bleeding-edge").strip()
+        t["paths"] = str(t.get("paths") or "tests").strip()
+        t["markers"] = str(t.get("markers") or "").strip()
+        t["repo"] = str(t.get("repo") or "").strip()
     elif kind == "cap":
         name = str(t.get("name") or "").strip()
         if not name:
@@ -247,6 +290,8 @@ def _default_title(kind: str, t: Dict[str, Any]) -> str:
             "task": f"Task · {t.get('id', '')}",
             "pipeline": f"Pipeline {t.get('action', '')} · {t.get('id') or t.get('branch', '')}",
             "board": f"Board · {t.get('id', '')}",
+            "loop": f"Loop · {str(t.get('goal', ''))[:48]}",
+            "tests": f"Tests · {t.get('branch', '')}" + (f" · {t['markers']}" if t.get("markers") else ""),
             "cap": f"Cap · {t.get('name', '')}"}[kind]
 
 
@@ -327,6 +372,15 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
             every = timedelta(minutes=int(rec.get("every_minutes") or 60))
             if last_started and now - last_started < every:
                 return False, "interval not elapsed"
+        if kind in BACKGROUND_KINDS and last_started:
+            last_fin = parse_iso(rec.get("last_finished_at") or "")
+            if (not last_fin or last_fin < last_started) and now - last_started < timedelta(hours=STILL_RUNNING_HOURS):
+                return False, "previous run still going"
+        if repeat == "continuous" and kind in BACKGROUND_KINDS:
+            cool = timedelta(minutes=int(rec.get("cooldown_minutes") or 0))
+            last_fin = parse_iso(rec.get("last_finished_at") or "")
+            if last_fin and now - last_fin < cool:
+                return False, "cooling down"
         elif repeat == "continuous":
             if kind == "census":
                 if state.get("census_running") and not (
@@ -428,6 +482,7 @@ def project_events(schedules: Iterable[Dict[str, Any]], start: datetime, end: da
                 "kind": rec.get("kind"), "schedule_id": rec["id"],
                 "enabled": bool(rec.get("enabled", True)),
                 "repeat": rec.get("repeat"), "label": _default_title(rec["kind"], rec["target"]),
+                "board_id": rec.get("board_id", ""),
             })
     out.sort(key=lambda e: e["start"])
     return out
@@ -453,6 +508,7 @@ def history_events(runs: Iterable[Dict[str, Any]], start: datetime, end: datetim
             "color": COLORS.get(r.get("kind"), COLORS["cap"]),
             "kind": r.get("kind"), "schedule_id": r.get("schedule_id"),
             "result": r.get("result", ""), "detail": r.get("detail", ""),
+            "board_id": r.get("board_id", ""),
         })
     out.sort(key=lambda e: e["start"])
     return out
@@ -475,7 +531,8 @@ def weekday_census(template: str = "default", *, start: str = "05:00", end: str 
 # calendar as the windows, the series reads at a glance - which days ran clean,
 # which capped, whether a change moved the numbers (asked 2026-09-22).
 
-RESULT_COLORS = {"good": "#6db87a", "mixed": "#c9a35a", "bad": "#c96b6b", "none": "#9aa0a6"}
+# bright and opaque on the calendar (drawn solid, over the faint window bands) so the results layer reads at a glance
+RESULT_COLORS = {"good": "#4ade80", "mixed": "#fbbf24", "bad": "#f87171", "none": "#9aa0a6"}
 
 
 def result_grade(pass_rate: Optional[float]) -> str:

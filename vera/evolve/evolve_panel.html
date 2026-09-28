@@ -708,29 +708,29 @@ html.vpb-nav-hosted body{padding-left:0}
      the windows are read-only projections, the runs the scheduler started sit beside
      them. Click an empty slot to make a schedule there; click a window to edit it. -->
 <div class="sec" id="sec-schedule" style="display:none">
-  <div class="card">
+  <div class="card sch-card">
     <div class="card-h">
       <span class="card-t">SCHEDULE</span>
       <span class="hint" id="sch-state">—</span>
-      <select id="sch-mode" onchange="schMode()" title="what the calendar shows: the schedules' windows, the results of every census run and suite over time, or both">
-        <option value="windows">windows</option><option value="results">results</option><option value="both">both</option>
-      </select>
-      <label class="row" style="gap:4px" id="sch-gran-wrap" title="results mode: one chip per run, or one per goal placed by its elapsed time"><input type="checkbox" id="sch-gran" style="width:auto" onchange="schMode()"> per goal</label>
+      <span style="flex:1"></span>
       <label class="row" style="gap:5px"><input type="checkbox" id="sch-enabled" style="width:auto" onchange="schCfgSave()"> scheduler on</label>
       <button class="btn sm" onclick="schTick()" title="Run the scheduler pass now: close a finished census, apply window-end controls, start what is due">tick now</button>
       <button class="btn sm primary" onclick="schOpen(null)">+ schedule</button>
       <button class="btn sm" onclick="schSeed()" title="Censuses of the default template back to back, weekdays 05:00-17:00">+ weekday census</button>
+      <button class="btn sm" id="sch-side-btn" onclick="schSide()" title="Show or hide the lists beside the calendar (schedules, board items, runs)">◧ lists</button>
     </div>
-    <div class="row" style="align-items:flex-start;gap:12px">
-      <div style="flex:3;min-width:420px">
-        <vera-calendar id="sch-cal" src="/evolve/schedule/events" view="week" hour-start="4" hour-end="21" poll="60000"></vera-calendar>
+    <!-- the calendar's LAYERS: each switched on and off here, counted, remembered per browser -->
+    <div class="sch-layers" id="sch-layers"></div>
+    <div class="sch-body">
+      <div class="sch-main">
+        <vera-calendar id="sch-cal" fill src="/evolve/schedule/events?mode=both&amp;granularity=runs" view="week" hour-start="4" hour-end="23" poll="60000"></vera-calendar>
       </div>
-      <div style="flex:1;min-width:280px">
-        <div class="card-h"><span class="card-t" style="font-size:10.5px">Schedules</span></div>
-        <div id="sch-list" class="hint">loading…</div>
-        <div class="card-h" style="margin-top:10px"><span class="card-t" style="font-size:10.5px">Started by the scheduler</span></div>
-        <div id="sch-runs" class="hint">—</div>
-      </div>
+      <aside class="sch-side">
+        <div class="sch-tabs"><button data-t="list" class="on" onclick="schTab('list')">Schedules</button><button data-t="board" onclick="schTab('board')" title="Board items - schedule work for one, see what is scheduled for each">Board</button><button data-t="runs" onclick="schTab('runs')">Runs</button></div>
+        <div class="sch-pane" data-p="list"><div id="sch-list" class="hint">loading…</div></div>
+        <div class="sch-pane" data-p="board" hidden><input id="sch-bq" placeholder="filter board items…" oninput="schBoard()" style="width:100%;margin-bottom:6px"><div id="sch-board" class="hint">—</div></div>
+        <div class="sch-pane" data-p="runs" hidden><div id="sch-runs" class="hint">—</div></div>
+      </aside>
     </div>
   </div>
 </div>
@@ -1054,17 +1054,32 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
 ]);
 
 /* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
-const SCH_KIND_LABEL={census:'Census',suite:'Suite',task:'Task',pipeline:'Pipeline',board:'Board item',cap:'Capability'};
+// Any Loop Lab work on a weekly window or once: a census, a suite, a task, a pipeline step, a board item's dispatch, an
+// agentic loop on a goal, a branch's unit tests, or any capability - and any of them may be FOR a board item (board_id):
+// the scheduler notes each start and end on that item, and the item's drawer lists its schedules. The calendar fills
+// the page; what it shows is a set of LAYERS the viewer switches: the windows (faint bands - when work MAY run), the
+// runs the scheduler started, the results of every census run and suite (solid, by pass rate), the board items' work,
+// and Vera's own calendar (the Comms panel's).
+const SCH_KIND_LABEL={census:'Census',suite:'Suite',task:'Task',pipeline:'Pipeline',board:'Board item',loop:'Agent loop',tests:'Unit tests',cap:'Capability'};
+const SCH_KIND_COL={census:'#c9a35a',suite:'#6db87a',task:'#8fb87a',pipeline:'#7aa2f7',board:'#a78bfa',loop:'#f472b6',tests:'#38bdf8',cap:'#9aa0a6'};
 const SCH_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const SCH_LAYERS=[
+  {k:'windows',label:'Windows',col:'#c9a35a',tip:'when each schedule may run - faint bands behind the rest'},
+  {k:'runs',label:'Runs',col:'#7aa2f7',tip:'what the scheduler started, and how each ended'},
+  {k:'results',label:'Results',col:'#4ade80',tip:'every census run and suite over time, coloured by its pass rate'},
+  {k:'board',label:'Board items',col:'#a78bfa',tip:'work scheduled for board items - its windows and runs'},
+  {k:'calendar',label:'Calendar',col:'#4a9eff',tip:'Vera\u2019s own calendar - the Comms panel\u2019s: local, ics, CalDAV, Google'}];
+let _schOn=new Set(SCH_LAYERS.map(L=>L.k)), _schCounts={}, _schBoardItems=[], _schProfiles=[];
+try{const v=JSON.parse(localStorage.getItem('loop-lab.sch.layers')||'null');if(Array.isArray(v))_schOn=new Set(v)}catch(_){}
 let _schCache={schedules:[],next:{},state:{},config:{}};
 async function loadSchedule(){
-  const d=await api('/evolve/schedule/list'); if(!d)return;
-  _schCache=d;
+  const [d,bi]=await Promise.all([api('/evolve/schedule/list'),api('/board/items')]); if(!d)return;
+  _schCache=d; _schBoardItems=((bi&&bi.items)||[]);
   $('sch-enabled').checked=!!(d.config||{}).enabled;
   const st=d.state||{};
   $('sch-state').textContent=(st.census_running?'census in flight ('+(st.template||'')+' '+(st.census_run||'')+')':'box free')
     +(st.loops_running?' · '+st.loops_running+' loop(s)':'')+(st.harness_blocked?' · '+st.harness_blocked:'')+' · tz '+((d.config||{}).timezone||'');
-  schList(); schRuns();
+  schList(); schRuns(); schBoard(); schMode();
   const cal=$('sch-cal'); if(cal&&typeof cal.refresh==='function')cal.refresh();
 }
 function schWhen(s){
@@ -1073,15 +1088,18 @@ function schWhen(s){
   const rep=s.repeat==='continuous'?'back to back':s.repeat==='every'?'every '+s.every_minutes+' min':'once per window';
   return days+' '+s.start+'–'+s.end+' · '+rep;
 }
+function schBoardTitle(id){const it=_schBoardItems.find(x=>x.id===id);return it?(it.title||id):id}
+function schBoardTag(id){return id?'<span class="sch-bl" onclick="event.stopPropagation();openBoardItem(\''+esc(id)+'\')" title="the board item this work is for - open it">▣ '+esc(String(schBoardTitle(id)).slice(0,40))+'</span>':''}
 function schList(){
   const L=_schCache.schedules||[];
   if(!L.length){$('sch-list').innerHTML='<span class="hint">no schedules yet — click an empty calendar slot, or + schedule</span>';return}
   $('sch-list').innerHTML=L.map(s=>{
     const nx=(_schCache.next||{})[s.id];
-    return '<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--border);padding:4px 0;gap:6px">'
-      +'<div style="flex:1;min-width:0"><div style="font-weight:600;'+(s.enabled?'':'opacity:.5;text-decoration:line-through')+'">'+esc(s.title)+'</div>'
-      +'<div class="hint">'+esc(SCH_KIND_LABEL[s.kind]||s.kind)+' · '+esc(schWhen(s))+(nx?' · next '+esc(String(nx.start).replace('T',' ').slice(5,16)):'')
-      +(s.last_started_at?' · last '+esc(String(s.last_started_at).replace('T',' ').slice(5,16))+' '+esc(s.last_result||''):'')+'</div></div>'
+    return '<div class="sch-row"><span class="sch-dot" style="background:'+(SCH_KIND_COL[s.kind]||'#999')+'"></span>'
+      +'<div style="flex:1;min-width:0"><div class="t" style="'+(s.enabled?'':'opacity:.5;text-decoration:line-through')+'">'+esc(s.title)+'</div>'
+      +'<div class="m">'+esc(SCH_KIND_LABEL[s.kind]||s.kind)+' · '+esc(schWhen(s))+(nx?' · next '+esc(String(nx.start).replace('T',' ').slice(5,16)):'')
+      +(s.last_started_at?' · last '+esc(String(s.last_started_at).replace('T',' ').slice(5,16))+' '+esc(s.last_result||''):'')+'</div>'
+      +(s.board_id?'<div class="m">'+schBoardTag(s.board_id)+'</div>':'')+'</div>'
       +'<div class="row" style="gap:3px;flex-wrap:nowrap">'
       +'<button class="btn sm" onclick="schToggle(\''+s.id+'\','+(s.enabled?'false':'true')+')" title="'+(s.enabled?'switch off':'switch on')+'">'+(s.enabled?'on':'off')+'</button>'
       +'<button class="btn sm" onclick="schRunNow(\''+s.id+'\')" title="start now, outside the window (still waits for a free box)">▶</button>'
@@ -1090,12 +1108,55 @@ function schList(){
   }).join('');
 }
 async function schRuns(){
-  const d=await api('/evolve/schedule/history?limit=12'); const R=(d&&d.runs)||[];
-  $('sch-runs').innerHTML=R.length?R.map(r=>'<div class="hint" style="padding:2px 0">'+esc(String(r.started_at).replace('T',' ').slice(5,16))+' · '+esc(r.title||r.kind)+' · <b>'+esc(r.result||'')+'</b>'+(r.detail?' · '+esc(String(r.detail).slice(0,60)):'')+'</div>').join(''):'nothing yet';
+  const d=await api('/evolve/schedule/history?limit=60'); const R=(d&&d.runs)||[];
+  const col=r=>/green|done|started|resumed/.test(r.result||'')?'#4ade80':/red|error|failed|dropped/.test(r.result||'')?'#f87171':'#9aa0a6';
+  $('sch-runs').innerHTML=R.length?R.map(r=>'<div class="sch-row" onclick="schOpen(\''+esc(r.schedule_id||'')+'\')" style="cursor:pointer"><span class="sch-dot" style="background:'+col(r)+'"></span><div style="flex:1;min-width:0">'
+    +'<div class="t">'+esc(r.title||r.kind)+' <span style="color:'+col(r)+'">'+esc(r.result||'')+'</span></div>'
+    +'<div class="m">'+esc(String(r.started_at).replace('T',' ').slice(5,16))+(r.finished_at?' → '+esc(String(r.finished_at).replace('T',' ').slice(11,16)):' · running')+(r.detail?' · '+esc(String(r.detail).slice(0,90)):'')+'</div>'
+    +(r.board_id?'<div class="m">'+schBoardTag(r.board_id)+'</div>':'')+'</div></div>').join(''):'nothing yet';
 }
+// Board items beside the calendar: what is scheduled for each, and ⏰ to schedule work for one.
+function schBoard(){
+  const box=$('sch-board'); if(!box)return;
+  const q=(($('sch-bq')||{}).value||'').toLowerCase();
+  const by={}; (_schCache.schedules||[]).forEach(s=>{if(s.board_id)(by[s.board_id]=by[s.board_id]||[]).push(s)});
+  const items=_schBoardItems.filter(it=>!/^(done|dropped)$/.test(it.lane||'')&&(!q||(String(it.title||'')+' '+it.id+' '+(it.labels||[]).join(' ')).toLowerCase().includes(q)))
+    .sort((a,b)=>(by[b.id]?1:0)-(by[a.id]?1:0));
+  box.innerHTML=items.length?items.slice(0,200).map(it=>{
+    const ss=by[it.id]||[];
+    return '<div class="sch-row"><span class="sch-dot" style="background:'+((typeof _LANE_COLOR!=='undefined'&&_LANE_COLOR[it.lane])||'#666')+'" title="'+esc(it.lane)+'"></span><div style="flex:1;min-width:0">'
+      +'<div class="t" style="cursor:pointer" onclick="openBoardItem(\''+esc(it.id)+'\')">'+esc(it.title||it.id)+'</div>'
+      +'<div class="m">'+esc(it.lane)+(it.branch?' · '+esc(it.branch):'')+(ss.length?' · '+ss.map(s=>'<a onclick="schOpen(\''+s.id+'\')" style="cursor:pointer;color:'+(SCH_KIND_COL[s.kind]||'inherit')+'">⏰ '+esc(SCH_KIND_LABEL[s.kind]||s.kind)+' '+esc(schWhen(s))+'</a>').join(' · '):'')+'</div></div>'
+      +'<button class="btn sm" onclick="schForBoard(\''+esc(it.id)+'\')" title="schedule work for this item">⏰</button></div>';
+  }).join(''):'<span class="hint">no open board items'+(q?' match':'')+'</span>';
+}
+function schForBoard(id){
+  const it=_schBoardItems.find(x=>x.id===id)||{};
+  schOpen(null,{kind:'board',target:{id,executor:'deterministic',agent:'orchestrator'},board_id:id,title:'',days:[0,1,2,3,4],start:'09:00',end:'17:00',repeat:'once_per_window'});
+  if(!_schBoardItems.length)api('/board/items').then(bi=>{_schBoardItems=(bi&&bi.items)||[]});
+}
+// the schedules tied to a board item, in its drawer
+async function schBoardLine(id){
+  const box=$('bd-scheds'); if(!box)return;
+  // filtered here too: a server from before board_id (a sandbox reads prod's) answers with every schedule
+  const d=await api('/evolve/schedule/list?board_id='+encodeURIComponent(id));
+  const L=((d&&d.schedules)||[]).filter(s=>s.board_id===id||(s.kind==='board'&&(s.target||{}).id===id));
+  box.innerHTML=L.length?'⏰ '+L.map(s=>'<a onclick="schOpen(\''+s.id+'\')" style="cursor:pointer;color:'+(SCH_KIND_COL[s.kind]||'inherit')+'">'+esc(s.title)+'</a> <span class="hint">'+esc(schWhen(s))+(s.last_result?' · last '+esc(s.last_result):'')+'</span>').join(' · '):'<span class="hint">nothing scheduled for this item</span>';
+}
+function schTab(t){document.querySelectorAll('#sec-schedule .sch-tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));document.querySelectorAll('#sec-schedule .sch-pane').forEach(p=>p.hidden=p.dataset.p!==t);try{localStorage.setItem('loop-lab.sch.tab',t)}catch(_){}}
+function schSide(force){const sec=$('sec-schedule');const off=force!=null?!!force:!sec.classList.contains('side-off');sec.classList.toggle('side-off',off);try{localStorage.setItem('loop-lab.sch.side',off?'off':'on')}catch(_){}}
+const SCH_PRESETS=[
+  ['Weekday census',{kind:'census',target:{template:'default'},days:[0,1,2,3,4],start:'05:00',end:'17:00',repeat:'continuous'}],
+  ['Nightly unit tests',{kind:'tests',target:{branch:'bleeding-edge',paths:'tests',markers:'critical'},days:[0,1,2,3,4,5,6],start:'02:00',end:'03:00',repeat:'once_per_window'}],
+  ['Agent loop on a goal',{kind:'loop',target:{profile:'coding',goal:''},days:[0,1,2,3,4],start:'19:00',end:'22:00',repeat:'once_per_window'}],
+  ['Suite',{kind:'suite',target:{tag:'nightly'},days:[5],start:'06:00',end:'12:00',repeat:'once_per_window'}],
+  ['Gate a pipeline',{kind:'pipeline',target:{action:'test'},days:[0,1,2,3,4],start:'07:00',end:'08:00',repeat:'once_per_window'}],
+  ['Dispatch a board item',{kind:'board',target:{executor:'deterministic',agent:'orchestrator'},days:[0,1,2,3,4],start:'09:00',end:'17:00',repeat:'once_per_window'}],
+  ['Sync errors',{kind:'cap',target:{name:'evolve.errors.sync',arguments:{}},days:[0,1,2,3,4,5,6],start:'06:00',end:'07:00',repeat:'once_per_window'}]];
+function schPreset(i){const p=JSON.parse(JSON.stringify(SCH_PRESETS[i][1]));const bid=(($('sch-board')||{}).value||'').trim();if(bid){p.board_id=bid;if(p.kind==='board')p.target.id=bid}schOpen(null,p)}
 function schKindFields(kind,t){
   t=t||{};
-  const f=(id,label,val,ph)=>'<div><label class="fld">'+label+'</label><input id="'+id+'" value="'+esc(val||'')+'" placeholder="'+esc(ph||'')+'" style="width:100%"></div>';
+  const f=(id,label,val,ph,list)=>'<div><label class="fld">'+label+'</label><input id="'+id+'" value="'+esc(val||'')+'" placeholder="'+esc(ph||'')+'"'+(list?' list="'+list+'"':'')+' style="width:100%"></div>';
   if(kind==='census')return f('sch-t-template','Template',t.template||'default','default')
     /* The loop's planning styles (planner_styles.LOOP_STYLES; the server
        rejects any other). A forced style is its own archive series. */
@@ -1110,22 +1171,33 @@ function schKindFields(kind,t){
     +'<div><label class="row" style="gap:6px;margin-top:16px"><input type="checkbox" id="sch-t-assess" style="width:auto" '+(t.assess?'checked':'')+'> assess</label></div>';
   if(kind==='pipeline')return '<div><label class="fld">Action</label><select id="sch-t-action" style="width:100%" onchange="schPipeFields()"><option value="test">test (run the gate)</option><option value="promote">promote → bleeding-edge</option><option value="adopt">adopt a branch → bleeding-edge</option></select></div>'
     +f('sch-t-id','Pipeline id',t.id,'')+f('sch-t-branch','Branch (adopt)',t.branch,'feat/…');
-  if(kind==='board')return f('sch-t-id','Board item id',t.id,'')+f('sch-t-executor','Executor',t.executor||'deterministic','deterministic')+f('sch-t-agent','Agent',t.agent||'orchestrator','orchestrator');
+  if(kind==='board')return f('sch-t-id','Board item',t.id,'pick or paste an item id','sch-board-dl')+f('sch-t-executor','Executor',t.executor||'deterministic','deterministic')+f('sch-t-agent','Agent',t.agent||'orchestrator','orchestrator');
+  if(kind==='loop')return '<div style="grid-column:1/-1"><label class="fld">Goal</label><textarea id="sch-t-goal" rows="3" style="width:100%" placeholder="what the loop should do">'+esc(t.goal||'')+'</textarea></div>'
+    +f('sch-t-profile','Loop profile',t.profile||'coding','coding','sch-prof-dl')+f('sch-t-model','Model (optional)',t.model,'the profile’s own');
+  if(kind==='tests')return f('sch-t-branch','Branch',t.branch||'bleeding-edge','bleeding-edge')+f('sch-t-paths','Paths',t.paths||'tests','tests')
+    +f('sch-t-markers','Markers',t.markers,'e.g. critical')+f('sch-t-repo','Repo (blank = Vera)',t.repo,'');
   return f('sch-t-name','Capability',t.name,'e.g. evolve.errors.sync')+'<div><label class="fld">Arguments (JSON)</label><textarea id="sch-t-args" rows="3" style="width:100%">'+esc(JSON.stringify(t.arguments||{}))+'</textarea></div>';
 }
 function schPipeFields(){}
 function schOpen(id,prefill){
   const s=id?(_schCache.schedules||[]).find(x=>x.id===id):null;
+  if(id&&!s){loadSchedule().then(()=>{if((_schCache.schedules||[]).some(x=>x.id===id))schOpen(id)});return}
   const r=s||Object.assign({kind:'census',target:{template:'default'},days:[0,1,2,3,4],start:'05:00',end:'17:00',
     timezone:(_schCache.config||{}).timezone||'Europe/London',repeat:'continuous',every_minutes:60,at_window_end:'finish',exclusive:true,enabled:true,title:''},prefill||{});
+  if(!_schProfiles.length)api('/loops/profiles').then(d=>{_schProfiles=((d&&d.profiles)||[]).map(p=>p.id||p).filter(Boolean);const dl=$('sch-prof-dl');if(dl)dl.innerHTML=_schProfiles.map(p=>'<option value="'+esc(p)+'">').join('')});
   const kindOpts=Object.keys(SCH_KIND_LABEL).map(k=>'<option value="'+k+'" '+(k===r.kind?'selected':'')+'>'+SCH_KIND_LABEL[k]+'</option>').join('');
   const days=SCH_DAYS.map((d,i)=>'<label class="row" style="gap:3px"><input type="checkbox" class="sch-day" value="'+i+'" style="width:auto" '+((r.days||[]).indexOf(i)>=0?'checked':'')+'>'+d+'</label>').join('');
+  const boardDl='<datalist id="sch-board-dl">'+_schBoardItems.filter(it=>!/^(done|dropped)$/.test(it.lane||'')).slice(0,300).map(it=>'<option value="'+esc(it.id)+'">'+esc(String(it.title||'').slice(0,80))+'</option>').join('')+'</datalist>'
+    +'<datalist id="sch-prof-dl">'+_schProfiles.map(p=>'<option value="'+esc(p)+'">').join('')+'</datalist>';
   openModal('<div class="card-h"><span class="card-t">'+(s?'EDIT SCHEDULE':'NEW SCHEDULE')+'</span><button class="btn sm" onclick="closeModal()">✕</button></div>'
+    +(s?'':'<div class="sch-presets"><span class="hint">start from</span>'+SCH_PRESETS.map((p,i)=>'<button class="btn sm" onclick="schPreset('+i+')">'+esc(p[0])+'</button>').join('')+'</div>')
+    +boardDl
     +'<div class="grid">'
     +'<div><label class="fld">Title</label><input id="sch-title" value="'+esc(r.title||'')+'" placeholder="(from the kind and target)" style="width:100%"></div>'
     +'<div><label class="fld">Kind</label><select id="sch-kind" style="width:100%" onchange="schKindChange()">'+kindOpts+'</select></div>'
+    +'<div style="grid-column:1/-1"><label class="fld">For board item (optional — its drawer lists this schedule, and each start and end is noted on it)</label><input id="sch-board" list="sch-board-dl" value="'+esc(r.board_id||'')+'" placeholder="pick an item, or leave blank" style="width:100%" oninput="schBoardHint()"><div class="hint" id="sch-board-hint">'+esc(r.board_id?schBoardTitle(r.board_id):'')+'</div></div>'
     +'</div><div class="grid" id="sch-target">'+schKindFields(r.kind,r.target)+'</div>'
-    +'<div class="card-h" style="margin-top:8px"><span class="card-t" style="font-size:10.5px">When</span></div>'
+    +'<div class="card-h" style="margin-top:8px"><span class="card-t" style="font-size:12px">When</span></div>'
     +'<div class="row" style="gap:10px">'+days+'</div>'
     +'<div class="grid" style="margin-top:6px">'
     +'<div><label class="fld">From</label><input id="sch-start" value="'+esc(r.start||'05:00')+'" placeholder="05:00" style="width:100%"></div>'
@@ -1138,12 +1210,13 @@ function schOpen(id,prefill){
     +'<label class="row" style="gap:5px"><input type="checkbox" id="sch-excl" style="width:auto" '+(r.exclusive!==false?'checked':'')+'> never beside a census</label>'
     +'<label class="row" style="gap:5px"><input type="checkbox" id="sch-on" style="width:auto" '+(r.enabled!==false?'checked':'')+'> enabled</label>'
     +'<span style="flex:1"></span><button class="btn primary" onclick="schSave(\''+(s?s.id:'')+'\')">Save</button></div>'
-    +'<div class="hint" style="margin-top:6px">A census needs the box to itself: it starts only when no census and no agent loop is running. Pipelines may reach bleeding-edge, never main.</div>');
+    +'<div class="hint" style="margin-top:6px">A census needs the box to itself: it starts only when no census and no agent loop is running. An agent loop or a test run goes on in the background; the next one waits until it has ended. Pipelines may reach bleeding-edge, never main.</div>');
   $('sch-repeat').value=r.repeat||'continuous';
   if(r.kind==='census'&&$('sch-t-awe'))$('sch-t-awe').value=r.at_window_end||'finish';
   if(r.kind==='pipeline'&&$('sch-t-action'))$('sch-t-action').value=(r.target||{}).action||'test';
 }
-function schKindChange(){const k=$('sch-kind').value;$('sch-target').innerHTML=schKindFields(k,{});if(k==='census')$('sch-repeat').value='continuous';else if($('sch-repeat').value==='continuous')$('sch-repeat').value='once_per_window'}
+function schBoardHint(){const v=(($('sch-board')||{}).value||'').trim();const h=$('sch-board-hint');if(h)h.textContent=v?schBoardTitle(v):'';if($('sch-kind').value==='board'&&$('sch-t-id')&&!$('sch-t-id').value)$('sch-t-id').value=v}
+function schKindChange(){const k=$('sch-kind').value;const bid=(($('sch-board')||{}).value||'').trim();$('sch-target').innerHTML=schKindFields(k,k==='board'?{id:bid}:{});if(k==='census')$('sch-repeat').value='continuous';else if($('sch-repeat').value==='continuous')$('sch-repeat').value='once_per_window'}
 function schReadTarget(kind){
   const v=id=>{const e=$(id);return e?e.value.trim():''};
   if(kind==='census')return {template:v('sch-t-template')||'default',plan_style:v('sch-t-style')};
@@ -1151,12 +1224,14 @@ function schReadTarget(kind){
   if(kind==='task')return {id:v('sch-t-id'),assess:!!($('sch-t-assess')||{}).checked};
   if(kind==='pipeline')return {action:v('sch-t-action')||'test',id:v('sch-t-id'),branch:v('sch-t-branch')};
   if(kind==='board')return {id:v('sch-t-id'),executor:v('sch-t-executor')||'deterministic',agent:v('sch-t-agent')||'orchestrator'};
+  if(kind==='loop')return {goal:v('sch-t-goal'),profile:v('sch-t-profile')||'coding',model:v('sch-t-model')};
+  if(kind==='tests')return {branch:v('sch-t-branch')||'bleeding-edge',paths:v('sch-t-paths')||'tests',markers:v('sch-t-markers'),repo:v('sch-t-repo')};
   let args={};try{args=JSON.parse(v('sch-t-args')||'{}')}catch(_){toast('arguments must be JSON');throw new Error('bad json')}
   return {name:v('sch-t-name'),arguments:args};
 }
 async function schSave(id){
   const kind=$('sch-kind').value; let target; try{target=schReadTarget(kind)}catch(_){return}
-  const rec={id:id||undefined,title:$('sch-title').value.trim(),kind,target,
+  const rec={id:id||undefined,title:$('sch-title').value.trim(),kind,target,board_id:(($('sch-board')||{}).value||'').trim(),
     days:[...document.querySelectorAll('.sch-day:checked')].map(e=>+e.value),
     start:$('sch-start').value.trim(),end:$('sch-end').value.trim(),timezone:$('sch-tz').value.trim(),
     repeat:$('sch-repeat').value,every_minutes:+$('sch-every').value||60,once_at:$('sch-once').value.trim(),
@@ -1174,15 +1249,29 @@ async function schRunNow(id){toast('starting…');const d=await api('/evolve/sch
 async function schTick(){const d=await api('/evolve/schedule/tick',{method:'POST',body:'{}'});toast(d?('started '+((d.started||[]).length)+' · controls '+((d.controls||[]).length)):'tick failed');loadSchedule()}
 async function schSeed(){const d=await api('/evolve/schedule/seed_weekday_census',{method:'POST',body:'{}'});toast(d&&d.ok?(d.existing?'already there':'weekday census schedule added'):'failed');loadSchedule()}
 async function schCfgSave(){const d=await api('/evolve/schedule/config/set',{method:'POST',body:JSON.stringify({enabled:$('sch-enabled').checked})});toast(d&&d.ok?('scheduler '+(d.config.enabled?'on':'off')):'failed');loadSchedule()}
-// Results mode: every archived census run / suite as a span coloured by its
-// pass rate, so the series reads on the calendar; per goal places each task
-// by its elapsed time. Remembered per browser.
+// The layers. What the server is asked for follows them (results only while that layer is on - it reads every suite;
+// Vera's calendar only while that one is); what is drawn is the calendar's filter over the answer, so switching a
+// layer the answer already holds redraws at once. Per goal places each goal of a census run by its elapsed time.
+function schLayerOf(ev){return ev.layer||(ev.source==='results'?'results':ev.source==='loop-lab-run'?(ev.board_id||ev.kind==='board'?'board':'runs'):ev.source==='loop-lab'?(ev.board_id||ev.kind==='board'?'board':'windows'):'calendar')}
+function schGran(){try{return localStorage.getItem('loop-lab.sch.gran')==='goals'?'goals':'runs'}catch(_){return 'runs'}}
+function schLayersBar(){
+  const b=$('sch-layers'); if(!b)return;
+  b.innerHTML=SCH_LAYERS.map(L=>'<button class="sch-ly'+(_schOn.has(L.k)?' on':'')+'" style="--c:'+L.col+'" title="'+esc(L.tip)+'" onclick="schLayer(\''+L.k+'\')"><i></i>'+esc(L.label)+(_schCounts[L.k]!=null?'<b>'+_schCounts[L.k]+'</b>':'')+'</button>').join('')
+    +'<label class="sch-gr" title="results: one chip per run, or one per goal placed by its elapsed time"><input type="checkbox" id="sch-gran" style="width:auto" '+(schGran()==='goals'?'checked':'')+' onchange="schMode()"> per goal</label>'
+    +(_schOn.has('results')?'<span class="sch-key" title="the results layer: each census run or suite coloured by its pass rate"><i style="background:#4ade80"></i>≥ 85%<i style="background:#fbbf24"></i>60–85%<i style="background:#f87171"></i>&lt; 60%<i style="background:#9aa0a6"></i>no rate</span>':'');
+}
 function schMode(){
   const cal=$('sch-cal'); if(!cal)return;
-  const mode=$('sch-mode').value, gran=$('sch-gran').checked?'goals':'runs';
-  try{localStorage.setItem('loop-lab.sch.mode',mode);localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
-  cal.setAttribute('src','/evolve/schedule/events?mode='+mode+'&granularity='+gran);
+  const g=$('sch-gran'); const gran=g?(g.checked?'goals':'runs'):schGran();
+  const res=_schOn.has('results'), sch=_schOn.has('windows')||_schOn.has('runs')||_schOn.has('board');
+  const mode=res?(sch?'both':'results'):'windows';
+  try{localStorage.setItem('loop-lab.sch.layers',JSON.stringify([..._schOn]));localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
+  const src='/evolve/schedule/events?mode='+mode+'&granularity='+gran+(_schOn.has('calendar')?'&include_calendar=1':'');
+  if(cal.getAttribute('src')!==src)cal.setAttribute('src',src);
+  cal.filter=ev=>_schOn.has(schLayerOf(ev));
+  schLayersBar();
 }
+function schLayer(k){_schOn.has(k)?_schOn.delete(k):_schOn.add(k);schMode()}
 function schResultModal(ev){
   const rows=(ev.rows||[]).map(r=>'<tr><td>'+esc(r.label||'')+'</td><td>'+esc(r.status||'')+(r.hit_cap?' (cap)':'')+'</td><td>'+esc(r.checks||'')+'</td><td style="text-align:right">'+(r.elapsed_s!=null?Math.round(r.elapsed_s)+' s':'')+'</td></tr>').join('');
   openModal('<div class="card-h"><span class="card-t">'+esc(ev.title||'')+'</span><button class="btn sm" onclick="closeModal()">✕</button></div>'
@@ -1191,17 +1280,58 @@ function schResultModal(ev){
     +(rows?'<table><thead><tr><th>goal</th><th>status</th><th>checks</th><th style="text-align:right">wall</th></tr></thead><tbody>'+rows+'</tbody></table>':'<div class="hint">'+esc(ev.status||'')+(ev.checks?' · '+esc(ev.checks):'')+'</div>')
     +(ev.suite_id?'<div class="row" style="margin-top:8px"><button class="btn sm" onclick="closeModal();nav(\'work\')">open in Work</button></div>':''));
 }
-// The calendar: an empty slot makes a schedule there (a weekly window on that
-// weekday from that hour); a window chip opens its schedule; a results chip
-// opens the run.
+// A run the scheduler started: how it ended, and the way back to its schedule and its board item.
+function schRunModal(ev){
+  openModal('<div class="card-h"><span class="card-t">'+esc(ev.title||'run')+'</span><button class="btn sm" onclick="closeModal()">✕</button></div>'
+    +'<div class="hint" style="margin-bottom:6px">'+esc(SCH_KIND_LABEL[ev.kind]||ev.kind||'')+' · '+esc(String(ev.start||'').replace('T',' ').slice(0,16))+' → '+esc(String(ev.end||'').replace('T',' ').slice(11,16))+(ev.result?' · <b>'+esc(ev.result)+'</b>':'')+'</div>'
+    +(ev.detail?'<div style="background:var(--bg1);border-radius:6px;padding:8px;font-size:12.5px;white-space:pre-wrap;margin:6px 0">'+esc(ev.detail)+'</div>':'')
+    +'<div class="row" style="gap:6px;margin-top:8px">'+(ev.schedule_id?'<button class="btn sm" onclick="schOpen(\''+esc(ev.schedule_id)+'\')">✎ its schedule</button><button class="btn sm" onclick="closeModal();schRunNow(\''+esc(ev.schedule_id)+'\')">▶ run again</button>':'')
+    +(ev.board_id?'<button class="btn sm" onclick="openBoardItem(\''+esc(ev.board_id)+'\')">▣ its board item</button>':'')+'</div>');
+}
+// Opened from elsewhere - the Comms calendar's Loop Lab layer leaves a hint (same origin) and asks the shell to open
+// Loop Lab: this page, that day, that schedule.
+async function schGotoHint(){
+  let h=null; try{h=JSON.parse(localStorage.getItem('loop-lab.goto')||'null')}catch(_){}
+  if(!h||h.sec!=='schedule'||Date.now()-(+h.at||0)>120000)return;
+  try{localStorage.removeItem('loop-lab.goto')}catch(_){}
+  nav('schedule'); const cal=$('sch-cal'); if(h.date&&cal&&cal.goto)cal.goto(h.date);
+  if(h.schedule_id){await loadSchedule();schOpen(h.schedule_id)}
+}
+window.addEventListener('storage',e=>{if(e.key==='loop-lab.goto'&&e.newValue)schGotoHint()});
+// The calendar: an empty slot makes a schedule there (a weekly window on that weekday from that hour); a window opens
+// its schedule, a run how it ended, a result the run's goals, an event of Vera's calendar says where to edit it.
 document.addEventListener('DOMContentLoaded',()=>{
   const cal=$('sch-cal'); if(!cal)return;
-  try{const m=localStorage.getItem('loop-lab.sch.mode');if(m&&$('sch-mode'))$('sch-mode').value=m;if($('sch-gran'))$('sch-gran').checked=localStorage.getItem('loop-lab.sch.gran')==='goals';if(m)schMode()}catch(_){}
+  try{schTab(localStorage.getItem('loop-lab.sch.tab')||'list');if(localStorage.getItem('loop-lab.sch.side')==='off')schSide(true)}catch(_){}
+  schMode();
+  // Vera's calendar joins here when the answer did not bring it (a server from before include_calendar - and a
+  // sandbox reads prod's): the same range from /cal/events, the Comms panel's own read
+  let calTok=0;
+  const ymdOf=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  cal.addEventListener('events-loaded',async e=>{
+    const meta=(e.detail&&e.detail.meta)||{}; let evs=(cal.events||[]).slice();
+    if(_schOn.has('calendar')&&!(meta.layers&&('calendar' in meta.layers))){
+      const tok=++calTok; const [s0,e0]=cal.range();
+      const d=await api('/cal/events?start='+ymdOf(s0)+'&end='+ymdOf(e0));
+      if(tok!==calTok)return;
+      evs=evs.concat(((d&&d.events)||[]).filter(x=>x&&x.source!=='loop-lab'&&x.source!=='loop-lab-run').map(x=>Object.assign({},x,{read_only:true,layer:'calendar'})));
+    }
+    _schCounts={};
+    evs.forEach(ev=>{const L=schLayerOf(ev);ev.layer=L;_schCounts[L]=(_schCounts[L]||0)+1;
+      if(ev.source==='loop-lab')ev.display='background';else if(ev.source==='results')ev.display='solid'});
+    cal.events=evs; cal.filter=x=>_schOn.has(schLayerOf(x)); schLayersBar();
+  });
   cal.addEventListener('slot-select',e=>{
     const d=e.detail; const dt=new Date(d.date+'T00:00:00'); const wd=(dt.getDay()+6)%7; const hh=String(d.hour).padStart(2,'0');
     schOpen(null,{days:[wd],start:hh+':00',end:(String(Math.min(23,d.hour+3)).padStart(2,'0'))+':00'});
   });
-  cal.addEventListener('event-open',e=>{const ev=e.detail.event||{};if(ev.source==='results')schResultModal(ev);else if(ev.schedule_id)schOpen(ev.schedule_id);else if(ev.detail)toast(ev.title+' · '+ev.detail)});
+  cal.addEventListener('event-open',e=>{const ev=e.detail.event||{};
+    if(ev.source==='results')schResultModal(ev);
+    else if(ev.source==='loop-lab-run')schRunModal(ev);
+    else if(ev.schedule_id)schOpen(ev.schedule_id);
+    else if(schLayerOf(ev)==='calendar')toast('📅 '+(ev.title||'')+(ev.location?' · '+ev.location:'')+' — edit it in Comms › Calendar');
+    else if(ev.detail)toast(ev.title+' · '+ev.detail)});
+  setTimeout(schGotoHint,400);
 });
 
 /* ═══ TEST GENERATION — LLM-propose pytest for a branch (route-forward M3.4) ═══ */
@@ -2156,7 +2286,8 @@ async function openBoardItem(id){
     +(it.pipeline?'<button class="btn sm" onclick="closeModal();openPipe(\''+esc(it.pipeline)+'\')">⎇ Pipeline '+esc(it.pipeline)+'</button>':'')
     +(it.session?'<button class="btn sm" onclick="closeModal();openSessionChat(\''+esc(it.session)+'\')">◈ Session chat</button>':'')
     +(it.branch?'<span class="tag" style="font-size:9px">'+esc(it.branch)+'</span>':'')
-    +'</div>';
+    +'<button class="btn sm" onclick="closeModal();schForBoard(\''+esc(it.id)+'\')" title="schedule work for this item - its dispatch, a census, a loop on its goal, its branch\u2019s tests - on a window or once">⏰ Schedule</button>'
+    +'</div><div id="bd-scheds" class="hint" style="margin:0 0 6px">…</div>';
   if(isPlan){const wc=(it.body||'').length;h+='<div class="hint" style="margin:2px 0">◔ This is a PLAN umbrella — its work items are grouped under it (open one to dispatch). The body below is the overall context that applies to every item.</div>';}
   if(it.body&&it.body.trim())h+='<div style="background:var(--bg1);border-radius:6px;padding:8px;font-size:12px;white-space:pre-wrap;max-height:200px;overflow:auto;margin:6px 0">'+esc(it.body)+'</div>';
   const cms=it.comments||[];
@@ -2176,6 +2307,7 @@ async function openBoardItem(id){
     +'<input id="bd-cbody" placeholder="comment — point at file:line, not a dump" style="flex:1" onkeydown="if(event.key===\'Enter\')boardPostComment(\''+esc(it.id)+'\')">'
     +'<button class="btn primary sm" onclick="boardPostComment(\''+esc(it.id)+'\')">Post</button></div>';
   openModal(h);
+  schBoardLine(it.id);
   const cb=$('bd-cbody');if(cb)cb.focus();
 }
 async function boardPostComment(id){
@@ -6127,6 +6259,34 @@ loadAll();
 vera-agent-loop-output.alo-fill{display:block;height:max(360px,calc(100vh - 230px));overflow:auto;resize:vertical;
   /* the element's own timeline list: as tall as the box, not a 60-440 px card inside it */
   --alo-cycles-minh:max(300px,calc(100vh - 330px));--alo-cycles-maxh:max(300px,calc(100vh - 330px))}
+/* Schedule: the calendar takes the page; the lists fold away beside it */
+#sec-schedule .sch-card{display:flex;flex-direction:column;height:max(480px,calc(100vh - 118px));min-height:0;margin-bottom:0;box-sizing:border-box}
+#sec-schedule .sch-layers{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0 8px;flex:none}
+.sch-ly{font:inherit;font-size:12.5px;display:inline-flex;align-items:center;gap:6px;padding:3px 11px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--dim);cursor:pointer}
+.sch-ly i{width:11px;height:11px;border-radius:3px;background:var(--c);opacity:.3}
+.sch-ly b{font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--dim2)}
+.sch-ly.on{color:var(--text);border-color:var(--c);background:color-mix(in srgb,var(--c) 14%,transparent)}
+.sch-ly.on i{opacity:1}
+.sch-gr{display:inline-flex;gap:5px;align-items:center;font-size:12.5px;color:var(--dim2);margin-left:6px}
+.sch-key{display:inline-flex;gap:4px;align-items:center;font-size:12px;color:var(--dim2);margin-left:auto}
+.sch-key i{width:11px;height:11px;border-radius:2px;display:inline-block;margin-left:8px}
+#sec-schedule .sch-body{display:flex;gap:12px;flex:1 1 0;min-height:0}
+#sec-schedule .sch-main{flex:1 1 0;min-width:0;min-height:0;display:flex;flex-direction:column}
+#sec-schedule .sch-main vera-calendar{flex:1 1 0;min-height:0}
+#sec-schedule .sch-side{flex:0 0 340px;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--border);padding-left:12px}
+#sec-schedule.side-off .sch-side{display:none}
+#sec-schedule.side-off #sch-side-btn{opacity:.6}
+.sch-tabs{display:flex;gap:4px;margin-bottom:8px;flex:none}
+.sch-tabs button{font:inherit;font-size:12.5px;flex:1;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--dim);cursor:pointer}
+.sch-tabs button.on{color:var(--text);border-color:var(--acc);background:color-mix(in srgb,var(--acc) 12%,transparent)}
+.sch-pane{flex:1 1 0;min-height:0;overflow:auto;font-size:12.5px}
+.sch-row{border-bottom:1px solid var(--border);padding:6px 0;display:flex;gap:7px;align-items:flex-start}
+.sch-row .t{font-weight:600;font-size:13px}
+.sch-row .m{font-size:12px;color:var(--dim2);margin-top:2px}
+.sch-dot{width:9px;height:9px;border-radius:50%;flex:none;margin-top:5px}
+.sch-bl{display:inline-flex;gap:4px;align-items:center;font-size:12px;padding:0 7px;border-radius:4px;background:color-mix(in srgb,#a78bfa 18%,transparent);color:var(--text);cursor:pointer}
+.sch-presets{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:4px 0 10px}
+@media (max-width:900px){#sec-schedule .sch-side{display:none}}
 .modal vera-agent-loop-output.alo-fill{height:max(360px,calc(100vh - 200px));--alo-cycles-minh:max(300px,calc(100vh - 300px));--alo-cycles-maxh:max(300px,calc(100vh - 300px))}
 #lens-card .card-h{flex-wrap:wrap}
 .lens-strip{display:flex;gap:4px;flex-wrap:wrap;margin-left:10px}
