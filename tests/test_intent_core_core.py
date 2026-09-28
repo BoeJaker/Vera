@@ -37,10 +37,17 @@ def test_mixed_and_unknown_intents_leave_the_catalogue_alone():
         assert order == CAT and info["moved"] == [] and info["added"] == []
 
 
-def test_a_missing_core_cap_is_added_only_when_registered_and_not_blocked():
+def test_a_missing_core_cap_is_not_added_by_default():
+    cat = [c for c in CAT if c != "operator.run"]
+    order, info = IC.apply(cat, "build", known=set(CAT))
+    assert "operator.run" not in order and info["added"] == []
+    assert sorted(order) == sorted(cat)
+
+
+def test_add_missing_adds_only_registered_unblocked_caps():
     cat = [c for c in CAT if c not in ("code.author", "operator.run", "prose.author")]
     known = set(CAT) - {"prose.author"}
-    order, info = IC.apply(cat, "build", known=known, blocked={"operator.run"})
+    order, info = IC.apply(cat, "build", known=known, blocked={"operator.run"}, add_missing=True)
     assert "code.author" in order and info["added"] == ["code.author"]
     assert "operator.run" not in order        # blocked
     assert "prose.author" not in order        # not registered
