@@ -258,3 +258,21 @@ def test_busy_nodes_leave_a_working_or_recently_used_node_alone():
     assert "gpu-250" in b                      # the card waits 10 minutes of quiet
     assert "cpu-247" not in b                  # a CPU node 2
     assert "gpu-250-cpu" not in b
+
+
+
+def test_one_model_under_two_tags_is_one_model():
+    """gpu-250, 2026-09-28: `:latest` and `:9b` of the jaahas model share a
+    digest. A resident `:9b` IS the planned `:latest`; no second load, and a
+    call naming either tag keeps the planned runner."""
+    dg = {DEFAULT + ":latest": "d1", DEFAULT + ":9b": "d1", "qwen3.5:9b": "d2"}
+    assert W.tags_of(DEFAULT, dg) == [DEFAULT, DEFAULT + ":9b"]
+    rows = W.canonical_rows([{"name": DEFAULT + ":9b", "digest": "d1", "expires_at_s": FOREVER}],
+                            [DEFAULT], dg)
+    assert rows[0]["name"] == DEFAULT and rows[0]["tag"] == DEFAULT + ":9b"
+    p = _plan()
+    assert not [a for a in W.actions(p, {"gpu-250": rows}, busy=(), now=NOW) if a["node"] == "gpu-250"]
+    pairs = W.planned_pairs_with_tags(p, {"gpu-250": dg})
+    assert W.request_overrides(pairs, "gpu-250", DEFAULT + ":9b", 1000)["keep_alive"] == -1
+    # different weights stay different
+    assert W.canonical_rows([{"name": "qwen3.5:9b", "digest": "d2"}], [DEFAULT], dg)[0]["name"] == "qwen3.5:9b"

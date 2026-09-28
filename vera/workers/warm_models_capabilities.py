@@ -46,7 +46,7 @@ _TICK_LOCK = "vera:ollama:warm:lock"     # one acting process per estate
 _LOCK = asyncio.Lock()
 _ACTING: Dict[str, str] = {}             # node -> what is being done there now
 _LAST: Dict[str, Any] = {"at": 0.0, "actions": [], "results": []}
-_SIZES: Dict[str, Any] = {"at": 0.0, "by_node": {}}
+_SIZES: Dict[str, Any] = {"at": 0.0, "by_node": {}, "digests": {}}
 _SIZES_TTL = 600.0
 _TIMEOUT = 300.0                          # a cold 35b on CPU is ~62 s; leave room
 
@@ -151,11 +151,13 @@ async def _sizes(insts: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
     if now - _SIZES["at"] < _SIZES_TTL and _SIZES["by_node"]:
         return _SIZES["by_node"]
     out: Dict[str, Dict[str, int]] = {}
+    digests: Dict[str, Dict[str, str]] = {}
     for iid, inst in insts.items():
         d = await _get(f"{inst.get('url')}/api/tags", timeout=8.0)
         if isinstance(d, dict):
             out[iid] = {m.get("name", ""): int(m.get("size") or 0) for m in d.get("models") or []}
-    _SIZES.update(at=now, by_node=out)
+            digests[iid] = {m.get("name", ""): str(m.get("digest") or "") for m in d.get("models") or []}
+    _SIZES.update(at=now, by_node=out, digests=digests)
     return out
 
 
@@ -263,6 +265,12 @@ async def compute() -> Dict[str, Any]:
     gw = await _gpu_windows(insts, aliases["@default"])
     plan = core.plan(insts, cfg, rules, aliases, states, sizes, mem, gw)
     running = await _residency(insts)
+    digests = _SIZES.get("digests") or {}
+    for iid, rows in list(running.items()):
+        pl = [m["model"] for m in (plan.get(iid) or {}).get("models") or []]
+        if (plan.get(iid) or {}).get("embed"):
+            pl.append(plan[iid]["embed"])
+        running[iid] = core.canonical_rows(rows, pl, digests.get(iid) or {})
     busy = core.busy_nodes(insts, getattr(_orch, "_LAST_PICKED", {}) or {}, now)
     for iid in _ACTING:
         busy.setdefault(iid, "the warmer is already working there")
@@ -288,7 +296,7 @@ def _publish_local(c: Dict[str, Any]) -> Dict[str, Any]:
     for sc in cfg.get("scenarios") or []:
         if sc.get("spill") and (c["states"].get(sc.get("name")) or {}).get("active"):
             spill.update(str(j) for j in sc.get("job_types") or [])
-    ws = {"planned": core.planned_pairs(c["plan"]),
+    ws = {"planned": core.planned_pairs_with_tags(c["plan"], _SIZES.get("digests") or {}),
           "embed_urls": {str(insts[i].get("url")): n["embed"] for i, n in c["plan"].items()
                          if n.get("embed") and i in insts},
           "spill_job_types": sorted(spill),
@@ -422,7 +430,7 @@ def _view(c: Dict[str, Any]) -> Dict[str, Any]:
             "dropped": p.get("dropped") or [], "busy": c["busy"].get(iid, ""),
             "acting": _ACTING.get(iid, ""),
             "resident": None if rows is None else [
-                {"model": r["name"], "num_ctx": r["context_length"],
+                {"model": r["name"], "tag": r.get("tag", ""), "num_ctx": r["context_length"],
                  "gb": round(r["size"] / 1e9, 1),
                  "expires_in_s": (None if r["expires_at_s"] - now > core.FOREVER_AFTER_S
                                   else int(r["expires_at_s"] - now)),
