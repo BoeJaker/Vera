@@ -105,6 +105,33 @@ def cutover_script(unit: str, node: str, public_port: int) -> str:
             f"systemctl daemon-reload; systemctl restart {unit}; echo {ROLLED_BACK};; esac")
 
 
+def source_version(src: bytes) -> str:
+    """The version a tap built from `src` reports in /vera-tap/health."""
+    import hashlib
+    return "tap-" + hashlib.sha256(src or b"").hexdigest()[:12]
+
+
+def tap_state(status: Dict[str, object], host_version: str) -> str:
+    """untapped | stale (running, but not the host's source - including a tap
+    from before taps reported a version) | tapped."""
+    health = status.get("health") or {}
+    if not (status.get("active") and isinstance(health, dict) and health.get("ok")):
+        return "untapped"
+    return "tapped" if health.get("source") == host_version else "stale"
+
+
+def refresh_cmd(public_port: int) -> str:
+    """Restart ONE tap onto the freshly installed source. Ollama is not
+    touched (it stays on loopback); the tap is down for a second or two, so
+    the caller skips a tap with calls in flight."""
+    p = int(public_port)
+    inst = f"vera-ollama-tap@{p}"
+    return (f"systemctl restart {inst} && for i in $(seq 1 30); do "
+            f"curl -fsS -m 3 http://127.0.0.1:{p}/vera-tap/health >/dev/null && "
+            f"curl -fsS -m 3 http://127.0.0.1:{p}/api/tags >/dev/null && echo {DONE} && break; "
+            f"sleep 1; done")
+
+
 def status_cmd(public_port: int) -> str:
     p = int(public_port)
     return (f"systemctl is-active --quiet vera-ollama-tap@{p} && echo TAP=active || echo TAP=absent; "

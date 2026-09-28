@@ -227,3 +227,14 @@ def test_the_media_server_version_covers_its_unit_and_core():
     names = [n for n, _c in files]
     assert {"GPU_inference.py", "media_store_core.py", "start.sh", "<unit>", "<deps>"} <= set(names)
     assert comp["sync"] and comp["service"] == "gpu-inference"
+
+
+
+def test_ort_sessions_get_an_explicit_thread_count():
+    """Without one ONNX Runtime pins threads to cores and an LXC cpuset
+    refuses: pthread_setaffinity_np errors at every media server start."""
+    src = open(os.path.join(os.path.dirname(__file__), "..", "edge", "GPU_inference.py"),
+               encoding="utf-8").read()
+    assert "ORT_THREADS" in src
+    assert "_so.intra_op_num_threads = ORT_THREADS" in src          # Kokoro
+    assert 'os.environ["OMP_NUM_THREADS"] = str(ORT_THREADS)' in src   # rembg, per call

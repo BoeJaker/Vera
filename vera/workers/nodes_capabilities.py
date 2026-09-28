@@ -2606,7 +2606,10 @@ async def _tap_redis_env() -> str:
                 "sandboxes', external callers' - with prompt, response and stats (user, "
                 "2026-09-28). The tap takes the PUBLIC port; that Ollama moves to "
                 "127.0.0.1:port+10 (a drop-in on its unit, which restarts it). Callers keep "
-                "the same address. A cutover that fails rolls itself back. Requests pass "
+                "the same address. A cutover that fails rolls itself back. A tap running an "
+                "older source than the host's (its /vera-tap/health `source`) is 'stale' and is "
+                "refreshed: new source, the tap restarted, Ollama untouched - skipped while "
+                "calls are in flight unless force. Requests pass "
                 "through byte for byte. Dry run by default; refused from a dev sandbox. "
                 "Inputs: dry_run (bool=true), instance_ids (list - default all), force "
                 "(bool - cut over even with a generation in flight). Output: {ok, nodes:[{"
@@ -2633,6 +2636,7 @@ async def cap_nodes_ollama_tap(dry_run: bool = True, instance_ids: Optional[List
                if h.get("host") and h.get("id")}
     src = (_Path(__file__).resolve().parents[2] / "edge" / "ollama_tap.py").read_bytes()
     src_b64 = _b64.b64encode(src).decode()
+    host_version = _tap_core.source_version(src)
     insts = dict(getattr(_orch, "OLLAMA_INSTANCES", {}) or {})
     installed_on: set = set()
     out = []
@@ -2648,8 +2652,35 @@ async def cap_nodes_ollama_tap(dry_run: bool = True, instance_ids: Optional[List
             continue
         st = _tap_core.parse_status((await run(command=_tap_core.status_cmd(port),
                                                  host_id=hid, timeout=30) or {}).get("stdout") or "")
-        if st["active"] and st["health"].get("ok"):
+        state = _tap_core.tap_state(st, host_version)
+        if state == "tapped":
             row.update(state="tapped", health=st["health"])
+            out.append(row)
+            continue
+        if state == "stale":
+            # running an older tap: refresh the source and restart the tap only
+            row.update(state="stale", running=st["health"].get("source") or "(unversioned)",
+                       version=host_version)
+            if dry_run:
+                out.append(row)
+                continue
+            if int(st["health"].get("inflight") or 0) > 0 and not force:
+                row["result"] = {"ok": False, "skipped": "calls in flight through the tap"}
+                out.append(row)
+                continue
+            if addr not in installed_on:
+                ires = await stdin_run(hid, _tap_core.install_cmd(), timeout=300, input=src_b64)
+                if "VERA_TAP_INSTALLED" not in (ires.get("stdout") or ""):
+                    row["result"] = {"ok": False, "error": "install failed: " + str(
+                        ires.get("stderr") or ires.get("error") or "")[-300:]}
+                    out.append(row)
+                    continue
+                installed_on.add(addr)
+            res = await run(command=_tap_core.refresh_cmd(port), host_id=hid, timeout=90) or {}
+            ok = _tap_core.DONE in (res.get("stdout") or "")
+            row["result"] = {"ok": ok, "refreshed": True,
+                             "error": "" if ok else str(res.get("stdout") or res.get("stderr") or "")[-300:]}
+            await emit_event({"type": "nodes.ollama.tap", "instance": iid, "ok": ok, "refreshed": True})
             out.append(row)
             continue
         # The unit that owns this port: the CPU sibling, else the node's own

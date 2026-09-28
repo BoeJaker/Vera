@@ -687,7 +687,8 @@ but now says when a census is in flight.
 
 With `sync_nodes` (default true) a finished release also brings the nodes
 onto it: every syncable node component (`provision.component.sync` –
-`nlp_server`, `gpu_inference`, `model_builder`), the node workers
+`nlp_server`, `gpu_inference`, `model_builder`), the Ollama activity taps
+(`nodes.ollama.tap` refreshes a tap running older source), the node workers
 (`nodes.workers.sync`) and the warm model slots (`ollama.warm.apply`). The
 sync is queued when the release is done and run by the same 30 s job – in
 the new process after a restart, so nodes are compared against the code prod

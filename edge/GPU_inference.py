@@ -76,6 +76,12 @@ ENABLE_WHISPER      = os.getenv("ENABLE_WHISPER",       "1") == "1"
 ENABLE_SD           = os.getenv("ENABLE_SD",            "1") == "1"
 ENABLE_TTS          = os.getenv("ENABLE_TTS",           "1") == "1"
 ENABLE_REDIS        = os.getenv("ENABLE_REDIS",         "1") == "1"
+# ONNX Runtime (Kokoro TTS, rembg) with no explicit thread count pins one
+# thread per core with pthread_setaffinity_np, which an LXC's cpuset refuses:
+# a burst of "pthread_setaffinity_np failed ... Specify the number of threads
+# explicitly" errors at every start (all three nodes, 2026-09). An explicit
+# count skips the pinning. Only the ORT sessions get it - torch keeps its own.
+ORT_THREADS         = int(os.getenv("VERA_ORT_THREADS", "0") or 0) or min(4, os.cpu_count() or 4)
 
 SERVER_HOST         = os.getenv("SERVER_HOST",          "0.0.0.0")
 SERVER_PORT         = int(os.getenv("SERVER_PORT",      "8765"))
@@ -735,7 +741,21 @@ def _load_kokoro():
                 urllib.request.urlretrieve(url, dest)
                 log.info(f"Downloaded {os.path.basename(dest)} ({os.path.getsize(dest)//1024//1024} MB)")
 
-        _kokoro_pipeline = Kokoro(model_path, voices_path)
+        _kokoro_pipeline = None
+        if hasattr(Kokoro, "from_session"):
+            try:
+                import onnxruntime as _ort
+                from kokoro_onnx.session import resolve_providers as _kp
+                _so = _ort.SessionOptions()
+                _so.intra_op_num_threads = ORT_THREADS
+                _so.inter_op_num_threads = 1
+                _kokoro_pipeline = Kokoro.from_session(
+                    _ort.InferenceSession(model_path, sess_options=_so, providers=_kp()),
+                    voices_path)
+            except Exception as _e:
+                log.info(f"Kokoro: explicit-thread session unavailable ({_e}); default session")
+        if _kokoro_pipeline is None:
+            _kokoro_pipeline = Kokoro(model_path, voices_path)
         TTS_SAMPLE_RATE  = KOKORO_SAMPLE_RATE
 
         try:
@@ -1623,9 +1643,18 @@ def _get_rembg_session(model: str):
         prev = os.environ.get("U2NET_HOME")
         if home:
             os.environ["U2NET_HOME"] = home
+        # rembg sets the session's thread counts from OMP_NUM_THREADS when it is
+        # present (see ORT_THREADS); set only for this call - torch is loaded
+        # already and does not read it again
+        prev_omp = os.environ.get("OMP_NUM_THREADS")
+        os.environ["OMP_NUM_THREADS"] = str(ORT_THREADS)
         try:
             _rembg_sessions[model] = new_session(model)
         finally:
+            if prev_omp is None:
+                os.environ.pop("OMP_NUM_THREADS", None)
+            else:
+                os.environ["OMP_NUM_THREADS"] = prev_omp
             if home:
                 if prev is None:
                     os.environ.pop("U2NET_HOME", None)

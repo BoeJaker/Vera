@@ -237,6 +237,19 @@ async def _run_node_sync(rec: Dict[str, Any]) -> Dict[str, Any]:
                          "error": str((res or {}).get("error") or "")[:300] if isinstance(res, dict) else str(res)[:300]}
         rec["results"] = results
         await _node_sync_save(rec)
+    tres = await _call("nodes.ollama.tap", dry_run=False)
+    if isinstance(tres, dict):
+        rows = tres.get("nodes") or []
+        bad = [x for x in rows if (x.get("result") or {}).get("ok") is False
+               and not (x.get("result") or {}).get("skipped")]
+        results["tap"] = {"ok": not bad and not tres.get("error"),
+                          "refreshed": sorted(x["instance"] for x in rows
+                                              if (x.get("result") or {}).get("refreshed")),
+                          "skipped": sorted(x["instance"] for x in rows
+                                            if (x.get("result") or {}).get("skipped")),
+                          "error": str(tres.get("error") or "; ".join(
+                              f"{x['instance']}: {(x.get('result') or {}).get('error', '')[:100]}"
+                              for x in bad))[:300]}
     wres = await _call("nodes.workers.sync", limit=16)
     results["workers"] = {"ok": bool(isinstance(wres, dict) and wres.get("ok")
                                      and all(v.get("ok") for v in (wres.get("results") or {}).values()
