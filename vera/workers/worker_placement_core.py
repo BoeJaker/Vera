@@ -54,6 +54,24 @@ NODE_SAFE: Dict[str, str] = {
     "echo":   "diagnostic",
 }
 
+#: Single caps checked to be node-safe in a namespace that, as a whole, is not
+#: (the rest of `gpu`/`tts`/`data`/`system` was not vetted, or keeps local
+#: state). cap -> (class, what makes it safe). Each was read in full: no fabric
+#: path, no process-local map, no in-process call to another cap. Checked and
+#: left host-only, with why: vision.describe (fetches a fabric path from the
+#: orchestrator on 127.0.0.1), web.search (fabric recall + background ingest),
+#: image.* (archives into the fabric; image.progress reads a process-local job
+#: map), system.ping (answers from the node's network position, not the host's).
+NODE_SAFE_CAPS: Dict[str, Tuple[str, str]] = {
+    "gpu.health":         ("media", "GET /health on the media node"),
+    "stt.transcribe":     ("media", "POST to the media node's Whisper server"),
+    "tts.synthesize":     ("media", "POST to the media node's TTS server"),
+    "tts.voices":         ("media", "GET the media node's voice list"),
+    "data.json_validate": ("general", "pure JSON parsing"),
+    "data.json_flatten":  ("general", "pure JSON transform"),
+    "system.timestamp":   ("general", "reads the clock"),
+}
+
 #: Final name segments that change process-local settings. Such a cap is
 #: host-only even inside a node-safe namespace (`nlp.config.set` flips
 #: `nlp.local` in the process that runs it).
@@ -111,6 +129,8 @@ def placement(cap_name: str, *, node_ok: Iterable[str] = (),
         return "host", "changes process-local settings"
     if ns in ok:
         return "any", "admitted by VERA_WORKER_NODE_OK"
+    if name in NODE_SAFE_CAPS:
+        return "any", NODE_SAFE_CAPS[name][1]
     if ns in NODE_SAFE:
         return "any", NODE_SAFE[ns]
     return "host", "not vetted as node-safe"
@@ -135,8 +155,8 @@ CLASSES: Dict[str, Dict[str, object]] = {
                             "class yet",
                     "namespaces": ()},
     "media":   {"label": "Media (GPU)",
-                "desc": "diffusion, STT, TTS - served by the node's gpu_inference "
-                        "server directly; no worker tasks in this class yet",
+                "desc": "STT and TTS calls to the gpu_inference server; diffusion "
+                        "stays on the host (it archives into the fabric)",
                 "namespaces": ()},
 }
 
@@ -169,6 +189,8 @@ def class_of(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
     where, _ = placement_from_env(cap_name, env)
     if where != "any":
         return ""
+    if cap_name in NODE_SAFE_CAPS:
+        return NODE_SAFE_CAPS[cap_name][0]
     ns = namespace(cap_name)
     for cls, spec in CLASSES.items():
         if ns in spec["namespaces"]:
