@@ -25,10 +25,10 @@ const VW = element();
 const recs = {}; LAY.widgets.forEach((t) => { recs[t.record.id] = t.record; });
 const strip = (h) => String(h).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
-T('the layout: every visible tile but the topology a record; the breadth of forms; the page tiles it replaced are hidden', () => {
+T('the layout: every visible tile a record (the stack topology too - the Vera graph now); the breadth of forms; the page tiles it replaced are hidden', () => {
   const shown = LAY.widgets.filter((t) => !t.hidden && t.record && typeof t.record === 'object');
   const rec = shown.filter((t) => t.record.draw && t.record.draw.body === 'record'), page = shown.filter((t) => t.record.draw && t.record.draw.body === 'page');
-  assert(rec.length >= 60, 'record tiles: ' + rec.length); assert.deepStrictEqual(page.map((t) => t.record.id), ['topology-map']); assert(recs['topology-map'].note);
+  assert(rec.length >= 60, 'record tiles: ' + rec.length); assert.deepStrictEqual(page.map((t) => t.record.id), []); assert.strictEqual(recs['topology-map'].form, 'vgraph'); assert(recs['topology-map'].note);
   const forms = new Set(); rec.forEach((t) => { forms.add(t.record.form); (t.record.children || []).forEach((c) => forms.add(c.record.form)); });
   assert(forms.size >= 25, 'forms: ' + Array.from(forms).join(' '));
   for (const f of ['composite', 'counter', 'pills', 'ring', 'level', 'lines', 'rows', 'table', 'ranked', 'donut', 'log', 'terminal', 'numbers', 'vgraph', 'sandboxes', 'gauge', 'thermo', 'treemap', 'section']) assert(forms.has(f), f);

@@ -199,6 +199,9 @@
       // a tile's widget fills its body on every page's grid (the rule lived only in the harness page: on Workers the element
       // tile drew at its natural 203 px in a 361 px body and scrolled its cards; small figures' captions were cut)
       '.dash-grid .w-body > vera-widget{flex:1 1 auto;min-height:0;display:block;overflow:hidden}',
+      // a record drawn into one of the page's old hand-built tiles keeps none of that body's cap (Scheduler and Connections held
+      // 220 px of a taller tile)
+      '.dash-grid .w-body:has(> vera-widget){max-height:none!important}',
       // a tile's buttons take no room until it is hovered, focused or arranged - the harness's rule, on every grid (a two-column
       // figure's title read "WORK..." beside its invisible buttons)
       '.dash-grid .widget > .w-head .w-actions{display:none}',

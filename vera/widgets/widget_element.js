@@ -605,7 +605,8 @@
   R.kv = (d, H, o2) => {
     const o = (d && typeof d === 'object' && !Array.isArray(d)) ? d : null; if (!o) return EMPTY('nothing to list');
     const all = Object.keys(o).filter((k) => typeof o[k] !== 'object' || o[k] === null); if (!all.length) return EMPTY('no plain values to list');
-    const n = Math.max(2, Math.min((o2 && o2.draw && o2.draw.limit) || 12, Math.floor(((H || 70) - 2) / 14))); const ks = all.slice(0, n);   // the pairs that fit
+    const rh = Math.round(15 * ((o2 && o2.textK) || 1)) + 2;   /* a pair's height at the page's text size (14 px assumed a text size the dashboard no longer uses) */
+    const n = Math.max(1, Math.min((o2 && o2.draw && o2.draw.limit) || 12, Math.floor(((H || 70) - 2 - (all.length > 2 ? rh : 0)) / rh))); const ks = all.slice(0, n);   // the pairs that fit, a line kept for '+ N more'
     return '<div class="vw-log vw-kv">' + ks.map((k) => '<div><span class="k">' + esc(k) + '</span><span>' + esc(String(o[k])) + '</span></div>').join('') + (all.length > n ? '<div class="more">+ ' + (all.length - n) + ' more</div>' : '') + '</div>';
   };
   R.scatter = (d, H) => {
@@ -755,6 +756,12 @@
     const wts = rowsP.map((rw) => Math.max(...rw.map((x) => need(x.c)))), fls = rowsP.map((rw) => Math.max(...rw.map((x) => floorOf(x.c)))); const wsum = wts.reduce((a, b) => a + b, 0) || 1;
     const bodyH = (o && o.height && !chip) ? o.height : 0, free = Math.max(0, bodyH - (rowsP.length - 1) * 8 - fls.reduce((a, b) => a + b, 0));
     const slotHOf = (ri) => bodyH ? Math.max(44, (fls[ri] || 44) + Math.floor(free * (wts[ri] || 1) / wsum)) : 0;
+    /* a report's blocks share the body: their natural heights, scaled down together when they exceed it (a list then shows
+       fewer rows and says how many more) - the whole card scrolled by up to 512 px before (2026-09-28) */
+    const BLK = /^(rows|list|table|log|feed|cards|files|checklist|timeline|lane|kv|pills|ranked|hosts|temps|thermo|people|links)$/;
+    const natBh = (c) => { const r0 = (c && typeof c.record === 'object') ? c.record : null; if (!r0) return 0; const f = canon(r0.form || ''); if (!BLK.test(f)) return 0; const tk = (o && o.textK) || 1, lim = +(r0.draw && r0.draw.limit) || 4, keysN = (r0.read && r0.read.map && Array.isArray(r0.read.map.keys)) ? r0.read.map.keys.length : 4;
+      return Math.round((f === 'kv' ? keysN * 19 : f === 'pills' ? 52 : lim * 31 + 56) * tk); };
+    let bhScale = 1; if (layout === 'report' && o && o.height) { const nat = shown.reduce((t, c) => t + natBh(c), 0), nb = shown.filter((c) => natBh(c) > 0).length, avail = o.height - (shown.length - nb) * 27 - nb * 30 - 8; if (nat > 0 && nat > avail) bhScale = Math.max(0.28, avail / nat); }
     return '<div class="vw-comp vw-comp-' + esc(layout) + '"' + (!chip && ncol !== 2 ? ' style="grid-template-columns:repeat(' + ncol + ',1fr)"' : (chip && o && o.height ? ' style="height:' + o.height + 'px"' : '')) + '>' + plan.map(({ c, i, ri, sp }) => {
       const slotH = slotHOf(ri), kidH = slotH ? Math.max(24, slotH - 36) : Math.max(44, Math.round(H * 0.8));
       const slotStyle = (slotH || sp > 1) ? ' style="' + (slotH ? 'height:' + slotH + 'px;' : '') + (sp > 1 ? 'grid-column:span ' + sp + ';' : '') + '"' : '';
@@ -775,7 +782,7 @@
          a single figure stays a chip in its row */
       if (chip && /^(rows|list|table|log|feed|cards|files|checklist|timeline|lane|kv|pills|ranked|hosts|temps|thermo|people|links)$/.test(canon(n.form))) {
         const tk = (o && o.textK) || 1, lim = +(n.draw && n.draw.limit) || 4, keysN = (n.read && n.read.map && Array.isArray(n.read.map.keys)) ? n.read.map.keys.length : 4;
-        const bh = Math.round((canon(n.form) === 'kv' ? keysN * 19 : canon(n.form) === 'pills' ? 52 : lim * 31 + 56) * tk);
+        const bh = Math.max(40, Math.round((canon(n.form) === 'kv' ? keysN * 19 : canon(n.form) === 'pills' ? 52 : lim * 31 + 56) * tk * bhScale));   /* its share of the body */
         return '<div class="vw-slot vw-slot-block' + stale + '" data-slot="' + esc(slot) + '"><span class="vw-slot-h">' + esc(n.title || n.form) + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: bh, title: n.title }, kopts, { width: (o && o.width) ? Math.max(160, o.width - 20) : undefined })) + '</div></div>'; }
       if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k" title="' + esc(n.title || n.form) + '">' + esc(n.title || n.form) + '</span><span class="vw-slot-c">' + draw(n.form, data, 's', Object.assign({}, kopts, { title: '' })) + kerr + '</span></div>';
       const fig = /^(counter|hero|string|level|ring|meter|gauge|dial|tank|numbers)$/.test(canon(n.form)) ? '' : figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
