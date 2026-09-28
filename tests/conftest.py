@@ -20,6 +20,7 @@ _CRITICAL_MODULES = {
     "test_node_threads_core",  # CPU-node runners ran 24 threads on 12 CPUs: 0.24 tok/s on a 0.5b, 4-6 s per embed (2026-09-23)
     "test_worker_placement_core",  # a worker off the host ran every cap and every ambient job; 2026-08-31 reaped the pool (2026-09-27)
     "test_node_sync_core",  # node workers stayed on the old commit after every promotion; sync must follow what the host RUNS (2026-09-28)
+    "test_fabric_ner_on_nodes",  # the host had no NER model, so the entity graph ran on heuristics while every node served OntoNotes NER (2026-09-28)
     "test_specialist_catalog",  # "in use" must be what the nodes serve; a partial export must not drop the manifest (2026-09-28)
     "test_specialist_models",  # no deployed component had a version: nothing could say a node was behind (2026-09-28)
     "test_redis_auth_core",  # Redis had no password; the host must boot from its sealed copy, never log or pass on a credential (2026-09-28)
