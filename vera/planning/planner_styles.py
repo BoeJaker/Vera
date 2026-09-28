@@ -515,6 +515,17 @@ LOOP_STYLES: Dict[str, Dict[str, Any]] = {
                        "run_planner": False, "master_plan": False, "recon": False,
                        "shape_guards": False, "lens_brief": False, "stepwise_controller": True,
                        "broad": True, "stream_steps": 1},
+    # STEPWISE-REVIEWED (user, 2026-09-28: stepwise variations that use the
+    # nodes in parallel for more comprehensive results): stepwise, plus a CRITIC
+    # on the long-horizon CPU node that reviews every finished step against the
+    # goal - what is missing, what is wrong, what the next step must fix - while
+    # the GPU carries on. Non-blocking, like broad's briefs: a critique reaches
+    # the controller (and the completion gate) when it has landed. Aimed at the
+    # run1 quality misses: an edit that never landed, a feature left out.
+    "stepwise-reviewed": {"label": "Stepwise-reviewed (stepwise + a CPU critic on every step)",
+                          "run_planner": False, "master_plan": False, "recon": False,
+                          "shape_guards": False, "lens_brief": False,
+                          "stepwise_controller": True, "step_critic": True},
 }
 DEFAULT_LOOP_STYLE = "auto"
 
@@ -723,6 +734,65 @@ def enrich_note(text: Any, deep: bool = True) -> str:
             "a quick first look at this work-stream; a deeper review may follow")
     return ("\n\nSTREAM BRIEF (%s - use it as evidence, the step goal above still decides "
             "the work):\n" % what + body)
+
+
+# ── STEP CRITIC (stepwise-reviewed): a CPU review of each finished step ─────
+
+CRITIC_SYSTEM = (
+    "You are the REVIEWER beside an agentic loop. The loop has just finished one step; you "
+    "check it against the GOAL while the loop carries on. Be concrete and brief, as plain "
+    "bullet lines under these labels (omit a label with nothing under it):\n"
+    "MISSING: parts of the goal this step was meant to cover but did not, or that no step has "
+    "covered yet\n"
+    "WRONG: anything in the step's result that contradicts the goal or is unsupported (a value "
+    "that was not applied, a file that was not written, a claim with no source)\n"
+    "NEXT: what the next step must do or check because of this\n"
+    "Judge only from the result shown. Never invent a value. If the step fully did its part, "
+    "answer exactly: OK. At most 8 lines.")
+#: A critique bigger than this is trimmed - it is advice for a prompt.
+MAX_CRITIQUE_CHARS = 900
+MAX_CRITIC_RESULT_CHARS = 3000
+
+
+def critic_prompt(goal: str, done_when: str, step: Dict[str, Any], result: Dict[str, Any],
+                  done_steps: Sequence[Dict[str, Any]] = ()) -> str:
+    prior = "\n".join("  step %s: %s -> %s" % (s.get("id"), str(s.get("title") or "")[:80],
+                                               "ok" if s.get("ok") else "FAILED")
+                      for s in list(done_steps)[-8:])
+    out = str(result.get("summary") or result.get("final") or result.get("output") or "")
+    return ("GOAL: %s\nDONE WHEN: %s\n\nSTEPS SO FAR:\n%s\n\nSTEP JUST FINISHED: %s. %s\n"
+            "ITS SUCCESS CRITERION: %s\nIT REPORTED: %s\nRESULT:\n%s"
+            % (goal, done_when or "(not stated)", prior or "  (none)", step.get("id"),
+               step.get("title") or "", step.get("success") or "(not stated)",
+               "met" if result.get("met") else ("ok" if result.get("ok") else "failed"),
+               out[:MAX_CRITIC_RESULT_CHARS] or "(no output)"))
+
+
+def critic_note(text: Any) -> str:
+    """The critique as bounded bullet lines; '' when the reviewer found nothing
+    to add ("OK") or said nothing."""
+    t = str(text or "").strip()
+    if not t or t.strip(" .").upper() == "OK":
+        return ""
+    lines: List[str] = []
+    for raw in _LINE_SPLIT.split(t):
+        line = _BULLET_STRIP.sub("", raw).strip()
+        if line and line.strip(" .").upper() != "OK":
+            lines.append(line[:MAX_BULLET_CHARS])
+        if len(lines) >= 8:
+            break
+    return "\n".join("  - %s" % ln for ln in lines)[:MAX_CRITIQUE_CHARS]
+
+
+def critic_block(notes: Sequence[Dict[str, Any]]) -> str:
+    """The critiques that have landed, for the controller's and the completion
+    gate's prompt; '' when there are none."""
+    parts = ["after step %s (%s):\n%s" % (n.get("step"), str(n.get("title") or "")[:60], n["note"])
+             for n in notes if n.get("note")]
+    if not parts:
+        return ""
+    return ("\n\nREVIEWER NOTES (a critic on the long-horizon CPU node reviewed finished steps "
+            "in parallel - evidence, not orders; act on what is still true):\n" + "\n".join(parts) + "\n")
 
 
 def merge_streams(streams: Sequence[Dict[str, Any]],

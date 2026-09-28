@@ -31,7 +31,7 @@ SRC = (ROOT / "vera" / "dag" / "dag_workshop_capabilities.py").read_text(encodin
 # ── the table ────────────────────────────────────────────────────────────────
 
 def test_the_four_styles_exist_and_auto_is_the_default():
-    assert PS.loop_style_ids() == ["auto", "flat", "stepwise", "detailed", "broad", "broad-stepwise"]
+    assert PS.loop_style_ids() == ["auto", "flat", "stepwise", "detailed", "broad", "broad-stepwise", "stepwise-reviewed"]
     assert PS.resolve_loop_style("")[0] == "auto"
     assert PS.resolve_loop_style(None)[0] == "auto"
     assert PS.resolve_loop_style("auto")[2] == "default"

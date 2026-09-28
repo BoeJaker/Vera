@@ -1054,7 +1054,7 @@ function schKindFields(kind,t){
     /* The loop's planning styles (planner_styles.LOOP_STYLES; the server
        rejects any other). A forced style is its own archive series. */
     +'<div><label class="fld">Planning style</label><select id="sch-t-style" style="width:100%" title="Forced on every goal; the run is archived in its own series (e.g. default-style-broad-runN) and compared only with runs of the same style">'
-    +[['','each goal’s own (auto) — the baseline series'],['auto','auto'],['flat','flat'],['stepwise','stepwise'],['detailed','detailed'],['broad','broad'],['broad-stepwise','broad-stepwise']]
+    +[['','each goal’s own (auto) — the baseline series'],['auto','auto'],['flat','flat'],['stepwise','stepwise'],['detailed','detailed'],['broad','broad'],['broad-stepwise','broad-stepwise'],['stepwise-reviewed','stepwise-reviewed']]
       .map(([v,l])=>'<option value="'+v+'"'+((t.plan_style||'')===v?' selected':'')+'>'+l+'</option>').join('')
     +'</select></div>'
     +'<div><label class="fld">At window end</label><select id="sch-t-awe" style="width:100%"><option value="finish">let the census in flight finish</option><option value="yield">yield (park after the goal in flight)</option><option value="drop">drop the set</option></select></div>';

@@ -1565,6 +1565,17 @@
         return;
       }
 
+      // ── stepwise-reviewed: the CPU critic's review of a finished step ──
+      if(t === 'agent_loop_v6.step_critique'){
+        const ok = !ev.note;
+        const col = ok ? 'var(--ok,#3cb371)' : 'var(--warn,#c7a15a)';
+        this._cycleEl(`<div class="alo-cycle-h">
+          <span class="alo-cycle-tool">✓ Reviewer · step ${_esc(String(ev.step??'?'))} <span style="color:${col}">${ok?(ev.error?'no review':'OK'):'notes'}</span></span>
+          <span class="alo-cycle-status" title="a critic on the long-horizon CPU node reviewed this step in parallel - the controller reads it when it has landed">${_esc(String(ev.elapsed_s??'?'))}s · cpu</span>
+        </div>${ev.note?`<div class="alo-cycle-preview" style="white-space:pre-wrap">${_esc(ev.note)}</div>`:''}${ev.error?`<div class="alo-cycle-preview">${_esc(ev.error)}</div>`:''}`, 'plan');
+        return;
+      }
+
       // ── v6/V7: an NLP node's zero-shot intent beside the one used ──
       if(t === 'agent_loop_v6.intent_zeroshot'){
         const ok = ev.agrees_used;
@@ -1592,7 +1603,7 @@
       if(t === 'agent_loop_v6.plan_style'){
         const PS = {auto:{ic:'◎',lbl:'auto'}, flat:{ic:'▭',lbl:'flat'},
                     stepwise:{ic:'⇢',lbl:'stepwise'}, detailed:{ic:'❖',lbl:'detailed'},
-                    broad:{ic:'⫘',lbl:'broad'}, 'broad-stepwise':{ic:'⫘⇢',lbl:'broad-stepwise'}};
+                    broad:{ic:'⫘',lbl:'broad'}, 'broad-stepwise':{ic:'⫘⇢',lbl:'broad-stepwise'}, 'stepwise-reviewed':{ic:'⇢✓',lbl:'stepwise-reviewed'}};
         const ps = PS[ev.effective] || {ic:'•', lbl:ev.effective||'?'};
         const fell = (ev.requested && ev.requested !== ev.effective)
           ? ` <span style="color:var(--warn,#c7a15a)" title="${_esc(ev.reason||'')}">asked ${_esc(ev.requested)}</span>` : '';
