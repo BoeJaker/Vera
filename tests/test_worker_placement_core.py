@@ -76,6 +76,23 @@ def test_every_vetted_namespace_is_in_exactly_one_class():
     assert set(seen) == set(wp.NODE_SAFE)
 
 
+def test_vetted_single_caps_join_a_class_without_opening_their_namespace():
+    assert wp.class_of("stt.transcribe", env={}) == "media"
+    assert wp.class_of("tts.synthesize", env={}) == "media"
+    assert wp.class_of("gpu.health", env={}) == "media"
+    assert wp.class_of("data.json_flatten", env={}) == "general"
+    assert wp.stream_for("tts.voices", env={}) == wp.class_stream("media")
+    # their siblings were checked and stay home
+    for cap in ("vision.describe", "web.search", "image.generate", "image.progress",
+                "system.ping", "gpu.chat_speak"):
+        assert wp.placement(cap)[0] == "host", cap
+    # the operator's brake still wins
+    assert wp.placement("stt.transcribe", host_only=["stt"])[0] == "host"
+    for cap, (cls, why) in wp.NODE_SAFE_CAPS.items():
+        assert cls in wp.CLASSES and why, cap
+        assert wp.namespace(cap) not in wp.NODE_SAFE, cap
+
+
 def test_class_of():
     assert wp.class_of("llm.generate", env={}) == "general"
     assert wp.class_of("memory.store", env={}) == "general"
