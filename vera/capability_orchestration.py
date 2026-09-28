@@ -5362,6 +5362,39 @@ async def wait_for_result(task_id: str, timeout: float = 60.0) -> Any:
         PENDING_RESULTS.pop(task_id,None)
         return {"error":"timeout","task_id":task_id,"timeout_s":timeout}
 
+async def _ensure_task_groups(streams) -> None:
+    """The workers' consumer group on each stream. "$" skips anything queued
+    before the group existed; only the shared legacy stream keeps that. Every
+    other stream (host, per-class) is written only by Vera, so "0" replays
+    nothing but real work - and does not drop a task dispatched during the
+    first boot that creates the stream."""
+    for _s in streams:
+        try:
+            await REDIS.xgroup_create(_s, GROUP_WORKERS,
+                                      id="$" if _s == TASK_STREAM else "0",
+                                      mkstream=True)
+        except Exception:
+            pass   # group already exists
+
+
+async def _worker_classes():
+    """This node worker's task classes: the roles registry (set from the
+    Workers UI, keyed by the host id provisioning gave it), else what
+    provisioning wrote into its unit, else the CPU-node default."""
+    hid = os.environ.get("VERA_WORKER_HOST_ID", "")
+    if hid and REDIS is not None:
+        try:
+            raw = await REDIS.hget(_placement.ROLES_KEY, hid)
+            if raw:
+                return _placement.clean_classes(json.loads(raw))
+        except Exception:
+            pass
+    env = os.environ.get("VERA_WORKER_CLASSES")
+    if env is not None:
+        return _placement.clean_classes(env)
+    return _placement.DEFAULT_CLASSES_CPU
+
+
 async def worker_loop(worker_id: str):
     """
     Worker loop with Redis retry.  If Redis is unavailable at startup the loop
@@ -5390,15 +5423,17 @@ async def worker_loop(worker_id: str):
     # A node worker advertises only the caps it will actually run: the
     # "another worker has it" hand-off below reads this list, and a host-bound
     # cap advertised by a node would send tasks looking for it here.
-    _streams = _placement.streams_to_read(is_worker=_IS_WORKER)
+    _classes = (await _worker_classes()) if _IS_WORKER else None
+    _streams = _placement.streams_to_read(is_worker=_IS_WORKER, classes=_classes)
     _advertised = [c for c in CAPABILITY_REGISTRY
-                   if _placement.may_run_here(c, is_worker=_IS_WORKER)[0]]
+                   if _placement.may_run_here(c, is_worker=_IS_WORKER, classes=_classes)[0]]
     reg = {
         "id":           worker_id,
         "status":       "starting",
         "role":         "node-worker" if _IS_WORKER else "host",
         # the commit provision.worker shipped - what the node sync compares
         "commit":       os.environ.get("VERA_WORKER_COMMIT", ""),
+        "classes":      json.dumps(list(_classes or ())),
         "streams":      json.dumps(list(_streams)),
         "capabilities": json.dumps(_advertised),
         "cap_count":    len(_advertised),
@@ -5421,17 +5456,25 @@ async def worker_loop(worker_id: str):
     except Exception as e:
         log.warning("Worker registry push failed: %s", e)
 
-    for _s in _streams:
+    await _ensure_task_groups(_streams)
+
+    async def _apply_classes(new_classes):
+        """Roles changed in the UI: read the new classes' streams from now on,
+        advertise only their caps. Live - no restart, no re-provision."""
+        streams = _placement.streams_to_read(is_worker=True, classes=new_classes)
+        await _ensure_task_groups(streams)
+        adv = [c for c in CAPABILITY_REGISTRY
+               if _placement.may_run_here(c, is_worker=True, classes=new_classes)[0]]
         try:
-            # "$" skips anything queued before the group existed. For the host
-            # stream that would drop a task dispatched during the first boot
-            # that creates it; only Vera writes that stream, so "0" replays
-            # nothing but real work. The shared stream keeps "$" (unchanged).
-            await REDIS.xgroup_create(_s, GROUP_WORKERS,
-                                      id="0" if _s == HOST_TASK_STREAM else "$",
-                                      mkstream=True)
+            await REDIS.hset(f"vera:workers:{worker_id}", mapping={
+                "classes": json.dumps(list(new_classes)), "streams": json.dumps(list(streams)),
+                "capabilities": json.dumps(adv), "cap_count": str(len(adv))})
         except Exception:
-            pass   # group already exists
+            pass
+        log.info("Worker %s: classes now %s (%d caps)", worker_id,
+                 ",".join(new_classes) or "none", len(adv))
+        return streams, adv
+    _classes_checked = time.monotonic()
 
     WORKER_REGISTRY[worker_id]["status"] = "idle"
     log.info("Worker %s ready (%d of %d caps, role=%s, streams=%s)", worker_id,
@@ -5439,6 +5482,12 @@ async def worker_loop(worker_id: str):
              "node-worker" if _IS_WORKER else "host", ",".join(_streams))
 
     while True:
+        if _IS_WORKER and time.monotonic() - _classes_checked > 30:
+            _classes_checked = time.monotonic()
+            _new = await _worker_classes()
+            if _new != _classes:
+                _classes = _new
+                _streams, _advertised = await _apply_classes(_classes)
         # Refresh TTL and write all live fields — not just status
         try:
             w = WORKER_REGISTRY[worker_id]
@@ -5500,21 +5549,30 @@ async def worker_loop(worker_id: str):
                                       "worker": worker_id, "task": task_id})
                     continue
 
-                # A host-bound task on the shared stream (queued by a process
-                # running older code) is handed to the host stream, never run
-                # here. Moving it is final: only the host reads that stream, so
-                # it cannot bounce between node workers.
-                _may, _why = _placement.may_run_here(cap_name, is_worker=_IS_WORKER)
+                # A task this worker may not run (host-bound, or a class this
+                # node was not given - e.g. queued on the legacy stream by a
+                # process running older code) goes where it belongs: the host
+                # stream, or its class stream, which the host always reads -
+                # so it cannot bounce between node workers. If that is the very
+                # stream it came from, the roles changed under us: re-read them
+                # first, which stops this worker reading that stream.
+                _may, _why = _placement.may_run_here(cap_name, is_worker=_IS_WORKER,
+                                                     classes=_classes)
                 if not _may:
-                    await REDIS.xadd(HOST_TASK_STREAM, {
+                    _target = _placement.handoff_stream(cap_name)
+                    if _target == _stream and _IS_WORKER:
+                        _classes = await _worker_classes()
+                        _streams, _advertised = await _apply_classes(_classes)
+                        _classes_checked = time.monotonic()
+                    await REDIS.xadd(_target, {
                         "id": task_id, "capability": cap_name,
                         "payload": json.dumps(payload), "trace_id": trace_id,
                         "ts": now_iso(), **({"bg": bg_label} if bg_label else {}),
                     }, maxlen=5000, approximate=True)
                     await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                     await REDIS.xdel(_stream, msg_id)
-                    log.info("Worker %s: %s is host-bound (%s) - handed to %s",
-                             worker_id, cap_name, _why, HOST_TASK_STREAM)
+                    log.info("Worker %s: %s not run here (%s) - handed to %s",
+                             worker_id, cap_name, _why, _target)
                     continue
 
                 WORKER_REGISTRY[worker_id]["status"] = f"running:{cap_name}"

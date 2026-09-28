@@ -739,6 +739,11 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
         }
         if bundle.get("commit"):
             extra_env["VERA_WORKER_COMMIT"] = bundle["commit"]
+        # Its identity for the roles registry, and the classes it starts with
+        # until the Workers UI sets some (a GPU node's worker takes none).
+        _has_gpu = _node_has_gpu(rec.get("host", ""))
+        extra_env["VERA_WORKER_HOST_ID"] = host_id
+        extra_env["VERA_WORKER_CLASSES"] = ",".join(_placement.default_classes(_has_gpu))
         # native_worker_cmd handles the repo's vera/ package layout, a neutral cwd (so
         # vera/operator can't shadow stdlib operator), and a durable systemd unit.
         cmd = native_worker_cmd(root=root, repo=repo, redis_url=redis_url,
@@ -881,6 +886,200 @@ async def cap_nodes_workers_sync(dry_run: bool = False, limit: int = 1,
         except Exception:
             pass
     return out
+
+
+def _node_has_gpu(addr: str) -> bool:
+    """Whether the node at `addr` is a GPU node, from the Ollama registry (the
+    one place that already says so)."""
+    from urllib.parse import urlparse
+    for inst in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).values():
+        try:
+            if urlparse(str(inst.get("url") or "")).hostname == addr:
+                return bool(inst.get("has_gpu"))
+        except Exception:
+            continue
+    return False
+
+
+async def _roles_get(host_id: str, has_gpu: bool):
+    """(classes, is_default)."""
+    r = _orch.REDIS
+    try:
+        raw = await r.hget(_placement.ROLES_KEY, host_id) if r is not None else None
+        if raw:
+            return list(_placement.clean_classes(json.loads(raw))), False
+    except Exception:
+        pass
+    return list(_placement.default_classes(has_gpu)), True
+
+
+@capability(
+    "nodes.workers.list",
+    http_method="GET", http_path="/nodes/workers", http_tags=["nodes", "provision"],
+    memory="off", silent=True,
+    description="Everything the Workers UI shows about node workers: the task classes "
+                "(label, what they cover, how many capabilities are vetted into each), "
+                "each registered node (address, GPU or CPU, its classes and whether they "
+                "are the default, its live worker - status, commit, caps - whether it is "
+                "on the commit this host runs, failures), Ollama nodes with an SSH "
+                "credential but no worker yet (candidates to provision), and the sync "
+                "plan. Output: {host_commit, sync_enabled, classes[], nodes[], "
+                "candidates[], plan}.",
+)
+async def cap_nodes_workers_list(trace_id=None) -> Dict:
+    r = _orch.REDIS
+    if r is None:
+        return {"ok": False, "error": "redis not connected"}
+    reg = {}
+    for v in (await r.hgetall(_node_sync.REGISTRY_KEY) or {}).values():
+        try:
+            e = json.loads(v)
+            reg[e.get("host_id")] = e
+        except Exception:
+            continue
+    live = await _live_node_workers()
+    by_node = {w.get("host"): w for w in live}
+    counts: Dict[str, int] = {}
+    for c in _orch.CAPABILITY_REGISTRY:
+        k = _placement.class_of(c)
+        if k:
+            counts[k] = counts.get(k, 0) + 1
+    classes = [{"key": k, "label": v["label"], "desc": v["desc"], "caps": counts.get(k, 0)}
+               for k, v in _placement.CLASSES.items()]
+    nodes = []
+    for hid, e in sorted(reg.items(), key=lambda kv: str(kv[1].get("host") or "")):
+        gpu = _node_has_gpu(e.get("host", ""))
+        cls, is_default = await _roles_get(hid, gpu)
+        w = by_node.get(e.get("nodename") or "") or {}
+        nodes.append({
+            "host_id": hid, "host": e.get("host", ""), "nodename": e.get("nodename", ""),
+            "has_gpu": gpu, "classes": cls, "classes_default": is_default,
+            "worker": {"online": bool(w), "status": w.get("status", ""),
+                       "commit": w.get("commit", "") or e.get("commit", ""),
+                       "id": w.get("id", "")},
+            "in_sync": bool(w) and (w.get("commit") or "") == _RUNNING_COMMIT,
+            "failures": int(e.get("failures") or 0), "last_error": e.get("last_error", ""),
+            "provisioned_at": e.get("provisioned_at"),
+        })
+    # Ollama nodes with an SSH credential and no worker yet
+    known = {e.get("host") for e in reg.values()}
+    candidates = []
+    try:
+        hosts = ((await _cap("exec.ssh.hosts.list")()) or {}).get("hosts", [])
+    except Exception:
+        hosts = []
+    from urllib.parse import urlparse
+    for iid, inst in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).items():
+        addr = urlparse(str(inst.get("url") or "")).hostname or ""
+        if not addr or addr in known:
+            continue
+        h = next((h for h in hosts if h.get("host") == addr), None)
+        candidates.append({"instance": iid, "host": addr, "label": inst.get("label", iid),
+                           "has_gpu": bool(inst.get("has_gpu")),
+                           "host_id": (h or {}).get("id", ""),
+                           "ssh": bool(h)})
+    plan = _node_sync.plan(_RUNNING_COMMIT, list(reg.values()), live,
+                           census_busy=await _census_busy())
+    return {"ok": True, "host_commit": _RUNNING_COMMIT, "sync_enabled": await _sync_enabled(),
+            "classes": classes, "nodes": nodes, "candidates": candidates, "plan": plan}
+
+
+@capability(
+    "nodes.workers.roles.set",
+    http_method="POST", http_path="/nodes/workers/roles", http_tags=["nodes", "provision"],
+    memory="off",
+    description="Set the task classes a node's worker takes (general, nlp, cpu_compute, "
+                "media). Applies live: the worker re-reads its roles within 30 s and "
+                "from then reads only those classes' task streams - no restart. "
+                "reset=true returns the node to its default (CPU node: general + nlp; "
+                "GPU node: none). Inputs: host_id (str!), classes (list), reset (bool). "
+                "Output: {ok, host_id, classes}.",
+)
+async def cap_nodes_workers_roles_set(host_id: str = "", classes: Optional[List[str]] = None,
+                                      reset: bool = False, trace_id=None) -> Dict:
+    r = _orch.REDIS
+    if r is None or not host_id:
+        return {"ok": False, "error": "host_id required" if host_id else "redis not connected"}
+    unknown = [c for c in (classes or []) if c not in _placement.CLASSES]
+    if unknown:
+        return {"ok": False, "error": "unknown classes %s (known: %s)"
+                % (unknown, list(_placement.CLASSES))}
+    if reset:
+        await r.hdel(_placement.ROLES_KEY, host_id)
+        rec = await _host_rec(host_id) or {}
+        cls, _ = await _roles_get(host_id, _node_has_gpu(rec.get("host", "")))
+    else:
+        cls = list(_placement.clean_classes(classes or []))
+        await r.hset(_placement.ROLES_KEY, host_id, json.dumps(cls))
+    await emit_event({"type": "nodes.workers.roles", "host_id": host_id, "classes": cls,
+                      "reset": bool(reset)})
+    return {"ok": True, "host_id": host_id, "classes": cls}
+
+
+@capability(
+    "nodes.workers.provision",
+    http_method="POST", http_path="/nodes/workers/provision", http_tags=["nodes", "provision"],
+    memory="off",
+    description="One click: install (or refresh to this host's running commit) the Vera "
+                "worker on a node - native, over its stored SSH credential - and record it "
+                "for the sync. The same path the automatic sync uses. Input: host_id (str!). "
+                "Output: {ok, commit, error}.",
+)
+async def cap_nodes_workers_provision(host_id: str = "", trace_id=None) -> Dict:
+    if not host_id:
+        return {"ok": False, "error": "host_id required"}
+    res = await cap_worker(host_id=host_id, mode="native", source="host")
+    if not res.get("recorded"):
+        rec = await _host_rec(host_id) or {}
+        entry = _node_sync.record_after(await _registry_get(host_id), ok=False,
+                                        error=str(res.get("error") or "provision failed"))
+        entry["host"] = rec.get("host", "")
+        await _registry_put(host_id, entry)
+    return {"ok": bool(res.get("ok")), "commit": res.get("commit", ""),
+            "error": str(res.get("error") or "")[:500]}
+
+
+_NODE_WORKERS_EL = Path(__file__).resolve().parents[1] / "workers" / "node_workers_element.js"
+
+
+@APP.get("/ui/elements/node_workers.js", include_in_schema=False)
+async def _node_workers_element_js():
+    from fastapi.responses import Response
+    try:
+        body = _NODE_WORKERS_EL.read_text(encoding="utf-8")
+    except OSError:
+        body = "console.error('node_workers_element.js not found')"
+    return Response(body, media_type="application/javascript")
+
+
+@APP.get("/nodes/workers/panel", include_in_schema=False)
+async def _node_workers_panel():
+    """The element as a page of its own (the registered panel embeds this)."""
+    return HTMLResponse("""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<script>(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<title>Vera - Node workers</title>
+<style>:root{--bg:#0d0f12;--bg1:#14181d;--bg2:#1a1f26;--border:#232a33;--border2:#2e3742;--fg:#d8dde3;
+--dim:#5f6975;--acc:#4a9eff;--acc2:#28c28a;--warn:#f5b341;--err:#ef5b5b}
+html,body{margin:0;background:var(--bg0,var(--bg));color:var(--fg);height:100%}</style></head>
+<body><vera-node-workers></vera-node-workers>
+<script src="/ui/vera-ui.js"></script><script src="/ui/elements/node_workers.js"></script></body></html>""")
+
+
+register_ui(
+    "node-workers", "Node workers", "⚙",
+    """<div style="height:100%;display:flex;flex-direction:column;">
+  <iframe src="/nodes/workers/panel" style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"></iframe>
+</div>""",
+    "",
+    ui_caps=["nodes.workers.list", "nodes.workers.roles.set", "nodes.workers.provision",
+             "nodes.workers.sync"],
+    # an element of the Workers pane (and any dashboard), not a tab of its own
+    mode="element",
+    tab_order=74,
+)
 
 
 async def _node_sync_tick():
