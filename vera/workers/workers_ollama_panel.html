@@ -88,12 +88,11 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
 /* Cap the two growing feeds so they scroll in place. Configurable per dashboard
    via --feed-max. They already carry overflow-y:auto inline. */
 #obs-feed,#sl-entries{max-height:var(--feed-max,460px)}
-/* The two Observe feed widgets are content-sized: top-align them so a taller
-   sibling (e.g. the System Log) doesn't stretch the shorter one and leave an
-   empty gap below its capped feed. Each widget then hugs its own content and
-   the feed meets the bottom of its panel. */
-#obs-grid>.widget[data-wid="obs-stream"],
-#obs-grid>.widget[data-wid="obs-syslog"]{align-self:start}
+/* The Observe stream and log are element widgets now (<vera-live-event-stream>, <vera-system-log>, drawn by their records):
+   they fill their span like every other tile. They used to be content-sized (align-self:start) and ran over the tiles
+   around them (owner, 2026-09-28). The page's own chrome that sat outside the body - the stream's filter bar - retires
+   with the body once a tile is converted: the element carries its own. */
+#obs-grid>.widget[data-converted] > :not(.w-head):not(.w-body):not(.w-resize){display:none!important}
 /* Configuring → extra empty scroll space below the grid to drag/resize into. */
 .dash-grid.editing{outline:1px dashed var(--border2);outline-offset:5px;border-radius:6px;background:repeating-linear-gradient(45deg,transparent 0 11px,rgba(255,255,255,.012) 11px 22px);padding-bottom:240px}
 /* flex-shrink:0 — in flex-column scroll panes (Docker etc.) overflow:hidden

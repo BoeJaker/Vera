@@ -84,6 +84,13 @@ log = logging.getLogger("vera.syslog")
 # ── Config ────────────────────────────────────────────────────────────────────
 SYSLOG_STREAM      = "vera:syslog"
 SYSLOG_MAXLEN      = int(os.getenv("SYSLOG_MAXLEN",      "5000"))
+# WARNING / ERROR / CRITICAL entries are ALSO kept in a stream of their own. The main stream holds 5000 lines - about 45
+# minutes when the Ollama request lines are flowing - and a level-filtered read only looked at the newest limit*3 of it,
+# so syslog.errors saw the last ~30 seconds and an error from five minutes ago was gone. Each copy carries its main-stream
+# id, which is what readers get as _redis_id (syslog.ask looks entries up by it).
+SYSLOG_ERR_STREAM  = "vera:syslog:errors"
+SYSLOG_ERR_MAXLEN  = int(os.getenv("SYSLOG_ERR_MAXLEN",  "3000"))
+SYSLOG_ERR_LEVELS  = ("WARNING", "ERROR", "CRITICAL")
 MONITOR_INTERVAL   = int(os.getenv("SYSLOG_MONITOR_INT", "300"))   # seconds
 MONITOR_ENABLED    = os.getenv("SYSLOG_MONITOR",         "0") == "1"
 CODE_CONTEXT_LINES = int(os.getenv("SYSLOG_CODE_LINES",  "30"))
@@ -214,8 +221,12 @@ class SyslogWriter:
         if not r:
             return
         try:
-            await r.xadd(SYSLOG_STREAM, {"data": json.dumps(asdict(rec))},
-                          maxlen=SYSLOG_MAXLEN)
+            data = json.dumps(asdict(rec))
+            main_id = await r.xadd(SYSLOG_STREAM, {"data": data}, maxlen=SYSLOG_MAXLEN)
+            if str(getattr(rec, "level", "") or "").upper() in SYSLOG_ERR_LEVELS:
+                mid = main_id.decode() if isinstance(main_id, bytes) else str(main_id or "")
+                await r.xadd(SYSLOG_ERR_STREAM, {"data": data, "main_id": mid},
+                             maxlen=SYSLOG_ERR_MAXLEN, approximate=True)
         except Exception as e:
             log.debug("SyslogWriter.write: %s", e)
 
@@ -548,11 +559,22 @@ async def _read_syslog(
     r = _redis()
     if not r:
         return []
+    # A filtered read looks through the WHOLE stream, not the newest limit*3 lines of it (a filter that matched nothing in
+    # those came back empty however recent the match). A level kept in the errors stream reads from there - it is where a
+    # warning or an error outlives the routine lines - and falls back to the main stream while that one is still empty.
+    filtered = bool(level or category or cap_name or keyword)
+    stream, scan = SYSLOG_STREAM, (max(limit * 3, SYSLOG_MAXLEN) if filtered else limit * 3)
+    if reverse and str(level or "").upper() in SYSLOG_ERR_LEVELS:
+        try:
+            if await r.xlen(SYSLOG_ERR_STREAM):
+                stream, scan = SYSLOG_ERR_STREAM, max(limit * 3, SYSLOG_ERR_MAXLEN)
+        except Exception:
+            pass
     try:
         if reverse:
-            raw = await r.xrevrange(SYSLOG_STREAM, count=limit * 3)
+            raw = await r.xrevrange(stream, count=scan)
         else:
-            raw = await r.xrange(SYSLOG_STREAM, min=since_id, count=limit * 3)
+            raw = await r.xrange(SYSLOG_STREAM, min=since_id, count=scan)
     except Exception as e:
         log.warning("syslog read: %s", e)
         return []
@@ -563,6 +585,9 @@ async def _read_syslog(
             raw_data = data.get(b"data", b"{}")
             rec = json.loads(raw_data)
             rec["_redis_id"] = entry_id.decode() if isinstance(entry_id, bytes) else entry_id
+            main_id = (data.get(b"main_id") or data.get("main_id")) if isinstance(data, dict) else None
+            if main_id:   # a copy in the errors stream answers to its main-stream id
+                rec["_redis_id"] = main_id.decode() if isinstance(main_id, bytes) else str(main_id)
 
             if level    and rec.get("level")    != level:     continue
             if category and rec.get("category") != category:  continue
@@ -747,6 +772,44 @@ async def syslog_errors(
 
 
 @capability(
+    "syslog.error_summary", memory="off",
+    http_method="GET", http_path="/syslog/error_summary", http_tags=["syslog"],
+    description="Warnings and errors over a time window (default the last hour): counts by level, by capability and by "
+                "category, a per-bucket series, the newest entries and the last error. Read from the errors stream, "
+                "which keeps them after the routine log lines have rolled them out of the main one.",
+)
+async def syslog_error_summary(window_s: int = 3600, bucket_s: int = 300, limit: int = 50, trace_id=None):
+    from Vera.vera.workers.syslog_summary_core import summarise
+    r = _redis()
+    if not r:
+        return {"error": "Redis not available", "errors": 0, "warnings": 0, "total": 0, "by_cap": [], "series": [], "entries": []}
+    now_ms = int(time.time() * 1000)
+    lo_ms = now_ms - max(60, int(window_s or 3600)) * 1000
+    source = SYSLOG_ERR_STREAM
+    try:
+        raw = await r.xrevrange(SYSLOG_ERR_STREAM, max="+", min=f"{lo_ms}-0", count=SYSLOG_ERR_MAXLEN)
+        if not raw and not await r.xlen(SYSLOG_ERR_STREAM):
+            # nothing has been copied yet (the stream is new): the main stream's window is the best there is
+            source = SYSLOG_STREAM
+            raw = await r.xrevrange(SYSLOG_STREAM, max="+", min=f"{lo_ms}-0", count=SYSLOG_MAXLEN)
+    except Exception as e:
+        return {"error": str(e), "errors": 0, "warnings": 0, "total": 0, "by_cap": [], "series": [], "entries": []}
+    rows = []
+    for entry_id, data in raw:
+        try:
+            rid = entry_id.decode() if isinstance(entry_id, bytes) else str(entry_id)
+            rec = json.loads(data.get(b"data") or data.get("data") or b"{}")
+            main_id = data.get(b"main_id") or data.get("main_id")
+            rec["_redis_id"] = (main_id.decode() if isinstance(main_id, bytes) else str(main_id)) if main_id else rid
+            rows.append((rid, rec))
+        except Exception:
+            continue
+    out = summarise(rows, now_ms, window_s=window_s, bucket_s=bucket_s, limit=max(1, min(int(limit or 50), 500)))
+    out["source"] = source
+    return out
+
+
+@capability(
     "syslog.ask", memory="on",
     http_method="POST", http_path="/syslog/ask", http_tags=["syslog"],
     description="Send a syslog entry + its source code + user question to the LLM for analysis. "
@@ -908,8 +971,11 @@ async def syslog_clear(keep: int = 500, trace_id=None):
         return {"error": "Redis not available"}
     try:
         await r.xtrim(SYSLOG_STREAM, maxlen=keep, approximate=False)
+        # the errors stream is trimmed with it: a cleared log should not keep answering with the errors it cleared
+        await r.xtrim(SYSLOG_ERR_STREAM, maxlen=keep, approximate=False)
         length = await r.xlen(SYSLOG_STREAM)
-        return {"status": "trimmed", "remaining": length}
+        return {"status": "trimmed", "remaining": length,
+                "errors_remaining": await r.xlen(SYSLOG_ERR_STREAM)}
     except Exception as e:
         return {"error": str(e)}
 

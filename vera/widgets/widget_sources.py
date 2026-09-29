@@ -656,6 +656,7 @@ MEASURED: Dict[str, Dict[str, Any]] = {
     "stream.list": {"shape":"values","map":{},"keys":["active","history","active_count","history_count"],"ms":53,"note":""},
     "sys.env.get": {"shape":"items","map":{"rows":"vars"},"keys":["path","vars"],"ms":65,"note":"dict of things"},
     "syscomms.feed": {"shape":"series","map":{"series":"unavailable"},"keys":["feed","summary","unavailable"],"ms":5562,"note":""},
+    "syslog.error_summary": {"shape":"events","map":{"events":"entries","t":"ts","kind":"level","text":"message"},"keys":["window_s","errors","warnings","critical","total","by_cap","by_category","series","entries","last_error","source"],"ms":20,"note":"the last hour's warnings and errors, from the errors stream"},
     "syslog.query": {"shape":"events","map":{"events":"entries"},"keys":["entries","count"],"ms":112,"note":""},
     "syslog.status": {"shape":"values","map":{},"keys":["stream","record_count","monitor_enabled","monitor_interval_s","recent_errors"],"ms":95,"note":""},
     "sysmon.history": {"shape":"items","map":{"rows":"samples"},"keys":["samples","count","interval_s","psutil"],"ms":60,"note":""},

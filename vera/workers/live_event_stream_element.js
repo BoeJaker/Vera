@@ -39,7 +39,7 @@ input:focus{outline:none;border-color:var(--acc,#5a9e8f)}
 .chip.on{background:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f);color:#fff}
 .chip-right{margin-left:auto;display:flex;gap:3px}
 .feed{flex:1;overflow-y:auto;padding:4px 6px;display:flex;flex-direction:column;gap:1px}
-.row{padding:3px 7px;border-radius:3px;font-size:10px;font-family:var(--mono,'JetBrains Mono',monospace);cursor:pointer;border-left:3px solid transparent;line-height:1.5;transition:.08s}
+.row{padding:3px 7px;border-radius:3px;font-size:12px;font-family:var(--mono,'JetBrains Mono',monospace);cursor:pointer;border-left:3px solid transparent;line-height:1.5;transition:.08s}
 .row:hover{background:var(--bg2,#272421)}
 .row.cat-err{border-left-color:var(--err,#c96b6b);background:rgba(201,107,107,.04)}
 .row.cat-ok{border-left-color:var(--ok,#6db87a)}
@@ -51,7 +51,7 @@ input:focus{outline:none;border-color:var(--acc,#5a9e8f)}
 .row.cat-fabric{border-left-color:#fb923c}
 .row.cat-system{border-left-color:var(--dim,#6a6058)}
 .row.cat-other{border-left-color:var(--acc4,#9e8fa0)}
-.detail{font-size:9px;color:var(--dim2,#8a7e70);margin-top:2px;white-space:pre-wrap;word-break:break-all;display:none}
+.detail{font-size:10.5px;color:var(--dim2,#8a7e70);margin-top:2px;white-space:pre-wrap;word-break:break-all;display:none}
 .row.expanded .detail{display:block}
 .sub-bar{padding:4px 8px;border-top:1px solid var(--border,#3a3530);display:flex;gap:5px;align-items:center;flex-wrap:wrap;background:var(--bg1,#1f1d1a);flex-shrink:0}
 .sub-label{font-size:8px;color:var(--dim,#6a6058);text-transform:uppercase;letter-spacing:.6px}
@@ -127,7 +127,15 @@ input:focus{outline:none;border-color:var(--acc,#5a9e8f)}
       });
 
       // Auto-connect WS
+      this._gone = false;
       setTimeout(() => this.connectWs(), 300);
+    }
+
+    // a tile that is taken off a dashboard takes its socket with it (onclose used to reconnect it for good)
+    disconnectedCallback() {
+      this._gone = true;
+      try { if (this._ws) { this._ws.onclose = null; this._ws.close(); } } catch (_) {}
+      this._ws = null;
     }
 
     setApiBase(url) { this._base = (url || '').replace(/\/$/, ''); }
@@ -139,13 +147,14 @@ input:focus{outline:none;border-color:var(--acc,#5a9e8f)}
     }
 
     connectWs() {
+      if (this._gone) return;
       try {
         const wsUrl = this._getBase().replace(/^http/, 'ws') + '/ws';
         this._ws = new WebSocket(wsUrl);
         this._ws.onmessage = e => { try { this.ingest(JSON.parse(e.data)); } catch (_) {} };
-        this._ws.onclose = () => { setTimeout(() => this.connectWs(), 3000); };
+        this._ws.onclose = () => { if (!this._gone) setTimeout(() => this.connectWs(), 3000); };
         this._ws.onerror = () => { try { this._ws.close(); } catch (_) {} };
-      } catch (_) { setTimeout(() => this.connectWs(), 5000); }
+      } catch (_) { if (!this._gone) setTimeout(() => this.connectWs(), 5000); }
     }
 
     _wsSend(msg) { try { if (this._ws?.readyState === 1) this._ws.send(JSON.stringify(msg)); } catch (_) {} }
