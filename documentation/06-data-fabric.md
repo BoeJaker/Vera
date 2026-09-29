@@ -31,6 +31,19 @@ healthy cited outputs when another source fails. Actual bytes, costs and context
 counts are checked against the reservations before a result is admitted;
 rejected alternatives and stable failure classes remain available as evidence.
 
+Discovery and context changes are evaluated with a payload-free, snapshot-bound
+benchmark contract. Every case binds the exact discovery request, query digest,
+relevant source and record revisions, and required support claims. Every
+observation binds a variant revision, configuration digest, repetition and
+declared ablations, while retaining per-case timing, ranked authority/citation
+evidence, support, cost and CPU/GPU accounting. Comparisons require a candidate
+to improve both p95 time-to-first-useful-context and nDCG, while guarding MRR,
+citation coverage, answer support, freshness, redundancy, source selection,
+failure rate, policy violations and individual-case regressions. Payload-free
+per-repetition evidence sits beside aggregates so averages cannot hide a bad
+case. Reports contain identifiers and metrics rather than queries or retrieved
+text, and never invoke a provider.
+
 The polyglot data fabric is Vera's unified data layer. It combines multiple database paradigms — vector (FAISS + Chroma), graph (Neo4j), relational (SQLite + PostgreSQL), and object storage (Garage / Ceph S3) — into a single ingestion pipeline and query DSL. Anything Vera produces or consumes that's worth keeping ends up in the fabric, where it can be recalled semantically, by relation, by exact filter, or by any combination of the three.
 
 The fabric is what makes Vera's components additive rather than siloed. A research result is fabric-recallable, so the IDE agent can find it. A crawled page is fabric-recallable, so dream cycles can use it. A chat message is fabric-recallable, so future sessions can build on it.

@@ -1,5 +1,5 @@
 {
-  "baseline_id": "dcb_3ab736199a7ce5fcf329d0dadd9419cfded88a216abc3836a6e1e79e340b7e31",
+  "baseline_id": "dcb_c0fda0a812cc3e4b778358eab82318dc6651294f2fa2419ddf4a00d9002da2bd",
   "schema": "vera.discovery-context-baseline/v1",
   "components": [
     {
@@ -49,6 +49,20 @@
       "data_contract": "vera.context-component-manifest.v1",
       "enriches": [
         "context.portable"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "discovery.benchmark",
+      "role": "data",
+      "source": "vera/discovery_benchmark.py",
+      "boundary": "discovery_contract",
+      "execution": "inline",
+      "resource": "none",
+      "data_contract": "vera.discovery-context-benchmark.v1",
+      "enriches": [
+        "discovery.orchestration",
+        "context.enrichment-ledger"
       ],
       "live_required": false
     },
@@ -309,7 +323,6 @@
   "gaps": [
     "discovery_does_not_share_context_registry_selection",
     "agent_rag_uses_a_native_result_shape",
-    "no_common_speed_and_relevance_benchmark_contract",
     "non_jepa_worldview_and_godseye_data_have_no_portable_dataset_boundary",
     "live_source_and_accelerator_evidence_is_not_part_of_this_offline_baseline"
   ]
