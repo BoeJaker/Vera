@@ -197,6 +197,10 @@ def record_fields(job: Dict[str, Any]) -> Dict[str, Any]:
         "status": str(j.get("status") or ""),
         "brief_chars": int(j.get("goal_chars") or 0),
         "board_item": str(j.get("board_item") or ""),
+        # J7: why it was delegated, by whom, and how good the report was.
+        "parent_task": str(j.get("parent_task") or "")[:200],
+        "delegator": str(j.get("delegator") or "")[:120],
+        "verdict": str(j.get("rating") or ""),
     }
     out.update(report_metrics(j.get("report") or ""))
     return out
