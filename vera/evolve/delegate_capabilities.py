@@ -212,14 +212,16 @@ async def _keep_trajectory(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 async def _trajectory_for(job_id: str) -> Optional[Dict[str, Any]]:
-    """The kept trajectory, else one built now (a job a restart interrupted
-    never reached the end of its run)."""
+    """The kept trajectory of a finished job, else one built now: a running
+    job's is rebuilt on every read (a kept snapshot of it goes stale - seen
+    live 2026-09-29), and a job a restart interrupted never reached the end
+    of its run."""
     traj = await _load_traj(job_id)
-    if traj:
+    if traj and (D.terminal(traj.get("status", "")) or traj.get("status") == "interrupted"):
         return traj
     job = await _load(job_id)
     if not job:
-        return None
+        return traj
     if not D.terminal(job.get("status", "")) and job_id not in _TASKS:
         job["status"] = "interrupted"
     return await _keep_trajectory(job)

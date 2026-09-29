@@ -167,3 +167,32 @@ def test_the_run_keeps_the_trajectory_after_its_record():
     src = (ROOT / "vera" / "evolve" / "delegate_capabilities.py").read_text(encoding="utf-8")
     run = src[src.index("async def _run("):src.index("@capability(\n    \"evolve.delegate.start\"")]
     assert run.index("await _record_run(sid)") < run.index("await _keep_trajectory(job)")
+
+
+@needs_app
+def test_a_running_jobs_trajectory_is_rebuilt_not_a_stale_snapshot(monkeypatch):
+    built = []
+
+    async def load_traj(jid):
+        return {"job_id": jid, "status": "running", "counts": {"calls": 1}}
+
+    async def load(jid):
+        return {"id": jid, "session_id": "delegate:" + jid, "status": "running"}
+
+    async def keep(job):
+        built.append(job["status"])
+        return {"job_id": job["id"], "status": job["status"], "counts": {"calls": 9}}
+    monkeypatch.setattr(DC, "_load_traj", load_traj)
+    monkeypatch.setattr(DC, "_load", load)
+    monkeypatch.setattr(DC, "_keep_trajectory", keep)
+    DC._TASKS["dgR2"] = object()
+    try:
+        t = asyncio.run(DC._trajectory_for("dgR2"))
+    finally:
+        DC._TASKS.pop("dgR2", None)
+    assert built == ["running"] and t["counts"]["calls"] == 9
+
+    async def load_done(jid):
+        return {"job_id": jid, "status": "done"}
+    monkeypatch.setattr(DC, "_load_traj", load_done)
+    assert asyncio.run(DC._trajectory_for("dgR2"))["status"] == "done" and built == ["running"]
