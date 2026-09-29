@@ -5546,6 +5546,7 @@ _CAP_TIMEOUT_OVERRIDES = {
     # Browser caps (playwright launch + page load + interaction)
     "browser.screenshot": 90.0,
     "browser.content":    90.0,
+    "browser.reader":     90.0,
     "browser.click":     120.0,
     "browser.form":      120.0,
     # Memory operations are usually fast but bulk ones can take a while

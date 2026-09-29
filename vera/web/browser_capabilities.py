@@ -7,6 +7,7 @@ Capabilities exposed
 ─────────────────────
   browser.screenshot   — Capture a full-page PNG screenshot of a URL
   browser.content      — Extract text, links, and metadata from a page
+  browser.reader       — Reader mode: the page's article (or a composite of its parts) as markdown
   browser.click        — Click an element by CSS selector and return screenshot
   browser.type         — Type into an input field and return screenshot
   browser.scroll       — Scroll the page and return screenshot
@@ -52,6 +53,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlparse, urlencode, quote_plus
 
@@ -359,6 +361,50 @@ async def browser_content(
         except Exception as e:
             log.warning("browser.content [%s]: %s", url, e)
             return _err(str(e), url=url, text="", links=[], meta={})
+        finally:
+            await ctx.close()
+
+
+_READER_JS_PATH = Path(__file__).with_name("reader_extract.js")
+_READER_JS: Optional[str] = None
+
+
+def _reader_js() -> str:
+    """The reader extraction (reader_extract.js), read once: a function expression page.evaluate runs as it is."""
+    global _READER_JS
+    if _READER_JS is None:
+        _READER_JS = _READER_JS_PATH.read_text(encoding="utf-8")
+    return _READER_JS
+
+
+@capability(
+    "browser.reader",
+    http_method="POST", http_path="/browser/reader", http_tags=["browser", "web"],
+    memory="on",
+    description="READER MODE: a page as the article a person reads, not its whole body stripped of tags. Renders "
+                "the page (JavaScript included), drops the chrome (navigation, headers, footers, cookie and share "
+                "blocks, anything hidden), finds the body by where the prose is and how little of it is links, and "
+                "writes it as markdown - headings, paragraphs, lists, quotes, code, tables, links, figures. A page "
+                "whose text is split across several containers comes back as a COMPOSITE of its strongest parts, in "
+                "page order. Input: url (str!), max_chars (int default 60000). Output: {ok, title, byline, site, "
+                "published, image, description, markdown, words, minutes, composite, parts, url, load_ms}.",
+)
+async def browser_reader(url: str, max_chars: int = 60_000, trace_id=None) -> dict:
+    url = _safe_url(url)
+    t0 = time.monotonic()
+    async with _get_semaphore():
+        browser = await _get_browser()
+        ctx, page = await _new_page(browser)
+        try:
+            await page.goto(url, wait_until="domcontentloaded")
+            await asyncio.sleep(0.8)   # let lazy JS render
+            out = await page.evaluate(_reader_js(), int(max_chars or 60_000))
+            out = dict(out or {})
+            out.update(ok=True, url=out.get("url") or page.url, load_ms=round((time.monotonic() - t0) * 1000))
+            return out
+        except Exception as e:
+            log.warning("browser.reader [%s]: %s", url, e)
+            return _err(str(e), url=url, markdown="")
         finally:
             await ctx.close()
 
