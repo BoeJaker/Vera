@@ -12,7 +12,7 @@ t('the kinds whose drawer draws its own head are named', /const OWN_HEAD = new S
 t('the card does not draw a second header over them — only the corner controls (maximise, expand)',
   /\$\{ownHead && !compact \? `<span class="mx solo[^`]*?<span class="xp solo" data-act="open"/.test(SRC) && /\.xp\.solo\{position:absolute/.test(SRC));
 t('a FOLDED item keeps the card header, because then it is the whole item', /ownHead && !compact/.test(SRC));
-t('the expand mark is there when you are on the item, not always', /\.it:hover > \.xp\.solo,\.it:focus-within > \.xp\.solo\{opacity:\.8\}/.test(SRC));
+t('the expand mark is there when you are on the item, not always', /\.it:is\(:hover,\.hov\) > \.xp\.solo,\.it:focus-within > \.xp\.solo\{opacity:\.8\}/.test(SRC));
 
 /* ── headers belong to Full ──────────────────────────────────────────────────────────────────────────────────── */
 t('the element carries the tier, because a rule on <html> cannot cross a shadow root', /if \(this\.dataset\.tier !== tier\) this\.dataset\.tier = tier;/.test(SRC));

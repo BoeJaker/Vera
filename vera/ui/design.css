@@ -54,13 +54,15 @@ html:root[data-blocks="off"] #sidebar[data-vera-lhm] .nav-btn.active { backgroun
    .chart .stack .result .gate #sync-tile .cal-cell ...), and an id rule outranks any class rule. So the design reads the
    ROLE from the name - a sidebar, a rail, a bar, a detail pane, a card, a tile, a panel - and says it firmly. What must
    keep a ground to stay readable keeps it: popovers, menus, dialogs, tips, code, fields, buttons. ── */
-/* NB the :not() is joined to the :is() - whitespace between them would be a descendant combinator and hit the children */
+/* NB the :not() is joined to the :is() - whitespace between them would be a descendant combinator and hit the children.
+   The widget details drawer (.vw-drawer) is an <aside> that floats OVER the page, like a popover: with blocks off it lost
+   its ground and its text sat on the page beneath it (owner, 2026-09-29: dashboard, estate, Loop Lab) - it keeps it. */
 html:root[data-blocks="off"] body :is(aside, nav, header, footer,
     [id*="sidebar"], [class*="sidebar"], [id*="rail"], [id="left"], [id="right"], [id$="-left"], [id$="-right"],
     [id$="bar"], [class$="bar"], [class*="-bar"], [class*="toolbar"], [class*="tabs"],
     [class*="card"], [class*="tile"], [id*="tile"], [class*="detail"], [id*="-panel"], [class*="-panel"],
     .chart, .stack, .result, .section, .sec, .group, .pane-tb, .kpi, .stat):not(:is([class*="pop"], [id*="pop"], [class*="modal"], [class*="dialog"], [role="dialog"], [role="menu"], [class*="menu"],
-           [class*="dropdown"], [class*="tooltip"], .vw-tip, .cmenu, .crun, pre, code, input, select, textarea, button, .btn,
+           [class*="dropdown"], [class*="tooltip"], .vw-tip, .vw-drawer, .cmenu, .crun, pre, code, input, select, textarea, button, .btn,
            [class*="progress"], [id*="progress"], [class*="meter"], [class*="fill"], [class*="spark"], [class*="gauge"])) {
   background: transparent !important; box-shadow: none !important;
 }

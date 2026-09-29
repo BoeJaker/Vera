@@ -134,6 +134,27 @@
   // ACTUALLY the one with scroll room, rather than assuming a specific class
   // name (which would only work on one host page) or `window` (which mostly
   // never scrolls on any of them).
+  /* THE EDGE SCROLL, ARMED BY INTENT (owner, 2026-09-29: "grabbing and dragging to resize shoots you to the very bottom
+     almost instantly ... seems to happen if the drag starting point is below a certain point on the page"). The resize
+     corner and the move both scroll the container while the pointer rests within EDGE of its top or bottom - and a tile
+     whose corner already sat in that band was scrolled from the moment it was grabbed, at full speed, every frame, the
+     scroll added straight onto the new height. Now the scroll arms only once the pointer has been out of both bands, or
+     has gone a clear 24 px further toward the edge it started in; and it starts at a quarter speed and reaches full
+     after about half a second at the edge, so a small adjustment near the bottom is a small adjustment.
+     st: {sy, armed, edgeSince} - one per gesture. Returns the pixels to scroll this frame. */
+  function _edgeSpeed(st, y, scrollEl) {
+    var r = scrollEl && scrollEl.getBoundingClientRect ? scrollEl.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    var top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom), EDGE = 56, MAX = 12;
+    var inTop = y < top + EDGE, inBot = y > bottom - EDGE;
+    if (!st.armed) {
+      if ((!inTop && !inBot) || (inBot && y - st.sy > 24) || (inTop && st.sy - y > 24)) st.armed = true;
+      else return 0;
+    }
+    var d = inTop ? -MAX * Math.min(1, (top + EDGE - y) / EDGE) : inBot ? MAX * Math.min(1, (y - (bottom - EDGE)) / EDGE) : 0;
+    if (!d) { st.edgeSince = 0; return 0; }
+    if (!st.edgeSince) st.edgeSince = Date.now();
+    return d * Math.min(1, 0.25 + (Date.now() - st.edgeSince) / 600);
+  }
   function _scrollParent(el) {
     var node = el.parentElement;
     while (node && node !== document.body) {
@@ -820,7 +841,7 @@
       var w = e.target.closest('.widget'); if (!w || w.parentNode !== grid || w.classList.contains('floating')) return;
       e.preventDefault();
       var scrollEl = _scrollParent(grid);
-      move = { w: w, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, live: false, scrolled: 0, scrollEl: scrollEl, slot: null, ghost: null, raf: 0 };
+      move = { w: w, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, live: false, scrolled: 0, scrollEl: scrollEl, slot: null, ghost: null, raf: 0, edge: { sy: e.clientY, armed: false, edgeSince: 0 } };
       document.addEventListener('mousemove', onMoveMove);
       document.addEventListener('mouseup', onMoveUp);
       document.addEventListener('keydown', onMoveKey, true);
@@ -869,10 +890,7 @@
     // the container scrolls while the pointer rests within EDGE of its top or bottom, as the resize corner does
     function moveScrollTick() {
       var m = move; if (!m || !m.live) return;
-      var r = m.scrollEl.getBoundingClientRect(), EDGE = 56, MAX = 16;
-      var top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom), d = 0;
-      if (m.y < top + EDGE) d = -MAX * (1 - (m.y - top) / EDGE);
-      else if (m.y > bottom - EDGE) d = MAX * (1 - (bottom - m.y) / EDGE);
+      var d = _edgeSpeed(m.edge, m.y, m.scrollEl);   // armed by intent - see _edgeSpeed
       if (d) {
         var before = m.scrollEl.scrollTop; m.scrollEl.scrollBy(0, d);
         var actual = m.scrollEl.scrollTop - before;
@@ -995,7 +1013,7 @@
       // page to keep scrolling — so a rAF loop re-checks the last known
       // cursor position every frame, independent of new mousemove events.
       var scrollEl = _scrollParent(grid);
-      var EDGE = 56, MAX_SPEED = 16;
+      var edgeSt = { sy: sy, armed: false, edgeSince: 0 };
       var lastX = sx, lastY = sy, rafId = null;
       function autoScrollTick() {
         // The edge zone is relative to the SCROLL CONTAINER's own box, not
@@ -1003,11 +1021,7 @@
         // fill the whole window (a toolbar/tab-bar above it, say) the two
         // don't line up, and triggering off the wrong one either fires the
         // auto-scroll too early or never at the container's actual edge.
-        var r = scrollEl.getBoundingClientRect();
-        var top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom);
-        var d = 0;
-        if (lastY < top + EDGE) d = -MAX_SPEED * (1 - (lastY - top) / EDGE);
-        else if (lastY > bottom - EDGE) d = MAX_SPEED * (1 - (bottom - lastY) / EDGE);
+        var d = _edgeSpeed(edgeSt, lastY, scrollEl);   // armed by intent - see _edgeSpeed
         if (d) {
           var before = scrollEl.scrollTop;
           scrollEl.scrollBy(0, d);

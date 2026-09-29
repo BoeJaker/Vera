@@ -49,7 +49,7 @@ t('AN ITEM LOSES ITS CONTAINER: no ground, no box, no shadow',
   /:host\(\[blocks="off"\]\) \.it\{background:transparent;box-shadow:none;border-color:transparent\}/.test(SRC), 'the 55% border box is still there');
 t('what says where an item ends is its own header line', /:host\(\[blocks="off"\]\) \.it > \.it-hd\{border-bottom:1px solid/.test(SRC));
 t('the rail is held back until you are on the item',
-  /:host\(\[blocks="off"\]\) \.it > \.it-ft\{opacity:0/.test(SRC) && /:host\(\[blocks="off"\]\) \.it:hover > \.it-ft,:host\(\[blocks="off"\]\) \.it:focus-within > \.it-ft\{opacity:1\}/.test(SRC));
+  /:host\(\[blocks="off"\]\) \.it > \.it-ft\{opacity:0/.test(SRC) && /:host\(\[blocks="off"\]\) \.it:is\(:hover,\.hov\) > \.it-ft,:host\(\[blocks="off"\]\) \.it:focus-within > \.it-ft\{opacity:1\}/.test(SRC));
 // blocks off is about grounds - it must not cost the states that MEAN something, which a bare box-shadow:none did
 ['hovopen'].forEach((k) => t('a ' + k + ' item keeps its ring with blocks off',
   new RegExp(':host\\(\\[blocks="off"\\]\\) \\.it\\.' + k + '\\{box-shadow:0 0 0 1\\.5px').test(SRC)));
