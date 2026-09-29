@@ -123,6 +123,26 @@
       }.bind(this));
     }
 
+    // ── a graph the host already has ──────────────────────────────────────
+    // setGraph({nodes, edges}) draws nodes and edges the host built (the canvas's fabric results: the query, the
+    // datasets that hold them, the records, the tags they share) through the same renderer, instead of a snapshot
+    // fetched by layer. Called before the element is connected, it is kept and drawn once the renderer is ready;
+    // called again, the graph is reloaded (positions of nodes that persist are kept by load()).
+    setGraph(data) {
+      this._data = data || { nodes: [], edges: [] };
+      if (this._graph) { try { this._graph.load(this._data); } catch (e) {} this._captionData(); }
+      return this;
+    }
+
+    _captionData() {
+      if (!this._note) return;
+      this._note.textContent = '';
+      var d = this._data || {};
+      var left = document.createElement('span');
+      left.textContent = (d.caption ? d.caption + ' — ' : '') + ((d.nodes || []).length) + ' nodes, ' + ((d.edges || []).length) + ' edges';
+      this._note.appendChild(left);
+    }
+
     // ── the structured renderer ───────────────────────────────────────────
     setDoc(doc) {
       this._doc = doc;
@@ -253,6 +273,12 @@
         },
       });
 
+      // a host that handed its own nodes and edges (setGraph, or renderer="data" with setGraph to follow) draws those
+      if (this._data || (this.getAttribute('renderer') || '') === 'data') {
+        if (this._data) { try { this._graph.load(this._data); } catch (e) { this._fail('load failed'); return; } }
+        this._captionData();
+        return;
+      }
       try {
         await this._graph.fetchSnapshot(layer, params);
       } catch (e) {

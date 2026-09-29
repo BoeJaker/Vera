@@ -65,6 +65,104 @@
     return s.replace(/\u0000F(\d+)\u0000/g, (_, i) => fences[+i] || '');
   }
 
+  /* READER MARKDOWN - what browser.reader writes (reader_extract.js) drawn as the article it is: headings, paragraphs,
+     nested and numbered lists, quotes, tables, figures, rules, code. The subset above (md) was built for notes and
+     turns a table into pipes and a figure into a link. Same rule as md: everything is escaped FIRST, so a page's text
+     can never become markup in the chat document; only the constructs below are drawn. */
+  function mdx(src) {
+    const fences = [];
+    let s = String(src || '').replace(/```([\w-]*)\n([\s\S]*?)```/g, (_, lang, body) => {
+      fences.push(`<pre class="vc-pre"><code>${esc(body.replace(/\n$/, ''))}</code></pre>`);
+      return `\n\u0000F${fences.length - 1}\u0000\n`;
+    });
+    const inl = (t) => {
+      const keep = [];
+      let x = String(t).replace(/\\([*_`\[\]\\|])/g, (_, ch) => { keep.push(ch); return '\u0001' + (keep.length - 1) + '\u0001'; });
+      x = esc(x)
+        .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+        .replace(/!\[([^\]]*)\]\((https?:[^)\s]+)\)/g, '<img class="vc-rd-img" src="$2" alt="$1" loading="lazy" referrerpolicy="no-referrer">')
+        .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+        .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+      return x.replace(/\u0001(\d+)\u0001/g, (_, i) => esc(keep[+i] || ''));
+    };
+    const lines = s.split('\n'); const out = []; let para = [];
+    const flush = () => { if (para.length) { out.push('<p>' + para.map(inl).join('<br>') + '</p>'); para = []; } };
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i];
+      if (/^\u0000F\d+\u0000$/.test(ln.trim())) { flush(); out.push(ln.trim()); continue; }
+      if (!ln.trim()) { flush(); continue; }
+      let m = /^(#{1,6})\s+(.*)$/.exec(ln);
+      if (m) { flush(); out.push(`<h${m[1].length}>${inl(m[2])}</h${m[1].length}>`); continue; }
+      if (/^\s*(---+|\*\*\*+)\s*$/.test(ln)) { flush(); out.push('<hr>'); continue; }
+      m = /^\s*!\[([^\]]*)\]\((https?:[^)\s]+)\)\s*$/.exec(ln);
+      if (m) { flush(); out.push(`<figure><img class="vc-rd-img" src="${esc(m[2])}" alt="${esc(m[1])}" loading="lazy" referrerpolicy="no-referrer"></figure>`); continue; }
+      if (/^\s*\|/.test(ln) && i + 1 < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[i + 1])) {
+        flush(); const cells = (r) => r.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((c) => inl(c.trim()));
+        const head = cells(ln); i++; const body = [];
+        while (i + 1 < lines.length && /^\s*\|/.test(lines[i + 1])) { i++; body.push(cells(lines[i])); }
+        out.push('<div class="vc-tablewrap"><table class="vc-table"><thead><tr>' + head.map((c) => `<th>${c}</th>`).join('') + '</tr></thead><tbody>'
+          + body.map((r) => '<tr>' + r.map((c) => `<td>${c}</td>`).join('') + '</tr>').join('') + '</tbody></table></div>');
+        continue;
+      }
+      if (/^\s*>\s?/.test(ln)) { flush(); const q = []; i--; while (i + 1 < lines.length && /^\s*>\s?/.test(lines[i + 1])) { i++; q.push(lines[i].replace(/^\s*>\s?/, '')); }
+        out.push('<blockquote>' + q.map(inl).join('<br>') + '</blockquote>'); continue; }
+      if (/^\s*([-*+]|\d+[.)])\s+/.test(ln)) {
+        flush(); const items = []; i--;
+        while (i + 1 < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i + 1])) { i++; const mm = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]); items.push({ d: Math.floor(mm[1].length / 2), ol: /\d/.test(mm[2]), t: mm[3] }); }
+        let html = ''; const stack = [];
+        items.forEach((it) => {
+          while (stack.length > it.d + 1) html += '</li></' + stack.pop() + '>';
+          if (stack.length === it.d + 1) html += '</li>';
+          while (stack.length < it.d + 1) { const tag = it.ol ? 'ol' : 'ul'; html += '<' + tag + '>'; stack.push(tag); }
+          html += '<li>' + inl(it.t);
+        });
+        while (stack.length) html += '</li></' + stack.pop() + '>';
+        out.push(html); continue;
+      }
+      para.push(ln.trim());
+    }
+    flush();
+    return out.join('').replace(/\u0000F(\d+)\u0000/g, (_, i) => fences[+i] || '');
+  }
+  /* a page read in reader mode (browser.reader's answer): its title, who and when, how long, a note when the body was
+     stitched from a fragmented page, and the article */
+  function readerHtml(rd) {
+    const when = rd.published ? String(rd.published).slice(0, 10) : '';
+    const bits = [rd.site, rd.byline, when, rd.minutes ? rd.minutes + ' min read' : ''].filter(Boolean);
+    return `<article class="vc-reader">`
+      + (rd.title ? `<h1 class="vc-rd-t">${esc(rd.title)}</h1>` : '')
+      + (bits.length ? `<div class="vc-rd-by">${bits.map(esc).join(' · ')}</div>` : '')
+      + (rd.composite ? `<div class="vc-rd-note">stitched from ${esc(rd.parts || 'several')} parts of a fragmented page</div>` : '')
+      + (rd.image && /^https?:/.test(String(rd.image)) ? `<img class="vc-rd-hero" src="${esc(rd.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '')
+      + `<div class="vc-rd-body">${mdx(String(rd.markdown || ''))}</div></article>`;
+  }
+  /* THE FABRIC'S ANSWER AS A GRAPH (owner, 2026-09-28: "the fabric one just seems to return one line results - itd be
+     better if it displayed a vera graph .js graph by default but the list can be an option"). The query at the centre,
+     the datasets that hold the records, the records sized by how close they are, and the tags two or more of them
+     share - a tag every record carries links everything and says nothing, so it is left out. Built from the item's own
+     records: no second read. */
+  function recGraph(c) {
+    const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object').slice(0, 80);
+    const nodes = [], edges = [], seen = {};
+    const node = (n) => { if (seen[n.id]) return; seen[n.id] = 1; nodes.push(n); };
+    const q = String(c.query || c.title || 'query');
+    node({ id: 'q', label: q.slice(0, 40), type: 'Query', r: 16, props: { title: q } });
+    const tagN = {}; items.forEach((r) => (Array.isArray(r.tags) ? r.tags : []).forEach((t) => { tagN[t] = (tagN[t] || 0) + 1; }));
+    items.forEach((r) => {
+      const rid = 'r:' + r.id;
+      const ds = String((r.meta && (r.meta.dataset_id || r.meta.source)) || r.domain || '');
+      const sc = r.score != null && isFinite(+r.score) ? Math.max(0, Math.min(1, +r.score)) : 0.5;
+      node({ id: rid, label: String(r.title || r.id).slice(0, 48), type: 'FabricRecord', r: Math.round(6 + 8 * sc),
+             props: { title: String(r.title || ''), text: String(r.snippet || '').slice(0, 600), score: r.score, dataset_id: ds, record_id: String(r.id) } });
+      if (ds) { node({ id: 'd:' + ds, label: ds, type: 'Dataset', r: 13, props: { name: ds } }); edges.push({ from: 'q', to: 'd:' + ds, rel: 'in' }, { from: 'd:' + ds, to: rid, rel: 'holds' }); }
+      else edges.push({ from: 'q', to: rid, rel: 'found' });
+      (Array.isArray(r.tags) ? r.tags : []).forEach((t) => { if (tagN[t] < 2 || tagN[t] === items.length) return;
+        node({ id: 't:' + t, label: '#' + t, type: 'Tag', r: 7, props: { name: t } }); edges.push({ from: rid, to: 't:' + t, rel: 'tag', dashed: true }); });
+    });
+    return { nodes, edges, caption: items.length + ' record' + (items.length === 1 ? '' : 's') };
+  }
+
 
   /* ── CODE AS THE CHAT DRAWS IT: the chat's own highlighter and linter (window.VeraCode, published by the chat page),
      so a code item and a code fence are coloured and checked by ONE implementation. Where the page has none (the
@@ -153,7 +251,9 @@
   const recState = (el, key) => { const box = el ? (el._recUi = el._recUi || {}) : _recFallback; const k = String(key || '');
     return box[k] || (box[k] = { page: 0, q: '', sort: 'rank', view: 'list', dom: '', open: {}, body: {} }); };
   const BLOCK = {
-    markdown: c => `<div class="vc-md">${md(c.md || c.text || '')}</div>`,
+    /* a document item draws with the reader's renderer (mdx): a research report's tables, numbered lists, quotes and
+       figures were pipes and bare lines under the note subset */
+    markdown: c => `<div class="vc-md">${mdx(c.md || c.text || '')}</div>`,
 
     /* A MONTH, WITH WHAT IS ON IT. Backed by the diary rather than by a copy of it: the month buttons and a day
        press go back to cal.events.list, so the item is a VIEW of the calendar and not a screenshot taken once.
@@ -251,6 +351,7 @@
       const chars = c.chars ? (c.chars > 1000 ? (c.chars / 1000).toFixed(1) + 'k' : String(c.chars)) + ' chars' : '';
       const shot = String(c.shot || '');
       const text = String(c.text || '');
+      const rdr = c.reader && typeof c.reader === 'object' ? c.reader : null;
       return `<div class="vc-src${c.failed ? ' bad' : ''}${open ? ' open' : ''}">`
         + `<div class="vc-src-hd">`
         + `<span class="vc-src-dom">${esc(host)}</span>`
@@ -260,10 +361,10 @@
         + `<a class="vc-src-t" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(url)}">${esc(title)}</a>`
         + (c.snippet ? `<div class="vc-src-s">${esc(String(c.snippet).slice(0, 400))}</div>` : '')
         + `<div class="vc-src-act">`
-        + `<button class="vc-src-b" data-src-act="read" data-src-key="${esc(key || '')}">${open ? 'less' : (text ? 'read' : 'read the page')}</button>`
+        + `<button class="vc-src-b" data-src-act="read" data-src-key="${esc(key || '')}">${open ? 'less' : (text || rdr ? 'read' : 'reader mode')}</button>`
         + `<button class="vc-src-b" data-src-act="shot" data-src-key="${esc(key || '')}">${shot ? 'hide the picture' : 'see the page'}</button>`
         + `</div>`
-        + (open && text ? `<div class="vc-src-body">${md(text.slice(0, 20000))}</div>` : '')
+        + (open && rdr ? `<div class="vc-src-body rd">${readerHtml(rdr)}</div>` : open && text ? `<div class="vc-src-body">${md(text.slice(0, 20000))}</div>` : '')
         + (shot ? `<img class="vc-src-shot" src="${esc(shot)}" alt="${esc(title)}">` : '')
         + `</div>`;
     },
@@ -351,6 +452,10 @@
     records: (c, size, key, el) => {
       const all = Array.isArray(c.items) ? c.items.filter((r) => r && typeof r === 'object') : [];
       const st = recState(el, key);
+      // the view the item asks for (the fabric's: graph) is where it starts; the reader's own choice wins after that
+      if (!st._v0) { st._v0 = true; if (c.view) st.view = String(c.view); }
+      const canGraph = c.kind === 'memory' || c.view === 'graph';
+      if (st.view === 'graph' && !canGraph) st.view = 'list';
       const q = String(st.q || '').toLowerCase().trim();
       let rows = all.filter((r) => (!st.dom || r.domain === st.dom) && (!q || (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.domain || '') + ' ' + JSON.stringify(r.meta || {})).toLowerCase().includes(q)));
       if (st.sort === 'newest') rows = rows.slice().sort((a, b) => (Date.parse(b.when) || 0) - (Date.parse(a.when) || 0));
@@ -368,13 +473,14 @@
       const actBtn = (act, id, label, t) => `<button class="vc-rbx-b" data-rec-act="${act}" data-rec-key="${K}" data-rec-arg="${esc(id)}" title="${esc(t || '')}">${label}</button>`;
       const opened = (r) => {
         const b = (st.body || {})[r.id] || {};
-        const acts = (r.url ? actBtn('read', r.id, b.text ? 'reread' : 'read the page', 'the page as text (browser.content)') + actBtn('land', r.id, 'to the canvas', 'land it as its own source item') + `<a class="vc-rbx-b" href="${esc(r.url)}" target="_blank" rel="noopener">open ↗</a>` : '')
+        const acts = (r.url ? actBtn('read', r.id, b.reader || b.text ? 'read again' : 'reader mode', 'the page as the article it is - its body (or a composite of its parts) formatted (browser.reader)') + actBtn('land', r.id, 'to the canvas', 'land it as its own source item') + `<a class="vc-rbx-b" href="${esc(r.url)}" target="_blank" rel="noopener">open ↗</a>` : '')
           + (r.ref && r.ref.record_id ? actBtn('rec', r.id, b.text ? 'read again' : 'read the record', 'the record in full, in pages (memory.read)') : '');
         return `<div class="vc-rbx-open">${r.snippet ? `<div class="vc-rbx-full">${esc(r.snippet)}</div>` : ''}`
           + (r.meta ? `<div class="vc-rbx-meta">${Object.keys(r.meta).map((k) => `<span><i>${esc(k)}</i>${esc(r.meta[k])}</span>`).join('')}</div>` : '')
           + `<div class="vc-rbx-acts">${acts}</div>`
           + (b.busy ? `<div class="vc-rbx-busy">… ${esc(b.busy)}</div>` : '')
           + (b.err ? `<div class="vc-rbx-err">${esc(b.err)}</div>` : '')
+          + (b.reader ? `<div class="vc-rbx-body rd">${readerHtml(b.reader)}</div>` : '')
           + (b.text ? `<div class="vc-rbx-body">${md(String(b.text).slice(0, 60000))}</div>` + (b.next != null ? actBtn('more', r.id, 'more of it ↓', 'the next page of the record') : '') : '')
           + `</div>`;
       };
@@ -383,6 +489,7 @@
       let body = '';
       if (!all.length) body = `<div class="vc-rbx-empty">nothing in it</div>`;
       else if (!rows.length) body = `<div class="vc-rbx-empty">nothing matches “${esc(st.q || st.dom)}”</div>`;
+      else if (st.view === 'graph') body = `<div class="vc-rbx-graph"><div class="vc-live" data-live="rgraph" data-key="${K}"><span class="vc-dim">drawing the graph…</span></div><div class="vc-rbx-gnote">a record's node opens it in the list</div></div>`;
       else if (st.view === 'table') {
         body = `<div class="vc-tablewrap"><table class="vc-table vc-rbx-tbl"><thead><tr><th>title</th><th>source</th><th>when</th>${all.some((r) => r.score != null) ? '<th>score</th>' : ''}</tr></thead><tbody>`
           + shown.map((r) => `<tr class="${(st.open || {})[r.id] ? 'on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}"><td>${title(r)}</td><td class="mono">${esc(r.domain || (r.meta && (r.meta.dataset_id || r.meta.engine)) || '')}</td><td class="mono">${esc(r.when ? ago(r.when) : '')}</td>${all.some((x) => x.score != null) ? `<td>${score(r)}</td>` : ''}</tr>` + ((st.open || {})[r.id] ? `<tr class="vc-rbx-tr-open"><td colspan="4">${opened(r)}</td></tr>` : '')).join('')
@@ -401,7 +508,7 @@
       const dots = pages > 1 ? Array.from({ length: Math.min(pages, 9) }, (_, i) => { const n = pages <= 9 ? i : Math.round(i * (pages - 1) / 8); return `<button class="vc-rbx-dot${n === page ? ' on' : ''}" data-rec-act="page" data-rec-key="${K}" data-rec-arg="${n}" title="page ${n + 1}"></button>`; }).join('') : '';
       return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
         + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
-        + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', [['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']])}</div>`
+        + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
         + (domList.length > 1 ? `<div class="vc-rbx-facets">${domList.map((d) => `<button class="${st.dom === d ? 'on' : ''}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}">${esc(d)}<i>${doms[d]}</i></button>`).join('')}</div>` : '')
         + body
         + `<div class="vc-rbx-foot"><span>${from}–${to} of ${rows.length}${rows.length !== all.length ? ' (of ' + all.length + ')' : ''}</span><span class="vc-rbx-pg">${pages > 1 ? `<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="prev" ${page ? '' : 'disabled'}>‹</button>${dots}<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="next" ${page < pages - 1 ? '' : 'disabled'}>›</button>` : ''}</span>${c.next && c.next.cap ? actBtn('loadmore', '', 'more from ' + esc(c.next.cap), 'fetch the next page from the source') : ''}</div>`
@@ -666,6 +773,11 @@
   .vc-md h1,.vc-md h2,.vc-md h3{margin:.3em 0;line-height:1.25;text-wrap:balance}
   .vc-md h1{font-size:1.35em}.vc-md h2{font-size:1.2em}.vc-md h3{font-size:1.08em}
   .vc-md p{margin:.35em 0}.vc-md ul{margin:.35em 0;padding-left:1.2em}
+  .vc-md ol{margin:.35em 0;padding-left:1.5em}.vc-md li{margin:.12em 0}
+  .vc-md blockquote{margin:.4em 0;padding:.1em 0 .1em .9em;border-left:3px solid var(--acc,#5a9e8f);color:var(--dim2,#8a7e70)}
+  .vc-md hr{border:0;border-top:1px solid var(--border,#3a3530);margin:.9em 0}
+  .vc-md figure{margin:.4em 0}.vc-md img{max-width:100%;height:auto;border-radius:6px}
+  .vc-md a{color:var(--acc,#5a9e8f)}.vc-md .vc-tablewrap{margin:.4em 0}
   code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.92em}
   /* the parts an item draws for itself carry the same rule as the item: content, not chrome. Code keeps a ground
      because a monospace block IS a surface — but a hairline of one, not a boxed card inside a boxed card. */
@@ -944,6 +1056,36 @@
   .vc-src-body{font-size:11px;line-height:1.6;max-height:340px;overflow:auto;
     border-top:1px solid var(--border,#3a3530);padding-top:6px;margin-top:2px}
   .vc-src-shot{width:100%;border-radius:6px;border:1px solid var(--border,#3a3530);margin-top:2px}
+  /* the fold you make: ▾ / ▸ at the head of an item, and what a folded list holds beside its name */
+  .it-hd .fd{flex:0 0 auto;width:14px;text-align:center;font-size:10px;color:var(--dim,#6b7480);cursor:pointer;user-select:none}
+  .it-hd .fd:hover{color:var(--fg,#dce1e8)}
+  .it-hd .fdn{flex:0 0 auto;font-family:ui-monospace,Consolas,monospace;font-size:9px;color:var(--dim,#6b7480);background:var(--bg2,#272421);border-radius:8px;padding:0 6px}
+  .fd.solo{position:absolute;right:36px;top:3px;z-index:3;font-size:10px;color:var(--dim,#6b7480);cursor:pointer;opacity:0;transition:opacity .15s}
+  .it:hover > .fd.solo,.it:focus-within > .fd.solo{opacity:.8}
+  /* a records item as a GRAPH: the slot the live layer draws the Vera graph over, sized with the item */
+  .vc-rbx-graph{display:flex;flex-direction:column;gap:3px}
+  .vc-rbx-graph .vc-live{height:300px}
+  .vc-rbx.s-s .vc-rbx-graph .vc-live{height:200px}.vc-rbx.s-m .vc-rbx-graph .vc-live{height:260px}
+  .vc-rbx.s-l .vc-rbx-graph .vc-live{height:320px}.vc-rbx.s-xl .vc-rbx-graph .vc-live{height:480px}
+  .vc-rbx-gnote{font-size:9.5px;color:var(--dim2,#8a7e70)}
+  /* READER MODE: a page read as its article - a measure you can read at, the prose face, the page's own shape */
+  .vc-rbx-body.rd,.vc-src-body.rd{max-height:620px;background:var(--bg0,#171513);padding:10px 14px}
+  .vc-reader{max-width:68ch;margin:0 auto;font-family:var(--f-prose,Georgia,'Iowan Old Style','Times New Roman',serif);font-size:13.5px;line-height:1.7;color:var(--fg,#dce1e8)}
+  .vc-rd-t{font-size:19px;line-height:1.25;margin:2px 0 6px;font-weight:650;letter-spacing:-.01em}
+  .vc-rd-by{font-family:var(--f-ui,system-ui,sans-serif);font-size:10.5px;color:var(--dim2,#8a7e70);margin-bottom:10px}
+  .vc-rd-note{display:inline-block;font-family:var(--f-ui,system-ui,sans-serif);font-size:10px;color:var(--acc2,#c9955a);border:1px dashed currentColor;border-radius:6px;padding:2px 8px;margin:0 0 10px}
+  .vc-rd-hero{display:block;width:100%;max-height:220px;object-fit:cover;border-radius:8px;margin:0 0 12px}
+  .vc-rd-body h1,.vc-rd-body h2{font-size:16px;line-height:1.3;margin:1.3em 0 .4em}
+  .vc-rd-body h3,.vc-rd-body h4,.vc-rd-body h5,.vc-rd-body h6{font-size:14px;margin:1.1em 0 .3em}
+  .vc-rd-body p{margin:0 0 .9em}
+  .vc-rd-body a{color:var(--acc,#5a9e8f);text-decoration:underline;text-underline-offset:2px}
+  .vc-rd-body ul,.vc-rd-body ol{margin:0 0 .9em;padding-left:1.4em}.vc-rd-body li{margin:.2em 0}
+  .vc-rd-body blockquote{margin:0 0 .9em;padding:.1em 0 .1em 1em;border-left:3px solid var(--acc,#5a9e8f);color:var(--dim2,#8a7e70);font-style:italic}
+  .vc-rd-body hr{border:0;border-top:1px solid var(--border,#3a3530);margin:1.4em 0}
+  .vc-rd-body figure{margin:0 0 1em}.vc-rd-img{max-width:100%;height:auto;border-radius:6px}
+  .vc-rd-body code{font-size:.86em;background:var(--bg2,#272421);padding:1px 4px;border-radius:4px}
+  .vc-rd-body pre{font-size:11.5px;margin:0 0 1em}
+  .vc-rd-body .vc-tablewrap{margin:0 0 1em;font-family:var(--f-ui,system-ui,sans-serif)}
   .it-hd .ic[data-kind="code"]{background:#5ec9a0}.it-hd .ic[data-kind="session"]{background:#4fb3bf}
   .it-hd .ic[data-kind="table"]{background:#6aa2e8}.it-hd .ic[data-kind="widget"]{background:#a78bfa}
   .it-hd .ic[data-kind="loop"]{background:var(--acc3,#e09a55)}.it-hd .ic[data-kind="diagram"]{background:#c58bd6}
@@ -2094,7 +2236,13 @@
         const fresh = !!mid && mid === focusMid;                                    // the turn in view produced it: open, in every tier
         // a header line, until opened. `hasFocus`: with no focus set there is nothing to be out of, so nothing folds
         const wouldFold = foldOf({ tier, aged, open, now: isNow, fresh, hasFocus: !!F, inFocus: !!F && F.has(key) });
-        const compact = wouldFold && !hovered;
+        /* FOLDED BY YOU (owner, 2026-09-28: the enrich items 'often dont have good results and need to be collapsible'): ▾ on
+           the header folds any item to its header line and it stays folded - remembered per canvas - until ▸ or a click
+           on the header opens it. What the canvas brings forth unasked (from='enrich') starts folded: its header says
+           what it is and how much it holds, and it opens when it is wanted. Opening it in place, maximising or editing
+           it overrides the fold. */
+        const ufold = !b._bid && !open && this._isUFolded(key, from);
+        const compact = (wouldFold && !hovered) || ufold;
         const px = this._px[key];
         /* the WIDTH you dragged it to, as a data attribute rather than a style: the placer applies it (it is the one
            thing that knows the columns it has to fit into), and it must survive the markup being rewritten */
@@ -2115,10 +2263,10 @@
         // what is fused INTO this one: drawn as panes of its body, so the two read as one thing
         const g = groupOf(b);
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
-        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '');
+        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (ufold ? ' ufold' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
-          ${ownHead && !compact ? `<span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
-            : `<div class="it-hd"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
+          ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
+            : `<div class="it-hd">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${ufold && Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
             ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
@@ -2248,7 +2396,7 @@
           this._sourceToExplode(w); return; }
         const ch = t.closest('.chip[data-key]'); if (ch) { ev.stopPropagation(); this.call('canvas.add', { key: ch.dataset.key }); return; }
         const hd = t.closest('.it-hd'); const it = hd && hd.closest('.it[data-key]');
-        if (it && !it.classList.contains('ghost')) { ev.stopPropagation(); this._toggleOpen(it.dataset.key); }
+        if (it && !it.classList.contains('ghost')) { ev.stopPropagation(); if (it.classList.contains('ufold')) this._setFold(it.dataset.key, false); else this._toggleOpen(it.dataset.key); }
       });
       // hover: the host hears which item is under the pointer (the runs light up); in the Hover tier a folded item
       // opens in the layout while the pointer is on it — the column makes room, like a click in Zen
@@ -2296,6 +2444,26 @@
       this._hovEl = it || null;
       if (it && it.classList.contains('compact') && it.classList.contains('foldable') && (hoverTier || it.classList.contains('aged'))) { it.classList.remove('compact'); it.classList.add('hovopen'); moved = true; }
       if (moved && this.hasAttribute('stage')) this._placeNow();
+    }
+    /* the folds you made, per canvas: {key: true|false}; an item you never folded or opened takes its default (an enrich
+       item folded, the rest open) */
+    _folds() {
+      const id = String(this.canvasId || '');
+      if (this._foldsFor !== id) { this._foldsFor = id; this._foldMap = {}; try { this._foldMap = JSON.parse(localStorage.getItem('vera:canvas:fold:' + id) || '{}') || {}; } catch (e) { this._foldMap = {}; } }
+      return this._foldMap;
+    }
+    _isUFolded(key, from) {
+      const f = this._folds(); key = String(key);
+      if (Object.prototype.hasOwnProperty.call(f, key)) return !!f[key];
+      return from === 'enrich' || key.indexOf('enrich:') === 0;
+    }
+    _setFold(key, on) {
+      key = String(key); const f = this._folds(); f[key] = !!on;
+      const ks = Object.keys(f); if (ks.length > 400) ks.slice(0, ks.length - 400).forEach((k) => { delete f[k]; });   // bounded
+      try { localStorage.setItem('vera:canvas:fold:' + this._foldsFor, JSON.stringify(f)); } catch (e) {}
+      if (on) this._open.delete(key);
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:fold', { bubbles: true, detail: { key, folded: !!on } })); } catch (e) {}
+      if (this._doc) this.render(this._doc);
     }
     _toggleOpen(key) {
       if (Date.now() - (this._rzT || 0) < 350) return;   // the click that ended a resize
@@ -2358,6 +2526,7 @@
         const i = bl.indexOf(b), j = act === 'up' ? i - 1 : i + 1; if (i < 0 || j < 0 || j >= bl.length) return;
         return this.call('canvas.move', { block_id: String(b.id), order: j });
       }
+      if (act === 'fold') return this._setFold(key, !(it && it.classList.contains('ufold')));
       if (act === 'open') return this._toggleOpen(key);
       if (act === 'max') return this._toggleMax(key);
       if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026'; return this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }); }
@@ -2505,6 +2674,12 @@
             this._explodeAttrs(inner, key);
             // the diagram answers the reader: a card click scrolls the bound code item to that span and lights it
             inner.addEventListener('vera-graph-node', (ev) => this._explodeToSource(key, (ev.detail || {}).node)); }
+          // a records item's GRAPH view (the fabric's answer): the same chrome-less Vera graph, fed the item's records
+          else if (kind === 'rgraph') { inner = document.createElement('vera-graph-embed'); h.textContent = '';
+            inner.setAttribute('renderer', 'data'); inner.setAttribute('expand', 'off'); inner.setAttribute('height', String(Math.max(160, (h.clientHeight || 300) - 16)));
+            ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
+            this._rgFeed(inner, key);
+            inner.addEventListener('vera-graph-node', (ev) => this._rgNode(key, (ev.detail || {}).node)); }
           else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
@@ -2516,6 +2691,7 @@
              its first update; and the redraw is double-buffered (_previewSwap) so there is never a blank frame */
           this._previewSwap(el, previewDoc(h.dataset.lang || cc.lang, cc.code || cc.html || ''));
         } else if (kind === 'explode') { if (h.textContent) h.textContent = ''; this._explodeAttrs(el.firstChild, key);
+        } else if (kind === 'rgraph') { if (h.textContent) h.textContent = ''; this._rgFeed(el.firstChild, key);
         } else if (kind === 'term' && h.dataset.ws) { const t = el.firstChild; if (t && t.getAttribute('ws') !== h.dataset.ws) { t.setAttribute('ws', h.dataset.ws); try { t.destroy && t.destroy(); t.connect(h.dataset.ws); } catch (e) {} } }
       });
       /* a PREVIEW whose slot has gone for a moment - its item folded to a header line as the turn in view moved, a tier
@@ -2537,6 +2713,27 @@
        The contract's cards each carry the span they came from (EXPLODE.md §3), so the two directions are the
        same fact read each way: a card's span → the lines to light here; a selection's lines → the card that
        covers them. Nothing is persisted; this is a reader's pointer, not a document change. */
+    /* the graph of a records item: rebuilt only when its records change (a render is not a new answer), handed to the
+       embed once it is defined */
+    _rgFeed(embed, key) {
+      if (!embed) return;
+      const c = this._contentOf(key) || {}; const g = recGraph(c);
+      const sig = (c.query || '') + '|' + (Array.isArray(c.items) ? c.items.map((r) => r && r.id).join(',') : '');
+      if (embed._rgSig === sig) return; embed._rgSig = sig;
+      const go = () => { try { embed.setGraph(g); } catch (e) {} };
+      if (typeof embed.setGraph === 'function') go();
+      else if (root.customElements) root.customElements.whenDefined('vera-graph-embed').then(go).catch(() => {});
+    }
+    // a record's node, clicked: the list, on the page that holds it, with that record open
+    _rgNode(key, node) {
+      const id = node && String(node.id || ''); if (!id || id.indexOf('r:') !== 0) return;
+      const rid = id.slice(2); const b = this._blockOf(key); const c = (b && b.content) || {};
+      const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object');
+      const st = recState(this, key); st.view = 'list'; st.q = ''; st.dom = ''; st.sort = 'rank'; st.open = st.open || {}; st.open[rid] = true;
+      const per = ({ s: 4, m: 6, l: 10, xl: 20 }[b && b.size] || 8); const i = items.findIndex((r) => String(r.id) === rid);
+      st.page = i >= 0 ? Math.floor(i / per) : 0;
+      if (this._doc) this.render(this._doc);
+    }
     _explodeAttrs(embed, key) {
       const c = this._contentOf(key) || {};
       const set = (k, v) => { const s = v == null ? '' : String(v); if (s ? embed.getAttribute(k) !== s : embed.hasAttribute(k)) { if (s) embed.setAttribute(k, s); else embed.removeAttribute(k); } };
@@ -2718,10 +2915,9 @@
       if (act === 'dom') { st.dom = st.dom === arg ? '' : arg; st.page = 0; return redraw(); }
       if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key); } return redraw(); }
       if (act === 'read' && it && it.url) {
-        st.open[it.id] = true; st.body[it.id] = { busy: 'reading the page' }; redraw();
-        const r = await this.callResult('browser.content', { url: String(it.url), max_chars: 40000 });
-        const text = String((r && (r.text || r.content || r.markdown)) || '');
-        st.body[it.id] = text ? { text } : { err: (r && r.error) || 'the page gave nothing back' }; return redraw();
+        st.open[it.id] = true; st.body[it.id] = { busy: 'reading the page (reader mode)' }; redraw();
+        const rd = await this._readPage(String(it.url));
+        st.body[it.id] = rd.reader ? { reader: rd.reader } : rd.text ? { text: rd.text } : { err: rd.err || 'the page gave nothing back' }; return redraw();
       }
       if ((act === 'rec' || act === 'more') && it && it.ref && it.ref.record_id) {
         const cur = st.body[it.id] || {}; const offset = act === 'more' ? (cur.next | 0) : 0;
@@ -2746,20 +2942,33 @@
         return this.call('canvas.update', { key, content: Object.assign({}, c, { items: items.concat(add), total: items.length + add.length, next: (r && r.next) || null }) });
       }
     }
+    /* a page, READ: reader mode first (browser.reader - the article as markdown, or a composite of a fragmented page),
+       the page's bare text when the reader found nothing to call a body (or is not on this instance). Kept small
+       enough to write into the item: a reader answer is its fields and at most 40k of markdown. */
+    async _readPage(url) {
+      let r = null; try { r = await this.callResult('browser.reader', { url, max_chars: 40000 }); } catch (e) { r = null; }
+      const mdTxt = String((r && r.markdown) || '');
+      if (mdTxt.trim().length > 200) {
+        const keep = ['title', 'byline', 'site', 'published', 'image', 'minutes', 'words', 'composite', 'parts', 'url'];
+        const reader = { markdown: mdTxt.slice(0, 40000) }; keep.forEach((k) => { if (r[k] != null && r[k] !== '') reader[k] = r[k]; });
+        return { reader };
+      }
+      let c = null; try { c = await this.callResult('browser.content', { url, max_chars: 40000 }); } catch (e) { c = null; }
+      const text = String((c && (c.text || c.content)) || '');
+      return text ? { text } : { err: (c && c.error) || (r && r.error) || '' };
+    }
     async _srcAct(key, act) {
       const b = this._blockOf(key); const c = (b && b.content) || null; if (!c || !c.url) return;
       this._srcOpen = this._srcOpen || {};
       if (act === 'read') {
         // already fetched: this is only the fold
         // already fetched, so this press is only the fold - a local repaint, the way the code preview folds
-        if (c.text) { this._srcOpen[key] = !this._srcOpen[key]; this._open.add(key); if (this._doc) this.render(this._doc); return; }
-        this._readout(key, '\u2026 reading the page');
-        // browser.content takes max_chars; `format` was never a parameter of it
-        const r = await this.callResult('browser.content', { url: String(c.url), max_chars: 40000 });
-        const text = String((r && (r.text || r.content || r.markdown)) || '');
-        if (!text) return this._readout(key, (r && r.error) || 'nothing came back');
+        if (c.text || c.reader) { this._srcOpen[key] = !this._srcOpen[key]; this._open.add(key); if (this._doc) this.render(this._doc); return; }
+        this._readout(key, '\u2026 reading the page (reader mode)');
+        const rd = await this._readPage(String(c.url));
+        if (!rd.reader && !rd.text) return this._readout(key, rd.err || 'nothing came back');
         this._srcOpen[key] = true;
-        return this.call('canvas.update', { key, content: Object.assign({}, c, { text: text.slice(0, 40000) }) });
+        return this.call('canvas.update', { key, content: Object.assign({}, c, rd.reader ? { reader: rd.reader } : { text: rd.text.slice(0, 40000) }) });
       }
       if (act === 'shot') {
         if (c.shot) return this.call('canvas.update', { key, content: Object.assign({}, c, { shot: '' }) });
@@ -3048,7 +3257,7 @@
     }
   }
 
-  const api = { place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, version: 6 };
+  const api = { place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

@@ -6734,45 +6734,56 @@ IMPORTANT:
      These read the RESULT (kept on the card by executeCapInline), not the rendered text, and pick the canvas
      block that fits it. Nothing here guesses at prose: a result that matches nothing falls through to the
      markdown it landed as before, which is the honest representation of something with no shape. */
-  /* SOURCES, AS THE RUN FINDS THEM. The research card announces every page it reads; this puts each one on the
-     session canvas, keyed by url so the same page is never there twice and a re-run updates rather than doubles.
-     It lands with what is known at that moment - the address, the domain, how much was read - and NOT with the
-     page's text or picture: a deep run reads dozens of pages, and the item fetches those when it is opened.
-     Anchored to the turn that asked, so it lives with the question it belongs to. */
-  /* A SOURCE ARRIVES AS A HEADLINE AND NOTHING ELSE. The crawl announces {url, domain, chars} - it knows how
-     much it read and does not pass on a word of it - so the card was an address and a title until you pressed
-     "read the page". A reading list of bare headlines is a bibliography, not something you can explore.
-
-     So the first few sources of a run get a SNIPPET, read once and written into the item. Three of them, 600
-     characters each: enough to tell whether a page is worth opening, bounded because a deep run reads dozens and
-     a page fetched to make a two-line preview is still a page fetched. The rest stay headlines until asked for -
-     which is the same bargain the screenshot makes. */
-  const _CV_SRC_SEEN={}; let _cvSnipN=0;
-  async function _cvSnippet(key, url){
-    if(_cvSnipN>=3) return; _cvSnipN++;
+  /* SOURCES, AS THE RUN FINDS THEM. The research card announces every page it reads (vera:research:source); the chat
+     gathers them - keyed by url, so a page announced twice (crawled, then cited) is one row - and anchors the list to
+     the turn that asked. They land WITHOUT the page's text or picture: a deep run reads dozens of pages, and a row reads
+     its page (in reader mode) when it is opened. */
+  /* ONE READING LIST PER RUN, not a card per page (owner, 2026-09-28: "research caps need better outputs to the
+     canvas"). A deep run reads dozens of pages and each landed as its own small source card, so the canvas became a
+     wall of headlines the report itself never reached. The pages of a turn's run now gather into ONE records item -
+     filter, domains as facets, sort, and each page opening in READER MODE in place - updated as the run reads on
+     (batched, so a page is not a write), the pages it CITED first. */
+  const _CV_RS={};
+  function _cvTurnSubject(mid){ return String((document.querySelector('#msgs .mwrap.u[data-mid="'+(mid||'')+'"] .msg-body')||{}).textContent||'').replace(/\s+/g,' ').trim().slice(0,70); }
+  function _cvLandSource(d){
+    if(!SID||!d||!d.url) return;
+    const url=String(d.url); const id=url.split('#')[0]; const mid=_cvRelMid||'';
+    const g=_CV_RS[mid]||(_CV_RS[mid]={ key:'research-sources:'+(mid||'session'), items:[], seen:{}, landed:false, t:0 });
+    let domain=String(d.domain||''); if(!domain){ try{ domain=new URL(url).host; }catch(_){ domain=''; } }
+    let rec=g.seen[id];
+    if(!rec){ rec={ id, url, domain:domain.replace(/^www\./,''), title:String(d.title||'')||domain||url, snippet:'', meta:{} }; g.seen[id]=rec; g.items.push(rec); }
+    else if(!d.cited&&!d.title) return;                     // the same page announced again, with nothing new
+    if(d.title&&(!rec.title||rec.title===rec.domain||rec.title===url)) rec.title=String(d.title);
+    if(+d.chars) rec.meta.read=(+d.chars>1000?(+d.chars/1000).toFixed(1)+'k':String(+d.chars))+' chars';
+    if(d.failed) rec.meta.status='did not load';
+    if(d.cited){ rec.cited=true; rec.meta.cited='cited in the report'; }
+    clearTimeout(g.t); g.t=setTimeout(()=>{ _cvFlushSources(mid); }, 700);
+  }
+  async function _cvFlushSources(mid){
+    const g=_CV_RS[mid]; if(!g||!SID||!g.items.length) return;
+    const items=g.items.slice().sort((a,b)=>(b.cited?1:0)-(a.cited?1:0));
+    const cited=items.filter(r=>r.cited).length; const q=_cvTurnSubject(mid);
+    const content={ title:'Research sources'+(q?' · '+q:''), kind:'research', query:q, items, total:items.length,
+                    why:items.length+' page'+(items.length===1?'':'s')+' read'+(cited?' · '+cited+' cited':'') };
     try{
-      const r=await _capCall('browser.content',{ url, max_chars:600 });
-      const txt=String((r&&(r.text||r.content))||'').replace(/\s+/g,' ').trim();
-      if(!txt) return;
-      const cur=await _capCall('canvas.get',{ session_id:SID });
-      const doc=(cur&&(cur.canvas||cur))||{}; const b=((doc.blocks)||[]).find(x=>x&&x.key===key);
-      if(!b||!b.content||b.content.snippet) return;                   // gone, or someone got there first
-      await _capCall('canvas.update',{ session_id:SID, key, content:Object.assign({}, b.content, { snippet:txt.slice(0,400) }) });
+      if(!g.landed){ const r=await _capCall('canvas.add',{ session_id:SID, kind:'records', key:g.key, at:'now', size:'l', content, anchor:mid?{ mid, turn:mid }:undefined }); if(r&&r.ok) g.landed=true; }
+      else await _capCall('canvas.update',{ session_id:SID, key:g.key, content });
     }catch(_){}
   }
-  async function _cvLandSource(d){
-    if(!SID||!d||!d.url) return;
-    const url=String(d.url); const key='source:'+url.replace(/^https?:\/\//,'').slice(0,120);
-    // the crawl and the citation both announce a page; the second one should not re-post it
-    if(_CV_SRC_SEEN[key]&&!d.cited) return; _CV_SRC_SEEN[key]=true;
-    let domain=String(d.domain||''); if(!domain){ try{ domain=new URL(url).host; }catch(_){ domain=''; } }
-    const mid=_cvRelMid||'';
-    try{ await _capCall('canvas.add',{ session_id:SID, kind:'source', key, at:'now', size:'s',
-      content:{ url, title:String(d.title||''), domain, chars:+d.chars||0, failed:!!d.failed },
-      anchor:mid?{ mid, turn:mid }:undefined });
-      // a page that would not load has nothing to read; the rest get a couple of lines to judge by
-      if(!d.failed) _cvSnippet(key, url);
-    }catch(_){}
+  /* THE REPORT, ON THE CANVAS. A finished run's report was drawn in the chat and nowhere else: the canvas got its
+     sources and, if it had dates in it, a timeline - never the document the run was for. It lands as a document item
+     (headings, tables, lists drawn as they are), its citations as a Sources list at the foot when the report does not
+     already carry one, keyed by the job so a re-run of the same job updates rather than doubles. */
+  async function _cvLandReport(text, mid, jobId, cits){
+    if(!SID) return 0; let md=String(text||''); if(md.trim().length<80) return 0;
+    const list=(Array.isArray(cits)?cits:[]).map(c=>(c&&typeof c==='object')?c:{ url:String(c||'') })
+      .map(c=>({ url:String(c.url||c.link||c.href||''), title:String(c.title||c.name||'') })).filter(c=>/^https?:/.test(c.url));
+    if(list.length&&!/^#+\s*(sources|references|citations|bibliography)\b/im.test(md))
+      md+='\n\n## Sources\n\n'+list.slice(0,40).map((c,i)=>(i+1)+'. ['+(c.title||c.url).replace(/[\[\]]/g,'')+']('+c.url+')').join('\n');
+    const subject=_cvTurnSubject(mid);
+    try{ const r=await _capCall('canvas.add',{ session_id:SID, kind:'markdown', key:'research-report:'+(jobId||mid||Date.now()), at:'now', size:'l',
+      content:{ title:subject?('Research · '+subject):'Research report', md:md.slice(0,60000) }, anchor:mid?{ mid, turn:mid }:undefined });
+      return (r&&r.ok)?1:0; }catch(_){ return 0; }
   }
   document.addEventListener('vera:research:source', ev=>{ try{ _cvLandSource(ev.detail||{}); }catch(_){} });
 
@@ -12863,6 +12874,7 @@ Your task: decide what to do next to advance toward the goal.
     const host=card?card.querySelector('#dag-res-area')||card:null;
     let cancelled=false;
     let fullText='';
+    let cits=[];   // the report's citations (a 'citations' message, or the polled status's) - its Sources on the canvas
 
     /* ── the ONE renderer ───────────────────────────────────────────────────
        All progress/report UI lives in <vera-research-card> (served from
@@ -12909,6 +12921,7 @@ Your task: decide what to do next to advance toward the goal.
           if(cancelled){ws.close();resolve();return;}
           try{
             const m=JSON.parse(e.data);
+            if(m.type==='citations'&&Array.isArray(m.citations)) cits=m.citations;
             if(m.type==='token'||m.type==='thinking') fullText+=(m.text||'');
             if(m.type==='done'){
               clearTimeout(timeout);
@@ -12947,6 +12960,7 @@ Your task: decide what to do next to advance toward the goal.
           // chars), so a WS failure silently downgraded the whole card.
           const result=res.result||res.report||'';
           fullText=result;
+          if(Array.isArray(res.citations)) cits=res.citations;
           (res.citations||[]).length&&push({type:'citations',citations:res.citations});
           finish(result);
           break;
@@ -12959,6 +12973,7 @@ Your task: decide what to do next to advance toward the goal.
     }finally{ if(rc&&rc._cancelBtn) rc._cancelBtn.remove(); }
 
     if(!fullText){return null;}
+    try{ _cvLandReport(fullText, _cvRelMid||'', jobId, cits); }catch(_){}
     HISTORY.push({role:'tool',content:`[research result] ${fullText.slice(0,600)}`});
     // The report is ALREADY on screen, rendered in full. Asking for a summary
     // here is what produced a lossy paraphrase of a document the user could
