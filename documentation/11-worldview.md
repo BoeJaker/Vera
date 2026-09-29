@@ -142,6 +142,15 @@ retrieval evidence while retaining its own model-package provenance. This
 allows their datasets to complement the JEPA implementation without coupling
 JEPA to Godseye storage, UI state, or product-specific schemas.
 
+`vera.godseye.portable_dataset` implements that offline boundary for the
+normalized CCTV, imagery, and building records. It sorts records by stable ID,
+binds every record to the caller-supplied source revision, and emits both an
+immutable `DatasetSnapshot` and a content-addressed artifact identity. Duplicate
+IDs, invalid coordinates, malformed geometry, ambiguous revisions, and
+oversized collections fail closed. The adapter performs no fetch, database
+read, UI inspection, or inference; its provenance explicitly states that it is
+not JEPA authority.
+
 Context's current optional `worldview.query` and `worldview.rollout` lookups
 refer specifically to the JEPA Worldview capability surface. Their historical
 names do not make non-JEPA Worldview or Godseye implementations of JEPA, and
@@ -220,6 +229,7 @@ dangling edges merely to obtain a green report.
 - `vera/worldview/reranking_shadow.py` — exact-identity context comparison only.
 - `vera/worldview/retrieval_provenance.py` — immutable snapshot/checkpoint/index binding.
 - `vera/worldview/retrieval_adapter.py` — live receipt validation for retrieval comparison.
+- `vera/godseye/portable_dataset.py` — portable non-JEPA Worldview/Godseye datasets.
 
 ## Related guides
 

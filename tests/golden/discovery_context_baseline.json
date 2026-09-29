@@ -1,5 +1,5 @@
 {
-  "baseline_id": "dcb_546fd6fd5e43a4b18180e281366941ace3b85a6a302335e6f89c2148d06e642c",
+  "baseline_id": "dcb_c929e64f7767aa3fda89fce6713b9485dcf08df0ef95d89be7e9060c4731fac0",
   "schema": "vera.discovery-context-baseline/v1",
   "components": [
     {
@@ -234,6 +234,19 @@
       "live_required": true
     },
     {
+      "component_id": "godseye.portable-dataset",
+      "role": "data",
+      "source": "vera/godseye/portable_dataset.py",
+      "boundary": "dataset_provider",
+      "execution": "inline",
+      "resource": "none",
+      "data_contract": "vera.godseye-portable-dataset.v1",
+      "enriches": [
+        "fabric.dataset"
+      ],
+      "live_required": false
+    },
+    {
       "component_id": "nlp.dispatch",
       "role": "enrich",
       "source": "vera/research/nlp_dispatch_core.py",
@@ -324,7 +337,6 @@
   "gaps": [
     "discovery_does_not_share_context_registry_selection",
     "agent_rag_uses_a_native_result_shape",
-    "non_jepa_worldview_and_godseye_data_have_no_portable_dataset_boundary",
     "live_source_and_accelerator_evidence_is_not_part_of_this_offline_baseline"
   ]
 }

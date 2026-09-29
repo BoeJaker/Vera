@@ -184,6 +184,11 @@ CURRENT_COMPONENTS = (
         "def repo_root", "native_adapter", "async_local", "storage",
         "vera.godseye-native.v1", (), True),
     DiscoveryContextComponent(
+        "godseye.portable-dataset", "data",
+        "vera/godseye/portable_dataset.py", "def make_portable_dataset",
+        "dataset_provider", "inline", "none",
+        "vera.godseye-portable-dataset.v1", ("fabric.dataset",)),
+    DiscoveryContextComponent(
         "nlp.dispatch", "enrich", "vera/research/nlp_dispatch_core.py",
         "def resolve_placement", "native_adapter", "remote_http", "cpu",
         "vera.nlp.text.v1", ("fabric.dataset",), True),
@@ -205,7 +210,6 @@ CURRENT_COMPONENTS = (
 CURRENT_GAPS = (
     "discovery_does_not_share_context_registry_selection",
     "agent_rag_uses_a_native_result_shape",
-    "non_jepa_worldview_and_godseye_data_have_no_portable_dataset_boundary",
     "live_source_and_accelerator_evidence_is_not_part_of_this_offline_baseline",
 )
 
