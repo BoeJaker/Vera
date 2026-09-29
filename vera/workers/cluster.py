@@ -304,14 +304,21 @@ def _pick_instance_load_aware(
     job_type:    Optional[str] = None,
     rule_override: Optional[dict] = None,
     explain:     Optional[dict] = None,
+    ctx_need:    int = 0,
     **_kw,
 ) -> Optional[str]:
     """
     Load-aware pick_instance.
 
     Effective score = in_use + colocated_worker_penalty * 0.5
-                    + proxy_queue_depth * 0.2 + priority * 0.01
-    Picks the online instance with the lowest score.
+                    + proxy_queue_depth * 0.2 + preference + warm + saturation
+    Picks the online instance with the lowest score (priority breaks ties).
+
+    Also: a context too big for the GPU window goes to a CPU node (the base
+    pick_instance always did this; this patch lost it until 2026-09-28), and
+    a GPU-preferring call may SPILL onto a CPU node that has its model warm
+    while the GPU is full - only where the rule or an active warm scenario
+    allows it (see route_preference.spill_candidates).
 
     Honours the same cluster-routing controls as the base pick_instance:
     disabled nodes (enabled=False) are excluded, and the active routing
@@ -403,6 +410,13 @@ def _pick_instance_load_aware(
     colocated = _colocated_worker_load()
 
     _prefer = _routepref.preferred_of(rule)
+    _slots_of = getattr(_orch, "_ollama_sem_limit", None)
+
+    def _slots(iid: str, inst: dict) -> int:
+        try:
+            return int(_slots_of(iid)) if _slots_of else (1 if inst.get("has_gpu") else 2)
+        except Exception:
+            return 1 if inst.get("has_gpu") else 2
 
     def _score(iid: str, inst: dict) -> float:
         """Real load plus any deliberate soft preference.
@@ -422,6 +436,12 @@ def _pick_instance_load_aware(
         # preferred node is the busier one. See route_preference for why a hard
         # exclusion (avoid_embed) could not express "favours, but will yield".
         s += _routepref.preference_bonus(iid, _prefer)
+        # Warm: the model is already loaded there (no cold load). Smaller than
+        # the preference, so an explicit prefer still wins while it is idle.
+        if model:
+            s += _routepref.warm_bonus(model, inst.get("running"))
+        # Every slot taken: whatever comes next queues behind them.
+        s += _routepref.saturation_penalty(inst.get("in_use", 0), _slots(iid, inst))
         return s
 
     def _has_model(inst: dict) -> bool:
@@ -448,9 +468,53 @@ def _pick_instance_load_aware(
               f"score={_scores[chosen]:.2f}, prio={_prio[chosen]}) from {sorted(cands)}")
         return _out(chosen)
 
+    # ── Oversized context: GPU -> CPU ────────────────────────────────────────
+    # A request bigger than the GPU's safe window would spill the model off
+    # the card (~3x slower) and evict the seated model for everyone after it.
+    # A CPU node degrades gracefully instead - and the warm bonus sends it to
+    # one that already holds the model (gpu-250-cpu keeps the GPU's 9b warm
+    # for exactly this, user 2026-09-28). Only when no CPU node has the model
+    # does the GPU take it anyway.
+    # `prompt_need` (prompt + minimum reserve, measured chars/token) is what
+    # decides: on the GPU the window is capped and the OUTPUT shrinks to fit,
+    # so only a prompt that cannot fit is a reason to leave the card. A caller
+    # that sends only ctx_need gets the old, stricter reading.
+    _need = int(_kw.get("prompt_need") or 0) or int(ctx_need or 0)
+    _safe = getattr(_orch, "gpu_safe_ctx", None)
+    if _need and model and _safe:
+        _with = {iid: i for iid, i in online.items() if _has_model(i)}
+        _g = [iid for iid, i in _with.items() if i.get("has_gpu")]
+        _c = {iid: i for iid, i in _with.items() if not i.get("has_gpu")}
+        if _g and _c:
+            try:
+                _fits = any(_need <= (_safe(model, g) or 10 ** 9) for g in _g)
+            except Exception:
+                _fits = True
+            if not _fits:
+                _note(f"ctx escalation: prompt ~{_need} tokens exceeds the GPU window - "
+                      f"CPU nodes {sorted(_c)}")
+                return _best(_c, "ctx escalation")
+
     if prefer_gpu:
         gpu = {iid: i for iid, i in online.items() if i.get("has_gpu")}
         gpu_model = {iid: i for iid, i in gpu.items() if _has_model(i)}
+        # Warm spill: every GPU slot is taken and a CPU node already holds the
+        # model. Opt-in (rule `spill`, or an active warm scenario for this job
+        # type) - measured, the 9b does 3.86 tok/s on a CPU node against 15-30
+        # on the GPU, so waiting is often the faster answer.
+        if gpu_model and model and all(_routepref.saturation_penalty(
+                i.get("in_use", 0), _slots(iid, i)) for iid, i in gpu_model.items()):
+            _ws = getattr(_orch, "WARM_STATE", None) or {}
+            _scen = str(job_type or "") in (_ws.get("spill_job_types") or ())
+            if (rule or {}).get("spill") or _scen:
+                _tps = getattr(_orch, "_route_tps", None)
+                _sp = _routepref.spill_candidates(
+                    online, model, _slots,
+                    lambda iid: (_tps(model, iid) if _tps else 0.0),
+                    float(_ws.get("spill_min_tps") or 3.0), _scen,
+                    ctx_need=int(ctx_need or 0), max_ctx=int(_ws.get("spill_max_ctx") or 8192))
+                if _sp:
+                    return _best(_sp, "GPU full - warm CPU spill")
         if gpu_model:
             return _best(gpu_model, "prefer_gpu + model")
         # No GPU node has this model: a node that HAS it beats a GPU node that

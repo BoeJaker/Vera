@@ -149,7 +149,7 @@ async def _syscomms_panel_route():
 # Registered as an element rather than a top-level tab: its home is the System
 # sub-tab of the Comms page, which embeds /syscomms/panel directly.
 register_ui(
-    "syscomms", "System Comms", "📡",
+    "syscomms", "System Comms", "≋",
     """<div style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/syscomms/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

@@ -1,39 +1,31 @@
 /**
  * vera_graph_panel_explode.js — "Explode" sidebar panel for vera_graph.js
  * ============================================================================
- * Turns a body of prose, or a stored fabric graph, or (when it exists) a code
- * graph, into a relational graph in the current viewer.
+ * Inspect ONE thing as structure: a fabric record, a slice of one (character
+ * ranges), a few records side by side, or a pasted passage — as the structured
+ * diagram (<vera-structgraph>, /ui/structgraph.js): paragraphs as plates,
+ * entities as cards standing where they were first mentioned, relations as
+ * routed runs styled by kind and by how sure the extractor was. Nothing is
+ * persisted. (Loom is the other tool: it stitches relations INTO the fabric.)
  *
  * Load AFTER vera_graph.js:
  *   <script src="/ui/vera-graph.js"></script>
  *   <script src="/ui/vera-graph-panel-explode.js"></script>
  *
- * WHY THIS IS ONE PANEL AND NOT THREE
- * -----------------------------------
- * vera_graph.js's fetchSnapshot() already routes by LAYER:
+ * WHY THIS IS NOT THE PHYSICS GRAPH
+ * ---------------------------------
+ * A force-directed graph is a fine glance at a stored graph. It is the wrong
+ * picture of one record: it does not read. The structured renderer lays the
+ * record out as bands × columns with orthogonal runs — an architecture diagram
+ * of the text — and every card carries the SPAN it came from, so a click shows
+ * the passage it stands for. The diagram is drawn OVER the graph stage
+ * (panelApi.graphContainer) and stepped out of with one click.
  *
- *   'memory'                -> the memory graph
- *   'entity'                -> /fabric/entity_graph/snapshot      (prose entities)
- *   anything else           -> /fabric/graphs/snapshot?graph=<layer>
- *
- * That last line is the important one: ANY registered fabric graph is already a
- * valid layer. So a code graph registered as `fabric.graphs.register(name="code")`
- * renders here with **no change to vera_graph.js and no change to this panel** —
- * it simply appears in the source list. Prose and code are the same operation
- * against different layers, which is why they share one panel.
- *
- * Sources
- *   • Entities      the prose entity graph (persisted)
- *   • <fabric graph>  any registered graph, listed live from /fabric/graphs
- *   • Text          paste prose, extract entities+relations WITHOUT persisting
- *                   (POST /fabric/entity_graph/extract_text) — the "explode
- *                   this passage" case, useful before committing anything
- *
- * Contract used (all pre-existing):
- *   GET  /fabric/graphs
- *   GET  /fabric/entity_graph/types
- *   POST /fabric/entity_graph/extract_text   {items:[{id,text}], content_type}
- *   graph.fetchSnapshot(layer, params) / graph.load({nodes,edges})
+ * Contract used
+ *   GET  /nlp/explode/layers                 the analysis layers and their defaults
+ *   POST /nlp/explode/prose                  {text | record_id | record_ids, ranges, mode, layers}
+ *                                            → the Explode contract (EXPLODE.md §3)
+ *   graph.state.selected                     the record a click on the graph selected
  */
 (function () {
   'use strict';
@@ -46,10 +38,14 @@
     return;
   }
 
+  var STRUCT_JS = '/ui/structgraph.js';
   var CSS_BTN =
     'width:100%;font-size:9px;padding:5px;background:rgba(90,158,143,.12);' +
     'border:1px solid var(--acc,#5a9e8f);color:var(--acc,#5a9e8f);border-radius:3px;' +
     'cursor:pointer;font-family:var(--mono,monospace)';
+  var CSS_BTN2 =
+    'font-size:9px;padding:3px 7px;background:none;border:1px solid var(--border,#2a2622);' +
+    'color:var(--dim,#6a6058);border-radius:3px;cursor:pointer;font-family:var(--mono,monospace)';
   var CSS_FIELD =
     'width:100%;font-size:9px;padding:4px;background:var(--bg0,#12100e);' +
     'border:1px solid var(--border,#2a2622);color:var(--text,#d8d0c6);' +
@@ -58,10 +54,41 @@
     'font-size:8.5px;color:var(--dim,#6a6058);text-transform:uppercase;' +
     'letter-spacing:.06em;margin:8px 0 3px';
 
-  function el(html) {
-    var d = document.createElement('div');
-    d.innerHTML = html;
-    return d.firstElementChild;
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+  var _structLoading = null;
+  function ensureStruct() {
+    if (window.customElements && window.customElements.get('vera-structgraph')) return Promise.resolve();
+    if (_structLoading) return _structLoading;
+    _structLoading = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = STRUCT_JS;
+      s.onload = function () { resolve(); };
+      s.onerror = function () { reject(new Error('could not load ' + STRUCT_JS)); };
+      document.head.appendChild(s);
+    });
+    return _structLoading;
+  }
+
+  // "12-340, 400-900" → [[12,340],[400,900]]
+  function parseRanges(s) {
+    var out = [];
+    String(s || '').split(/[,;]+/).forEach(function (part) {
+      var m = part.trim().match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+      if (m) out.push([parseInt(m[1], 10), parseInt(m[2], 10)]);
+    });
+    return out;
+  }
+
+  // the passage a span stands for, with the span itself marked
+  function excerpt(doc, span) {
+    if (!doc || !span) return '';
+    var t = doc.source && doc.source.text;
+    if (t && typeof t === 'object') t = t[span.path];
+    if (typeof t !== 'string') return '';
+    var s = Math.max(0, span.start | 0), e = Math.min(t.length, span.end | 0);
+    var a = Math.max(0, s - 90), b = Math.min(t.length, e + 90);
+    return (a > 0 ? '…' : '') + esc(t.slice(a, s)) + '<mark style="background:rgba(90,158,143,.35);color:inherit">' + esc(t.slice(s, e)) + '</mark>' + esc(t.slice(e, b)) + (b < t.length ? '…' : '');
   }
 
   window.veraUI.Graph.registerPanel({
@@ -71,137 +98,317 @@
     order: 15,
 
     mount: function (bodyEl, graph, api) {
-      var self = this;
       var base = (api && api.apiBase) || '';
+      var stage = (api && api.graphContainer) || (graph && graph.container);
 
       bodyEl.innerHTML =
         '<div style="font-size:9px;color:var(--dim,#6a6058);line-height:1.5;margin-bottom:6px">' +
-          'Render a source as a relational graph.' +
+          'Inspect one record, a slice of it, a few records, or a passage as a structured diagram. Nothing is persisted.' +
         '</div>' +
-        '<div style="' + CSS_LABEL + '">Source</div>' +
-        '<select class="xp-src" style="' + CSS_FIELD + '">' +
-          '<option value="entity">Entities (prose)</option>' +
-          '<option value="__text">Text — extract live</option>' +
+        '<div style="' + CSS_LABEL + '">What</div>' +
+        '<select class="xp-what" style="' + CSS_FIELD + '">' +
+          '<option value="record">A record</option>' +
+          '<option value="records">Several records — lanes</option>' +
+          '<option value="text">A passage — pasted</option>' +
+          '<option value="code">Code — a repo file, directory or snippet</option>' +
         '</select>' +
-        '<div class="xp-scope">' +
-          '<div style="' + CSS_LABEL + '">Scope (optional)</div>' +
-          '<input class="xp-dataset" placeholder="dataset_id" style="' + CSS_FIELD + '">' +
-          '<div style="' + CSS_LABEL + '">Entity type</div>' +
-          '<select class="xp-type" style="' + CSS_FIELD + '"><option value="">any</option></select>' +
+        '<div class="xp-w-code" style="display:none">' +
+          '<div style="' + CSS_LABEL + '">Vera\u2019s source</div>' +
+          '<select class="xp-src-dir" style="' + CSS_FIELD + '"><option value="">loading the tree\u2026</option></select>' +
+          '<select class="xp-src-file" style="' + CSS_FIELD + ';margin-top:4px" disabled><option value="">\u2014</option></select>' +
+          '<div class="xp-src-note" style="font-size:9px;color:var(--dim,#6a6058);margin-top:3px"></div>' +
+          '<div style="' + CSS_LABEL + '">Repo path (file or directory)</div>' +
+          '<input class="xp-code-path" placeholder="vera/research/explode_capabilities.py" style="' + CSS_FIELD + '">' +
+          '<div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:9px;color:var(--dim,#6a6058)">' +
+            '<label style="display:flex;gap:4px;align-items:center;cursor:pointer"><input type="checkbox" class="xp-code-hop" checked style="margin:0">pull in the files it imports</label>' +
+          '</div>' +
+          '<div style="' + CSS_LABEL + '">— or a snippet</div>' +
+          '<textarea class="xp-code-text" rows="6" placeholder="Paste code. tree-sitter reads broken or partial code when installed; ast / patterns otherwise." style="' + CSS_FIELD + ';resize:vertical"></textarea>' +
+          '<select class="xp-code-lang" style="' + CSS_FIELD + ';margin-top:4px"><option value="">language — detect</option><option value="python">python</option><option value="javascript">javascript</option><option value="typescript">typescript</option><option value="css">css</option><option value="html">html</option></select>' +
         '</div>' +
-        '<div class="xp-textwrap" style="display:none">' +
-          '<div style="' + CSS_LABEL + '">Text</div>' +
-          '<textarea class="xp-text" rows="7" placeholder="Paste prose to explode into entities and relations. Nothing is persisted." ' +
+        '<div class="xp-w-record">' +
+          '<div style="' + CSS_LABEL + '">Record id</div>' +
+          '<div style="display:flex;gap:4px"><input class="xp-record" placeholder="record id" style="' + CSS_FIELD + '">' +
+          '<button class="xp-pick" title="Use the record selected on the graph" style="' + CSS_BTN2 + ';white-space:nowrap">selected</button></div>' +
+          '<div style="' + CSS_LABEL + '">Slice (optional)</div>' +
+          '<input class="xp-ranges" placeholder="start-end, start-end  (characters)" style="' + CSS_FIELD + '">' +
+        '</div>' +
+        '<div class="xp-w-records" style="display:none">' +
+          '<div style="' + CSS_LABEL + '">Record ids — one per line</div>' +
+          '<textarea class="xp-records" rows="4" style="' + CSS_FIELD + ';resize:vertical"></textarea>' +
+        '</div>' +
+        '<div class="xp-w-text" style="display:none">' +
+          '<div style="' + CSS_LABEL + '">Passage</div>' +
+          '<textarea class="xp-text" rows="7" placeholder="Paste prose to explode. Nothing is persisted." ' +
             'style="' + CSS_FIELD + ';resize:vertical"></textarea>' +
         '</div>' +
-        '<div style="' + CSS_LABEL + '">Limit</div>' +
-        '<input class="xp-limit" type="number" value="200" min="10" max="2000" style="' + CSS_FIELD + '">' +
+        '<div style="' + CSS_LABEL + '">Mode</div>' +
+        '<select class="xp-mode" style="' + CSS_FIELD + '">' +
+          '<option value="">auto — position for a slice or passage, type for a record</option>' +
+          '<option value="position">position — paragraphs down, entity types across</option>' +
+          '<option value="type">type — a band per entity type, paragraphs across</option>' +
+        '</select>' +
+        '<div style="' + CSS_LABEL + '">Layers</div>' +
+        '<div class="xp-layers" style="font-size:9px;line-height:1.7;font-family:var(--mono,monospace)">loading…</div>' +
+        '<div style="margin-top:6px;font-size:9px;color:var(--dim,#6a6058)"><label style="display:flex;gap:5px;align-items:center;cursor:pointer" title="Run the scorers too: readability · structure · sources · AI-likelihood (stylometric, low confidence) · trust for prose; complexity · smells · clones · tests · provenance · health for code. Every verdict says what produced it; click one for its evidence.">' +
+          '<input type="checkbox" class="xp-assess" checked style="margin:0">assess — a verdict rail with evidence</label></div>' +
         '<div style="margin-top:8px"><button class="xp-go" style="' + CSS_BTN + '">Explode</button></div>' +
         '<div class="xp-stat" style="font-size:8.5px;color:var(--dim,#6a6058);' +
           'font-family:var(--mono,monospace);margin-top:7px;line-height:1.5"></div>';
 
-      var srcSel = bodyEl.querySelector('.xp-src');
-      var typeSel = bodyEl.querySelector('.xp-type');
-      var dsIn = bodyEl.querySelector('.xp-dataset');
-      var limIn = bodyEl.querySelector('.xp-limit');
-      var textWrap = bodyEl.querySelector('.xp-textwrap');
-      var scopeWrap = bodyEl.querySelector('.xp-scope');
-      var textIn = bodyEl.querySelector('.xp-text');
-      var stat = bodyEl.querySelector('.xp-stat');
+      var $ = function (sel) { return bodyEl.querySelector(sel); };
+      var whatSel = $('.xp-what'), recIn = $('.xp-record'), rangesIn = $('.xp-ranges'), recsIn = $('.xp-records'),
+          textIn = $('.xp-text'), modeSel = $('.xp-mode'), layersEl = $('.xp-layers'), stat = $('.xp-stat'),
+          codeIn = $('.xp-code-path');
 
       function say(msg, bad) {
         if (!stat) return;
-        stat.textContent = msg || '';
+        stat.innerHTML = msg || '';
         stat.style.color = bad ? 'var(--err,#b4563c)' : 'var(--dim,#6a6058)';
       }
-
-      // ── Populate the source list from the live graph registry ──────────────
-      // Any registered fabric graph is a valid layer, so a code graph shows up
-      // here the moment it is registered — no change to this file.
-      fetch(base + '/fabric/graphs')
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          var graphs = (d && (d.graphs || d.registered)) || [];
-          graphs.forEach(function (g) {
-            var name = (typeof g === 'string') ? g : (g.name || g.graph);
-            if (!name || name === 'entity') return;
-            var o = document.createElement('option');
-            o.value = name;
-            o.textContent = name + (g && g.description ? ' — ' + g.description : '');
-            srcSel.insertBefore(o, srcSel.lastElementChild);
-          });
-        })
-        .catch(function () { /* registry unavailable: the two built-ins still work */ });
-
-      fetch(base + '/fabric/entity_graph/types')
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          ((d && d.types) || []).slice(0, 40).forEach(function (t) {
-            var o = document.createElement('option');
-            o.value = t.type;
-            o.textContent = t.type + ' (' + t.count + ')';
-            typeSel.appendChild(o);
-          });
-        })
-        .catch(function () {});
-
-      function syncMode() {
-        var isText = srcSel.value === '__text';
-        textWrap.style.display = isText ? '' : 'none';
-        scopeWrap.style.display = isText ? 'none' : '';
-        typeSel.parentElement.style.display =
-          (srcSel.value === 'entity') ? '' : 'none';
+      function syncWhat() {
+        var w = whatSel.value;
+        $('.xp-w-record').style.display = w === 'record' ? '' : 'none';
+        $('.xp-w-records').style.display = w === 'records' ? '' : 'none';
+        $('.xp-w-text').style.display = w === 'text' ? '' : 'none';
+        $('.xp-w-code').style.display = w === 'code' ? '' : 'none';
+        // prose has modes and NLP layers; code has one layout and its own layers (drawn from the reply)
+        [modeSel, modeSel.previousElementSibling, layersEl, layersEl.previousElementSibling].forEach(function (el) { if (el) el.style.display = w === 'code' ? 'none' : ''; });
       }
-      srcSel.onchange = syncMode;
-      syncMode();
+      whatSel.onchange = syncWhat;
+      syncWhat();
 
-      // ── Explode ───────────────────────────────────────────────────────────
-      bodyEl.querySelector('.xp-go').onclick = async function () {
-        var limit = parseInt(limIn.value, 10) || 200;
+      // the record selected on the graph, when one is
+      function selectedId() {
+        var n = graph && graph.state && graph.state.selected;
+        if (!n) return '';
+        var t = String(n.type || (n.labels && n.labels[0]) || '');
+        return (/record/i.test(t) || n.props && n.props.record_id) ? String((n.props && n.props.record_id) || n.id) : String(n.id || '');
+      }
+      $('.xp-pick').onclick = async function () {
+        var id = selectedId();
+        if (!id) { say('select something on the graph first', true); return; }
+        recIn.value = id; whatSel.value = 'record'; syncWhat();
+        say('reading ' + id + '…');
+        var tg = await resolveTarget({ id: id, max_records: 12 });          // say what it is BEFORE exploding it
+        say(tg && tg.ok ? esc(tg.label || id) + ' — ' + esc(tg.why || '') : esc((tg && tg.why) || id), !(tg && tg.ok));
+      };
+      if (!recIn.value) recIn.value = selectedId();
 
-        if (srcSel.value === '__text') {
-          var text = (textIn.value || '').trim();
-          if (!text) { say('nothing to extract', true); return; }
-          say('extracting…');
-          try {
-            var res = await fetch(base + '/fabric/entity_graph/extract_text', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                items: [{ id: 'pasted', text: text }],
-                content_type: 'text',
-              }),
-            });
-            var data = await res.json();
-            var nodes = (data && data.nodes) || [];
-            var edges = (data && data.edges) || [];
-            if (!nodes.length) {
-              say('no entities found in that text', true);
-              return;
-            }
-            graph.load({ nodes: nodes, edges: edges });
-            say(nodes.length + ' entities, ' + edges.length + ' relations — not persisted');
-          } catch (e) {
-            say('extract failed: ' + e, true);
-          }
+      /* ── Vera's source, as a picker ─────────────────────────────────────────
+         "a drop selector ... for veras source in-whole or in-part (i.e. 1 folder or file or the entire thing) -
+         just to make it easier" (owner, 2026-09-22). Typing a repo path was the only way in. Every choice says
+         how much it is about to draw, because the whole tree is over a thousand files and a reader should know
+         that before asking for it. */
+      var dirSel = $('.xp-src-dir'), fileSel = $('.xp-src-file'), srcNote = $('.xp-src-note');
+      var TREE = { folders: [], files: [], byDir: {} };
+      var WHOLE = '*';                                  // the sentinel for "the entire thing"
+      var WHOLE_CAP = 60;                               // and what that honestly means at once
+      function srcSay(msg){ if(srcNote) srcNote.textContent = msg || ''; }
+      function fillFiles(dir){
+        var own = TREE.byDir[dir] || [];
+        fileSel.innerHTML = '<option value="">the whole folder \u2014 ' + own.length + ' file' + (own.length===1?'':'s') + '</option>'
+          + own.map(function(f){ return '<option value="' + esc(f.path) + '">' + esc(f.path.split('/').pop()) + ' \u00b7 ' + Math.round((f.bytes||0)/1024) + ' kB</option>'; }).join('');
+        fileSel.disabled = !own.length;
+      }
+      /* The note says what the CURRENT pair of choices would draw. It never rebuilds the file list: doing that on
+         every change threw away the file the reader had just picked (seen live -- the path fell back to the
+         folder the instant a file was chosen), so the list is rebuilt only when the FOLDER changes. */
+      function saySrc(){
+        var dir = dirSel.value;
+        if(dir === WHOLE){
+          srcSay(TREE.files.length + ' files in the tree \u2014 the first ' + WHOLE_CAP + ' by path are exploded together; pick a folder for something readable');
           return;
         }
+        var own = TREE.byDir[dir] || [];
+        srcSay(fileSel.value
+          ? fileSel.value + ' \u2014 one file' + ($('.xp-code-hop').checked ? ', with the files it imports' : '')
+          : (dir || '/') + ' \u00b7 ' + own.length + ' file' + (own.length===1?'':'s') + ' \u2014 its imports join them if the box below is ticked');
+      }
+      function syncDir(){                                  // the folder changed: rebuild its files, start at "all of it"
+        var dir = dirSel.value;
+        if(dir === WHOLE){
+          fileSel.innerHTML = '<option value="">every file \u2014 ' + TREE.files.length + '</option>';
+          fileSel.disabled = true; codeIn.value = WHOLE; saySrc(); return;
+        }
+        fillFiles(dir);
+        codeIn.value = dir;
+        saySrc();
+      }
+      function syncFile(){                                 // the file changed: nothing is rebuilt, so it STAYS chosen
+        codeIn.value = fileSel.value || dirSel.value;
+        saySrc();
+      }
+      fetch(base + '/code/sources')
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(!d || d.error){ dirSel.innerHTML = '<option value="">the tree is unavailable \u2014 type a path</option>'; return; }
+          TREE.folders = d.folders || []; TREE.files = d.files || []; TREE.byDir = {};
+          TREE.files.forEach(function(f){ var dir = f.path.indexOf('/') < 0 ? '' : f.path.slice(0, f.path.lastIndexOf('/'));
+            (TREE.byDir[dir] = TREE.byDir[dir] || []).push(f); });
+          dirSel.innerHTML = '<option value="' + WHOLE + '">Vera \u2014 the whole tree (' + TREE.files.length + ' files)</option>'
+            + TREE.folders.map(function(f){ return '<option value="' + esc(f.path) + '">' + esc(f.path || '/') + ' \u00b7 ' + f.files + '</option>'; }).join('');
+          var want = TREE.folders.filter(function(f){ return /^vera\//.test(f.path); })[0] || TREE.folders[0];
+          if(want){ dirSel.value = want.path; }
+          syncDir();
+        })
+        .catch(function(){ dirSel.innerHTML = '<option value="">the tree is unavailable \u2014 type a path</option>'; });
+      dirSel.onchange = syncDir;
+      fileSel.onchange = syncFile;
+      $('.xp-code-hop').addEventListener('change', saySrc);
 
-        // A stored layer: 'entity' or any registered fabric graph.
-        var params = { limit: limit };
-        if (dsIn.value.trim()) params.dataset_id = dsIn.value.trim();
-        if (srcSel.value === 'entity' && typeSel.value) params.entity_type = typeSel.value;
-        say('loading ' + srcSel.value + '…');
+      // ── the layers, from the registry ───────────────────────────────────────
+      fetch(base + '/nlp/explode/layers')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var L = (d && d.layers) || [];
+          if (!L.length) { layersEl.textContent = 'no layers registered'; return; }
+          layersEl.innerHTML = L.map(function (l) {
+            return '<label style="display:flex;gap:5px;align-items:center;cursor:pointer" title="' + esc((l.by || '') + (l.where ? ' · ' + l.where : '')) + '">' +
+              '<input type="checkbox" data-l="' + esc(l.id) + '"' + (l.default_on ? ' checked' : '') + ' style="margin:0">' +
+              '<span>' + esc(l.label || l.id) + '</span><span style="color:var(--dim,#6a6058)">' + esc(l.where || '') + '</span></label>';
+          }).join('');
+        })
+        .catch(function () { layersEl.textContent = 'layers unavailable — the defaults will run'; });
+
+      function chosenLayers() {
+        var boxes = layersEl.querySelectorAll('input[data-l]');
+        if (!boxes.length) return null;
+        var out = [];
+        boxes.forEach(function (b) { if (b.checked) out.push(b.dataset.l); });
+        return out;
+      }
+
+      // ── what IS the thing that was clicked? ─────────────────────────────────
+      // The panel used to assume every id on the graph was a fabric record id and post it as one, so clicking a
+      // Dataset node answered "explode failed: record topic_… not found" for something that was never a record
+      // (owner, 2026-09-22 — it holds four records). explode.target resolves it server-side and says both what it
+      // is and how it explodes: a record, a dataset's records as lanes, an entity's evidence, a memory's own text,
+      // a code file. Nothing explodable is a sentence about the thing, not an error.
+      async function resolveTarget(q) {
         try {
-          await graph.fetchSnapshot(srcSel.value, params);
-          say('loaded ' + srcSel.value);
+          var r = await fetch(base + '/explode/target', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(q),
+          });
+          return await r.json();
+        } catch (e) { return { ok: false, why: String(e) }; }
+      }
+
+      // ── the diagram, over the stage ─────────────────────────────────────────
+      var overlay = null, sg = null, lastDoc = null;
+      function closeOverlay() { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; sg = null; }
+      bodyEl._xpClose = closeOverlay;
+      function openOverlay(doc, label) {
+        closeOverlay();
+        if (!stage) { say('no graph stage to draw on', true); return; }
+        if (getComputedStyle(stage).position === 'static') stage.style.position = 'relative';
+        overlay = document.createElement('div');
+        overlay.className = 'vg-explode-overlay';
+        overlay.style.cssText = 'position:absolute;inset:0;z-index:60;display:flex;flex-direction:column;background:var(--bg0,#12100e)';
+        overlay.innerHTML =
+          '<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;font-size:9px;font-family:var(--mono,monospace);color:var(--dim,#6a6058);border-bottom:1px solid var(--border,#2a2622)">' +
+            '<button class="xp-back" style="' + CSS_BTN2 + '">← graph</button>' +
+            '<span class="xp-label" style="color:var(--text,#d8d0c6)">' + esc(label) + '</span>' +
+            '<span class="xp-counts"></span>' +
+            '<span style="flex:1"></span>' +
+            '<span class="xp-hint">click a card for its passage · double-click to re-explode from it</span>' +
+          '</div>' +
+          '<vera-structgraph style="flex:1;min-height:0;display:flex"></vera-structgraph>' +
+          '<div class="xp-excerpt" style="display:none;padding:6px 10px;font-size:9.5px;line-height:1.5;color:var(--text,#d8d0c6);border-top:1px solid var(--border,#2a2622);max-height:96px;overflow:auto"></div>';
+        stage.appendChild(overlay);
+        sg = overlay.querySelector('vera-structgraph');
+        var ex = overlay.querySelector('.xp-excerpt');
+        overlay.querySelector('.xp-back').onclick = closeOverlay;
+        overlay.querySelector('.xp-counts').textContent = '· ' + (doc.cards || []).length + ' cards · ' + (doc.edges || []).length + ' runs · ' + (doc.groups || []).length + ' groups';
+        sg.addEventListener('vera-explode-select', function (ev) {
+          var d = ev.detail || {}; var h = excerpt(lastDoc, d.span);
+          ex.style.display = h ? '' : 'none';
+          ex.innerHTML = h ? '<b style="color:var(--acc,#5a9e8f)">' + esc(d.card && d.card.title) + '</b> · ' + esc(d.card && d.card.kind) + ' — ' + h : '';
+        });
+        sg.addEventListener('vera-explode-verdict', function (ev) {
+          var d = ev.detail || {}; var evs = (d.evidence || []).slice(0, 6);
+          ex.style.display = '';
+          ex.innerHTML = '<b style="color:var(--acc,#5a9e8f)">' + esc(d.label || d.key) + '</b> ' + (d.score != null ? Number(d.score).toFixed(2) : '') +
+            ' <span style="color:var(--dim,#6a6058)">· ' + esc(d.by || '') + (d.confidence != null ? ' · confidence ' + d.confidence : '') + '</span>' +
+            (evs.length ? '<div style="margin-top:4px">' + evs.map(function (e) { var h = excerpt(lastDoc, e.span); return '<div style="margin:2px 0"><span style="color:var(--dim,#6a6058)">' + esc(e.note || '') + '</span>' + (h ? ' — ' + h : '') + '</div>'; }).join('') + '</div>' : ' — no evidence spans: a composite, or a whole-text measure');
+        });
+        sg.addEventListener('vera-explode-drill', function (ev) {
+          var d = ev.detail || {}; if (!d.card || !d.card.title) return;
+          textIn.value = String(d.card.title); whatSel.value = 'text'; syncWhat();
+          say('re-explode from a card: paste the passage it stands in — the title alone is too little');
+        });
+        sg.setDoc(doc);
+      }
+
+      // ── Explode ─────────────────────────────────────────────────────────────
+      $('.xp-go').onclick = async function () {
+        var body = { include_text: true };
+        var w = whatSel.value, label = '', why = '';
+        if (w === 'record') {
+          var id = recIn.value.trim() || selectedId();
+          if (!id) { say('a record id is needed — or select one on the graph', true); return; }
+          say('resolving ' + id + '…');
+          var tg = await resolveTarget({ id: id, max_records: 12 });
+          if (!tg || !tg.ok) { say((tg && tg.why) || ('nothing to explode for ' + id), true); return; }
+          if (tg.cap === 'code.explode') w = 'code';
+          body = tg.args || {};
+          if (w !== 'code') body.include_text = true;
+          label = tg.label || id; why = tg.why || '';
+          var rg = parseRanges(rangesIn.value);
+          if (rg.length && body.record_id) { body.ranges = rg; label += ' · ' + rg.map(function (r) { return r[0] + '–' + r[1]; }).join(', '); }
+        } else if (w === 'records') {
+          var ids = recsIn.value.split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
+          if (ids.length < 2) { say('two or more record ids, one per line', true); return; }
+          body.record_ids = ids; label = ids.length + ' records';
+        } else if (w === 'code') {
+          var cpath = $('.xp-code-path').value.trim(), ctext = ($('.xp-code-text').value || '').trim();
+          body = {};
+          if (ctext) { body.text = ctext; body.lang = $('.xp-code-lang').value; body.path = cpath; label = 'code · ' + (body.lang || 'detected') + ' · ' + ctext.length + ' chars'; }
+          else if (cpath === WHOLE) {
+            // the entire thing: what that means is said, not implied — the cap is the panel's, and it shows
+            var all = TREE.files.map(function (f) { return f.path; });
+            if (!all.length) { say('the tree is not loaded yet', true); return; }
+            body.paths = all.slice(0, WHOLE_CAP); body.depth = 0;
+            label = 'Vera · ' + body.paths.length + ' of ' + all.length + ' files';
+            why = 'the whole tree is ' + all.length + ' files; this is the first ' + body.paths.length + ' by path';
+          }
+          else if (cpath) { body.path = cpath; body.depth = $('.xp-code-hop').checked ? 1 : 0; label = cpath; }
+          else { say('a repo path or a snippet is needed', true); return; }
+        } else {
+          var text = (textIn.value || '').trim();
+          if (!text) { say('nothing to explode', true); return; }
+          body.text = text; label = 'passage · ' + text.length + ' chars';
+        }
+        if (w !== 'code') {
+          if (modeSel.value) body.mode = modeSel.value;
+          var L = chosenLayers(); if (L) body.layers = L;
+        }
+        if ($('.xp-assess').checked) body.assess = true;
+        say('exploding…');
+        try {
+          await ensureStruct();
+          var res = await fetch(base + (w === 'code' ? '/code/explode' : '/nlp/explode/prose'), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          });
+          var doc = await res.json();
+          if (!doc || doc.error) { say('explode failed: ' + ((doc && doc.error) || res.status), true); return; }
+          lastDoc = doc;
+          openOverlay(doc, label);
+          var rows = (doc.layers || []).map(function (l) {
+            return (l.on ? (l.error ? '✗ ' : '✓ ') : '· ') + esc(l.label || l.id) + (l.on && !l.error ? ' ' + l.count + (l.ms ? ' · ' + l.ms + ' ms' : '') + (l.where ? ' · ' + esc(l.where) : '') : '') + (l.error ? ' — ' + esc(l.error) : '');
+          });
+          say((why ? esc(why) + '<br>' : '') +
+              (doc.counts ? doc.counts.cards + ' cards, ' + doc.counts.edges + ' runs, ' + (doc.counts.paragraphs != null ? doc.counts.paragraphs + ' paragraphs' : doc.counts.files + ' file' + (doc.counts.files === 1 ? '' : 's') + (doc.counts.external ? ', ' + doc.counts.external + ' external' : '')) : '') +
+              (doc.source && doc.source.engines ? ' · ' + doc.source.engines.join(' + ') + (doc.source.tree_sitter === false ? ' (tree-sitter not installed)' : '') : '') +
+              (doc.source && doc.source.partial ? ' · partial' : '') + ' · not persisted<br>' + rows.join('<br>'));
         } catch (e) {
-          say('load failed: ' + e, true);
+          say('explode failed: ' + e, true);
         }
       };
     },
 
     unmount: function (bodyEl) {
+      if (bodyEl && bodyEl._xpClose) { try { bodyEl._xpClose(); } catch (e) {} }
       if (bodyEl) bodyEl.innerHTML = '';
     },
   });

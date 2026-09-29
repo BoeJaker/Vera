@@ -60,9 +60,10 @@
  *
  *   Once a host confirms it's actually rendering the injected menu, it
  *   sends back `{type:'vera:panel:nav_hosted'}`, which the shim turns into
- *   a `vpb-nav-hosted` class on <html> — a panel's OWN stylesheet uses that
- *   to hide its now-redundant internal rail, e.g.:
- *     html.vpb-nav-hosted #secNav{display:none}
+ *   a `vpb-nav-hosted` class on <html>, which hides the panel's own
+ *   now-redundant menu. Every panel gets that for free from the shared
+ *   /ui/vera-panel.css:
+ *     html.vpb-nav-hosted [data-vera-lhm]{display:none}
  *   This is confirmation-driven, never assumed from "am I in an iframe" —
  *   a panel opened standalone, or mounted somewhere that hasn't adopted nav
  *   injection (today: the chat side-rail), never gets this class and keeps
@@ -82,6 +83,129 @@
   var _navItems = null;      // [{id,label}] once a panel registers, else null
   var _navActiveId = '';
   var _navSelectFn = null;
+
+  // ── A PANEL'S MENU AS THE CHAT'S (owner, 2026-09-27: "can each internal ui panel drop into its lhm menu like the chat").
+  // The items a panel registered are published as a full LHM spec too (state.nav.lhm), so the harness draws the panel's
+  // menu IN its LHM - a rail of icons, the open one's list beside it - exactly as it draws the chat's. A panel whose items
+  // come in named groups (the Estate: Overview, Machines, ...) gets a rail icon per group and that group's items as the
+  // list; a flat one gets a rail icon per item and the whole list beside it. Menu ids are '\u00a7g<n>' (a group) and
+  // '\u00a7i<n>' (an item); a pick is '<menu>' or '<menu>/<item id>', resolved back to an item id by _navResolve.
+
+  // ── NESTED PANELS (owner, 2026-09-27: "the comms and estate storage menus and any other deep LHMs needs fully absorbing
+  // into the new chat/harness ui based unified LHM system"). A panel that shows other panels in frames - Comms (its
+  // Calendar, Email, Telegram ...), the Estate (its Storage, its map) - hears the menu each child publishes (their
+  // bridges post to this page, their parent). The child that is SHOWN has its sections listed under the item that shows
+  // it (depth 1 in the docked menu), its current section lit; a pick on one is sent down to the child as its own
+  // nav_select; while this menu is docked the child is told it is hosted, so its own sidebar folds away; and when this
+  // page has no top bar of its own, the shown child's bar is offered up in its place. ──
+  var _kids = [], _hostedUp = false, _hdrKid = null;
+  // only a panel IN the harness nests: never the harness itself (it hosts every panel) nor the chat (its side panel is its own)
+  function _nestOn(){ try{ return window.parent && window.parent !== window && !document.documentElement.hasAttribute('data-harness'); }catch(e){ return false; } }
+  function _kidOf(win){
+    for(var i = 0; i < _kids.length; i++) if(_kids[i].win === win) return _kids[i];
+    var fr = null; try{ var fs = document.querySelectorAll('iframe'); for(var j = 0; j < fs.length; j++) if(fs[j].contentWindow === win){ fr = fs[j]; break; } }catch(e){}
+    if(!fr) return null; var k = { win: win, frame: fr, nav: null, hdr: null }; _kids.push(k); return k;
+  }
+  function _kidShown(k){ try{ return !!(k.frame && k.frame.isConnected && (k.frame.offsetWidth || k.frame.offsetHeight)); }catch(e){ return false; } }
+  function _activeKid(){ for(var i = _kids.length - 1; i >= 0; i--){ var k = _kids[i]; if(_kidShown(k) && k.nav && k.nav.items && k.nav.items.length) return k; } return null; }
+  // ── A PAGE'S OWN SUB-SECTIONS (owner, 2026-09-28: "the estate ui's observe menu is missing the perf section"). A section
+  // that switches between views in the page itself (Observe: Events / Perf) marks each tab data-vera-sub="<id>"; while its
+  // strip is shown the docked menu lists them under the open item ('s:<id>'), the current one lit, and a pick clicks the tab.
+  // A strip in a bar the harness absorbed still counts as shown (the bar is folded away because the harness holds it). ──
+  function _subShown(el){ for(var n = el; n && n !== document.body; n = n.parentElement){ if(n.hidden) return false; var cs = getComputedStyle(n);
+      if(cs.visibility === 'hidden') return false; if(cs.display === 'none' && !n.hasAttribute('data-vpb-hdr-bar')) return false; } return !!el; }
+  function _subLabel(el){ var own = ''; Array.prototype.forEach.call(el.childNodes, function(c){ if(c.nodeType === 3) own += c.textContent; });
+    return String(el.getAttribute('data-label') || own.trim() || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40); }
+  function _pageSubs(){ try{
+    var els = Array.prototype.slice.call(document.querySelectorAll('[data-vera-sub]')).filter(_subShown).slice(0, 24); if(!els.length) return null;
+    var on = els.filter(function(el){ return /\b(active|on|selected)\b/.test(String(el.className || '')) || el.getAttribute('aria-selected') === 'true'; })[0];
+    return { items: els.map(function(el){ return { id: String(el.getAttribute('data-vera-sub')), label: _subLabel(el), el: el }; }), active: on ? String(on.getAttribute('data-vera-sub')) : '' };
+  }catch(e){ return null; } }
+  function _kidsHosted(on){ _hostedUp = !!on; _kids.forEach(function(k){ try{ k.win.postMessage({ type: on ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){} }); }
+  window.addEventListener('message', function(ev){
+    if(!_nestOn()) return;
+    var d = ev.data; if(!d || typeof d !== 'object' || !ev.source || ev.source === window) return;
+    try{ if(ev.source === window.parent) return; }catch(e){}
+    if(d.type !== 'vera:panel:state' && d.type !== 'vera:hdr:offer') return;
+    var k = _kidOf(ev.source); if(!k) return;
+    if(d.type === 'vera:panel:state'){
+      var nv = d.state && d.state.nav; k.nav = (nv && Array.isArray(nv.items)) ? { items: nv.items.slice(0, 60).map(function(it){ return { id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48) }; }), active: String(nv.active || '') } : null;
+      if(k.nav && nv.lhm && Array.isArray(nv.lhm.widgets)) k.nav.widgets = nv.lhm.widgets.slice(0, 8).map(String);   // the child's menu widgets ride up with its sections
+      try{ ev.source.postMessage({ type: (_hostedUp || document.documentElement.classList.contains('vpb-nav-hosted')) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){}
+      publishStateDebounced();
+    } else { k.hdr = d; _hdrRelay(); }
+  });
+  // what is shown changes as this page switches its own item: look again, cheaply
+  setInterval(function(){ if(!_nestOn()) return; var k = _activeKid(); var ps = (typeof _pageSubs === 'function') ? _pageSubs() : null; var sig = (k ? k.frame.getAttribute('src') + '|' + k.nav.active : '') + '|' + (ps ? ps.items.map(function(it){ return it.id; }).join(',') + '>' + ps.active : ''); if(sig !== _kidSig){ _kidSig = sig; publishStateDebounced(); _hdrRelay(); } }, 1000);
+  var _kidSig = '';
+  function _hdrRelay(){
+    if(typeof _hdrBar !== 'undefined' && _hdrBar) return;   // this page has its own bar
+    var k = null; for(var i = _kids.length - 1; i >= 0; i--){ if(_kidShown(_kids[i]) && _kids[i].hdr){ k = _kids[i]; break; } }
+    var had = _hdrKid; _hdrKid = k;
+    if(!k){ if(had){ try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: [] }, '*'); }catch(e){} } return; }
+    try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: k.hdr.title || document.title || '', groups: k.hdr.groups || [] }, '*'); }catch(e){}
+  }
+  // ── ANY PAGE'S MENU DOCKS (owner, 2026-09-27: "the research ui lhm needs integrating into the unified lhm and im sure
+  // there are more"). A page marks its menu data-vera-lhm - whatever its markup, a sidebar, an icon rail, a strip of view
+  // tabs - and the shell's nav code (/ui/vera-panel.js) publishes it; a page that does not load that code has it brought
+  // here. Docked, the marked menu folds away, firmly: a page's own #nav{display:...} would otherwise outrank the rule. ──
+  function _adoptLhm(){
+    try{
+      if(!document.querySelector('[data-vera-lhm]')) return;
+      if(!document.getElementById('vpb-lhm-css')){ var st = document.createElement('style'); st.id = 'vpb-lhm-css';
+        st.textContent = 'html.vpb-nav-hosted [data-vera-lhm]:not(.vp-has-content){display:none!important}';
+        (document.head || document.documentElement).appendChild(st); }
+      if(!window.veraPanel && !document.querySelector('script[src$="/ui/vera-panel.js"]')){ var s = document.createElement('script'); s.src = '/ui/vera-panel.js'; (document.head || document.documentElement).appendChild(s); }
+    }catch(e){}
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _adoptLhm); else _adoptLhm();
+
+  var _navLhmOpts = null;
+  // ── A PANEL'S MENU WIDGETS (owner, 2026-09-27: "any lhm items that can be made into widgets ... like the calendar controls
+  // and even the calendar from the comms ui itself - and the different parts of it like the schedule view"). A page names
+  // the widgets its docked menu carries on any element: data-lhm-widgets="cal:controls cal:month@m" - template ids, @size
+  // optional. They ride in the lhm spec (spec.widgets); a nesting page passes its shown child's up with the child's sections.
+  function _navWidgets(){ try{ var el = document.querySelector('[data-lhm-widgets]'); if(!el) return [];
+    return String(el.getAttribute('data-lhm-widgets') || '').split(/[\s,]+/).filter(function(s){ return /^[\w.:-]+(@(xs|s|m|l|xl))?$/.test(s); }).slice(0, 8); }catch(e){ return []; } }
+  function _navIcon(it){ var t = String(it.icon || '').trim(); if(t) return t; return (String(it.label || it.id || '').trim().charAt(0) || '\u2022').toUpperCase(); }
+  function _navLhm(){
+    if(!_navItems || !_navItems.length || (_navLhmOpts && _navLhmOpts.lhm === false)) return null;
+    // the panel's name: its page title carries the product's name first ("Vera — Estate"), which the menu's head does not need
+    var title = String((_navLhmOpts && _navLhmOpts.title) || document.title || '').replace(/^\s*Vera\s*[\u2014\u2013\-\u00b7|:]\s*/i, '').trim();
+    var groups = [], at = {};
+    _navItems.forEach(function(it){ var g = it.group || ''; if(!(g in at)){ at[g] = groups.length; groups.push({ name: g, items: [] }); } groups[at[g]].items.push(it); });
+    var act = { menu: '', tab: '' }, menus;
+    if(groups.filter(function(g){ return g.name; }).length >= 2){
+      menus = groups.map(function(g, gi){ var id = '\u00a7g' + gi; g.items.forEach(function(it){ if(it.id === _navActiveId){ act.menu = id; act.tab = it.id; } });
+        return { id: id, icon: _navIcon(g.items[0]), label: g.name || 'More', title: g.name || 'More', tabs: g.items.map(function(it){ return { id: it.id, label: it.label }; }) }; });
+    } else {
+      var all = _navItems.map(function(it){ return { id: it.id, label: it.label }; });
+      menus = _navItems.map(function(it, i){ var id = '\u00a7i' + i; if(it.id === _navActiveId){ act.menu = id; act.tab = it.id; }
+        return { id: id, icon: _navIcon(it), label: it.label, title: title || 'Sections', tabs: all }; });
+    }
+    if(!act.menu && menus.length) act.menu = menus[0].id;
+    var kid = (typeof _activeKid === 'function') ? _activeKid() : null, ps = (act.menu && typeof _pageSubs === 'function') ? _pageSubs() : null;
+    if((kid || ps) && act.menu){
+      // the page's own sub-sections, and a framed child's sections under the one that shows it (or under the item, as before)
+      var kidSub = kid ? kid.nav.items.map(function(it){ return { id: 'c:' + it.id, label: String(it.label || it.id), depth: ps ? 2 : 1 }; }) : [], sub = kidSub;
+      if(ps){ sub = []; ps.items.forEach(function(it){ sub.push({ id: 's:' + it.id, label: it.label, depth: 1 }); if(it.id === ps.active) sub = sub.concat(kidSub); }); if(!ps.active) sub = sub.concat(kidSub); }
+      menus.forEach(function(m){ if(m.id !== act.menu) return; var at = -1; m.tabs.forEach(function(tb, i){ if(tb.id === _navActiveId) at = i; });
+        m.tabs = m.tabs.slice(0, at + 1).concat(sub, m.tabs.slice(at + 1)); });
+      if(kid && kid.nav.active) act.tab = 'c:' + kid.nav.active; else if(ps && ps.active) act.tab = 's:' + ps.active;
+    }
+    var wd = _navWidgets(); if(kid && kid.nav.widgets) kid.nav.widgets.forEach(function(w){ if(wd.indexOf(w) < 0) wd.push(w); });
+    return { title: title, active: act, menus: menus, open: [], widgets: wd };
+  }
+  function _navResolve(id){
+    var s = String(id);
+    if(s.charAt(0) !== '\u00a7') return s;                          // an item id, as before
+    var slash = s.indexOf('/'); if(slash > 0) return s.slice(slash + 1);   // '<menu>/<item>': the item
+    var spec = _navLhm(); if(!spec) return s;
+    var m = spec.menus.filter(function(x){ return x.id === s; })[0]; if(!m) return s;
+    if(s.charAt(1) === 'i'){ var it = _navItems[+s.slice(2)]; return it ? it.id : s; }   // a flat menu's icon: its item
+    if(m.tabs.some(function(t){ return t.id === _navActiveId; })) return _navActiveId;   // a group's icon: stay if already in it
+    return m.tabs.length ? m.tabs[0].id : s;                                                // ... else its first item
+  }
 
   // ── DOM helpers ───────────────────────────────────────────────────────
   function _elById(id){ return id ? document.getElementById(id) : null; }
@@ -145,7 +269,10 @@
     // sun (.on, .active, .selected, .current...), so a guess would either
     // miss real panels or misfire on unrelated "active" elements that have
     // nothing to do with top-level section nav.
-    if(_navItems) st.nav = {items: _navItems, active: _navActiveId};
+    if(_navItems){ st.nav = {items: _navItems, active: _navActiveId}; var _lhm = _navLhm(); if(_lhm) st.nav.lhm = _lhm; }
+    // a page whose menu is VeraLHM's (the chat) publishes that menu itself; this snapshot is a second state from the same
+    // frame, and the host reads a state WITHOUT nav as "no menu" - so it carries the menu's own nav, or it drops it
+    else { try{ var _own = (window.VeraLHM && typeof window.VeraLHM.navState === 'function') ? window.VeraLHM.navState() : null; if(_own) st.nav = _own; }catch(e){} }
     try{
       var focused = document.activeElement;
       if(focused && focused !== document.body && focused.id) st.focused_id = focused.id;
@@ -355,10 +482,43 @@
   // the registerNav(items) call itself — and the canonical vera-panel.js
   // #sidebar[data-vera-lhm] shell doesn't even need that: it calls
   // registerNav()/setNavActive() generically for every panel using it.
+  var _navPend = 0;
+  function _navPick(p){
+    var id = (p || {}).id;
+    if(id == null) return {ok: false, error: 'nav_select requires {id}'};
+    id = _navResolve(String(id));
+    _navPend++;   // a newer pick cancels a chain still waiting
+    var steps = id.split('>');
+    if(steps.length > 1 && steps.slice(1).every(function(x){ return /^[cs]:/.test(x); })){
+      var r0 = _navSelect({id: steps[0]});
+      if(r0 && r0.ok) steps.shift();
+      else if(!/^[cs]:/.test(steps[0])) return r0;   // an item that is not there: nothing below it can be either
+      _navChain(steps, _navPend, 0); return {ok: true, pending: steps.length};
+    }
+    var r = _navSelect({id: id});
+    if(r && r.ok === false && /^[cs]:/.test(id)){ _navChain([id], _navPend, 1); r.pending = 1; }
+    return r;
+  }
+  function _navChain(steps, tok, n){
+    if(!steps.length || tok !== _navPend) return;
+    setTimeout(function(){
+      if(tok !== _navPend) return;
+      var r = _navSelect({id: steps[0]});
+      if(r && r.ok){ _navChain(steps.slice(1), tok, 0); return; }
+      if(n < 60) _navChain(steps, tok, n + 1);
+    }, n ? 400 : 300);
+  }
+  /* one step: an item, a page sub-section (s:) or a shown child's section (c:) */
   function _navSelect(p){
     var id = (p || {}).id;
     if(id == null) return {ok: false, error: 'nav_select requires {id}'};
-    id = String(id);
+    id = _navResolve(String(id));
+    if(id.indexOf('c:') === 0){ var kid = _activeKid(); if(!kid) return {ok: false, error: 'no nested panel is shown'};
+      if(kid.nav && kid.nav.items && !kid.nav.items.some(function(it){ return it.id === id.slice(2); })) return {ok: false, error: 'the shown nested panel has no ' + id.slice(2)};
+      try{ kid.win.postMessage({type: 'vera:panel:action', action: 'nav_select', action_id: 'nest-' + Date.now(), payload: {id: id.slice(2)}}, '*'); }catch(e){}
+      kid.nav.active = id.slice(2); publishStateDebounced(); return {ok: true}; }
+    if(id.indexOf('s:') === 0){ var ps = _pageSubs(), hit = ps && ps.items.filter(function(it){ return it.id === id.slice(2); })[0];
+      if(!hit) return {ok: false, error: 'no sub-section ' + id.slice(2) + ' is shown'}; hit.el.click(); publishStateDebounced(); return {ok: true}; }
     if(_navSelectFn){
       try{ _navSelectFn(id); }catch(e){ return {ok: false, error: String(e)}; }
       _navActiveId = id; publishStateDebounced();
@@ -388,7 +548,7 @@
 
   var _builtins = {
     click: _click, set_field: _setField, set_fields: _setFields, submit: _submit,
-    nav_select: _navSelect,
+    nav_select: _navPick,
   };
 
   // ── Live cap-activity feed ────────────────────────────────────────────
@@ -567,12 +727,14 @@
       // today's chat side-rail) never receives this, so its own rail stays
       // visible there — this is never assumed, only confirmed by the host.
       document.documentElement.classList.add('vpb-nav-hosted');
+      _kidsHosted(true);
     } else if(t === 'vera:panel:nav_unhosted'){
       // The inverse — the host's own top-level menu just stopped reliably
       // covering these sections (its "keep inner nav visible while the main
       // menu is auto-hiding" opt-in, or the host isn't hosting this panel's
       // nav at all right now), so un-hide this panel's own rail again.
       document.documentElement.classList.remove('vpb-nav-hosted');
+      _kidsHosted(false);
     } else if(t === 'vera:panel:query'){
       // Explicit freshness ping — bypass the changed-state dedupe. Without
       // this, an idle panel whose state hasn't changed republishes NOTHING,
@@ -622,6 +784,150 @@
   ['click', 'change', 'input'].forEach(function(t){ document.addEventListener(t, publishStateDebounced, {passive: true, capture: true}); });
   setInterval(publishStateDebounced, 30000);
 
+
+  // ── THE PANEL'S TOP BAR, IN THE HARNESS'S (owner, 2026-09-27: "i need all ui panels top bars to absorb into the harness
+  // top bar like the chat ui does"). The chat offers its own bar; every other panel's is found and offered here, over the
+  // same protocol: its controls go up as proxies (vera:hdr:offer), the harness says when it holds them (vera:hdr:absorbed)
+  // and the bar folds away, and a press on a proxy is a press on the panel's own control (vera:hdr:act). A panel names its
+  // bar with data-vera-topbar (="keep" keeps it in the panel); otherwise the usual names count only when the element IS the
+  // page's top bar - at the top, across most of the width, holding controls - so a toolbar inside a pane is never taken.
+  /* the names a page's top bar goes by - a sweep of 58 panels found Stack Monitor's .pane-tb, Research's #toolbar, Perf's
+     and the Gallery's .bar, a header inside the page's wrapper - still only at the top, across the page, holding controls */
+  var _HDR_SEL = '#topbar, #topBar, .topbar, .top-bar, .panel-topbar, body > header, .hdr, .header, .tb, .pane-tb, #tb, #toolbar, .toolbar, .bar, header, .page-head, .panel-head';
+  var _hdrBar = null, _hdrSig = '', _hdrT = null, _hdrHid = 0, _hdrMO = null;
+  /* NOTHING IN THE BAR IS LOST (owner, 2026-09-28: "the issue that happened with the perf ui... have any other parts of
+     uis been swallowed/hidden by mistake?"). The bar folds away while the harness holds it, so whatever it holds that is
+     not offered is gone: the Estate's Observe tabs (<span class="j-tab" onclick>) and the Notebook's logo link were. What
+     is offered is every CLICKABLE thing in the bar - a control, a link, a tab (role=tab, data-vera-sub), anything with an
+     onclick or a tabindex, and anything the page draws with a pointer cursor (a click bound in script) - never a part of
+     one (a wrapper that holds a control gives way to the control; what sits inside a control is the control). */
+  var _HDR_CTL = 'button, select, input, textarea, a[href], [onclick], [role=tab], [role=button], [role=link], [role=menuitem], [role=switch], [role=checkbox], [role=radio], [role=option], [data-vera-sub], summary, [tabindex]:not([tabindex="-1"])';
+  function _hdrNative(el){ return /^(BUTTON|SELECT|INPUT|TEXTAREA)$/.test(el.tagName); }
+  function _hdrCtls(bar){
+    var out = [];
+    Array.prototype.forEach.call(bar.querySelectorAll('*'), function(el){
+      var tag = el.tagName; if(tag === 'OPTION' || tag === 'OPTGROUP' || tag === 'SCRIPT' || tag === 'STYLE') return;
+      if(tag === 'INPUT' && String(el.type || '').toLowerCase() === 'hidden') return;
+      var hit = false; try{ hit = el.matches(_HDR_CTL); }catch(e){}
+      if(!hit){ try{ hit = getComputedStyle(el).cursor === 'pointer' && (!el.parentElement || getComputedStyle(el.parentElement).cursor !== 'pointer'); }catch(e){} }
+      if(!hit) return;
+      for(var n = el.parentElement; n && n !== bar; n = n.parentElement){ if(_hdrNative(n) || (n.tagName === 'A' && n.hasAttribute('href'))) return; }
+      out.push(el);
+    });
+    out = out.filter(function(el){ if(_hdrNative(el)) return true; for(var i = 0; i < out.length; i++){ if(out[i] !== el && el.contains(out[i])) return false; } return true; });
+    return out.filter(function(el){ return _hdrShownIn(el, bar); });
+  }
+  function _hdrOn(el){ return /\b(on|active|selected|current)\b/.test(String(el.className && el.className.baseVal != null ? el.className.baseVal : el.className || '')) || el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-selected') === 'true' || (el.getAttribute('aria-current') || 'false') !== 'false'; }
+  function _hdrLabel(el, t){ return (_hdrText(el) || t || el.getAttribute('data-label') || '\u00b7').slice(0, 24); }
+  /* the bar SHOWN: a page of several panes keeps one bar per pane, and the absorbed one must be the shown pane's. Its own
+     display does not count (it is folded away while the harness holds it); its pane's does. */
+  function _hdrBarShown(b){
+    if(!b || !document.contains(b) || b.hidden) return false;
+    for(var n = b.parentElement; n && n !== document.documentElement; n = n.parentElement){ if(n.hidden) return false; var cs = getComputedStyle(n); if(cs.display === 'none' || cs.visibility === 'hidden') return false; }
+    return true;
+  }
+  function _hdrDrop(){ if(_hdrBar){ try{ _hdrBar.removeAttribute('data-vpb-hdr-bar'); }catch(e){} } if(_hdrMO){ try{ _hdrMO.disconnect(); }catch(e){} _hdrMO = null; } _hdrBar = null; _hdrSig = ''; }
+  function _hdrCheck(){
+    if(_hdrBar && _hdrBarShown(_hdrBar)){ _hdrOffer(); return; }
+    var had = !!_hdrBar; _hdrDrop(); _hdrFind();
+    if(!_hdrBar && had){ try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: [] }, '*'); }catch(e){} _hdrKid = null; if(typeof _hdrRelay === 'function') _hdrRelay(); }
+  }
+  function _hdrEmbedded(){ try{ return !!(window.parent && window.parent !== window); }catch(e){ return false; } }
+  function _hdrFindBar(){
+    var named = document.querySelector('[data-vera-topbar]');
+    if(named) return named.getAttribute('data-vera-topbar') === 'keep' ? null : named;
+    var c = document.querySelectorAll(_HDR_SEL), W = window.innerWidth || document.documentElement.clientWidth || 0;
+    for(var i = 0; i < c.length; i++){
+      var r = c[i].getBoundingClientRect();
+      if(r.width < 1 || r.top > 90 || r.height < 18 || r.height > 96 || r.width < W * 0.4) continue;
+      if(!c[i].querySelector('button, select, input')) continue;
+      return c[i];
+    }
+    return null;
+  }
+  // shown by its OWN rules: the bar itself is folded away while the harness holds it, and that must not count
+  function _hdrShownIn(el, bar){
+    for(var n = el; n && n !== bar.parentNode; n = n.parentElement){
+      if(n.hidden) return false; var cs = getComputedStyle(n);
+      if(n !== bar && cs.display === 'none') return false; if(cs.visibility === 'hidden') return false;
+    }
+    return true;
+  }
+  function _hdrText(el){ return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim(); }
+  function _hdrItems(bar){
+    var groups = [], gi = 0;
+    var ttl = bar.querySelector('.ttl, .title, #sec-title, .panel-title, h1, h2, h3');
+    var all = _hdrCtls(bar);
+    /* a title that is itself clickable is offered as what it is (a link, a tab) - not twice */
+    if(ttl && _hdrText(ttl) && !all.some(function(el){ return el === ttl || el.contains(ttl); })) groups.push({ grp: 'title', prio: 1, items: [{ hid: 'title', kind: 'text', label: _hdrText(ttl).slice(0, 60), title: _hdrText(ttl).slice(0, 160) }] });
+    Array.prototype.forEach.call(bar.children, function(ch){
+      var ctl = all.filter(function(el){ return el === ch || ch.contains(el); });
+      if(!ctl.length) return;
+      gi++;
+      var g = { grp: 'g' + gi, prio: 2 + Math.min(gi, 7), title: String(ch.title || '').slice(0, 80), items: [] };
+      ctl.slice(0, 40).forEach(function(el){
+        var id = el.getAttribute('data-vpb-hid'); if(!id){ id = 'p' + (++_hdrHid); el.setAttribute('data-vpb-hid', id); }
+        var tag = el.tagName, ty = String(el.type || '').toLowerCase(), t = String(el.title || el.getAttribute('aria-label') || '').slice(0, 160);
+        if(tag === 'SELECT') g.items.push({ hid: id, kind: 'select', value: el.value, title: t, options: Array.prototype.slice.call(el.options, 0, 80).map(function(o){ return [o.value, _hdrText(o).slice(0, 40)]; }) });
+        else if(tag === 'INPUT' && (ty === 'checkbox' || ty === 'radio')){ var lb = el.closest('label'); g.items.push({ hid: id, kind: 'btn', label: (_hdrText(lb) || el.name || t || 'toggle').slice(0, 24), title: t, on: !!el.checked }); }
+        else if(tag === 'INPUT' && /^(|text|search|number|url|email|tel|password)$/.test(ty)) g.items.push({ hid: id, kind: 'input', type: ty === 'number' ? 'number' : 'search', value: String(el.value || '').slice(0, 200), placeholder: String(el.placeholder || t || '').slice(0, 60), title: t });
+        else if(tag === 'TEXTAREA') g.items.push({ hid: id, kind: 'input', type: 'search', value: String(el.value || '').slice(0, 200), placeholder: String(el.placeholder || t || '').slice(0, 60), title: t });
+        /* a date, a time, a colour, a slider: the same kind of input in the harness's bar */
+        else if(tag === 'INPUT' && /^(date|time|datetime-local|month|week|color|range)$/.test(ty)) g.items.push({ hid: id, kind: 'input', type: ty, value: String(el.value || '').slice(0, 200), min: el.min || '', max: el.max || '', step: el.step || '', placeholder: '', title: t || ty });
+        else if(tag === 'INPUT') g.items.push({ hid: id, kind: 'btn', label: (String(el.value || '') || t || ty || '\u00b7').slice(0, 24), title: t });   /* submit, reset, button, file */
+        else if(tag === 'BUTTON') g.items.push({ hid: id, kind: 'btn', label: _hdrLabel(el, t), title: t, on: _hdrOn(el) });
+        /* everything else that is clicked: a tab (lit when it is the current one), a link, an element with a click of its own */
+        else { var tab = el.matches('[role=tab], [data-vera-sub]') || /(^|[\s_-])(tab|j-tab|seg|chip)([\s_-]|$)/i.test(String(el.className && el.className.baseVal != null ? el.className.baseVal : el.className || ''));
+          var lnk = tag === 'A' && el.hasAttribute('href');
+          g.items.push({ hid: id, kind: 'btn', label: _hdrLabel(el, t), title: t || (lnk ? String(el.getAttribute('href') || '').slice(0, 160) : ''), on: _hdrOn(el), tab: !!tab, link: !!lnk }); }
+      });
+      if(g.items.length) groups.push(g);
+    });
+    return groups;
+  }
+  function _hdrOffer(force){
+    if(!_hdrBar || !document.contains(_hdrBar)) return;
+    var groups = _hdrItems(_hdrBar), sig = JSON.stringify(groups);
+    if(!force && sig === _hdrSig) return; _hdrSig = sig;
+    try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: groups }, '*'); }catch(e){}
+  }
+  function _hdrSoon(){ if(_hdrT) return; _hdrT = setTimeout(function(){ _hdrT = null; _hdrOffer(); }, 160); }
+  function _hdrFind(){
+    if(_hdrBar && document.contains(_hdrBar)) return;
+    var b = _hdrFindBar(); if(!b) return;
+    _hdrBar = b; b.setAttribute('data-vpb-hdr-bar', '');
+    try{ _hdrMO = new MutationObserver(_hdrSoon); _hdrMO.observe(b, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'title', 'disabled', 'aria-selected', 'aria-pressed', 'aria-current', 'href'] }); }catch(e){}
+    b.addEventListener('change', _hdrSoon, true); b.addEventListener('input', _hdrSoon, true);
+    _hdrOffer(true);
+  }
+  function _hdrStart(){
+    // the chat speaks for its own bar (it marks itself data-harness); the harness itself is never embedded
+    if(!_hdrEmbedded() || document.documentElement.hasAttribute('data-harness')) return;
+    try{ var st = document.createElement('style'); st.textContent = 'html.vpb-hdr-absorbed [data-vpb-hdr-bar]{display:none!important}'; (document.head || document.documentElement).appendChild(st); }catch(e){}
+    window.addEventListener('message', function(ev){
+      var d = ev.data; if(!d || typeof d !== 'object' || ev.source !== window.parent) return;
+      if(!_hdrBar && _hdrKid && (d.type === 'vera:hdr:absorbed' || d.type === 'vera:hdr:act')){ try{ _hdrKid.win.postMessage(d, '*'); }catch(e){} return; }
+      if(d.type === 'vera:hdr:absorbed'){ document.documentElement.classList.toggle('vpb-hdr-absorbed', !!d.on); if(d.on) _hdrOffer(true); return; }
+      if(d.type !== 'vera:hdr:act' || !_hdrBar) return;
+      var el = _hdrBar.querySelector('[data-vpb-hid="' + String(d.hid || '').replace(/["\\]/g, '') + '"]'); if(!el) return;
+      var v = d.value;
+      if(el.tagName === 'SELECT'){ el.value = String(v == null ? '' : v); el.dispatchEvent(new Event('change', { bubbles: true })); }
+      else if(el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) el.click();
+      else if(el.tagName === 'INPUT'){
+        var val = (v && typeof v === 'object') ? v.value : v; el.value = String(val == null ? '' : val);
+        el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+        if(v && typeof v === 'object' && v.enter) ['keydown', 'keypress', 'keyup'].forEach(function(k){ el.dispatchEvent(new KeyboardEvent(k, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })); });
+      }
+      else el.click();
+      _hdrSoon();
+    });
+    // a panel in a tab not yet shown has no size to measure: look again until its bar is found, then keep it current
+    _hdrFind();
+    setInterval(_hdrCheck, 2500);
+    var _hdrCT = null; document.addEventListener('click', function(){ clearTimeout(_hdrCT); _hdrCT = setTimeout(_hdrCheck, 220); }, true);
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _hdrStart); else setTimeout(_hdrStart, 0);
+
   window.VeraPanelBridge = {
     registerStateProvider: function(fn){ _stateProvider = fn; publishStateDebounced(); },
     registerActionHandler: function(name, fn){ _actionHandlers[String(name)] = fn; },
@@ -652,7 +958,7 @@
     // switch didn't originate from an injected click.
     registerNav: function(items, selectFn){
       _navItems = (items || []).map(function(it){
-        return {id: String(it.id), label: String(it.label || it.id)};
+        return {id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48), group: it.group ? String(it.group) : '', icon: it.icon ? String(it.icon) : ''};
       });
       if(typeof selectFn === 'function') _navSelectFn = selectFn;
       publishStateDebounced();
@@ -665,6 +971,13 @@
 })();
 
 /* Vera: load the select-anywhere -> thermal print helper (isolated, best-effort) */
+/* Vera: the right-click menu on every panel - the registry and its runtime (isolated, best-effort; a page with its own
+   menu sets window.__veraRcmOwn and the runtime stands aside) */
+try{ (function(){ if(window.__veraRcmLoad) return; window.__veraRcmLoad = 1;
+  var h = document.head || document.documentElement;
+  if(!window.MENUS){ var m = document.createElement('script'); m.src = '/ui/menus.js'; m.async = false; h.appendChild(m); }
+  if(!window.VeraRCM){ var r = document.createElement('script'); r.src = '/ui/rcm.js'; r.async = false; h.appendChild(r); }
+})(); }catch(e){}
 try{ (function(){ if(window.__veraPrintSelLoad) return; window.__veraPrintSelLoad = 1;
   var s = document.createElement('script'); s.src = '/ui/vera-print-selection.js'; s.async = true;
   (document.head || document.documentElement).appendChild(s);

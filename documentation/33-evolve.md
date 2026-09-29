@@ -685,6 +685,18 @@ Ship page's "release to prod" button asks which mode and shows the pending
 release under the edges. `promote_to_main` itself is unchanged (merge only)
 but now says when a census is in flight.
 
+With `sync_nodes` (default true) a finished release also brings the nodes
+onto it: every syncable node component (`provision.component.sync` –
+`nlp_server`, `gpu_inference`, `model_builder`), the Ollama activity taps
+(`nodes.ollama.tap` refreshes a tap running older source), the node workers
+(`nodes.workers.sync`) and the warm model slots (`ollama.warm.apply`). The
+sync is queued when the release is done and run by the same 30 s job – in
+the new process after a restart, so nodes are compared against the code prod
+actually runs – and never while a census goal is in flight (a refusal for a
+census is retried, not counted as a failure). `evolve.release.node_sync`
+shows it (`run=true` queues one by hand); the release button asks whether to
+sync, and the status line under the edges shows its state.
+
 ## 9. Markets self-improving loop
 
 `vera/markets/markets_evolve_capabilities.py` applies the same idea to the

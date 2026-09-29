@@ -223,20 +223,161 @@ _RAW_THEMES: Dict[str, dict] = {
         "--on-ac": "#ffffff"}},
 }
 
-# Materialise: apply the layout tail and guarantee legibility for every theme.
+# ─────────────────────────────────────────────────────────────────────────────
+# APPEARANCE — style packs, density tiers, the data-viz ramp, derived surfaces
+# (UI redesign, workstream 1 — Notes/40 §1, the StylePacks board's contract).
+#
+# A THEME is colour. A STYLE PACK is everything else a surface is made of: the
+# type ramp, radii, spacing, label metrics, the primary button, the card
+# shadow. The two are orthogonal attributes on the root — 'data-theme' and
+# 'data-style' — so any theme wears any pack. 'data-den' is the density
+# tier (Full · Hover · Zen) and 'data-blocks' whether per-turn block
+# backgrounds are painted; both are applied by vera-ui.js and styled per
+# surface. The data-viz ramp ('--dv1'..'--dv7') is the categorical order
+# every chart, chip and graph shares; a dark and a light instance, chosen by
+# the theme's type.
+# ─────────────────────────────────────────────────────────────────────────────
+_F_SANS = "'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif"
+_F_MONO = "'JetBrains Mono',ui-monospace,Menlo,monospace"
+
+STYLE_PACKS: Dict[str, dict] = {
+    "standard": {"label": "Standard", "vars": {
+        "--f-ui": _F_SANS, "--f-prose": "'Instrument Sans',system-ui,sans-serif",
+        "--f-disp": "'Instrument Sans',system-ui,sans-serif", "--f-mono": _F_MONO,
+        "--ui-radius": "10px", "--r-sm": "7px", "--r-pill": "999px", "--row-h": "30px", "--pad": "14px",
+        "--label-size": "10.5px", "--label-case": "none", "--label-track": ".01em", "--label-weight": "500",
+        "--body": "13px", "--lead": "1.62",
+        "--fill": "color-mix(in srgb,var(--ac) 14%,transparent)",
+        "--pri-bg": "var(--ac)", "--pri-fg": "var(--on-ac)", "--pri-bd": "transparent",
+        "--card": "0 1px 2px rgba(0,0,0,.14),0 0 0 1px var(--bd)",
+        "--elev": "0 1px 2px rgba(0,0,0,.20),0 10px 30px -16px rgba(0,0,0,.60),inset 0 1px 0 color-mix(in srgb,var(--t1) 7%,transparent)",
+        "--elev-lo": "0 1px 2px rgba(0,0,0,.14),inset 0 1px 0 color-mix(in srgb,var(--t1) 5%,transparent)"}},
+    "newspaper": {"label": "Newspaper", "vars": {
+        "--f-ui": _F_SANS, "--f-prose": "'Source Serif 4',Georgia,'Times New Roman',serif",
+        "--f-disp": "'Libre Baskerville',Georgia,'Times New Roman',serif", "--f-mono": _F_MONO,
+        "--ui-radius": "0px", "--r-sm": "0px", "--r-pill": "0px", "--row-h": "29px", "--pad": "15px",
+        "--label-size": "9.5px", "--label-case": "uppercase", "--label-track": ".1em", "--label-weight": "600",
+        "--body": "14px", "--lead": "1.72",
+        "--fill": "color-mix(in srgb,var(--ac) 8%,transparent)",
+        "--pri-bg": "var(--ac)", "--pri-fg": "var(--on-ac)", "--pri-bd": "transparent",
+        "--card": "0 0 0 1px var(--bd)",
+        "--elev": "0 0 0 1px var(--bd),0 8px 26px -16px rgba(0,0,0,.5)", "--elev-lo": "0 0 0 1px var(--bd)"}},
+    "terminal": {"label": "Terminal", "vars": {
+        "--f-ui": _F_MONO, "--f-prose": _F_MONO, "--f-disp": "'JetBrains Mono',ui-monospace,monospace", "--f-mono": _F_MONO,
+        "--ui-radius": "0px", "--r-sm": "0px", "--r-pill": "0px", "--row-h": "25px", "--pad": "10px",
+        "--label-size": "9px", "--label-case": "uppercase", "--label-track": ".12em", "--label-weight": "700",
+        "--body": "12.5px", "--lead": "1.6",
+        "--fill": "transparent",
+        "--pri-bg": "transparent", "--pri-fg": "var(--ac)", "--pri-bd": "var(--ac)",
+        "--card": "0 0 0 1px var(--bd)",
+        "--elev": "0 0 0 1px var(--bd2),0 8px 24px -14px rgba(0,0,0,.55)", "--elev-lo": "0 0 0 1px var(--bd)"}},
+    "pixel": {"label": "Pixel", "vars": {
+        "--f-ui": "'Pixelify Sans','Silkscreen',ui-monospace,monospace", "--f-prose": "'Pixelify Sans',ui-monospace,monospace",
+        "--f-disp": "'Press Start 2P',ui-monospace,monospace", "--f-mono": "'VT323',ui-monospace,monospace",
+        "--ui-radius": "0px", "--r-sm": "0px", "--r-pill": "0px", "--row-h": "32px", "--pad": "12px",
+        "--label-size": "11px", "--label-case": "uppercase", "--label-track": ".05em", "--label-weight": "500",
+        "--body": "15px", "--lead": "1.55",
+        "--fill": "color-mix(in srgb,var(--ac) 24%,transparent)",
+        "--pri-bg": "var(--ac)", "--pri-fg": "var(--on-ac)", "--pri-bd": "transparent",
+        "--card": "0 0 0 2px var(--bd2),4px 4px 0 0 rgba(0,0,0,.4)",
+        "--elev": "0 0 0 2px var(--bd2),5px 5px 0 0 rgba(0,0,0,.45),inset 0 1px 0 color-mix(in srgb,var(--t1) 8%,transparent)",
+        "--elev-lo": "0 0 0 2px var(--bd2)"}},
+}
+DEFAULT_STYLE = "standard"
+
+# The density tiers the chat (and every chat-variant surface) draws itself at.
+DENSITY_TIERS: Dict[str, dict] = {
+    "full":  {"label": "Full",  "hint": "Citations, actions and tool-call detail inline"},
+    "hover": {"label": "Hover", "hint": "Chrome floats out of the flow and returns when you point at a turn"},
+    "zen":   {"label": "Zen",   "hint": "Words, rendered output and timestamps; detail on click"},
+}
+DEFAULT_DENSITY = "full"
+
+# The data-viz ramp: one categorical order for every chart, chip and graph; the
+# light instance is deeper so it clears a white surface.
+DATAVIZ_RAMP: Dict[str, Dict[str, str]] = {
+    "dark":  {"--dv1": "#866ec5", "--dv2": "#54a863", "--dv3": "#3585c9", "--dv4": "#bb881a",
+              "--dv5": "#b95c88", "--dv6": "#00aba4", "--dv7": "#bd6533"},
+    "light": {"--dv1": "#6e4fb1", "--dv2": "#2a9446", "--dv3": "#0069b6", "--dv4": "#ab7000",
+              "--dv5": "#a2396f", "--dv6": "#009891", "--dv7": "#a74300"},
+}
+
+# Surfaces derived from the theme's colours: the accent tints every surface
+# slightly, so depth comes from the theme rather than from a new palette.
+# Emitted once on :root; a pack overrides --elev/--elev-lo/--card with its own.
+DERIVED_VARS: Dict[str, str] = {
+    "--surf":  "color-mix(in srgb,var(--ac) 4%,var(--s1))",
+    "--surf2": "color-mix(in srgb,var(--ac) 6%,var(--s2))",
+    "--surf3": "color-mix(in srgb,var(--ac) 8%,var(--s3))",
+    "--glow":  "0 0 22px -6px color-mix(in srgb,var(--ac) 55%,transparent)",
+    "--ring":  "0 0 0 3px color-mix(in srgb,var(--ac) 26%,transparent)",
+}
+
+
+def with_dataviz(vars_: dict, theme_type: str = "dark") -> dict:
+    """Add the data-viz ramp to a theme's vars (kept if the theme carries its own)."""
+    out = dict(vars_ or {})
+    ramp = DATAVIZ_RAMP["light" if str(theme_type).lower() == "light" else "dark"]
+    for k, v in ramp.items():
+        out.setdefault(k, v)
+    return out
+
+
+def style_pack_css(pack_id: str) -> str:
+    """The '[data-style="<pack>"]' rule for one pack."""
+    p = STYLE_PACKS.get(pack_id)
+    if not p:
+        return ""
+    body = "; ".join(f"{k}:{v}" for k, v in p["vars"].items())
+    return f'[data-style="{pack_id}"] {{ {body} }}'
+
+
+def appearance_css() -> str:
+    """The derived surfaces on :root, then every style pack — emitted AFTER the
+    theme blocks so a pack's radius wins over the theme's layout tail."""
+    derived = "; ".join(f"{k}:{v}" for k, v in DERIVED_VARS.items())
+    lines = [f":root {{ {derived} }}"]
+    lines += [style_pack_css(pid) for pid in STYLE_PACKS]
+    # the pixel pack renders crisp: no smoothing on its bitmaps and edges
+    lines.append('[data-style="pixel"] * { image-rendering:pixelated; }')
+    return "\n".join(lines)
+
+
+def normalize_appearance(style=None, density=None, blocks=None) -> dict:
+    """Clamp an appearance triple to known values (None → the default)."""
+    s = str(style or DEFAULT_STYLE).lower()
+    d = str(density or DEFAULT_DENSITY).lower()
+    if s not in STYLE_PACKS:
+        s = DEFAULT_STYLE
+    if d not in DENSITY_TIERS:
+        d = DEFAULT_DENSITY
+    if isinstance(blocks, str):
+        b = blocks.strip().lower() not in ("off", "0", "false", "no")
+    elif blocks is None:
+        b = True
+    else:
+        b = bool(blocks)
+    return {"style": s, "density": d, "blocks": b}
+
+
+# Materialise: apply the layout tail, the data-viz ramp, and guarantee
+# legibility for every theme.
 BUILTIN_THEMES: Dict[str, dict] = {}
 for _tid, _spec in _RAW_THEMES.items():
     BUILTIN_THEMES[_tid] = {
         "label": _spec["label"],
         "type": _spec["type"],
         "accent": _spec["accent"],
-        "vars": ensure_contrast(_t(_spec["vars"])),
+        "vars": ensure_contrast(with_dataviz(_t(_spec["vars"]), _spec["type"])),
     }
 
 DEFAULT_THEME = "dusk"
 
 __all__ = [
     "BUILTIN_THEMES", "DEFAULT_THEME",
+    "STYLE_PACKS", "DEFAULT_STYLE", "DENSITY_TIERS", "DEFAULT_DENSITY",
+    "DATAVIZ_RAMP", "DERIVED_VARS",
+    "with_dataviz", "style_pack_css", "appearance_css", "normalize_appearance",
     "ensure_contrast", "on_accent_for", "contrast", "luminance",
     "INK_DARK", "INK_LIGHT",
 ]

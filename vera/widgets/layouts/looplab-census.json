@@ -1,0 +1,222 @@
+{
+ "v": 2,
+ "dashboard": "looplab-census",
+ "layout": "default",
+ "key": "looplab-census",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "name": "Census × commits",
+ "note": "The census run by run beside the commits that landed before each run - a real gain or loss lit, the noise named - the goal matrix, and the commit graph it came from.",
+ "widgets": [
+  {
+   "record": {
+    "id": "looplab-census-census",
+    "form": "census-commits",
+    "source": "ci.census",
+    "shape": "matrix",
+    "title": "Census × commits",
+    "read": {
+     "refresh": "5m",
+     "args": {
+      "template": "default"
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      10
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    12,
+    10
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-census-timeline",
+    "form": "census-timeline",
+    "source": "ci.census",
+    "shape": "events",
+    "title": "Census timeline · runs among the commits",
+    "read": {
+     "refresh": "5m",
+     "args": {
+      "template": "default"
+     },
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      9
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    10
+   ],
+   "span": [
+    6,
+    9
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-census-graph",
+    "form": "element",
+    "source": "",
+    "shape": "panel",
+    "title": "Commit graph",
+    "read": {
+     "refresh": "",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      9
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "tag": "vera-git-graph",
+     "attrs": {}
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    10
+   ],
+   "span": [
+    6,
+    9
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "looplab-census-trends",
+    "form": "trend-layers",
+    "source": "census.runs",
+    "shape": "series",
+    "title": "Census trends",
+    "read": {
+     "refresh": "5m",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      6
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "rows": "runs",
+     "t": "ended_at",
+     "facets": [
+      "template"
+     ],
+     "range": "all",
+     "series": [
+      {
+       "field": "done",
+       "label": "goals done"
+      },
+      {
+       "field": "quality_mean",
+       "label": "quality"
+      },
+      {
+       "field": "checks_passed",
+       "label": "checks passed"
+      },
+      {
+       "field": "wall_total_s",
+       "label": "wall s"
+      }
+     ]
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    19
+   ],
+   "span": [
+    12,
+    6
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  }
+ ]
+}

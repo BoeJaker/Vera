@@ -1,0 +1,479 @@
+{
+ "v": 2,
+ "dashboard": "workers",
+ "layout": "default",
+ "key": "wol-workers",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "Every widget of the workers grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here. The widget review (2026-09-27): the figures, the ollama ring and the resources heat map read obs.cluster (and obs.health) and draw as records; the queue, the detail and the cards stay the page's - each record says why. 2026-09-28: the six figures are two rows tall - one 58 px row left a head and no room for the value, so the row read as hidden behind Cluster Resources.",
+ "widgets": [
+  {
+   "record": {
+    "id": "w-total",
+    "form": "counter",
+    "source": "obs.cluster",
+    "shape": "level",
+    "title": "Workers",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "of": "workers",
+      "total": true
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "unit": "workers"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-busy",
+    "form": "level",
+    "source": "obs.cluster",
+    "shape": "level",
+    "title": "Busy",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "of": "workers",
+      "total": true,
+      "where": {
+       "status": [
+        "busy",
+        "running*"
+       ]
+      },
+      "max": true
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "unit": "busy"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    2,
+    0
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-caps",
+    "form": "counter",
+    "source": "obs.health",
+    "shape": "level",
+    "title": "Capabilities",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "value": "caps"
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "unit": "caps"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    0
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-tasks",
+    "form": "counter",
+    "source": "obs.cluster",
+    "shape": "level",
+    "title": "Tasks Done",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "of": "workers",
+      "total": "tasks_done"
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "unit": "done"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-queue",
+    "form": "counter",
+    "source": "cluster.jobs",
+    "shape": "level",
+    "title": "Queue",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: it counts the page's own job tracker (the jobs pending, from a route that is not a capability)"
+   },
+   "at": [
+    8,
+    0
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-ollama",
+    "form": "ring",
+    "source": "obs.cluster",
+    "shape": "level",
+    "title": "Ollama Nodes",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "of": "ollama",
+      "total": true,
+      "where": {
+       "status": [
+        "online",
+        "ok"
+       ]
+      },
+      "max": true
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    10,
+    0
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-resources",
+    "form": "heat",
+    "source": "obs.cluster",
+    "shape": "matrix",
+    "title": "Cluster Resources · cpu · ram · disk %",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "cells": "workers",
+      "fields": [
+       "cpu_pct",
+       "ram_pct",
+       "disk_pct"
+      ]
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "palette": "load",
+     "total": false
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    2
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-detail",
+    "form": "cards",
+    "source": "cluster.workers",
+    "shape": "items",
+    "title": "Worker Detail",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ],
+     "max_body": 260
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "subject": "$selected",
+    "note": "stays the page's: it shows the worker a click on a card picked"
+   },
+   "at": [
+    6,
+    2
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-cards",
+    "form": "cards",
+    "source": "cluster.workers",
+    "shape": "items",
+    "title": "Worker Nodes",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: filterable cards (GPU · CPU · LIGHT) whose click opens the worker's detail"
+   },
+   "at": [
+    0,
+    4
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "w-node-workers",
+    "form": "element",
+    "source": "",
+    "shape": "panel",
+    "title": "Node workers",
+    "read": {
+     "refresh": "",
+     "args": {},
+     "map": {}
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      6
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "tag": "vera-node-workers",
+     "attrs": {}
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "the node workers: task classes per node, one-click provisioning, commit sync (nodes.workers.*)"
+   },
+   "at": [
+    0,
+    8
+   ],
+   "span": [
+    12,
+    6
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  }
+ ]
+}

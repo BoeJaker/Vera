@@ -100,3 +100,27 @@ def test_terminal_and_empty_are_none():
     with pytest.raises(ValueError):
         rc.new_pending(edge="", mode="later", by="", reason="", restart=True, now=T0, release_id="x")
     assert "waiting" in rc.describe(pend(), RUNNING) and rc.describe(None, DONE) == "no release pending"
+
+
+# ── node sync after a release (2026-09-28) ────────────────────────────────────
+def test_node_sync_waits_for_the_census_and_runs_once():
+    now = datetime(2026, 9, 28, 20, 0, tzinfo=timezone.utc)
+    rec = rc.new_node_sync(release_id="r1", commit="abc", now=now)
+    ok, why = rc.node_sync_due(rec, {"busy": True, "state": "running"}, now=now, running_here=False)
+    assert not ok and "census" in why
+    assert rc.node_sync_due(rec, {"busy": False, "state": "done"}, now=now, running_here=False)[0]
+    assert not rc.node_sync_due(rec, {}, now=now, running_here=True)[0]
+    running = dict(rec, status="running", updated_at=now.isoformat())
+    assert not rc.node_sync_due(running, {}, now=now + timedelta(minutes=5), running_here=False)[0]
+    # a process that died mid-sync: picked up again once it is stale
+    assert rc.node_sync_due(running, {}, now=now + timedelta(hours=1), running_here=False)[0]
+    assert not rc.node_sync_due(dict(rec, status="done"), {}, now=now, running_here=False)[0]
+    assert not rc.node_sync_due(dict(rec, attempts=3), {}, now=now, running_here=False)[0]
+
+
+def test_node_sync_outcome():
+    assert rc.node_sync_outcome({"nlp_server": {"ok": True}, "workers": {"ok": True}})[0] == "done"
+    st, why = rc.node_sync_outcome({"nlp_server": {"ok": False, "error": "a census goal is in flight - ..."}})
+    assert st == "pending"
+    st, why = rc.node_sync_outcome({"gpu_inference": {"ok": False, "error": "ssh: no route"}})
+    assert st == "failed" and "gpu_inference" in why

@@ -1,0 +1,47 @@
+{
+  "kind": "prose",
+  "source": { "record_id": "rec-4f2a", "label": "Northwind acquires Contoso — three paragraphs", "ranges": [[0, 1180]], "partial": false },
+  "layout": { "direction": "LR", "mode": "position" },
+  "layers": [
+    { "id": "ner.gliner", "label": "entities · GLiNER", "by": "urchade/gliner_medium-v2.1", "kind": "entity", "on": true, "where": "gpu-250", "ms": 812 },
+    { "id": "ner.spacy", "label": "entities · spaCy", "by": "en_core_web_trf", "kind": "entity", "on": true, "where": "host", "ms": 240 },
+    { "id": "rel.typed", "label": "relations · typed", "by": "_extract_relationships_from_entities", "kind": "relation", "on": true },
+    { "id": "rel.cooccur", "label": "co-occurrence", "by": "same sentence", "kind": "relation", "on": true },
+    { "id": "coref", "label": "coreference", "by": "fastcoref", "kind": "relation", "on": true }
+  ],
+  "groups": [
+    { "id": "p1", "label": "¶ 1 · the announcement", "kind": "paragraph", "parent": null, "span": { "start": 0, "end": 410 } },
+    { "id": "p2", "label": "¶ 2 · the terms", "kind": "paragraph", "parent": null, "span": { "start": 411, "end": 820 } },
+    { "id": "p3", "label": "¶ 3 · what happens next", "kind": "paragraph", "parent": null, "span": { "start": 821, "end": 1180 } }
+  ],
+  "cards": [
+    { "id": "e.alice", "group": "p1", "layer": "ner.gliner", "kind": "person", "title": "Alice Carter", "subtitle": "PERSON · 4 mentions", "span": { "start": 12, "end": 24 }, "fields": [{ "k": "role", "v": "chief executive" }], "score": 0.97 },
+    { "id": "e.northwind", "group": "p1", "layer": "ner.gliner", "kind": "org", "title": "Northwind Ltd", "subtitle": "ORG · 5 mentions", "span": { "start": 40, "end": 53 }, "score": 0.95 },
+    { "id": "e.northwind.spacy", "group": "p1", "layer": "ner.spacy", "kind": "org", "title": "Northwind", "subtitle": "ORG · 5 mentions · spaCy", "span": { "start": 40, "end": 49 }, "score": 0.88 },
+    { "id": "e.bristol", "group": "p1", "layer": "ner.gliner", "kind": "location", "title": "Bristol", "subtitle": "LOCATION · 1 mention", "span": { "start": 88, "end": 95 }, "score": 0.93 },
+    { "id": "e.march", "group": "p1", "layer": "ner.gliner", "kind": "date", "title": "March 2024", "subtitle": "DATE · 2 mentions", "span": { "start": 120, "end": 130 }, "score": 0.9 },
+    { "id": "e.merger", "group": "p2", "layer": "ner.gliner", "kind": "event", "title": "the acquisition", "subtitle": "EVENT · 3 mentions", "span": { "start": 430, "end": 445 }, "score": 0.81 },
+    { "id": "e.contoso", "group": "p2", "layer": "ner.gliner", "kind": "org", "title": "Contoso", "subtitle": "ORG · 3 mentions", "span": { "start": 470, "end": 477 }, "score": 0.96 },
+    { "id": "e.bob", "group": "p2", "layer": "ner.gliner", "kind": "person", "title": "Bob Ng", "subtitle": "PERSON · 2 mentions", "span": { "start": 520, "end": 526 }, "fields": [{ "k": "role", "v": "founder, Contoso" }], "score": 0.94 },
+    { "id": "e.she", "group": "p2", "layer": "coref", "kind": "person", "title": "she", "subtitle": "mention · resolves to Alice Carter", "span": { "start": 610, "end": 613 }, "score": 0.77 },
+    { "id": "e.close", "group": "p3", "layer": "ner.gliner", "kind": "claim", "title": "the deal closes in June", "subtitle": "CLAIM · 1 mention", "span": { "start": 840, "end": 866 }, "score": 0.7 },
+    { "id": "e.june", "group": "p3", "layer": "ner.gliner", "kind": "date", "title": "June 2024", "subtitle": "DATE · 1 mention", "span": { "start": 860, "end": 869 }, "score": 0.9 }
+  ],
+  "edges": [
+    { "from": "e.alice", "to": "e.northwind", "layer": "rel.typed", "kind": "RELATES", "resolution": "exact", "label": "chief executive of" },
+    { "from": "e.northwind", "to": "e.contoso", "layer": "rel.typed", "kind": "RELATES", "resolution": "exact", "label": "acquires" },
+    { "from": "e.merger", "to": "e.contoso", "layer": "rel.typed", "kind": "RELATES", "resolution": "exact", "label": "of" },
+    { "from": "e.bob", "to": "e.contoso", "layer": "rel.typed", "kind": "RELATES", "resolution": "exact", "label": "founded" },
+    { "from": "e.merger", "to": "e.march", "layer": "rel.typed", "kind": "RELATES", "resolution": "exact", "label": "announced" },
+    { "from": "e.northwind", "to": "e.bristol", "layer": "rel.cooccur", "kind": "CO_OCCURS", "resolution": "heuristic" },
+    { "from": "e.alice", "to": "e.march", "layer": "rel.cooccur", "kind": "CO_OCCURS", "resolution": "heuristic" },
+    { "from": "e.she", "to": "e.alice", "layer": "coref", "kind": "COREF", "resolution": "exact" },
+    { "from": "e.close", "to": "e.merger", "layer": "rel.typed", "kind": "SUPPORTS", "resolution": "heuristic", "label": "about" },
+    { "from": "e.close", "to": "e.june", "layer": "rel.cooccur", "kind": "CO_OCCURS", "resolution": "heuristic" },
+    { "from": "e.northwind.spacy", "to": "e.northwind", "layer": "ner.spacy", "kind": "MATCHES", "resolution": "heuristic", "label": "the same span, two engines" }
+  ],
+  "assessments": [
+    { "key": "ai_likelihood", "label": "AI-generated", "score": 0.31, "confidence": 0.6, "by": "binoculars/qwen3", "on": "source" },
+    { "key": "trust", "label": "trust", "score": 0.66, "confidence": 0.5, "by": "assess.trust", "on": "source" }
+  ]
+}

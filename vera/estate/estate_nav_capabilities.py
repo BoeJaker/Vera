@@ -29,6 +29,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, emit_event
 from Vera.vera.estate import estate_nav_core as nav
+from Vera.vera.ui import places_core as places
 
 
 async def _enabled() -> bool:
@@ -83,6 +84,21 @@ async def cap_tabs_retired_set(enabled: bool = True, trace_id=None) -> Dict[str,
     await r.set(nav.RETIRE_SETTING_KEY, "1" if on else "0")
     await emit_event({"type": "ui.tabs.retired", "enabled": on})
     return _state(on)
+
+
+@capability(
+    "ui.places",
+    http_method="GET", http_path="/ui/places", http_tags=["ui"],
+    memory="off", silent=True,
+    description="Where a reading lives in the UI: every place a drill-through can open "
+                "(a tab, an Estate or Models pane and sub-tab, a view of the Automations tab, "
+                "an element of the Elements switcher) and the rules that map a capability "
+                "name to one. A dashboard record names a place with `open`; without one its "
+                "source picks the place. Output: {places:{name:{panel|tab, pane, sub, nav, "
+                "media}}, rules:[[prefix, place]], panels:[panel ids the places need]}.",
+)
+async def cap_ui_places(trace_id=None) -> Dict[str, Any]:
+    return places.table()
 
 
 _NETCTL_MISSING = """<!doctype html><meta charset="utf-8">

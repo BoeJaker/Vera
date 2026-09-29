@@ -916,7 +916,7 @@ try:
     from Vera.vera.evolve.ttl_cache import TTLCache as _TTLCache
 except Exception:                                          # pragma: no cover
     from vera.evolve.ttl_cache import TTLCache as _TTLCache
-_LIST_SESSIONS_CACHE = _TTLCache(45.0)
+_LIST_SESSIONS_CACHE = _TTLCache(120.0)   # ~25 s to build on prod (2026-09-28): the Agents page, the sandbox menu and ci.branch all read it; `fresh` still forces
 
 
 async def _list_sessions_uncached(scan_limit: int, max_sessions: int) -> dict:
@@ -1557,7 +1557,7 @@ async def cap_claude_sessions_panel_html(trace_id=None):
 register_ui(
     "ide-claude-dispatch",
     "Dispatch",
-    "🗂",
+    "⇉",
     """<div id="ide-claude-dispatch-mount" style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/ide/claude_sessions/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

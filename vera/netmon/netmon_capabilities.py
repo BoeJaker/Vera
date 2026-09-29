@@ -164,7 +164,9 @@ async def _is_alive(ip: str) -> bool:
 # SQLite — own connection to the shared vera.db (open/close freely)
 # ─────────────────────────────────────────────────────────────────────────────
 def _db_path() -> Path:
-    p = Path(cfg.get("VERA_DATA_DIR", "/tmp/vera")) / "vera.db"
+    # VeraConfig is an object, not a dict: `cfg.get` raised on every call from 20 Jul. The data lives under ~/.vera
+    # (Vera's runtime-state home) unless VERA_DATA_DIR says otherwise.
+    p = Path(os.getenv("VERA_DATA_DIR") or (Path.home() / ".vera")) / "vera.db"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 

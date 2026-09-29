@@ -152,6 +152,120 @@ def registration_threads(has_gpu: bool, requested: Any = None) -> int:
     return n if n > 0 else DEFAULT_CPU_THREADS
 
 
+# ── concurrency on CPU Ollama servers ─────────────────────────────────────────
+# Measured 2026-09-28 (cpu-246 / gpu-250's CPU, 6 threads): with the default one
+# slot, a second request to a CPU server WAITS for the first (2x0.5b: 4.6 s then
+# 8.9 s wall). Two slots run them together: 0.5b 44.8 -> 2x30.3 tok/s (+35%
+# total), 7b 6.16 -> 2x3.7 (+20%). Each request is slower, the node does more.
+# The embedding model is a different runner, so it runs beside a generation as
+# long as both stay loaded - MAX_LOADED_MODELS 3 keeps a big LLM, the embedder
+# and one more resident (the CPU nodes have 50 GB).
+CPU_NUM_PARALLEL = 2
+CPU_MAX_LOADED_MODELS = 3
+CONCURRENCY_DROPIN_NAME = "20-vera-concurrency.conf"
+
+#: The CPU-only sibling Ollama on a GPU node (user, 2026-09-28): the GPU node's
+#: cores serve embeddings and small models beside the GPU runner. Measured: CPU
+#: embeds (6.1-6.6 docs/s) and a 0.5b (42-47 tok/s) on gpu-250's CPU did not
+#: move the GPU's 9b throughput beyond run-to-run noise.
+CPU_SIBLING_PORT = 11436
+CPU_SIBLING_UNIT = "ollama-vera-cpu.service"
+
+
+def concurrency_dropin(num_parallel: int = CPU_NUM_PARALLEL,
+                       max_loaded: int = CPU_MAX_LOADED_MODELS) -> str:
+    return ("[Service]\n"
+            "# Written by Vera (nodes.ollama.tune): two requests at once on a CPU\n"
+            "# server, and room for the embedder beside a large model.\n"
+            f'Environment="OLLAMA_NUM_PARALLEL={int(num_parallel)}"\n'
+            f'Environment="OLLAMA_MAX_LOADED_MODELS={int(max_loaded)}"\n')
+
+
+def cpu_sibling_id(gpu_instance_id: str) -> str:
+    return f"{gpu_instance_id}-cpu"
+
+
+def cpu_sibling_unit(models_dir: str, port: int = CPU_SIBLING_PORT) -> str:
+    """A CPU-only Ollama beside a GPU node's own. The GPU is hidden from it
+    (and the CPU library forced), it reads the SAME model store read-only
+    (NOPRUNE), and it has the CPU concurrency settings."""
+    return ("[Unit]\n"
+            f"Description=Ollama CPU-only sibling (Vera, port {int(port)}) - embeddings and small models\n"
+            "After=network-online.target ollama-vera.service\nWants=network-online.target\n\n"
+            "[Service]\nExecStart=/usr/local/bin/ollama serve\nUser=root\nGroup=root\n"
+            'Environment="HOME=/"\n'
+            f'Environment="OLLAMA_MODELS={models_dir}"\n'
+            f'Environment="OLLAMA_HOST=0.0.0.0:{int(port)}"\n'
+            'Environment="OLLAMA_NOPRUNE=1"\n'
+            'Environment="CUDA_VISIBLE_DEVICES="\n'
+            'Environment="HIP_VISIBLE_DEVICES="\n'
+            'Environment="OLLAMA_LLM_LIBRARY=cpu"\n'
+            f'Environment="OLLAMA_NUM_PARALLEL={CPU_NUM_PARALLEL}"\n'
+            f'Environment="OLLAMA_MAX_LOADED_MODELS={CPU_MAX_LOADED_MODELS}"\n'
+            'Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"\n'
+            "Restart=always\nRestartSec=3\n\n[Install]\nWantedBy=multi-user.target\n")
+
+
+def tune_probe_cmd() -> str:
+    """Shell that reports a node's Ollama unit, its model dir, its current
+    concurrency drop-in and whether a CPU sibling runs. Read-only."""
+    return ('U=ollama; systemctl is-active --quiet ollama-vera && U=ollama-vera; echo "UNIT=$U"; '
+            'echo "MODELS=$(systemctl show $U -p Environment --value | tr " " "\\n" '
+            '| sed -n "s/^OLLAMA_MODELS=//p")"; '
+            'echo "USER=$(systemctl show $U -p User --value)"; '
+            f'D=/etc/systemd/system/$U.service.d/{CONCURRENCY_DROPIN_NAME}; '
+            '[ -f $D ] && echo "DROPIN_B64=$(base64 -w0 $D)" || echo "DROPIN_B64="; '
+            f'systemctl is-active --quiet {CPU_SIBLING_UNIT} && echo SIBLING=active || echo SIBLING=absent')
+
+
+def parse_tune_probe(stdout: str) -> Dict[str, str]:
+    import base64 as _b64
+    out: Dict[str, str] = {}
+    for line in (stdout or "").splitlines():
+        k, sep, v = line.partition("=")
+        if sep and k in ("UNIT", "MODELS", "DROPIN_B64", "SIBLING", "USER"):
+            out[k] = v.strip()
+    try:
+        out["dropin"] = _b64.b64decode(out.get("DROPIN_B64") or "").decode("utf-8", "replace")
+    except Exception:
+        out["dropin"] = ""
+    return out
+
+
+def default_models_dir(user: str) -> str:
+    """Where a unit with no OLLAMA_MODELS keeps its models: Ollama's installer
+    runs the stock unit as `ollama` (home /usr/share/ollama); root's is /root."""
+    u = str(user or "").strip()
+    return "/usr/share/ollama/.ollama/models" if u == "ollama" else (
+        "/root/.ollama/models" if u in ("", "root") else f"/home/{u}/.ollama/models")
+
+
+def tune_plan(has_gpu: bool, probe: Dict[str, str]) -> Dict[str, Any]:
+    """What tuning a node takes. A CPU node needs the concurrency drop-in on
+    its Ollama unit (a restart of that unit - loaded models reload). A GPU node
+    keeps ONE slot on its GPU server (a V100 cannot hold two big models) and
+    gets the CPU-only sibling instead."""
+    unit = probe.get("UNIT") or "ollama"
+    if has_gpu:
+        if probe.get("SIBLING") == "active":
+            return {"action": "none", "why": "CPU sibling already running", "unit": unit}
+        models = probe.get("MODELS") or ""
+        if not models and "USER" in probe:
+            # a fresh install: the stock unit keeps the installer's default
+            models = default_models_dir(probe.get("USER") or "")
+        if not models:
+            return {"action": "skip", "why": f"could not read OLLAMA_MODELS from {unit}",
+                    "unit": unit}
+        return {"action": "add_sibling", "unit": unit, "models": models,
+                "why": f"add the CPU-only sibling on :{CPU_SIBLING_PORT}"}
+    want = concurrency_dropin()
+    if (probe.get("dropin") or "") == want:
+        return {"action": "none", "why": "concurrency already set", "unit": unit}
+    return {"action": "set_concurrency", "unit": unit,
+            "why": f"{unit}: OLLAMA_NUM_PARALLEL={CPU_NUM_PARALLEL}, "
+                   f"MAX_LOADED_MODELS={CPU_MAX_LOADED_MODELS} (restarts {unit})"}
+
+
 def install_succeeded(stdout: Any) -> bool:
     """The recipe only succeeds when it reached its end marker — which it only
     prints after the node answered on the port."""

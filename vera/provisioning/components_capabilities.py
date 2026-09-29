@@ -50,7 +50,7 @@ from Vera.vera.provisioning.components_core import (
     WORKER_DIR_CANDIDATES as _WORKER_DIR_CANDIDATES,
     edge_dir_probe_cmd, parse_edge_dir, pidfile_lookup_cmd,
     component_version, version_file, version_json, version_lookup_cmd,
-    parse_version, compare_versions, component_sync_plan,
+    parse_version, compare_versions, component_sync_plan, media_env_profile,
 )
 from Vera.vera.workers import worker_placement_core as _placement
 from Vera.vera.security import redis_auth_core as _redis_auth_core
@@ -119,14 +119,48 @@ def _primary_lan_ip() -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 _COMPONENTS: Dict[str, Dict[str, Any]] = {
     "gpu_inference": {
-        "label": "GPU Inference Server", "port": 8765, "python": True,
-        "files": [("edge/GPU_inference.py", "GPU_inference.py")],
-        "requirements": "edge/requirements.txt",       # heavy (torch/diffusers/whisper/TTS)
-        "run": "{py} GPU_inference.py",
-        "env": {"SERVER_PORT": "{port}"},
-        "heavy": True,
-        "desc": "Whisper STT + Stable Diffusion + TTS server. Needs a GPU and large "
-                "Python deps — enable 'install deps' and expect a long first run.",
+        # The media server, in the layout every node already runs it in (see
+        # edge/gpu-inference.service): an install dir with its own ./env,
+        # start.sh, the gpu-inference.service unit and /etc/default/vera-inference.
+        # It used to deploy to ~/.vera/edge with a second venv, a layout no node
+        # ran, so the nodes were installed by hand and drifted (2026-09-28: the
+        # CPU nodes ran GPU_inference.py from 60f87f39, the GPU node 631948e2).
+        "label": "Media server (STT · TTS · diffusion)", "port": 8765, "python": True,
+        "install_dir": "/home/Servers/StableDiffustionWhisper",
+        "venv": "env",
+        "files": [("edge/GPU_inference.py", "GPU_inference.py"),
+                  ("edge/gpu_residency_core.py", "gpu_residency_core.py"),
+                  ("edge/media_store_core.py", "media_store_core.py"),
+                  # reports every call to the Estate Activity pane
+                  ("edge/activity_record.py", "activity_record.py"),
+                  ("edge/gpu_inference_start.sh", "start.sh", "755")],
+        "unit_file": ("edge/gpu-inference.service", "gpu-inference.service"),
+        "service": "gpu-inference",
+        # rendered per node by components_core.media_env_profile
+        "env_file": "/etc/default/vera-inference",
+        # torch first, from the index that matches the node - a CPU node must not
+        # pull the CUDA build (>1 GB of nvidia libs it cannot use)
+        "torch_index": {"gpu": "https://download.pytorch.org/whl/cu121",
+                        "cpu": "https://download.pytorch.org/whl/cpu"},
+        "pip_steps": [["torch", "torchvision", "torchaudio", "--index-url", "{torch_index}"]],
+        "requirements": "edge/requirements.txt",
+        # tiers the server degrades without; one failing must not fail the deploy
+        "pip_optional": [["rembg>=2.0.50", "onnxruntime>=1.16"], ["controlnet-aux>=0.0.7"],
+                         ["compel>=2.0.2"], ["opencv-python-headless>=4.8"],
+                         ["realesrgan>=0.3.0"], ["TTS>=0.22"]],
+        "precheck": {
+            "cmd": ('[ -d /opt/vera-store/models/sd ] && [ -d /opt/vera-store/models/tts ] '
+                    '&& echo VERA_PRECHECK_OK'),
+            "why": ("the shared model store is not mounted at /opt/vera-store/models on this "
+                    "node. On the Proxmox host: pct set <ctid> -mpN /tank_sdh/vera-store/models,"
+                    "mp=/opt/vera-store/models,ro=1 (see specialist.store.mount)."),
+        },
+        "health": "/health",
+        "start_timeout": 900,
+        "heavy": True, "sync": True, "systemd": True,
+        "desc": "Whisper STT + Kokoro/Coqui TTS + Stable Diffusion (ControlNet, IP-Adapter, "
+                "rembg, upscale). Every node runs it; models load from the shared store, a "
+                "CPU node runs them on CPU, and routing stays GPU-first.",
     },
     "onnx_runtime": {
         # ⚠ 8772, NOT 8770. The node agent (edge/vera_node_agent.py) listens on
@@ -146,6 +180,8 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         # 8771 — clear of the node agent (8770) and onnx_runtime (8772).
         "label": "NLP Server", "port": 8771, "python": True,
         "files": [("edge/nlp_server.py", "nlp_server.py"),
+                  # reports every call to the Estate Activity pane
+                  ("edge/activity_record.py", "activity_record.py"),
                   # Shipped so the node and the Vera host share ONE registry and
                   # ONE implementation of chunking and offset merging.
                   ("vera/research/nlp_dispatch_core.py", "nlp_dispatch_core.py"),
@@ -175,7 +211,15 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
             ["torch", "--index-url", "https://download.pytorch.org/whl/cpu"],
             ["optimum[onnxruntime]", "transformers>=4.57,<5", "onnxruntime",
              "sentencepiece", "protobuf", "numpy", "fastembed",
-             "fastapi", "uvicorn"],
+             "fastapi", "uvicorn", "redis"],
+            # The fabric's own entity engines, off the host: GLiNER (zero-shot
+            # NER, a torch checkpoint the exporter saves into the store) and
+            # spaCy with its English pipeline as a PINNED wheel — `spacy
+            # download` would reach the hub at deploy time and pick whatever
+            # version is current; the wheel is the same file every time.
+            ["gliner>=0.2.13", "spacy>=3.8,<3.9",
+             "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/"
+             "en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"],
         ],
         "run": "{py} nlp_server.py serve --host 0.0.0.0 --port {port}",
         # The model store is a Proxmox bind-mount, which SSH cannot create.
@@ -211,12 +255,13 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         # way (this deploy path, as vera-nlp_server.service).
         "sync": True, "systemd": True,
         "desc": "Text-level NLP so the 2-core Vera host never runs it: NER "
-                "(OntoNotes-v5, has DATE, plus multilingual), sentiment, "
+                "(OntoNotes-v5, has DATE, plus multilingual), GLiNER zero-shot "
+                "NER over any labels (the fabric's own engine), spaCy, sentiment, "
                 "zero-shot classification, extractive QA, language id, "
-                "embeddings and reranking. Loads pre-exported ONNX from the "
-                "shared read-only model store, chunks whole documents rather "
-                "than truncating, and caps its thread count so the node keeps "
-                "inferring.",
+                "embeddings and reranking. Loads pre-exported ONNX (and the "
+                "GLiNER checkpoint) from the shared read-only model store, "
+                "chunks whole documents rather than truncating, and caps its "
+                "thread count so the node keeps inferring.",
     },
     # ollama_wrapper was removed as a deployable component. It proxied :11435 in
     # front of Ollama to make requests visible, but it was never deployed, it
@@ -233,6 +278,51 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         "needs_vera_url": True,
         "desc": "LAN→Vera forwarder so firewalled ESP32 mesh nodes can reach Vera "
                 "through this box. Stdlib only — no deps to install.",
+    },
+    "model_builder": {
+        # 8773 - clear of the node agent (8770), nlp_server (8771), onnx_runtime (8772).
+        # Deployed to ONE box, the builder CT (vera-model-builder, CT 131), whose
+        # mount of the shared store is read-write; every serving node's is ro.
+        "label": "Specialist model builder", "port": 8773, "python": True,
+        "files": [("edge/model_builder.py", "model_builder.py"),
+                  # the exporter that built the NLP store, and its registry
+                  ("edge/nlp_export_models.py", "nlp_export_models.py"),
+                  ("vera/research/nlp_dispatch_core.py", "nlp_dispatch_core.py"),
+                  # content-verified packages for the NLP manifest, as a
+                  # standalone package (vera/models/__init__ imports far more)
+                  ("edge/vmodels_init.py", "vmodels/__init__.py"),
+                  ("vera/models/nlp_inventory.py", "vmodels/nlp_inventory.py"),
+                  ("vera/models/model_package.py", "vmodels/model_package.py")],
+        # a minimal ubuntu CT has no ensurepip
+        "apt": ["python3-venv"],
+        # Same CPU-torch-first ordering and transformers pin as nlp_server: the
+        # exports must load in the server that reads them.
+        "pip_steps": [
+            ["torch", "--index-url", "https://download.pytorch.org/whl/cpu"],
+            ["optimum[onnxruntime]", "transformers>=4.57,<5", "onnxruntime",
+             "sentencepiece", "protobuf", "numpy", "fastembed", "huggingface_hub",
+             "openai-whisper", "fastapi", "uvicorn"],
+        ],
+        "run": "{py} model_builder.py serve --host 0.0.0.0 --port {port}",
+        "precheck": {
+            "cmd": ('[ -d /opt/vera-store/models/nlp ] && [ -w /opt/vera-store/models/nlp ] '
+                    '&& echo VERA_PRECHECK_OK'),
+            "why": ("the shared store is not mounted READ-WRITE at /opt/vera-store/models. "
+                    "On the Proxmox host: pct set <ctid> -mp0 /tank_sdh/vera-store/models,"
+                    "mp=/opt/vera-store/models, and (unprivileged CT) chown the family "
+                    "dirs to 100000:100000."),
+        },
+        "env": {"VERA_STORE_DIR": "/opt/vera-store/models",
+                # the download cache stays on the CT's own disk, not in the store
+                "HF_HOME": "/var/lib/vera-builder/hf", "HOME": "/",
+                "OMP_NUM_THREADS": "4"},
+        "heavy": True, "sync": True, "systemd": True,
+        # the hosts it runs on: stored SSH hosts with this tag, not the ollama nodes
+        "hosts_tag": "model-builder",
+        "desc": "Fills the shared specialist-model store on demand: ONNX exports for "
+                "nlp_server, Hugging Face snapshots (GLiNER, diffusion), Whisper "
+                "checkpoints, curated TTS files. One job at a time. Runs only on the "
+                "builder CT, the one box with the store mounted read-write.",
     },
 }
 
@@ -280,18 +370,25 @@ def _deps_spec(comp: Dict[str, Any]) -> bytes:
     req = _read_local(comp["requirements"]) if comp.get("requirements") else None
     return json.dumps({"requirements": (req or b"").decode("utf-8", "replace"),
                        "pip_steps": comp.get("pip_steps") or [],
-                       "pip": comp.get("pip") or []}, sort_keys=True).encode("utf-8")
+                       "pip": comp.get("pip") or [],
+                       "pip_optional": comp.get("pip_optional") or [],
+                       "apt": comp.get("apt") or []}, sort_keys=True).encode("utf-8")
 
 
 def _shipped_files(comp: Dict[str, Any]) -> Optional[List[tuple]]:
     """(dest, content) for every file a deploy pushes, plus the deps spec;
     None when a bundled file is missing from the repo."""
     files = []
-    for rel, dest in comp["files"]:
+    for rel, dest, *_mode in comp["files"]:
         content = _read_local(rel)
         if content is None:
             return None
         files.append((dest, content))
+    if comp.get("unit_file"):
+        content = _read_local(comp["unit_file"][0])
+        if content is None:
+            return None
+        files.append(("<unit>", content))
     files.append(("<deps>", _deps_spec(comp)))
     return files
 
@@ -307,6 +404,19 @@ def _push_cmd(content: bytes, dest: str) -> str:
     """A shell snippet that recreates `content` at remote `dest` (base64 is shell-safe)."""
     b64 = base64.b64encode(content).decode()
     return f"printf %s {shlex.quote(b64)} | base64 -d > {dest}"
+
+
+#: Largest file pushed inline in a command (its base64 is 4/3 bigger, and one
+#: argument may not exceed 128 KB); anything bigger goes over stdin.
+_INLINE_PUSH_MAX = 64 * 1024
+
+
+def _push_cmd_as(content: bytes, dest: str, sudo_prefix: str = "") -> str:
+    """_push_cmd into a root-owned path (via `sudo tee` when not root)."""
+    if not sudo_prefix:
+        return _push_cmd(content, dest)
+    b64 = base64.b64encode(content).decode()
+    return f"printf %s {shlex.quote(b64)} | base64 -d | {sudo_prefix}tee {dest} >/dev/null"
 
 
 def _py_bin(install_deps: bool, venv: str = "") -> str:
@@ -393,16 +503,22 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
         approval_receipt_ref=approval_receipt_ref, retry=retry)
     out["effect_shadow"] = shadow
 
-    # Never assume $HOME is writable — see _EDGE_DIR_CANDIDATES for why two of
-    # the three ollama nodes cannot use it at all.
-    edge = await _resolve_edge_dir(host_id)
-    if not edge.get("ok"):
-        out["ok"] = False
-        out["error"] = edge.get("error", "no writable working directory")
-        out["edge_dir_tried"] = edge.get("tried")
-        return out
-    edge_dir, venv = edge["dir"], edge["venv"]
+    if comp.get("install_dir"):
+        # a component with a fixed layout (the media server): its own dir + venv
+        edge_dir = comp["install_dir"]
+        venv = f"{edge_dir}/{comp.get('venv', 'env')}"
+    else:
+        # Never assume $HOME is writable — see _EDGE_DIR_CANDIDATES for why two of
+        # the three ollama nodes cannot use it at all.
+        edge = await _resolve_edge_dir(host_id)
+        if not edge.get("ok"):
+            out["ok"] = False
+            out["error"] = edge.get("error", "no writable working directory")
+            out["edge_dir_tried"] = edge.get("tried")
+            return out
+        edge_dir, venv = edge["dir"], edge["venv"]
     out["edge_dir"] = edge_dir
+    has_gpu = _node_has_gpu(rec.get("host", ""))
 
     # 0b) component precheck — fail before spending the install, not after
     pre = comp.get("precheck") or {}
@@ -416,12 +532,38 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
         out["precheck"] = True
 
     parts = [f"mkdir -p {edge_dir}"]
-    for rel, dest in comp["files"]:
+    large: List[tuple] = []
+    for rel, dest, *mode in comp["files"]:
         content = _read_local(rel)
         if content is None:
             return {"ok": False, "error": f"bundled file missing in repo: {rel}"}
-        parts.append(_push_cmd(content, f"{edge_dir}/{dest}"))
+        if "/" in dest:                      # a file shipped as part of a package
+            parts.append(f"mkdir -p {edge_dir}/{shlex.quote(dest.rsplit('/', 1)[0])}")
+        if len(content) > _INLINE_PUSH_MAX:
+            # Linux caps ONE argument at 128 KB and the whole command reaches the
+            # remote shell as one argument: GPU_inference.py (144 KB, ~195 KB as
+            # base64) failed with "Argument list too long". Stream it on stdin.
+            large.append((content, f"{edge_dir}/{dest}"))
+        else:
+            parts.append(_push_cmd(content, f"{edge_dir}/{dest}"))
+        if mode:                             # e.g. start.sh, which the unit executes
+            parts.append(f"chmod {shlex.quote(mode[0])} {edge_dir}/{dest}")
         out["pushed"].append(dest)
+    if large:
+        runner = _ssh_stored_with_input()
+        if runner is None:
+            return {**out, "ok": False,
+                    "error": "a bundled file is too large for a command line and the exec "
+                             "module has no ssh_run_stored (stdin transport)"}
+        for content, dest in large:
+            d = dest.rsplit("/", 1)[0]
+            res = await runner(host_id, f"mkdir -p {d} && base64 -d > {dest}.part && "
+                                        f"mv {dest}.part {dest} && echo VERA_PUSHED",
+                               timeout=120, input=base64.b64encode(content).decode())
+            if "VERA_PUSHED" not in (res.get("stdout") or ""):
+                return {**out, "ok": False,
+                        "error": f"push of {dest} failed: "
+                                 f"{res.get('stderr') or res.get('error') or 'no confirmation'}"}
     # The version is written only once the deploy has succeeded (below), so a
     # half-finished deploy never claims the new version.
     version = host_component_version(component)
@@ -434,24 +576,45 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
 
     # 2) install deps (optional) ───────────────────────────────────────────────
     if install_deps and comp["python"]:
-        steps = [f'python3 -m venv "{venv}" --system-site-packages',
-                 f'"{venv}/bin/pip" install -U pip wheel']
+        steps = []
+        if comp.get("apt"):
+            # system packages the venv itself needs (a minimal CT has no ensurepip)
+            s = _sudo_for(rec, sudo)
+            steps.append(f"{s}env DEBIAN_FRONTEND=noninteractive apt-get install -y -q "
+                         + " ".join(shlex.quote(p) for p in comp["apt"])
+                         + f" || {{ {s}apt-get update -q && {s}env DEBIAN_FRONTEND=noninteractive "
+                         + "apt-get install -y -q " + " ".join(shlex.quote(p) for p in comp["apt"])
+                         + "; }")
+        if comp.get("install_dir"):
+            # its own venv - keep an existing one (the nodes' ./env holds GBs of wheels)
+            steps += [f'[ -x "{venv}/bin/python" ] || python3 -m venv "{venv}"',
+                      f'"{venv}/bin/pip" install -U pip wheel']
+        else:
+            steps += [f'python3 -m venv "{venv}" --system-site-packages',
+                      f'"{venv}/bin/pip" install -U pip wheel']
+        torch_index = (comp.get("torch_index") or {}).get("gpu" if has_gpu else "cpu", "")
+        # Separate invocations, in order — some components need an index or a
+        # constraint applied to one package and not the rest; then the
+        # requirements file, which must not be the one to choose torch's build.
+        for group in comp.get("pip_steps") or []:
+            steps.append(f'"{venv}/bin/pip" install ' +
+                         " ".join(shlex.quote(p.format(torch_index=torch_index)) for p in group))
         if comp.get("requirements"):
             req = _read_local(comp["requirements"])
             if req is not None:
                 steps.append(_push_cmd(req, f"{edge_dir}/requirements.txt"))
                 steps.append(f'"{venv}/bin/pip" install -r {edge_dir}/requirements.txt')
-        elif comp.get("pip_steps"):
-            # Separate invocations, in order — some components need an index or
-            # a constraint applied to one package and not the rest.
-            for group in comp["pip_steps"]:
-                steps.append(f'"{venv}/bin/pip" install ' +
-                             " ".join(shlex.quote(p) for p in group))
         elif comp.get("pip"):
             steps.append(f'"{venv}/bin/pip" install ' + " ".join(shlex.quote(p) for p in comp["pip"]))
+        # optional tiers: a failure is reported, never fatal
+        for group in comp.get("pip_optional") or []:
+            steps.append(f'{{ "{venv}/bin/pip" install ' + " ".join(shlex.quote(p) for p in group)
+                         + f' || echo VERA_OPTIONAL_FAILED={shlex.quote(group[0])}; }}')
         steps.append("echo VERA_DEPS_DONE")
         dres = await _ssh(host_id, " && ".join(steps), timeout=int(timeout or 900))
         out["installed"] = "VERA_DEPS_DONE" in (dres.get("stdout", "") or "")
+        out["optional_failed"] = [ln.split("=", 1)[1] for ln in (dres.get("stdout", "") or "").splitlines()
+                                  if ln.startswith("VERA_OPTIONAL_FAILED=")]
         out["install_log"] = ((dres.get("stdout", "") or "") + "\n" +
                               (dres.get("stderr", "") or ""))[-3000:]
         if not out["installed"]:
@@ -469,7 +632,16 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
         out["version"] = version.get("version") if vres.get("ok") else ""
 
     # 3) launch (optional) ─────────────────────────────────────────────────────
-    if launch:
+    if launch and comp.get("unit_file"):
+        lres = await _launch_layout(host_id, rec, comp, port, has_gpu, sudo, edge_dir)
+        out.update(mode="systemd", launched=bool(lres.get("ok")),
+                   launch_log=lres.get("log", ""), health=lres.get("health"))
+        if not out["launched"]:
+            out["ok"] = False
+            out["error"] = lres.get("error", "launch failed")
+            return out
+        out["url"] = f"http://{rec.get('host','')}:{port}"
+    elif launch:
         py = _py_bin(install_deps, venv)
         run_cmd = comp["run"].format(py=py, port=port, vera_url=shlex.quote(vera_url) if vera_url else "")
         env = {k: v.format(port=port) for k, v in (comp.get("env") or {}).items()}
@@ -492,6 +664,52 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
     await emit_event({"type": "provision.deploy.done", "host": rec.get("host", ""),
                       "component": component, "ok": True})
     return out
+
+
+async def _launch_layout(host_id: str, rec: Dict, comp: Dict, port: int, has_gpu: bool,
+                         sudo: bool, install_dir: str) -> Dict:
+    """Launch a fixed-layout component (the media server): write its profile
+    (keeping the first hand-written one as .pre-vera), install the repo's unit,
+    restart it, and wait for its health endpoint - a model load can take
+    minutes, and "the unit started" is not "the server serves"."""
+    s = _sudo_for(rec, sudo)
+    env_path = comp["env_file"]
+    profile = media_env_profile(has_gpu, port=port, app_dir=install_dir)
+    unit_src, unit_name = comp["unit_file"]
+    unit = _read_local(unit_src)
+    if unit is None:
+        return {"ok": False, "error": f"unit file missing in repo: {unit_src}"}
+    svc = comp.get("service") or unit_name.rsplit(".", 1)[0]
+    cmd = " && ".join([
+        f"{{ [ -f {env_path} ] && [ ! -f {env_path}.pre-vera ] && {s}cp {env_path} {env_path}.pre-vera || true; }}",
+        _push_cmd_as(profile.encode("utf-8"), f"{env_path}.new", s),
+        f"{s}mv {env_path}.new {env_path}",
+        _push_cmd_as(unit, f"/etc/systemd/system/{unit_name}", s),
+        f"{s}systemctl daemon-reload", f"{s}systemctl enable {svc}",
+        f"{s}systemctl restart {svc}", f'echo "VERA_LAUNCHED service={svc}"'])
+    res = await _ssh(host_id, cmd, timeout=90)
+    log_tail = ((res.get("stdout", "") or "") + "\n" + (res.get("stderr", "") or ""))[-2000:]
+    if not (res.get("ok") and "VERA_LAUNCHED" in (res.get("stdout") or "")):
+        return {"ok": False, "log": log_tail,
+                "error": res.get("stderr") or res.get("error") or "unit install failed"}
+    health = None
+    if comp.get("health"):
+        deadline = int(comp.get("start_timeout") or 300)
+        probe = (f'for i in $(seq 1 {max(1, deadline // 10)}); do '
+                 f'H=$(curl -sf -m 5 http://127.0.0.1:{port}{comp["health"]} 2>/dev/null) && '
+                 f'{{ echo "VERA_HEALTH $H"; exit 0; }}; sleep 10; done; echo VERA_HEALTH_TIMEOUT')
+        hres = await _ssh(host_id, probe, timeout=deadline + 60)
+        line = next((ln for ln in (hres.get("stdout") or "").splitlines()
+                     if ln.startswith("VERA_HEALTH")), "")
+        if not line.startswith("VERA_HEALTH "):
+            return {"ok": False, "log": log_tail,
+                    "error": f"{svc} did not answer {comp['health']} within {deadline}s "
+                             f"(see /var/log/gpu_inference.log on the node)"}
+        try:
+            health = json.loads(line[len("VERA_HEALTH "):])
+        except ValueError:
+            health = {"raw": line[:300]}
+    return {"ok": True, "log": log_tail, "health": health}
 
 
 async def _launch_nohup(host_id: str, key: str, run_cmd: str, env: Dict[str, str],
@@ -552,8 +770,9 @@ async def cap_component_status(host_id: str = "", component: str = "",
                                systemd: bool = False, trace_id=None) -> Dict:
     if not host_id or component not in _COMPONENTS:
         return {"ok": False, "error": "host_id and a valid component are required"}
-    if systemd:
-        res = await _ssh(host_id, f"systemctl is-active vera-{component}.service", timeout=20)
+    svc = _COMPONENTS[component].get("service") or f"vera-{component}"
+    if systemd or _COMPONENTS[component].get("service"):
+        res = await _ssh(host_id, f"systemctl is-active {svc}.service", timeout=20)
         state = (res.get("stdout", "") or "").strip()
         return {"ok": True, "running": state == "active", "detail": state or "unknown"}
     res = await _ssh(
@@ -586,7 +805,9 @@ async def cap_component_version(component: str = "", host_id: str = "",
     out: Dict[str, Any] = {"ok": True, "component": component, "host": host}
     if not host_id:
         return out
-    res = await _ssh(host_id, version_lookup_cmd(component), timeout=20)
+    inst = _COMPONENTS[component].get("install_dir")
+    res = await _ssh(host_id, version_lookup_cmd(component, candidates=[inst] if inst else None),
+                     timeout=20)
     if not res.get("ok"):
         return {**out, "ok": False, "error": res.get("stderr") or res.get("error")
                 or "ssh failed"}
@@ -982,6 +1203,22 @@ _SANDBOX_REFUSAL = ("this is a dev sandbox: provisioning from here would join PR
 _COMPONENT_SYNC_LOCK = "vera:component_sync:lock:{component}"
 
 
+async def _tagged_hosts(tag: str) -> List[Dict[str, str]]:
+    """Stored SSH hosts carrying `tag`: [{host_id, host}]."""
+    try:
+        hosts = ((await _cap("exec.ssh.hosts.list")()) or {}).get("hosts", [])
+    except Exception:
+        hosts = []
+    return [{"host_id": h["id"], "host": h.get("host", "")} for h in hosts
+            if h.get("id") and tag in (h.get("tags") or [])]
+
+
+async def component_hosts(component: str) -> List[Dict[str, str]]:
+    """Where a component runs: its tagged hosts, else the Ollama nodes."""
+    tag = (_COMPONENTS.get(component) or {}).get("hosts_tag")
+    return await _tagged_hosts(tag) if tag else await _ollama_node_hosts()
+
+
 async def _ollama_node_hosts() -> List[Dict[str, str]]:
     """The Ollama nodes that have a stored SSH credential: [{host_id, host}]."""
     from urllib.parse import urlparse
@@ -1006,12 +1243,12 @@ async def _ollama_node_hosts() -> List[Dict[str, str]]:
     description="Bring every node that runs a component onto the version this host would "
                 "deploy (see provision.component.version) - 'update all nodes to the same "
                 "version'. Only components every node runs the same way are syncable "
-                "(nlp_server). Per node: already current -> left alone; never deployed -> "
+                "(nlp_server, model_builder). Per node: already current -> left alone; never deployed -> "
                 "left alone (a sync updates, it does not spread); otherwise redeployed, "
                 "reinstalling dependencies only when they changed. One node at a time, "
                 "never while a census goal is in flight, never from a dev sandbox. Inputs: "
-                "component (str='nlp_server'), host_ids (list - default: every Ollama node "
-                "with a stored SSH credential), dry_run (bool=true), force (bool - redeploy "
+                "component (str='nlp_server'), host_ids (list - default: the hosts tagged "
+                "for the component, else every Ollama node with a stored SSH credential), dry_run (bool=true), force (bool - redeploy "
                 "even a current node, e.g. one edited by hand). Output: {ok, component, "
                 "host_version, plan[], results{}}.",
 )
@@ -1024,7 +1261,7 @@ async def cap_component_sync(component: str = "nlp_server",
         return {"ok": False, "error": f"{component!r} is not syncable",
                 "syncable": [k for k, c in _COMPONENTS.items() if c.get("sync")]}
     nodes = ([{"host_id": h, "host": ((await _host_rec(h)) or {}).get("host", "")}
-              for h in host_ids] if host_ids else await _ollama_node_hosts())
+              for h in host_ids] if host_ids else await component_hosts(component))
     rows = []
     for n in nodes:
         v = await cap_component_version(component=component, host_id=n["host_id"])
@@ -1120,6 +1357,60 @@ async def _roles_get(host_id: str, has_gpu: bool):
     return list(_placement.default_classes(has_gpu)), True
 
 
+async def _dispatch_cfg() -> Dict[str, Any]:
+    r = _orch.REDIS
+    try:
+        raw = await r.get(_placement.DISPATCH_KEY) if r is not None else None
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+def _dispatch_view(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    st = _placement.stage_of(cfg.get("stage") or 0)
+    return {"stage": st["id"], "name": st["name"], "exclude": list(cfg.get("exclude") or []),
+            "stages": [{"id": s["id"], "name": s["name"], "label": s["label"], "desc": s["desc"]}
+                       for s in _placement.STAGES],
+            "offloaded": dict(getattr(_orch, "_OFFLOAD_SENT", {}) or {}),
+            "in_flight": dict(getattr(_orch, "_OFFLOAD_INFLIGHT", {}) or {})}
+
+
+@capability(
+    "nodes.workers.dispatch",
+    http_method="POST", http_path="/nodes/workers/dispatch", http_tags=["nodes", "provision"],
+    memory="off",
+    description="Which node-safe work is SENT to node workers - the rollout stage, each a type "
+                "of worker deployment: 0 idle (idle-queue jobs only), 1 NLP workers (nlp.*), "
+                "2 + compute workers (text, math, http, memory, the vetted pure caps), 3 + LLM "
+                "workers (llm.*), 4 + media workers (STT/TTS), 5 full (every node-safe class). "
+                "A call is offloaded only when a node worker of its class is idle; otherwise it "
+                "runs on the host as before. Inputs: stage (int - omit to read), exclude (list "
+                "of caps or namespaces never offloaded). Output: {stage, name, stages[], "
+                "exclude, offloaded{class: n}, in_flight{class: n}}.",
+)
+async def cap_nodes_workers_dispatch(stage: Optional[int] = None,
+                                     exclude: Optional[List[str]] = None,
+                                     trace_id=None) -> Dict:
+    r = _orch.REDIS
+    cfg = await _dispatch_cfg()
+    if stage is not None or exclude is not None:
+        if r is None:
+            return {"ok": False, "error": "redis not connected"}
+        if stage is not None:
+            if not 0 <= int(stage) < len(_placement.STAGES):
+                return {"ok": False, "error": f"stage must be 0-{len(_placement.STAGES) - 1}"}
+            cfg["stage"] = int(stage)
+        if exclude is not None:
+            cfg["exclude"] = [str(x).strip() for x in exclude if str(x).strip()]
+        await r.set(_placement.DISPATCH_KEY, json.dumps(cfg))
+        try:
+            _orch._OFFLOAD_CACHE["cfg_at"] = 0.0      # this process sees it at once
+        except Exception:
+            pass
+        await emit_event({"type": "nodes.workers.dispatch", "stage": cfg.get("stage", 0)})
+    return {"ok": True, **_dispatch_view(cfg)}
+
+
 @capability(
     "nodes.workers.list",
     http_method="GET", http_path="/nodes/workers", http_tags=["nodes", "provision"],
@@ -1187,7 +1478,8 @@ async def cap_nodes_workers_list(trace_id=None) -> Dict:
                            "ssh": bool(h)})
     plan = _node_sync.plan(_RUNNING_COMMIT, list(reg.values()), live,
                            census_busy=await _census_busy())
-    return {"ok": True, "host_commit": _RUNNING_COMMIT, "sync_enabled": await _sync_enabled(),
+    _dispatch = _dispatch_view(await _dispatch_cfg())
+    return {"dispatch": _dispatch, "ok": True, "host_commit": _RUNNING_COMMIT, "sync_enabled": await _sync_enabled(),
             "classes": classes, "nodes": nodes, "candidates": candidates, "plan": plan,
             "sandbox": _in_sandbox(), "sandbox_note": _SANDBOX_REFUSAL if _in_sandbox() else ""}
 

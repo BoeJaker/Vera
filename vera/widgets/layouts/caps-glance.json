@@ -1,0 +1,249 @@
+{
+ "v": 2,
+ "dashboard": "caps-glance",
+ "layout": "default",
+ "key": "caps-glance",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "Cap Hub with no capability chosen: the capabilities at a glance (an empty pane is a glance, not a blank).",
+ "widgets": [
+  {
+   "record": {
+    "id": "cap-count",
+    "form": "counter",
+    "source": "obs.health",
+    "title": "Capabilities",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "value": "caps"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-ontology",
+    "form": "ring",
+    "source": "cap_ontology.stats",
+    "title": "Ontology coverage",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "value": "covered_caps",
+      "max": "total_caps"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      6,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-called",
+    "form": "ranked",
+    "source": "dream.sensor.cap_calls",
+    "title": "Most called · last 50 calls",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "sample",
+      "count": "name"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      12,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    2
+   ],
+   "span": [
+    12,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-latency",
+    "form": "trace",
+    "source": "dream.sensor.cap_calls",
+    "title": "Call time · last 50 calls",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "sample",
+      "v": "elapsed_ms",
+      "t": "ts",
+      "reverse": true
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      12,
+      2
+     ]
+    },
+    "draw": {
+     "body": "record",
+     "unit": "ms"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    5
+   ],
+   "span": [
+    12,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-modules",
+    "form": "treemap",
+    "source": "obs.modules",
+    "title": "Capabilities · by module",
+    "read": {
+     "refresh": "5m",
+     "map": {
+      "parts": "modules",
+      "name": "name",
+      "value": "caps_added"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      12,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "capabilities"
+   },
+   "at": [
+    0,
+    7
+   ],
+   "span": [
+    12,
+    3
+   ],
+   "hidden": false,
+   "refresh": "5m",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "cap-callers",
+    "form": "ranked",
+    "source": "activity.sessions",
+    "title": "Who calls · by actor",
+    "read": {
+     "refresh": "60s",
+     "map": {
+      "values": "sessions",
+      "count": "actor",
+      "sum": "count"
+     }
+    },
+    "frame": {
+     "size": "l",
+     "span": [
+      12,
+      3
+     ]
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "activity"
+   },
+   "at": [
+    0,
+    10
+   ],
+   "span": [
+    12,
+    3
+   ],
+   "hidden": false,
+   "refresh": "60s",
+   "floated": false
+  }
+ ]
+}

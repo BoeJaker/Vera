@@ -70,7 +70,28 @@ DEFAULT_MODELS: Dict[str, str] = {
     "embed":      "sentence-transformers/all-MiniLM-L6-v2",  # pragma: allowlist secret
     # Cross-encoder reranker, loaded through fastembed rather than optimum.
     "rerank":     "Xenova/ms-marco-MiniLM-L-6-v2",
+    # Zero-shot NER: the fabric's own entity engine (any label the caller names;
+    # GLINER_LABELS_DEFAULT is the fabric's set), so the 2-core host stops
+    # running the transformer itself. A torch checkpoint saved into the store
+    # with save_pretrained — not an optimum export.
+    "gliner":     "urchade/gliner_medium-v2.1",
+    # Statistical NER with a full pipeline (sentences, POS, dependency parse)
+    # the fabric's spaCy path used on the host. A pip package, pinned in the
+    # component's install steps rather than a store directory.
+    "spacy":      "en_core_web_sm",
 }
+
+#: The fabric's zero-shot label set (fabric_web_acquisition._GLINER_LABELS_DEFAULT
+#: is the same list): what `gliner` looks for when the caller names nothing.
+GLINER_LABELS_DEFAULT: List[str] = [
+    "person", "organization", "company", "government agency", "location",
+    "city", "country", "building", "landmark", "geographic feature",
+    "product", "technology", "software", "programming language", "device",
+    "vehicle", "creative work", "book", "film", "game", "song", "character",
+    "event", "date", "money", "law", "field of study", "scientific concept",
+    "biological species", "chemical", "medical condition", "job title",
+    "nationality", "language", "award", "currency", "unit",
+]
 
 #: How each task's model is loaded. The exporter picks an ORT class from this
 #: and the server picks a pipeline from it, so a task added in one place cannot
@@ -85,6 +106,8 @@ TASK_KIND: Dict[str, str] = {
     "langid":     "text-classification",
     "embed":      "feature-extraction",
     "rerank":     "fastembed",          # not an optimum export
+    "gliner":     "gliner",             # a torch checkpoint the gliner package loads
+    "spacy":      "spacy",              # a pip-installed pipeline package
 }
 
 

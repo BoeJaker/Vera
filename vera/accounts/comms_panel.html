@@ -19,23 +19,8 @@ html,body{ margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);o
   font:12px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif; }
 #root{ display:flex;height:100vh;min-height:0; }
 
-/* ── Left-hand menu ──────────────────────────────────── */
-#lhm{ width:184px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);
-  display:flex;flex-direction:column; }
-#lhm-head{ padding:14px 14px 10px;border-bottom:1px solid var(--border);
-  display:flex;align-items:center;gap:8px; }
-#lhm-head .ico{ width:24px;height:24px;background:var(--bg2);border:1px solid var(--border2);
-  border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:14px; }
-#lhm-head h1{ margin:0;font-size:12px;font-weight:600;letter-spacing:.04em; }
-#lhm-head .sub{ font-size:9px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;margin-top:1px; }
-#lhm-nav{ flex:1;padding:8px 6px;overflow-y:auto; }
-.subtab{ display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border-radius:6px;
-  cursor:pointer;color:var(--fg2);font-size:12px;font-weight:500;border:1px solid transparent;
-  transition:.12s;margin-bottom:2px; }
-.subtab:hover{ background:var(--bg2);color:var(--fg); }
-.subtab.active{ background:var(--bg2);border-color:var(--border2);color:var(--fg); }
-.subtab .gl{ width:18px;text-align:center;font-size:15px;opacity:.9; }
-.subtab.active .gl{ opacity:1; }
+/* The left-hand menu is the shared one — see /ui/vera-panel.css. This page
+   used to restate its every rule here, which is how it drifted. */
 
 /* ── Frames ──────────────────────────────────────────── */
 #frames{ flex:1;position:relative;min-height:0; }
@@ -47,18 +32,18 @@ html,body{ margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);o
 </head>
 <body>
 <div id="root">
-  <aside id="lhm" data-vera-lhm>
-    <div id="lhm-head">
-      <div class="ico">✦</div>
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <span class="ico">✦</span>
       <div><h1>Comms</h1><div class="sub">Accounts &amp; Messaging</div></div>
     </div>
-    <nav id="lhm-nav">
-      <div class="subtab" data-k="system"><span class="gl">📡</span> System</div>
-      <div class="subtab" data-k="accounts"><span class="gl">👤</span> Accounts</div>
-      <div class="subtab" data-k="calendar"><span class="gl">🗓</span> Calendar</div>
-      <div class="subtab" data-k="email"><span class="gl">✉</span> Email</div>
-      <div class="subtab" data-k="telegram"><span class="gl">✈</span> Telegram</div>
-      <div class="subtab" data-k="printer"><span class="gl">🖨</span> Printer</div>
+    <nav id="nav">
+      <button type="button" class="nav-btn" data-k="system"   title="System"><span class="gl">📡</span>System</button>
+      <button type="button" class="nav-btn" data-k="accounts" title="Accounts"><span class="gl">👤</span>Accounts</button>
+      <button type="button" class="nav-btn" data-k="calendar" title="Calendar"><span class="gl">🗓</span>Calendar</button>
+      <button type="button" class="nav-btn" data-k="email"    title="Email"><span class="gl">✉</span>Email</button>
+      <button type="button" class="nav-btn" data-k="telegram" title="Telegram"><span class="gl">✈</span>Telegram</button>
+      <button type="button" class="nav-btn" data-k="printer"  title="Printer"><span class="gl">🖨</span>Printer</button>
     </nav>
   </aside>
   <div id="frames">
@@ -72,7 +57,7 @@ html,body{ margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);o
 </div>
 <script>
 const LS="vera.comms.tab";
-const tabs=[...document.querySelectorAll('.subtab')];
+const tabs=[...document.querySelectorAll('#nav .nav-btn')];
 const frames=[...document.querySelectorAll('#frames iframe')];
 function show(k){
   tabs.forEach(t=>t.classList.toggle('active',t.dataset.k===k));

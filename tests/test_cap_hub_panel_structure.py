@@ -86,9 +86,12 @@ def test_markup_is_balanced(tree):
 def test_rail_shell_menu_and_page_list_agree(tree):
     html = _page_part()
     panes = re.findall(r"'([\w-]+)'", re.search(r"const PANES = \[([^\]]*)\]", html).group(1))
-    rail = re.findall(r'class="snav[^"]*"\s+data-pane="([\w-]+)"', html)
-    menu = re.findall(r"\{id: '([\w-]+)'", re.search(r"registerNav\(\[(.*?)\]\)", html, re.S).group(1))
-    assert panes == rail == menu == ["browse", "tracking", "ontology", "mcp", "modules"]
+    # The menu IS the list the shell is handed: /ui/vera-panel.js publishes the
+    # canonical buttons, so there is no second hand-written copy to drift from.
+    menu = re.findall(r'class="nav-btn[^"]*"\s+data-pane="([\w-]+)"', html)
+    assert "VeraPanelBridge.registerNav(" not in html, \
+        "a hand-written second copy of the menu is back"
+    assert panes == menu == ["browse", "tracking", "ontology", "mcp", "modules"]
     for p in panes:
         assert tree.parent.get("pane-" + p) == ("div", "panes"), p
     assert tree.parent.get("panes") == ("div", "shell")

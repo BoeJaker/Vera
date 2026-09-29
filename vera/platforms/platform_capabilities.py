@@ -597,7 +597,7 @@ async def _platform_panel_route():
 
 
 register_ui(
-    "platform-config", "Platforms", "🎛",
+    "platform-config", "Platforms", "⌸",
     """<div style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/platform/panel"
           style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"

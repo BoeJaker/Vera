@@ -49,7 +49,9 @@ def _redis():
 # chat/chat_panels_capabilities.py). This module serves /ui/themes.css from the
 # same table, so the stylesheet and the JSON theme API stay in lockstep.
 from Vera.vera.theme_defs import (
-    BUILTIN_THEMES, DEFAULT_THEME, ensure_contrast,
+    BUILTIN_THEMES, DEFAULT_THEME, ensure_contrast, with_dataviz,
+    STYLE_PACKS, DENSITY_TIERS, DEFAULT_STYLE, DEFAULT_DENSITY,
+    appearance_css, normalize_appearance,
 )
 
 # Custom themes stored at runtime (persisted to Redis if available)
@@ -76,10 +78,13 @@ def _theme_to_css(theme_id: str) -> str:
 
 
 def _all_themes_css() -> str:
-    """Generate all theme CSS for injection."""
+    """Generate all theme CSS for injection: every theme's colour block, then
+    the derived surfaces and the style packs (after the themes, so a pack's
+    radius and card shadow win over the theme's layout tail)."""
     lines = []
     for tid in _all_themes():
         lines.append(_theme_to_css(tid))
+    lines.append(appearance_css())
     return "\n".join(lines)
 
 
@@ -167,8 +172,8 @@ async def cap_theme_create(id: str, label: str = "", type: str = "dark",
     if not id or not id.isalnum():
         return {"error": "id must be alphanumeric"}
     # Repair unreadable colour choices (text ~ background, weak on-accent) so a
-    # saved custom theme is always legible.
-    var_dict = ensure_contrast(var_dict)
+    # saved custom theme is always legible; give it the data-viz ramp for its type.
+    var_dict = ensure_contrast(with_dataviz(var_dict, type))
     CUSTOM_THEMES[id] = {
         "label": label or id,
         "type": type,
@@ -432,6 +437,56 @@ async def cap_scale_set(scale: float, trace_id=None):
     return {"scale": _UI_SCALE}
 
 
+# ── Appearance: style pack · density tier · blocks — mirrors the scale API ────
+# The live per-device store is localStorage (vera-ui.js); this is the seed for
+# fresh browsers and the broadcast channel for programmatic changes. The packs
+# and tiers themselves are defined in theme_defs (one source with the CSS).
+_APPEARANCE: dict = normalize_appearance()
+
+
+@capability(
+    "ui.appearance.get",
+    http_method="GET", http_path="/ui/appearance", http_tags=["ui"],
+    memory="off", silent=True,
+    description="Get the UI appearance: the style pack (standard | newspaper | terminal | pixel), "
+                "the density tier (full | hover | zen) and whether per-turn blocks are painted, "
+                "with the packs and tiers available.",
+)
+async def cap_appearance_get(trace_id=None):
+    return {
+        **_APPEARANCE,
+        "styles": {k: v["label"] for k, v in STYLE_PACKS.items()},
+        "densities": {k: v["label"] for k, v in DENSITY_TIERS.items()},
+        "defaults": {"style": DEFAULT_STYLE, "density": DEFAULT_DENSITY, "blocks": True},
+    }
+
+
+@capability(
+    "ui.appearance.set",
+    http_method="POST", http_path="/ui/appearance/set", http_tags=["ui"],
+    memory="off", silent=True,
+    description="Set the UI appearance and broadcast it to every UI. Input (each optional): "
+                "style (standard | newspaper | terminal | pixel), density (full | hover | zen), "
+                "blocks (bool — paint per-turn block backgrounds).",
+)
+async def cap_appearance_set(style: str = "", density: str = "", blocks: str = "", trace_id=None):
+    global _APPEARANCE
+    cur = _APPEARANCE
+    _APPEARANCE = normalize_appearance(
+        style if style else cur["style"],
+        density if density else cur["density"],
+        blocks if blocks not in (None, "") else cur["blocks"],
+    )
+    r = _redis()
+    if r:
+        try:
+            await r.set("vera:ui:appearance", json.dumps(_APPEARANCE))
+        except Exception:
+            pass
+    await emit_event({"type": "ui.appearance.changed", **_APPEARANCE})
+    return dict(_APPEARANCE)
+
+
 # Serve vera-graph.js — the unified reusable graph element
 @APP.get("/ui/vera-graph.js", include_in_schema=False)
 async def _serve_vera_graph_js():
@@ -480,6 +535,23 @@ async def _serve_vera_markdown_js():
         content="console.warn('vera_markdown element JS not found');",
         media_type="application/javascript"
     )
+
+
+# Serve widget_element.js — <vera-widget> + window.VeraWidget (UI redesign M2):
+# the ONE renderer for every widget record wherever it is placed (a dashboard
+# tile, a canvas item, an LHM slot, a block in a reply). The chat, VeraDash and
+# the registry panel all draw through it.
+@APP.get("/ui/widgets/widget_element.js", include_in_schema=False)
+async def _serve_widget_element_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "widgets" / "widget_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(content="console.warn('widget_element.js not found');",
+                    media_type="application/javascript")
 
 
 # Serve loop_graph.js — the <vera-loop-graph> live agentic-loop activity graph.
@@ -961,10 +1033,19 @@ def get_allowed_caps(scope: str = "general") -> List[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _startup():
-    global _ACTIVE_THEME, _UI_SCALE
+    global _ACTIVE_THEME, _UI_SCALE, _APPEARANCE
     r = _redis()
     if not r:
         return
+
+    # Load the appearance (style pack · density · blocks)
+    try:
+        saved = await r.get("vera:ui:appearance")
+        if saved:
+            raw = json.loads(saved.decode() if isinstance(saved, bytes) else saved)
+            _APPEARANCE = normalize_appearance(raw.get("style"), raw.get("density"), raw.get("blocks"))
+    except Exception:
+        pass
 
     # Load active theme
     try:

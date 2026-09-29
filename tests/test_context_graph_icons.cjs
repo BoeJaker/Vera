@@ -1,0 +1,20 @@
+// typed icons on the context graph's records: the kind of a record and its icon path
+const path = require('path'); const vm = require('vm'); const fs = require('fs');
+const src = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'context_graph_element.js'), 'utf8');
+const win = { customElements: { get: () => undefined, define: () => {} }, addEventListener: () => {}, document: { createElement: () => ({ style: {}, setAttribute: () => {}, appendChild: () => {} }), head: { appendChild: () => {} }, querySelectorAll: () => [] }, HTMLElement: class {}, location: { origin: '' }, requestAnimationFrame: (f) => 0 };
+win.window = win; vm.createContext(win); vm.runInContext(src, win);
+const G = win.VeraContextGraph; let f = 0; const ok = (c, m) => { console.log((c ? 'ok   ' : 'FAIL ') + m); if (!c) f++; };
+ok(G && typeof G.kindOf === 'function' && G.ICON && Object.keys(G.ICON).length >= 14, 'kindOf and the icon paths are exposed');
+const K = (n, s) => G.kindOf(n, s);
+ok(K({ type: 'capability', label: 'obs.provenance' }, 'cap') === 'cap', 'a capability');
+ok(K({ type: 'dataset', label: 'fabric.digest' }, 'fabric') === 'dataset', 'a dataset');
+ok(K({ type: 'chunk', label: 'fabric_capabilities.py 410-486' }, 'vector') === 'file', 'a file chunk');
+ok(K({ type: 'memory', label: 'boot memo' }, 'memory') === 'memory', 'a memory');
+ok(K({ label: 'commit 312caef' }, 'graph') === 'commit', 'a commit by its hash');
+ok(K({ label: 'ct126.int' }, 'graph') === 'host', 'a host by its name');
+ok(K({ type: 'skill', label: 'fabric-ops' }, 'skill') === 'skill' && K({ type: 'agent' }, 'agent') === 'agent' && K({ type: 'ontology' }, 'ontology') === 'ontology', 'skill · agent · ontology');
+ok(K({ type: 'page', label: 'issue #41' }, 'web') === 'page' && K({}, 'related_qa') === 'qa' && K({ type: 'entity' }, 'ontology') === 'entity', 'page · qa · entity');
+const o = G.compute({ view: 'galaxy', nodes: [{ id: 'v1', label: 'fabric_capabilities.py', source: 'vector', type: 'chunk', score: .9 }, { id: 'c1', label: 'obs.provenance', source: 'cap', type: 'capability', score: .7 }], edges: [], focus: ['v1', 'c1'], reads: {} }, 600, 400);
+ok(o.cnodes.length === 2 && o.cnodes.every((n) => n.kind) && o.cnodes.find((n) => n.id === 'c1').kind === 'cap', 'every node carries its kind');
+ok(o.pos.v1.icon === 'file', 'positions report the icon kind for the host');
+console.log(f ? f + ' failed' : 'all pass'); process.exit(f ? 1 : 0);

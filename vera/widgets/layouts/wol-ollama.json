@@ -1,0 +1,520 @@
+{
+ "v": 2,
+ "dashboard": "ollama",
+ "layout": "default",
+ "key": "wol-ollama",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "note": "Every widget of the ollama grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here. The widget review (2026-09-27): routing activity (a log and the calls by model) and the three figures draw as records; the forms and the node cards stay the page's.",
+ "widgets": [
+  {
+   "record": {
+    "id": "ol-routing",
+    "form": "form",
+    "source": "ollama.model_tags",
+    "shape": "values",
+    "title": "Model Tags & Routing",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: a form (model tags) with its own inputs and Save"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-route-activity",
+    "form": "composite",
+    "source": "ollama.request_log",
+    "shape": "composite",
+    "title": "Routing Activity & Stats",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": 120
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "rows",
+    "children": [
+     {
+      "slot": "log",
+      "record": {
+       "form": "log",
+       "source": "$subject",
+       "shape": "events",
+       "title": "recent routed requests",
+       "read": {
+        "map": {
+         "events": "entries",
+         "t": "ts",
+         "kind": "instance",
+         "text": "model"
+        }
+       }
+      }
+     },
+     {
+      "slot": "stats",
+      "record": {
+       "form": "ranked",
+       "source": "ollama.route_stats",
+       "shape": "values",
+       "title": "calls by model",
+       "read": {
+        "map": {
+         "values": "stats",
+         "count": "model",
+         "sum": "n"
+        }
+       }
+      }
+     }
+    ]
+   },
+   "at": [
+    6,
+    0
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-online",
+    "form": "ring",
+    "source": "obs.cluster",
+    "shape": "level",
+    "title": "Online",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "of": "ollama",
+      "total": true,
+      "where": {
+       "status": [
+        "online",
+        "ok"
+       ]
+      },
+      "max": true
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    0,
+    3
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-models",
+    "form": "counter",
+    "source": "obs.cluster",
+    "shape": "level",
+    "title": "Models",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "of": "ollama",
+      "total": "model_count"
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "unit": "loaded"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    2,
+    3
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-active",
+    "form": "counter",
+    "source": "obs.cluster",
+    "shape": "level",
+    "title": "Active Requests",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "of": "ollama",
+      "total": "in_use"
+     }
+    },
+    "frame": {
+     "size": "s",
+     "span": [
+      2,
+      1
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record",
+     "unit": "in flight"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard"
+   },
+   "at": [
+    4,
+    3
+   ],
+   "span": [
+    2,
+    1
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-nodes",
+    "form": "cards",
+    "source": "cluster.ollama",
+    "shape": "items",
+    "title": "Nodes",
+    "read": {
+     "refresh": "5s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      4
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: each node's card carries its models and its actions"
+   },
+   "at": [
+    0,
+    4
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "5s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-bgqueue",
+    "form": "composite",
+    "source": "background.status",
+    "shape": "composite",
+    "title": "Background Queue — waiting for an idle box",
+    "note": "the ollama page folded this into its Jobs head (bleeding-edge 53043a9); the element draws it from the file",
+    "read": {
+     "refresh": "30s"
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "record"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "children": [
+     {
+      "slot": "a",
+      "record": {
+       "form": "numbers",
+       "source": "$subject",
+       "shape": "values",
+       "title": "queue",
+       "read": {
+        "map": {
+         "pick": {
+          "queued": "queue.depth",
+          "quiet for s": "quiet_for_s",
+          "needs s": "min_quiet_s"
+         }
+        }
+       }
+      }
+     },
+     {
+      "slot": "b",
+      "record": {
+       "form": "string",
+       "source": "$subject",
+       "shape": "string",
+       "title": "waiting because",
+       "read": {
+        "map": {
+         "text": "busy_reason"
+        }
+       }
+      }
+     },
+     {
+      "slot": "c",
+      "record": {
+       "form": "rows",
+       "source": "$subject",
+       "shape": "items",
+       "title": "jobs",
+       "read": {
+        "map": {
+         "rows": "jobs",
+         "name": "name",
+         "value": "runs",
+         "status": "last_ok"
+        }
+       }
+      }
+     }
+    ],
+    "layout": "report"
+   },
+   "at": [
+    0,
+    8
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-embed-cfg",
+    "form": "form",
+    "source": "ollama.embed_config",
+    "shape": "values",
+    "title": "Embedding Config",
+    "read": {
+     "refresh": ""
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "note": "stays the page's: a form (the embedding model, the pin) with its own inputs"
+   },
+   "at": [
+    6,
+    8
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "ol-test",
+    "form": "composite",
+    "source": "llm.generate",
+    "shape": "composite",
+    "title": "Node Test",
+    "read": {
+     "refresh": ""
+    },
+    "frame": {
+     "size": "xl",
+     "span": [
+      6,
+      3
+     ],
+     "max_body": null
+    },
+    "draw": {
+     "body": "page"
+    },
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "place": "dashboard",
+    "layout": "rows",
+    "children": [
+     {
+      "slot": "form",
+      "record": {
+       "id": "ol-test:form",
+       "form": "form",
+       "source": "llm.generate",
+       "title": "node test",
+       "shape": "values"
+      }
+     },
+     {
+      "slot": "result",
+      "record": {
+       "id": "ol-test:result",
+       "form": "terminal",
+       "source": "llm.generate",
+       "title": "result",
+       "shape": "string"
+      }
+     }
+    ],
+    "note": "stays the page's: a form that runs llm.generate"
+   },
+   "at": [
+    0,
+    11
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false
+  }
+ ]
+}

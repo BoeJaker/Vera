@@ -43,7 +43,7 @@
   }
 
   function initCollapse() {
-    var sidebar = document.querySelector('#sidebar[data-vera-lhm]');
+    var sidebar = document.querySelector('[data-vera-lhm]');
     var head = sidebar ? sidebar.querySelector('#side-head') : null;
     if (!head || !sidebar || document.getElementById('lhm-toggle')) return;
 
@@ -119,24 +119,80 @@
     var host = document.querySelector('[data-vera-lhm]');
     if (!host || host._vpNavBridged) return;
     var nav = (host.id === 'nav') ? host : (host.querySelector('#nav') || host);
-    var SEL = '[data-section], [data-sec], [data-s], [data-view], [data-tab], [data-nav], [data-pane], [data-go], [data-k]';
-    var btns = nav.querySelectorAll(SEL);
+    var SEL = '[data-section], [data-sec], [data-s], [data-view], [data-tab], [data-nav], [data-pane], [data-go], [data-k], [data-t]';
+    // Canonical markup first: .nav-btn is the menu's only target, so a heading
+    // or a rule that happens to carry data-view (the Estate groups its items
+    // that way) is never mistaken for one. The loose list stays for a panel
+    // that opted in before this shape existed.
+    var btns = nav.querySelectorAll('.nav-btn');
+    if (!btns.length) btns = nav.querySelectorAll(SEL);
+    if (!nav.querySelector('.nav-btn')) btns = Array.prototype.filter.call(btns, function (b) { return !!(b.matches && (b.matches('button, a, [role="button"], [onclick]') || b.matches('[role="tab"], .tab'))); });   /* a tab drawn as a div (its click bound in script) is an item too */
+    // a menu in markup of its own (Research's icon rail: buttons with a title and an onclick, no data attribute): its
+    // clickable things with a name are the items - never what sits under [data-lhm-skip] (Research's theme palette)
+    if (!btns.length) btns = Array.prototype.filter.call(nav.querySelectorAll('button, a, [role="button"], [onclick]'), function (b) {
+      return !(b.closest && b.closest('[data-lhm-skip]')) && !!((b.getAttribute('title') || b.textContent || '').trim()); });
+    // A button the panel's own rules hide (a view filter — the Estate's
+    // ?view=models shows only the model pages) is not part of the menu it is
+    // publishing. Ask for the button's OWN computed display, never its
+    // offsetParent: a panel is routinely still in a hidden container when this
+    // runs (the shell builds a tab before it shows it), which makes every
+    // offsetParent null and would let the whole menu through — the Estate
+    // published its Models pages into its Estate menu that way. Computed
+    // display is 'none' only when a rule aimed at this element says so, and is
+    // unaffected by an ancestor being hidden.
+    btns = Array.prototype.filter.call(btns, function (b) {
+      try { return getComputedStyle(b).display !== 'none'; } catch (e) { return true; }
+    });
     if (!btns.length) return;
     host._vpNavBridged = true;
+    // a sidebar that CARRIES content of its own (panes: the Calendar's layers, events, assistant) keeps that content
+    // when its menu is docked in the harness - only its header and tab strip fold (vera-panel.css, .vp-has-content)
+    if (host.querySelector('#lhm-body, .lhm-pane, [data-lhm-content]')) host.classList.add('vp-has-content');
 
+    /* AN ID NAMES ONE ITEM. The first attribute in this order that a button carried used to be its id, and the Estate
+       marks every one of its items data-view="estate" (the view that owns it) beside a data-pane that names it: all
+       nineteen published as "estate", the host lit them all, and picking any of them - Live ops, Docker - sent an id
+       that meant none of them (owner, 2026-09-27: "i cant select sub menu options for things like the estate"). The
+       id is now the first attribute, in the same order, that EVERY item carries with a DIFFERENT value; a panel whose
+       ids were already unique keeps exactly the ids it had. */
+    var ID_ATTRS = ['data-section', 'data-sec', 'data-s', 'data-view', 'data-tab', 'data-nav', 'data-pane', 'data-go', 'data-k', 'data-t'];
+    var idAttr = ID_ATTRS.filter(function (a) {
+      var seen = {};
+      for (var i = 0; i < btns.length; i++) { var v = btns[i].getAttribute(a); if (!v || seen[v]) return false; seen[v] = 1; }
+      return true;
+    })[0] || '';
+    /* none of those names every item apart: any data-* attribute that does is the id (the Estate's Storage says data-p;
+       2026-09-27, it nested as seven 'null' items no pick could reach) - and failing even that, the item's place */
+    if (!idAttr) {
+      // each item's own element id first (Research: nv-r, nv-p ...; Cap Ontology: vt-matrix ...) - set on purpose, where a
+      // data attribute may be anyone's (the bridge tags a top bar's buttons data-vpb-hid p1, p2 ... when it offers the bar)
+      if (!idAttr) { var seen3 = {}, ok3 = true; for (var bk = 0; bk < btns.length; bk++) { var v3 = btns[bk].getAttribute('id'); if (!v3 || seen3[v3]) { ok3 = false; break; } seen3[v3] = 1; } if (ok3) idAttr = 'id'; }
+    }
+    if (!idAttr) {
+      var at0 = btns[0].attributes || [];
+      for (var ai = 0; ai < at0.length && !idAttr; ai++) {
+        var nm = at0[ai].name; if (!/^data-/.test(nm) || /^data-(w|tip|title|label|i18n|vera-|rcm-|icon|lhm-|vpb-)/.test(nm)) continue;   /* data-icon is the glyph, never the id */
+        var seen2 = {}, ok = true;
+        for (var bj = 0; bj < btns.length; bj++) { var v2 = btns[bj].getAttribute(nm); if (!v2 || seen2[v2]) { ok = false; break; } seen2[v2] = 1; }
+        if (ok) idAttr = nm;
+      }
+    }
     function idOf(b) {
+      if (idAttr) return b.getAttribute(idAttr);
       return b.getAttribute('data-section') || b.getAttribute('data-sec') || b.getAttribute('data-s') ||
              b.getAttribute('data-view') || b.getAttribute('data-tab') || b.getAttribute('data-nav') ||
-             b.getAttribute('data-pane') || b.getAttribute('data-go') || b.getAttribute('data-k');
+             b.getAttribute('data-pane') || b.getAttribute('data-go') || b.getAttribute('data-k') || b.getAttribute('data-t') ||
+             ('n' + Array.prototype.indexOf.call(btns, b));
     }
-    // title attribute first — it's already clean text with no icon glyph.
-    // Failing that, a couple of panels wrap the label in its own child
-    // element (.lbl, .fab-nb-label) rather than a bare trailing text node
-    // (the shape the collapse CSS above relies on to hide just the label
-    // in icon-rail mode) — check those explicitly before falling back to
-    // whatever plain text nodes exist, then the whole button's text as a
-    // last resort (icon glyph and all).
+    // title attribute first — it's already clean text with no icon glyph, and
+    // the canonical markup carries one on every item. Failing that, a panel
+    // that wraps its label in a child element rather than a bare trailing
+    // text node (the shape the collapse CSS above relies on to hide just the
+    // label in icon-rail mode) gets those checked explicitly, then whatever
+    // plain text nodes exist, then the whole button's text as a last resort
+    // (icon glyph and all).
     function labelOf(b) {
+      var dl = (b.getAttribute('data-label') || '').trim(); if (dl) return dl;   /* a title that is a description does not name the item */
       var t = (b.getAttribute('title') || '').trim();
       if (t) return t;
       var lblEl = b.querySelector('.lbl, .fab-nb-label, .nav-label');
@@ -144,11 +200,24 @@
       var txt = '';
       Array.prototype.forEach.call(b.childNodes, function (n) { if (n.nodeType === 3) txt += n.textContent; });
       txt = txt.trim();
+      // the label in a span beside its .gl glyph: the text without the glyph
+      var gl = !txt && b.querySelector('.gl');
+      if (gl) { Array.prototype.forEach.call(b.childNodes, function (n) { if (n !== gl) txt += n.textContent || ''; }); txt = txt.replace(/\s+/g, ' ').trim(); }
       return txt || (b.textContent || '').trim() || idOf(b);
     }
-    var items = Array.prototype.map.call(btns, function (b) { return { id: idOf(b), label: labelOf(b) }; });
-    // ".on" (markets_studio_panel.html's own railBtn convention, among
-    // others) alongside the canonical ".active" — scoped to just these nav
+    // the group an item sits under (the nearest .nav-grp heading before it) and its glyph: the harness draws the
+    // panel's menu in its LHM from these - a rail icon per group, or per item when the menu has no groups
+    function groupOf(b) {
+      for (var el = b.previousElementSibling; el; el = el.previousElementSibling) {
+        if (el.classList && el.classList.contains('nav-grp')) return (el.textContent || '').trim().slice(0, 40);
+      }
+      var g = b.closest && b.closest('[data-nav-group]');
+      return g ? String(g.getAttribute('data-nav-group') || '').slice(0, 40) : '';
+    }
+    function iconOf(b) { var di = b.getAttribute && b.getAttribute('data-icon'); if (di) return Array.from(di.trim()).slice(0, 2).join(''); var g = b.querySelector('.gl'); return g ? Array.from((g.textContent || '').trim()).slice(0, 2).join('') : ''; }
+    var items = Array.prototype.map.call(btns, function (b) { return { id: idOf(b), label: labelOf(b), group: groupOf(b), icon: iconOf(b) }; });
+    // ".active" is the canonical mark; ".on" is still accepted for a panel
+    // that has not moved to this markup yet — scoped to just these nav
     // buttons, so it's never ambiguous with an unrelated "on" state
     // elsewhere in the panel.
     function currentActive() {
@@ -162,7 +231,17 @@
         if (tries > 0) setTimeout(function () { ready(tries - 1); }, 200);
         return;
       }
-      window.VeraPanelBridge.registerNav(items);
+      // Hand the bridge the exact button for each id rather than leaving it to
+      // re-find one by attribute: two items can carry the same value on
+      // different attributes (the Estate's data-pane="estate" map beside every
+      // data-view="estate" item), and the loser of that race is a dead menu
+      // entry. We already hold the element, so there is nothing to guess.
+      window.VeraPanelBridge.registerNav(items, function (id) {
+        for (var i = 0; i < btns.length; i++) {
+          if (idOf(btns[i]) === String(id)) { btns[i].click(); return; }
+        }
+        throw new Error('no menu item ' + id);
+      });
       window.VeraPanelBridge.setNavActive(currentActive());
       var mo = new MutationObserver(function () {
         window.VeraPanelBridge.setNavActive(currentActive());
@@ -172,6 +251,62 @@
       });
     }
     ready(25);   // ~5s — covers vera-panel-bridge.js loading after this script
+
+    /* SIDE BY SIDE FROM THE PANEL'S OWN MENU TOO (owner, 2026-09-28: "in the LHM all the sub menus are supposed to let
+       you open pages as extra panels side-by-side"). While this menu is shown in the frame (not docked: the harness in
+       tabs mode, or keeping inner menus), Ctrl/\u2318- or middle-click on an item - or on a page sub-section under it -
+       asks the harness to open this panel again beside, at that item (vera:lhm:tab, as the chat's bridge does). */
+    function splitKey(ev) { return !!(ev && (ev.ctrlKey || ev.metaKey || ev.button === 1)); }
+    function besideOf(el) {
+      if (!el || !el.closest) return '';
+      var sb = el.closest('.vp-sub');
+      if (sb && nav.contains(sb)) { var a = null; for (var i = 0; i < btns.length; i++) if (btns[i].classList.contains('active') || btns[i].classList.contains('on')) { a = btns[i]; break; } return (a ? idOf(a) + '>' : '') + 's:' + sb.getAttribute('data-vp-sub'); }
+      for (var j = 0; j < btns.length; j++) if (btns[j] === el || btns[j].contains(el)) return idOf(btns[j]);
+      return '';
+    }
+    function besideAsk(ev) {
+      if (!splitKey(ev)) return;
+      var inHarness = false; try { inHarness = window.parent && window.parent !== window && window.parent === window.top; } catch (e) {}
+      var pid = ''; try { pid = window.VeraPanelBridge && window.VeraPanelBridge.panelId ? String(window.VeraPanelBridge.panelId() || '') : ''; } catch (e) {}
+      if (!inHarness || !pid) return;
+      var sec = besideOf(ev.target); if (!sec) return;
+      ev.preventDefault(); ev.stopPropagation();
+      if (ev.type === 'auxclick' || ev.type === 'click') { try { window.parent.postMessage({ type: 'vera:lhm:tab', id: pid.replace(/--\d+$/, ''), section: sec, by: 'you' }, '*'); } catch (e) {} }
+    }
+    nav.addEventListener('click', besideAsk, true);
+    nav.addEventListener('auxclick', besideAsk, true);
+    nav.addEventListener('mousedown', function (ev) { if (ev.button === 1 && besideOf(ev.target)) ev.preventDefault(); }, true);   /* no autoscroll on a middle-press */
+
+    /* A PAGE'S OWN SUB-SECTIONS under the lit item (owner, 2026-09-28: "the estate ui's observe menu is missing the perf
+       section"). A section that switches views in the page (Observe: Events / Perf) marks each tab data-vera-sub="<id>";
+       the shown strip's tabs are mirrored here, the current one lit, and a pick clicks the tab. A strip in a bar the harness
+       absorbed still counts as shown - that bar is folded away only because the harness holds it. */
+    if (!document.getElementById('vp-sub-css')) { var sc = document.createElement('style'); sc.id = 'vp-sub-css';
+      sc.textContent = '#sidebar[data-vera-lhm] .vp-sub,[data-vera-lhm] .vp-sub{display:flex;align-items:center;gap:7px;width:calc(100% - 22px);margin:1px 0 1px 22px;padding:5px 10px;border:none;border-radius:6px;background:transparent;color:var(--dim2,var(--t2,#8a92a0));font:inherit;font-size:11.5px;text-align:left;cursor:pointer}'
+        + '#sidebar[data-vera-lhm] .vp-sub::before,[data-vera-lhm] .vp-sub::before{content:"\\203a";opacity:.5}'
+        + '#sidebar[data-vera-lhm] .vp-sub:hover,[data-vera-lhm] .vp-sub:hover{background:var(--bg2,#1a1f26);color:var(--fg,var(--text,#d8dde3))}'
+        + '#sidebar[data-vera-lhm] .vp-sub.active,[data-vera-lhm] .vp-sub.active{color:var(--fg,var(--text,#d8dde3));background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}'
+        + 'body.lhm-collapsed #sidebar[data-vera-lhm] .vp-sub{display:none}';
+      (document.head || document.documentElement).appendChild(sc); }
+    function subShown(el) { for (var n = el; n && n !== document.body; n = n.parentElement) { if (n.hidden) return false; var cs = getComputedStyle(n);
+      if (cs.visibility === 'hidden') return false; if (cs.display === 'none' && !n.hasAttribute('data-vpb-hdr-bar')) return false; } return !!el; }
+    function subLabel(el) { var own = ''; Array.prototype.forEach.call(el.childNodes, function (c) { if (c.nodeType === 3) own += c.textContent; });
+      return String(el.getAttribute('data-label') || own.trim() || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40); }
+    var subSig = '';
+    function syncSubs() {
+      var act = null; for (var i = 0; i < btns.length; i++) if (btns[i].classList.contains('active') || btns[i].classList.contains('on')) { act = btns[i]; break; }
+      var tabs = Array.prototype.filter.call(document.querySelectorAll('[data-vera-sub]'), subShown).slice(0, 24);
+      var sig = (act ? idOf(act) : '') + '|' + tabs.map(function (t) { return t.getAttribute('data-vera-sub') + (/\b(active|on|selected)\b/.test(String(t.className || '')) ? '*' : ''); }).join(',');
+      if (sig === subSig) return; subSig = sig;
+      Array.prototype.forEach.call(nav.querySelectorAll('.vp-sub'), function (x) { x.remove(); });
+      if (!act || !tabs.length) return;
+      var after = act;
+      tabs.forEach(function (t) { var b = document.createElement('button'); b.type = 'button'; b.className = 'vp-sub' + (/\b(active|on|selected)\b/.test(String(t.className || '')) ? ' active' : '');
+        b.textContent = subLabel(t); b.title = b.textContent; b.setAttribute('data-vp-sub', t.getAttribute('data-vera-sub'));
+        b.addEventListener('click', function () { t.click(); subSig = ''; setTimeout(syncSubs, 60); });
+        after.parentNode.insertBefore(b, after.nextSibling); after = b; });
+    }
+    syncSubs(); setInterval(syncSubs, 700);
   }
 
   function init() { initCollapse(); initSections(); initNavBridge(); }

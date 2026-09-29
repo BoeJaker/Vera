@@ -166,7 +166,7 @@
       this._pipelineId = this.getAttribute('pipeline-id') || '';
       this._connectWs();
       if (this._onScreen()) this.refresh();
-      this._pollTimer = setInterval(() => { if (this._onScreen()) this.refresh(); }, 10000);
+      this._pollTimer = setInterval(() => { if (this._onScreen() && !document.hidden) this.refresh(); }, 30000);   // was 10000 ms, and ran in a background tab
     }
 
     /* Poll only while on screen. offsetParent is null inside a hidden

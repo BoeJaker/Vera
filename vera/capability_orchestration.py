@@ -571,7 +571,9 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
                 tab_order: int = 100,
                 specialist_agent: str = "",
                 specialist_loop_profile: str = "",
-                specialist_context_cap: str = ""):
+                specialist_context_cap: str = "",
+                sections: List[dict] = None,
+                options: List[dict] = None):
     """Register a built-in UI panel.
 
     mode:
@@ -604,6 +606,11 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
     passed as agent.consult's `context` argument — no new execution engine,
     just real data prepended to the same consult/loop call. Blank = no
     context injection, specialist answers from persona alone as before.
+    sections / options (UI redesign, Notes/40 §2): what the panel's own menu
+    holds — sections [{id, label, tabs:[{id,label}]}] and options [{id, label,
+    kind, get, set}] — so the harness LHM, the chat rail and a panel's side menu
+    are built from ONE registration instead of three hand-drawn lists. Empty =
+    the panel has no declared menu (as every panel today).
     """
     UI_PANELS[panel_id] = {
         "id":        panel_id,
@@ -617,6 +624,8 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
         "specialist_agent":        specialist_agent,
         "specialist_loop_profile": specialist_loop_profile,
         "specialist_context_cap":  specialist_context_cap,
+        "sections":  [s for s in (sections or []) if isinstance(s, dict)],
+        "options":   [o for o in (options or []) if isinstance(o, dict)],
     }
 
 REDIS = PG_POOL = CHROMA = NEO = None
@@ -683,6 +692,12 @@ OLLAMA_JOB_TYPES: List[str] = [
     # Media services served by the GPU inference server(s) (edge/GPU_inference.py):
     # routed across MEDIA_INSTANCES by resolve_media(), not pick_instance().
     "stt", "tts", "imagegen",
+    # The chat's one-line "working on it" acknowledgement, generated BESIDE the
+    # reply - it must never queue behind the reply it announces.
+    "quick_opener",
+    # Background work the idle queue and the nightly automations run
+    # (job_type idle_<what>); one rule covers them all (see _resolve_rule).
+    "idle_*",
 ]
 
 def _rule(job_type: str, *, prefer_gpu: bool = False, deny_gpu: bool = False,
@@ -733,10 +748,16 @@ LONG_HORIZON_CPU_NODE = "cpu-247"
 # `naming` (chat titles + simple/utility LLM ops) is CPU-only by default so it
 # never ties up a GPU — pin it to a specific CPU node and/or a lighter model in
 # the Workers & Ollama tab's routing editor.
+#: The GPU node's CPU-only Ollama (ollama_node_core.cpu_sibling_id("gpu-250")).
+EMBED_PRIMARY_NODE = "gpu-250-cpu"
+
 DEFAULT_ROUTING_RULES: Dict[str, dict] = {
-    # cpu-246 FAVOURS embedding, cpu-247 favours the light generation jobs -
-    # but neither is excluded, so a busy node hands work to the other.
-    "embedding": _rule("embedding", deny_gpu=True, prefer="cpu-246"),
+    # The GPU node's CPU-only sibling is the PRIMARY embedder (user, 2026-09-28:
+    # "make the gpu node the primary embedding node - then the other 2 cpu nodes
+    # can be used primarily for large models ... but can also act as
+    # embedders"). `prefer` is soft: while gpu-250-cpu is the busier node the
+    # CPU nodes take the overflow.
+    "embedding": _rule("embedding", deny_gpu=True, prefer=EMBED_PRIMARY_NODE),
     # naming + summarize are light utility LLM ops that run INLINE in latency-
     # sensitive paths (chat title generation; history compaction before a reply).
     # Keep them off the embedding node (avoid_embed) so they land on an idle CPU
@@ -745,7 +766,9 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # A chat title is 3-8 tokens. With no model here a sandbox took the instance
     # default - the 9b - onto a CPU node, where one such call held the node for
     # 9 hours (2026-09-23, judgement 18). Every node carries the 0.5b.
-    "naming":    _rule("naming",    deny_gpu=True, prefer="cpu-247", model="qwen2.5:0.5b"),
+    # Also on the GPU node's CPU sibling, so the CPU nodes stay for the large
+    # (MoE) models; either CPU node still takes it when the sibling is busier.
+    "naming":    _rule("naming",    deny_gpu=True, prefer=EMBED_PRIMARY_NODE, model="qwen2.5:0.5b"),
     # summarize is GPU-ONLY. It runs INLINE - the caller is blocked awaiting it -
     # so a CPU summarise does not overlap anything: the GPU sits idle while the
     # slower box works, and the caller just waits longer. Verified safe: the gate
@@ -797,6 +820,18 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     "stt":      _rule("stt",      prefer_gpu=True),
     "tts":      _rule("tts",      prefer_gpu=True),
     "imagegen": _rule("imagegen", prefer_gpu=True),
+    # Light work on the GPU node's CPU sibling (user, 2026-09-28: "the naming and
+    # other lighter llm functions ... routed to the new cpu node"), which keeps
+    # the default model warm for it. The caller asked for "not the GPU"
+    # (prefer_gpu=False) - but the `default` rule's prefer_gpu overrode that, so
+    # every opener queued on the GPU behind the reply it was announcing.
+    "quick_opener": _rule("quick_opener", deny_gpu=True, prefer=EMBED_PRIMARY_NODE),
+    # Background automations ask for "not the GPU first" (prefer_gpu=False)
+    # but fell through to `default`, whose prefer_gpu overrode that: route
+    # stats 2026-09-28 show 98 idle_intel calls on gpu-250. A SOFT preference:
+    # the sibling takes them while it is free, and an idle GPU still takes the
+    # overflow - the night window is when the card is free anyway.
+    "idle_*": _rule("idle_*", prefer=EMBED_PRIMARY_NODE),
 }
 
 # In-memory routing state (hydrated from Redis on startup, see
@@ -823,7 +858,9 @@ def _match_glob(iid: str, pattern: str) -> bool:
 
 
 def _resolve_rule(job_type: Optional[str]) -> dict:
-    """The effective rule for a job type: active-profile override, else default."""
+    """The effective rule for a job type: active-profile override, else default.
+    An exact key wins; then a glob key ('idle_*') - profile before default,
+    the longest pattern first."""
     jt = (job_type or "default").strip() or "default"
     prof = ROUTING.get("profiles", {}).get(ROUTING.get("active_profile", "default"), {})
     rules = (prof.get("rules") or {})
@@ -831,6 +868,10 @@ def _resolve_rule(job_type: Optional[str]) -> dict:
         return rules[jt]
     if jt in DEFAULT_ROUTING_RULES:
         return DEFAULT_ROUTING_RULES[jt]
+    for table in (rules, DEFAULT_ROUTING_RULES):
+        for pat in sorted((k for k in table if k.endswith("*") and k != "*"), key=len, reverse=True):
+            if table[pat] and _match_glob(jt, pat):
+                return table[pat]
     return DEFAULT_ROUTING_RULES["default"]
 
 
@@ -1498,18 +1539,28 @@ async def _seed_routing_parity(present: Dict[str, bool]) -> List[str]:
             pass
     return seeded
 
-# Per-instance concurrency semaphores for Ollama — limits simultaneous
-# in-flight requests per node to 1 (Ollama queues internally but multiple
-# concurrent httpx connections cause request pile-ups and timeouts).
-# Callers that want parallelism across *different* nodes are unaffected.
-# Use acquire/release via `async with _ollama_sem(iid):` pattern.
+# Per-instance concurrency semaphores for Ollama - this process's own limit on
+# simultaneous generations per node, in front of the cross-process gate. It
+# follows the node: a GPU node takes one generation at a time, a CPU node as
+# many as its Ollama has slots (the gate's capacity_for - 2 by default, user
+# 2026-09-28). A limit of 1 everywhere serialised prod's own CPU jobs even where
+# the node could run two. OLLAMA_CONCURRENCY, when set, still overrides all.
+# Embeddings do not take this semaphore. Use `async with _ollama_slot(iid):`.
 _OLLAMA_SEMAPHORES: Dict[str, asyncio.Semaphore] = {}
-_OLLAMA_SEM_LIMIT = int(os.environ.get("OLLAMA_CONCURRENCY", "1"))
+_OLLAMA_SEM_OVERRIDE = os.environ.get("OLLAMA_CONCURRENCY", "").strip()
+
+
+def _ollama_sem_limit(iid: str) -> int:
+    if _OLLAMA_SEM_OVERRIDE:
+        return max(1, int(_OLLAMA_SEM_OVERRIDE))
+    has_gpu = bool((OLLAMA_INSTANCES.get(iid) or {}).get("has_gpu"))
+    return 1 if has_gpu else max(1, _gate.capacity_for(False))
+
 
 def _ollama_sem(iid: str) -> asyncio.Semaphore:
     """Return (creating if needed) the per-instance Semaphore."""
     if iid not in _OLLAMA_SEMAPHORES:
-        _OLLAMA_SEMAPHORES[iid] = asyncio.Semaphore(_OLLAMA_SEM_LIMIT)
+        _OLLAMA_SEMAPHORES[iid] = asyncio.Semaphore(_ollama_sem_limit(iid))
     return _OLLAMA_SEMAPHORES[iid]
 
 
@@ -1537,6 +1588,65 @@ except _GateBrokerError as _broker_error:
     _GATE_BROKER_ERROR = str(_broker_error)
 # Dev-sandbox write guard (strict no-op in prod). See vera/sandbox_guard.py.
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked   # noqa: E402
+try:
+    from Vera.vera.sandbox_guard import upstream_read_url as _sg_upstream_url, read_through_allowed as _sg_read_through_allowed   # noqa: E402
+except Exception:  # pragma: no cover
+    try:
+        from .sandbox_guard import upstream_read_url as _sg_upstream_url, read_through_allowed as _sg_read_through_allowed
+    except Exception:
+        _sg_upstream_url = lambda env=None: ""          # noqa: E731
+        _sg_read_through_allowed = lambda name, method, env=None: False   # noqa: E731
+# Read-through is a property of a sandbox that SERVES pages, not of the module: it is armed by lifespan() once the
+# app starts (arm_read_through), and stays '' for every other way this module gets imported — pytest in the gate's
+# ephemeral container (started with VERA_IS_DEV_SANDBOX=1 like any sandbox), a script, a REPL. Armed at import, the
+# hook answered a test's monkeypatched readers and FakeRedis from prod's live estate: 25 red tests on the design edge
+# that were green on bleeding-edge, and five thousand gate tests reading prod. The prod process never arms (the guard
+# says '' outside a sandbox) and a served sandbox behaves exactly as before.
+_READ_THROUGH_URL = ""
+_READ_THROUGH_TIMEOUT_S = float(os.environ.get("VERA_UPSTREAM_READ_TIMEOUT_S") or 40)   # seconds prod gets to answer one reading
+
+
+def arm_read_through(env=None) -> str:
+    """Arm the sandbox read-through for this process — the app calls it when it starts serving. Returns the upstream
+    URL now in force ('' when this process must not read through: not a sandbox, or VERA_UPSTREAM_READ_URL=off)."""
+    global _READ_THROUGH_URL
+    _READ_THROUGH_URL = _sg_upstream_url(env) or ""
+    return _READ_THROUGH_URL
+
+
+def read_through_url() -> str:
+    """The upstream a read-through goes to right now; '' while the hook is disarmed."""
+    return _READ_THROUGH_URL
+
+
+async def _upstream_read(name: str, kw: dict):
+    """One read of prod's estate from a sandbox (sandbox_guard.read_through_allowed said yes): prod's /mcp/call,
+    the arguments as given, no trace of ours. None when prod could not answer — the local capability runs then."""
+    args = {k: v for k, v in (kw or {}).items() if k != "trace_id"}
+    try:
+        # a reading can be slow on the estate itself (topology.snapshot walks every node: ~11 s on prod, longer while a
+        # dashboard of seventeen tiles reads at once) - waiting beats answering from the sandbox's empty stores
+        async with httpx.AsyncClient(verify=False, timeout=_READ_THROUGH_TIMEOUT_S) as c:
+            r = await c.post(_READ_THROUGH_URL, json={"name": name, "arguments": args, "caller_kind": "sandbox-read"},
+                             headers={"X-Vera-Read-Through": "sandbox"})
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        # /mcp/call answers in the MCP envelope {type: tool_result, tool_name, trace_id, content: <the result>} — the
+        # capability's own result is `content` (a list of text parts on an older bridge); a tile wants that, not the envelope
+        if isinstance(j, dict) and j.get("type") == "tool_result" and "content" in j:
+            c = j["content"]
+            if isinstance(c, list) and c and all(isinstance(x, dict) and "text" in x for x in c):
+                txt = "".join(str(x.get("text", "")) for x in c)
+                try:
+                    return json.loads(txt)
+                except Exception:
+                    return {"text": txt}
+            return c
+        return j
+    except Exception as e:  # prod unreachable, a slow read, a bad body: the sandbox answers for itself
+        log.debug("read-through %s: %s", name, e)
+        return None
 
 
 def _split_redis_url(url: str):
@@ -2052,7 +2162,9 @@ async def _ping_media_instance(iid: str, inst: dict) -> None:
             status="online", errors=0, last_check=now_iso(),
             services=[svc for key, svc in _MEDIA_SERVICE_KEYS.items() if d.get(key)],
             detail={k: d.get(k) for k in ("tts_engine", "gpu", "cuda", "device",
-                                          "sample_rate") if k in d},
+                                          "sample_rate", "sd_device",
+                                          # which models load from the shared store
+                                          "model_store") if k in d},
         )
     except Exception as e:
         inst.update(status="offline", last_check=now_iso(),
@@ -2230,6 +2342,17 @@ def _embed_node_id() -> str:
 #: same paths and cannot leak differently from them.
 OLLAMA_INFLIGHT: Dict[str, dict] = {}
 
+# Warm model slots (vera/workers/warm_models_capabilities.py). The module
+# writes WARM_STATE each tick; the request path and the picker only READ it:
+#   planned        {node: {model: num_ctx}} - pairs kept resident
+#   embed_urls     {node url: embed model}  - embedders kept beside the slots
+#   spill_job_types, spill_min_tps, spill_max_ctx - see cluster.py
+# ROUTE_DEMAND is the demand a workload scenario turns on from: one
+# (epoch seconds, job_type) per generation this process routed.
+import collections as _collections  # noqa: E402
+WARM_STATE: Dict[str, Any] = {}
+ROUTE_DEMAND: "_collections.deque" = _collections.deque(maxlen=4000)
+
 
 def _inflight_hold(inst: dict, slot_id: str, meta: Optional[dict] = None) -> None:
     try:
@@ -2299,7 +2422,7 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
                   model: Optional[str] = None, job_type: Optional[str] = None,
                   rule_override: Optional[dict] = None,
                   explain: Optional[dict] = None,
-                  ctx_need: int = 0) -> Optional[str]:
+                  ctx_need: int = 0, **_kw) -> Optional[str]:
     _inflight_sweep()   # reclaim slots whose request never returned
     # `explain`, when passed, is filled with the decision trail so callers can
     # log/emit WHY a node was chosen (rule applied, filters, tie-break).
@@ -2651,6 +2774,38 @@ def est_ctx_tokens(prompt: str = "", system: str = "", num_predict: int = 0) -> 
     return int(chars / max(_CHARS_PER_TOKEN, 1.0)) + max(int(num_predict or 0), _CTX_RESERVE_OUT)
 
 
+#: chars/token for a ROUTING decision when nothing has been measured. The
+#: window arithmetic above must over-count (2.3); a decision to send a prompt
+#: to a 4 tok/s CPU node must not - at 2.3 a 64k-char prompt (~16k real
+#: tokens, measured 3.6-4.4 on the 9b) reads as 28k and "does not fit" a GPU
+#: window it fits with room to spare.
+_ROUTE_DECISION_CPT = 3.0
+
+
+def prompt_need_tokens(prompt: str, system: str, model: str, job_type: str) -> int:
+    """The PROMPT's tokens plus the minimum output reserve - does it fit a GPU
+    window at all? Uses the measured chars/token of this model on a GPU node
+    (this job type first), unbiased; the caller's num_predict is not part of
+    it (on the GPU the window is capped and the output shrinks to fit - only a
+    prompt that cannot fit is a reason to leave the card)."""
+    chars = len(prompt or "") + len(system or "")
+    cpt = 0.0
+    for iid, inst in OLLAMA_INSTANCES.items():
+        if not inst.get("has_gpu"):
+            continue
+        s = _ROUTE_STATS.get(_route_stats_key(model or "", iid, job_type or ""))
+        if s and int(s.get("n_tok_measured") or 0) >= 3:
+            cpt = float(s.get("ema_chars_per_token") or 0)
+        if not cpt:
+            for st in _ROUTE_STATS.values():
+                if (st.get("model") == model and st.get("instance") == iid
+                        and int(st.get("n_tok_measured") or 0) >= 3):
+                    cpt = max(cpt, float(st.get("ema_chars_per_token") or 0))
+        if cpt:
+            break
+    return int(chars / max(cpt or _ROUTE_DECISION_CPT, 1.0)) + _CTX_RESERVE_OUT
+
+
 # Auto-fit the context window to the prompt when no num_ctx is pinned. Ollama's
 # DEFAULT num_ctx is ~2048 no matter the model's real max, so a big prompt with
 # no num_ctx is silently truncated to its last ~2048 tokens — the model never
@@ -2687,6 +2842,10 @@ try:
     from Vera.vera import node_threads_core as _node_threads_core
 except Exception:  # pragma: no cover - worktree / test layout
     from . import node_threads_core as _node_threads_core
+try:
+    from Vera.vera.workers import warm_models_core as _warm_core
+except Exception:  # pragma: no cover - worktree / test layout
+    from vera.workers import warm_models_core as _warm_core
 _CPU_NODE_THREADS = int(os.environ.get("VERA_CPU_NODE_THREADS",
                                        str(_node_threads_core.DEFAULT_CPU_THREADS)) or 0)
 
@@ -3380,10 +3539,15 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # How much context this request actually needs — lets the router send an
     # oversized one to a CPU node instead of spilling the GPU (see pick_instance).
     _ctx_need = est_ctx_tokens(prompt, system, (options or {}).get("num_predict") or 0)
+    try:
+        _prompt_need = prompt_need_tokens(prompt, system, eff_model or OLLAMA_MODEL, eff_job_type)
+    except Exception:
+        _prompt_need = 0
     chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id,
                            model=eff_model, job_type=eff_job_type,
                            rule_override=(eff_rule if (cap_rule or bg_demoted) else None),
-                           explain=route_explain, ctx_need=_ctx_need) or "cpu-246"
+                           explain=route_explain, ctx_need=_ctx_need,
+                           prompt_need=_prompt_need) or "cpu-246"
     if bg_demoted:
         route_explain.setdefault("reason", []).append(
             f"background '{bg_label}' demoted off GPU (human active)")
@@ -3408,6 +3572,10 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # race so the next picker sees this node's raised load and spreads out. The
     # single `finally` at the end releases it exactly once.
     _req_slot_id = str(uuid.uuid4())[:12]
+    try:
+        ROUTE_DEMAND.append((time.time(), str(eff_job_type or "default")))
+    except Exception:
+        pass
     inst["in_use"] = inst.get("in_use", 0) + 1
     _inflight_hold(inst, _req_slot_id)
     mdl    = eff_model or OLLAMA_MODEL
@@ -3504,6 +3672,15 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                             stable=_CTX_STABLE_GPU)
         _merged_opts["num_ctx"] = max(_CTX_FLOOR, _want)
         _merged_opts.pop("num_ctx_max", None)
+        # Warm slot: a model this node keeps loaded answers on the runner the
+        # warmer spawned - the planned window when the request fits in it (a
+        # different num_ctx is a new runner, i.e. a reload), never above the
+        # node-safe cap. See warm_models_core.request_overrides.
+        _warm = _warm_core.request_overrides(
+            (WARM_STATE or {}).get("planned") or {}, chosen, mdl,
+            int(_merged_opts["num_ctx"]), int(_cap or 0))
+        if _warm.get("num_ctx"):
+            _merged_opts["num_ctx"] = int(_warm["num_ctx"])
         # num_predict = the output room actually available in the window (bounded
         # by the sensible max), so a long generation can use it ALL but nothing
         # decodes PAST the window. Only when the caller pinned no positive value.
@@ -3542,6 +3719,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             _keep = _ctx_keep_tokens(int(_merged_opts["num_ctx"]))
             if _keep:
                 _merged_opts["num_keep"] = _keep
+    # ...and it stays resident: keep_alive=-1 (a NUMBER; "-1" is a 400) unless
+    # the caller asked for its own. Unplanned pairs keep the default.
+    if keep_alive is None and _warm_core.request_overrides(
+            (WARM_STATE or {}).get("planned") or {}, chosen, mdl, 0):
+        body["keep_alive"] = _warm_core.KEEP_FOREVER
     if _merged_opts:
         # A CPU node's runner must not spin more threads than the node has.
         _nt = _node_threads_core.threads_for(
@@ -3698,7 +3880,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                     pass
                 body["stream"] = True   # always stream so silence == stall
                 async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_gto) as c:
-                    async with c.stream("POST",f"{inst['url']}/api/generate",json=body) as resp:
+                    async with c.stream("POST",f"{inst['url']}/api/generate",json=body,
+                                        headers=vera_origin_header(eff_job_type or job_type or "", req_id,
+                                                                   caller.get("cap_name") or "")) as resp:
                         if resp.status_code != 200:
                             err_body = ""
                             async for chunk in resp.aiter_bytes():
@@ -3956,7 +4140,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                     async with _ollama_slot(fb_id, timeout=timeout) as _gate_act:
                         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=httpx.Timeout(gen_timeout, connect=15.0)) as c:
                             async with c.stream("POST", f"{fb_inst['url']}/api/generate",
-                                                json={**fb_body, "stream": True}) as r:
+                                                json={**fb_body, "stream": True},
+                                                headers=vera_origin_header(eff_job_type or job_type or "", req_id,
+                                                                           "fallback")) as r:
                                 if r.status_code != 200:
                                     err_detail = (await r.aread()).decode("utf-8", errors="replace")[:300]
                                     log.warning("ollama_fallback [%s] %s returned %d: %s", req_id, fb_id, r.status_code, err_detail)
@@ -4118,6 +4304,9 @@ def _embed_body(mdl: str, text: str, node: Optional[dict]) -> dict:
     the embed runner does not spin the host's 24 threads on 12 CPUs (4-6 s per
     137M embedding before; see node_threads_core)."""
     body = {"model": mdl, "input": text[:4096]}
+    _we = ((WARM_STATE or {}).get("embed_urls") or {}).get(str((node or {}).get("url") or ""))
+    if _we and _warm_core.same_model(_we, mdl):
+        body["keep_alive"] = _warm_core.KEEP_FOREVER
     nt = _node_threads_core.threads_for(
         has_gpu=bool((node or {}).get("has_gpu")),
         node_num_thread=(node or {}).get("num_thread"), default=_CPU_NODE_THREADS)
@@ -4245,12 +4434,13 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
             pass
         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_emb_timeout) as c:
             # Try new endpoint first (Ollama ≥0.4)
+            _oh = vera_origin_header("embedding", req_id, caller.get("cap_name") or "")
             r = await c.post(f"{url}/api/embed",
-                             json=_embed_body(mdl, text, inst))
+                             json=_embed_body(mdl, text, inst), headers=_oh)
             if r.status_code != 200:
                 # Fall back to legacy endpoint
                 r = await c.post(f"{url}/api/embeddings",
-                                 json={"model": mdl, "prompt": text[:4096]})
+                                 json={"model": mdl, "prompt": text[:4096]}, headers=_oh)
             if r.status_code != 200:
                 elapsed = round(time.time() - t_start, 2)
                 err_str = f"HTTP {r.status_code} from {chosen}"
@@ -4357,11 +4547,12 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
             try:
                 log.info("ollama_embed_fallback [%s] trying %s", req_id, fb_id)
                 async with httpx.AsyncClient(verify=_SSL_CTX, timeout=_emb_timeout) as c:
+                    _oh = vera_origin_header("embedding", req_id, "fallback")
                     r = await c.post(f"{fb_inst['url']}/api/embed",
-                                     json=_embed_body(mdl, text, fb_inst))
+                                     json=_embed_body(mdl, text, fb_inst), headers=_oh)
                     if r.status_code != 200:
                         r = await c.post(f"{fb_inst['url']}/api/embeddings",
-                                         json={"model": mdl, "prompt": text[:4096]})
+                                         json={"model": mdl, "prompt": text[:4096]}, headers=_oh)
                     if r.status_code != 200:
                         continue
                     data = r.json()
@@ -5192,7 +5383,8 @@ async def dispatch_task(cap_name: str, payload: dict, trace_id: str,
     Redis, so the label travels in the record. The idle queue's `cap` jobs use
     this so their Ollama calls are demoted and logged as background work."""
     task_id=new_id()
-    rec={"id":task_id,"capability":cap_name,"payload":json.dumps(payload),"trace_id":trace_id,"ts":now_iso()}
+    rec={"id":task_id,"capability":cap_name,"payload":json.dumps(payload),"trace_id":trace_id,"ts":now_iso(),
+         "reply_to":_placement.reply_stream(PROCESS_TAG)}
     if bg: rec["bg"]=str(bg)
     # A host-bound cap goes where only the host reads, so a node worker never
     # sees it (worker_placement_core). Everything else is on the shared stream.
@@ -5201,6 +5393,62 @@ async def dispatch_task(cap_name: str, payload: dict, trace_id: str,
         cap=CAPABILITY_REGISTRY.get(cap_name)
         if cap: asyncio.create_task(_run_local(cap,task_id,payload,trace_id,bg=bg))
     return task_id
+
+# ── Staged offload to node workers (worker_placement_core.STAGES) ─────────────
+_OFFLOAD_INFLIGHT: Dict[str, int] = {}
+_OFFLOAD_SENT: Dict[str, int] = {}          # class -> calls this process offloaded
+_OFFLOAD_CACHE: Dict[str, Any] = {"cfg_at": 0.0, "cfg": {}, "w_at": 0.0, "workers": []}
+
+
+async def _offload_config() -> Dict[str, Any]:
+    now = time.monotonic()
+    if now - _OFFLOAD_CACHE["cfg_at"] > 10 and REDIS is not None:
+        try:
+            raw = await REDIS.get(_placement.DISPATCH_KEY)
+            _OFFLOAD_CACHE["cfg"] = json.loads(raw) if raw else {}
+        except Exception:
+            pass
+        _OFFLOAD_CACHE["cfg_at"] = now
+    return _OFFLOAD_CACHE["cfg"] or {}
+
+
+async def _offload_workers() -> List[Dict[str, Any]]:
+    now = time.monotonic()
+    if now - _OFFLOAD_CACHE["w_at"] > 3 and REDIS is not None:
+        out = []
+        try:
+            async for k in REDIS.scan_iter("vera:workers:*"):
+                try:
+                    vals = await REDIS.hmget(k, "role", "status", "classes")
+                except Exception:
+                    continue
+                role, status, classes = [(v.decode() if isinstance(v, bytes) else (v or "")) for v in vals]
+                if role == "node-worker":
+                    out.append({"role": role, "status": status, "classes": classes})
+        except Exception:
+            pass
+        _OFFLOAD_CACHE.update(w_at=now, workers=out)
+    return _OFFLOAD_CACHE["workers"]
+
+
+async def _node_offload(name: str, kw: dict) -> str:
+    """The class to offload this call to, or '' to run it here."""
+    if REDIS is None or _IS_WORKER:
+        return ""
+    cfg = await _offload_config()
+    if not int(cfg.get("stage") or 0):
+        return ""
+    try:
+        json.dumps(kw)
+        args_ok = True
+    except (TypeError, ValueError):
+        args_ok = False
+    free = _placement.free_workers(await _offload_workers(), _OFFLOAD_INFLIGHT)
+    ok, _why = _placement.offload_decision(
+        name, stage=cfg.get("stage"), free=free, is_worker=_IS_WORKER,
+        is_sandbox=is_dev_sandbox(), args_ok=args_ok, exclude=cfg.get("exclude") or ())
+    return _placement.class_of(name) if ok else ""
+
 
 async def _run_local(cap,task_id,payload,trace_id,bg=""):
     if bg: BACKGROUND_LLM.set(str(bg))     # this task's own context only
@@ -5535,6 +5783,9 @@ async def worker_loop(worker_id: str):
                 payload  = json.loads(data[b"payload"])
                 trace_id = data[b"trace_id"].decode()
                 bg_label = (data.get(b"bg") or b"").decode() if isinstance(data.get(b"bg"), bytes) else str(data.get(b"bg") or "")
+                # the asking process's own result stream (older dispatchers
+                # send none: their result goes to the shared stream as before)
+                reply_to = (data.get(b"reply_to") or b"").decode() if isinstance(data.get(b"reply_to"), bytes) else str(data.get(b"reply_to") or "")
                 cap      = CAPABILITY_REGISTRY.get(cap_name)
 
                 # Queued-cancel guard: if this task was stopped before a worker
@@ -5542,7 +5793,7 @@ async def worker_loop(worker_id: str):
                 if await _is_task_cancelled(task_id):
                     await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                     await REDIS.xdel(_stream, msg_id)
-                    await REDIS.xadd(RESULT_STREAM, {
+                    await _post_result(reply_to, {
                         "id": task_id, "error": "cancelled", "trace_id": trace_id,
                     })
                     await emit_event({"type": "worker.cancelled",
@@ -5568,6 +5819,7 @@ async def worker_loop(worker_id: str):
                         "id": task_id, "capability": cap_name,
                         "payload": json.dumps(payload), "trace_id": trace_id,
                         "ts": now_iso(), **({"bg": bg_label} if bg_label else {}),
+                        **({"reply_to": reply_to} if reply_to else {}),
                     }, maxlen=5000, approximate=True)
                     await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                     await REDIS.xdel(_stream, msg_id)
@@ -5619,10 +5871,11 @@ async def worker_loop(worker_id: str):
                             "id": task_id, "capability": cap_name,
                             "payload": json.dumps(payload), "trace_id": trace_id, "ts": now_iso(),
                             **({"bg": bg_label} if bg_label else {}),
+                        **({"reply_to": reply_to} if reply_to else {}),
                         }, maxlen=5000, approximate=True)
                     else:
                         log.warning("Worker %s: no handler for %s on any worker", worker_id, cap_name)
-                        await REDIS.xadd(RESULT_STREAM, {
+                        await _post_result(reply_to, {
                             "id": task_id, "error": f"no_worker_for:{cap_name}", "trace_id": trace_id,
                         })
                         await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
@@ -5654,23 +5907,27 @@ async def worker_loop(worker_id: str):
                             except Exception:
                                 pass
                     _hb = asyncio.create_task(_heartbeat())
+                    _act = {"t0": time.time(), "result": None, "error": ""}
                     try:
                         result = await inner
-                        await REDIS.xadd(RESULT_STREAM, {
+                        _act["result"] = result
+                        await _post_result(reply_to, {
                             "id": task_id, "result": json.dumps(result), "trace_id": trace_id,
                         }, maxlen=5000)
                         WORKER_REGISTRY[worker_id]["tasks_done"] += 1
                         await emit_event({"type": "worker.done", "worker": worker_id, "task": task_id})
                     except asyncio.CancelledError:
                         # Intentional cancel of the inner task — not the worker loop.
-                        await REDIS.xadd(RESULT_STREAM, {
+                        _act["error"] = "cancelled"
+                        await _post_result(reply_to, {
                             "id": task_id, "error": "cancelled", "trace_id": trace_id,
                         })
                         await emit_event({
                             "type": "worker.cancelled", "worker": worker_id, "task": task_id,
                         })
                     except Exception as e:
-                        await REDIS.xadd(RESULT_STREAM, {
+                        _act["error"] = str(e)[:300]
+                        await _post_result(reply_to, {
                             "id": task_id, "error": str(e), "trace_id": trace_id,
                         })
                         WORKER_REGISTRY[worker_id]["tasks_failed"] += 1
@@ -5683,10 +5940,87 @@ async def worker_loop(worker_id: str):
                         RUNNING_TASKS.pop(task_id, None)
                         await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                         await REDIS.xdel(_stream, msg_id)
+                        asyncio.ensure_future(_worker_activity(
+                            worker_id, cap_name, cap, payload, trace_id, bg_label, _act))
 
                 WORKER_REGISTRY[worker_id]["status"] = "idle"
                 WORKER_REGISTRY[worker_id]["current_task"] = ""
                 WORKER_REGISTRY[worker_id]["task_started"] = ""
+
+async def _post_result(reply_to: str, fields: dict, **_kw) -> None:
+    """A task's result, to the process that asked (its reply stream), else the
+    shared result stream. The reply stream expires on its own once the asking
+    process is gone."""
+    if reply_to:
+        await REDIS.xadd(reply_to, fields, maxlen=1000, approximate=True)
+        try:
+            await REDIS.expire(reply_to, _placement.REPLY_TTL_S)
+        except Exception:
+            pass
+        return
+    await REDIS.xadd(RESULT_STREAM, fields, maxlen=5000)
+
+
+async def _worker_activity(worker_id: str, cap_name: str, cap: dict, payload: dict,
+                           trace_id: str, bg: str, act: dict) -> None:
+    """One record per worker task on the Estate Activity stream
+    (vera:node_activity, service "worker"), with the cap's own redaction
+    applied. Fire-and-forget: never delays the worker."""
+    try:
+        import socket as _socket
+        red = set((cap or {}).get("redact_args") or [])
+        args = {k: ("[redacted]" if k in red else v) for k, v in (payload or {}).items()}
+        res = "[redacted]" if (cap or {}).get("redact_result") else act.get("result")
+        end = time.time()
+        rec = {"id": uuid.uuid4().hex[:16], "node": _socket.gethostname(), "port": 0,
+               "service": "worker", "kind": "task", "path": cap_name, "model": "",
+               "caller": worker_id, "origin": f"{'prod' if not is_dev_sandbox() else 'sandbox'}"
+                                                f"|{bg or 'task'}|{trace_id}|{cap_name}",
+               "start": act["t0"], "end": end, "duration_s": round(end - act["t0"], 3),
+               "status": 500 if act.get("error") else 200, "error": act.get("error", ""),
+               "prompt": json.dumps(args, default=str)[:16384],
+               "response": json.dumps(res, default=str)[:16384]}
+        await REDIS.xadd("vera:node_activity", {"r": json.dumps(rec)}, maxlen=5000,
+                         approximate=True)
+    except Exception as e:
+        log.debug("worker activity record: %s", e)
+
+
+#: This process, for its reply stream (a hostname is not enough: prod and
+#: stray orchestrators share one host).
+PROCESS_TAG = f"{os.uname().nodename}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+
+
+async def reply_listener():
+    """Results addressed to THIS process (dispatch_task's reply_to). A plain
+    XREAD - no consumer group - so no other process can take them."""
+    if not REDIS:
+        return
+    stream = _placement.reply_stream(PROCESS_TAG)
+    last = "0"
+    log.info("Reply listener started (%s)", stream)
+    while True:
+        try:
+            resp = await REDIS.xread({stream: last}, count=20, block=5000)
+        except Exception as e:
+            log.debug("reply_listener: %s", e)
+            await asyncio.sleep(2)
+            continue
+        for _, messages in resp or []:
+            for msg_id, data in messages:
+                last = msg_id
+                task_id = data[b"id"].decode()
+                fut = PENDING_RESULTS.pop(task_id, None)
+                if fut and not fut.done():
+                    if b"result" in data:
+                        fut.set_result(json.loads(data[b"result"]))
+                    else:
+                        fut.set_result({"error": data.get(b"error", b"unknown").decode()})
+                try:
+                    await REDIS.xdel(stream, msg_id)
+                except Exception:
+                    pass
+
 
 async def result_listener():
     """
@@ -6389,6 +6723,14 @@ def capability(
                         return _estate_guard.refusal(name)
                 except Exception as _eg:              # pragma: no cover
                     log.debug("estate guard skipped for %s: %s", name, _eg)
+            # READ-THROUGH: a dev sandbox has no estate of its own (its Redis and SQLite are its own, empty); a read-only
+            # estate capability is answered by prod, one way — see sandbox_guard.read_through_allowed. Prod itself
+            # never takes this branch, and neither does a process that merely imported this module (a test, a script):
+            # _READ_THROUGH_URL is '' until lifespan() arms it in a serving sandbox.
+            if _READ_THROUGH_URL and not kw.get("_local") and _sg_read_through_allowed(name, http_method):   # the policy says which routes read
+                _rt = await _upstream_read(name, kw)
+                if _rt is not None:
+                    return _rt
             tid     = kw.pop("trace_id",None) or new_id()
             if _alias_for:
                 _surface = ("http_caller" if CURRENT_HTTP_CAP.get("") == name
@@ -6453,8 +6795,17 @@ def capability(
                             })
                             raise PolicyEnforcementDenied(
                                 name, _policy_shadow["verdict"])
-                    if mode=="distributed" and REDIS:
-                        task_id=await dispatch_task(name,kw,tid)
+                    _off_cls = "" if mode == "distributed" else await _node_offload(name, kw)
+                    if REDIS and (mode == "distributed" or _off_cls):
+                        if _off_cls:
+                            _OFFLOAD_INFLIGHT[_off_cls] = _OFFLOAD_INFLIGHT.get(_off_cls, 0) + 1
+                            _OFFLOAD_SENT[_off_cls] = _OFFLOAD_SENT.get(_off_cls, 0) + 1
+                        try:
+                            task_id=await dispatch_task(name,kw,tid,bg=BACKGROUND_LLM.get("") or "")
+                        except Exception:
+                            if _off_cls:
+                                _OFFLOAD_INFLIGHT[_off_cls] = max(0, _OFFLOAD_INFLIGHT.get(_off_cls, 1) - 1)
+                            raise
                         # Per-cap timeout: LLM caps need 240-300s, research
                         # needs 60s, DAG composer caps need 600s. The previous
                         # 30s blanket default caused every llm.generate inside
@@ -6462,7 +6813,11 @@ def capability(
                         # Honour an explicit `_timeout` field in payload kw if
                         # the caller has special needs.
                         _t = float(kw.pop("_timeout", 0)) or _cap_timeout(name)
-                        result =await wait_for_result(task_id, timeout=_t)
+                        try:
+                            result =await wait_for_result(task_id, timeout=_t)
+                        finally:
+                            if _off_cls:
+                                _OFFLOAD_INFLIGHT[_off_cls] = max(0, _OFFLOAD_INFLIGHT.get(_off_cls, 1) - 1)
                     else:
                         # Filter kwargs to only those the function accepts,
                         # preventing TypeError on unexpected keyword arguments
@@ -7770,6 +8125,12 @@ async def mcp_call_endpoint(name: str, arguments: str = "", trace_id=None):
         args = arguments or {}
     cap = CAPABILITY_REGISTRY.get(name)
     if not cap:
+        # a sandbox that does not load this module still answers a reading of the estate from prod (worldview.stats
+        # on a mirror without the worldview module)
+        if _READ_THROUGH_URL and _sg_read_through_allowed(name, "GET"):
+            _rt = await _upstream_read(name, args)
+            if _rt is not None:
+                return {"type": "tool_result", "tool_name": name, "trace_id": trace_id or new_id(), "content": _rt}
         raise HTTPException(404, f"Unknown capability: {name}")
     tid    = trace_id or new_id()
     result = await cap["func"](**args, trace_id=tid)
@@ -7833,6 +8194,10 @@ def _make_mcp_call_handler():
 
         cap = CAPABILITY_REGISTRY.get(name)
         if not cap:
+            if _READ_THROUGH_URL and _sg_read_through_allowed(name, "GET"):   # a module this sandbox does not load: prod's reading
+                _rt = await _upstream_read(name, args)
+                if _rt is not None:
+                    return {"type": "tool_result", "tool_name": name, "trace_id": new_id(), "content": _rt}
             raise HTTPException(404, f"Unknown capability: {name}")
 
         # Filter args to accepted params — prevents unexpected kwarg errors
@@ -7986,6 +8351,20 @@ def is_dev_sandbox() -> bool:
     Call sites that start ambient/incidental background work (not the actual
     thing under test) should check this and skip in a sandbox."""
     return str(os.environ.get("VERA_IS_DEV_SANDBOX", "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+def vera_origin_header(job_type: str = "", req_id: str = "", cap: str = "") -> Dict[str, str]:
+    """`X-Vera-Origin` for a request this Vera sends a node's Ollama: which Vera
+    (prod, or `sandbox:<container>`), the job type, the request id, the cap.
+    The node-side activity tap records it, so the Estate activity pane can tell
+    prod's calls from each sandbox's and from external callers'. Ollama ignores
+    unknown headers; nothing in the request changes."""
+    import re as _re
+    import socket as _socket
+    who = (os.environ.get("VERA_ORIGIN_NAME", "").strip()
+           or (f"sandbox:{_socket.gethostname()}" if is_dev_sandbox() else "prod"))
+    val = "|".join(str(x or "") for x in (who, job_type, req_id, cap))
+    return {"X-Vera-Origin": _re.sub(r"[^\x20-\x7e]", "?", val)[:240]}
 
 
 def _relaunch_argv() -> List[str]:
@@ -10610,6 +10989,12 @@ async def _openbao_autounseal_boot():
 async def lifespan(app: FastAPI):
     global REDIS, PG_POOL, CHROMA, NEO
 
+    # A serving sandbox answers estate readings from prod (the read-through hook in @capability). Armed HERE, once
+    # the app is starting, so that a bare import of this module — the gate's pytest, a script — never reads through.
+    _rt_url = arm_read_through()
+    if _rt_url:
+        log.info("sandbox read-through armed: estate readings answered by %s", _rt_url)
+
     # Preload optional automatic telemetry during startup, never on the first
     # completed Run. Disabled mode imports nothing on the Run-recording path.
     if str(os.getenv("VERA_OTLP_AUTO_EXPORT") or "").strip().lower() in {
@@ -10840,11 +11225,16 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "estate/backup_capabilities.py"),
         os.path.join(_here, "estate/estate_entity_capabilities.py"),
         os.path.join(_here, "estate/registration_capabilities.py"),
+        os.path.join(_here, "estate/ops_capabilities.py"),
         os.path.join(_here, "security/secrets_capabilities.py"),
         os.path.join(_here, "security/redis_auth_capabilities.py"),
         os.path.join(_here, "security/certs_capabilities.py"),
         os.path.join(_here, "execution/ssh_cleanup_capabilities.py"),
         os.path.join(_here, "workers/nodes_capabilities.py"),
+        # nodes.activity - the Estate's single pane over the node-side taps
+        os.path.join(_here, "workers/node_activity_capabilities.py"),
+        # ollama.warm.* - warm model slots per node, workload scenarios
+        os.path.join(_here, "workers/warm_models_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),
         os.path.join(_here, "remote/operator_capabilities.py"),
@@ -10895,6 +11285,10 @@ async def lifespan(app: FastAPI):
         # operator sees why an nlp.* call went where it did.
         os.path.join(_here, "research/nlp_dispatch.py"),
         os.path.join(_here, "research/nlp_capabilities.py"),
+        # explode AFTER the nlp caps: its node-tier layers call them through the registry
+        os.path.join(_here, "research/explode_capabilities.py"),
+        # assess AFTER explode: the scorers read the contracts explode builds
+        os.path.join(_here, "research/assess_capabilities.py"),
         os.path.join(_here, "models/model_inventory_capabilities.py"),
         os.path.join(_here, "vector browser/vector_browser_capabilites.py"),
         os.path.join(_here, "workers/job_persistance.py"),
@@ -10929,6 +11323,23 @@ async def lifespan(app: FastAPI):
         # inventory and after skills/loop_profiles/agents, for the same reason -
         # it projects onto the live registries and must see all of them.
         os.path.join(_here, "registry/registry_capabilities.py"),
+        # The widget registry (UI redesign): every part of the UI as a record -
+        # templates, instances, the registry panel. Beside the agent registry
+        # because it projects the panel registry (UI_PANELS) as built-ins.
+        os.path.join(_here, "widgets/widget_registry.py"),
+        # The control plane (UI redesign): one vocabulary of directives, one
+        # dispatcher with policy / log / undo and the room manifest, and the
+        # scripted path (deterministic rules on events, no model call). After
+        # the widget registry and the chat's panel bridge, which it drives.
+        os.path.join(_here, "ui/directives.py"),
+        os.path.join(_here, "ui/scripts.py"),
+        # The shared UI libraries (UI redesign): the one ISO projection and the
+        # one context-menu registry, served at /ui/iso.js and /ui/menus.js.
+        os.path.join(_here, "ui/libs.py"),
+        # The widget catalogue (UI redesign): shapes, forms, sources; the
+        # validate / render_spec a renderer or editor asks before drawing.
+        # After the registry, whose templates it validates.
+        os.path.join(_here, "widgets/widget_catalog.py"),
         # Planning styles: additive alternatives to the loop's own planner
         # (plan.styles / plan.detailed). Loaded late so plan.detailed's default
         # capability catalogue is the complete registry, not a partial one.
@@ -10977,6 +11388,14 @@ async def lifespan(app: FastAPI):
         # Mission control's one table: a row per event from the audit log, the
         # errors queue and the gates, with the live strip - after task_history/.
         os.path.join(_here, "evolve/mission_capabilities.py"),
+        # ci.* / loop.ci.*: the Loop Lab pictures (matrix, race, tests, run,
+        # board, fleet) as capabilities the canvas draws - after evolve/,
+        # board/ and dag/ (reads their stores through sys.modules).
+        os.path.join(_here, "evolve/ci_capabilities.py"),
+        # canvas.enrich: what else is relevant to a turn, onto its canvas - after
+        # canvas/, widgets/, web/, fabric/, markets/ and dag/ (caps.search), which it
+        # calls through the registry.
+        os.path.join(_here, "canvas/enrich_capabilities.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any
@@ -11083,6 +11502,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_connect_backends())       # DB connections with retry — non-blocking
     asyncio.create_task(worker_loop(worker_id))
     asyncio.create_task(result_listener())
+    asyncio.create_task(reply_listener())
     asyncio.create_task(cancel_listener())
     asyncio.create_task(scheduler_loop())
     asyncio.create_task(instance_health_loop(interval=20))
@@ -11479,7 +11899,7 @@ async def _memgraph_panel_route():
 
 try:
     register_ui(
-        "memory-graph", "Memory Graph", "",
+        "memory-graph", "Memory Graph", "✣",
         """<div style="height:100%;display:flex;flex-direction:column;">
   <iframe src="/memgraph/panel"
           style="flex:1;border:none;width:100%;height:100%"

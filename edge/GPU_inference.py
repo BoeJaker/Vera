@@ -76,6 +76,12 @@ ENABLE_WHISPER      = os.getenv("ENABLE_WHISPER",       "1") == "1"
 ENABLE_SD           = os.getenv("ENABLE_SD",            "1") == "1"
 ENABLE_TTS          = os.getenv("ENABLE_TTS",           "1") == "1"
 ENABLE_REDIS        = os.getenv("ENABLE_REDIS",         "1") == "1"
+# ONNX Runtime (Kokoro TTS, rembg) with no explicit thread count pins one
+# thread per core with pthread_setaffinity_np, which an LXC's cpuset refuses:
+# a burst of "pthread_setaffinity_np failed ... Specify the number of threads
+# explicitly" errors at every start (all three nodes, 2026-09). An explicit
+# count skips the pinning. Only the ORT sessions get it - torch keeps its own.
+ORT_THREADS         = int(os.getenv("VERA_ORT_THREADS", "0") or 0) or min(4, os.cpu_count() or 4)
 
 SERVER_HOST         = os.getenv("SERVER_HOST",          "0.0.0.0")
 SERVER_PORT         = int(os.getenv("SERVER_PORT",      "8765"))
@@ -126,6 +132,33 @@ CONTROLNET_XL_MODEL_ID = os.getenv("CONTROLNET_XL_MODEL_ID", "thibaud/controlnet
 IPADAPTER_REPO      = os.getenv("IPADAPTER_REPO",    "h94/IP-Adapter")
 REMBG_MODEL         = os.getenv("REMBG_MODEL",       "u2net")
 ESRGAN_MODEL        = os.getenv("ESRGAN_MODEL",      "RealESRGAN_x4plus")
+
+# ── The shared model store ────────────────────────────────────────────────────
+# Every node mounts the specialist-model store READ-ONLY at VERA_MODEL_STORE
+# (/opt/vera-store/models). A model the store holds is loaded from there, so
+# every node serves the same bytes; one it lacks falls back to the old hub id /
+# cache. Resolution is per call (media_store_core), so a model the builder adds
+# later is used without a restart of this code path's config.
+try:
+    import media_store_core as _mstore
+except Exception:                      # deployed without the core: old behaviour
+    _mstore = None
+
+
+def _src(model_id: str, family: str = "sd") -> str:
+    return _mstore.hf_source(model_id, family) if _mstore else model_id
+
+
+def _whisper_root():
+    return _mstore.whisper_root(WHISPER_MODEL) if _mstore else None
+
+
+def _store_report() -> dict:
+    if not _mstore:
+        return {"store": None, "note": "media_store_core not deployed"}
+    return _mstore.resolve_all({"sd": SD_MODEL_ID, "controlnet": CONTROLNET_MODEL_ID,
+                                "ipadapter": IPADAPTER_REPO, "whisper": WHISPER_MODEL,
+                                "coqui": TTS_MODEL_NAME, "rembg": REMBG_MODEL})
 
 _controlnet_pipe   = None   # lazily built (shares _sd_pipe weights + a ControlNet)
 _openpose_detector = None   # controlnet_aux OpenposeDetector (False once if absent)
@@ -459,11 +492,11 @@ def load_models():
         log.info(f"Loading Whisper ({WHISPER_MODEL})…")
         import whisper
         try:
-            _whisper_model = whisper.load_model(WHISPER_MODEL, device=device)
+            _whisper_model = whisper.load_model(WHISPER_MODEL, device=device, download_root=_whisper_root())
         except Exception as e:
             if device == "cuda":
                 log.warning(f"Whisper GPU load failed ({e}); falling back to CPU.")
-                _whisper_model = whisper.load_model(WHISPER_MODEL, device="cpu")
+                _whisper_model = whisper.load_model(WHISPER_MODEL, device="cpu", download_root=_whisper_root())
             else:
                 raise
         log.info("Whisper ready.")
@@ -528,11 +561,11 @@ def _load_sd(device: str):
         if dev == "cuda":
             kwargs["variant"] = "fp16"
         try:
-            pipe = SDPipeline.from_pretrained(SD_MODEL_ID, **kwargs).to(dev)
+            pipe = SDPipeline.from_pretrained(_src(SD_MODEL_ID), **kwargs).to(dev)
         except Exception as e:
             if kwargs.pop("variant", None) is not None:
                 log.warning(f"SD fp16-variant load failed ({e}); retrying without variant.")
-                pipe = SDPipeline.from_pretrained(SD_MODEL_ID, **kwargs).to(dev)
+                pipe = SDPipeline.from_pretrained(_src(SD_MODEL_ID), **kwargs).to(dev)
             else:
                 raise
         return pipe, dtype
@@ -690,7 +723,9 @@ def _load_kokoro():
         from kokoro_onnx import Kokoro
         import urllib.request, os
 
-        model_dir   = os.getenv("KOKORO_MODEL_DIR", os.path.dirname(os.path.abspath(__file__)))
+        model_dir   = (os.getenv("KOKORO_MODEL_DIR")
+                       or (_mstore.kokoro_dir() if _mstore else None)
+                       or os.path.dirname(os.path.abspath(__file__)))
         model_path  = os.path.join(model_dir, "kokoro-v1.0.onnx")
         voices_path = os.path.join(model_dir, "voices-v1.0.bin")
 
@@ -706,7 +741,21 @@ def _load_kokoro():
                 urllib.request.urlretrieve(url, dest)
                 log.info(f"Downloaded {os.path.basename(dest)} ({os.path.getsize(dest)//1024//1024} MB)")
 
-        _kokoro_pipeline = Kokoro(model_path, voices_path)
+        _kokoro_pipeline = None
+        if hasattr(Kokoro, "from_session"):
+            try:
+                import onnxruntime as _ort
+                from kokoro_onnx.session import resolve_providers as _kp
+                _so = _ort.SessionOptions()
+                _so.intra_op_num_threads = ORT_THREADS
+                _so.inter_op_num_threads = 1
+                _kokoro_pipeline = Kokoro.from_session(
+                    _ort.InferenceSession(model_path, sess_options=_so, providers=_kp()),
+                    voices_path)
+            except Exception as _e:
+                log.info(f"Kokoro: explicit-thread session unavailable ({_e}); default session")
+        if _kokoro_pipeline is None:
+            _kokoro_pipeline = Kokoro(model_path, voices_path)
         TTS_SAMPLE_RATE  = KOKORO_SAMPLE_RATE
 
         try:
@@ -725,6 +774,9 @@ def _load_coqui(device: str):
     global _tts_synthesizer, TTS_SAMPLE_RATE
     log.info(f"Loading Coqui TTS ({TTS_MODEL_NAME}) on {device}...")
     from TTS.api import TTS as CoquiTTS
+    home = _mstore.coqui_home(TTS_MODEL_NAME) if _mstore else None
+    if home and not os.getenv("TTS_HOME"):
+        os.environ["TTS_HOME"] = home          # Coqui's own layout, read from the store
     try:
         _tts_synthesizer = CoquiTTS(
             model_name=TTS_MODEL_NAME,
@@ -1287,7 +1339,7 @@ def _get_cpu_pipe():
         from diffusers import StableDiffusionPipeline as P
     log.info("Building CPU fallback SD pipeline (fp32)…")
     _sd_cpu_pipe = P.from_pretrained(
-        SD_MODEL_ID, torch_dtype=torch.float32,
+        _src(SD_MODEL_ID), torch_dtype=torch.float32,
         safety_checker=None, use_safetensors=True,
     ).to("cpu")
     return _sd_cpu_pipe
@@ -1585,7 +1637,29 @@ def _get_rembg_session(model: str):
     model = model or REMBG_MODEL
     if model not in _rembg_sessions:
         from rembg import new_session
-        _rembg_sessions[model] = new_session(model)
+        # rembg reads U2NET_HOME when the session is made: the store for a model
+        # it holds, else the node's own cache (never a download into the ro store)
+        home = _mstore.rembg_home(model) if _mstore else None
+        prev = os.environ.get("U2NET_HOME")
+        if home:
+            os.environ["U2NET_HOME"] = home
+        # rembg sets the session's thread counts from OMP_NUM_THREADS when it is
+        # present (see ORT_THREADS); set only for this call - torch is loaded
+        # already and does not read it again
+        prev_omp = os.environ.get("OMP_NUM_THREADS")
+        os.environ["OMP_NUM_THREADS"] = str(ORT_THREADS)
+        try:
+            _rembg_sessions[model] = new_session(model)
+        finally:
+            if prev_omp is None:
+                os.environ.pop("OMP_NUM_THREADS", None)
+            else:
+                os.environ["OMP_NUM_THREADS"] = prev_omp
+            if home:
+                if prev is None:
+                    os.environ.pop("U2NET_HOME", None)
+                else:
+                    os.environ["U2NET_HOME"] = prev
     return _rembg_sessions[model]
 
 
@@ -1664,7 +1738,7 @@ def _get_controlnet_pipe():
     is_xl = "xl" in SD_MODEL_ID.lower()
     cn_id = CONTROLNET_XL_MODEL_ID if is_xl else CONTROLNET_MODEL_ID
     dtype = torch.float16 if _sd_device == "cuda" else torch.float32
-    controlnet = ControlNetModel.from_pretrained(cn_id, torch_dtype=dtype)
+    controlnet = ControlNetModel.from_pretrained(_src(cn_id), torch_dtype=dtype)
     if is_xl:
         from diffusers import StableDiffusionXLControlNetPipeline as CNP
     else:
@@ -1712,10 +1786,10 @@ def _op_controlnet(payload: dict) -> dict:
         try:
             pipe.unet.set_default_attn_processor()
             if is_xl:
-                pipe.load_ip_adapter(IPADAPTER_REPO, subfolder="sdxl_models",
+                pipe.load_ip_adapter(_src(IPADAPTER_REPO), subfolder="sdxl_models",
                                      weight_name="ip-adapter_sdxl.bin")
             else:
-                pipe.load_ip_adapter(IPADAPTER_REPO, subfolder="models",
+                pipe.load_ip_adapter(_src(IPADAPTER_REPO), subfolder="models",
                                      weight_name="ip-adapter_sd15.bin")
             pipe.set_ip_adapter_scale(float(payload.get("ip_scale", 0.55)))
             extra["ip_adapter_image"] = _decode_image_b64(ref_b64, bg=ref_bg).convert("RGB")
@@ -1787,10 +1861,10 @@ def _op_ipadapter(payload: dict) -> dict:
     except Exception as e:
         log.debug(f"[SD] reset attn processor before IP-Adapter: {e}")
     if is_xl:
-        pipe.load_ip_adapter(IPADAPTER_REPO, subfolder="sdxl_models",
+        pipe.load_ip_adapter(_src(IPADAPTER_REPO), subfolder="sdxl_models",
                              weight_name="ip-adapter_sdxl.bin")
     else:
-        pipe.load_ip_adapter(IPADAPTER_REPO, subfolder="models",
+        pipe.load_ip_adapter(_src(IPADAPTER_REPO), subfolder="models",
                              weight_name="ip-adapter_sd15.bin")
     try:
         pipe.set_ip_adapter_scale(float(payload.get("scale", 0.6)))
@@ -2006,6 +2080,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="GPU Inference Server", version="1.3.0", lifespan=lifespan)
 
+# Every media call reported to the Estate Activity pane (edge/activity_record.py):
+# a pure-ASGI tee, bytes untouched; audio/image payloads recorded as sizes.
+try:
+    import activity_record as _activity
+    _activity.install(app, "media", ("/stt", "/tts", "/imagine", "/img2img", "/expression",
+                                     "/rembg", "/upscale", "/controlnet", "/ipadapter",
+                                     "/thumbnail", "/chat/speak", "/duplex"),
+                      port=SERVER_PORT)
+except Exception as _e:                       # never let reporting stop the server
+    log.warning("activity reporting off: %s", _e)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -2105,6 +2190,9 @@ async def health():
         "sample_rate":      TTS_SAMPLE_RATE,
         "cuda":             torch.cuda.is_available(),
         "gpu":              torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        # which models this node loads from the shared store (a path) and which
+        # from its own cache / the hub (null)
+        "model_store":      _store_report(),
     }
 
 
@@ -2628,6 +2716,7 @@ async def sd_capabilities():
         "model":        SD_MODEL_ID,
         "device":       _sd_device,
         "loras":        len(_scan_lora_dir()),
+        "model_source": _src(SD_MODEL_ID),
     }
 
 

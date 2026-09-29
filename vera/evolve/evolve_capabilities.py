@@ -2704,7 +2704,7 @@ try:
     from Vera.vera.evolve.ttl_cache import TTLCache as _TTLCache
 except Exception:                                          # pragma: no cover
     from vera.evolve.ttl_cache import TTLCache as _TTLCache
-_AUTHORS_CACHE = _TTLCache(60.0)
+_AUTHORS_CACHE = _TTLCache(300.0)   # 16-27 s to compute (2026-09-28); authorship moves at commit speed
 
 
 async def _evolve_authors_uncached(hours: int, branch: str):
@@ -2796,7 +2796,8 @@ async def _evolve_authors_uncached(hours: int, branch: str):
                         "(suite | run | manual | improve | census | goal | "
                         "captest | ide).")
 async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
-                      source: str = "", trace_id=None):
+                      source: str = "", fields: str = "", trace_id=None):
+    # fields (a comma list) cuts each run to those keys and skips the git join unless `commits` is one of them
     r = _redis()
     out: List[Dict[str, Any]] = []
     if r:
@@ -2818,6 +2819,14 @@ async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
                     break
         except Exception:
             pass
+    keep = [f.strip() for f in str(fields or "").split(",") if f.strip()]
+    if keep:
+        # the matrix and the activity timeline draw a dozen fields of 300-500 runs every tick: the rest (routing,
+        # code, commits, ...) was ~70% of the bytes, and the git join per run window the bulk of the time
+        if "commits" in keep:
+            await _runs_window_commits_batch(out)
+        out = [{k: rec.get(k) for k in keep if k in rec} for rec in out]
+        return {"runs": out, "count": len(out), "fields": keep}
     await _runs_window_commits_batch(out)
     return {"runs": out, "count": len(out)}
 
@@ -4601,7 +4610,7 @@ async def evolve_code_queue(session_id: str = "", index: int = 0, trace_id=None)
 
 KEY_PIPELINES = "vera:evolve:pipelines"       # list of pipeline records (newest first)
 KEY_PIPELINE  = "vera:evolve:pipeline:"       # + id -> full record
-PIPELINES_CAP = 100
+PIPELINES_CAP = 1000   # the CI/CD history reaches back this many pipelines (was 100: ~a week)
 BRANCH_PREFIX = "loop-lab/"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5275,7 +5284,7 @@ async def _save_pipeline(rec: Dict[str, Any]):
         return
     try:
         await r.set(KEY_PIPELINE + rec["id"], json.dumps(rec, default=str))
-        await r.expire(KEY_PIPELINE + rec["id"], 60 * 86400)
+        await r.expire(KEY_PIPELINE + rec["id"], 400 * 86400)   # a year+ of drill-down
         rows = await r.lrange(KEY_PIPELINES, 0, PIPELINES_CAP - 1)
         compact = {k: rec.get(k) for k in
                    ("id", "kind", "profile", "status", "decision", "created_at",
@@ -5300,7 +5309,9 @@ async def _save_pipeline(rec: Dict[str, Any]):
 
 def _pstep(rec: Dict[str, Any], stage: str, ok: bool, detail: str = ""):
     rec.setdefault("steps", []).append(
-        {"stage": stage, "ok": bool(ok), "detail": str(detail)[:400], "ts": now_iso()})
+        # 4000, not 400: the critical-tests step's detail names the failing tests and
+        # 400 cut the list mid-name — the drill-down showed a run failed, not why
+        {"stage": stage, "ok": bool(ok), "detail": str(detail)[:4000], "ts": now_iso()})
 
 
 async def _pipeline_worker(rec: Dict[str, Any]):
@@ -7465,6 +7476,9 @@ services:
       OLLAMA_EMBED_URL: "{_host_for_docker(getattr(c, 'OLLAMA_EMBED_URL', 'http://192.168.0.246:11435'))}"
       OLLAMA_MODEL: "{getattr(c, 'OLLAMA_MODEL', '')}"
       VERA_IS_DEV_SANDBOX: "1"
+      # A sandbox reads prod's estate one way (read-only GET capabilities in the estate groups are answered by
+      # prod's /mcp/call — sandbox_guard.read_through_allowed); 0 turns it off for a sandbox that must stand alone.
+      VERA_UPSTREAM_READ_URL: "https://host.docker.internal:8999/mcp/call"
       # Dev containers ARE the sanctioned place for sys.dev.* (restart/env) — a
       # sandbox needs to restart its own process to pick up module-import changes.
       # Prod never sets this by default, so enable it here (the skill relied on it
@@ -7863,8 +7877,14 @@ async def _refresh_standing_bleeding_edge_container(edge: str = "") -> Dict[str,
     except ValueError as err:
         return {"ok": False, "error": str(err)}
     mirror = await _refresh_bleeding_edge_mirror(edge=e["name"])
-    if mirror.get("error"):
-        return {"ok": False, "error": mirror["error"]}
+    # A refusal comes back as {ok: False, reason} (a mirror that is not a
+    # fast-forward of its edge, uncommitted changes) - not only as {error}.
+    # Checking `error` alone restarted the container on the OLD tree and
+    # reported "mirror refreshed", so every promote after the design mirror
+    # diverged (2026-09-24) looked landed on the mirror and was not.
+    if mirror.get("error") or mirror.get("ok") is False:
+        return {"ok": False, "error": mirror.get("error") or mirror.get("reason")
+                or "mirror not refreshed", "mirror": mirror}
     pool = await _sandbox_pool()
     entry = pool.get(e["slug"])
     if not entry or not entry.get("name"):
@@ -8492,7 +8512,7 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
         return {"error": "ephemeral test container failed to run pytest",
                 "detail": combined[-1500:], "code": res.get("code", -1)}
     parsed = _ut_parse(combined)
-    label = branch or tgt.get("container") or "primary"
+    label = branch or "primary"
     await _audit("unittest.run", f"[{label}] {parsed['summary']}", ok=parsed["ok"])
     await _record_unittest_run(parsed, branch=branch, markers=markers,
                                paths=paths, label=label, pipeline_id=pipeline_id)
@@ -8532,8 +8552,20 @@ async def _record_unittest_run(parsed: Dict[str, Any], *, branch: str = "",
     if r is None or _ut_hist is None:
         return
     try:
+        controller = session_id = ""
+        if pipeline_id:
+            try:
+                raw = await r.get(KEY_PIPELINE + pipeline_id)
+                prec = json.loads(raw) if raw else {}
+                controller = prec.get("controller") or prec.get("via") or ""
+                session_id = prec.get("session_id") or ""
+            except Exception:
+                pass
+        controller = controller or _triggered_by()
         row = _ut_hist.record(parsed, branch=branch, markers=markers, paths=paths,
-                              ts=now_iso(), label=label, pipeline_id=pipeline_id)
+                              ts=now_iso(), label=label, pipeline_id=pipeline_id,
+                              controller=controller, session_id=session_id,
+                              repo=DEFAULT_REPO_ID)
         await r.lpush(KEY_UT_HISTORY, json.dumps(row, default=str))
         await r.ltrim(KEY_UT_HISTORY, 0, _ut_hist.HISTORY_CAP - 1)
     except Exception as e:                                 # pragma: no cover
@@ -8568,12 +8600,17 @@ async def _get_unittest_history(limit: int = 200) -> List[Dict[str, Any]]:
                         "race (the most recent red→green transition and how many "
                         "runs it took), regressions (runs that went GREEN ON FEWER "
                         "TESTS — coverage that stopped being collected, which the "
-                        "gate reports as PASS)}. Query: limit (int=200), branch "
-                        "(str filter), markers (str filter, e.g. 'critical').")
+                        "gate reports as PASS)}. Each run carries `failures` (the "
+                        "failing tests' node ids + descriptions) and its controller. "
+                        "Query: limit (int=200, up to the kept 5000), branch "
+                        "(str filter), markers (str filter, e.g. 'critical'), lanes "
+                        "(int=40 cells; 0 = one per run returned).")
 async def evolve_unittest_history(limit: int = 200, branch: str = "",
-                                  markers: str = "", trace_id=None):
+                                  markers: str = "", lanes: int = 40,
+                                  trace_id=None):
     if _ut_hist is None:                                   # pragma: no cover
         return {"error": "unittest_history module unavailable"}
+    limit = max(1, min(_ut_hist.HISTORY_CAP, int(limit or 200)))
     rows = await _get_unittest_history(limit)
     if branch:
         rows = [r for r in rows if r.get("branch") == branch]
@@ -8581,7 +8618,8 @@ async def evolve_unittest_history(limit: int = 200, branch: str = "",
         rows = [r for r in rows if r.get("markers") == markers]
     return {"ok": True, "count": len(rows),
             "runs": _ut_hist.newest_first(rows),
-            "lanes": _ut_hist.lanes(rows, limit=40),
+            "lanes": _ut_hist.lanes(rows, limit=(int(lanes) if int(lanes or 0) > 0
+                                                 else max(1, len(rows)))),
             "trend": _ut_hist.trend(rows),
             "race": _ut_hist.race_to_green(rows),
             "regressions": _ut_hist.regressions(rows)}
@@ -8596,6 +8634,15 @@ async def evolve_unittest_history(limit: int = 200, branch: str = "",
                         "modules:[{module,tests,critical}], total_tests, total_modules, "
                         "critical_modules, critical_tests, critical_names}.")
 async def evolve_tests_matrix(trace_id=None):
+    # the collected suite changes at commit speed, and collecting it takes ~14 s: read it once per ten minutes
+    # (concurrent callers wait for the one collection in flight - a lens and the Tests view ask together)
+    return await _TESTS_MATRIX_CACHE.get("matrix", _evolve_tests_matrix_collect)
+
+
+_TESTS_MATRIX_CACHE = _TTLCache(600.0)
+
+
+async def _evolve_tests_matrix_collect():
     root = str(_repo_root())
     coll = await _sh([sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q",
                       "--no-header", "-p", "no:cacheprovider"], cwd=root, timeout=120)
@@ -11424,10 +11471,14 @@ APP.get("/ui/elements/author_map.js", include_in_schema=False)(
     _serve_element_js_from("author_map_element.js", "vera-author-map element JS not found"))
 APP.get("/ui/elements/git_graph.js", include_in_schema=False)(
     _serve_element_js_from("git_graph_element.js", "vera-git-graph element JS not found"))
+APP.get("/ui/elements/ci_ops.js", include_in_schema=False)(
+    _serve_element_js_from("ci_ops_element.js", "vera-ci-ops element JS not found"))
+APP.get("/ui/elements/looplab_tables.js", include_in_schema=False)(
+    _serve_element_js_from("looplab_tables.js", "the Loop Lab table upgrade JS not found"))
 
 
 register_ui(
-    "evolve", "Loop Lab", "🧪",
+    "evolve", "Loop Lab", "⌬",
     """<div id="evolve-mount" style="height:100%;display:flex;flex-direction:column;">
         <iframe src="/evolve/panel"
                 style="flex:1;border:none;width:100%;height:100%"></iframe>

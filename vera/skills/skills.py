@@ -1800,7 +1800,7 @@ except Exception:
 register_ui(
     "skills-editor",
     "Skills",
-    "🧠",
+    "✧",
     """
 <div style="display:flex;flex-direction:column;gap:12px;height:100%">
 
@@ -2145,7 +2145,7 @@ register_ui(
 register_ui(
     "ontologies-browser",
     "Ontologies",
-    "🗂",
+    "⑂",
     """
 <div style="display:flex;flex-direction:column;gap:12px">
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">

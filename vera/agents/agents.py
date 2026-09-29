@@ -74,6 +74,7 @@ from Vera.vera.capability_orchestration import (
     APP,            # noqa
     CAPABILITY_REGISTRY, OLLAMA_INSTANCES, OLLAMA_MODEL,
     capability, emit_event, media_base, now_iso, ollama_generate, pick_instance, schedule,
+    vera_origin_header,
     _ollama_slot,
     record_stream_activity, begin_stream_activity, end_stream_activity,
     register_ui,
@@ -2988,7 +2989,7 @@ class AgentRunner:
                         _b["engine"] = engine
                     async with httpx.AsyncClient(
                             timeout=httpx.Timeout(60.0, connect=10.0)) as _hc:
-                        _hr = await _hc.post(f"{media_base('tts')}/tts", json=_b)
+                        _hr = await _hc.post(f"{media_base('tts')}/tts", headers=vera_origin_header(job_type='tts', cap='media.tts'), json=_b)
                         if _hr.status_code == 200:
                             _hd = _hr.json()
                             if _hd.get("audio_b64"):
@@ -3492,7 +3493,7 @@ class AgentRunner:
 
         try:
             async with httpx.AsyncClient(timeout=60) as c:
-                r = await c.post(f"{media_base('tts')}/tts", json=tts_body)
+                r = await c.post(f"{media_base('tts')}/tts", headers=vera_origin_header(job_type='tts', cap='media.tts'), json=tts_body)
                 r.raise_for_status()
                 tts_data = r.json()
             result["audio_b64"]   = tts_data.get("audio_b64", "")
@@ -5504,7 +5505,7 @@ _ASO_MOUNT_JS = r"""
 register_ui(
     "agents-skills-ontologies",
     "Agents",
-    "",
+    "⊚",
     """
     <div id="panel-aso" style="height:100%;overflow:hidden;background:#181614">
         <iframe src="/ui/panels/agents-skills-ontologies"
@@ -6138,7 +6139,7 @@ _CHAT_PANEL_INJECT_JS = r"""
 register_ui(
     "chat2",                         # panel id
     "Chat",                          # tab label
-    "",                     # icon (speech bubble, works as HTML entity)
+    "❏",                     # icon (speech bubble, works as HTML entity)
     # The panel HTML is just a mount point — the iframe is injected by the JS
     '<div id="panel-chat2" style="height:100%;overflow:hidden;background:var(--bg0)"></div>',
     _CHAT_PANEL_INJECT_JS,

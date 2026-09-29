@@ -303,6 +303,43 @@ def compare_versions(host: Dict[str, object], node: Dict[str, object]) -> Dict[s
 DEPS_ENTRY = "<deps>"
 
 
+# ── the media server's profile (/etc/default/vera-inference) ──────────────────
+#: Where every node mounts the shared specialist-model store, read-only.
+MODEL_STORE_MOUNT = "/opt/vera-store/models"
+
+
+def media_env_profile(has_gpu: bool, port: int = 8765,
+                      app_dir: str = "/home/Servers/StableDiffustionWhisper",
+                      store: str = MODEL_STORE_MOUNT) -> str:
+    """The media server's environment for one node.
+
+    Every node serves every model (user, 2026-09-28: "all nodes have access to
+    the same non-llm models ... all plumbed in"); a CPU node runs them on CPU.
+    It does not take GPU work away from the GPU node: media routing is
+    GPU-first (resolve_media's prefer_gpu), so a CPU node serves a service only
+    when no GPU node offers it - overflow and failover, not a peer."""
+    dev = "cuda" if has_gpu else "cpu"
+    lines = [
+        "# /etc/default/vera-inference - written by Vera (provision.deploy gpu_inference).",
+        "# Edits here are replaced on the next deploy; change the component instead.",
+        f"# Profile: {'GPU' if has_gpu else 'CPU'} node - every service on, models from the shared store.",
+        f"INFER_APP_DIR={app_dir}",
+        f"SERVER_PORT={int(port)}",
+        f"VERA_MODEL_STORE={store}",
+        "# the node's own cache: only for a model the store does not hold",
+        "HF_HOME=/.cache/huggingface",
+        "ENABLE_WHISPER=1",
+        "ENABLE_TTS=1",
+        "ENABLE_SD=1",
+        f"SD_DEVICE={dev}",
+        "TTS_ENGINE=kokoro",
+        "# Vera calls the media server over HTTP only; its Redis job queues (and the",
+        "# 'Redis unavailable localhost:6379' warning at every start) are unused.",
+        "ENABLE_REDIS=0",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def component_sync_plan(rows) -> list:
     """What bringing each node to the host's version takes.
 

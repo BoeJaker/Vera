@@ -35,70 +35,33 @@
 html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px;-webkit-font-smoothing:antialiased}
 html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
 
-/* ── Shell layout ── */
+/* ── Shell layout ──
+   The left-hand menu is the shared one: canonical markup, chrome from
+   /ui/vera-panel.css, behaviour (collapse to an icon rail, publishing itself
+   to whichever shell hosts it, hiding when that shell says it is showing the
+   same menu) from /ui/vera-panel.js. It is not styled here — that is what
+   made this panel's menu read differently from every other one. */
 #shell{display:flex;height:100vh;overflow:hidden}
-#secNav{
-  width:42px;flex-shrink:0;display:flex;flex-direction:column;
-  align-items:center;padding:8px 0;gap:1px;
-  border-right:1px solid var(--border);background:var(--bg1);
-  overflow-y:auto;overflow-x:hidden;min-height:0;
-  scrollbar-width:thin;scrollbar-color:var(--bg3) transparent;
-}
-#secNav::-webkit-scrollbar{width:5px}
-/* Hidden once the host shell confirms it's rendering these same sections
-   as injected sub-menu items itself (VeraPanelBridge's registerNav() +
-   vpb-nav-hosted — see vera-panel-bridge.js). #panes already carries
-   flex:1 in the #shell flex row above, so it fills the freed width with
-   no other adjustment needed. Confirmation-driven, not assumed — opened
-   standalone or mounted somewhere that hasn't adopted nav injection keeps
-   this rail exactly as before. */
-html.vpb-nav-hosted #secNav{display:none}
-#secNav::-webkit-scrollbar-track{background:transparent}
-#secNav::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
-#secNav::-webkit-scrollbar-thumb:hover{background:var(--border2)}
-.snav{
-  writing-mode:vertical-rl;transform:rotate(180deg);
-  font-size:9px;font-weight:700;letter-spacing:1.5px;
-  text-transform:uppercase;font-family:var(--mono);
-  padding:12px 7px;border-radius:3px;cursor:pointer;
-  color:var(--dim2);border:1px solid transparent;
-  transition:all .15s;user-select:none;width:34px;text-align:center;
-}
-.snav:hover{color:var(--text)}
-.snav.on{border-color:var(--border);background:var(--bg2)}
-.snav[data-pane="overview"].on{color:var(--ok)}
-.snav[data-pane="workers"].on{color:var(--acc)}
-.snav[data-pane="nodes"].on{color:#6fd68b}
-.snav[data-pane="ollama"].on{color:var(--gpu)}
-.snav[data-pane="jobs"].on{color:var(--acc3)}
-.snav[data-pane="observe"].on{color:var(--acc4)}
-.snav[data-pane="proxmox"].on{color:#e36b2d}
-.snav[data-pane="storage"].on{color:#d9a441}
-.snav[data-pane="network"].on{color:#4cc9b0}
-.snav[data-pane="connections"].on{color:#9c8cf0}
-.snav[data-pane="docker"].on{color:#2496ed}
-.snav[data-pane="mimic"].on{color:var(--gpu)}
-.snav[data-pane="vllm"].on{color:var(--acc2)}
-.snav[data-pane="catalog"].on{color:#e6b800}
-.snav[data-pane="api"].on{color:var(--acc4)}
-.snav[data-pane="provision"].on{color:var(--acc3)}
-.snav[data-pane="remote"].on{color:#9c8cf0}
-.snav[data-pane="software"].on{color:var(--acc3)}
-.snav[data-pane="integrations"].on{color:#e6b800}
-.snav[data-pane="platforms"].on{color:#e6b800}
-.snav[data-pane="machines"].on{color:#6fd68b}
 .mc-kind{font-family:var(--mono);font-size:8.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--dim2);white-space:nowrap}
 .mc-state{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--dim2)}
 .mc-state.running{color:var(--ok)}.mc-state.unknown{color:var(--warn)}.mc-state.template{color:var(--acc4)}
 .mc-note{display:block;margin-top:1px;font-size:8.5px;color:var(--dim)}
 .mc-acts{display:flex;flex-wrap:wrap;gap:3px}
 .mc-acts .btn{font-size:8px;padding:1px 6px}
-.nsec{writing-mode:vertical-rl;transform:rotate(180deg);flex-shrink:0;width:34px;padding:8px 0 3px;text-align:center;font-family:var(--mono);font-size:7.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--dim);user-select:none}
-#secNav [data-view="models"]{display:none}
-html.view-models #secNav [data-view="estate"]{display:none}
-html.view-models #secNav [data-view="models"]{display:block}
-.navdiv{width:24px;height:1px;background:var(--border);margin:3px 0;flex-shrink:0}
-#panes{flex:1;overflow:hidden;position:relative}
+/* This panel is two menus in one file: the Estate's pages, and the model
+   pages the Models tab opens with ?view=models. Only the current view's
+   items exist on screen, and vera-panel.js publishes only those.
+
+   Every selector here carries #sidebar[data-vera-lhm] on purpose. The shared
+   rule it has to beat is `#sidebar[data-vera-lhm] .nav-btn{display:flex}`;
+   a plain `#nav [data-view=...]` is less specific than that, so the filter
+   did not fire at all and the Estate menu listed the model pages too. */
+#sidebar[data-vera-lhm] #nav [data-view="models"]{display:none}
+html.view-models #sidebar[data-vera-lhm] #nav [data-view="estate"]{display:none}
+html.view-models #sidebar[data-vera-lhm] #nav .nav-btn[data-view="models"]{display:flex}
+html.view-models #sidebar[data-vera-lhm] #nav .nav-grp[data-view="models"],
+html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{display:block}
+#panes{flex:1;overflow:hidden;position:relative;min-width:0}
 .pane{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px}
 .pane.on{display:block}
 
@@ -406,50 +369,56 @@ html.view-models #secNav [data-view="models"]{display:block}
 ::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--border2)}
 </style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
 <body>
 <div id="shell">
-  <!-- Side navigation -->
-  <div id="secNav">
-    <!-- Estate: one list, grouped by the question each section answers. The
-         Models tab opens this same panel with ?view=models and lists only the
-         model panes. -->
-    <div class="nsec" data-view="estate">Overview</div>
-    <div class="snav on" data-pane="overview" data-view="estate" onclick="P.show('overview',this)">Overview</div>
-    <div class="snav" data-pane="estate" data-view="estate" onclick="P.show('estate',this)">Map</div>
-    <div class="snav" data-pane="observe" data-view="estate" onclick="P.show('observe',this)">Observe</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="nsec" data-view="estate">Machines</div>
-    <div class="snav" data-pane="machines" data-view="estate" onclick="P.show('machines',this)">All</div>
-    <div class="snav" data-pane="workers" data-view="estate" onclick="P.show('workers',this)">Workers</div>
-    <div class="snav" data-pane="proxmox" data-view="estate" onclick="P.show('proxmox',this)">Proxmox</div>
-    <div class="snav" data-pane="docker" data-view="estate" onclick="P.show('docker',this)">Docker</div>
-    <div class="snav" data-pane="sandbox" data-view="estate" onclick="P.show('sandbox',this)">Sandbox</div>
-    <div class="snav" data-pane="connections" data-view="estate" onclick="P.show('connections',this)">Connections</div>
-    <div class="snav" data-pane="remote" data-view="estate" onclick="P.show('remote',this)">Remote</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="snav" data-pane="storage" data-view="estate" onclick="P.show('storage',this)">Storage</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="snav" data-pane="network" data-view="estate" onclick="P.show('network',this)">Network</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="snav" data-pane="provision" data-view="estate" onclick="P.show('provision',this)">Trust</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="nsec" data-view="estate">Build</div>
-    <div class="snav" data-pane="build" data-view="estate" onclick="P.show('build',this)">New</div>
-    <div class="snav" data-pane="foundry" data-view="estate" onclick="P.show('foundry',this)">Foundry</div>
-    <div class="snav" data-pane="software" data-view="estate" onclick="P.show('software',this)">Provision</div>
-    <div class="navdiv" data-view="estate"></div>
-    <div class="nsec" data-view="estate">Integrations</div>
-    <div class="snav" data-pane="integrations" data-view="estate" onclick="P.show('integrations',this)">Services</div>
-    <div class="snav" data-pane="platforms" data-view="estate" onclick="P.show('platforms',this)">Platforms</div>
-    <div class="snav" data-pane="ollama" data-view="models" onclick="P.show('ollama',this)">Ollama</div>
-    <div class="snav" data-pane="modelrouting" data-view="models" onclick="P.show('modelrouting',this)">Model Routing</div>
-    <div class="navdiv" data-view="models"></div>
-    <div class="snav" data-pane="mimic" data-view="models" onclick="P.show('mimic',this)">Mimic</div>
-    <div class="snav" data-pane="vllm" data-view="models" onclick="P.show('vllm',this)">vLLM</div>
-    <div class="snav" data-pane="specialist" data-view="models" onclick="P.show('specialist',this)" title="Non-LLM models: NLP, STT/TTS, diffusion, host NER">Specialist</div>
-    <div class="snav" data-pane="api" data-view="models" onclick="P.show('api',this)">API</div>
-  </div>
+  <!-- The page's left-hand menu, in the one shape every panel uses.
+       Estate: one list, grouped by the question each section answers. The
+       Models tab opens this same panel with ?view=models and lists only the
+       model pages. -->
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <span class="ico">▦</span>
+      <div><h1 id="lhmTitle">Estate</h1><div class="sub" id="lhmSub">machines &middot; workers</div></div>
+    </div>
+    <nav id="nav">
+      <div class="nav-grp" data-view="estate">Overview</div>
+      <button type="button" class="nav-btn active" data-pane="overview" data-view="estate" title="Overview" onclick="P.show('overview',this)"><span class="gl">▦</span>Overview</button>
+      <button type="button" class="nav-btn" data-pane="activity" data-view="estate" title="Everything the nodes are doing: running now, every call (prod, sandboxes, external) with prompt, response and stats" onclick="P.show('activity',this)"><span class="gl">↯</span>Activity</button>
+      <button type="button" class="nav-btn" data-pane="nodemodels" data-view="estate" title="Which models each node keeps loaded, the workloads that hotload models, NLP placement and switches, and the specialist catalog" onclick="P.show('nodemodels',this)"><span class="gl">◈</span>Models &amp; NLP</button>
+      <button type="button" class="nav-btn" data-pane="estate" data-view="estate" title="Map" onclick="P.show('estate',this)"><span class="gl">⬡</span>Map</button>
+      <button type="button" class="nav-btn" data-pane="observe" data-view="estate" title="Observe" onclick="P.show('observe',this)"><span class="gl">◎</span>Observe</button>
+      <button type="button" class="nav-btn" data-pane="ops" data-view="estate" title="Live ops" onclick="P.show('ops',this)"><span class="gl">✦</span>Live ops</button>
+      <div class="nav-grp" data-view="estate">Machines</div>
+      <button type="button" class="nav-btn" data-pane="machines" data-view="estate" title="All" onclick="P.show('machines',this)"><span class="gl">▤</span>All</button>
+      <button type="button" class="nav-btn" data-pane="workers" data-view="estate" title="Workers" onclick="P.show('workers',this)"><span class="gl">⚙</span>Workers</button>
+      <button type="button" class="nav-btn" data-pane="proxmox" data-view="estate" title="Proxmox" onclick="P.show('proxmox',this)"><span class="gl">▣</span>Proxmox</button>
+      <button type="button" class="nav-btn" data-pane="docker" data-view="estate" title="Docker" onclick="P.show('docker',this)"><span class="gl">◧</span>Docker</button>
+      <button type="button" class="nav-btn" data-pane="sandbox" data-view="estate" title="Sandbox" onclick="P.show('sandbox',this)"><span class="gl">◱</span>Sandbox</button>
+      <button type="button" class="nav-btn" data-pane="connections" data-view="estate" title="Connections" onclick="P.show('connections',this)"><span class="gl">⇄</span>Connections</button>
+      <button type="button" class="nav-btn" data-pane="remote" data-view="estate" title="Remote" onclick="P.show('remote',this)"><span class="gl">↗</span>Remote</button>
+      <div class="nav-div" data-view="estate"></div>
+      <button type="button" class="nav-btn" data-pane="storage" data-view="estate" title="Storage" onclick="P.show('storage',this)"><span class="gl">▥</span>Storage</button>
+      <button type="button" class="nav-btn" data-pane="network" data-view="estate" title="Network" onclick="P.show('network',this)"><span class="gl">⌗</span>Network</button>
+      <button type="button" class="nav-btn" data-pane="provision" data-view="estate" title="Trust" onclick="P.show('provision',this)"><span class="gl">⚿</span>Trust</button>
+      <div class="nav-grp" data-view="estate">Build</div>
+      <button type="button" class="nav-btn" data-pane="build" data-view="estate" title="New" onclick="P.show('build',this)"><span class="gl">＋</span>New</button>
+      <button type="button" class="nav-btn" data-pane="foundry" data-view="estate" title="Foundry" onclick="P.show('foundry',this)"><span class="gl">⚗</span>Foundry</button>
+      <button type="button" class="nav-btn" data-pane="software" data-view="estate" title="Provision" onclick="P.show('software',this)"><span class="gl">⇩</span>Provision</button>
+      <div class="nav-grp" data-view="estate">Integrations</div>
+      <button type="button" class="nav-btn" data-pane="integrations" data-view="estate" title="Services" onclick="P.show('integrations',this)"><span class="gl">◈</span>Services</button>
+      <button type="button" class="nav-btn" data-pane="platforms" data-view="estate" title="Platforms" onclick="P.show('platforms',this)"><span class="gl">▩</span>Platforms</button>
+      <button type="button" class="nav-btn" data-pane="nodemodels" data-view="models" title="Warm slots per node, workload hotloading, NLP and the specialist catalog" onclick="P.show('nodemodels',this)"><span class="gl">◈</span>Nodes &amp; NLP</button>
+      <button type="button" class="nav-btn" data-pane="ollama" data-view="models" title="Ollama" onclick="P.show('ollama',this)"><span class="gl">◍</span>Ollama</button>
+      <button type="button" class="nav-btn" data-pane="modelrouting" data-view="models" title="Model Routing" onclick="P.show('modelrouting',this)"><span class="gl">⇉</span>Model Routing</button>
+      <div class="nav-div" data-view="models"></div>
+      <button type="button" class="nav-btn" data-pane="mimic" data-view="models" title="Mimic" onclick="P.show('mimic',this)"><span class="gl">◑</span>Mimic</button>
+      <button type="button" class="nav-btn" data-pane="vllm" data-view="models" title="vLLM" onclick="P.show('vllm',this)"><span class="gl">◐</span>vLLM</button>
+      <button type="button" class="nav-btn" data-pane="specialist" data-view="models" title="Non-LLM models: NLP, STT/TTS, diffusion, host NER" onclick="P.show('specialist',this)"><span class="gl">◇</span>Specialist</button>
+      <button type="button" class="nav-btn" data-pane="api" data-view="models" title="API" onclick="P.show('api',this)"><span class="gl">⌸</span>API</button>
+    </nav>
+  </aside>
 
   <div id="panes">
 
@@ -497,33 +466,35 @@ html.view-models #secNav [data-view="models"]{display:block}
       <!-- Sub-pane: Nodes -->
       <div id="wk-sub-nodes">
       <div class="dash-grid" id="w-grid">
-        <!-- KPI widgets -->
-        <div class="widget w-w2 w-h1" data-wid="w-total">
+        <!-- KPI widgets - two rows each: the dashboard's rows are fixed 58 px units
+             (vera-dashboard.js, "the span IS the height"), and a head plus a value
+             is ~115 px, so one row clipped every value out of sight -->
+        <div class="widget w-w2 w-h2" data-wid="w-total">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Workers</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-total')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val" id="k-w-total">—</div><div class="kpi-sub" id="k-w-total-sub">loading</div></div></div>
           <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-w2 w-h1" data-wid="w-busy">
+        <div class="widget w-w2 w-h2" data-wid="w-busy">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Busy</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-busy')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-warn" id="k-w-busy">—</div><div class="kpi-sub" id="k-w-busy-sub">active</div></div></div>
           <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-w2 w-h1" data-wid="w-caps">
+        <div class="widget w-w2 w-h2" data-wid="w-caps">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Capabilities</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-caps')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val" id="k-w-caps">—</div><div class="kpi-sub">unique caps</div></div></div>
           <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-w2 w-h1" data-wid="w-tasks">
+        <div class="widget w-w2 w-h2" data-wid="w-tasks">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Tasks Done</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-tasks')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-ok" id="k-w-done">—</div><div class="kpi-sub" id="k-w-done-sub">completed</div></div></div>
           <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-w2 w-h1" data-wid="w-queue">
+        <div class="widget w-w2 w-h2" data-wid="w-queue">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Queue</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-queue')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-warn" id="k-w-queue">—</div><div class="kpi-sub" id="k-w-queue-sub">pending</div></div></div>
           <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-w2 w-h1" data-wid="w-ollama">
+        <div class="widget w-w2 w-h2" data-wid="w-ollama">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Ollama Nodes</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('workers','w-ollama')">×</button></span></div>
           <div class="w-body" style="padding:8px 10px"><div class="kpi"><div class="kpi-val tv-gpu" id="k-w-oll">—</div><div class="kpi-sub" id="k-w-oll-sub">nodes</div></div></div>
           <span class="w-resize" data-resize></span>
@@ -555,65 +526,79 @@ html.view-models #secNav [data-view="models"]{display:block}
       <!-- Sub-pane: Workers Jobs — per-worker cap/job tracking -->
       <div id="wk-sub-jobs" style="display:none">
 
-      <!-- KPIs (reuse from job tracker) -->
-      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:10px">
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot" id="wkj-dot-pend"></span><span class="w-title">Pending</span></div>
+      <!-- The Workers › Jobs tiles and tables were fixed markup (a 6-column row and two full-width cards); they are
+           the wol-wkjobs grid now — the same VeraDash mechanics as every other pane (drag, resize, hide, float, the
+           loader, the layout file). The bodies and every id in them are unchanged: wkjRender() keeps driving them. -->
+      <div class="dash-picker" id="wkj-hidden-picker"><span style="font-size:9px;color:var(--dim);margin-right:4px">Hidden:</span><span id="wkj-hidden-chips"></span></div>
+      <div class="dash-grid" id="wkj-grid">
+        <!-- KPIs (reuse from job tracker) -->
+        <div class="widget w-w2 w-h1" data-wid="wkj-pending">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="wkj-dot-pend"></span><span class="w-title">Pending</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-pending')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val" id="wkj-pend">0</div><div class="kpi-sub">queued</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot" id="wkj-dot-run"></span><span class="w-title">Running</span></div>
+        <div class="widget w-w2 w-h1" data-wid="wkj-running">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="wkj-dot-run"></span><span class="w-title">Running</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-running')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val tv-warn" id="wkj-run">0</div><div class="kpi-sub">active</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot"></span><span class="w-title">Done</span></div>
+        <div class="widget w-w2 w-h1" data-wid="wkj-done">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Done</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-done')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val tv-ok" id="wkj-done">0</div><div class="kpi-sub">completed</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot" id="wkj-dot-fail"></span><span class="w-title">Failed</span></div>
+        <div class="widget w-w2 w-h1" data-wid="wkj-failed">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot" id="wkj-dot-fail"></span><span class="w-title">Failed</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-failed')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val tv-err" id="wkj-fail">0</div><div class="kpi-sub">errors</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot"></span><span class="w-title">Cap Types</span></div>
+        <div class="widget w-w2 w-h1" data-wid="wkj-cap-types">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Cap Types</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-cap-types')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val" id="wkj-cap-types">0</div><div class="kpi-sub">unique caps</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="widget w-h1" style="grid-column:span 1">
-          <div class="w-head"><span class="w-dot"></span><span class="w-title">Avg Duration</span></div>
+        <div class="widget w-w2 w-h1" data-wid="wkj-avg-dur">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot"></span><span class="w-title">Avg Duration</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-avg-dur')">×</button></span></div>
           <div class="w-body" style="padding:6px 10px"><div class="kpi"><div class="kpi-val" id="wkj-avg-dur" style="font-size:14px">—</div><div class="kpi-sub">per job</div></div></div>
+          <span class="w-resize" data-resize></span>
         </div>
-      </div>
 
-      <!-- Worker job breakdown -->
-      <div class="widget" style="grid-column:span 12;margin-bottom:10px">
-        <div class="w-head">
-          <span class="w-dot ok"></span>
-          <span class="w-title">Jobs by Worker</span>
-          <span style="flex:1"></span>
-          <input id="wkj-search" placeholder="Filter by cap, worker, args, error…" style="font-size:9px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px;width:160px;font-family:var(--mono)" oninput="P.wkjFilter()">
-          <div style="display:flex;gap:2px;margin-left:6px">
-            <span class="j-tab active" id="wkjt-all" onclick="P.wkjTab('all')" style="padding:3px 8px;font-size:9px">All</span>
-            <span class="j-tab" id="wkjt-running" onclick="P.wkjTab('running')" style="padding:3px 8px;font-size:9px">Running</span>
-            <span class="j-tab" id="wkjt-done" onclick="P.wkjTab('done')" style="padding:3px 8px;font-size:9px">Done</span>
-            <span class="j-tab" id="wkjt-failed" onclick="P.wkjTab('failed')" style="padding:3px 8px;font-size:9px;color:var(--err)">Failed</span>
+        <!-- Worker job breakdown -->
+        <div class="widget w-w12 w-h5" data-wid="wkj-table">
+          <div class="w-head">
+            <span class="w-grip">⠿</span>
+            <span class="w-dot ok"></span>
+            <span class="w-title">Jobs by Worker</span>
+            <span style="flex:1"></span>
+            <input id="wkj-search" placeholder="Filter by cap, worker, args, error…" style="font-size:9px;background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:3px;width:160px;font-family:var(--mono)" oninput="P.wkjFilter()">
+            <div style="display:flex;gap:2px;margin-left:6px">
+              <span class="j-tab active" id="wkjt-all" onclick="P.wkjTab('all')" style="padding:3px 8px;font-size:9px">All</span>
+              <span class="j-tab" id="wkjt-running" onclick="P.wkjTab('running')" style="padding:3px 8px;font-size:9px">Running</span>
+              <span class="j-tab" id="wkjt-done" onclick="P.wkjTab('done')" style="padding:3px 8px;font-size:9px">Done</span>
+              <span class="j-tab" id="wkjt-failed" onclick="P.wkjTab('failed')" style="padding:3px 8px;font-size:9px;color:var(--err)">Failed</span>
+            </div>
+            <span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-table')">×</button></span>
           </div>
+          <div class="w-body flush" style="padding:0;max-height:380px;overflow-y:auto">
+            <table class="job-tbl" id="wkj-table">
+              <thead><tr><th>Worker</th><th>Capability</th><th>State</th><th>Model</th><th>Elapsed</th><th>Tokens</th><th>Caller</th><th>Time</th></tr></thead>
+              <tbody id="wkj-tbody"></tbody>
+            </table>
+            <div id="wkj-empty" class="j-empty" style="display:none">No jobs tracked yet — non-LLM capability calls appear here as they execute (ollama/vllm traffic is under Ollama › Jobs)</div>
+          </div>
+          <span class="w-resize" data-resize></span>
         </div>
-        <div class="w-body flush" style="padding:0;max-height:380px;overflow-y:auto">
-          <table class="job-tbl" id="wkj-table">
-            <thead><tr><th>Worker</th><th>Capability</th><th>State</th><th>Model</th><th>Elapsed</th><th>Tokens</th><th>Caller</th><th>Time</th></tr></thead>
-            <tbody id="wkj-tbody"></tbody>
-          </table>
-          <div id="wkj-empty" class="j-empty" style="display:none">No jobs tracked yet — non-LLM capability calls appear here as they execute (ollama/vllm traffic is under Ollama › Jobs)</div>
-        </div>
-      </div>
 
-      <!-- Cap summary -->
-      <div class="widget">
-        <div class="w-head"><span class="w-dot ok"></span><span class="w-title">Capability Breakdown</span></div>
-        <div class="w-body flush" style="padding:0;max-height:200px;overflow-y:auto">
-          <table class="job-tbl" id="wkj-cap-table">
-            <thead><tr><th>Capability</th><th>Total</th><th>Running</th><th>Done</th><th>Failed</th><th>Avg Duration</th></tr></thead>
-            <tbody id="wkj-cap-tbody"></tbody>
-          </table>
+        <!-- Cap summary -->
+        <div class="widget w-w12 w-h3" data-wid="wkj-cap-table">
+          <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Capability Breakdown</span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('wkjobs','wkj-cap-table')">×</button></span></div>
+          <div class="w-body flush" style="padding:0;max-height:200px;overflow-y:auto">
+            <table class="job-tbl" id="wkj-cap-table">
+              <thead><tr><th>Capability</th><th>Total</th><th>Running</th><th>Done</th><th>Failed</th><th>Avg Duration</th></tr></thead>
+              <tbody id="wkj-cap-tbody"></tbody>
+            </table>
+          </div>
+          <span class="w-resize" data-resize></span>
         </div>
       </div>
 
@@ -922,11 +907,11 @@ html.view-models #secNav [data-view="models"]{display:block}
         <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap">
           <span style="font-size:9px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#e6b800">Model Catalog</span>
           <div style="display:flex;gap:2px">
-            <span class="j-tab active" id="cats-browse" onclick="P.catSub('browse')" style="padding:3px 9px;font-size:9px">Browse</span>
-            <span class="j-tab" id="cats-installed" onclick="P.catSub('installed')" style="padding:3px 9px;font-size:9px">Installed <span class="j-cnt" id="cat-inst-cnt">0</span></span>
-            <span class="j-tab" id="cats-dl" onclick="P.catSub('dl')" style="padding:3px 9px;font-size:9px">Downloads <span class="j-cnt" id="cat-dl-cnt" style="display:none">0</span></span>
-            <span class="j-tab" id="cats-nodes" onclick="P.catSub('nodes')" style="padding:3px 9px;font-size:9px">Nodes &amp; Hardware</span>
-            <span class="j-tab" id="cats-opt" onclick="P.catSub('opt')" style="padding:3px 9px;font-size:9px">Auto-optimise</span>
+            <span class="j-tab active" id="cats-browse" onclick="P.catSub('browse')" data-vera-sub="browse" style="padding:3px 9px;font-size:9px">Browse</span>
+            <span class="j-tab" id="cats-installed" onclick="P.catSub('installed')" data-vera-sub="installed" style="padding:3px 9px;font-size:9px">Installed <span class="j-cnt" id="cat-inst-cnt">0</span></span>
+            <span class="j-tab" id="cats-dl" onclick="P.catSub('dl')" data-vera-sub="dl" style="padding:3px 9px;font-size:9px">Downloads <span class="j-cnt" id="cat-dl-cnt" style="display:none">0</span></span>
+            <span class="j-tab" id="cats-nodes" onclick="P.catSub('nodes')" data-vera-sub="nodes" style="padding:3px 9px;font-size:9px">Nodes &amp; Hardware</span>
+            <span class="j-tab" id="cats-opt" onclick="P.catSub('opt')" data-vera-sub="opt" style="padding:3px 9px;font-size:9px">Auto-optimise</span>
           </div>
           <span style="flex:1"></span>
           <label style="font-size:9px;color:var(--dim2);display:flex;align-items:center;gap:4px">Install to
@@ -1216,14 +1201,17 @@ html.view-models #secNav [data-view="models"]{display:block}
     <!-- ══════════════════════════════════════════════════════════════════════
          OBSERVE PANE — Events (dash grid) / ⚡ Perf (lazy iframe) sub-tabs
          ══════════════════════════════════════════════════════════════════════ -->
+    <div class="pane" id="pane-ops" style="padding:0;overflow:hidden">
+      <iframe id="ops-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
     <div class="pane" id="pane-observe" style="padding:0;overflow:hidden">
       <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
       <div class="pane-tb" style="flex-shrink:0;padding:12px 12px 0;margin-bottom:8px">
         <span class="pane-tb-title" style="color:var(--acc4)">OBSERVE</span>
         <span class="tb-sep"></span>
         <div style="display:flex;gap:2px">
-          <span class="j-tab active" id="obss-events" onclick="P.obsSub('events')" style="padding:3px 9px;font-size:9px">Events</span>
-          <span class="j-tab" id="obss-perf" onclick="P.obsSub('perf')" style="padding:3px 9px;font-size:9px;color:#e6bd66">⚡ Perf</span>
+          <span class="j-tab active" id="obss-events" onclick="P.obsSub('events')" data-vera-sub="events" style="padding:3px 9px;font-size:9px">Events</span>
+          <span class="j-tab" id="obss-perf" onclick="P.obsSub('perf')" data-vera-sub="perf" style="padding:3px 9px;font-size:9px;color:#e6bd66">⚡ Perf</span>
         </div>
         <span class="tb-sep" data-obs-events></span>
         <button class="btn sm" onclick="P.obsClear()" data-obs-events>Clear</button>
@@ -1432,8 +1420,8 @@ html.view-models #secNav [data-view="models"]{display:block}
           <button class="btn sm" id="pmx-auto-btn" onclick="P.pmxAutoToggle()">Auto 10s</button>
           <span class="status-hint" id="pmx-status">—</span>
           <div style="display:flex;gap:2px;margin-left:8px">
-            <span class="j-tab active" id="pmxs-dash" onclick="P.pmxSub('dash')" style="padding:3px 9px;font-size:9px">Dashboard</span>
-            <span class="j-tab" id="pmxs-cpu" onclick="P.pmxSub('cpu')" style="padding:3px 9px;font-size:9px">CPU / NUMA</span>
+            <span class="j-tab active" id="pmxs-dash" onclick="P.pmxSub('dash')" data-vera-sub="dash" style="padding:3px 9px;font-size:9px">Dashboard</span>
+            <span class="j-tab" id="pmxs-cpu" onclick="P.pmxSub('cpu')" data-vera-sub="cpu" style="padding:3px 9px;font-size:9px">CPU / NUMA</span>
           </div>
           <span style="flex:1"></span>
           <!-- Security / Identity / Enroll moved to the Provision pane;
@@ -1710,6 +1698,14 @@ html.view-models #secNav [data-view="models"]{display:block}
     </div>
 
     <!-- Sandbox pane — shared exec-sandbox policy editor (gates exec.*, IDE Run, docker.* CLI) -->
+    <!-- Models & NLP: the <vera-node-models> element (ollama.warm.*, nlp.*, specialist.*) -->
+    <div class="pane" id="pane-nodemodels" style="padding:0;overflow:hidden">
+      <iframe id="nodemodels-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
+    <!-- Activity: the <vera-node-activity> element (nodes.activity) -->
+    <div class="pane" id="pane-activity" style="padding:0;overflow:hidden">
+      <iframe id="activity-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
     <div class="pane" id="pane-sandbox" style="padding:0;overflow:hidden">
       <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
         <div class="pane-tb" style="flex-shrink:0;padding:8px 12px 6px">
@@ -1717,7 +1713,7 @@ html.view-models #secNav [data-view="models"]{display:block}
           <span class="tb-sep"></span>
           <span class="status-hint">Gates exec.*, IDE Run and docker CLI calls</span>
           <span style="flex:1"></span>
-          <button class="btn sm" onclick="P.show('docker',document.querySelector('.snav[data-pane=docker]'))" title="Session sandbox containers are listed in the Docker pane">📦 Sandbox containers → Docker</button>
+          <button class="btn sm" onclick="P.show('docker',document.querySelector('#nav .nav-btn[data-pane=docker]'))" title="Session sandbox containers are listed in the Docker pane">📦 Sandbox containers → Docker</button>
         </div>
         <vera-sandbox-controls id="wk-sandbox-ctl" style="display:block;flex:1;min-height:0"></vera-sandbox-controls>
       </div>
@@ -1821,9 +1817,9 @@ html.view-models #secNav [data-view="models"]{display:block}
           <span class="pane-tb-title" style="color:#4cc9b0">NETWORK</span>
           <span class="tb-sep"></span>
           <div style="display:flex;gap:2px">
-            <span class="j-tab active" id="nets-graph" onclick="P.netSub('graph')" style="padding:3px 9px;font-size:9px">Graph &amp; Firewall</span>
-            <span class="j-tab" id="nets-ops" onclick="P.netSub('ops')" style="padding:3px 9px;font-size:9px">Traffic (NWM-01)</span>
-            <span class="j-tab" id="nets-netctl" onclick="P.netSub('netctl')" style="padding:3px 9px;font-size:9px" title="netctl's own pages, behind its own sign-in">netctl</span>
+            <span class="j-tab active" id="nets-graph" onclick="P.netSub('graph')" data-vera-sub="graph" style="padding:3px 9px;font-size:9px">Graph &amp; Firewall</span>
+            <span class="j-tab" id="nets-ops" onclick="P.netSub('ops')" data-vera-sub="ops" style="padding:3px 9px;font-size:9px">Traffic (NWM-01)</span>
+            <span class="j-tab" id="nets-netctl" onclick="P.netSub('netctl')" data-vera-sub="netctl" style="padding:3px 9px;font-size:9px" title="netctl's own pages, behind its own sign-in">netctl</span>
           </div>
         </div>
         <iframe id="net-sub-graph" src="about:blank" style="display:none;flex:1;border:none;width:100%;min-height:0;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
@@ -1957,13 +1953,13 @@ html.view-models #secNav [data-view="models"]{display:block}
           <div style="display:flex;gap:2px">
             <!-- Software tab removed: runtime/component installs live in the
                  Nodes pane; docker host mgmt in Docker; CT creation in Proxmox. -->
-            <span class="j-tab active" id="prvs-security" onclick="P.provSub('security')" style="padding:3px 9px;font-size:9px">Security</span>
-            <span class="j-tab" id="prvs-secrets" onclick="P.provSub('secrets')" style="padding:3px 9px;font-size:9px">Secrets</span>
-            <span class="j-tab" id="prvs-certs" onclick="P.provSub('certs')" style="padding:3px 9px;font-size:9px">Certificates</span>
-            <span class="j-tab" id="prvs-registration" onclick="P.provSub('registration')" style="padding:3px 9px;font-size:9px">Registration</span>
-            <span class="j-tab" id="prvs-identity" onclick="P.provSub('identity')" style="padding:3px 9px;font-size:9px">Identity</span>
-            <span class="j-tab" id="prvs-enroll" onclick="P.provSub('enroll')" style="padding:3px 9px;font-size:9px">Enroll</span>
-            <span class="j-tab" id="prvs-mesh" onclick="P.provSub('mesh')" style="padding:3px 9px;font-size:9px">Mesh</span>
+            <span class="j-tab active" id="prvs-security" onclick="P.provSub('security')" data-vera-sub="security" style="padding:3px 9px;font-size:9px">Security</span>
+            <span class="j-tab" id="prvs-secrets" onclick="P.provSub('secrets')" data-vera-sub="secrets" style="padding:3px 9px;font-size:9px">Secrets</span>
+            <span class="j-tab" id="prvs-certs" onclick="P.provSub('certs')" data-vera-sub="certs" style="padding:3px 9px;font-size:9px">Certificates</span>
+            <span class="j-tab" id="prvs-registration" onclick="P.provSub('registration')" data-vera-sub="registration" style="padding:3px 9px;font-size:9px">Registration</span>
+            <span class="j-tab" id="prvs-identity" onclick="P.provSub('identity')" data-vera-sub="identity" style="padding:3px 9px;font-size:9px">Identity</span>
+            <span class="j-tab" id="prvs-enroll" onclick="P.provSub('enroll')" data-vera-sub="enroll" style="padding:3px 9px;font-size:9px">Enroll</span>
+            <span class="j-tab" id="prvs-mesh" onclick="P.provSub('mesh')" data-vera-sub="mesh" style="padding:3px 9px;font-size:9px">Mesh</span>
           </div>
           <span class="status-hint" style="margin-left:8px">Net policy (graph &amp; firewall) lives in Network → Graph; deploy its OPA engine from Security</span>
         </div>
@@ -3828,7 +3824,14 @@ function gridId(pane){
 // ── Dashboard framework delegates to the shared VeraDash module ───────────────
 // (per-pane controllers live in _vd, created in Init below). The old grid*/wl*
 // internals further down are SUPERSEDED and kept only as inert dead code.
-function gridToggleEdit(pane){ if(_vd[pane]) _vd[pane].toggleEdit(); }
+// A pane's toolbar serves its sub-panes too: the WORKERS buttons reach the Workers › Jobs grid while that sub-pane
+// is showing, the OLLAMA buttons the Ollama › Jobs grid (which had no Configure of its own before).
+function _gridPane(pane){
+  if(pane==='workers'&&_wkSubCurrent==='jobs') return 'wkjobs';
+  if(pane==='ollama'&&_olSubCurrent==='jobs') return 'jobs';
+  return pane;
+}
+function gridToggleEdit(pane){ pane=_gridPane(pane); if(_vd[pane]) _vd[pane].toggleEdit(); }
 
 function gridHide(pane, wid){ if(_vd[pane]) _vd[pane].hide(wid); }
 
@@ -3888,7 +3891,7 @@ function gridRenderHidden(pane){
   }).join('');
 }
 
-function gridReset(pane){ if(_vd[pane]) _vd[pane].reset(); }
+function gridReset(pane){ pane=_gridPane(pane); if(_vd[pane]) _vd[pane].reset(); }
 
 // ── Drag & drop reordering ───────────────────────────────────────────────────
 let _dragSrc=null;
@@ -4451,7 +4454,7 @@ let _wlPanels=[];
 let _wlTargetPane=null;
 let _wlDynamic={}; // loaded dynamic widgets keyed by pane:wid
 
-function openWidgetLoader(pane){ if(_vd[pane]) _vd[pane].openLoader(); }
+function openWidgetLoader(pane){ pane=_gridPane(pane); if(_vd[pane]) _vd[pane].openLoader(); }
 
 function closeWidgetLoader(){
   $('wl-overlay').classList.add('hidden');
@@ -5009,10 +5012,9 @@ function wkSubTab(name,btn){
   if(nodesEl) nodesEl.style.display=name==='nodes'?'':'none';
   if(jobsEl)  jobsEl.style.display=name==='jobs'?'':'none';
   // Adjust which toolbar buttons are relevant
-  const editBtn=$('w-edit-btn');
   const filterBtns=['wf-all','wf-GPU','wf-CPU','wf-LIGHT'];
   const hideNodes=name==='jobs';
-  if(editBtn) editBtn.style.display=hideNodes?'none':'';
+  // Configure / Reset / + Add Widget stay: the Jobs sub-pane is a grid of its own now (wol-wkjobs)
   filterBtns.forEach(id=>{const el=$(id);if(el) el.style.display=hideNodes?'none':'';});
   if(name==='jobs') wkjRender();
 }
@@ -6173,7 +6175,7 @@ function _mountFrame(id, url){
 // iframe's page as a fragment change (no reload); a fresh mount carries it.
 const _buildFrames={foundry:['foundry-frame','/foundry/panel'],software:['software-frame','/provision/panel']};
 function buildGo(pane, section){
-  const nav=document.querySelector('.snav[data-pane="'+pane+'"]');
+  const nav=document.querySelector('#nav .nav-btn[data-pane="'+pane+'"]');
   const [fid,path]=_buildFrames[pane]||[];
   const f=fid&&$(fid);
   if(f&&(!f.src||f.src==='about:blank')) f.src=BASE+path+'#'+section;
@@ -6309,28 +6311,31 @@ async function mcAct(idx, action){
 
 function showPane(name, el){
   if(name==='nodes'){ // folded into Machines: the same list, plus Provision and Switch backend per row
-    return showPane('machines', document.querySelector('.snav[data-pane="machines"]'));
+    return showPane('machines', document.querySelector('#nav .nav-btn[data-pane="machines"]'));
   }
   if(name==='perf'){ // legacy alias — Perf now lives as a sub-tab of Observe
-    showPane('observe', document.querySelector('.snav[data-pane="observe"]'));
+    showPane('observe', document.querySelector('#nav .nav-btn[data-pane="observe"]'));
     obsSub('perf');
     return;
   }
   if(name==='catalog'){ // legacy alias — Catalog now lives as a sub-tab of Ollama
-    showPane('ollama', document.querySelector('.snav[data-pane="ollama"]'));
+    showPane('ollama', document.querySelector('#nav .nav-btn[data-pane="ollama"]'));
     olSubTab('catalog');
     return;
   }
-  document.querySelectorAll('.snav').forEach(n=>n.classList.remove('on'));
-  if(el) el.classList.add('on');
+  document.querySelectorAll('#nav .nav-btn').forEach(n=>n.classList.remove('active'));
+  if(el) el.classList.add('active');
   document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
   const pane=$('pane-'+name);
   if(pane) pane.classList.add('on');
   if(name==='overview'){ ovLoad(); }
+  if(name==='ops'){ _mountFrame('ops-frame', BASE+'/ops/panel'); }
   if(name==='ollama'){ loadEmbedCfg(); }
   if(name==='docker'){ if(!Object.keys(_dkrHosts||{}).length) _dkrInitHosts(); dkrWorkerList(); sbxRefresh(); stkRefresh(); if(_dkrHostId) dkrRefresh(); }
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
   if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
+  if(name==='activity'){ _mountFrame('activity-frame', BASE+'/nodes/activity/panel'); }
+  if(name==='nodemodels'){ _mountFrame('nodemodels-frame', BASE+'/nodes/models/panel'); }
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
@@ -6349,36 +6354,30 @@ function showPane(name, el){
   if(name==='integrations'){ _mountFrame('integrations-frame', BASE+'/integrations/panel'); }
   if(name==='platforms'){ _mountFrame('platforms-frame', BASE+'/platform/panel'); }
   if(name==='software'){ _mountFrame('software-frame', BASE+'/provision/panel'); }
-  // Keep the outer shell's injected top-level sub-menu in sync when this
-  // panel changes pane on its own (a direct click here, not one relayed
-  // from an injected item) — see registerNav() below. The 'perf'/'catalog'
-  // legacy aliases above recurse into this function with a real pane name
-  // before returning, so they still land here correctly.
-  if(window.VeraPanelBridge) VeraPanelBridge.setNavActive(name);
+  // The outer shell's copy of this menu follows the .active class the lines
+  // above set — the shared /ui/vera-panel.js watches for it — so there is no
+  // setNavActive of our own to keep in step. The 'perf'/'catalog' legacy
+  // aliases recurse into this function with a real pane name before
+  // returning, so they still mark the right item.
 }
-// Pilot rollout of nav unification (2nd panel, after Loop Lab) — every
-// button above already carries data-pane, which VeraPanelBridge's generic
-// nav_select fallback matches directly, so no selectFn is needed here
-// either. Excludes the 'perf'/'catalog' legacy aliases (they're sub-tabs
-// of Observe/Ollama, not real top-level panes of their own).
 // This panel serves two top-level tabs: Estate, and Models (?view=models).
-// Each lists only its own panes; ?pane=<id>&sub=<id> opens a pane directly,
-// and the shell sends vera:estate:open for a retired tab.
+// Each lists only its own pages; ?pane=<id>&sub=<id> opens one directly, and
+// the shell sends vera:estate:open for a retired tab. The class below is what
+// hides the other view's items — and the shared /ui/vera-panel.js publishes
+// only the items on screen, so the shell is handed this view's menu and not
+// both. It hands the bridge the button itself for each id, which is what the
+// 'estate' map page needs: its pane id collides with the view name, and a
+// lookup by attribute used to land on a section heading instead.
 const _VIEW=(new URLSearchParams(location.search).get('view')==='models')?'models':'estate';
 if(_VIEW==='models') document.documentElement.classList.add('view-models');
-// The select callback is not optional here, whatever the bridge's fallback
-// does: this panel's pane ids share their namespace with data-view, and the
-// map pane ('estate') collides with the view name, so a lookup by attribute
-// can land on a section heading instead of the item.
-if(window.VeraPanelBridge) VeraPanelBridge.registerNav(
-  [...document.querySelectorAll('#secNav .snav[data-view="'+_VIEW+'"]')]
-    .map(el=>({id:el.dataset.pane, label:el.textContent.trim()})),
-  id=>showPane(id, document.querySelector('#secNav .snav[data-pane="'+id+'"]')));
 function estateOpen(pane, sub, entity){
   if(!$('pane-'+pane)) return false;
-  showPane(pane, document.querySelector('.snav[data-pane="'+pane+'"]'));
+  // a pane listed in both views (nodemodels): highlight this view's entry
+  showPane(pane, document.querySelector('#nav .nav-btn[data-view="'+_VIEW+'"][data-pane="'+pane+'"]')
+                 || document.querySelector('#nav .nav-btn[data-pane="'+pane+'"]'));
   if(sub&&pane==='provision') provSub(sub);
   if(sub&&pane==='network') netSub(sub);
+  if(sub&&pane==='observe') obsSub(sub);
   if(entity) entityFocus(pane, sub, String(entity));
   return true;
 }
@@ -6392,7 +6391,7 @@ const _ENTITY_PANE={guest:'machines',host:'machines','docker-host':'docker',cont
   pool:'storage',dataset:'storage',integration:'integrations',identity:'provision',mesh:'provision',
   'secret':'provision',cert:'provision','backup-job':'storage',model:'ollama'};   // pragma: allowlist secret (an entity kind, not a value)
 const _ENTITY_SUB={identity:'identity',mesh:'mesh','secret':'secrets',cert:'certs','backup-job':'estate'};   // pragma: allowlist secret
-const _PANE_FRAME={overview:'overview-frame',storage:'storage-frame',integrations:'integrations-frame',foundry:'foundry-frame',
+const _PANE_FRAME={overview:'overview-frame',ops:'ops-frame',storage:'storage-frame',integrations:'integrations-frame',foundry:'foundry-frame',
   software:'software-frame',platforms:'platforms-frame',remote:'remote-frame',estate:'estate-frame'};
 function entityParse(ref){ const i=String(ref||'').indexOf(':'); if(i<1) return null;
   const kind=String(ref).slice(0,i).toLowerCase(), id=String(ref).slice(i+1); return (_ENTITY_PANE[kind]&&id)?{kind,id}:null; }
@@ -6640,7 +6639,10 @@ window.addEventListener('message', e=>{
     workers:{grid:'w-grid',  editBtn:'w-edit-btn',  picker:'w-hidden-picker',  chips:'w-hidden-chips'},
     ollama: {grid:'ol-grid', editBtn:'ol-edit-btn', picker:'ol-hidden-picker', chips:'ol-hidden-chips'},
     jobs:   {grid:'j-grid',  editBtn:'j-edit-btn',  picker:'j-hidden-picker',  chips:'j-hidden-chips'},
-    observe:{grid:'obs-grid',editBtn:'',            picker:'obs-hidden-picker',chips:'obs-hidden-chips'}
+    observe:{grid:'obs-grid',editBtn:'',            picker:'obs-hidden-picker',chips:'obs-hidden-chips'},
+    // Workers › Jobs — the fixed tiles and tables, a grid of their own now (UI redesign M5); it shares the
+    // WORKERS toolbar, whose buttons reach whichever sub-pane is showing (see gridToggleEdit).
+    wkjobs: {grid:'wkj-grid',editBtn:'w-edit-btn',  picker:'wkj-hidden-picker',chips:'wkj-hidden-chips'}
   };
   for(const pane in SPEC){ const s=SPEC[pane]; const g=$(s.grid); if(!g) continue;
     _vd[pane]=VeraDash.init(g,{key:'wol-'+pane,loader:true,popout:true,
@@ -8237,6 +8239,7 @@ return {
 })();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-entity-drawer.js"></script>
 <script src="/ui/vera-estate.js"></script>

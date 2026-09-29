@@ -117,3 +117,56 @@ def describe(pending: Optional[Dict[str, Any]], census: Dict[str, Any]) -> str:
         _, why = may_release(pending.get("mode", "finish"), census)
         return f"release of {pending.get('edge')} waiting ({pending.get('mode')}): {why}"
     return f"release of {pending.get('edge')}: {st}"
+
+
+# ── node sync after a release (2026-09-28) ────────────────────────────────────
+# A release changes what prod RUNS; the node-side services (nlp_server,
+# gpu_inference, model_builder) and the node workers are shipped copies of
+# the same tree, and until now every release left them on the old version
+# until someone ran provision.component.sync by hand. With `sync_nodes` (the
+# default) the release queues one sync that the release job carries out once
+# the release is done - after the restart, in the NEW process, so the host
+# compares nodes against the code it actually runs - and never while a census
+# goal is in flight (a redeploy drops the census's NLP calls).
+SYNC_STALE_S = 45 * 60            # a sync "running" this long without an update died with its process
+SYNC_MAX_ATTEMPTS = 3
+
+
+def new_node_sync(*, release_id: str, commit: str, now: datetime) -> Dict[str, Any]:
+    return {"release_id": release_id, "commit": commit, "status": "pending", "attempts": 0,
+            "requested_at": now.isoformat(timespec="seconds"),
+            "updated_at": now.isoformat(timespec="seconds"), "last_why": "", "results": {}}
+
+
+def node_sync_due(rec: Optional[Dict[str, Any]], census: Dict[str, Any], *, now: datetime,
+                  running_here: bool) -> Tuple[bool, str]:
+    """(run now?, why) for the queued node sync."""
+    if not rec:
+        return False, "nothing queued"
+    status = rec.get("status")
+    if status in ("done", "failed"):
+        return False, f"sync {status}"
+    if running_here:
+        return False, "running"
+    if status == "running":
+        upd = parse_iso(rec.get("updated_at") or "")
+        if upd and now - upd < timedelta(seconds=SYNC_STALE_S):
+            return False, "running in another process"
+    if int(rec.get("attempts") or 0) >= SYNC_MAX_ATTEMPTS:
+        return False, "gave up after %d attempts" % SYNC_MAX_ATTEMPTS
+    busy = bool((census or {}).get("busy")) or str((census or {}).get("state") or "") in BUSY_STATES
+    if busy:
+        return False, "census goal in flight - the sync waits for it"
+    return True, "release done, census clear"
+
+
+def node_sync_outcome(results: Dict[str, Dict[str, Any]]) -> Tuple[str, str]:
+    """(status, why) from the per-step results: done when every step ran
+    (a node that was already current, or skipped, is fine); pending again when
+    a step was refused only because a census started; failed otherwise."""
+    bad = {k: v for k, v in (results or {}).items() if not v.get("ok")}
+    if not bad:
+        return "done", "all steps ok"
+    if all("census" in str(v.get("error") or "") for v in bad.values()):
+        return "pending", "a census started - retrying when it clears"
+    return "failed", "; ".join(f"{k}: {str(v.get('error') or 'failed')[:120]}" for k, v in bad.items())

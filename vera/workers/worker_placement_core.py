@@ -281,3 +281,111 @@ WORKER_NICE = 5
 def worker_thread_env(threads: int = DEFAULT_WORKER_THREADS) -> Dict[str, str]:
     n = str(max(1, int(threads or DEFAULT_WORKER_THREADS)))
     return {k: n for k in THREAD_ENV_VARS}
+
+
+# ── rollout stages: which node-safe work is SENT to node workers ──────────────
+# Until 2026-09-28 nothing was: no capability declares mode="distributed", so
+# node workers only ever ran what the idle queue queued. The user decided
+# (2026-09-28) that node workers should receive the full set of node-safe work,
+# in stages, each stage a TYPE of worker deployment. A stage is cumulative.
+#
+# A call is offloaded only when a node worker of the cap's class is IDLE right
+# now: a worker runs one task at a time, so sending work to a busy one would
+# queue a caller behind it where running it on the host would not. When no
+# node worker is free the call runs on the host exactly as before.
+DISPATCH_KEY = "vera:node_workers:dispatch"      # json {"stage": int, "exclude": [...]}
+STAGES = (
+    {"id": 0, "name": "idle", "label": "Idle queue only",
+     "desc": "nothing is sent to node workers except idle-queue jobs",
+     "classes": (), "skip_ns": ()},
+    {"id": 1, "name": "nlp", "label": "NLP workers",
+     "desc": "nlp.* - NER, classification, zero-shot, QA, embeddings, rerank",
+     "classes": ("nlp",), "skip_ns": ()},
+    {"id": 2, "name": "compute", "label": "+ compute workers",
+     "desc": "text, math, http, memory and the vetted pure caps (general class, not llm)",
+     "classes": ("nlp", "general"), "skip_ns": ("llm",)},
+    {"id": 3, "name": "llm", "label": "+ LLM workers",
+     "desc": "llm.* - generation still routes through the shared GPU gate and node routing",
+     "classes": ("nlp", "general"), "skip_ns": ()},
+    {"id": 4, "name": "media", "label": "+ media workers",
+     "desc": "STT and TTS calls to the media servers",
+     "classes": ("nlp", "general", "media"), "skip_ns": ()},
+    {"id": 5, "name": "full", "label": "Full",
+     "desc": "every node-safe class, including any vetted into cpu_compute later",
+     "classes": tuple(CLASSES), "skip_ns": ()},
+)
+
+
+def stage_of(n) -> Dict[str, object]:
+    try:
+        i = int(n)
+    except (TypeError, ValueError):
+        i = 0
+    return STAGES[max(0, min(len(STAGES) - 1, i))]
+
+
+def offload_decision(cap_name: str, *, stage, free: Dict[str, int],
+                     is_worker: bool, is_sandbox: bool, args_ok: bool,
+                     exclude: Iterable[str] = (),
+                     env: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
+    """(send to a node worker?, why). Pure."""
+    if is_worker:
+        return False, "already on a worker"
+    if is_sandbox:
+        return False, "a dev sandbox has no node workers on its Redis"
+    st = stage_of(stage)
+    if not st["classes"]:
+        return False, "stage %s" % st["name"]
+    cls = class_of(cap_name, env)
+    if not cls:
+        return False, "host-bound"
+    if cls not in st["classes"]:
+        return False, "class %s not in stage %s" % (cls, st["name"])
+    if namespace(cap_name) in st["skip_ns"]:
+        return False, "%s.* not in stage %s" % (namespace(cap_name), st["name"])
+    ex = set(_names(exclude))
+    if cap_name in ex or namespace(cap_name) in ex:
+        return False, "excluded"
+    if not args_ok:
+        return False, "arguments cannot travel (not JSON)"
+    if int((free or {}).get(cls, 0)) <= 0:
+        return False, "no free node worker for class %s" % cls
+    return True, "stage %s: idle %s worker" % (st["name"], cls)
+
+
+def free_workers(workers: Iterable[Dict[str, object]],
+                 inflight: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+    """{class: node workers idle right now, less this process's own offloads
+    still in flight to that class}. `workers` are registry records ({role,
+    status, classes (list or json)}); a dead worker's record expires (120 s
+    TTL), so presence means alive. A worker serving two classes counts for
+    both - the in-flight subtraction keeps that from double-booking it."""
+    import json as _json
+    out: Dict[str, int] = {}
+    for w in workers or ():
+        if str(w.get("role") or "") != "node-worker" or str(w.get("status") or "") != "idle":
+            continue
+        cl = w.get("classes") or ()
+        if isinstance(cl, str):
+            try:
+                cl = _json.loads(cl)
+            except ValueError:
+                cl = _names(cl)
+        for c in clean_classes(cl):
+            out[c] = out.get(c, 0) + 1
+    for c, n in (inflight or {}).items():
+        if c in out:
+            out[c] = max(0, out[c] - int(n or 0))
+    return out
+
+
+#: Per-process reply stream: a result goes back to the process that asked.
+#: The shared result stream is read through ONE consumer group, which hands
+#: each result to exactly one reader - often not the process waiting for it,
+#: which is the "stuck-pending jobs" that turned distributed mode off.
+REPLY_STREAM = "vera:results:p:{proc}"
+REPLY_TTL_S = 3600
+
+
+def reply_stream(proc: str) -> str:
+    return REPLY_STREAM.format(proc=proc)

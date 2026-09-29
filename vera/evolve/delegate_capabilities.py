@@ -118,6 +118,32 @@ async def _drop_worktree(path: str) -> None:
         log.debug("delegate worktree cleanup %s: %s", path, e)
 
 
+# ── the job in Loop Lab (ROADMAP J1) ─────────────────────────────────────────
+
+async def _mark_run(job: Dict[str, Any]) -> None:
+    """Write the job's facts into its loop's run hash, where the Loop Lab record
+    builder (loop_record_core.delegate_job) reads them."""
+    r = _redis()
+    if not r:
+        return
+    try:
+        await r.hset("vera:loop:run:%s" % job["session_id"], D.RUN_FIELD,
+                     json.dumps(D.record_fields(job), default=str))
+    except Exception as e:
+        log.debug("delegate run mark: %s", e)
+
+
+async def _record_run(session_id: str) -> None:
+    cap = CAPABILITY_REGISTRY.get("evolve.loop.record") or {}
+    fn = cap.get("raw") or cap.get("func")
+    if not fn:
+        return
+    try:
+        await fn(session_id=session_id, where="delegate")
+    except Exception as e:
+        log.debug("delegate loop record: %s", e)
+
+
 # ── the run ──────────────────────────────────────────────────────────────────
 
 def _engine_kwargs(fn, want: Dict[str, Any]) -> Dict[str, Any]:
@@ -167,6 +193,7 @@ async def _run(job: Dict[str, Any], goal: str) -> None:
             "clarify_mode": "off", "plan_tier": "complex", "auto_escalate": False})
         job["status"] = "running"
         await _save(job)
+        await _mark_run(job)
         await _board(job, "progress", "Delegated to Vera (%s): %s - loop session %s, worktree %s @ %s"
                      % (job["mode"], job["title"], sid, job["ref"], job.get("head") or "?"))
         result = await fn(goal=goal, trace_id=sid, **kwargs)
@@ -200,6 +227,11 @@ async def _run(job: Dict[str, Any], goal: str) -> None:
                               "report_chars": len(job.get("report") or "")})
         except Exception:
             pass
+        # Loop Lab: the job's final facts onto its loop's run hash, then the record
+        # rebuilt from them (the automatic record at the loop's end may have been
+        # built before the report existed).
+        await _mark_run(job)
+        await _record_run(sid)
 
 
 @capability(

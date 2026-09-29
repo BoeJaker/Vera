@@ -91,13 +91,24 @@ The cluster monitor in `cluster.py` extends this with `_fetch_instance_detail`, 
 
 - **Latency** — sub-100ms is healthy; over 500ms is a penalty.
 - **GPU preference** — if the cap or the prompt prefers GPU, GPU nodes are scored higher.
-- **Model affinity** — if a node has the requested model already loaded (in `running`), it's preferred (no cold-start cost).
+- **Warm residency** — a node that already has the requested model loaded (in `running`, from `/api/ps`) scores 0.3 better: no cold load (a 9B on CPU is ~10 s cold, a 35B MoE ~60 s). It is smaller than a rule's `prefer` bonus (0.5), so an explicit preference still wins while its node is idle.
+- **Slots** — a GPU node serves one generation at a time, a CPU node two (`OLLAMA_NUM_PARALLEL=2`). A node with every slot taken gets a full call's penalty, so it loses to any node with a slot free.
+- **Oversized prompts** — a prompt that cannot fit the GPU's safe window (measured chars/token, plus a minimum output reserve) goes to a CPU node that has the model; with warm residency that is the node keeping it loaded. The caller's `num_predict` does not count: on the GPU the window is capped and the output shrinks to fit.
+- **Warm spill (opt-in)** — when every GPU slot is taken, a GPU-preferring call may take a CPU node that has its model loaded and a slot free, if the rule sets `spill: true` or an active workload scenario covers the job type, the node has proved at least `spill_min_tps` for that model, and the prompt is under `spill_max_ctx`. Off by default: a 9B does ~4 tok/s on CPU against 15–30 on the GPU, so waiting is often faster.
 - **Instance pin** — explicit `instance_id` always wins, overriding strategy.
 - **Co-located worker load** — if Vera workers are co-located on the same host as an Ollama node, their running tasks count against that node's score.
 - **Proxy queue depth** — when the proxy is enabled, the node hosting the proxy gets a penalty proportional to its queue depth.
 - **Errors** — consecutive errors compound a penalty.
 
 The routing picks the lowest-cost instance from the online set. If all instances are offline, the call fails with a clear error rather than silently retrying forever.
+
+### Warm model slots
+
+Each node keeps a planned set of models loaded (`ollama.warm.status|set|apply`, `vera/workers/warm_models_*`). A GPU node has one slot, a CPU node two; the embedding model rides beside the slots on CPU nodes. The plan per node is, in order: an explicit list for the node, else the models the routing rules point at it (a `pin`, then a `prefer`), topped up from the class default (`@default` – the configured default model – and, on CPU nodes, the long-horizon model; the GPU node's CPU sibling holds `@default` and the naming model). Models that do not fit the node's memory are dropped and reported.
+
+A minute job loads what is missing with `keep_alive: -1` at the planned window (one load per node per pass, never on a node with a call in flight or used in the last 2 min – 10 min for the GPU), and releases a model it pinned that the plan dropped. Calls Vera routes to a planned model on that node carry `keep_alive: -1` and the planned window, so they stay on the runner the warmer spawned instead of reloading it. Nothing re-arms a resident model on a timer: a load-only call to a resident 9B on CPU takes tens of seconds and holds up the node's embeddings.
+
+**Workload scenarios** take the slots over while a job type runs hot, e.g. `coding`: when `code`/`loop_coder` demand reaches `min_requests` in `window_s` (or `min_inflight` live), coder models go into every slot (`fill: "all"`) per node class, and stay for `hold_s` after the demand falls away. A scenario can also turn warm spill on for its job types. Scenarios stay off while a census goal is in flight. Configure them in Estate › **Models & NLP**, which also holds the NLP placement and switches and the specialist model catalog.
 
 ### Failover
 
@@ -110,7 +121,7 @@ The transparent failover means a request to `llm.generate` against the GPU node 
 All routing control lives in the top-level **Model Routing** tab (`/ui/panels/model-routing`). The layers, from baseline to most specific — a more specific layer always wins:
 
 1. **Default policy** — *least-busy, GPU-first*: every untyped request load-balances across online nodes, preferring GPU nodes (`DEFAULT_ROUTING_RULES["default"]`).
-2. **Job-type rules** — route by *kind* of work (`chat`, `code`, `embedding`, `research_writer`, …), organised into named, activatable profiles (`ollama.routing.*`). e.g. embeddings/naming are `deny_gpu` so they never tie up a GPU.
+2. **Job-type rules** — route by *kind* of work (`chat`, `code`, `embedding`, `research_writer`, …), organised into named, activatable profiles (`ollama.routing.*`). e.g. embeddings/naming are `deny_gpu` so they never tie up a GPU. A rule key may end in `*` (`idle_*` covers every background job type); an exact key wins over a pattern. Light work – embeddings, naming, the chat's one-line acknowledgement (`quick_opener`) – prefers the GPU node's CPU-only sibling (`gpu-250-cpu`); background `idle_*` work prefers it too and overflows to an idle GPU.
 3. **Per-capability rules** — route by *who* is asking, keyed on cap name or `prefix.*` glob (`ollama.cap_routing.*`). Two sub-layers: rules **declared** in code by subsystems (`register_cap_routing`) and **user** rules edited in the UI, which win.
 4. **Role profiles** — subsystems that run several LLM personas register a profile of named roles and resolve every call through it (`register_routing_profile` / `resolve_role`, caps `ollama.role_profiles.*`, preview via `llm.route.resolve`). The **research** system registers `thinker`/`writer`/`verifier`, the **IDE** registers the same trio (its analyser is the verifier role). Per-role user overrides from the Model Routing page win over the declared defaults. Roles support length escalation (`escalate_chars` + overrides, e.g. "verifier jumps to GPU above 12k chars").
 

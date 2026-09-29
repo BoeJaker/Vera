@@ -40,6 +40,7 @@ from Vera.vera.capability_orchestration import (
     capability,
     emit_event,
     media_base,
+    vera_origin_header,
     now_iso,
 )
 from Vera.vera.config import cfg
@@ -403,7 +404,7 @@ async def _tts_segment(text: str, voice: str, speed: float, engine: str) -> byte
     if engine:
         body["engine"] = engine
     async with httpx.AsyncClient(timeout=180) as c:
-        r = await c.post(f"{media_base('tts')}/tts", json=body)
+        r = await c.post(f"{media_base('tts')}/tts", headers=vera_origin_header(job_type='tts', cap='media.tts'), json=body)
         r.raise_for_status()
         data = r.json()
     b64 = data.get("audio_b64") or ""

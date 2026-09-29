@@ -314,7 +314,66 @@ def _launch_census_sync(template: str, plan_style: str = "") -> Dict[str, Any]:
     return {"ok": True, "pid": p.pid, "state": line}
 
 
-async def _start(action: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
+# ── background kinds and board notes ─────────────────────────────────────────
+# A loop on a goal or a branch's unit tests takes minutes to an hour: the tick starts it and moves on, and the run
+# record is closed (result + detail) when it ends, which also releases the schedule's next start.
+_BG_TASKS: set = set()
+
+
+def _bg_word(res: Any) -> str:
+    if not isinstance(res, dict):
+        return "done"
+    if res.get("error"):
+        return "error"
+    if "passed" in res or "summary" in res and "ok" in res:
+        return "green" if res.get("ok", res.get("passed")) else "red"
+    if res.get("ok") is False:
+        return "failed"
+    return "done"
+
+
+def _bg_detail(res: Any) -> str:
+    if not isinstance(res, dict):
+        return str(res or "")[:200]
+    v = res.get("error") or res.get("summary") or res.get("final") or res.get("deliverable") or ""
+    if isinstance(v, dict):
+        v = " · ".join(f"{k} {v[k]}" for k in list(v)[:6])
+    return str(v)[:200]
+
+
+async def _board_note(rec: Dict[str, Any], body: str) -> None:
+    """A line on the board item this work is for: when it started, how it ended. Best effort."""
+    bid = str((rec or {}).get("board_id") or "")
+    if not bid:
+        return
+    try:
+        await _call("board.comment", id=bid, frm="loop-lab-scheduler", kind="progress",
+                    body=f"⏰ {rec.get('title') or rec.get('id')}: {body}"[:600])
+    except Exception:
+        pass
+
+
+def _in_background(run_id: str, rec: Dict[str, Any], coro) -> None:
+    async def _go():
+        try:
+            res = await coro
+            word, detail = _bg_word(res), _bg_detail(res)
+        except Exception as e:                         # pragma: no cover - the call itself guards
+            word, detail = "error", str(e)[:200]
+        fin = core.iso(_now())
+        await _update_run(run_id, finished_at=fin, result=word, detail=detail)
+        cur = await _get(rec["id"]) or rec
+        cur["last_finished_at"], cur["last_result"] = fin, word
+        await _save(cur)
+        await _board_note(cur, f"{word}" + (f" · {detail}" if detail else ""))
+        await emit_event({"type": "evolve.schedule.finished", "schedule_id": rec["id"], "result": word,
+                          "detail": detail})
+    t = asyncio.ensure_future(_go())
+    _BG_TASKS.add(t)
+    t.add_done_callback(_BG_TASKS.discard)
+
+
+async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") -> Dict[str, Any]:
     kind, t = action["kind"], dict(action.get("target") or {})
     if kind == "census":
         if action.get("reason") == "resume":
@@ -351,6 +410,15 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
     if kind == "board":
         return await _call("board.dispatch", id=t.get("id", ""), executor=t.get("executor", "deterministic"),
                            agent=t.get("agent", "orchestrator"))
+    if kind == "loop":
+        _in_background(run_id, rec, _call("loops.run", profile=t.get("profile") or "coding", goal=t.get("goal", ""),
+                                          model=t.get("model", ""), session_id=f"sched:{rec['id']}:{run_id}"))
+        return {"ok": True, "state": f"loop running · session sched:{rec['id']}:{run_id}", "background": True}
+    if kind == "tests":
+        _in_background(run_id, rec, _call("evolve.unittest.run", branch=t.get("branch", ""),
+                                          paths=t.get("paths") or "tests", markers=t.get("markers", ""),
+                                          repo=t.get("repo", "")))
+        return {"ok": True, "state": f"tests running on {t.get('branch', '')}", "background": True}
     if kind == "cap":
         if core.cap_denied(t.get("name", "")):
             return {"error": f"{t.get('name')} may not run from a schedule"}
@@ -454,14 +522,14 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
         if not rec:
             continue
         run_id = uuid.uuid4().hex[:10]
-        res = await _start(action, rec)
+        res = await _start(action, rec, run_id)
         word = _result_word(res)
         run = {"id": run_id, "schedule_id": rec["id"], "kind": rec["kind"], "title": rec.get("title", ""),
                "target": rec.get("target"), "started_at": core.iso(now), "finished_at": "",
                "result": word, "detail": str((res or {}).get("error") or (res or {}).get("state")
                                               or (res or {}).get("id") or "")[:200],
-               "reason": action.get("reason", "")}
-        if rec["kind"] != "census" or word == "error":
+               "reason": action.get("reason", ""), "board_id": rec.get("board_id", "")}
+        if (rec["kind"] != "census" and not (res or {}).get("background")) or word == "error":
             run["finished_at"] = core.iso(_now())
         if rec["kind"] == "census" and word != "error":
             own = await _owner()
@@ -480,6 +548,7 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
         rec["runs"] = int(rec.get("runs") or 0) + 1
         rec["updated"] = core.iso(now)
         await _save(rec)
+        await _board_note(rec, f"started ({action.get('reason', '')})" + (f" · {run['detail']}" if run["detail"] else ""))
         started.append({"schedule_id": rec["id"], "kind": rec["kind"], "title": rec.get("title", ""),
                         "result": word, "detail": run["detail"], "run_id": run_id})
         await emit_event({"type": "evolve.schedule.started", "schedule_id": rec["id"], "kind": rec["kind"],
@@ -511,8 +580,10 @@ schedule(_tick, _TICK_S, name="evolve.schedule.tick", skip_in_sandbox=True, sing
             description="Loop Lab schedules: when censuses, suites, tasks, pipeline steps, board items "
                         "or capabilities may run (weekly windows in a timezone, or one-shot). "
                         "Output: {schedules[], next[] (id -> next window), config, state}.")
-async def cap_schedule_list(trace_id=None) -> Dict[str, Any]:
+async def cap_schedule_list(board_id: str = "", trace_id=None) -> Dict[str, Any]:
     scheds = await _load_all()
+    if (board_id or "").strip():
+        scheds = core.for_board(scheds, board_id)
     now = _now()
     nxt = {}
     for s in scheds:
@@ -628,9 +699,13 @@ async def cap_schedule_tick(trace_id=None) -> Dict[str, Any]:
                         "scheduler started (source loop-lab-run); mode=results: every archived census "
                         "run and suite as a span coloured by its pass rate (source results; "
                         "granularity=runs|goals); mode=both. Input: start, end (ISO; default this "
-                        "week ± 3 days), mode, granularity. Output: {events[], count}.")
+                        "week ± 3 days), mode, granularity, include_calendar (bool - Vera's own "
+                        "calendar events beside them, source local/ics/caldav/google). Every event carries "
+                        "`layer` (windows|runs|results|board|calendar) so a viewer can switch each on and off. "
+                        "Output: {events[], count, layers{layer: n}}.")
 async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windows",
-                              granularity: str = "runs", trace_id=None) -> Dict[str, Any]:
+                              granularity: str = "runs", include_calendar: bool = False,
+                              trace_id=None) -> Dict[str, Any]:
     now = _now()
     s = core.parse_iso(start) or (now - __import__("datetime").timedelta(days=3))
     e = core.parse_iso(end) or (now + __import__("datetime").timedelta(days=10))
@@ -643,8 +718,18 @@ async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windo
         res = await _call("evolve.suites", limit=400)
         suites = (res.get("suites") if isinstance(res, dict) else None) or []
         ev += core.results_events(suites, s, e, granularity=(granularity or "runs").strip().lower())
-    ev.sort(key=lambda x: x["start"])
-    return {"events": ev, "count": len(ev), "mode": mode}
+    if include_calendar in (True, 1, "1", "true", "yes"):
+        # Vera's calendar (the one the Comms panel shows), without its own Loop Lab overlay - that is this list
+        cal = await _call("cal.events.list", start=core.iso(s), end=core.iso(e))
+        for x in ((cal.get("events") if isinstance(cal, dict) else None) or []):
+            if isinstance(x, dict) and x.get("source") not in ("loop-lab", "loop-lab-run"):
+                ev.append(dict(x, read_only=True))
+    layers: Dict[str, int] = {}
+    for x in ev:
+        x["layer"] = core.layer_of(x)
+        layers[x["layer"]] = layers.get(x["layer"], 0) + 1
+    ev.sort(key=lambda x: str(x.get("start") or ""))
+    return {"events": ev, "count": len(ev), "mode": mode, "layers": layers}
 
 
 @capability("evolve.schedule.history", memory="off", silent=True,

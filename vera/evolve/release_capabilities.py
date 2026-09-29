@@ -7,6 +7,14 @@
                           (`census=goal`), or `force=true` to go now.
   evolve.release.status   the pending release, the census, what is next
   evolve.release.cancel   drop the pending release (resumes a census it yielded)
+  evolve.release.node_sync  the node sync a release queued (status, or run it now)
+
+With `sync_nodes` (default on) a finished release also brings the nodes onto
+it: the node-side components (provision.component.sync for every syncable
+one), the node workers (nodes.workers.sync) and the warm model slots
+(ollama.warm.apply). It is queued when the release is done and carried out by
+the same 30 s job - in the NEW process after a restart, never while a census
+goal is in flight. The decisions are release_core.node_sync_*.
 
 The decisions are in `release_core` (pure). This module owns Redis, the
 census reads (the same summary /health carries), the merge
@@ -45,10 +53,12 @@ log = logging.getLogger("vera.evolve.release")
 
 KEY_PENDING = "vera:evolve:release:pending"
 KEY_HISTORY = "vera:evolve:release:history"
+KEY_NODE_SYNC = "vera:evolve:release:node_sync"
 _BY = "evolve.release"
 _TICK_S = 30
 _PROCESS_STARTED = datetime.now(timezone.utc).replace(microsecond=0)   # this process's boot
 _LOCK = asyncio.Lock()
+_SYNC_TASK: Dict[str, Any] = {"task": None}
 
 
 def _redis():
@@ -154,6 +164,7 @@ async def _do_release(p: Dict[str, Any]) -> Dict[str, Any]:
         p["finished_at"] = _now().isoformat(timespec="seconds")
         await _save(None)
         await _archive(p)
+        await _queue_node_sync(p)
         if p.get("yield_written"):
             await _resume_if_ours()
         await emit_event({"type": "evolve.release.done", "release_id": p["id"], "commit": p["merge"].get("commit"),
@@ -176,7 +187,109 @@ async def _do_release(p: Dict[str, Any]) -> Dict[str, Any]:
     return p
 
 
+async def _node_sync_rec() -> Optional[Dict[str, Any]]:
+    r = _redis()
+    try:
+        raw = await r.get(KEY_NODE_SYNC) if r is not None else None
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+async def _node_sync_save(rec: Dict[str, Any]) -> None:
+    r = _redis()
+    try:
+        if r is not None:
+            rec["updated_at"] = _now().isoformat(timespec="seconds")
+            await r.set(KEY_NODE_SYNC, json.dumps(rec), ex=14 * 86400)
+    except Exception:
+        pass
+
+
+async def _queue_node_sync(p: Dict[str, Any]) -> None:
+    if not p.get("sync_nodes", True):
+        return
+    rec = core.new_node_sync(release_id=p["id"], commit=str((p.get("merge") or {}).get("commit") or ""),
+                             now=_now())
+    await _node_sync_save(rec)
+    await emit_event({"type": "evolve.release.node_sync", "release_id": p["id"], "status": "pending"})
+
+
+def _syncable_components() -> list:
+    import sys as _sys
+    comp = _sys.modules.get("components_capabilities")
+    table = getattr(comp, "_COMPONENTS", None) or {}
+    return sorted(k for k, c in table.items() if (c or {}).get("sync"))
+
+
+async def _run_node_sync(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """One pass: every syncable component, then the workers, then the warm
+    slots. Each step's outcome is kept; one failing does not stop the rest."""
+    rec["status"] = "running"
+    rec["attempts"] = int(rec.get("attempts") or 0) + 1
+    await _node_sync_save(rec)
+    results: Dict[str, Dict[str, Any]] = {}
+    for comp in _syncable_components():
+        res = await _call("provision.component.sync", component=comp, dry_run=False)
+        deployed = sorted((res or {}).get("results") or {}) if isinstance(res, dict) else []
+        results[comp] = {"ok": bool(isinstance(res, dict) and res.get("ok")),
+                         "deployed": deployed,
+                         "error": str((res or {}).get("error") or "")[:300] if isinstance(res, dict) else str(res)[:300]}
+        rec["results"] = results
+        await _node_sync_save(rec)
+    tres = await _call("nodes.ollama.tap", dry_run=False)
+    if isinstance(tres, dict):
+        rows = tres.get("nodes") or []
+        bad = [x for x in rows if (x.get("result") or {}).get("ok") is False
+               and not (x.get("result") or {}).get("skipped")]
+        results["tap"] = {"ok": not bad and not tres.get("error"),
+                          "refreshed": sorted(x["instance"] for x in rows
+                                              if (x.get("result") or {}).get("refreshed")),
+                          "skipped": sorted(x["instance"] for x in rows
+                                            if (x.get("result") or {}).get("skipped")),
+                          "error": str(tres.get("error") or "; ".join(
+                              f"{x['instance']}: {(x.get('result') or {}).get('error', '')[:100]}"
+                              for x in bad))[:300]}
+    wres = await _call("nodes.workers.sync", limit=16)
+    results["workers"] = {"ok": bool(isinstance(wres, dict) and wres.get("ok")
+                                     and all(v.get("ok") for v in (wres.get("results") or {}).values()
+                                             if isinstance(v, dict))),
+                          "refreshed": sorted((wres or {}).get("results") or {}) if isinstance(wres, dict) else [],
+                          "blocked": ((wres or {}).get("plan") or {}).get("blocked", "") if isinstance(wres, dict) else "",
+                          "error": str((wres or {}).get("error") or "")[:300] if isinstance(wres, dict) else str(wres)[:300]}
+    if results["workers"]["blocked"] and "census" in results["workers"]["blocked"]:
+        results["workers"].update(ok=False, error=results["workers"]["blocked"])
+    if "ollama.warm.apply" in CAPABILITY_REGISTRY:
+        ares = await _call("ollama.warm.apply", dry_run=False)
+        results["warm"] = {"ok": bool(isinstance(ares, dict) and not ares.get("error")),
+                           "error": str((ares or {}).get("error") or "")[:300] if isinstance(ares, dict) else ""}
+    status, why = core.node_sync_outcome(results)
+    if status == "pending":            # refused for a census, not a failure: not an attempt
+        rec["attempts"] = max(0, int(rec.get("attempts") or 1) - 1)
+    rec.update(status=status, last_why=why, results=results)
+    if status == "done":
+        rec["finished_at"] = _now().isoformat(timespec="seconds")
+    await _node_sync_save(rec)
+    await emit_event({"type": "evolve.release.node_sync", "release_id": rec.get("release_id"),
+                      "status": status, "why": why})
+    return rec
+
+
+async def _maybe_node_sync() -> Dict[str, Any]:
+    t = _SYNC_TASK.get("task")
+    running_here = bool(t is not None and not t.done())
+    rec = await _node_sync_rec()
+    ok, why = core.node_sync_due(rec, await census_summary(), now=_now(), running_here=running_here)
+    if ok and rec is not None:
+        _SYNC_TASK["task"] = asyncio.create_task(_run_node_sync(rec))
+    return {"due": ok, "why": why}
+
+
 async def run_tick() -> Dict[str, Any]:
+    try:
+        await _maybe_node_sync()
+    except Exception as e:
+        log.warning("release node sync: %s", e)
     p = await _pending()
     if not p:
         return {"action": "none"}
@@ -206,6 +319,7 @@ async def run_tick() -> Dict[str, Any]:
         p["census_resumed"] = resumed
         await _save(None)
         await _archive(p)
+        await _queue_node_sync(p)
         await emit_event({"type": "evolve.release.done", "release_id": p["id"],
                           "commit": (p.get("merge") or {}).get("commit"), "restarted": True,
                           "census_resumed": resumed})
@@ -242,12 +356,16 @@ schedule(_tick, _TICK_S, name="evolve.release.tick", skip_in_sandbox=True, singl
                         "flight; census=goal yields it (the goal in flight finishes, the harness parks, "
                         "the release goes, the census resumes after the restart); force=true releases "
                         "now (the restart's own gate pauses and re-runs the goal). A wait is carried by "
-                        "a 30 s job - this call returns at once with held=true. Input: confirm (bool!), "
-                        "edge, census, force, restart (bool, default true), reason. Output: {ok|held, "
-                        "release_id, status, census, why}.")
+                        "a 30 s job - this call returns at once with held=true. sync_nodes (default "
+                        "true) then brings the nodes onto the release once it is done: every syncable "
+                        "node component (provision.component.sync), the node workers and the warm "
+                        "model slots - run by the same job in the new process, never while a census "
+                        "goal is in flight (evolve.release.node_sync shows it). Input: confirm "
+                        "(bool!), edge, census, force, restart (bool, default true), sync_nodes "
+                        "(bool, default true), reason. Output: {ok|held, release_id, status, census, why}.")
 async def cap_release_prod(confirm: bool = False, edge: str = "", census: str = "finish",
                            force: bool = False, restart: bool = True, reason: str = "",
-                           trace_id=None) -> Dict[str, Any]:
+                           sync_nodes: bool = True, trace_id=None) -> Dict[str, Any]:
     if not confirm:
         return {"ok": False, "refused": "confirmation-required",
                 "note": "a release moves what prod serves and restarts it; pass confirm=true"}
@@ -267,6 +385,7 @@ async def cap_release_prod(confirm: bool = False, edge: str = "", census: str = 
             by = "release"
         p = core.new_pending(edge=edge or "", mode=mode, by=str(by), reason=reason, restart=restart,
                              now=_now(), release_id=uuid.uuid4().hex[:8])
+        p["sync_nodes"] = bool(sync_nodes)
         summary = await census_summary()
         ok, why = core.may_release(mode, summary)
         await emit_event({"type": "evolve.release.requested", "release_id": p["id"], "edge": edge,
@@ -304,6 +423,7 @@ async def cap_release_status(trace_id=None) -> Dict[str, Any]:
         except Exception:
             hist = []
     return {"pending": p, "census": census, "summary": core.describe(p, census),
+            "node_sync": await _node_sync_rec(),
             "next": core.decide(p, census, now=_now(), process_started_at=_PROCESS_STARTED),
             "process_started_at": _PROCESS_STARTED.isoformat(timespec="seconds"), "history": hist}
 
@@ -325,6 +445,27 @@ async def cap_release_cancel(reason: str = "", trace_id=None) -> Dict[str, Any]:
         resumed = await _resume_if_ours() if p.get("yield_written") else False
         await emit_event({"type": "evolve.release.cancelled", "release_id": p["id"], "census_resumed": resumed})
         return {"ok": True, "release_id": p["id"], "census_resumed": resumed}
+
+
+@capability("evolve.release.node_sync", memory="off",
+            http_method="POST", http_path="/evolve/release/node_sync", http_tags=["evolve", "release", "nodes"],
+            description="The node sync the last release queued: {release_id, status (pending | "
+                        "running | done | failed), results per step (each syncable component, "
+                        "workers, warm slots), attempts, last_why}. run=true queues one now for the "
+                        "running release (e.g. after a release made with sync_nodes=false, or a "
+                        "failed sync) - it still waits for any census goal in flight.")
+async def cap_release_node_sync(run: bool = False, trace_id=None) -> Dict[str, Any]:
+    if run:
+        if _orch.is_dev_sandbox():
+            return {"ok": False, "error": "this is a dev sandbox: the nodes are prod's"}
+        rec = core.new_node_sync(release_id="manual-" + uuid.uuid4().hex[:6], commit="", now=_now())
+        await _node_sync_save(rec)
+        due = await _maybe_node_sync()
+        return {"ok": True, "queued": rec["release_id"], **due}
+    rec = await _node_sync_rec()
+    t = _SYNC_TASK.get("task")
+    return {"ok": True, "node_sync": rec, "running_here": bool(t is not None and not t.done()),
+            "syncable": _syncable_components()}
 
 
 @capability("evolve.release.tick", memory="off",

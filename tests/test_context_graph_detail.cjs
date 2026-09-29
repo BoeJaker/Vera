@@ -1,0 +1,135 @@
+// The context graph's DETAIL (Notes/42 defect 48 — the old rail galaxy's features in the new graph): the record panel
+// carries the record's text · URL · tags · type; the LIST rows; the search filters the list and dims the plot; the
+// edge-type filter; the frames scrubber over the turns' snapshots; the mini's detail card and list for the widget form.
+//   node tests/test_context_graph_detail.cjs
+const path = require('node:path');
+const F = require(path.join(__dirname, '..', 'vera', 'graph', 'families.js'));
+global.VeraGraphFamilies = F;
+const G = require(path.join(__dirname, '..', 'vera', 'chat', 'context_graph_element.js'));
+let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
+const nodes = [
+  { id: 'v1', label: 'fabric_capabilities.py 410–486', source: 'vector', type: 'chunk', score: 0.94, text: 'def ensure(): pulls the model when the digest changed; the boot path compares the stored digest first', tags: ['fabric', 'boot'], included: true },
+  { id: 'v2', label: 'vera_start.log', source: 'vector', type: 'chunk', score: 0.7, snippet: 'boot 4 · re-embed · 38 s', included: true },
+  { id: 'g1', label: 'commit 312caef', source: 'graph', type: 'dataset', dataset: 'commits', score: 0.9, summary: 'gate the pull behind a stored digest', included: true },
+  { id: 'w1', label: 'issue #41', source: 'web', type: 'page', score: 0.5, url: 'https://example.test/issues/41', content: 'fabric re-embeds on every restart', included: false },
+  { id: 'c1', label: 'fabric.digest', source: 'cap', score: 0.6, included: true },
+  { id: 'm1', label: 'recall 1', source: 'memory', score: 0.8, text: 'the digest gate closed #41', included: true },
+];
+const edges = [{ from: 'v1', to: 'g1', label: 'CITES' }, { from: 'v1', to: 'v2', type: 'SIMILAR' }, { from: 'g1', to: 'w1', label: 'RELATED' }, { from: 'c1', to: 'v1' }];
+const base = { view: 'galaxy', nodes, edges, focus: ['v1', 'g1', 'm1', 'c1'], reads: { m4: ['v1', 'g1', 'm1', 'c1'] }, layersOff: new Set(), related: true, pan: { x: 0, y: 0, z: 1 }, allEdges: true };
+const W = 660, H = 640;
+
+// ── the text preview: the node's text, else snippet · summary · content · preview ──
+t('textOf reads text first', G.textOf(nodes[0]).indexOf('def ensure') === 0);
+t('textOf falls back to snippet · summary · content', G.textOf(nodes[1]) === 'boot 4 · re-embed · 38 s' && G.textOf(nodes[2]).indexOf('gate the pull') === 0 && G.textOf(nodes[3]).indexOf('fabric re-embeds') === 0);
+t('textOf: nothing when the record has no text', G.textOf(nodes[4]) === '' && G.textOf(null) === '');
+
+// ── the record panel: text · url · tags · type beside relevance · tokens · read by ──
+const p1 = G.compute(Object.assign({}, base, { sel: 'v1' }), W, H);
+const keys = (r) => r.rows.map((x) => x.k).join(',');
+t('the panel carries relevance · tokens · read by · loop steps · source · type · tags', keys(p1.rec) === 'relevance,tokens,read by,loop steps,source,type,tags', keys(p1.rec));
+t('the panel carries the record\'s text', p1.rec.text.indexOf('def ensure()') === 0);
+t('the type row: the type and the dataset', G.compute(Object.assign({}, base, { sel: 'g1' }), W, H).rec.rows.find((x) => x.k === 'type').v === 'dataset · dataset commits');
+const pw = G.compute(Object.assign({}, base, { sel: 'w1' }), W, H);
+t('the url row links out', pw.rec.rows.find((x) => x.k === 'url') && pw.rec.rows.find((x) => x.k === 'url').url === 'https://example.test/issues/41' && pw.rec.url === 'https://example.test/issues/41');
+t('a memory record carries its text too', G.compute(Object.assign({}, base, { sel: 'm1' }), W, H).rec.text === 'the digest gate closed #41');
+const card = G.recordCard(p1.rec, {});
+t('the card draws the text block, the rows, the actions', /cg-rec-t/.test(card) && /def ensure\(\)/.test(card) && /data-a="toggle" data-id="v1"/.test(card) && /data-a="open"/.test(card) && /Focus turn/.test(card));
+t('the url row is an anchor in the card', /<a class="v" href="https:\/\/example\.test\/issues\/41"/.test(G.recordCard(pw.rec, {})));
+t('the compact card (the mini\'s) trims the rows and the text', (G.recordCard(p1.rec, { compact: true }).match(/cg-rec-r/g) || []).length === 3 && /cg-rec compact/.test(G.recordCard(p1.rec, { compact: true })));
+
+// ── the list: the rows (source dot · label · relevance bar · tokens · included), the most relevant first ──
+const l0 = G.compute(base, W, H);
+t('a row per record, the memory recall included, most relevant first', l0.list.length === 6 && l0.list[0].id === 'v1' && l0.list[l0.list.length - 1].id === 'w1', l0.list.map((r) => r.id).join(','));
+t('a row knows its source colour, relevance, tokens, included, text', l0.list[0].col && l0.list[0].score === 0.94 && l0.list[0].tok > 0 && l0.list[0].included === true && l0.list.find((r) => r.id === 'w1').included === false && l0.list[0].text.indexOf('def ensure') === 0);
+const lh = G.listHtml(l0, {});
+// count the ROW element, not anything whose class merely BEGINS with cg-row: a row now carries its detail
+// block (cg-row-d / -m / -x / -u), and a prefix match counts those as rows too
+t('the list draws rows with the dot, the bar, the tokens and the toggle', (lh.match(/class="cg-row[ "]/g) || []).length === 6 && /class="bar"><i style="width:94%"/.test(lh) && /data-a="toggle" data-id="w1"[^>]*>＋</.test(lh) && /6 records/.test(lh));
+t('an excluded record is a hollow row', /cg-row excl[^"]*" data-id="w1"/.test(lh));
+
+// ── the search: the list filters, the plot dims what does not match, the hits count ──
+const s1 = G.compute(Object.assign({}, base, { q: 'digest' }), W, H);
+t('a search matches on text, summary and label', s1.list.map((r) => r.id).sort().join(',') === 'c1,g1,m1,v1', s1.list.map((r) => r.id).join(','));
+t('the hit count is the matches among the records drawn', s1.hits === 4, String(s1.hits));
+t('what does not match dims in the plot (miss), what matches does not', s1.cnodes.filter((n) => /\bmiss\b/.test(n.cls)).map((n) => n.id).sort().join(',') === 'v2,w1' && !/\bmiss\b/.test(s1.cnodes.find((n) => n.id === 'v1').cls));
+t('the memory node dims with the search too', G.compute(Object.assign({}, base, { q: 'zzz' }), W, H).memNodes.every((n) => /\bmiss\b/.test(n.cls)));
+t('a search on a tag matches', G.compute(Object.assign({}, base, { q: 'boot' }), W, H).list.map((r) => r.id).indexOf('v1') >= 0);
+t('no search: no misses, no hits, the whole list', l0.hits === 0 && l0.cnodes.every((n) => !/\bmiss\b/.test(n.cls)) && /6 records/.test(G.listHtml(l0)));
+t('the list head says how many match', /4 of 6 match “digest”/.test(G.listHtml(s1)));
+
+// ── the edge types: the chips with counts; a folded type leaves the plot and the panel ──
+t('the edge types, by count, an untyped relation as RELATED', l0.edgeTypes.map((e) => e.name + ':' + e.n).join(',') === 'CITES:1,SIMILAR:1,RELATED:2' || l0.edgeTypes.map((e) => e.name + ':' + e.n).sort().join(',') === 'CITES:1,RELATED:2,SIMILAR:1', l0.edgeTypes.map((e) => e.name + ':' + e.n).join(','));
+const relTitles = (o) => o.cedges.filter((e) => /^rel/.test(e.cls)).map((e) => e.title);
+const eOff = G.compute(Object.assign({}, base, { edgesOff: new Set(['CITES']) }), W, H);
+t('a folded edge type leaves the plot', relTitles(l0).some((s) => /cites/.test(s)) && !relTitles(eOff).some((s) => /cites/.test(s)) && relTitles(eOff).some((s) => /similar/.test(s)));
+t('the chip says it is off', eOff.edgeTypes.find((e) => e.name === 'CITES').on === false && eOff.edgeTypes.find((e) => e.name === 'SIMILAR').on === true);
+t('the panel\'s relations follow the filter', G.compute(Object.assign({}, base, { sel: 'v1' }), W, H).rec.rels.length === 3 && G.compute(Object.assign({}, base, { sel: 'v1', edgesOff: new Set(['CITES']) }), W, H).rec.rels.length === 2);
+
+// ── the frames: a turn's snapshot stands in for the live records while picked; the live set is untouched ──
+const frames = [{ id: 1001, label: 'm1', ts: '10:00', nodes: nodes.slice(0, 2), edges: [{ from: 'v1', to: 'v2', type: 'SIMILAR' }] }, { id: 1002, label: 'm2', ts: '10:02', nodes: nodes.slice(0, 4), edges: edges.slice(0, 3) }];
+const fLive = G.compute(Object.assign({}, base, { frames }), W, H);
+t('frames listed, none in view: the live set draws', fLive.frames.length === 2 && fLive.frames.every((f) => !f.on) && fLive.frame === null && fLive.cnodes.length === 5);
+const f1 = G.compute(Object.assign({}, base, { frames, frame: 1001 }), W, H);
+t('a picked frame draws its own records and relations', f1.frame && f1.frame.label === 'm1' && f1.cnodes.length === 2 && f1.cedges.filter((e) => /^rel/.test(e.cls)).length === 1 && f1.frames.find((f) => f.id === 1001).on === true, f1.cnodes.length + ' nodes');
+t('a frame id compares as a string too', G.compute(Object.assign({}, base, { frames, frame: '1002' }), W, H).cnodes.length === 4);
+t('the list head names the frame', /frame m1/.test(G.listHtml(f1)));
+t('the live records are untouched by the scrub', base.nodes.length === 6 && base.nodes === nodes);
+
+// ── the mini: the detail card, the list, and miniHtml with both ──
+const st = G.stateFrom({ nodes, rels: edges, q: 'digest', list: true, frames, frame: 1002, edgesOff: ['SIMILAR'] });
+t('stateFrom carries q · list · frames · frame · edgesOff', st.q === 'digest' && st.list === true && st.frames.length === 2 && st.frame === 1002 && st.edgesOff.has('SIMILAR'));
+const md = G.miniDetail(G.stateFrom({ nodes, rels: edges }), 'v1');
+t('miniDetail: the compact card for one record, with its text and toggle', /cg-rec compact/.test(md) && /def ensure/.test(md) && /data-a="toggle" data-id="v1"/.test(md) && /data-id="v1"/.test(md));
+t('miniDetail: nothing for an unknown id', G.miniDetail(G.stateFrom({ nodes, rels: edges }), 'nope') === '');
+const ml = G.miniList(G.stateFrom({ nodes, rels: edges }), { q: 'digest' });
+t('miniList: the compact rows, the search applied', /cg-list compact/.test(ml) && (ml.match(/class="cg-row/g) || []).length === 4);
+const mh = G.miniHtml(G.stateFrom({ nodes, rels: edges }), 262, 196, { detail: 'g1', list: true });
+t('miniHtml with detail + list: the box carries the list and the card', /cg-mini listing/.test(mh) && /cg-list compact/.test(mh) && /cg-rec compact" data-id="g1"/.test(mh));
+t('miniHtml without opts: no card, no list', !/cg-rec/.test(G.miniHtml(G.stateFrom({ nodes, rels: edges }), 262, 196)) && !/cg-list/.test(G.miniHtml(G.stateFrom({ nodes, rels: edges }), 262, 196)));
+t('the API exposes the detail functions', typeof G.miniDetail === 'function' && typeof G.miniList === 'function' && typeof G.recordCard === 'function' && typeof G.listHtml === 'function' && G.version === 6);
+// the list carries the session's memory records too (hollow, no toggle — not prompt records), after the context's
+const sess = [{ id: 'ss1', record_type: 'session', summary: 'the session', created_at: '2026-09-11T09:59:00Z', importance: 0.9 }, { id: 'sf1', record_type: 'fact', text: 'a digest fact', created_at: '2026-09-11T10:02:00Z', importance: 0.3 }];
+const ls = G.compute(Object.assign({}, base, { memory: sess, memEdges: [] }), W, H);
+t('the session records are rows after the context\'s, hollow, without a toggle', ls.list.length === 8 && ls.list.slice(-2).every((r) => r.sess && !r.included) && !/data-a="toggle" data-id="sf1"/.test(G.listHtml(ls)) && /data-a="toggle" data-id="v1"/.test(G.listHtml(ls)));
+const lq = G.compute(Object.assign({}, base, { memory: sess, memEdges: [], q: 'digest' }), W, H);
+t('the search counts what the list shows: hits = rows', lq.hits === lq.list.length && lq.list.some((r) => r.id === 'sf1'), lq.hits + ' vs ' + lq.list.length);
+
+// ── All edges: on draws every record's spoke to the hub (lit for the prompt's), the mini alike; off draws none ──
+const spokes = (o) => o.cedges.filter((e) => /^spoke/.test(e.cls));
+const aOn = G.compute(Object.assign({}, base, { allEdges: true }), W, H), aOff = G.compute(Object.assign({}, base, { allEdges: false }), W, H);
+t('All edges on: a spoke from the hub to every record drawn — the context\'s memory recall too, never the session\'s records', spokes(aOn).length === aOn.cnodes.length + 1 && aOn.cnodes.length === 5, spokes(aOn).length + ' vs ' + aOn.cnodes.length);
+t('the prompt\'s records get a lit spoke, the rest a dim one', spokes(aOn).filter((e) => /lit/.test(e.cls)).length === 4 && spokes(aOn).filter((e) => !/lit/.test(e.cls)).length === 2);
+t('All edges off: no spokes, the dim relations folded', spokes(aOff).length === 0 && !aOff.cedges.some((e) => e.cls === 'rel'));
+t('the mini honours All edges the same way', spokes(G.mini(Object.assign({}, base, { allEdges: true }), 262, 196)).length === 6 && spokes(G.mini(Object.assign({}, base, { allEdges: false }), 262, 196)).length === 0);
+t('miniHtml draws the spokes when the state says so', (G.miniHtml(G.stateFrom({ nodes, rels: edges, allEdges: true }), 262, 196).match(/cg-edge spoke/g) || []).length === 6 && !/cg-edge spoke/.test(G.miniHtml(G.stateFrom({ nodes, rels: edges, allEdges: false }), 262, 196)));
+t('no spokes where the hub is hidden (flow · time)', spokes(G.compute(Object.assign({}, base, { allEdges: true, view: 'flow' }), W, H)).length === 0 && spokes(G.compute(Object.assign({}, base, { allEdges: true, view: 'time' }), W, H)).length === 0);
+t('iso: the spokes rise from the hub on its pin', spokes(G.compute(Object.assign({}, base, { allEdges: true, view: 'iso' }), W, H)).length === 6);
+
+// ── zoom-to: the pan that centres a record ──
+const pz = G.panTo({ x: 100, y: 80 }, 600, 400, 2);
+t('panTo puts the record at the plot\'s centre at zoom z (the inverse of atP)', pz.z === 2 && 300 + (100 - 300) * 2 + pz.x === 300 && 200 + (80 - 200) * 2 + pz.y === 200);
+t('the element\'s panel offers Zoom to; the mini\'s card does not (it has no pan)', /data-a="zoom" data-id="v1"/.test(G.recordCard(p1.rec, { zoom: true })) && !/data-a="zoom"/.test(G.recordCard(p1.rec, { compact: true })) && /data-a="zoom"/.test(G.drawLanes(p1)));
+
+// ── the page preview, the run node's evidence links, Incl all / Excl all ──
+t('a record with a URL offers Preview page in the panel and ◫ on its row', /data-a="preview" data-id="w1" data-url="https:\/\/example\.test\/issues\/41"/.test(G.recordCard(pw.rec, {})) && /class="pv" data-a="preview" data-id="w1"/.test(G.listHtml(l0)) && !/data-a="preview"/.test(G.recordCard(p1.rec, {})));
+const runN = nodes.concat([{ id: 'r1', label: 'obs.health · run', source: 'run', type: 'run', score: 0.55, status: 'running', attempt: 2, progress: 0.4, run_id: 'run-77', session_id: 'sess-9', included: true }]);
+const pr = G.compute(Object.assign({}, base, { nodes: runN, sel: 'r1' }), W, H);
+t('a run node: status · attempt · progress rows', keys(pr.rec).indexOf('status,attempt,progress') > 0 && pr.rec.rows.find((x) => x.k === 'progress').v === '40%', keys(pr.rec));
+t('a run node: Activity evidence ↗ and Memory graph ↗ links, on the run root and the session', pr.rec.links.length === 2 && pr.rec.links[0].href === '/activity/panel#run%3Arun-77' && pr.rec.links[1].href === '/memgraph/panel?run_id=run-77&session_id=sess-9');
+t('the links are anchors in the card (the mini\'s too)', (G.recordCard(pr.rec, {}).match(/class="lnk"/g) || []).length === 2 && (G.recordCard(pr.rec, { compact: true }).match(/class="lnk"/g) || []).length === 2 && !/class="lnk"/.test(G.recordCard(p1.rec, {})));
+t('the list head offers Incl all · Excl all when there are prompt records', /data-a="incl-all"/.test(G.listHtml(l0)) && /data-a="excl-all"/.test(G.listHtml(l0)) && /data-a="incl-all"[^>]*>incl</.test(G.listHtml(l0, { compact: true })));
+t('no Incl / Excl all over session records alone', !/data-a="incl-all"/.test(G.listHtml(G.compute(Object.assign({}, base, { nodes: [], memory: sess, memEdges: [] }), W, H))));
+// ── a frame is a turn: its prompt is the focus, read by the question (by 'u') or the response (by 'a'); the turn under the hub ──
+const fTurn = { id: 7001, label: 'Turn 3', ts: '10:03', mid: 'm5', amid: 'm6', turn: 'turn m5', nodes: [Object.assign({}, nodes[0], { by: 'u' }), Object.assign({}, nodes[2], { by: 'u' }), Object.assign({}, nodes[3], { by: 'a', included: true }), Object.assign({}, nodes[1], { included: false })], edges: edges.slice(0, 2) };
+const ft = G.compute(Object.assign({}, base, { focus: [], reads: {}, frames: [fTurn], frame: 7001 }), W, H);
+t('a frame in view: its included records are the focus (lit), not the host\'s', ft.lit === 3 && ft.cnodes.filter((n) => /\blit\b/.test(n.cls)).map((n) => n.id).sort().join(',') === 'g1,v1,w1', String(ft.lit));
+t('read by the question (mid) or the response (amid) as `by` says', JSON.stringify(G.frameReads(fTurn, fTurn.nodes)) === JSON.stringify({ m5: ['v1', 'g1'], m6: ['w1'] }));
+t('the panel says which read it', G.compute(Object.assign({}, base, { focus: [], reads: {}, frames: [fTurn], frame: 7001, sel: 'w1' }), W, H).rec.rows.find((x) => x.k === 'read by').v === 'm6' && G.compute(Object.assign({}, base, { focus: [], reads: {}, frames: [fTurn], frame: 7001, sel: 'v1' }), W, H).rec.rows.find((x) => x.k === 'read by').v === 'm5');
+t('the turn stands under the hub; the live set carries the host\'s label', ft.turn === 'turn m5' && /cg-hubt[^>]*>turn m5</.test(G.drawPlot(ft)) && G.compute(Object.assign({}, base, { turn: 'turn m9' }), W, H).turn === 'turn m9' && !/cg-hubt/.test(G.drawPlot(G.compute(base, W, H))));
+t('a frame without mid falls back to its label', G.compute(Object.assign({}, base, { frames: [{ id: 1, label: 'm2', nodes: nodes.slice(0, 2), edges: [] }], frame: 1 }), W, H).turn === 'turn m2');
+t('the positions carry by (the runs land on the question or the response)', ft.pos.w1.by === 'a' && ft.pos.v1.by === 'u' && G.compute(base, W, H).pos.v1.by === 'u');
+t('no caption in flow/time (the hub is hidden) nor in the quad', !/cg-hubt/.test(G.drawPlot(G.compute(Object.assign({}, base, { view: 'flow', turn: 'turn m9' }), W, H))) && !/cg-hubt/.test(G.drawPlot(G.compute(Object.assign({}, base, { view: 'quad', turn: 'turn m9' }), W, H))));
+t('the mini draws the frame in view and its caption', /cg-hubt[^>]*>turn m5</.test(G.miniHtml(G.stateFrom({ nodes, rels: edges, frames: [fTurn], frame: 7001 }), 262, 196)) && (G.miniHtml(G.stateFrom({ nodes, rels: edges, frames: [fTurn], frame: 7001 }), 262, 196).match(/cg-node /g) || []).length === 4);
+console.log(fails ? fails + ' FAILED' : 'all passed');
+process.exit(fails ? 1 : 0);

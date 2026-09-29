@@ -1754,7 +1754,7 @@ except Exception as e:
 # standalone top-level harness tab as well, uncomment the block below.
 #
 register_ui(
-    "ide-inspect-panel", "Source Inspection", "🔍",
+    "ide-inspect-panel", "Source Inspection", "≣",
     """<div style="height:100%;display:flex;flex-direction:column;">
       <iframe src="/inspect/panel"
               style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12);"
