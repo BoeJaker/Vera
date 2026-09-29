@@ -71,6 +71,11 @@ const BR = fs.readFileSync(path.join(__dirname, '..', 'vera', 'web', 'browser_ca
 }
 t('the live layer draws the graph through <vera-graph-embed>, fed the records', /else if \(kind === 'rgraph'\) \{ inner = document\.createElement\('vera-graph-embed'\)/.test(CV) && /inner\.setAttribute\('renderer', 'data'\)/.test(CV) && /this\._rgFeed\(inner, key\);/.test(CV));
 t('a record\'s node opens it in the list', /_rgNode\(key, node\) \{/.test(CV) && /st\.view = 'list';/.test(CV));
+/* measured on the mirror, 2026-09-29: vera_graph.js writes its stylesheet into <head>, which the canvas's shadow root does
+   not see - the graph came up squashed with its workbench drawers as bare text */
+t('the graph\'s stylesheet is carried into the column', /_adoptGraphCss\(tries\) \{/.test(CV) && /\/\\\.vg-\[a-z\]\/\.test\(s\.textContent/.test(CV) && /this\._adoptGraphCss\(\); \};/.test(CV));
+t('and its workbench drawer is not drawn in a records graph', /\.lv\[data-kind="rgraph"\] \.vg-bottom-area\{display:none!important\}/.test(CV));
+t('unfolding opens the item in place, so its graph is not cut off', /if \(on\) this\._open\.delete\(key\); else this\._open\.add\(key\);/.test(CV));
 t('the embed takes a graph from its host - an addition, the snapshot path unchanged', /setGraph\(data\) \{/.test(EMB) && /this\._graph\.load\(this\._data\)/.test(EMB) && /await this\._graph\.fetchSnapshot\(layer, params\);/.test(EMB));
 
 // ── reader mode ───────────────────────────────────────────────────────────────────────────────────────────────────

@@ -33,7 +33,15 @@
     if (m) { const tail = m[2].trim().toLowerCase(); if ((siteName && (siteName.includes(tail) || tail.includes(siteName))) || (hostWord && tail.replace(/\s+/g, '').includes(hostWord))) title = m[1].trim(); }
   }
   const bylineEl = doc.querySelector('[rel="author"],[itemprop="author"],.byline,.author,.post-author,.article-author');
-  const byline = clean(meta('author') || meta('article:author') || (bylineEl && bylineEl.textContent) || '').slice(0, 120);
+  // the NAME, not the author box: a bio block ("James Lewis James Lewis is a Principal Consultant at...", measured on a
+  // live essay) is who they are, not the byline - its link or name element first, a doubled name once, cut at "is a"
+  let byline = clean(meta('author') || '');
+  if (!byline && bylineEl) { const nm = bylineEl.querySelector('[itemprop="name"],.name,a'); byline = clean((nm && nm.textContent) || bylineEl.textContent || ''); }
+  if (!byline) byline = clean(meta('article:author') || '');
+  byline = byline.replace(/^by\s+/i, '').replace(/\s+(is|was)\s+(a|an|the)\s[\s\S]*$/i, '');
+  { const w = byline.split(' '); const h = Math.floor(w.length / 2); if (w.length >= 2 && w.length % 2 === 0 && w.slice(0, h).join(' ') === w.slice(h).join(' ')) byline = w.slice(0, h).join(' '); }
+  if (/^https?:/.test(byline)) byline = '';
+  byline = byline.slice(0, 80);
   const site = clean(meta('og:site_name') || location.hostname.replace(/^www\./, ''));
   const timeEl = doc.querySelector('time[datetime]');
   const published = meta('article:published_time') || meta('datePublished') || meta('date') || (timeEl ? timeEl.getAttribute('datetime') : '') || '';

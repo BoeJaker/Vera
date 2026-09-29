@@ -1068,6 +1068,8 @@
   .vc-rbx.s-s .vc-rbx-graph .vc-live{height:200px}.vc-rbx.s-m .vc-rbx-graph .vc-live{height:260px}
   .vc-rbx.s-l .vc-rbx-graph .vc-live{height:320px}.vc-rbx.s-xl .vc-rbx-graph .vc-live{height:480px}
   .vc-rbx-gnote{font-size:9.5px;color:var(--dim2,#8a7e70)}
+  /* a records graph is a glance: the graph's workbench drawer (terminal · table · content · chat) is not drawn here */
+  .lv[data-kind="rgraph"] .vg-bottom-area{display:none!important}
   /* READER MODE: a page read as its article - a measure you can read at, the prose face, the page's own shape */
   .vc-rbx-body.rd,.vc-src-body.rd{max-height:620px;background:var(--bg0,#171513);padding:10px 14px}
   .vc-reader{max-width:68ch;margin:0 auto;font-family:var(--f-prose,Georgia,'Iowan Old Style','Times New Roman',serif);font-size:13.5px;line-height:1.7;color:var(--fg,#dce1e8)}
@@ -2461,7 +2463,9 @@
       key = String(key); const f = this._folds(); f[key] = !!on;
       const ks = Object.keys(f); if (ks.length > 400) ks.slice(0, ks.length - 400).forEach((k) => { delete f[k]; });   // bounded
       try { localStorage.setItem('vera:canvas:fold:' + this._foldsFor, JSON.stringify(f)); } catch (e) {}
-      if (on) this._open.delete(key);
+      // folding closes it; unfolding is asking to see it, so it opens IN PLACE - at its size's cap a list opened to its
+      // graph was cut off under its own header line (measured on the mirror)
+      if (on) this._open.delete(key); else this._open.add(key);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:fold', { bubbles: true, detail: { key, folded: !!on } })); } catch (e) {}
       if (this._doc) this.render(this._doc);
     }
@@ -2720,9 +2724,21 @@
       const c = this._contentOf(key) || {}; const g = recGraph(c);
       const sig = (c.query || '') + '|' + (Array.isArray(c.items) ? c.items.map((r) => r && r.id).join(',') : '');
       if (embed._rgSig === sig) return; embed._rgSig = sig;
-      const go = () => { try { embed.setGraph(g); } catch (e) {} };
+      const go = () => { try { embed.setGraph(g); } catch (e) {} this._adoptGraphCss(); };
       if (typeof embed.setGraph === 'function') go();
       else if (root.customElements) root.customElements.whenDefined('vera-graph-embed').then(go).catch(() => {});
+    }
+    /* THE GRAPH'S STYLES, INSIDE THE COLUMN. vera_graph.js puts its stylesheet in the document's <head>, and the canvas
+       draws in a shadow root the head does not reach - so the physics graph came up unstyled: its canvas squashed to a
+       strip and its own drawers (terminal, table, the ask box) laid out as bare text (measured on the mirror,
+       2026-09-29). The explode items never showed it: their renderer is the struct one. The sheet is copied in once,
+       when the library has written it (it loads on demand, so a few tries). */
+    _adoptGraphCss(tries) {
+      const sr = this.shadowRoot; if (!sr || sr.querySelector('style[data-vg-adopted]')) return;
+      const doc = this.ownerDocument || document;
+      const ss = Array.from(doc.querySelectorAll('head style')).filter((s) => /\.vg-[a-z]/.test(s.textContent || ''));
+      if (!ss.length) { const n = (tries | 0) + 1; if (n < 12) setTimeout(() => this._adoptGraphCss(n), 250 * n); return; }
+      ss.forEach((s) => { const c = s.cloneNode(true); c.setAttribute('data-vg-adopted', ''); sr.appendChild(c); });
     }
     // a record's node, clicked: the list, on the page that holds it, with that record open
     _rgNode(key, node) {
