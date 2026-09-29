@@ -3125,6 +3125,29 @@ async def execute_query(q: Dict) -> Dict:
     dropped_weak = len(rrf) - len(kept_ids)
     ranked_ids = kept_ids[:top_k]
 
+    # Revision identity is optional for legacy callers, but portable consumers
+    # may only use hits for which canonical revision policy permits an exact
+    # read. Never derive authority from mutable text or timestamps.
+    def _revision_ids(record_ids: List[str]) -> Dict[str, str]:
+        values: Dict[str, str] = {}
+        try:
+            path = _canonical_revision_path()
+            actor = _revision_actor()
+        except Exception:
+            return values
+        for record_id in record_ids:
+            try:
+                revision = path.get(record_id, actor=actor)
+            except Exception:
+                revision = None
+            if revision:
+                values[record_id] = str(revision["revision_id"])
+        return values
+
+    include_revision_authority = bool(q.get("include_revision_authority", False))
+    revision_ids = (await asyncio.to_thread(_revision_ids, ranked_ids)
+                    if ranked_ids and include_revision_authority else {})
+
     records_map = {}
     if FABRIC_PG.available and ranked_ids:
         records_map = await _safe("pg_get_by_ids",
@@ -3137,6 +3160,8 @@ async def execute_query(q: Dict) -> Dict:
         entry = {"id": rid, "score": round(rrf.get(rid, 0.0), 6),
                  "vector_score": round(vec_scores.get(rid, 0.0), 4),
                  "text_score": round(text_scores.get(rid, 0.0), 4)}
+        if rid in revision_ids:
+            entry["revision_id"] = revision_ids[rid]
         if rec:
             entry.update({"dataset_id": rec.dataset_id, "text": rec.text[:300],
                           "created_at": rec.created_at, "tags": rec.tags,
@@ -3177,6 +3202,16 @@ async def execute_query(q: Dict) -> Dict:
             if q.get("include_data"):
                 entry["data"] = data
             results.append(entry)
+
+        missing_revision_ids = [str(entry.get("id") or "") for entry in results
+                                if entry.get("id") and not entry.get("revision_id")]
+        if missing_revision_ids and include_revision_authority:
+            fallback_revisions = await asyncio.to_thread(
+                _revision_ids, missing_revision_ids)
+            for entry in results:
+                revision_id = fallback_revisions.get(str(entry.get("id") or ""))
+                if revision_id:
+                    entry["revision_id"] = revision_id
 
     # Weak-result signal: tell the caller (and the LLM) when the best match is
     # poor, so a genuinely empty topic reads as "no relevant data" instead of
@@ -5614,13 +5649,15 @@ async def cap_fabric_ingest(dataset_id: str, records: str = "[]",
                 "retry with a lower min_score to widen. "
                 "Params: text (str), vector (str), dataset_id (str — restrict to one dataset), "
                 "top_k (int default 20), min_score (float 0..1 — similarity floor, default 0.28; lower = wider/noisier), "
-                "include_data (bool default False). "
-                "Output: {results:[{dataset_id, id, score, vector_score, text_score, text, data}], count, "
+                "include_data (bool default False), include_revision_authority (bool default False — attach exact "
+                "authorized canonical revision IDs for portable consumers). "
+                "Output: {results:[{dataset_id, id, revision_id?, score, vector_score, text_score, text, data}], count, "
                 "relevance:{min_score, max_vector_score, dropped_below_floor, weak}, backends, note?}.",
 )
 async def cap_fabric_query(query=None, text: str = "",
                               vector: str = "", dataset_id: str = "",
                               top_k: int = 20, include_data: bool = False,
+                              include_revision_authority: bool = False,
                               min_score: float = -1.0,
                               trace_id=None) -> Dict:
     """Accepts the query as:
@@ -5649,6 +5686,8 @@ async def cap_fabric_query(query=None, text: str = "",
     if text:        q["text"] = text
     if vector:      q["vector"] = vector
     if dataset_id:  q["dataset_id"] = dataset_id
+    if include_revision_authority:
+        q["include_revision_authority"] = True
     if top_k != 20: q["top_k"] = top_k
     try:
         if float(min_score) >= 0:

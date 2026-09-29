@@ -201,6 +201,10 @@ CURRENT_COMPONENTS = (
         "async def agent_rag_retrieve", "capability", "async_local", "storage",
         "vera.agent-rag-native.v1", ("context.portable",)),
     DiscoveryContextComponent(
+        "agent.rag-context", "context", "vera/agents/rag_context_adapter.py",
+        "def project_agent_rag_results", "context_provider", "inline", "none",
+        "vera.context-item.v1", ("agent.rag", "context.portable")),
+    DiscoveryContextComponent(
         "workers.node-choice", "route", "vera/workers/node_choice.py",
         "def choose", "internal", "inline", "none",
         "vera.worker-choice-native.v1"),
@@ -209,7 +213,6 @@ CURRENT_COMPONENTS = (
 
 CURRENT_GAPS = (
     "discovery_does_not_share_context_registry_selection",
-    "agent_rag_uses_a_native_result_shape",
     "live_source_and_accelerator_evidence_is_not_part_of_this_offline_baseline",
 )
 

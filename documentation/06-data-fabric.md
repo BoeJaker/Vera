@@ -299,9 +299,14 @@ rejects snapshot mismatches, incomplete citation maps, and invalid indexes.
 `UnavailableRetrievalAdapter` records an intentionally configured but absent
 integration without claiming that it was queried.
 
-The current general-purpose `fabric.query` capability searches live indexes;
-it does not yet accept an immutable snapshot ID or return revision-qualified
-citations. It is therefore not represented as snapshot-pinned Fabric evidence.
+The current general-purpose `fabric.query` capability searches live indexes and
+does not accept an immutable snapshot ID, so it is not represented as
+snapshot-pinned Fabric evidence. When a result has a canonical Fabric revision
+that the caller is authorized to read, `include_revision_authority=true` adds
+that exact `revision_id`; the opt-in avoids revision-store work for ordinary
+queries, and legacy or unauthorized results remain unqualified. Portable
+consumers such as Agent RAG must fail closed on unqualified hits rather than
+derive a revision from mutable text or timestamps.
 `NativeFabricSnapshotProjection` provides the separate admissible vector path:
 it reconstructs and verifies the complete `DatasetSnapshot`, requires exactly
 one vector per record, and reuses Fabric's canonical `EmbeddingSpace` and
