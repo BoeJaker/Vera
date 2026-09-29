@@ -25,6 +25,7 @@ _CRITICAL_MODULES = {
     "test_ollama_tap",  # the capture proxy must never alter a request or response (the retired wrapper did) (2026-09-28)
     "test_activity_services",  # NLP/media/worker calls in the Activity pane; payloads sized, redaction honoured (2026-09-28)
     "test_node_activity",  # one pane over every node call, prod / sandbox / external (2026-09-28)
+    "test_worldview_stream_yields",  # the stream worker reattached without yielding and wedged a release restart (2026-09-29)
     "test_worker_dispatch_stages",  # node workers never received work; results went to one reader of a shared group, not the asker (2026-09-28)
     "test_warm_models_core",  # every node let its models lapse after 5 min; a CPU cold load is 10-62 s (2026-09-28)
     "test_route_warm",  # the picker scored raw in_use (a 2-slot CPU node looked full) and ignored residency (2026-09-28)
