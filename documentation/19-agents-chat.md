@@ -42,6 +42,23 @@ When `domain_caps` is set and `tool_mode != none`, the agent only sees and can c
 
 Agent definitions persist to Redis (always) and Postgres (when available), with fabric snapshots for versioned restore.
 
+### Portable knowledge context
+
+Agent knowledge retrieval still uses the agent's configured Fabric datasets,
+but its native hits now preserve any canonical `record_id` and `revision_id`
+returned by Fabric. `vera.agents.rag_context_adapter` is the offline boundary
+from those hits to Vera's shared `ContextItem` contract. It emits an exact
+`fabric://...?...revision=...` citation and a deterministic, payload-free
+projection receipt containing only provider and record/revision identities. It
+never queries Fabric itself.
+
+Legacy hits without canonical revision authority remain available to existing
+prompt assembly, but they are deliberately inadmissible as portable context.
+The adapter also rejects missing dataset/record identities, duplicate revision
+citations, invalid scores, unbounded result sets, and invalid token counts. It
+does not derive authority from result text, timestamps, ranking, or dataset
+membership.
+
 ---
 
 ## 3. The agentic loop

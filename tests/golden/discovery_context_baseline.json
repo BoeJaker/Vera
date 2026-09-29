@@ -1,5 +1,5 @@
 {
-  "baseline_id": "dcb_c929e64f7767aa3fda89fce6713b9485dcf08df0ef95d89be7e9060c4731fac0",
+  "baseline_id": "dcb_971f36f6f3e9b3199eaba271f367e36facf976b46e0d779bdd8dc47679d47176",
   "schema": "vera.discovery-context-baseline/v1",
   "components": [
     {
@@ -11,6 +11,20 @@
       "resource": "storage",
       "data_contract": "vera.agent-rag-native.v1",
       "enriches": [
+        "context.portable"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "agent.rag-context",
+      "role": "context",
+      "source": "vera/agents/rag_context_adapter.py",
+      "boundary": "context_provider",
+      "execution": "inline",
+      "resource": "none",
+      "data_contract": "vera.context-item.v1",
+      "enriches": [
+        "agent.rag",
         "context.portable"
       ],
       "live_required": false
@@ -336,7 +350,6 @@
   ],
   "gaps": [
     "discovery_does_not_share_context_registry_selection",
-    "agent_rag_uses_a_native_result_shape",
     "live_source_and_accelerator_evidence_is_not_part_of_this_offline_baseline"
   ]
 }
