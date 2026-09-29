@@ -82,3 +82,20 @@ def test_results_come_back_to_the_asking_process():
     a, b = W.reply_stream("LLM-100-aa"), W.reply_stream("LLM-200-bb")
     assert a != b and a.startswith("vera:results:p:")
     assert W.REPLY_TTL_S > 0
+
+
+def test_result_listeners_wait_for_redis_instead_of_exiting():
+    """Both listeners start with lifespan, before _connect_backends has a
+    connection. An early `if not REDIS: return` made them exit at once, so on
+    prod no dispatched result was ever read (no "Result listener started" line
+    at any boot) - the real cause of the old stuck-pending jobs."""
+    import ast
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "vera", "capability_orchestration.py"), encoding="utf-8").read()
+    tree = ast.parse(src)
+    for fn in ("result_listener", "reply_listener"):
+        node = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == fn)
+        assert "while REDIS is None" in ast.get_source_segment(src, node), fn
+        for stmt in node.body[:4]:     # no early exit before the loop
+            assert not (isinstance(stmt, ast.If)
+                        and any(isinstance(b, ast.Return) for b in stmt.body)), fn
