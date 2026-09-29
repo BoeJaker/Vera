@@ -36,7 +36,7 @@ svc_enable(){
 '''
 
 FEATURES = ("mesh", "distributed-compute", "hardening", "file-client",
-            "file-server", "security-monitoring", "vfs-client")
+            "file-server", "security-monitoring", "vfs-client", "docker-resilience")
 
 # Defaults for the vfs-client feature. VFS-02 is the estate's file server; a
 # guest that wants the shared drives should not have to be told where they are.
@@ -90,6 +90,67 @@ def _mesh_feature(ctx) -> str:
     return _wrap(body)
 
 
+# ── Docker daemon settings every Vera host carries. deploy/host-stack/docker holds the same as files (daemon.json and
+# the systemd drop-ins) and tests/test_foundry_docker_resilience.py keeps the two from drifting apart. ──
+# 2026-09-29: dockerd (leaking ~0.75 GiB a day) was OOM-killed at 14 GiB; its restart stopped every container and hung
+# 16 h behind two deadlocked `docker exec` helpers. live-restore keeps containers running through a daemon crash or
+# restart (the new daemon reconnects instead of stopping them); OOMScoreAdjust makes dockerd and containerd the OOM
+# killer's last choice; restart=always brings the core services back even after a daemon stopped them itself
+# (unless-stopped did not).
+DOCKER_DAEMON_SETTINGS_JSON = '{"live-restore": true}'
+DOCKER_OOM_DROPIN = ("[Service]\n"
+                     "# dockerd was OOM-killed on 2026-09-29 01:34 (it had leaked to 14 GB) and every container went with it\n"
+                     "OOMScoreAdjust=-900\n")
+DOCKER_OOM_DROPIN_NAME = "20-oom-protect.conf"
+
+# Merge a JSON object into /etc/docker/daemon.json, keeping every key already there (lists are unioned).
+DAEMON_JSON_MERGE_FN = '''daemon_json_merge(){
+  mkdir -p /etc/docker; _dj=/etc/docker/daemon.json; [ -s "$_dj" ] || echo '{}' > "$_dj"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys
+p=sys.argv[1]; d=json.load(open(p)); new=json.loads(sys.argv[2])
+for k,v in new.items():
+    d[k]=(d[k]+[x for x in v if x not in d[k]]) if isinstance(v,list) and isinstance(d.get(k),list) else v
+json.dump(d,open(p,"w"),indent=2)' "$_dj" "$1"
+  elif command -v jq >/dev/null 2>&1; then
+    printf '%s' "$1" | jq -s '.[0] * .[1]' "$_dj" - > "$_dj.tmp" && mv "$_dj.tmp" "$_dj"
+  else echo "[foundry] neither python3 nor jq - cannot merge $_dj"; return 1; fi
+}
+'''
+
+
+def _docker_resilience_feature(ctx) -> str:
+    core = [str(c).strip() for c in (ctx.get("core_containers") or []) if str(c).strip()]
+    body = (
+        "# feature: docker-resilience -- containers survive a dockerd crash, dockerd is the OOM killer's last choice,\n"
+        "# the core services come back after any stop the daemon made itself\n"
+        "command -v docker >/dev/null 2>&1 || { echo '[foundry] docker is not installed - nothing to make resilient'; exit 0; }\n"
+        + DAEMON_JSON_MERGE_FN +
+        "daemon_json_merge " + _q(DOCKER_DAEMON_SETTINGS_JSON) + " || exit 1\n"
+        "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then\n"
+        "  for u in docker containerd; do\n"
+        "    mkdir -p /etc/systemd/system/$u.service.d\n"
+        "    cat > /etc/systemd/system/$u.service.d/" + DOCKER_OOM_DROPIN_NAME + " <<'OOMDROP'\n"
+        + DOCKER_OOM_DROPIN +
+        "OOMDROP\n"
+        "  done\n"
+        "  systemctl daemon-reload\n"
+        # a reload (SIGHUP) applies live-restore without stopping a single container
+        "  systemctl reload docker 2>/dev/null || true\n"
+        "  for p in $(systemctl show docker -p MainPID --value) $(systemctl show containerd -p MainPID --value); do\n"
+        "    [ \"$p\" -gt 0 ] 2>/dev/null && echo -900 > /proc/$p/oom_score_adj\n"
+        "  done\n"
+        "else\n"
+        "  pkill -HUP dockerd 2>/dev/null || true\n"
+        "  for p in $(pidof dockerd containerd 2>/dev/null); do echo -900 > /proc/$p/oom_score_adj; done\n"
+        "fi\n"
+        + "".join("docker update --restart=always " + _q(c) + " >/dev/null 2>&1 && echo '[foundry] restart=always: '" + _q(c)
+                  + " || echo '[foundry] no container '" + _q(c) + "\n" for c in core)
+        + "echo \"[foundry] docker-resilience: live-restore=$(docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null)\"\n"
+    )
+    return _wrap(body)
+
+
 def _worker_feature(ctx) -> str:
     image = str(ctx.get("vera_image", "") or "192.168.0.138:5000/vera:latest").strip()
     reg = str(ctx.get("registry", "") or "192.168.0.138:5000").strip()
@@ -97,9 +158,10 @@ def _worker_feature(ctx) -> str:
     body = (
         "# feature: distributed-compute -- run a Vera WORKER container joined to the stack\n"
         "command -v docker >/dev/null 2>&1 || { pkg_install docker.io 2>/dev/null || pkg_install docker; }\n"
-        "cat > /etc/docker/daemon.json <<DJSON\n"
-        "{\"insecure-registries\": [\"" + reg + "\"]}\n"
-        "DJSON\n"
+        # MERGED into daemon.json, not written over it: an overwrite dropped every other setting - live-restore
+        # among them (docker-resilience), which is what keeps containers up through a daemon crash
+        + DAEMON_JSON_MERGE_FN +
+        "daemon_json_merge " + _q('{"insecure-registries": ["' + reg.replace('"', '') + '"]}') + "\n"
         "mkdir -p /etc/docker; svc_enable docker\n"
         "(command -v systemctl >/dev/null 2>&1 && systemctl restart docker 2>/dev/null) || rc-service docker restart 2>/dev/null || true\n"
         "cat > /etc/vera-worker.env <<'WENV'\n" + env + "\nWENV\n"
@@ -170,7 +232,9 @@ def _vfs_client_feature(ctx) -> str:
     raw = ctx.get("shares") or ["home", "sync", "media"]
     if isinstance(raw, str):
         raw = [s.strip() for s in raw.replace(",", " ").split() if s.strip()]
-    shares = [s for s in raw if s in VFS_SHARE_PATHS]
+    # names only: a file-client share record ({remote, mountpoint}) handed here is not a VFS share (it raised
+    # "unhashable type: 'dict'" and took the whole script with it)
+    shares = [s for s in raw if isinstance(s, str) and s in VFS_SHARE_PATHS]
 
     lines = ["# feature: vfs-client -- mount the Vera File Fabric (VFS-02)\n"]
     if not shares:
@@ -307,4 +371,6 @@ def feature_script(feature: str, ctx=None) -> str:
         return _file_server_feature(ctx)
     if feature == "security-monitoring":
         return _security_monitoring_feature(ctx)
+    if feature in ("docker-resilience", "docker_resilience"):
+        return _docker_resilience_feature(ctx)
     return ""
