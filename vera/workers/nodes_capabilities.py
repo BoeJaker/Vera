@@ -2525,6 +2525,9 @@ async def cap_nodes_ollama_tune(dry_run: bool = True, force: bool = False,
                                       _ollama_core.parse_tune_probe(probe.get("stdout") or ""))
         row["plan"] = plan
         if plan["action"] in ("none", "skip") or dry_run:
+            # the thread default is its own step: a node already in shape
+            # (or a dry run) still gets it checked / planned
+            row["threads"] = await _threads_step(iid, inst, hid, dry_run, force)
             out.append(row)
             continue
         if int(inst.get("in_use") or 0) > 0 and not force:
@@ -2569,17 +2572,7 @@ async def cap_nodes_ollama_tune(dry_run: bool = True, force: bool = False,
                 row["result"]["registered"] = reg["instance_id"]
         await emit_event({"type": "nodes.ollama.tune", "instance": iid,
                           "action": plan["action"], "ok": bool((row.get("result") or {}).get("ok"))})
-        # The runner thread default on the node's CPU Ollama: the node's own
-        # unit on a CPU node, the sibling on a GPU node. Every caller gets it,
-        # not only Vera's routed calls (which already send num_thread).
-        if inst.get("has_gpu"):
-            sid = _ollama_core.cpu_sibling_id(iid)
-            t_inst = (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).get(sid)
-            t_unit = _ollama_core.CPU_SIBLING_UNIT.replace(".service", "") if t_inst else ""
-        else:
-            sid, t_inst, t_unit = iid, inst, _UNIT_EXPR
-        if t_unit:
-            row["threads"] = await _apply_threads(hid, sid, t_inst, t_unit, dry_run, force)
+        row["threads"] = await _threads_step(iid, inst, hid, dry_run, force)
         out.append(row)
     return {"ok": all((r.get("result") or {}).get("ok", True)
                       and (r.get("threads") or {}).get("ok", True) for r in out),
@@ -2589,6 +2582,19 @@ async def cap_nodes_ollama_tune(dry_run: bool = True, force: bool = False,
 #: The node's own Ollama unit, resolved ON the node (ollama-vera on the fleet,
 #: stock `ollama` on a fresh install).
 _UNIT_EXPR = "$(systemctl is-active --quiet ollama-vera && echo ollama-vera || echo ollama)"
+
+
+async def _threads_step(iid: str, inst: Dict, hid: str, dry_run: bool, force: bool) -> Dict[str, Any]:
+    """The runner thread default on the node's CPU Ollama: the node's own unit
+    on a CPU node, its CPU sibling on a GPU node (none registered: nothing)."""
+    if inst.get("has_gpu"):
+        sid = _ollama_core.cpu_sibling_id(iid)
+        t_inst = (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).get(sid)
+        if not t_inst:
+            return {"plan": {"action": "none", "why": "no CPU sibling registered"}}
+        return await _apply_threads(hid, sid, t_inst,
+                                    _ollama_core.CPU_SIBLING_UNIT.replace(".service", ""), dry_run, force)
+    return await _apply_threads(hid, iid, inst, _UNIT_EXPR, dry_run, force)
 
 
 def _node_threads(inst: Dict) -> int:
