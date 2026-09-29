@@ -9,6 +9,8 @@ report. Report mode only for now (see delegate_core for the safety model).
     evolve.delegate.result  -> the report once done
     evolve.delegate.cancel  -> stop it (task cancelled + the loop's cancel flag)
     evolve.delegate.list    -> recent jobs
+    evolve.delegate.trajectory / .trajectories -> the kept run records (J7)
+    evolve.delegate.rate    -> the delegator's verdict on a report; rated jobs are remembered
     evolve.delegate.fs.*    -> the loop's JAILED read tools (worktree only)
 """
 
@@ -32,12 +34,21 @@ try:
     from Vera.vera.evolve import delegate_core as D
 except ImportError:                                   # pragma: no cover
     from vera.evolve import delegate_core as D
+try:
+    from Vera.vera.evolve import delegate_trajectory_core as T
+except ImportError:                                   # pragma: no cover
+    from vera.evolve import delegate_trajectory_core as T
 
 log = logging.getLogger("vera.evolve.delegate")
 
 KEY_JOB = "vera:delegate:job:%s"
 KEY_INDEX = "vera:delegate:jobs"
 JOB_TTL_S = 14 * 86400
+# J7: a finished job's trajectory is KEPT (no TTL) - it is the training and
+# analysis record, and the loop's own event log does not last.
+KEY_TRAJ = "vera:delegate:trajectory:%s"
+KEY_TRAJ_INDEX = "vera:delegate:trajectories"
+MEMORY_CAP = "memory.store"
 _TASKS: Dict[str, "asyncio.Task[Any]"] = {}
 _WORKTREES: Dict[str, str] = {}                        # job id -> worktree path (this process)
 
@@ -144,6 +155,76 @@ async def _record_run(session_id: str) -> None:
         log.debug("delegate loop record: %s", e)
 
 
+# ── the trajectory (ROADMAP J7) ──────────────────────────────────────────────
+
+def _decode(raw: Any) -> Optional[Dict[str, Any]]:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+    except Exception:
+        return None
+
+
+async def _loop_events(session_id: str) -> List[Dict[str, Any]]:
+    r = _redis()
+    if not r or not session_id:
+        return []
+    out: List[Dict[str, Any]] = []
+    for raw in await r.lrange("vera:loop:events:%s" % session_id, 0, -1) or []:
+        e = _decode(raw)
+        if isinstance(e, dict):
+            out.append(e)
+    return out
+
+
+async def _save_traj(traj: Dict[str, Any]) -> None:
+    r = _redis()
+    if not r or not traj.get("job_id"):
+        return
+    await r.set(KEY_TRAJ % traj["job_id"], json.dumps(traj, default=str))
+    await r.zadd(KEY_TRAJ_INDEX, {traj["job_id"]: time.time()})
+
+
+async def _load_traj(job_id: str) -> Optional[Dict[str, Any]]:
+    r = _redis()
+    if not r or not job_id:
+        return None
+    return _decode(await r.get(KEY_TRAJ % job_id))
+
+
+async def _keep_trajectory(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Build the job's trajectory from its loop's events and keep it. A rating
+    already given survives a rebuild. Best effort: never fails the job."""
+    try:
+        traj = T.build(job, await _loop_events(job.get("session_id", "")),
+                       metrics=D.report_metrics(job.get("report") or ""))
+        old = await _load_traj(job.get("id", ""))
+        if old:
+            for k in ("rating", "rating_history", "memory_ids"):
+                if old.get(k):
+                    traj[k] = old[k]
+        await _save_traj(traj)
+        return traj
+    except Exception as e:
+        log.debug("delegate trajectory %s: %s", job.get("id"), e)
+        return None
+
+
+async def _trajectory_for(job_id: str) -> Optional[Dict[str, Any]]:
+    """The kept trajectory, else one built now (a job a restart interrupted
+    never reached the end of its run)."""
+    traj = await _load_traj(job_id)
+    if traj:
+        return traj
+    job = await _load(job_id)
+    if not job:
+        return None
+    if not D.terminal(job.get("status", "")) and job_id not in _TASKS:
+        job["status"] = "interrupted"
+    return await _keep_trajectory(job)
+
+
 # ── the run ──────────────────────────────────────────────────────────────────
 
 def _engine_kwargs(fn, want: Dict[str, Any]) -> Dict[str, Any]:
@@ -232,6 +313,8 @@ async def _run(job: Dict[str, Any], goal: str) -> None:
         # built before the report existed).
         await _mark_run(job)
         await _record_run(sid)
+        # J7: the trajectory, while the loop's events are still there.
+        await _keep_trajectory(job)
 
 
 @capability(
@@ -249,8 +332,11 @@ async def _run(job: Dict[str, Any], goal: str) -> None:
         "suggest_commands (str|list - searches/commands to try), ref (str=bleeding-edge), "
         "paths (str|list - where to start), effort (standard|max - max uses the CPU nodes' "
         "larger models: the critic reviews every step), max_steps (int=12), plan_style "
-        "(str=stepwise), board_item (str - a board item id to keep updated), mode (report). "
-        "Output: {ok, job_id, session_id, worktree, head}."),
+        "(str=stepwise), board_item (str - a board item id to keep updated), mode (report), "
+        "parent_task (str - YOUR overarching task this delegation is part of: kept with the "
+        "job's trajectory for analysis and training), delegator (str - who is delegating, "
+        "e.g. claude:<session>). When the report is in, RATE it with evolve.delegate.rate "
+        "(a rated job is remembered). Output: {ok, job_id, session_id, worktree, head}."),
 )
 async def cap_evolve_delegate_start(title: str = "", brief: str = "", plan: Any = "",
                                     suggest_caps: Any = "", suggest_commands: Any = "",
@@ -258,6 +344,7 @@ async def cap_evolve_delegate_start(title: str = "", brief: str = "", plan: Any 
                                     effort: str = "standard", max_steps: int = D.DEFAULT_MAX_STEPS,
                                     plan_style: str = "stepwise", board_item: str = "",
                                     mode: str = "report", repo: str = "vera",
+                                    parent_task: str = "", delegator: str = "",
                                     trace_id=None) -> Dict[str, Any]:
     if not (brief or "").strip():
         return {"error": "brief is required - the handover, as you would brief an agent"}
@@ -285,12 +372,19 @@ async def cap_evolve_delegate_start(title: str = "", brief: str = "", plan: Any 
            "worktree": wt["path"], "board_item": (board_item or "").strip(),
            "plan_style": (plan_style or "stepwise").strip().lower(),
            "max_steps": max(2, min(40, int(max_steps or D.DEFAULT_MAX_STEPS))),
-           "status": "starting", "created_at": now_iso(), "report": "", "error": ""}
+           "status": "starting", "created_at": now_iso(), "report": "", "error": "",
+           # J7: why (the delegator's task) and what (the brief as given) travel
+           # with the job into its trajectory.
+           "parent_task": str(parent_task or "")[:T.MAX_PARENT_TASK],
+           "delegator": str(delegator or "")[:T.MAX_DELEGATOR],
+           "brief": str(brief or "")[:D.MAX_BRIEF_CHARS],
+           "plan": D._list(plan), "suggest_caps": D._list(suggest_caps)}
     _WORKTREES[job_id] = wt["path"]
     goal = D.compose_goal(title=job["title"], brief=brief, plan=plan, suggest_caps=suggest_caps,
                           suggest_commands=suggest_commands, ref=ref, repo=repo, paths=paths,
                           board_item=job["board_item"])
     job["goal_chars"] = len(goal)
+    job["goal"] = goal
     await _save(job)
     _TASKS[job_id] = asyncio.ensure_future(_run(job, goal))
     return {"ok": True, "job_id": job_id, "session_id": job["session_id"],
@@ -393,6 +487,97 @@ async def cap_evolve_delegate_list(limit: int = 20, trace_id=None) -> Dict[str, 
             jobs.append({k: j.get(k) for k in ("id", "title", "status", "mode", "effort", "ref",
                                                "created_at", "ended_at", "board_item")})
     return {"jobs": jobs}
+
+
+# ── trajectories and ratings (ROADMAP J7) ────────────────────────────────────
+
+@capability("evolve.delegate.trajectory", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/delegate/trajectory", http_tags=["evolve", "delegate"],
+            description=("A delegated job's TRAJECTORY - the record kept for analysis and "
+                         "training: parent_task (the delegator's overarching task), brief, plan, "
+                         "the loop's tier/intent/catalogue, every step with its tool calls (cap, "
+                         "args, the model's stated reason, ok/error, result), the report and its "
+                         "rating. Input: job_id (str!). Output: {ok, trajectory}."))
+async def cap_evolve_delegate_trajectory(job_id: str = "", trace_id=None) -> Dict[str, Any]:
+    traj = await _trajectory_for(job_id)
+    if not traj:
+        return {"error": "no such delegated job: %s" % job_id}
+    return {"ok": True, "trajectory": traj}
+
+
+@capability("evolve.delegate.trajectories", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/delegate/trajectories", http_tags=["evolve", "delegate"],
+            description=("Kept delegated-job trajectories, newest first: title, parent task, "
+                         "status, steps, calls, verdict. Inputs: limit (int=20), rated "
+                         "(str all|rated|unrated)."))
+async def cap_evolve_delegate_trajectories(limit: int = 20, rated: str = "all",
+                                           trace_id=None) -> Dict[str, Any]:
+    r = _redis()
+    if not r:
+        return {"trajectories": []}
+    want = (rated or "all").strip().lower()
+    rows = []
+    for i in await r.zrevrange(KEY_TRAJ_INDEX, 0, -1) or []:
+        t = await _load_traj(i.decode() if isinstance(i, bytes) else i)
+        if not t:
+            continue
+        has = bool((t.get("rating") or {}).get("verdict"))
+        if (want == "rated" and not has) or (want == "unrated" and has):
+            continue
+        rows.append(T.summary_row(t))
+        if len(rows) >= max(1, int(limit or 20)):
+            break
+    return {"trajectories": rows}
+
+
+async def _remember(traj: Dict[str, Any]) -> str:
+    """A rated job into long-term memory (memory.store). Returns the id, or ''."""
+    text = T.memory_text(traj)
+    cap = CAPABILITY_REGISTRY.get(MEMORY_CAP) or {}
+    fn = cap.get("raw") or cap.get("func")
+    if not text or not fn:
+        return ""
+    try:
+        res = await fn(text=text, session_id=traj.get("session_id", ""), category="delegate",
+                       tags=T.memory_tags(traj), importance=T.memory_importance(traj))
+        return str((res or {}).get("id") or "") if isinstance(res, dict) else ""
+    except Exception as e:
+        log.debug("delegate memory %s: %s", traj.get("job_id"), e)
+        return ""
+
+
+@capability("evolve.delegate.rate", memory="off",
+            http_method="POST", http_path="/evolve/delegate/rate", http_tags=["evolve", "delegate"],
+            description=("RATE a delegated job's report - the delegating agent does this once it "
+                         "has checked the report against the code. verdict useful|partly|wrong, "
+                         "notes = why (what was right, what was missed or invented). The rating "
+                         "labels the job's trajectory (training data), shows on its Loop Lab "
+                         "record, and a RATED job is written to long-term memory (a 'wrong' one "
+                         "as a warning, not an answer). Re-rating replaces the rating and keeps "
+                         "the history. Inputs: job_id (str!), verdict (str!), notes (str), by "
+                         "(str - who rates, e.g. claude:<session>). Output: {ok, verdict, memory_id}."))
+async def cap_evolve_delegate_rate(job_id: str = "", verdict: str = "", notes: str = "",
+                                   by: str = "", trace_id=None) -> Dict[str, Any]:
+    traj = await _trajectory_for(job_id)
+    if not traj:
+        return {"error": "no such delegated job: %s" % job_id}
+    if not D.terminal(traj.get("status", "")) and traj.get("status") != "interrupted":
+        return {"error": "the job is still %s - rate its report once it is done" % traj.get("status")}
+    try:
+        traj = T.rate(traj, verdict, notes=notes, by=by or "", at=now_iso())
+    except ValueError as e:
+        return {"error": str(e)}
+    mem = await _remember(traj)
+    if mem:
+        traj["memory_ids"] = list(traj.get("memory_ids") or []) + [mem]
+    await _save_traj(traj)
+    job = await _load(job_id)
+    if job:
+        job["rating"] = traj["rating"]["verdict"]
+        await _save(job)
+        await _mark_run(job)
+        await _record_run(job.get("session_id", ""))
+    return {"ok": True, "verdict": traj["rating"]["verdict"], "memory_id": mem}
 
 
 # ── the loop's jailed read tools ─────────────────────────────────────────────
