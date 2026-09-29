@@ -8,10 +8,11 @@ const WE = R('vera/widgets/widget_element.js'), PANEL = R('vera/workers/workers_
 const LES = R('vera/workers/live_event_stream_element.js'), SLE = R('vera/workers/system_log_element.js');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 const id = (k) => L.widgets.find((w) => w.record.id === k);
+const ERR4 = ['obs-errors', 'obs-warnings', 'obs-recent-errors', 'obs-error-trend'];
 
 // errors lead
 const first = L.widgets.filter((w) => w.at[1] < 8).map((w) => w.record.id);
-t('the first rows are the warnings and errors', ['obs-errors', 'obs-warnings', 'obs-last-error', 'obs-error-trend', 'obs-error-log', 'obs-errors-by-cap'].every((k) => first.includes(k)) && first.length === 6, first.join(' '));
+t('the first rows are the warnings and errors', ['obs-errors', 'obs-warnings', 'obs-recent-errors', 'obs-error-trend', 'obs-error-log', 'obs-errors-by-cap'].every((k) => first.includes(k)) && first.length === 6, first.join(' '));
 t('they all read syslog.error_summary', first.every((k) => id(k).record.source === 'syslog.error_summary'));
 t('the errors log is the widest tile of the band', id('obs-error-log').span[0] === 8 && id('obs-error-log').record.form === 'log');
 // nothing was dropped (never remove widgets)
@@ -41,9 +42,17 @@ vm.runInNewContext(R('vera/ui/iso.js'), ctx); vm.runInNewContext(WE, ctx); const
 const now = Date.now(), ans = { errors: 7, warnings: 12, critical: 1, total: 19, window_s: 3600,
   by_cap: [{ name: 'llm.generate', errors: 4, warnings: 2, count: 6 }], series: [0, 1, 2, 3].map((i) => ({ t: new Date(now - (3 - i) * 300000).toISOString(), errors: i, warnings: 0 })),
   entries: [{ ts: new Date(now - 60000).toISOString(), level: 'ERROR', cap_name: 'llm.generate', message: 'timeout after 900s' }],
+  recent_errors: [{ ts: new Date(now - 60000).toISOString(), level: 'ERROR', cap_name: 'llm.generate', message: 'timeout after 900s' }],
   last_error: { ts: new Date(now - 60000).toISOString(), level: 'ERROR', cap_name: 'llm.generate', message: 'timeout after 900s' } };
 const drawn = first.map((k) => { const n = W.normalise(id(k).record); const h = W.draw(n.form, ans, 'l', { record: n, draw: n.draw, height: 200, width: 500 }); return [k, h]; });
 t('each errors tile draws the answer, not its sample', drawn.every(([, h]) => !/data-sample="1"/.test(h) && !/needs/.test(h)), drawn.filter(([, h]) => /data-sample="1"|needs/.test(h)).map(([k]) => k).join(' '));
 t('the errors log shows the message', /timeout after 900s/.test(drawn.find(([k]) => k === 'obs-error-log')[1]));
+/* the live check (2026-09-29): at two columns the counters' figures were clipped, and with no error in the hour the
+   last-error tile drew the summary's SERIES as a table ("1 h ago 0 0 ... 12 rows") */
+t('the band is four tiles of three columns and three rows (a counter at two of either is clipped)', ERR4.every((k) => id(k).span[0] === 3 && id(k).span[1] === 3), ERR4.map((k) => id(k).span.join('x')).join(' '));
+t('recent errors lists the errors (not the series) and shows the message', /timeout after 900s/.test(drawn.find(([k]) => k === 'obs-recent-errors')[1]));
+{ const n = W.normalise(id('obs-recent-errors').record); const quiet = Object.assign({}, ans, { errors: 0, recent_errors: [], last_error: null });
+  const m = W.mapped(n, n.form, quiet), rows = Array.isArray(m) ? m : (m && (m.rows || m.items)) || [];
+  t('an hour with no errors maps to no rows - never the series', Array.isArray(rows) && rows.length === 0, JSON.stringify(m).slice(0, 120)); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

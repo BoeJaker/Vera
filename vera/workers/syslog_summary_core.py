@@ -42,6 +42,7 @@ def summarise(entries: Iterable[Tuple[str, Dict[str, Any]]], now_ms: int, window
     by_cat: Dict[str, int] = {}
     errors = warnings = critical = 0
     newest: List[Dict[str, Any]] = []
+    recent_errors: List[Dict[str, Any]] = []          # ERROR / CRITICAL only - an empty list is "none this hour"
     last_error: Optional[Dict[str, Any]] = None
     for rid, rec in entries:
         ms = entry_ms(rid)
@@ -71,6 +72,8 @@ def summarise(entries: Iterable[Tuple[str, Dict[str, Any]]], now_ms: int, window
                "_redis_id": rec.get("_redis_id", rid)}
         if is_err and last_error is None:
             last_error = row
+        if is_err and len(recent_errors) < limit:
+            recent_errors.append(row)
         if len(newest) < limit:
             newest.append(row)
     caps = sorted(by_cap.values(), key=lambda c: (-c["errors"], -c["count"], c["name"]))
@@ -84,5 +87,6 @@ def summarise(entries: Iterable[Tuple[str, Dict[str, Any]]], now_ms: int, window
         "by_category": [{"name": k, "count": v} for k, v in sorted(by_cat.items(), key=lambda kv: -kv[1])],
         "series": series,
         "entries": newest,
+        "recent_errors": recent_errors,
         "last_error": last_error,
     }
