@@ -108,7 +108,7 @@ def test_settings_parse():
     assert out["dropins"][0]["name"] == "20-vera-concurrency.conf"
     assert "OLLAMA_NUM_PARALLEL=2" in out["dropins"][0]["text"]
     assert out["runners"][1] == {"ctx": 4096, "parallel": 1, "threads": 0, "blob": "sha256-def",
-                                 "os_threads": 27, "embedding": False}
+                                 "os_threads": 27, "embedding": False, "model": ""}
     assert out["runners"][2]["embedding"] is True
 
 
@@ -122,3 +122,14 @@ def test_custom_flags_are_allow_listed_and_round_trip():
     assert len(errs) == 4                      # PATH, two managed keys, the unsafe value
     text = core.custom_dropin({"OLLAMA_FLASH_ATTENTION": "1", "LLAMA_ARG_BATCH": "512"})
     assert core.custom_flags_from_dropin(text) == {"OLLAMA_FLASH_ATTENTION": "1", "LLAMA_ARG_BATCH": "512"}
+
+
+def test_runner_model_from_its_manifest():
+    """A runner's --model is the GGUF blob; /api/tags lists MANIFEST digests,
+    so the name comes from the manifest that references the blob."""
+    assert core.model_from_manifest("registry.ollama.ai/library/qwen2.5/0.5b") == "qwen2.5:0.5b"
+    assert core.model_from_manifest("registry.ollama.ai/jaahas/qwen3.5-uncensored/9b") == "jaahas/qwen3.5-uncensored:9b"
+    assert core.model_from_manifest("hf.co/unsloth/Qwen3-Coder-GGUF/Q8_K_XL") == "hf.co/unsloth/Qwen3-Coder-GGUF:Q8_K_XL"
+    assert core.model_from_manifest("") == ""
+    out = core.parse_settings("RUNNER=2048|1|6|sha256-e|15|1|registry.ollama.ai/library/nomic-embed-text/latest")
+    assert out["runners"][0]["model"] == "nomic-embed-text:latest"
