@@ -5391,7 +5391,6 @@ async def _wv_stream_worker():
                 await redis.xgroup_create(stream, group, id="$", mkstream=True)
             except Exception:
                 pass  # BUSYGROUP — already exists
-            backoff = 2.0
             log.info("worldview stream worker attached to %s", stream)
             await _emit("stream_attached", message="Streaming worker connected to Redis")
 
@@ -5410,7 +5409,16 @@ async def _wv_stream_worker():
                             or isinstance(e, asyncio.TimeoutError)):
                         continue
                     log.warning("worldview stream read: %s", e)
+                    # Wait before reattaching. A closed client ("Buffer is
+                    # closed" - shutdown closed Redis under us) fails every
+                    # call at once WITHOUT yielding, so reattaching straight
+                    # away spun the event loop: on 2026-09-29 it starved a
+                    # release restart before its execv - prod at 18 GB RSS,
+                    # no HTTP, until killed. The sleep always yields.
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 60.0)
                     break
+                backoff = 2.0          # a read that worked: reset the backoff
                 if not msgs:
                     # Check if dynamics update is due
                     now = time.time()
