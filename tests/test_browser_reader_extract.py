@@ -59,7 +59,7 @@ async def _extract(html):
 def test_the_article_as_markdown_without_the_chrome():
     r = asyncio.run(_extract(ARTICLE))
     md = r["markdown"]
-    assert r["title"] == "Vector stores compared | Example"
+    assert r["title"] == "Vector stores compared"              # the site's name after it is the site, not the title
     assert r["site"] == "Example Journal" and r["byline"] == "A. Writer" and r["published"].startswith("2026-09-01")
     assert "## Method" in md                                   # headings kept as headings
     assert "[the public benchmark](https://example.org/bench)" in md   # links as links
@@ -81,3 +81,50 @@ def test_a_fragmented_page_is_a_composite_in_page_order():
     assert a < b < c
     assert "---" in md                                           # the parts are set apart
     assert "link" not in md.replace("](", "")                    # the link strip between them is not content
+
+
+# ── the shapes live pages have that the first fixtures did not (measured 2026-09-29: an encyclopedia article whose
+#    reference list outscored its body, a docs page whose code sat inside list items and whose sections were read as
+#    fragments, a changelog whose cookie notice was the only prose found) ──
+
+ENCYCLOPEDIA = f"""<html><head><title>Vector database - Wikipedia</title><meta property="og:site_name" content="Wikipedia"></head><body>
+<div id="mw-content-text"><div class="mw-parser-output">
+<p>{PARA}</p><div class="mw-heading"><h2 id="Techniques">Techniques<span class="mw-editsection">[edit]</span></h2></div>
+<p>{PARA}<sup class="reference"><a href="#cite-1">[1]</a></sup></p><p>{PARA}</p><p>{PARA}</p>
+<div class="reflist"><ol class="references">""" + "".join(
+    f'<li><a href="https://example.org/{i}">"A cited page {i}"</a>, Example, Publisher, 2023, retrieved 2024.</li>' for i in range(40)) + """
+</ol></div></div></div></body></html>"""
+
+DOCS = f"""<html><head><title>Coroutines and tasks — Python documentation</title>
+<meta property="og:site_name" content="Python documentation"></head><body><div class="document"><div class="body">
+<section id="a"><h2>Coroutines</h2><p>{PARA}</p><ul><li><p>Awaiting on a coroutine, as below:</p>
+<div class="highlight-python3"><pre>import asyncio
+asyncio.run(main())</pre></div></li></ul></section>
+<section id="b"><h2>Tasks</h2><p>{PARA}</p><p>{PARA}</p></section>
+<section id="c"><h2>Task groups</h2><p>{PARA}</p><p>{PARA}</p></section></div></div></body></html>"""
+
+CONSENT = f"""<html><head><title>Changelog</title></head><body>
+<div id="x1"><p>We use optional cookies to improve your experience on our websites. Manage cookies at any time.</p></div>
+<main><h1>Changelog</h1><p>{PARA}</p><p>{PARA}</p></main></body></html>"""
+
+
+def test_an_encyclopedia_article_is_its_body_not_its_reference_list():
+    r = asyncio.run(_extract(ENCYCLOPEDIA))
+    md = r["markdown"]
+    assert r["title"] == "Vector database"
+    assert "## Techniques" in md and "[edit]" not in md and "[1]" not in md
+    assert "A cited page" not in md and md.count("The quick survey") == 4
+
+
+def test_a_docs_page_is_one_document_and_its_code_stays_code():
+    r = asyncio.run(_extract(DOCS))
+    md = r["markdown"]
+    assert r["composite"] is False                                # sections of one page are not fragments
+    assert md.index("## Coroutines") < md.index("## Tasks") < md.index("## Task groups")
+    assert "- Awaiting on a coroutine, as below:" in md
+    assert "```\nimport asyncio\nasyncio.run(main())\n```" in md   # not run into the sentence as one line
+
+
+def test_a_cookie_notice_is_known_by_what_it_says():
+    r = asyncio.run(_extract(CONSENT))
+    assert "cookies" not in r["markdown"] and "The quick survey" in r["markdown"]
