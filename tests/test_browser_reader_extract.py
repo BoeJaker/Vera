@@ -125,6 +125,16 @@ def test_a_docs_page_is_one_document_and_its_code_stays_code():
     assert "```\nimport asyncio\nasyncio.run(main())\n```" in md   # not run into the sentence as one line
 
 
+BIO = f"""<html><head><title>Microservices</title></head><body><article>
+<div class="author"><a href="/jl">James Lewis</a> James Lewis is a Principal Consultant at Example and a member of a board.</div>
+<p>{PARA}</p><p>{PARA}</p></article></body></html>"""
+
+
+def test_the_byline_is_the_name_not_the_author_box():
+    r = asyncio.run(_extract(BIO))
+    assert r["byline"] == "James Lewis"
+
+
 def test_a_cookie_notice_is_known_by_what_it_says():
     r = asyncio.run(_extract(CONSENT))
     assert "cookies" not in r["markdown"] and "The quick survey" in r["markdown"]
