@@ -1,6 +1,6 @@
 ---
 name: improve-vera-sandboxed
-description: Build, fix, or improve Vera's own RUNTIME source by working inside a Loop Lab sandbox — cut a typed branch off `bleeding-edge`, edit in its worktree, commit via the HOST (git-over-SMB fails), test, then land through the CI/CD pipeline (adopt → review_request → promote) into `bleeding-edge` — the shared integration branch every change (code AND docs) funnels through before `main`. Diagnose against the live prod instance (its Redis traces, UI, behaviour are ground truth) but land the FIX here, never by editing prod's live checkout. Use this whenever the work is a source or docs change to Vera itself.
+description: Build, fix, or improve Vera's own RUNTIME source by working inside a Loop Lab sandbox — cut a typed branch off `bleeding-edge`, edit in its worktree, commit via the HOST (git-over-SMB fails), test, then land through the CI/CD pipeline (adopt → review.request → review → promote) into `bleeding-edge` — the shared integration branch every change (code AND docs) funnels through before `main`. Diagnose against the live prod instance (its Redis traces, UI, behaviour are ground truth) but land the FIX here, never by editing prod's live checkout. Use this whenever the work is a source or docs change to Vera itself.
 ---
 
 # Improving Vera — sandboxed, adversarially-reviewed, gated, attributed
@@ -411,17 +411,30 @@ uses the SAFE merge (never a blind `git checkout`):
 ```
 evolve.pipeline.adopt(branch="feat/<name>", to="bleeding-edge", title, summary, session_id)  # via /mcp/call
    → gate_passed: true | false | null
-evolve.pipeline.review_request(id, reason)
+evolve.pipeline.review.request(id, reason)
+evolve.pipeline.review(id, verdict="approved|changes_requested|blocked",
+                       findings="<adversarial findings>")
 evolve.pipeline.promote(id, to="bleeding-edge"[, force=true])   # force for docs/UI/infra
 ```
 `to="bleeding-edge"` per §2 — `evolve.pipeline.promote`'s own default is
 `bleeding-edge` too now (as of 2026-08-16), but `adopt`'s default is still
 `main`, so pass it explicitly on `adopt` regardless. If you started with
 `evolve.pipeline.begin` (§3) you already have the pipeline `id` — skip `adopt`
-and go straight to `review_request` + `promote(to="bleeding-edge")` (promote
+and go straight to `review.request` + recorded `review` +
+`promote(to="bleeding-edge")` (promote
 refreshes the branch's commits before merging; if you omit `to`, it defaults
 there anyway, but pass it — explicit beats relying on a default that could
 change again).
+
+The critical tier currently exceeds the historical 900-second starter ceiling.
+Never launch duplicate runners to work around that. `evolve.unittest.run` is
+single-flight by exact worktree plus pytest tokens (the timeout is deliberately
+not part of the key): start one exact `paths="tests", markers="critical"` run
+with `timeout=1800`, then call `evolve.pipeline.test` while it is active so the
+pipeline joins the same execution and records the shared JUnit receipt. Do not
+change `extra` between those calls; that creates a different key and therefore
+a second container. A client timeout is not a test failure and not permission
+to re-fire—inspect test history/pipeline state and running containers first.
 
 **`gate_passed` is TWO checks, not one** (as of the 2026-08-16 M3 work — the
 description on the cap itself is the source of truth if this drifts):

@@ -112,8 +112,9 @@ CURRENT_COMPONENTS = (
         "cpu", "vera.context-item.v1"),
     DiscoveryContextComponent(
         "context.registry", "route", "vera/context_registry.py",
-        "class ContextRegistry", "internal", "async_local", "cpu",
-        "vera.context-component-manifest.v1", ("context.portable",)),
+        "def select_discovery_result", "discovery_contract", "async_local",
+        "cpu", "vera.context-component-manifest.v1",
+        ("context.portable", "discovery.portable")),
     DiscoveryContextComponent(
         "context.enrichment-ledger", "enrich", "vera/context_enrichment.py",
         "class ContextEnrichmentLedger", "context_provider", "inline", "none",

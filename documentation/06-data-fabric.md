@@ -31,6 +31,18 @@ healthy cited outputs when another source fails. Actual bytes, costs and context
 counts are checked against the reservations before a result is admitted;
 rejected alternatives and stable failure classes remain available as evidence.
 
+Discovery results connect to context composition without creating another
+provider registry or translating retrieved payloads. The existing
+`ContextRegistry` derives a payload-free selection from the portable context
+authorities already present in a `DiscoveryResult`, validates those provider
+and ranker IDs against its own manifest, and binds the selection to the exact
+result, policy and registry-manifest identities. Policy can restrict eligible
+providers, cap their count, and either reject or explicitly record unregistered
+providers. Composition refuses a selection after the registry changes, so a
+stale decision cannot silently target a different component set. The selection
+contains provider, item, source and revision identities—not retrieved text—and
+the discovery result remains the authority for collection receipts and content.
+
 Discovery and context changes are evaluated with a payload-free, snapshot-bound
 benchmark contract. Every case binds the exact discovery request, query digest,
 relevant source and record revisions, and required support claims. Every
