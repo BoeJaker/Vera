@@ -102,6 +102,11 @@ CURRENT_COMPONENTS = (
         "cpu", "vera.discovery-route-report.v1",
         ("discovery.portable", "discovery.routing")),
     DiscoveryContextComponent(
+        "discovery.benchmark", "data", "vera/discovery_benchmark.py",
+        "def compare_context_benchmark", "discovery_contract", "inline",
+        "none", "vera.discovery-context-benchmark.v1",
+        ("discovery.orchestration", "context.enrichment-ledger")),
+    DiscoveryContextComponent(
         "context.portable", "context", "vera/context_provider.py",
         "class ContextProvider(Protocol)", "context_provider", "provider_injected",
         "cpu", "vera.context-item.v1"),
@@ -199,7 +204,6 @@ CURRENT_COMPONENTS = (
 CURRENT_GAPS = (
     "discovery_does_not_share_context_registry_selection",
     "agent_rag_uses_a_native_result_shape",
-    "no_common_speed_and_relevance_benchmark_contract",
     "non_jepa_worldview_and_godseye_data_have_no_portable_dataset_boundary",
     "live_source_and_accelerator_evidence_is_not_part_of_this_offline_baseline",
 )
