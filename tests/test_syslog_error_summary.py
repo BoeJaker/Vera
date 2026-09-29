@@ -25,7 +25,14 @@ def test_counts_only_warnings_and_errors_inside_the_window():
     assert [c["name"] for c in s["by_cap"]] == ["a.b", "c.d"]   # errors first, then count
     assert s["by_cap"][0] == {"name": "a.b", "errors": 1, "warnings": 1, "count": 2, "last": "t10"}
     assert s["last_error"]["cap_name"] == "a.b" and s["last_error"]["level"] == "ERROR"
+    # errors only, newest first: the warning is not in it
+    assert [e["cap_name"] for e in s["recent_errors"]] == ["a.b", "c.d"]
     assert [e["level"] for e in s["entries"]] == ["ERROR", "WARNING", "CRITICAL"]
+
+
+def test_an_hour_without_errors_has_no_recent_errors():
+    s = summarise([_e(10, "WARNING", "a.b"), _e(20, "INFO")], NOW)
+    assert s["recent_errors"] == [] and s["last_error"] is None and s["warnings"] == 1
 
 
 def test_the_series_buckets_the_window_and_places_each_entry():
