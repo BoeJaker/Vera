@@ -1,5 +1,5 @@
 {
-  "baseline_id": "dcb_c0fda0a812cc3e4b778358eab82318dc6651294f2fa2419ddf4a00d9002da2bd",
+  "baseline_id": "dcb_546fd6fd5e43a4b18180e281366941ace3b85a6a302335e6f89c2148d06e642c",
   "schema": "vera.discovery-context-baseline/v1",
   "components": [
     {
@@ -43,12 +43,13 @@
       "component_id": "context.registry",
       "role": "route",
       "source": "vera/context_registry.py",
-      "boundary": "internal",
+      "boundary": "discovery_contract",
       "execution": "async_local",
       "resource": "cpu",
       "data_contract": "vera.context-component-manifest.v1",
       "enriches": [
-        "context.portable"
+        "context.portable",
+        "discovery.portable"
       ],
       "live_required": false
     },
