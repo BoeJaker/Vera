@@ -11,6 +11,10 @@
  * Routing     the CPU window planned models share, and the warm-spill limits.
  * NLP         where nlp.* runs (placement, the node chosen and why, versions),
  *             the host-NLP switch, the node pin, and the LLM-NLP master switch.
+ * Node settings  what is tuned on each Ollama node (nodes.ollama.settings):
+ *             num_thread (registry + the unit's runner default), environment
+ *             flags, drop-ins, custom flags, and the live runners with the -t
+ *             they run - loaded on demand (one SSH read per node).
  * Catalog     the specialist (non-LLM) model catalog, per node - the
  *             <vera-specialist-models> element, embedded.
  *
@@ -57,6 +61,8 @@
       this._root = this.attachShadow({ mode: 'open' });
       this._warm = null; this._nlp = null; this._ncfg = null; this._llmnlp = null;
       this._edit = null;      // {kind:'node'|'scenario', key}
+      this._settings = null;  // nodes.ollama.settings, loaded on demand
+      this._setBusy = '';
       this._msg = '';
     }
     get base() { return this.getAttribute('api-base') || ''; }
@@ -98,7 +104,7 @@
         + (w.census_busy ? '<span class="badge warn" title="scenarios stay off and the GPU is left alone while a census goal runs">census running</span>' : '')
         + '<span class="sp"></span><span class="muted msg" id="msg">' + esc(this._msg) + '</span>'
         + '<button data-a="preview">preview</button><button data-a="apply" title="Load what is missing now (one model per node)">apply now</button><button data-a="refresh">refresh</button></div>';
-      const body = top + this._nodesHtml(w) + this._scenariosHtml(w) + this._routingHtml(w) + this._nlpHtml();
+      const body = top + this._nodesHtml(w) + this._scenariosHtml(w) + this._routingHtml(w) + this._settingsHtml() + this._nlpHtml();
       // keep the embedded catalog element alive across re-renders
       let cat = this._root.getElementById('cat');
       const holder = cat ? cat.parentElement : null;
@@ -186,6 +192,54 @@
         + '<div class="muted">Also: a context larger than the GPU window goes to a CPU node that has the model loaded; a node with every slot taken loses to one with a free slot; a loaded model wins a tie.</div></div>';
     }
 
+    _settingsHtml() {
+      const s = this._settings;
+      let h = '<div class="panel"><div class="row"><span class="sec">Node settings - what is tuned on each Ollama node</span><span class="sp"></span>'
+        + '<button data-a="set-load">' + (this._setBusy === 'load' ? 'reading nodes...' : (s ? 'reload' : 'load')) + '</button></div>';
+      if (!s) return h + '<div class="muted">Reads each node over SSH: runner threads, environment flags, drop-ins, loaded runners.</div></div>';
+      for (const n of s.nodes || []) {
+        const cpu = !n.has_gpu;
+        const bad = (n.runners || []).filter((r) => r.default_threads);
+        h += '<div class="card" style="margin-top:6px"><div class="row"><span class="name">' + esc(n.instance) + '</span>'
+          + '<span class="badge ' + (cpu ? 'cpu">CPU' : 'gpu">GPU') + '</span><span class="muted mono">' + esc(n.unit || '') + '</span>'
+          + (bad.length ? '<span class="badge bad" title="runners started without -t run llama.cpp\'s default - 24 threads on 12 CPUs">' + bad.length + ' runner(s) on the 24-thread default</span>' : '')
+          + (n.error ? '<span class="bad">' + esc(n.error) + '</span>' : '') + '</div>';
+        if (n.error) { h += '</div>'; continue; }
+        if (cpu) {
+          h += '<div class="row"><label title="sent with every routed call, and written as the unit\'s runner default so every caller gets it">num_thread '
+            + '<input id="nt-' + esc(n.instance) + '" type="number" min="1" max="64" style="width:56px" value="' + esc(n.num_thread) + '"></label>'
+            + '<span class="muted">runner default on the node: <b class="' + (String(n.threads_default) === String(n.num_thread) ? 'ok' : 'warn') + '">' + esc(n.threads_default || 'not set (llama.cpp default)') + '</b></span>'
+            + '<button data-a="nt-save" data-k="' + esc(n.instance) + '">' + (this._setBusy === 'nt:' + n.instance ? 'applying...' : 'apply') + '</button></div>';
+        }
+        h += '<table><tr><th>runner</th><th>ctx</th><th>parallel</th><th>-t</th><th>OS threads</th></tr>'
+          + (n.runners || []).map((r) => '<tr><td class="mono">' + esc(r.model) + (r.embedding ? ' <span class="muted">(embed)</span>' : '') + '</td><td>' + esc(r.ctx) + '</td><td>' + esc(r.parallel) + '</td>'
+            + '<td class="' + (r.default_threads ? 'bad' : '') + '">' + (r.threads ? esc(r.threads) : (cpu ? 'default (24)' : '-')) + '</td><td>' + esc(r.os_threads) + '</td></tr>').join('')
+          + ((n.runners || []).length ? '' : '<tr><td colspan="5" class="muted">no runner loaded</td></tr>') + '</table>';
+        h += '<div class="muted" style="margin-top:4px">environment: ' + Object.entries(n.env || {}).map(([k, v]) => '<span class="mono">' + esc(k) + '=' + esc(v) + '</span>').join(' &middot; ') + '</div>'
+          + '<div class="muted">drop-ins: ' + (n.dropins || []).map((d) => '<span class="mono" title="' + esc(d.text) + '">' + esc(d.name) + '</span>').join(', ') + '</div>';
+        const cf = Object.entries(n.custom || {}).map(([k, v]) => k + '=' + v).join('\n');
+        h += '<div class="sec">custom flags (OLLAMA_* / LLAMA_ARG_*, one KEY=VALUE per line; remove a line to drop it)</div>'
+          + '<textarea id="cf-' + esc(n.instance) + '" style="min-height:48px">' + esc(cf) + '</textarea>'
+          + '<div class="row"><button data-a="cf-preview" data-k="' + esc(n.instance) + '">preview</button>'
+          + '<button data-a="cf-apply" data-k="' + esc(n.instance) + '" title="restarts the unit; its models reload; rolls back if Ollama does not answer">'
+          + (this._setBusy === 'cf:' + n.instance ? 'applying...' : 'apply') + '</button></div></div>';
+      }
+      return h + '</div>';
+    }
+
+    _flagsDiff(inst) {
+      const n = ((this._settings || {}).nodes || []).find((x) => x.instance === inst) || {};
+      const want = {};
+      for (const line of (this._root.getElementById('cf-' + inst).value || '').split('\n')) {
+        const t = line.trim(); if (!t || t.startsWith('#')) continue;
+        const i = t.indexOf('='); if (i < 1) continue;
+        want[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+      }
+      const flags = Object.assign({}, want);
+      for (const k of Object.keys(n.custom || {})) if (!(k in want)) flags[k] = null;
+      return flags;
+    }
+
     _nlpHtml() {
       const n = this._nlp || {}; const c = (this._ncfg || {}).config || {}; const l = this._llmnlp || {};
       const nodes = (n.nodes || []).map((x) => {
@@ -210,6 +264,28 @@
       const b = e.target.closest('[data-a]'); if (!b || b.tagName === 'INPUT' || b.tagName === 'SELECT') return;
       const a = b.dataset.a, k = b.dataset.k;
       if (a === 'refresh') return this.load();
+      if (a === 'set-load') {
+        this._setBusy = 'load'; this.render();
+        this._settings = await this._get('/nodes/ollama/settings'); this._setBusy = ''; return this.render();
+      }
+      if (a === 'nt-save') {
+        const v = parseInt(this._root.getElementById('nt-' + k).value, 10);
+        if (!confirm('Set num_thread=' + v + ' on ' + k + '? This restarts its Ollama unit; loaded models reload.')) return;
+        this._setBusy = 'nt:' + k; this.render();
+        const r = await this._post('/nodes/ollama/settings/set', { instance_id: k, num_thread: v, dry_run: false });
+        this._say(r.ok ? 'num_thread applied' : (r.skipped || (r.errors || []).join('; ') || r.error || 'failed'));
+        this._settings = await this._get('/nodes/ollama/settings'); this._setBusy = ''; return this.render();
+      }
+      if (a === 'cf-preview' || a === 'cf-apply') {
+        const flags = this._flagsDiff(k);
+        if (!Object.keys(flags).length) return this._say('no change');
+        if (a === 'cf-apply' && !confirm('Apply custom flags on ' + k + '? This restarts its Ollama unit; loaded models reload.')) return;
+        if (a === 'cf-apply') { this._setBusy = 'cf:' + k; this.render(); }
+        const r = await this._post('/nodes/ollama/settings/set', { instance_id: k, flags: flags, dry_run: a === 'cf-preview' });
+        if (a === 'cf-preview') return this._say(r.ok ? ('would set: ' + JSON.stringify((r.plan || {}).flags || {}) + ' - ' + (r.note || '')) : ((r.errors || []).join('; ') || r.error || 'refused'));
+        this._say(r.ok ? 'flags applied' : ((r.result || {}).flags && r.result.flags.rolled_back ? 'Ollama did not answer - rolled back' : (r.skipped || (r.errors || []).join('; ') || r.error || 'failed')));
+        this._settings = await this._get('/nodes/ollama/settings'); this._setBusy = ''; return this.render();
+      }
       if (a === 'cancel') { this._edit = null; return this.render(); }
       if (a === 'warm-toggle') { const r = await this._post('/ollama/warm/set', { enabled: !(this._warm || {}).enabled }); this._say(r.ok ? 'saved' : (r.error || 'failed')); return this.load(); }
       if (a === 'preview' || a === 'apply') {

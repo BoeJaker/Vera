@@ -110,6 +110,10 @@ A minute job loads what is missing with `keep_alive: -1` at the planned window (
 
 **Workload scenarios** take the slots over while a job type runs hot, e.g. `coding`: when `code`/`loop_coder` demand reaches `min_requests` in `window_s` (or `min_inflight` live), coder models go into every slot (`fill: "all"`) per node class, and stay for `hold_s` after the demand falls away. A scenario can also turn warm spill on for its job types. Scenarios stay off while a census goal is in flight. Configure them in Estate › **Models & NLP**, which also holds the NLP placement and switches and the specialist model catalog.
 
+### Node settings
+
+Estate › Models & NLP › **Node settings** (`nodes.ollama.settings`, read-only, one SSH read per node) shows what is tuned on each Ollama: Vera's registry values, the unit's `OLLAMA_*` / `LLAMA_ARG_*` / GPU environment, every systemd drop-in and its contents, and the runners loaded right now with the `-t` they were started with. `nodes.ollama.settings.set` changes `num_thread` (the registry value sent with every routed call, and the unit's `LLAMA_ARG_THREADS`, so a caller that sends none - a sandbox, an external client - still gets it instead of llama.cpp's 24 threads on 12 CPUs) and custom `OLLAMA_*` / `LLAMA_ARG_*` flags in a Vera-owned drop-in. Applying restarts the unit and rolls back if Ollama stops answering; dry run by default. `nodes.ollama.tune` also writes the thread default on every CPU Ollama unit.
+
 ### Failover
 
 Calls that fail (timeout, connection error, model not loaded) are retried automatically on a different instance. The retry chain is: prefer the next-best GPU-or-CPU node by score, exhausting all online nodes before giving up. By default, every `llm.*` cap supports retry; the retry count is per-cap (see `@capability(retries=...)`).
