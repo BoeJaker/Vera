@@ -2852,7 +2852,8 @@ async def cap_nodes_ollama_settings(instance_ids: Optional[List[str]] = None, tr
         st = _ollama_core.parse_settings(r.get("stdout") or "")
         names = await _blob_names(str(inst.get("url") or ""))
         for rn in st["runners"]:
-            rn["model"] = names.get(rn.get("blob") or "", rn.get("blob", "")[:19])
+            rn["model"] = (rn.get("model") or names.get(rn.get("blob") or "")
+                           or rn.get("blob", "")[:19])
             rn["default_threads"] = (not rn.get("threads")) and not inst.get("has_gpu")
         custom = next((d for d in st["dropins"] if d["name"] == _ollama_core.CUSTOM_DROPIN_NAME), None)
         row.update(unit=st["unit"], env=st["env"], dropins=st["dropins"], runners=st["runners"],

@@ -329,11 +329,32 @@ def settings_probe_cmd(unit_expr: str) -> str:
         "grep -E '^(OLLAMA_|LLAMA_ARG_|CUDA_VISIBLE_DEVICES|HIP_VISIBLE_DEVICES|GGML_)' | sed 's/^/ENV=/'; "
         "for f in /etc/systemd/system/$U.service.d/*.conf; do [ -f \"$f\" ] && "
         "echo \"DROPIN=$(basename $f):$(base64 -w0 $f)\"; done; "
+        "M=$(systemctl show $U -p Environment --value | tr ' ' '\\n' | sed -n 's/^OLLAMA_MODELS=//p'); "
         "P=$(systemctl show $U -p MainPID --value); "
         "for c in $(pgrep -P $P 2>/dev/null); do a=$(tr '\\0' '\\n' < /proc/$c/cmdline 2>/dev/null); "
+        "b=$(echo \"$a\" | grep -A1 -x -- --model | tail -1 | xargs -r basename); "
+        # the model a runner serves: the manifest that references its blob
+        "m=$([ -n \"$M\" ] && [ -n \"$b\" ] && grep -rl \"$(echo $b | sed 's/-/:/')\" $M/manifests 2>/dev/null "
+        "| head -1 | sed \"s#^$M/manifests/##\"); "
         "echo \"RUNNER=$(echo \"$a\" | grep -A1 -x -- -c | tail -1)|$(echo \"$a\" | grep -A1 -x -- -np | tail -1)"
-        "|$(echo \"$a\" | grep -A1 -xE -- '-t|--threads' | tail -1)|$(echo \"$a\" | grep -A1 -x -- --model | tail -1 | xargs -r basename)"
-        "|$(ls /proc/$c/task 2>/dev/null | wc -l)|$(echo \"$a\" | grep -cx -- --embedding)\"; done")
+        "|$(echo \"$a\" | grep -A1 -xE -- '-t|--threads' | tail -1)|$b"
+        "|$(ls /proc/$c/task 2>/dev/null | wc -l)|$(echo \"$a\" | grep -cx -- --embedding)|$m\"; done")
+
+
+def model_from_manifest(path: str) -> str:
+    """A manifest path under manifests/ -> the tag callers use:
+    registry.ollama.ai/library/qwen2.5/0.5b -> qwen2.5:0.5b,
+    registry.ollama.ai/jaahas/qwen3.5-uncensored/9b -> jaahas/qwen3.5-uncensored:9b,
+    hf.co/user/repo/Q4 -> hf.co/user/repo:Q4."""
+    parts = [p for p in str(path or "").strip().split("/") if p]
+    if len(parts) < 3:
+        return ""
+    host, rest, tag = parts[0], parts[1:-1], parts[-1]
+    if host == "registry.ollama.ai":
+        if rest and rest[0] == "library":
+            rest = rest[1:]
+        return "/".join(rest) + ":" + tag
+    return "/".join([host] + rest) + ":" + tag
 
 
 def parse_settings(stdout: str) -> Dict[str, Any]:
@@ -356,7 +377,7 @@ def parse_settings(stdout: str) -> Dict[str, Any]:
                 text = ""
             out["dropins"].append({"name": name, "text": text})
         elif k == "RUNNER":
-            parts = (v.split("|") + [""] * 6)[:6]
+            parts = (v.split("|") + [""] * 7)[:7]
             def _i(x):
                 try:
                     return int(x)
@@ -364,7 +385,8 @@ def parse_settings(stdout: str) -> Dict[str, Any]:
                     return 0
             out["runners"].append({"ctx": _i(parts[0]), "parallel": _i(parts[1]) or 1,
                                    "threads": _i(parts[2]), "blob": parts[3],
-                                   "os_threads": _i(parts[4]), "embedding": parts[5] == "1"})
+                                   "os_threads": _i(parts[4]), "embedding": parts[5] == "1",
+                                   "model": model_from_manifest(parts[6])})
     return out
 
 
