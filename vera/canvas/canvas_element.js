@@ -142,7 +142,7 @@
      the datasets that hold the records, the records sized by how close they are, and the tags two or more of them
      share - a tag every record carries links everything and says nothing, so it is left out. Built from the item's own
      records: no second read. */
-  function recGraph(c) {
+  function recGraph(c, bodies) {
     const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object').slice(0, 80);
     const nodes = [], edges = [], seen = {};
     const node = (n) => { if (seen[n.id]) return; seen[n.id] = 1; nodes.push(n); };
@@ -160,7 +160,15 @@
       (Array.isArray(r.tags) ? r.tags : []).forEach((t) => { if (tagN[t] < 2 || tagN[t] === items.length) return;
         node({ id: 't:' + t, label: '#' + t, type: 'Tag', r: 7, props: { name: t } }); edges.push({ from: rid, to: 't:' + t, rel: 'tag', dashed: true }); });
     });
-    return { nodes, edges, caption: items.length + ' record' + (items.length === 1 ? '' : 's') };
+    // the NEIGHBOURS a record was asked for (its 'neighbours' in the list): drawn off it, dashed - 'similar', not 'holds'
+    let nbN = 0;
+    items.forEach((r) => { const nb = bodies && bodies[r.id] && bodies[r.id].nb; if (!Array.isArray(nb)) return;
+      nb.slice(0, 8).forEach((m) => { if (!m || !m.id) return; const nid = 'r:' + m.id; const ds = String(m.dataset_id || '');
+        if (!seen[nid]) { nbN++; node({ id: nid, label: String(m.snippet || m.id).replace(/\s+/g, ' ').slice(0, 40), type: 'FabricRecord', r: 6,
+          props: { title: String(m.snippet || '').slice(0, 120), text: String(m.snippet || ''), dataset_id: ds, record_id: String(m.id), neighbour: true } });
+          if (ds) { node({ id: 'd:' + ds, label: ds, type: 'Dataset', r: 11, props: { name: ds } }); edges.push({ from: 'd:' + ds, to: nid, rel: 'holds' }); } }
+        edges.push({ from: 'r:' + r.id, to: nid, rel: 'similar', dashed: true }); }); });
+    return { nodes, edges, caption: items.length + ' record' + (items.length === 1 ? '' : 's') + (nbN ? ' \u00b7 ' + nbN + ' neighbour' + (nbN === 1 ? '' : 's') : '') };
   }
 
 
@@ -315,24 +323,42 @@
        is a list wearing an axis. Each event keeps the page it came from, so the timeline is a way back into the
        sources rather than a summary that has left them behind. */
     timeline: (c) => {
-      const ev = Array.isArray(c.events) ? c.events : [];
+      const ev = (Array.isArray(c.events) ? c.events : []).filter((e) => e && e.when);
       if (!ev.length) return `<div class="vc-tl-empty">No dated events were found.</div>`;
+      const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const yearOf = (w) => String(w || '').slice(0, 4);
-      const rest = (w) => { const s = String(w || ''); return s.length > 4 ? s.slice(5) : ''; };
+      const pos = (w) => { const s = String(w || ''); const y = +s.slice(0, 4) || 0, m = +s.slice(5, 7) || 0, d = +s.slice(8, 10) || 0; return y + (m ? (m - 1) / 12 : 0) + (d ? (d - 1) / 366 : 0); };
+      const pretty = (w) => { const s = String(w || ''); const m = +s.slice(5, 7); if (s.length >= 10) return (+s.slice(8, 10)) + ' ' + (MON[m - 1] || ''); if (s.length >= 7) return MON[m - 1] || ''; return ''; };
+      const reEsc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // the date is on the axis and on the row: a label that OPENS with it ('In 1984, ...') loses it
+      const labelOf = (e) => { let l = String(e.label || e.text || '');
+        if (e.lead && e.raw) { const s = l.replace(new RegExp('^\\W*(?:(?:in|on|by|since|from|during|circa|early|late|mid|around)\\s+)?' + reEsc(e.raw) + '\\s*[,:\\u2013\\u2014-]?\\s*', 'i'), ''); if (s.length > 8) l = s.charAt(0).toUpperCase() + s.slice(1); }
+        return l; };
+      const xs = ev.map((e) => pos(e.when)); const lo = Math.min.apply(null, xs), hi = Math.max.apply(null, xs), span = Math.max(1e-6, hi - lo);
+      const pct = (x) => (4 + 92 * (x - lo) / span).toFixed(2);
+      const y0 = Math.floor(lo), y1 = Math.floor(hi);
+      const ticks = [y0]; if (y1 - y0 >= 4) { const step = (y1 - y0) / 4; for (let k = 1; k < 4; k++) ticks.push(Math.round(y0 + step * k)); } if (y1 !== y0) ticks.push(y1);
+      const axis = `<div class="vc-tl-ax"><div class="vc-tl-ln"></div>`
+        + ev.map((e, i) => `<button class="vc-tl-dot" style="left:${pct(xs[i])}%" data-tl-go="${i}" title="${esc(e.when + ' \u2014 ' + labelOf(e).slice(0, 90))}"></button>`).join('')
+        + [...new Set(ticks)].map((y, i, a) => `<span class="vc-tl-tick${i === a.length - 1 && a.length > 1 ? ' end' : ''}" style="left:${pct(y)}%">${y}</span>`).join('')
+        + `</div>`;
       let out = '', year = '';
-      ev.forEach((e) => {
+      ev.forEach((e, i) => {
         const y = yearOf(e.when);
-        if (y !== year) { year = y; out += `<div class="vc-tl-y">${esc(y)}</div>`; }
-        const when = rest(e.when);
-        out += `<div class="vc-tl-e">`
-          + `<span class="vc-tl-w">${esc(when || '')}</span>`
-          + `<span class="vc-tl-t">${esc(String(e.label || e.text || ''))}`
-          + (e.url ? ` <a class="vc-tl-a" href="${esc(e.url)}" target="_blank" rel="noopener">source</a>` : '')
+        if (y !== year) {
+          if (year && +y - +year > 1) out += `<div class="vc-tl-gap">\u2026 ${+y - +year} years</div>`;
+          year = y; out += `<div class="vc-tl-y">${esc(y)}</div>`;
+        }
+        out += `<div class="vc-tl-e" data-i="${i}">`
+          + `<span class="vc-tl-w">${esc(pretty(e.when))}</span>`
+          + `<span class="vc-tl-t">${esc(labelOf(e))}`
+          + (e.url ? `<a class="vc-tl-a" href="${esc(e.url)}" target="_blank" rel="noopener">source \u2197</a>` : '')
           + `</span></div>`;
       });
-      return `<div class="vc-tl">${c.title ? `<div class="vc-tl-h">${esc(c.title)}</div>` : ''}${out}</div>`;
+      const years = y1 > y0 ? y0 + '\u2013' + y1 : String(y0);
+      return `<div class="vc-tl"><div class="vc-tl-h"><b>${esc(c.title || 'Timeline')}</b><small>${ev.length} event${ev.length === 1 ? '' : 's'} \u00b7 ${esc(years)}</small></div>`
+        + (ev.length > 1 ? axis : '') + `<div class="vc-tl-list">${out}</div></div>`;
     },
-
     /* A PAGE THE RESEARCH READ. The run already knows every page it fetched - the research card has listed them
        beside the report all along - but the canvas only ever got the finished prose, so the thing you could not
        do was go back to what it was BUILT from. This is that: where it came from, what it said, and what it
@@ -471,20 +497,48 @@
       const badge = (r) => { const d = r.domain || (r.meta && (r.meta.dataset_id || r.meta.source)) || c.kind || '?'; return `<span class="vc-rbx-fav" style="--h:${hue(d)}">${esc(String(d).replace(/^www\./, '').charAt(0).toUpperCase())}</span>`; };
       const ago = (t) => { const x = Date.parse(t); if (!isFinite(x)) return String(t || '').slice(0, 10); const s = (Date.now() - x) / 1000; return s < 3600 ? Math.max(1, Math.round(s / 60)) + 'm' : s < 172800 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd'; };
       const actBtn = (act, id, label, t) => `<button class="vc-rbx-b" data-rec-act="${act}" data-rec-key="${K}" data-rec-arg="${esc(id)}" title="${esc(t || '')}">${label}</button>`;
+      /* A RECORD, OPENED, WITH ITS DEPTH (owner, 2026-09-29: the web results need "better depth and rendering of results &
+         their text"; the fabric's "doesnt show enough depth on each record i.e. its neighbors, meta data"). Its facts -
+         where it came from, when, how relevant, its tags, its fields; the page's own text when the answer carried it
+         (web.research reads its pages); a page in reader mode; a fabric record read in full and its NEIGHBOURS - the
+         records nearest it across every dataset, each readable in place, and drawn into the graph. */
+      const paras = (s) => String(s || '').replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{1,}/g, '\n\n').trim();
       const opened = (r) => {
         const b = (st.body || {})[r.id] || {};
+        const isRec = !!(r.ref && r.ref.record_id);
         const acts = (r.url ? actBtn('read', r.id, b.reader || b.text ? 'read again' : 'reader mode', 'the page as the article it is - its body (or a composite of its parts) formatted (browser.reader)') + actBtn('land', r.id, 'to the canvas', 'land it as its own source item') + `<a class="vc-rbx-b" href="${esc(r.url)}" target="_blank" rel="noopener">open ↗</a>` : '')
-          + (r.ref && r.ref.record_id ? actBtn('rec', r.id, b.text ? 'read again' : 'read the record', 'the record in full, in pages (memory.read)') : '');
-        return `<div class="vc-rbx-open">${r.snippet ? `<div class="vc-rbx-full">${esc(r.snippet)}</div>` : ''}`
-          + (r.meta ? `<div class="vc-rbx-meta">${Object.keys(r.meta).map((k) => `<span><i>${esc(k)}</i>${esc(r.meta[k])}</span>`).join('')}</div>` : '')
+          + (isRec ? actBtn('rec', r.id, b.text ? 'read again' : 'read the record', 'the record in full, in pages (fabric.record.get)')
+                   + actBtn('nb', r.id, b.nb ? 'neighbours \u21bb' : 'neighbours', 'the records nearest this one, across every dataset (fabric.loom.record_match)') : '');
+        const facts = []; const fact = (k, vHtml) => { if (vHtml != null && vHtml !== '') facts.push(`<span><i>${esc(k)}</i>${vHtml}</span>`); };
+        if (r.domain) fact('site', esc(r.domain));
+        if (r.when) fact('when', esc(String(r.when).slice(0, 19).replace('T', ' ')));
+        if (r.score != null && isFinite(+r.score)) fact('relevance', esc(Math.round(+r.score * 100) + '%'));
+        Object.keys(r.meta || {}).forEach((k) => fact(k, esc(r.meta[k])));
+        const rec = b.rec || null;
+        if (rec) { const s = rec.source || {}; if (s.url) fact('source', `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.label || s.url)}</a>`); else if (s.label) fact('source', esc(s.label));
+          if (rec.created_at) fact('written', esc(String(rec.created_at).slice(0, 19))); if (rec.total_chars) fact('length', esc(rec.total_chars > 1000 ? (rec.total_chars / 1000).toFixed(1) + 'k chars' : rec.total_chars + ' chars')); }
+        const tags = (Array.isArray(r.tags) && r.tags.length ? r.tags : (rec && rec.tags) || []).slice(0, 12);
+        const fields = rec && rec.data && typeof rec.data === 'object' ? Object.keys(rec.data) : [];
+        const nbHtml = Array.isArray(b.nb) ? `<div class="vc-rbx-nb"><h5>nearest records \u00b7 ${b.nb.length}</h5>` + (b.nb.length ? b.nb.map((m) => {
+            const on = !!(b.nbOpen || {})[m.id]; const nt = (b.nbText || {})[m.id];
+            const head = String(m.snippet || m.id).replace(/\s+/g, ' ').trim();
+            return `<div class="vc-rbx-nbr${on ? ' on' : ''}" data-rec-act="nbopen" data-rec-key="${K}" data-rec-arg="${esc(r.id + '|' + m.id)}">`
+              + `<div class="vc-rbx-nbh"><b>${esc(head.slice(0, 90))}</b><small>${esc(m.dataset_id || '')}</small></div>`
+              + (on ? (nt ? `<div class="vc-rbx-nbt">${mdx(paras(String(nt).slice(0, 6000)))}</div>` : `<div class="vc-rbx-busy">\u2026 reading</div>`) : '')
+              + `</div>`; }).join('') : '<div class="vc-rbx-empty">nothing near it</div>') + `</div>` : '';
+        return `<div class="vc-rbx-open">${r.snippet && !r.text ? `<div class="vc-rbx-full">${esc(r.snippet)}</div>` : ''}`
+          + (facts.length ? `<div class="vc-rbx-meta">${facts.join('')}</div>` : '')
+          + (tags.length ? `<div class="vc-rbx-tags">${tags.map((x) => `<span>#${esc(x)}</span>`).join('')}</div>` : '')
+          + (fields.length ? `<details class="vc-rbx-fields"><summary>fields \u00b7 ${fields.length}</summary><div class="vc-rbx-kv">${fields.map((k) => `<span class="k">${esc(k)}</span><span class="v">${esc(rec.data[k] == null ? '' : String(rec.data[k]))}</span>`).join('')}</div></details>` : '')
           + `<div class="vc-rbx-acts">${acts}</div>`
           + (b.busy ? `<div class="vc-rbx-busy">… ${esc(b.busy)}</div>` : '')
           + (b.err ? `<div class="vc-rbx-err">${esc(b.err)}</div>` : '')
-          + (b.reader ? `<div class="vc-rbx-body rd">${readerHtml(b.reader)}</div>` : '')
-          + (b.text ? `<div class="vc-rbx-body">${md(String(b.text).slice(0, 60000))}</div>` + (b.next != null ? actBtn('more', r.id, 'more of it ↓', 'the next page of the record') : '') : '')
+          + (b.reader ? `<div class="vc-rbx-body rd">${readerHtml(b.reader)}</div>`
+             : r.text ? `<div class="vc-rbx-body rd"><div class="vc-reader"><div class="vc-rd-body">${mdx(paras(String(r.text).slice(0, 20000)))}</div></div></div>` : '')
+          + (b.text ? `<div class="vc-rbx-body rd"><div class="vc-reader"><div class="vc-rd-body">${mdx(paras(String(b.text).slice(0, 60000)))}</div></div></div>` + (b.next != null ? actBtn('more', r.id, 'more of it ↓', 'the next page of the record') : '') : '')
+          + nbHtml
           + `</div>`;
-      };
-      const title = (r) => r.url ? `<a class="vc-rbx-t" href="${esc(r.url)}" target="_blank" rel="noopener" data-rec-stop="1">${esc(r.title || r.url)}</a>` : `<span class="vc-rbx-t">${esc(r.title || r.id)}</span>`;
+      };      const title = (r) => r.url ? `<a class="vc-rbx-t" href="${esc(r.url)}" target="_blank" rel="noopener" data-rec-stop="1">${esc(r.title || r.url)}</a>` : `<span class="vc-rbx-t">${esc(r.title || r.id)}</span>`;
       const score = (r) => r.score != null ? `<span class="vc-rbx-sc" title="relevance ${esc(r.score)}"><i style="width:${Math.round(Math.max(0, Math.min(1, +r.score)) * 100)}%"></i></span>` : '';
       let body = '';
       if (!all.length) body = `<div class="vc-rbx-empty">nothing in it</div>`;
@@ -704,7 +758,7 @@
   :host([blocks="off"]) .it{background:transparent;box-shadow:none;border-color:transparent}
   :host([blocks="off"]) .it > .it-hd{border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 45%,transparent)}
   :host([blocks="off"]) .it > .it-ft{opacity:0;transition:opacity .15s}
-  :host([blocks="off"]) .it:hover > .it-ft,:host([blocks="off"]) .it:focus-within > .it-ft{opacity:1}
+  :host([blocks="off"]) .it:is(:hover,.hov) > .it-ft,:host([blocks="off"]) .it:focus-within > .it-ft{opacity:1}
   /* the states that MEAN something keep their ring: blocks off is about grounds, not about hiding that this turn is
      waiting on you, that you opened an item, or that one is being dragged to a size */
   /* (no ring for the NOW band here either — see the note on .it.now below) */
@@ -856,7 +910,7 @@
   .it{border:0;border-radius:0;background:none;margin:2px 0 10px;
     overflow:hidden;position:relative;display:flex;flex-direction:column;box-sizing:border-box;
     container-type:inline-size}   /* its own width is a query: a fused pair stacks when the card is too narrow to halve */
-  .it:hover{background:color-mix(in srgb,var(--bg2,#1c2026) 42%,transparent)}
+  .it:is(:hover,.hov){background:color-mix(in srgb,var(--bg2,#1c2026) 42%,transparent)}
   .it.pinned{box-shadow:inset 2px 0 0 0 color-mix(in srgb,var(--acc,#5a9e8f) 70%,transparent)}
   /* ⛔ "now" IS A BAND, NOT A STATE. Every live item carries it (the class is the item's state: now · pinned ·
      parked), so a ring on .it.now drew an amber box around EVERY item on the canvas — the "border" the owner kept
@@ -884,7 +938,7 @@
   :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-th{opacity:.35}
   /* the solo expand of an item whose drawer draws its own head: a corner mark, not a row of its own */
   .xp.solo{position:absolute;right:4px;top:3px;z-index:3;font-size:10px;color:var(--dim,#6b7480);cursor:pointer;opacity:0;transition:opacity .15s}
-  .it:hover > .xp.solo,.it:focus-within > .xp.solo{opacity:.8}
+  .it:is(:hover,.hov) > .xp.solo,.it:focus-within > .xp.solo{opacity:.8}
   .it.compact{transition:height .18s ease}
   /* ⛔ OPENED IN PLACE DRAWS NO RING EITHER. A resize marks the item open (it has an explicit height now), so the
      ring appeared the moment you finished dragging and stayed until you clicked the item — "if i resize a canvas
@@ -911,7 +965,7 @@
     border-radius:0 0 5px 0;transition:opacity .18s;
     background:linear-gradient(135deg,transparent 52%,var(--dim,#6b7480) 52%,var(--dim,#6b7480) 60%,transparent 60%,
       transparent 74%,var(--dim,#6b7480) 74%,var(--dim,#6b7480) 82%,transparent 82%)}
-  .it:hover .rz{opacity:.75}
+  .it:is(:hover,.hov) .rz{opacity:.75}
   /* the stage: items placed level with their turns; the pinned band stays at the top, the parked chips at the bottom */
   .stage{position:relative;min-height:40px}
   .stage .it{position:absolute;margin:0;box-sizing:border-box;left:0;top:0;transition:top .32s cubic-bezier(.2,.7,.3,1),left .32s}
@@ -979,16 +1033,29 @@
   .vc-wid-b{font:inherit;font-size:8.5px;height:16px;padding:0 7px;margin-left:6px;border:1px solid var(--border,#3a3530);
     border-radius:8px;background:var(--bg2,#272421);color:var(--dim2,#8a7e70);cursor:pointer;vertical-align:middle}
   .vc-wid-b:hover{color:var(--fg,#ddd);border-color:var(--acc,#5a9e8f)}
-  /* the axis is the left rule; the year stands on it, the events hang off it */
-  .vc-tl{display:flex;flex-direction:column;gap:1px;position:relative;padding-left:2px}
-  .vc-tl-h{font-size:11px;font-weight:600;color:var(--fg,#ddd);margin-bottom:5px}
-  .vc-tl-y{font-family:var(--mono,monospace);font-size:10px;font-weight:600;color:var(--acc3,#c9955a);
-    margin:7px 0 2px;padding-left:9px;border-left:2px solid var(--acc3,#c9955a)}
-  .vc-tl-e{display:grid;grid-template-columns:34px 1fr;gap:7px;padding:2px 0 2px 9px;
-    border-left:1px solid var(--border,#3a3530)}
-  .vc-tl-w{font-family:var(--mono,monospace);font-size:9px;color:var(--dim2,#8a7e70);padding-top:1px;text-align:right}
-  .vc-tl-t{font-size:10.5px;line-height:1.5;color:var(--fg,#ddd)}
-  .vc-tl-a{font-size:9px;color:var(--dim2,#8a7e70);text-decoration:none;white-space:nowrap}
+  /* A TIMELINE: the span at a glance on a proportional axis (a dot per event - press one to go to it), then the spine,
+     the years standing on it, a dot per event, a gap said where years pass with nothing in them */
+  .vc-tl{display:flex;flex-direction:column;gap:2px;position:relative;min-width:0}
+  .vc-tl-h{display:flex;align-items:baseline;gap:8px;margin-bottom:2px}
+  .vc-tl-h b{font-size:11.5px;font-weight:600;color:var(--fg,#ddd);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vc-tl-h small{font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim2,#8a7e70);white-space:nowrap}
+  .vc-tl-ax{position:relative;height:30px;margin:4px 8px 8px}
+  .vc-tl-ln{position:absolute;left:0;right:0;top:11px;height:2px;border-radius:1px;background:var(--border,#3a3530)}
+  .vc-tl-dot{position:absolute;top:7px;width:10px;height:10px;margin-left:-5px;padding:0;border:0;border-radius:50%;background:var(--acc3,#c9955a);opacity:.85;cursor:pointer;box-shadow:0 0 0 2px var(--bg0,#171513);transition:transform .12s}
+  .vc-tl-dot:hover{transform:scale(1.45);opacity:1}
+  .vc-tl-tick{position:absolute;top:19px;transform:translateX(-50%);font-family:var(--mono,monospace);font-size:9px;color:var(--dim2,#8a7e70);white-space:nowrap}
+  .vc-tl-tick:first-of-type{transform:none}.vc-tl-tick.end{transform:translateX(-100%)}
+  .vc-tl-list{position:relative;padding-left:16px}
+  .vc-tl-list::before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:2px;border-radius:1px;background:var(--border,#3a3530)}
+  .vc-tl-y{position:relative;font-family:var(--mono,monospace);font-size:10.5px;font-weight:700;color:var(--acc3,#c9955a);margin:9px 0 3px}
+  .vc-tl-y::before{content:"";position:absolute;left:-15px;top:3px;width:10px;height:10px;border-radius:3px;background:var(--acc3,#c9955a)}
+  .vc-tl-gap{font-size:9.5px;color:var(--dim,#6b7480);font-style:italic;margin:4px 0}
+  .vc-tl-e{position:relative;display:grid;grid-template-columns:44px 1fr;gap:8px;padding:4px 6px 4px 0;border-radius:6px;transition:background .3s}
+  .vc-tl-e::before{content:"";position:absolute;left:-13px;top:10px;width:6px;height:6px;border-radius:50%;background:var(--fg,#ddd);opacity:.55}
+  .vc-tl-e.flash{background:color-mix(in srgb,var(--acc3,#c9955a) 20%,transparent)}
+  .vc-tl-w{font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim2,#8a7e70);padding-top:2px;text-align:right;white-space:nowrap}
+  .vc-tl-t{font-size:11px;line-height:1.55;color:var(--fg,#ddd)}
+  .vc-tl-a{margin-left:6px;font-size:9px;color:var(--dim2,#8a7e70);text-decoration:none;white-space:nowrap}
   .vc-tl-a:hover{color:var(--acc,#5a9e8f);text-decoration:underline}
   .vc-tl-empty{font-size:10.5px;color:var(--dim2,#8a7e70);font-style:italic}
   /* a source reads as a page, not as a row: the domain small above it, the title the thing you click */
@@ -1044,6 +1111,19 @@
   .vc-rbx-b{font:inherit;font-size:9.5px;height:21px;padding:0 9px;border:1px solid var(--border,#3a3530);border-radius:10px;background:var(--bg1,#1f1d1a);color:var(--dim2,#8a7e70);cursor:pointer;display:inline-flex;align-items:center;text-decoration:none}
   .vc-rbx-b:hover{color:var(--fg,#ddd);border-color:var(--acc,#5a9e8f)}
   .vc-rbx-body{max-height:420px;overflow:auto;font-size:11.5px;line-height:1.6;padding:8px 10px;border-radius:8px;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530)}
+  /* a record's depth: its tags, its fields, its neighbours */
+  .vc-rbx-meta a{color:var(--acc,#5a9e8f);text-decoration:none}.vc-rbx-meta a:hover{text-decoration:underline}
+  .vc-rbx-tags{display:flex;flex-wrap:wrap;gap:4px}.vc-rbx-tags span{font-family:var(--mono,monospace);font-size:9.5px;color:var(--acc2,var(--acc,#5a9e8f));background:color-mix(in srgb,var(--acc2,var(--acc,#5a9e8f)) 12%,transparent);border-radius:8px;padding:1px 7px}
+  .vc-rbx-fields summary{cursor:pointer;font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim2,#8a7e70);letter-spacing:.04em}
+  .vc-rbx-kv{display:grid;grid-template-columns:minmax(80px,30%) 1fr;gap:2px 10px;margin-top:4px;font-size:10.5px}
+  .vc-rbx-kv .k{color:var(--dim2,#8a7e70)}.vc-rbx-kv .v{font-family:var(--mono,monospace);font-size:10px;overflow-wrap:anywhere}
+  .vc-rbx-nb{display:flex;flex-direction:column;gap:4px;margin-top:2px}
+  .vc-rbx-nb h5{margin:4px 0 0;font-size:9.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--dim2,#8a7e70)}
+  .vc-rbx-nbr{padding:6px 9px;border-radius:7px;background:var(--bg1,#1f1d1a);border:1px solid var(--border,#3a3530);cursor:pointer}
+  .vc-rbx-nbr:hover,.vc-rbx-nbr.on{border-color:color-mix(in srgb,var(--acc,#5a9e8f) 55%,var(--border,#3a3530))}
+  .vc-rbx-nbh{display:flex;gap:8px;align-items:baseline}.vc-rbx-nbh b{flex:1;min-width:0;font-weight:500;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vc-rbx-nbh small{font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim2,#8a7e70);white-space:nowrap}
+  .vc-rbx-nbt{margin-top:6px;font-size:11px;line-height:1.6;max-height:260px;overflow:auto;cursor:text}
   .vc-rbx-busy{font-size:10px;color:var(--acc,#5a9e8f)}.vc-rbx-err{font-size:10px;color:var(--err,#c96b6b)}
   .vc-rbx-empty{padding:14px;text-align:center;font-size:11px;color:var(--dim2,#8a7e70);font-style:italic}
   .vc-rbx-foot{display:flex;align-items:center;gap:10px;font:9.5px var(--mono,monospace);color:var(--dim2,#8a7e70)}
@@ -1061,7 +1141,7 @@
   .it-hd .fd:hover{color:var(--fg,#dce1e8)}
   .it-hd .fdn{flex:0 0 auto;font-family:ui-monospace,Consolas,monospace;font-size:9px;color:var(--dim,#6b7480);background:var(--bg2,#272421);border-radius:8px;padding:0 6px}
   .fd.solo{position:absolute;right:36px;top:3px;z-index:3;font-size:10px;color:var(--dim,#6b7480);cursor:pointer;opacity:0;transition:opacity .15s}
-  .it:hover > .fd.solo,.it:focus-within > .fd.solo{opacity:.8}
+  .it:is(:hover,.hov) > .fd.solo,.it:focus-within > .fd.solo{opacity:.8}
   /* a records item as a GRAPH: the slot the live layer draws the Vera graph over, sized with the item */
   .vc-rbx-graph{display:flex;flex-direction:column;gap:3px}
   .vc-rbx-graph .vc-live{height:300px}
@@ -1099,7 +1179,7 @@
   .it-hd .k{font-family:ui-monospace,Consolas,monospace;font-size:8.5px;color:var(--dim,#6b7480);
     max-width:30%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .it-hd .xp{font-size:10px;color:var(--dim,#6b7480);flex:0 0 auto;cursor:pointer;padding:0 2px}
-  .it:hover .it-hd .xp{color:var(--fg,#dce1e8)}
+  .it:is(:hover,.hov) .it-hd .xp{color:var(--fg,#dce1e8)}
   .it-a{display:inline-flex;gap:2px;flex:1 1 auto;min-width:0;align-items:center}
   .it-a button{font:inherit;font-size:9.5px;color:var(--dim,#6b7480);background:none;border:1px solid transparent;
     border-radius:5px;padding:0 5px;cursor:pointer;line-height:1.5}
@@ -1254,9 +1334,9 @@
   .vc-many + .vc-many{margin-top:6px}
   /* MAXIMISED: the item takes the canvas and stays there, fixed, until it is restored */
   .mx{font-size:10px;color:var(--dim,#6b7480);flex:0 0 auto;cursor:pointer;padding:0 2px}
-  .it:hover .it-hd .mx{color:var(--fg,#dce1e8)}.mx.on{color:var(--acc,#5a9e8f)!important}
+  .it:is(:hover,.hov) .it-hd .mx{color:var(--fg,#dce1e8)}.mx.on{color:var(--acc,#5a9e8f)!important}
   .mx.solo{position:absolute;right:20px;top:3px;z-index:3;opacity:0;transition:opacity .15s}
-  .it:hover > .mx.solo,.it:focus-within > .mx.solo,.it.maxed > .mx.solo{opacity:.8}
+  .it:is(:hover,.hov) > .mx.solo,.it:focus-within > .mx.solo,.it.maxed > .mx.solo{opacity:.8}
   .it.maxed{z-index:8!important;display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15181d))!important;box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px var(--acc,#5a9e8f)!important;transition:none!important;border-radius:8px}
   .it.maxed > .it-bd{max-height:none!important;flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto}
   .it.maxed > .it-bd > *{flex:1 1 auto;min-height:0}
@@ -2265,7 +2345,7 @@
         // what is fused INTO this one: drawn as panes of its body, so the two read as one thing
         const g = groupOf(b);
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
-        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (ufold ? ' ufold' : '');
+        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
           ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
             : `<div class="it-hd">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${ufold && Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
@@ -2383,7 +2463,15 @@
         // a records item: page, sort, view, facet, open a record, read it, land it
         if (t.closest('[data-rec-stop]') || t.closest('.vc-rbx-q') || (t.closest('a') && t.closest('.vc-rbx'))) return;
         const ra = t.closest('[data-rec-act]');
+        // inside an OPENED record (its text, its facts, its fields) or an opened neighbour's text, a click is reading, not
+        // closing: only the buttons there act - the row's own open/close is its head
+        if (ra && body.contains(ra) && ((ra.matches('.vc-rbx-row,tr') && t.closest('.vc-rbx-open') && ra.contains(t.closest('.vc-rbx-open')))
+            || (ra.matches('.vc-rbx-nbr') && t.closest('.vc-rbx-nbt')))) { ev.stopPropagation(); return; }
         if (ra && body.contains(ra)) { ev.stopPropagation(); this._recAct(ra.dataset.recKey, ra.dataset.recAct, ra.dataset.recArg); return; }
+        // a timeline's axis: a dot is the way to its event (the list scrolls to it and lights it a moment)
+        const tg = t.closest('[data-tl-go]');
+        if (tg && body.contains(tg)) { ev.stopPropagation(); const box = tg.closest('.vc-tl'); const row = box && box.querySelector('.vc-tl-e[data-i="' + tg.dataset.tlGo + '"]');
+          if (row) { try { row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) { row.scrollIntoView(); } row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 1400); } return; }
         // the calendar's month buttons and its days
         const wa = t.closest('[data-wid-act]');
         if (wa && body.contains(wa)) { ev.stopPropagation(); this._widAct(wa.dataset.widKey, wa.dataset.widAct); return; }
@@ -2405,8 +2493,18 @@
       // a SELECTION of lines says more than a click: the card covering the whole range lights when the drag ends
       body.addEventListener('mouseup', (ev) => { const w = ev.target.closest && ev.target.closest('.vc-codewrap[data-code]');
         if (w) setTimeout(() => this._sourceToExplode(w), 0); });
-      body.addEventListener('mouseover', (ev) => { const it = ev.target.closest && ev.target.closest('.it[data-key]'); const k = it ? it.dataset.key : null; if (k !== this._hovKey) { this._hovKey = k; this._hoverOpen(it); try { this.dispatchEvent(new CustomEvent('vera:canvas:hover', { bubbles: true, detail: { key: k } })); } catch (e) {} } });
-      body.addEventListener('mouseleave', () => { if (this._hovKey) { this._hovKey = null; this._hoverOpen(null); try { this.dispatchEvent(new CustomEvent('vera:canvas:hover', { bubbles: true, detail: { key: null } })); } catch (e) {} } });
+      /* WHAT IS UNDER THE POINTER, WITHOUT FLICKER (owner, 2026-09-29: 'the canvas elements flicker if you put the mouse near
+         its edge or the edge of inner frames/divs'). A widget, a frame, a graph is drawn in the LIVE layer - a sibling of
+         the items, over their slots - so crossing onto one left the item: :hover dropped (its ground and controls faded),
+         a hover event went out, and in the Hover tier the item folded, the column re-placed and it opened again. The
+         live layer now belongs to its item (.lv carries the key), hover is a class the render keeps (.hov) rather than
+         only :hover, and a change of item is settled for a beat so an edge or a gap between two items is not a flip. */
+      const hovAt = (ev) => { const t = ev.target; if (!t || !t.closest) return null;
+        const it = t.closest('.it[data-key]'); if (it) return it.dataset.key; const lv = t.closest('.lv[data-key]'); return lv ? lv.dataset.key : null; };
+      const hovTo = (k) => { clearTimeout(this._hovT); if (k === this._hovWant) return; this._hovWant = k;
+        this._hovT = setTimeout(() => this._hovSet(this._hovWant), k ? 60 : 160); };
+      body.addEventListener('mouseover', (ev) => hovTo(hovAt(ev)));
+      body.addEventListener('mouseleave', () => hovTo(null));
       // the corner grip: a drag sizes the item; the drop saves it as the item's size (s · m · l · xl)
       body.addEventListener('mousedown', (ev) => { const g = ev.target.closest && ev.target.closest('.rz'); if (!g) return; const it = g.closest('.it[data-key]'); if (!it) return;
         ev.preventDefault(); ev.stopPropagation(); it.classList.add('sized', 'resizing');
@@ -2439,6 +2537,16 @@
     }
     /* a folded item opens in the layout under the pointer — every folded item in the Hover tier, an aged one in any
        tier ("hover to read, click to open") — and folds back when the pointer leaves; one opened by a click stays */
+    // the hovered item, settled: its class, the host's event, the Hover tier's opening
+    _hovSet(k) {
+      k = k || null; if (k === this._hovKey) return;
+      const body = this.shadowRoot && this.shadowRoot.getElementById('body'); if (!body) return;
+      const find = (x) => x ? body.querySelector('#items .it[data-key="' + String(x).replace(/"/g, '\\"') + '"]') : null;
+      const prev = find(this._hovKey); if (prev) prev.classList.remove('hov');
+      this._hovKey = k; const it = find(k); if (it) it.classList.add('hov');
+      this._hoverOpen(it);
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:hover', { bubbles: true, detail: { key: k } })); } catch (e) {}
+    }
     _hoverOpen(it) {
       const hoverTier = this.tier() === 'hover'; let moved = false;
       const prev = this._hovEl;
@@ -2721,8 +2829,8 @@
        embed once it is defined */
     _rgFeed(embed, key) {
       if (!embed) return;
-      const c = this._contentOf(key) || {}; const g = recGraph(c);
-      const sig = (c.query || '') + '|' + (Array.isArray(c.items) ? c.items.map((r) => r && r.id).join(',') : '');
+      const c = this._contentOf(key) || {}; const bodies = recState(this, key).body || {}; const g = recGraph(c, bodies);
+      const sig = (c.query || '') + '|' + (Array.isArray(c.items) ? c.items.map((r) => r && r.id).join(',') : '') + '|' + Object.keys(bodies).map((k) => k + ':' + ((bodies[k] && bodies[k].nb) || []).length).join(',');
       if (embed._rgSig === sig) return; embed._rgSig = sig;
       const go = () => { try { embed.setGraph(g); } catch (e) {} this._adoptGraphCss(); };
       if (typeof embed.setGraph === 'function') go();
@@ -2929,7 +3037,11 @@
       if (act === 'page') { st.page = arg === 'prev' ? Math.max(0, (st.page | 0) - 1) : arg === 'next' ? (st.page | 0) + 1 : (+arg || 0); return redraw(); }
       if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0; return redraw(); }
       if (act === 'dom') { st.dom = st.dom === arg ? '' : arg; st.page = 0; return redraw(); }
-      if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key); } return redraw(); }
+      if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key);
+          // a fabric record opened is READ at once: its facts, its source, its text - the depth is the point of opening it
+          const cur = st.body[it.id] || {};
+          if (st.open[it.id] && it.ref && it.ref.record_id && !cur.text && !cur.busy && !cur.err) { redraw(); return this._recAct(key, 'rec', arg); } }
+        return redraw(); }
       if (act === 'read' && it && it.url) {
         st.open[it.id] = true; st.body[it.id] = { busy: 'reading the page (reader mode)' }; redraw();
         const rd = await this._readPage(String(it.url));
@@ -2938,11 +3050,37 @@
       if ((act === 'rec' || act === 'more') && it && it.ref && it.ref.record_id) {
         const cur = st.body[it.id] || {}; const offset = act === 'more' ? (cur.next | 0) : 0;
         st.open[it.id] = true; st.body[it.id] = Object.assign({}, act === 'more' ? cur : {}, { busy: 'reading the record' }); redraw();
-        const r = await this.callResult('memory.read', { record_id: String(it.ref.record_id), offset, max_chars: 6000 });
+        // a fabric record through the fabric's own read (memory.read does not know fabric records - 'record not found');
+        // the memory store's read for the rest
+        let r = null; try { r = await this.callResult('fabric.record.get', { record_id: String(it.ref.record_id), offset, max_chars: 8000 }); } catch (e) { r = null; }
+        let viaFabric = !!(r && r.ok);
+        if (!viaFabric) { try { r = await this.callResult('memory.read', { record_id: String(it.ref.record_id), offset, max_chars: 6000 }); } catch (e) { r = null; } }
         const text = String((r && r.text) || '');
-        if (!text) { st.body[it.id] = { err: (r && r.error) || 'the record gave nothing back' }; return redraw(); }
-        st.body[it.id] = { text: (act === 'more' ? (cur.text || '') + '\n\n' : '') + text, next: (r && r.next_offset != null && r.next_offset < (r.total_chars || 0)) ? r.next_offset : null };
+        if (!text) { st.body[it.id] = Object.assign({}, cur, { busy: '', err: (r && r.error) || 'the record gave nothing back' }); return redraw(); }
+        const keep = { nb: cur.nb, nbOpen: cur.nbOpen, nbText: cur.nbText };
+        st.body[it.id] = Object.assign(keep, { text: (act === 'more' ? (cur.text || '') + '\n\n' : '') + text,
+          next: (r && r.next_offset != null && r.next_offset < (r.total_chars || 0)) ? r.next_offset : null,
+          rec: viaFabric ? { source: r.source || {}, tags: r.tags || [], created_at: r.created_at || '', data: r.data || {}, total_chars: r.total_chars || 0 } : cur.rec });
         return redraw();
+      }
+      // the records NEAREST this one, across every dataset - listed under it, and drawn into the graph view
+      if (act === 'nb' && it && it.ref && it.ref.record_id) {
+        const cur = st.body[it.id] || {}; st.open[it.id] = true;
+        st.body[it.id] = Object.assign({}, cur, { busy: 'finding its neighbours', err: '' }); redraw();
+        let r = null; try { r = await this.callResult('fabric.loom.record_match', { record_id: String(it.ref.record_id), max_matches: 8 }); } catch (e) { r = null; }
+        const ms = (r && Array.isArray(r.matches)) ? r.matches.filter((m) => m && m.id) : null;
+        st.body[it.id] = Object.assign({}, st.body[it.id], { busy: '', nb: ms || [], err: ms ? '' : ((r && r.error) || 'no neighbours came back') });
+        return redraw();
+      }
+      // a neighbour, opened in place: its text read through the fabric
+      if (act === 'nbopen') {
+        const parts = String(arg || '').split('|'); const owner = items.find((x) => x && String(x.id) === parts[0]); const mid = parts[1];
+        if (!owner || !mid) return; const cur = st.body[owner.id] || {}; const nbOpen = Object.assign({}, cur.nbOpen); nbOpen[mid] = !nbOpen[mid];
+        st.body[owner.id] = Object.assign({}, cur, { nbOpen }); redraw();
+        if (!nbOpen[mid] || (cur.nbText || {})[mid]) return;
+        let r = null; try { r = await this.callResult('fabric.record.get', { record_id: mid, max_chars: 4000 }); } catch (e) { r = null; }
+        const nbText = Object.assign({}, (st.body[owner.id] || {}).nbText); nbText[mid] = String((r && r.text) || (r && r.error) || 'nothing came back');
+        st.body[owner.id] = Object.assign({}, st.body[owner.id], { nbText }); return redraw();
       }
       if (act === 'land' && it && it.url) {
         return this.call('canvas.add', { kind: 'source', key: 'source:' + it.url, size: 's',

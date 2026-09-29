@@ -9799,6 +9799,68 @@ async def cap_loom_record_match(
 
 
 @capability(
+    "fabric.record.get",
+    http_method="POST", http_path="/fabric/record/get",
+    http_tags=["fabric", "record"],
+    memory="off",
+    description="One fabric record by id, as it is stored: its text (in pages - offset, max_chars), its dataset, the "
+                "source it was gathered from (url, label, type), its tags, when it was written, and its structured "
+                "data fields. Read-only. The canvas opens a fabric record through this (memory.read does not know "
+                "fabric records). Input: record_id (str!), offset (int default 0), max_chars (int default 8000). "
+                "Output: {ok, id, dataset_id, text, offset, next_offset, total_chars, source:{id, url, label, type}, "
+                "tags:[str], created_at, data:{field: value}}.",
+)
+async def cap_record_get(record_id: str, offset: int = 0, max_chars: int = 8000, trace_id=None) -> Dict:
+    if not record_id:
+        return {"error": "record_id required"}
+    loop = asyncio.get_running_loop()
+
+    def _fetch():
+        conn = _sqlite_conn()
+        try:
+            row = conn.execute("SELECT * FROM fabric_records WHERE id=? LIMIT 1", (record_id,)).fetchone()
+            rec = dict(row) if row else None
+            if rec and rec.get("source_id"):
+                s = conn.execute("SELECT id, source_type, url, label FROM fabric_sources WHERE id=? LIMIT 1",
+                                 (rec["source_id"],)).fetchone()
+                rec["_source"] = dict(s) if s else None
+            return rec
+        finally:
+            conn.close()
+    rec = await loop.run_in_executor(None, _fetch)
+    if not rec:
+        return {"error": f"Record {record_id} not found"}
+
+    def _js(v, dflt):
+        if isinstance(v, (dict, list)):
+            return v
+        try:
+            return json.loads(v) if v else dflt
+        except Exception:
+            return dflt
+    text = rec.get("text") or ""
+    off = max(0, int(offset or 0))
+    n = max(200, min(50_000, int(max_chars or 8000)))
+    part = text[off:off + n]
+    nxt = off + len(part)
+    tags = _js(rec.get("tags"), [])
+    tags = [str(t) for t in tags] if isinstance(tags, list) else ([str(tags)] if tags else [])
+    data = _js(rec.get("data"), {})
+    # the data fields as a person reads them: plain values, a bounded handful, nothing enormous
+    fields = {}
+    if isinstance(data, dict):
+        for k, v in list(data.items())[:40]:
+            fields[str(k)] = v if (v is None or isinstance(v, (int, float, bool))) else str(v)[:300]
+    src = rec.get("_source") or {}
+    return {"ok": True, "id": rec["id"], "dataset_id": rec.get("dataset_id") or "",
+            "text": part, "offset": off, "next_offset": nxt if nxt < len(text) else None,
+            "total_chars": len(text),
+            "source": {"id": rec.get("source_id") or "", "url": src.get("url") or "",
+                       "label": src.get("label") or "", "type": src.get("source_type") or ""},
+            "tags": tags, "created_at": rec.get("created_at") or "", "data": fields}
+
+
+@capability(
     "fabric.record.summarise",
     http_method="POST", http_path="/fabric/record/summarise",
     http_tags=["fabric", "record"],

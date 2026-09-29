@@ -20,7 +20,7 @@ t('the states that MEAN something still draw: waiting, opened, pinned, a suggest
 /* and the one that does NOT: "now" is the band every live item is in, so a ring on it was a box around everything */
 t('being in the NOW band draws no ring — that was the border on every item',
   !/\.it\.now\{box-shadow/.test(SRC) && !/:host\(\[blocks="off"\]\) \.it\.now\{box-shadow/.test(SRC));
-t('the item you are pointing at lifts, so the surface is still readable', /\.it:hover\{background:color-mix/.test(SRC));
+t('the item you are pointing at lifts, so the surface is still readable', /\.it:is\(:hover,\.hov\)\{background:color-mix/.test(SRC));
 t('the live slot is a hole, not a plate — no ground behind a widget or a graph',
   /\.vc-live\{flex:1 1 auto;min-height:40px;height:110px;border-radius:0;background:none;/.test(SRC) &&
   /#live \.lv\{position:absolute;box-sizing:border-box;border-radius:0;overflow:hidden;background:none\}/.test(SRC));
