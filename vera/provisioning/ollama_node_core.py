@@ -27,7 +27,7 @@ contains shell braces.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from Vera.vera.node_threads_core import DEFAULT_CPU_THREADS
@@ -270,3 +270,138 @@ def install_succeeded(stdout: Any) -> bool:
     """The recipe only succeeds when it reached its end marker — which it only
     prints after the node answered on the port."""
     return DONE_MARKER in str(stdout or "")
+
+
+# ── the runner thread default, server-side (2026-09-29) ──────────────────────
+# Vera sends options.num_thread on every call it routes to a CPU node, so its
+# runners start with `-t 6`. Any request WITHOUT it - a sandbox on older code,
+# an external client, anything that bypasses the router - started a runner
+# with no -t, and llama.cpp then takes 24 threads on these 12-CPU containers
+# (the 0.24 tok/s pathology node_threads_core documents). Measured on
+# gpu-250-cpu 2026-09-29: a bare /api/generate spawned exactly that runner.
+# llama-server reads LLAMA_ARG_THREADS when no -t is given, and an explicit
+# -t still wins - so a drop-in makes the node's num_thread the default for
+# every caller.
+THREADS_DROPIN_NAME = "25-vera-threads.conf"
+
+
+def threads_dropin(n: int) -> str:
+    return ("[Service]\n# Written by Vera (nodes.ollama.tune): runners started without\n"
+            "# num_thread use this, not llama.cpp's 24-on-12-CPUs default.\n"
+            f'Environment="LLAMA_ARG_THREADS={int(n)}"\n')
+
+
+def threads_probe_cmd(unit_expr: str) -> str:
+    """Prints THREADS=<effective LLAMA_ARG_THREADS of the unit> (may be empty)."""
+    return (f"U={unit_expr}; echo \"UNIT=$U\"; echo \"THREADS=$(systemctl show $U -p Environment "
+            "--value | tr ' ' '\\n' | sed -n 's/^LLAMA_ARG_THREADS=//p')\"")
+
+
+def threads_plan(current: str, want: int) -> Dict[str, Any]:
+    try:
+        cur = int(str(current or "").strip() or 0)
+    except ValueError:
+        cur = 0
+    if int(want or 0) <= 0:
+        return {"action": "none", "why": "no thread count configured"}
+    if cur == int(want):
+        return {"action": "none", "why": f"runners default to {cur} threads"}
+    return {"action": "set_threads", "want": int(want), "current": cur,
+            "why": f"runners without num_thread default to {cur or 'llama.cpp (24)'}; set {int(want)}"}
+
+
+# ── node settings: what is set on each Ollama unit, and the live runners ─────
+CUSTOM_DROPIN_NAME = "40-vera-custom.conf"
+#: Keys an operator may set through Vera: Ollama's own and llama-server's.
+import re as _re
+_CUSTOM_KEY = _re.compile(r"^(OLLAMA_|LLAMA_ARG_)[A-Z0-9_]{1,60}$")
+_CUSTOM_VAL = _re.compile(r"^[A-Za-z0-9_.:/,=+-]{0,200}$")
+#: Keys Vera's own drop-ins manage; setting them as custom flags would fight them.
+MANAGED_KEYS = frozenset({"OLLAMA_HOST", "OLLAMA_MODELS", "LLAMA_ARG_THREADS"})
+
+
+def settings_probe_cmd(unit_expr: str) -> str:
+    """Read-only: the unit, its Ollama/llama/GPU env, every drop-in (base64),
+    and each live runner: ctx | parallel | -t | model blob | OS threads."""
+    return (
+        f"U={unit_expr}; echo \"UNIT=$U\"; "
+        "systemctl show $U -p Environment --value | tr ' ' '\\n' | "
+        "grep -E '^(OLLAMA_|LLAMA_ARG_|CUDA_VISIBLE_DEVICES|HIP_VISIBLE_DEVICES|GGML_)' | sed 's/^/ENV=/'; "
+        "for f in /etc/systemd/system/$U.service.d/*.conf; do [ -f \"$f\" ] && "
+        "echo \"DROPIN=$(basename $f):$(base64 -w0 $f)\"; done; "
+        "P=$(systemctl show $U -p MainPID --value); "
+        "for c in $(pgrep -P $P 2>/dev/null); do a=$(tr '\\0' '\\n' < /proc/$c/cmdline 2>/dev/null); "
+        "echo \"RUNNER=$(echo \"$a\" | grep -A1 -x -- -c | tail -1)|$(echo \"$a\" | grep -A1 -x -- -np | tail -1)"
+        "|$(echo \"$a\" | grep -A1 -xE -- '-t|--threads' | tail -1)|$(echo \"$a\" | grep -A1 -x -- --model | tail -1 | xargs -r basename)"
+        "|$(ls /proc/$c/task 2>/dev/null | wc -l)|$(echo \"$a\" | grep -cx -- --embedding)\"; done")
+
+
+def parse_settings(stdout: str) -> Dict[str, Any]:
+    import base64 as _b64
+    out: Dict[str, Any] = {"unit": "", "env": {}, "dropins": [], "runners": []}
+    for line in (stdout or "").splitlines():
+        k, sep, v = line.partition("=")
+        if not sep:
+            continue
+        if k == "UNIT":
+            out["unit"] = v.strip()
+        elif k == "ENV":
+            ek, _, ev = v.partition("=")
+            out["env"][ek] = ev
+        elif k == "DROPIN":
+            name, _, b = v.partition(":")
+            try:
+                text = _b64.b64decode(b).decode("utf-8", "replace")
+            except Exception:
+                text = ""
+            out["dropins"].append({"name": name, "text": text})
+        elif k == "RUNNER":
+            parts = (v.split("|") + [""] * 6)[:6]
+            def _i(x):
+                try:
+                    return int(x)
+                except ValueError:
+                    return 0
+            out["runners"].append({"ctx": _i(parts[0]), "parallel": _i(parts[1]) or 1,
+                                   "threads": _i(parts[2]), "blob": parts[3],
+                                   "os_threads": _i(parts[4]), "embedding": parts[5] == "1"})
+    return out
+
+
+def custom_flags_from_dropin(text: str) -> Dict[str, str]:
+    """KEY -> value from a drop-in's Environment= lines."""
+    out: Dict[str, str] = {}
+    for m in _re.finditer(r'Environment="?([A-Z0-9_]+)=([^"\n]*)"?', text or ""):
+        out[m.group(1)] = m.group(2)
+    return out
+
+
+def custom_dropin(flags: Dict[str, str]) -> str:
+    lines = ["[Service]", "# Written by Vera (nodes.ollama.settings.set): custom flags.",
+             "# Edit them in Estate > Models & NLP > Node settings, not here."]
+    for k in sorted(flags):
+        lines.append(f'Environment="{k}={flags[k]}"')
+    return "\n".join(lines) + "\n"
+
+
+def validate_flags(changes: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """(clean changes, errors). A value of None removes the key."""
+    clean: Dict[str, Any] = {}
+    errors: List[str] = []
+    for k, v in (changes or {}).items():
+        k = str(k or "").strip()
+        if not _CUSTOM_KEY.match(k):
+            errors.append(f"{k!r}: only OLLAMA_* and LLAMA_ARG_* keys")
+            continue
+        if k in MANAGED_KEYS:
+            errors.append(f"{k}: managed by Vera (use num_thread, or the tap/store settings)")
+            continue
+        if v is None:
+            clean[k] = None
+            continue
+        v = str(v).strip()
+        if not _CUSTOM_VAL.match(v):
+            errors.append(f"{k}: value may use letters, digits and _.:/,=+- only")
+            continue
+        clean[k] = v
+    return clean, errors

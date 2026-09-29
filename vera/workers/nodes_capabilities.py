@@ -54,9 +54,11 @@ import json
 import logging
 import re
 import shlex
+
+import httpx
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import Vera.vera.capability_orchestration as _orch
@@ -2567,9 +2569,66 @@ async def cap_nodes_ollama_tune(dry_run: bool = True, force: bool = False,
                 row["result"]["registered"] = reg["instance_id"]
         await emit_event({"type": "nodes.ollama.tune", "instance": iid,
                           "action": plan["action"], "ok": bool((row.get("result") or {}).get("ok"))})
+        # The runner thread default on the node's CPU Ollama: the node's own
+        # unit on a CPU node, the sibling on a GPU node. Every caller gets it,
+        # not only Vera's routed calls (which already send num_thread).
+        if inst.get("has_gpu"):
+            sid = _ollama_core.cpu_sibling_id(iid)
+            t_inst = (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).get(sid)
+            t_unit = _ollama_core.CPU_SIBLING_UNIT.replace(".service", "") if t_inst else ""
+        else:
+            sid, t_inst, t_unit = iid, inst, _UNIT_EXPR
+        if t_unit:
+            row["threads"] = await _apply_threads(hid, sid, t_inst, t_unit, dry_run, force)
         out.append(row)
-    return {"ok": all((r.get("result") or {}).get("ok", True) for r in out),
+    return {"ok": all((r.get("result") or {}).get("ok", True)
+                      and (r.get("threads") or {}).get("ok", True) for r in out),
             "dry_run": bool(dry_run), "nodes": out}
+
+
+#: The node's own Ollama unit, resolved ON the node (ollama-vera on the fleet,
+#: stock `ollama` on a fresh install).
+_UNIT_EXPR = "$(systemctl is-active --quiet ollama-vera && echo ollama-vera || echo ollama)"
+
+
+def _node_threads(inst: Dict) -> int:
+    return _ollama_core.registration_threads(False, (inst or {}).get("num_thread"))
+
+
+def _restart_unit_script(unit_expr: str, dropin_name: str, dropin_text: str) -> str:
+    """Write one drop-in on the unit, restart it, and print VERA_TUNED once the
+    Ollama answers on the address the unit itself binds."""
+    return (f"U={unit_expr}; D=/etc/systemd/system/$U.service.d; mkdir -p $D && "
+            f"printf '%s' {shlex.quote(dropin_text)} > $D/{dropin_name} && "
+            "systemctl daemon-reload && systemctl restart $U && "
+            "H=$(systemctl show $U -p Environment --value | tr ' ' '\\n' | sed -n 's/^OLLAMA_HOST=//p'); "
+            "for i in $(seq 1 45); do curl -fsS -m 3 http://${H:-127.0.0.1:11434}/api/tags >/dev/null "
+            "&& echo VERA_TUNED && break; sleep 2; done")
+
+
+async def _apply_threads(hid: str, iid: str, inst: Dict, unit_expr: str,
+                         dry_run: bool, force: bool) -> Dict[str, Any]:
+    run = _rawcap("exec.ssh.run")
+    want = _node_threads(inst)
+    probe = await run(command=_ollama_core.threads_probe_cmd(unit_expr), host_id=hid, timeout=30) or {}
+    cur = ""
+    for line in (probe.get("stdout") or "").splitlines():
+        if line.startswith("THREADS="):
+            cur = line[len("THREADS="):].strip()
+    plan = _ollama_core.threads_plan(cur, want)
+    res: Dict[str, Any] = {"instance": iid, "plan": plan}
+    if plan["action"] == "none" or dry_run:
+        return res
+    if int((inst or {}).get("in_use") or 0) > 0 and not force:
+        res.update(ok=False, skipped="a generation is in flight on this node")
+        return res
+    r = await run(command=_restart_unit_script(unit_expr, _ollama_core.THREADS_DROPIN_NAME,
+                                               _ollama_core.threads_dropin(want)),
+                  host_id=hid, timeout=150) or {}
+    ok = "VERA_TUNED" in (r.get("stdout") or "")
+    res.update(ok=ok, error="" if ok else str(r.get("stderr") or r.get("stdout") or "no answer")[-300:])
+    await emit_event({"type": "nodes.ollama.threads", "instance": iid, "threads": want, "ok": ok})
+    return res
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2721,6 +2780,167 @@ async def cap_nodes_ollama_tap(dry_run: bool = True, instance_ids: Optional[List
         out.append(row)
     return {"ok": all((r.get("result") or {}).get("ok", True) for r in out),
             "dry_run": bool(dry_run), "nodes": out}
+
+
+def _settings_target(iid: str, insts: Dict[str, Dict]) -> Tuple[str, str]:
+    """(address, unit expression) for an instance: the sibling unit for a
+    '<gpu>-cpu' sibling, the node's own unit otherwise."""
+    inst = insts.get(iid) or {}
+    addr = urlparse(str(inst.get("url") or "")).hostname or ""
+    parent = iid[:-len("-cpu")] if iid.endswith("-cpu") else ""
+    if parent and (insts.get(parent) or {}).get("has_gpu"):
+        return addr, _ollama_core.CPU_SIBLING_UNIT.replace(".service", "")
+    return addr, _UNIT_EXPR
+
+
+async def _blob_names(url: str) -> Dict[str, str]:
+    """sha256-<digest> -> model tag(s), from the node's /api/tags."""
+    out: Dict[str, str] = {}
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            r = await c.get(f"{url}/api/tags")
+            for m in (r.json() or {}).get("models") or []:
+                d = "sha256-" + str(m.get("digest") or "")
+                out[d] = (out[d] + ", " if d in out else "") + str(m.get("name") or "")
+    except Exception:
+        pass
+    return out
+
+
+@capability(
+    "nodes.ollama.settings",
+    http_method="GET", http_path="/nodes/ollama/settings", http_tags=["nodes", "ollama"],
+    memory="off", silent=True,
+    description="Everything tuned on each Ollama node, read live: Vera's registry values (enabled, "
+                "priority, num_thread - sent with every routed call - GPU or CPU), the unit's "
+                "Ollama / llama.cpp / GPU environment flags and every systemd drop-in with its "
+                "contents, the custom flags Vera manages, and the runners loaded right now (model, "
+                "context, parallel slots, the -t they were started with and their OS thread count - "
+                "a runner with no -t on a CPU node runs llama.cpp's default, 24 on 12 CPUs). "
+                "Read-only. Input: instance_ids (list - default all). Output: {nodes:[...]}.",
+)
+async def cap_nodes_ollama_settings(instance_ids: Optional[List[str]] = None, trace_id=None) -> Dict:
+    run = _rawcap("exec.ssh.run")
+    lst = _rawcap("exec.ssh.hosts.list")
+    if not run or not lst:
+        return {"ok": False, "error": "exec.ssh unavailable"}
+    by_addr = {h.get("host"): h.get("id") for h in ((await lst()) or {}).get("hosts", [])
+               if h.get("host") and h.get("id")}
+    insts = dict(getattr(_orch, "OLLAMA_INSTANCES", {}) or {})
+    out = []
+    for iid in [i for i in (instance_ids or sorted(insts)) if i in insts]:
+        inst = insts[iid]
+        addr, unit = _settings_target(iid, insts)
+        row: Dict[str, Any] = {
+            "instance": iid, "label": inst.get("label", iid), "url": inst.get("url"),
+            "has_gpu": bool(inst.get("has_gpu")), "enabled": inst.get("enabled", True),
+            "priority": inst.get("priority"), "status": inst.get("status"),
+            "num_thread": None if inst.get("has_gpu") else _node_threads(inst),
+            "num_thread_set": inst.get("num_thread")}
+        hid = by_addr.get(addr)
+        if not hid:
+            row["error"] = "no stored SSH login for this address"
+            out.append(row)
+            continue
+        r = await run(command=_ollama_core.settings_probe_cmd(unit), host_id=hid, timeout=40) or {}
+        st = _ollama_core.parse_settings(r.get("stdout") or "")
+        names = await _blob_names(str(inst.get("url") or ""))
+        for rn in st["runners"]:
+            rn["model"] = names.get(rn.get("blob") or "", rn.get("blob", "")[:19])
+            rn["default_threads"] = (not rn.get("threads")) and not inst.get("has_gpu")
+        custom = next((d for d in st["dropins"] if d["name"] == _ollama_core.CUSTOM_DROPIN_NAME), None)
+        row.update(unit=st["unit"], env=st["env"], dropins=st["dropins"], runners=st["runners"],
+                   custom=_ollama_core.custom_flags_from_dropin(custom["text"]) if custom else {},
+                   threads_default=st["env"].get("LLAMA_ARG_THREADS", ""))
+        out.append(row)
+    return {"ok": True, "nodes": out}
+
+
+@capability(
+    "nodes.ollama.settings.set",
+    http_method="POST", http_path="/nodes/ollama/settings/set", http_tags=["nodes", "ollama"],
+    memory="off",
+    description="Change what is tuned on one Ollama node. num_thread (int, CPU nodes and the GPU "
+                "node's CPU sibling): stored in Vera's registry (sent with every routed call) AND "
+                "written as the unit's runner default (LLAMA_ARG_THREADS), so callers that send "
+                "none get it too. flags ({KEY: value | null}): custom OLLAMA_* / LLAMA_ARG_* "
+                "environment in a drop-in Vera owns (40-vera-custom.conf); null removes a key; "
+                "keys Vera manages (OLLAMA_HOST, OLLAMA_MODELS, LLAMA_ARG_THREADS) are refused. "
+                "Applying restarts the unit (its loaded models reload) and rolls back if Ollama "
+                "does not answer. Dry run by default; a node with a generation in flight is "
+                "skipped unless force; refused from a dev sandbox. Inputs: instance_id (str!), "
+                "num_thread, flags, dry_run (bool=true), force. Output: {ok, plan, result}.",
+)
+async def cap_nodes_ollama_settings_set(instance_id: str = "", num_thread: Optional[int] = None,
+                                        flags: Optional[Dict[str, Any]] = None,
+                                        dry_run: bool = True, force: bool = False,
+                                        trace_id=None) -> Dict:
+    insts = dict(getattr(_orch, "OLLAMA_INSTANCES", {}) or {})
+    inst = insts.get(instance_id)
+    if not inst:
+        return {"ok": False, "error": f"unknown instance {instance_id!r}", "known": sorted(insts)}
+    if not dry_run and _orch.is_dev_sandbox():
+        return {"ok": False, "error": "this is a dev sandbox: the Ollama nodes are prod's"}
+    plan: Dict[str, Any] = {}
+    errors: List[str] = []
+    if num_thread is not None:
+        if inst.get("has_gpu"):
+            errors.append("num_thread applies to CPU Ollama (a CPU node or a GPU node's -cpu sibling)")
+        elif not 1 <= int(num_thread) <= 64:
+            errors.append("num_thread must be 1-64")
+        else:
+            plan["num_thread"] = int(num_thread)
+    clean, ferr = _ollama_core.validate_flags(flags or {})
+    errors += ferr
+    if errors:
+        return {"ok": False, "errors": errors}
+    cur = (await cap_nodes_ollama_settings(instance_ids=[instance_id]))["nodes"][0]
+    if cur.get("error"):
+        return {"ok": False, "error": cur["error"]}
+    new_flags = dict(cur.get("custom") or {})
+    for k, v in clean.items():
+        if v is None:
+            new_flags.pop(k, None)
+        else:
+            new_flags[k] = v
+    if clean:
+        plan["flags"] = new_flags
+        plan["flags_before"] = cur.get("custom") or {}
+    if not plan:
+        return {"ok": True, "dry_run": bool(dry_run), "plan": {}, "note": "nothing to change"}
+    if dry_run:
+        return {"ok": True, "dry_run": True, "plan": plan, "current": cur,
+                "note": "applying restarts " + str(cur.get("unit") or "the unit") + " (models reload)"}
+    if int(inst.get("in_use") or 0) > 0 and not force:
+        return {"ok": False, "skipped": "a generation is in flight on this node", "plan": plan}
+    addr, unit = _settings_target(instance_id, insts)
+    hid = {h.get("host"): h.get("id") for h in ((await _rawcap("exec.ssh.hosts.list")()) or {})
+           .get("hosts", []) if h.get("host")}.get(addr)
+    run = _rawcap("exec.ssh.run")
+    result: Dict[str, Any] = {}
+    if "num_thread" in plan:
+        cfg = _orch.CAPABILITY_REGISTRY.get("ollama.node.config")
+        await (cfg.get("raw") or cfg.get("func"))(id=instance_id, num_thread=plan["num_thread"])
+        text = _ollama_core.threads_dropin(plan["num_thread"])
+        r = await run(command=_restart_unit_script(unit, _ollama_core.THREADS_DROPIN_NAME, text),
+                      host_id=hid, timeout=150) or {}
+        result["num_thread"] = {"ok": "VERA_TUNED" in (r.get("stdout") or "")}
+    if "flags" in plan:
+        text = _ollama_core.custom_dropin(plan["flags"])
+        r = await run(command=_restart_unit_script(unit, _ollama_core.CUSTOM_DROPIN_NAME, text),
+                      host_id=hid, timeout=150) or {}
+        ok = "VERA_TUNED" in (r.get("stdout") or "")
+        if not ok:
+            # roll back to the flags that were there, so a bad flag never
+            # leaves the node without its Ollama
+            back = _ollama_core.custom_dropin(plan["flags_before"])
+            await run(command=_restart_unit_script(unit, _ollama_core.CUSTOM_DROPIN_NAME, back),
+                      host_id=hid, timeout=150)
+        result["flags"] = {"ok": ok, "rolled_back": not ok}
+    await emit_event({"type": "nodes.ollama.settings", "instance": instance_id,
+                      "changed": sorted(k for k in plan if k != "flags_before")})
+    return {"ok": all(v.get("ok") for v in result.values()), "dry_run": False,
+            "plan": plan, "result": result}
 
 
 log.info("nodes: unified node estate capabilities loaded "

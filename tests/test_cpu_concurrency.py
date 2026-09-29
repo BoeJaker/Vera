@@ -80,3 +80,45 @@ def test_the_sibling_is_cpu_only_on_the_same_readonly_store():
     d = core.concurrency_dropin()
     assert "OLLAMA_NUM_PARALLEL=2" in d and "OLLAMA_MAX_LOADED_MODELS=3" in d
     assert core.tune_probe_cmd().count("systemctl") >= 3
+
+
+# ── runner thread default + node settings (2026-09-29) ───────────────────────
+def test_threads_default_is_set_server_side():
+    """A bare /api/generate on gpu-250-cpu spawned a runner with no -t -
+    llama.cpp's 24 on 12 CPUs. LLAMA_ARG_THREADS makes num_thread the default
+    for every caller; an explicit -t still wins."""
+    assert 'Environment="LLAMA_ARG_THREADS=6"' in core.threads_dropin(6)
+    assert core.threads_plan("", 6)["action"] == "set_threads"
+    assert core.threads_plan("24", 6)["action"] == "set_threads"
+    assert core.threads_plan("6", 6)["action"] == "none"
+    assert core.threads_plan("", 0)["action"] == "none"
+    assert "LLAMA_ARG_THREADS" in core.threads_probe_cmd("ollama-vera-cpu")
+
+
+def test_settings_parse():
+    import base64
+    d = base64.b64encode(b'[Service]\nEnvironment="OLLAMA_NUM_PARALLEL=2"\n').decode()
+    out = core.parse_settings(chr(10).join([
+        "UNIT=ollama-vera-cpu", "ENV=OLLAMA_NUM_PARALLEL=2", "ENV=LLAMA_ARG_THREADS=6",
+        "DROPIN=20-vera-concurrency.conf:" + d,
+        "RUNNER=32768|2|6|sha256-abc|15|0", "RUNNER=4096|1||sha256-def|27|0",
+        "RUNNER=2048|1|6|sha256-emb|15|1"]))
+    assert out["unit"] == "ollama-vera-cpu"
+    assert out["env"] == {"OLLAMA_NUM_PARALLEL": "2", "LLAMA_ARG_THREADS": "6"}
+    assert out["dropins"][0]["name"] == "20-vera-concurrency.conf"
+    assert "OLLAMA_NUM_PARALLEL=2" in out["dropins"][0]["text"]
+    assert out["runners"][1] == {"ctx": 4096, "parallel": 1, "threads": 0, "blob": "sha256-def",
+                                 "os_threads": 27, "embedding": False}
+    assert out["runners"][2]["embedding"] is True
+
+
+def test_custom_flags_are_allow_listed_and_round_trip():
+    clean, errs = core.validate_flags({"OLLAMA_FLASH_ATTENTION": "1", "LLAMA_ARG_BATCH": "512",
+                                       "OLLAMA_KV_CACHE_TYPE": None, "PATH": "/tmp",
+                                       "OLLAMA_HOST": "0.0.0.0", "LLAMA_ARG_THREADS": "8",
+                                       "OLLAMA_X": "a b; rm -rf /"})
+    assert clean == {"OLLAMA_FLASH_ATTENTION": "1", "LLAMA_ARG_BATCH": "512",
+                     "OLLAMA_KV_CACHE_TYPE": None}
+    assert len(errs) == 4                      # PATH, two managed keys, the unsafe value
+    text = core.custom_dropin({"OLLAMA_FLASH_ATTENTION": "1", "LLAMA_ARG_BATCH": "512"})
+    assert core.custom_flags_from_dropin(text) == {"OLLAMA_FLASH_ATTENTION": "1", "LLAMA_ARG_BATCH": "512"}
