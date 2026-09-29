@@ -64,7 +64,7 @@
   });
   // citation markers, the reference list and permalink pilcrows by their own names - not by a bare 'reference' class,
   // which documentation sites put on every internal link (a.reference.internal) and would cut words out of sentences
-  root.querySelectorAll('sup.reference,sup[class*="cite"],.mw-cite-backlink,ol.references,.mw-references-wrap,a.headerlink,.mw-editsection').forEach((el) => el.remove());
+  root.querySelectorAll('sup.reference,sup[class*="cite"],.mw-cite-backlink,ol.references,.mw-references-wrap,a.headerlink,.mw-editsection,.ambox,.hatnote,.sistersitebox').forEach((el) => el.remove());   // (a notice box's classes also say 'ambox-content', which reads as body to the chrome rule)
   // a cookie notice is known by what it SAYS, whatever its classes are called (measured: a changelog page's banner
   // was the only prose the reader found) - the outermost short block that says it goes
   const CONSENT = /(we|this (site|website)) use[s]? (optional |essential )?cookies|manage (your )?cookies|cookie (settings|preferences|policy|notice)|accept (all )?cookies|reject (all|optional) cookies/i;
