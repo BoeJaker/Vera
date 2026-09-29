@@ -17,8 +17,272 @@
    12
   ]
  },
- "note": "Every widget of the observe grid as a record (UI redesign M5). draw.body = \"page\": the page draws the body by hand today and its own updaters address it by id; the record owns the frame. Generated from the markup by the M5 slice; edit by hand from here.",
+ "note": "Observe, errors first: the last hour's warnings and errors (syslog.error_summary) lead, then the jobs band, the work and routing lists, the job stream, and the live event stream and system log as their own elements. Every tile is a record the element draws.",
  "widgets": [
+  {
+   "record": {
+    "id": "obs-errors",
+    "form": "counter",
+    "source": "syslog.error_summary",
+    "title": "Errors · last hour",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "value": "errors"
+     }
+    },
+    "draw": {
+     "body": "record",
+     "what": "errors and criticals"
+    },
+    "open": "estate/observe",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "note": "ERROR + CRITICAL entries in the system log over the last hour, from its errors stream",
+    "frame": {
+     "span": [
+      2,
+      2
+     ]
+    }
+   },
+   "at": [
+    0,
+    0
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "obs-warnings",
+    "form": "counter",
+    "source": "syslog.error_summary",
+    "title": "Warnings · last hour",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "value": "warnings"
+     }
+    },
+    "draw": {
+     "body": "record",
+     "what": "warnings"
+    },
+    "open": "estate/observe",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "frame": {
+     "span": [
+      2,
+      2
+     ]
+    }
+   },
+   "at": [
+    2,
+    0
+   ],
+   "span": [
+    2,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "obs-last-error",
+    "form": "kv",
+    "source": "syslog.error_summary",
+    "title": "The last error",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "pick": {
+       "capability": "last_error.cap_name",
+       "when": "last_error.ts",
+       "message": "last_error.message"
+      }
+     }
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/observe",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "frame": {
+     "span": [
+      4,
+      2
+     ]
+    }
+   },
+   "at": [
+    4,
+    0
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "obs-error-trend",
+    "form": "trace",
+    "source": "syslog.error_summary",
+    "title": "Errors · per 5 minutes · last hour",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "series",
+      "t": "t",
+      "v": "errors"
+     }
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/observe",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "frame": {
+     "span": [
+      4,
+      2
+     ]
+    }
+   },
+   "at": [
+    8,
+    0
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "obs-error-log",
+    "form": "log",
+    "source": "syslog.error_summary",
+    "title": "Warnings and errors · newest first",
+    "read": {
+     "refresh": "15s",
+     "args": {
+      "limit": 200
+     },
+     "map": {
+      "events": "entries",
+      "t": "ts",
+      "kind": "level",
+      "text": "message"
+     }
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/observe",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "note": "every warning and error of the last hour; the full log (with tracebacks and Ask) is the System Log below",
+    "frame": {
+     "span": [
+      8,
+      6
+     ]
+    }
+   },
+   "at": [
+    0,
+    2
+   ],
+   "span": [
+    8,
+    6
+   ],
+   "hidden": false,
+   "refresh": "15s",
+   "floated": false
+  },
+  {
+   "record": {
+    "id": "obs-errors-by-cap",
+    "form": "ranked",
+    "source": "syslog.error_summary",
+    "title": "Warnings and errors · by capability",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "values": "by_cap",
+      "name": "name",
+      "value": "count"
+     }
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/observe",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "frame": {
+     "span": [
+      4,
+      6
+     ]
+    }
+   },
+   "at": [
+    8,
+    2
+   ],
+   "span": [
+    4,
+    6
+   ],
+   "hidden": false,
+   "refresh": "30s",
+   "floated": false
+  },
   {
    "record": {
     "place": "dashboard",
@@ -51,7 +315,7 @@
    },
    "at": [
     0,
-    0
+    8
    ],
    "span": [
     3,
@@ -90,7 +354,7 @@
    },
    "at": [
     3,
-    0
+    8
    ],
    "span": [
     2,
@@ -136,7 +400,7 @@
    },
    "at": [
     5,
-    0
+    8
    ],
    "span": [
     4,
@@ -175,7 +439,7 @@
    },
    "at": [
     9,
-    0
+    8
    ],
    "span": [
     3,
@@ -214,7 +478,7 @@
      "size": "l",
      "span": [
       6,
-      5
+      6
      ]
     },
     "draw": {
@@ -223,11 +487,11 @@
    },
    "at": [
     0,
-    2
+    10
    ],
    "span": [
     6,
-    5
+    6
    ],
    "hidden": false,
    "refresh": "15s",
@@ -267,17 +531,17 @@
      "size": "l",
      "span": [
       6,
-      5
+      6
      ]
     }
    },
    "at": [
     6,
-    2
+    10
    ],
    "span": [
     6,
-    5
+    6
    ],
    "hidden": false,
    "refresh": "15s",
@@ -340,20 +604,20 @@
      }
     ],
     "frame": {
-     "size": "l",
+     "size": "xl",
      "span": [
       12,
-      4
+      6
      ]
     }
    },
    "at": [
     0,
-    7
+    16
    ],
    "span": [
     12,
-    4
+    6
    ],
    "hidden": false,
    "refresh": "15s",
@@ -362,23 +626,25 @@
   {
    "record": {
     "id": "obs-stream",
-    "form": "log",
-    "source": "stream:events",
-    "shape": "events",
+    "form": "element",
+    "source": "",
+    "shape": "panel",
     "title": "Live Event Stream",
     "read": {
-     "refresh": "live"
+     "refresh": ""
     },
     "frame": {
      "size": "xl",
      "span": [
       6,
-      6
+      10
      ],
      "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "tag": "vera-live-event-stream",
+     "attrs": {}
     },
     "actions": [
      "dive",
@@ -386,40 +652,42 @@
      "ask"
     ],
     "place": "dashboard",
-    "note": "stays the page's: a live stream (not a capability the element can read) with its own controls"
+    "note": "the live event stream as its element (<vera-live-event-stream>, its own socket, filters and Err view) - no longer the page's hand-drawn feed"
    },
    "at": [
     0,
-    11
+    22
    ],
    "span": [
     6,
-    6
+    10
    ],
    "hidden": false,
-   "refresh": "live",
+   "refresh": "",
    "floated": false
   },
   {
    "record": {
     "id": "obs-syslog",
-    "form": "composite",
-    "source": "stream:log",
-    "shape": "composite",
+    "form": "element",
+    "source": "",
+    "shape": "panel",
     "title": "System Log",
     "read": {
-     "refresh": "live"
+     "refresh": ""
     },
     "frame": {
      "size": "xl",
      "span": [
       6,
-      6
+      10
      ],
-     "max_body": 80
+     "max_body": null
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "tag": "vera-system-log",
+     "attrs": {}
     },
     "actions": [
      "dive",
@@ -427,51 +695,18 @@
      "ask"
     ],
     "place": "dashboard",
-    "layout": "rows",
-    "children": [
-     {
-      "slot": "log",
-      "record": {
-       "id": "obs-syslog:log",
-       "form": "log",
-       "source": "stream:log",
-       "title": "system log",
-       "shape": "events"
-      }
-     },
-     {
-      "slot": "monitor",
-      "record": {
-       "id": "obs-syslog:monitor",
-       "form": "pills",
-       "source": "stream:log",
-       "title": "LLM monitor",
-       "shape": "values"
-      }
-     },
-     {
-      "slot": "ask",
-      "record": {
-       "id": "obs-syslog:ask",
-       "form": "ask",
-       "source": "chat.ask",
-       "title": "ask",
-       "shape": "string"
-      }
-     }
-    ],
-    "note": "stays the page's: a live stream (not a capability the element can read) with its own controls"
+    "note": "the system log as its element (<vera-system-log>: level/category/keyword filters, tracebacks, the LLM monitor, Ask) - no longer the page's hand-drawn log"
    },
    "at": [
     6,
-    11
+    22
    ],
    "span": [
     6,
-    6
+    10
    ],
    "hidden": false,
-   "refresh": "live",
+   "refresh": "",
    "floated": false
   }
  ]

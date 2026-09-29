@@ -45,10 +45,10 @@ select option{background:var(--bg2,#272421)}
 .entry-header{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .level{font-size:9.5px;font-weight:700;font-family:var(--mono,'JetBrains Mono',monospace);text-transform:uppercase;letter-spacing:.5px;flex-shrink:0}
 .level.ERROR{color:var(--err,#c96b6b)}.level.WARNING{color:var(--warn,#c9a35a)}.level.INFO{color:var(--acc2,#8fb87a)}.level.DEBUG{color:var(--dim2,#8a7e70)}
-.entry-cap{font-size:10px;font-family:var(--mono,'JetBrains Mono',monospace);color:var(--acc2,#8fb87a);font-weight:600}
-.entry-ts{font-size:8px;color:var(--dim2,#8a7e70);margin-left:auto;font-family:var(--mono,'JetBrains Mono',monospace)}
-.entry-msg{font-size:10px;color:var(--text,#ddd5c8);margin-top:3px;line-height:1.5;word-break:break-word}
-.entry-detail{display:none;font-size:9px;color:var(--dim2,#8a7e70);margin-top:4px;white-space:pre-wrap;word-break:break-all;background:var(--bg0,#181614);padding:6px;border-radius:3px;border:1px solid var(--border,#3a3530);max-height:180px;overflow-y:auto;user-select:text;-webkit-user-select:text;cursor:text}
+.entry-cap{font-size:11px;font-family:var(--mono,'JetBrains Mono',monospace);color:var(--acc2,#8fb87a);font-weight:600}
+.entry-ts{font-size:9.5px;color:var(--dim2,#8a7e70);margin-left:auto;font-family:var(--mono,'JetBrains Mono',monospace)}
+.entry-msg{font-size:12px;color:var(--text,#ddd5c8);margin-top:3px;line-height:1.5;word-break:break-word}
+.entry-detail{display:none;font-size:10.5px;color:var(--dim2,#8a7e70);margin-top:4px;white-space:pre-wrap;word-break:break-all;background:var(--bg0,#181614);padding:6px;border-radius:3px;border:1px solid var(--border,#3a3530);max-height:180px;overflow-y:auto;user-select:text;-webkit-user-select:text;cursor:text}
 .entry.expanded .entry-detail{display:block}
 .entry-traceback{font-size:9px;color:var(--err,#c96b6b);margin-top:3px;white-space:pre-wrap;font-family:var(--mono,'JetBrains Mono',monospace);max-height:140px;overflow-y:auto;background:rgba(201,107,107,.05);padding:4px;border-radius:3px;user-select:text;-webkit-user-select:text;cursor:text}
 .footer{border-top:1px solid var(--border,#3a3530);padding:6px 8px;background:var(--bg1,#1f1d1a);display:flex;flex-direction:column;gap:5px;flex-shrink:0}
@@ -70,6 +70,7 @@ textarea{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);co
     <span class="meta" id="autoLabel"></span>
     <select id="levelSel">
       <option value="">All levels</option>
+      <option value="CRITICAL">CRITICAL</option>
       <option value="ERROR">ERROR</option>
       <option value="WARNING">WARNING</option>
       <option value="INFO">INFO</option>
@@ -150,6 +151,12 @@ textarea{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);co
           if (ev.type === 'syslog.monitor_report') this._handleMonitorReport(ev);
         }
       });
+
+      // a tile can open the log filtered (level="ERROR") and following it (auto) - the Observe page's errors-first view;
+      // without the attributes it opens as it always has
+      const lv = String(this.getAttribute('level') || '').toUpperCase();
+      if (lv && [...$('levelSel').options].some(o => o.value === lv)) $('levelSel').value = lv;
+      if (this.hasAttribute('auto')) setTimeout(() => { if (!this._autoTimer) this._toggleAuto(); }, 300);
 
       setTimeout(() => this.load(), 200);
     }
