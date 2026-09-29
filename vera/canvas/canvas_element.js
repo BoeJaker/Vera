@@ -356,7 +356,8 @@
           + `</span></div>`;
       });
       const years = y1 > y0 ? y0 + '\u2013' + y1 : String(y0);
-      return `<div class="vc-tl"><div class="vc-tl-h"><b>${esc(c.title || 'Timeline')}</b><small>${ev.length} event${ev.length === 1 ? '' : 's'} \u00b7 ${esc(years)}</small></div>`
+      // the card's own header carries the title; the body says how much and over what span
+      return `<div class="vc-tl"><div class="vc-tl-h"><small>${ev.length} event${ev.length === 1 ? '' : 's'} \u00b7 ${esc(years)}</small></div>`
         + (ev.length > 1 ? axis : '') + `<div class="vc-tl-list">${out}</div></div>`;
     },
     /* A PAGE THE RESEARCH READ. The run already knows every page it fetched - the research card has listed them

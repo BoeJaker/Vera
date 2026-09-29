@@ -63,6 +63,8 @@ const cv = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.
   t('its pages carry the text it read', m.content.items[0].text && m.content.items[0].text.length > 200);
   t('a page it could not read says so', m.content.items[2].meta.status === 'could not be read');
   t('the links it found but did not read follow, marked', m.content.items.length === 4 && m.content.items[3].meta.status === 'found, not read');
+  const esc2 = ctx.S({ sources: [{ url: 'https://a.org/x', title: 'Features, Performance &amp; Use Cases', text: long }, { url: 'https://b.org/y', title: 'B &quot;q&quot;', text: long }] });
+  t('a search engine\'s escaped title reads as text', esc2.content.items[0].title === 'Features, Performance & Use Cases' && esc2.content.items[1].title === 'B "q"', esc2.content.items[0].title);
   t('titled with the question', m.content.title === 'Research · vector databases' && /2 pages read · 2 more found/.test(m.content.why));
   const plain = ctx.S({ results: [{ url: 'https://a.org', title: 'A' }, { url: 'https://b.org', title: 'B' }] });
   t('a short search with no text is still its cards', Array.isArray(plain) && plain.length === 2);

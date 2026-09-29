@@ -9702,6 +9702,38 @@ async def cap_entity_graph_extract_record(record_id: str, trace_id=None) -> Dict
             "entity_count": len(entities), "persisted": persisted}
 
 
+async def _record_row_any(record_id: str) -> Optional[Dict]:
+    """A fabric record by id wherever it is kept: the local SQLite first (where the record_match/summarise reads always
+    looked), then Postgres - a record fabric.query returns can live in either (measured 2026-09-30: a record the canvas
+    listed was in Postgres only, so its neighbours and details came back 'not found'), and memory.read already looks in
+    both. Returns the row as a dict (id, dataset_id, text, data, source_id, tags, created_at) or None."""
+    loop = asyncio.get_running_loop()
+
+    def _fetch():
+        conn = _sqlite_conn()
+        try:
+            row = conn.execute("SELECT * FROM fabric_records WHERE id=? LIMIT 1", (record_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+    try:
+        rec = await loop.run_in_executor(None, _fetch)
+    except Exception:
+        rec = None
+    if rec:
+        return rec
+    if getattr(FABRIC_PG, "_pool", None) is not None:
+        try:
+            got = await asyncio.wait_for(FABRIC_PG.get_by_ids([record_id]), timeout=6)
+            raw = (got or {}).get(record_id)
+            if raw is not None:
+                return {"id": raw.id, "dataset_id": raw.dataset_id, "text": raw.text or "", "data": raw.data or {},
+                        "source_id": raw.source or "", "tags": raw.tags or [], "created_at": raw.created_at or ""}
+        except Exception as e:
+            log.debug("record row from postgres: %s", e)
+    return None
+
+
 @capability(
     "fabric.loom.record_match",
     http_method="POST", http_path="/fabric/loom/record_match",
@@ -9730,18 +9762,8 @@ async def cap_loom_record_match(
 
     await _emit("loading", message=f"Loading record {record_id[:24]}...")
 
-    # Fetch the source record
-    loop = asyncio.get_running_loop()
-    def _fetch():
-        conn = _sqlite_conn()
-        try:
-            row = conn.execute(
-                "SELECT * FROM fabric_records WHERE id=? LIMIT 1", (record_id,)
-            ).fetchone()
-            return dict(row) if row else None
-        finally:
-            conn.close()
-    rec = await loop.run_in_executor(None, _fetch)
+    # Fetch the source record (SQLite, then Postgres - see _record_row_any)
+    rec = await _record_row_any(record_id)
     if not rec:
         return {"error": f"Record {record_id} not found"}
 
@@ -9813,23 +9835,22 @@ async def cap_loom_record_match(
 async def cap_record_get(record_id: str, offset: int = 0, max_chars: int = 8000, trace_id=None) -> Dict:
     if not record_id:
         return {"error": "record_id required"}
-    loop = asyncio.get_running_loop()
-
-    def _fetch():
-        conn = _sqlite_conn()
-        try:
-            row = conn.execute("SELECT * FROM fabric_records WHERE id=? LIMIT 1", (record_id,)).fetchone()
-            rec = dict(row) if row else None
-            if rec and rec.get("source_id"):
-                s = conn.execute("SELECT id, source_type, url, label FROM fabric_sources WHERE id=? LIMIT 1",
-                                 (rec["source_id"],)).fetchone()
-                rec["_source"] = dict(s) if s else None
-            return rec
-        finally:
-            conn.close()
-    rec = await loop.run_in_executor(None, _fetch)
+    rec = await _record_row_any(record_id)          # SQLite, then Postgres
     if not rec:
         return {"error": f"Record {record_id} not found"}
+    if rec.get("source_id"):
+        def _src():
+            conn = _sqlite_conn()
+            try:
+                s = conn.execute("SELECT id, source_type, url, label FROM fabric_sources WHERE id=? LIMIT 1",
+                                 (rec["source_id"],)).fetchone()
+                return dict(s) if s else None
+            finally:
+                conn.close()
+        try:
+            rec["_source"] = await asyncio.get_running_loop().run_in_executor(None, _src)
+        except Exception:
+            rec["_source"] = None
 
     def _js(v, dflt):
         if isinstance(v, (dict, list)):
