@@ -827,8 +827,11 @@
     return true;
   }
   function _hdrDrop(){ if(_hdrBar){ try{ _hdrBar.removeAttribute('data-vpb-hdr-bar'); }catch(e){} } if(_hdrMO){ try{ _hdrMO.disconnect(); }catch(e){} _hdrMO = null; } _hdrBar = null; _hdrSig = ''; }
+  // the harness has answered an offer (either way): until it has, the offer is sent again even with an unchanged signature -
+  // an offer the harness could not place yet was dropped there and never re-sent (the chat's bar, 2026-09-29)
+  var _hdrHeard = false;
   function _hdrCheck(){
-    if(_hdrBar && _hdrBarShown(_hdrBar)){ _hdrOffer(); return; }
+    if(_hdrBar && _hdrBarShown(_hdrBar)){ _hdrOffer(!_hdrHeard); return; }
     var had = !!_hdrBar; _hdrDrop(); _hdrFind();
     if(!_hdrBar && had){ try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: [] }, '*'); }catch(e){} _hdrKid = null; if(typeof _hdrRelay === 'function') _hdrRelay(); }
   }
@@ -907,7 +910,7 @@
     window.addEventListener('message', function(ev){
       var d = ev.data; if(!d || typeof d !== 'object' || ev.source !== window.parent) return;
       if(!_hdrBar && _hdrKid && (d.type === 'vera:hdr:absorbed' || d.type === 'vera:hdr:act')){ try{ _hdrKid.win.postMessage(d, '*'); }catch(e){} return; }
-      if(d.type === 'vera:hdr:absorbed'){ document.documentElement.classList.toggle('vpb-hdr-absorbed', !!d.on); if(d.on) _hdrOffer(true); return; }
+      if(d.type === 'vera:hdr:absorbed'){ _hdrHeard = true; document.documentElement.classList.toggle('vpb-hdr-absorbed', !!d.on); if(d.on) _hdrOffer(true); return; }
       if(d.type !== 'vera:hdr:act' || !_hdrBar) return;
       var el = _hdrBar.querySelector('[data-vpb-hid="' + String(d.hid || '').replace(/["\\]/g, '') + '"]'); if(!el) return;
       var v = d.value;

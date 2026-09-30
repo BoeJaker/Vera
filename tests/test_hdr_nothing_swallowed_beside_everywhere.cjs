@@ -26,7 +26,7 @@ t('the harness draws a tab proxy as a tab', /\(it\.tab \? ' hp-tab' : ''\)/.test
 t('a bar whose pane is hidden is let go and the shown pane\'s found', /function _hdrBarShown\(b\)\{/.test(BR) && /var had = !!_hdrBar; _hdrDrop\(\); _hdrFind\(\);/.test(BR));
 t('...looked at again after every click, not only on the interval', /document\.addEventListener\('click', function\(\)\{ clearTimeout\(_hdrCT\); _hdrCT = setTimeout\(_hdrCheck, 220\); \}, true\);/.test(BR));
 t('no bar left: the harness is told the bar is empty, and a shown child\'s bar is relayed instead', /groups: \[\] \}, '\*'\); \}catch\(e\)\{\} _hdrKid = null; if\(typeof _hdrRelay === 'function'\) _hdrRelay\(\);/.test(BR));
-t('the harness drops an empty offer rather than holding a stale bar', /if\(!Array\.isArray\(d\.groups\) \|\| !d\.groups\.length\)\{ if\(_hdrOffers\[pid\]\)\{ delete _hdrOffers\[pid\]; _hdrSync\(\); \} return; \}/.test(HAR));
+t('the harness drops an empty offer rather than holding a stale bar', /if\(!Array\.isArray\(d\.groups\) \|\| !d\.groups\.length\)\{ if\(_hdrOffers\[pid\]\)\{ if\(_hdrOffers\[pid\]\.absorbed\)\{ try\{ e\.source\.postMessage\(\{ type: 'vera:hdr:absorbed', on: false \}, '\*'\); \}catch\(_\)\{\} \} delete _hdrOffers\[pid\]; _hdrSync\(\); \} return; \}/.test(HAR)   /* 2026-09-29: and the panel is told it is no longer held */);
 
 // ── 3. what does not fit the header is still one press away ──
 t('groups that do not fit go into a harness-drawn ⋯ when the panel has no ⋯ of its own',

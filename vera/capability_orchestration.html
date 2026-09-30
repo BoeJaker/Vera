@@ -2774,7 +2774,9 @@ window.addEventListener('message', e => {
   const d = e.data; if(!d || typeof d !== 'object' || d.type !== 'vera:hdr:offer' || !e.source) return;
   const pid = _panelIdOfSource(e.source); if(!pid) return;
   const prev = _hdrOffers[pid] || {};
-  if(!Array.isArray(d.groups) || !d.groups.length){ if(_hdrOffers[pid]){ delete _hdrOffers[pid]; _hdrSync(); } return; }
+  // an offer withdrawn: the panel is TOLD it no longer is held, or it keeps its own bar folded with nothing standing in
+  // for it here (the chat's controls vanished from both bars, 2026-09-29)
+  if(!Array.isArray(d.groups) || !d.groups.length){ if(_hdrOffers[pid]){ if(_hdrOffers[pid].absorbed){ try{ e.source.postMessage({ type: 'vera:hdr:absorbed', on: false }, '*'); }catch(_){} } delete _hdrOffers[pid]; _hdrSync(); } return; }
   _hdrOffers[pid] = { src: e.source, title: String(d.title || ''), groups: d.groups.slice(0, 40), absorbed: prev.absorbed };
   _hdrSync();
 });
@@ -2852,7 +2854,8 @@ function _hdrOverClose(host, keep){
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hook, { once: true }); else hook(); }
 function _hdrSync(){
   const hdr = document.querySelector('body > header'); if(!hdr) return;
-  Object.keys(_hdrOffers).forEach(k => { if(!_panelIdOfSource(_hdrOffers[k].src)) delete _hdrOffers[k]; });   // its frame is gone
+  // its frame is gone - or no longer among the panels'; if it is still there it hears that its bar is its own again
+  Object.keys(_hdrOffers).forEach(k => { const o = _hdrOffers[k]; if(!_panelIdOfSource(o.src)){ if(o.absorbed){ try{ o.src.postMessage({ type: 'vera:hdr:absorbed', on: false }, '*'); }catch(_){} } delete _hdrOffers[k]; } });
   const pid = [..._openTabs][0] || '';
   const off = pid ? _hdrOffers[pid] : null;
   Object.keys(_hdrOffers).forEach(k => { const o = _hdrOffers[k], on = (k === pid);

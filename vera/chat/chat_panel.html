@@ -1445,7 +1445,7 @@ html[data-blocks="off"] .cmp-strip{background:transparent;border-color:transpare
 html[data-blocks="off"] .pa-att{background:transparent}
 </style>
 <script>/* the chat embedded in parts (the Canvas board): ?only=menu is the rail + quick menus alone (a host's LHM slot); ?only=chat is everything but them; harness=yes = the host's ☰ above the rail does the top-level menu */
-(function(){ try{ var q=new URLSearchParams(location.search); var o=q.get('only')||''; if(o==='menu'||o==='chat') document.documentElement.setAttribute('data-only', o); if(q.get('harness')==='yes') document.documentElement.setAttribute('data-harness','yes'); if(q.get('embed')==='1') document.documentElement.setAttribute('data-embed',''); var de=document.documentElement; de.classList.add('vboot'); document.addEventListener('DOMContentLoaded', function(){ setTimeout(function(){ de.classList.remove('vboot'); }, 5000); }); if(q.get('harness')==='yes'&&o==='chat') de.classList.add('hdr-absorbed'); try{ var mo=JSON.parse(localStorage.getItem('vera:chat:motion')||'{}')||{}; de.setAttribute('data-cursor', mo.cursor||'bar'); de.setAttribute('data-reply', mo.reply||'rise'); de.setAttribute('data-capanim', mo.caps||'slide'); if((mo.run||'shimmer')!=='dot') de.setAttribute('data-caprun', mo.run||'shimmer'); }catch(_){} }catch(e){} })();</script>
+(function(){ try{ var q=new URLSearchParams(location.search); var o=q.get('only')||''; if(o==='menu'||o==='chat') document.documentElement.setAttribute('data-only', o); if(q.get('harness')==='yes') document.documentElement.setAttribute('data-harness','yes'); if(q.get('embed')==='1') document.documentElement.setAttribute('data-embed',''); var de=document.documentElement; de.classList.add('vboot'); document.addEventListener('DOMContentLoaded', function(){ setTimeout(function(){ de.classList.remove('vboot'); }, 5000); }); if(q.get('harness')==='yes'&&o==='chat'){ de.classList.add('hdr-absorbed'); /* folded before the page draws so the bar never flashes - and given back HERE if the harness never answers: the fallback in _hdrOfferMount never ran when init stopped before it, and the bar stayed folded with nothing in the harness's (2026-09-29) */ var _hdrHeard0=false; window.addEventListener('message', function(e){ var d=e.data; if(d&&d.type==='vera:hdr:absorbed'&&e.source===window.parent) _hdrHeard0=true; }); setTimeout(function(){ if(!_hdrHeard0) de.classList.remove('hdr-absorbed'); }, 9000); } try{ var mo=JSON.parse(localStorage.getItem('vera:chat:motion')||'{}')||{}; de.setAttribute('data-cursor', mo.cursor||'bar'); de.setAttribute('data-reply', mo.reply||'rise'); de.setAttribute('data-capanim', mo.caps||'slide'); if((mo.run||'shimmer')!=='dot') de.setAttribute('data-caprun', mo.run||'shimmer'); }catch(_){} }catch(e){} })();</script>
 <style id="designChrome">
 /* ═══ THE CHAT'S CHROME AS THE CANVAS BOARD DRAWS IT (the design landing) ═══════════════════════════════════════
    The board's own rules ([data-board="main"] …) on this page's markup: the theme carries the tokens (--t1..3, --s1..3,
@@ -15392,6 +15392,14 @@ function _embedMount(){
     const fold=(k,sel,label)=>{ const el=bar.querySelector(sel); if(!el) return false; const w=el.getBoundingClientRect().width; const hold=document.createElement('span'); hold.className='tb-hold'; hold.dataset.for=k; hold.hidden=true; el.parentNode.insertBefore(hold, el);
       const row=document.createElement('div'); row.className='ts-row ts-folded'; row.dataset.fold=k; const kk=document.createElement('span'); kk.className='ts-k'; kk.textContent=label; row.appendChild(kk); row.appendChild(el); const note=sheet.querySelector('.ts-note'); sheet.insertBefore(row, note?note.nextSibling:sheet.firstChild); _folded.push({k, w, hold, row, el}); return true; };
     const unfold=(f)=>{ if(f.hold.parentNode) f.hold.parentNode.insertBefore(f.el, f.hold); f.hold.remove(); f.row.remove(); _folded=_folded.filter(x=>x!==f); };
+    /* NOTHING FOLDS UNSEEN, AND NOTHING STAYS FOLDED WHILE THE HARNESS HOLDS THE BAR (2026-09-29, "the chat ui top bar is
+       not absorbing into the harness top bar reliably"). A chat that loaded on a hidden tab measured its bar 0 wide, took
+       every group for overflow and folded pages / explode views / density into the sheet - and a group only came back
+       when the bar measured room for it, which a bar folded away for the harness never does: those controls were in
+       neither bar (the harness showed 7 of 10 groups). A bar with no width is not laid out, so it is left alone; a bar the
+       harness holds gets every group back - the harness's own bar decides what fits there, and offers the rest in its ⋯. */
+    if(!bar.clientWidth) return;
+    if(document.documentElement.classList.contains('hdr-absorbed')){ while(_folded.length) unfold(_folded[_folded.length-1]); document.body.classList.remove('hdr-folded'); return; }
     for(const [k,sel,label] of _FOLD_ORDER){ if(!over()) break; if(_folded.some(f=>f.k===k)) continue; fold(k,sel,label); }
     // the room came back: the last group folded returns when its width fits, and stays if that overflows again
     let guard=0; while(_folded.length&&guard++<3){ const f=_folded[_folded.length-1]; if(bar.clientWidth-bar.scrollWidth<=f.w+24) break; unfold(f); if(over()){ fold(f.k, _FOLD_ORDER.find(o=>o[0]===f.k)[1], _FOLD_ORDER.find(o=>o[0]===f.k)[2]); break; } }
@@ -15923,7 +15931,10 @@ function _embedMount(){
     const bar=document.getElementById('topBar'); if(!bar||bar._hdrOffer) return; bar._hdrOffer=true;
     try{ new MutationObserver(_hdrOfferSoon).observe(bar, { subtree:true, childList:true, characterData:true, attributes:true, attributeFilter:['class','style','hidden','title'] }); }catch(_){}
     bar.addEventListener('change', _hdrOfferSoon, true);
-    setInterval(()=>_hdrOffer(), 4000);   // a cheap re-read: the signature decides whether anything is sent
+    /* a cheap re-read: the signature decides whether anything is sent - EXCEPT until the harness has answered. An offer the
+       harness could not place yet (its frame not yet among the panels') was dropped there, and with the same signature it
+       was never sent again: the chat's bar stayed folded and the harness's held nothing of it (2026-09-29). */
+    setInterval(()=>_hdrOffer(!_hdrAck), 4000);
     window.addEventListener('message', ev=>{
       const d=ev.data; if(!d||typeof d!=='object'||ev.source!==window.parent) return;
       if(d.type==='vera:hdr:absorbed'){ _hdrAck=true; document.documentElement.classList.toggle('hdr-absorbed', !!d.on); if(d.on) _hdrOffer(true); return; }
