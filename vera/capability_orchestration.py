@@ -1613,7 +1613,32 @@ except Exception:  # pragma: no cover
 # that were green on bleeding-edge, and five thousand gate tests reading prod. The prod process never arms (the guard
 # says '' outside a sandbox) and a served sandbox behaves exactly as before.
 _READ_THROUGH_URL = ""
-_READ_THROUGH_TIMEOUT_S = float(os.environ.get("VERA_UPSTREAM_READ_TIMEOUT_S") or 40)   # seconds prod gets to answer one reading
+# Seconds prod gets to answer one reading. It was 40: a browser holds about six requests to one origin, and while prod
+# was slow six tiles waiting 40 s each left the whole sandbox page unanswered. topology.snapshot, the slowest reading
+# (~11 s), now caps each of its sources at 4 s.
+_READ_THROUGH_TIMEOUT_S = float(os.environ.get("VERA_UPSTREAM_READ_TIMEOUT_S") or 20)
+_READ_THROUGH_CONNECT_S = 3.0      # an unreachable prod fails at once rather than after the read timeout
+# After a reading fails to reach prod (timeout, refused, TLS), the sandbox answers locally for this long before it
+# tries prod again: a slow prod gets one wave of readings, not every tile of every refresh piled onto it. There is no
+# retry; a reading that could not be read through is answered by the local capability, as before.
+_READ_THROUGH_BACKOFF_S = 30.0
+_READ_THROUGH_DOWN_UNTIL = 0.0
+# One pooled client per event loop: a new client per reading was a fresh TLS handshake per tile (py-spy on the mirror
+# showed a harness load idle in handshakes).
+_READ_THROUGH_CLIENT = None
+_READ_THROUGH_CLIENT_LOOP = None
+
+
+def _read_through_client():
+    global _READ_THROUGH_CLIENT, _READ_THROUGH_CLIENT_LOOP
+    loop = asyncio.get_running_loop()
+    if _READ_THROUGH_CLIENT is None or _READ_THROUGH_CLIENT_LOOP is not loop or _READ_THROUGH_CLIENT.is_closed:
+        _READ_THROUGH_CLIENT = httpx.AsyncClient(
+            verify=False,
+            timeout=httpx.Timeout(_READ_THROUGH_TIMEOUT_S, connect=_READ_THROUGH_CONNECT_S),
+            limits=httpx.Limits(max_connections=16, max_keepalive_connections=8))
+        _READ_THROUGH_CLIENT_LOOP = loop
+    return _READ_THROUGH_CLIENT
 
 
 def arm_read_through(env=None) -> str:
@@ -1632,13 +1657,21 @@ def read_through_url() -> str:
 async def _upstream_read(name: str, kw: dict):
     """One read of prod's estate from a sandbox (sandbox_guard.read_through_allowed said yes): prod's /mcp/call,
     the arguments as given, no trace of ours. None when prod could not answer — the local capability runs then."""
+    global _READ_THROUGH_DOWN_UNTIL
+    if time.monotonic() < _READ_THROUGH_DOWN_UNTIL:
+        return None                     # prod failed a reading moments ago: answer locally, don't queue onto it
     args = {k: v for k, v in (kw or {}).items() if k != "trace_id"}
     try:
-        # a reading can be slow on the estate itself (topology.snapshot walks every node: ~11 s on prod, longer while a
-        # dashboard of seventeen tiles reads at once) - waiting beats answering from the sandbox's empty stores
-        async with httpx.AsyncClient(verify=False, timeout=_READ_THROUGH_TIMEOUT_S) as c:
-            r = await c.post(_READ_THROUGH_URL, json={"name": name, "arguments": args, "caller_kind": "sandbox-read"},
-                             headers={"X-Vera-Read-Through": "sandbox"})
+        try:
+            r = await _read_through_client().post(
+                _READ_THROUGH_URL, json={"name": name, "arguments": args, "caller_kind": "sandbox-read"},
+                headers={"X-Vera-Read-Through": "sandbox"})
+        except httpx.TransportError as e:   # timeout, refused, reset, TLS - prod did not answer
+            if time.monotonic() >= _READ_THROUGH_DOWN_UNTIL:
+                log.warning("read-through %s: prod did not answer (%s: %s) - answering locally for %gs",
+                            name, type(e).__name__, e, _READ_THROUGH_BACKOFF_S)
+            _READ_THROUGH_DOWN_UNTIL = time.monotonic() + _READ_THROUGH_BACKOFF_S
+            return None
         if r.status_code != 200:
             return None
         j = r.json()
