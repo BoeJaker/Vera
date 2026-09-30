@@ -14518,6 +14518,19 @@ except Exception:                                     # pragma: no cover
                     "create a second copy at the workspace root")
 
 
+try:
+    from Vera.vera.dag import rewrite_intent_core as _rewrite_intent_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import rewrite_intent_core as _rewrite_intent_core
+
+
+def _v5_step_text_for_route(step: Dict[str, Any], goal: str) -> str:
+    """What the write router reads as the step's intent: its title AND goal (a
+    recovery step's 'Re-author ... from scratch' is in its title)."""
+    s = step or {}
+    return (str(s.get("title") or "") + "\n" + str(s.get("goal") or goal or "")).strip()
+
+
 def _v5_route_write_call(
     tool: str, args: Any, *, artifacts: Dict[str, Dict[str, Any]], catalog_set: set,
     proven_redirects: int, code_write_redirects: int,
@@ -14558,8 +14571,13 @@ def _v5_route_write_call(
     # file. Route to code.edit (shows the coder the CURRENT file, applies a
     # targeted change) instead of discarding working code on the chance the
     # next generation is as good — live-observed it frequently is not.
+    # ...unless the step ASKS for a rewrite: "ran ok" is rc=0, not "was right"
+    # (census 2026-09-30 analyse-data: a script that printed std 0.00 for 200
+    # random numbers was 'proven', and the recovery step's from-scratch
+    # re-author was forced back into the edits that had corrupted it).
     if (tool == "code.author" and "code.edit" in catalog_set
-            and proven_redirects < max_proven_redirects):
+            and proven_redirects < max_proven_redirects
+            and not _rewrite_intent_core.rewrite_asked(step_goal)):
         tp = _v5_art_key(str(args.get("path") or ""))
         if tp and _v5_path_is_proven(artifacts, tp):
             return {
@@ -16176,7 +16194,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 proven_redirects=proven_redirects, code_write_redirects=code_write_redirects,
                 max_proven_redirects=_MAX_PROVEN_REDIRECTS,
                 max_code_write_redirects=_MAX_CODE_WRITE_REDIRECTS,
-                step_goal=(step.get("goal") or goal), saved_run_files=saved_run_files,
+                step_goal=_v5_step_text_for_route(step, goal), saved_run_files=saved_run_files,
                 session_id=sid)
             if _hroute:
                 if _hroute["budget"] == "proven":
@@ -17930,7 +17948,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 proven_redirects=proven_redirects, code_write_redirects=code_write_redirects,
                 max_proven_redirects=_MAX_PROVEN_REDIRECTS,
                 max_code_write_redirects=_MAX_CODE_WRITE_REDIRECTS,
-                step_goal=(step.get("goal") or goal), saved_run_files=saved_run_files,
+                step_goal=_v5_step_text_for_route(step, goal), saved_run_files=saved_run_files,
                 session_id=sid)
         else:
             _route = None
