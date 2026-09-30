@@ -208,6 +208,13 @@ def _normalize_target(kind: str, t: Dict[str, Any]) -> Dict[str, Any]:
         if style and style not in census_plan_styles():
             raise ValueError("census plan_style must be one of: %s" % ", ".join(census_plan_styles()))
         t["plan_style"] = style
+        # The loop's intent core forced on every goal (the harness's
+        # CENSUS_INTENT_CORE, roadmap G): its own series, <template>-core-order-runN.
+        # "" / "off" = the loop default - the baseline series.
+        core = str(t.get("intent_core") or "").strip().lower()
+        if core and core not in CENSUS_INTENT_CORES:
+            raise ValueError("census intent_core must be one of: %s" % ", ".join(CENSUS_INTENT_CORES))
+        t["intent_core"] = "" if core in ("", "off") else core
     elif kind == "suite":
         if not str(t.get("tag") or "").strip():
             raise ValueError("a suite schedule needs target.tag")
@@ -269,6 +276,10 @@ def _normalize_target(kind: str, t: Dict[str, Any]) -> Dict[str, Any]:
     return t
 
 
+#: The intent-core modes a census may force (dag/intent_core_core.MODES).
+CENSUS_INTENT_CORES = ("off", "order")
+
+
 def census_plan_styles() -> List[str]:
     """The loop's planning styles a census may force (planner_styles.LOOP_STYLES)."""
     try:
@@ -285,7 +296,8 @@ def cap_denied(name: str) -> bool:
 
 def _default_title(kind: str, t: Dict[str, Any]) -> str:
     return {"census": f"Census · {t.get('template', 'default')}"
-                      + (f" · {t['plan_style']} planning" if t.get("plan_style") else ""),
+                      + (f" · {t['plan_style']} planning" if t.get("plan_style") else "")
+                      + (f" · intent core {t['intent_core']}" if t.get("intent_core") else ""),
             "suite": f"Suite · {t.get('tag', '')}",
             "task": f"Task · {t.get('id', '')}",
             "pipeline": f"Pipeline {t.get('action', '')} · {t.get('id') or t.get('branch', '')}",
