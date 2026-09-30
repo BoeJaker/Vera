@@ -5106,7 +5106,7 @@ async def _bus_worker():
             while _BUS_ENABLED:
                 try:
                     msgs = await redis.xreadgroup(
-                        group, consumer, {stream: ">"}, count=20, block=5000)
+                        group, consumer, {stream: ">"}, count=20, block=_orch.STREAM_BLOCK_MS)
                 except Exception as e:
                     log.warning("data_fabric: bus read: %s", e)
                     break
