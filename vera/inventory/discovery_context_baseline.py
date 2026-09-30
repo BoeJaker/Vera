@@ -113,6 +113,12 @@ CURRENT_COMPONENTS = (
         "none", "vera.discovery-context-benchmark.v1",
         ("discovery.orchestration", "context.enrichment-ledger")),
     DiscoveryContextComponent(
+        "discovery.context-orchestration", "route",
+        "vera/discovery_context_orchestration.py",
+        "async def run_discovery_context_route", "discovery_contract",
+        "async_local", "cpu", "vera.discovery-context-route-report.v1",
+        ("discovery.orchestration", "context.registry")),
+    DiscoveryContextComponent(
         "context.portable", "context", "vera/context_provider.py",
         "class ContextProvider(Protocol)", "context_provider", "provider_injected",
         "cpu", "vera.context-item.v1"),
@@ -218,7 +224,6 @@ CURRENT_COMPONENTS = (
 
 
 CURRENT_GAPS = (
-    "discovery_does_not_share_context_registry_selection",
     "live_source_and_accelerator_evidence_is_not_part_of_this_offline_baseline",
 )
 
