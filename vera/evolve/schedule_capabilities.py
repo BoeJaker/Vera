@@ -286,7 +286,7 @@ def _clear_own_control_sync() -> None:
                         _ctl.make_control("resume", reason="scheduler: clearing its own control before a new run", by=_BY))
 
 
-def _launch_census_sync(template: str, plan_style: str = "") -> Dict[str, Any]:
+def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = "") -> Dict[str, Any]:
     d = Path(_CENSUS_DIR)
     _clear_own_control_sync()
     env = dict(os.environ)
@@ -298,6 +298,10 @@ def _launch_census_sync(template: str, plan_style: str = "") -> Dict[str, Any]:
     env.pop("CENSUS_PLAN_STYLE", None)
     if plan_style:
         env["CENSUS_PLAN_STYLE"] = plan_style
+    # The intent core likewise (roadmap G): never inherited, its own series.
+    env.pop("CENSUS_INTENT_CORE", None)
+    if intent_core and intent_core != "off":
+        env["CENSUS_INTENT_CORE"] = intent_core
     try:
         p = subprocess.Popen(["sh", "census_all.sh"], cwd=str(d), env=env,
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -386,11 +390,13 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
             return {"ok": bool((res or {}).get("ok")), "resumed": True,
                     "error": (res or {}).get("error", "")}
         res = await asyncio.to_thread(_launch_census_sync, t.get("template", "default"),
-                                      str(t.get("plan_style") or ""))
+                                      str(t.get("plan_style") or ""),
+                                      str(t.get("intent_core") or ""))
         if res.get("ok"):
             await _set_owner({"schedule_id": rec["id"], "started_at": core.iso(_now()),
                               "pid": res.get("pid"), "template": t.get("template", "default"),
-                              "plan_style": str(t.get("plan_style") or "")})
+                              "plan_style": str(t.get("plan_style") or ""),
+                              "intent_core": str(t.get("intent_core") or "")})
         return res
     if kind == "suite":
         return await _call("evolve.suite.start", tag=t.get("tag", ""), profile=t.get("profile", ""),
