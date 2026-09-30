@@ -15924,8 +15924,14 @@ function _embedMount(){
     });
     return out;
   }
+  /* this document's FIRST offer says hello: the frame may have been reloaded (the harness's lazy loader swaps its src) and
+     the harness, which only speaks when its idea of "absorbed" changes, still thinks it holds this window's bar - so the new
+     document never heard it, its fallback unfolded its own bar, and both bars showed (2026-09-30). A hello is answered with
+     the state whatever it was; the chat's reply to "held" is a plain offer, so there is no ping-pong. */
+  let _hdrHello=true;
   function _hdrOffer(force){ const groups=_hdrItems(); const sig=JSON.stringify(groups); if(!force&&sig===_hdrSig) return; _hdrSig=sig;
-    try{ window.parent.postMessage({ type:'vera:hdr:offer', title:'Chat', groups }, '*'); }catch(_){} }
+    const hello=_hdrHello&&groups.length>0; if(hello) _hdrHello=false;
+    try{ window.parent.postMessage({ type:'vera:hdr:offer', title:'Chat', groups, hello }, '*'); }catch(_){} }
   function _hdrOfferSoon(){ if(_hdrT) return; _hdrT=setTimeout(()=>{ _hdrT=null; _hdrOffer(); }, 160); }
   function _hdrOfferMount(){
     const bar=document.getElementById('topBar'); if(!bar||bar._hdrOffer) return; bar._hdrOffer=true;

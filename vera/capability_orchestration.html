@@ -2777,7 +2777,9 @@ window.addEventListener('message', e => {
   // an offer withdrawn: the panel is TOLD it no longer is held, or it keeps its own bar folded with nothing standing in
   // for it here (the chat's controls vanished from both bars, 2026-09-29)
   if(!Array.isArray(d.groups) || !d.groups.length){ if(_hdrOffers[pid]){ if(_hdrOffers[pid].absorbed){ try{ e.source.postMessage({ type: 'vera:hdr:absorbed', on: false }, '*'); }catch(_){} } delete _hdrOffers[pid]; _hdrSync(); } return; }
-  _hdrOffers[pid] = { src: e.source, title: String(d.title || ''), groups: d.groups.slice(0, 40), absorbed: prev.absorbed };
+  // a panel document's first offer says hello (it may be a reloaded frame): forget what this window was told, so _hdrSync
+  // tells the new document where its bar is - it only speaks on a change, and a reload is not one to it
+  _hdrOffers[pid] = { src: e.source, title: String(d.title || ''), groups: d.groups.slice(0, 40), absorbed: d.hello ? undefined : prev.absorbed };
   _hdrSync();
 });
 function _hdrAct(pid, hid, value){ const o = _hdrOffers[pid]; if(!o) return; try{ o.src.postMessage({ type: 'vera:hdr:act', hid, value }, '*'); }catch(_){} }

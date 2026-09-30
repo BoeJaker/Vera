@@ -892,8 +892,12 @@
     if(!_hdrBar || !document.contains(_hdrBar)) return;
     var groups = _hdrItems(_hdrBar), sig = JSON.stringify(groups);
     if(!force && sig === _hdrSig) return; _hdrSig = sig;
-    try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: groups }, '*'); }catch(e){}
+    // this document's first offer says hello (a reloaded frame): the harness answers it with where the bar is, whatever it
+    // thought before - it only speaks on a change, and a reload is not one to it (both bars showed, 2026-09-30)
+    var hello = _hdrHello && groups.length > 0; if(hello) _hdrHello = false;
+    try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: groups, hello: hello }, '*'); }catch(e){}
   }
+  var _hdrHello = true;
   function _hdrSoon(){ if(_hdrT) return; _hdrT = setTimeout(function(){ _hdrT = null; _hdrOffer(); }, 160); }
   function _hdrFind(){
     if(_hdrBar && document.contains(_hdrBar)) return;

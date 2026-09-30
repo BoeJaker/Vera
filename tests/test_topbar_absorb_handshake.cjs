@@ -22,6 +22,13 @@ t('3. and it only counts an answer from the harness itself', /if\(d&&d\.type==='
 const fold = CHAT.slice(CHAT.indexOf('function _chromeFold(bar, sheet){'), CHAT.indexOf('function _chromeFoldMount('));
 t('4. a bar with no width (a hidden tab) is not folded', /\n    if\(!bar\.clientWidth\) return;\n/.test(fold) && fold.indexOf('if(!bar.clientWidth) return;') < fold.indexOf('for(const [k,sel,label] of _FOLD_ORDER)'));
 t('4. a bar the harness holds gets every group back (the harness decides what fits)', /if\(document\.documentElement\.classList\.contains\('hdr-absorbed'\)\)\{ while\(_folded\.length\) unfold\(_folded\[_folded\.length-1\]\); document\.body\.classList\.remove\('hdr-folded'\); return; \}/.test(fold));
+/* 5. A RELOADED FRAME (2026-09-30, on the mirror): the lazy loader swaps the chat frame's src, the new document is the same
+   window to the harness, which already thought it held that bar and only speaks on a change - so the new document never
+   heard, its fallback unfolded its bar, and both bars showed. A document's first offer says hello; the harness forgets
+   what it told that window, so it tells the new document. */
+t('5. the chat\'s first offer says hello', /let _hdrHello=true;/.test(CHAT) && /const hello=_hdrHello&&groups\.length>0; if\(hello\) _hdrHello=false;/.test(CHAT) && /type:'vera:hdr:offer', title:'Chat', groups, hello \}/.test(CHAT));
+t('5. so does every other panel\'s (the bridge)', /var hello = _hdrHello && groups\.length > 0; if\(hello\) _hdrHello = false;/.test(BR) && /groups: groups, hello: hello \}/.test(BR) && /var _hdrHello = true;/.test(BR));
+t('5. the harness answers a hello with the state, whatever it thought before', /absorbed: d\.hello \? undefined : prev\.absorbed \};/.test(H));
 // the head script is one line: a // comment there would swallow the rest of it
 const head = (CHAT.split('\n').find((l) => l.includes("if(q.get('harness')==='yes'&&o==='chat'){")) || '');
 t('the <head> script stays one line with block comments only', head.length > 0 && !/[^:]\/\/ /.test(head.replace(/https?:\/\//g, '')));
