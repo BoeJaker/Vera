@@ -3359,10 +3359,12 @@ def _ner_available() -> Dict:
     http_tags=["fabric", "graph", "entity", "nlp"],
     memory="off",
     description="Inspect and control the entity NER/NLP backend, and self-test it. "
-                "GET/empty: report the ACTIVE backend (gliner|spacy|heuristic), which "
-                "libraries are importable, the configured model names, and run a "
+                "GET/empty: report the ACTIVE backend (node_gliner - GLiNER on the "
+                "nodes, the auto default | node - their OntoNotes NER | gliner / spacy "
+                "- in-process on the host | heuristic), which libraries are importable, "
+                "the configured model names, and run a "
                 "self-test extraction on a sample so you can SEE what it produces. "
-                "Set backend (auto|gliner|spacy|heuristic) to switch at runtime "
+                "Set backend (auto|node_gliner|node|gliner|spacy|heuristic) to switch at runtime "
                 "(re-detects on next use). Optionally pass spacy_model / gliner_model "
                 "to change the model, and sample to test your own text. "
                 "NER is independent of and composes with the LLM augmentation in "
@@ -3380,8 +3382,8 @@ async def cap_entity_graph_ner(
         os.environ["FABRIC_GLINER_MODEL"] = gliner_model.strip(); changed = True
     if backend.strip():
         b = backend.strip().lower()
-        if b not in ("auto", "gliner", "spacy", "node", "heuristic"):
-            return {"error": "backend must be auto|gliner|spacy|node|heuristic"}
+        if b not in ("auto", "node_gliner", "node", "gliner", "spacy", "heuristic"):
+            return {"error": "backend must be auto|node_gliner|node|gliner|spacy|heuristic"}
         os.environ["FABRIC_NER_BACKEND"] = b
         changed = True
     if changed:
