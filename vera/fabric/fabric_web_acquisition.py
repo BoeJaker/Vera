@@ -939,15 +939,26 @@ def _ner_backend() -> Dict:
     # degrades to the NEXT available backend instead of dropping straight to
     # heuristic (or producing nothing). 'heuristic' pref disables the ML stack.
     order: List[str] = []
-    if pref in ("gliner", "spacy", "node"):
+    if pref in ("gliner", "spacy", "node", "node_gliner"):
         order.append(pref)
     if pref != "heuristic":
-        for b in ("gliner", "spacy", "node"):
+        # The NODES first (user, 2026-09-30: processing belongs on the nodes,
+        # not the host): GLiNER served by the node NLP servers, then their
+        # OntoNotes NER - each call falls back node GLiNER -> node NER ->
+        # heuristic. The host loads GLiNER / spaCy in-process only when the
+        # nlp.* capability is not there at all.
+        for b in ("node_gliner", "node", "gliner", "spacy"):
             if b not in order:
                 order.append(b)
 
     for backend in order:
-        if backend == "gliner":
+        if backend == "node_gliner":
+            if _nlp_ner_fn() is not None:
+                _NER_STATE.update(kind="node_gliner", obj=None)
+                log.info("entity NER backend: GLiNER on the nodes (nlp.ner task=gliner), "
+                         "node OntoNotes NER as the per-call fallback")
+                return _NER_STATE
+        elif backend == "gliner":
             try:
                 from gliner import GLiNER  # type: ignore
                 model = os.getenv("FABRIC_GLINER_MODEL", "urchade/gliner_medium-v2.1")
@@ -1127,10 +1138,11 @@ def _nlp_ner_fn():
         return None
 
 
-def _node_entities(text: str) -> Optional[List[Dict]]:
-    """Entities from the nodes' NER, or None when that cannot be had here -
-    on the event loop's own thread (blocking it would deadlock), with no loop
-    to hand to, or when no node serves - so the caller falls back."""
+def _node_entities(text: str, task: str = "ner") -> Optional[List[Dict]]:
+    """Entities from the nodes' NER (`task` ner = OntoNotes, gliner = the
+    fabric's GLiNER labels), or None when that cannot be had here - on the
+    event loop's own thread (blocking it would deadlock), with no loop to
+    hand to, or when no node serves - so the caller falls back."""
     fn = _nlp_ner_fn()
     if fn is None or _MAIN_LOOP is None or not _MAIN_LOOP.is_running():
         return None
@@ -1139,9 +1151,11 @@ def _node_entities(text: str) -> Optional[List[Dict]]:
         return None                       # on a loop thread: never block it
     except RuntimeError:
         pass
+    kw: Dict[str, Any] = {"text": text[:_ner_node.MAX_CHARS], "task": task}
+    if task == "gliner":
+        kw.update(labels=_gliner_labels(), threshold=_gliner_threshold())
     try:
-        fut = asyncio.run_coroutine_threadsafe(
-            fn(text=text[:_ner_node.MAX_CHARS], task="ner"), _MAIN_LOOP)
+        fut = asyncio.run_coroutine_threadsafe(fn(**kw), _MAIN_LOOP)
         res = fut.result(timeout=120) or {}
     except Exception as e:
         log.debug("node NER: %s", e)
@@ -1151,7 +1165,9 @@ def _node_entities(text: str) -> Optional[List[Dict]]:
         return None
     out: List[Dict] = []
     seen = set()
-    for name, ety, pos, conf in _ner_node.node_entities(text, res["entities"], _slug_type):
+    for name, ety, pos, conf in _ner_node.node_entities(
+            text, res["entities"], _slug_type,
+            type_of=_map_gliner_type if task == "gliner" else None):
         norm = _normalise_entity(name.strip(".,;:"))
         if not norm or len(norm) < 2 or len(norm) > 120 or norm in seen:
             continue
@@ -1173,9 +1189,15 @@ def _extract_entities_from_text(text: str, content_type: str = "text") -> List[D
     if not text or not text.strip():
         return []
     st = _ner_backend()
-    if st["kind"] in ("spacy", "gliner", "node"):
-        ents = (_node_entities(text) if st["kind"] == "node"
-                else _model_entities(text, content_type))
+    if st["kind"] in ("spacy", "gliner", "node", "node_gliner"):
+        if st["kind"] == "node_gliner":
+            ents = _node_entities(text, "gliner")
+            if ents is None:              # no node has GLiNER (yet): their NER
+                ents = _node_entities(text, "ner")
+        elif st["kind"] == "node":
+            ents = _node_entities(text)
+        else:
+            ents = _model_entities(text, content_type)
         if ents is not None:
             ents += _supplement_entities(text, content_type,
                                          exclude={e["normalised"] for e in ents})

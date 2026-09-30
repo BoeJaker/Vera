@@ -240,6 +240,9 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
             # the ollama runner sharing this container. This is the setting that
             # decides whether NLP on the GPU node is free or ruinous.
             "VERA_NLP_THREADS": "4",
+            # every model in the store is loaded at start (small; a cold one
+            # made the first call wait 10-15 s) - "" goes back to lazy loading
+            "VERA_NLP_PRELOAD": "all",
             "VERA_NLP_PORT": "{port}",
             # The shared ZFS model store, bind-mounted read-only into the node
             # alongside ollama's own blobs.
@@ -302,6 +305,10 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
             ["optimum[onnxruntime]", "transformers>=4.57,<5", "onnxruntime",
              "sentencepiece", "protobuf", "numpy", "fastembed", "huggingface_hub",
              "openai-whisper", "fastapi", "uvicorn"],
+            # GLiNER exports are saved with the library itself (a torch
+            # checkpoint, not ONNX) - the same pin the nodes' nlp_server loads
+            # them with. Without it the export job failed at import.
+            ["gliner>=0.2.13"],
         ],
         "run": "{py} model_builder.py serve --host 0.0.0.0 --port {port}",
         "precheck": {

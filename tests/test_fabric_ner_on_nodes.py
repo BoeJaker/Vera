@@ -76,3 +76,46 @@ def test_never_blocks_the_event_loop_thread(monkeypatch):
     ents = asyncio.run(on_the_loop())
     assert calls == []                  # no node call from the loop thread
     assert isinstance(ents, list)       # heuristic answered instead
+
+
+# ── GLiNER on the nodes (user, 2026-09-30: processing belongs on the nodes) ──
+def test_gliner_labels_map_through_the_fabric_table():
+    ents = [{"entity": "person", "word": "Tim Cook", "score": 0.9, "start": 0, "end": 8},
+            {"entity": "organization", "word": "Berlin", "score": 0.7, "start": 30, "end": 36},
+            {"entity": "job title", "word": "2023", "score": 0.6, "start": 40, "end": 44}]
+    rows = core.node_entities(TEXT, ents, type_of=wa._map_gliner_type)
+    assert [(n, t) for n, t, _p, _c in rows] == [
+        ("Tim Cook", "person"), ("Berlin", "organisation"), ("2023", "job_title")]
+
+
+def _with_fake_gliner_ner(monkeypatch, by_task):
+    calls = []
+
+    async def fake_ner(text="", task="ner", labels=None, threshold=0.4, trace_id=None):
+        calls.append((task, bool(labels), threshold))
+        return by_task[task]
+
+    monkeypatch.setitem(orch.CAPABILITY_REGISTRY, "nlp.ner", {"func": fake_ner, "raw": fake_ner})
+    monkeypatch.delenv("FABRIC_NER_BACKEND", raising=False)     # auto
+    monkeypatch.setattr(wa, "_NER_STATE", {"init": False, "kind": "heuristic", "obj": None})
+    return calls
+
+
+def test_auto_prefers_gliner_on_the_nodes_over_the_host(monkeypatch):
+    calls = _with_fake_gliner_ner(monkeypatch, {
+        "gliner": {"ok": True, "entities": [
+            {"entity": "person", "word": "Tim Cook", "score": 0.9, "start": 0, "end": 8}]},
+        "ner": {"ok": True, "entities": _ents()}})
+    ents = asyncio.run(wa.ner_offload(wa._extract_entities_from_text, TEXT, "text"))
+    assert wa._NER_STATE["kind"] == "node_gliner"      # never loaded GLiNER on the host
+    assert calls[0][0] == "gliner" and calls[0][1]     # the fabric's labels travel
+    assert ("Tim Cook", "person") in {(e["name"], e["type"]) for e in ents}
+
+
+def test_node_without_gliner_falls_back_to_the_node_ner(monkeypatch):
+    calls = _with_fake_gliner_ner(monkeypatch, {
+        "gliner": {"error": "gliner is not in the store"},
+        "ner": {"ok": True, "entities": _ents()}})
+    ents = asyncio.run(wa.ner_offload(wa._extract_entities_from_text, TEXT, "text"))
+    assert [c[0] for c in calls] == ["gliner", "ner"]
+    assert ("Angela Merkel", "person") in {(e["name"], e["type"]) for e in ents}
