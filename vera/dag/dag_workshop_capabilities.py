@@ -24138,12 +24138,34 @@ async def cap_dag_agent_loop_v6(
     # measured here so the next census says which part it is).
     _setup_t0 = time.monotonic()
     artifact_dir_path = ""
+    # The artifact dir IS the session's sandbox, created on first use - 30-54 s
+    # measured live 2026-09-30 (setup_timing), which every run waited out before
+    # it could tier or plan. Tiering, intent and planning never touch it, so it
+    # is created in the background and awaited only before execution
+    # (_artifact_dir_ready). A tool call that races it shares the one creation
+    # (session_sandbox_capabilities._create_lock).
+    _artifact_task = None
     try:
         import importlib as _il
         _exec_mod = _il.import_module("Vera.vera.execution.exec_capabilities")
-        artifact_dir_path = await _exec_mod.artifact_dir_async(session_id=sid)
+        _artifact_task = asyncio.ensure_future(_exec_mod.artifact_dir_async(session_id=sid))
     except Exception as e:
         log.debug("v6 artifact dir resolve failed: %s", e)
+    _artifact_state: Dict[str, Any] = {"done": False, "path": ""}
+
+    async def _artifact_dir_ready() -> str:
+        if not _artifact_state["done"]:
+            _artifact_state["done"] = True
+            if _artifact_task is not None:
+                _aw0 = time.monotonic()
+                try:
+                    _artifact_state["path"] = (await _artifact_task) or ""
+                except Exception as _ae:
+                    log.debug("v6 artifact dir resolve failed: %s", _ae)
+                await emit_event({"type": "agent_loop_v6.artifact_dir_ready",
+                                  "session_id": sid, "stream_id": stream_id,
+                                  "waited_s": round(time.monotonic() - _aw0, 2)})
+        return _artifact_state["path"]
     _setup_t1 = time.monotonic()
 
     stream_register = getattr(ctx, "stream_register", None)
@@ -24529,7 +24551,7 @@ async def cap_dag_agent_loop_v6(
                             snap = await _v7_escalation_snapshot(
                                 strategic_slug, session_id=sid, goal=goal,
                                 done_when=done_when, master_plan=mp["long_form"],
-                                artifact_dir_path=artifact_dir_path)
+                                artifact_dir_path=(await _artifact_dir_ready()))
                             await emit_event({"type": "agent_loop_v6.strategic_escalated",
                                               "session_id": sid, "stream_id": stream_id,
                                               "slug": strategic_slug, **snap})
@@ -24798,6 +24820,8 @@ async def cap_dag_agent_loop_v6(
                       "stream_id": stream_id, **_plan_style_rec})
     fix_loop_bound = ""      # the failure signature that ended the run early (item 28)
     verify_reasons_by_step: Dict[str, List[str]] = {}   # every attempt's verdict, per step (28b)
+
+    artifact_dir_path = await _artifact_dir_ready()
 
     # ── Execute over a shared ledger with an adaptive controller ──────────────
     blackboard: Dict[int, Dict[str, Any]] = {}
