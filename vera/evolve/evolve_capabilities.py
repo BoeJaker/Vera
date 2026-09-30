@@ -5589,6 +5589,79 @@ async def evolve_pipeline_run(kind: str = "variant", profile: str = "",
 # runs beside another; evolve.unittest.run's own ceiling is 1800 s.
 _CRITICAL_TIER_TIMEOUT_S = 900
 
+# Gates run their critical tier ONE AT A TIME. Two tiers side by side each
+# took about twice as long: on 2026-09-29 two gates in parallel were killed at
+# 900 s while the same tier alone took 335-551 s. A queued gate waits (the wait
+# is not part of its 900 s) and says who it is waiting for in its steps. The
+# lease is in Redis so it holds across processes; its TTL outlives one run, so
+# a process that dies holding it frees the queue on its own. The in-process
+# lock keeps gates in this process in order when Redis is unavailable.
+_CRITICAL_TIER_LEASE_KEY = "vera:evolve:critical_tier:lease"
+_CRITICAL_TIER_LEASE_S = _CRITICAL_TIER_TIMEOUT_S + 300
+_CRITICAL_TIER_POLL_S = 10.0
+_CRITICAL_TIER_RELEASE_LUA = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+    "return redis.call('del', KEYS[1]) end return 0")
+_critical_tier_lock: Optional[asyncio.Lock] = None
+
+
+async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, Any]:
+    """Run the critical tier for `branch` once no other gate is running one."""
+    global _critical_tier_lock
+    if _critical_tier_lock is None:
+        _critical_tier_lock = asyncio.Lock()
+    token = f"{rec.get('id', '')}:{branch}"
+    queued = False
+
+    async def _note_queued(holder: str):
+        nonlocal queued
+        if queued:
+            return
+        queued = True
+        rec["current"] = f"critical tier queued behind {holder}"
+        _pstep(rec, "critical-queue", True,
+               f"waiting for the gate running now ({holder}) to finish")
+        await _save_pipeline(rec)
+
+    if _critical_tier_lock.locked():
+        await _note_queued("another gate in this process")
+    async with _critical_tier_lock:
+        r = _redis()
+        held = False
+        waited_from = time.monotonic()
+        while r is not None:
+            try:
+                if await r.set(_CRITICAL_TIER_LEASE_KEY, token, nx=True,
+                               ex=_CRITICAL_TIER_LEASE_S):
+                    held = True
+                    break
+                holder = await r.get(_CRITICAL_TIER_LEASE_KEY)
+            except Exception as e:
+                log.warning("critical-tier lease unavailable, running without it: %s", e)
+                break
+            if isinstance(holder, bytes):
+                holder = holder.decode("utf-8", "replace")
+            await _note_queued(str(holder or "another gate"))
+            await asyncio.sleep(_CRITICAL_TIER_POLL_S)
+        if queued:
+            _pstep(rec, "critical-queue", True,
+                   f"gate slot free after {int(time.monotonic() - waited_from)} s")
+            rec["current"] = "running critical tier"
+            await _save_pipeline(rec)
+        try:
+            return await evolve_unittest_run(branch=branch, paths="tests",
+                                             markers="critical",
+                                             timeout=_CRITICAL_TIER_TIMEOUT_S,
+                                             pipeline_id=rec["id"])
+        finally:
+            if held:
+                try:
+                    await r.eval(_CRITICAL_TIER_RELEASE_LUA, 1,
+                                 _CRITICAL_TIER_LEASE_KEY, token)
+                except Exception as e:
+                    log.warning("critical-tier lease release failed (expires in %d s): %s",
+                                _CRITICAL_TIER_LEASE_S, e)
+
 @capability("evolve.pipeline.adopt", memory="on",
             http_method="POST", http_path="/evolve/pipeline/adopt", http_tags=["evolve"],
             description="Register an ALREADY-edited branch as a code pipeline run — for a "
@@ -5761,9 +5834,7 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
         wt = await _branch_worktree(branch)   # pool sandbox OR any plain git worktree
         if wt:
             try:
-                crit = await evolve_unittest_run(branch=branch, paths="tests",
-                                                 markers="critical", timeout=_CRITICAL_TIER_TIMEOUT_S,
-                                                 pipeline_id=rec["id"])
+                crit = await _critical_tier_queued(rec, branch)
             except Exception as e:
                 crit = {"error": str(e)}
             if crit.get("error"):
@@ -6027,9 +6098,7 @@ async def evolve_pipeline_test(id: str = "", trace_id=None):
         _pstep(rec, "gate", compile_ok,
                f"compile-check {len(py_files)} .py file(s): " +
                ("PASS" if compile_ok else "FAIL — " + "; ".join(parse_errors[:3])))
-        critical = await evolve_unittest_run(branch=branch, paths="tests",
-                                             markers="critical", timeout=_CRITICAL_TIER_TIMEOUT_S,
-                                             pipeline_id=rec["id"])
+        critical = await _critical_tier_queued(rec, branch)
         critical_ok = bool(critical.get("ok")) and not critical.get("error")
         failures = critical.get("failure_details") or []
         failure_text = _ut_format_failures(failures)
