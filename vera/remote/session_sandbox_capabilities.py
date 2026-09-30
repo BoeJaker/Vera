@@ -800,6 +800,20 @@ async def _wake(dk, host, rec: Dict, state: Optional[str]) -> bool:
         return False
 
 
+#: One auto-create per session at a time. The agent loop now starts the
+#: session's sandbox in the background while it plans (census 2026-09-30:
+#: creation took 30-54 s on the critical path of every run), so a tool call can
+#: race it; without this both would call cap_sbx_start.
+_CREATE_LOCKS: dict = {}
+
+
+def _create_lock(sid: str) -> "asyncio.Lock":
+    lk = _CREATE_LOCKS.get(sid)
+    if lk is None:
+        lk = _CREATE_LOCKS[sid] = asyncio.Lock()
+    return lk
+
+
 async def _ensure_routable(session_id: str, *, create: bool = True) -> Optional[Dict]:
     """The routing gatekeeper: resolve aliases, WAKE a sleeping container, and —
     when the system-wide `auto_create` default is on (sandbox.config, default
@@ -843,13 +857,19 @@ async def _ensure_routable(session_id: str, *, create: bool = True) -> Optional[
     cfg = await _get_cfg()
     if not cfg.get("auto_create", True):
         return None
-    try:
-        res = await cap_sbx_start(session_id=sid, enable=True)
-        if not res.get("ok"):
+    async with _create_lock(sid):
+        # A concurrent caller may have created it while this one waited.
+        _made = await _get_rec(await _resolve_sid(sid))
+        if _made and _made.get("container") and _made.get("active"):
+            await _touch(_made)
+            return _made
+        try:
+            res = await cap_sbx_start(session_id=sid, enable=True)
+            if not res.get("ok"):
+                return None
+        except Exception as e:
+            log.debug("sandbox auto-create failed for %s: %s", sid, e)
             return None
-    except Exception as e:
-        log.debug("sandbox auto-create failed for %s: %s", sid, e)
-        return None
     # start() may have REDIRECTED the session into its run-owner's container
     # (aliasing sid) — resolve again so routing lands in the shared container.
     rec = await _get_rec(await _resolve_sid(sid))
