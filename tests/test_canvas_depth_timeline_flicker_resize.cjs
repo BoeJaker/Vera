@@ -64,6 +64,9 @@ const cv = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.
   t('a page it could not read says so', m.content.items[2].meta.status === 'could not be read');
   t('the links it found but did not read follow, marked', m.content.items.length === 4 && m.content.items[3].meta.status === 'found, not read');
   const esc2 = ctx.S({ sources: [{ url: 'https://a.org/x', title: 'Features, Performance &amp; Use Cases', text: long }, { url: 'https://b.org/y', title: 'B &quot;q&quot;', text: long }] });
+  const nav = 'Products\nResources\nPricing Docs Blog\nSign up\n' + 'The actual article begins here and runs on long enough to be the first real paragraph of the page. ' + long;
+  const nv = ctx.S({ sources: [{ url: 'https://a.org/x', title: 'A', text: nav }, { url: 'https://b.org/y', title: 'B', text: long }] });
+  t('a page\'s menu before its first paragraph is not its text', /^The actual article begins here/.test(nv.content.items[0].text), nv.content.items[0].text.slice(0, 40));
   t('a search engine\'s escaped title reads as text', esc2.content.items[0].title === 'Features, Performance & Use Cases' && esc2.content.items[1].title === 'B "q"', esc2.content.items[0].title);
   t('titled with the question', m.content.title === 'Research · vector databases' && /2 pages read · 2 more found/.test(m.content.why));
   const plain = ctx.S({ results: [{ url: 'https://a.org', title: 'A' }, { url: 'https://b.org', title: 'B' }] });
@@ -87,6 +90,10 @@ const cv = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.
   t('its source, when it was written, its length', /<i>source<\/i><a href="https:\/\/src\.org"/.test(h2) && /<i>written<\/i>2026-09-27 13:32:24/.test(h2) && /1\.2k chars/.test(h2));
   t('its fields', /fields · 2/.test(h2) && /<span class="k">lane<\/span><span class="v">shipped<\/span>/.test(h2));
   t('its neighbours, each readable in place', /nearest records · 1/.test(h2) && /A neighbour record/.test(h2) && /<p>Its text\.<\/p>/.test(h2));
+  s2.body.r1.nb = [{ id: 'n1', snippet: 'Same chunk text' }, { id: 'n2', snippet: 'Same chunk text' }, { id: 'n3', snippet: 'Same chunk text' }, { id: 'n4', snippet: 'Other' }];
+  const h3 = cv.BLOCK.records(F, 'l', 'k2', e2);
+  t('the same chunk three times over is one neighbour, counted', /nearest records · 2/.test(h3) && /×3/.test(h3));
+  t('no score is not a relevance of 0%', !/relevance/.test(h2));
   t('and the buttons for both', /data-rec-act="rec"/.test(h2) && /data-rec-act="nb"/.test(h2));
   const g = cv.recGraph({ query: 'q', items: [{ id: 'r1', title: 'R1', meta: { dataset_id: 'board_index' } }] }, { r1: { nb: [{ id: 'n1', dataset_id: 'topic.x', snippet: 'near' }] } });
   t('the graph draws its neighbours, dashed', g.nodes.some((n) => n.id === 'r:n1') && g.edges.some((e) => e.from === 'r:r1' && e.to === 'r:n1' && e.rel === 'similar' && e.dashed) && /1 neighbour/.test(g.caption));
