@@ -77,10 +77,21 @@ try:
     from Vera.vera.operator import operator_run_projection as _run_projection  # noqa: E402
 except ImportError:                                                  # pragma: no cover
     from vera.operator import operator_run_projection as _run_projection       # noqa: E402
+# The discovery read model is OPTIONAL to the operator: when it cannot be imported, its two caps say so and the rest of
+# the operator loads. A plain-'vera' import deep in its chain took every operator.* cap off prod on 2026-09-30.
+DISCOVERY_OPERATOR_LEDGER = None
+_DISCOVERY_IMPORT_ERROR = ''
 try:
     from vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER       # noqa: E402
-except ImportError:                                                  # pragma: no cover
-    from Vera.vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER  # noqa: E402
+except ImportError:
+    try:
+        from Vera.vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER  # noqa: E402
+    except Exception as _e:                                          # pragma: no cover
+        _DISCOVERY_IMPORT_ERROR = '%s: %s' % (type(_e).__name__, _e)
+        logging.getLogger('vera.operator').warning('operator: discovery read model unavailable (%s) - operator.discovery.* answer unavailable', _DISCOVERY_IMPORT_ERROR)
+except Exception as _e:                                              # pragma: no cover
+    _DISCOVERY_IMPORT_ERROR = '%s: %s' % (type(_e).__name__, _e)
+    logging.getLogger('vera.operator').warning('operator: discovery read model unavailable (%s) - operator.discovery.* answer unavailable', _DISCOVERY_IMPORT_ERROR)
 
 
 def _orch_base_url() -> str:
@@ -452,6 +463,8 @@ async def _open_session(url: str = "", kind: str = "", base_url: str = "",
             description="Read bounded payload-free discovery route and context benchmark evidence. "
                         "Inputs: limit (1..50). Output has no query/result payload and no control authority.")
 async def cap_operator_discovery_evidence(limit: int = 20, trace_id=None) -> Dict:
+    if DISCOVERY_OPERATOR_LEDGER is None:
+        return {"ok": False, "error": "discovery read model unavailable", "detail": _DISCOVERY_IMPORT_ERROR}
     return {"ok": True, **DISCOVERY_OPERATOR_LEDGER.snapshot(int(limit))}
 
 
@@ -467,6 +480,8 @@ async def cap_operator_discovery_evidence(limit: int = 20, trace_id=None) -> Dic
                         "Inputs: comparison (object from compare_context_benchmark).")
 async def cap_operator_discovery_benchmark_record(
         comparison: Dict = None, trace_id=None) -> Dict:
+    if DISCOVERY_OPERATOR_LEDGER is None:
+        return {"ok": False, "error": "discovery read model unavailable", "detail": _DISCOVERY_IMPORT_ERROR}
     value = DISCOVERY_OPERATOR_LEDGER.record_benchmark(comparison or {})
     return {"ok": True, "benchmark": value}
 

@@ -7,7 +7,12 @@ import math
 from threading import RLock
 from typing import Any, Mapping
 
-from vera.discovery_benchmark import SCHEMA as BENCHMARK_SCHEMA
+# Dual-spelled: in the running app the package is only importable as Vera.vera (the plain 'vera' is a test-path
+# spelling), and a plain-only import here took operator_web_capabilities down with it on prod (2026-09-30).
+try:  # the test path's spelling first; the app has only Vera.vera, so it takes the fallback - one spelling per process
+    from vera.discovery_benchmark import SCHEMA as BENCHMARK_SCHEMA
+except ImportError:  # pragma: no cover - the running app
+    from Vera.vera.discovery_benchmark import SCHEMA as BENCHMARK_SCHEMA
 
 
 READMODEL_SCHEMA = "vera.discovery-operator-readmodel/v1"
