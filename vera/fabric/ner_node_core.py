@@ -32,17 +32,22 @@ MAX_CHARS = 100000
 
 
 def node_entities(text: str, entities: Iterable[Dict[str, Any]],
-                  slug=lambda s: s.lower()) -> List[Tuple[str, str, int, float]]:
+                  slug=lambda s: s.lower(), type_of=None) -> List[Tuple[str, str, int, float]]:
     """(name, type, position, confidence) per usable node entity.
 
     The name is cut from the ORIGINAL text by the entity's offsets when it has
     them: the model's `word` is the tokenizer's rendering (a RoBERTa word
-    carries a leading space, sub-words are glued), not what the page said."""
+    carries a leading space, sub-words are glued), not what the page said.
+
+    `type_of` maps a label as the model gave it (GLiNER's open labels -
+    "organization", "job title") to the fabric's type; without it the label is
+    read as OntoNotes."""
     out = []
     for e in entities or []:
-        label = str(e.get("entity") or e.get("entity_group") or "").upper()
+        raw = str(e.get("entity") or e.get("entity_group") or "")
+        label = raw.upper()
         label = label[2:] if label[:2] in ("B-", "I-") else label
-        if not label or label in DROP_LABELS:
+        if not label or (type_of is None and label in DROP_LABELS):
             continue
         start, end = e.get("start"), e.get("end")
         if isinstance(start, int) and isinstance(end, int) and 0 <= start < end <= len(text):
@@ -55,6 +60,6 @@ def node_entities(text: str, entities: Iterable[Dict[str, Any]],
         name = name.strip()
         if not name:
             continue
-        out.append((name, ONTONOTES_TYPE.get(label) or slug(label), pos,
-                    float(e.get("score", 0.8))))
+        ety = type_of(raw) if type_of is not None else (ONTONOTES_TYPE.get(label) or slug(label))
+        out.append((name, ety, pos, float(e.get("score", 0.8))))
     return out
