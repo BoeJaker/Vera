@@ -11,6 +11,7 @@ from vera.discovery_orchestration import (
     CollectedBatch, DiscoveryRoutePolicy, rank_collection_options,
     run_discovery_route,
 )
+from vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER
 from vera.discovery_routing import DiscoveryWorkerOffer, WorkerProviderBinding
 
 
@@ -153,6 +154,10 @@ async def test_two_stage_route_isolates_failed_scout_and_returns_cited_context()
     assert failure.participant == "failed"
     assert failure.reason == "RuntimeError"
     assert "provider response" not in repr(report.failures)
+    operator_view = DISCOVERY_OPERATOR_LEDGER.snapshot()["routes"][0]
+    assert operator_view["request_id"] == req.request_id
+    assert operator_view["counts"]["context"] == 2
+    assert "find useful evidence" not in str(operator_view)
 
 
 @pytest.mark.critical

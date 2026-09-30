@@ -198,6 +198,11 @@
   .tile .via.route{color:var(--ok)}
   .tile .ck{position:absolute;top:6px;left:6px;width:18px;height:18px;accent-color:var(--acc)}
   .tile .dom{position:absolute;top:6px;right:6px;font-size:9px;background:rgba(0,0,0,.55);color:#fff;padding:1px 6px;border-radius:8px}
+  .ev-list{display:flex;flex-direction:column;gap:7px;max-height:250px;overflow:auto}
+  .ev-card{border:1px solid var(--border);border-radius:6px;padding:7px;background:var(--bg2);font-size:10px}
+  .ev-card .ev-head{display:flex;gap:6px;align-items:center;color:var(--text);font-weight:700}
+  .ev-card .ev-meta{color:var(--dim);line-height:1.45;margin-top:3px;overflow-wrap:anywhere}
+  .ev-pass{color:var(--ok)}.ev-fail{color:var(--err)}
   @media(max-width:1080px){.grid{grid-template-columns:1fr}.rail,.mind{max-height:none}}
 </style>
 </head>
@@ -292,6 +297,16 @@
             <button class="act ghost" id="captureBtn">🎬 Directives</button>
           </div>
           <div class="hint" id="missionMsg"></div>
+        </div>
+      </div>
+
+      <div class="sec" data-sec="discovery-evidence">
+        <h3>Discovery evidence <span class="car">▾</span></h3>
+        <div class="body">
+          <div class="btns"><button class="act ghost" id="discEvRefresh">↻ Refresh</button></div>
+          <div id="discEvState"></div>
+          <div class="ev-list" id="discEvList"><div class="hint">No evidence loaded.</div></div>
+          <div class="hint">Payload-free route, resource, failure, quality and latency evidence. Read-only; this view cannot run discovery or activate a benchmark winner.</div>
         </div>
       </div>
     </div>
@@ -771,6 +786,32 @@ function liveShot(ev){
   const n=liveGrid.querySelectorAll('.tile').length; const c=$('galLiveN'); if(c) c.textContent=n+' captured';
 }
 
+/* ── discovery evidence read model ───────────────────── */
+function evidenceCard(value){
+  if(value.kind==='benchmark'){
+    const c=(value.summaries||{})[value.candidate_variant_id]||{};
+    const q=(c.quality||{}).ndcg, p=(c.latency_ms||{}).first_useful_p95;
+    return '<div class="ev-card"><div class="ev-head"><span class="'+(value.passed?'ev-pass':'ev-fail')+'">'+
+      (value.passed?'✓ passed':'⚠ blocked')+'</span><span>benchmark</span></div><div class="ev-meta">'+
+      esc(value.baseline_variant_id)+' → '+esc(value.candidate_variant_id)+' · nDCG '+esc(q==null?'—':q)+
+      ' · useful p95 '+esc(p==null?'—':p)+' ms · '+esc(value.observation_count)+' observations'+
+      (value.blockers&&value.blockers.length?'<br>blockers: '+value.blockers.map(esc).join(', '):'')+'</div></div>';
+  }
+  const n=value.counts||{}, a=value.assignments||[];
+  return '<div class="ev-card"><div class="ev-head"><span class="ev-pass">route</span><span>'+esc(value.request_id)+'</span></div><div class="ev-meta">'+
+    esc(n.candidates||0)+' candidates · '+esc(n.context||0)+' context · '+esc(n.datasets||0)+' datasets · '+
+    esc(n.failures||0)+' failures<br>resources: '+(a.length?a.map(x=>esc(x.resource)+'@'+esc(x.worker_id)).join(', '):'none')+'</div></div>';
+}
+async function loadDiscoveryEvidence(){
+  const d=await api('/operator/discovery/evidence?limit=10');
+  const list=$('discEvList'); if(!list) return;
+  if(!d||d.error||d.ok===false){ list.innerHTML='<div class="hint">Evidence unavailable.</div>'; return; }
+  const values=[...(d.routes||[]),...(d.benchmarks||[])];
+  list.innerHTML=values.length?values.map(evidenceCard).join(''):'<div class="hint">No route or benchmark evidence recorded yet.</div>';
+  $('discEvState').textContent=(d.counts.routes||0)+' routes · '+(d.counts.benchmarks||0)+' benchmarks';
+}
+$('discEvRefresh').onclick=loadDiscoveryEvidence;
+
 /* ── boot ──────────────────────────────────────────────── */
 async function boot(){
   initSections(); initKind(); initFilters(); initChips(); initComposer(); connectWs();
@@ -781,6 +822,7 @@ async function boot(){
   const tl=await api('/operator/tour/list'); const tours=(tl&&tl.tours)||[];
   $('tourSlug').innerHTML=tours.length?tours.map(t=>'<option>'+t+'</option>').join(''):'<option value="">(no tours)</option>';
   loadConnectables();   // connections is the default target view
+  loadDiscoveryEvidence();
   // Browser status is confirmed on first successful observe; until then leave "?".
 }
 boot();

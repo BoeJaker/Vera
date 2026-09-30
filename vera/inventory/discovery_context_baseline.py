@@ -102,6 +102,12 @@ CURRENT_COMPONENTS = (
         "cpu", "vera.discovery-route-report.v1",
         ("discovery.portable", "discovery.routing")),
     DiscoveryContextComponent(
+        "discovery.operator-readmodel", "data",
+        "vera/discovery_operator_readmodel.py",
+        "class DiscoveryOperatorLedger", "internal", "inline", "none",
+        "vera.discovery-operator-readmodel.v1",
+        ("discovery.orchestration", "discovery.benchmark")),
+    DiscoveryContextComponent(
         "discovery.benchmark", "data", "vera/discovery_benchmark.py",
         "def compare_context_benchmark", "discovery_contract", "inline",
         "none", "vera.discovery-context-benchmark.v1",

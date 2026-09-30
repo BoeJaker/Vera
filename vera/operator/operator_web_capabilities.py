@@ -77,6 +77,10 @@ try:
     from Vera.vera.operator import operator_run_projection as _run_projection  # noqa: E402
 except ImportError:                                                  # pragma: no cover
     from vera.operator import operator_run_projection as _run_projection       # noqa: E402
+try:
+    from vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER       # noqa: E402
+except ImportError:                                                  # pragma: no cover
+    from Vera.vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER  # noqa: E402
 
 
 def _orch_base_url() -> str:
@@ -433,6 +437,38 @@ async def _open_session(url: str = "", kind: str = "", base_url: str = "",
             return {"error": f"could not load the start page ({resolved['start_url']}): {e}"}
     return {"ok": True, "session_id": sess.session_id, "resolved": resolved,
             "summary": sess.summary()}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  DISCOVERY EVIDENCE — bounded payload-free operator read model
+# ─────────────────────────────────────────────────────────────────────────────
+@capability("operator.discovery.evidence", memory="off", silent=True,
+            http_method="GET", http_path="/operator/discovery/evidence",
+            http_tags=["operator"],
+            contract=_operator_contract(
+                "discovery.evidence.inspect", effects=["read"],
+                trust="bounded_payload_free_evidence", tenant="global_aggregate",
+                pagination="bounded_limit", resources=["cpu", "memory"]),
+            description="Read bounded payload-free discovery route and context benchmark evidence. "
+                        "Inputs: limit (1..50). Output has no query/result payload and no control authority.")
+async def cap_operator_discovery_evidence(limit: int = 20, trace_id=None) -> Dict:
+    return {"ok": True, **DISCOVERY_OPERATOR_LEDGER.snapshot(int(limit))}
+
+
+@capability("operator.discovery.benchmark.record", memory="off",
+            http_method="POST", http_path="/operator/discovery/benchmark/record",
+            http_tags=["operator"],
+            contract=_operator_contract(
+                "discovery.benchmark.record", effects=["write"],
+                trust="validated_benchmark_evidence", tenant="global_aggregate",
+                resources=["cpu", "memory"]),
+            description="Record an already-computed offline context benchmark comparison in the "
+                        "bounded operator read model. Does not run providers, models, or sources. "
+                        "Inputs: comparison (object from compare_context_benchmark).")
+async def cap_operator_discovery_benchmark_record(
+        comparison: Dict = None, trace_id=None) -> Dict:
+    value = DISCOVERY_OPERATOR_LEDGER.record_benchmark(comparison or {})
+    return {"ok": True, "benchmark": value}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

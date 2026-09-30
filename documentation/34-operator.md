@@ -63,6 +63,21 @@ Everything runs **host-side**: the browser lives wherever the operator runs and
 points at a target *base URL* over HTTP. That target can be a loop-lab sandbox
 (`:8998`), the live Vera (`:8999`), or any external site.
 
+### Discovery evidence
+
+Operator Studio also has a read-only **Discovery evidence** section. It shows
+the newest discovery routes and recorded context-benchmark comparisons using a
+bounded in-memory projection. Route cards expose candidate/output/failure
+counts and assigned resource/worker identities. Benchmark cards expose the
+baseline and candidate, nDCG, time-to-first-useful-context p95, observation
+count, pass state and blockers.
+
+`operator.discovery.evidence` reads this projection, and
+`operator.discovery.benchmark.record` accepts a comparison that has already
+been computed by the offline benchmark. Neither capability contacts a source,
+runs a model, starts discovery, or activates a benchmark winner. Query text,
+retrieved content and per-record payloads are deliberately absent.
+
 ---
 
 ## 3. Perception — hybrid observe

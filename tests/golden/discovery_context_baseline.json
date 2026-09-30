@@ -1,5 +1,5 @@
 {
-  "baseline_id": "dcb_971f36f6f3e9b3199eaba271f367e36facf976b46e0d779bdd8dc47679d47176",
+  "baseline_id": "dcb_3ceb426f9173efe310fcb67dd796741cc96b7c7918b4ef10d93a771e684a01e2",
   "schema": "vera.discovery-context-baseline/v1",
   "components": [
     {
@@ -78,6 +78,20 @@
       "enriches": [
         "discovery.orchestration",
         "context.enrichment-ledger"
+      ],
+      "live_required": false
+    },
+    {
+      "component_id": "discovery.operator-readmodel",
+      "role": "data",
+      "source": "vera/discovery_operator_readmodel.py",
+      "boundary": "internal",
+      "execution": "inline",
+      "resource": "none",
+      "data_contract": "vera.discovery-operator-readmodel.v1",
+      "enriches": [
+        "discovery.orchestration",
+        "discovery.benchmark"
       ],
       "live_required": false
     },

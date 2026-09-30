@@ -7,6 +7,7 @@ does not discover providers, inspect resources, or infer capacity itself.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ from vera.discovery_routing import (
 
 MAX_PARTICIPANTS = 256
 MAX_SCOUT_CANDIDATES = 4_096
+_LOG = logging.getLogger(__name__)
 MAX_FAILURES = 4_096
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 
@@ -494,5 +496,15 @@ async def run_discovery_route(
     failures.sort(key=lambda value: (
         value.stage, value.participant, value.candidate_id,
         value.option_id, value.reason))
-    return DiscoveryRouteReport(
+    report = DiscoveryRouteReport(
         result, execution, ranked, tuple(failures), tuple(sorted(rejected)))
+    # Observability is best-effort and cannot alter an authoritative route.
+    try:
+        try:
+            from vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER
+        except ImportError:
+            from Vera.vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER
+        DISCOVERY_OPERATOR_LEDGER.record_route(report)
+    except Exception:
+        _LOG.debug("discovery operator projection failed", exc_info=True)
+    return report
