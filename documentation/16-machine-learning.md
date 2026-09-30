@@ -114,8 +114,24 @@ content-addressed `ModelPackage` whose `training_run_id` names that exact run.
 A checkpoint or Workshop job marked complete without that package is recorded
 as a failed portable run, rather than overstating interoperability. The adapter
 does not import an ML framework, load data, invoke training on import, redirect
-the existing `ml.train` capabilities, or select a runtime. A live runner bridge
-and parity testing remain separately gated operational work.
+the existing `ml.train` capabilities, or select a runtime.
+
+`MLWorkshopCapabilityBridge` supplies the explicit live seam without changing
+those responsibilities. It resolves the request's exact dataset revision to
+bounded finite numeric arrays, translates an allowlisted configuration to the
+existing `ml.train` job API, verifies job and module identity on every status
+read, and waits for a terminal acknowledgement when cancelling. Successful
+jobs are exported through `ml.export.onnx`; the mutable Workshop export is
+copied to a content-addressed immutable artifact before a run-bound
+`ModelPackage` is verified and registered. A changing dataset revision,
+identity mismatch, unsupported hyperparameter, mutable artifact race, or
+conflicting content-addressed file fails closed.
+
+Constructing the bridge does not train, export, register, activate, deploy, or
+route traffic. Callers inject the dataset resolver and existing capability
+calls, provide explicit module/package bindings, and opt into the runtime.
+Production selection and any replacement of the legacy Workshop path remain a
+separate, reversible operational decision.
 
 DeepEval/Promptfoo adapters, Accelerate, PEFT, MLflow, DSPy, live judges, and
 native training cutover remain subsequent gated work.

@@ -62,6 +62,12 @@ from .inference_deployment import (
     inference_deployment_observation_from_dict)
 from .ml_workshop_inference_adapter import (
     LegacyMLWorkshopInferenceProvider, LegacyMLWorkshopRunner)
+from .ml_workshop_training_adapter import (
+    MLWorkshopTrainingBinding, MLWorkshopTrainingRuntime,
+    MLWorkshopTrainingSubmission)
+from .ml_workshop_runtime_bridge import (
+    MLWorkshopCapabilityBridge, MLWorkshopDatasetBatch,
+    MLWorkshopONNXOutputBinding, MLWorkshopONNXPublisher)
 from .native_tensor_inference_adapter import (
     NativeTensorRunner, PyTorchInferenceProvider, TensorFlowInferenceProvider)
 from .native_tensor_runtime import (
@@ -93,6 +99,10 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "inference_deployment_from_dict",
            "inference_deployment_observation_from_dict",
            "LegacyMLWorkshopInferenceProvider", "LegacyMLWorkshopRunner",
+           "MLWorkshopTrainingBinding", "MLWorkshopTrainingRuntime",
+           "MLWorkshopTrainingSubmission", "MLWorkshopCapabilityBridge",
+           "MLWorkshopDatasetBatch", "MLWorkshopONNXOutputBinding",
+           "MLWorkshopONNXPublisher",
            "NativeTensorRunner", "PyTorchInferenceProvider",
            "TensorFlowInferenceProvider",
            "NativeTensorRuntimeError", "load_pytorch_provider",
