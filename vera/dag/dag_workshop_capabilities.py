@@ -14165,6 +14165,12 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _intent_core = None
 
+# When a final-gate follow-up is redundant (census 2026-09-30: edits were skipped).
+try:
+    from Vera.vera.dag import follow_up_core as _follow_up_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import follow_up_core as _follow_up_core
+
 
 async def _v6_zeroshot_intent(goal: str) -> Tuple[Optional[str], Dict[str, float]]:
     """(intent, scores) from nlp.zeroshot, or (None, {}) when unavailable or
@@ -25452,6 +25458,15 @@ async def cap_dag_agent_loop_v6(
             # to add — no follow_up means no more work THIS gate call can
             # drive, so re-gating again would just repeat the same verdict.
             break
+        # Which of the batch's named files exist BEFORE it runs: a step is
+        # redundant only if an earlier step IN THIS BATCH made its files, never
+        # because a file it must edit already exists (follow_up_core).
+        try:
+            _fu_before = await _v6_check_paths_exist(sid, [
+                p for s_ in follow_up
+                for p in _v6_extract_paths(f"{s_.get('goal','')}\n{s_.get('title','')}")])
+        except Exception:
+            _fu_before = {}
         while follow_up and executed < hard_cap:
             step = follow_up.pop(0)
             # A follow_up batch can contain more than one step for the SAME
@@ -25470,11 +25485,11 @@ async def cap_dag_agent_loop_v6(
                     _fu_exist = await _v6_check_paths_exist(sid, _fu_paths)
                 except Exception:
                     _fu_exist = {}
-                if all(_fu_exist.get(p) is True for p in _fu_paths):
+                if _follow_up_core.redundant(_fu_paths, _fu_before, _fu_exist):
                     await emit_event({"type": "agent_loop_v6.follow_up_skipped", "session_id": sid,
                                       "stream_id": stream_id,
                                       "step": {"id": step["id"], "title": step["title"]},
-                                      "reason": ("already satisfied by an earlier step in this "
+                                      "reason": ("already made by an earlier step in this "
                                                  "batch: " + ", ".join(_fu_paths))})
                     continue
             executed += 1
