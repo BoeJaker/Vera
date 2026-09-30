@@ -513,18 +513,20 @@
         const facts = []; const fact = (k, vHtml) => { if (vHtml != null && vHtml !== '') facts.push(`<span><i>${esc(k)}</i>${vHtml}</span>`); };
         if (r.domain) fact('site', esc(r.domain));
         if (r.when) fact('when', esc(String(r.when).slice(0, 19).replace('T', ' ')));
-        if (r.score != null && isFinite(+r.score)) fact('relevance', esc(Math.round(+r.score * 100) + '%'));
+        if (r.score != null && isFinite(+r.score) && +r.score > 0) fact('relevance', esc(Math.round(+r.score * 100) + '%'));   // no score is not a score of 0
         Object.keys(r.meta || {}).forEach((k) => fact(k, esc(r.meta[k])));
         const rec = b.rec || null;
         if (rec) { const s = rec.source || {}; if (s.url) fact('source', `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.label || s.url)}</a>`); else if (s.label) fact('source', esc(s.label));
           if (rec.created_at) fact('written', esc(String(rec.created_at).slice(0, 19))); if (rec.total_chars) fact('length', esc(rec.total_chars > 1000 ? (rec.total_chars / 1000).toFixed(1) + 'k chars' : rec.total_chars + ' chars')); }
         const tags = (Array.isArray(r.tags) && r.tags.length ? r.tags : (rec && rec.tags) || []).slice(0, 12);
         const fields = rec && rec.data && typeof rec.data === 'object' ? Object.keys(rec.data) : [];
-        const nbHtml = Array.isArray(b.nb) ? `<div class="vc-rbx-nb"><h5>nearest records \u00b7 ${b.nb.length}</h5>` + (b.nb.length ? b.nb.map((m) => {
+        /* the same chunk three times over (a document indexed in overlapping pieces) is ONE neighbour, counted */
+        const nbList = []; if (Array.isArray(b.nb)) { const bySig = {}; b.nb.forEach((m) => { const sg = String(m.snippet || m.id).replace(/\s+/g, ' ').trim().slice(0, 80).toLowerCase(); if (bySig[sg]) { bySig[sg].n++; return; } const x = Object.assign({ n: 1 }, m); bySig[sg] = x; nbList.push(x); }); }
+        const nbHtml = Array.isArray(b.nb) ? `<div class="vc-rbx-nb"><h5>nearest records \u00b7 ${nbList.length}</h5>` + (nbList.length ? nbList.map((m) => {
             const on = !!(b.nbOpen || {})[m.id]; const nt = (b.nbText || {})[m.id];
             const head = String(m.snippet || m.id).replace(/\s+/g, ' ').trim();
             return `<div class="vc-rbx-nbr${on ? ' on' : ''}" data-rec-act="nbopen" data-rec-key="${K}" data-rec-arg="${esc(r.id + '|' + m.id)}">`
-              + `<div class="vc-rbx-nbh"><b>${esc(head.slice(0, 90))}</b><small>${esc(m.dataset_id || '')}</small></div>`
+              + `<div class="vc-rbx-nbh"><b>${esc(head.slice(0, 90))}</b>${m.n > 1 ? `<small title="the same text in ${m.n} records">\u00d7${m.n}</small>` : ''}<small>${esc(m.dataset_id || '')}</small></div>`
               + (on ? (nt ? `<div class="vc-rbx-nbt">${mdx(paras(String(nt).slice(0, 6000)))}</div>` : `<div class="vc-rbx-busy">\u2026 reading</div>`) : '')
               + `</div>`; }).join('') : '<div class="vc-rbx-empty">nothing near it</div>') + `</div>` : '';
         return `<div class="vc-rbx-open">${r.snippet && !r.text ? `<div class="vc-rbx-full">${esc(r.snippet)}</div>` : ''}`
