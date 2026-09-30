@@ -50,6 +50,15 @@ def test_the_deploy_files_say_what_the_feature_installs():
     assert dj["live-restore"] is True and json.loads(fc.DOCKER_DAEMON_SETTINGS_JSON).items() <= dj.items()
     for unit in ("docker", "containerd"):
         assert open(os.path.join(DOCKER, unit + ".service.d", fc.DOCKER_OOM_DROPIN_NAME)).read() == fc.DOCKER_OOM_DROPIN
+    sysctl = os.path.join(ROOT, "deploy", "host-stack", "sysctl", fc.HOST_SWAPPINESS_CONF_NAME)
+    assert open(sysctl).read() == fc.HOST_SWAPPINESS_CONF
+
+
+def test_it_keeps_service_memory_out_of_swap():
+    s = feature_script("docker-resilience", {})
+    assert "> /etc/sysctl.d/60-vera-swappiness.conf" in s
+    assert "sysctl -q -p /etc/sysctl.d/60-vera-swappiness.conf" in s
+    assert "vm.swappiness = 10" in s
 
 
 @pytest.mark.skipif(not shutil.which("sh") or not shutil.which("python3"), reason="needs sh and python3")

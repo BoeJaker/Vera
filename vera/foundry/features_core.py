@@ -102,6 +102,11 @@ DOCKER_OOM_DROPIN = ("[Service]\n"
                      "# dockerd was OOM-killed on 2026-09-29 01:34 (it had leaked to 14 GB) and every container went with it\n"
                      "OOMScoreAdjust=-900\n")
 DOCKER_OOM_DROPIN_NAME = "20-oom-protect.conf"
+# The leak pushed ~8.7 GB of the services' memory (Neo4j 1.5 GB, Redis 367 MB, chroma 2.2 GB) into swap, and at
+# swappiness 60 it stayed there with 30 GB free: Neo4j froze up to 1.7 s at a time (gcTime=0) and Redis PING took
+# 866 ms. 10 keeps service memory resident unless RAM is genuinely short.
+HOST_SWAPPINESS_CONF = "vm.swappiness = 10\n"
+HOST_SWAPPINESS_CONF_NAME = "60-vera-swappiness.conf"
 
 # Merge a JSON object into /etc/docker/daemon.json, keeping every key already there (lists are unioned).
 DAEMON_JSON_MERGE_FN = '''daemon_json_merge(){
@@ -144,6 +149,8 @@ def _docker_resilience_feature(ctx) -> str:
         "  pkill -HUP dockerd 2>/dev/null || true\n"
         "  for p in $(pidof dockerd containerd 2>/dev/null); do echo -900 > /proc/$p/oom_score_adj; done\n"
         "fi\n"
+        + "printf '%s' " + _q(HOST_SWAPPINESS_CONF) + " > /etc/sysctl.d/" + HOST_SWAPPINESS_CONF_NAME + "\n"
+        "sysctl -q -p /etc/sysctl.d/" + HOST_SWAPPINESS_CONF_NAME + " 2>/dev/null || true\n"
         + "".join("docker update --restart=always " + _q(c) + " >/dev/null 2>&1 && echo '[foundry] restart=always: '" + _q(c)
                   + " || echo '[foundry] no container '" + _q(c) + "\n" for c in core)
         + "echo \"[foundry] docker-resilience: live-restore=$(docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null)\"\n"
