@@ -24104,6 +24104,10 @@ async def cap_dag_agent_loop_v6(
     await emit_event({"type": "agent_loop_v6.toolkit", "stream_id": "", "session_id": sid,
                       "toolkit": list(catalog_names)})
 
+    # Setup timing (census 2026-09-30: 30-60 s passed between the toolkit event
+    # and the tier pass in every session, with no model call and no gate wait -
+    # measured here so the next census says which part it is).
+    _setup_t0 = time.monotonic()
     artifact_dir_path = ""
     try:
         import importlib as _il
@@ -24111,6 +24115,7 @@ async def cap_dag_agent_loop_v6(
         artifact_dir_path = await _exec_mod.artifact_dir_async(session_id=sid)
     except Exception as e:
         log.debug("v6 artifact dir resolve failed: %s", e)
+    _setup_t1 = time.monotonic()
 
     stream_register = getattr(ctx, "stream_register", None)
     stream_complete = getattr(ctx, "stream_complete", None)
@@ -24125,7 +24130,14 @@ async def cap_dag_agent_loop_v6(
         except Exception:
             stream_id = ""
 
+    _setup_t2 = time.monotonic()
     available_models = await _v5_available_models(trace_id or "")
+    _setup_t3 = time.monotonic()
+    await emit_event({"type": "agent_loop_v6.setup_timing", "session_id": sid,
+                      "stream_id": stream_id,
+                      "artifact_dir_s": round(_setup_t1 - _setup_t0, 2),
+                      "stream_register_s": round(_setup_t2 - _setup_t1, 2),
+                      "models_s": round(_setup_t3 - _setup_t2, 2)})
 
     # ── Tier classification (V7): heuristic floor + less-prescriptive LLM pass. ─
     # Drives whether the strategic master planner fires (fixes v6's "complex
