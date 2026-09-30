@@ -630,6 +630,16 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
 
 REDIS = PG_POOL = CHROMA = NEO = None
 
+# Every blocking stream read (XREAD / XREADGROUP block=) on the shared REDIS
+# client must return before that client's socket_timeout (4 s, set where it
+# connects). It used block=5000: an idle read hit the socket timeout first,
+# so every quiet loop logged "Timeout reading from ..." about every 6 s, and
+# redis-py dropped the pooled connection each time (a fresh TLS connect per
+# idle read). A message arriving between 4 s and 5 s went to a socket
+# nobody was reading. Readers use this constant, not a literal.
+REDIS_SOCKET_TIMEOUT_S = 4
+STREAM_BLOCK_MS = 3000
+
 # COORD_REDIS — a SHARED coordination Redis handle used for cross-process
 # primitives that must be visible across prod AND every dev sandbox container
 # (currently: the Ollama GPU gate / "one big queue"). Dev containers run their
@@ -5661,7 +5671,7 @@ async def worker_loop(worker_id: str):
             try:
                 candidate = aioredis.from_url(REDIS_URL, decode_responses=False,
                                               socket_connect_timeout=4,
-                                              socket_timeout=4)
+                                              socket_timeout=REDIS_SOCKET_TIMEOUT_S)
                 await candidate.ping()
                 REDIS = candidate
                 log.info("Worker %s: Redis reconnected ✓", worker_id)
@@ -5754,7 +5764,7 @@ async def worker_loop(worker_id: str):
 
         try:
             resp = await REDIS.xreadgroup(
-                GROUP_WORKERS, worker_id, {_s: ">" for _s in _streams}, count=1, block=5000
+                GROUP_WORKERS, worker_id, {_s: ">" for _s in _streams}, count=1, block=STREAM_BLOCK_MS
             )
         except Exception as e:
             err_str = str(e)
@@ -6004,7 +6014,7 @@ async def reply_listener():
     log.info("Reply listener started (%s)", stream)
     while True:
         try:
-            resp = await REDIS.xread({stream: last}, count=20, block=5000)
+            resp = await REDIS.xread({stream: last}, count=20, block=STREAM_BLOCK_MS)
         except Exception as e:
             log.debug("reply_listener: %s", e)
             await asyncio.sleep(2)
@@ -6056,7 +6066,7 @@ async def result_listener():
     while True:
         try:
             resp = await REDIS.xreadgroup(
-                GROUP_RESULTS, consumer_name, {RESULT_STREAM: ">"}, count=10, block=5000
+                GROUP_RESULTS, consumer_name, {RESULT_STREAM: ">"}, count=10, block=STREAM_BLOCK_MS
             )
         except Exception as e:
             log.error("result_listener: %s", e)
@@ -11043,7 +11053,7 @@ async def lifespan(app: FastAPI):
             try:
                 _r = aioredis.from_url(
                     REDIS_URL, decode_responses=False,
-                    socket_connect_timeout=4, socket_timeout=4,
+                    socket_connect_timeout=4, socket_timeout=REDIS_SOCKET_TIMEOUT_S,
                 )
                 await _r.ping()
                 info = await _r.info("server")

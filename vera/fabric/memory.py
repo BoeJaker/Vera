@@ -1895,7 +1895,7 @@ async def _memory_promoter():
     while True:
         try:
             results = await _redis().xread(
-                {MEMORY_PROMO_STREAM: last_id}, count=50, block=5000
+                {MEMORY_PROMO_STREAM: last_id}, count=50, block=_orch.STREAM_BLOCK_MS
             )
         except Exception as e:
             log.debug("Memory promoter xread: %s", e)

@@ -271,7 +271,7 @@ class SyslogWriter:
         log.info("SyslogWriter listener started")
         while True:
             try:
-                results = await r.xread({"vera:events": last_id}, count=50, block=5000)
+                results = await r.xread({"vera:events": last_id}, count=50, block=_orch.STREAM_BLOCK_MS)
             except Exception as e:
                 log.debug("SyslogWriter xread: %s", e)
                 await asyncio.sleep(2)

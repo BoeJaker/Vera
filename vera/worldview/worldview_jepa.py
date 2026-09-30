@@ -5397,7 +5397,7 @@ async def _wv_stream_worker():
             while _STREAM_ENABLED:
                 try:
                     msgs = await redis.xreadgroup(
-                        group, consumer, {stream: ">"}, count=20, block=5000)
+                        group, consumer, {stream: ">"}, count=20, block=_orch.STREAM_BLOCK_MS)
                 except Exception as e:
                     # A blocking XREAD hitting the client socket_timeout while
                     # idle is NORMAL (no events arrived) — just loop again.
