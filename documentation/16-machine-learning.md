@@ -181,11 +181,22 @@ runner. The runner receives only the content-derived deployment ID and canonical
 JSON tensor input; arbitrary runtime fields are removed from the portable
 result, and backend failures become stable codes.
 
-These adapters intentionally do not import PyTorch or TensorFlow, deserialize
-weights, choose devices, open artifact URIs, discover workers, or redirect
-existing ML traffic. A runtime controller must verify and load the deployment
-and supply the runner. Live native-runtime parity, cancellation during a real
-kernel, placement, memory pressure, and teardown remain separate gates.
+The adapters themselves remain runtime-free. An opt-in controller boundary in
+`native_tensor_runtime.py` can now construct their injected runner from one
+caller-resolved local artifact. Before deserialization it requires the exact
+declared role, byte length, SHA-256, package/framework, deployment and installed
+runtime version. PyTorch accepts TorchScript only and maps it to CPU; it never
+uses pickle-based `torch.load`. TensorFlow accepts a single `.keras` v3 artifact
+through Keras safe mode. Both execute off the event loop and return only the
+portable prediction and shape fields.
+
+This loader does not resolve artifact URIs, download packages, select workers,
+route traffic, retry, activate a deployment or modify existing ML traffic. The
+execution owner must provision the optional framework and pass an explicit
+local path. Representative CPU checks cover verified loading and parity for
+both frameworks. Cancellation during a real kernel, accelerator placement,
+memory pressure, long-running load, worker loss and teardown remain separate
+operational gates.
 
 An evidence-bound dispatch plan closes the gap between provider discovery and
 deployment state without becoming a router. For one caller-selected provider
