@@ -45,6 +45,15 @@ stale decision cannot silently target a different component set. The selection
 contains provider, item, source and revision identities—not retrieved text—and
 the discovery result remains the authority for collection receipts and content.
 
+The integrated `run_discovery_context_route` path completes that connection:
+the exact portable discovery result selects registered context providers, the
+selection is bound to the registry manifest, and composition reuses the
+original request query in memory. Provider and ranker policy, token and
+per-provider limits, cancellation, registry drift, partial failures, citations,
+and source/revision identity remain explicit. No provider is discovered
+implicitly, and the coordination layer does not probe a source, model, worker,
+or accelerator on its own.
+
 Discovery and context changes are evaluated with a payload-free, snapshot-bound
 benchmark contract. Every case binds the exact discovery request, query digest,
 relevant source and record revisions, and required support claims. Every

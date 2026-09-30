@@ -32,6 +32,15 @@ duplicate registration, ambiguous selection, and unknown IDs fail before any
 provider runs. Callers explicitly choose providers and the ordered ranker chain,
 so adding an adapter cannot silently alter an existing request.
 
+Discovery can feed that same registry without creating a second context plane.
+`run_discovery_context_route` completes the bounded discovery route, binds its
+exact result and current registry manifest into a payload-free selection, then
+composes only the selected registered providers and rankers. Invalid budgets
+and ranker IDs fail before scouting; registry drift, unregistered discovered
+providers, and empty allowlisted selections fail closed. The combined report
+retains discovery receipts and rejected options beside provider/ranker failures
+and the final token-budgeted assembly.
+
 Composition gathers and validates all provider candidates first, applies each
 optional ranker to the still-complete candidate set, and performs the token-budget
 selection exactly once at the end. This ordering matters: ranking evidence can
