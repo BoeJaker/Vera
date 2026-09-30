@@ -431,6 +431,16 @@ def _py_bin(install_deps: bool, venv: str = "") -> str:
     return f'"{venv or _VENV}/bin/python"' if install_deps else "python3"
 
 
+def _launch_python(comp: Dict[str, Any], install_deps: bool, venv: str = "") -> str:
+    """The interpreter a component runs under. A component WITH dependencies
+    runs in its venv whether or not THIS deploy reinstalled them: a code-only
+    redeploy (deps unchanged, install_deps false) used to write the unit with
+    the system python3, which has none of them - every node's nlp_server
+    crash-looped on "No module named uvicorn" (release aad3cbbe, 2026-09-30)."""
+    has_deps = bool(comp.get("pip_steps") or comp.get("requirements") or comp.get("pip"))
+    return _py_bin(install_deps or has_deps, venv)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  CAPABILITIES
 # ═════════════════════════════════════════════════════════════════════════════
@@ -649,7 +659,7 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
             return out
         out["url"] = f"http://{rec.get('host','')}:{port}"
     elif launch:
-        py = _py_bin(install_deps, venv)
+        py = _launch_python(comp, install_deps, venv)
         run_cmd = comp["run"].format(py=py, port=port, vera_url=shlex.quote(vera_url) if vera_url else "")
         env = {k: v.format(port=port) for k, v in (comp.get("env") or {}).items()}
         if systemd:

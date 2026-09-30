@@ -238,3 +238,13 @@ def test_ort_sessions_get_an_explicit_thread_count():
     assert "ORT_THREADS" in src
     assert "_so.intra_op_num_threads = ORT_THREADS" in src          # Kokoro
     assert 'os.environ["OMP_NUM_THREADS"] = str(ORT_THREADS)' in src   # rembg, per call
+
+
+def test_a_code_only_redeploy_keeps_the_venv():
+    """Release aad3cbbe (2026-09-30): nlp_server redeployed with unchanged
+    deps (install_deps false) was launched with the system python3 - no
+    uvicorn - and crash-looped on every node."""
+    nlp = components._COMPONENTS["nlp_server"]
+    assert "/bin/python" in components._launch_python(nlp, install_deps=False, venv="/v")
+    assert "/bin/python" in components._launch_python(nlp, install_deps=True, venv="/v")
+    assert components._launch_python({"run": "x"}, install_deps=False) == "python3"
