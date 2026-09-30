@@ -14,8 +14,14 @@ from pathlib import Path
 import time
 from typing import Any
 
-from vera.capability_contract_core import project_registry
-from vera.capability_resolver_core import resolve_shadow
+# Dual-spelled: the running app has only Vera.vera (eval.ontology.decision answered "No module named 'vera'" on prod,
+# 2026-09-30); the test path's spelling first, so one process never holds both.
+try:
+    from vera.capability_contract_core import project_registry
+    from vera.capability_resolver_core import resolve_shadow
+except ImportError:  # pragma: no cover - the running app
+    from Vera.vera.capability_contract_core import project_registry
+    from Vera.vera.capability_resolver_core import resolve_shadow
 
 
 ONTOLOGY_DECISION_CORPUS_SCHEMA = "vera.capability-ontology-decision-corpus/v1"
