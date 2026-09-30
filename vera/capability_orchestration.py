@@ -630,6 +630,16 @@ def register_ui(panel_id: str, label: str, icon: str, html: str, js: str = "",
 
 REDIS = PG_POOL = CHROMA = NEO = None
 
+# Every blocking stream read (XREAD / XREADGROUP block=) on the shared REDIS
+# client must return before that client's socket_timeout (4 s, set where it
+# connects). It used block=5000: an idle read hit the socket timeout first,
+# so every quiet loop logged "Timeout reading from ..." about every 6 s, and
+# redis-py dropped the pooled connection each time (a fresh TLS connect per
+# idle read). A message arriving between 4 s and 5 s went to a socket
+# nobody was reading. Readers use this constant, not a literal.
+REDIS_SOCKET_TIMEOUT_S = 4
+STREAM_BLOCK_MS = 3000
+
 # COORD_REDIS — a SHARED coordination Redis handle used for cross-process
 # primitives that must be visible across prod AND every dev sandbox container
 # (currently: the Ollama GPU gate / "one big queue"). Dev containers run their
@@ -5661,7 +5671,7 @@ async def worker_loop(worker_id: str):
             try:
                 candidate = aioredis.from_url(REDIS_URL, decode_responses=False,
                                               socket_connect_timeout=4,
-                                              socket_timeout=4)
+                                              socket_timeout=REDIS_SOCKET_TIMEOUT_S)
                 await candidate.ping()
                 REDIS = candidate
                 log.info("Worker %s: Redis reconnected ✓", worker_id)
@@ -5754,7 +5764,7 @@ async def worker_loop(worker_id: str):
 
         try:
             resp = await REDIS.xreadgroup(
-                GROUP_WORKERS, worker_id, {_s: ">" for _s in _streams}, count=1, block=5000
+                GROUP_WORKERS, worker_id, {_s: ">" for _s in _streams}, count=1, block=STREAM_BLOCK_MS
             )
         except Exception as e:
             err_str = str(e)
@@ -6004,7 +6014,7 @@ async def reply_listener():
     log.info("Reply listener started (%s)", stream)
     while True:
         try:
-            resp = await REDIS.xread({stream: last}, count=20, block=5000)
+            resp = await REDIS.xread({stream: last}, count=20, block=STREAM_BLOCK_MS)
         except Exception as e:
             log.debug("reply_listener: %s", e)
             await asyncio.sleep(2)
@@ -6056,7 +6066,7 @@ async def result_listener():
     while True:
         try:
             resp = await REDIS.xreadgroup(
-                GROUP_RESULTS, consumer_name, {RESULT_STREAM: ">"}, count=10, block=5000
+                GROUP_RESULTS, consumer_name, {RESULT_STREAM: ">"}, count=10, block=STREAM_BLOCK_MS
             )
         except Exception as e:
             log.error("result_listener: %s", e)
@@ -9042,25 +9052,60 @@ async def _gather_subsystem_snapshot() -> Dict:
     topology map both need. Kept as one shared helper so neither reimplements
     the other's gather logic. `nodes`/`cluster` are only consumed by the
     topology map today, but there's no reason for it to run a second parallel
-    gather just for two more cheap (cache-backed, no live SSH) calls."""
-    sysmon, mesh, loop_lab, sandboxes, mimic, nodes, cluster, temps, memstats, redis_info, docker_stats, perf = await asyncio.gather(
-        _cap_call("sysmon.status"),
-        _cap_call("mesh.nodes"),
-        _cap_call("evolve.sandbox.status"),
-        _cap_call("sandbox.session.list"),
-        _cap_call("cluster.mimic.status"),
-        _cap_call("nodes.list"),
-        _cap_call("obs.cluster"),
-        _cap_call("obs.node_temps"),
-        _cap_call("memory.stats"),
-        _cap_call("obs.redis"),
-        _cap_call("docker.stats.top"),
-        _cap_call("perf.stalls", limit=5),
-    )
-    return {"sysmon": sysmon, "mesh": mesh, "loop_lab": loop_lab,
-            "sandboxes": sandboxes, "mimic": mimic, "nodes": nodes,
-            "cluster": cluster, "temps": temps, "memstats": memstats, "redis": redis_info,
-            "docker_stats": docker_stats, "perf": perf}
+    gather just for two more cheap (cache-backed, no live SSH) calls.
+
+    Each source gets SNAPSHOT_SOURCE_TIMEOUT_S. The whole gather used to wait
+    for the slowest source, so /topology/snapshot took 10.8 s on every call
+    (measured on the bleeding-edge mirror 2026-09-30) and held the dashboard
+    with it. A source still running at its limit goes on in the background (it
+    is never cancelled, so a cap that fills its own cache still does); the
+    snapshot uses that source's last answer and lists it under "stale". A
+    source is never called twice at once: a poll that finds it still running
+    waits on the same call."""
+    vals = await asyncio.gather(*(_snapshot_source(key, cap, kw)
+                                  for key, cap, kw in _SNAPSHOT_SOURCES))
+    out = {key: val for (key, _cap, _kw), (val, _stale) in zip(_SNAPSHOT_SOURCES, vals)}
+    out["stale"] = [key for (key, _cap, _kw), (_val, stale) in zip(_SNAPSHOT_SOURCES, vals) if stale]
+    return out
+
+
+_SNAPSHOT_SOURCES = (
+    ("sysmon", "sysmon.status", {}),
+    ("mesh", "mesh.nodes", {}),
+    ("loop_lab", "evolve.sandbox.status", {}),
+    ("sandboxes", "sandbox.session.list", {}),
+    ("mimic", "cluster.mimic.status", {}),
+    ("nodes", "nodes.list", {}),
+    ("cluster", "obs.cluster", {}),
+    ("temps", "obs.node_temps", {}),
+    ("memstats", "memory.stats", {}),
+    ("redis", "obs.redis", {}),
+    ("docker_stats", "docker.stats.top", {}),
+    ("perf", "perf.stalls", {"limit": 5}),
+)
+SNAPSHOT_SOURCE_TIMEOUT_S = 4.0
+_SNAPSHOT_LAST: Dict[str, Any] = {}
+_SNAPSHOT_INFLIGHT: Dict[str, "asyncio.Task"] = {}
+
+
+async def _snapshot_source(key: str, cap_name: str, kw: Dict) -> "Tuple[Any, bool]":
+    """(value, stale) for one snapshot source within SNAPSHOT_SOURCE_TIMEOUT_S."""
+    loop = asyncio.get_running_loop()
+    task = _SNAPSHOT_INFLIGHT.get(key)
+    if task is None or task.done() or task.get_loop() is not loop:
+        task = loop.create_task(_cap_call(cap_name, **kw))
+        _SNAPSHOT_INFLIGHT[key] = task
+
+        def _keep(t, k=key):
+            if not t.cancelled() and t.exception() is None:
+                _SNAPSHOT_LAST[k] = t.result()
+        task.add_done_callback(_keep)
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), SNAPSHOT_SOURCE_TIMEOUT_S), False
+    except asyncio.TimeoutError:
+        if key in _SNAPSHOT_LAST:
+            return _SNAPSHOT_LAST[key], True
+        return {"error": f"{cap_name} still running after {SNAPSHOT_SOURCE_TIMEOUT_S:g}s"}, True
 
 
 def _dot_state(ok: bool, exists: bool, warn: bool = False) -> str:
@@ -9516,7 +9561,8 @@ async def topology_snapshot(trace_id=None) -> Dict:
         nodes_out.append({"id": sid, "label": label, "kind": "monitor", "status": status, "detail": detail})
         edges_out.append({"from": "hub", "to": sid})
 
-    return {"nodes": nodes_out, "edges": edges_out, "ts": now_iso()}
+    return {"nodes": nodes_out, "edges": edges_out, "ts": now_iso(),
+            "stale": snap.get("stale") or []}
 
 
 @capability("ollama.instances", memory="off", silent=True,
@@ -11043,7 +11089,7 @@ async def lifespan(app: FastAPI):
             try:
                 _r = aioredis.from_url(
                     REDIS_URL, decode_responses=False,
-                    socket_connect_timeout=4, socket_timeout=4,
+                    socket_connect_timeout=4, socket_timeout=REDIS_SOCKET_TIMEOUT_S,
                 )
                 await _r.ping()
                 info = await _r.info("server")
