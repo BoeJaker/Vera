@@ -20,7 +20,7 @@ def test_current_inventory_is_source_bound_without_live_work():
     value = build_discovery_context_baseline(ROOT)
     assert value["schema"] == "vera.discovery-context-baseline/v1"
     assert value["counts"] == {
-        "components": 27, "live_evidence_required": 6, "gaps": 2,
+        "components": 28, "live_evidence_required": 6, "gaps": 2,
     }
     assert len(value["source_evidence"]) == value["counts"]["components"]
     assert all(not enabled for enabled in value["constraints"].values())
@@ -31,6 +31,7 @@ def test_current_inventory_is_source_bound_without_live_work():
     assert "godseye.geospatial" in value["components_by_role"]["data"]
     assert "godseye.portable-dataset" in value["components_by_role"]["data"]
     assert "agent.rag-context" in value["components_by_role"]["context"]
+    assert "discovery.operator-readmodel" in value["components_by_role"]["data"]
 
 
 @pytest.mark.critical

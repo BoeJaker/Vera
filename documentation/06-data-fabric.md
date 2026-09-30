@@ -4,8 +4,10 @@
 
 Vera keeps an offline, source-bound inventory of the discovery and context
 paths that feed the Fabric. It distinguishes portable provider contracts from
-native adapters, labels JEPA Worldview paths explicitly, and records the missing
-portable dataset boundary for the separate non-JEPA Worldview/Godseye line.
+native adapters and labels JEPA Worldview paths explicitly. The separate
+non-JEPA Worldview/Godseye line now projects normalized geospatial records into
+immutable portable datasets without claiming JEPA authority, while Agent RAG
+can project revision-qualified Fabric hits into cited portable context.
 It also records which paths still require live source or accelerator evidence.
 The inventory is content-addressed and checked against a reviewed semantic
 baseline, so routing work starts from an explicit system map rather than an
@@ -55,6 +57,14 @@ failure rate, policy violations and individual-case regressions. Payload-free
 per-repetition evidence sits beside aggregates so averages cannot hide a bad
 case. Reports contain identifiers and metrics rather than queries or retrieved
 text, and never invoke a provider.
+
+Operators can inspect this evidence without gaining execution authority.
+Completed discovery routes append a bounded, payload-free read model containing
+candidate/option ranks, worker and GPU-admission identities, resource class,
+receipt counts/timing/cost, stable failures and output counts. Already-computed
+benchmark comparisons can be recorded explicitly and expose baseline/candidate
+quality, latency, resource, failure and blocker summaries. The read model stores
+no queries or retrieved content and cannot run discovery or activate a winner.
 
 The polyglot data fabric is Vera's unified data layer. It combines multiple database paradigms — vector (FAISS + Chroma), graph (Neo4j), relational (SQLite + PostgreSQL), and object storage (Garage / Ceph S3) — into a single ingestion pipeline and query DSL. Anything Vera produces or consumes that's worth keeping ends up in the fabric, where it can be recalled semantically, by relation, by exact filter, or by any combination of the three.
 
