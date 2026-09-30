@@ -14165,6 +14165,12 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _intent_core = None
 
+# What a finished loop may claim: the final gate's last verdict (census 2026-09-30).
+try:
+    from Vera.vera.dag import gate_finish_core as _gate_finish_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import gate_finish_core as _gate_finish_core
+
 # When a final-gate follow-up is redundant (census 2026-09-30: edits were skipped).
 try:
     from Vera.vera.dag import follow_up_core as _follow_up_core
@@ -19699,7 +19705,8 @@ def _v5_stepwise_bootstrap_step(goal: str, catalog_names: List[str]) -> Dict[str
 
 async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
                                model: str = "", instance_id: str = "",
-                               prefer_gpu: bool = True) -> str:
+                               prefer_gpu: bool = True,
+                               unmet: Optional[List[str]] = None) -> str:
     """Compose a final answer from the per-step results (the blackboard)."""
     def _step_hdr(r: Dict[str, Any]) -> str:
         # See _v6_build_ledger/_v5_build_ctx_slice: `title` is the PLANNED
@@ -19714,7 +19721,9 @@ async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
     sys = ("Write the final answer to the user's GOAL using the results of the executed steps. "
            "Be direct and concrete. Do not mention 'steps' or internal orchestration unless the "
            "goal asked for a process. If something failed, state what is known and what is missing.")
-    prompt = f"GOAL: {goal}\n\nSTEP RESULTS:\n{block}\n\nWrite the final answer."
+    prompt = (f"GOAL: {goal}\n\nSTEP RESULTS:\n{block}\n"
+              + _gate_finish_core.note(unmet or [])
+              + "\nWrite the final answer.")
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
@@ -23453,7 +23462,8 @@ _V6_DELIVER_DOC_MAX      = 6000    # chars of each deliverable FILE shown to the
 
 async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
                       final: str, *, model: str, instance_id: str,
-                      prefer_gpu: bool, session_id: str = "", emit_fn=None) -> str:
+                      prefer_gpu: bool, session_id: str = "", emit_fn=None,
+                      unmet: Optional[List[str]] = None) -> str:
     """DELIVERY stage — a dedicated final agent that turns the whole run (goal,
     per-step evidence, artifacts) into the definitive user-facing deliverable in
     MARKDOWN. Where the cap calls themselves were the point (code edits, deploys)
@@ -23528,6 +23538,7 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
     )
     prompt = (f"GOAL: {goal}\n"
               + (f"DONE WHEN: {done_when}\n" if done_when else "")
+              + _gate_finish_core.note(unmet or [])
               + f"\nRUN EVIDENCE:\n{block}\n\nARTIFACTS RECORDED:\n{art_block}\n"
               + (f"\nDELIVERABLE FILE(S) - compose the Result from these:\n{doc_block}\n"
                  if doc_block else "")
@@ -25422,6 +25433,8 @@ async def cap_dag_agent_loop_v6(
     # the `executed < hard_cap` bound that already limits real step work.
     _gate_rounds = 0
     _MAX_GATE_ROUNDS = 3
+    _gate_last: Dict[str, Any] = {}      # the last verdict, carried to the end
+    _gate_ran_after = 0                  # follow-up steps run since that verdict
     while enable_final_gate and executed < hard_cap and _gate_rounds < _MAX_GATE_ROUNDS:
         _gate_rounds += 1
         _gate_goal = (goal + "\n\n" + _user_updates_block(user_updates)
@@ -25452,6 +25465,8 @@ async def cap_dag_agent_loop_v6(
                           "round": _gate_rounds,
                           "follow_up": [{"id": s["id"], "title": s["title"]}
                                         for s in gate.get("follow_up", [])]})
+        _gate_last = gate
+        _gate_ran_after = 0
         follow_up = gate.get("follow_up") or []
         if not follow_up:
             # Either complete, or the judge/overrides had nothing actionable
@@ -25493,6 +25508,7 @@ async def cap_dag_agent_loop_v6(
                                                  "batch: " + ", ".join(_fu_paths))})
                     continue
             executed += 1
+            _gate_ran_after += 1
             _umsgs = await _drain_user_messages(sid)
             if _umsgs:
                 user_updates.extend(_umsgs)
@@ -25546,8 +25562,11 @@ async def cap_dag_agent_loop_v6(
             await _journal_step(step, res)
 
     # ── Synthesize final ──────────────────────────────────────────────────────
+    # The gate's last word: parts it found NOT met are reported as not done.
+    _unmet = _gate_finish_core.unmet(_gate_last, _gate_ran_after)
     final = await _v5_synthesize_final(
-        goal, results, model=model, instance_id=instance_id, prefer_gpu=prefer_gpu)
+        goal, results, model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+        unmet=_unmet)
     handover_output = ""
     if handover and results:
         try:
@@ -25573,7 +25592,7 @@ async def cap_dag_agent_loop_v6(
         deliverable = await _v6_deliver(
             goal, done_when, results, final,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
-            session_id=sid,
+            session_id=sid, unmet=_unmet,
             emit_fn=lambda ev: emit_event({
                 "type": str(ev.get("type") or "agent_loop_v6.deliverable_shaped"),
                 "session_id": sid, "stream_id": stream_id,
@@ -25618,7 +25637,7 @@ async def cap_dag_agent_loop_v6(
                              stream_id=stream_id)
     await emit_event({"type": "agent_loop_v6.done", "stream_id": stream_id, "session_id": sid,
                       "summary": final, "cycles": gcycle, "steps_run": len(results),
-                      "reason": "complete"})
+                      "reason": _gate_finish_core.reason(_unmet), "unmet": _unmet})
     if stream_complete and stream_id:
         try:
             await stream_complete(stream_id, deliverable or final)
