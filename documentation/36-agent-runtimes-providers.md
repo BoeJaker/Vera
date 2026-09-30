@@ -142,8 +142,14 @@ TensorFlow batch adapters without taking over lifecycle ownership. Both reuse
 the same canonical JSON input, prediction/shape output, cancellation, output
 limit, and stable-error boundary as existing batch providers. Construction
 fails when the admitted deployment's package, runtime, provider, or artifact
-evidence does not match the selected framework. Framework imports, weight
-deserialization, device selection, worker discovery, retries, and traffic
+evidence does not match the selected framework.
+
+An optional verified loader supplies the execution seam for controllers that
+already own a local artifact. It re-hashes the regular file against its
+ModelPackage, rejects symlinks and runtime-version drift, and permits only
+TorchScript on PyTorch or safe-mode `.keras` v3 on TensorFlow. The current
+loader fixes representative execution to CPU. Artifact resolution, downloads,
+worker discovery, accelerator placement, retries, activation and traffic
 cutover remain outside this layer.
 
 Before an execution owner dispatches, `plan_inference_dispatch` can join one

@@ -64,6 +64,9 @@ from .ml_workshop_inference_adapter import (
     LegacyMLWorkshopInferenceProvider, LegacyMLWorkshopRunner)
 from .native_tensor_inference_adapter import (
     NativeTensorRunner, PyTorchInferenceProvider, TensorFlowInferenceProvider)
+from .native_tensor_runtime import (
+    NativeTensorRuntimeError, load_pytorch_provider, load_tensorflow_provider,
+    verify_native_artifact)
 from .inference_dispatch import (
     InferenceDispatchPlan, InferenceDispatchPolicy,
     inference_dispatch_plan_from_dict, plan_inference_dispatch)
@@ -92,6 +95,8 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "LegacyMLWorkshopInferenceProvider", "LegacyMLWorkshopRunner",
            "NativeTensorRunner", "PyTorchInferenceProvider",
            "TensorFlowInferenceProvider",
+           "NativeTensorRuntimeError", "load_pytorch_provider",
+           "load_tensorflow_provider", "verify_native_artifact",
            "InferenceDispatchPlan", "InferenceDispatchPolicy",
            "inference_dispatch_plan_from_dict", "plan_inference_dispatch",
            "OpenAICompatibleInferenceProvider", "OpenAICompatibleTransport",
