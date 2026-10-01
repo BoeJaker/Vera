@@ -280,6 +280,7 @@ _CRITICAL_MODULES = {
     "test_routing_parity_core",  # a sandbox ran the code-default models, not prod's routing - its measurements measured other models (2026-09-27)
     "test_step_deps_core",  # a step that needed a failed step read the failed attempt, never the recovery that finished it (2026-09-27)
     "test_step_call_ledger_core",  # a 10-18 cycle step re-ran calls that had already failed once they left its last-4 window (2026-09-27)
+    "test_discovery_imports_prod_path",  # a plain-'vera' import the running app cannot resolve took operator.* (29 caps), then worldview + model inventory, off prod (2026-09-30)
     "test_stable_ctx",  # one context window per GPU node+model: the runner reloaded on nearly every call (2026-09-22)  # the loop chained web.search -> web.fetch to the wall cap while web.research sat unnamed (2026-09-21)
 }
 
