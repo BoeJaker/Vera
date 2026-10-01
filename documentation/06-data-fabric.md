@@ -67,6 +67,24 @@ per-repetition evidence sits beside aggregates so averages cannot hide a bad
 case. Reports contain identifiers and metrics rather than queries or retrieved
 text, and never invoke a provider.
 
+Live measurements use a separate bounded execution harness rather than adding
+effects to the offline comparator. The harness executes the complete
+variant-by-case-by-repetition matrix sequentially, so variants do not compete
+for the same provider, worker, or accelerator. It owns monotonic milestones for
+source selection and first useful context, enforces a deadline for every run,
+propagates caller cancellation, and reduces provider failures to stable error
+codes. A timeout or malformed result cannot retain partial hits, timing claims,
+queries, provider exception text, or retrieved payloads.
+
+Existing snapshot-aware retrieval adapters can be bound to the harness without
+creating another retrieval implementation. The binding recreates each
+digest-qualified query case against the exact `DatasetSnapshot`, converts only
+revision-qualified citations into benchmark hits, and cancels the provider
+signal when the run ends. Answer-support claims require a separate explicit
+resolver: retrieving a relevant record is not automatically treated as proof
+that a generated claim is supported. This path produces comparison evidence
+only; it does not select a winner, change routing, or authorize deployment.
+
 Operators can inspect this evidence without gaining execution authority.
 Completed discovery routes append a bounded, payload-free read model containing
 candidate/option ranks, worker and GPU-admission identities, resource class,
