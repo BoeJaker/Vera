@@ -3934,7 +3934,15 @@ span.vw-sampled{opacity:.85}
     + '.vw-dr-json summary::before{content:"\\25BE";display:inline-block;width:14px;margin-left:-14px;color:var(--t3,var(--dim,#6b7280))}.vw-dr-json details:not([open]) > summary::before{content:"\\25B8"}.vw-dr-json details:not([open]) > summary::after{content:" \\2026";color:var(--t3,var(--dim,#6b7280))}'
     + '.vw-dr-json i{font-style:normal}.vw-dr-json .k{color:var(--t1,var(--text,#d8dce4))}.vw-dr-json .s{color:var(--ok,#5fc49a)}.vw-dr-json .m{color:var(--acc,#6ea8d8)}.vw-dr-json .b{color:var(--warn,#f5b341)}.vw-dr-json .n,.vw-dr-json .p{color:var(--t3,var(--dim,#6b7280))}'
     + '.vw-dr-json .c{color:var(--t3,var(--dim,#6b7280));font-size:10px;margin-left:8px;font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}.vw-dr-json .t{font-size:9px;letter-spacing:.06em;text-transform:uppercase;margin-right:6px;padding:0 5px;border-radius:3px;color:var(--acc,#6ea8d8);box-shadow:inset 0 0 0 1px var(--acc,#6ea8d8)}'
-    + '.vw-dr-kv .vw-dr-json{padding:4px 6px 4px 18px;font-size:11px}.vw-dr-argl{margin:8px 0 4px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7280))}.vw-drawer button.on{border-color:var(--acc,#6ea8d8);color:var(--acc,#6ea8d8)}';
+    + '.vw-dr-kv .vw-dr-json{padding:4px 6px 4px 18px;font-size:11px}.vw-dr-argl{margin:8px 0 4px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7280))}.vw-drawer button.on{border-color:var(--acc,#6ea8d8);color:var(--acc,#6ea8d8)}'
+    + '.vw-dr-tree{display:flex;flex-direction:column;gap:6px;min-width:0}.vw-dr-sec{border-radius:7px;background:var(--s2,var(--bg2,#1f232b));box-shadow:inset 0 0 0 1px var(--bd,rgba(255,255,255,.06));min-width:0}'
+    + '.vw-dr-sec > summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:8px;padding:5px 9px;border-radius:7px}.vw-dr-sec > summary::-webkit-details-marker{display:none}.vw-dr-sec > summary:hover{background:var(--s3,rgba(255,255,255,.04))}'
+    + '.vw-dr-sec > summary::before{content:"\\25BE";color:var(--t3,var(--dim,#6b7280));width:10px}.vw-dr-sec:not([open]) > summary::before{content:"\\25B8"}.vw-dr-sec > summary b{font-weight:600;color:var(--t1,var(--text,#d8dce4))}'
+    + '.vw-dr-sec > .in{display:flex;flex-direction:column;gap:6px;padding:2px 9px 8px 19px;min-width:0}.vw-dr-tree .c{color:var(--t3,var(--dim,#6b7280));font-size:10.5px;font-style:normal}'
+    + '.vw-dr-tw{overflow:auto;max-height:340px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--bd,rgba(255,255,255,.06))}.vw-dr-tb{border-collapse:collapse;width:100%;font-size:11px}'
+    + '.vw-dr-tb th{position:sticky;top:0;text-align:left;font-weight:600;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--t2,var(--dim2,#8a92a0));background:var(--s2,var(--bg2,#1f232b));padding:4px 7px;white-space:nowrap}'
+    + '.vw-dr-tb td{padding:3px 7px;border-top:1px solid var(--bd,rgba(255,255,255,.06));vertical-align:top;max-width:220px;overflow-wrap:anywhere}.vw-dr-chips{display:flex;flex-wrap:wrap;gap:4px}'
+    + '.vw-dr-chips > span{padding:1px 7px;border-radius:999px;font-size:11px;background:var(--s2,var(--bg2,#1f232b));box-shadow:inset 0 0 0 1px var(--bd,rgba(255,255,255,.08));overflow-wrap:anywhere}';
 
   /* THE DRAWER'S JSON (owner, 2026-09-27: "prettyfy all the json properly in the right hand details panel"). The tile's json
      form, drawn into the page, lost its styles (they live in the widget's shadow root) and cut every value to a line. This
@@ -3958,6 +3966,41 @@ span.vw-sampled{opacity:.85}
     };
     return '<div class="vw-dr-json">' + node(null, root, 0, true) + '</div>';
   }
+  /* THE DRAWER'S DATA AS HTML (owner, 2026-09-28: "the json content of the right details panel could be formatted much nicer
+     as html instead of as raw json"). The fields view draws what is nested the way it draws the top: plain values as rows
+     (formatted as the fields are - status dots, dates, bytes, links), an object or a list as a section that says how much is
+     in it (the first level open, the rest a click away), a list of records as a table of their plain columns, a list of
+     plain values as chips. The { } JSON button still shows the raw JSON. */
+  function drTree(root) {
+    let left = 3000;
+    const cnt = (v) => Array.isArray(v) ? v.length + (v.length === 1 ? ' item' : ' items') : Object.keys(v).length + (Object.keys(v).length === 1 ? ' key' : ' keys');
+    const lbl = (k) => esc(String(k).replace(/_/g, ' '));
+    const rowsOf = (o, ks) => '<div class="vw-dr-kv">' + ks.map((k) => '<span class="k">' + lbl(k) + '</span><span class="v">' + fieldVal(k, o[k]) + '</span>').join('') + '</div>';
+    const table = (arr) => {
+      const rs = arr.slice(0, 50), cols = [];
+      rs.forEach((r) => Object.keys(r).forEach((k) => { if (!cols.includes(k) && rs.some((x) => isPlain(x[k]) && x[k] !== '' && x[k] != null)) cols.push(k); }));
+      if (!cols.length) return '';
+      const cs = cols.slice(0, 7), deep = rs.some((r) => Object.keys(r).some((k) => !isPlain(r[k])));
+      return '<div class="vw-dr-tw"><table class="vw-dr-tb"><thead><tr>' + cs.map((k) => '<th>' + lbl(k) + '</th>').join('') + '</tr></thead><tbody>'
+        + rs.map((r) => '<tr>' + cs.map((k) => '<td>' + (isPlain(r[k]) ? fieldVal(k, r[k]) : '<i class="c">' + cnt(r[k]) + '</i>') + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>'
+        + ((arr.length > 50 || cols.length > 7 || deep) ? '<i class="c">' + [arr.length > 50 ? (arr.length - 50) + ' more rows' : '', cols.length > 7 ? (cols.length - 7) + ' more columns' : '', deep ? 'nested values counted' : ''].filter(Boolean).join(' · ') + ' - { } JSON shows everything</i>' : '');
+    };
+    const block = (v, depth) => {
+      if (--left < 0) return '<i class="c">… more than the drawer draws - { } JSON shows everything</i>';
+      if (Array.isArray(v)) {
+        if (!v.length) return '<i class="c">empty</i>';
+        if (v.every(isPlain)) return '<div class="vw-dr-chips">' + v.slice(0, 120).map((x) => '<span>' + fieldVal('', x) + '</span>').join('') + (v.length > 120 ? '<span class="c">+ ' + (v.length - 120) + '</span>' : '') + '</div>';
+        if (v.every((x) => x && typeof x === 'object' && !Array.isArray(x))) { const t = table(v); if (t) return t; }
+        return v.slice(0, 60).map((x, i) => sec('#' + (i + 1), x, depth)).join('') + (v.length > 60 ? '<i class="c">+ ' + (v.length - 60) + ' more</i>' : '');
+      }
+      if (isPlain(v)) return '<span class="v">' + fieldVal('', v) + '</span>';
+      const ks = Object.keys(v); if (!ks.length) return '<i class="c">empty</i>';
+      const pl = ks.filter((k) => isPlain(v[k])), ns = ks.filter((k) => !isPlain(v[k]));
+      return (pl.length ? rowsOf(v, pl) : '') + ns.map((k) => sec(k, v[k], depth)).join('');
+    };
+    const sec = (k, v, depth) => (isPlain(v) ? rowsOf({ [k]: v }, [k]) : '<details class="vw-dr-sec"' + (depth < 1 ? ' open' : '') + '><summary><b>' + lbl(k) + '</b><i class="c">' + cnt(v) + '</i></summary><div class="in">' + block(v, depth + 1) + '</div></details>');
+    return '<div class="vw-dr-tree">' + block(root, 0) + '</div>';
+  }
   const isPlain = (v) => v == null || typeof v !== 'object';
   /* an item with no name field is named by what identifies it (a request log row: its model, else its id) - the drawer's
      head and the hover card said the widget's title for every row */
@@ -3967,7 +4010,7 @@ span.vw-sampled{opacity:.85}
   const fieldVal = (k, v) => { if (v === null || v === undefined) return '<i style="opacity:.5">—</i>'; if (typeof v === 'boolean') return '<i class="st" style="background:' + (v ? 'var(--ok,#28c28a)' : 'var(--warn,#f5b341)') + '"></i>' + (v ? 'yes' : 'no');
     if (typeof v === 'number') return esc(TIP_RAW.test(k) ? String(v) : ((/(^|_)(created|updated|started|ended|at|ts|time|last_run|next_run)$/i.test(k) && v > 1e9 && v < 4e10) ? new Date(v * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' · ' + v : (/bytes?$|_b$/.test(k) ? fmtBytesS(v) + ' · ' + v : fmt(v))));
     const s = String(v); if (/^(status|state|health|level|severity)$/i.test(k)) return '<i class="st" style="background:' + stCol(s).replace(/var\(--b-(ac\d?|t3)\)/, (m, x) => ({ ac: 'var(--acc,#6ea8d8)', ac2: 'var(--ok,#28c28a)', ac3: 'var(--warn,#f5b341)', ac4: 'var(--err,#ef5b5b)', t3: 'var(--dim,#6b7280)' }[x] || m)) + '"></i>' + esc(s);
-    if (/^\s*[\[{]/.test(s)) { try { const o = JSON.parse(s); if (o && typeof o === 'object') return drJson(o); } catch (_) {} }
+    if (/^\s*[\[{]/.test(s)) { try { const o = JSON.parse(s); if (o && typeof o === 'object') return drTree(o); } catch (_) {} }
     if (/^https?:\/\//.test(s)) return '<a href="' + esc(s) + '" target="_blank" rel="noopener" style="color:var(--acc,#6ea8d8)">' + esc(s) + '</a>'; return esc(s.length > 2000 ? s.slice(0, 2000) + '…' : s); };
   const itemName = (it, fb) => (it && typeof it === 'object' && !Array.isArray(it)) ? String(nameOf(it) || it.date || it.title || idName(it) || fb || 'item') : (Array.isArray(it) ? (fb || 'the answer') + ' · ' + it.length + ' items' : String(it ?? fb ?? 'item'));
   let _drawer = null;
@@ -4006,9 +4049,9 @@ span.vw-sampled{opacity:.85}
       + drMedia(obj, host)
       + (D.view === 'json' ? '<h4>The item · JSON</h4>' + drJson(it) : '')
       + (D.view !== 'json' && plain.length ? '<h4>Fields · ' + (plain.length + nested.length) + '</h4><div class="vw-dr-kv">' + plain.map((k) => '<span class="k">' + esc(k.replace(/_/g, ' ')) + '</span><span class="v">' + fieldVal(k, obj[k]) + '</span>').join('') + '</div>' : '')
-      + (D.view !== 'json' && nested.length ? '<h4>' + (plain.length ? 'Nested' : 'Everything') + '</h4>' + drJson(Array.isArray(obj) ? obj : nested.reduce((o2, k) => { o2[k] = obj[k]; return o2; }, {})) : '')
+      + (D.view !== 'json' && nested.length ? '<h4>' + (plain.length ? 'Nested' : 'Everything') + '</h4>' + drTree(Array.isArray(obj) ? obj : nested.reduce((o2, k) => { o2[k] = obj[k]; return o2; }, {})) : '')
       + (rel.length ? '<h4>Related · ' + rel.length + ' in the same answer</h4><div class="vw-dr-rel">' + rel.map((r, i) => '<div data-dr-rel="' + i + '"><b>' + esc(itemName(r.row, r.path)) + '</b><small>' + esc(r.via.join(' · ')) + '</small></div>').join('') + '</div>' : '')
-      + '<h4>Where it comes from</h4><div class="vw-dr-src">' + esc((src ? src : 'the record\'s own data') + (cur.path ? '\npart ' + cur.path : '') + (rec.id ? '\nrecord ' + rec.id : '')) + '</div>' + (args ? '<div class="vw-dr-argl">args</div>' + drJson(JSON.parse(args)) : '')
+      + '<h4>Where it comes from</h4><div class="vw-dr-src">' + esc((src ? src : 'the record\'s own data') + (cur.path ? '\npart ' + cur.path : '') + (rec.id ? '\nrecord ' + rec.id : '')) + '</div>' + (args ? '<div class="vw-dr-argl">args</div>' + drTree(JSON.parse(args)) : '')
       + '</div>';
     el.onclick = (e) => { const b = e.target.closest && e.target.closest('[data-dr],[data-dr-rel]'); if (!b) return;
       if (b.hasAttribute('data-dr-rel')) { const r = rel[+b.getAttribute('data-dr-rel')]; if (r) { D.stack.push({ record: rec, item: r.row, path: r.path, ref: rowRef(r.row), data: cur.data, host }); paintDrawer(); } return; }
