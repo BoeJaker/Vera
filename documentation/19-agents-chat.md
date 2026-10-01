@@ -301,6 +301,9 @@ Two deterministic guards back this up:
 
 The variant used is the one selected in the Loop pane (`loopVariant`); if that is the built-in chat loop, the auto path uses `dag.agent_loop_v7`.
 
+> [!NOTE]
+> **🚧 Not live — System 1.** A small trained classifier for the chat-or-loop decision (`chat.route_to_loop`) has been proposed to replace the in-band `[[loop:]]` marker and its regex backstops. Today the decision is made only as described above. See [48 · System 1 decision models](./48-system-one-decision-models.md#53-chat).
+
 `sendAgentLoop` then dispatches on the variant:
 
 | `loopVariant` | Engine |
@@ -386,10 +389,11 @@ A turn can draw context from four independent places. Duplicate injection is pre
 |---|---|---|
 | Memory | `POST /memory/search`, `POST /memory/agent/context`, `GET /memory/session/edges` | Vector + session context; 1-hop graph expansion of the top 5 hits via `POST /memory/traverse`. |
 | Fabric | `POST /fabric/query` | Optional dataset filter. |
-| Entities / worldview / related Q&A | `POST /context/recall` | Seeded with real record ids from memory/fabric hits; cross-source dedupe unions provenance and keeps the best score (+0.03). |
+| Entities / related Q&A | `POST /context/recall` | Seeded with real record ids from memory/fabric hits; cross-source dedupe unions provenance and keeps the best score (+0.03). |
 | URLs in the message | `http.get` via `/mcp/call` | First URL also opens in the browser pane. |
 | Web / news | web search | Skipped when **Web live** is on (the server searches instead). |
 | Runs | `GET /run/shadow/graph` | Recent run graph for the session. |
+| Worldview | `POST /context/recall` (`sources` includes `worldview`) | JEPA latent-space neighbours. **Off by default**: the default source set is `memory`, `fabric`, `entities`, `urls`, so the Worldview chip must be switched on. See [Worldview](./11-worldview.md). |
 
 `buildCtxInj` injects up to `ctxK` (default 8) nodes scoring at least `ctxSim` (default 0.55) as a `[Retrieved Context]` block appended to the user message. In live mode it never injects context fetched for a different message. Each turn's context set is frozen at send time, so past turns redraw their own graph.
 
@@ -423,6 +427,9 @@ Artifact context (`_fetchArtifactContext`) is fetched concurrently and appended.
 7. Web results when server-side web search is active ([§10](#10-latency-features-opener-two-tier-web-gating-insights)).
 
 `agents_context_patch.py` additionally routes agent `skill_ids`/`ontology_ids` through `build_context_prompt` for callers that do not assemble context themselves. It leaves memory to the runner.
+
+> [!NOTE]
+> **🚧 Not live — System 1.** Gating memory retrieval per turn with a small classifier (`chat.memory_inject`) is a proposal only; today recall runs on every turn whenever `memory_inject` is on. See [48 · System 1 decision models](./48-system-one-decision-models.md#53-chat).
 
 ### 7.4 Agent knowledge (per-agent RAG)
 
@@ -463,6 +470,9 @@ The chat **Output format** picker (`cfgFormat`) sends `output_format`. The serve
 | deliverable | `markdown`, `report`, `json`, `code`, `email`, `slides`, `plain` | `md`, `docx`, `json`, `py`, `txt`, `pptx`, `txt` |
 
 Skills of type `output_format` register additional profiles at runtime (`register_profile`) and shadow a built-in profile with the same id. The picker lists them via `llm.formats` → `list_profiles()`. `ANTI_HALLU` is the shared grounding preamble used by Dream's synthesize stage.
+
+> [!NOTE]
+> **🚧 Not live — System 1.** Suggesting an output format or delivery channel automatically (`chat.output_format`, `delivery.channel`) is a proposal only; both are user choices today. See [48 · System 1 decision models](./48-system-one-decision-models.md#53-chat).
 
 ### 8.2 Format-specific rendering in chat
 
@@ -506,6 +516,9 @@ Per turn, `AgentRunner`:
 4. **Compacts history** to the agent's budget (`min(cap, window) − reserve`, reserve = `num_predict` or 1024). Dropped turns are summarised (`compact_messages`, bounded by `AGENT_COMPACT_SUMMARY_TIMEOUT`), and a `compacted` frame reports how many were dropped.
 5. **Takes a GPU slot** (`_chat_gpu_slot`) so chat shares the GPU queue with batch work. The wait is short and fails open (`VERA_CHAT_GATE_WAIT_S`).
 
+> [!NOTE]
+> **🚧 Not live — System 1.** A learned fallback for job-type classification when no `routing_table` row matches (`chat.job_type`) is proposed, not implemented; today an unmatched turn is always `chat`. See [48 · System 1 decision models](./48-system-one-decision-models.md#53-chat).
+
 While waiting, `queued` frames describe what the turn is behind (`queue_status_core.describe_wait`). They only name jobs Vera itself started, say "work Vera did not start" when a runner is busy for another client, and emit nothing when nothing is known.
 
 ---
@@ -520,6 +533,9 @@ All four are opt-in. A chat-side checkbox forces a feature on for the turn; leav
 | **Server web search** | `web_search=true` (web source on + **Web live**) | Emits `web_searching`, runs `web.search` (`limit` 1–10, default 5; 25 s timeout), emits `web_results` with sources, and **gates** the main generation on the results, injecting a `## Web search results` block with `[n]` citations. |
 | **Two-tier reply** | `two_tier` = `fetched` or `message` | Tier 1 answers from a starved prompt (`fetched` drops retrieved sections, `message` drops history too). Decider `tier1`: tier 1 emits `[[NEEDS-CONTEXT]]` if it needs more. Decider `tier2` (default): tier 2 always runs with full context and emits `[[NO-ADDITION]]` when nothing changes. Markers are filtered from the stream, and tier 2 continues tier 1's text mid-flow, so the reader sees one message. Tier 1 never waits on web search. |
 | **Insights** | `insights` (agent or chat toggle), reply ≥ 200 chars, not TTS | After the reply, a CPU long-horizon model (`job_type=chat_enrich`) returns up to 4 `insights`, `caveats` and `follow_ups`. Emitted as a `chat.insight` event and rendered in a card; never added to the conversation history. |
+
+> [!NOTE]
+> **🚧 Not live — System 1.** A classifier that would let two-tier skip tier 2 only when it is very confident the context adds nothing (`chat.needs_context`) is proposed, not live; today the markers above decide. See [48 · System 1 decision models](./48-system-one-decision-models.md#53-chat).
 
 ---
 

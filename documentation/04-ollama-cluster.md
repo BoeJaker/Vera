@@ -39,7 +39,13 @@ The core lives in [`vera/capability_orchestration.py`](../vera/capability_orches
 - [15. Configuration](#15-configuration)
 - [16. Events and storage](#16-events-and-storage)
 - [17. Portable inference compatibility](#17-portable-inference-compatibility)
-- [18. Troubleshooting](#18-troubleshooting)
+- [18. Model catalogue, benchmarks and hardware fit](#18-model-catalogue-benchmarks-and-hardware-fit)
+  - [Hardware facts](#hardware-facts)
+  - [Finding and installing models](#finding-and-installing-models)
+  - [Repointing routes and the optimiser](#repointing-routes-and-the-optimiser)
+  - [Benchmarks](#benchmarks)
+  - [Specialist (non-LLM) models](#specialist-non-llm-models)
+- [19. Troubleshooting](#19-troubleshooting)
 - [See also](#see-also)
 - [Screenshots](#screenshots)
 - [Capabilities](#capabilities)
@@ -137,6 +143,14 @@ Node settings (`enabled`, `priority`, `label`, `url`, `has_gpu`, `num_ctx`, `num
 
 Estate › Models & NLP › **Node settings** (`nodes.ollama.settings`, read-only, one SSH read per node) shows what is tuned on each Ollama: Vera's registry values, the unit's `OLLAMA_*` / `LLAMA_ARG_*` / GPU environment, every systemd drop-in and its contents, and the runners loaded right now with the `-t` they were started with. `nodes.ollama.settings.set` changes `num_thread` (the registry value sent with every routed call, and the unit's `LLAMA_ARG_THREADS`, so a caller that sends none — a sandbox, an external client — still gets it instead of llama.cpp's default) and custom `OLLAMA_*` / `LLAMA_ARG_*` flags in a Vera-owned drop-in. Applying restarts the unit and rolls back if Ollama stops answering; dry run by default. `nodes.ollama.tune` brings every node to the concurrency layout (two parallel slots and room for three loaded models on CPU servers, a CPU sibling beside a GPU node) and writes the thread default on every CPU Ollama unit.
 
+| Capability | Route | Purpose |
+|---|---|---|
+| `nodes.ollama.settings` | `GET /nodes/ollama/settings` | Live read of registry values, unit environment, drop-ins, managed flags and loaded runners per node |
+| `nodes.ollama.settings.set` | `POST /nodes/ollama/settings/set` | `num_thread` and custom `OLLAMA_*`/`LLAMA_ARG_*` flags (drop-in `40-vera-custom.conf`); dry run by default, restart with rollback |
+| `nodes.ollama.tune` | `POST /nodes/ollama/tune` | Concurrency layout: CPU servers get `OLLAMA_NUM_PARALLEL=2` and `OLLAMA_MAX_LOADED_MODELS=3` (drop-in `20-vera-concurrency.conf`, restarts the unit); a GPU node keeps one GPU slot and gains the CPU sibling on `:11436`. Dry run by default. |
+| `nodes.ollama.tap` | `POST /nodes/ollama/tap` | Put the activity tap (`edge/ollama_tap.py`) on each Ollama's public port and move Ollama to `127.0.0.1:<port+10>`, so the Estate activity pane sees every request — Vera's, sandboxes' and external callers' — byte for byte. A failed cutover rolls back; a stale tap is refreshed without touching Ollama (skipped while calls are in flight unless `force`). Dry run by default; refused from a dev sandbox. |
+| `obs.node_temps` | `GET /nodes/temps` | Per-node CPU/drive temperatures, BMC sensors (fans, voltages, power), SMART health, disk usage and per-logical-CPU load for every SSH-registered node, probed every 60 s (containers report their host's sensors) |
+
 ---
 
 ## 4. Health monitoring
@@ -232,6 +246,9 @@ All routing control lives on the **Model Routing** page (`/ui/panels/model-routi
 | `job_type` | cap and role rules | Job type whose base rule this rule merges over. |
 | `escalate_chars` + `escalate` | cap and role rules | When the prompt is at least this many characters, merge `escalate` over the effective rule (booleans apply even when false, so an escalation can lift a `deny_gpu`). |
 | `label`, `declared_by`, `pattern`, `role` | cap and role rules | Display and provenance. |
+
+> [!NOTE]
+> 🚧 **Not live.** Length escalation (`escalate_chars`) is a character-count proxy for "this prompt is hard enough for the GPU". A learned replacement, the `route.model_escalate` decision, is proposed in [48 · System 1 decision models](./48-system-one-decision-models.md#54-model-and-node-routing); today only the length threshold runs.
 
 ### 5.5 Built-in job-type rules
 
@@ -464,7 +481,16 @@ External clients (editor plug-ins, n8n, Open WebUI) point at Vera instead of a n
 - **Concurrency.** Up to `PROXY_MAX_CONCURRENCY` (3) in flight per node; beyond that a per-node FIFO queue (`PROXY_QUEUE_MAX` 50, else HTTP 429) waits up to `PROXY_QUEUE_TIMEOUT` (120 s, else HTTP 504). Each node drains its own queue, so a slow node never blocks another.
 - **Streaming.** Missing `stream` is treated as `true` (Ollama's default); streamed chunks are forwarded as they arrive and the slot is released when the stream ends.
 - **Observability.** Each request is appended to the `vera:ollama_proxy_log` stream (1000 entries) and emits `ollama.proxy_request` plus `ollama.request` / `ollama.request_done` / `ollama.request_error`, so it appears in the Jobs view.
-- **Control.** `cluster.mimic.status`, `cluster.mimic.config` (`paused`, `max_concurrency`, `prefer_gpu`), `cluster.mimic.requests[.clear]`; a monitor page at `/cluster/mimic/panel`.
+- **Control.** A monitor page at `/cluster/mimic/panel` (the **Mimic** pane of Workers & Ollama) backed by:
+
+| Capability | Route | Purpose |
+|---|---|---|
+| `cluster.mimic.status` | `GET /cluster/mimic/status` | `mounted`, `paused`, `prefer_gpu`, `routing` (`gpu-preferred` or `load-aware`), `current_target` (where a request would go now), `online_nodes`, `local_instance`, `active`, `queue_depth`, `queue_per_node`, `queue_max`, `max_concurrency`, `queue_timeout` |
+| `cluster.mimic.config` | `POST /cluster/mimic/config` | Runtime changes, not persisted: `paused` (return 503 without forwarding), `max_concurrency` (≥ 1), `prefer_gpu` (GPU-preferring vs pure load-aware routing); emits `ollama.proxy.config` |
+| `cluster.mimic.requests` | `GET /cluster/mimic/requests` | Requests that came through the proxy (not Vera's own traffic), newest first, from `vera:ollama_proxy_log` |
+| `cluster.mimic.requests.clear` | `POST /cluster/mimic/requests/clear` | Clear that stream |
+
+Model routing for proxied traffic is edited like any other caller: add a user rule for the pattern `mimic.proxy` on the Model Routing page (for example a `model` to use when clients omit one, or a `pin`).
 
 The mimic does not use the per-node semaphore or the gate; it is bounded by its own per-node concurrency limit.
 
@@ -676,7 +702,78 @@ The adapter maps prompt plus optional system text, bounded sampling parameters, 
 
 ---
 
-## 18. Troubleshooting
+## 18. Model catalogue, benchmarks and hardware fit
+
+The [`vera/catalog/`](../vera/catalog/) package is the model-selection side of the cluster: it knows each node's hardware, finds models that fit, installs them, repoints routes at them, and measures them. It is surfaced in Estate › **Models & NLP** and the catalogue/benchmark panes.
+
+### Hardware facts
+
+| Capability | Route | Purpose |
+|---|---|---|
+| `catalog.nodes` | `GET /catalog/nodes` | Ollama and vLLM nodes with detected or overridden hardware (VRAM, RAM, GPU, cores), free disk (root and model store), SSH mapping, installed models, and any "slow high-quality" class |
+| `catalog.node.ssh_set` | `POST /catalog/node/ssh_set` | Map a routing node to a stored SSH host |
+| `catalog.node.detect` / `catalog.nodes.detect_all` | `POST /catalog/node/detect`, `/catalog/nodes/detect_all` | Detect hardware over SSH (`nvidia-smi`, `free`, `nproc`) and cache it |
+| `catalog.node.hw_set` | `POST /catalog/node/hw_set` | Manual override (`source=manual`) |
+
+Hardware is stored in `vera:catalog:node_hw` (SSH mapping in `vera:catalog:node_ssh`) and feeds the fit verdicts below and the VRAM-safe context sizing (§7).
+
+### Finding and installing models
+
+| Capability | Route | Purpose |
+|---|---|---|
+| `catalog.search` | `GET /catalog/search` | Search Hugging Face (default tag `gguf` = Ollama-pullable) with a hardware-fit badge per result for a node, the cluster, or any (`fits`), assuming a quant (`Q4_K_M`) |
+| `catalog.browse.index` / `catalog.browse` | `GET /catalog/browse…` | Browse by trending, popular, recent, family, publisher or parameter-size window without a search term |
+| `catalog.model` | `GET /catalog/model` | One repo's file tree, GGUF quant variants with size, estimated VRAM/RAM, fit and throughput, context length and card summary |
+| `catalog.installed` | `GET /catalog/installed` | Installed models per node with quant, parameters, size, residency, and free disk |
+| `catalog.install.plan` | `POST /catalog/install/plan` | Dry run: concrete model ref and hardware verdict |
+| `catalog.install` | `POST /catalog/install` | Install on a node (`backend` `ollama`\|`vllm`; `via` `direct` or `store` = pull once into the shared model store); delegates to `ollama.pull`, the model-store pull, or `vllm.server.start` |
+| `catalog.pull.start` / `status` / `cancel` / `resume` / `clear` | `/catalog/pull/…` | Background downloads with progress, speed and ETA, mirrored across Vera instances through Redis (`vera:catalog:pulls`); a download interrupted by a restart resumes from its partial data (automatically at startup) |
+| `catalog.model.delete` | `POST /catalog/model/delete` | Delete an installed model from a node |
+
+### Repointing routes and the optimiser
+
+| Capability | Route | Purpose |
+|---|---|---|
+| `catalog.route.set_model` | `POST /catalog/route/set_model` | The easy model swap: point a per-capability rule (`scope=cap`, `pattern`) or a role (`scope=role`, `profile` + `role`) at a model, optionally pinning a node or setting `prefer_gpu`/`deny_gpu`; wraps `ollama.cap_routing.save` / `ollama.role_profiles.save` |
+| `catalog.node.mark_quality` | `POST /catalog/node/mark_quality` | Mark a node "slow high-quality" and pin a large model to it under the `quality` role profile (§5.6), so loops and agents can ask for the high-quality route; `model=""` unmarks |
+| `catalog.optimize.suggest` | `POST /catalog/optimize/suggest` | Recommend the best recent model that fits each node (current → suggested), no side effects |
+| `catalog.optimize.apply` | `POST /catalog/optimize/apply` | Install the selections and optionally repoint roles |
+| `catalog.autoopt.get` / `catalog.autoopt.set` | `/catalog/autoopt…` | Opt-in auto-optimise per node and role on an interval (default 1440 min), with a run log (`vera:catalog:autoopt`) |
+
+### Benchmarks
+
+| Capability | Route | Purpose |
+|---|---|---|
+| `bench.suites` | `GET /bench/suites` | Deterministic role packs (`instruct`, `reasoning`, `code`, `json`, `factual`, `embed`, `vision`) |
+| `bench.run` / `bench.run.start` / `bench.status` | `/bench/run…`, `/bench/status` | Benchmark one model on one node — throughput, load time and pack accuracy — synchronously or in the background (`bench.progress` events) |
+| `bench.results` / `bench.result.get` / `bench.clear` | `/bench/result…` | Stored results (`vera:bench:*`) |
+| `bench.compare` | `GET /bench/compare` | Role leaderboard: latest result per (model, node), ranked by accuracy then tokens/s |
+| `bench.passive` | `GET /bench/passive` | Metrics harvested from real traffic (the route statistics of §13): observed tokens/s, latency, request count and job types |
+| `bench.loop` | `POST /bench/loop` | Qualitative check: run a real agentic loop profile with the model pinned |
+| `bench.node_perf` / `bench.node_perf.history` | `GET /bench/node_perf…` | Per-node live monitor: reachability, resident models and VRAM, hardware and free disk, live workload, with a sparkline history |
+| `bench.node_gpu` | `POST /bench/node_gpu` | On-demand `nvidia-smi` sample over SSH |
+| `bench.node_trace` | `POST /bench/node_trace` | Run a real generation and sample clocks, temperature, power and throttling (GPU) or the container's CPU use (CPU) while it runs |
+| `bench.node_requests` | `POST /bench/node_requests` | Who is calling a node, from the node's own access log over SSH — including callers that bypass Vera |
+| `bench.matrix.variants` / `start` / `status` / `cancel` / `results` / `get` | `/bench/matrix/…` | Context × quantisation sweep on one node: per (model, window) cell it times warm calls and reads how much stayed on the GPU; cells end `ok`, `throttled`, `cpu_bound`, `spill` or `error`; each model gets a recommended window (the largest within 10 % of its best clean speed, never a spilled one). Cells hold the node's generation slot, so a sweep queues behind live work. |
+| `bench.matrix.apply` | `POST /bench/matrix/apply` | Adopt a sweep's recommended windows as the **learned safe window** per model on that node, which the context sizing of §7 prefers over its estimate |
+
+### Specialist (non-LLM) models
+
+`vera/catalog/specialist_*` manages the estate's non-LLM models — the NLP server's task models ([30 · ONNX](./30-onnx.md#8-off-host-nlp-routing)), the GPU media servers' Whisper / TTS / Stable Diffusion models (§10), GLiNER and spaCy:
+
+| Capability | Route | Purpose |
+|---|---|---|
+| `specialist.status` | `GET /specialist/status` | Per node: the deployed NLP server version against the current source, each task's model, whether it is in the shared store and loaded; media services; host entity NER |
+| `specialist.store` | `GET /specialist/store` | What the shared specialist-model store holds per family, its NLP export manifest and free space |
+| `specialist.catalog` | `GET /specialist/catalog` | Curated alternatives per family and task, marked in use and built; optional Hugging Face search |
+| `specialist.install` | `POST /specialist/install` | Build a model into the shared store as a job on the builder container (NLP models are exported to ONNX); does not switch any node to it |
+| `specialist.jobs` | `GET /specialist/jobs` | Builder jobs and logs |
+| `specialist.node_models` / `.prune` | `/specialist/node_models…` | Models in each node's own caches outside the store, and pruning of copies the read-only store already serves (dry run by default) |
+| `specialist.store.mount` | `POST /specialist/store/mount` | Bind-mount the shared store read-only into every Ollama node's container (dry run by default) |
+
+---
+
+## 19. Troubleshooting
 
 | Symptom | Likely cause | Check / fix |
 |---|---|---|

@@ -294,6 +294,9 @@ Default triggers are seeded once on a fresh install. On later starts, only trigg
 | Workspace / projects | `notebook_recent`, `ide_workspace`, `project_context`, `active_projects` | Notebook entries; IDE changes; one project's context; projects inferred from cap-call clustering. |
 | Source | `source_changes`, `source_review_state` | Code changes; review state. |
 
+> [!NOTE]
+> **🚧 Not live — System 1.** Learned sensor signals and a learned trigger-firing score (`dream.sensor_signal`, `dream.director_fire`) are proposals in [48 · System 1 decision models](./48-system-one-decision-models.md#55-dream-narrator-and-director). Worldview anomaly and drift sensors are likewise only surveyed, in [49 · Worldview integration](./49-worldview-integration.md#52-opportunity-table). Today's sensors are the hand-written ones above.
+
 ### 4.3 Collectors
 
 ```json
@@ -534,6 +537,9 @@ The Director is a lightweight, continuously running thought loop. It is routed w
 - **Conversation**: when the user replies (`dream.director.reply`), a conversation window opens (`conversation_window_min`, default 12) and replies are GPU-preferred dialogue.
 
 Each think pass builds a briefing (calendar and todos, long-term goals, active projects, dream schedule and queue, v8 loop programs, business snapshot, user-vs-background activity, the live agentic loop, its recent thoughts and freshness rules) and asks for JSON `{thought, deliver, actions[]}`. **Silence is the normal output.** The model's `deliver: true` is honoured only if the user is active (when `only_on_activity`), outside `quiet_hours`, and past `deliver_cooldown_min` (30). Actions (up to 2) have `kind` ∈ `steer`, `dream`, `project`, `think`, `loop`, `program`, `business`. With `project_linked_only` (default true) only actions that advance an existing project (`project` with a slug, or `think` with a target) are executed; others are refused (`dream.director.refused`). Queued actions auto-drain after `auto_drain_min` (45) even if the user stays active.
+
+> [!NOTE]
+> **🚧 Not live — System 1.** The Director and Narrator are timer-driven today: they generate on their cadences and judge novelty only afterwards. A small "is anything new worth waking the LLM for?" gate (`narrator.wake_gate`, `director.deliver`) is proposed, not implemented. See [48 · System 1 decision models](./48-system-one-decision-models.md#55-dream-narrator-and-director).
 
 Every `dream.director.thought` raises a small clickable notification in the Dream panel; clicking opens a reply popover that feeds your text back into its train of thought. The Director card has a standing Reply button, and diamonds on the activity timeline open the same popover on a past thought.
 

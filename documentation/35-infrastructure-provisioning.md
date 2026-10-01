@@ -32,10 +32,12 @@ exercised than the Proxmox and Docker paths. The longer-term design is in
   - [Machines, health and live operations](#machines-health-and-live-operations)
   - [Backups](#backups)
   - [Registrations and the entity record](#registrations-and-the-entity-record)
+  - [Estate Map](#estate-map)
 - [5. Proxmox control plane](#5-proxmox-control-plane)
   - [Consoles](#consoles)
 - [6. Storage fabric (`pxstore.*`)](#6-storage-fabric-pxstore)
   - [ZFS operations](#zfs-operations)
+  - [File fabric (`vfs.*`)](#file-fabric-vfs)
 - [7. Foundry — OS provisioning](#7-foundry--os-provisioning)
   - [Images, features and provisioning](#images-features-and-provisioning)
   - [Blueprints](#blueprints)
@@ -51,6 +53,7 @@ exercised than the Proxmox and Docker paths. The longer-term design is in
   - [Directory: FreeIPA and lldap](#directory-freeipa-and-lldap)
   - [Backing services and stores](#backing-services-and-stores)
 - [10. Software, components and node workers](#10-software-components-and-node-workers)
+  - [Unified node estate and uniform provisioning](#unified-node-estate-and-uniform-provisioning)
 - [11. Network policy and presence monitoring](#11-network-policy-and-presence-monitoring)
 - [12. Remote connections, workspaces and the host operator](#12-remote-connections-workspaces-and-the-host-operator)
 - [13. Devices: Home Assistant and thermal printers](#13-devices-home-assistant-and-thermal-printers)
@@ -69,9 +72,11 @@ exercised than the Proxmox and Docker paths. The longer-term design is in
 
 | Area | Responsibility |
 |---|---|
-| Estate | One list of machines, estate health, backups, registrations, live operations map |
+| Estate | One list of machines, estate health, backups, registrations, live operations map, the Estate Map |
+| Nodes | Unified node estate: detection, a provisionable component catalogue, uniform provisioning onto any target, estate storage, backups and share sync |
 | Proxmox | Cluster connections, live status, guest lifecycle, creation, exec, consoles, firewall |
-| Storage fabric | ZFS, disks, CPU pinning, the shared model store, backup targets, file-fabric settings |
+| Storage fabric | ZFS, disks, CPU pinning, the shared model store, backup targets |
+| File fabric | The estate file server: shares, the name-keyed estate tree, device access |
 | Foundry | Image catalogue, feature bundles, provisioning of CTs/VMs/Docker, blueprints, PXE, SD cards, VM import/export, salvage, hardening, swarm clusters |
 | Build | The `vera-builder` compile service (Arduino, PlatformIO, general builds, isolated Python) |
 | Enrolment and identity | SSH credential store, agentless enrolment, auto-enrolment, FreeIPA and lldap, OpenBao, step-ca |
@@ -88,6 +93,9 @@ exercised than the Proxmox and Docker paths. The longer-term design is in
 | Path | Contents |
 |---|---|
 | `vera/estate/` | `estate_machines_*`, `estate_health_*`, `backup_*`, `registration_*`, `estate_entity_*`, `ops_*`, `compute_load_core.py`, `estate_nav_*`, Estate panels and `vera-estate.js` / `vera-entity-drawer.js` |
+| `vera/workers/nodes_capabilities.py` | `nodes.*` unified node estate and `provision.overview` / `provision.node.new` / `provision.apply` |
+| `vera/vfs/` | `vfs_capabilities.py` (file-fabric control surface), `vfs_rw_core.py` (writable-guest plans) |
+| `vera/interaction/` | The Estate Map panel (`interaction_capabilities.py`, `interaction_panel.html`) |
 | `vera/proxmox/` | `proxmox_capabilities.py` (API, consoles), `pxstore_capabilities.py` (storage fabric), `zfs_ops_*` (ZFS plans), `pool_core.py`, `node_hosts_core.py`, `pxstore_*_core.py` |
 | `vera/foundry/` | `foundry_capabilities.py` plus pure cores: `foundry_core.py` (PXE render, hardening), `features_core.py`, `sdcard_core.py`, `vmport_core.py`, `salvage_core.py`, `security_core.py` |
 | `vera/build/` | `build_capabilities.py` (Vera side), `builder_service.py` (the service inside the container), `Dockerfile` |
@@ -176,6 +184,18 @@ and is a dry run unless `confirm=true`. `pxstore.backup.status` and
   is named in the record rather than left blank. The entity drawer
   (`vera-entity-drawer.js`) renders it.
 
+### Estate Map
+
+The **Map** pane (panel `interaction-map`, served at `/interaction/panel`) is
+a live SVG of the infrastructure outside Vera: hosts on the left with their
+security posture as badges (certificate SSH, on the mesh, in FreeIPA), the
+managers and security services on the right, and edges for the systems each
+host is enrolled into. It composes existing capabilities in the browser
+(`proxmox.cluster.list`, `workers.docker.hosts`, `netsec.mesh.members`,
+`identity.host.list`, and others) with an optional deep scan of every guest and
+container, and animates real infrastructure events from `/events`. It keeps no
+backend state of its own.
+
 ---
 
 ## 5. Proxmox control plane
@@ -248,7 +268,7 @@ at `/pxstore/panel`).
 | Backups | `pxstore.backup.status`, `pxstore.backup.target` | Backup jobs on a node; point estate backups at the file fabric's backup dataset |
 | Network monitor | `pxstore.nwm.flows`, `.accounting`, `.capture` | Live connections, per-flow byte accounting and timed header captures on the network-monitor container |
 | Editors | `pxstore.vscode.targets` | Remote-SSH config entries for opening guests in VS Code |
-| Legacy share | `pxstore.fs.provision`, `.sync`, `.status`, `.retire` | The old hypervisor Samba share; the estate file server (`vfs.*`) replaces it |
+| Legacy share | `pxstore.fs.provision`, `.sync`, `.status`, `.retire` | The old hypervisor Samba share; the file fabric (`vfs.*`, below) replaces it |
 
 > [!NOTE]
 > Attaching the store to a container uses `pct set` on the node, because
@@ -275,6 +295,27 @@ returns the exact commands and warnings by default and runs them only with
 `pool_core.py` turns `zpool status` / `iostat` / `list` and `zfs get` into pool
 layout, scrub state, throughput, fragmentation and compression, and flags pools
 with no redundancy, overdue scrubs, degraded state or low free space.
+
+### File fabric (`vfs.*`)
+
+The estate's file server is a dedicated container that binds the ZFS pool roots
+once and projects every guest filesystem into a **name-keyed, read-only**
+estate tree, so new guests appear without reconfiguration and a running guest's
+filesystem is never written through the share. Anonymous access is refused.
+`vfs_capabilities.py` drives the scripts on that box over the exec SSH store;
+its location (host, SSH label, share root) is stored in Redis `vera:vfs:cfg`.
+
+| Capability | Purpose |
+|---|---|
+| `vfs.health` / `vfs.status` | Liveness of smbd, nfsd, syncthing and nginx; full status with shares, free space, exports, peers and disks |
+| `vfs.shares` | The share catalogue with ready-to-paste client mount strings |
+| `vfs.estate.sync` / `vfs.estate.list` | Rebuild the estate tree now (it also runs on a timer) and list what it exposes and what was skipped |
+| `vfs.estate.rw` / `.rw.set` / `.rw.door_only` | Which guests are additionally exposed **writable** through an admin-only share, setting that list, and restricting that share to devices on the file-access WireGuard door |
+| `vfs.peer.add` / `.list` / `.remove` | Give a device file access over the WireGuard door (returns its client config), list peers with last handshake, revoke |
+| `vfs.settings.save` | Update where the file fabric lives |
+
+Progress is emitted as `vfs.progress`. The older `pxstore.fs.*` hypervisor
+share is legacy and can be retired with `pxstore.fs.retire`.
 
 ---
 
@@ -515,6 +556,36 @@ activity tap (`edge/ollama_tap.py`) on a node's public Ollama port with Ollama
 moved to loopback. Workers and jobs are covered in
 [Workers, Jobs & Syslog](22-workers-jobs-syslog.md).
 
+### Unified node estate and uniform provisioning
+
+`vera/workers/nodes_capabilities.py` treats every reachable machine as a Vera
+**node** of varying capability, and everything Vera can run (inference
+workers, data stores, the worker agent) as a **component** provisioned through
+whichever management plane the node offers: Docker first, Proxmox second, plain
+SSH as the fallback. Every step delegates to existing capabilities
+(`docker.run`, `provision.install`, `provision.deploy`, `provision.worker`,
+`pxstore.backend.provision_vllm`, `ollama.add_instance`, …).
+
+| Capability | Route | Purpose |
+|---|---|---|
+| `nodes.list` | `GET /nodes` | One row per machine linking its SSH, Docker and Proxmox identities, detected facts, and the Ollama/vLLM instances it runs |
+| `nodes.detect` / `nodes.detect_all` | `POST /nodes/detect`, `/nodes/detect_all` | One SSH probe per node: GPU/VRAM/RAM/cores/disk and Docker/Ollama/vLLM/ZFS/PVE presence |
+| `nodes.components` | `GET /nodes/components` | The unified provisionable catalogue |
+| `nodes.provision.plan` / `nodes.provision` | `POST /nodes/provision/plan`, `/nodes/provision` | Resolve components to a backend and steps (dry run), then execute and register endpoints |
+| `provision.overview` | `GET /provision/overview` | Every target and payload for uniform provisioning in one call |
+| `provision.apply` | `POST /provision/apply` | Deploy payloads (component keys, `stack:<service>`, …) onto `node:<id>`, `docker:<host_id>` or `new-ct:<cluster_id>:<pve_node>` |
+| `provision.node.new` | `POST /provision/node/new` | Create a Proxmox CT and enrol it as a node in one step |
+| `nodes.storage` | `POST /nodes/storage` | Estate-wide storage: pools, datasets, non-ZFS mounts, guest disks, Docker volumes and images |
+| `nodes.backup.get` / `.set` / `.run` | `/nodes/backup…` | Vera's own backup scheduler: vzdump guests to a Proxmox backup storage and tar Docker volumes (`interval_hours` default 24) |
+| `nodes.sync.get` / `.set` / `.run` | `/nodes/sync…` | Keep the share tree in sync (default daily) |
+| `obs.node_temps` | `GET /nodes/temps` | Per-node temperatures (sensors, BMC via ipmitool, SMART), fan/voltage/power health, and per-CPU load for every SSH-registered node |
+
+Redis keys: `vera:nodes:facts`, `vera:nodes:sync`, `vera:nodes:backup`,
+`vera:nodes:backup:log`. Ollama tuning on nodes (`nodes.ollama.tune`,
+`nodes.ollama.settings`, `nodes.ollama.settings.set`) is documented in
+[Ollama Cluster](04-ollama-cluster.md); `nodes.ollama.tap` installs the
+activity tap described above.
+
 ---
 
 ## 11. Network policy and presence monitoring
@@ -727,6 +798,8 @@ Selected Redis keys:
 | `vera:provisioning:ssh_hosts`, `vera:provisioning:state`, `vera:provisioning:identity`, `vera:provisioning:security` | Enrolment store, suite state, FreeIPA config, security deploy record |
 | `vera:autoenroll:config`, `vera:autoenroll:pending` | Auto-enrolment |
 | `vera:ha:config` | Home Assistant connection |
+| `vera:vfs:cfg` | File-fabric location |
+| `vera:nodes:facts`, `vera:nodes:backup`, `vera:nodes:backup:log`, `vera:nodes:sync` | Node facts, backup and share-sync configuration |
 | `vera:ui:retire_overlap_tabs` | Estate tab folding switch |
 
 ---
@@ -766,6 +839,7 @@ profiles, and rebooting a different machine after an address changed.
 - [Execution & Network Mapping](12-execution.md) — exec SSH store, Network Map, session sandboxes
 - [Docker](13-docker.md) — Docker hosts and container operations
 - [Device Mesh](14-mesh.md) — ESP32 nodes and firmware built by the build service
+- [Ollama Cluster](04-ollama-cluster.md) — Ollama node tuning (`nodes.ollama.*`)
 - [Workers, Jobs & Syslog](22-workers-jobs-syslog.md) — node workers and job dispatch
 - [Integrations](23-integrations.md) — the Integrations Hub and the effect inventory
 - [Security](29-security.md) — secrets, OpenBao and PKI

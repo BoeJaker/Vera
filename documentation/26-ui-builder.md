@@ -184,11 +184,11 @@ Let an agent build and show a panel in one turn:
 
 ```json
 {"name": "ui.panel.create", "arguments": {
-  "id": "disk-usage", "label": "Disk usage", "mode": "tab",
-  "html": "<div id='out'>loading…</div>",
-  "js": "fetch('/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'sysinfo.disk',arguments:{}})}).then(r=>r.json()).then(j=>out.textContent=JSON.stringify(j.content,null,2));",
-  "ui_caps": "sysinfo.disk"}}
-{"name": "render.screen", "arguments": {"panel_id": "disk-usage", "session_id": "<chat session>"}}
+  "id": "health-view", "label": "Health", "mode": "tab",
+  "html": "<pre id='out'>loading…</pre>",
+  "js": "fetch('/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'obs.health',arguments:{}})}).then(r=>r.json()).then(j=>out.textContent=JSON.stringify(j.content,null,2));",
+  "ui_caps": "obs.health"}}
+{"name": "render.screen", "arguments": {"panel_id": "health-view", "session_id": "<chat session>"}}
 ```
 
 Switch to the terminal style pack at zen density:
