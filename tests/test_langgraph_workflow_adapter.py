@@ -78,7 +78,7 @@ def test_profile_and_analysis_claim_only_the_offline_proven_subset():
         "available": True,
         "executable": False,
         "supports": ["tasks", "parallel", "conditions"],
-        "detail": "Offline compiler and injected conformance boundary; no operational runner is registered or invoked.",
+        "detail": "Offline compiler plus an opt-in operational runner; no policy executor is bound or default route registered.",
     }
     analysis = analyze_adapter(workflow(), adapter="langgraph")
     assert analysis["ok"] is True
