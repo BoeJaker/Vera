@@ -244,6 +244,7 @@ async def test_snapshot_adapter_binding_preserves_authority_and_requires_explici
         snapshot=snap,
         adapter=Adapter(),
         variant=variant("native"),
+        source_id="sealed-corpus",
         claim_support=lambda case, citations: (
             case.required_claim_ids if citations else ()),
     )
@@ -251,6 +252,7 @@ async def test_snapshot_adapter_binding_preserves_authority_and_requires_explici
         snapshot=snap,
         adapter=Adapter(),
         variant=variant("no-claim-resolver"),
+        source_id="sealed-corpus",
     )
     fixture = await ContextBenchmarkRuntime(
         snapshot=snap,
@@ -262,6 +264,25 @@ async def test_snapshot_adapter_binding_preserves_authority_and_requires_explici
     native = observations["native"]
     assert native.hits[0].authority == current.relevant_authorities[0]
     assert native.supported_claim_ids == current.required_claim_ids
-    assert native.selected_sources == ("source-case-a",)
+    assert native.selected_sources == ("sealed-corpus",)
     assert observations["no-claim-resolver"].supported_claim_ids == ()
     assert current.request.query not in repr(fixture.observations)
+
+
+def test_snapshot_binding_does_not_conflate_provider_and_source_identity():
+    snap = snapshot()
+
+    class Adapter:
+        profile = RetrievalProviderProfile("provider-one", "fabric_vector", "r1")
+
+        async def retrieve(self, *_args):
+            return ()
+
+    runner = snapshot_retrieval_runner(
+        snapshot=snap, adapter=Adapter(), variant=variant("one"),
+        source_id="corpus-one")
+    assert runner.variant.variant_id == "one"
+    with pytest.raises(ValueError, match="source ID"):
+        snapshot_retrieval_runner(
+            snapshot=snap, adapter=Adapter(), variant=variant("two"),
+            source_id="not bounded")

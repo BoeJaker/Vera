@@ -212,6 +212,7 @@ def snapshot_retrieval_runner(
     snapshot: DatasetSnapshot,
     adapter: SnapshotRetrievalAdapter,
     variant: ContextBenchmarkVariant,
+    source_id: str,
     timeout_seconds: float = 30.0,
     claim_support: ClaimSupport | None = None,
 ) -> LiveContextVariantRunner:
@@ -229,6 +230,10 @@ def snapshot_retrieval_runner(
     if (profile is None or not isinstance(getattr(profile, "provider_id", None), str)
             or not callable(getattr(adapter, "retrieve", None))):
         raise TypeError("snapshot retrieval runner requires a profiled adapter")
+    source_id = str(source_id or "").strip()
+    if (not source_id or len(source_id) > 256 or
+            any(character.isspace() for character in source_id)):
+        raise ValueError("snapshot retrieval runner requires a bounded source ID")
     if claim_support is not None and not callable(claim_support):
         raise TypeError("claim support resolver must be callable")
 
@@ -267,8 +272,8 @@ def snapshot_retrieval_runner(
             ),),
         ) for value in citations)
         return LiveContextResult(
-            discovered_sources=(profile.provider_id,),
-            selected_sources=(profile.provider_id,),
+            discovered_sources=(source_id,),
+            selected_sources=(source_id,),
             hits=hits,
             supported_claim_ids=claims,
         )
