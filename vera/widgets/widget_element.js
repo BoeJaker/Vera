@@ -601,7 +601,11 @@
     const paras = (s) => s.split(/\n+/).map((x) => x.trim()).filter(Boolean).slice(0, 60).map((x) => '<p>' + esc(x) + '</p>').join('');
     const cards = rw.slice(pg * per, pg * per + per).map((r, j) => {
       const i = pg * per + j, u = String(r.url || r.link || r.href), on = open === i;
-      const body = ent(r.text || r.content || ''), sn = ent(r.snippet || r.summary || r.description || '') || body.replace(/\s+/g, ' ').slice(0, 320);
+      /* the page's text starts at its first real paragraph, not its site menu ('Products / Resources / Pricing ...'); and
+         a search engine's stub of a snippet ('Compare 20') gives way to that paragraph */
+      let body = ent(r.text || r.content || ''); { const ls = body.split(/\n+/); const k = ls.findIndex((l) => l.trim().length >= 80); const cut = k > 0 ? ls.slice(0, k).join('\n').length : 0; if (k > 0 && cut < body.length * 0.4) body = ls.slice(k).join('\n'); }
+      const given = ent(r.snippet || r.summary || r.description || '').trim(); const lead = (body.split(/\n+/).find((l) => l.trim().length >= 80) || body).replace(/\s+/g, ' ').trim().slice(0, 320);
+      const sn = given.length >= 60 || !lead ? given : lead;
       const when = r.published || r.published_at || r.date || r.when;
       const meta = [host(u), when ? String(when).slice(0, 10) : '', r.chars ? (r.chars > 1000 ? (r.chars / 1000).toFixed(1) + 'k' : r.chars) + ' chars read' : '', (r.blocked || r.error) ? 'could not be read' : '', r.unread ? 'found, not read' : ''].filter(Boolean).join(' \u00b7 ');
       return '<div class="vb-rd' + (on ? ' on' : '') + '"><span class="f">' + esc((host(u) || '?').charAt(0).toUpperCase()) + '</span><div class="c">'
