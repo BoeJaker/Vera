@@ -1,26 +1,21 @@
 /**
- * <vera-node-models> - the models the estate keeps ready, and the NLP it runs,
- * in one pane.
+ * <vera-node-models section="warm|settings|nlp"> - the models the nodes keep
+ * ready, how each node is tuned, and where NLP runs. One section per page (the
+ * Models tab lists them separately: Warm models, Node settings, NLP).
  *
- * Warm slots  per node: its slots (GPU 1, CPU 2 - the embedder rides beside
- *             them), the models planned there and where the plan came from,
- *             what is resident now (pinned or expiring), what was dropped and
- *             why. Edit a node's models; apply now.
- * Workloads   the scenarios that take the slots over while a job type runs
- *             hot (e.g. coders into every slot) - their demand, state, edit.
- * Routing     the CPU window planned models share, and the warm-spill limits.
- * NLP         where nlp.* runs (placement, the node chosen and why, versions),
- *             the host-NLP switch, the node pin, and the LLM-NLP master switch.
- * Node settings  what is tuned on each Ollama node (nodes.ollama.settings):
- *             num_thread (registry + the unit's runner default), environment
- *             flags, drop-ins, custom flags, and the live runners with the -t
- *             they run - loaded on demand (one SSH read per node).
- * Catalog     the specialist (non-LLM) model catalog, per node - the
- *             <vera-specialist-models> element, embedded.
+ * warm      per node: its slots (GPU 1, CPU 2 - the embedder beside them), the
+ *           planned models and where the plan came from, what is resident now
+ *           (pinned or expiring), what was dropped and why; the workloads that
+ *           take the slots over while a job type runs hot; the routing knobs.
+ * settings  what is tuned on each Ollama node (nodes.ollama.settings): num_thread,
+ *           environment flags, drop-ins, custom flags, live runners and their -t.
+ *           Read over SSH, so it loads when opened and on "reload" only.
+ * nlp       where nlp.* runs, each node's NLP server (version, models loaded),
+ *           and the three switches.
  *
- * Data: ollama.warm.status|set|apply, nlp.nodes, nlp.config.get|set,
- *       fabric.nlp.get|set, specialist.status (via the embedded element).
- * Attributes: api-base (default ''), refresh (seconds, default 15)
+ * Data: ollama.warm.status|set|apply, nodes.ollama.settings|set, nlp.nodes,
+ *       nlp.config.get|set, fabric.nlp.get|set.
+ * Attributes: section (default warm), api-base (default ''), refresh (s, 15)
  */
 (function () {
   if (customElements.get('vera-node-models')) return;
@@ -64,15 +59,18 @@
       this._settings = null;  // nodes.ollama.settings, loaded on demand
       this._setBusy = '';
       this._msg = '';
-    }
-    get base() { return this.getAttribute('api-base') || ''; }
-    connectedCallback() {
       this._root.innerHTML = '<style>' + CSS + '</style><div class="wrap" id="w"></div>';
+      this._last = ''; this._auto = false;
       this._root.addEventListener('click', (e) => this._click(e));
       this._root.addEventListener('change', (e) => this._change(e));
+    }
+    get base() { return this.getAttribute('api-base') || ''; }
+    get section() { const s = this.getAttribute('section') || 'warm'; return ['warm', 'settings', 'nlp'].indexOf(s) >= 0 ? s : 'warm'; }
+    connectedCallback() {
       this.load();
       const n = Math.max(5, parseInt(this.getAttribute('refresh') || '15', 10));
-      this._t = setInterval(() => { if (!this._edit && !document.hidden) this.load(); }, n * 1000);
+      // node settings are an SSH read per node: never on a timer
+      this._t = setInterval(() => { if (!this._edit && !document.hidden && this.section !== 'settings') this.load(true); }, n * 1000);
     }
     disconnectedCallback() { clearInterval(this._t); }
 
@@ -85,39 +83,57 @@
         return await r.json();
       } catch (e) { return { ok: false, error: String(e) }; }
     }
-    async load() {
-      const [w, n, c, l] = await Promise.all([
-        this._get('/ollama/warm/status'), this._get('/nlp/nodes'),
-        this._get('/nlp/config'), this._get('/fabric/nlp/config')]);
-      this._warm = w; this._nlp = n; this._ncfg = c; this._llmnlp = l;
-      this.render();
+    async load(auto) {
+      const sec = this.section;
+      if (sec === 'warm') this._warm = await this._get('/ollama/warm/status');
+      else if (sec === 'nlp') {
+        const [n, c, l] = await Promise.all([this._get('/nlp/nodes'), this._get('/nlp/config'), this._get('/fabric/nlp/config')]);
+        this._nlp = n; this._ncfg = c; this._llmnlp = l;
+      } else if (sec === 'settings' && !this._settings) {
+        this._setBusy = 'load'; this.render();
+        this._settings = await this._get('/nodes/ollama/settings'); this._setBusy = '';
+      }
+      this._auto = !!auto; try { this.render(); } finally { this._auto = false; }
+    }
+
+    /* Repaint without the flicker (2026-10-01): the stylesheet is set once,
+       identical output is not repainted, the page and inner scroll positions
+       are kept, and an automatic refresh waits while a field has focus. The
+       old pane also re-attached an embedded catalog on every refresh, which
+       restarted it from "Loading..." and threw the page back to the top. */
+    _paint(h) {
+      const host = this._root.getElementById('w');
+      if (!host || h === this._last) return false;
+      const a = this._root.activeElement;
+      if (this._auto && a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return false;
+      const se = document.scrollingElement, py = se ? se.scrollTop : 0;
+      const sel = 'pre, textarea, table, [data-keep-scroll]';
+      const keep = Array.prototype.map.call(host.querySelectorAll(sel), (e) => e.scrollTop);
+      host.innerHTML = h;
+      this._last = h;
+      Array.prototype.forEach.call(host.querySelectorAll(sel), (e, i) => { if (keep[i]) e.scrollTop = keep[i]; });
+      if (se && se.scrollTop !== py) se.scrollTop = py;
+      return true;
     }
     _say(m) { this._msg = m; const el = this._root.getElementById('msg'); if (el) el.textContent = m; }
 
     render() {
-      const w = this._warm || {};
-      const el = this._root.getElementById('w');
-      if (!el) return;
-      const catalogHtml = this._root.getElementById('cat') ? null : '<div class="panel"><div class="sec">Catalog - specialist (non-LLM) models</div><vera-specialist-models id="cat"></vera-specialist-models></div>';
-      const top = '<div class="hdr"><span class="t">Models &amp; NLP</span>'
-        + '<button data-a="warm-toggle" class="' + (w.enabled ? 'on' : '') + '" title="Keep each node\'s planned models loaded">' + (w.enabled ? 'warm slots on' : 'warm slots off') + '</button>'
-        + (w.census_busy ? '<span class="badge warn" title="scenarios stay off and the GPU is left alone while a census goal runs">census running</span>' : '')
-        + '<span class="sp"></span><span class="muted msg" id="msg">' + esc(this._msg) + '</span>'
-        + '<button data-a="preview">preview</button><button data-a="apply" title="Load what is missing now (one model per node)">apply now</button><button data-a="refresh">refresh</button></div>';
-      const body = top + this._nodesHtml(w) + this._scenariosHtml(w) + this._routingHtml(w) + this._settingsHtml() + this._nlpHtml();
-      // keep the embedded catalog element alive across re-renders
-      let cat = this._root.getElementById('cat');
-      const holder = cat ? cat.parentElement : null;
-      if (holder) holder.remove();
-      el.innerHTML = body;
-      if (holder) el.appendChild(holder);
-      else {
-        el.insertAdjacentHTML('beforeend', catalogHtml);
-        if (!customElements.get('vera-specialist-models') && !document.querySelector('script[data-spm]')) {
-          const s = document.createElement('script'); s.src = this.base + '/ui/elements/specialist_models.js'; s.dataset.spm = '1';
-          document.head.appendChild(s);
-        }
+      const sec = this.section;
+      const msg = '<span class="sp"></span><span class="muted msg" id="msg">' + esc(this._msg) + '</span>';
+      let h;
+      if (sec === 'warm') {
+        const w = this._warm || {};
+        h = '<div class="hdr"><span class="t">Warm models</span>'
+          + '<button data-a="warm-toggle" class="' + (w.enabled ? 'on' : '') + '" title="Keep each node\'s planned models loaded">' + (w.enabled ? 'on' : 'off') + '</button>'
+          + (w.census_busy ? '<span class="badge warn" title="workloads stay off and the GPU is left alone while a census goal runs">census running</span>' : '')
+          + msg + '<button data-a="preview">preview</button><button data-a="apply" title="Load what is missing now (one model per node)">apply now</button></div>'
+          + (this._warm ? this._nodesHtml(w) + this._scenariosHtml(w) + this._routingHtml(w) : '<div class="muted">loading...</div>');
+      } else if (sec === 'settings') {
+        h = '<div class="hdr"><span class="t">Node settings</span>' + msg + '</div>' + this._settingsHtml();
+      } else {
+        h = '<div class="hdr"><span class="t">NLP</span>' + msg + '</div>' + this._nlpHtml();
       }
+      this._paint(h);
     }
 
     _nodesHtml(w) {
@@ -194,9 +210,9 @@
 
     _settingsHtml() {
       const s = this._settings;
-      let h = '<div class="panel"><div class="row"><span class="sec">Node settings - what is tuned on each Ollama node</span><span class="sp"></span>'
+      let h = '<div class="panel"><div class="row"><span class="sec">Each Ollama node - threads, flags, drop-ins and the runners loaded now</span><span class="sp"></span>'
         + '<button data-a="set-load">' + (this._setBusy === 'load' ? 'reading nodes...' : (s ? 'reload' : 'load')) + '</button></div>';
-      if (!s) return h + '<div class="muted">Reads each node over SSH: runner threads, environment flags, drop-ins, loaded runners.</div></div>';
+      if (!s) return h + '<div class="muted">' + (this._setBusy === 'load' ? 'Reading each node over SSH...' : 'Reads each node over SSH: runner threads, environment flags, drop-ins, loaded runners.') + '</div></div>';
       for (const n of s.nodes || []) {
         const cpu = !n.has_gpu;
         const bad = (n.runners || []).filter((r) => r.default_threads);
@@ -241,23 +257,30 @@
     }
 
     _nlpHtml() {
-      const n = this._nlp || {}; const c = (this._ncfg || {}).config || {}; const l = this._llmnlp || {};
-      const nodes = (n.nodes || []).map((x) => {
-        const ver = (x.component || {}).version || '';
-        return '<tr><td class="mono">' + esc(x.node_id) + (x.node_id === n.node ? ' <span class="badge ok">next</span>' : '') + '</td>'
-          + '<td class="mono">' + esc(ver) + ((x.component || {}).intact === false ? ' <span class="bad">edited</span>' : '') + '</td>'
-          + '<td>' + esc(x.runners != null ? x.runners : '') + '</td>'
-          + '<td>' + (x.mem_available_mb != null ? esc(Math.round(x.mem_available_mb / 1024)) + ' GB free' : '') + '</td>'
-          + '<td>' + esc((x.load || [])[0] != null ? x.load[0] : '') + '</td></tr>';
-      }).join('');
-      const pins = ['<option value="">choose by signals</option>'].concat((n.candidates || []).map((id) => '<option value="' + esc(id) + '"' + (c.node === id ? ' selected' : '') + '>' + esc(id) + '</option>')).join('');
-      return '<div class="panel"><div class="sec">NLP</div>'
-        + '<div class="kv"><span class="muted">runs</span><span><b>' + esc(n.where || '?') + '</b> &middot; ' + esc(n.reason || '') + '</span>'
-        + '<span class="muted">next call</span><span class="mono">' + esc(n.why || '-') + '</span>'
-        + '<span class="muted">host may run NLP</span><span><input type="checkbox" data-a="nlp-local"' + (c.nlp_local ? ' checked' : '') + '> <span class="muted">off = never on the host, even with no node</span></span>'
-        + '<span class="muted">pin to node</span><span><select data-a="nlp-pin">' + pins + '</select> timeout <input id="nlp-timeout" type="number" style="width:60px" value="' + esc(c.timeout_s) + '"> s <button data-a="nlp-timeout-save">save</button></span>'
-        + '<span class="muted">LLM NLP in pipelines</span><span><input type="checkbox" data-a="llm-nlp"' + (l.enabled ? ' checked' : '') + '> <span class="muted">off = ingestion, discovery and loops use regex/spaCy/node NER only</span></span></div>'
-        + '<table><tr><th>node</th><th>nlp_server</th><th>runners</th><th>memory</th><th>load</th></tr>' + (nodes || '<tr><td colspan="5" class="muted">no node answers</td></tr>') + '</table></div>';
+      const n = this._nlp, c = (this._ncfg || {}).config || {}, l = this._llmnlp || {};
+      if (!n) return '<div class="muted">loading...</div>';
+      const remote = n.where === 'remote';
+      let h = '<div class="panel"><div class="row"><span class="badge ' + (remote ? 'ok' : 'warn') + '">' + (remote ? 'on the nodes' : esc(n.where || '?')) + '</span>'
+        + '<span>' + esc(n.reason || '') + '</span><span class="sp"></span><span class="muted">next call: <b>' + esc(n.node || '-') + '</b></span></div>'
+        + '<table><tr><th>node</th><th>models loaded</th><th>NLP server</th><th>memory free</th></tr>'
+        + (n.nodes || []).map((x) => {
+            const p = x.preload || {};
+            const loaded = (p.loaded || []).length, failed = Object.keys(p.failed || {}).length;
+            return '<tr><td><b>' + esc(x.node_id) + '</b></td>'
+              + '<td>' + (p.state === 'done' ? '<span class="ok">' + loaded + '</span>' : p.state === 'loading' ? '<span class="warn">loading ' + loaded + '</span>' : '<span class="muted">' + esc(p.state || 'lazy') + '</span>')
+              + (failed ? ' <span class="bad" title="' + esc(JSON.stringify(p.failed)) + '">' + failed + ' failed</span>' : '')
+              + ' <span class="muted" title="' + esc((p.loaded || []).join(', ')) + '">' + esc((p.loaded || []).join(' · ')) + '</span></td>'
+              + '<td class="mono">' + esc((x.component || {}).version || '') + '</td>'
+              + '<td>' + (x.mem_available_mb != null ? esc(Math.round(x.mem_available_mb / 1024)) + ' GB' : '') + '</td></tr>';
+          }).join('')
+        + ((n.nodes || []).length ? '' : '<tr><td colspan="4" class="muted">no node answers</td></tr>') + '</table></div>';
+      const pins = ['<option value="">best node</option>'].concat((n.candidates || []).map((id) => '<option value="' + esc(id) + '"' + (c.node === id ? ' selected' : '') + '>' + esc(id) + '</option>')).join('');
+      h += '<div class="panel"><div class="sec">Switches</div><div class="kv">'
+        + '<span>Run on</span><span><select data-a="nlp-pin">' + pins + '</select></span>'
+        + '<span>Host fallback</span><span><label><input type="checkbox" data-a="nlp-local"' + (c.nlp_local ? ' checked' : '') + '> let the Vera host run NLP when no node can</label></span>'
+        + '<span>LLM NLP</span><span><label><input type="checkbox" data-a="llm-nlp"' + (l.enabled ? ' checked' : '') + '> use the LLMs for NLP in automatic pipelines</label></span>'
+        + '</div></div>';
+      return h;
     }
 
     async _click(e) {

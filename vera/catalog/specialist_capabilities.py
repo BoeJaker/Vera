@@ -484,9 +484,14 @@ async def _specialist_element_js():
 
 
 @APP.get("/specialist/panel", include_in_schema=False)
-async def _specialist_panel():
-    """The element as a page of its own (the registered panel embeds this)."""
-    return HTMLResponse("""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+async def _specialist_panel(tab: str = "", tabs: str = ""):
+    """The element as a page of its own (the registered panel embeds this).
+    `tab` opens a section; tabs=external hides the element's own tab buttons
+    because the page around it lists the sections (the harness submenu), and
+    switches them by message."""
+    t = tab if tab in ("status", "catalog", "jobs", "caches") else ""
+    attrs = (f' tab="{t}"' if t else "") + (' tabs="external"' if tabs == "external" else "")
+    return HTMLResponse(("""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <script>(function(){try{var d=document.documentElement,S=window.localStorage;
 var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
 var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
@@ -495,8 +500,11 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <style>:root{--bg:#0d0f12;--bg1:#14181d;--bg2:#1a1f26;--border:#232a33;--border2:#2e3742;--fg:#d8dde3;
 --dim:#5f6975;--acc:#4a9eff;--acc2:#28c28a;--warn:#f5b341;--err:#ef5b5b}
 html,body{margin:0;background:var(--bg0,var(--bg));color:var(--fg);height:100%}</style></head>
-<body><vera-specialist-models></vera-specialist-models>
-<script src="/ui/vera-ui.js"></script><script src="/ui/elements/specialist_models.js"></script></body></html>""")
+<body><vera-specialist-models__ATTRS__></vera-specialist-models>
+<script src="/ui/vera-ui.js"></script><script src="/ui/elements/specialist_models.js"></script>
+<script>window.addEventListener('message',function(e){var d=e.data||{};
+if(d.type==='vera:specialist:tab'&&d.tab){var el=document.querySelector('vera-specialist-models');if(el)el.setAttribute('tab',d.tab);}});</script>
+</body></html>""").replace("__ATTRS__", attrs))
 
 
 register_ui(

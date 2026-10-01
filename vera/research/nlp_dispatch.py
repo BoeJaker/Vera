@@ -195,6 +195,8 @@ async def discover(force: bool = False) -> List[Dict[str, Any]]:
                       "threads": health.get("threads"),
                       # the deployed nlp_server version (provision.component.version)
                       "component": health.get("component") or {},
+                      # which models the node has loaded (nlp_server preload)
+                      "preload": health.get("preload") or {},
                       **inventory})
         found.append(facts)
 

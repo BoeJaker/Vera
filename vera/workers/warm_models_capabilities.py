@@ -564,18 +564,19 @@ async def _node_models_js():
 
 
 @APP.get("/nodes/models/panel", include_in_schema=False)
-async def _node_models_panel():
-    return HTMLResponse("""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+async def _node_models_panel(section: str = "warm"):
+    sec = section if section in ("warm", "settings", "nlp") else "warm"
+    return HTMLResponse(("""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <script>(function(){try{var d=document.documentElement,S=window.localStorage;
 var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
 var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
 if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
-<title>Vera - Models &amp; NLP</title>
+<title>Vera - Models</title>
 <style>:root{--bg:#0d0f12;--bg1:#14181d;--bg2:#1a1f26;--border:#232a33;--border2:#2e3742;--fg:#d8dde3;
 --dim:#5f6975;--acc:#4a9eff;--acc2:#28c28a;--warn:#f5b341;--err:#ef5b5b}
 html,body{margin:0;background:var(--bg0,var(--bg));color:var(--fg);min-height:100%}</style></head>
-<body><vera-node-models></vera-node-models>
-<script src="/ui/vera-ui.js"></script><script src="/ui/elements/node_models.js"></script></body></html>""")
+<body><vera-node-models section="__SECTION__"></vera-node-models>
+<script src="/ui/vera-ui.js"></script><script src="/ui/elements/node_models.js"></script></body></html>""").replace("__SECTION__", sec))
 
 
 register_ui(
