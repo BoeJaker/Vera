@@ -1308,9 +1308,22 @@ arguments. Scalars from the caller win; `base_toolkit`, `allowed_caps` and
 `attach_skills` CSVs are **unioned** so a caller can add caps without losing the
 profile floor. The agent's `domain_caps` are unioned into `allowed_caps` and its
 model used when none is given. Arguments are then filtered to what the engine
-accepts — for v7 that means v6's parameters (`engine_params.py`), so nothing is
-silently dropped. `loops.run` is blacklisted from loop toolkits so a loop cannot
-recurse into a specialist loop.
+accepts (`engine_params.py`), in two sets:
+
+- The assembled **profile body** is filtered by the engine's own schema. For
+  v1–v6 that is every parameter. v7's signature is `(goal, **kwargs)`, so for a
+  v7 profile (`planning`, `long-term-scheduling`, `operator`, `research-brief`)
+  the profile's toolkit, agent and defaults do **not** reach the engine through
+  `loops.run` — a v7 run via `loops.run` is a bare v7 run unless the caller
+  passes those arguments explicitly. This is deliberate: census and suite numbers
+  were produced that way and stay comparable.
+- Arguments the **caller** passed explicitly are widened by the engine's
+  delegate (v7 → v6's 69 parameters), so a caller's `model`, `allowed_caps` or
+  `max_steps` is honoured. `session_id` and `trace_id` always pass. Anything still
+  dropped is logged.
+
+`loops.run` is blacklisted from loop toolkits so a loop cannot recurse into a
+specialist loop.
 
 ```bash
 curl -s -X POST localhost:8999/loops/run -H 'content-type: application/json' -d '{
