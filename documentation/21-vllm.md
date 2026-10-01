@@ -2,7 +2,10 @@
 
 `vllm/vllm_capabilities.py` integrates **vLLM** as an LLM backend, mirroring the Ollama backend pattern but targeting vLLM's OpenAI-compatible server. It's how Vera's [backend-agnostic cluster](./04-ollama-cluster.md) gains a high-throughput inference option for the GPU node — without any cap having to know it's talking to vLLM rather than Ollama.
 
-> **Opt-in.** This module ships commented out in the orchestrator's `_module_files` list. Enable it by uncommenting that line or adding `vllm/vllm_capabilities.py` to the `VERA_MODULES` env var (see [Capability Framework §11](./01-capability-framework.md#11-module-loading)).
+> **Endpoint opt-in.** The capability module is part of the normal orchestrator
+> module set. That makes `vllm.status` and the administrative surface available;
+> it does not create a server or route traffic. An endpoint must still be
+> explicitly configured and admitted before inference can use it.
 
 ---
 
@@ -58,6 +61,20 @@ contracts; the request cannot replace the bound model, endpoint, credentials,
 or transport. This makes the same inference call portable to vLLM and other
 OpenAI-compatible serving products without treating their operational controls
 as part of the model payload.
+
+### Readiness is more than module availability
+
+`vllm.status` can be healthy as a Vera capability while reporting zero
+instances. That means the integration code loaded successfully but no serving
+endpoint is configured. A usable deployment additionally needs a reachable,
+shared-gate-managed endpoint, a compatible content-verified `ModelPackage`, an
+`InferenceDeployment`, and fresh health evidence for that exact package and
+placement. Do not infer inference readiness from capability registration alone.
+
+The optional local subprocess controls are administrative tools, not a shortcut
+around those requirements. A process launched inside the orchestrator does not
+by itself prove shared GPU admission, package provenance, restart ownership, or
+production routing safety.
 
 ---
 
@@ -118,6 +135,11 @@ available models, routing metadata, and optional managed-process state. Chat,
 completion, and embedding capabilities use the OpenAI-compatible API; server
 start/stop capabilities additionally manage a local subprocess and its launch
 arguments.
+
+On an installation with no configured endpoint, `vllm.status` should report an
+empty instance set rather than pretending the integration is unavailable or a
+model is ready. Add an instance only after its lifecycle owner, package,
+placement, shared gate, rollback, and teardown path are known.
 
 Capacity is dominated by model weights, KV cache, maximum model length,
 batching, tensor parallelism, and LoRA allocation. A server that binds but

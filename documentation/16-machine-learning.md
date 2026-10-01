@@ -214,6 +214,14 @@ both frameworks. Cancellation during a real kernel, accelerator placement,
 memory pressure, long-running load, worker loss and teardown remain separate
 operational gates.
 
+Those checks establish the native adapter and artifact-verification boundary;
+they do not redirect Workshop prediction or make either framework the default.
+The deployed NLP estate is a separate example of the portable inventory working
+with real ONNX Runtime services: task-specific embedding, NER, classification,
+zero-shot, QA, language-identification, and reranking packages appear in
+`model.inventory` only when their artifact manifests are content-verified.
+Inventory presence still does not grant activation or routing authority.
+
 An evidence-bound dispatch plan closes the gap between provider discovery and
 deployment state without becoming a router. For one caller-selected provider
 and deployment, it verifies request compatibility, placement, current readiness,

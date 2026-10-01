@@ -71,8 +71,8 @@ through it. The request and result validation is shared with ML Workshop batch
 inference through `models/legacy_prediction_adapter.py`, preventing the two
 legacy paths from becoming separate portable prediction dialects.
 
-The second W2-06 slice adds `SQLiteModelPackageRegistry`. Canonical package JSON
-and aliases survive restart in transactional tables; package content is
+`SQLiteModelPackageRegistry` provides the durable package registry. Canonical
+package JSON and aliases survive restart in transactional tables; package content is
 revalidated and its identity recomputed on every read, so malformed or forged
 stored state fails visibly. Alias changes are compare-and-set operations.
 
@@ -108,8 +108,8 @@ queryable independently of execution.
 
 This is a discovery and migration bridge, not runtime delegation: the legacy
 capabilities do not yet consult the binding, and no inference call is redirected
-by this slice. That traffic step remains gated on identical legacy/package
-inference evidence.
+by the migration bridge. Redirecting traffic remains gated on identical
+legacy/package inference evidence.
 
 Before an audited alias activation, `evaluate_model_admission` compares the
 package against an explicit `ModelDeploymentTarget` and `ModelTrustPolicy`. It
@@ -258,6 +258,14 @@ shows placement evidence and blockers, and reports whether the package registry,
 deployment registry, and NLP discovery sources are available. Viewing this page
 does not warm or execute any model.
 
+Deployed NLP workers also publish their exact ONNX task packages into
+`model.inventory`. The inventory understands embedding, NER, classification,
+zero-shot classification, question answering, language identification, and
+reranking deployments. Each accepted package binds artifact digests, runtime
+and framework versions, task contracts, model identity, and placement metadata.
+A name-only deployment remains an unresolved candidate; it is never promoted
+into a content-verified package by inference or guesswork.
+
 ---
 
 ## 6. Edge runtime
@@ -298,6 +306,19 @@ falls through to Ollama, so it is fully back-compatible.
 - ⚠️ **Vector-space caveat:** the fastembed model is 768-dim like Ollama's
   `nomic-embed-text` but the values differ — **re-index** before enabling on a
   populated vector store.
+
+This local Fabric backend is distinct from the routed NLP-worker embedding
+service. `nlp.embed` sends a bounded batch to an admitted CPU worker and returns
+L2-normalised sentence vectors plus the serving node, model, dimension, and
+count. The deployed MiniLM package is 384-dimensional, so its vectors must not
+be mixed with either 768-dimensional Nomic space. Use the package and embedding
+space identity—not merely the word “ONNX”—when selecting or rebuilding a
+projection.
+
+`nlp.nodes` reports the routed workers and their task-shaped package manifests;
+`model.inventory` joins those packages with Vera's deployment and provider
+records. Neither capability loads a model, changes routing, or authorizes a
+vector-store migration.
 
 ---
 
@@ -389,7 +410,6 @@ host**; the edge runtime needs them on the **edge node**.
 - [LLM Cluster](./04-ollama-cluster.md) — the embedding hot path (`ollama_embed`) §7 hooks
 - [Research System](./07-research.md) — where `nlp.rerank` will plug into retrieval
 - [Capability Framework](./01-capability-framework.md) — `@capability` pattern the caps follow
-- `ONNX_TODO.md` (repo root) — live status and remaining work
 
 ## Screenshots
 
