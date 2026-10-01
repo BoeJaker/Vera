@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import inspect
 import math
 import time
-from typing import Any, Awaitable, Callable, Sequence
+from typing import Awaitable, Callable, Sequence
 
 from .context_provider import ContextCitation
 from .fabric.dataset_provider import CancellationSignal, DatasetSnapshot
@@ -29,7 +29,7 @@ from .discovery_benchmark import (
 
 LiveVariantCall = Callable[
     [ContextBenchmarkCase, "BenchmarkMilestones"],
-    "LiveContextResult | Awaitable[LiveContextResult]",
+    Awaitable["LiveContextResult"],
 ]
 ClaimSupport = Callable[
     [ContextBenchmarkCase, tuple[RetrievalCitation, ...]], Sequence[str]
@@ -62,6 +62,12 @@ class LiveContextVariantRunner:
             raise TypeError("live runner requires a benchmark variant")
         if not callable(self.execute):
             raise TypeError("live runner execute must be callable")
+        asynchronous = inspect.iscoroutinefunction(self.execute)
+        if not asynchronous:
+            asynchronous = inspect.iscoroutinefunction(
+                getattr(self.execute, "__call__", None))
+        if not asynchronous:
+            raise TypeError("live runner execute must be asynchronous")
         if (isinstance(self.timeout_seconds, bool)
                 or not isinstance(self.timeout_seconds, (int, float))
                 or not math.isfinite(self.timeout_seconds)
@@ -164,9 +170,8 @@ class ContextBenchmarkRuntime:
         started = time.monotonic_ns()
         milestones = BenchmarkMilestones(started)
         try:
-            value = runner.execute(case, milestones)
-            if inspect.isawaitable(value):
-                value = await asyncio.wait_for(value, runner.timeout_seconds)
+            value = await asyncio.wait_for(
+                runner.execute(case, milestones), runner.timeout_seconds)
             if not isinstance(value, LiveContextResult):
                 raise TypeError("live context variant returned an invalid result")
             ended = time.monotonic_ns()

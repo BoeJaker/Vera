@@ -208,6 +208,9 @@ def test_runtime_rejects_drift_duplicates_and_unbounded_inputs():
                                 runners=(one, two), repetitions=1001)
     with pytest.raises(ValueError, match="timeout"):
         LiveContextVariantRunner(variant("bad"), execute, float("nan"))
+    with pytest.raises(TypeError, match="must be asynchronous"):
+        LiveContextVariantRunner(
+            variant("sync"), lambda case, milestones: result_for(case))
 
 
 def test_milestones_are_ordered_single_use_and_closed():
