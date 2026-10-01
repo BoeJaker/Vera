@@ -24,7 +24,7 @@ today. The LLM becomes the **teacher**: every escalation is a labelled example,
 and every recorded outcome is a calibration point.
 
 This page documents the design, the infrastructure it would need, a verified
-survey of **56 decision points** across the codebase where it could be used, and
+survey of **57 decision points** across the codebase where it could be used, and
 the candidates that were considered and rejected. The survey was taken against
 the source tree on 2026-10-01; `file:line` references point at that revision.
 
@@ -562,7 +562,8 @@ and after a window in which chat's own LLM traffic has actually been measured.
 
 | ID | Where | Notes | Priority |
 |---|---|---|---|
-| `route.dag_supervise` | `_llm_supervise` (`dag_workshop_capabilities.py:7206`) for `supervised_run_graph` | Choice of continue / abort / retry node / insert node, legacy DAG runner | P3 |
+| `route.dag_supervise` | `_llm_supervise` (`vera/capability_orchestration.py:7206`) for `supervised_run_graph` | Choice of continue / abort / retry node / insert node, legacy DAG runner | P3 |
+| `exec.stepwise_next_cap` | `/dag/plan_stream_scoped` stepwise mode (`vera/execution/exec_capabilities.py:4727`) | Each step the LLM picks the next capability from a list, or `done`, as JSON — choice-of-N; arguments still need generation, so the student would at most answer `done` | P3 |
 
 Job-type inference (`_infer_job_type`, `:895`) and node selection
 (`pick_instance`) are rejected: they are a static mapping and load balancing
@@ -685,6 +686,7 @@ is *"is this worth waking the LLM for?"*
 | P3 | `chat.output_format` | 5- or 20-way | yes | per turn | suggestion | low |
 | P3 | `delivery.channel` | 7-way | yes | per report | suggestion | low |
 | P3 | `route.dag_supervise` | 4-way | truncated | legacy | — | low |
+| P3 | `exec.stepwise_next_cap` | N-way + done | truncated | per stepwise step | skip a call on `done` | low |
 | P3 | `dream.pivot` | N-way | truncated | rare | — | low |
 | P3 | `narrator.length_tier` | 3-way | yes | per take | — | low |
 | P3 | `dream.sensor_signal` | score | yes | per sensor | feeds the wake gate | low |
