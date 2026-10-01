@@ -527,6 +527,17 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
         rec = by_id.get(action["schedule_id"])
         if not rec:
             continue
+        if action.get("reason") == core.DISPLACE:
+            # Drop the census parked on another schedule's window-end yield. Not a
+            # start: the harness archives the parked run (-partial-dropped) and
+            # exits within seconds, and THIS schedule launches on the next tick
+            # (its once-per-window record is untouched, so it is still due).
+            res = await _call("census.control.set", action="drop", by=_BY,
+                              reason="scheduler: %s is due - dropping the census parked on "
+                                     "another schedule's window-end yield" % rec.get("title", rec["id"]))
+            controls.append({"schedule_id": rec["id"], "action": "drop-parked",
+                             "ok": bool((res or {}).get("ok"))})
+            break                        # one census at a time: launch next tick
         run_id = uuid.uuid4().hex[:10]
         res = await _start(action, rec, run_id)
         word = _result_word(res)
