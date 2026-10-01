@@ -200,7 +200,7 @@ plans. Loop Lab's board is the operational source of truth. Private supporting
 files shared across main, bleeding-edge, and sandboxes live outside the worktree
 under `<git-common-dir>/vera-work/shared-planning/`; sandbox-local handoff state
 lives in gitignored `.vera-work/work-plan.json`. See
-[Loop Lab](33-evolve.md#repository-shared-private-planning).
+[Loop Lab](33-evolve.md#116-work-plans-and-shared-private-planning).
 
 ## Screenshot maintenance
 

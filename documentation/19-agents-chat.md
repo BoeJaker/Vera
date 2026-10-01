@@ -15,7 +15,7 @@ registries shared with Dream and Render live in `vera/output_formats.py` and
 `vera/delivery.py`; authoring-task routing for loop steps is in
 `vera/agent_task_intent.py`. The agentic-loop engines themselves are in
 `vera/dag/dag_workshop_capabilities.py` and are documented in
-[DAG Engine §5](./03-dag-engine.md#5-the-agentic-loop); this page explains how
+[DAG Engine §8](./03-dag-engine.md#8-the-agentic-loop-modes-and-shared-machinery); this page explains how
 chat reaches them.
 
 **Status:** production. Ordinary chat, capability directives, server-side
@@ -585,7 +585,7 @@ el.appendEvent(ev);                                         // or feed events ma
 el.setHitlEndpoint('/workshop/agent_loop/hitl/respond');    // HITL approvals
 ```
 
-Events are versioned by engine (`agent_loop_v2.*`, …). The engines currently span v1–v8; see [DAG Engine §5](./03-dag-engine.md#5-the-agentic-loop) for phases, budgets and continue/wrap behaviour.
+Events are versioned by engine (`agent_loop_v2.*`, …). The engines currently span v1–v8; see [DAG Engine §8](./03-dag-engine.md#8-the-agentic-loop-modes-and-shared-machinery) for phases, budgets and continue/wrap behaviour.
 
 The chat panel's **Loop** tab shows a live activity graph, the **⟳ Loops** tab lists running and recent loops (any can be picked back up), and **Stop** aborts all streams and loops.
 
