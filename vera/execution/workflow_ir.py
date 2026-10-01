@@ -33,7 +33,7 @@ _ADAPTER_PROFILES = {
                         "detail": "Loss-aware conversion only; native DAG remains authoritative."},
     "langgraph": {"available": True, "executable": False,
                   "supports": ["tasks", "parallel", "conditions"],
-                  "detail": "Offline compiler and injected conformance boundary; no operational runner is registered or invoked."},
+                  "detail": "Offline compiler plus an opt-in operational runner; no policy executor is bound or default route registered."},
     "temporal": {"available": True, "executable": False,
                  "supports": ["tasks", "parallel", "conditions"],
                  "detail": "Offline compiler and injected conformance boundary; no operational worker is registered or invoked."},

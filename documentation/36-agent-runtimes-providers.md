@@ -250,10 +250,13 @@ validated run requests now pass through the shared adapter. Static inspection
 does not import LangGraph, build an image, contact a model, or launch a run.
 Workflow IR also has a separate offline LangGraph compiler. It converts only the
 losslessly supported task, flat-parallel, and state-truthy-condition subset into
-a content-addressed plan, and an injected conformance seam verifies that a future
-runner echoes the exact plan and workflow identities. This compiler is not wired
-to `langgraph.run`: it cannot launch a container, call a model, authorize an
-effect, or imply that richer Workflow IR semantics are supported.
+a content-addressed plan, and an injected conformance seam verifies that a runner
+echoes the exact plan and workflow identities. An opt-in operational runner now
+materializes that proven subset as a real LangGraph `StateGraph`, but only after
+independent graph validation and a complete task allowlist check. Vera's injected
+executor remains the sole capability and policy authority. The runner is not
+wired to `langgraph.run`, registered as a default route, or permitted to imply
+support for richer Workflow IR semantics.
 Temporal has the same offline compiler and conformance boundary, with a distinct
 plan schema and identity. It does not import the Temporal SDK, contact a server,
 start a worker, or claim Temporal-specific retry, scheduling, compensation, or

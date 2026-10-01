@@ -279,6 +279,28 @@ LangGraph, builds an image, starts a bridge, resolves a reference, or grants
 effect authority. This allows deterministic conformance testing without
 mistaking compiler availability for operational readiness.
 
+`LangGraphOperationalRunner` is the opt-in implementation of that injected
+seam. It lazily loads LangGraph and constructs a `StateGraph` only after the
+content-addressed plan has passed independent size, identity, authority,
+allowlist, reachability, acyclicity, entrypoint, terminal-node, and output-key
+checks. LangGraph schedules the already-compiled nodes; it does not discover or
+call capabilities. Vera retains that authority through a mandatory injected
+task executor and checks every allowed task before the first node runs.
+
+State updates are append-only per node and are folded in compiled plan order,
+so parallel completion timing cannot silently change merge order. Guards read a
+detached state snapshot, task results and final state remain canonical-JSON and
+one-MiB bounded, cancellation reaches the active executor, and runtime absence
+or execution failure becomes a stable terminal code. Empty workflows preserve
+their input without loading LangGraph. Merely importing or constructing the
+runner performs no runtime load or effect.
+
+This runner is not registered as Vera's default workflow route. A consumer must
+provide an explicit task allowlist and policy-enforcing executor, then opt into
+the existing runtime adapter. Native DAG and agent-bridge capability names are
+unchanged, and no production workflow is redirected simply because LangGraph is
+installed.
+
 The LangGraph and Temporal modules are thin profiles over one shared compiler
 and injected-runner validator. Runtime-specific schemas and plan identities stay
 distinct, while graph construction, size limits, terminal-envelope validation,
