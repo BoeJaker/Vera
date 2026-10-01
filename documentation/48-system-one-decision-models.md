@@ -24,7 +24,7 @@ today. The LLM becomes the **teacher**: every escalation is a labelled example,
 and every recorded outcome is a calibration point.
 
 This page documents the design, the infrastructure it would need, a verified
-survey of **54 decision points** across the codebase where it could be used, and
+survey of **56 decision points** across the codebase where it could be used, and
 the candidates that were considered and rejected. The survey was taken against
 the source tree on 2026-10-01; `file:line` references point at that revision.
 
@@ -616,6 +616,8 @@ is *"is this worth waking the LLM for?"*
 |---|---|---|---|---|---|---|
 | `discovery.page_on_topic` | `vera/fabric/discovery.py:2480-2530` (LLM at `:2508`); fallback `keep = relevance ≥ 0.4` | Heuristic, then LLM for borderline pages (0.15–0.55) | binary | yes (topic, title, 700-char excerpt) | Student sits between heuristic and LLM; only its uncertain band reaches the LLM. Hundreds of borderline pages per crawl, each a 30 s-timeout call today | P2 |
 | `discovery.page_relevance_tag` | `_llm_tag` (`:5381`), `_llm_page_analyze` (`:5594`), queued at `:2240-2258` | LLM relevance 0–1 + tags + entities | score + multi-label | truncated | Student scores relevance; LLM extracts only above the bar | P2 |
+| `research.query_intent` | `vera/research/researcher_api.py:2125` (`_detect_intent`) | Fast-model LLM classifies each research query into one of 12 intents (`general`, `structured_data`, `documentation`, `financial`, `osint`, `news_media`, `gaming`, `legal`, `academic`, `code`, `security`, `technical`) as JSON | choice-of-12 | yes (the query) | Student picks the intent at high P; the LLM still names authoritative sources and OSINT targets | P2 |
+| `research.citation_score` | `vera/research/researcher_api.py:5614-5630` | Writer LLM rates up to 16 citations 0–5 in one prompt, penalising duplicates | score per citation | per pair | Score (query, citation) pairs with `nlp.rerank` or a student — the citation rerank (§3) is already live for ordering; duplicate detection pairs with `loop.same_failure`-style pair scoring | P2 |
 | `ontology.cap_composable` | `vera/ontologies/cap_ontology.py:961` (`_auto_pair`) | LLM over capability pairs, O(N²) | binary + score | yes | Student filters; LLM describes only positive pairs | P2 |
 | `llm.classify` | `vera/capabilities/capabilities.py:2190` | LLM-only classifier returning a label with no real confidence | choice-of-N | truncated | Route to `nlp.zeroshot` / `decide.ask` first; escalate on `null`. A drop-in swap with the same contract | P2 |
 | `memory.record_cap` | `vera/fabric/memory_hooks.py:248` (`_should_record_cap`) | Mode, allow/deny lists, `MEMORY_MIN_TEXT_LEN` | binary | yes | High volume, low stakes | P3 |
@@ -665,6 +667,8 @@ is *"is this worth waking the LLM for?"*
 | P2 | `narrator.intent` | ≈ 25-way | yes | every 8 min | skip call | low |
 | P2 | `discovery.page_on_topic` | binary | yes | per borderline page | large crawl speed-up | low |
 | P2 | `discovery.page_relevance_tag` | score | truncated | per page | skip LLM for low pages | low |
+| P2 | `research.query_intent` | 12-way | yes | per research job | skip a fast-model call | low |
+| P2 | `research.citation_score` | score | per pair | per research node | parallel scoring, no decode | low |
 | P2 | `ontology.cap_composable` | binary + score | yes | O(N²) batch | prune pairs | low |
 | P2 | `llm.classify` | N-way | truncated | per call | drop-in swap | low |
 | P2 | `syslog.monitor_wake` | binary | yes | ≤ 288 / day | skip GPU analysis | low |

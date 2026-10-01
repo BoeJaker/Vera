@@ -28,6 +28,7 @@ Source: [`vera/execution/exec_capabilities.py`](../vera/execution/exec_capabilit
   - [Interactive terminals](#interactive-terminals)
   - [Operator verbs](#operator-verbs)
   - [Remote file system, workspaces, apps and MCP](#remote-file-system-workspaces-apps-and-mcp)
+  - [Session sandboxes](#session-sandboxes)
 - [8. Network discovery](#8-network-discovery)
   - [Infrastructure scans and imports](#infrastructure-scans-and-imports)
   - [Target probing](#target-probing)
@@ -94,6 +95,7 @@ flowchart TB
 | `vera/remote/remote_capabilities.py` | `conn.*` connection registry and WebSocket terminals |
 | `vera/remote/operator_capabilities.py` | `operator.sysinfo|processes|ports|services|service|pkg` |
 | `vera/remote/workspace_capabilities.py` | `fs.*`, `workspace.*`, `app.*`, `mcp.detect`, the app reverse proxy |
+| `vera/remote/session_sandbox_capabilities.py`, `sandbox_idle_core.py` | Per-session sandbox containers and their idle decisions (`sandbox.*`) |
 | `vera/remote/vera-terminal.js` | `<vera-terminal>` element |
 | `vera/remote/remote_panel.html`, `workspace_panel.html` | Remote and Workspace pages |
 | `vera/execution/run_*.py`, `workflow_*.py`, `*_mapping.py`, … | Execution foundation (§14) |
@@ -285,6 +287,20 @@ All are `POST /remote/operator/<verb>`. The `operator` loop profile pins this to
 | MCP | `mcp.detect` (`POST /remote/mcp/detect`) | Probe a target for network MCP servers and register and pair them in the MCP catalogue |
 
 The Remote page is served at `/remote/panel` and the Workspace page at `/remote/workspace/panel`.
+
+### Session sandboxes
+
+[`vera/remote/session_sandbox_capabilities.py`](../vera/remote/session_sandbox_capabilities.py) gives a chat, IDE or agentic-loop session (or a shared goal/project owner) its own Docker container. While a session's sandbox is **active**, the exec runners of §4 route that session's commands, code and file I/O into it with `docker exec`, so the Vera host is never used for that session's work. Containers are named `vera-sbx-…`, keep `/workspace` in a named volume, sleep when idle, and can be committed (`vera-session:<sid>`) and synced to the Garage/Gitea session store for full restore. The lifecycle, run ownership, durability, package approval and idle/archival behaviour are documented in [13 · Docker §8](./13-docker.md#8-per-session-sandboxes).
+
+| Group | Capabilities (all under `/remote/sandbox/…`) |
+|---|---|
+| Lifecycle and state | `sandbox.session.start`, `sandbox.session.status`, `sandbox.session.stop`, `sandbox.session.sleep`, `sandbox.session.set_active`, `sandbox.session.list`, `sandbox.session.link`, `sandbox.session.context`, `sandbox.session.terminal` |
+| Run and files | `sandbox.session.exec`, `sandbox.session.run_code`, `sandbox.session.fs.read`, `sandbox.session.fs.write` |
+| Durability | `sandbox.session.commit`, `sandbox.session.sync`, `sandbox.session.restore`, `sandbox.session.snapshots`, `sandbox.session.seed` |
+| Packages | `sandbox.packages.catalog`, `sandbox.packages.list`, `sandbox.packages.install`, `sandbox.packages.remove`, `sandbox.packages.pending`, `sandbox.packages.respond` |
+| Configuration and hosts | `sandbox.config.get`, `sandbox.config.set`, `sandbox.host.provision` |
+
+Records live in Redis `vera:remote:sandboxes` (links in `vera:remote:sandbox:alias`, defaults in `vera:remote:sandbox:cfg`).
 
 ---
 

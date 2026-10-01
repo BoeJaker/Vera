@@ -163,7 +163,7 @@ each section is tagged.
 | 45 | [Capability policy boundary](45-capability-policy.md) | Shadow decisions, effect grants, approvals, and enforcement path |
 | 46 | [Interoperability foundations](46-interoperability-foundations.md) | Common contracts, Runs, adapters, evidence, model packages, Worldview, and A2A boundaries |
 | 47 | [PWA](47-pwa.md) | Installable app: manifest, service worker, offline shell, generated icons |
-| 48 | [System 1 decision models](48-system-one-decision-models.md) | 🚧 **Not live.** Calibrated typed-decision tier: design, ledger, and a survey of 54 decision points |
+| 48 | [System 1 decision models](48-system-one-decision-models.md) | 🚧 **Not live.** Calibrated typed-decision tier: design, ledger, and a survey of 56 decision points |
 | 49 | [Worldview integration](49-worldview-integration.md) | How the JEPA world model is wired in today, known limitations, and a 🚧 not-live opportunity survey |
 
 ## Status tags
