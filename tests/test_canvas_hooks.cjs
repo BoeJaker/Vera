@@ -68,13 +68,18 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_pan
       const history = 'Apple was founded on April 1, 1976. In 1984 it launched the Macintosh. '
         + 'The iPhone was announced on January 9, 2007 and Tim Cook became CEO in August 2011. '
         + 'By 2018 it was worth a trillion dollars.';
+      /* 2026-10-01 (owner: 'its taking any dates in the input and just stringing them together'): dated prose nobody asked
+         to see as a history is prose; a reply that IS a chronology - its own History section - is a timeline */
       const made = run(history);
-      t('a reply full of dates becomes a timeline', made.length === 1 && made[0].kind === 'timeline', JSON.stringify(made.map((m) => m.kind)));
-      t('with the events in order', made[0].content.events.map((e) => e.when).join(',') === '1976-04-01,1984,2007-01-09,2011-08,2018',
-        made[0] && made[0].content.events.map((e) => e.when).join(','));
+      t('dated prose nobody asked to see as a history stays prose', made.length === 0, JSON.stringify(made.map((m) => m.kind)));
+      const chron = run('## History\n' + history.split('. ').join('.\n'));
+      t('a reply with a History section becomes a timeline', chron.length === 1 && chron[0].kind === 'timeline', JSON.stringify(chron.map((m) => m.kind)));
+      t('with the events in order', chron[0] && chron[0].content.events.map((e) => e.when).join(',') === '1976-04-01,1984,2007-01-09,2011-08,2018',
+        chron[0] && chron[0].content.events.map((e) => e.when).join(','));
       /* this is the point of it: the same question answered from what the model knows has the same shape as one
          answered from the web, and only the web one was getting an axis */
-      t('without any research run involved', !/research/.test(String(take)));
+      // (it NAMES the research card, to read the reply without it - it calls nothing of a research run)
+      t('without any research run involved', !/_streamResearchJob|_cvLandTimeline|research\.(run|report|deep)|_researcherWsUrl/.test(String(take)));
 
       // and the restraint, which matters more here than in a research report - ordinary replies are full of numbers
       t('two dates are not a history', run('We shipped in 2019 and again in 2020.').length === 0);

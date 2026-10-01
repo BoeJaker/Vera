@@ -17,8 +17,12 @@ t('the expand mark is there when you are on the item, not always', /\.it:is\(:ho
 /* ── headers belong to Full ──────────────────────────────────────────────────────────────────────────────────── */
 t('the element carries the tier, because a rule on <html> cannot cross a shadow root', /if \(this\.dataset\.tier !== tier\) this\.dataset\.tier = tier;/.test(SRC));
 t('in Hover and Zen the header and the rail are held back until you are on the item',
-  /:host\(\[data-tier="hover"\]\) \.it:not\(\.compact\):not\(:hover\):not\(:focus-within\) > \.it-hd/.test(SRC) &&
-  /:host\(\[data-tier="zen"\]\) \.it:not\(\.compact\):not\(:hover\):not\(:focus-within\) > \.it-ft\{display:none\}/.test(SRC));
+  // held back as OVERLAYS that fade in, never display:none - an item grew by them when pointed at near an edge, and
+  // the edge flickered (2026-10-01)
+  /:host\(\[data-tier="hover"\]\) \.it:not\(\.compact\) > \.it-hd,:host\(\[data-tier="zen"\]\) \.it:not\(\.compact\) > \.it-hd\{position:absolute;[^}]*opacity:0;pointer-events:none/.test(SRC) &&
+  /:host\(\[data-tier="hover"\]\) \.it:not\(\.compact\) > \.it-ft,:host\(\[data-tier="zen"\]\) \.it:not\(\.compact\) > \.it-ft\{position:absolute;[^}]*opacity:0/.test(SRC) &&
+  /:is\(:hover,\.hov,:focus-within\) > :is\(\.it-hd,\.it-ft\)[^{]*\{opacity:1;pointer-events:auto\}/.test(SRC) &&
+  !/:not\(:hover\):not\(:focus-within\) > \.it-(hd|ft)/.test(SRC));
 
 /* ── room for what you read ──────────────────────────────────────────────────────────────────────────────────── */
 t('code, a page, a passage and a structured graph take a bigger share of the column',

@@ -20,7 +20,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 CAP_FORMS = ("kv", "table", "list", "json", "log", "terminal", "diff", "code", "progress", "hero", "trace", "area",
-             "column", "status", "files", "media", "error", "markdown")
+             "column", "status", "files", "media", "error", "markdown", "reading")
 
 # the capability's own hint: what the dashboard already reads each of these as (kept in step with CAP_HINTS in the element)
 CAP_HINTS: Dict[str, Dict[str, Any]] = {
@@ -234,6 +234,12 @@ def from_cap_result(cap: str, result: Any, args: Optional[dict] = None, title: s
     if rw and _is_obj(rw[0]):
         r0 = rw[0]
         tk, xk, nk = _first(r0, _TIME), _first(r0, _TEXT), _num_keys(r0)
+        # 7b pages: rows with a web address and a title or what they say - a reading list, before the log a dated page
+        # would make and the table that cut every page to a cell (kept in step with the element's rule 7b)
+        if all(_is_obj(r) and re.match(r"^https?:", str(r.get("url") or r.get("link") or r.get("href") or "")) for r in rw) \
+                and any(r.get("title") or r.get("snippet") or r.get("text") for r in rw):
+            mk("reading", c, "pages: a title, an address and what they say", {"rows": rk})
+            return done()
         # 8 events
         if tk and xk and all(_is_obj(r) for r in rw):
             kind = _first(r0, ("kind", "level", "type", "severity", "source")) or ""

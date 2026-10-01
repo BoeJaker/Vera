@@ -147,6 +147,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("log", "events", ("flat", "iso"), glyph="log", motion=True, options=("lanes", "limit", "tail"), name="Log stream", boards=("widgets", "motion")),
     _F("lane", "events", glyph="lane", options=("limit", "lanes"), name="Lane", boards=("widgets",)),
     _F("feed", "events", ("flat", "iso"), glyph="feed", motion=True, options=("page", "show"), name="News feed", boards=("widgets", "motion", "iso")),
+    _F("reading", "items", ("flat",), glyph="feed", options=("page", "show"), name="Reading list", boards=("widgets", "reply")),
     _F("pulse", "events", glyph="pulse", motion=True, options=("classes", "ring_life"), name="Pulse", boards=("motion",)),
     _F("sweep", "events", ("iso",), glyph="sweep", motion=True, options=("sweep", "range"), name="Radar sweep", boards=("motion",)),
     _F("activity", "events", ("iso",), glyph="activity", name="Activity", boards=("iso",)),
