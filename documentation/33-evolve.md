@@ -222,6 +222,15 @@ numbers (for example duplicate goal ids) unless forced. Census runs from the
 off-repo harness are recorded through `evolve.result.ingest` (§4.6); see
 [Evaluation corpus](44-evaluation-corpus.md).
 
+The translation lives in `census_seed.py` (pure: template dict in, task records
+out). Parity is its point: every historical census number was produced by
+`dag.agent_loop_v7` called with the goal alone, so seeded tasks use the
+`planning` profile (the profile whose engine is v7) through `loops.run`, which
+passes the caller's explicit arguments and drops the v7 profile body — a bare v7
+run, exactly as the harness made it. If that asymmetry ever changes, seeded
+census tasks stop being comparable with earlier runs and the template needs a
+new name.
+
 ### 4.3 Running a test in the background
 
 **`evolve.run.start`** launches one test in the background and returns a
@@ -425,6 +434,13 @@ the caller's explicit overrides (`_apply_evolve_overlay`, see
 [DAG engine §11](03-dag-engine.md#11-loop-profiles-and-loopsrun)), so every
 production run of that profile picks up the learned knobs and preamble while a
 caller can still override any of them. Clear it at any time to revert to stock.
+
+> [!NOTE]
+> The overlay is merged into the profile *body*. For a v7 profile (`planning`,
+> `long-term-scheduling`, `operator`, `research-brief`) `loops.run` filters the
+> profile body by v7's own schema, so overlay knobs reach the engine only on
+> v5/v6 profiles or when passed explicitly by the caller (see
+> [DAG engine §11](03-dag-engine.md#11-loop-profiles-and-loopsrun)).
 
 The editor may only tune these knobs (anything else is dropped; numbers are
 clamped):
@@ -1022,7 +1038,7 @@ given, `board.comment` pinned to that item.
 |---|---|
 | `evolve.delegate.start` / `status` / `result` / `cancel` / `list` | Job lifecycle (session `delegate:<id>`) |
 | `evolve.delegate.trajectory` / `trajectories` | The job as a trajectory for analysis and training: parent task, brief, plan, the loop's tier/intent/catalogue, every step with its calls, the report, the verdict |
-| `evolve.delegate.rate` | Rate a report `useful|partly|wrong` with notes, once checked against the code |
+| `evolve.delegate.rate` | Rate a report with a verdict from `VERDICTS` (`useful`, `partly`, `wrong`) plus notes, once checked against the code; anything else is refused (`delegate_trajectory_core.py`) |
 | `evolve.delegate.fs.grep` / `list` / `read` / `outline` | Jailed read tools over the job's checkout |
 
 ## 16. Autonomous mode and the orchestrator
@@ -1135,13 +1151,13 @@ Environment variables:
 | `VERA_SANDBOX_LOG_INTERVAL` | `10` | Sandbox log/metrics collector interval (s) |
 | `VERA_SESSION_SANDBOX_RETAIN_HOURS` / `VERA_DISK_SWEEP_INTERVAL` / `VERA_DOCKER_DISK_MOUNT` | `24` / `900` / `""` | Docker disk headroom sweep |
 | `VERA_SCAFFOLD_SWEEP_ENABLED` / `VERA_SCAFFOLD_SWEEP_INTERVAL_S` | `1` / `3600` | Stale scaffolding sweep |
-| `VERA_SWEEP_STARTUP_GRACE_S` | `180` | Grace period before sweeps act after startup |
+| `VERA_SWEEP_STARTUP_GRACE_S` | `180` | Grace period after startup before the scaffolding sweep acts |
 | `VERA_WORKTREE_CLAIM_TTL_H` | `12` | Worktree claim expiry |
 | `VERA_MAINLINE_MIRROR_REFRESH_INTERVAL_S` | `86400` | Mainline mirror refresh |
-| `VERA_ORCHESTRATOR_INTERVAL_S` | `60` | Autonomous drive tick |
+| `VERA_ORCHESTRATOR_INTERVAL_S` | `60` (minimum 15) | Autonomous drive tick |
 | `VERA_EDGES` | `""` | Extra integration branches `name=branch[:base],…` |
 | `VERA_PERF_GATE_STRICT` | unset | Make a perf-gate `fail` block promotion |
-| `VERA_CENSUS_DIR` | `""` | Census harness directory |
+| `VERA_CENSUS_DIR` | `~/loop-census` when empty | Off-repo census harness directory |
 
 ## 20. Storage and events
 
@@ -1200,8 +1216,8 @@ curl -s -X POST localhost:8999/evolve/pipeline/promote -H 'content-type: applica
   -d '{"id":"<pipeline id>"}'
 ```
 
-(Check the exact argument names of `evolve.sandbox.exec` with `caps.describe`
-before scripting it.)
+`evolve.sandbox.exec` takes `cmd`, `where` (`container` or `worktree`),
+`branch` or `name`, and `timeout` (60 s).
 
 Probe a loop with an ad-hoc goal and a critic:
 

@@ -720,8 +720,8 @@ effect.
 
 | Mode | Capability (route) | Defined in | Strategy | Notes |
 |---|---|---|---|---|
-| v1 | `dag.agent_loop` (`POST /dag/agent_loop`) | `fabric/context.py` | ReAct: one tool per cycle from a goal-filtered toolkit | `max_cycles` 8 |
-| v2 | `dag.agent_loop_v2` (`POST /dag/agent_loop_v2`) | `fabric/context.py` | Triage + dynamic toolkit + post-call satisfaction check | Default version of the SSE stream; phased by default |
+| v1 | `dag.agent_loop` (`POST /dag/agent_loop`) | `fabric/context.py` | ReAct: one tool per cycle from a goal-filtered toolkit | Legacy engine; `max_cycles` 8 |
+| v2 | `dag.agent_loop_v2` (`POST /dag/agent_loop_v2`) | `fabric/context.py` | Triage + dynamic toolkit + post-call satisfaction check | Legacy engine; still the default `version` of the SSE stream; phased by default |
 | v3 | `dag.agent_loop_v3` (`POST /dag/agent_loop_v3`) | `dag_workshop_capabilities.py` | Full message history with `tool_use` blocks, HITL, phase model, continue | `max_cycles` 10 (clamped 1–40) |
 | v4 | `dag.agent_loop_v4` (`POST /dag/agent_loop_v4`) | `dag_workshop_capabilities.py` | Strict plan/explore/think/act/verify cadence with step selection and a todo plan | `max_cycles` 12 |
 | v5 | `dag.agent_loop_v5` (`POST /dag/agent_loop_v5`) | `dag_workshop_capabilities.py` | Orchestrator plans steps in one call; each step runs as an ephemeral scoped specialist | Replans on failure |
@@ -854,6 +854,13 @@ mistakes, and invokes the capability with the run's `session_id`.
   (`repeat_failure`).
 
 ## 9. Classic loops v1–v4
+
+v1 (`dag.agent_loop`) and v2 (`dag.agent_loop_v2`) are the legacy engines and
+live in `vera/fabric/context.py` beside the context builder they grew out of; both
+register streams (`dag.agent_loop`, `dag.agent_loop_v2`) and return
+`{final_state, history, cycles, done, summary}` (v2 adds `toolkit`, `triage`).
+v3 and v4 live in `dag_workshop_capabilities.py` and reuse v2's triage, the
+satisfaction judge and the context module's `ollama_generate`.
 
 ### 9.1 Action protocol
 
@@ -999,6 +1006,9 @@ plan_piecewise, planner, executor, verifier, controller, adjust, gate`
 (`loop_stage_audit.py`). The executor's full prompt is available on request as
 `agent_loop_v5.step_context`.
 
+> [!NOTE]
+> **🚧 Not live — System 1.** Several loop decisions (executor done?, controller continue, verifier, intent, tier, prestep gaps) are surveyed as candidates for a fast calibrated decision model; see [System 1 decision models](48-system-one-decision-models.md#52-agent-loop-and-workshop).
+
 ### 10.2 Setup: recall, catalogue, tier, intent, fast path, clarification
 
 - **Recall.** Up to five relevant memories from past conversations are fetched
@@ -1020,8 +1030,10 @@ plan_piecewise, planner, executor, verifier, controller, adjust, gate`
   `agent_loop_v6.tier`.
 - **Intent** (`build|research|action|mixed`). A conservative heuristic decides
   unless it says `mixed`, in which case an LLM call disambiguates. A zero-shot
-  NLP-node classification runs alongside for measurement only
-  (`agent_loop_v6.intent_zeroshot`).
+  NLP-node classification (`nlp.zeroshot`, `intent_zeroshot_core.py`) runs
+  alongside as a live shadow: it is recorded beside the intent the run used
+  (`agent_loop_v6.intent_zeroshot`) for measurement only and never changes the
+  decision.
 - **Fast path** (`enable_fast_path`, on in v7). For a `single`-tier goal, one LLM
   call picks the one capability that satisfies it and fills its arguments
   (`{"cap": "<name or empty>", "args": {...}}`); the call runs and the answer is
