@@ -13,8 +13,10 @@ import inspect
 import json
 from typing import Any, Awaitable, Callable, Mapping
 
-from vera.execution.run_projection import ShadowRunRegistry
-from vera.execution.run_protocol import ArtifactRef, Run, RunError, RunStatus
+# relative, as the package's other imports are: the plain 'vera.' spelling does not exist in the running app, and this
+# line took worldview_jepa and the model inventory off prod through models/__init__ (2026-09-30)
+from ..execution.run_projection import ShadowRunRegistry
+from ..execution.run_protocol import ArtifactRef, Run, RunError, RunStatus
 
 from .model_package import ModelPackage, model_package_from_dict
 from .training_contracts import ProviderProfile, TrainingRequest, TrainingRun

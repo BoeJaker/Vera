@@ -62,6 +62,7 @@ def test_no_module_the_app_loads_has_a_plain_only_import_in_its_chain():
     import a plain `vera.X` only where the same file also spells it `Vera.vera.X` (the fallback the app takes)."""
     import re
     imp = re.compile(r"^(?:    )?from ((?:Vera\.)?vera(?:\.\w+)+) import|^(?:    )?import ((?:Vera\.)?vera(?:\.\w+)+)", re.M)
+    rel = re.compile(r"^(?:    )?from (\.+)([\w.]*) import ([^\n]+)", re.M)
 
     def path_of(m):
         for p in (os.path.join(ROOT, *m.split(".")) + ".py", os.path.join(ROOT, *m.split("."), "__init__.py")):
@@ -77,6 +78,10 @@ def test_no_module_the_app_loads_has_a_plain_only_import_in_its_chain():
         m = todo.pop()
         if m in seen:
             continue
+        # importing a.b.c RUNS a/__init__ and a/b/__init__ first: every parent package is walked too (the model
+        # package's __init__ is what carried the plain import into worldview_jepa - 2026-10-01)
+        parts = m.split(".")
+        todo.extend(".".join(parts[:i]) for i in range(2, len(parts)))
         seen.add(m)
         p = path_of(m)
         if not p:
@@ -88,6 +93,19 @@ def test_no_module_the_app_loads_has_a_plain_only_import_in_its_chain():
             if name.startswith("vera.") and ("Vera." + name) not in src:
                 bad.setdefault(m, []).append(name)
             todo.append(plain)
+        # RELATIVE imports are followed too: a package's __init__ pulling in '.ml_workshop_training_adapter' carried a
+        # plain import into worldview_jepa and the model inventory, and the walk never went there (2026-10-01)
+        pkg = m if p.endswith("__init__.py") else m.rsplit(".", 1)[0]
+        for dots, rest, names in rel.findall(src):
+            base = pkg.split(".")
+            if len(dots) > 1:
+                base = base[:len(base) - (len(dots) - 1)]
+            target = ".".join(base + ([rest] if rest else []))
+            todo.append(target)
+            if not rest:
+                for nm in re.split(r"[,\s()]+", names):
+                    if nm and nm != "as" and re.match(r"^\w+$", nm):
+                        todo.append(target + "." + nm)
     assert not bad, "plain-only 'vera.' imports the app cannot resolve: %s" % bad
 
 
