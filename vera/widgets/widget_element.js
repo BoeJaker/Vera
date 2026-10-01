@@ -1465,25 +1465,45 @@
      per thing - a core, a thread, a cpu - in groups (a host, a NUMA node), coloured by the lens the viewer picks in the tile. Two
      shapes: hosts [{label, <dict>: {key: value}}] (obs.node_temps: percpu loads, "Core N" temperatures) and a cpu map
      {topology: {cpus, numa_nodes}, guests: [{name, status, cpus, flags}]} (pxstore.cpu.map: pinning, NUMA nodes, guests that
-     span them). A lens a shape cannot fill is not offered; draw.lenses narrows the list; draw.lens is the first shown. */
+     span them). A lens a shape cannot fill is not offered; draw.lenses narrows the list; draw.lens is the first shown.
+     A third shape, compute load {nodes: [{label, machine, cores: [{cpu, load}], gpus, same_machine}], hosts: [...]}
+     (estate.compute.load), becomes the first: one group per machine serving models (instances on one machine share a group),
+     then each Proxmox host's whole-host group; its GPUs fill the GPU util and VRAM lenses. */
   const CM_LENS = {
     load: { label: 'load', dict: 'percpu', match: /^cpu(\d+)$/i, unit: '%', warn: 60, bad: 85 },
+    gpu: { label: 'GPU util', dict: 'gpuutil', match: /^gpu(\d+)$/i, unit: '%', warn: 60, bad: 85 },
+    vram: { label: 'VRAM', dict: 'gpuvram', match: /^gpu(\d+)$/i, unit: '%', warn: 75, bad: 92 },
     temp: { label: 'core °C', dict: 'temps', match: /^core\s*(\d+)$/i, unit: '°C', warn: 70, bad: 85 },
     pins: { label: 'pinned', cpumap: true },
     numa: { label: 'NUMA node', cpumap: true },
     span: { label: 'spans NUMA', cpumap: true },
   };
   const cmBand = (v, L) => v == null || !isFinite(v) ? B.s3 : v >= L.bad ? B.ac4 : v >= L.warn ? B.ac3 : mix(B.ac2, Math.round(30 + 60 * Math.max(0, Math.min(1, v / L.warn))));
+  /* estate.compute.load -> the hosts shape: cores [{cpu, load}] -> percpu, gpus -> gpuutil / gpuvram, an instance whose
+     machine an earlier one already drew folded into that group's name; every cell carries where it is (item.on) */
+  function cmCompute(d) {
+    const one = (h, label, on) => { const out = { label, _on: on, percpu: {}, gpuutil: {}, gpuvram: {} };
+      (h.cores || []).forEach((c) => { if (c && c.cpu != null && c.load != null) out.percpu['cpu' + c.cpu] = c.load; });
+      (h.gpus || []).forEach((g, i) => { if (!g) return; const k = 'gpu' + (g.index != null ? g.index : i); if (g.util_pct != null) out.gpuutil[k] = g.util_pct; if (num(g.total_mb) > 0) out.gpuvram[k] = Math.round(num(g.used_mb) / num(g.total_mb) * 1000) / 10; });
+      return out; };
+    const rows = [], seen = {};
+    (d.nodes || []).forEach((n) => { if (!n) return; const m = n.machine || {}, key = n.ip || n.id;
+      if (seen[key]) { seen[key].label += ' + ' + (n.label || n.id); return; }
+      const on = m.label ? (m.label + (m.vmid != null ? ' (CT ' + m.vmid + ')' : '') + (n.host ? ' on ' + n.host.label : '')) : (n.ip || '');
+      seen[key] = one(n, String(n.label || n.id), on); rows.push(seen[key]); });
+    (d.hosts || []).forEach((h) => { if (h) rows.push(one(h, String(h.label || h.ref) + ' · whole host', 'Proxmox host ' + (h.pve_node || ''))); });
+    return rows; }
   function cellmapOf(d, want, allow) {
     const isMap = !!(d && typeof d === 'object' && !Array.isArray(d) && d.topology && Array.isArray(d.topology.cpus));
-    const hostsArr = isMap ? [] : (Array.isArray(d) ? d : (d && Array.isArray(d.hosts) ? d.hosts : (d && Array.isArray(d.rows) ? d.rows : [])));
+    const isCompute = !isMap && !!(d && typeof d === 'object' && !Array.isArray(d) && Array.isArray(d.nodes) && d.nodes.some((n) => n && (Array.isArray(n.cores) || Array.isArray(n.gpus))));
+    const hostsArr = isMap ? [] : isCompute ? cmCompute(d) : (Array.isArray(d) ? d : (d && Array.isArray(d.hosts) ? d.hosts : (d && Array.isArray(d.rows) ? d.rows : [])));
     const ok = Object.keys(CM_LENS).filter((id) => (!allow || allow.includes(id)) && (CM_LENS[id].cpumap ? isMap : hostsArr.some((h) => h && h[CM_LENS[id].dict] && Object.keys(h[CM_LENS[id].dict]).some((k) => CM_LENS[id].match.test(k)))));
     const lens = ok.includes(want) ? want : ok[0]; if (!lens) return { lenses: ok, lens: '', groups: [] }; const L = CM_LENS[lens]; const groups = [];
     if (!isMap) {
       hostsArr.forEach((h) => { const dict = (h && h[L.dict]) || {}; const ks = Object.keys(dict).filter((k) => L.match.test(k)).sort((a, b) => +a.match(L.match)[1] - +b.match(L.match)[1]); if (!ks.length) return;
         const vals = ks.map((k) => num(dict[k])), peak = Math.max(...vals), mean = vals.reduce((a, b) => a + b, 0) / vals.length;
         groups.push({ name: String(h.label || h.name || h.host_id || 'host'), note: ks.length + ' · peak ' + fmt(Math.round(peak)) + L.unit + ' · mean ' + fmt(Math.round(mean)) + L.unit,
-          cells: ks.map((k, i) => ({ id: k, v: vals[i], col: cmBand(vals[i], L), item: { name: k, value: Math.round(vals[i] * 10) / 10, unit: L.unit, host: String(h.label || h.host_id || '') } })) }); });
+          cells: ks.map((k, i) => ({ id: k, v: vals[i], col: cmBand(vals[i], L), item: { name: k, value: Math.round(vals[i] * 10) / 10, unit: L.unit, host: String(h.label || h.host_id || ''), ...(h._on ? { on: h._on } : {}) } })) }); });
     } else {
       const numa = {}; Object.keys(d.topology.numa_nodes || {}).forEach((n) => (d.topology.numa_nodes[n] || []).forEach((c) => { numa[c] = +n; }));
       const on = {}, spans = {}; (d.guests || []).forEach((g) => { if (!g || !Array.isArray(g.cpus)) return; const run = String(g.status || '') === 'running';

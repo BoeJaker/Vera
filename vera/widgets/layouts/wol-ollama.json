@@ -319,6 +319,52 @@
    "floated": false
   },
   {
+   "at": [
+    0,
+    8
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "ol-compute-load",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      4
+     ],
+     "max_body": null
+    },
+    "form": "cellmap",
+    "source": "estate.compute.load",
+    "title": "Cores and GPUs under each node",
+    "read": {
+     "refresh": "30s"
+    },
+    "draw": {
+     "body": "record",
+     "lens": "load",
+     "lenses": [
+      "load",
+      "gpu",
+      "vram"
+     ]
+    },
+    "open": "estate/workers"
+   }
+  },
+  {
    "record": {
     "id": "ol-bgqueue",
     "form": "composite",
@@ -401,7 +447,7 @@
    },
    "at": [
     0,
-    8
+    12
    ],
    "span": [
     6,
@@ -442,7 +488,7 @@
    },
    "at": [
     6,
-    8
+    12
    ],
    "span": [
     6,
@@ -506,7 +552,7 @@
    },
    "at": [
     0,
-    11
+    15
    ],
    "span": [
     6,
