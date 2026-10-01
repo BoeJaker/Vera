@@ -9,11 +9,10 @@ import math
 import time
 from typing import Any, Awaitable, Callable, Sequence
 
-from vera.context_provider import ContextCitation
-from vera.fabric.dataset_provider import DatasetSnapshot
-from vera.fabric.dataset_provider import CancellationSignal
-from vera.fabric.retrieval_comparison import RetrievalCitation, RetrievalCase
-from vera.fabric.retrieval_execution import (
+from .context_provider import ContextCitation
+from .fabric.dataset_provider import CancellationSignal, DatasetSnapshot
+from .fabric.retrieval_comparison import RetrievalCitation, RetrievalCase
+from .fabric.retrieval_execution import (
     RetrievalQueryBinding,
     SnapshotRetrievalAdapter,
 )
