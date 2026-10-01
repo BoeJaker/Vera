@@ -25616,6 +25616,29 @@ async def cap_dag_agent_loop_v6(
             await _journal_step(step, res)
 
     # ── Synthesize final ──────────────────────────────────────────────────────
+    # A run that spent its whole step budget never entered the gate loop above (it
+    # needs a step left to act on a verdict), so it ended 'complete' UNCHECKED -
+    # live 2026-10-01, max_steps=1 on a three-part goal: no gate event at all,
+    # reason complete. Judge it once anyway: no step is left to fix what it finds,
+    # so the verdict goes to the end (gate_finish_core) instead of being skipped.
+    if enable_final_gate and _gate_rounds == 0 and results and executed >= hard_cap:
+        try:
+            _gb = await _v6_final_gate(
+                goal, done_when, results, catalog_names=catalog_names,
+                valid_skill_ids=valid_skill_ids, base_id=max_id,
+                steps_left=0, model=model,
+                instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
+                raw_goal=_orig_goal, bounded_failure=fix_loop_bound,
+                file_register=lambda _d: _v6_file_register_block(artifacts, _d))
+            _gate_last = _gb
+            _gate_ran_after = 0
+            await emit_event({"type": "agent_loop_v6.gate", "session_id": sid,
+                              "stream_id": stream_id, "complete": bool(_gb.get("complete")),
+                              "missing": _gb.get("missing", []), "round": 0,
+                              "follow_up": [], "budget_exhausted": True})
+        except Exception as _gbe:
+            log.debug("v6 budget-exhausted gate failed: %s", _gbe)
+
     # The gate's last word: parts it found NOT met are reported as not done.
     _unmet = _gate_finish_core.unmet(_gate_last, _gate_ran_after)
     final = await _v5_synthesize_final(
