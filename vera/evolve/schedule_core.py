@@ -280,6 +280,10 @@ def _normalize_target(kind: str, t: Dict[str, Any]) -> Dict[str, Any]:
 CENSUS_INTENT_CORES = ("off", "order")
 
 
+#: is_due's reason when a due census displaces another schedule's parked one.
+DISPLACE = "displace parked"
+
+
 def census_plan_styles() -> List[str]:
     """The loop's planning styles a census may force (planner_styles.LOOP_STYLES)."""
     try:
@@ -412,6 +416,16 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
     if kind == "census":
         if state.get("census_parked_by_us") and state.get("census_owner") == rec.get("id"):
             return True, "resume"          # parked on this schedule's own yield
+        if (state.get("census_running") and state.get("census_parked_by_us")
+                and state.get("window_end_applied")
+                and state.get("census_owner") != rec.get("id")):
+            # Parked on ANOTHER schedule's window-end yield: that run resumes only
+            # when its own window reopens (the next day, or days later), and a
+            # parked census counts as in flight - 1 Oct 2026 the operator-family
+            # run parked at 07:00 and blocked the baseline and every style slot.
+            # A due census displaces it (it is dropped and archived partial).
+            # Never a person's pause: parked_by_us is the scheduler's own yield.
+            return True, DISPLACE
         if state.get("census_running"):
             return False, "census in flight"
         if int(state.get("loops_running") or 0) > 0:
@@ -435,8 +449,9 @@ def plan_tick(schedules: Iterable[Dict[str, Any]], now: datetime, state: Dict[st
         if len(out) >= max_starts:
             break
         if rec.get("kind") == "census" and census_taken and not (
-                st.get("census_parked_by_us") and st.get("census_owner") == rec.get("id")):
-            continue
+                st.get("census_parked_by_us") and (st.get("census_owner") == rec.get("id")
+                                                  or st.get("window_end_applied"))):
+            continue                    # (a window-end park is judged by is_due: DISPLACE)
         due, why = is_due(rec, now, st)
         if not due:
             continue
