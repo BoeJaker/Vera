@@ -8,6 +8,22 @@ reference guides when you need implementation details.
 > [performance and sizing](00-performance-and-sizing.md), and follow
 > [Getting started](../docs/GETTING_STARTED.md).
 
+## Contents
+
+- [See Vera](#see-vera)
+- [Choose a path](#choose-a-path)
+  - [Learn the platform](#learn-the-platform)
+  - [Run models and distributed work](#run-models-and-distributed-work)
+  - [Build knowledge systems](#build-knowledge-systems)
+  - [Build agents and interfaces](#build-agents-and-interfaces)
+  - [Operate and extend Vera](#operate-and-extend-vera)
+  - [Design notes: decision and world-model tiers](#design-notes-decision-and-world-model-tiers)
+- [Complete guide index](#complete-guide-index)
+- [Status tags](#status-tags)
+- [How every guide is laid out](#how-every-guide-is-laid-out)
+- [Planning and delivery](#planning-and-delivery)
+- [Screenshot maintenance](#screenshot-maintenance)
+
 ## See Vera
 
 These screenshots were captured from the running Vera UI with Operator on
@@ -83,6 +99,17 @@ gallery without overwriting this authored guide.
 - [Frozen evaluation corpus](44-evaluation-corpus.md)
 - [Capability policy boundary](45-capability-policy.md)
 - [Interoperability foundations](46-interoperability-foundations.md)
+- [PWA](47-pwa.md)
+
+### Design notes: decision and world-model tiers
+
+These two pages describe how a fast decision tier and the JEPA world model fit
+into Vera. Most of their content is **🚧 Not live** (design and survey only);
+each section is tagged.
+
+- [System 1 decision models](48-system-one-decision-models.md) — 🚧 not live
+- [Worldview integration](49-worldview-integration.md) — current wiring plus a
+  🚧 not-live opportunity survey
 
 ## Complete guide index
 
@@ -136,6 +163,35 @@ gallery without overwriting this authored guide.
 | 45 | [Capability policy boundary](45-capability-policy.md) | Shadow decisions, effect grants, approvals, and enforcement path |
 | 46 | [Interoperability foundations](46-interoperability-foundations.md) | Common contracts, Runs, adapters, evidence, model packages, Worldview, and A2A boundaries |
 | 47 | [PWA](47-pwa.md) | Installable app: manifest, service worker, offline shell, generated icons |
+| 48 | [System 1 decision models](48-system-one-decision-models.md) | 🚧 **Not live.** Calibrated typed-decision tier: design, ledger, and a survey of 54 decision points |
+| 49 | [Worldview integration](49-worldview-integration.md) | How the JEPA world model is wired in today, known limitations, and a 🚧 not-live opportunity survey |
+
+## Status tags
+
+Guides mark maturity explicitly so readers never mistake a design for a
+running feature:
+
+| Tag | Meaning |
+|---|---|
+| ✅ **Live** | Runs in the current code and is reachable at runtime |
+| ⚠️ **Opt-in / partial** | Implemented, but off by default, measure-only, or limited |
+| 🧪 **Shadow / offline** | Implemented and tested, but non-authoritative or not wired into runtime |
+| 🚧 **Not live** | Design, proposal or survey only — nothing is implemented |
+
+## How every guide is laid out
+
+Each numbered guide follows the same shape so you can navigate any of them the
+same way:
+
+1. **Overview** — what the subsystem is, where it lives in the source tree, and
+   its maturity.
+2. **Contents** — links to every section.
+3. **Concepts and architecture** — components and data flow, often with a
+   diagram.
+4. **Reference** — capabilities, HTTP routes, UI panels, configuration and
+   events, verified against the source.
+5. **Examples, limits and troubleshooting.**
+6. **Related pages.**
 
 ## Planning and delivery
 

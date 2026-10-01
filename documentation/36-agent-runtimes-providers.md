@@ -1,27 +1,48 @@
 # 36 · Agent Runtimes, Providers, and Model Catalog
 
 Vera can run its own DAG/loop engine and can also delegate work to external
-agent frameworks. The Agent Bridges layer normalizes those runtimes; Providers
-manage hosted-model connections and usage; Catalog helps choose models that fit
-available hardware.
+agent frameworks. The **Agent Bridges** layer (`vera/agentbridges/` plus the
+per-framework packages `vera/smolagents/`, `vera/langgraph/` and
+`vera/pydanticai/`) launches those frameworks in throwaway containers and
+normalises their lifecycle; **API Providers** (`vera/providers/`) manage
+hosted-model connections, usage and cost, plus the provider-neutral
+structured-generation and document-parsing contracts; and the model
+**Catalog** and portable inference contracts (`vera/catalog/`,
+`vera/models/`) help choose and describe models that fit available hardware.
 
-The Agent Bridges panel treats its runtime catalog and interoperability summary
-as separate read models. Each reports loading, empty, ready, or failed state
-independently and offers a retry after transport or response failure. This keeps
-an available catalog usable when its summary is unavailable, and prevents a
-failed request from looking like an indefinitely loading service.
+All three shipped bridges (smolagents, LangGraph, PydanticAI) are opt-in, run
+one goal per container against the local Ollama cluster, and have been
+exercised live. The runtime comparison matrix, A2A mapping, structured
+generation and document parsing are deliberately **non-executing** contracts:
+they validate, plan and report evidence, and every live execution path they
+describe is labelled `queued_live` until it is implemented and verified.
 
-The API Providers panel applies the same rule independently to provider
-inventory, structured-generation status, document-parser status, model lists,
-and usage. An HTTP, application, or malformed-response failure is visible and
-retryable without suppressing healthy sibling reads. Failed model discovery
-disables the affected selector and playground action instead of presenting a
-fallback as verified inventory; failed usage reads replace plausible zeroes with
-unknown values. A confirmed empty response remains distinct from an unavailable
-service. Configuration, credential storage, provider execution, and usage
-accounting retain their existing authority.
+## Contents
 
-## Supported layers
+- [1. Supported layers](#1-supported-layers)
+- [2. Source map](#2-source-map)
+- [3. Agent Bridges](#3-agent-bridges)
+  - [3.1 Shipped bridges](#31-shipped-bridges)
+  - [3.2 Container protocol and events](#32-container-protocol-and-events)
+  - [3.3 Capabilities](#33-capabilities)
+  - [3.4 RuntimeAdapter lifecycle boundary](#34-runtimeadapter-lifecycle-boundary)
+  - [3.5 Live validation evidence](#35-live-validation-evidence)
+  - [3.6 Offline runtime comparison matrix](#36-offline-runtime-comparison-matrix)
+  - [3.7 Interoperability summary and panel](#37-interoperability-summary-and-panel)
+- [4. Launch lifecycle](#4-launch-lifecycle)
+- [5. API Providers](#5-api-providers)
+  - [5.1 Provider capabilities](#51-provider-capabilities)
+  - [5.2 Structured generation contract](#52-structured-generation-contract)
+  - [5.3 Portable document parsing and Docling](#53-portable-document-parsing-and-docling)
+- [6. Model selection, inference registry and deployments](#6-model-selection-inference-registry-and-deployments)
+- [7. Trust boundary](#7-trust-boundary)
+- [8. Configuration](#8-configuration)
+- [9. Troubleshooting](#9-troubleshooting)
+- [See also](#see-also)
+
+---
+
+## 1. Supported layers
 
 | Layer | Examples | Contract |
 |---|---|---|
@@ -32,7 +53,179 @@ accounting retain their existing authority.
 | Provider | hosted chat/model APIs | Sealed credentials, model discovery, usage, and cost |
 | Catalog | Hugging Face/Ollama metadata | Search, fit estimation, and installation handoff |
 
-## Offline runtime comparison matrix
+External tools reached over MCP are catalogued separately in the
+[MCP server catalog](./23-integrations.md#9-mcp-server-catalog-and-client);
+OpenClaw has its own bridge ([27](./27-openclaw.md)).
+
+## 2. Source map
+
+| Path | Responsibility |
+|---|---|
+| `vera/agentbridges/agentbridge_registry.py` | Static `BridgeSpec` catalog: paradigm, pinned packages, image, Dockerfile, opt-in env var, run/status caps, event prefix |
+| `vera/agentbridges/agentbridge_capabilities.py` | `agentbridge.*` capabilities and the **Agent Bridges** tab |
+| `vera/agentbridges/agentbridge_runtime.py` | Shared container-streaming runner: launch, stderr drain, stall detection, hard timeout, cancellation, teardown, bounded payloads |
+| `vera/agentbridges/runtime_adapter.py`, `runtime_registry.py` | Runtime-neutral `RuntimeAdapter` contract and the registry of shipped adapters (LangGraph) |
+| `vera/agentbridges/runtime_matrix.py` | Deterministic upstream-versus-Vera feature matrix and queued live conformance cases |
+| `vera/agentbridges/live_runtime_validation.py` | Opt-in live lifecycle validation (not a capability) |
+| `vera/smolagents/`, `vera/langgraph/`, `vera/pydanticai/` | Per-bridge capabilities, Dockerfile and container entrypoint; `langgraph/runtime_contract.py` holds the LangGraph adapter descriptor |
+| `vera/execution/a2a_mapping.py` | Offline A2A v1.0 mapping and conformance lanes |
+| `vera/integrations/source_intake.py`, `source_build_plan.py` | Bounded discovery and inert build/activation admission contracts |
+| `vera/providers/providers_capabilities.py` | `providers.*`: credentials, models, chat proxy, pricing, usage |
+| `vera/providers/structured_generation.py` | Neutral structured-generation contract |
+| `vera/providers/document_parser.py` | Portable `DocumentParser` contract |
+| `vera/models/` | ModelPackage lifecycle, portable inference contracts, runtime adapters, the inference provider registry and deployments |
+| `vera/catalog/` | Model discovery, hardware-fit estimates, benchmarks |
+| `vera/ide/` and `vera/board/` | Coding-agent execution and work ownership ([08](./08-ide.md), [39](./39-activity-boards.md)) |
+
+## 3. Agent Bridges
+
+### 3.1 Shipped bridges
+
+| Bridge | Paradigm | Pinned packages | Image | Opt-in |
+|---|---|---|---|---|
+| smolagents | Code-as-action: the agent writes and runs Python as its tool-call mechanism (`CodeAgent`) | `smolagents==1.26.0` | `vera-smolagents:latest` | `SMOLAGENTS_ENABLED=1` |
+| LangGraph | Explicit graph with structured JSON tool-calling (`langgraph.prebuilt.create_react_agent`) | `langgraph==1.2.11`, `langgraph-prebuilt==1.1.0`, `langchain-openai==1.5.1`, `langchain-core==1.5.5` | `vera-langgraph:latest` | `LANGGRAPH_ENABLED=1` |
+| PydanticAI | Typed, schema-first: output validated against a Pydantic model | `pydantic-ai-slim==2.31.0` | `vera-pydanticai:latest` | `PYDANTICAI_ENABLED=1` |
+
+Each bridge runs **one goal per fresh, throwaway Docker container** — never in
+Vera's own process — against an Ollama instance through its
+OpenAI-compatible surface. Adding a bridge is one `BridgeSpec` entry plus the
+bridge's own module; the catalog, status, update check and panel iterate the
+registry generically. `agentbridge.check_updates` only **reports** pin drift
+against PyPI; bumping a pin is a reviewed, tested code change.
+
+### 3.2 Container protocol and events
+
+A bridge entrypoint speaks a line protocol on unbuffered stdout:
+
+```text
+BRIDGE_STEP:<json>     zero or more, one per unit of real progress
+BRIDGE_RESULT:<json>   exactly one, last: {ok, answer, steps, elapsed_s, model} | {ok:false, error}
+```
+
+`<bridge>.run(goal, session_id)` is event-driven: it returns
+`{ok, run_id, status: "running"}` as soon as the container launches, and
+progress arrives on the event bus:
+
+| Event | Meaning |
+|---|---|
+| `<bridge>.run.start` | Container launched (goal reported only as length + short SHA-256) |
+| `<bridge>.run.step` | One streamed step; `kind` is bridge-specific (for smolagents: task/planning/action/final) |
+| `<bridge>.run.done` | Final result `{ok, answer, steps, elapsed_s, model}` |
+| `<bridge>.run.error` | Container failed, stalled or timed out |
+| `pydanticai.image.build` / `pydanticai.image.ensured` | Image build lifecycle |
+
+The runner detects stalls by genuine progress rather than byte arrival
+(`<BRIDGE>_STALL_S`, 60 s), enforces a hard timeout (`<BRIDGE>_TIMEOUT_S`,
+300 s), and bounds protocol payloads (depth 8, 2048 nodes, 128 fields, 256
+items, 32 768-char strings).
+
+### 3.3 Capabilities
+
+| Cap | Route | Purpose |
+|---|---|---|
+| `agentbridge.catalog` | `GET /agentbridge/catalog` | Every registered bridge with enabled flag, image presence, paradigm and pins |
+| `agentbridge.check_updates` | `POST /agentbridge/check_updates` | Compare pins with the latest PyPI releases (report only) |
+| `agentbridge.image.ensure` | `POST /agentbridge/image/ensure` | Build one bridge's image (`bridge`, `force`) via its own `<name>.image.ensure` |
+| `agentbridge.run.cancel` | `POST /agentbridge/run/cancel` | Cancel one active isolated run by validated run id |
+| `agentbridge.runtime.version` | `GET /agentbridge/runtime/version` | Compare an image's OCI labels with the declared adapter without starting it: verified, mismatch, unattested, unavailable, unknown-adapter |
+| `agentbridge.runtime_matrix` | `GET /agentbridge/runtime_matrix` | Deterministic runtime comparison ([§3.6](#36-offline-runtime-comparison-matrix)) |
+| `agentbridge.runtime_matrix.evaluate` | `POST /agentbridge/runtime-matrix/evaluate` | Validate payload-free live observations for selected runtimes |
+| `agentbridge.interoperability` | `GET /agentbridge/interoperability` | Inspection-only A2A / matrix / contract summary |
+| `agentbridge.panel.html` | `GET /agentbridge/panel` | Panel HTML |
+| `smolagents.status` / `.image.ensure` / `.run` | `/smolagents/*` | smolagents bridge |
+| `langgraph.status` / `.image.ensure` / `.run` | `/langgraph/*` | LangGraph bridge |
+| `pydanticai.status` / `.image.ensure` / `.run` | `/pydanticai/*` | PydanticAI bridge |
+
+The bridges are also selectable as loop engines in the chat UI's Loop pane
+([Agents & Chat](./19-agents-chat.md)).
+
+### 3.4 RuntimeAdapter lifecycle boundary
+
+Container-based agent bridges share a runtime-neutral lifecycle boundary before
+their library-specific code runs. The boundary declares image acquisition,
+health, dependency isolation, streaming events, cancellation, resource gates,
+teardown, and version reporting; unsupported or partial semantics remain
+visible rather than being inferred from a successful container launch.
+LangGraph is the first migrated bridge. Its existing `langgraph.*` capability
+names and `langgraph.run.*` events are unchanged, while image health/build and
+validated run requests now pass through the shared adapter. Static inspection
+does not import LangGraph, build an image, contact a model, or launch a run.
+Workflow IR also has a separate offline LangGraph compiler. It converts only the
+losslessly supported task, flat-parallel, and state-truthy-condition subset into
+a content-addressed plan, and an injected conformance seam verifies that a runner
+echoes the exact plan and workflow identities. An opt-in operational runner now
+materializes that proven subset as a real LangGraph `StateGraph`, but only after
+independent graph validation and a complete task allowlist check. Vera's injected
+executor remains the sole capability and policy authority. The runner is not
+wired to `langgraph.run`, registered as a default route, or permitted to imply
+support for richer Workflow IR semantics.
+Temporal has the same offline compiler and conformance boundary, with a distinct
+plan schema and identity. It does not import the Temporal SDK, contact a server,
+start a worker, or claim Temporal-specific retry, scheduling, compensation, or
+durability semantics. Both profiles share one compiler/terminal-result contract
+so adding an engine does not duplicate Vera's workflow safety boundary.
+Active runs can be cancelled by validated run ID through the runner's owned
+process registry. Cancellation, timeout, malformed output, and normal completion
+converge on one terminal event and release the shared resource gate. Protocol
+payloads are bounded and cannot override trusted run, session, or event fields.
+Success is emitted only after the owned container process exits. If it prints a
+result and then hangs, Vera kills and reaps it; inability to reap becomes an
+explicit teardown failure rather than a false successful run.
+On abnormal exit, the runner also force-removes only the exact validated
+container name supplied by its own `docker run --name` arguments. This matters
+because killing the local Docker client does not necessarily stop the
+daemon-owned container. Cleanup is verified before the terminal event is
+accepted; the runner never guesses by image name or prefix.
+
+Bridge goals are treated as payload, not telemetry. Capability activity redacts
+the `goal` argument, and start events contain only its character count and a
+short SHA-256 identity. Run/session IDs, lifecycle state, timings, step counts,
+and stable reason codes remain observable without copying task text into the
+event stream.
+The image records its runtime identity and complete pinned package set as OCI
+labels. Agent Bridge can compare those labels with the declared adapter without
+starting the image; missing labels and drift remain visibly distinct from a
+matching self-declaration. This is version evidence, not a signature or
+independent supply-chain attestation.
+
+The other shipped container bridges already share the hardened low-level
+container runner, but they do not yet use the complete adapter facade.
+PydanticAI and Smolagents still repeat Docker health checks, image build
+wrappers, run preconditions, and request assembly; the aggregate catalog also
+checks image presence directly. A safe consolidation seam is therefore the
+existing RuntimeAdapter and ContainerRunRequest, not a new agent loop.
+Static descriptors can centralize common health, image, cancellation, teardown,
+and run lifecycle behavior while preserving each bridge's capability names,
+event prefix, opt-in setting, image and Dockerfile, command arguments, progress
+kinds, and runtime-specific errors. Catalog health can use registered adapters
+with an explicit legacy fallback while migration is incomplete. No wrapper may
+be removed until stored and external callers are inventoried and deterministic
+success, error, timeout, cancellation, teardown, and resource-gate parity is
+proven; live image builds and bridge runs remain separate validation gates.
+
+### 3.5 Live validation evidence
+
+The opt-in `vera.agentbridges.live_runtime_validation` command exercises this
+boundary with network-disabled, resource-bounded throwaway containers. Its
+report contains lifecycle facts only. The representative live run verifies
+normal completion, malformed output, silent crash, a missing runtime dependency,
+stall, hard timeout, cancellation, one terminal event per case, and confirmed
+container removal. A separate real LangGraph cancellation check verifies the
+shared inference lease returns to the pool. The command is not registered as a
+capability and is never run by the ordinary unit suite.
+
+A representative comparison has also exercised the three shipped bridge images
+sequentially against the same bounded calculator task. Smolagents, PydanticAI,
+and LangGraph each reached one successful terminal event, with their native
+step counts preserved rather than normalized into a quality ranking. Subsequent
+runs acquiring the single shared model slot proved that prior bridge leases were
+released, and no named probe container remained. This evidence does not make a
+universal-winner claim: session resume remains unsupported for the one-shot
+bridges, while generic cancellation and OCI package attestation are currently
+exposed only for registered RuntimeAdapters.
+
+### 3.6 Offline runtime comparison matrix
 
 `agentbridge.runtime_matrix` is the non-executing runtime comparison surface. It
 covers native Vera, the shipped LangGraph/PydanticAI/Smolagents bridges, and
@@ -56,7 +249,33 @@ dimensions come from that adapter's declaration. This keeps execution evidence
 in one place without inflating unrelated matrix claims such as policy or
 recovery.
 
-## Launch lifecycle
+### 3.7 Interoperability summary and panel
+
+Agent Bridges also exposes an interoperability summary in its UI. The summary
+shows the A2A mapping and inert client/server plans, runtime candidate and
+dimension counts, migrated adapter contracts with their explicit gaps, queued
+live gates, and whether shared Vera contract
+capabilities are actually registered. It also reports MCP/OpenAPI source
+intake as an inspection-only lifecycle, separating its implemented discovery,
+inspection, and proposal states from queued build, verification, approval, and
+activation. “Implemented” there means the bounded,
+deterministic planning contract exists; transport/listener execution remains
+labelled `queued_live` until the explicit live gate is authorised and passes.
+The source build contract adds an equally inert build/activation proposal for pinned Python, CLI,
+OCI, and repository sources. Agent Bridges shows the plan-contract state and
+source-kind count, but exposes no build or activation action; actual external
+materialisation and conformance remain queued.
+
+The Agent Bridges panel treats its runtime catalog and interoperability summary
+as separate read models. Each reports loading, empty, ready, or failed state
+independently and offers a retry after transport or response failure. This keeps
+an available catalog usable when its summary is unavailable, and prevents a
+failed request from looking like an indefinitely loading service.
+
+UI: the **Agent Bridges** tab (`agentbridge-catalog-panel`, `tab_order=73`,
+served from `/agentbridge/panel`).
+
+## 4. Launch lifecycle
 
 1. Inspect bridge/provider status and dependencies.
 2. Resolve a model and verify it is available to the selected runtime.
@@ -69,7 +288,103 @@ Image `ensure` capabilities prepare runtime environments but should not silently
 upgrade an active workload. Pin versions for repeatability. A bridge being
 installed does not mean its provider credentials, model, or tools are valid.
 
-## Model selection and accounting
+## 5. API Providers
+
+`providers_capabilities.py` connects *external* hosted LLM providers alongside
+the local Ollama / vLLM cluster. Keys for Anthropic, OpenAI, or any
+OpenAI-compatible base are sealed in Redis with the shared vault; when no key is
+stored the provider's standard env var (`ANTHROPIC_API_KEY` /
+`OPENAI_API_KEY`) is used. `providers.chat` normalises Anthropic Messages and
+OpenAI Chat Completions to one `{text, input_tokens, output_tokens}` shape and
+records usage and cost, priced from a built-in, UI-overridable per-model table
+(USD per 1M tokens). The **API** page is served from `/providers/panel` and
+embedded in the Models / Estate panel.
+
+### 5.1 Provider capabilities
+
+| Cap | Route | Purpose |
+|---|---|---|
+| `providers.list` | `GET /providers/list` | Configured providers (keys redacted) |
+| `providers.save` / `providers.delete` | `POST /providers/save`, `/delete` | Provider CRUD (a custom provider uses any id with `kind="openai"`) |
+| `providers.test` | `POST /providers/test` | Test a key by listing models |
+| `providers.models` | `GET /providers/models` | Live `/models` when a key is available, else the known fallback list |
+| `providers.chat` | `POST /providers/chat` | Chat completion: `provider`, `model`, `prompt` or `messages`, `system`, `max_tokens` (1024), `caller` |
+| `providers.usage` | `GET /providers/usage` | Recent calls + cumulative totals |
+| `providers.usage.clear` | `POST /providers/usage/clear` | Clear the in-memory log and persisted totals |
+| `providers.pricing` / `providers.pricing.set` | `GET /providers/pricing`, `POST /providers/pricing/set` | Per-model price table / override |
+
+Storage: `vera:providers` (records, keys sealed), `vera:providers:pricing`,
+`vera:providers:totals`.
+
+The API Providers panel applies the same rule independently to provider
+inventory, structured-generation status, document-parser status, model lists,
+and usage. An HTTP, application, or malformed-response failure is visible and
+retryable without suppressing healthy sibling reads. Failed model discovery
+disables the affected selector and playground action instead of presenting a
+fallback as verified inventory; failed usage reads replace plausible zeroes with
+unknown values. A confirmed empty response remains distinct from an unavailable
+service. Configuration, credential storage, provider execution, and usage
+accounting retain their existing authority.
+
+### 5.2 Structured generation contract
+
+Structured generation starts with the provider-neutral, non-executing contract in
+`vera/providers/structured_generation.py`. It normalizes a bounded portable JSON
+Schema subset, assigns a stable schema and plan identity, records exactly one
+retry owner, and describes optional semantic validation, latency, and streaming
+requirements. Provider-native JSON Schema, Instructor correction, and Outlines
+constrained decoding are static profiles behind the same record.
+
+`providers.structured.validate` deterministically checks supplied JSON values
+and returns only violation paths/codes—not the value. It does not run a semantic
+validator. Schema and semantic failures can produce a bounded retry plan;
+provider failures are not silently retried, and cancellation or timeout is
+terminal. Streaming remains explicitly unverified.
+
+The provider page and Agent Bridges show contract/profile state, while all three
+execution paths remain `queued_live`. The offline layer imports neither
+Instructor nor Outlines, accepts no prompt, calls no model, decodes no token, and
+starts no stream. This prevents vLLM's existing `guided_json` option or a hosted
+provider's schema feature from becoming a separate canonical task family.
+
+| Capability | Purpose |
+|---|---|
+| `providers.structured.status` | Inspect profiles and execution readiness |
+| `providers.structured.plan` | Normalize schema and plan provider/retry ownership |
+| `providers.structured.validate` | Validate supplied JSON without returning it |
+| `providers.structured.retry.plan` | Plan but never start one correction attempt |
+
+### 5.3 Portable document parsing and Docling
+
+`vera/providers/document_parser.py` defines the portable `DocumentParser` contract.
+It compiles an inert plan from an original `ArtifactRef`, supplied inspection
+metadata, OCR policy, and bounded page/element/time/memory/artifact ceilings.
+Encrypted, corrupt, oversized, cancelled, and OCR-required-but-disabled inputs
+fail before provider import or file access. Element IDs deterministically bind
+source checksum, page, ordinal, kind, and locator.
+
+Supplied adapter evidence is validated without returning extracted content or
+writing records. Every element needs text/structure hashes and a citation back
+to the exact source checksum, page, and locator. Parser version/configuration,
+derived-artifact checksums and budgets, OCR engine/languages, duplicate
+positions, and cancellation are checked explicitly. A frozen-corpus evaluator
+compares bounded text/table/layout hashes so later Docling and alternative
+adapters can use the same evidence format.
+
+The Docling profile is currently `not_imported`; conversion, fidelity, OCR,
+resource enforcement, cancellation propagation, and teardown execution remain
+`queued_live`. The teardown capability returns a checklist only and never
+deletes the original or verified data.
+
+| Capability | Purpose |
+|---|---|
+| `providers.document.status` | Inspect portable contract and honest Docling readiness |
+| `providers.document.plan` | Compile a bounded, non-executing parse plan |
+| `providers.document.validate` | Validate supplied provenance, IDs, citations, bounds, and OCR evidence |
+| `providers.document.corpus.evaluate` | Compare frozen-corpus hash evidence without content |
+| `providers.document.teardown.plan` | Plan isolated cleanup without starting it |
+
+## 6. Model selection, inference registry and deployments
 
 Catalog fit is an estimate derived from model metadata, quantization, and known
 hardware. Confirm with a real load/warm-up before routing important traffic.
@@ -167,65 +482,7 @@ fail over. If evidence changes between planning and execution, the recorded
 revisions make revalidation the execution owner's responsibility rather than a
 silent fallback.
 
-## Structured generation contract
-
-Structured generation starts with the provider-neutral, non-executing contract in
-`vera/providers/structured_generation.py`. It normalizes a bounded portable JSON
-Schema subset, assigns a stable schema and plan identity, records exactly one
-retry owner, and describes optional semantic validation, latency, and streaming
-requirements. Provider-native JSON Schema, Instructor correction, and Outlines
-constrained decoding are static profiles behind the same record.
-
-`providers.structured.validate` deterministically checks supplied JSON values
-and returns only violation paths/codes—not the value. It does not run a semantic
-validator. Schema and semantic failures can produce a bounded retry plan;
-provider failures are not silently retried, and cancellation or timeout is
-terminal. Streaming remains explicitly unverified.
-
-The provider page and Agent Bridges show contract/profile state, while all three
-execution paths remain `queued_live`. The offline layer imports neither
-Instructor nor Outlines, accepts no prompt, calls no model, decodes no token, and
-starts no stream. This prevents vLLM's existing `guided_json` option or a hosted
-provider's schema feature from becoming a separate canonical task family.
-
-| Capability | Purpose |
-|---|---|
-| `providers.structured.status` | Inspect profiles and execution readiness |
-| `providers.structured.plan` | Normalize schema and plan provider/retry ownership |
-| `providers.structured.validate` | Validate supplied JSON without returning it |
-| `providers.structured.retry.plan` | Plan but never start one correction attempt |
-
-### Portable document parsing and Docling
-
-`vera/providers/document_parser.py` defines the portable `DocumentParser` contract.
-It compiles an inert plan from an original `ArtifactRef`, supplied inspection
-metadata, OCR policy, and bounded page/element/time/memory/artifact ceilings.
-Encrypted, corrupt, oversized, cancelled, and OCR-required-but-disabled inputs
-fail before provider import or file access. Element IDs deterministically bind
-source checksum, page, ordinal, kind, and locator.
-
-Supplied adapter evidence is validated without returning extracted content or
-writing records. Every element needs text/structure hashes and a citation back
-to the exact source checksum, page, and locator. Parser version/configuration,
-derived-artifact checksums and budgets, OCR engine/languages, duplicate
-positions, and cancellation are checked explicitly. A frozen-corpus evaluator
-compares bounded text/table/layout hashes so later Docling and alternative
-adapters can use the same evidence format.
-
-The Docling profile is currently `not_imported`; conversion, fidelity, OCR,
-resource enforcement, cancellation propagation, and teardown execution remain
-`queued_live`. The teardown capability returns a checklist only and never
-deletes the original or verified data.
-
-| Capability | Purpose |
-|---|---|
-| `providers.document.status` | Inspect portable contract and honest Docling readiness |
-| `providers.document.plan` | Compile a bounded, non-executing parse plan |
-| `providers.document.validate` | Validate supplied provenance, IDs, citations, bounds, and OCR evidence |
-| `providers.document.corpus.evaluate` | Compare frozen-corpus hash evidence without content |
-| `providers.document.teardown.plan` | Plan isolated cleanup without starting it |
-
-## Trust boundary
+## 7. Trust boundary
 
 External runtimes may propose tool calls or return structured events, but Vera's
 capability policy remains authoritative. Do not grant a framework every tool
@@ -239,103 +496,21 @@ IDs remain server-owned; and Task/Message/Artifact projections cannot authorize
 effects. This protocol layer must land before Google ADK or OpenAI Agents SDK can
 join a common RuntimeAdapter/A2A conformance matrix.
 
-Container-based agent bridges share a runtime-neutral lifecycle boundary before
-their library-specific code runs. The boundary declares image acquisition,
-health, dependency isolation, streaming events, cancellation, resource gates,
-teardown, and version reporting; unsupported or partial semantics remain
-visible rather than being inferred from a successful container launch.
-LangGraph is the first migrated bridge. Its existing `langgraph.*` capability
-names and `langgraph.run.*` events are unchanged, while image health/build and
-validated run requests now pass through the shared adapter. Static inspection
-does not import LangGraph, build an image, contact a model, or launch a run.
-Workflow IR also has a separate offline LangGraph compiler. It converts only the
-losslessly supported task, flat-parallel, and state-truthy-condition subset into
-a content-addressed plan, and an injected conformance seam verifies that a runner
-echoes the exact plan and workflow identities. An opt-in operational runner now
-materializes that proven subset as a real LangGraph `StateGraph`, but only after
-independent graph validation and a complete task allowlist check. Vera's injected
-executor remains the sole capability and policy authority. The runner is not
-wired to `langgraph.run`, registered as a default route, or permitted to imply
-support for richer Workflow IR semantics.
-Temporal has the same offline compiler and conformance boundary, with a distinct
-plan schema and identity. It does not import the Temporal SDK, contact a server,
-start a worker, or claim Temporal-specific retry, scheduling, compensation, or
-durability semantics. Both profiles share one compiler/terminal-result contract
-so adding an engine does not duplicate Vera's workflow safety boundary.
-Active runs can be cancelled by validated run ID through the runner's owned
-process registry. Cancellation, timeout, malformed output, and normal completion
-converge on one terminal event and release the shared resource gate. Protocol
-payloads are bounded and cannot override trusted run, session, or event fields.
-Success is emitted only after the owned container process exits. If it prints a
-result and then hangs, Vera kills and reaps it; inability to reap becomes an
-explicit teardown failure rather than a false successful run.
-On abnormal exit, the runner also force-removes only the exact validated
-container name supplied by its own `docker run --name` arguments. This matters
-because killing the local Docker client does not necessarily stop the
-daemon-owned container. Cleanup is verified before the terminal event is
-accepted; the runner never guesses by image name or prefix.
+Bridge containers run LLM-generated code from third-party libraries, which is
+why they are throwaway, launched per goal, and never upgraded silently.
 
-The opt-in `vera.agentbridges.live_runtime_validation` command exercises this
-boundary with network-disabled, resource-bounded throwaway containers. Its
-report contains lifecycle facts only. The representative live run verifies
-normal completion, malformed output, silent crash, a missing runtime dependency,
-stall, hard timeout, cancellation, one terminal event per case, and confirmed
-container removal. A separate real LangGraph cancellation check verifies the
-shared inference lease returns to the pool. The command is not registered as a
-capability and is never run by the ordinary unit suite.
+## 8. Configuration
 
-A representative comparison has also exercised the three shipped bridge images
-sequentially against the same bounded calculator task. Smolagents, PydanticAI,
-and LangGraph each reached one successful terminal event, with their native
-step counts preserved rather than normalized into a quality ranking. Subsequent
-runs acquiring the single shared model slot proved that prior bridge leases were
-released, and no named probe container remained. This evidence does not make a
-universal-winner claim: session resume remains unsupported for the one-shot
-bridges, while generic cancellation and OCI package attestation are currently
-exposed only for registered RuntimeAdapters.
+| Env var | Default | Meaning |
+|---|---|---|
+| `SMOLAGENTS_ENABLED` / `LANGGRAPH_ENABLED` / `PYDANTICAI_ENABLED` | `0` | Opt a bridge in |
+| `SMOLAGENTS_IMAGE` / `LANGGRAPH_IMAGE` / `PYDANTICAI_IMAGE` | `vera-<bridge>:latest` | Bridge image |
+| `SMOLAGENTS_TIMEOUT_S` / `LANGGRAPH_TIMEOUT_S` / `PYDANTICAI_TIMEOUT_S` | 300 | Hard run timeout |
+| `SMOLAGENTS_STALL_S` / `LANGGRAPH_STALL_S` / `PYDANTICAI_STALL_S` | 60 | No-progress stall limit |
+| `LANGGRAPH_MAX_STEPS` / `PYDANTICAI_MAX_STEPS` | 8 | Step budget inside the container |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | — | Fallback provider keys when none is stored |
 
-Bridge goals are treated as payload, not telemetry. Capability activity redacts
-the `goal` argument, and start events contain only its character count and a
-short SHA-256 identity. Run/session IDs, lifecycle state, timings, step counts,
-and stable reason codes remain observable without copying task text into the
-event stream.
-The image records its runtime identity and complete pinned package set as OCI
-labels. Agent Bridge can compare those labels with the declared adapter without
-starting the image; missing labels and drift remain visibly distinct from a
-matching self-declaration. This is version evidence, not a signature or
-independent supply-chain attestation.
-
-The other shipped container bridges already share the hardened low-level
-container runner, but they do not yet use the complete adapter facade.
-PydanticAI and Smolagents still repeat Docker health checks, image build
-wrappers, run preconditions, and request assembly; the aggregate catalog also
-checks image presence directly. A safe consolidation seam is therefore the
-existing RuntimeAdapter and ContainerRunRequest, not a new agent loop.
-Static descriptors can centralize common health, image, cancellation, teardown,
-and run lifecycle behavior while preserving each bridge's capability names,
-event prefix, opt-in setting, image and Dockerfile, command arguments, progress
-kinds, and runtime-specific errors. Catalog health can use registered adapters
-with an explicit legacy fallback while migration is incomplete. No wrapper may
-be removed until stored and external callers are inventoried and deterministic
-success, error, timeout, cancellation, teardown, and resource-gate parity is
-proven; live image builds and bridge runs remain separate validation gates.
-
-Agent Bridges also exposes an interoperability summary in its UI. The summary
-shows the A2A mapping and inert client/server plans, runtime candidate and
-dimension counts, migrated adapter contracts with their explicit gaps, queued
-live gates, and whether shared Vera contract
-capabilities are actually registered. It also reports MCP/OpenAPI source
-intake as an inspection-only lifecycle, separating its implemented discovery,
-inspection, and proposal states from queued build, verification, approval, and
-activation. “Implemented” there means the bounded,
-deterministic planning contract exists; transport/listener execution remains
-labelled `queued_live` until the explicit live gate is authorised and passes.
-The source build contract adds an equally inert build/activation proposal for pinned Python, CLI,
-OCI, and repository sources. Agent Bridges shows the plan-contract state and
-source-kind count, but exposes no build or activation action; actual external
-materialisation and conformance remain queued.
-
-## Troubleshooting
+## 9. Troubleshooting
 
 For `llm.generate`, boolean thinking settings retain their boolean meaning even
 when a tool transport supplies strings such as `"False"`. An Ollama response
@@ -367,21 +542,18 @@ result-normalization failure. Preserve the native trace alongside Vera's
 normalized error; collapsing everything to “agent failed” removes the evidence
 needed to fix it.
 
-## Source map
+---
 
-- `vera/agentbridges/` — catalog, environment, and launch normalization.
-- `vera/agentbridges/runtime_matrix.py` — deterministic upstream-versus-Vera
-  feature matrix and queued live conformance cases.
-- `vera/execution/a2a_mapping.py` — offline A2A v1.0 mapping and conformance lanes.
-- `vera/integrations/source_intake.py` and `source_build_plan.py` — bounded
-  discovery and inert build/activation admission contracts.
-- `vera/smolagents/`, `vera/langgraph/`, `vera/pydanticai/` — adapters.
-- `vera/providers/` — credentials, models, chat, pricing, usage, and the neutral
-  structured-generation and document-parser contracts.
-- `vera/models/` — ModelPackage lifecycle, portable inference contracts,
-  runtime adapters, and the inference provider registry.
-- `vera/catalog/` — discovery and hardware-fit estimates.
-- `vera/ide/` and `vera/board/` — coding-agent execution and work ownership.
+## See also
+
+- [Agents & Chat](./19-agents-chat.md) — Vera's native loops and the Loop pane
+- [LLM Cluster](./04-ollama-cluster.md) — the Ollama cluster bridges run against, and the shared GPU gate
+- [vLLM](./21-vllm.md) — `guided_json` and the vLLM backend
+- [Integrations](./23-integrations.md) — A2A, source intake, MCP catalog
+- [OpenClaw](./27-openclaw.md) — the OpenClaw gateway bridge
+- [Docker](./13-docker.md) — the engine bridge containers run on
+- [Interoperability Foundations](./46-interoperability-foundations.md)
+- [IDE](./08-ide.md) and [Activity & Boards](./39-activity-boards.md) — coding bridges and work ownership
 
 <!-- VERA:AUTO:screenshots START -->
 <!-- VERA:AUTO:screenshots END -->
