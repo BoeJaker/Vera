@@ -13,7 +13,14 @@
  * Data:    GET  /specialist/status[?deep=true&refresh=true]   (specialist.status)
  * Actions: POST /provision/component/sync                      (provision.component.sync)
  *
- * Attributes: api-base (default ''), refresh (seconds, default 30)
+ * Catalog: every curated model across the families at once - search, family /
+ * task chips, per model whether it is in the shared store, loaded on how many
+ * nodes and in use; export / download into the store; Hugging Face search.
+ *
+ * Attributes: api-base (default ''), refresh (seconds, default 30),
+ *             tab (status|catalog|jobs|caches - drives the view from outside,
+ *             e.g. the Models tab's submenu), tabs="external" (hide the
+ *             element's own tab buttons when the page provides them)
  */
 (function () {
   if (customElements.get('vera-specialist-models')) return;
@@ -43,6 +50,11 @@
   td{padding:2px 6px 2px 0;vertical-align:top;border-top:1px solid var(--border,#232a33)}
   td.m{font-family:var(--mono,ui-monospace,monospace);word-break:break-all}
   .note{font-size:10px}
+  input.q{flex:1;min-width:200px;font:inherit;background:var(--bg2,#1a1f26);color:inherit;border:1px solid var(--border2,#2e3742);border-radius:4px;padding:5px 8px}
+  .chip{font:inherit;font-size:10.5px;padding:3px 9px;border-radius:12px}
+  .chip.on{border-color:var(--acc,#4a9eff);color:var(--acc,#4a9eff)}
+  tr.fam td{padding-top:10px;border-top:none;font:600 9.5px/1 var(--mono,ui-monospace,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--dim,#5f6975)}
+  a.hf{color:inherit;text-decoration:none;border-bottom:1px dotted var(--dim,#5f6975)} a.hf:hover{color:var(--acc,#4a9eff)}
   .plan div{font-size:10.5px}
   `;
 
@@ -56,17 +68,18 @@
     constructor() {
       super();
       this._root = this.attachShadow({ mode: 'open' });
+      this._root.innerHTML = '<style>' + CSS + '</style><div id="host"></div>';
+      this._last = ''; this._auto = false;
       this._data = null; this._plan = null; this._busy = {}; this._msg = ''; this._deep = false; this._timer = null;
       this._tab = 'status';
-      this._cat = { family: 'nlp', task: 'ner', query: '', data: null, hf: null };
+      this._cat = { fam: 'all', task: '', text: '', query: '', data: null, hf: null };
       this._jobs = null; this._job = null; this._caches = null;
     }
     async _loadTab() {
       try {
         if (this._tab === 'catalog') {
-          const c = this._cat, q = ['family=' + encodeURIComponent(c.family)];
-          if (c.family === 'nlp' && c.task) q.push('task=' + encodeURIComponent(c.task));
-          c.data = await this._call('GET', '/specialist/catalog?' + q.join('&'));
+          // every family at once - the browse view filters client-side
+          if (!this._cat.data || this._auto) this._cat.data = await this._call('GET', '/specialist/catalog');
         } else if (this._tab === 'jobs') {
           this._jobs = await this._call('GET', '/specialist/jobs');
           if (this._job) this._job = await this._call('GET', '/specialist/jobs?job_id=' + encodeURIComponent(this._job.id));
@@ -76,7 +89,16 @@
       } catch (e) { this._msg = 'could not load: ' + e.message; }
       this._render();
     }
+    static get observedAttributes() { return ['tab']; }
+    attributeChangedCallback(name, _old, val) {
+      if (name === 'tab' && val && val !== this._tab && ['status', 'catalog', 'jobs', 'caches'].indexOf(val) >= 0) {
+        this._tab = val; this._msg = ''; if (val === 'caches') this._caches = null;
+        this._render(); this._loadTab();
+      }
+    }
     connectedCallback() {
+      const t = this.getAttribute('tab');
+      if (t && ['status', 'catalog', 'jobs', 'caches'].indexOf(t) >= 0) this._tab = t;
       this._render(); this.refresh();
       const s = Math.max(10, parseInt(this.getAttribute('refresh') || '30', 10) || 30);
       this._timer = setInterval(() => { if (!Object.keys(this._busy).length) this.refresh(); }, s * 1000);
@@ -98,8 +120,28 @@
       if (force) q.push('refresh=true');
       try { this._data = await this._call('GET', '/specialist/status' + (q.length ? '?' + q.join('&') : '')); }
       catch (e) { this._msg = 'could not read specialist models: ' + e.message; }
-      if (this._tab === 'jobs' || this._tab === 'catalog') await this._loadTab();
-      else this._render();
+      this._auto = true;
+      try {
+        if (this._tab === 'jobs') await this._loadTab();
+        else this._render();               // the catalog keeps what it loaded
+      } finally { this._auto = false; }
+    }
+
+    /* Repaint without the flicker (2026-10-01): stylesheet set once, identical
+       output not repainted, scroll kept, an automatic refresh waits while a
+       field has focus. */
+    _paint(h) {
+      const host = this._root.getElementById('host');
+      if (!host || h === this._last) return false;
+      const a = this._root.activeElement;
+      if (this._auto && a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return false;
+      const se = document.scrollingElement, py = se ? se.scrollTop : 0;
+      const keep = Array.prototype.map.call(host.querySelectorAll('pre'), (x) => x.scrollTop);
+      host.innerHTML = h;
+      this._last = h;
+      Array.prototype.forEach.call(host.querySelectorAll('pre'), (x, i) => { if (keep[i]) x.scrollTop = keep[i]; });
+      if (se && se.scrollTop !== py) se.scrollTop = py;
+      return true;
     }
     async _act(key, fn, okMsg) {
       if (this._busy[key]) return;
@@ -135,7 +177,7 @@
       const d = this._data || {};
       const nlp = d.nlp || {}, media = d.media || {}, ner = d.host_ner || {}, sm = d.summary || {};
       const busyMsg = this._msg && (this._msg.startsWith('failed') || this._msg.startsWith('could not'));
-      let h = '<style>' + CSS + '</style><div class="wrap">';
+      let h = '<div class="wrap">';
       h += '<div class="hdr"><span class="t">Specialist models</span>'
         + '<span class="muted">NLP ' + (sm.nlp_current || 0) + '/' + (sm.nlp_nodes || 0) + ' nodes current'
         + (sm.nlp_missing_models ? ' · <span class="warn">' + sm.nlp_missing_models + ' missing models</span>' : '')
@@ -143,15 +185,14 @@
         + ' · builder ' + (d.builder ? (d.builder.ok ? '<span class="ok">up</span>' + (d.builder.free_gb != null ? ' (' + d.builder.free_gb + ' GB free)' : '')
             + ((d.builder.running || []).length ? ' <span class="warn">1 job running</span>' : '') : '<span class="bad">down</span>') : '-')
         + '</span><span class="sp"></span>'
-        + ['status', 'catalog', 'jobs', 'caches'].map((t) => '<button data-a="tab" data-t="' + t + '"' + (this._tab === t ? ' class="pri"' : '') + '>'
-            + { status: 'Nodes', catalog: 'Catalog', jobs: 'Builds', caches: 'Node caches' }[t] + '</button>').join('') + '</div>';
+        + (this.getAttribute('tabs') === 'external' ? '' : ['catalog', 'status', 'jobs', 'caches'].map((t) => '<button data-a="tab" data-t="' + t + '"' + (this._tab === t ? ' class="pri"' : '') + '>'
+            + { status: 'Nodes', catalog: 'Catalog', jobs: 'Builds', caches: 'Node caches' }[t] + '</button>').join('')) + '</div>';
       if (d.sandbox) h += '<div class="note warn">This is a dev sandbox: updating nodes and installing models from here is refused - use the host.</div>';
       if (this._msg) h += '<div class="note ' + (busyMsg ? 'bad' : 'ok') + '">' + esc(this._msg) + '</div>';
       if (this._tab !== 'status') {
         h += this._tab === 'catalog' ? this._renderCatalog() : this._tab === 'jobs' ? this._renderJobs() : this._renderCaches();
         h += '</div>';
-        this._root.innerHTML = h;
-        this._wire();
+        if (this._paint(h)) this._wire();
         return;
       }
       h += '<div class="row"><span class="sp"></span><button data-a="deep">' + (this._deep ? 'Hide details' : 'Details') + '</button>'
@@ -201,41 +242,76 @@
       h += '</div>';
 
       // Host NER
-      h += '<div class="sec">Entity NER on the host (fabric entity graph)</div>'
+      const onNodes = String(ner.backend || '').indexOf('node') === 0;
+      h += '<div class="sec">Entity NER (fabric entity graph)</div>'
         + '<div class="card"><div class="row">backend <b class="mono">' + esc(ner.backend || '-') + '</b>'
-        + ' · spaCy ' + yes(ner.spacy_installed, 'installed', 'not installed') + ' <span class="mono muted">' + esc(ner.spacy_model) + '</span>'
-        + ' · GLiNER ' + yes(ner.gliner_installed, 'installed', 'not installed') + ' <span class="mono muted">' + esc(ner.gliner_model) + '</span></div>'
-        + '<div class="muted note">Runs in-process on the host, not on the nodes. Switch or install via fabric.entity_graph.ner / ner_install.</div></div>';
+        + (onNodes ? ' <span class="badge ok">on the nodes</span>' : ' <span class="badge warn">in-process on the host</span>') + '</div>'
+        + '<div class="muted note">' + (onNodes ? 'GLiNER (or the OntoNotes NER) served by the node NLP servers above; the host loads no model.'
+            : 'The host runs it itself - the nodes are not answering nlp.ner. fabric.entity_graph.ner switches it.') + '</div></div>';
 
       if (!this._data && !this._msg) h += '<div class="muted">Loading…</div>';
       h += '</div>';
-      this._root.innerHTML = h;
-      this._wire();
+      if (this._paint(h)) this._wire();
     }
 
     _renderCatalog() {
-      const c = this._cat, d = c.data || {}, fams = d.families || { nlp: {}, whisper: {}, tts: {}, sd: {}, gliner: {} };
+      const c = this._cat, d = c.data || {}, fams = d.families || {};
       const sandbox = (this._data || {}).sandbox;
-      let h = '<div class="row">family <select data-a="cat-family">' + Object.keys(fams).map((f) => '<option value="' + f + '"' + (f === c.family ? ' selected' : '') + '>'
-          + esc((fams[f] || {}).label || f) + '</option>').join('') + '</select>';
-      if (c.family === 'nlp') h += ' task <select data-a="cat-task">' + (d.nlp_tasks || ['ner']).map((t) => '<option' + (t === c.task ? ' selected' : '') + '>' + esc(t) + '</option>').join('') + '</select>';
-      h += '<span class="muted">' + esc((fams[c.family] || {}).serves || '') + '</span></div>';
-      if (d.store_error) h += '<div class="note warn">store not readable: ' + esc(d.store_error) + ' - "in store" is unknown</div>';
-      const row = (e, hf) => '<tr><td class="m">' + esc(e.model) + (e.task ? ' <span class="muted">(' + esc(e.task) + ')</span>' : '') + '<div class="muted">' + esc(e.note || '') + '</div></td>'
-        + '<td>' + (e.in_use ? '<span class="badge ok">in use</span> ' : '') + (e.built ? '<span class="badge ok">in store</span> ' : '')
-        + (hf ? (e.curated ? '<span class="badge">curated</span>' : '<span class="badge warn">unvetted</span>') + ' <span class="muted">' + esc(e.downloads || 0) + ' dl</span>' : (e.built ? '' : '<span class="muted">curated · not built here</span>')) + '</td>'
-        + '<td><button data-a="install" data-e="' + esc(e.id) + '" data-hf="' + (hf ? '1' : '') + '" data-m="' + esc(e.model) + '"'
-        + (sandbox || this._busy['inst:' + e.id] || (e.built && !hf) ? ' disabled' : '') + '>' + (this._busy['inst:' + e.id] ? 'Queuing…' : e.built ? 'In store' : (c.family === 'nlp' ? 'Export' : 'Download')) + '</button></td></tr>';
-      h += '<table>' + (d.entries || []).map((e) => row(e, false)).join('') + '</table>';
-      if (!d.entries && !this._msg) h += '<div class="muted">Loading…</div>';
-      if (['nlp', 'sd', 'gliner'].indexOf(c.family) >= 0 && !(c.family === 'nlp' && c.task === 'rerank')) {
-        h += '<div class="sec">Search Hugging Face</div><div class="row"><input data-a="cat-q" value="' + esc(c.query) + '" placeholder="search ' + esc(c.family === 'nlp' ? c.task + ' models' : c.family) + '" style="flex:1;font:inherit;background:var(--bg2,#1a1f26);color:inherit;border:1px solid var(--border2,#2e3742);border-radius:4px;padding:4px 7px">'
-          + '<button data-a="cat-search"' + (this._busy.hf ? ' disabled' : '') + '>' + (this._busy.hf ? 'Searching…' : 'Search') + '</button></div>';
+      const all = d.entries || [];
+      if (d.store_error) return '<div class="note warn">store not readable: ' + esc(d.store_error) + '</div>';
+      if (!c.data) return '<div class="muted">Loading the catalog...</div>';
+      // loaded-on-N: what the node NLP servers report per task
+      const nodes = ((this._data || {}).nlp || {}).nodes || [];
+      const loadedOn = (e) => e.family !== 'nlp' ? null : nodes.filter((n) => {
+        const t = (n.tasks || {})[e.task] || {}; return t.model === e.model && t.loaded; }).length;
+      const count = (f) => all.filter((e) => f === 'all' || e.family === f).length;
+      let h = '<div class="row"><input class="q" data-a="cat-text" placeholder="filter by name, task or note" value="' + esc(c.text) + '">'
+        + '<span class="muted">' + all.length + ' curated models · ' + all.filter((e) => e.built).length + ' in the store</span></div>';
+      h += '<div class="row">' + ['all'].concat(Object.keys(fams)).map((f) => '<button class="chip' + (c.fam === f ? ' on' : '') + '" data-a="cat-fam" data-f="' + f + '">'
+          + esc(f === 'all' ? 'All' : ((fams[f] || {}).label || f)) + ' <span class="muted">' + count(f) + '</span></button>').join('') + '</div>';
+      if (c.fam === 'nlp') {
+        const tasks = Array.from(new Set(all.filter((e) => e.family === 'nlp').map((e) => e.task))).sort();
+        h += '<div class="row">' + [''].concat(tasks).map((t) => '<button class="chip' + (c.task === t ? ' on' : '') + '" data-a="cat-task" data-t="' + esc(t) + '">'
+            + esc(t || 'every task') + '</button>').join('') + '</div>';
+      }
+      const shown = all.filter((e) => (c.fam === 'all' || e.family === c.fam) && (!c.task || e.task === c.task));
+      const order = (e) => (e.in_use ? 0 : e.built ? 1 : 2);
+      const groups = {};
+      shown.forEach((e) => { (groups[e.family] = groups[e.family] || []).push(e); });
+      const row = (e, hf) => {
+        const n = hf ? null : loadedOn(e);
+        const text = [e.model, e.task, e.family, e.note].join(' ').toLowerCase();
+        return '<tr data-text="' + esc(text) + '"><td class="m"><a class="hf" target="_blank" rel="noopener" href="https://huggingface.co/' + esc(e.model) + '">' + esc(e.model) + '</a>'
+          + '<div class="muted">' + esc(e.note || '') + '</div></td>'
+          + '<td>' + esc(e.task || '') + '</td>'
+          + '<td>' + (e.in_use ? '<span class="badge ok">in use</span> ' : '') + (e.built ? '<span class="badge ok">in store</span> ' : '')
+          + (n ? '<span class="badge ok" title="loaded on ' + n + ' NLP node(s)">loaded ' + n + '/' + nodes.length + '</span> ' : '')
+          + (hf ? (e.curated ? '<span class="badge">curated</span>' : '<span class="badge warn">unvetted</span>') + ' <span class="muted">' + esc(e.downloads || 0) + ' dl</span>' : '') + '</td>'
+          + '<td><button data-a="install" data-e="' + esc(e.id || '') + '" data-hf="' + (hf ? '1' : '') + '" data-m="' + esc(e.model) + '" data-fam="' + esc(e.family || c.fam) + '" data-task="' + esc(e.task || c.task || '') + '"'
+          + (sandbox || this._busy['inst:' + (e.id || e.model)] || (e.built && !hf) ? ' disabled' : '') + '>'
+          + (this._busy['inst:' + (e.id || e.model)] ? 'Queuing...' : e.built && !hf ? 'In store' : ((e.family || c.fam) === 'nlp' ? 'Export' : 'Download')) + '</button></td></tr>';
+      };
+      h += '<table><tr><th style="text-align:left">model</th><th style="text-align:left">task</th><th style="text-align:left">status</th><th></th></tr>'
+        + Object.keys(groups).map((f) => '<tr class="fam"><td colspan="4">' + esc((fams[f] || {}).label || f) + ' <span class="muted">- ' + esc((fams[f] || {}).serves || '') + '</span></td></tr>'
+            + groups[f].sort((a, b) => order(a) - order(b)).map((e) => row(e, false)).join('')).join('')
+        + (shown.length ? '' : '<tr><td colspan="4" class="muted">nothing curated here</td></tr>') + '</table>';
+      // Hugging Face: for one family (and, for NLP, one task)
+      const canHf = ['nlp', 'sd', 'gliner'].indexOf(c.fam) >= 0 && !(c.fam === 'nlp' && (!c.task || c.task === 'rerank'));
+      if (canHf) {
+        h += '<div class="sec">More on Hugging Face</div><div class="row"><input class="q" data-a="cat-q" value="' + esc(c.query) + '" placeholder="search ' + esc(c.fam === 'nlp' ? c.task + ' models' : c.fam) + '">'
+          + '<button data-a="cat-search"' + (this._busy.hf ? ' disabled' : '') + '>' + (this._busy.hf ? 'Searching...' : 'Search') + '</button></div>';
         if (c.hf && c.hf.error) h += '<div class="note bad">' + esc(c.hf.error) + '</div>';
         if (c.hf && c.hf.results) h += '<div class="muted note">Unvetted picks: the build reports whether the model exports and loads. Putting a model in the store does not switch a node to it.</div>'
-          + '<table>' + c.hf.results.map((e) => row(e, true)).join('') + '</table>';
+          + '<table>' + c.hf.results.map((x) => row(Object.assign({ family: c.fam, task: c.task }, x), true)).join('') + '</table>';
+      } else if (c.fam === 'nlp') {
+        h += '<div class="muted note">Pick one task to search Hugging Face for more.</div>';
       }
       return h;
+    }
+
+    _applyCatFilter() {
+      const q = (this._cat.text || '').trim().toLowerCase();
+      this._root.querySelectorAll('tr[data-text]').forEach((tr) => { tr.style.display = !q || tr.dataset.text.indexOf(q) >= 0 ? '' : 'none'; });
     }
 
     _renderJobs() {
@@ -270,28 +346,31 @@
     }
 
     _wire() {
+      if (this._tab === 'catalog') this._applyCatFilter();      // a repaint shows every row again
       this._root.querySelectorAll('[data-a]').forEach((el) => {
         const a = el.dataset.a;
-        if (a === 'cat-family') { el.addEventListener('change', () => { this._cat.family = el.value; this._cat.task = el.value === 'nlp' ? 'ner' : ''; this._cat.hf = null; this._cat.data = null; this._loadTab(); }); return; }
-        if (a === 'cat-task') { el.addEventListener('change', () => { this._cat.task = el.value; this._cat.hf = null; this._loadTab(); }); return; }
+        if (a === 'cat-fam') { el.addEventListener('click', () => { this._cat.fam = el.dataset.f; this._cat.task = ''; this._cat.hf = null; this._render(); this._applyCatFilter(); }); return; }
+        if (a === 'cat-task') { el.addEventListener('click', () => { this._cat.task = el.dataset.t; this._cat.hf = null; this._render(); this._applyCatFilter(); }); return; }
+        // filtering hides rows in place: no repaint, so the field keeps focus
+        if (a === 'cat-text') { el.addEventListener('input', () => { this._cat.text = el.value; this._applyCatFilter(); }); return; }
         if (a === 'cat-q') { el.addEventListener('input', () => { this._cat.query = el.value; }); el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') this._root.querySelector('[data-a="cat-search"]').click(); }); return; }
         el.addEventListener('click', () => {
           if (a === 'tab') { this._tab = el.dataset.t; this._msg = ''; if (this._tab === 'caches') this._caches = null; this._render(); this._loadTab(); }
           else if (a === 'cat-search') {
             const c = this._cat;
             this._busy.hf = true; this._render();
-            const q = ['family=' + encodeURIComponent(c.family), 'hf=true', 'query=' + encodeURIComponent(c.query)];
-            if (c.family === 'nlp') q.push('task=' + encodeURIComponent(c.task));
+            const q = ['family=' + encodeURIComponent(c.fam), 'hf=true', 'query=' + encodeURIComponent(c.query)];
+            if (c.fam === 'nlp') q.push('task=' + encodeURIComponent(c.task));
             this._call('GET', '/specialist/catalog?' + q.join('&')).then((r) => { c.hf = r.hf || { error: r.error }; })
               .catch((e) => { c.hf = { error: e.message }; }).finally(() => { delete this._busy.hf; this._render(); });
           }
           else if (a === 'install') {
-            const c = this._cat, id = el.dataset.e;
-            const body = el.dataset.hf ? { family: c.family, model: el.dataset.m, task: c.family === 'nlp' ? c.task : '' } : { entry: id };
+            const id = el.dataset.e || el.dataset.m, fam = el.dataset.fam;
+            const body = el.dataset.hf ? { family: fam, model: el.dataset.m, task: fam === 'nlp' ? el.dataset.task : '' } : { entry: el.dataset.e };
             this._busy['inst:' + id] = true; this._render();
             this._call('POST', '/specialist/install', body).then((r) => {
               this._msg = r.ok === false ? 'failed: ' + r.error : 'queued on the builder - see Builds';
-            }).catch((e) => { this._msg = 'failed: ' + e.message; }).finally(() => { delete this._busy['inst:' + id]; this._render(); });
+            }).catch((e) => { this._msg = 'failed: ' + e.message; }).finally(() => { delete this._busy['inst:' + id]; this._cat.data = null; this._loadTab(); });
           }
           else if (a === 'job') { this._call('GET', '/specialist/jobs?job_id=' + encodeURIComponent(el.dataset.j)).then((r) => { this._job = r; this._render(); }).catch((e) => { this._msg = 'failed: ' + e.message; this._render(); }); }
           else if (a === 'job-close') { this._job = null; this._render(); }

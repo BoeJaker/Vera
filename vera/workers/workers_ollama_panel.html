@@ -64,6 +64,7 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
 #panes{flex:1;overflow:hidden;position:relative;min-width:0}
 .pane{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px}
 .pane.on{display:block}
+#pane-specialist.on{display:flex}
 
 /* ── Buttons ── */
 .btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-family:var(--sans);font-size:10.5px;font-weight:500;transition:all .14s;white-space:nowrap}
@@ -384,8 +385,7 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
     <nav id="nav">
       <div class="nav-grp" data-view="estate">Overview</div>
       <button type="button" class="nav-btn active" data-pane="overview" data-view="estate" title="Overview" onclick="P.show('overview',this)"><span class="gl">▦</span>Overview</button>
-      <button type="button" class="nav-btn" data-pane="activity" data-view="estate" title="Everything the nodes are doing: running now, every call (prod, sandboxes, external) with prompt, response and stats" onclick="P.show('activity',this)"><span class="gl">↯</span>Activity</button>
-      <button type="button" class="nav-btn" data-pane="nodemodels" data-view="estate" title="Which models each node keeps loaded, the workloads that hotload models, NLP placement and switches, and the specialist catalog" onclick="P.show('nodemodels',this)"><span class="gl">◈</span>Models &amp; NLP</button>
+      <button type="button" class="nav-btn" data-pane="activity" data-view="estate" data-label="Activity" title="Everything the nodes are doing: running now, every call (prod, sandboxes, external) with prompt, response and stats" onclick="P.show('activity',this)"><span class="gl">↯</span>Activity</button>
       <button type="button" class="nav-btn" data-pane="estate" data-view="estate" title="Map" onclick="P.show('estate',this)"><span class="gl">⬡</span>Map</button>
       <button type="button" class="nav-btn" data-pane="observe" data-view="estate" title="Observe" onclick="P.show('observe',this)"><span class="gl">◎</span>Observe</button>
       <button type="button" class="nav-btn" data-pane="ops" data-view="estate" title="Live ops" onclick="P.show('ops',this)"><span class="gl">✦</span>Live ops</button>
@@ -408,13 +408,15 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
       <div class="nav-grp" data-view="estate">Integrations</div>
       <button type="button" class="nav-btn" data-pane="integrations" data-view="estate" title="Services" onclick="P.show('integrations',this)"><span class="gl">◈</span>Services</button>
       <button type="button" class="nav-btn" data-pane="platforms" data-view="estate" title="Platforms" onclick="P.show('platforms',this)"><span class="gl">▩</span>Platforms</button>
-      <button type="button" class="nav-btn" data-pane="nodemodels" data-view="models" title="Warm slots per node, workload hotloading, NLP and the specialist catalog" onclick="P.show('nodemodels',this)"><span class="gl">◈</span>Nodes &amp; NLP</button>
+      <button type="button" class="nav-btn" data-pane="warmmodels" data-view="models" data-label="Warm models" title="Which models each node keeps loaded, and the workloads that hotload models into the slots" onclick="P.show('warmmodels',this)"><span class="gl">◈</span>Warm models</button>
+      <button type="button" class="nav-btn" data-pane="nodesettings" data-view="models" data-label="Node settings" title="Threads, flags and drop-ins tuned on each Ollama node, and the runners loaded now" onclick="P.show('nodesettings',this)"><span class="gl">⚙</span>Node settings</button>
+      <button type="button" class="nav-btn" data-pane="nlpnodes" data-view="models" data-label="NLP" title="Where NLP runs, the models each node has loaded, and its switches" onclick="P.show('nlpnodes',this)"><span class="gl">◇</span>NLP</button>
       <button type="button" class="nav-btn" data-pane="ollama" data-view="models" title="Ollama" onclick="P.show('ollama',this)"><span class="gl">◍</span>Ollama</button>
       <button type="button" class="nav-btn" data-pane="modelrouting" data-view="models" title="Model Routing" onclick="P.show('modelrouting',this)"><span class="gl">⇉</span>Model Routing</button>
       <div class="nav-div" data-view="models"></div>
       <button type="button" class="nav-btn" data-pane="mimic" data-view="models" title="Mimic" onclick="P.show('mimic',this)"><span class="gl">◑</span>Mimic</button>
       <button type="button" class="nav-btn" data-pane="vllm" data-view="models" title="vLLM" onclick="P.show('vllm',this)"><span class="gl">◐</span>vLLM</button>
-      <button type="button" class="nav-btn" data-pane="specialist" data-view="models" title="Non-LLM models: NLP, STT/TTS, diffusion, host NER" onclick="P.show('specialist',this)"><span class="gl">◇</span>Specialist</button>
+      <button type="button" class="nav-btn" data-pane="specialist" data-view="models" data-label="Specialist models" title="The non-LLM model catalog: browse, put models in the store, and what each node runs" onclick="P.show('specialist',this)"><span class="gl">◇</span>Specialist models</button>
       <button type="button" class="nav-btn" data-pane="api" data-view="models" title="API" onclick="P.show('api',this)"><span class="gl">⌸</span>API</button>
     </nav>
   </aside>
@@ -1698,8 +1700,14 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
 
     <!-- Sandbox pane — shared exec-sandbox policy editor (gates exec.*, IDE Run, docker.* CLI) -->
     <!-- Models & NLP: the <vera-node-models> element (ollama.warm.*, nlp.*, specialist.*) -->
-    <div class="pane" id="pane-nodemodels" style="padding:0;overflow:hidden">
-      <iframe id="nodemodels-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    <div class="pane" id="pane-warmmodels" style="padding:0;overflow:hidden">
+      <iframe id="warmmodels-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
+    <div class="pane" id="pane-nodesettings" style="padding:0;overflow:hidden">
+      <iframe id="nodesettings-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
+    <div class="pane" id="pane-nlpnodes" style="padding:0;overflow:hidden">
+      <iframe id="nlpnodes-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
     </div>
     <!-- Activity: the <vera-node-activity> element (nodes.activity) -->
     <div class="pane" id="pane-activity" style="padding:0;overflow:hidden">
@@ -1933,8 +1941,15 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
       <iframe id="vllm-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
     <!-- Specialist: the <vera-specialist-models> element (specialist.status) -->
-    <div class="pane" id="pane-specialist" style="padding:0;overflow:hidden">
-      <iframe id="specialist-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    <div class="pane" id="pane-specialist" style="padding:0;overflow:hidden;flex-direction:column">
+      <!-- the page's sections: the harness lists them as a submenu (data-vera-sub) -->
+      <div class="j-tabs" id="spec-subs" style="display:flex;gap:4px;padding:6px 10px 0">
+        <span class="j-tab active" id="specs-catalog" onclick="P.specSub('catalog')" data-vera-sub="catalog" style="padding:3px 9px;font-size:9px">Catalog</span>
+        <span class="j-tab" id="specs-status" onclick="P.specSub('status')" data-vera-sub="status" style="padding:3px 9px;font-size:9px">Nodes</span>
+        <span class="j-tab" id="specs-jobs" onclick="P.specSub('jobs')" data-vera-sub="jobs" style="padding:3px 9px;font-size:9px">Builds</span>
+        <span class="j-tab" id="specs-caches" onclick="P.specSub('caches')" data-vera-sub="caches" style="padding:3px 9px;font-size:9px">Node caches</span>
+      </div>
+      <iframe id="specialist-frame" src="about:blank" style="flex:1;width:100%;border:none;background:var(--bg0)"></iframe>
     </div>
 
     <div class="pane" id="pane-api" style="padding:0;overflow:hidden">
@@ -6334,11 +6349,13 @@ function showPane(name, el){
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
   if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
   if(name==='activity'){ _mountFrame('activity-frame', BASE+'/nodes/activity/panel'); }
-  if(name==='nodemodels'){ _mountFrame('nodemodels-frame', BASE+'/nodes/models/panel'); }
+  if(name==='warmmodels'){ _mountFrame('warmmodels-frame', BASE+'/nodes/models/panel?section=warm'); }
+  if(name==='nodesettings'){ _mountFrame('nodesettings-frame', BASE+'/nodes/models/panel?section=settings'); }
+  if(name==='nlpnodes'){ _mountFrame('nlpnodes-frame', BASE+'/nodes/models/panel?section=nlp'); }
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
-  if(name==='specialist'){ _mountFrame('specialist-frame', BASE+'/specialist/panel'); }
+  if(name==='specialist'){ _mountFrame('specialist-frame', BASE+'/specialist/panel?tabs=external&tab='+(window._specTab||'catalog')); }
   if(name==='api'){ _mountFrame('api-frame', BASE+'/providers/panel'); }
   if(name==='provision'){ provSub(_prvSub); }
   if(name==='storage'){ _mountFrame('storage-frame', BASE+'/pxstore/panel'); }
@@ -6368,10 +6385,24 @@ function showPane(name, el){
 // 'estate' map page needs: its pane id collides with the view name, and a
 // lookup by attribute used to land on a section heading instead.
 const _VIEW=(new URLSearchParams(location.search).get('view')==='models')?'models':'estate';
-if(_VIEW==='models') document.documentElement.classList.add('view-models');
+if(_VIEW==='models'){
+  document.documentElement.classList.add('view-models');
+  // the Models tab is this same panel: say so in its own header
+  const _t = document.getElementById('lhmTitle'), _s = document.getElementById('lhmSub');
+  if (_t) _t.textContent = 'Models';
+  if (_s) _s.textContent = 'LLM \u00b7 specialist \u00b7 nodes';
+}
+// Specialist models: its sections (Catalog / Nodes / Builds / Node caches) are
+// the harness submenu - each switches the element inside the frame.
+P.specSub = function(t){
+  window._specTab = t;
+  document.querySelectorAll('#spec-subs .j-tab').forEach(function(x){ x.classList.toggle('active', x.id === 'specs-' + t); });
+  const f = document.getElementById('specialist-frame');
+  try { if (f && f.contentWindow) f.contentWindow.postMessage({type:'vera:specialist:tab', tab:t}, '*'); } catch(e) {}
+};
 function estateOpen(pane, sub, entity){
   if(!$('pane-'+pane)) return false;
-  // a pane listed in both views (nodemodels): highlight this view's entry
+  // a pane listed in more than one view: highlight this view's entry
   showPane(pane, document.querySelector('#nav .nav-btn[data-view="'+_VIEW+'"][data-pane="'+pane+'"]')
                  || document.querySelector('#nav .nav-btn[data-pane="'+pane+'"]'));
   if(sub&&pane==='provision') provSub(sub);
