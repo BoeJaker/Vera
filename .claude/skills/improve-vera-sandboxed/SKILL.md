@@ -397,6 +397,17 @@ commit, same as code, then land via §7 like any other change.
   - Host venv (has pytest): `/home/boejaker/langchain/bin/python3 -m pytest
     tests/… -q` — fast, but only correct via the lowercase `vera.X` + sys.path
     insert above; `Vera.vera.X` there still hits main.
+- **Package re-exports expand the import closure (confirmed 2026-10-01).** A
+  new export in `vera/<package>/__init__.py` is eager: every import of any child
+  first runs the parent initializer, then every relative import it exposes.
+  Production can load the same tree as `Vera.vera`; a descendant containing a
+  plain-only `from vera...` import then fails even when the new bridge itself
+  uses correct relative imports. This exact chain removed Operator
+  capabilities, JEPA Worldview, and model inventory after a models-package
+  re-export reached a plain-only import in a training adapter. Before adding a
+  package export, walk parent initializers and relative imports and smoke-import
+  through the production `Vera.vera...` path. A lowercase-only focused test
+  does not cover this failure mode.
 - **Loop Lab task** (`evolve.task.upsert`) for behavioural/loop changes, with
   `checks` that would actually fail if the bug returned.
 - Verify the module **boots** — restart your exact spawned branch with
