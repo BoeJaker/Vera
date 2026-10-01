@@ -431,6 +431,52 @@
    "floated": false
   },
   {
+   "at": [
+    0,
+    8
+   ],
+   "span": [
+    12,
+    4
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "w-compute-load",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "frame": {
+     "size": "xl",
+     "span": [
+      12,
+      4
+     ],
+     "max_body": null
+    },
+    "form": "cellmap",
+    "source": "estate.compute.load",
+    "title": "Model nodes · cores and GPUs",
+    "read": {
+     "refresh": "30s"
+    },
+    "draw": {
+     "body": "record",
+     "lens": "load",
+     "lenses": [
+      "load",
+      "gpu",
+      "vram"
+     ]
+    },
+    "open": "models"
+   }
+  },
+  {
    "record": {
     "id": "w-node-workers",
     "form": "element",
@@ -465,7 +511,7 @@
    },
    "at": [
     0,
-    8
+    12
    ],
    "span": [
     12,

@@ -33,7 +33,8 @@ const FIX = {
   'sysmon.history': { samples: [{ t: 1, cpu: 20, mem: 80, pmx_mem_pct: 60, pmx_running: 22, dkr_running: 65, oll_online: 3, pmx_temp_max: 81 }, { t: 2, cpu: 30, mem: 81, pmx_mem_pct: 61, pmx_running: 22, dkr_running: 66, oll_online: 3, pmx_temp_max: 82 }] },
   'background.status': { running: 'ide.claude_sessions.ingest', busy_reason: 'the GPU gate was held 58s ago', quiet_for_s: 0, min_quiet_s: 600, queue: { depth: 0, waiting: [], note: 'nothing queued' }, jobs: [{ name: 'ingest', runs: 3, last_ok: true }], timeline: [{ title: 'digest', starts_in_s: 300 }], eta_total_s: 0 },
   'backup.status': { guests: [{ name: 'LLM', status: 'running', state: 'ok' }, { name: 'Kali', status: 'stopped', state: 'excluded' }] },
-  'obs.node_temps': { hosts: [{ label: 'ollama126.vera.int', max_c: 76 }, { label: 'VFS-02', max_c: 70 }] } };
+  'obs.node_temps': { hosts: [{ label: 'ollama126.vera.int', max_c: 76 }, { label: 'VFS-02', max_c: 70 }] },
+  'estate.compute.load': { nodes: [{ id: 'gpu-250', label: 'GPU Node', ip: '192.168.0.250', machine: { label: 'Ollama', vmid: 126 }, host: { label: 'PVE01' }, cores: [{ cpu: 12, load: 31.7 }, { cpu: 13, load: 95 }], gpus: [{ index: 0, total_mb: 12288, used_mb: 8200, util_pct: 40 }] }], hosts: [{ label: 'PVE01', pve_node: 'corp', cores: [{ cpu: 0, load: 20 }] }] } };
 
 // ── every grid: records, notes, the conversions ──
 const GRIDS = { dream: 9, 'wol-workers': 9, 'wol-ollama': 9, 'wol-jobs': 10, 'wol-wkjobs': 8, 'wol-observe': 2, 'estate-overview': 11 };
