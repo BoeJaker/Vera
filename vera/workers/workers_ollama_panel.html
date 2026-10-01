@@ -1944,10 +1944,10 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
     <div class="pane" id="pane-specialist" style="padding:0;overflow:hidden;flex-direction:column">
       <!-- the page's sections: the harness lists them as a submenu (data-vera-sub) -->
       <div class="j-tabs" id="spec-subs" style="display:flex;gap:4px;padding:6px 10px 0">
-        <span class="j-tab active" id="specs-catalog" onclick="P.specSub('catalog')" data-vera-sub="catalog" style="padding:3px 9px;font-size:9px">Catalog</span>
-        <span class="j-tab" id="specs-status" onclick="P.specSub('status')" data-vera-sub="status" style="padding:3px 9px;font-size:9px">Nodes</span>
-        <span class="j-tab" id="specs-jobs" onclick="P.specSub('jobs')" data-vera-sub="jobs" style="padding:3px 9px;font-size:9px">Builds</span>
-        <span class="j-tab" id="specs-caches" onclick="P.specSub('caches')" data-vera-sub="caches" style="padding:3px 9px;font-size:9px">Node caches</span>
+        <span class="j-tab active" id="specs-catalog" onclick="specSub('catalog')" data-vera-sub="catalog" style="padding:3px 9px;font-size:9px">Catalog</span>
+        <span class="j-tab" id="specs-status" onclick="specSub('status')" data-vera-sub="status" style="padding:3px 9px;font-size:9px">Nodes</span>
+        <span class="j-tab" id="specs-jobs" onclick="specSub('jobs')" data-vera-sub="jobs" style="padding:3px 9px;font-size:9px">Builds</span>
+        <span class="j-tab" id="specs-caches" onclick="specSub('caches')" data-vera-sub="caches" style="padding:3px 9px;font-size:9px">Node caches</span>
       </div>
       <iframe id="specialist-frame" src="about:blank" style="flex:1;width:100%;border:none;background:var(--bg0)"></iframe>
     </div>
@@ -6394,7 +6394,10 @@ if(_VIEW==='models'){
 }
 // Specialist models: its sections (Catalog / Nodes / Builds / Node caches) are
 // the harness submenu - each switches the element inside the frame.
-P.specSub = function(t){
+// window.specSub, not P.specSub: this runs INSIDE the function that builds P,
+// where a reference to P throws (TDZ) and stops the whole panel script; and a
+// plain function here would be local to it, out of reach of the onclick.
+window.specSub = function specSub(t){
   window._specTab = t;
   document.querySelectorAll('#spec-subs .j-tab').forEach(function(x){ x.classList.toggle('active', x.id === 'specs-' + t); });
   const f = document.getElementById('specialist-frame');
