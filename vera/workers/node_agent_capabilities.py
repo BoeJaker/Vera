@@ -151,7 +151,9 @@ async def _collect_runners(node_filter: str = "") -> Dict[str, Any]:
     "nodes.agent.status", memory="off", silent=True,
     http_method="GET", http_path="/nodes/agent/status", http_tags=["nodes", "obs"],
     description="Host facts from every compute node running the Vera node agent "
-                "— cores, load, memory, GPU (name/total/used/free), runner count. "
+                "— cores, load, memory, runner count, and every GPU under `gpus` "
+                "(index, name, total/used/free MB, util %, temp °C; `gpu` is the "
+                "first card, kept for older readers). "
                 "Nodes with no agent are listed under `unreachable` rather than "
                 "omitted. Output: {nodes:[...], unreachable:[...]}.")
 async def cap_nodes_agent_status(trace_id=None) -> Dict[str, Any]:

@@ -374,3 +374,37 @@ def parse_port_from_cmdline(cmdline: str) -> int:
             except ValueError:
                 return 0
     return 0
+
+
+#: nvidia-smi fields the agent asks for, in the order parse_gpus reads them.
+GPU_QUERY = "index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu"
+
+
+def _gpu_num(v: str) -> Optional[int]:
+    """One CSV field as an int; None for "[N/A]", "[Not Supported]" or blank."""
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_gpus(csv_text: str) -> List[Dict[str, object]]:
+    """`nvidia-smi --query-gpu=<GPU_QUERY> --format=csv,noheader,nounits` -> one
+    row per card, in the order nvidia-smi lists them.
+
+    The agent used to read only the first line, so a node with two cards reported
+    one. A field a card cannot report comes back as "[N/A]" and becomes None
+    rather than dropping the card; a line with too few fields is skipped.
+    """
+    out: List[Dict[str, object]] = []
+    for line in (csv_text or "").splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 7:
+            continue
+        idx, name, tot, used, free, util, temp = parts[:7]
+        i = _gpu_num(idx)
+        out.append({"index": i if i is not None else len(out),
+                    "name": name, "total_mb": _gpu_num(tot) or 0, "used_mb": _gpu_num(used) or 0,
+                    "free_mb": _gpu_num(free) or 0, "util_pct": _gpu_num(util),
+                    "temp_c": _gpu_num(temp)})
+    return out
