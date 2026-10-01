@@ -40,7 +40,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
    is what opens instead of the OS's — the select itself is untouched, and stays the value every reader reads. */
 select{cursor:pointer;appearance:none;-webkit-appearance:none;padding-right:20px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'><path d='M1 2.5L4 5.5L7 2.5' stroke='%238a92a0' fill='none' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/></svg>");background-repeat:no-repeat;background-position:right 7px center}
 select[multiple],select[size]:not([size="1"]){background-image:none;padding-right:7px}
-.vsel-m{position:fixed;z-index:3000;min-width:120px;max-height:min(52vh,420px);overflow:auto;scrollbar-width:thin;padding:4px;border-radius:var(--ui-radius,8px);background:var(--surf,var(--bg2,#1a1d24));box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.20),0 12px 34px -16px rgba(0,0,0,.70));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px}
+.vsel-m{position:fixed;z-index:10000;min-width:120px;max-height:min(52vh,420px);overflow:auto;scrollbar-width:thin;padding:4px;border-radius:var(--ui-radius,8px);background:var(--surf,var(--bg2,#1a1d24));box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.20),0 12px 34px -16px rgba(0,0,0,.70));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px}
 .vsel-o{display:flex;align-items:center;gap:8px;padding:5px 9px;border-radius:calc(var(--r-sm,6px) - 1px);color:var(--t2,var(--dim2,#8a92a0));white-space:nowrap;cursor:pointer}
 .vsel-o:hover,.vsel-o.cur{color:var(--t1,var(--text,#d8dce4));background:var(--bg3,#232732)}
 .vsel-o.on{color:var(--ac,var(--acc,#5a9e8f))}
@@ -1931,7 +1931,7 @@ body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri
 #rightRail.lhm-host .lhm-quick .wid.lhm-added{background:var(--surf2,var(--bg2,#1a1c20));box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 @keyframes xbl{50%{opacity:.35}}
 /* ── the Settings page (the Settings board) ── */
-#settingsPage{position:fixed;top:52px;right:0;bottom:0;left:0;z-index:5200;display:flex;flex-direction:column;background:var(--bg,var(--bg0,#0e0f12));color:var(--t1,var(--text,#d8dce4));font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
+#settingsPage{position:fixed;top:0;right:0;bottom:0;left:0;z-index:5200;display:flex;flex-direction:column;background:var(--bg,var(--bg0,#0e0f12));color:var(--t1,var(--text,#d8dce4));font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
 #settingsPage[hidden]{display:none}
 #settingsPage .sp-hd{display:flex;align-items:center;gap:14px;height:52px;padding:0 22px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));flex-shrink:0}
 #settingsPage .sp-hd h1{margin:0;font-size:19px;font-weight:600;letter-spacing:-.01em}
@@ -1985,7 +1985,6 @@ body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri
 #settingsPage .sp-card .btn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
 #settingsPage .sp-card .btn.danger,#settingsPage .sp-card .btn.red,#settingsPage .sp-card .btn.err-btn,#settingsPage .sp-card .btn.no{color:var(--dv6,#c96b6b)}
 #settingsPage .sp-card .opt .opt-main{display:flex;flex-direction:column;gap:1px;min-width:0}#settingsPage .sp-card .opt .opt-name{font-size:11.5px;color:var(--t1,var(--text,#d8dce4))}#settingsPage .sp-card .opt .opt-desc{font-size:10px;color:var(--t3,var(--dim,#6b7280))}
-#settingsPage .sp-hd .sp-hd-pack{display:inline-flex;align-items:center}#settingsPage .sp-hd .sp-hd-pack .seg,#settingsPage .sp-hd .sp-hd-pack [class*="style"]{font-size:10.5px}
 #settingsPage .sp-look-pack,#settingsPage .sp-look-theme{display:flex;align-items:center;gap:8px;min-height:30px;flex-wrap:wrap}
 #settingsPage .sp-block{display:flex;flex-direction:column;gap:5px;font-size:11.5px;min-width:0}
 #settingsPage .sp-block > .sec{font-size:var(--label-size,9.5px);text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t2,var(--dim2,#8a92a0));padding:6px 0 2px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));margin-bottom:2px}
@@ -1996,6 +1995,9 @@ body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri
 .rpane .sp-gone b{color:var(--t1,var(--text,#d8dce4))}
 /* ── embedded in parts: only=menu · only=chat · harness=yes ── */
 html[data-only="menu"] body > :not(:has(#rightRail)){display:none!important}
+/* the drop menu every select opens is drawn on <body>: in the menu page it must survive the rule above (whose :has(#id)
+   weighs as an id, so this one carries an id's weight too) - else every select in the menu's settings opened nothing */
+html[data-only="menu"] body > .vsel-m:not(#_){display:block!important}
 html[data-only="menu"] :has(> #rightRail) > :not(#rightRail){display:none!important}
 html[data-only="menu"] body > #ctxRunsOverlay{display:none!important}
 /* THE SETTINGS PAGE IS OPENED FROM THE MENU - the context graph's gear and the configuration rows both call it -
@@ -3668,17 +3670,22 @@ const CH = (() => {
     const btn = document.getElementById('jumpToBottomBtn');
     if(btn) btn.style.display = near ? 'none' : 'flex';
   }
+  /* Following the tail is INSTANT (owner, 2026-10-01: "when chat is streaming in to the chat ui it sometimes jerks back
+     and forth"). #msgs scrolls smoothly for the reader, so every per-frame scrollTop write while a reply streamed started
+     a fresh smooth glide from wherever the last one had got to - and mid-glide the scroll listener saw "80 px from the
+     bottom" and dropped the follow, so the view chased the reply in lurches. */
+  function _toBottom(b){ try{ b.scrollTo({ top:b.scrollHeight, behavior:'instant' }); }catch(_){ b.scrollTop = b.scrollHeight; } }
   function scroll(force){
     const b = BOX(); if(!b) return;
     if(force){
       _stickToBottom = true;
-      b.scrollTop = b.scrollHeight;
+      _toBottom(b);
       const btn = document.getElementById('jumpToBottomBtn');
       if(btn) btn.style.display = 'none';
       return;
     }
     if(_stickToBottom){
-      b.scrollTop = b.scrollHeight;
+      _toBottom(b);
     }
   }
   /* Wire the user-intent listeners once the DOM is ready. We do this here
@@ -11571,6 +11578,12 @@ Your task: decide what to do next to advance toward the goal.
         _sc[i]={top:p.scrollTop,
                 atEnd:(p.scrollHeight-p.scrollTop-p.clientHeight)<40};
       });
+      // the reply only grows while it streams: hold the height it has, so a repaint whose code cards and widgets are
+      // still mounting cannot shrink it for a frame (the page clamped its scroll up, then the follow pulled it back
+      // down - the reply jerked up and down). The floor goes once the tokens stop.
+      try{ const cs=getComputedStyle(bubEl), pad=cs.boxSizing==='border-box'?0:(parseFloat(cs.paddingTop)||0)+(parseFloat(cs.paddingBottom)||0)+(parseFloat(cs.borderTopWidth)||0)+(parseFloat(cs.borderBottomWidth)||0);
+        const h0=bubEl.offsetHeight-pad; if(h0>(parseFloat(bubEl.style.minHeight)||0)) bubEl.style.minHeight=h0+'px';   // min-height is the content box here
+        clearTimeout(bubEl._hold); bubEl._hold=setTimeout(()=>{ bubEl.style.minHeight=''; }, 1200); }catch(_){}
       _paintStream(bubEl, fullText);
       try{ _cvLandLive(bubEl); }catch(_){}   // and the canvas keeps up with it, item by item as they appear
       bubEl.querySelectorAll('.code-card pre').forEach((p,i)=>{
@@ -15329,8 +15342,6 @@ Your task: decide what to do next to advance toward the goal.
     // the panes keep a line saying where their fields went (nothing vanishes; the page is where it lives now)
     Object.keys(moved).forEach(pid=>{ const pane=document.getElementById(pid); if(!pane) return; const l=document.createElement('div'); l.className='sp-gone'; l.innerHTML='<span>'+moved[pid]+' section'+(moved[pid]>1?'s':'')+' moved to <b>Settings</b> — ⌘,</span><button class="btn xs" type="button">Open Settings</button>'; l.querySelector('button').addEventListener('click',()=>_settingsPage(true)); pane.insertBefore(l, pane.firstChild); });
     page.querySelector('.sp-count').textContent=n+' sections · every field keeps its id and handler';
-    // the pack segment in the page header (the board)
-    try{ const hd=page.querySelector('.sp-hd'), k=hd&&hd.querySelector('.kbd'); if(hd&&k&&window.veraUI&&typeof veraUI.makeStyleControl==='function'&&!hd.querySelector('.sp-hd-pack')){ const w=document.createElement('span'); w.className='sp-hd-pack'; w.appendChild(veraUI.makeStyleControl()); hd.insertBefore(w, k); } }catch(_){}
     // the theme picker fills its card now that the card is in the document (injectPicker looks the container up by id)
     try{ if(document.getElementById('spThemePick')&&window.veraUI&&typeof veraUI.injectPicker==='function') veraUI.injectPicker('spThemePick'); }catch(_){}
     _spShow('variant');
