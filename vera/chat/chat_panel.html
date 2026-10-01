@@ -6827,7 +6827,8 @@ IMPORTANT:
      overwriting the answer you already have. */
   async function _cvLandTimeline(text, mid){
     if(!SID) return 0;
-    let events=[]; try{ events=_tlTimeline(text,{}); }catch(_){ return 0; }   // a history, not a text with dates in it (_tlTimeline)
+    const askOf=String((document.querySelector('#msgs .mwrap.u[data-mid="'+(mid||'')+'"] .msg-body')||{}).textContent||'');
+    let events=[]; try{ events=_tlTimeline(text,{ ask:askOf }); }catch(_){ return 0; }   // a history, not a text with dates in it (_tlTimeline)
     // two dates are a pair, not a history; below that the prose is better read as prose
     if(events.length<3) return 0;
     const subject=String((document.querySelector('#msgs .mwrap.u[data-mid="'+(mid||'')+'"] .msg-body')||{}).textContent||'').replace(/\s+/g,' ').trim().slice(0,70);
@@ -6909,13 +6910,24 @@ IMPORTANT:
      a chronology does ('In 1984 ...', '2019: ...'), or the text says so (a History / Timeline / Milestones heading). And it
      spans time: three or more distinct dates over more than one year. Anything else is prose that mentions dates. */
   function _tlTimeline(text, o){
-    const ev=_tlEvents(text, o); if(ev.length<3) return [];
-    const dates=new Set(ev.map(e=>e.when)), years=new Set(ev.map(e=>e.when.slice(0,4)));
-    if(dates.size<3||years.size<2) return [];
-    const dense=ev.length/Math.max(1, ev._sentences||ev.length) >= 0.3;
+    o=o||{};
+    let ev=_tlEvents(text, o); const n=ev._sentences;
+    // a fragment is not an event ('March 2024, Redis Ltd.'): three words beside its date, or it goes
+    ev=ev.filter(e=>String(e.label||'').replace(String(e.raw||''),' ').split(/[\s,.:;()\u2013\u2014-]+/).filter(w=>/[A-Za-z]/.test(w)).length>=3);
+    // the same date told twice is one event: the row that LEADS with its date, else the fuller one
+    const byWhen={}; ev.forEach(e=>{ const k=e.when; const cur=byWhen[k]; if(!cur||(!cur.lead&&e.lead)||(cur.lead===e.lead&&e.label.length>cur.label.length&&e.label.length<=240)) byWhen[k]=e; });
+    ev=Object.keys(byWhen).map(k=>byWhen[k]).sort((a,b)=>a.key-b.key);
+    if(ev.length<3) return [];
+    const years=new Set(ev.map(e=>e.when.slice(0,4))); if(years.size<2) return [];
+    /* A TIMELINE IS A CHRONOLOGY, not a text with dates in it (owner, 2026-10-01: 'its taking any dates in the input and
+       just stringing them together'). It passes when the text SAYS it is one (a History / Timeline / Milestones heading),
+       when three or more of its lines LEAD with their dates as a chronology does ('1984: ...', 'In 1984, ...'), or when
+       the question ASKED for one (history, timeline, when did ..., how has ... changed) and the answer is mostly dated. */
+    const named=/^\s*#{1,6}\s*.*\b(history|timeline|chronolog\w*|milestones?|key dates)\b/im.test(String(text||''));
     const leads=ev.filter(e=>e.lead).length>=3;
-    const named=/^\s*#{1,6}\s*.*\b(history|timeline|chronolog\w*|milestones?|key dates|background)\b/im.test(String(text||''));
-    return (dense||leads||named)?ev:[];
+    const asked=/\b(histor(y|ical)|timeline|chronolog\w*|milestones?|evolution|evolved|over the years|over time|when (did|was|were)|since when|what happened|how (has|have|did) .{0,60}\b(change|changed|evolve|evolved|develop|developed|start|started|begin|began))\b/i.test(String(o.ask||''));
+    const dense=ev.length/Math.max(1, n||ev.length) >= 0.3 && ev.length>=4;
+    return (named||leads||(asked&&dense))?ev:[];
   }
   /* ═══ THE CAP → CANVAS ADAPTER ═══════════════════════════════════════════════════════════════════════════════
      There are 2513 capabilities across 150 namespaces. Whatever decides what a result becomes on the canvas, it
@@ -7247,7 +7259,9 @@ IMPORTANT:
     cvHook('widget', '.wblk[id^="w"]', (el, out, i) => { const w=_W_STORE[el.id]; if(!w||!w.rec||el.closest('vera-widget')) return; const rec=Object.assign({}, w.rec, w.data!==undefined?{data:w.data}:{}); const form=rec.draw.form; const title=rec.title||rec.name||form;
       out.push({kind:'widget', n:title, d:'widget · '+form, content:Object.assign({}, rec, {widget:form, form, title, record:rec}), col:'#a78bfa', k:'widget'}); });
 
-    cvHook('widget-element', 'vera-widget', (el, out, i) => { let rec=null; try{ rec=el.record||JSON.parse(el.getAttribute('record')||'null'); }catch(_){} const form=(rec&&rec.form)||el.getAttribute('form')||''; if(!form) return;
+    // a widget INSIDE a tool card is that card's drawing: the capability hook lands the card's answer as its own item
+    // (web.research as one openable reading list), so lifting the drawing too put the same answer on the canvas twice
+    cvHook('widget-element', 'vera-widget', (el, out, i) => { if(el.closest&&el.closest('.cap-inline')) return; let rec=null; try{ rec=el.record||JSON.parse(el.getAttribute('record')||'null'); }catch(_){} const form=(rec&&rec.form)||el.getAttribute('form')||''; if(!form) return;
       const title=(rec&&(rec.title||rec.name))||el.getAttribute('title')||form;
       out.push({kind:'widget', n:title, d:'widget · '+form, content:Object.assign({}, rec&&rec.draw?rec:{}, {widget:form, form, title, args:(rec&&(rec.source||rec.args))||{}, record:rec||undefined}), col:'#a78bfa', k:'widget'}); });
 
@@ -7259,8 +7273,14 @@ IMPORTANT:
      the same shape as the same question answered from the web, and only one of them was getting an axis. The
      extractor is the research one; what differs is where the text comes from. Three dates or it is prose. */
   cvHook('timeline', null, (body, out) => {
-    const txt=String((body&&body.textContent)||''); if(txt.length<80) return;
-    let ev=[]; try{ ev=_tlTimeline(txt,{}); }catch(_){ return; }   // a history, not a reply that mentions dates (_tlTimeline)
+    /* WHAT THE ASSISTANT WROTE, not what its tools fetched (measured on prod, 2026-10-01: labels were raw page text -
+       '"text": "Latest Machine Learning News...', 'tags webfetch, oneuptime.co', '29th October 2019 12th April 2023' -
+       because body.textContent carried every tool card's result). Tool cards, code, think boxes and research cards go. */
+    let txt=''; try{ const cl=body.cloneNode(true); cl.querySelectorAll('.cap-inline,.cap-result,.cap-peek,pre,code,.think-box,vera-research-card,.research-card,.msg-actions,.cv-moved,.cv-elsewhere').forEach(x=>x.remove()); txt=String(cl.textContent||''); }catch(_){ txt=String((body&&body.textContent)||''); }
+    if(txt.length<80) return;
+    // the question it answers: a timeline the person ASKED for may be told in prose; otherwise it must be a chronology
+    let ask=''; try{ let w=body.closest('.mwrap'); w=w&&w.previousElementSibling; while(w&&!(w.classList&&w.classList.contains('u'))) w=w.previousElementSibling; ask=String((w&&w.querySelector('.msg-body')||{}).textContent||''); }catch(_){}
+    let ev=[]; try{ ev=_tlTimeline(txt,{ ask }); }catch(_){ return; }   // a history, not a reply that mentions dates (_tlTimeline)
     if(ev.length<3) return;
     out.push({ kind:'timeline', n:'Timeline \u00b7 '+ev.length+' events', k:'timeline', col:'#c9955a',
                d:'timeline \u00b7 '+ev.length+' events', content:{ title:'Timeline', events:ev } });

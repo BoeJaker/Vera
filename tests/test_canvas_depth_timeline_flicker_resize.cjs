@@ -31,9 +31,18 @@ const cv = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.
   t('and its dates lead their lines', ev.every((e) => e.lead));
   const report = ['Apple Inc. was founded on April 1, 1976 by Steve Jobs and Steve Wozniak.', 'In 1984 the company launched the Macintosh.',
     'The iPhone was announced on January 9, 2007.', 'Tim Cook became chief executive in August 2011.', 'By 2018 it was worth a trillion dollars.'].join(' ');
-  t('a history told in prose is a timeline (most of it is dated)', ctx.T(report).length === 5, String(ctx.T(report).length));
+  t('a history told in prose is a timeline when the question asked for one', ctx.T(report, { ask: 'What is the history of Apple?' }).length === 5, String(ctx.T(report, { ask: 'What is the history of Apple?' }).length));
+  t('...and not when it did not (2026-10-01: any dated prose was strung together)', ctx.T(report, { ask: 'Tell me about Apple' }).length === 0);
+  // the Redis answer measured on prod: a license explainer full of dates, three of them the same month
+  const redis = ['SSPL was created by MongoDB in 2018 to stop cloud resale.', 'Before March 2024, Redis was licensed under the permissive BSD-3-Clause license.',
+    'Redis changed from BSD-3-Clause to SSPL/RSALv2 in March 2024.', 'March 2024, Redis Ltd.', 'The license change in 2024 hit the community hard after fifteen years.',
+    'Valkey forked from Redis 7.2.4 in 2024 under the Linux Foundation.', 'Redis 8 added AGPLv3 as an option in May 2025.'].join(' ');
+  t('a licence explainer full of dates is not a timeline unasked', ctx.T(redis, { ask: 'Should I use Redis or Valkey for my cache?' }).length === 0);
+  const rh = ctx.T(redis, { ask: 'How has the Redis license changed over time?' });
+  t('asked, it is one - each date once, fragments gone', rh.length >= 3 && new Set(rh.map((e) => e.when)).size === rh.length && !rh.some((e) => /^March 2024, Redis Ltd\.$/.test(e.label)), JSON.stringify(rh.map((e) => e.when + ' ' + e.label.slice(0, 30))));
+  t('the reply is read without its tool cards', /cl\.querySelectorAll\('\.cap-inline,\.cap-result,\.cap-peek,pre,code,\.think-box,vera-research-card/.test(CHAT) && /ev=_tlTimeline\(txt,\{ ask \}\)/.test(CHAT));
   t('two years are not a span to draw', ctx.T('In 2019 it began. In 2019 it grew. In 2020 it ended.').length === 0);
-  t('the lifted timeline and the research timeline both ask the gate', /ev=_tlTimeline\(txt,\{\}\)/.test(CHAT) && /events=_tlTimeline\(text,\{\}\)/.test(CHAT));
+  t('the lifted timeline and the research timeline both ask the gate, with the question', /ev=_tlTimeline\(txt,\{ ask \}\)/.test(CHAT) && /events=_tlTimeline\(text,\{ ask:askOf \}\)/.test(CHAT));
 }
 // ── ...drawn as one: the span on an axis, the spine, the gaps ─────────────────────────────────────────────────────────
 {

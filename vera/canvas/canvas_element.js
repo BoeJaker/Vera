@@ -933,10 +933,15 @@
   /* A HEADER BELONGS TO FULL. In Hover and Zen an item is its content and nothing else; its name, its key and its
      controls come back when you are on it (owner, 2026-09-24: "they should only be displayed in the full view mode
      the hover and zen should act accordingly"). A FOLDED item is exempt: its header line is the whole item. */
-  :host([data-tier="hover"]) .it:not(.compact):not(:hover):not(:focus-within) > .it-hd,
-  :host([data-tier="zen"]) .it:not(.compact):not(:hover):not(:focus-within) > .it-hd,
-  :host([data-tier="hover"]) .it:not(.compact):not(:hover):not(:focus-within) > .it-ft,
-  :host([data-tier="zen"]) .it:not(.compact):not(:hover):not(:focus-within) > .it-ft{display:none}
+  /* ...and held back WITHOUT leaving the layout (owner, 2026-10-01: the canvas "flicker ... still there if the mouse is
+     between elements"). They were display:none until :hover, so pointing at an item near its top or its foot made it
+     GROW by its header or its rail: the edge moved off the pointer, they went, the item shrank back under it - an
+     oscillation at every item edge. Now each is an overlay - the header over the top, the rail over the foot - that fades
+     in when you are on the item; an item's height never changes because you pointed at it. */
+  /* (an item is already position:relative - absolute on the stage - so the overlays anchor to it either way) */
+  :host([data-tier="hover"]) .it:not(.compact) > .it-hd,:host([data-tier="zen"]) .it:not(.compact) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
+  :host([data-tier="hover"]) .it:not(.compact) > .it-ft,:host([data-tier="zen"]) .it:not(.compact) > .it-ft{position:absolute;left:0;right:0;bottom:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:0 0 var(--r,8px) var(--r,8px)}
+  :host([data-tier="hover"]) .it:not(.compact):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft),:host([data-tier="zen"]) .it:not(.compact):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft){opacity:1;pointer-events:auto}
   :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-codehead,
   :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-th{opacity:.35}
   /* the solo expand of an item whose drawer draws its own head: a corner mark, not a row of its own */

@@ -151,7 +151,7 @@
     depth = depth || 0; if (x == null || depth > 2) return x;
     form = canon(form);
     if (CI_FORMS.test(form)) return x;   // a CI picture reads its payload whole
-    if (/^(json|diff|code|progress|status|media|error|markdown|month|schedule|calnav|vgraph|cellmap)$/.test(form)) return x;   // a result form reads the answer whole
+    if (/^(json|diff|code|progress|status|media|error|markdown|month|schedule|calnav|vgraph|cellmap|reading)$/.test(form)) return x;   // (reading: every list of pages in it - web.research's sources AND the links it found)   // a result form reads the answer whole
     if (Array.isArray(x)) return x;
     if (typeof x === 'object') {
       if (/^(radial|counter|bar|hero|meter|level|ring|gauge|dial|tank)$/.test(form) && typeof x.value === 'number') return x;   // a level with its trend beside it is the level, not its trend
@@ -332,6 +332,7 @@
               { from: 'c2', to: 'c3', label: 'TAKES', resolution: 'exact', layer: 'symbols' }],
       assessments: [] }),
     // ── the boards' forms: a face each, the board's own demo made data (so the gallery and the pickers show the form as drawn) ──
+    reading: () => [['Best Vector Databases in 2026: A Complete Comparison Guide', 'https://firecrawl.dev/blog/best-vector-databases', 'A selection guide with real performance numbers from VectorDBBench, honest trade-offs between managed and self-hosted options, and a framework for choosing.', 3000], ['Vector Database Comparison: Features, Performance & Use Cases', 'https://turing.com/kb/vector-database-comparison', 'Pinecone, Milvus, Qdrant, Weaviate and Chroma compared on indexing, filtering and cost.', 2400], ['Neo4j vs Memgraph - How to Choose a Graph Database?', 'https://memgraph.com/blog/neo4j-vs-memgraph', 'Graph databases are gaining traction across a variety of applications.', 0]].map((p) => ({ title: p[0], url: p[1], snippet: p[2], chars: p[3] })),
     feed: () => [['system', 'Digest gate landed — 312caef', 'The second boot skipped the pull entirely. Four re-embeds became none; boot is 18 s again.', 'aide', '14:44'], ['dream', 'Nightly review: three writers still touch the tree', 'state_paths, the notebook exporter and the media mirror write inside the repo.', 'dream director', '06:02'], ['team', 'ct130 is back — for now', 'Brought up after the connect timeout; the prober has it on backoff.', 'boejaker', 'yesterday'], ['markets', 'BTC · the March gap filled', 'QChart flagged the fill at 14:41. The backtest waiting on it is unblocked.', 'markets.watch', '14:41']].map((r) => ({ kind: r[0], title: r[1], body: r[2], who: r[3], when: r[4] })),
     table: () => [['ct126', 62, 71, 4], ['ct121', 41, 54, 1], ['ct118', 18, 48, 0], ['pxstore', 12, 42, 0], ['workstation', 33, 51, 2], ['ct130', 0, 0, 0]].map((r) => ({ node: r[0], load: r[1], temp: r[2], in_flight: r[3] })),
     gallery: () => [['render 04', 'png'], ['ops map', 'png'], ['boot chart', 'svg'], ['sprite 04', 'png'], ['companion', 'png'], ['thumb 12', 'jpg'], ['report fig 2', 'svg'], ['screenshot', 'png']].map((g) => ({ name: g[0], kind: g[1] })),
@@ -580,6 +581,38 @@
     const want = (o && o.draw && Array.isArray(o.draw.columns)) ? o.draw.columns : null;
     const cols = (want || Object.keys(rw[0]).filter((k) => typeof rw[0][k] !== 'object')).slice(0, 6);
     return '<div class="vw-tablewrap" style="max-height:' + Math.max(H, 60) + 'px"><table><thead><tr>' + cols.map((c) => '<th>' + esc(c) + '</th>').join('') + '</tr></thead><tbody>' + rw.slice(0, (o && o.draw && o.draw.limit) || 12).map((r) => '<tr>' + cols.map((c) => '<td title="' + esc(String(r[c] ?? '')) + '">' + esc(String(r[c] ?? '')) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+  };
+  /* A READING LIST (owner, 2026-10-01: web.research "is too dense of a format ... the cells of the table are commonly
+     truncated so it cant be read"). Pages are not rows of a grid: each is a card - its title (the link), where it is from,
+     when, how much was read - and two or three lines of what it says, wrapped and never cut to a cell. A card opens in
+     place to the text the answer carried (web.research reads every page it lists); the rest page through. */
+  R.reading = (d, H, o) => {
+    // the pages, wherever the answer keeps them: a list, or every list of pages in it - the ones it READ first
+    // (web.research's sources), then the ones it only found (more_links), marked so
+    let src = Array.isArray(d) ? d : [];
+    if (!Array.isArray(d) && d && typeof d === 'object') src = Object.keys(d).filter((k) => Array.isArray(d[k]) && d[k].some((r) => r && typeof r === 'object' && (r.url || r.link || r.href)))
+      .sort((a, b) => (/more|links|extra/i.test(a) ? 1 : 0) - (/more|links|extra/i.test(b) ? 1 : 0)).flatMap((k) => d[k].map((r) => (/more|links|extra/i.test(k) && r && typeof r === 'object') ? Object.assign({ unread: true }, r) : r));
+    const rw = rows(src).filter((r) => typeof (r.url || r.link || r.href) === 'string');
+    if (!rw.length) return EMPTY('a reading list needs pages');
+    const ent = (s) => String(s == null ? '' : s).replace(/&(amp|lt|gt|quot|#39|#x27|apos|nbsp);/g, (m, k) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", '#x27': "'", apos: "'", nbsp: ' ' })[k]);
+    const host = (u) => { try { return new URL(u).host.replace(/^www\./, ''); } catch (e) { return ''; } };
+    const per = Math.max(2, Math.min(10, Math.floor(((H || 320) - 30) / 84))); const n = rw.length, pages = Math.ceil(n / per);
+    const pg = Math.max(0, Math.min(pages - 1, +ui(o, 'page', 0) || 0)), open = +ui(o, 'open', -1);
+    const paras = (s) => s.split(/\n+/).map((x) => x.trim()).filter(Boolean).slice(0, 60).map((x) => '<p>' + esc(x) + '</p>').join('');
+    const cards = rw.slice(pg * per, pg * per + per).map((r, j) => {
+      const i = pg * per + j, u = String(r.url || r.link || r.href), on = open === i;
+      /* the page's text starts at its first real paragraph, not its site menu ('Products / Resources / Pricing ...'); and
+         a search engine's stub of a snippet ('Compare 20') gives way to that paragraph */
+      let body = ent(r.text || r.content || ''); { const ls = body.split(/\n+/); const k = ls.findIndex((l) => l.trim().length >= 80); const cut = k > 0 ? ls.slice(0, k).join('\n').length : 0; if (k > 0 && cut < body.length * 0.4) body = ls.slice(k).join('\n'); }
+      const given = ent(r.snippet || r.summary || r.description || '').trim(); const lead = (body.split(/\n+/).find((l) => l.trim().length >= 80) || body).replace(/\s+/g, ' ').trim().slice(0, 320);
+      const sn = given.length >= 60 || !lead ? given : lead;
+      const when = r.published || r.published_at || r.date || r.when;
+      const meta = [host(u), when ? String(when).slice(0, 10) : '', r.chars ? (r.chars > 1000 ? (r.chars / 1000).toFixed(1) + 'k' : r.chars) + ' chars read' : '', (r.blocked || r.error) ? 'could not be read' : '', r.unread ? 'found, not read' : ''].filter(Boolean).join(' \u00b7 ');
+      return '<div class="vb-rd' + (on ? ' on' : '') + '"><span class="f">' + esc((host(u) || '?').charAt(0).toUpperCase()) + '</span><div class="c">'
+        + '<a class="t" href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(ent(r.title || r.name || u)) + '</a><span class="m">' + esc(meta) + '</span>'
+        + (on && body ? '<div class="x">' + paras(body.slice(0, 8000)) + '</div>' : (sn ? '<span class="s">' + esc(sn) + '</span>' : ''))
+        + (body.length > sn.length + 60 ? '<button class="mo"' + set('open', on ? -1 : i) + '>' + (on ? 'less' : 'read more') + '</button>' : '') + '</div></div>'; }).join('');
+    return wrap('reading', '<div class="vb-rds">' + cards + '</div>' + (pages > 1 ? '<div class="vb-fn"><button' + set('page', (pg + pages - 1) % pages) + '>\u2039</button><button' + set('page', (pg + 1) % pages) + '>\u203a</button><span>' + (pg + 1) + ' / ' + pages + ' \u00b7 ' + n + ' pages</span></div>' : ''));
   };
   R.files = (d, H, o) => { const rw = rows(d); if (!rw.length) return EMPTY('no rows'); if (!rw.some((r) => r.path != null)) return EMPTY('files need a path field'); return R.table(rw, H, { draw: { columns: ['path'].concat(Object.keys(rw[0]).filter((k) => k !== 'path' && typeof rw[0][k] !== 'object').slice(0, 4)) } }); };
   R.list = (d, H) => {
@@ -2155,6 +2188,9 @@
     if (rw && rw.length && rw.every((r) => isObj(r) && (r.step != null || r.stage != null || r.phase != null) && (r.status != null || r.state != null || r.done != null))) { mk('progress', { steps: rw }, 'rows of step and state'); return done(); }
     if (rw && rw.length && isObj(rw[0])) {
       const r0 = rw[0], tk = firstKey(r0, TIMEK), xk = firstKey(r0, TEXTK), nk = numKeys(r0);
+      // 7b pages: rows with a web address and a title or what they say - a reading list, before the log a dated page
+      // would make and the table that cut every page to a cell (web.research, web.search, news, research sources)
+      if (rw.every((r) => isObj(r) && /^https?:/.test(String(r.url || r.link || r.href || ''))) && rw.some((r) => r.title || r.snippet || r.text)) { mk('reading', c, 'pages: a title, an address and what they say', { map: { rows: rk } }); return done(); }
       // 8 events
       if (tk && xk && rw.every((r) => isObj(r))) { mk('log', c, 'rows with a time and a line of text', { map: { events: rk, t: tk, text: xk, kind: firstKey(r0, ['kind', 'level', 'type', 'severity', 'source']) || '' } }); if (rw.length > 1 && rw.some((r) => /err|fail|warn/i.test(String(r.level ?? r.kind ?? r.severity ?? '')))) mk('pareto', c, 'the lines counted by kind', { map: { values: rk, count: firstKey(r0, ['kind', 'level', 'type', 'severity']) || 'kind' }, title: title + ' · by kind' }); return done(); }
       // 9 series
@@ -3422,6 +3458,7 @@ span.vw-sampled{opacity:.85}
 .vb-rw{display:flex;align-items:center;gap:8px;font-size:10px}.vb-rw .n{width:clamp(64px,24%,170px);flex-shrink:0;color:var(--b-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-rw .tr{flex:1;height:7px;border-radius:4px;background:var(--b-s3);overflow:hidden;position:relative}.vb-rw .tr i{display:block;height:100%;border-radius:4px}.vb-rw .tr em{position:absolute;top:-2px;width:2px;height:11px;background:var(--b-t1);transform:translateX(-50%)}.vb-rw .v{min-width:38px;white-space:nowrap;text-align:right;font-family:var(--b-mono);font-size:9.5px;color:var(--b-t1);flex-shrink:0}
 /* the standard set */
 .vb-fc{flex:1;min-height:0;border-radius:var(--b-r);background:var(--b-surf2);padding:9px 11px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14));animation:vb-fcin .35s ease}@keyframes vb-fcin{from{opacity:0;transform:translateX(10px)}}
+  .vb-rds{display:flex;flex-direction:column;gap:6px;min-height:0;overflow:auto}.vb-rd{display:grid;grid-template-columns:22px minmax(0,1fr);gap:9px;padding:8px 10px;border-radius:var(--b-r);background:var(--b-surf2)}.vb-rd .f{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--b-ac);background:color-mix(in srgb,var(--b-ac) 14%,transparent)}.vb-rd .c{display:flex;flex-direction:column;gap:3px;min-width:0}.vb-rd .t{font-size:12px;font-weight:600;line-height:1.35;color:var(--b-t1);text-decoration:none;overflow-wrap:anywhere}.vb-rd .t:hover{color:var(--b-ac);text-decoration:underline}.vb-rd .m{font-size:10px;color:var(--b-t3)}.vb-rd .s{font-size:11px;line-height:1.5;color:var(--b-t2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.vb-rd .x{font-size:11.5px;line-height:1.6;color:var(--b-t1);max-height:340px;overflow:auto}.vb-rd .x p{margin:0 0 .6em}.vb-rd .mo{align-self:flex-start;font-size:10px;padding:1px 8px;border-radius:99px;color:var(--b-ac);background:transparent;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--b-ac) 45%,transparent)}.vb-rd.on{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--b-ac) 40%,transparent)}
 .vb-fc .k{font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--b-t3);display:flex;gap:6px;align-items:center}.vb-fc .k i{width:6px;height:6px;border-radius:50%}.vb-fc .h{font-size:12px;font-weight:600;color:var(--b-t1);line-height:1.35}.vb-fc .b{font-size:10px;color:var(--b-t2);line-height:1.45;overflow:hidden}.vb-fc .m{font-family:var(--b-mono);font-size:8.5px;color:var(--b-t3);display:flex;gap:8px}
 .vb-fn,.vb-carn{display:flex;align-items:center;gap:5px}.vb-fn button,.vb-carn button{width:22px;height:18px;border-radius:var(--b-r);background:var(--b-surf2);color:var(--b-t2);font-size:11px}.vb-fn i,.vb-carn i{width:6px;height:6px;border-radius:50%;background:var(--b-s3);cursor:pointer}.vb-fn i.on,.vb-carn i.on{background:var(--b-ac)}.vb-fn span{margin-left:auto;font-family:var(--b-mono);font-size:8.5px;color:var(--b-t3)}.vb-carn .vb-lbl{margin-left:8px}
 .vb-fr{display:grid;grid-template-columns:18px 1fr 44px 52px;gap:7px;align-items:center;height:22px;font-size:10px;border-bottom:1px solid var(--b-bd)}.vb-fr.h{color:var(--b-t3);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;height:18px}.vb-fr .ic{width:14px;height:16px;border-radius:2px;font-family:var(--b-mono);font-size:6.5px;font-weight:700;color:#0e0f12;display:flex;align-items:flex-end;justify-content:center;padding-bottom:1px}.vb-fr .n{color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-fr .n small{color:var(--b-t3);margin-left:5px;font-size:9px}.vb-fr .m{font-family:var(--b-mono);font-size:9px;color:var(--b-t3);text-align:right}
