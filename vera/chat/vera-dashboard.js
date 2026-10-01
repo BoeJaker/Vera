@@ -648,7 +648,7 @@
       // a width the grid's CSS knows (a 5 persisted by another build would fall to one column) and a row 1–MAX_ROWS
       var cw = snapWidth(+span[0]), ch = Math.max(1, Math.min(MAX_ROWS, Math.round(+span[1] || 1)));
       [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); });
-      w.classList.add('w-w' + cw); setRows(w, ch);
+      w.removeAttribute('data-vd-fill'); w.style.gridColumn = ''; w.classList.add('w-w' + cw); setRows(w, ch);
     }
     /* A TILE MAY BE AS TALL AS ITS CONTENT NEEDS (owner, 2026-09-28: "the stack topology widget is not tall enough ... it
        seemed to have a max i could drag it to that wasnt far from where it started"). Heights stopped at six rows - the
@@ -702,14 +702,16 @@
         var t = { record: ed ? ed : (dyn ? (dyn.record || panelRecord(dyn.panelId, wid)) : wid), at: null, span: sp,
           hidden: state.hidden.has(wid), refresh: m.refresh || '', floated: !!floated };
         if (ed) t.edited = true;   // a page or file tile whose record the user changed: the edit rides inline
+        if (state.userH && state.userH[wid]) t.userH = true;   // a height the user set (fitting leaves it alone)
         tiles.push(t);
       });
-      return { v: 2, dashboard: (state.file && state.file.dashboard) || key, layout: state.name || 'default', key: key,
+      return { v: 2, fitv: 1, dashboard: (state.file && state.file.dashboard) || key, layout: state.name || 'default', key: key,
         user: state.user || '', grid: state.grid, widgets: flow(tiles, state.grid.cols) };
     }
     function unpack(rec) {
       state.order = []; state.hidden = new Set(); state.sizes = {}; state.dynamic = {}; state.edits = {}; state.meta = {}; state.seen = {};
       state.name = rec.layout || 'default'; state.user = rec.user || '';
+      state.userH = {}; state.legacySaved = !rec.fitv;   // saved before fitting: a height unlike the file's is the user's
       if (rec.grid && +rec.grid.cols) state.grid = rec.grid;
       (rec.widgets || []).forEach(function (t) {
         if (!t) return;
@@ -718,6 +720,7 @@
         if (!wid) return;
         state.order.push(wid); state.seen[wid] = 1;
         if (t.hidden) state.hidden.add(wid);
+        if (t.userH) state.userH[wid] = 1;
         if (Array.isArray(t.span) && +t.span[0]) state.sizes[wid] = { w: +t.span[0], h: +t.span[1] || 1 };
         state.meta[wid] = { at: Array.isArray(t.at) ? t.at : null, refresh: t.refresh || '', floated: !!t.floated };
         if (r && t.edited) state.edits[wid] = r;
@@ -731,6 +734,7 @@
       try {
         var j = JSON.parse(localStorage.getItem(SKEY) || 'null');
         if (!j) return;
+        state.saved = true;                    // the user's own layout: fitting may set heights, packing never reorders it
         if (!Array.isArray(j.widgets)) {
           j = migrate(j, { key: key, page: widgets().map(function (w) { return { id: w.dataset.wid, span: spanOf(w) }; }) });
         }
@@ -903,6 +907,7 @@
     function onMoveBlur() { moveEnd(false); }   // the button let go over another window: the tile goes back
     function moveEnd(commit) {
       var m = move; if (!m) return; move = null;
+      if (commit) state.saved = true;          // a tile you moved: the order is yours
       document.removeEventListener('mousemove', onMoveMove);
       document.removeEventListener('mouseup', onMoveUp);
       document.removeEventListener('keydown', onMoveKey, true);
@@ -1050,7 +1055,7 @@
         _dragGuardOff(); endGesture();
         ghost.remove();
         allowed.forEach(function (n) { w.classList.remove('w-w' + n); });
-        w.classList.add('w-w' + targetW); setRows(w, targetH);
+        w.removeAttribute('data-vd-fill'); w.style.gridColumn = ''; w.classList.add('w-w' + targetW); setRows(w, targetH);
         // Resize only ever sets the w-wN/w-hN span classes — nothing else.
         // An earlier version of this also stamped an inline max-height here,
         // computed from THIS drag's measured row pitch — but that pitch is
@@ -1065,6 +1070,8 @@
         // thing that needs to be idempotent; each widget's own CSS is
         // responsible for its own height ceiling, if it has one.
         state.sizes[w.dataset.wid] = { w: targetW, h: targetH };
+        // a height you dragged to is yours: fitting never moves it again, and the layout is yours to arrange
+        state.userH = state.userH || {}; state.userH[w.dataset.wid] = 1; delete w.dataset.vdFit; state.saved = true;
         syncSize(w);       // the span picks the size the record draws at
         save();
         applyLayout();     // and the positions follow
@@ -1107,13 +1114,159 @@
       });
       ws.forEach(function (w) {
         var sz = state.sizes[w.dataset.wid];
-        if (sz && sz.w) { [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); }); w.classList.add('w-w' + sz.w); }
+        if (sz && sz.w) { [2, 3, 4, 6, 8, 12].forEach(function (n) { w.classList.remove('w-w' + n); }); w.removeAttribute('data-vd-fill'); w.style.gridColumn = ''; w.classList.add('w-w' + sz.w); }
         if (sz && sz.h) setRows(w, sz.h);
       });
       stampAt();
+      fillGaps();
       ws.forEach(syncSize);
       renderHidden();
     }
+    /* ── A TILE AS TALL AS WHAT IT HOLDS (owner, 2026-10-01: "lots of the widgets are at the default height when they could
+       be taller ... squashed vertically ... widgets that have less content in are often too big and have lots of empty
+       space ... the default layout is the worst, the actual layout of the widgets is very random"). Measured on the main
+       dashboard: every height was the layout file's guess whatever the tile held - a 19-row routing table in 194 px, a
+       100-line log in 194 px, two 155-item rankings in 126 px; four numbers in 126 px using 49 of them.
+       So a tile's height follows its CONTENT once its data is in: a figure two rows, a chart four, a list, a table or a
+       log as many as its items need (to a ceiling - beyond it the tile scrolls), a parts chart three. Graphs, maps, iso
+       scenes, composites and panels keep the height their author gave them - they are drawn to fill what they get.
+       A height YOU set (the resize corner) is never touched; neither is one a layout saved before this, where it
+       differs from the file's. ── */
+    var FIT_CAT = { level: 'level', series: 'series', values: 'values', parts: 'parts', events: 'events', items: 'items', stages: 'stages' };
+    function fitCategory(form) {
+      var f = String(form || '').toLowerCase();
+      if (/^(section|panel|composite|element|vgraph|graph|map|globe|topology|pipes|context_graph|cellmap|matrix|heat|calendar|month|schedule|calnav|iso)$/.test(f) || /@iso$|iso/.test(f)) return '';
+      if (f === 'reading') return 'reading';
+      if (/^(numbers|pills|status)$/.test(f)) return 'chips';
+      if (/^(ranked|bars|kv)$/.test(f)) return 'rowsv';   // (thermo and temps stand their readings side by side: their author's height)
+      if (/^(thermo|temps|gauge|column|histogram|pulse)$/.test(f)) return '';
+      return FIT_CAT[SHAPE_OF[f]] || '';
+    }
+    function itemsOf(w) {
+      var el = w.querySelector(':scope > .w-body > vera-widget') || w.querySelector('vera-widget'); if (!el) return null;
+      var d = el._data; if (d === undefined || d === null) return null;
+      // what the ELEMENT draws (its own record: the map, the where-filter) - a tile's file record can lack them
+      var rec = el._rec || recordOf(w.dataset.wid) || null, form = rec && rec.form, VW = window.VeraWidget, x = d;
+      try { if (VW && rec) x = VW.dataFor(VW.mapped ? VW.mapped(rec, form, d) : d, form); } catch (e) { x = d; }
+      if (Array.isArray(x)) return x.length;
+      // the list it DRAWS: the conventional keys first (a series or a history beside it is not what the rows are)
+      if (x && typeof x === 'object') { var ck = ['rows', 'items', 'results', 'entries', 'events', 'data', 'values', 'records', 'sources'].filter(function (k) { return Array.isArray(x[k]); })[0];
+        if (ck) return x[ck].length; var arr = Object.keys(x).map(function (k) { return x[k]; }).filter(Array.isArray); if (arr.length === 1) return arr[0].length;
+        // a ranking or a set of values is an object of numbers ({gpu-250-cpu: 41, cpu-247: 12, ...}): one row each
+        var ks = Object.keys(x); if (ks.length && ks.every(function (k) { return x[k] == null || typeof x[k] !== 'object'; })) return ks.length;
+        return null; }
+      return 1;
+    }
+    function desiredRows(w) {
+      var rec = recordOf(w.dataset.wid); var el = w.querySelector('vera-widget');
+      var form = (rec && rec.form) || (el && el._rec && el._rec.form) || '';
+      var cat = fitCategory(form); if (!cat) return 0;
+      var n = itemsOf(w); var px = w.getBoundingClientRect().width || 400;
+      var gs = getComputedStyle(grid), gap = parseFloat(gs.rowGap || gs.gap) || GRID.gap, pitch = GRID.row + gap;
+      var head = w.querySelector(':scope > .w-head'); var chrome = (head ? head.offsetHeight : 32) + 16;
+      var content;
+      if (cat === 'level') content = 74;   // one figure (its data may carry a history: that is its trend, not more figures)
+      else if (cat === 'chips') { if (n == null) return 0; content = 34 * Math.ceil(Math.max(1, n) / Math.max(1, Math.floor(px / 120))) + 8; }
+      else if (cat === 'series') content = px >= 500 ? 210 : 170;
+      else if (cat === 'parts') content = 150;
+      else if (cat === 'stages') content = 110;
+      else if (n == null) return 0;                       // a list's height waits for its data
+      else if (cat === 'rowsv') content = Math.min(n, 14) * 24 + 16;
+      else if (cat === 'events') content = Math.min(n, 16) * 21 + 26;
+      else if (cat === 'reading') content = Math.min(n, 5) * 88 + 34;
+      else content = Math.min(n, 16) * 22 + 38;          // a table, a list, rows, files, a checklist
+      var cap = (cat === 'items' || cat === 'events' || cat === 'rowsv' || cat === 'reading') ? 11 : 6;
+      return Math.max(cat === 'level' || cat === 'chips' ? 2 : 3, Math.min(cap, MAX_ROWS, Math.ceil((content + chrome + gap) / pitch)));
+    }
+    function userSized(wid) {
+      if (state.userH && state.userH[wid]) return true;
+      // a layout saved before fitting existed: a height different from the file's own is the user's choice
+      if (state.legacySaved && state.sizes[wid] && +state.sizes[wid].h) { var fs = state.fileSpan && state.fileSpan[wid]; if (fs && +fs[1] && +fs[1] !== +state.sizes[wid].h) return true; }
+      return false;
+    }
+    var _fitT = 0;
+    function fitSoon() { clearTimeout(_fitT); _fitT = setTimeout(fitAll, 350); }
+    function fitAll() {
+      if (gesture || state.editing && grid.querySelector('.vd-rghost')) return;
+      var changed = false;
+      widgets().forEach(function (w) {
+        if (w.classList.contains('hidden') || w.classList.contains('floating') || userSized(w.dataset.wid)) return;
+        var r = desiredRows(w); if (!r) return;
+        var sp = spanOf(w); if (r !== sp[1]) { setRows(w, r); changed = true; }
+        w.dataset.vdFit = '1';
+      });
+      if (changed || !grid._vdPacked) packDefault();
+      if (changed) stampAt();
+      fillGaps();
+      if (changed) widgets().forEach(syncSize);
+    }
+    /* THE DEFAULT LAYOUT, PACKED: within each section (a section is a full-width band), the taller tiles first and the
+       shorter ones filling the holes beside them - so rows line up instead of a tall tile leaving a well beside short ones. Only
+       the default: an arrangement the user saved (or made with Arrange) is theirs. */
+    function packDefault() {
+      if (state.saved) return;                 // a layout the user saved or arranged: theirs, never reordered
+      grid._vdPacked = true;
+      var kids = widgets(), seg = [], segs = [];
+      kids.forEach(function (w) { var rec = recordOf(w.dataset.wid); if (rec && rec.form === 'section') { if (seg.length) segs.push(seg); segs.push([w]); seg = []; } else seg.push(w); });
+      if (seg.length) segs.push(seg);
+      var order = [];
+      segs.forEach(function (s) {
+        if (s.length === 1) { order.push(s[0]); return; }
+        var idx = s.map(function (w, i) { return { w: w, i: i, h: spanOf(w)[1], wd: spanOf(w)[0] }; });
+        idx.sort(function (a, b) { return (b.h - a.h) || (b.wd - a.wd) || (a.i - b.i); });
+        // packed in a grid of its own (a section is a wall: nothing from below fills a hole above it), then laid in the
+        // order the packing reads row by row - the order the page's own (sparse) placement then follows
+        var tiles = idx.map(function (x) { return { wid: x.w.dataset.wid, span: [x.wd, x.h], hidden: x.w.classList.contains('hidden') }; });
+        var byWid = {}; idx.forEach(function (x) { byWid[x.w.dataset.wid] = x.w; });
+        arrange(tiles, state.grid.cols || GRID.cols).forEach(function (t) { order.push(byWid[t.wid]); });
+      });
+      var same = order.every(function (w, i) { return kids[i] === w; });
+      if (!same) order.forEach(function (w) { grid.appendChild(w); });
+    }
+    /* NO HOLES BESIDE A TILE: the widths a tile may take are 2, 3, 4, 6, 8 and 12 of 12, so a packed band can still end a
+       row short - a 3-wide gauge beside a 4 and a 3 leaves two columns empty to its right. A tile
+       with free cells to its right on EVERY row it spans grows into them (the cells the final flow left empty - no later
+       tile wanted them, so taking them moves nothing). Drawn only (inline, data-vd-fill, the full-width grid only): the record
+       keeps the tile's own width, and a tile whose size the user dragged keeps exactly the width they gave it. */
+    // where the page's grid puts each tile: CSS sparse auto-placement - a cursor that only moves forward, each tile at
+    // the first cell at or after it where its span fits (flow() is the dense model the record's at uses)
+    function sparseFlow(tiles, cols) {
+      var occ = {}, cr = 0, cc = 0;
+      function fits(r, c, w, h) { for (var y = r; y < r + h; y++) for (var x = c; x < c + w; x++) if (occ[y + ',' + x]) return false; return true; }
+      return tiles.map(function (t) {
+        var o = { wid: t.wid, span: t.span, at: null }; if (t.hidden) return o;
+        var w = Math.min(cols, Math.max(1, +t.span[0] || 4)), h = Math.max(1, +t.span[1] || 1);
+        for (var r = cr, c = cc; r < cr + 10000; c++) {
+          if (c + w > cols) { r++; c = -1; continue; }
+          if (fits(r, c, w, h)) { for (var y = r; y < r + h; y++) for (var x = c; x < c + w; x++) occ[y + ',' + x] = 1; o.at = [c, r]; cr = r; cc = c + w; break; }
+        }
+        return o;
+      });
+    }
+    function fillGaps() {
+      var ws = widgets();
+      ws.forEach(function (w) { if (w.hasAttribute('data-vd-fill')) { w.removeAttribute('data-vd-fill'); w.style.gridColumn = ''; } });
+      var cols = state.grid.cols || GRID.cols;
+      // only where the grid has its full columns: the narrow breakpoints re-flow the same order into 6 or 2
+      var live = String(getComputedStyle(grid).gridTemplateColumns || '').split(/\s+/).filter(Boolean).length;
+      if (live !== cols) return;
+      var tiles = ws.map(function (w) { return { wid: w.dataset.wid, span: spanOf(w), hidden: w.classList.contains('hidden') || w.classList.contains('floating') }; });
+      var placed = sparseFlow(tiles, cols), occ = {};
+      placed.forEach(function (t) { if (!t.at) return; var sw = Math.min(cols, t.span[0]); for (var y = t.at[1]; y < t.at[1] + t.span[1]; y++) for (var x = t.at[0]; x < t.at[0] + sw; x++) occ[y + ',' + x] = t.wid; });
+      placed.forEach(function (t) {
+        if (!t.at) return; var sw = Math.min(cols, t.span[0]), free = 0;
+        for (var x = t.at[0] + sw; x < cols; x++) {
+          var ok = true; for (var y = t.at[1]; y < t.at[1] + t.span[1]; y++) if (occ[y + ',' + x]) { ok = false; break; }
+          if (!ok) break; free++;
+        }
+        if (!free) return;
+        for (var y2 = t.at[1]; y2 < t.at[1] + t.span[1]; y2++) for (var x2 = t.at[0] + sw; x2 < t.at[0] + sw + free; x2++) occ[y2 + ',' + x2] = t.wid;
+        var w = byId(t.wid); if (!w || state.userH && state.userH[t.wid]) return;   // a width you set stays yours
+        w.setAttribute('data-vd-fill', String(sw + free)); w.style.gridColumn = 'span ' + (sw + free);
+      });
+    }
+    grid.addEventListener('widget:rendered', fitSoon);
+    var _gapT = 0; window.addEventListener('resize', function () { clearTimeout(_gapT); _gapT = setTimeout(fillGaps, 200); });
     // at = [col, row] from dense flow over the grid's order — what the record persists and the tile shows
     function stampAt() {
       var tiles = widgets().map(function (w) { return { wid: w.dataset.wid, span: spanOf(w), hidden: state.hidden.has(w.dataset.wid) }; });
@@ -1126,6 +1279,7 @@
     }
     // Arrange / compact: the tiles in the order dense flow packs them, so the holes a tall tile left close.
     function doArrange() {
+      state.saved = true;
       var tiles = widgets().map(function (w) { return { wid: w.dataset.wid, span: spanOf(w), hidden: state.hidden.has(w.dataset.wid) }; });
       state.order = arrange(tiles, state.grid.cols).map(function (t) { return t.wid; });
       applyLayout(); save();
@@ -1148,6 +1302,8 @@
       if (!confirm('Reset dashboard layout to defaults?')) return;
       try { localStorage.removeItem(SKEY); } catch (e) {}
       state.order = []; state.hidden = new Set(); state.sizes = {}; state.edits = {}; state.meta = {}; state.seen = {}; state.name = 'default';
+      state.userH = {}; state.saved = false; state.legacySaved = false; grid._vdPacked = false;   // the defaults again: fitted and packed afresh
+      widgets().forEach(function (w) { delete w.dataset.vdFit; }); setTimeout(fitAll, 400);
       widgets().forEach(function (w) { if (w.dataset.record && !w.dataset.fromFile) { w.remove(); delete state.dynamic[w.dataset.wid]; } });
       widgets().forEach(function (w) { var r = recordOf(w.dataset.wid); if (r) { drawTile(w, r); recordChip(w); } });   // an edited tile back to its record
       if (state.file) applyFile(state.file); else applyLayout();
@@ -1717,6 +1873,7 @@
         var eff = state.edits[wid] || r;   // the user's edit of this tile, else the file's record
         var w = byIdAnywhere(wid);
         var span = Array.isArray(t.span) && +t.span[0] ? t.span : (eff ? spanFor(eff) : null);
+        if (span) { state.fileSpan = state.fileSpan || {}; state.fileSpan[wid] = span; }   // the file's own span (userSized compares)
         if (w) {
           if (!state.seen[wid]) {          // the file's defaults, for a tile the user has not arranged
             if (span && !(state.sizes[wid] && +state.sizes[wid].w)) setSpan(w, span);
