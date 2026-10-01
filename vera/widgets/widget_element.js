@@ -3706,7 +3706,7 @@ span.vw-sampled{opacity:.85}
     + '.vw-tip{max-width:360px}.vw-tip .vw-tkv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:1px 10px;margin:4px 0 2px}.vw-tip .vw-tkv > i{font-style:normal;color:var(--t2,var(--dim2,#8a92a0));font-size:10.5px;white-space:nowrap}'
     + '.vw-tip .vw-tkv > u{text-decoration:none;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-tip .vw-tkv i.st{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:1px}'
     + '.vw-tip small{display:block;margin-top:5px;padding-top:4px;border-top:1px solid var(--bd,rgba(255,255,255,.08));font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-tip a{color:inherit;text-decoration:none}'
-    + ':host{position:relative}.vw-as{position:absolute;top:4px;right:4px;z-index:6;opacity:0;transition:opacity .15s}:host(:hover) .vw-as,.vw-as.open{opacity:1}:host-context(.dash-grid.editing) .vw-as{display:none}'
+    + ':host{position:relative}.vw-as{position:absolute;top:4px;right:4px;z-index:6;opacity:.38;transition:opacity .15s}.vw-as:hover,.vw-as:focus-within,.vw-as.open{opacity:1}:host-context(.dash-grid.editing) .vw-as{display:none}'   /* the owner (2026-09-28): the view-as list appears only when the ⇄ is pressed, never on mouseover. It used to fade in on the widget's hover and sat at opacity 0 the rest of the time - still the topmost thing in the corner, so a click there opened the list unseen. Now the ⇄ is always faintly there and nothing changes on the widget's hover */
     + '.vw-as-b{all:unset;cursor:pointer;width:22px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;font-size:12px;color:var(--b-t2,#8a92a0);background:var(--b-s2,#1f232b);box-shadow:inset 0 0 0 1px var(--b-bd,rgba(255,255,255,.12))}.vw-as-b:hover{color:var(--b-ac,#6ea8d8)}'
     + '.vw-as-m{position:fixed;z-index:2147483001;min-width:170px;display:flex;flex-direction:column;padding:4px;border-radius:8px;background:var(--b-s1,var(--s1,#15171c));box-shadow:0 10px 30px -10px rgba(0,0,0,.65),inset 0 0 0 1px var(--b-bd,rgba(255,255,255,.12))}'
     + '.vw-as-m > small{padding:3px 8px 4px;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--b-t3,#6b7280)}.vw-as-m button{all:unset;cursor:pointer;display:flex;gap:8px;align-items:center;padding:4px 8px;border-radius:5px;font-size:11.5px;color:var(--b-t1,#d8dce4)}'
@@ -4124,12 +4124,21 @@ span.vw-sampled{opacity:.85}
       if (this.hasAttribute('no-view-as') || (/^(xs|s)$/.test(this.size) && !this.hasAttribute('bare'))) return;
       const alts = viewsFor(rec, form0, this._data); if (alts.length < 2) return;
       const box = document.createElement('div'); box.className = 'vw-as';
-      box.innerHTML = '<button type="button" class="vw-as-b" title="View this as another form">\u21c4</button><div class="vw-as-m" hidden><small>view as</small>'
+      /* no title: the hover card turns any title into a card, so pointing at the \u21c4 popped up "View this as another form" -
+         the list appearing on mouseover the owner reported. aria-label names it for a screen reader instead */
+      box.innerHTML = '<button type="button" class="vw-as-b" aria-label="View this as another form">\u21c4</button><div class="vw-as-m" hidden><small>view as</small>'
         + alts.map((f) => '<button type="button" data-as="' + esc(f) + '" class="' + (f === form ? 'on' : '') + '"><i>' + glyphOf(f, this._data) + '</i>' + esc(f) + (f === canon(form0) ? ' \u00b7 as made' : '') + '</button>').join('') + '</div>';
       const m = box.querySelector('.vw-as-m'), b = box.querySelector('.vw-as-b');
       const close = () => { m.hidden = true; box.classList.remove('open'); document.removeEventListener('click', close, true); };
       b.addEventListener('click', (ev) => { ev.stopPropagation(); if (!m.hidden) { close(); return; } const r = b.getBoundingClientRect(); m.hidden = false; box.classList.add('open');
-        const mw = m.offsetWidth || 170, mh = m.offsetHeight || 200; m.style.left = Math.max(4, Math.min((window.innerWidth || 1200) - mw - 4, r.right - mw)) + 'px'; m.style.top = ((r.bottom + 4 + mh > (window.innerHeight || 800)) ? Math.max(4, r.top - mh - 4) : r.bottom + 4) + 'px';
+        const vw = document.documentElement.clientWidth || window.innerWidth || 1200, vh = document.documentElement.clientHeight || window.innerHeight || 800;
+        const mw = m.offsetWidth || 170, mh = m.offsetHeight || 200, want = { x: Math.max(4, Math.min(vw - mw - 4, r.right - mw)), y: (r.bottom + 4 + mh > vh) ? Math.max(4, r.top - mh - 4) : r.bottom + 4 };
+        m.style.left = want.x + 'px'; m.style.top = want.y + 'px';
+        /* the owner (2026-10-01): the list often showed cut off at the right edge of the screen. position:fixed is the
+           viewport only when no ancestor makes a containing block (a transform, a filter, container-type on a parent
+           widget's body...); then left/top count from that box instead. Measure where it landed and shift by the
+           difference, so it sits where it was meant to whatever is around the widget */
+        const got = m.getBoundingClientRect(); if (Math.abs(got.left - want.x) > 1 || Math.abs(got.top - want.y) > 1) { m.style.left = (want.x - (got.left - want.x)) + 'px'; m.style.top = (want.y - (got.top - want.y)) + 'px'; }
         setTimeout(() => document.addEventListener('click', close, true), 0); });
       m.addEventListener('click', (ev) => { const x = ev.target.closest && ev.target.closest('[data-as]'); if (!x) return; ev.stopPropagation(); const f = x.getAttribute('data-as');
         this._viewAs = f === canon(form0) ? '' : f; try { if (this._viewAs) localStorage.setItem('vera.widget.as.' + key(rec), this._viewAs); else localStorage.removeItem('vera.widget.as.' + key(rec)); } catch (_) {}
