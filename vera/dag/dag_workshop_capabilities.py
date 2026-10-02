@@ -14194,6 +14194,12 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _intent_core = None
 
+# Which run file an operator.run call meant to open (live 2026-10-02: no url, or a path).
+try:
+    from Vera.vera.dag import operator_url_core as _operator_url_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import operator_url_core as _operator_url_core
+
 # Double-escaped newlines in model-written Python (probe 2026-10-01: 24% of
 # exec.python.run calls wrote a literal backslash-n instead of a newline).
 try:
@@ -17194,31 +17200,31 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                                   "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                   "session_id": sid, "note": f"{_UI_URL_ARG} {_u} → {_fixed}"})
-            elif not _u and _V5_UI_VERIFY_STEP_RE.search(f"{step.get('title','')}\n{step.get('goal','')}"):
-                # §3.14-chapter's OTHER observed failure mode (Test R): a
-                # step whose args omitted the url/start_url ENTIRELY doesn't
-                # match the malformed-guess regex above at all (there's
-                # nothing to guess-correct) — it just silently falls through
-                # to browser.navigate's own hardcoded default
-                # (start_url='https://www.google.com') and the run ends up
-                # "stuck on a Google consent page" trying to extract info
-                # from a search engine's cookie banner instead of ever
-                # reaching the file it was meant to verify. Only fires for a
-                # step whose own title/goal is UI-verify-shaped (so this
-                # never redirects an unrelated call that legitimately wants
-                # no default), and only when exactly ONE html/htm file
-                # exists in the working directory — with more than one
-                # candidate, guessing which is wrong is worse than leaving
-                # the args alone.
-                _html_candidates = [n for n in (workdir_files or [])
-                                    if n.lower().endswith((".html", ".htm")) and not n.endswith("/")]
-                if len(_html_candidates) == 1:
-                    _fixed = _v5_sandbox_preview_url(sid, _html_candidates[0])
+            else:
+                # A url that is MISSING, or a filesystem path rather than a url, still
+                # names one of this run's own files - open its preview. Live
+                # 2026-10-02: every failed live-target operator run opened on Vera's
+                # dashboard because the call had no usable url - "Load timer_app.html
+                # from local HTTP server at port 8080" (no url), "Navigate to the timer
+                # page" (no url), url="/workspace/answer.html". The old heal filled a
+                # missing url only for a step WORDED as a UI check with exactly ONE
+                # html file; operator_url_core also reads the file the call's own goal
+                # names (by name or stem) and maps a path to its file. browser.navigate
+                # keeps the old gate; a panel/IDE/VM target is never redirected.
+                _step_txt = f"{step.get('title','')}\n{step.get('goal','')}"
+                _known = list(workdir_files or [])
+                _known += [k for k in (saved_run_files or {}) if k not in _known]
+                _rel, _why = _operator_url_core.pick_preview_file(
+                    _u, f"{args.get('goal') or ''}\n{_step_txt}", _known,
+                    kind=str(args.get("kind") or ""), operator=(tool == "operator.run"),
+                    ui_verify_step=bool(_V5_UI_VERIFY_STEP_RE.search(_step_txt)))
+                if _rel:
+                    _fixed = _v5_sandbox_preview_url(sid, _rel)
                     args[_UI_URL_ARG] = _fixed
                     await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                                       "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                       "session_id": sid,
-                                      "note": f"{_UI_URL_ARG} (missing) → {_fixed}"})
+                                      "note": f"{_UI_URL_ARG} {_u or '(missing)'} → {_fixed} ({_why})"})
         # ── operator.run/browser.navigate missing `goal` self-heal ───────────
         # Both hard-require `goal` (operator.run: "ERROR: goal required";
         # browser.navigate the same) — observed live (§5.22, Test U): a
