@@ -63,7 +63,8 @@ const MAINSRC = new Set(JSON.parse(fs.readFileSync(path.join(R, 'vera', 'widgets
   t('the topology form draws a snapshot-shaped answer (nodes + edges) as the graph', !/wempty|vw-nodata/.test(h) && /vb-topo/.test(h) && (h.match(/class="tn"/g) || []).length === 3, h.slice(0, 160)); }
 // ── the read-through waits for a slow reading (prod's topology.snapshot takes ~11 s; the old 12 s limit fell back to the sandbox's empty stores) ──
 { const CO = fs.readFileSync(path.join(R, 'vera', 'capability_orchestration.py'), 'utf8');
-  t('the read-through timeout is a named constant, 40 s by default, overridable by VERA_UPSTREAM_READ_TIMEOUT_S', CO.includes('_READ_THROUGH_TIMEOUT_S = float(os.environ.get("VERA_UPSTREAM_READ_TIMEOUT_S") or 40)') && CO.includes('timeout=_READ_THROUGH_TIMEOUT_S') && !CO.includes('verify=False, timeout=12)')); }
+  // 40 s became 20 with the pooled read-through client (877cf064): six tiles waiting 40 s each left a sandbox page unanswered; it fails fast on connect instead
+  t('the read-through timeout is a named constant, 20 s by default, overridable by VERA_UPSTREAM_READ_TIMEOUT_S, with a short connect timeout', CO.includes('_READ_THROUGH_TIMEOUT_S = float(os.environ.get("VERA_UPSTREAM_READ_TIMEOUT_S") or 20)') && CO.includes('timeout=httpx.Timeout(_READ_THROUGH_TIMEOUT_S, connect=_READ_THROUGH_CONNECT_S)') && !CO.includes('verify=False, timeout=12)')); }
 // -- the Cluster overview (main.json): bands that fill the twelve columns, no overlap, human titles, every page tile named --
 { const main = JSON.parse(fs.readFileSync(path.join(R, 'vera', 'widgets', 'layouts', 'main.json'), 'utf8'));
   const shown = main.widgets.filter((w) => !w.hidden), cells = {}; let overlap = '', rows = 0;

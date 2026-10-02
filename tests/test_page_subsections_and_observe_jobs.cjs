@@ -11,7 +11,7 @@ t('a strip in a bar the harness absorbed still counts as shown', BR.includes("if
 const VP = R('vera/vera-panel.js');
 t('the panel\'s own menu mirrors the shown strip under the lit item, a pick clicks the tab', VP.includes("document.querySelectorAll('[data-vera-sub]'), subShown)") && VP.includes("b.addEventListener('click', function () { t.click();") && VP.includes("after.parentNode.insertBefore(b, after.nextSibling)"));
 t('the menu draws a second level', LHM.includes("(t.depth > 1 ? ' sub2' : '')") && LHM.includes('.lhm-absorbed .lhm-tab.sub2{'));
-t('the Estate\'s sub-tab strips name their sections - Observe\'s Events and Perf among them', (WO.match(/data-vera-sub="/g) || []).length === 19 && WO.includes("onclick=\"P.obsSub('perf')\" data-vera-sub=\"perf\"") && WO.includes("onclick=\"P.obsSub('events')\" data-vera-sub=\"events\""));
+t('the Estate\'s sub-tab strips name their sections - Observe\'s Events and Perf among them', (WO.match(/data-vera-sub="/g) || []).length >= 19 /* 19 when this was written; the Models catalog added browse, installed, dl and nodes (3ac1d433) */ && WO.includes("onclick=\"P.obsSub('perf')\" data-vera-sub=\"perf\"") && WO.includes("onclick=\"P.obsSub('events')\" data-vera-sub=\"events\""));
 const ids = O.widgets.map((w) => w.record && w.record.id);
 /* 2026-09-28 (owner): "the widgets in observe panel are not focused on errors and they must be" - the warnings and errors
    lead now; the jobs - Vera's and the LLM's - follow them, still above the event stream and the log */
