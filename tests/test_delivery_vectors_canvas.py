@@ -70,6 +70,22 @@ def test_a_pick_is_one_of_the_offered_vectors_or_none():
     assert D.parse_pick("", ALLOWED)["channel"] == "none"
 
 
+def test_an_explicit_ask_decides_without_a_model():
+    """Measured 2026-10-02 on qwen3.5:2b: the plainest asks went to 'none' - so the request is read first."""
+    allowed = ["canvas", "canvas_html", "html", "podcast", "email", "telegram", "notebook", "memory"]
+    asks = {"plan my weekend and keep it somewhere I can see": "canvas",
+            "summarise the news so I can listen to it on my drive": "podcast",
+            "email me the report": "email",                       # an email, not a report
+            "ping it to my phone": "telegram",
+            "write it up as a proper document": "canvas_html",
+            "put it on the canvas": "canvas",
+            "remember that the router is on .1": "memory",
+            "what is 12 times 9?": ""}
+    for q, want in asks.items():
+        assert D.explicit_ask(q, allowed) == want, q
+    assert D.explicit_ask("email me the report", ["canvas"]) == ""        # not offered: not chosen
+
+
 def test_the_pick_prompt_carries_the_request_the_answer_and_the_menu():
     p = D.pick_prompt("THE-ANSWER", "THE-ASK", [{"id": "canvas", "label": "Canvas"}], [{"id": "short"}])
     assert "THE-ANSWER" in p and "THE-ASK" in p and "- canvas:" in p and "short" in p and '"channel"' in p
@@ -130,19 +146,42 @@ def test_the_model_picks_a_vector_and_it_is_delivered(monkeypatch):
     _stub(monkeypatch, "llm.generate", gen)
     _stub(monkeypatch, "report.html", report)
     _stub(monkeypatch, "canvas.add", add)
-    out = asyncio.run(R.output_deliver_auto(content="# Findings\n" + "y" * 80, request="write it up",
+    out = asyncio.run(R.output_deliver_auto(content="# Findings\n" + "y" * 600, request="what did the survey find",
                                             session_id="s2", html_to_canvas=True))
     assert calls["gen"]["job_type"] == "delivery_pick"
     assert out["channel"] == "canvas_html" and out["delivered"] and calls["add"]["content"]["url"] == "/render/report/r2.html"
 
 
 @needs_app
-def test_most_answers_stay_in_the_chat(monkeypatch):
+def test_an_explicit_ask_is_delivered_without_asking_a_model(monkeypatch):
+    calls = {}
+
     async def gen(**kw):
+        calls["gen"] = kw
+        return {"text": '{"channel": "none"}'}
+
+    async def add(**kw):
+        calls["add"] = kw
+        return {"ok": True, "id": "cv_session_s4"}
+    _stub(monkeypatch, "llm.generate", gen)
+    _stub(monkeypatch, "canvas.add", add)
+    out = asyncio.run(R.output_deliver_auto(content="- pack\n- book\n- leave", request="keep it somewhere I can see",
+                                            session_id="s4"))
+    assert "gen" not in calls and out["channel"] == "canvas" and out["delivered"] and out["why"] == "you asked for it"
+
+
+@needs_app
+def test_most_answers_stay_in_the_chat(monkeypatch):
+    calls = {}
+
+    async def gen(**kw):
+        calls["gen"] = kw
         return {"text": '{"channel": "none", "why": "the chat is enough"}'}
     _stub(monkeypatch, "llm.generate", gen)
-    out = asyncio.run(R.output_deliver_auto(content="z" * 80, session_id="s3"))
-    assert out["ok"] and out["channel"] == "none" and out["delivered"] is False
+    short = asyncio.run(R.output_deliver_auto(content="z" * 80, request="what is 12 times 9", session_id="s3"))
+    assert short["channel"] == "none" and short["delivered"] is False and "gen" not in calls   # short: no model
+    long_ = asyncio.run(R.output_deliver_auto(content="z" * 900, request="explain it", session_id="s3"))
+    assert long_["ok"] and long_["channel"] == "none" and long_["delivered"] is False and "gen" in calls
 
 
 @needs_app

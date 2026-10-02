@@ -399,22 +399,63 @@ def describe_for_model(available: Optional[List[str]] = None,
     return "\n".join(lines)
 
 
+# What the request itself says about where the answer should go. A small model following a menu got the plainest
+# asks wrong (measured 2026-10-02, qwen3.5:2b: "keep it somewhere I can see" -> none, "so I can listen to it on my
+# drive" -> none), so an explicit ask is read here and decides; the model is asked only when the request says nothing.
+# Most specific first: "email me the report" is an email, not a report.
+_ASKS = [
+    ("email",       r"\be-?mail\b"),
+    ("telegram",    r"\btelegram\b|\bmy phone\b|\btext me\b|\bping (it|this|me)\b"),
+    ("podcast",     r"\blisten\b|\bhear (it|this)\b|\baudio\b|\bpodcast\b|\bout loud\b|\baloud\b|\bread (it|this|me)\b.*\b(later|car|drive)\b"),
+    ("notebook",    r"\bnotebook\b|\bmy notes\b|\bsave (it|this) (to|in) (my )?notes\b"),
+    ("memory",      r"\bremember (this|that|it)\b|\bdon'?t forget\b"),
+    ("canvas_html", r"\b(as a|proper|full) (document|doc|report)\b|\bwrite[- ]?up\b|\bwith diagrams\b|\bhtml report\b"),
+    ("canvas",      r"\bcanvas\b|\b(beside|next to) the chat\b|\bkeep (it|this) (open|somewhere|handy|visible|around)\b"
+                    r"|\bwhere i can see\b|\bpin (it|this)\b"),
+]
+
+
+def explicit_ask(request: str, allowed: List[str]) -> str:
+    """The channel the request asks for in so many words ('' when it asks for none, or for one not offered)."""
+    import re as _re
+    q = str(request or "").lower()
+    for cid, pat in _ASKS:
+        if cid in allowed and _re.search(pat, q):
+            return cid
+    return ""
+
+
+#: An answer shorter than this stays in the chat without asking a model: nothing that short is worth a second place.
+SHORT_ANSWER = 400
+
+# Worked examples for the model - phrased unlike any rule above, so they teach the judgement, not the keywords.
+_PICK_EXAMPLES = [
+    ("a step-by-step plan for moving house, with a checklist per week", "canvas"),
+    ("an in-depth comparison of three databases, sections and tables", "canvas_html"),
+    ("the capital of Peru", "none"),
+    ("a quick fix for the failing import", "none"),
+]
+
+
 def pick_prompt(content: str, request: str, channels: List[Dict[str, Any]],
                 styles: Optional[List[Dict[str, Any]]] = None) -> str:
-    """The question a small model answers to choose where a finished answer ALSO goes (output.deliver_auto)."""
-    lines = ["A user asked something and got the answer below in the chat. Decide whether they would be better served by",
-             "ALSO receiving it another way. Most answers need nothing more: answer none unless one clearly fits.",
-             "", "Ways it can be delivered:"]
+    """The question a small model answers to choose where a finished answer ALSO goes (output.deliver_auto) - asked
+    only when the request names no place (explicit_ask) and the answer is not short."""
+    lines = ["Choose whether a chat answer should ALSO be delivered another way. A long plan or reference worth keeping "
+             "open goes to canvas, a rich document to canvas_html; most answers stay in the chat (none).",
+             "", "Ways:"]
     for c in channels:
         lines.append(f"- {c['id']}: {CHANNEL_USE.get(c['id'], c.get('label') or c['id'])}")
+    lines += ["", "Examples (what the answer is -> channel):"]
+    for what, ch in _PICK_EXAMPLES:
+        lines.append(f"- {what} -> {ch}")
     if styles:
-        lines += ["", "Styles it can be shaped into (or leave blank): "
+        lines += ["", "Styles (optional): "
                   + ", ".join(str(s.get("id")) for s in styles if isinstance(s, dict) and s.get("id"))]
-    lines += ["", "THE REQUEST:", (request or "(not given)")[:1200], "",
-              "THE ANSWER (start):", (content or "")[:2400], "",
+    lines += ["", "THE REQUEST: " + (request or "(not given)")[:1200], "",
+              "THE ANSWER (start):", (content or "")[:2000], "",
               'Reply with ONE line of JSON and nothing else: {"channel": "<one id above, or none>", "style": "<id or empty>", "why": "<few words>"}']
     return "\n".join(lines)
-
 
 def parse_pick(text: str, allowed: List[str], styles: Optional[List[str]] = None) -> Dict[str, str]:
     """Read a model's delivery pick. Anything that is not one of the allowed channels is 'none' - a pick never

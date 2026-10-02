@@ -853,6 +853,14 @@ async def output_deliver_auto(content: str = "", request: str = "", session_id: 
     else:
         if not chans:
             return {"ok": True, "channel": "none", "delivered": False, "why": "no channel to offer"}
+        # the request names a place: that decides (a small model got the plainest asks wrong); a short answer stays
+        # in the chat; only what is left is the model's to judge
+        asked = _delivery.explicit_ask(request, ids)
+        if asked:
+            ch, why = asked, "you asked for it"
+        elif len(content.strip()) < _delivery.SHORT_ANSWER:
+            return {"ok": True, "channel": "none", "delivered": False, "why": "a short answer stays in the chat"}
+    if not ch:
         gen = _cap("llm.generate")
         if not gen:
             return {"ok": False, "error": "llm.generate unavailable"}
