@@ -164,11 +164,15 @@ def parse_decision(text: str) -> Dict[str, Any]:
         except Exception:
             d = None
     if d is None:
-        # last resort: some models emit action on its own line
-        m = re.search(r'"?action"?\s*[:=]\s*"?(\w+)"?', text)
-        if m:
-            return {"thought": "", "action": m.group(1), "args": {}, "done": False,
-                    "raw": text[:400]}
+        # last resort: some models emit action on its own line. Only a REAL
+        # action name counts - prose like "Action: I will click Start" matched
+        # as action "I" (edge mirror 2026-10-02, run fa706e575d): a wasted step
+        # that also hid the truncation, so the "answer with ONLY the JSON" hint
+        # `decide` adds to a cut-off reply never reached the model.
+        for m in re.finditer(r'"?action"?\s*[:=]\s*"?(\w+)"?', text, re.IGNORECASE):
+            if m.group(1).lower() in ACTIONS:
+                return {"thought": "", "action": m.group(1).lower(), "args": {}, "done": False,
+                        "raw": text[:400]}
         return {"error": f"could not parse decision JSON: {text[:160]}"}
     if not isinstance(d, dict):
         return {"error": "decision was not a JSON object"}
