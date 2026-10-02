@@ -1708,8 +1708,12 @@ async def agent_chat_stream_endpoint(request: Request):
     agent = copy.copy(agent)
     if body.get("model_override"): agent.model       = body["model_override"]
     if body.get("instance_id"):    agent.instance_id = body["instance_id"]
-    if body.get("prefer_gpu"):     agent.prefer_gpu  = True
+    # the chat's GPU toggle both ways: unticked used to be ignored ("if prefer_gpu: True" never turned it off)
+    if "prefer_gpu" in body:       agent.prefer_gpu  = bool(body.get("prefer_gpu"))
     if body.get("think"):          agent.think       = True
+    # GPU off for this turn: nothing it starts may land on a GPU node (see capability_orchestration.NO_GPU)
+    if body.get("no_gpu"):
+        _orch.NO_GPU.set(True)
 
     # Ensure the session node exists in the memory graph — FIRE-AND-FORGET.
     # This is a Neo4j MERGE; a slow/degraded graph backend must never delay the

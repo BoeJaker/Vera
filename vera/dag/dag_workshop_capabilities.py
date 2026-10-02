@@ -25934,6 +25934,10 @@ async def workshop_agent_loop_stream(request: Request):
     model              = body.get("model", "")
     instance_id        = body.get("instance_id", "")
     prefer_gpu         = bool(body.get("prefer_gpu", True))
+    # GPU off for this run (the chat's toggle unticked): no role and no cap it calls lands on a GPU node. Set before
+    # the run's task starts so the task carries it (capability_orchestration.NO_GPU).
+    if body.get("no_gpu"):
+        _orch.NO_GPU.set(True)
     attach_skills      = body.get("attach_skills", "")
     attach_ontologies  = body.get("attach_ontologies", "")
     session_id         = body.get("session_id", "") or str(uuid.uuid4())
