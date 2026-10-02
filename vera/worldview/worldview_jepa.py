@@ -1139,11 +1139,14 @@ class WorldView:
                 log.debug("worldview: cached latent restore failed: %s", e)
         return True
 
-    def load_bytes(self, blob: bytes) -> bool:
+    def load_bytes(self, blob: bytes, pickle_module=None) -> bool:
+        """`pickle_module` reads a checkpoint written by another numpy major
+        (a node worker's - node_compute_core.compat_pickle_module)."""
         if not HAS_TORCH or not blob:
             return False
         try:
-            ckpt = torch.load(io.BytesIO(blob), map_location=self.device, weights_only=False)
+            kw = {"pickle_module": pickle_module} if pickle_module is not None else {}
+            ckpt = torch.load(io.BytesIO(blob), map_location=self.device, weights_only=False, **kw)
             return self._restore_from_ckpt(ckpt)
         except Exception as e:
             log.error("WorldView load_bytes failed: %s", e)
@@ -2414,6 +2417,293 @@ def generate_walks(graph: Dict, model: WorldView,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# THE TRAINING STAGES  —  pure compute, run on a node worker (node_compute_core)
+# ─────────────────────────────────────────────────────────────────────────────
+# The host builds the graph (its stores), a node runs the three stages, the host
+# loads the trained checkpoint and rebuilds its index. The stages read only the
+# model, the graph and _WV_CONFIG, so one function serves a node and, with host
+# fallback on, the host.
+
+#: Module constants WorldView() builds its layers from: shipped with a job so a
+#: node whose environment differs still builds the host's architecture.
+_ARCH_CONSTANTS = ("NUM_GNN_LAYERS", "VQ_DECAY", "VQ_COMMITMENT", "DYN_DIM",
+                   "DYN_HEADS", "DYN_LAYERS", "DYN_CTX", "LR")
+
+
+def _train_stages_sync(model: "WorldView", graph: Dict, gnn_epochs: int,
+                       codebook_epochs: int, dynamics_epochs: int,
+                       progress, should_stop) -> Dict:
+    """The three training stages over a built graph. Blocking. `progress(d)`
+    gets one dict per event: `stage` (the event name the UI knows), its fields,
+    and `_hist` [stage, epoch, loss, extra] for the loss history."""
+    import gc
+    t0 = time.time()
+    N = len(graph["rids"])
+    E = len(graph["edges"])
+    g_x = graph.get("X_t", graph.get("X"))
+    g_s = graph.get("s_t", graph.get("src"))
+    g_d = graph.get("d_t", graph.get("dst"))
+    g_et = graph.get("e_t", graph.get("edge_type"))
+    stopped = False
+
+    def say(stage, **kw):
+        kw.setdefault("elapsed_s", round(time.time() - t0, 1))
+        progress({"stage": stage, **kw})
+
+    if gnn_epochs > 0 and not stopped:
+        say("stage_gnn", message=f"Training graph encoder ({gnn_epochs} epochs, {N} nodes, {E} edges)...")
+        gc.collect()
+        t_stage = time.time()
+        for epoch in range(gnn_epochs):
+            if should_stop():
+                stopped = True
+                break
+            try:
+                pos, neg = sample_pairs(graph, n_pairs=min(1024, len(graph["edges"])))
+                if not pos:
+                    say("gnn_epoch", epoch=epoch + 1, total=gnn_epochs, loss=0,
+                        message="No positive pairs — skipping")
+                    break
+                loss = model.train_gnn_step(g_x, g_s, g_d, g_et, pos, neg)
+                ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
+                say("gnn_epoch", epoch=epoch + 1, total=gnn_epochs, loss=round(loss, 6),
+                    epoch_rate=round(ep_rate, 2),
+                    message=f"GNN epoch {epoch+1}/{gnn_epochs} loss={loss:.4f} ({ep_rate:.1f} ep/s)",
+                    _hist=["gnn", epoch + 1, loss, {}])
+            except Exception as e:
+                log.error("GNN epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
+                say("gnn_error", epoch=epoch + 1, error=str(e)[:200],
+                    message=f"GNN epoch {epoch+1} failed: {e}")
+                break
+        gc.collect()
+
+    if codebook_epochs > 0 and not stopped:
+        say("stage_codebook", message=f"Fitting concept codebook ({codebook_epochs} epochs)...")
+        gc.collect()
+        t_stage = time.time()
+        for epoch in range(codebook_epochs):
+            if should_stop():
+                stopped = True
+                break
+            try:
+                loss = model.train_codebook_step(g_x, g_s, g_d, g_et)
+                cb = model.codebook.usage_stats()
+                ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
+                say("codebook_epoch", epoch=epoch + 1, total=codebook_epochs,
+                    loss=round(loss, 6), active=cb["active_concepts"], entropy=cb["entropy"],
+                    perplexity=cb.get("perplexity", 0),
+                    revived=getattr(model, "_last_revived", 0), epoch_rate=round(ep_rate, 2),
+                    message=f"Codebook epoch {epoch+1}/{codebook_epochs} "
+                            f"loss={loss:.4f} active={cb['active_concepts']} "
+                            f"perplexity={cb.get('perplexity', 0):.0f} ({ep_rate:.1f} ep/s)",
+                    _hist=["codebook", epoch + 1, loss,
+                           {"active": cb["active_concepts"],
+                            "perplexity": round(cb.get("perplexity", 0), 1),
+                            "entropy": round(float(cb["entropy"]), 4)}])
+            except Exception as e:
+                log.error("Codebook epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
+                say("codebook_error", epoch=epoch + 1, error=str(e)[:200],
+                    message=f"Codebook epoch {epoch+1} failed: {e}")
+                break
+        gc.collect()
+
+    walks_n = 0
+    if dynamics_epochs > 0 and not stopped:
+        say("stage_dynamics", message="Generating concept walks...")
+        gc.collect()
+        try:
+            walks = generate_walks(graph, model,
+                                   min(_WV_CONFIG.get("max_walks", MAX_WALKS), N * 4),
+                                   _WV_CONFIG.get("walk_len", WALK_LEN))
+        except Exception as e:
+            log.error("Walk generation FAILED: %s", e, exc_info=True)
+            say("dynamics_error", error=str(e)[:200], message=f"Walk generation failed: {e}")
+            walks = []
+        walks_n = len(walks)
+        if walks:
+            say("dynamics_walks", walks=len(walks),
+                message=f"{len(walks)} walks generated — training dynamics...")
+            t_stage = time.time()
+            dyn_batch = _WV_CONFIG.get("batch_size", BATCH_SIZE)
+            for epoch in range(dynamics_epochs):
+                if should_stop():
+                    stopped = True
+                    break
+                try:
+                    random.shuffle(walks)
+                    losses = []
+                    for i in range(0, len(walks), dyn_batch):
+                        batch = walks[i:i + dyn_batch]
+                        if len(batch) >= 2:
+                            losses.append(model.train_dynamics_step(batch))
+                    avg_loss = sum(losses) / len(losses) if losses else 0.0
+                    ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
+                    say("dynamics_epoch", epoch=epoch + 1, total=dynamics_epochs,
+                        loss=round(avg_loss, 6), epoch_rate=round(ep_rate, 2),
+                        batches=len(walks) // dyn_batch,
+                        message=f"Dynamics epoch {epoch+1}/{dynamics_epochs} "
+                                f"loss={avg_loss:.4f} ({ep_rate:.1f} ep/s)",
+                        _hist=["dynamics", epoch + 1, avg_loss, {}])
+                except Exception as e:
+                    log.error("Dynamics epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
+                    say("dynamics_error", epoch=epoch + 1, error=str(e)[:200],
+                        message=f"Dynamics epoch {epoch+1} failed: {e}")
+                    break
+        gc.collect()
+    if stopped:
+        say("stopped", message="Training stopped — keeping the epochs already run")
+    return {"walks": walks_n, "stopped": stopped}
+
+
+def _graph_for_job(graph: Dict) -> Dict:
+    """The parts of a built graph the stages read, as arrays + JSON."""
+    def arr(t_key, n_key, dtype):
+        v = graph.get(t_key)
+        if v is not None and HAS_TORCH and isinstance(v, torch.Tensor):
+            return v.detach().cpu().numpy().astype(dtype, copy=False)
+        return np.asarray(graph[n_key], dtype=dtype)
+    rels = sorted({e[2] for e in graph["edges"]})
+    rel_ix = {r: i for i, r in enumerate(rels)}
+    idx_of = graph["idx_of"]
+    recs = graph.get("records") or {}
+    return {
+        "X": arr("X_t", "X", "float32"),
+        "src": arr("s_t", "src", "int64"),
+        "dst": arr("d_t", "dst", "int64"),
+        "edge_type": arr("e_t", "edge_type", "int64"),
+        "rids": list(graph["rids"]),
+        "edge_src": np.asarray([idx_of[e[0]] for e in graph["edges"]], dtype="int64"),
+        "edge_dst": np.asarray([idx_of[e[1]] for e in graph["edges"]], dtype="int64"),
+        "edge_rel": np.asarray([rel_ix[e[2]] for e in graph["edges"]], dtype="int32"),
+        "rels": rels,
+        # generate_walks keeps display metadata per record: only what it reads
+        "records": {rid: {"dataset_id": (recs.get(rid) or {}).get("dataset_id", ""),
+                          "text": ((recs.get(rid) or {}).get("text") or "")[:200],
+                          "created_at": (recs.get(rid) or {}).get("created_at", "")}
+                    for rid in graph["rids"]},
+    }
+
+
+def _graph_from_job(g: Dict) -> Dict:
+    rids = list(g["rids"])
+    rels = list(g["rels"])
+    edges = [(rids[int(s)], rids[int(d)], rels[int(r)])
+             for s, d, r in zip(g["edge_src"], g["edge_dst"], g["edge_rel"])]
+    out = {"rids": rids, "idx_of": {rid: i for i, rid in enumerate(rids)},
+           "edges": edges, "records": g.get("records") or {}}
+    out["X_t"] = torch.tensor(g["X"], dtype=torch.float32)
+    out["s_t"] = torch.tensor(g["src"], dtype=torch.long)
+    out["d_t"] = torch.tensor(g["dst"], dtype=torch.long)
+    out["e_t"] = torch.tensor(g["edge_type"], dtype=torch.long)
+    return out
+
+
+def node_train_stages(inputs: Dict, progress, should_stop) -> Dict:
+    """compute.run entry (node_compute_core.FUNCTIONS["worldview.train"]).
+
+    Builds a WorldView with the host's architecture on CPU, loads the host's
+    checkpoint, runs the stages and returns the trained checkpoint. Never
+    touches this process's own MODEL or any store."""
+    if not HAS_TORCH:
+        raise RuntimeError("torch is not installed here")
+    for k, v in (inputs.get("arch") or {}).items():
+        if k in _ARCH_CONSTANTS:
+            globals()[k] = type(globals()[k])(v)
+    _WV_CONFIG.update(inputs.get("config") or {})
+    dims = inputs.get("dims") or {}
+    model = WorldView(embed_dim=int(dims["embed_dim"]), latent_dim=int(dims["latent_dim"]),
+                      hidden_dim=int(dims["hidden_dim"]),
+                      num_concepts=int(dims["num_concepts"]), device="cpu")
+    model._target_ema_decay = float(_WV_CONFIG.get("target_ema_decay", 0.996))
+    if not model.load_bytes(inputs["state"]):
+        raise RuntimeError("the host's checkpoint did not load (architecture differs?)")
+    graph = _graph_from_job(inputs["graph"])
+    ep = inputs.get("epochs") or {}
+    res = _train_stages_sync(model, graph, int(ep.get("gnn", 0)), int(ep.get("codebook", 0)),
+                             int(ep.get("dynamics", 0)), progress, should_stop)
+    blob = model.serialize_bytes()
+    if not blob:
+        raise RuntimeError("the trained checkpoint could not be serialised")
+    return {"state": blob, "walks": res["walks"], "stopped": res["stopped"],
+            "revived": int(getattr(model, "_last_revived", 0) or 0)}
+
+
+def _train_job_inputs(graph: Dict, gnn_epochs: int, codebook_epochs: int,
+                      dynamics_epochs: int) -> Dict:
+    blob = MODEL.serialize_bytes()
+    if not blob:
+        raise RuntimeError("the model could not be serialised for training")
+    return {
+        "state": blob,
+        "graph": _graph_for_job(graph),
+        "dims": {"embed_dim": MODEL.embed_dim, "latent_dim": MODEL.latent_dim,
+                 "hidden_dim": MODEL.hidden_dim, "num_concepts": MODEL.num_concepts},
+        "arch": {k: globals()[k] for k in _ARCH_CONSTANTS},
+        "config": dict(_WV_CONFIG),
+        "epochs": {"gnn": int(gnn_epochs), "codebook": int(codebook_epochs),
+                   "dynamics": int(dynamics_epochs)},
+    }
+
+
+#: The training job in flight in this process ({"stop": bool}); worldview.train.stop sets it.
+_TRAIN_JOB: Dict[str, Any] = {}
+
+
+async def _train_stages(graph: Dict, gnn_epochs: int, codebook_epochs: int,
+                        dynamics_epochs: int, t0: float) -> Dict:
+    """Run the stages where training runs (a node worker; the host only with
+    compute host fallback on) and load the result into MODEL."""
+    def on_hist(d):
+        h = d.pop("_hist", None)
+        if h:
+            _loss_history_append(h[0], h[1], h[2], **(h[3] if len(h) > 3 else {}))
+
+    async def on_progress(d):
+        on_hist(d)
+        stage = d.pop("stage", "progress")
+        d["elapsed_s"] = round(time.time() - t0, 1)
+        await _emit(stage, **d)
+
+    _TRAIN_JOB.clear()
+    _TRAIN_JOB["stop"] = False
+    run = getattr(_orch, "NODE_COMPUTE", None)
+    if run is None:
+        # compute module not loaded: the stages run here, as they always did
+        loop = asyncio.get_running_loop()
+
+        def progress(d):
+            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(on_progress(dict(d))))
+        res = await loop.run_in_executor(
+            None, _train_stages_sync, MODEL, graph, gnn_epochs, codebook_epochs,
+            dynamics_epochs, progress, lambda: bool(_TRAIN_JOB.get("stop")))
+        return {**res, "where": "host", "node": ""}
+    inputs = _train_job_inputs(graph, gnn_epochs, codebook_epochs, dynamics_epochs)
+    await _emit("offload", message="Training on a node worker...",
+                elapsed_s=round(time.time() - t0, 1))
+    try:
+        out = await run("worldview.train", inputs, label="worldview.train",
+                        on_progress=on_progress, stop=lambda: bool(_TRAIN_JOB.get("stop")))
+    except Exception as e:
+        return {"error": str(e)}
+    pm = None
+    if out.get("_where") == "node":
+        try:
+            from Vera.vera.workers import node_compute_core as _nc
+        except Exception:                              # pragma: no cover
+            from vera.workers import node_compute_core as _nc
+        pm = _nc.compat_pickle_module()
+    if not MODEL.load_bytes(out["state"], pickle_module=pm):
+        return {"error": "the trained checkpoint from the node did not load"}
+    MODEL._last_revived = out.get("revived", 0)
+    await _emit("offload_done", node=out.get("_node", ""), where=out.get("_where", ""),
+                message=f"Trained on {out.get('_node') or out.get('_where')} "
+                        f"in {out.get('_seconds', 0)} s",
+                elapsed_s=round(time.time() - t0, 1))
+    return {"walks": out.get("walks", 0), "stopped": out.get("stopped", False),
+            "where": out.get("_where", ""), "node": out.get("_node", "")}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -3473,141 +3763,19 @@ async def cap_worldview_train(
                 gnn_epochs=gnn_epochs, codebook_epochs=codebook_epochs,
                 dynamics_epochs=dynamics_epochs, nodes=N, edges=E)
 
-    # Resolve tensor references (pre-built in build_graph, or fallback to numpy)
-    g_x  = graph.get("X_t",  graph.get("X"))
-    g_s  = graph.get("s_t",  graph.get("src"))
-    g_d  = graph.get("d_t",  graph.get("dst"))
-    g_et = graph.get("e_t",  graph.get("edge_type"))
-
-    import gc
-
-    # Stage 1 — GNN contrastive training
-    if gnn_epochs > 0:
-        await _emit("stage_gnn", message=f"Training graph encoder ({gnn_epochs} epochs, {N} nodes, {E} edges)...",
-                     elapsed_s=round(time.time() - t0, 1))
-        gc.collect()
-        t_stage = time.time()
-        margin = _WV_CONFIG.get("contrastive_margin", 0.2)
-        uniformity_w = _WV_CONFIG.get("uniformity_weight", 0.1)
-        loop = asyncio.get_running_loop()
-        for epoch in range(gnn_epochs):
-            try:
-                pos, neg = sample_pairs(graph, n_pairs=min(1024, len(graph["edges"])))
-                if not pos:
-                    await _emit("gnn_epoch", epoch=epoch + 1, total=gnn_epochs,
-                                 loss=0, message="No positive pairs — skipping")
-                    break
-                # Run CPU-bound training step in executor to avoid blocking the event loop
-                loss = await loop.run_in_executor(
-                    None, MODEL.train_gnn_step, g_x, g_s, g_d, g_et, pos, neg)
-                ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
-                # Emit every epoch for UI progress
-                await _emit("gnn_epoch", epoch=epoch + 1, total=gnn_epochs,
-                             loss=round(loss, 6),
-                             elapsed_s=round(time.time() - t0, 1),
-                             epoch_rate=round(ep_rate, 2),
-                             message=f"GNN epoch {epoch+1}/{gnn_epochs} loss={loss:.4f} ({ep_rate:.1f} ep/s)")
-                _loss_history_append("gnn", epoch + 1, loss)
-                # Yield to event loop so SSE events actually flush
-                await asyncio.sleep(0)
-            except Exception as e:
-                log.error("GNN epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
-                await _emit("gnn_error", epoch=epoch + 1, error=str(e)[:200],
-                             message=f"GNN epoch {epoch+1} failed: {e}")
-                break
-        gc.collect()
-
-    # Stage 2 — Codebook fitting
-    if codebook_epochs > 0:
-        await _emit("stage_codebook", message=f"Fitting concept codebook ({codebook_epochs} epochs)...",
-                     elapsed_s=round(time.time() - t0, 1))
-        gc.collect()
-        t_stage = time.time()
-        loop = asyncio.get_running_loop()
-        for epoch in range(codebook_epochs):
-            try:
-                loss = await loop.run_in_executor(
-                    None, MODEL.train_codebook_step, g_x, g_s, g_d, g_et)
-                cb_stats = MODEL.codebook.usage_stats()
-                ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
-                await _emit("codebook_epoch", epoch=epoch + 1, total=codebook_epochs,
-                             loss=round(loss, 6),
-                             active=cb_stats["active_concepts"],
-                             entropy=cb_stats["entropy"],
-                             perplexity=cb_stats.get("perplexity", 0),
-                             revived=getattr(MODEL, "_last_revived", 0),
-                             elapsed_s=round(time.time() - t0, 1),
-                             epoch_rate=round(ep_rate, 2),
-                             message=f"Codebook epoch {epoch+1}/{codebook_epochs} "
-                                     f"loss={loss:.4f} active={cb_stats['active_concepts']} "
-                                     f"perplexity={cb_stats.get('perplexity',0):.0f} ({ep_rate:.1f} ep/s)")
-                _loss_history_append("codebook", epoch + 1, loss,
-                                     active=cb_stats["active_concepts"],
-                                     perplexity=round(cb_stats.get("perplexity", 0), 1),
-                                     entropy=round(float(cb_stats["entropy"]), 4))
-                await asyncio.sleep(0)
-            except Exception as e:
-                log.error("Codebook epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
-                await _emit("codebook_error", epoch=epoch + 1, error=str(e)[:200],
-                             message=f"Codebook epoch {epoch+1} failed: {e}")
-                break
-        gc.collect()
-
-    # Stage 3 — Dynamics (walks + transformer)
-    if dynamics_epochs > 0:
-        await _emit("stage_dynamics", message="Generating concept walks...",
-                     elapsed_s=round(time.time() - t0, 1))
-        gc.collect()
-        loop = asyncio.get_running_loop()
-        try:
-            walks = await loop.run_in_executor(
-                None, generate_walks, graph, MODEL,
-                min(_WV_CONFIG.get("max_walks", MAX_WALKS), N * 4),
-                _WV_CONFIG.get("walk_len", WALK_LEN))
-        except Exception as e:
-            log.error("Walk generation FAILED: %s", e, exc_info=True)
-            await _emit("dynamics_error", error=str(e)[:200],
-                         message=f"Walk generation failed: {e}")
-            walks = []
-        if walks:
-            await _emit("dynamics_walks", walks=len(walks),
-                         elapsed_s=round(time.time() - t0, 1),
-                         message=f"{len(walks)} walks generated — training dynamics...")
-            t_stage = time.time()
-            dyn_batch = _WV_CONFIG.get("batch_size", BATCH_SIZE)
-
-            def _run_dynamics_epoch(walk_data, batch_sz):
-                """Run one full dynamics epoch in a thread — CPU-bound."""
-                random.shuffle(walk_data)
-                losses = []
-                for i in range(0, len(walk_data), batch_sz):
-                    batch = walk_data[i:i + batch_sz]
-                    if len(batch) < 2:
-                        continue
-                    l = MODEL.train_dynamics_step(batch)
-                    losses.append(l)
-                return sum(losses) / len(losses) if losses else 0.0
-
-            for epoch in range(dynamics_epochs):
-                try:
-                    avg_loss = await loop.run_in_executor(
-                        None, _run_dynamics_epoch, walks, dyn_batch)
-                    ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
-                    await _emit("dynamics_epoch", epoch=epoch + 1,
-                                 total=dynamics_epochs,
-                                 loss=round(avg_loss, 6),
-                                 elapsed_s=round(time.time() - t0, 1),
-                                 epoch_rate=round(ep_rate, 2),
-                                 batches=len(walks) // dyn_batch,
-                                 message=f"Dynamics epoch {epoch+1}/{dynamics_epochs} loss={avg_loss:.4f} ({ep_rate:.1f} ep/s)")
-                    _loss_history_append("dynamics", epoch + 1, avg_loss)
-                    await asyncio.sleep(0)
-                except Exception as e:
-                    log.error("Dynamics epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
-                    await _emit("dynamics_error", epoch=epoch + 1, error=str(e)[:200],
-                                 message=f"Dynamics epoch {epoch+1} failed: {e}")
-                    break
-        gc.collect()
+    # The three stages run on a node worker (node_compute_core): the host
+    # built the graph from its stores; it loads the trained checkpoint back.
+    try:
+        trained = await _train_stages(graph, gnn_epochs, codebook_epochs, dynamics_epochs, t0)
+    finally:
+        _TRAIN_JOB.clear()
+    if trained.get("error"):
+        await _emit("train_error", message=f"Training did not run: {trained['error']}",
+                    error=trained["error"][:300])
+        return {"error": trained["error"],
+                "hint": "compute.status shows which node workers take training jobs; "
+                        "compute.config.set host_fallback=true runs it on the Vera host"}
+    gc.collect()
 
     await _emit("indexing", message="Rebuilding FAISS index...")
     log.info("worldview: starting index rebuild (graph has %d records)", N)
@@ -3708,7 +3876,24 @@ async def cap_worldview_train(
         "edges":     E,
         "indexed":   indexed,
         "duration_s": duration,
+        "trained_on": trained.get("node") or trained.get("where", ""),
+        "stopped":   bool(trained.get("stopped")),
     }
+
+
+@capability(
+    "worldview.train_stop",
+    http_method="POST", http_path="/worldview/train_stop",
+    http_tags=["worldview"], memory="off",
+    description="Stop the worldview training in flight at its next epoch; the "
+                "epochs already run are kept, indexed and persisted. "
+                "Output: {ok, stopping}.",
+)
+async def cap_worldview_train_stop(trace_id=None) -> Dict:
+    if not _TRAIN_JOB or _TRAIN_JOB.get("stop"):
+        return {"ok": True, "stopping": False, "message": "no training in flight"}
+    _TRAIN_JOB["stop"] = True
+    return {"ok": True, "stopping": True}
 
 
 @capability(

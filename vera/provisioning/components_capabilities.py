@@ -935,6 +935,23 @@ async def _record_native_result(host_id: str, rec: Dict, ok: bool, commit: str,
     await _registry_put(host_id, entry)
 
 
+def _host_ml_pins() -> Dict[str, str]:
+    """This host's torch / scikit-learn releases, as a worker's pip pins: a
+    model a node trains comes back as a pickle the host must load."""
+    from importlib import metadata as _md
+    vers = {}
+    for pkg in ("torch", "scikit-learn"):
+        try:
+            vers[pkg] = _md.version(pkg)
+        except Exception:
+            pass
+    try:
+        from Vera.vera.workers import node_compute_core as _nc
+    except Exception:                                  # pragma: no cover
+        from vera.workers import node_compute_core as _nc
+    return _nc.ml_pins(vers)
+
+
 def _ssh_stored_with_input():
     """exec's stdin-capable runner, from the module that actually registered
     exec.ssh.run (importing it by path again could load a second copy)."""
@@ -1073,7 +1090,8 @@ async def cap_worker(host_id: str = "", mode: str = "docker", name: str = "",
                                 backend_kv=backend_kv, port=int(port),
                                 bundle=(src_kind == "host"), extra_env=extra_env,
                                 nice=_placement.WORKER_NICE,
-                                cpu_weight=_placement.WORKER_CPU_WEIGHT)
+                                cpu_weight=_placement.WORKER_CPU_WEIGHT,
+                                ml_pins=_host_ml_pins())
         res = await runner(host_id, cmd, timeout=int(timeout or 1200),
                            input=bundle["b64"] if src_kind == "host" else None)
         ok = bool(res.get("ok")) and "VERA_LAUNCHED" in (res.get("stdout", "") or "")

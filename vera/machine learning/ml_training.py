@@ -1184,6 +1184,113 @@ def _train_val_test_split(X, y, val=0.15, test=0.15, seed=42):
 # TRAINING LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _train_epochs_sync(module: dict, weights: dict, X_tr, y_tr, X_va, y_va,
+                       cfg_t: dict, progress, should_stop) -> dict:
+    """The epoch loop of one training job. Blocking, and touches nothing but
+    its arguments - it runs on a node worker (node_compute_core).
+
+    `progress(d)` gets one dict per epoch; returns the best weights, the
+    history, the final status and the best validation loss."""
+    epochs    = int(cfg_t.get("epochs", 20))
+    lr        = float(cfg_t.get("lr", 1e-3))
+    batch     = int(cfg_t.get("batch_size", 32))
+    opt_name  = cfg_t.get("optimiser", "adam")
+    loss_fn   = cfg_t.get("loss", "mse")
+    sched     = cfg_t.get("lr_schedule", "cosine")
+    patience  = int(cfg_t.get("early_stopping_patience", 10))
+    grad_clip = float(cfg_t.get("grad_clip", 5.0))
+    X_tr = np.asarray(X_tr, dtype=np.float32); y_tr = np.asarray(y_tr, dtype=np.float32)
+    X_va = np.asarray(X_va, dtype=np.float32); y_va = np.asarray(y_va, dtype=np.float32)
+
+    opt   = _make_optimiser(opt_name, weight_decay=float(cfg_t.get("weight_decay", 0.0)))
+    rng   = np.random.default_rng(42)
+    n_tr  = len(X_tr)
+    backprop = _module_supports_backprop(module)
+    trainable = bool(_flatten_weights(weights).size)
+
+    history        = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": [], "lr": []}
+    best_val_loss  = float("inf")
+    best_weights   = deepcopy(weights)
+    no_improve     = 0
+    status         = "running"
+    epoch_done     = 0
+
+    for epoch in range(epochs):
+        if should_stop():
+            status = "stopped"
+            break
+        curr_lr  = _lr_schedule(lr, epoch, epochs, sched)
+        idx      = rng.permutation(n_tr)
+        X_sh, y_sh = X_tr[idx], y_tr[idx]
+
+        epoch_losses = []
+        for start in range(0, n_tr, batch):
+            if should_stop():
+                break
+            Xb = X_sh[start:start+batch]
+            yb = y_sh[start:start+batch]
+            # exact backprop where every node type has one, else the numerical sweep
+            if not trainable:
+                grads = {}
+            elif backprop:
+                grads = _forward_backward(module, weights, Xb, yb, loss_fn)
+            else:
+                grads = _numerical_grad(module, weights, Xb, yb, loss_fn)
+            flat_g = _flatten_weights(grads)
+            gnorm  = np.linalg.norm(flat_g)
+            if gnorm > grad_clip and gnorm > 0:
+                grads = _unflatten_weights(flat_g * (grad_clip / gnorm), grads)
+            weights = opt.step(weights, grads, curr_lr)
+            yp, _  = _forward_with_weights(module, weights, Xb)
+            epoch_losses.append(_compute_loss(yp, yb, loss_fn))
+
+        train_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
+        yp_val, _ = _forward_with_weights(module, weights, X_va)
+        val_loss  = _compute_loss(yp_val, y_va, loss_fn)
+        train_acc = val_acc = 0.0
+        if loss_fn in ("cross_entropy", "bce"):
+            yp_tr_f, _ = _forward_with_weights(module, weights, X_tr[:min(256, n_tr)])
+            train_acc  = _accuracy(yp_tr_f, y_tr[:min(256, n_tr)])
+            val_acc    = _accuracy(yp_val, y_va)
+
+        row = {"train_loss": round(train_loss, 6), "val_loss": round(val_loss, 6),
+               "train_acc": round(train_acc, 4), "val_acc": round(val_acc, 4),
+               "lr": round(curr_lr, 8)}
+        for k, v in row.items():
+            history[k].append(v)
+        epoch_done = epoch + 1
+
+        improved = val_loss < best_val_loss - 1e-6
+        if improved:
+            best_val_loss = val_loss
+            best_weights  = deepcopy(weights)
+            no_improve    = 0
+        else:
+            no_improve += 1
+        progress({**row, "epoch": epoch_done, "progress": round(epoch_done / epochs * 100, 1),
+                  "best_val_loss": round(best_val_loss, 6) if improved else None})
+        if not improved and no_improve >= patience:
+            status = "early_stopped"
+            break
+
+    if status == "running":
+        status = "complete"
+    return {"weights": best_weights, "history": history, "status": status,
+            "epoch": epoch_done,
+            "best_val_loss": round(best_val_loss, 6) if best_val_loss != float("inf") else None}
+
+
+def node_train_epochs(inputs: dict, progress, should_stop) -> dict:
+    """compute.run entry (node_compute_core.FUNCTIONS["ml.train"]). Weights
+    travel as [node_id, arrays] pairs so a numeric node id stays numeric."""
+    weights = {nid: dict(w) for nid, w in inputs["weights"]}
+    res = _train_epochs_sync(inputs["module"], weights, inputs["X_train"], inputs["y_train"],
+                             inputs["X_val"], inputs["y_val"], inputs.get("config") or {},
+                             progress, should_stop)
+    res["weights"] = [[nid, w] for nid, w in res["weights"].items()]
+    return res
+
+
 async def _train_loop(job_id: str, job: dict):
     """
     Async training loop that streams progress events.
@@ -1243,13 +1350,6 @@ async def _train_loop(job_id: str, job: dict):
 
     cfg_t     = job["config"]
     epochs    = int(cfg_t.get("epochs", 20))
-    lr        = float(cfg_t.get("lr", 1e-3))
-    batch     = int(cfg_t.get("batch_size", 32))
-    opt_name  = cfg_t.get("optimiser", "adam")
-    loss_fn   = cfg_t.get("loss", "mse")
-    sched     = cfg_t.get("lr_schedule", "cosine")
-    patience  = int(cfg_t.get("early_stopping_patience", 10))
-    grad_clip = float(cfg_t.get("grad_clip", 5.0))
 
     X_tr = np.array(job["X_train"], dtype=np.float32)
     y_tr = np.array(job["y_train"], dtype=np.float32)
@@ -1267,117 +1367,68 @@ async def _train_loop(job_id: str, job: dict):
         job["status"] = "error"; job["error"] = "No trainable parameters found"
         return
 
-    opt   = _make_optimiser(opt_name, weight_decay=float(cfg_t.get("weight_decay", 0.0)))
-    rng   = np.random.default_rng(42)
-    n_tr  = len(X_tr)
-
-    history        = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": [], "lr": []}
-    best_val_loss  = float("inf")
-    best_weights   = deepcopy(weights)
-    no_improve     = 0
-
+    history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": [], "lr": []}
     job["status"]  = "running"
     job["history"] = history
 
-    for epoch in range(epochs):
-        if job.get("stop"):
-            job["status"] = "stopped"
-            break
-
-        curr_lr  = _lr_schedule(lr, epoch, epochs, sched)
-        idx      = rng.permutation(n_tr)
-        X_sh, y_sh = X_tr[idx], y_tr[idx]
-
-        # Mini-batch
-        epoch_losses = []
-        for start in range(0, n_tr, batch):
-            if job.get("stop"): break
-            Xb = X_sh[start:start+batch]
-            yb = y_sh[start:start+batch]
-
-            # Gradient step (exact backprop; numerical fallback offloaded to a thread)
-            grads = await _fast_grad(module, weights, Xb, yb, loss_fn)
-
-            # Gradient clipping
-            flat_g = _flatten_weights(grads)
-            gnorm  = np.linalg.norm(flat_g)
-            if gnorm > grad_clip and gnorm > 0:
-                scale  = grad_clip / gnorm
-                grads  = _unflatten_weights(flat_g * scale, grads)
-
-            weights = opt.step(weights, grads, curr_lr)
-
-            # Compute batch loss. Offloaded like the gradient above — a forward
-            # pass is NumPy-bound and blocks the event loop for as long as it
-            # runs (see _fast_grad: these frames dominate the stall log).
-            # `await asyncio.sleep(0)` below only yields BETWEEN batches, which
-            # does nothing for a call that itself takes a second.
-            yp, _  = await asyncio.get_running_loop().run_in_executor(
-                None, _forward_with_weights, module, weights, Xb)
-            bloss  = _compute_loss(yp, yb, loss_fn)
-            epoch_losses.append(bloss)
-
-            # Yield control
-            await asyncio.sleep(0)
-
-        train_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
-
-        # Val pass — the FULL validation set, so the worst offender of the three.
-        _loop_x = asyncio.get_running_loop()
-        yp_val, _ = await _loop_x.run_in_executor(
-            None, _forward_with_weights, module, weights, X_va)
-        val_loss  = _compute_loss(yp_val, y_va, loss_fn)
-
-        # Accuracy (if classification)
-        train_acc = val_acc = 0.0
-        if loss_fn in ("cross_entropy", "bce"):
-            yp_tr_f, _ = await _loop_x.run_in_executor(
-                None, _forward_with_weights, module, weights, X_tr[:min(256, n_tr)])
-            train_acc  = _accuracy(yp_tr_f, y_tr[:min(256, n_tr)])
-            val_acc    = _accuracy(yp_val, y_va)
-
-        history["train_loss"].append(round(train_loss, 6))
-        history["val_loss"].append(round(val_loss, 6))
-        history["train_acc"].append(round(train_acc, 4))
-        history["val_acc"].append(round(val_acc, 4))
-        history["lr"].append(round(curr_lr, 8))
-
-        job["epoch"]    = epoch + 1
-        job["progress"] = round((epoch + 1) / epochs * 100, 1)
-
+    async def on_progress(d):
+        for k in history:
+            history[k].append(d.get(k, 0.0))
+        job["epoch"]    = d["epoch"]
+        job["progress"] = d["progress"]
+        if d.get("best_val_loss") is not None:
+            job["best_val_loss"] = d["best_val_loss"]
         await emit_event({
             "type":       "ml.train_epoch",
             "job_id":     job_id,
             "module_id":  module_id,
-            "epoch":      epoch + 1,
+            "epoch":      d["epoch"],
             "epochs":     epochs,
-            "train_loss": round(train_loss, 6),
-            "val_loss":   round(val_loss, 6),
-            "val_acc":    round(val_acc, 4),
-            "lr":         round(curr_lr, 8),
-            "progress":   job["progress"],
+            "train_loss": d["train_loss"],
+            "val_loss":   d["val_loss"],
+            "val_acc":    d["val_acc"],
+            "lr":         d["lr"],
+            "progress":   d["progress"],
         })
 
-        # Early stopping
-        if val_loss < best_val_loss - 1e-6:
-            best_val_loss = val_loss
-            best_weights  = deepcopy(weights)
-            no_improve    = 0
-            job["best_val_loss"] = round(best_val_loss, 6)
-        else:
-            no_improve += 1
-            if no_improve >= patience:
-                job["status"] = "early_stopped"
-                break
+    # The epochs run on a node worker (node_compute_core): the host resolved
+    # the module and its weights; it keeps the best weights the node returns.
+    run = getattr(sys_mod.modules.get("Vera.vera.capability_orchestration"), "NODE_COMPUTE", None)
+    try:
+        if run is None:
+            # compute module not loaded: the epochs run here, as they always did
+            loop = asyncio.get_running_loop()
 
-        await asyncio.sleep(0)
+            def progress(d):
+                loop.call_soon_threadsafe(lambda: asyncio.ensure_future(on_progress(dict(d))))
+            res = await loop.run_in_executor(
+                None, _train_epochs_sync, module, weights, X_tr, y_tr, X_va, y_va, cfg_t,
+                progress, lambda: bool(job.get("stop")))
+            job["trained_on"] = "host"
+        else:
+            out = await run("ml.train", {
+                "module": module, "weights": [[nid, w] for nid, w in weights.items()],
+                "X_train": X_tr, "y_train": y_tr, "X_val": X_va, "y_val": y_va,
+                "config": cfg_t}, label=f"ml.train {module_id}",
+                on_progress=on_progress, stop=lambda: bool(job.get("stop")))
+            res = {**out, "weights": {nid: w for nid, w in out["weights"]}}
+            job["trained_on"] = out.get("_node") or out.get("_where", "")
+    except Exception as e:
+        job["status"] = "error"; job["error"] = str(e)[:500]
+        await emit_event({"type": "ml.train_complete", "job_id": job_id,
+                          "module_id": module_id, "status": "error", "error": job["error"],
+                          "epochs_run": job.get("epoch", 0), "best_val_loss": 0})
+        return
+    best_weights = res["weights"]
+    job["history"] = res["history"]
+    job["epoch"] = res["epoch"]
+    if res.get("best_val_loss") is not None:
+        job["best_val_loss"] = res["best_val_loss"]
+    job["status"] = res["status"]
 
     # Restore best weights
     _WEIGHTS[module_id] = best_weights
     await _persist_weights(module_id, best_weights)
-
-    if job["status"] == "running":
-        job["status"] = "complete"
 
     # Persist final job record to fabric
     await _persist_job(job)

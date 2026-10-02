@@ -509,6 +509,10 @@ try:
 except Exception:                                     # pragma: no cover
     from vera.workers import worker_placement_core as _placement
 try:
+    from Vera.vera.workers import node_compute_core as _compute_core
+except Exception:                                     # pragma: no cover
+    from vera.workers import node_compute_core as _compute_core
+try:
     # REDIS_URL can carry an ACL password (config.py) - log it redacted only
     from Vera.vera.security import redis_auth_core as _redis_auth
 except Exception:                                     # pragma: no cover
@@ -5727,6 +5731,9 @@ async def worker_loop(worker_id: str):
         "commit":       os.environ.get("VERA_WORKER_COMMIT", ""),
         "classes":      json.dumps(list(_classes or ())),
         "streams":      json.dumps(list(_streams)),
+        # the training libraries this process can import: the host routes a
+        # compute job to the nodes only when every compute worker has them
+        "libs":         json.dumps(_compute_core.available_libs()),
         "capabilities": json.dumps(_advertised),
         "cap_count":    len(_advertised),
         "tasks_done":   0,
@@ -11324,6 +11331,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "workers/node_activity_capabilities.py"),
         # ollama.warm.* - warm model slots per node, workload scenarios
         os.path.join(_here, "workers/warm_models_capabilities.py"),
+        # compute.* - model training on the node workers (node_compute_core)
+        os.path.join(_here, "workers/node_compute_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),
         os.path.join(_here, "remote/operator_capabilities.py"),

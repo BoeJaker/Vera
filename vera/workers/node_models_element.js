@@ -1,5 +1,5 @@
 /**
- * <vera-node-models section="warm|settings|nlp"> - the models the nodes keep
+ * <vera-node-models section="warm|settings|nlp|training"> - the models the nodes keep
  * ready, how each node is tuned, and where NLP runs. One section per page (the
  * Models tab lists them separately: Warm models, Node settings, NLP).
  *
@@ -65,7 +65,7 @@
       this._root.addEventListener('change', (e) => this._change(e));
     }
     get base() { return this.getAttribute('api-base') || ''; }
-    get section() { const s = this.getAttribute('section') || 'warm'; return ['warm', 'settings', 'nlp'].indexOf(s) >= 0 ? s : 'warm'; }
+    get section() { const s = this.getAttribute('section') || 'warm'; return ['warm', 'settings', 'nlp', 'training'].indexOf(s) >= 0 ? s : 'warm'; }
     connectedCallback() {
       this.load();
       const n = Math.max(5, parseInt(this.getAttribute('refresh') || '15', 10));
@@ -89,6 +89,8 @@
       else if (sec === 'nlp') {
         const [n, c, l] = await Promise.all([this._get('/nlp/nodes'), this._get('/nlp/config'), this._get('/fabric/nlp/config')]);
         this._nlp = n; this._ncfg = c; this._llmnlp = l;
+      } else if (sec === 'training') {
+        this._comp = await this._get('/compute/status');
       } else if (sec === 'settings' && !this._settings) {
         this._setBusy = 'load'; this.render();
         this._settings = await this._get('/nodes/ollama/settings'); this._setBusy = '';
@@ -130,6 +132,8 @@
           + (this._warm ? this._nodesHtml(w) + this._scenariosHtml(w) + this._routingHtml(w) : '<div class="muted">loading...</div>');
       } else if (sec === 'settings') {
         h = '<div class="hdr"><span class="t">Node settings</span>' + msg + '</div>' + this._settingsHtml();
+      } else if (sec === 'training') {
+        h = '<div class="hdr"><span class="t">Training</span>' + msg + '</div>' + this._trainHtml();
       } else {
         h = '<div class="hdr"><span class="t">NLP</span>' + msg + '</div>' + this._nlpHtml();
       }
@@ -283,6 +287,39 @@
       return h;
     }
 
+    /* Model training on the nodes (compute.status): which workers take it and
+       with what, where each trainer would run now, the switches, recent jobs. */
+    _trainHtml() {
+      const c = this._comp;
+      if (!c) return '<div class="muted">loading...</div>';
+      const cfg = c.config || {}, ws = c.workers || [], fns = c.functions || {}, jobs = c.jobs || [];
+      const lib = (l, k) => '<span class="badge ' + (l[k] ? 'ok' : 'bad') + '">' + k + '</span>';
+      let h = '<div class="panel"><div class="sec">Workers that train</div><table><tr><th>node</th><th>libraries</th><th>now</th></tr>'
+        + ws.map((w) => { const l = w.libs || {}; return '<tr><td><b>' + esc(w.host || w.id) + '</b></td><td>'
+            + ['numpy', 'torch', 'sklearn'].map((k) => lib(l, k)).join(' ') + '</td><td class="muted">'
+            + esc((w.status || '').replace('running:', 'running ')) + '</td></tr>'; }).join('')
+        + (ws.length ? '' : '<tr><td colspan="3" class="muted">no node worker has the CPU compute class</td></tr>')
+        + '</table></div>';
+      const label = { 'worldview.train': 'Worldview', 'ml.train': 'ML Lab', 'markets.ml.train': 'Markets models' };
+      h += '<div class="panel"><div class="sec">Where each trainer runs</div><table><tr><th>trainer</th><th>needs</th><th>runs on</th><th></th></tr>'
+        + Object.keys(fns).map((k) => { const f = fns[k]; const cls = f.would_run === 'node' ? 'ok' : f.would_run === 'host' ? 'warn' : 'bad';
+            return '<tr><td><b>' + esc(label[k] || k) + '</b></td><td class="muted">' + esc((f.needs || []).join(', ')) + '</td>'
+              + '<td><span class="badge ' + cls + '">' + esc(f.would_run === 'refuse' ? 'not run' : f.would_run) + '</span></td>'
+              + '<td class="muted">' + esc(f.why || '') + '</td></tr>'; }).join('') + '</table></div>';
+      h += '<div class="panel"><div class="sec">Switches</div><div class="kv">'
+        + '<span>Host fallback</span><span><label><input type="checkbox" data-a="tr-fallback"' + (cfg.host_fallback ? ' checked' : '') + '> run training on the Vera host when no node worker can take it</label></span>'
+        + '<span>Threads per job</span><span><input id="tr-threads" type="number" min="1" max="32" value="' + esc(cfg.threads || 4) + '" style="width:5em"> <button data-a="tr-threads-save">save</button></span>'
+        + '</div></div>';
+      h += '<div class="panel"><div class="sec">Recent jobs</div><div data-keep-scroll style="max-height:320px;overflow:auto"><table><tr><th>started</th><th>job</th><th>ran on</th><th>state</th><th>time</th><th></th></tr>'
+        + jobs.map((j) => '<tr><td class="muted">' + esc((j.started || '').replace('T', ' ').slice(0, 19)) + '</td>'
+            + '<td>' + esc(j.label || j.fn) + '</td><td>' + esc(j.node || j.where || '') + '</td>'
+            + '<td><span class="badge ' + (j.state === 'done' ? 'ok' : j.state === 'error' || j.state === 'refused' ? 'bad' : 'warn') + '">' + esc(j.state) + '</span></td>'
+            + '<td>' + (j.seconds != null ? esc(j.seconds) + ' s' : '') + '</td>'
+            + '<td class="muted">' + esc(j.error || j.why || '') + '</td></tr>').join('')
+        + (jobs.length ? '' : '<tr><td colspan="6" class="muted">no training jobs yet</td></tr>') + '</table></div></div>';
+      return h;
+    }
+
     async _click(e) {
       const b = e.target.closest('[data-a]'); if (!b || b.tagName === 'INPUT' || b.tagName === 'SELECT') return;
       const a = b.dataset.a, k = b.dataset.k;
@@ -338,6 +375,7 @@
         const r = await this._post('/ollama/warm/set', { cpu_num_ctx: parseInt(v('r-ctx'), 10), spill_min_tps: parseFloat(v('r-tps')), spill_max_ctx: parseInt(v('r-maxctx'), 10) });
         this._say(r.ok ? 'saved' : (r.error || 'failed')); return this.load();
       }
+      if (a === 'tr-threads-save') { const r = await this._post('/compute/config', { threads: parseInt(this._root.getElementById('tr-threads').value, 10) }); this._say(r.ok ? 'saved' : (r.error || 'failed')); return this.load(); }
       if (a === 'nlp-timeout-save') { const r = await this._post('/nlp/config/set', { timeout_s: parseFloat(this._root.getElementById('nlp-timeout').value) }); this._say(r.ok ? 'saved' : (r.error || 'failed')); return this.load(); }
     }
     async _change(e) {
@@ -349,6 +387,10 @@
         r = await this._post('/nlp/config/set', { nlp_local: t.checked });
       }
       if (a === 'nlp-pin') r = await this._post('/nlp/config/set', { node: t.value });
+      if (a === 'tr-fallback') {
+        if (t.checked && !confirm('Let the Vera host run model training when no node worker can take it?')) { t.checked = false; return; }
+        r = await this._post('/compute/config', { host_fallback: t.checked });
+      }
       if (a === 'llm-nlp') {
         if (t.checked && !confirm('Turn LLM NLP on for automatic pipelines? It sends ingestion and discovery NLP to the LLMs.')) { t.checked = false; return; }
         r = await this._post('/fabric/nlp/set', { enabled: t.checked });

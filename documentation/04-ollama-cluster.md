@@ -108,11 +108,11 @@ Each node keeps a planned set of models loaded (`ollama.warm.status|set|apply`, 
 
 A minute job loads what is missing with `keep_alive: -1` at the planned window (one load per node per pass, never on a node with a call in flight or used in the last 2 min – 10 min for the GPU), and releases a model it pinned that the plan dropped. Calls Vera routes to a planned model on that node carry `keep_alive: -1` and the planned window, so they stay on the runner the warmer spawned instead of reloading it. Nothing re-arms a resident model on a timer: a load-only call to a resident 9B on CPU takes tens of seconds and holds up the node's embeddings.
 
-**Workload scenarios** take the slots over while a job type runs hot, e.g. `coding`: when `code`/`loop_coder` demand reaches `min_requests` in `window_s` (or `min_inflight` live), coder models go into every slot (`fill: "all"`) per node class, and stay for `hold_s` after the demand falls away. A scenario can also turn warm spill on for its job types. Scenarios stay off while a census goal is in flight. Configure them in Estate › **Models & NLP**, which also holds the NLP placement and switches and the specialist model catalog.
+**Workload scenarios** take the slots over while a job type runs hot, e.g. `coding`: when `code`/`loop_coder` demand reaches `min_requests` in `window_s` (or `min_inflight` live), coder models go into every slot (`fill: "all"`) per node class, and stay for `hold_s` after the demand falls away. A scenario can also turn warm spill on for its job types. Scenarios stay off while a census goal is in flight. Configure them in Models › **Warm models**; Models › **NLP** holds the NLP placement and switches, Models › **Specialist models** the non-LLM catalog.
 
 ### Node settings
 
-Estate › Models & NLP › **Node settings** (`nodes.ollama.settings`, read-only, one SSH read per node) shows what is tuned on each Ollama: Vera's registry values, the unit's `OLLAMA_*` / `LLAMA_ARG_*` / GPU environment, every systemd drop-in and its contents, and the runners loaded right now with the `-t` they were started with. `nodes.ollama.settings.set` changes `num_thread` (the registry value sent with every routed call, and the unit's `LLAMA_ARG_THREADS`, so a caller that sends none - a sandbox, an external client - still gets it instead of llama.cpp's 24 threads on 12 CPUs) and custom `OLLAMA_*` / `LLAMA_ARG_*` flags in a Vera-owned drop-in. Applying restarts the unit and rolls back if Ollama stops answering; dry run by default. `nodes.ollama.tune` also writes the thread default on every CPU Ollama unit.
+Models › **Node settings** (`nodes.ollama.settings`, read-only, one SSH read per node) shows what is tuned on each Ollama: Vera's registry values, the unit's `OLLAMA_*` / `LLAMA_ARG_*` / GPU environment, every systemd drop-in and its contents, and the runners loaded right now with the `-t` they were started with. `nodes.ollama.settings.set` changes `num_thread` (the registry value sent with every routed call, and the unit's `LLAMA_ARG_THREADS`, so a caller that sends none - a sandbox, an external client - still gets it instead of llama.cpp's 24 threads on 12 CPUs) and custom `OLLAMA_*` / `LLAMA_ARG_*` flags in a Vera-owned drop-in. Applying restarts the unit and rolls back if Ollama stops answering; dry run by default. `nodes.ollama.tune` also writes the thread default on every CPU Ollama unit.
 
 ### Failover
 
@@ -252,6 +252,24 @@ The embedding model has its own URL and model name (`OLLAMA_EMBED_URL`, `OLLAMA_
 ## 8. GPU inference server
 
 A separate process (the GPU node's `:8765` `gpu_infer` server) handles Whisper STT, TTS, and Stable Diffusion. The `GPU_INFER_URL` config points at it. Capabilities like `gpu.stt`, `gpu.tts`, and `gpu.sd_generate` route through it without going via Ollama.
+
+---
+
+## 9. Model training on the nodes
+
+Model training runs on the node workers, not the Vera host (`compute.*`, `vera/workers/node_compute_*`). Three trainers use it: `worldview.train` (the JEPA's GNN, codebook and dynamics stages, torch), the ML Lab trainer (`ml.train`, numpy) and the markets models (`markets.ml.*`, scikit-learn). The host still gathers the inputs from its own stores and keeps the result. A node runs only the numeric loop.
+
+1. The host packs the inputs into a Redis key. Arrays and bytes travel as `.npz` entries, everything else as JSON, never as a pickle. It then queues `compute.run` on `vera:tasks:node:cpu_compute`. The host reads every class stream, so a job meant to leave the host needs a stream it does not read.
+2. A node worker with the **CPU compute** class takes the job. It runs the allow-listed function in a thread, writes a heartbeat and a progress list as it goes, and stores the outputs.
+3. The host re-emits the progress as its usual events (`worldview.progress`, `ml.train_epoch`, `markets.ml`), so the UIs work as before. It then loads the outputs: the trained checkpoint, the best weights, or the fitted model.
+
+A job goes to the nodes only when every live compute worker has the libraries it needs. Busy workers count, since the job waits in the stream. Otherwise the job is refused with the reason, unless **host fallback** is on (`compute.config.set host_fallback=true`; off by default). A job whose heartbeat stops for 60 s, or that waits 2 min with no compute worker alive, fails, and it is withdrawn from the stream so no worker runs it later. A stop (`worldview.train_stop`, `ml.train.stop`) reaches the node, which keeps the epochs it already ran.
+
+Worker provisioning installs torch (CPU build) and scikit-learn, pinned to the host's releases, because a fitted model or checkpoint comes back as a pickle the host must load. The nodes' numpy is a newer major than the host's, so the host reads those pickles through a numpy-compatible unpickler, and stores markets models re-pickled in its own format. One training job uses `threads` (default 4) on its node.
+
+The worldview's live stream updates stay on the host: a few dynamics mini-batches per minute, where shipping the model would cost more than the work. So do inference calls on a trained model (`worldview.query`, `ml.train.predict`, ONNX runs).
+
+Models › **Training** shows the workers that train and their libraries, where each trainer would run right now and why, the switches, and the recent jobs with the node each ran on.
 
 ---
 
