@@ -8,12 +8,22 @@ const WE = R('vera/widgets/widget_element.js'), PANEL = R('vera/workers/workers_
 const LES = R('vera/workers/live_event_stream_element.js'), SLE = R('vera/workers/system_log_element.js');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 const id = (k) => L.widgets.find((w) => w.record.id === k);
-const ERR4 = ['obs-errors', 'obs-warnings', 'obs-recent-errors', 'obs-error-trend'];
+const ERR4 = ['obs-errors', 'obs-warnings', 'obs-error-trend'];
+const ERRS = ['obs-errors', 'obs-warnings', 'obs-recent-errors', 'obs-error-trend', 'obs-error-log', 'obs-errors-by-cap'];
 
-// errors lead
-const first = L.widgets.filter((w) => w.at[1] < 8).map((w) => w.record.id);
-t('the first rows are the warnings and errors', ['obs-errors', 'obs-warnings', 'obs-recent-errors', 'obs-error-trend', 'obs-error-log', 'obs-errors-by-cap'].every((k) => first.includes(k)) && first.length === 6, first.join(' '));
-t('they all read syslog.error_summary', first.every((k) => id(k).record.source === 'syslog.error_summary'));
+// 2026-10-02 (owner): "the observe panel widgets are not specific enough to vera health monitoring - i suppose it should be
+// called health and not observe". Vera's own health leads; the errors band comes next.
+const isSec = (w) => w.record.form === 'section';
+const top = L.widgets.filter((w) => w.at[1] < 4 && !isSec(w)).map((w) => w.record.id);
+t('the pane opens on its Vera\'s health banner (VeraDash keeps the order of the bands between banners)', isSec(L.widgets[0]) && L.widgets[0].record.id === 'sec-h-vera' && ['sec-h-errors', 'sec-h-host', 'sec-h-logs', 'sec-h-traffic'].every((k) => id(k) && isSec(id(k))));
+t('Vera\'s own health leads: its self-checks, what needs attention, the stores', ['h-checks', 'h-findings', 'h-stores'].every((k) => top.includes(k)) && top.length === 3, top.join(' '));
+t('then the control plane, the GPU gate, the census, stuck runners and pending jobs', ['h-control', 'obs-gpu-gate', 'h-census', 'h-stuck', 'h-pending'].every((k) => id(k) && id(k).at[1] === 4));
+t('the health tiles read Vera\'s own state', id('h-checks').record.source === 'perf.scan' && id('h-findings').record.source === 'perf.scan' && id('h-stores').record.source === 'obs.health' && id('h-stuck').record.source === 'nodes.runner.list' && id('h-stalls').record.source === 'perf.stalls' && id('h-proc-ram').record.source === 'sysmon.history' && id('h-redis').record.source === 'obs.redis');
+t('the errors band follows the health, before everything else', ERR4.every((k) => id(k).at[1] > id('sec-h-errors').at[1] && id(k).at[1] < id('sec-h-host').at[1]) && id('obs-error-log').at[1] < id('sec-h-host').at[1]);
+t('the error tiles all read syslog.error_summary', ERRS.every((k) => id(k).record.source === 'syslog.error_summary'));
+t('the model traffic comes last, below the live feeds', ['obs-inflight', 'obs-llm-by-worker', 'obs-llm-rate', 'obs-vera-work', 'obs-llm-routing'].every((k) => id(k).at[1] >= id('obs-stream').at[1] + id('obs-stream').span[1]));
+t('the pane is named Health where it is shown; its id stays observe', /data-pane="observe" data-view="estate" title="Health - Vera's own health" onclick="P\.show\('observe',this\)"><span class="gl">◎<\/span>Health<\/butt/.test(PANEL) && /<span class="pane-tb-title" style="color:var\(--acc4\)">HEALTH<\/span>/.test(PANEL) && !/>Observe<\/butt/.test(PANEL) && !/>OBSERVE</.test(PANEL));
+const first = ERRS;
 t('the errors log is the widest tile of the band', id('obs-error-log').span[0] === 8 && id('obs-error-log').record.form === 'log');
 // nothing was dropped (never remove widgets)
 t('every earlier tile is still there', ['obs-inflight', 'obs-gpu-gate', 'obs-llm-by-worker', 'obs-llm-rate', 'obs-vera-work', 'obs-llm-routing', 'obs-job-stream', 'obs-stream', 'obs-syslog'].every((k) => !!id(k)));
