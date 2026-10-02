@@ -1608,6 +1608,9 @@ _TEMP_BACKOFF: Dict[str, dict] = {}
 _TEMP_SCRIPT = r"""
 v=$(systemd-detect-virt --container 2>/dev/null); [ -z "$v" ] && [ -r /run/systemd/container ] && v=$(cat /run/systemd/container 2>/dev/null)
 echo "VIRT|${v:-none}"
+for d in /sys/devices/system/cpu/cpu[0-9]*; do
+  [ -r "$d/topology/core_id" ] && echo "CPUTOPO|$(basename $d)|$(cat $d/topology/physical_package_id 2>/dev/null)|$(cat $d/topology/core_id 2>/dev/null)"
+done
 if command -v sensors >/dev/null 2>&1; then
   echo "SENSORS_BEGIN"
   sensors -A -u 2>/dev/null
@@ -1899,13 +1902,17 @@ async def _probe_host_temp(host: Dict) -> None:
         temps: Dict[str, float] = {}
         missing_tools = []
 
+        core_temps: Dict[str, float] = {}
         if "SENSORS_BEGIN" in out:
             body = out.split("SENSORS_BEGIN", 1)[1].split("SENSORS_END", 1)[0]
             temps.update(_parse_sensors_u(body))
+            # per package and core (the flat `temps` keeps one "Core N" per label)
+            core_temps = _temps_core.parse_core_temps(body)
         elif "THERMAL_ZONE|" in out:
             temps.update(_parse_thermal_zones(out))
         elif "NO_SENSORS" in out:
             missing_tools.append("lm-sensors")
+        cpu_t = _temps_core.cpu_temps(core_temps, _temps_core.parse_cpu_topo(out))
 
         health: Dict[str, Dict[str, float]] = {"fan": {}, "voltage": {}, "power": {}}
         if "IPMI_BEGIN" in out:
@@ -1958,6 +1965,7 @@ async def _probe_host_temp(host: Dict) -> None:
             "host_id": host_id, "label": label, "pve": bool(facts.get("pve")),
             "temps": temps, "max_c": max(temps.values()) if temps else None,
             "percpu": percpu, "health": health, "drives": drives, "disk_usage": disk_usage,
+            "core_temps": core_temps, "cpu_temps": cpu_t,
             "updated_at": now_iso(), "error": error,
         }, virt)
     except Exception as e:
@@ -2017,7 +2025,11 @@ except Exception as e:
                 "health:{fan:{name:rpm},voltage:{name:volts},power:{name:w}},"
                 "drives:{dev:{temp_c,health,power_on_hours}},"
                 "disk_usage:[{mount,total_gb,used_gb,used_pct}],max_c,"
+                "core_temps:{'<package>:<core_id>':celsius} (every package's "
+                "cores - the flat temps keeps one 'Core N'), cpu_temps:{cpuN:"
+                "celsius} (each logical cpu with its physical core's reading), "
                 "virt,temps_from,host_temps?,host_drives?,host_health?,"
+                "host_core_temps?,host_cpu_temps?,"
                 "updated_at,error}], count}.",
 )
 async def cap_node_temps(trace_id=None) -> Dict:

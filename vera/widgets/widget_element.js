@@ -1471,6 +1471,10 @@
      then each Proxmox host's whole-host group; its GPUs fill the GPU util and VRAM lenses. */
   const CM_LENS = {
     load: { label: 'load', dict: 'percpu', match: /^cpu(\d+)$/i, unit: '%', warn: 60, bad: 85 },
+    /* (2026-10-02) a container's cores with the host's temperature for that physical core and the host's whole load
+       on it, mapped through the Proxmox pinning (estate.compute.load) */
+    ctemp: { label: 'core °C', dict: 'cputemp', match: /^cpu(\d+)$/i, unit: '°C', warn: 70, bad: 85 },
+    hostload: { label: 'host load', dict: 'hostload', match: /^cpu(\d+)$/i, unit: '%', warn: 60, bad: 85 },
     gpu: { label: 'GPU util', dict: 'gpuutil', match: /^gpu(\d+)$/i, unit: '%', warn: 60, bad: 85 },
     vram: { label: 'VRAM', dict: 'gpuvram', match: /^gpu(\d+)$/i, unit: '%', warn: 75, bad: 92 },
     temp: { label: 'core °C', dict: 'temps', match: /^core\s*(\d+)$/i, unit: '°C', warn: 70, bad: 85 },
@@ -1482,8 +1486,11 @@
   /* estate.compute.load -> the hosts shape: cores [{cpu, load}] -> percpu, gpus -> gpuutil / gpuvram, an instance whose
      machine an earlier one already drew folded into that group's name; every cell carries where it is (item.on) */
   function cmCompute(d) {
-    const one = (h, label, on) => { const out = { label, _on: on, percpu: {}, gpuutil: {}, gpuvram: {} };
-      (h.cores || []).forEach((c) => { if (c && c.cpu != null && c.load != null) out.percpu['cpu' + c.cpu] = c.load; });
+    const one = (h, label, on) => { const out = { label, _on: on, percpu: {}, cputemp: {}, hostload: {}, gpuutil: {}, gpuvram: {}, _cell: {} };
+      (h.cores || []).forEach((c) => { if (!c || c.cpu == null) return; const k = 'cpu' + c.cpu;
+        if (c.load != null) out.percpu[k] = c.load; if (c.temp != null) out.cputemp[k] = c.temp; if (c.host_load != null) out.hostload[k] = c.host_load;
+        const x = {}; if (c.temp != null) x['core °C'] = c.temp; if (c.host_load != null) x['host load %'] = c.host_load; if (c.shared_with && c.shared_with.length) x['shared with'] = c.shared_with.join(', ');
+        if (Object.keys(x).length) out._cell[k] = x; });
       (h.gpus || []).forEach((g, i) => { if (!g) return; const k = 'gpu' + (g.index != null ? g.index : i); if (g.util_pct != null) out.gpuutil[k] = g.util_pct; if (num(g.total_mb) > 0) out.gpuvram[k] = Math.round(num(g.used_mb) / num(g.total_mb) * 1000) / 10; });
       return out; };
     const rows = [], seen = {};
@@ -1503,7 +1510,7 @@
       hostsArr.forEach((h) => { const dict = (h && h[L.dict]) || {}; const ks = Object.keys(dict).filter((k) => L.match.test(k)).sort((a, b) => +a.match(L.match)[1] - +b.match(L.match)[1]); if (!ks.length) return;
         const vals = ks.map((k) => num(dict[k])), peak = Math.max(...vals), mean = vals.reduce((a, b) => a + b, 0) / vals.length;
         groups.push({ name: String(h.label || h.name || h.host_id || 'host'), note: ks.length + ' · peak ' + fmt(Math.round(peak)) + L.unit + ' · mean ' + fmt(Math.round(mean)) + L.unit,
-          cells: ks.map((k, i) => ({ id: k, v: vals[i], col: cmBand(vals[i], L), item: { name: k, value: Math.round(vals[i] * 10) / 10, unit: L.unit, host: String(h.label || h.host_id || ''), ...(h._on ? { on: h._on } : {}) } })) }); });
+          cells: ks.map((k, i) => ({ id: k, v: vals[i], col: cmBand(vals[i], L), item: { name: k, value: Math.round(vals[i] * 10) / 10, unit: L.unit, host: String(h.label || h.host_id || ''), ...(h._on ? { on: h._on } : {}), ...((h._cell && h._cell[k]) || {}) } })) }); });
     } else {
       const numa = {}; Object.keys(d.topology.numa_nodes || {}).forEach((n) => (d.topology.numa_nodes[n] || []).forEach((c) => { numa[c] = +n; }));
       const on = {}, spans = {}; (d.guests || []).forEach((g) => { if (!g || !Array.isArray(g.cpus)) return; const run = String(g.status || '') === 'running';
