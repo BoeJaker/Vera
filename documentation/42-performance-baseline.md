@@ -70,7 +70,7 @@ event with `path`, `session_id`, `trace_id` and the same `timing` object.
 | `phases_ms.persistence` | File and version persistence |
 | `phases_ms.smoke_and_runtime_repair` | Bounded Python smoke execution and runtime-repair calls |
 | `counters.syntax_repairs`, `smoke_runs`, `runtime_repairs` | Activity counts |
-| `telemetry_emit_ms` | Time spent emitting the event. It is added to the returned result **after** emission, so it is not present in the stored event. |
+| `telemetry_emit_ms` | Time spent emitting the event. It is added to the returned result **after** emission, so it is not present in the stored event, and the stream summary does not report it. |
 
 This separates five possible causes of a pause:
 
@@ -379,7 +379,6 @@ queue admission, and the gap from one capability result to the next loop cycle.
 |---|---|
 | `code.author.timing.summary` reports `error: timing event observers are unavailable` | Neither `obs.stream_history` nor `obs.events` is registered in this process. |
 | `window.source` is `events` and there are few samples | The dedicated stream is empty (an older deployment, or Redis was flushed). It fills as `code.author` runs. |
-| `telemetry_emit_ms` has 0 samples | Expected. The field is added to the result after the event is emitted (§1). |
 | `census.runs` shows fewer runs than files | Partial or failed runs are hidden by default; pass `include_partial=true`. |
 | `census.control` shows `live: false` | The harness's active report is stale. The harness probably died without saying so. |
 | `census.control.set` returns `acked: false` after a yield | The goal in flight has not finished yet. Keep polling `census.control`. |

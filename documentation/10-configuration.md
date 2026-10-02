@@ -107,8 +107,7 @@ pair of matching single or double quotes around the value is removed. A key
 already present in the environment is never overridden.
 
 `.env.example` at the repository root lists the main overrides with
-explanations; copy it to `.env`. Note that its `OLLAMA_MODEL=mistral` comment
-predates the current default (`jaahas/qwen3.5-uncensored`, below).
+explanations; copy it to `.env`.
 
 ### Redis credentials from the sealed local copy
 
@@ -242,7 +241,7 @@ health report, connects to `localhost:8008` regardless of these variables.
 |---|---|---|
 | `NEO4J_URI` | `bolt://localhost:7687` | Bolt URI |
 | `NEO4J_USER` | `neo4j` | Username |
-| `NEO4J_PASS` | `neo4j` (Compose: `veraneo4j`) | Password |
+| `NEO4J_PASS` | `veraneo4j` (same as Compose) | Password |
 
 Neo4j is the primary store for the memory graph and the auxiliary fabric graph.
 At startup the orchestrator verifies connectivity with the configured
@@ -416,7 +415,7 @@ stack it overrides several defaults to point at service names:
 | `REDIS_URL` | `redis://redis:6379` | `redis://localhost:6379` |
 | `POSTGRES_URL` | `postgresql://admin:admin@postgres:5432/postgres` | `…@localhost:5433/postgres` |
 | `CHROMA_HOST` / `CHROMA_PORT` | `chromadb` / `8000` | `localhost` / `8008` |
-| `NEO4J_URI` / `NEO4J_PASS` | `bolt://neo4j:7687` / `${NEO4J_PASS:-veraneo4j}` | `bolt://localhost:7687` / `neo4j` |
+| `NEO4J_URI` / `NEO4J_PASS` | `bolt://neo4j:7687` / `${NEO4J_PASS:-veraneo4j}` | `bolt://localhost:7687` / `veraneo4j` |
 | `FABRIC_OBJECT_STORE` | `${FABRIC_OBJECT_STORE:-garage}` | `none` |
 | `FABRIC_S3_ENDPOINT` | `http://garage:3900` (not overridable) | `http://localhost:3900` |
 | `VERA_BUILDER_URL` | `${VERA_BUILDER_URL:-http://vera-builder:8080}` | unset |
@@ -597,7 +596,7 @@ relative to `vera/`.
 | `CHROMA_COLLECTION` | `vera_memory` | `fabric/memory.py` |
 | `CHROMA_HOST` | `localhost` | `config.py` |
 | `CHROMA_PORT` | `8008` | `config.py` |
-| `NEO4J_PASS` | `neo4j (cfg) / veraneo4j (compose, docker caps)` | `config.py`, `workers/docker_capabilities.py` |
+| `NEO4J_PASS` | `veraneo4j` | `config.py`, `workers/docker_capabilities.py` |
 | `NEO4J_URI` | `bolt://localhost:7687` | `config.py` |
 | `NEO4J_USER` | `neo4j` | `config.py`, `workers/docker_capabilities.py` |
 | `POSTGRES_URL` | `postgresql://admin:admin@localhost:5433/postgres` | `config.py` |
@@ -753,7 +752,7 @@ relative to `vera/`.
 | `VERA_LOG_FILE` | `""` | `log_setup.py` |
 | `VERA_LOG_FILE_ENABLED` | `on` | `log_setup.py` |
 | `VERA_LOG_FILE_LEVEL` | `(unset)` | `log_setup.py` |
-| `VERA_LOG_MAX_BYTES` | `10485760 (10 MiB)` | `log_setup.py`, `monitor/perf_capabilities.py` |
+| `VERA_LOG_MAX_BYTES` | `33554432 (32 MiB)`, bounded 64 KiB–2 GiB | `log_setup.py`, `monitor/perf_capabilities.py` |
 | `VERA_LOG_RING` | `3000` | `monitor/perf_capabilities.py` |
 | `VERA_LOOP_HANG_DUMP_S` | `1` | `capability_orchestration.py` |
 | `VERA_LOOP_LAG_WARN_MS` | `500` | `capability_orchestration.py` |

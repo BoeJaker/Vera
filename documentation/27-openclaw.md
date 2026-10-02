@@ -18,7 +18,7 @@ Source: `openclaw_capabilities.py` (capabilities, connection loop, prompt
 queue, installer, panel route), `openclaw_device_core.py` (the pure connect
 contract, Ed25519 device proof, stream parsing — testable without the app) and
 `openclaw_panel.html`. The Vera → OpenClaw path is the mature, exercised half;
-the inbound REST tool bridge has known limitations (see
+the inbound REST tool bridge is unauthenticated (see
 [§9](#9-openclaw--vera-tool-bridge-and-installer)).
 
 ## Contents
@@ -292,13 +292,13 @@ OpenClaw-style tool schema (name, description, JSON parameters), and
 arguments.
 
 > [!WARNING]
-> Known limitations of the REST tool bridge in the current source: the routes
-> perform no authentication of their own and bypass the capability wrapper, so
-> they must not be exposed beyond a trusted network; `/openclaw/tools` reads a
-> `doc` field the capability registry does not populate, so tool descriptions
-> come back empty; and `/openclaw/call` looks up an `fn` entry the registry does
-> not provide, so calls currently fail with HTTP 500. For tool use from external
-> agents, prefer Vera's MCP exposure ([Agent Runtimes & Providers](./36-agent-runtimes-providers.md)).
+> The REST tool bridge performs no authentication of its own, so it must not
+> be exposed beyond a trusted network. `/openclaw/call/{capability_name}`
+> invokes the capability through its registered wrapper (the same entry point
+> as `/mcp/call`, so events, policy and retries apply) and rejects a non-object
+> JSON body with HTTP 400; `/openclaw/tools` returns each capability's registry
+> description (first 200 characters). For tool use from external agents, prefer
+> Vera's MCP exposure ([Agent Runtimes & Providers](./36-agent-runtimes-providers.md)).
 
 ## 10. UI
 

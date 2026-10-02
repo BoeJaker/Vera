@@ -191,7 +191,7 @@ class VeraConfig:
     # ── Neo4j ─────────────────────────────────────────────────────────────────
     NEO4J_URI         : str = os.getenv("NEO4J_URI",  "bolt://localhost:7687")
     NEO4J_USER        : str = os.getenv("NEO4J_USER", "neo4j")
-    NEO4J_PASS        : str = os.getenv("NEO4J_PASS", "neo4j")
+    NEO4J_PASS        : str = os.getenv("NEO4J_PASS", "veraneo4j")
 
     # ── Ollama cluster ────────────────────────────────────────────────────────
     # gpu-250: main GPU node (V100, 16GB VRAM)

@@ -565,7 +565,7 @@ The **Workers & Ollama** tab (`workers_ollama_panel.html`) shows per-node cards 
 
 | Capability | Route | Purpose |
 |---|---|---|
-| `ollama.instances` | `GET /ollama/cluster` | Live status of every node |
+| `ollama.instances` | `GET /ollama/cluster` (also `GET /ollama/instances`) | Live status of every node: `url`, `label`, `has_gpu`, `status`, `enabled`, `latency_ms`, `models`, `in_use`, `errors`, `last_check`, `num_thread`, `num_ctx` |
 | `ollama.add_instance` | `POST /ollama/instances/add` | Add or overwrite a node (`id`, `url`, `has_gpu`, `label`, `num_thread`); persisted |
 | `ollama.node.config` | `POST /ollama/node/config` | `enabled`, `priority`, `label`, `num_thread`; persisted |
 | `ollama.ping_instance` | `POST /ollama/ping` | Ping one node now |

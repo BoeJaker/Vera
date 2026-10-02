@@ -246,7 +246,7 @@ mistaken for whatever code was running.
 ### Log capture
 
 `perf_capabilities.py` tees the whole application log to a rotating file,
-`<VERA_LOG_DIR>/vera.log` (default `<repo>/logs`, `VERA_LOG_MAX_BYTES` 10 MB ×
+`<VERA_LOG_DIR>/vera.log` (default `<repo>/logs`, `VERA_LOG_MAX_BYTES` 32 MiB ×
 `VERA_LOG_BACKUPS` 5), through a queue handler and background listener so file
 I/O never runs on the event loop. An in-memory ring of the last
 `VERA_LOG_RING` (3000) lines serves instant tails.
@@ -360,7 +360,7 @@ stall stacks, job history, and route statistics to locate the slow stage.
 | `VERA_GC_FULL_EVERY` | `15` | Paced cycles per full collection |
 | `VERA_GC_WARN_MS` | `200` | Collection time recorded as a `gc` event |
 | `VERA_LOG_DIR` | `<repo>/logs` | Captured log directory |
-| `VERA_LOG_MAX_BYTES` / `VERA_LOG_BACKUPS` | `10485760` / `5` | Log rotation |
+| `VERA_LOG_MAX_BYTES` / `VERA_LOG_BACKUPS` | `33554432` (32 MiB) / `5` | Log rotation (bounded: 64 KiB–2 GiB, 0–50 backups) |
 | `VERA_LOG_RING` | `3000` | In-memory tail size |
 | `VERA_PERF_GATE_MAX_CRIT` / `VERA_PERF_GATE_MAX_WARN` | `0` / `4` | Gate thresholds |
 | `VERA_PERF_GATE_STRICT` | empty | `1` makes a `fail` verdict block promotion |

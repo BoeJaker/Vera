@@ -284,7 +284,7 @@ docker compose up -d redis postgres chromadb neo4j
 | Redis | `REDIS_URL=redis://localhost:6379` | Events, queues, caching |
 | Postgres | `POSTGRES_URL=postgresql://admin:admin@localhost:5433/postgres` | Compose publishes 5432 as 5433 |
 | ChromaDB | `CHROMA_HOST=localhost`, `CHROMA_PORT=8008` | Vector store |
-| Neo4j | `NEO4J_URI=bolt://localhost:7687`, `NEO4J_USER=neo4j` | Native default password is `neo4j`; the Compose service uses `veraneo4j`, so set `NEO4J_PASS=veraneo4j` in `.env` |
+| Neo4j | `NEO4J_URI=bolt://localhost:7687`, `NEO4J_USER=neo4j` | The default password is `veraneo4j`, matching the Compose service; set `NEO4J_PASS` if your Neo4j uses another |
 | Object store | `FABRIC_OBJECT_STORE=none` | Native default disables blob storage; Docker defaults to Garage |
 
 ## Services and ports

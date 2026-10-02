@@ -19780,7 +19780,7 @@ async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
         "planner keeps exploring (read files, web, read-only shell like ls/grep/cat/find) until it "
         "knows enough or rounds run out; 0 disables recon, 1 = legacy single pass), "
         "enable_subplans (bool default True — a step marked `complex` is expanded into "
-        "its own one-level sub-plan), enable_phases (bool default True — the planner may give a "
+        "its own one-level sub-plan), enable_phases (bool default False — the planner may give a "
         "step a `phases` subset of explore/think/act/verify, each run as its own scoped sub-agent), "
         "phase_policy (auto|encourage|sparing default auto — encourage forces heavy phasing), "
         "phase_set (csv default 'explore,think,act,verify' — which step phases are allowed), "

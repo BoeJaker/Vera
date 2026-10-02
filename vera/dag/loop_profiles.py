@@ -830,7 +830,7 @@ async def cap_loops_run(profile: str = "", goal: str = "",
         core = {"goal": goal, "allowed_caps": body.get("allowed_caps", ""),
                 "base_toolkit": body.get("base_toolkit", ""),
                 "model": body.get("model", ""), "trace_id": session_id or trace_id}
-        core = {k: v for k, v in core.items() if k in accepted or k == "goal"}
+        core = {k: v for k, v in core.items() if k in _caller_ok or k == "goal"}
         result = await cap["func"](**core)
     if isinstance(result, dict):
         result.setdefault("loop_profile", p["id"])

@@ -152,7 +152,7 @@ Each narrowing step is skipped when it would leave no candidates, so a model or 
 | **Routing pin** (recommended) | A job-type rule, per-capability rule or role-profile role whose `pin` is `vllm:<id>` (or `vllm:*` for the best instance) makes `ollama_generate` call `vllm_generate` with `system + "\n\n" + prompt`, the rule's model, `max_tokens` = the caller's `num_predict` (default 1024), `temperature`/`top_p` from options (0.7 / 0.9), `guided_json: {"type":"object"}` for JSON-mode calls, and the caller identity. If no vLLM instance is online, or the call raises, the request continues on normal Ollama routing. A caller that pins an Ollama `instance_id` bypasses the delegation. See [04 · LLM Cluster §11](./04-ollama-cluster.md#11-delegation-to-vllm-and-api-providers). |
 | **Direct capabilities** | `vllm.generate`, `vllm.chat`, `vllm.embed` call the helpers directly. |
 | **Passthrough proxy** | `/vllm/proxy/{id}/{path}` forwards any OpenAI-compatible request (§9). |
-| **`llm.generate` `backend` argument** | See the limitation in §16. |
+| **`llm.generate` `backend` argument** | `backend="vllm"`, or `backend="auto"` with `prefer_gpu`, routes through `vllm.generate` when an instance is online (system prompt prepended); on failure it falls back to Ollama. |
 
 The Model Routing page lists vLLM servers beside Ollama nodes (it reads `vllm.status`), so `vllm:` pins can be chosen from the node pickers.
 
@@ -323,7 +323,7 @@ Managed launch settings such as quantisation, dtype, speculative model, prefix c
 
 | Symptom / limitation | Explanation |
 |---|---|
-| `llm.generate` with `backend="vllm"` (or `auto` + `prefer_gpu`) still answers from Ollama | `llm.generate` looks for the vLLM module under a package path at which the loader does not register it; the lookup fails silently and the call uses Ollama. Route to vLLM with a `vllm:` pin in the routing rules, or call `vllm.generate` / `vllm.chat` directly. |
+| `llm.generate` with `backend="vllm"` (or `auto` + `prefer_gpu`) answers from Ollama | No vLLM instance is `online`, or the `vllm` module is not loaded. Both `llm.generate` and the `vllm:` routing pin use the module copy the loader registered (so they see the health-polled instances); check `vllm.status`. |
 | Instances disappear after restart | The registry is in memory; use `VLLM_INSTANCES`. |
 | Empty text from `vllm.generate` | No instance online, no model resolvable, or both attempts failed; check the log line `vllm_generate [...] FAILED` and `vllm.status`. |
 | Instance shows `degraded` | More than 32 queued requests or GPU KV cache above 97 %; reduce load or `max_model_len`. |

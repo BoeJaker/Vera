@@ -537,7 +537,7 @@ rather than stopping startup.
 > `perf_capabilities.py` installs a second, independent capture for the Perf
 > panel: a rotating `vera.log` under `VERA_LOG_DIR` (default `logs/` beside the
 > package) plus the in-memory ring. It reads the same `VERA_LOG_MAX_BYTES` /
-> `VERA_LOG_BACKUPS` names but defaults to 10 MiB.
+> `VERA_LOG_BACKUPS` settings with the same defaults and bounds (32 MiB × 5).
 
 ## 13. Reusable observability elements
 
