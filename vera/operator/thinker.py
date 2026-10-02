@@ -50,6 +50,17 @@ _SYSTEM = (
     "ref fits (e.g. a canvas / remote-desktop surface).\n"
     "• Take the smallest useful step. Do not repeat an action that just failed.\n"
     "• When the GOAL is achieved, use action \"done\" with a short summary.\n"
+    # A failed check is a finished check (edge mirror 2026-10-02, run fa706e575d:
+    # told to confirm a countdown decreased, it saw 03:00 at load, after a wait,
+    # after Start, and after three more waits - then ran out of its 480 s. The
+    # page was broken; "it did not change" was the answer and the loop needed
+    # it early, to fix the file. A done summary is the step's evidence, and the
+    # loop is told to edit the file when that report shows it is wrong.)
+    "• If the GOAL is to check or verify something, a check that FAILS is a "
+    "finished check: once you have seen enough to answer - e.g. the value did not "
+    "change across two observations after the action meant to change it, or the "
+    "expected message never appeared - use \"done\" and say plainly what you saw "
+    "and that it did NOT behave as asked. Do not keep waiting or re-clicking.\n"
     "• Respond with EXACTLY ONE JSON object and nothing else."
 )
 
@@ -95,7 +106,8 @@ def build_prompt(goal: str, observation, history: Optional[List[Dict[str, Any]]]
         # recent runs ever said done; 16 ran out of steps or time.
         + 'Reply with one JSON object: '
         '{"thought": "...", "action": "<name>", "args": {...}, '
-        '"done": true if the goal is now verified, otherwise false}'
+        '"done": true once you can answer the GOAL (verified, or seen NOT to work), '
+        'otherwise false}'
     )
     return {"system": _SYSTEM, "user": user}
 
@@ -164,11 +176,15 @@ def parse_decision(text: str) -> Dict[str, Any]:
         except Exception:
             d = None
     if d is None:
-        # last resort: some models emit action on its own line
-        m = re.search(r'"?action"?\s*[:=]\s*"?(\w+)"?', text)
-        if m:
-            return {"thought": "", "action": m.group(1), "args": {}, "done": False,
-                    "raw": text[:400]}
+        # last resort: some models emit action on its own line. Only a REAL
+        # action name counts - prose like "Action: I will click Start" matched
+        # as action "I" (edge mirror 2026-10-02, run fa706e575d): a wasted step
+        # that also hid the truncation, so the "answer with ONLY the JSON" hint
+        # `decide` adds to a cut-off reply never reached the model.
+        for m in re.finditer(r'"?action"?\s*[:=]\s*"?(\w+)"?', text, re.IGNORECASE):
+            if m.group(1).lower() in ACTIONS:
+                return {"thought": "", "action": m.group(1).lower(), "args": {}, "done": False,
+                        "raw": text[:400]}
         return {"error": f"could not parse decision JSON: {text[:160]}"}
     if not isinstance(d, dict):
         return {"error": "decision was not a JSON object"}
