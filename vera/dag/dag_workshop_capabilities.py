@@ -8502,7 +8502,15 @@ _V5_LOOP_DENYLIST = {"browser.navigate",
                      # titled "Force-persist __init__.py via ide.fs.read
                      # write-back". Denying it outright states the rule once,
                      # instead of leaving a cap visible that scope will refuse.
-                     "ide.fs.write", "sandbox.session.fs.write"}
+                     "ide.fs.write", "sandbox.session.fs.write",
+                     # operator.test.run runs pytest in VERA'S OWN repository on
+                     # the host - not in the session sandbox - so for a loop's
+                     # project it can only fail (census 2026-10-02 build-multifile:
+                     # path='statkit' failed 3x 'with no error detail', then 15
+                     # minutes on the test harness). The same trap as
+                     # evolve.unittest.run below; tests run with pytest via
+                     # exec.bash.run in the sandbox.
+                     "operator.test.run"}
 
 # WHOLE FAMILIES the loop must never be offered, by prefix.
 #   evolve.* — Vera's own CI/CD and self-modification surface: repo registry,
@@ -10913,6 +10921,48 @@ def _code_author_timing(started: float, generation_started: float,
     }
 
 
+#: code.author's browser-observability rules - for web files only (see the call site).
+_CODE_AUTHOR_WEB_LANGS = frozenset({"html", "htm", "javascript", "js", "jsx",
+                                    "typescript", "ts", "tsx", "vue", "svelte"})
+_CODE_AUTHOR_BROWSER_RULES = (
+        "  \u2022 IF A BROWSER WILL CHECK IT, IT MUST BE BROWSER-OBSERVABLE. A page that a "
+        "person can use is not automatically a page an automated checker can read, and two "
+        "census runs were lost to exactly that gap. Two rules:\n"
+        "      1. RENDER STATE ON LOAD. Any element whose text reflects program state must be "
+        "produced by your render function AT LOAD, never typed into the markup as a literal. "
+        "Call the render/update function once at the end of your script. A countdown page "
+        "shipped `<div id='timer'>60</div>` with updateDisplay() never called on load: when the "
+        "starting value was later changed to 90 the variable changed, the markup did not, and "
+        "the page kept loading with the stale number until a button was pressed. The edit was "
+        "correct and INVISIBLE.\n"
+        "      2. EVERY CONTROL NEEDS A NAME A CHECKER CAN READ. A control is ANYTHING you "
+        "attach a click/change/input handler to - button, a, input, select, textarea, or any "
+        "div/span/svg you make clickable. THE TEST: does the element contain visible TEXT of "
+        "its own? `<button>Delete</button>` does, so it is already named and needs nothing. A "
+        "checkbox, radio, text input, icon-only button or clickable svg contains NO text, so "
+        "it has NO name and an automated checker cannot see it at all - it is not 'unlabelled', "
+        "it is ABSENT from what the checker reads.\n"
+        "         For those, set the name ON THE SAME LINES you build the element, right after "
+        "you set its type:\n"
+        "             const cb = document.createElement('input');\n"
+        "             cb.type = 'checkbox';\n"
+        "             cb.setAttribute('aria-label', `Mark ${task.text} complete`);\n"
+        "         In plain markup use aria-label=\"...\" on the tag, or a <label for=...> tied "
+        "to the input's id. A to-do app shipped its complete-checkbox with only "
+        "type/checked/onchange and no name: the checker read the page as 'Task A Delete', "
+        "found nothing that completes a task, clicked the same spot five times and stopped. "
+        "The feature was fully implemented and completely invisible.\n"
+)
+#: For Python: a file other code imports must do nothing at import.
+_CODE_AUTHOR_PY_MODULE_RULE = (
+    "  \u2022 A Python file that defines functions or classes for other code to IMPORT "
+    "(a module, a package file, anything a test or another file imports) must DO "
+    "NOTHING when imported: no prints, no demo calls, no tests, no input(), no "
+    "top-level work. Put any demo or self-check under `if __name__ == \"__main__\":`. "
+    "A stats.py that ended with a module-level call crashed the tests that imported "
+    "it, and the run spent its time debugging the test harness instead.\n")
+
+
 @capability(
     "code.author", memory="on",
     http_method="POST", http_path="/code/author", http_tags=["code", "fabric"],
@@ -11076,34 +11126,13 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         "behind it. Grabbing an element with getElementById and then never binding a handler "
         "ships a DEAD control and is a failed file. Before you stop, walk every button/control and "
         "every feature the task names, and make sure each one actually does something end-to-end.\n"
-        "  \u2022 IF A BROWSER WILL CHECK IT, IT MUST BE BROWSER-OBSERVABLE. A page that a "
-        "person can use is not automatically a page an automated checker can read, and two "
-        "census runs were lost to exactly that gap. Two rules:\n"
-        "      1. RENDER STATE ON LOAD. Any element whose text reflects program state must be "
-        "produced by your render function AT LOAD, never typed into the markup as a literal. "
-        "Call the render/update function once at the end of your script. A countdown page "
-        "shipped `<div id='timer'>60</div>` with updateDisplay() never called on load: when the "
-        "starting value was later changed to 90 the variable changed, the markup did not, and "
-        "the page kept loading with the stale number until a button was pressed. The edit was "
-        "correct and INVISIBLE.\n"
-        "      2. EVERY CONTROL NEEDS A NAME A CHECKER CAN READ. A control is ANYTHING you "
-        "attach a click/change/input handler to - button, a, input, select, textarea, or any "
-        "div/span/svg you make clickable. THE TEST: does the element contain visible TEXT of "
-        "its own? `<button>Delete</button>` does, so it is already named and needs nothing. A "
-        "checkbox, radio, text input, icon-only button or clickable svg contains NO text, so "
-        "it has NO name and an automated checker cannot see it at all - it is not 'unlabelled', "
-        "it is ABSENT from what the checker reads.\n"
-        "         For those, set the name ON THE SAME LINES you build the element, right after "
-        "you set its type:\n"
-        "             const cb = document.createElement('input');\n"
-        "             cb.type = 'checkbox';\n"
-        "             cb.setAttribute('aria-label', `Mark ${task.text} complete`);\n"
-        "         In plain markup use aria-label=\"...\" on the tag, or a <label for=...> tied "
-        "to the input's id. A to-do app shipped its complete-checkbox with only "
-        "type/checked/onchange and no name: the checker read the page as 'Task A Delete', "
-        "found nothing that completes a task, clicked the same spot five times and stopped. "
-        "The feature was fully implemented and completely invisible.\n"
-        "  • This call authors EXACTLY ONE file — the one named on the fence. If it is a "
+        # Browser-only rules: for a web file. Given to every language they were
+        # obeyed in Python - census 2026-10-02 build-multifile: stats.py ended with
+        # a module-level render() ("call the render function at the end of your
+        # script"), so importing it from the tests ran and crashed it.
+        + (_CODE_AUTHOR_BROWSER_RULES if lang in _CODE_AUTHOR_WEB_LANGS else "")
+        + (_CODE_AUTHOR_PY_MODULE_RULE if lang == "python" else "")
+        +         "  • This call authors EXACTLY ONE file — the one named on the fence. If it is a "
         "self-contained web page, the ENTIRE app goes in THIS single file: ALL markup, ALL CSS "
         "inside a <style> block, and ALL JavaScript inside a <script> block — there are no other "
         "files, so inline everything. ONLY split across files (<script src=…>/<link href=…> to a "
