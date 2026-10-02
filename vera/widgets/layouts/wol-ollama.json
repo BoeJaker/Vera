@@ -357,6 +357,8 @@
      "lens": "load",
      "lenses": [
       "load",
+      "ctemp",
+      "hostload",
       "gpu",
       "vram"
      ]

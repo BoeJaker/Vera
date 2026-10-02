@@ -58,6 +58,48 @@ def test_a_real_failure_in_a_container_is_kept():
     assert out["error"] == "PermissionDenied"
 
 
+# PVE01's `sensors -A -u`, trimmed (2026-10-02): two coretemp chips, each with its own "Core 0"
+SENSORS = """tg3-pci-0203
+temp1:
+  temp1_input: 59.000
+
+coretemp-isa-0000
+Package id 0:
+  temp1_input: 61.000
+Core 0:
+  temp2_input: 56.000
+Core 8:
+  temp10_input: 57.000
+
+coretemp-isa-0001
+Package id 1:
+  temp1_input: 90.000
+Core 0:
+  temp2_input: 82.000
+Core 13:
+  temp15_input: 84.000
+"""
+
+
+def test_every_packages_cores_are_kept_apart():
+    assert tc.parse_core_temps(SENSORS) == {"0:0": 56.0, "0:8": 57.0, "1:0": 82.0, "1:13": 84.0}
+
+
+def test_each_logical_cpu_gets_its_physical_cores_temperature():
+    topo = tc.parse_cpu_topo("CPUTOPO|cpu0|0|0\nCPUTOPO|cpu6|0|8\nCPUTOPO|cpu12|1|0\nCPUTOPO|cpu36|1|0\n"
+                             "CPUTOPO|cpu47|1|13\nCPUTOPO|cpu5|0|5\nCPUTOPO|bad|x|y\n")
+    assert topo["cpu36"] == (1, 0) and "bad" not in topo
+    t = tc.cpu_temps(tc.parse_core_temps(SENSORS), topo)
+    # hyperthread siblings (cpu12, cpu36) share their core; a core with no reading is left out
+    assert t == {"cpu0": 56.0, "cpu6": 57.0, "cpu12": 82.0, "cpu36": 82.0, "cpu47": 84.0}
+
+
+def test_a_container_moves_its_core_temps_to_the_hosts_too():
+    out = tc.attribute(_entry(core_temps={"0:0": 56.0}, cpu_temps={"cpu0": 56.0}), "lxc")
+    assert out["core_temps"] == {} and out["cpu_temps"] == {}
+    assert out["host_core_temps"] == {"0:0": 56.0} and out["host_cpu_temps"] == {"cpu0": 56.0}
+
+
 def test_the_input_is_not_changed():
     e = _entry()
     tc.attribute(e, "lxc")

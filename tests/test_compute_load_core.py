@@ -53,11 +53,67 @@ def _by_id(out):
 def test_instance_joins_guest_cores_gpus_and_host():
     n = _by_id(cl.build(_src(), NOW))["gpu-250"]
     assert n["machine"]["ref"] == "guest:126" and n["machine"]["pve_node"] == "corp"
-    assert n["cores"] == [{"cpu": 12, "load": 91.0}, {"cpu": 13, "load": 20.8}]   # sorted, junk key dropped
-    assert n["summary"] == {"n": 2, "avg": 55.9, "max": 91.0, "hot": 1}
+    # sorted, junk key dropped; a container's cores carry the host's load on the same cpu (PVE01 reports i% on cpu i)
+    assert n["cores"] == [{"cpu": 12, "load": 91.0, "host_load": 12.0}, {"cpu": 13, "load": 20.8, "host_load": 13.0}]
+    assert n["summary"] == {"n": 2, "avg": 55.9, "max": 91.0, "hot": 1, "host_load_avg": 12.5}
     assert n["gpus"][0]["util_pct"] == 37
     assert n["host"] == {"label": "PVE01", "pve_node": "corp", "ref": "pve:corp"}
+    assert n["notes"] == ["core temps: the host's probe has no per-core temperatures yet"]
+
+
+def _with_pinning():
+    src = _src()
+    pve = src["obs.node_temps"]["hosts"][2]
+    pve["cpu_temps"] = {"cpu12": 80.0, "cpu13": 66.0, "cpu0": 50.0}
+    src["estate.machines"]["machines"][1]["cluster_id"] = "c1"
+    src["pxstore.cpu.map"] = {"corp": {"guests": [
+        {"vmid": 126, "name": "Ollama", "type": "lxc", "status": "running", "pinned": "12-23", "live": "12-23", "cpus": list(range(12, 24)), "numa": [1], "flags": []},
+        {"vmid": 160, "name": "VFS-02", "type": "lxc", "status": "running", "pinned": "", "live": "11,13", "cpus": [11, 13], "numa": [0, 1], "flags": ["unpinned"]},
+        {"vmid": 144, "name": "vidforge", "type": "lxc", "status": "stopped", "pinned": "", "live": "", "cpus": [12], "flags": ["unpinned"]},
+        {"vmid": 104, "name": "LLM", "type": "qemu", "status": "running", "pinned": "36-47", "live": "36-47", "cpus": list(range(36, 48)), "flags": []},
+    ]}}
+    return src
+
+
+def test_a_containers_cores_take_the_hosts_core_temperature_and_name_who_shares_them():
+    n = _by_id(cl.build(_with_pinning(), NOW))["gpu-250"]
+    assert n["cores"] == [{"cpu": 12, "load": 91.0, "temp": 80.0, "host_load": 12.0},
+                          {"cpu": 13, "load": 20.8, "temp": 66.0, "host_load": 13.0, "shared_with": ["VFS-02"]}]
+    assert n["summary"]["temp_max"] == 80.0 and n["summary"]["temp_avg"] == 73.0
+    assert n["pinning"]["pinned"] == "12-23" and n["pinning"]["shared_by"] == 1
+    # a stopped guest and a guest elsewhere on the host share nothing
+    assert n["sharers"] == [{"vmid": 160, "name": "VFS-02", "type": "lxc", "pinned": False, "cpus": [13]}]
     assert n["notes"] == []
+
+
+def test_the_host_row_carries_its_own_core_temperatures():
+    h = cl.build(_with_pinning(), NOW)["hosts"][0]
+    t = {c["cpu"]: c.get("temp") for c in h["cores"]}
+    assert t[0] == 50.0 and t[12] == 80.0 and t[1] is None
+
+
+def test_a_vm_numbers_its_own_vcpus_and_gets_nothing_mapped():
+    src = _with_pinning()
+    src["estate.machines"]["machines"][2]["type"] = "qemu"           # cpu-246 as a VM
+    n = _by_id(cl.build(src, NOW))["cpu-246"]
+    assert all(set(c) == {"cpu", "load"} for c in n["cores"])
+    assert any("VM numbers its own vCPUs" in x for x in n["notes"])
+
+
+def test_pin_targets_names_each_proxmox_node_once():
+    src = _with_pinning()
+    for r in src["estate.machines"]["machines"]:
+        if r["kind"] == "guest":
+            r["cluster_id"] = "c1"
+    assert cl.pin_targets(src) == [("c1", "corp")]
+
+
+def test_a_failed_pin_read_is_named_and_maps_nothing():
+    src = _with_pinning()
+    src["pxstore.cpu.map"] = {"corp": {"error": "ssh refused"}}
+    out = cl.build(src, NOW)
+    assert out["sources"]["pxstore.cpu.map corp"] == "ssh refused"
+    assert _by_id(out)["gpu-250"]["pinning"] is None and _by_id(out)["gpu-250"]["sharers"] == []
 
 
 def test_two_instances_on_one_machine_name_each_other():

@@ -28,6 +28,15 @@ const vram = W.draw('cellmap', cl, 'l', { bare: true, height: 240, width: 500, u
 t('the VRAM lens is used over total, as a percent', cells(vram) === 1 && /peak 67%/.test(vram), vram.slice(0, 400));
 t('obs.node_temps tiles are unchanged: no GPU lenses without GPUs', !/lens:gpu/.test(W.draw('cellmap', { hosts: [{ label: 'corp', percpu: { cpu0: 1 }, temps: { 'Core 0': 50 } }] }, 'l', { bare: true, height: 200, width: 400 })));
 t('a widget reads the join on its own', W.readable('estate.compute.load') === true);
+// 2026-10-02: through the Proxmox pinning, a container's cores carry the host's core temperature, the host's load and who shares them
+const pinned = JSON.parse(JSON.stringify(cl)); pinned.nodes[2].cores = [{ cpu: 0, load: 14, temp: 56, host_load: 40, shared_with: ['kali-2020-4', 'n8n'] }, { cpu: 1, load: 10.1, temp: 88, host_load: 2 }, { cpu: 2, load: 70 }];
+const ct = W.draw('cellmap', pinned, 'l', { bare: true, height: 240, width: 500, ui: { lens: 'ctemp' } });
+t('the core °C lens: only cores with a reading, coloured hot at 85+', /data-vb-set="lens:ctemp"/.test(ct) && /data-vb-set="lens:hostload"/.test(ct) && cells(ct) === 2 && /peak 88°C/.test(ct), ct.slice(0, 300));
+const hl = W.draw('cellmap', pinned, 'l', { bare: true, height: 240, width: 500, ui: { lens: 'hostload' } });
+t('the host load lens: the host\'s whole load on those cpus', cells(hl) === 2 && /peak 40%/.test(hl));
+t('a core names who shares it, its temperature and the host\'s load', /shared with/.test(hl) && /kali-2020-4, n8n/.test(hl) && /host load %/.test(hl));
+const unp = W.draw('cellmap', cl, 'l', { bare: true, height: 240, width: 500 });
+t('without pinning data the new lenses are not offered', !/lens:ctemp/.test(unp) && !/lens:hostload/.test(unp));
 // the two panes carry it, each opening the other
 const tileIn = (f, id) => (JSON.parse(R('vera/widgets/layouts/' + f)).widgets || []).find((w) => w.record && w.record.id === id);
 const ol = tileIn('wol-ollama.json', 'ol-compute-load'), wk = tileIn('wol-workers.json', 'w-compute-load');
