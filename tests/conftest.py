@@ -28,6 +28,7 @@ _CRITICAL_MODULES = {
     "test_worldview_stream_yields",  # the stream worker reattached without yielding and wedged a release restart (2026-09-29)
     "test_worker_dispatch_stages",  # node workers never received work; results went to one reader of a shared group, not the asker (2026-09-28)
     "test_warm_models_core",  # every node let its models lapse after 5 min; a CPU cold load is 10-62 s (2026-09-28)
+    "test_node_compute",  # model training ran on the Vera host, not the nodes (2026-10-02)
     "test_route_warm",  # the picker scored raw in_use (a 2-slot CPU node looked full) and ignored residency (2026-09-28)
     "test_route_warm_picker",  # an oversized context went to the GPU and spilled: the patched picker dropped ctx_need (2026-09-28)
     "test_cpu_concurrency",  # a CPU node's Ollama served one request at a time and prod's own limit was 1 per node (2026-09-28)

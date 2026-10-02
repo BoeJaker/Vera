@@ -411,6 +411,7 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
       <button type="button" class="nav-btn" data-pane="warmmodels" data-view="models" data-label="Warm models" title="Which models each node keeps loaded, and the workloads that hotload models into the slots" onclick="P.show('warmmodels',this)"><span class="gl">◈</span>Warm models</button>
       <button type="button" class="nav-btn" data-pane="nodesettings" data-view="models" data-label="Node settings" title="Threads, flags and drop-ins tuned on each Ollama node, and the runners loaded now" onclick="P.show('nodesettings',this)"><span class="gl">⚙</span>Node settings</button>
       <button type="button" class="nav-btn" data-pane="nlpnodes" data-view="models" data-label="NLP" title="Where NLP runs, the models each node has loaded, and its switches" onclick="P.show('nlpnodes',this)"><span class="gl">◇</span>NLP</button>
+      <button type="button" class="nav-btn" data-pane="trainnodes" data-view="models" data-label="Training" title="Model training on the node workers: which take it, where each trainer runs, recent jobs" onclick="P.show('trainnodes',this)"><span class="gl">∿</span>Training</button>
       <button type="button" class="nav-btn" data-pane="ollama" data-view="models" title="Ollama" onclick="P.show('ollama',this)"><span class="gl">◍</span>Ollama</button>
       <button type="button" class="nav-btn" data-pane="modelrouting" data-view="models" title="Model Routing" onclick="P.show('modelrouting',this)"><span class="gl">⇉</span>Model Routing</button>
       <div class="nav-div" data-view="models"></div>
@@ -1708,6 +1709,9 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
     </div>
     <div class="pane" id="pane-nlpnodes" style="padding:0;overflow:hidden">
       <iframe id="nlpnodes-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
+    <div class="pane" id="pane-trainnodes" style="padding:0;overflow:hidden">
+      <iframe id="trainnodes-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
     </div>
     <!-- Activity: the <vera-node-activity> element (nodes.activity) -->
     <div class="pane" id="pane-activity" style="padding:0;overflow:hidden">
@@ -6352,6 +6356,7 @@ function showPane(name, el){
   if(name==='warmmodels'){ _mountFrame('warmmodels-frame', BASE+'/nodes/models/panel?section=warm'); }
   if(name==='nodesettings'){ _mountFrame('nodesettings-frame', BASE+'/nodes/models/panel?section=settings'); }
   if(name==='nlpnodes'){ _mountFrame('nlpnodes-frame', BASE+'/nodes/models/panel?section=nlp'); }
+  if(name==='trainnodes'){ _mountFrame('trainnodes-frame', BASE+'/nodes/models/panel?section=training'); }
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }

@@ -508,6 +508,123 @@ def eval_conditions(arr, conds, resolve, mode="and") -> "np.ndarray":
 # Capabilities
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Model training (pure; runs on a node worker)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _make_model(task: str, kind: str, hp: dict, n_jobs: int = -1):
+    hp = dict(hp or {})
+    if task == "classify":
+        if kind == "gbt":
+            return GradientBoostingClassifier(
+                n_estimators=int(hp.get("n_estimators", 200)),
+                max_depth=int(hp.get("max_depth", 3)),
+                learning_rate=float(hp.get("learning_rate", 0.05)))
+        if kind == "rf":
+            return RandomForestClassifier(
+                n_estimators=int(hp.get("n_estimators", 300)),
+                max_depth=int(hp.get("max_depth", 6)) or None,
+                min_samples_leaf=int(hp.get("min_samples_leaf", 5)), n_jobs=n_jobs)
+        return make_pipeline(StandardScaler(), LogisticRegression(
+            C=float(hp.get("C", 1.0)), max_iter=int(hp.get("max_iter", 500))))
+    # regress
+    if kind == "gbt":
+        return GradientBoostingRegressor(
+            n_estimators=int(hp.get("n_estimators", 200)),
+            max_depth=int(hp.get("max_depth", 3)),
+            learning_rate=float(hp.get("learning_rate", 0.05)))
+    if kind == "rf":
+        return RandomForestRegressor(
+            n_estimators=int(hp.get("n_estimators", 300)),
+            max_depth=int(hp.get("max_depth", 6)) or None,
+            min_samples_leaf=int(hp.get("min_samples_leaf", 5)), n_jobs=n_jobs)
+    return make_pipeline(StandardScaler(), Ridge(alpha=float(hp.get("alpha", 1.0))))
+
+def _train_sync(row: dict, arr: Dict[str, "np.ndarray"], compute,
+                n_jobs: int = -1, progress=None) -> dict:
+    """Blocking train + walk-forward eval. Returns {metrics, blob}.
+
+    Pure but for `compute` (the indicator function): it runs on a node
+    worker (node_compute_core), so it reads no store."""
+    feats = json.loads(row["features"]) if isinstance(row["features"], str) else row["features"]
+    hp = json.loads(row["hyperparams"] or "{}") if isinstance(row["hyperparams"], str) \
+        else (row["hyperparams"] or {})
+    task, kind, horizon = row["task"], row["model_kind"], max(1, int(row["horizon"]))
+    X, names = build_features(arr, feats or DEFAULT_FEATURES, compute)
+    c = arr["c"]
+    fwd = np.full(len(c), np.nan)
+    fwd[:-horizon] = c[horizon:] / c[:-horizon] - 1.0
+    y = (fwd > 0).astype(int) if task == "classify" else fwd
+    valid = ~np.isnan(fwd) & ~np.any(np.isnan(X), axis=1)
+    Xv, yv, tv = X[valid], y[valid], arr["t"][valid]
+    fwd_v = fwd[valid]
+    if len(Xv) < 200:
+        raise ValueError(f"only {len(Xv)} usable samples — need ≥200 (fetch more history)")
+
+    n_splits = min(4, max(2, len(Xv) // 500))
+    tss = TimeSeriesSplit(n_splits=n_splits)
+    accs, f1s, maes, r2s, sig_rets = [], [], [], [], []
+    for fold, (tr_idx, te_idx) in enumerate(tss.split(Xv)):
+        if progress:
+            progress({"stage": "fold", "fold": fold + 1, "folds": n_splits})
+        m = _make_model(task, kind, hp, n_jobs)
+        m.fit(Xv[tr_idx], yv[tr_idx])
+        pred = m.predict(Xv[te_idx])
+        if task == "classify":
+            accs.append(accuracy_score(yv[te_idx], pred))
+            f1s.append(f1_score(yv[te_idx], pred, zero_division=0))
+            sig_rets.extend((np.where(pred > 0, 1.0, 0.0) * fwd_v[te_idx]).tolist())
+        else:
+            maes.append(mean_absolute_error(yv[te_idx], pred))
+            r2s.append(r2_score(yv[te_idx], pred))
+            sig_rets.extend((np.where(pred > 0, 1.0, 0.0) * fwd_v[te_idx]).tolist())
+
+    sig = np.asarray(sig_rets)
+    bpy = infer_bars_per_year(arr["t"]) / horizon
+    sig_sharpe = float(np.mean(sig) / np.std(sig) * math.sqrt(bpy)) \
+        if len(sig) and np.std(sig) > 1e-12 else 0.0
+    metrics = {
+        "samples": int(len(Xv)), "features": names, "cv_folds": n_splits,
+        "signal_sharpe": round(sig_sharpe, 4),
+        "signal_total_return_pct": round(float(np.nansum(sig)) * 100, 3),
+    }
+    if task == "classify":
+        base = float(np.mean(yv))
+        metrics.update({
+            "accuracy": round(float(np.mean(accs)), 4),
+            "f1": round(float(np.mean(f1s)), 4),
+            "baseline_up_rate": round(base, 4),
+            "edge": round(float(np.mean(accs)) - max(base, 1 - base), 4),
+        })
+    else:
+        metrics.update({"mae": round(float(np.mean(maes)), 6),
+                        "r2": round(float(np.mean(r2s)), 4)})
+
+    final = _make_model(task, kind, hp, n_jobs)
+    final.fit(Xv, yv)
+    buf = io.BytesIO()
+    pickle.dump({"model": final, "features": feats or DEFAULT_FEATURES,
+                 "names": names, "task": task, "horizon": horizon}, buf)
+    return {"metrics": metrics, "blob": buf.getvalue()}
+
+
+def node_train_model(inputs: dict, progress, should_stop) -> dict:
+    """compute.run entry (node_compute_core.FUNCTIONS["markets.ml.train"]):
+    the model's row fields and its bars as arrays in, metrics + model out."""
+    ma = sys.modules.get("markets_analysis_capabilities")
+    if ma is None or not hasattr(ma, "compute_indicator"):
+        raise RuntimeError("markets_analysis_capabilities is not loaded here")
+    if not HAS_SKLEARN:
+        raise RuntimeError("scikit-learn is not installed here")
+    threads = int(inputs.get("_threads") or 4)
+    return _train_sync(inputs["row"], inputs["arr"], ma.compute_indicator,
+                       n_jobs=threads, progress=progress)
+
+
+#: The fields of a model row the training reads.
+TRAIN_ROW_FIELDS = ("features", "hyperparams", "task", "model_kind", "horizon")
+
+
 if _CAP_AVAILABLE and HAS_NUMPY:
 
     def _md():
@@ -645,95 +762,6 @@ if _CAP_AVAILABLE and HAS_NUMPY:
         finally:
             conn.close()
 
-    def _make_model(task: str, kind: str, hp: dict):
-        hp = dict(hp or {})
-        if task == "classify":
-            if kind == "gbt":
-                return GradientBoostingClassifier(
-                    n_estimators=int(hp.get("n_estimators", 200)),
-                    max_depth=int(hp.get("max_depth", 3)),
-                    learning_rate=float(hp.get("learning_rate", 0.05)))
-            if kind == "rf":
-                return RandomForestClassifier(
-                    n_estimators=int(hp.get("n_estimators", 300)),
-                    max_depth=int(hp.get("max_depth", 6)) or None,
-                    min_samples_leaf=int(hp.get("min_samples_leaf", 5)), n_jobs=-1)
-            return make_pipeline(StandardScaler(), LogisticRegression(
-                C=float(hp.get("C", 1.0)), max_iter=int(hp.get("max_iter", 500))))
-        # regress
-        if kind == "gbt":
-            return GradientBoostingRegressor(
-                n_estimators=int(hp.get("n_estimators", 200)),
-                max_depth=int(hp.get("max_depth", 3)),
-                learning_rate=float(hp.get("learning_rate", 0.05)))
-        if kind == "rf":
-            return RandomForestRegressor(
-                n_estimators=int(hp.get("n_estimators", 300)),
-                max_depth=int(hp.get("max_depth", 6)) or None,
-                min_samples_leaf=int(hp.get("min_samples_leaf", 5)), n_jobs=-1)
-        return make_pipeline(StandardScaler(), Ridge(alpha=float(hp.get("alpha", 1.0))))
-
-    def _train_sync(row: dict, arr: Dict[str, "np.ndarray"], compute) -> dict:
-        """Blocking train + walk-forward eval. Returns {metrics, blob}."""
-        feats = json.loads(row["features"]) if isinstance(row["features"], str) else row["features"]
-        hp = json.loads(row["hyperparams"] or "{}") if isinstance(row["hyperparams"], str) \
-            else (row["hyperparams"] or {})
-        task, kind, horizon = row["task"], row["model_kind"], max(1, int(row["horizon"]))
-        X, names = build_features(arr, feats or DEFAULT_FEATURES, compute)
-        c = arr["c"]
-        fwd = np.full(len(c), np.nan)
-        fwd[:-horizon] = c[horizon:] / c[:-horizon] - 1.0
-        y = (fwd > 0).astype(int) if task == "classify" else fwd
-        valid = ~np.isnan(fwd) & ~np.any(np.isnan(X), axis=1)
-        Xv, yv, tv = X[valid], y[valid], arr["t"][valid]
-        fwd_v = fwd[valid]
-        if len(Xv) < 200:
-            raise ValueError(f"only {len(Xv)} usable samples — need ≥200 (fetch more history)")
-
-        n_splits = min(4, max(2, len(Xv) // 500))
-        tss = TimeSeriesSplit(n_splits=n_splits)
-        accs, f1s, maes, r2s, sig_rets = [], [], [], [], []
-        for tr_idx, te_idx in tss.split(Xv):
-            m = _make_model(task, kind, hp)
-            m.fit(Xv[tr_idx], yv[tr_idx])
-            pred = m.predict(Xv[te_idx])
-            if task == "classify":
-                accs.append(accuracy_score(yv[te_idx], pred))
-                f1s.append(f1_score(yv[te_idx], pred, zero_division=0))
-                sig_rets.extend((np.where(pred > 0, 1.0, 0.0) * fwd_v[te_idx]).tolist())
-            else:
-                maes.append(mean_absolute_error(yv[te_idx], pred))
-                r2s.append(r2_score(yv[te_idx], pred))
-                sig_rets.extend((np.where(pred > 0, 1.0, 0.0) * fwd_v[te_idx]).tolist())
-
-        sig = np.asarray(sig_rets)
-        bpy = infer_bars_per_year(arr["t"]) / horizon
-        sig_sharpe = float(np.mean(sig) / np.std(sig) * math.sqrt(bpy)) \
-            if len(sig) and np.std(sig) > 1e-12 else 0.0
-        metrics = {
-            "samples": int(len(Xv)), "features": names, "cv_folds": n_splits,
-            "signal_sharpe": round(sig_sharpe, 4),
-            "signal_total_return_pct": round(float(np.nansum(sig)) * 100, 3),
-        }
-        if task == "classify":
-            base = float(np.mean(yv))
-            metrics.update({
-                "accuracy": round(float(np.mean(accs)), 4),
-                "f1": round(float(np.mean(f1s)), 4),
-                "baseline_up_rate": round(base, 4),
-                "edge": round(float(np.mean(accs)) - max(base, 1 - base), 4),
-            })
-        else:
-            metrics.update({"mae": round(float(np.mean(maes)), 6),
-                            "r2": round(float(np.mean(r2s)), 4)})
-
-        final = _make_model(task, kind, hp)
-        final.fit(Xv, yv)
-        buf = io.BytesIO()
-        pickle.dump({"model": final, "features": feats or DEFAULT_FEATURES,
-                     "names": names, "task": task, "horizon": horizon}, buf)
-        return {"metrics": metrics, "blob": buf.getvalue()}
-
     async def _train_task(mid: str):
         md, ma = _md(), _ma()
         row = await asyncio.get_running_loop().run_in_executor(None, _ml_row_sync, mid)
@@ -746,8 +774,31 @@ if _CAP_AVAILABLE and HAS_NUMPY:
             if not bars:
                 raise ValueError(f"no bars for {row['dataset_id']}")
             arr = ma.bars_to_arrays(bars)
-            res = await asyncio.get_running_loop().run_in_executor(
-                None, _train_sync, row, arr, ma.compute_indicator)
+            # the fit runs on a node worker (node_compute_core); the host keeps
+            # the bars, the row and the stored model
+            run = getattr(sys.modules.get("Vera.vera.capability_orchestration"),
+                          "NODE_COMPUTE", None)
+            if run is None:
+                res = await asyncio.get_running_loop().run_in_executor(
+                    None, _train_sync, row, arr, ma.compute_indicator)
+            else:
+                async def _fold(d):
+                    await emit_event({"type": "markets.ml", "stage": "training", "id": mid,
+                                      "name": row.get("name"), "fold": d.get("fold"),
+                                      "folds": d.get("folds")})
+                res = await run("markets.ml.train", {
+                    "row": {k: row.get(k) for k in TRAIN_ROW_FIELDS},
+                    "arr": {k: np.asarray(v) for k, v in arr.items()}},
+                    label=f"markets.ml.train {row.get('name') or mid}", on_progress=_fold)
+                res["metrics"] = {**res["metrics"],
+                                  "trained_on": res.get("_node") or res.get("_where", "")}
+                if res.get("_where") == "node":
+                    # stored as THIS host's pickle: the node's numpy is a newer major
+                    try:
+                        from Vera.vera.workers import node_compute_core as _nc
+                    except Exception:                  # pragma: no cover
+                        from vera.workers import node_compute_core as _nc
+                    res["blob"] = pickle.dumps(_nc.compat_pickle_module().loads(res["blob"]))
             await asyncio.get_running_loop().run_in_executor(
                 None, lambda: _ml_update_sync(
                     mid, status="ready", metrics=json.dumps(res["metrics"]),
