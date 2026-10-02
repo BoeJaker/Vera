@@ -415,14 +415,20 @@ _ASKS = [
 ]
 
 
+# ...and the request that asks to keep it short asks for the chat alone (measured 2026-10-02: "how does TLS work,
+# briefly" went to an HTML report). A named place still wins: "briefly, email me" is an email.
+_STAY = r"\bbrief(ly)?\b|\bquick(ly)?\b|\bin short\b|\btl;?dr\b|\bone line\b|\bin a sentence\b|\bjust tell me\b"
+
+
 def explicit_ask(request: str, allowed: List[str]) -> str:
-    """The channel the request asks for in so many words ('' when it asks for none, or for one not offered)."""
+    """The channel the request asks for in so many words ('' when it asks for none, or for one not offered;
+    'none' when it asks to keep the answer short - the chat alone)."""
     import re as _re
     q = str(request or "").lower()
     for cid, pat in _ASKS:
         if cid in allowed and _re.search(pat, q):
             return cid
-    return ""
+    return "none" if _re.search(_STAY, q) else ""
 
 
 #: An answer shorter than this stays in the chat without asking a model: nothing that short is worth a second place.
