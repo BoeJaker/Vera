@@ -45,7 +45,12 @@ from Vera.vera import delivery as _delivery
 log = logging.getLogger("vera.render")
 
 _OUT_DIR = Path(__file__).parent / "_out"
-_OUT_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    _OUT_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # a read-only checkout (the test runner mounts the branch read-only): importing must not fail for want of it
+    _OUT_DIR = Path(tempfile.gettempdir()) / "vera_render_out"
+    _OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Target formats we know how to produce. "text" formats are written directly;
 # everything else goes through pandoc. "pdf" additionally needs a PDF engine.
@@ -702,6 +707,10 @@ async def output_redeliver(channel: str = "", content: str = "", title: str = ""
     rendered = await _reshape_for_format(content, fmt)
     # ctx mirrors the dream deliver stage; `target` is channel-specific (email
     # address for email, chat/html/podcast session id, …) — never auto-filled.
+    # A channel addressed by session (chat, canvas) with no target goes to the CALLING session - its label has
+    # always said "blank = calling session"; the canvas channels need it to know whose canvas.
+    if not target and not ch.get("fixed_target") and ch.get("target_field") == "session_id":
+        target = session_id or ""
     ctx: Dict[str, Any] = {
         "label": title, "name": title,
         "target": (target or ch.get("fixed_target") or ""),
@@ -730,6 +739,144 @@ async def output_redeliver(channel: str = "", content: str = "", title: str = ""
         out["error"] = res["error"]
     await emit_event({"type": "output.redeliver", "stage": "done",
                       "channel": channel, "ok": ok, "title": title})
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE CANVAS AS A DELIVERY VECTOR, AND A MODEL THAT PICKS (owner, 2026-10-02: "could the output options be turned
+# into a proper system that can deliver a selection of styles via any of the available delivery methods and expose
+# this to the chat/agentic loops - add a configuration option to the ui that lets the llm pick a delivery method -
+# also id like for html delivery to be able to go to the canvas instead of automatically opening a new tab").
+# The channels and the styles were already one registry each (vera.delivery, vera.output_formats) and
+# output.redeliver already crossed them; what was missing was the canvas, and a way for a model to choose.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@capability(
+    "report.canvas", memory="off",
+    http_method="POST", http_path="/render/report_canvas", http_tags=["render", "output", "canvas"],
+    description="Build a rich HTML report (report.html) and put it ON THE CANVAS instead of opening a tab: an html "
+                "item that draws the report in a sandboxed frame, keyed by the report so the same one is brought "
+                "back, not doubled. Input: content (str!), title (str), mode (auto|author|template|pandoc), "
+                "illustrate (int), session_id (str — whose session canvas) or id (a canvas id). "
+                "Output: {ok, url, download_url, artifact_id, canvas, key, resolved}.",
+)
+async def report_canvas(content: str = "", title: str = "", mode: str = "auto", illustrate: int = 0,
+                        session_id: str = "", id: str = "", trace_id=None):
+    if not (content or "").strip():
+        return {"ok": False, "error": "content required"}
+    if not (session_id or id):
+        return {"ok": False, "error": "session_id or id required (whose canvas)"}
+    rep, add = _cap("report.html"), _cap("canvas.add")
+    if not rep or not add:
+        return {"ok": False, "error": "report.html or canvas.add unavailable"}
+    r = await rep(content=content, title=title or "Report", mode=mode or "auto",
+                  illustrate=int(illustrate or 0), session_id=session_id)
+    r = r if isinstance(r, dict) else {}
+    if not r.get("url"):
+        return {"ok": False, "error": r.get("error") or "report.html made no document"}
+    ttl = r.get("title") or title or "Report"
+    key = "report:" + str(r.get("artifact_id") or r.get("filename") or r["url"])[-80:]
+    a = await add(id=id, session_id=session_id, kind="html", key=key, size="xl", at="now",
+                  content={"url": r["url"], "title": ttl, "download_url": r.get("download_url") or ""})
+    a = a if isinstance(a, dict) else {}
+    out = {"ok": bool(a.get("ok")), "url": r["url"], "download_url": r.get("download_url") or "",
+           "artifact_id": r.get("artifact_id") or "", "title": ttl, "canvas": a.get("id") or id,
+           "key": key, "resolved": a.get("resolved") or ""}
+    if not a.get("ok"):
+        out["error"] = a.get("error") or "canvas.add failed"
+    return out
+
+
+def _model_channels(allow: str = "") -> List[Dict[str, Any]]:
+    """The channels a model may be offered: loaded, not the chat itself, and within the caller's allow list."""
+    want = {s.strip() for s in str(allow or "").split(",") if s.strip()}
+    out = []
+    for c in _delivery.list_channels():
+        if c["id"] in _delivery._NOT_FOR_MODEL or c.get("cap") not in CAPABILITY_REGISTRY:
+            continue
+        if want and c["id"] not in want:
+            continue
+        out.append(c)
+    return out
+
+
+def _style_list() -> List[Dict[str, Any]]:
+    try:
+        from Vera.vera.output_formats import list_profiles
+        return [{"id": p.get("id"), "label": p.get("label") or p.get("id")} for p in list_profiles() if p.get("id")]
+    except Exception:
+        return []
+
+
+@capability(
+    "output.delivery_menu", memory="off", silent=True,
+    http_method="GET", http_path="/render/delivery_menu", http_tags=["render", "output"],
+    description="The delivery menu a model reads when it may choose where a finished answer ALSO goes: every "
+                "loaded channel (canvas, HTML on the canvas, HTML report, podcast, email, telegram, notebook, "
+                "memory, + skill channels) with what it is for, and the output styles. Input: allow (str — "
+                "comma-separated channel ids to offer; blank = all). Output: {channels, styles, text}.",
+)
+async def output_delivery_menu(allow: str = "", trace_id=None):
+    chans = _model_channels(allow)
+    styles = _style_list()
+    return {"channels": [{"id": c["id"], "label": c["label"], "use": _delivery.CHANNEL_USE.get(c["id"], "")}
+                         for c in chans],
+            "styles": styles,
+            "text": _delivery.describe_for_model([c["id"] for c in chans], styles)}
+
+
+@capability(
+    "output.deliver_auto", memory="off",
+    http_method="POST", http_path="/render/deliver_auto", http_tags=["render", "output"],
+    description="Let a model choose where a finished answer ALSO goes, then deliver it there (output.redeliver). A "
+                "small model off the GPU reads the request, the answer and the menu (output.delivery_menu) and "
+                "picks one channel and style - or none, which is most answers. Input: content (str!), request "
+                "(str — what the user asked), session_id (str), allow (str — channel ids to offer, comma-"
+                "separated), channel (str — skip the pick and use this one), style (str — force a style), "
+                "html_to_canvas (bool — an HTML pick lands on the canvas, not in a tab), dry_run (bool — pick, do "
+                "not deliver). Output: {ok, channel, style, why, delivered, ...output.redeliver's result}.",
+)
+async def output_deliver_auto(content: str = "", request: str = "", session_id: str = "", allow: str = "",
+                              channel: str = "", style: str = "", html_to_canvas: bool = False,
+                              dry_run: bool = False, trace_id=None):
+    if not (content or "").strip():
+        return {"ok": False, "error": "content required"}
+    chans = _model_channels(allow)
+    ids = [c["id"] for c in chans]
+    styles = _style_list()
+    sids = [str(s["id"]).lower() for s in styles]
+    why = "chosen by the caller"
+    ch = (channel or "").strip()
+    if ch:
+        if ch not in ids and not _delivery.get_channel(ch):
+            return {"ok": False, "error": f"unknown channel: {ch}"}
+    else:
+        if not chans:
+            return {"ok": True, "channel": "none", "delivered": False, "why": "no channel to offer"}
+        gen = _cap("llm.generate")
+        if not gen:
+            return {"ok": False, "error": "llm.generate unavailable"}
+        try:
+            res = await gen(prompt=_delivery.pick_prompt(content, request, chans, styles),
+                            job_type="delivery_pick", think=False, caller="output.deliver_auto",
+                            options={"temperature": 0.1, "num_predict": 80})
+        except Exception as e:
+            return {"ok": False, "error": f"delivery pick failed: {e}"}
+        pick = _delivery.parse_pick(_gen_text(res), ids, sids)
+        ch, why = pick["channel"], pick["why"]
+        if not style:
+            style = pick["style"]
+    if ch == "html" and html_to_canvas and "report.canvas" in CAPABILITY_REGISTRY:
+        ch = "canvas_html"
+    out: Dict[str, Any] = {"ok": True, "channel": ch, "style": style or "", "why": why, "delivered": False}
+    if ch in ("", "none") or dry_run:
+        return out
+    res = await output_redeliver(channel=ch, content=content, format=style or "", session_id=session_id,
+                                 title=next((l.strip().lstrip("# ").strip() for l in content.splitlines()
+                                             if l.strip()), "Delivered")[:140])
+    out.update(res if isinstance(res, dict) else {})
+    out["delivered"] = bool(out.get("ok"))
+    out["why"] = why
     return out
 
 

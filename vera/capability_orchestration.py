@@ -709,6 +709,9 @@ OLLAMA_JOB_TYPES: List[str] = [
     # The chat's one-line "working on it" acknowledgement, generated BESIDE the
     # reply - it must never queue behind the reply it announces.
     "quick_opener",
+    # Where a finished answer is ALSO delivered (canvas, an HTML report, a podcast, ...) when the chat lets a model
+    # choose (output.deliver_auto): one short JSON pick, after the reply - never on the GPU the reply came from.
+    "delivery_pick",
     # Background work the idle queue and the nightly automations run
     # (job_type idle_<what>); one rule covers them all (see _resolve_rule).
     "idle_*",
@@ -840,6 +843,9 @@ DEFAULT_ROUTING_RULES: Dict[str, dict] = {
     # (prefer_gpu=False) - but the `default` rule's prefer_gpu overrode that, so
     # every opener queued on the GPU behind the reply it was announcing.
     "quick_opener": _rule("quick_opener", deny_gpu=True, prefer=EMBED_PRIMARY_NODE),
+    # The delivery pick reads the answer and a short menu and answers with one JSON line: a small model off the GPU
+    # (the 0.5b the naming job uses cannot hold a nine-way choice; the 2b can), beside the reply, never behind it.
+    "delivery_pick": _rule("delivery_pick", deny_gpu=True, prefer=EMBED_PRIMARY_NODE, model="qwen3.5:2b"),
     # Background automations ask for "not the GPU first" (prefer_gpu=False)
     # but fell through to `default`, whose prefer_gpu overrode that: route
     # stats 2026-09-28 show 98 idle_intel calls on gpu-250. A SOFT preference:

@@ -158,6 +158,34 @@ def _build_html(rendered: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
     return args
 
 
+def _canvas_where(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """The canvas a delivery lands on: a canvas id (cv_…) names one; anything else is a chat session, whose own
+    session canvas is resolved (and made) on demand."""
+    tgt = str(ctx.get("target") or "").strip()
+    if tgt.startswith("cv_"):
+        return {"id": tgt}
+    return {"session_id": tgt} if tgt else {}
+
+
+def _build_canvas(rendered: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """The answer as a reading item on the session canvas (canvas.add - the resolver, so the same delivery twice
+    is brought back, not doubled)."""
+    label = ctx.get("label") or ctx.get("name") or "Delivered"
+    args: Dict[str, Any] = {"kind": "markdown", "content": {"md": rendered or "", "title": str(label)[:140]},
+                            "size": "l", "at": "now"}
+    if ctx.get("key"):
+        args["key"] = str(ctx["key"])
+    args.update(_canvas_where(ctx))
+    return args
+
+
+def _build_canvas_report(rendered: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """A rich HTML report (report.html) placed on the session canvas instead of opened in a tab (report.canvas)."""
+    args = _build_html(rendered, {**ctx, "target": ""})
+    args.update(_canvas_where(ctx))
+    return args
+
+
 _BUILDERS: Dict[str, Callable[[str, Dict[str, Any]], Dict[str, Any]]] = {
     "tg.notify":        _build_telegram,
     "memory.store":     _build_memory,
@@ -167,6 +195,8 @@ _BUILDERS: Dict[str, Callable[[str, Dict[str, Any]], Dict[str, Any]]] = {
     "chat.deliver":     _build_chat,
     "podcast.generate": _build_podcast,
     "report.html":      _build_html,
+    "canvas.add":       _build_canvas,
+    "report.canvas":    _build_canvas_report,
 }
 
 
@@ -213,6 +243,33 @@ DELIVERY_CHANNELS: Dict[str, Dict[str, Any]] = {
         "label": "HTML report", "cap": "report.html", "default_format": "",
         "needs_target": False, "target_field": "", "target_label": "",
     },
+    # THE CANVAS IS A DELIVERY VECTOR (owner, 2026-10-02: "id like for html delivery to be able to go to the canvas
+    # instead of automatically opening a new tab"). The session canvas beside the chat: the answer as a reading item,
+    # or the rich HTML report drawn there in a sandboxed frame. Target = the chat session (or a cv_ canvas id).
+    "canvas": {
+        "label": "Canvas", "cap": "canvas.add", "default_format": "",
+        "needs_target": True, "target_field": "session_id",
+        "target_label": "Chat session id or canvas id (blank = calling session)",
+    },
+    "canvas_html": {
+        "label": "HTML report on the canvas", "cap": "report.canvas", "default_format": "",
+        "needs_target": True, "target_field": "session_id",
+        "target_label": "Chat session id or canvas id (blank = calling session)",
+    },
+}
+
+# What each channel is FOR, in one line - the menu a model reads when it may pick where its answer goes
+# (describe_for_model). A channel with no line here (a skill's) is offered by its label.
+CHANNEL_USE: Dict[str, str] = {
+    "canvas":      "a long or structured answer the user will keep open beside the chat (lists, plans, notes)",
+    "canvas_html": "a rich visual document - sections, diagrams, infographics - shown on the canvas",
+    "html":        "a rich standalone document the user may open in its own tab or keep in the gallery",
+    "podcast":     "something meant to be listened to - a briefing, a story, a long explanation",
+    "email":       "something the user asked to receive by email",
+    "telegram":    "a short note the user should get on their phone",
+    "notebook":    "working notes or a write-up to keep in the notebook",
+    "memory":      "a fact or decision worth remembering for later turns",
+    "chat":        "another chat session the user named",
 }
 
 
@@ -313,3 +370,71 @@ def list_channels() -> List[Dict[str, Any]]:
             "source":         n["source"],
         })
     return out
+
+
+# The channels the chat itself never offers a model: it IS the chat, and the fabric gets everything anyway.
+_NOT_FOR_MODEL = {"chat", "fabric"}
+
+
+def describe_for_model(available: Optional[List[str]] = None,
+                       formats: Optional[List[Dict[str, Any]]] = None) -> str:
+    """The delivery menu as a model reads it: every channel it may send its finished answer through, what each is
+    for, the styles it may shape it into, and the one marker that asks for it. `available` limits the channels
+    (the caller knows which caps are loaded); `formats` is output_formats' list (id + label)."""
+    chans = [c for c in list_channels()
+             if c["id"] not in _NOT_FOR_MODEL and (available is None or c["id"] in available)]
+    if not chans:
+        return ""
+    lines = ["## Delivery",
+             "Your answer is shown in the chat. When the user would be better served by ALSO receiving it another "
+             "way, end your answer with ONE marker on its own line:",
+             "[[deliver:<channel>]]  or  [[deliver:<channel>|<style>]]",
+             "Leave it out when the chat is enough - most answers. Never deliver the same answer twice.",
+             "", "Channels:"]
+    for c in chans:
+        lines.append(f"- {c['id']} - {c['label']}: {CHANNEL_USE.get(c['id'], c['label'])}")
+    fl = [f for f in (formats or []) if isinstance(f, dict) and f.get("id")]
+    if fl:
+        lines += ["", "Styles (optional): " + ", ".join(f"{f['id']} ({f.get('label') or f['id']})" for f in fl[:16])]
+    return "\n".join(lines)
+
+
+def pick_prompt(content: str, request: str, channels: List[Dict[str, Any]],
+                styles: Optional[List[Dict[str, Any]]] = None) -> str:
+    """The question a small model answers to choose where a finished answer ALSO goes (output.deliver_auto)."""
+    lines = ["A user asked something and got the answer below in the chat. Decide whether they would be better served by",
+             "ALSO receiving it another way. Most answers need nothing more: answer none unless one clearly fits.",
+             "", "Ways it can be delivered:"]
+    for c in channels:
+        lines.append(f"- {c['id']}: {CHANNEL_USE.get(c['id'], c.get('label') or c['id'])}")
+    if styles:
+        lines += ["", "Styles it can be shaped into (or leave blank): "
+                  + ", ".join(str(s.get("id")) for s in styles if isinstance(s, dict) and s.get("id"))]
+    lines += ["", "THE REQUEST:", (request or "(not given)")[:1200], "",
+              "THE ANSWER (start):", (content or "")[:2400], "",
+              'Reply with ONE line of JSON and nothing else: {"channel": "<one id above, or none>", "style": "<id or empty>", "why": "<few words>"}']
+    return "\n".join(lines)
+
+
+def parse_pick(text: str, allowed: List[str], styles: Optional[List[str]] = None) -> Dict[str, str]:
+    """Read a model's delivery pick. Anything that is not one of the allowed channels is 'none' - a pick never
+    invents a channel or a style; a reply that is not JSON is read for a bare channel id as a last resort."""
+    import json as _json
+    import re as _re
+    raw = str(text or "").strip()
+    got: Dict[str, Any] = {}
+    m = _re.search(r"\{.*\}", raw, _re.S)
+    if m:
+        try:
+            got = _json.loads(m.group(0))
+        except Exception:
+            got = {}
+    ch = str((got or {}).get("channel") or "").strip().lower()
+    if not got:
+        ch = next((a for a in allowed if _re.search(r"\b" + _re.escape(a) + r"\b", raw.lower())), "")
+    if ch not in allowed:
+        ch = "none"
+    st = str((got or {}).get("style") or "").strip().lower()
+    if styles is not None and st not in styles:
+        st = ""
+    return {"channel": ch, "style": st if ch != "none" else "", "why": str((got or {}).get("why") or "")[:200]}
