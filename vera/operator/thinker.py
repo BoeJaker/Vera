@@ -327,6 +327,33 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
         decision["model_dropped"] = model_dropped
     if truncated:
         decision["truncated"] = True
+    if decision.get("error") and truncated and think is not False \
+            and name in ("ollama", "vllm", "local", "cluster"):
+        # Cut off while THINKING OUT LOUD: ask the same question once more with
+        # the model's thinking pass off. Prod 2026-10-02 22:03, a three-step
+        # check (operator run b7e3c5a00e): two of five thinks hit the 2048-token
+        # cap mid "Thinking Process: 1. **Analyze the Goal:** ..." - 3m43s and
+        # 1m53s gone, each a wasted step - while the decisions that did parse
+        # took ~30 s. The same prompt with think=False answered in 5-41 s with
+        # no truncation (15 A/B calls, same evening). The default stays the
+        # caller's (`think=None`); only a reply already lost to the cap is
+        # retried, so this never costs a working step anything.
+        try:
+            res2 = await call_cap(
+                "llm.generate", prompt=prompt["user"], system=prompt["system"],
+                model=model or None, job_type=THINK_JOB_TYPE, caller="operator.think",
+                think=False, options={"num_predict": THINK_MAX_TOKENS},
+            )
+        except Exception as e:
+            res2 = {"error": str(e)}
+        if isinstance(res2, dict) and not res2.get("error"):
+            d2 = parse_decision(str(res2.get("text") or ""))
+            if not d2.get("error"):
+                d2["provider"] = provider
+                d2["retried_without_thinking"] = True
+                if model_dropped:
+                    d2["model_dropped"] = model_dropped
+                return finalise_decision(d2)
     if decision.get("error"):
         if truncated:
             decision["error"] = (
