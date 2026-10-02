@@ -4185,13 +4185,19 @@ span.vw-sampled{opacity:.85}
       const close = () => { m.hidden = true; box.classList.remove('open'); document.removeEventListener('click', close, true); document.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', close); document.removeEventListener('keydown', onKey, true); };
       b.addEventListener('click', (ev) => { ev.stopPropagation(); if (!m.hidden) { close(); return; } const r = b.getBoundingClientRect(); m.hidden = false; box.classList.add('open');
         const vw = document.documentElement.clientWidth || window.innerWidth || 1200, vh = document.documentElement.clientHeight || window.innerHeight || 800;
-        const mw = m.offsetWidth || 170, mh = m.offsetHeight || 200, want = { x: Math.max(4, Math.min(vw - mw - 4, r.right - mw)), y: (r.bottom + 4 + mh > vh) ? Math.max(4, r.top - mh - 4) : r.bottom + 4 };
+        const mr0 = m.getBoundingClientRect(), mw = mr0.width || m.offsetWidth || 170, mh = mr0.height || m.offsetHeight || 200, want ={ x: Math.max(4, Math.min(vw - mw - 4, r.right - mw)), y: (r.bottom + 4 + mh > vh) ? Math.max(4, r.top - mh - 4) : r.bottom + 4 };
         m.style.left = want.x + 'px'; m.style.top = want.y + 'px';
         /* the owner (2026-10-01): the list often showed cut off at the right edge of the screen. position:fixed is the
            viewport only when no ancestor makes a containing block (a transform, a filter, container-type on a parent
            widget's body...); then left/top count from that box instead. Measure where it landed and shift by the
            difference, so it sits where it was meant to whatever is around the widget */
-        const got = m.getBoundingClientRect(); if (Math.abs(got.left - want.x) > 1 || Math.abs(got.top - want.y) > 1) { m.style.left = (want.x - (got.left - want.x)) + 'px'; m.style.top = (want.y - (got.top - want.y)) + 'px'; }
+        /* (2026-10-02, prod) a shift alone is not enough: a zoom or scale on the page around the widget stretches left/top
+           too - the list opened 12 px left of and 46 px above its place, over the ⇄. So measure it at two places and solve
+           each axis exactly (landed = origin + scale × set) */
+        const got = m.getBoundingClientRect(); if (Math.abs(got.left - want.x) > 1 || Math.abs(got.top - want.y) > 1) {
+          m.style.left = (want.x + 100) + 'px'; m.style.top = (want.y + 100) + 'px'; const g2 = m.getBoundingClientRect();
+          const sx = (g2.left - got.left) / 100 || 1, sy = (g2.top - got.top) / 100 || 1;
+          m.style.left = (want.x + (want.x - got.left) / sx) + 'px'; m.style.top = (want.y + (want.y - got.top) / sy) + 'px'; }
         at = b.getBoundingClientRect();
         setTimeout(() => { if (m.hidden) return; document.addEventListener('click', close, true); document.addEventListener('scroll', onScroll, true); window.addEventListener('resize', close); document.addEventListener('keydown', onKey, true); }, 0); });
       m.addEventListener('click', (ev) => { const x = ev.target.closest && ev.target.closest('[data-as]'); if (!x) return; ev.stopPropagation(); const f = x.getAttribute('data-as');
