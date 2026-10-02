@@ -830,13 +830,13 @@ async def output_delivery_menu(allow: str = "", trace_id=None):
     http_method="POST", http_path="/render/deliver_auto", http_tags=["render", "output"],
     description="Let a model choose where a finished answer ALSO goes, then deliver it there (output.redeliver). A "
                 "small model off the GPU reads the request, the answer and the menu (output.delivery_menu) and "
-                "picks one channel and style - or none, which is most answers. Input: content (str!), request "
-                "(str — what the user asked), session_id (str), allow (str — channel ids to offer, comma-"
+                "picks one channel and style - or none, which is most answers. Input: content (str!), question "
+                "(str — what the user asked; named so because the capability layer reserves `request`), session_id (str), allow (str — channel ids to offer, comma-"
                 "separated), channel (str — skip the pick and use this one), style (str — force a style), "
                 "html_to_canvas (bool — an HTML pick lands on the canvas, not in a tab), dry_run (bool — pick, do "
                 "not deliver). Output: {ok, channel, style, why, delivered, ...output.redeliver's result}.",
 )
-async def output_deliver_auto(content: str = "", request: str = "", session_id: str = "", allow: str = "",
+async def output_deliver_auto(content: str = "", question: str = "", session_id: str = "", allow: str = "",
                               channel: str = "", style: str = "", html_to_canvas: bool = False,
                               dry_run: bool = False, trace_id=None):
     if not (content or "").strip():
@@ -855,7 +855,7 @@ async def output_deliver_auto(content: str = "", request: str = "", session_id: 
             return {"ok": True, "channel": "none", "delivered": False, "why": "no channel to offer"}
         # the request names a place: that decides (a small model got the plainest asks wrong); a short answer stays
         # in the chat; only what is left is the model's to judge
-        asked = _delivery.explicit_ask(request, ids)
+        asked = _delivery.explicit_ask(question, ids)
         if asked:
             ch, why = asked, "you asked for it"
         elif len(content.strip()) < _delivery.SHORT_ANSWER:
@@ -865,7 +865,7 @@ async def output_deliver_auto(content: str = "", request: str = "", session_id: 
         if not gen:
             return {"ok": False, "error": "llm.generate unavailable"}
         try:
-            res = await gen(prompt=_delivery.pick_prompt(content, request, chans, styles),
+            res = await gen(prompt=_delivery.pick_prompt(content, question, chans, styles),
                             job_type="delivery_pick", think=False, caller="output.deliver_auto",
                             options={"temperature": 0.1, "num_predict": 80})
         except Exception as e:
