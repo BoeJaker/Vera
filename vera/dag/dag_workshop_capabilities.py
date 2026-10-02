@@ -14165,6 +14165,13 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _intent_core = None
 
+# Double-escaped newlines in model-written Python (probe 2026-10-01: 24% of
+# exec.python.run calls wrote a literal backslash-n instead of a newline).
+try:
+    from Vera.vera.dag import escape_fix_core as _escape_fix_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import escape_fix_core as _escape_fix_core
+
 # What a finished loop may claim: the final gate's last verdict (census 2026-09-30).
 try:
     from Vera.vera.dag import gate_finish_core as _gate_finish_core
@@ -17253,6 +17260,21 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                       "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                       "session_id": sid,
                                       "note": f"{_sf}: controller steer removed (it is context, not the task)"})
+        # Double-escaped newlines: the model escaped the backslash of '\n' twice
+        # inside its JSON argument, so the code would write a literal backslash-n
+        # (b-data-count: n.csv was one line of "5\n10\n..."; census analyse-data:
+        # 200 numbers on one line -> mean 134, std 0). Corrected before it runs.
+        if tool == "exec.python.run" and isinstance(args, dict) \
+                and isinstance(args.get("code"), str):
+            _fixed_code, _n_esc = _escape_fix_core.fix_double_escaped_newlines(args["code"])
+            if _n_esc:
+                args["code"] = _fixed_code
+                await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "session_id": sid,
+                                  "note": ("code: %d string literal(s) held a double-escaped "
+                                           "\\\\n (it would have written a literal backslash-n) - "
+                                           "corrected to a newline" % _n_esc)})
         # ── RUN-BEFORE-AUTHOR guard ─────────────────────────────────────────
         # The self-heal above only rescues a path whose basename WAS saved this
         # run. The other half of the failure is running a script that does not
