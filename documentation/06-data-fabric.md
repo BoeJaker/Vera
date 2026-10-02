@@ -2,781 +2,1192 @@
 
 ![Data Fabric captured from the running Vera UI](assets/overview/fabric-panel.png)
 
-Vera keeps an offline, source-bound inventory of the discovery and context
-paths that feed the Fabric. It distinguishes portable provider contracts from
-native adapters and labels JEPA Worldview paths explicitly. The separate
-non-JEPA Worldview/Godseye line now projects normalized geospatial records into
-immutable portable datasets without claiming JEPA authority, while Agent RAG
-can project revision-qualified Fabric hits into cited portable context.
-It also records which paths still require live source or accelerator evidence.
-The inventory is content-addressed and checked against a reviewed semantic
-baseline, so routing work starts from an explicit system map rather than an
-informal list or a live probe. It does not contact sources, models, or workers.
+The polyglot data fabric is Vera's unified data layer. It combines several
+database paradigms — relational (SQLite + PostgreSQL), vector (ChromaDB, with
+an optional FAISS tier), graph (Neo4j), cache/streaming (Redis) and object
+storage (Garage / Ceph via S3) — behind one ingestion pipeline and one query
+surface. Anything Vera produces or consumes that is worth keeping ends up in a
+fabric **dataset**, where it can be recalled semantically, by keyword, by
+field value or through the entity graph.
 
-Discovery work crosses subsystem boundaries through immutable envelopes. A
-request fixes its source types, time, result limits, latency, byte and cost budgets.
-Candidates identify a versioned source and offer explicit collection methods,
-resource needs, expected latency and output kinds. Receipts preserve the exact
-request, candidate, option and provider revision—even for cancellation,
-timeouts and failures. Successful outputs reuse cited `ContextItem`,
-`DatasetSnapshot`, and content-addressed artifact identities, with the
-collection receipt retained in their lineage. These are descriptive contracts:
-they neither crawl nor claim a CPU/GPU worker is available.
+The fabric is what makes Vera's components additive rather than siloed. A
+research result is fabric-recallable, so the IDE agent can find it; a crawled
+page is fabric-recallable, so dream cycles can use it; a chat message is
+ingested so its entities join the shared graph. Around the core store sit
+sources and collectors that pull external data on a schedule, a discovery
+crawler that detects new feeds/APIs/tables, an entity graph and the Loom
+cross-dataset stitcher, curated (keyed, schema-checked) datasets, and
+knowledgebases synthesised from all of it.
 
-The operational discovery route is provider-injected and explicitly two-stage.
-It scouts independent source providers concurrently, isolates timeouts and
-failures, ranks the strongest source and collection method combinations, and
-selects at most one method per source. Selected work is admitted through exact,
-current worker offers and—when needed—an exact GPU-gate receipt. Collection has
-separate concurrency and deadline bounds, cleans up timed-out tasks, and keeps
-healthy cited outputs when another source fails. Actual bytes, costs and context
-counts are checked against the reservations before a result is admitted;
-rejected alternatives and stable failure classes remain available as evidence.
+The runtime lives in `vera/fabric/` — chiefly `data_fabric.py`,
+`fabric_web_acquisition.py`, `discovery.py`, `data_fabric_collectors.py`,
+`curation_capabilities.py` and `knowledgebase.py` — with the UI in
+`vera/fabric/fabric_panel.html`. Next to the runtime, a set of
+storage-neutral, offline-tested contracts (`record_revision.py`,
+`revision_store.py`, `artifact_provider.py`, `dataset_provider.py`,
+`projection_provider.py`, the `*_retrieval.py` modules and
+`vera/discovery_*.py`) define canonical revisions, artifacts, snapshots and
+comparable retrieval evidence.
 
-Discovery results connect to context composition without creating another
-provider registry or translating retrieved payloads. The existing
-`ContextRegistry` derives a payload-free selection from the portable context
-authorities already present in a `DiscoveryResult`, validates those provider
-and ranker IDs against its own manifest, and binds the selection to the exact
-result, policy and registry-manifest identities. Policy can restrict eligible
-providers, cap their count, and either reject or explicitly record unregistered
-providers. Composition refuses a selection after the registry changes, so a
-stale decision cannot silently target a different component set. The selection
-contains provider, item, source and revision identities—not retrieved text—and
-the discovery result remains the authority for collection receipts and content.
+**Maturity.** Ingest, query, sources, discovery, the entity graph, Loom,
+curation and the blob store are in production use. The canonical revision and
+artifact paths are live but deliberately narrow (SQLite authority, policy
+gated). The dataset/projection/retrieval/discovery contracts and optional
+adapters (Hugging Face, DuckDB, DVC, Qdrant, GraphRAG) are deterministic,
+test-backed seams; live trials against those external systems are separate,
+explicitly scheduled work and are not implied by this page.
 
-The integrated `run_discovery_context_route` path completes that connection:
-the exact portable discovery result selects registered context providers, the
-selection is bound to the registry manifest, and composition reuses the
-original request query in memory. Provider and ranker policy, token and
-per-provider limits, cancellation, registry drift, partial failures, citations,
-and source/revision identity remain explicit. No provider is discovered
-implicitly, and the coordination layer does not probe a source, model, worker,
-or accelerator on its own.
+## Contents
 
-Discovery and context changes are evaluated with a payload-free, snapshot-bound
-benchmark contract. Every case binds the exact discovery request, query digest,
-relevant source and record revisions, and required support claims. Every
-observation binds a variant revision, configuration digest, repetition and
-declared ablations, while retaining per-case timing, ranked authority/citation
-evidence, support, cost and CPU/GPU accounting. Comparisons require a candidate
-to improve both p95 time-to-first-useful-context and nDCG, while guarding MRR,
-citation coverage, answer support, freshness, redundancy, source selection,
-failure rate, policy violations and individual-case regressions. Payload-free
-per-repetition evidence sits beside aggregates so averages cannot hide a bad
-case. Reports contain identifiers and metrics rather than queries or retrieved
-text, and never invoke a provider.
-
-Live measurements use a separate bounded execution harness rather than adding
-effects to the offline comparator. The harness executes the complete
-variant-by-case-by-repetition matrix sequentially, so variants do not compete
-for the same provider, worker, or accelerator. It owns monotonic milestones for
-source selection and first useful context, enforces a deadline for every run,
-propagates caller cancellation, and reduces provider failures to stable error
-codes. A timeout or malformed result cannot retain partial hits, timing claims,
-queries, provider exception text, or retrieved payloads.
-
-Existing snapshot-aware retrieval adapters can be bound to the harness without
-creating another retrieval implementation. The binding recreates each
-digest-qualified query case against the exact `DatasetSnapshot`, converts only
-revision-qualified citations into benchmark hits, and cancels the provider
-signal when the run ends. Answer-support claims require a separate explicit
-resolver: retrieving a relevant record is not automatically treated as proof
-that a generated claim is supported. This path produces comparison evidence
-only; it does not select a winner, change routing, or authorize deployment.
-
-Operators can inspect this evidence without gaining execution authority.
-Completed discovery routes append a bounded, payload-free read model containing
-candidate/option ranks, worker and GPU-admission identities, resource class,
-receipt counts/timing/cost, stable failures and output counts. Already-computed
-benchmark comparisons can be recorded explicitly and expose baseline/candidate
-quality, latency, resource, failure and blocker summaries. The read model stores
-no queries or retrieved content and cannot run discovery or activate a winner.
-
-The polyglot data fabric is Vera's unified data layer. It combines multiple database paradigms — vector (FAISS + Chroma), graph (Neo4j), relational (SQLite + PostgreSQL), and object storage (Garage / Ceph S3) — into a single ingestion pipeline and query DSL. Anything Vera produces or consumes that's worth keeping ends up in the fabric, where it can be recalled semantically, by relation, by exact filter, or by any combination of the three.
-
-The fabric is what makes Vera's components additive rather than siloed. A research result is fabric-recallable, so the IDE agent can find it. A crawled page is fabric-recallable, so dream cycles can use it. A chat message is fabric-recallable, so future sessions can build on it.
+- [1. Concepts and architecture](#1-concepts-and-architecture)
+- [2. Source map](#2-source-map)
+- [3. Storage layers](#3-storage-layers)
+- [4. Canonical revisions and provider contracts](#4-canonical-revisions-and-provider-contracts)
+  - [Record revisions and the revision store](#record-revisions-and-the-revision-store)
+  - [Caller policy](#caller-policy)
+  - [Artifact provider](#artifact-provider)
+  - [Graph and vector projection contract](#graph-and-vector-projection-contract)
+  - [Dataset and query provider contracts](#dataset-and-query-provider-contracts)
+  - [Optional dataset adapters](#optional-dataset-adapters)
+- [5. The ingestion pipeline](#5-the-ingestion-pipeline)
+- [6. Writing, curating and deleting data](#6-writing-curating-and-deleting-data)
+  - [fabric.ingest](#fabricingest)
+  - [Curated datasets (fabric.upsert and friends)](#curated-datasets-fabricupsert-and-friends)
+  - [Deleting data](#deleting-data)
+  - [Event bus and stream publishing](#event-bus-and-stream-publishing)
+- [7. Querying and recall](#7-querying-and-recall)
+  - [fabric.query](#fabricquery)
+  - [Browsing datasets](#browsing-datasets)
+  - [Agent-facing recall](#agent-facing-recall)
+- [8. Sources and collectors](#8-sources-and-collectors)
+- [9. Web acquisition, discovery and synthesis](#9-web-acquisition-discovery-and-synthesis)
+  - [Web acquisition](#web-acquisition)
+  - [Discovery crawls, surfaces and sub-tables](#discovery-crawls-surfaces-and-sub-tables)
+  - [Collections, topic models and knowledgebases](#collections-topic-models-and-knowledgebases)
+- [10. Entity graph, Loom and graph views](#10-entity-graph-loom-and-graph-views)
+- [11. Vectors, embeddings and the blob store](#11-vectors-embeddings-and-the-blob-store)
+- [12. Comparable retrieval evidence](#12-comparable-retrieval-evidence)
+- [13. Discovery and context routing contracts](#13-discovery-and-context-routing-contracts)
+- [14. The Fabric panel](#14-the-fabric-panel)
+- [15. Configuration](#15-configuration)
+- [16. Events](#16-events)
+- [17. Worked examples](#17-worked-examples)
+- [18. Operations and failure diagnosis](#18-operations-and-failure-diagnosis)
+- [19. Related pages](#19-related-pages)
+- [Screenshots](#screenshots)
+- [Capabilities](#capabilities)
 
 ---
 
-## 1. Storage layers
+## 1. Concepts and architecture
 
-| Layer | Role | Notes |
-|---|---|---|
-| **SQLite** | Always-available local fallback | Eager init at import — tables exist before first HTTP request. Used as primary store when other backends are offline. |
-| **PostgreSQL** | Authoritative relational store | Tables for datasets, records, sources, relationships. Uses `cfg.POSTGRES_URL`. |
-| **FAISS** | Persistent sharded vector index | Sharded by dataset for scalable similarity. Snapshots saved to object storage. |
-| **ChromaDB** | Metadata-filtered vector search | Used alongside FAISS for metadata-rich queries. |
-| **Neo4j** | Auxiliary graph layer | Dataset relationships, lineage, categories, entity graph. |
-| **Redis** | Hot cache + streaming | Query result cache, ingestion stream, shared pool with orchestrator. |
-| **Garage / Ceph** | Object storage | Large blobs, FAISS index snapshots. S3-compatible API, optional. |
+- **Dataset** — a named, dotted namespace (for example `research.results`,
+  `chat.messages`, `docs:<host>`, `bus.<event>`). There can be thousands, so
+  they are browsed one namespace level at a time. Datasets carry tags, a
+  processing configuration, optionally a declared schema, and can be linked to
+  each other in the graph.
+- **Record** — one `DataRecord` in exactly one dataset: short indexable `text`
+  (≤ 2000 chars), the full structured `data` payload, tags, source, and
+  derived `content_hash`, `schema` and `embedding`.
+- **Source** — a registered external feed (RSS, API, database, crawl…) that is
+  pulled on demand or on an interval into its dataset.
+- **Entity graph** — named entities extracted from records, linked to the
+  records (and memory nodes) that mention them.
+- **Canonical revision** — an immutable, content-addressed version of a record
+  with explicit lineage, held by the revision store (see [§4](#4-canonical-revisions-and-provider-contracts)).
 
-Each layer can fail independently. The pipeline degrades gracefully — if Neo4j is down, ingestion still writes to SQLite/Postgres/Chroma; if FAISS is down, queries fall through to Chroma; if Chroma is down, queries fall through to text search.
-
----
-
-## 2. The data model
-
-```python
-@dataclass
-class DataRecord:
-    id:         str
-    dataset_id: str          # logical grouping (e.g. "research.results", "web.crawl.example_com")
-    source:     str          # "api" | "web" | "research" | "chat" | ...
-    source_id:  str          # the entity that produced this record (e.g. session_id, job_id)
-    text:       str          # ≤2000 chars, indexable
-    data:       dict         # full structured payload
-    tags:       List[str]
-    created_at: str
+```mermaid
+flowchart LR
+    subgraph Inputs
+        SRC["Sources & auto-pull"]
+        COL["collector.*"]
+        WEB["fabric.web.acquire<br/>fabric.discover.*"]
+        API["fabric.ingest / fabric.upsert<br/>HTTP /fabric/ingest"]
+        BUS["Event bus<br/>(vera:events)"]
+    end
+    subgraph Pipeline["DEFAULT_PIPELINE"]
+        direction LR
+        H[Hash] --> S[Schema] --> T[TextExtract] --> E[Embed] --> SQ[SQLite] --> PG[Postgres] --> V[Vector] --> N[Neo4j]
+    end
+    Inputs --> Pipeline
+    Pipeline --> POST["Post-ingest:<br/>source registration,<br/>entity extraction,<br/>memory linking, Loom"]
+    PG & V & SQ --> Q["fabric.query (RRF)<br/>memory.seek"]
+    N --> G["Entity graph · Loom ·<br/>graph views"]
 ```
 
-Datasets are first-class: every record belongs to one dataset, and datasets carry their own metadata, sources, and (optionally) explicit relationships to other datasets.
+---
 
-### Canonical revision migration
+## 2. Source map
 
-The first W2-01 kernel slice adds the storage-neutral
-`vera.fabric-record-revision/v1` contract in
-`vera.fabric.record_revision`. It separates a stable logical `record_id` from an
-immutable `revision_id`, and binds content or an artifact reference, ordered
-parent revisions, snapshot identity, source, policy, metadata, content schema,
-media type, timestamps, valid time, and tombstone state into a full SHA-256
-identity. Nested caller input is copied
-into canonical JSON so later mutation cannot alter an existing observation.
+| File | Responsibility |
+|---|---|
+| `vera/fabric/data_fabric.py` | Core: config, `DataRecord`, storage backends (SQLite, Postgres, FAISS, Chroma, Neo4j, ObjectStore), `DEFAULT_PIPELINE`, `ingest_dataset`, `execute_query`, sources and auto-pull, bus, graphs, skills/ontology builders, Loom, objects, canonical revision and artifact capabilities, `/fabric/panel` |
+| `vera/fabric/fabric_web_acquisition.py` | `fabric.web.*` crawler and the second-order entity graph (`fabric.entity_graph.*`, NER backends) |
+| `vera/fabric/discovery.py` | `fabric.discover.*`, surfaces, sub-tables, collections, topic synthesis, domain authority |
+| `vera/fabric/url_dataset_resolve.py` | Cached, off-loop URL → discovery-dataset resolution |
+| `vera/fabric/knowledgebase.py` | `fabric.kb.*` structured knowledgebases |
+| `vera/fabric/data_fabric_collectors.py` | Prebaked collectors (`collector.*`) |
+| `vera/fabric/curation_capabilities.py`, `curation_core.py` | Keyed upsert, declared schema, validation, identify, gaps, fusion, `memory.select`, `context.for_agent` |
+| `vera/fabric/embed_policy_core.py` | Which datasets are excluded from embedding |
+| `vera/fabric/embed_provider_capabilities.py`, `fastembed_provider.py` | `embed.provider.*` (see [ONNX](./30-onnx.md)) |
+| `vera/fabric/record_revision.py`, `revision_store.py`, `revision_path.py`, `revision_policy.py`, `revision_projection.py`, `caller_policy.py` | Canonical revisions, transactional authority, policy and SQLite projection |
+| `vera/fabric/artifact_provider.py` | Checksum-addressed local artifacts with optional object-store replica |
+| `vera/fabric/projection_provider.py` | Graph/vector `ProjectionSpec`, `EmbeddingSpace`, `FrozenProjectionProvider` |
+| `vera/fabric/dataset_provider.py` | `DatasetSnapshot`, `DatasetProvider`, `QueryProvider`, `CancellationSignal` |
+| `vera/fabric/huggingface_dataset_adapter.py`, `duckdb_artifact_query.py`, `dvc_artifact_adapter.py` | Optional dataset/artifact adapters |
+| `vera/fabric/retrieval_comparison.py`, `retrieval_execution.py`, `retrieval_lifecycle.py`, `retrieval_trial.py` | Comparable retrieval evidence |
+| `vera/fabric/native_retrieval.py`, `external_retrieval.py`, `qdrant_retrieval.py`, `graphrag_retrieval.py`, `analytical_retrieval.py` | Snapshot-bound retrieval participants |
+| `vera/discovery_contract.py`, `discovery_routing.py`, `discovery_orchestration.py`, `discovery_context_orchestration.py`, `discovery_benchmark.py`, `discovery_benchmark_runtime.py`, `discovery_operator_readmodel.py` | Discovery and context routing contracts |
+| `vera/inventory/discovery_context_baseline.py` | Offline, source-bound inventory of discovery/context paths |
+| `vera/fabric/fabric_panel.html` | The Data Fabric panel |
 
-`vera.fabric.revision_store.RevisionStore` now supplies the first transactional
-authority path for that contract. Its dedicated SQLite tables atomically persist
-the revision, current-head compare-and-swap, projection receipts and an audit
-event. Receipts report `pending`, `applied`, `failed`, `stale`, `rebuilding`, or
-`removed`; applied and failed outcomes require bounded evidence. Bounded
-reconciliation locates failed/stale work, and authority rollback schedules the
-restored revision's projections for a new generation instead of merely moving a
-head pointer.
+Memory-side modules that also live in `vera/fabric/` (`memory*.py`,
+`context.py`, `session_notes.py`) are documented in
+[Memory Graph](./05-memory-graph.md).
 
-The first public path is deliberately narrow:
-`fabric.revision.put`, `fabric.revision.get`, and
-`fabric.revision.reconcile`. Deployment policy is read from
-`FABRIC_REVISION_POLICY`; by default reads are allowed and only direct human
-(`user`) writes are admitted. Namespace-specific reader/writer rules can admit
-Codex, Claude/Claude Code, or autonomous callers explicitly. Invalid policy
-fails closed.
+---
 
-`fabric.revision.put` commits authority first, then projects the canonical
-envelope into the existing SQLite `fabric_records` read path and transitions
-its `sqlite` receipt to `applied`, `removed`, or `failed`. Dataset counts remain
-idempotent across replay and tombstone deletion. A projection failure does not
-erase the authoritative revision; bounded `fabric.revision.reconcile` retries
-failed/stale receipts through `rebuilding`. Existing `fabric.ingest` behavior
-is unchanged, and this slice makes no claim that FAISS, Chroma, PostgreSQL or
-Neo4j were contacted.
+## 3. Storage layers
+
+| Layer | Role | Details |
+|---|---|---|
+| **SQLite** | Always-available local store | `FABRIC_SQLITE` (default `vera/fabric/vera_fabric.db`). Initialised eagerly at import, so tables exist before the first request. Writes are serialised through a single writer. Tables include `fabric_datasets`, `fabric_records`, `fabric_sources`, `fabric_dataset_tags`, `fabric_dataset_config`, `fabric_custom_graphs`, `fabric_pipelines`, `fabric_agents`, `fabric_dags`, `fabric_skills`, `fabric_kv` and the curation tables |
+| **PostgreSQL** | Authoritative relational store and word-overlap text search | `cfg.POSTGRES_URL`; `fabric_datasets`, `fabric_records` |
+| **ChromaDB** | Persistent vector search (HNSW, cosine) | Shared collection `vera_fabric`; serves all fabric vector search |
+| **FAISS** | Optional in-RAM vector tier | Off by default (`FABRIC_FAISS=0`); `FABRIC_FAISS_SHARDS` (4), `FABRIC_FAISS_INDEX` (`flat`) |
+| **Neo4j** | Graph projection | `(:Dataset)-[:CONTAINS]->(:FabricRecord)`, dataset links, `(:Entity)-[:MENTIONED_IN]->(:FabricRecord)`, Loom `RELATED_TO` edges, registered graph views |
+| **Redis** | Query cache and event bus | Query results cached under `fabric:cache:<md5>` for `FABRIC_CACHE_TTL` (3600 s); shared connection pool with the orchestrator |
+| **Object store** | Large blobs (Garage / Ceph / any S3) | Disabled unless `FABRIC_OBJECT_STORE` is set (default `none`); bucket `FABRIC_S3_BUCKET` (`vera-data-fabric`) |
+
+Each layer can fail independently and the pipeline degrades gracefully: the
+SQLite stage always runs, so data appears in the UI even when Postgres, Chroma
+or Neo4j are down; queries fall back from Postgres to SQLite keyword ranking
+when Postgres returns nothing. On startup the optional backends connect
+concurrently and the fabric emits `fabric.ready` with the active set
+(`sqlite` is always included).
+
+> [!NOTE]
+> In development sandboxes the shared Neo4j/Chroma writes are suppressed by
+> the same write guard described in
+> [Memory Graph](./05-memory-graph.md#dev-sandbox-write-guard).
+
+---
+
+## 4. Canonical revisions and provider contracts
+
+The live `fabric_records` path is mutable and best-effort. Alongside it, a
+storage-neutral contract family defines immutable, content-addressed
+authority and the providers that project or serve it.
+
+### Record revisions and the revision store
+
+`vera.fabric.record_revision` defines the `vera.fabric-record-revision/v1`
+contract. It separates a stable logical `record_id` from an immutable
+`revision_id` (`rev_<sha256>`), and binds content or an artifact reference,
+ordered parent revisions, snapshot identity, source, policy, metadata, content
+schema, media type, timestamps, valid time and tombstone state into a full
+SHA-256 identity. Nested caller input is copied into canonical JSON so later
+mutation cannot alter an existing observation.
+
+`vera.fabric.revision_store.RevisionStore` supplies the transactional
+authority. Its dedicated SQLite database (`FABRIC_REVISION_SQLITE`, default
+`vera/fabric/vera_fabric_revisions.db`; tables `fabric_record_revisions`,
+`fabric_record_heads`, `fabric_projection_receipts`, `fabric_revision_events`)
+atomically persists the revision, a current-head compare-and-swap, projection
+receipts and an audit event. Projection receipts move through a fixed state
+machine:
+
+| From | Allowed next states |
+|---|---|
+| `pending` | `applied`, `failed`, `removed` |
+| `applied` | `stale`, `removed` |
+| `failed` | `pending`, `rebuilding`, `removed` |
+| `stale` | `rebuilding`, `removed` |
+| `rebuilding` | `applied`, `failed`, `removed` |
+| `removed` | `rebuilding` |
+
+Applied and failed outcomes require bounded evidence. Bounded reconciliation
+locates failed/stale work, and an authority rollback schedules the restored
+revision's projections for a new generation instead of merely moving a head
+pointer.
+
+The public path is deliberately narrow:
+
+| Capability | HTTP | Behaviour |
+|---|---|---|
+| `fabric.revision.put` | `POST /fabric/revisions/put` | Inputs `namespace`, `record_type`, `created_at`, `record_id` or `logical_key`, `content_json`, `parents` (csv), `policy_json`/`source_json`/`metadata_json`, `expected_head`, `tombstone`, `media_type`, `valid_from`/`valid_to`. Commits authority first, then projects the canonical envelope into the existing SQLite `fabric_records` read path and transitions its `sqlite` receipt to `applied`, `removed` or `failed`. Tombstones need `tombstone=true`, null content and a parent. Emits `fabric.revision.committed` |
+| `fabric.revision.get` | `POST /fabric/revisions/get` | Current revision for `record_id`, or an exact `revision_id` bound to it |
+| `fabric.revision.reconcile` | `POST /fabric/revisions/reconcile` | Bounded retry (`limit` 1–100) of failed/stale receipts through `rebuilding` |
+
+Dataset counts stay idempotent across replay and tombstone deletion. A
+projection failure does not erase the authoritative revision. `fabric.ingest`
+behaviour is unchanged, and this path does not write FAISS, Chroma, Postgres
+or Neo4j.
+
+### Caller policy
+
+Revision and artifact capabilities share `CallerPolicy`
+(`caller_policy.py`). The actor is the request's caller kind (`user`,
+`codex`, `claude`, `claude_code` — MCP callers map to `claude_code` — or
+`autonomous`). By default **anyone may read and only direct human (`user`)
+callers may write**. A JSON policy can widen or narrow this globally or per
+namespace; an invalid policy fails the request closed rather than breaking
+module load.
+
+```json
+{
+  "readers": ["*"],
+  "writers": ["user"],
+  "namespaces": {
+    "agent-notes": { "writers": ["user", "claude_code", "autonomous"] }
+  }
+}
+```
+
+Set it with `FABRIC_REVISION_POLICY` (revisions) or `FABRIC_ARTIFACT_POLICY`
+(artifacts).
+
+### Artifact provider
+
+`vera.fabric.artifact_provider.LocalArtifactProvider` stores bytes by SHA-256
+under hash-sharded paths (`FABRIC_ARTIFACT_ROOT`, default
+`vera/fabric/artifact_store`) and keeps immutable metadata, retention and
+reference identity in SQLite. Atomic publish, bounded reads, verification,
+idempotent duplicates, non-retargetable references, monotonic retention and
+partial-file cleanup are deterministic conformance behaviour.
+
+| Capability | HTTP | Notes |
+|---|---|---|
+| `fabric.artifact.put` | `POST /fabric/artifacts/put` | `data_b64`, `media_type`, `created_at`, `retain_until`; decoded size ≤ `FABRIC_ARTIFACT_MAX_PUT_BYTES` (64 MiB) |
+| `fabric.artifact.get` | `POST /fabric/artifacts/get` | `artifact_id`, `max_bytes` ≤ `FABRIC_ARTIFACT_MAX_GET_BYTES` (8 MiB) |
+| `fabric.artifact.stat` / `.verify` | `POST /fabric/artifacts/stat`, `/verify` | Metadata; checksum and size verification |
+| `fabric.artifact.reference` | `POST /fabric/artifacts/reference` | Idempotent, non-retargetable reference |
+| `fabric.artifact.replica.reconcile` | `POST /fabric/artifacts/replica/reconcile` | Bounded retry (`limit` 1–100) of failed replication |
+| `fabric.artifact.restore_local` | `POST /fabric/artifacts/restore-local` | Repair a missing/corrupt local object from a checksum-verified replica |
+
+Authorisation precedes decoding or storage access. Remote replication is
+opt-in: with `FABRIC_ARTIFACT_REPLICA=object_store` (default `none`, which
+makes no replica network calls) the adapter copies locally committed
+artifacts to the S3-compatible object store under deterministic checksum keys.
+Local storage remains authoritative — a remote outage returns the successful
+local artifact plus a durable failed replica receipt instead of rolling back
+the put. Reconcile retries only after verifying local bytes, and restore
+accepts downloaded bytes only when they match the immutable local checksum
+and size. The offline suite exercises outage, retry, corrupt-local refusal and
+verified restore with an injected fake backend; live S3/Garage compatibility
+is not asserted by those tests.
 
 ### Graph and vector projection contract
 
-W2-05 begins an additive provider-neutral boundary in
-`vera.fabric.projection_provider`. A `ProjectionSpec` identifies a graph or
-vector backend plus its schema version. Vector specifications must additionally
-pin the exact model-package identity, dimension, preprocessing contract and
-distance metric; changing any of them creates a different projection space and
-requires rebuild rather than mixed-vector reuse.
+`vera.fabric.projection_provider` is a provider-neutral projection boundary.
+A `ProjectionSpec` identifies a graph or vector backend plus its schema
+version. Vector specifications must also pin the exact model-package identity,
+dimension, preprocessing contract and distance metric (an `EmbeddingSpace`);
+changing any of them creates a different projection space and requires a
+rebuild rather than mixed-vector reuse.
 
 Each `ProjectionEntry` binds a stable projection identity to one exact Fabric
 record revision, its authoritative content hash and a separate hash of the
 derived graph/vector payload. Tombstones carry no derived payload. The offline
 `FrozenProjectionProvider` demonstrates idempotent apply, compare-and-swap
-revision updates, bounded snapshots, drift reconciliation and generation-guarded
-atomic rebuild. Reconciliation reports only identity and checksum evidence; it
-does not make a derived index authoritative or repair it implicitly.
+revision updates, bounded snapshots, drift reconciliation and
+generation-guarded atomic rebuild. Reconciliation reports only identity and
+checksum evidence; it never makes a derived index authoritative or repairs it
+implicitly. The contract does not redirect the existing Neo4j, FAISS or Chroma
+paths.
 
-This contract does not redirect the existing Neo4j, FAISS or Chroma paths and
-does not claim Qdrant is installed. Backend adapters, dual-read/fallback,
-retrieval-quality evidence and outage recovery remain later, explicitly tested
-slices; live trials stay queued.
+### Dataset and query provider contracts
 
-### ArtifactProvider migration
+`vera.fabric.dataset_provider` defines storage-neutral datasets. A
+`DatasetSnapshot` binds dataset identity, creation time, JSON schema,
+provenance and the complete frozen record sequence to a SHA-256 snapshot id.
+`DatasetProvider` exposes exact/latest metadata and bounded snapshot scans;
+`QueryProvider` accepts an immutable `QueryRequest` and returns
+provider/provenance-labelled `QueryPage`s. Opaque cursors are checksummed and
+bound to the exact snapshot or query semantics, so they fail closed when
+reused against changed filters, text, projection mode or another snapshot.
 
-The W2-02 provider kernel begins in `vera.fabric.artifact_provider`. Its local
-implementation stores bytes by SHA-256 under hash-sharded paths and keeps
-immutable metadata, retention and reference identity in SQLite. Atomic publish,
-bounded reads, verification, idempotent duplicates, non-retargetable references,
-monotonic retention and partial-file cleanup are deterministic conformance
-behavior. The local provider is exposed through
-`fabric.artifact.put/stat/get/verify/reference`, gated by
-`FABRIC_ARTIFACT_POLICY`. Reads and writes have separate size ceilings
-(`FABRIC_ARTIFACT_MAX_GET_BYTES` and `FABRIC_ARTIFACT_MAX_PUT_BYTES`), and
-authorization precedes decoding or storage access.
+`CancellationSignal` is a process-local seam for mapping a native runtime's
+cancellation into cooperative provider checkpoints. The offline
+`FrozenDatasetProvider` exercises the contract deterministically and supports
+only equality filters and substring matching; it is not wired into
+`fabric.query` and makes no ranking-quality claim.
 
-Remote replication is deliberately opt-in. With
-`FABRIC_ARTIFACT_REPLICA=object_store`, the adapter copies locally committed
-artifacts to the existing S3-compatible `ObjectStore` under deterministic
-checksum keys. Local storage remains authoritative: a remote outage returns the
-successful local artifact plus a durable failed replica receipt instead of
-rolling back the put. `fabric.artifact.replica.reconcile` performs bounded
-retries only after verifying local bytes, and `fabric.artifact.restore_local`
-repairs a missing or corrupt local object only when downloaded bytes match the
-immutable local checksum and size. Both repair operations use the artifact
-caller policy. The default `none` mode performs no replica network calls.
+### Optional dataset adapters
 
-The offline conformance suite uses an injected fake backend to exercise outage,
-retry, corrupt-local refusal and checksum-verified restore. Live S3/Garage
-compatibility and legacy compatibility aliases remain queued rather than
-inferred from those deterministic tests.
+None of these adapters is selected by a public capability yet. Each is
+optional, never installed into the core runtime, and tested with injected
+fakes.
 
-### Dataset and query provider migration
+**Hugging Face Datasets** (`huggingface_dataset_adapter.py`). An integration
+host injects `datasets.load_dataset` and must report exactly `datasets==4.8.4`.
+Sources accept only Hub `owner/name` repositories pinned to a full commit SHA
+plus explicit config and split. Loader calls pass `token=False`, preventing
+ambient credential discovery (private datasets need a future secret-reference
+integration). `materialize` copies schema/features, bounded provenance and
+every JSON-compatible row of a complete sized split into a content-addressed
+snapshot, refusing oversized datasets rather than sampling or truncating.
+With `streaming=True`, `stream_page` returns bounded rows and a checksummed
+cursor carrying the provider's checkpoint state; resume recreates the exact
+pinned source and calls `load_state_dict`. Cursors cannot cross revisions,
+configs or splits, a page is never called a complete snapshot, and reaching an
+exact page boundary may need one final empty request to observe exhaustion.
 
-The first W2-03 slice introduces the storage-neutral contracts in
-`vera.fabric.dataset_provider`. A `DatasetSnapshot` binds dataset identity,
-creation time, JSON schema, provenance and the complete frozen record sequence
-to a SHA-256 snapshot ID. `DatasetProvider` exposes exact/latest metadata and
-bounded snapshot scans; `QueryProvider` accepts an immutable request and returns
-provider/provenance-labelled result pages. Opaque cursors are checksummed and
-bound to the exact snapshot or query semantics, so they fail closed when reused
-against changed filters, text, projection mode or another snapshot.
-
-`CancellationSignal` is a process-local reference seam for mapping a native
-runtime's cancellation mechanism into cooperative provider checkpoints. The
-offline `FrozenDatasetProvider` exists to exercise the contract deterministically
-and intentionally supports only equality filters and substring matching. It is
-not wired into the current Fabric query capability and makes no claim about
-ranking quality or external storage. Hugging Face, DuckDB, DVC and Lance adapters,
-plus compatibility over the current SQLite/PostgreSQL/FAISS/Chroma paths, remain
-subsequent slices; their live tests stay queued.
-
-The LIB-19 follow-on adds an optional Hugging Face Datasets adapter without
-installing that ecosystem into Vera's core runtime. An integration host injects
-`datasets.load_dataset` and must report the exact supported package version,
-currently `datasets==4.8.4`. Source descriptors accept only Hub `owner/name`
-repositories pinned to a full commit SHA, plus explicit config and split. Loader
-calls pass `token=False`, preventing ambient credential discovery; a later
-secret-reference integration is required for private datasets.
-
-For a complete sized split, `materialize` copies schema/features, bounded
-provenance and every JSON-compatible row into a content-addressed Vera snapshot.
-It refuses oversized datasets rather than silently sampling or truncating them.
-For `streaming=True`, `stream_page` returns bounded rows and a checksummed cursor
-containing the provider's own checkpoint state. Resume recreates the exact pinned
-source and invokes `load_state_dict`; cursors cannot cross revisions, configs or
-splits. A page is never called a complete snapshot, and reaching an exact page
-boundary may require one final empty request to observe exhaustion.
-
-No public capability selects this adapter yet. The deterministic suite injects
-fake loaders and streams; it performs no import, Hub request, cache write or
-credential lookup. Live verification of dataset card/license metadata, commit
-resolution, cache ceilings, public/private access and real stream recovery
-remains queued.
-
-The LIB-22 follow-on adds `DuckDBArtifactQueryProvider`, an optional analytical
-adapter over one immutable local Parquet artifact. It verifies the artifact's
-stored SHA-256 before construction and again before every page, derives the
-dataset snapshot identity from that checksum, and returns bounded
-`QueryPage` results with artifact and engine provenance. It deliberately does
-not expose SQL. Equality filters use restricted column identifiers and bound
-values; paths, limits and offsets are parameters, while opaque cursors remain
-bound to the full `QueryRequest` semantics.
-
-The default connection path requires exactly `duckdb==1.5.5`, creates a fresh
-in-memory connection rather than using DuckDB's shared global connection, and
-locks configuration after disabling extension auto-install/load, unsigned
-extensions, ambient S3 configuration and general external access. Only the
-already verified artifact path is allow-listed. Text search, arbitrary
-expressions, non-scalar filters, non-Parquet media, writes and extension use
-are outside this adapter.
-
-This slice is not yet a public capability or a replacement for `fabric.query`.
-Deterministic tests use an injected connection and exercise statement shape,
-parameter binding, pagination, cancellation, binding/checksum rejection,
-bounded errors and teardown without importing DuckDB. Live DuckDB execution,
-real and malformed Parquet, memory/time enforcement and concurrency remain
-queued. The security posture follows DuckDB's
+**DuckDB over Parquet** (`duckdb_artifact_query.py`).
+`DuckDBArtifactQueryProvider` is an analytical adapter over one immutable
+local Parquet artifact. It verifies the artifact's stored SHA-256 before
+construction and before every page, derives the snapshot identity from that
+checksum (or binds an explicit `DatasetSnapshot` id with a stable record-index
+column), and returns bounded `QueryPage` results with artifact and engine
+provenance. It does not expose SQL: equality filters use restricted column
+identifiers and bound values; paths, limits and offsets are parameters; cursors
+stay bound to the full `QueryRequest`. The default connection path requires
+exactly `duckdb==1.5.5`, creates a fresh in-memory connection rather than the
+shared global one, and locks configuration after disabling extension
+auto-install/load, unsigned extensions, ambient S3 configuration and general
+external access — only the verified artifact path is allow-listed. Text
+search, arbitrary expressions, non-scalar filters, non-Parquet media, writes
+and extensions are out of scope. The posture follows DuckDB's
 [configuration options](https://duckdb.org/docs/stable/configuration/overview),
-[security guidance](https://duckdb.org/docs/current/operations_manual/securing_duckdb/overview),
-and recommendation to use independent package connections rather than the
+[security guidance](https://duckdb.org/docs/current/operations_manual/securing_duckdb/overview)
+and advice to use independent connections rather than the
 [shared Python connection](https://duckdb.org/docs/stable/clients/python/overview).
 
-### Comparable retrieval evidence
-
-`vera.fabric.retrieval_comparison` provides a deterministic evidence boundary
-for comparing retrieval implementations without calling them. Every provider
-must report against the same immutable `DatasetSnapshot`, the same
-content-identified query cases, the same relevance citations, and the exact
-record revisions returned. Query text is represented only by a SHA-256 digest.
-
-The report keeps different operational questions separate: recall, precision,
-mean reciprocal rank, citation-revision accuracy, p50/p95 latency, failures,
-index/update/rebuild/deletion time, and storage. An unmeasured lifecycle value
-remains `null` rather than being confused with zero. The comparator does not
-construct a composite score, choose a winner, invoke a backend, or authorize a
-deployment.
-
-`vera.fabric.retrieval_lifecycle` preserves lifecycle evidence that the query
-executor cannot express in numeric fields alone. For each exact-snapshot
-adapter it records completed, unavailable, failed, cancelled, timed-out,
-unsupported, and not-requested phases separately. Recovery and teardown are
-explicit opt-in phases, run sequentially with the same bounded deadline.
-Recovery is successful only after a fresh lifecycle observation; teardown is
-successful only when its receipt names the exact snapshot, reports the
-projection inactive, and supplies a non-negative deletion measurement. Backend
-exception text is never retained. The report chooses no winner or fallback and
-grants no activation authority. Deterministic validation uses injected adapters;
-live outage/recovery/deletion trials remain separate evidence.
-
-`vera.fabric.retrieval_execution` is the bounded invocation layer that feeds
-that offline comparator. A `RetrievalQueryBinding` holds query text only for
-the duration of execution and verifies it against the case digest; neither the
-binding representation, evidence, nor report serialises the text. The executor
-runs at most 16 explicitly configured adapters over at most 200 identical cases,
-with a bounded per-operation deadline, cooperative cancellation, redacted error
-codes, and deliberately sequential provider pressure. Timeouts, cancellation,
-missing integrations, and malformed provider citations remain visible outcomes
-rather than silently disappearing or falling back to another backend.
-
-`QueryProviderRetrievalAdapter` connects providers that already honour
-`DatasetSnapshot` and `QueryRequest`. Because provider query pages identify
-matches by snapshot-local record index, the adapter also requires a complete
-immutable index-to-`(record_id, revision_id)` map for that exact snapshot. It
-rejects snapshot mismatches, incomplete citation maps, and invalid indexes.
-`UnavailableRetrievalAdapter` records an intentionally configured but absent
-integration without claiming that it was queried.
-
-The current general-purpose `fabric.query` capability searches live indexes and
-does not accept an immutable snapshot ID, so it is not represented as
-snapshot-pinned Fabric evidence. When a result has a canonical Fabric revision
-that the caller is authorized to read, `include_revision_authority=true` adds
-that exact `revision_id`; the opt-in avoids revision-store work for ordinary
-queries, and legacy or unauthorized results remain unqualified. Portable
-consumers such as Agent RAG must fail closed on unqualified hits rather than
-derive a revision from mutable text or timestamps.
-`NativeFabricSnapshotProjection` provides the separate admissible vector path:
-it reconstructs and verifies the complete `DatasetSnapshot`, requires exactly
-one vector per record, and reuses Fabric's canonical `EmbeddingSpace` and
-`ProjectionSpec` identities to pin the model package, dimension, preprocessing,
-metric, backend and schema. The projection is isolated in memory, integrity is
-checked before and after every query, and its receipt reports index time,
-storage and idempotent teardown without record or query content. Its adapter
-returns only exact `(record_id, revision_id)` citations and grants no activation
-authority. It never reads, writes or relabels the mutable shared indexes.
-
-The native graph path follows the same boundary. `SnapshotGraphEdge` accepts
-only bounded, unique edges whose endpoints exist in the exact snapshot.
-`NativeFabricSnapshotGraphProjection` reuses the canonical graph
-`ProjectionSpec`, content-identifies all nodes, revisions, edges and traversal
-limits, and uses deterministic lexical seeds plus a bounded one-to-eight-hop
-traversal. Directed edges are never traversed backwards. Integrity is checked
-around every query, results contain only revision citations, and teardown clears
-the isolated node/edge material. Shared Neo4j remains untouched.
-
-Qdrant and GraphRAG now have an injected-driver evidence boundary in
-`vera.fabric.external_retrieval`. `ExternalSnapshotBinding` recreates the
-complete immutable snapshot and content-identifies the provider revision,
-projection revision, retrieval mode, and full revision-qualified citation
-manifest. Query and lifecycle receipts must reproduce every one of those
-identities; drift, citations outside the snapshot, duplicates, excessive
-results, malformed lifecycle measures, and another snapshot all fail closed.
-Qdrant modes are explicit (`dense`, `sparse`, `hybrid`, `multivector`) and
-GraphRAG modes are explicit (`local`, `global`, `drift`). The core runtime does
-not import or install either library. An integration host must inject the
-driver, and a missing driver produces provider-specific unavailable evidence
-without falling back to Fabric or another index. This is a conformance seam,
-not runtime evidence by itself; deployments and measurements are recorded
-separately.
-
-The optional Qdrant runtime driver in `vera.fabric.qdrant_retrieval` uses the
-REST API directly through a bounded standard-library transport, so Qdrant does
-not become a core Python dependency. It provisions one deterministic isolated
-collection per external snapshot binding, uploads deterministic point IDs with
-exact snapshot/record/revision payloads, verifies the resulting point count,
-and supports explicit dense, sparse, RRF-hybrid and max-sim multivector query
-shapes. Every query filters the exact snapshot and requests only citation
-payloads. Lifecycle, recovery and deletion operate on that same collection;
-teardown reports it inactive and grants no activation authority. Credentials,
-shared collections and implicit fallback are outside this driver.
-
-The optional GraphRAG runtime driver in `vera.fabric.graphrag_retrieval`
-separates Vera's evidence contract from GraphRAG's model and index
-configuration. An integration host supplies a configured runtime implementing
-index, query, inspection and deletion; Vera does not import GraphRAG, resolve
-its credentials, or start model work implicitly. The driver sends the complete
-revision-bound document manifest into one deterministic workspace and accepts
-an active index only when the runtime returns the same snapshot, projection,
-provider revision, mode, record count and complete citation manifest. Local,
-global and DRIFT queries request citation fields only; answer and context bodies
-do not cross the comparison boundary. Recovery requires a fresh complete
-lifecycle observation, while teardown must prove that the same workspace is
-inactive. Runtime failures are redacted and never trigger another provider.
-
-`vera.fabric.retrieval_trial` joins query-quality evidence and the explicit
-lifecycle coordinator into one common-corpus receipt. The same immutable
-snapshot, digest-bound cases and adapter instances are used for both phases,
-and provider profile or snapshot drift is rejected. Synthesis reports query
-completion, failure, cancellation and unavailability separately from baseline,
-recovery and deletion status. A provider is evidence-complete only when every
-requested dimension is complete; missing integrations remain visible and are
-never converted into zero scores. The receipt contains no query text, chooses
-no winner or fallback, and grants no activation authority. External/model-backed
-trials remain a separate, explicitly scheduled operation.
-
-The analytical participant reuses the existing read-only QueryProvider rather
-than introducing SQL or a second query authority. DuckDB artifact providers may
-now bind an explicit DatasetSnapshot ID and read a designated stable record-index
-column, so filtered result rows resolve to their original snapshot revisions
-rather than to filtered-page offsets. `AnalyticalSnapshotRetrievalAdapter`
-selects a bounded, predeclared structured filter plan by the digest-bound case
-ID; query text is never translated into SQL and row data is never returned to
-the comparator. The provider, dataset and snapshot must match exactly, and
-missing plans, index drift, invalid/duplicate indexes and backend errors fail
-closed. Live DuckDB/Parquet execution remains separate evidence.
-
-JEPA Worldview has a dedicated binding and query path:
-`worldview.retrieval.bind` pins the complete index to a `DatasetSnapshot` and
-checkpoint `ModelPackage`, while `JepaWorldviewRetrievalAdapter` rejects any
-live receipt that drifts from those identities. An unbound legacy JEPA
-checkpoint remains explicitly unavailable to the comparison. This is a
-deliberate evidence boundary, not an indication that an unavailable provider
-scored zero.
-
-Supported evidence profiles distinguish Fabric graph/vector retrieval, Qdrant,
-GraphRAG, analytical retrieval, and **JEPA Worldview evidence**. “Worldview” is
-not accepted as an ambiguous provider kind: the older non-JEPA Worldview and
-Godseye product lineage is distinct from the JEPA model. Data exported from that
-lineage can still participate by first becoming canonical Fabric records and an
-immutable `DatasetSnapshot`; the comparison layer never reads its database or UI
-state directly.
-
-The LIB-21 follow-on adds an inspect-only bridge from one local DVC-tracked file
-to Vera's artifact contract. `DVCArtifactAdapter` requires an explicit stable
-repository identity, full Git commit and relative standalone `.dvc` descriptor.
-It resolves `HEAD` using bounded reads of in-tree Git metadata and accepts only
-one cached regular-file output in DVC's default
-`.dvc/cache/files/md5/<prefix>/<suffix>` layout. It never invokes Git or DVC,
-loads `.dvc/config`, follows a remote, discovers credentials, checks out data,
-or executes `dvc.yaml` commands.
-
-Before import, the adapter checks descriptor size and structure, path
-containment, declared size and MD5 cache identity. It then commits the already
-verified bytes to `LocalArtifactProvider`, which supplies Vera's SHA-256
-identity, and returns an `ArtifactRef` plus the independent DVC/Git provenance.
-This preserves both ecosystems' identities instead of treating DVC's MD5 as
-Vera's authority. The source record includes a SHA-256 descriptor observation,
-and import rechecks both descriptor bytes and `HEAD`; v1 does not independently
-prove that the working descriptor is clean and Git-tracked. Unsupported
-directories, custom caches, multiple/uncached
-outputs and remotes fail closed rather than silently broadening effects.
-
-The deterministic fixture gate confirms missing/corrupt cache handling,
-revision mismatch, packed refs, traversal/symlink refusal, size ceilings,
-unsupported descriptor shapes, ArtifactRef conversion and source-repository
-non-mutation. DVC's own documentation notes that tracked outputs are located
-through `.dvc`/`dvc.yaml` metadata and local cache or configured remotes in
-[`dvc get`](https://dvc.org/doc/command-reference/get); Vera deliberately stops
-before that command's download and workspace-writing behavior. Live DVC/API,
-remote, credential, directory and custom-cache trials remain queued.
+**DVC-tracked files** (`dvc_artifact_adapter.py`). `DVCArtifactAdapter` is an
+inspect-only bridge from one local DVC-tracked file to the artifact contract.
+It requires an explicit stable repository identity, a full Git commit and a
+relative standalone `.dvc` descriptor, resolves `HEAD` with bounded reads of
+in-tree Git metadata, and accepts only one cached regular-file output in DVC's
+default `.dvc/cache/files/md5/<prefix>/<suffix>` layout. It never invokes Git
+or DVC, loads `.dvc/config`, follows a remote, discovers credentials, checks
+out data or executes `dvc.yaml` commands. Before import it checks descriptor
+size and structure, path containment, declared size and MD5 cache identity,
+then commits the verified bytes to `LocalArtifactProvider` (Vera's SHA-256
+identity) and returns an `ArtifactRef` plus independent DVC/Git provenance —
+preserving both ecosystems' identities instead of treating DVC's MD5 as Vera's
+authority. Import rechecks descriptor bytes and `HEAD`; it does not prove the
+working descriptor is clean and Git-tracked. Directories, custom caches,
+multiple/uncached outputs and remotes fail closed. Vera deliberately stops
+before the download and workspace-writing behaviour of
+[`dvc get`](https://dvc.org/doc/command-reference/get).
 
 ---
 
-## 3. The ingestion pipeline
+## 5. The ingestion pipeline
 
-`DEFAULT_PIPELINE` is a sequence of stages, each responsible for one concern:
+`DEFAULT_PIPELINE` runs each record through these stages in order:
 
 ```
-Hash  →  Schema  →  TextExtract  →  Embed  →  PG  →  Vector  →  Neo4j
+Hash → Schema → TextExtract → Embed → SQLite → Postgres → Vector → Neo4j
 ```
 
 | Stage | Action |
 |---|---|
-| **Hash** | Compute a content hash for deduplication |
-| **Schema** | Infer or refine the dataset's schema from the record |
-| **TextExtract** | Pull indexable text from structured fields |
-| **Embed** | Generate embedding via Ollama (`llm.embed` cap → `OLLAMA_EMBED_URL`) |
-| **PG** | Write to PostgreSQL (or SQLite fallback) |
-| **Vector** | Insert into FAISS shard + Chroma collection |
-| **Neo4j** | Register dataset/relationship nodes |
+| **Hash** | `content_hash` = sha256 of `text` (or canonical `data` JSON), first 16 hex chars |
+| **Schema** | Infer a schema from `data` when none is set |
+| **TextExtract** | When `text` is empty, join the string values of `data` (500 chars each, 2000 total) |
+| **Embed** | Embed `text` via the configured embed model, unless deferred or already embedded |
+| **SQLite** | Always written — guarantees the record is visible in the UI immediately |
+| **Postgres** | Written when Postgres is available |
+| **Vector** | Add to FAISS (when enabled) and upsert into Chroma (off the event loop) when the record has a vector |
+| **Neo4j** | `MERGE` the `:Dataset` and `:FabricRecord` nodes and the `CONTAINS` edge |
 
-Each stage is async, and the pipeline awaits them in sequence per record. A stage failure logs the error and continues — partial ingestion is preferred over none.
+A stage error is logged and the record continues to the next stage — partial
+ingestion is preferred over none.
 
-### Post-ingestion pipeline
+`ingest_dataset()` wraps the pipeline:
 
-After every batch is ingested, a non-blocking `_post_ingest_pipeline` runs:
+- **Embedding exclusion.** Datasets in `EMBED_EXCLUDED_DATASETS` or matching a
+  `VERA_FABRIC_NO_EMBED` glob (default `vera.ha.*`, `*.ha.entities`,
+  `*.ha.states`; set it empty to exclude nothing) are stored and
+  text-searchable but get **no vector** and nothing is queued. A one-line
+  notice is logged once per dataset per process. Naming such a dataset in an
+  explicit backfill still embeds it.
+- **Deferred embedding** (`defer_embedding=True`, opt-in per call). Records are
+  stored without vectors and a fabric vector backfill is queued on the idle
+  queue (de-duplicated per dataset). If it cannot be queued, the ingest embeds
+  inline instead — storing records nothing will come back for is never chosen.
+- **Batch embedding.** Multi-record ingests embed ~64 records per Ollama
+  `/api/embed` call before the pipeline runs.
+- **Bounded concurrency.** Records run through the pipeline 8 at a time.
+- **Keyed upsert hook.** An item carrying `_id` uses it as the record id, so
+  re-ingesting the same business key replaces the row (used by `fabric.upsert`).
 
-- **Source registration** — if the record came from a known source, update the source's record count.
-- **Entity extraction** — extract named entities, dates, places from the text (writes to the second-order entity graph).
-- **Loom linking** — when configured per-dataset, run cross-dataset relationship inference.
+It then emits `fabric.ingested` (`dataset_id`, `ingested`, `errors`, `source`,
+up to 200 `record_ids`) and starts the non-blocking **post-ingest pipeline**,
+whose LLM work is marked as background (demoted while a human is actively
+using the system):
 
-Errors here are logged but don't surface to the caller — ingestion is considered successful as soon as the primary stages have written the record.
+1. **Source registration** — create a source for the dataset if none exists.
+2. **Entity extraction** — when `auto_extract_entities` is on (default),
+   run `fabric.entity_graph.extract` (LLM extraction only when the dataset sets
+   `use_llm` **and** the system-wide LLM-NLP switch is on).
+3. **Memory linking** — when `link_memory` is on (default), link extracted
+   entities to the `:Memory` nodes records came from.
+4. **Loom** — when `auto_loom` is on (default off), stitch relations.
 
+Per-dataset processing configuration (`fabric.datasets.config`, table
+`fabric_dataset_config`) and its defaults:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `auto_extract_entities` | `true` | Run entity extraction after ingest |
+| `link_memory` | `true` | Bridge entities to `:Memory` nodes |
+| `auto_loom` | `false` | Run Loom after ingest |
+| `extract_limit` | `500` | Max records per extraction run |
+| `content_type` | `text` | Extraction hint |
+| `use_llm` | `false` | Allow LLM triple extraction (still gated by `fabric.nlp.set`) |
+| `loom_scope` / `entity_scope` | `internal` | `internal` (within dataset) or `cross` |
+| `loom_mode` | `hybrid` | `vector`, `keyword` or `hybrid` |
+| `loom_min_score` / `loom_max_matches` | `0.4` / `100` | Loom thresholds |
 
 ![Data Graph dashboard](https://github.com/BoeJaker/Vera/blob/main/images/DF%20-%20Graph%20-%20Fabric%20Structure.jpg)
 
 ---
 
-## 4. Ingestion API
+## 6. Writing, curating and deleting data
 
-### `fabric.ingest`
+### fabric.ingest
 
 ```python
+# Python (in-process)
 await ingest_dataset(
     dataset_id = "my_dataset",
-    data       = [{"text": "...", "title": "...", "extra_field": ...}, ...],
+    data       = [{"text": "...", "title": "...", "extra": 1}, ...],
     source     = "api",
     tags       = ["t1", "t2"],
     source_id  = "session_abc",
 )
 ```
 
-Items can be:
+As a capability: `fabric.ingest` (`POST /fabric/ingest`) takes `dataset_id`!,
+`records` (a JSON array or object, as a string), `source` and `tags` (csv),
+and returns `{ingested, errors, dataset_id}`. Items may be dicts (text taken
+from a `text` field or the concatenated string values), strings (stored as
+`text` and `data.value`) or a single dict/string.
 
-- A list of dicts → each dict becomes one record (text auto-extracted from `text` field or concatenation of string values)
-- A list of strings → each becomes a record with that string as text and as `data.value`
-- A single dict or string → wrapped to a list
+### Curated datasets (fabric.upsert and friends)
 
-Returns `{ingested, errors, dataset_id}`.
+`curation_capabilities.py` adds identity, declared schemas and quality checks
+on top of the same store, so datasets that agents collect repeatedly stay
+consistent and reusable.
 
-Emits `fabric.ingested` event.
-
-### `fabric.update`
-
-Update an existing record by ID. Re-runs embedding if text changed.
-
-### `fabric.delete_dataset`
-
-Drop a dataset's records across all backends.
-
----
-
-## 5. Query DSL
-
-`fabric.query` accepts a hybrid query combining text, vector, filter, and graph expansion:
-
-```python
-await cap_fabric_query(
-    text       = "machine learning frameworks",   # keyword/FTS search
-    vector     = "ML libraries for Python",       # semantic search
-    dataset_id = "research.results",              # scope to one dataset
-    top_k      = 20,
-    include_data = False,
-)
-```
-
-Either or both of `text` and `vector` may be supplied. With both, results are fusion-scored (weighted vector + text + graph proximity, deduplicated by ID).
-
-The cap also accepts:
-
-- A `query` dict for the legacy API: `{text, vector, dataset_id, top_k, filter: {...}}`
-- A JSON-encoded string (for MCP callers that serialise everything)
-- A plain string (auto-converted to `text=...` + `vector=...`)
-
-### Filter syntax
-
-```python
-{
-    "filter": {
-        "tags":     {"contains": "important"},
-        "source":   "research",
-        "created_at": {"gte": "2025-01-01"},
-        "data.author": "Joe"
-    }
-}
-```
-
-Filters apply against PostgreSQL columns when the field is structured, and against Chroma metadata when going through the vector path.
-
-### Graph expansion
-
-If a dataset has explicit Neo4j relationships to others (set up via `fabric.link_datasets`), a query against one dataset can be expanded to include semantically-related results from linked datasets. The fusion score includes a graph-proximity component (decay by distance).
-
----
-
-## 6. Sources
-
-Sources are external feeds that get pulled into the fabric on demand or on schedule:
-
-| Source type | Examples |
-|---|---|
-| RSS | News feeds, blogs |
-| API | REST endpoints with JSON responses |
-| Database | SQL queries (config-defined) |
-| Web | Single URL or recursive crawl |
-| File | Local file or upload |
-
-### Source caps
-
-| Cap | Path | Purpose |
+| Capability | HTTP | Purpose |
 |---|---|---|
-| `fabric.source.add` | `POST /fabric/sources/add` | Register a new source |
-| `fabric.source.list` | `GET /fabric/sources` | List all sources |
-| `fabric.source.pull` | `POST /fabric/sources/pull` | Manually pull one source now |
-| `fabric.source.delete` | `POST /fabric/sources/delete` | Remove a source |
+| `fabric.upsert` | `POST /fabric/upsert` | Ingest rows **with identity**: `key` (csv business-key fields) and `mode` `merge` (update in place and gap-fill, default), `append` (still de-dups exact key repeats) or `replace`. Returns `{upserted, new, updated, record_count, mode}`; emits `fabric.upserted` |
+| `fabric.schema.declare` | `POST /fabric/schema/declare` | Declare and version a dataset schema (field types, key, kind, trust) |
+| `fabric.schema.get` | `GET /fabric/schema/get` | Declared schema, or an inferred one when none is declared |
+| `fabric.validate` | `POST /fabric/validate` | Required-field violations, type mismatches, coverage and duplicate keys vs the declared schema |
+| `fabric.identify` | `POST /fabric/identify` | "Do we already have a dataset for this?" — call before fetching reference data |
+| `fabric.gaps` | `POST /fabric/gaps` | Missing fields/keys vs an expectation, and which gaps are worth acting on now |
+| `fabric.gaps.attempt` | `POST /fabric/gaps/attempt` | Record a fetch attempt; failures back off exponentially and become `unfillable` after 4 failures |
+| `fabric.gaps.resolve` | `POST /fabric/gaps/resolve` | Mark a gap `noise`/`unfillable` (or re-open it) |
+| `fabric.fuse` | `POST /fabric/fuse` | Row-level join of two datasets on key fields into a fused dataset (left wins conflicts); the recipe is stored |
+| `fabric.fuse.refresh` | `POST /fabric/fuse/refresh` | Re-run a stored fusion recipe |
+| `memory.select` | `POST /memory/select` | Typed field filter/sort over a dataset's rows |
+| `context.for_agent` | `POST /context/for_agent` | Trust-ranked curated datasets above an agent's memories |
 
-When a source is pulled, items are deduplicated by content hash and bulk-inserted in chunks of 5, with `fabric.record.ingested` progress events emitted per chunk (so the UI can show records streaming in live). The async embed/vector/graph pipeline runs after SQLite writes so the UI sees data immediately.
+State lives in SQLite tables `fabric_dataset_schema`, `fabric_gap_ledger` and
+`fabric_fusion_recipes`.
+
+### Deleting data
+
+The delete capabilities differ in scope — choose deliberately:
+
+| Capability | HTTP | Scope |
+|---|---|---|
+| `fabric.delete_record` | `POST /fabric/delete_record` | One record from all backends |
+| `fabric.clear_dataset` | `POST /fabric/clear_dataset` | All records of a dataset (SQLite, Chroma, FAISS) |
+| `fabric.dataset.delete` | `POST /fabric/dataset/delete` | Fully delete a dataset (SQLite, Chroma, FAISS) |
+| `fabric.delete_dataset` | `POST /fabric/delete` | **Chroma vectors only** for a dataset |
+| `fabric.dataset.reset_edges` | `POST /fabric/dataset/reset_edges` | Loom `RELATED_TO` edges for a dataset (to re-run Loom) |
+| `fabric.entity_graph.purge` | `POST /fabric/entity_graph/purge` | A dataset's entity state (optionally the entities) |
+| `fabric.chroma_reset` | `POST /fabric/chroma_reset` | Drop and recreate the whole `vera_fabric` collection |
+
+> [!WARNING]
+> Destructive reset/delete capabilities need a verified authoritative copy
+> first. After `fabric.chroma_reset`, rebuild vectors with
+> `fabric.backfill_vectors`.
+
+### Event bus and stream publishing
+
+- **Event bus** — `fabric.bus.configure` (`enabled`, `filters` as csv event
+  prefixes) attaches a consumer group `fabric_bus` to the `vera:events` Redis
+  stream and ingests matching events into datasets named
+  `bus.<event_type with dots as underscores>`. `fabric.bus.status` reports
+  `{enabled, filters, task_alive}`.
+- **Stream publish** — `fabric.stream_publish` appends a record to the Redis
+  stream `FABRIC_STREAM_KEY` (default `vera:fabric:ingest`). No in-tree
+  consumer reads that stream; use `fabric.ingest` when the record must land in
+  a dataset.
 
 ---
 
-## 7. Web acquisition
+## 7. Querying and recall
 
-`fabric_web_acquisition.py` extends the fabric with a richer web pipeline beyond basic source pulls:
+### fabric.query
 
-| Cap | Purpose |
+`fabric.query` (`POST /fabric/query`) is the hybrid search over all datasets.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `text` | — | Keyword query (Postgres word-overlap) |
+| `vector` | — | Semantic query (falls back to `text`; `text` falls back to `vector`) |
+| `dataset_id` | all | Restrict to one dataset |
+| `top_k` | 20 | Results to return |
+| `min_score` | `FABRIC_MIN_SCORE` (0.28) | Cosine floor; lower is wider and noisier |
+| `include_data` | false | Return the full `data` payload |
+| `include_revision_authority` | false | Attach `revision_id` for hits with an authorised canonical revision |
+
+It also accepts a `query` dict, a JSON string, or a plain string (treated as
+both `text` and `vector`). The legacy dict form additionally honours
+`vector_weight` (1.0), `text_weight` (0.5), `weak_below`, `cache` and
+`cache_ttl`.
+
+How it ranks:
+
+1. Embed the vector query; search Chroma (and FAISS when enabled) for
+   `top_k × 2` neighbours, **max-combining** scores (they index the same
+   vectors).
+2. Postgres word-overlap search for `top_k × 3` hits.
+3. Fuse the two **rankings** with weighted reciprocal-rank fusion
+   (`FABRIC_RRF_K`, 60), because cosine similarity and keyword overlap are on
+   different scales.
+4. Drop any record that is neither above the cosine floor nor a keyword hit.
+5. If Postgres returned nothing, fall back to SQLite with the same
+   word-overlap ranking and floor.
+
+Each result carries `score` (RRF), `vector_score` and `text_score`; the
+response carries `relevance: {min_score, max_vector_score,
+dropped_below_floor, weak}`. `weak` is true when nothing survived or the best
+vector score is below `FABRIC_WEAK_BELOW` (0.42) without a full keyword match
+— treat it as "no relevant stored data". Results are cached in Redis for
+`FABRIC_CACHE_TTL` seconds.
+
+> [!NOTE]
+> `fabric.query` searches live, mutable indexes and does not accept a snapshot
+> id, so its results are not snapshot-pinned evidence. With
+> `include_revision_authority=true`, hits that have a canonical revision the
+> caller may read gain that exact `revision_id`; legacy or unauthorised hits
+> stay unqualified, and portable consumers (such as Agent RAG) must fail
+> closed on unqualified hits rather than derive a revision from mutable text.
+> Field filters and graph expansion are **not** part of `fabric.query`; use
+> `memory.select` for field filters and the entity-graph/Loom capabilities for
+> graph neighbourhoods.
+
+### Browsing datasets
+
+- `fabric.datasets` (`GET /fabric/datasets`) lists datasets with counts —
+  always pass `parent=` to browse one namespace level at a time.
+- `fabric.browse` pages through one dataset (`limit` 1–200, `offset`,
+  optional `search`); `fabric.dataset_stats` and `fabric.schema` describe one
+  dataset; `fabric.record.get` / `fabric.record.summarise` work on one record.
+- Tags: `fabric.datasets.tag`, `fabric.datasets.tags`,
+  `fabric.datasets.auto_tag` (LLM), `fabric.tags.list_grouped`.
+
+### Agent-facing recall
+
+LLM agents should normally use the canonical memory doors —
+`memory.seek` (hybrid fabric + memory search with de-duplication and a context
+budget), `memory.read`, `memory.map` and `memory.browse` — described in
+[Memory Graph §9](./05-memory-graph.md#9-retrieval-surfaces). In the default
+`canonical` tooling mode `fabric.query`, `fabric.datasets` and `fabric.browse`
+are hidden from agent tool discovery (they remain callable).
+
+Research has its own wrappers over fabric datasets — `research.recall.search`,
+`research.recall.datasets`, `research.recall.job`, `research.recall.session`
+and `research.recall.notebook`; see [Research System](./07-research.md).
+
+---
+
+## 8. Sources and collectors
+
+Sources are registered feeds pulled into a dataset on demand or on an
+interval. `fabric.source_types.list` returns every type with its config and
+auth field schema (the panel renders forms from it):
+
+| Type | Pulls |
 |---|---|
-| `fabric.web.acquire` | Multi-stage web crawl with full content fetch, page structure extraction (headings, sections, code blocks), and negative-filter exclusions |
-| `fabric.web.continue` | Resume a previous acquisition that paused or was cancelled |
-| `fabric.web.acquire_status` | Get status of running/completed acquisitions |
-| `fabric.entity_graph.extract` | Extract a second-order entity graph from a dataset's records |
-| `fabric.entity_graph.query` | Query the entity graph by entity, type, or dataset |
-| `fabric.entity_graph.merge` | Merge duplicate entities across datasets |
-| `fabric.entity_graph.bulk_load` | Bulk-load entities and relationships (used by analyser flows) |
+| `rss` | RSS / Atom feed (`fabric.rss.fetch_content` fetches full article text) |
+| `api` | Generic JSON API (with `jq_path`, headers) |
+| `wiki` | MediaWiki API |
+| `scrape` | HTML scrape |
+| `recon` | Browser-driven API discovery (best for single-page apps) |
+| `gitea`, `github`, `gitlab` | Issues / PRs / releases from a forge |
+| `postgres`, `mysql`, `sqlite`, `mongodb`, `elasticsearch` | Database query or collection scan (SQLite read-only) |
+| `docs` | Documentation crawler with change detection |
+| `topic` | Re-runs web acquisition for a saved discovery topic (`fabric.topic.save`) |
+| `index` | A CSV/JSON/HTML list of other resources, fanned out to child sources (`fabric.sources.add_index`) |
 
-![DF - Discover - Web Acquisition_zoomed](https://github.com/BoeJaker/Vera/blob/main/images/DF%20-%20Discover%20-%20Web%20Acquisition_zoomed.jpg)
+| Capability | HTTP | Purpose |
+|---|---|---|
+| `fabric.sources` | `GET /fabric/sources` | List sources |
+| `fabric.sources.add` | `POST /fabric/sources/add` | Register a source (`url`!, `source_type`, `label`, `dataset_id`, `interval` seconds, …) |
+| `fabric.sources.update` | `POST /fabric/sources/update` | Change label, tags, interval, limit, enabled, `jq_path`, headers |
+| `fabric.sources.pull` | `POST /fabric/sources/pull` | Pull now |
+| `fabric.sources.delete` | `POST /fabric/sources/delete` | Remove |
+| `fabric.sources.auto_tag` | `POST /fabric/sources/auto_tag` | LLM-tag a source's dataset |
+| `fabric.tags.fan_out` | `POST /fabric/tags/fan_out` | Pull every source carrying any of the given tags |
 
-### Entity graph
+**Pull behaviour.** Items are de-duplicated by content hash and inserted in
+chunks of 5, emitting `fabric.record.ingested` per chunk so the UI can show
+records streaming in; the embed/vector/graph work follows the SQLite writes.
+Lifecycle events are `fabric.source.added`, `fabric.source.pulling`,
+`fabric.source.pulled`, `fabric.source.error` and
+`fabric.source.index.expanded`.
 
-Entities (people, orgs, dates, places, technologies, code symbols) extracted from records get stored in Neo4j under the `:Entity` label, with `:MENTIONED_IN` edges to the `:FabricRecord` nodes they came from, and `:CO_OCCURS` / `:RELATES_TO` edges between entities that appear together. Entities are normalised (case-folded, deduplicated) so a single graph node aggregates all mentions across datasets.
+**Auto-pull.** Sources load from SQLite at startup with their persisted
+last-pull time (so a restart does not make every source due at once). A loop
+checks every 30 seconds and pulls due, enabled sources with `interval > 0`, at
+most two concurrently.
 
-### Loom (cross-dataset stitching)
+**Prebaked collectors** (`data_fabric_collectors.py`) provide
+purpose-built ingestion for well-known sources, with incremental cursors in
+SQLite for large feeds and versioned records for documentation sites:
 
-The "Loom" pipeline finds relationships between datasets — pairs of datasets whose records mention the same entities or share topics. The harness's Fabric panel has a Loom tab with four numbered stages (gather, plan, stitch, link) and a graph view showing the resulting cross-dataset edges in distinct colours.
+| Capability | Purpose |
+|---|---|
+| `collector.catalog` / `collector.add_prebaked` | List / register prebaked source definitions (news, CVE/KEV, arXiv, Hacker News, weather, GitHub, PyPI, OpenAlex, …) |
+| `collector.ingest_cve`, `collector.ingest_arxiv`, `collector.ingest_hn` | Incremental CVE (NVD), arXiv and Hacker News ingestion |
+| `collector.ingest_docs` / `collector.monitor_docs` / `collector.version_list` | Crawl a documentation site into `docs:<hostname>` and store a new version when a page's hash changes |
+| `collector.site_profile`, `collector.url_inspect`, `collector.discover` | Inspect a site/URL; AI-assisted dataset discovery |
+| `collector.stealth_fetch`, `collector.stealth_crawl`, `collector.stealth_domain_config`, `collector.stealth_list_domains` | Fetching for sites that block plain clients, with per-domain configuration |
+| `collector.timeseries.ingest` / `collector.timeseries.query` | Numeric time series |
+| `collector.iot.serial_read`, `collector.iot.mqtt_sub`, `collector.iot.http_poll`, `collector.iot.list_ports` | IoT inputs (USB/serial, MQTT, HTTP polling) |
+
+Per-source politeness delays are configurable (see [§15](#15-configuration)).
 
 ![Data Loom sources dashboard](https://github.com/BoeJaker/Vera/blob/main/images/DF%20-%20Graph%20-%20Loom.jpg)
 
 ---
 
-## 8. Fabric capabilities
+## 9. Web acquisition, discovery and synthesis
 
-| Cap | Purpose |
+### Web acquisition
+
+`fabric_web_acquisition.py` provides a multi-stage crawler that fetches full
+page content, extracts structure (headings, sections, code blocks), applies
+negative-word/URL filters and builds the entity graph. It creates both a
+source and a dataset.
+
+| Capability | Purpose |
 |---|---|
-| `fabric.ingest` | Insert records into a dataset |
-| `fabric.update` | Update an existing record |
-| `fabric.query` | Hybrid vector + text + filter + graph search |
-| `fabric.schema` | Get/refine a dataset's schema |
-| `fabric.datasets` | List all datasets with record counts |
-| `fabric.stats` | Aggregate stats (total records, dataset count, vector count, ...) |
-| `fabric.link_datasets` | Add an explicit Neo4j relationship between two datasets |
-| `fabric.stream_publish` | Publish a record to the ingestion stream |
-| `fabric.delete_dataset` | Drop a dataset |
-| `fabric.source.*` | Source management (see §6) |
-| `fabric.web.*` | Web acquisition (see §7) |
-| `fabric.entity_graph.*` | Entity graph (see §7) |
-| `fabric.bus.*` | Configure the ingestion bus |
-| `fabric.aux_graph.*` | Query the auxiliary graph (dataset relationships, lineage) |
-| `fabric.ai_analyse_links` | LLM-driven Loom suggestion |
-| `fabric.ai_stitch` | LLM-driven stitch execution |
-| `fabric.chroma_reset` | Delete + recreate the vector collection (embed-model change) |
-| `fabric.backfill_vectors` | Re-encode records present in Postgres but missing from Chroma (post-reset / embedder-outage repair; dry-run by default) |
-| `fabric.objects.*` | Blob store: status / buckets / list / stat / get / put / delete |
+| `fabric.web.acquire` | Start an acquisition (seed URL, topic, depth/pages/breadth, exclusions, content filters); emits `fabric.web.acquire.progress` |
+| `fabric.web.continue` | Resume by `acquisition_id`, `source_id` or `dataset_id`, reusing the original config |
+| `fabric.web.acquire_status` | Recent acquisitions and their status |
+
+![DF - Discover - Web Acquisition_zoomed](https://github.com/BoeJaker/Vera/blob/main/images/DF%20-%20Discover%20-%20Web%20Acquisition_zoomed.jpg)
+
+### Discovery crawls, surfaces and sub-tables
+
+`discovery.py` makes discovery recursive and self-extending:
+
+1. **Interaction-surface detection.** While crawling, each page is inspected
+   for other consumable sources — RSS/Atom feeds, sitemaps, Git hosting,
+   OpenAPI/Swagger specs, GraphQL endpoints, generic JSON APIs, data files
+   (`csv`, `tsv`, `jsonl`, `ndjson`) and database connection hints. Each
+   surface is stored, scored against the topic and can be **promoted** into a
+   recurring source.
+2. **Concept → sub-table extraction.** Structured concepts embedded in a page
+   (HTML tables, API endpoint lists, CLI flag lists, definition lists) become
+   sub-datasets named `<parent>.table.<slug>`, linked `HAS_SUBTABLE`.
+3. **Resumable, dataset-seeded crawling.** Crawls persist their frontier
+   (queue + visited) so they can be continued, or seeded from an existing
+   dataset's already-scanned structure.
+
+| Group | Capabilities |
+|---|---|
+| Crawl | `fabric.discover.crawl`, `.continue`, `.from_dataset`, `.detect` (one page), `.scrape_page`, `.expand` (grow the graph from a node), `.auto` (keep mining the best surfaces) |
+| Topic | `fabric.discover.topic` (multi-angle searches + feeds), `.map_topic` (comprehensive multi-site mapping), `.subtopic`, `.description`, `.query` (ask the LLM about a crawl), `.compile` (multi-section Markdown document), `.entity_extract` |
+| History | `fabric.discover.history`, `.graph`, `.delete_scan`, `.clear_history` |
+| Surfaces | `fabric.surfaces.list`, `.preview` (read-only sample), `.browse`, `.enumerate` (whole OpenAPI/REST index into an `api_endpoints` sub-table), `.promote`, `.delete`; `fabric.api.list`, `fabric.api.map` (infer a record array, schema and `jq_path`) |
+| Sub-tables | `fabric.subtables.list`, `fabric.subtables.stitch` (merge schema-compatible fragments) |
+| Authority | `fabric.domains.authority` — learned per-topic domain relevance |
+
+Discovery emits `fabric.discover.progress`, `fabric.discover.surface`,
+`fabric.discover.subtable` and `fabric.discover.scan_deleted`. Crawl politeness
+is `FABRIC_DISCOVER_DELAY_S` (falls back to `FABRIC_CRAWL_DELAY_S`, 2 s) with
+at most `FABRIC_HOST_FETCH_CONCURRENCY` (2) concurrent fetches per host.
+Resolving which discovery dataset a URL belongs to is a full scan of record
+payloads, so `url_dataset_resolve.py` runs it off the event loop and caches
+positive and negative answers per URL.
+
+### Collections, topic models and knowledgebases
+
+- **Collections** — `fabric.collection.detect` recognises a multi-page
+  structured collection from a list/index URL and induces a field map;
+  `fabric.collection.reconstruct` crawls every detail page into one typed
+  dataset plus graph (`fabric.collection.list`, `.get`, `.progress`).
+- **Topic models** — `fabric.synthesize.topic` builds a "third-order",
+  coherent picture of a topic: an LLM plans the structure, checks coverage
+  against records and the entity graph, optionally triggers more discovery,
+  and persists the model (SQLite rows plus a Neo4j concept layer).
+  `fabric.synthesize.list` / `.get` / `.delete` manage them.
+- **Knowledgebases** (`knowledgebase.py`) — an accumulating, wiki-like body of
+  knowledge per subject: LLM-written **articles** grounded in crawled records
+  (re-builds extend by slug), subject–predicate–object **facts** harvested
+  from the entity graph and article writing, and contributing **tables** that
+  stay queryable. Capabilities: `fabric.kb.build`, `.list`, `.get`,
+  `.article`, `.query` (facts + articles + table rows, optional cited LLM
+  answer), `.render` (wiki Markdown for panels), `.delete`.
+- **Skills and ontologies from data** — `fabric.skills.build` and
+  `fabric.ontologies.build` sample records and ask the LLM for concepts,
+  entity types and relationship rules (see
+  [Skills & Ontologies](./18-skills-ontologies.md)).
+
+---
+
+## 10. Entity graph, Loom and graph views
+
+**Entity graph.** Entities (people, organisations, places, dates,
+technologies, code symbols…) extracted from records are normalised
+(case-folded, alias-resolved) so one node aggregates all mentions. They are
+stored in SQLite (`fabric_entities`, `fabric_entity_mentions`) and projected
+to Neo4j as `:Entity` nodes with `MENTIONED_IN` edges to the `:FabricRecord`
+(and, via `fabric.entity_graph.link_memory`, `:Memory`) nodes they came from,
+`CO_OCCURS` edges between entities that appear together, and `HAS_ENTITY`
+edges from datasets (`fabric.entity_graph.attach_to_datasets`).
+
+Extraction uses the active NER backend — GLiNER, spaCy or a heuristic
+fallback — chosen by `FABRIC_NER_BACKEND` (`auto`). `fabric.extract_graph`
+supports `nlp` (fast, default), `llm` and `hybrid` modes. LLM-based NLP in
+automatic pipelines is governed by a persisted system-wide switch
+(`fabric.nlp.get` / `fabric.nlp.set`, **off** by default); humans can still
+request it per call.
+
+| Capability | Purpose |
+|---|---|
+| `fabric.entity_graph.extract` / `.extract_record` / `.extract_text` | Extract from a dataset, one record, or caller-supplied text |
+| `fabric.entity_graph.query` / `.types` / `.snapshot` / `.mentions` / `.records` / `.record_entities` | Read the graph |
+| `fabric.entity_graph.merge` / `.consolidate` / `.dedup` / `.purge` | Clean up duplicates or reset a dataset |
+| `fabric.entity_graph.profile` | LLM profile for one entity (type, description, aliases, facts) |
+| `fabric.entity_graph.bulk_load` | Import pre-computed entities and relations |
+| `fabric.entity_graph.link_memory` / `.attach_to_datasets` | Bridge into the memory graph / dataset nodes |
+| `fabric.entity_graph.ner` / `.ner_labels` / `.ner_install` | Inspect and self-test the NER backend, set GLiNER labels and threshold, install models |
+
+**Loom (cross-dataset stitching).** Loom finds relations between records —
+within a dataset or across datasets — by vector, keyword or hybrid matching.
+`fabric.loom.run` runs server-side over a whole dataset, emits
+`fabric.loom.progress` and writes `RELATED_TO` edges between `:FabricRecord`
+nodes (plus aggregate dataset edges). `fabric.loom.record_match` finds matches
+for one record, and `fabric.ai_analyse_links` asks the LLM to suggest related
+dataset pairs and then drives Loom for each accepted pair.
+`fabric.dataset.reset_edges` clears a dataset's Loom edges to start again.
+
+**Graph views.**
+
+| Capability | Purpose |
+|---|---|
+| `fabric.link_datasets` | Link two datasets (`rel_type`, default `SIMILAR_TO`) |
+| `fabric.aux_graph.link` / `fabric.aux_graph.query` | Link typed nodes / read-only Cypher returning rows plus renderer-ready nodes and edges |
+| `fabric.graphs.list` / `.register` / `.unregister` / `.snapshot` / `.query` | Named graph views — built-ins `fabric`, `memory`, `net`, plus label-scoped custom views |
+| `fabric.graph.node_actions` / `fabric.graph.run_node_action` | Per-label node actions dispatched to capabilities |
+
+---
+
+## 11. Vectors, embeddings and the blob store
 
 ### Vector performance
 
 Bulk ingests and backfills **batch-embed**: one Ollama `/api/embed` call per
-~64 records (`_embed_many`, routed via `pick_instance` like single embeds)
-instead of one HTTP roundtrip per record, and the ingest pipeline fans records
-out with bounded concurrency (8). Chroma's synchronous HTTP client is kept off
-the event loop (executor) on both the ingest and query paths, and collection
-`count()` is cached for 30 s instead of being re-fetched on every search.
+~64 records (`_embed_many`, routed like single embeds) instead of one HTTP
+roundtrip per record, and the pipeline fans records out with bounded
+concurrency (8). Chroma's synchronous HTTP client is kept off the event loop
+on both the ingest and query paths, and collection `count()` is cached for
+30 s instead of being re-fetched on every search.
 
-**FAISS is OFF by default** (`FABRIC_FAISS=0`): it had no persistence — empty
-after every restart, only ever holding records ingested by the current process
-— while duplicating Chroma's cosine search over the same vectors at >1 GB RAM
-at current scale (each vector stored twice: global shard + per-dataset index).
-Chroma (HNSW, persistent) serves all fabric vector search. Set `FABRIC_FAISS=1`
-to enable the in-RAM tier — it then **hydrates from Chroma in the background at
-startup** so it is actually populated. `fabric.query` max-combines the FAISS and
-Chroma scores (they index the same vectors; the old additive merge double-scored
-whatever happened to be in FAISS). The worldview's latent-space FAISS index
-(`WV_INDEX`) is separate and unaffected.
+**FAISS is off by default** (`FABRIC_FAISS=0`). It had no persistence — empty
+after every restart, holding only records ingested by the current process —
+while duplicating Chroma's cosine search over the same vectors at > 1 GB RAM
+(each vector stored twice: global shard plus per-dataset index). Chroma
+(HNSW, persistent) serves all fabric vector search. Setting `FABRIC_FAISS=1`
+enables the in-RAM tier, which then **hydrates from Chroma in the background
+at startup**. `fabric.query` max-combines FAISS and Chroma scores. The
+Worldview latent-space FAISS index is separate and unaffected.
 
 ### Vector hygiene
 
-Vectors are only ever written with an **explicit embedding** — if the embedder
-is down, the vector write is skipped (the record still lands in Postgres/SQLite)
-rather than letting Chroma fall back to its built-in 384-dim default embedder,
-which dimension-mismatches the nomic 768-dim collections. The embed
-circuit-breaker cools down after 5 minutes instead of latching for the process
-lifetime. Repair gaps with `fabric.backfill_vectors` (Postgres-sourced) or
-`worldview.reembed_missing` (SQLite-sourced, concurrent); the memory system's
-twin is `memory.backfill_vectors`.
+Vectors are only ever written with an **explicit embedding**. If the embedder
+is down the vector write is skipped (the record still lands in
+Postgres/SQLite) rather than letting Chroma fall back to its built-in 384-dim
+default embedder, which would mismatch the 768-dim collection
+(`FABRIC_VECTOR_DIM`). The embed circuit breaker cools down instead of
+latching for the process lifetime, and slow embeds are bounded by
+`VERA_EMBED_WAIT_S` (5 s) and `VERA_EMBED_SLOW_COOLDOWN_S` (30 s). Repair gaps
+with `fabric.backfill_vectors` (Postgres-sourced, dry-run by default; also run
+from the idle queue for deferred ingests) or `worldview.reembed_missing`
+(SQLite-sourced, concurrent). The memory system's twin is
+`memory.backfill_vectors`. Vector inspection (`fabric.vectors.*`) is covered
+in [Vector Browser](./25-vector-browser.md); embedding providers
+(`embed.provider.*`) in [ONNX](./30-onnx.md).
 
-### Blob store (Garage)
+### Blob store
+
+`fabric.objects.*` wraps an S3-compatible object store (Garage, Ceph or S3)
+enabled by `FABRIC_OBJECT_STORE` with `FABRIC_S3_ENDPOINT`,
+`FABRIC_S3_ACCESS`, `FABRIC_S3_SECRET`, `FABRIC_S3_BUCKET` and
+`FABRIC_S3_REGION`.
+
+| Capability | Purpose |
+|---|---|
+| `fabric.objects.status` | `{enabled, available, mode, endpoint, default_bucket, has_boto, last_error}` |
+| `fabric.objects.buckets` / `.bucket_create` | List / create buckets |
+| `fabric.objects.list` / `.stat` | List under a prefix / HEAD one object |
+| `fabric.objects.get` / `.put` / `.delete` | Download (objects > 5 MB always return a presigned URL) / upload base64 / delete |
+| `fabric.objects.presign` | Presigned GET/PUT URL (default 3600 s) |
 
 `fabric.objects.status` reports `last_error` when the store is enabled but
-unavailable. `AccessDenied` / `No such key` means the garage node has no
-layout/key/bucket yet — the compose `garage-init` sidecar bootstraps it via the
-**admin API** (`:3903`), and `provision.store.garage.bootstrap` does the same
-from inside Vera (idempotent, then reconnects the ObjectStore). Garage can also
+unavailable. `AccessDenied` / `No such key` means the Garage node has no
+layout, key or bucket yet — the compose `garage-init` sidecar bootstraps it
+via the admin API (`:3903`), and `provision.store.garage.bootstrap` does the
+same from inside Vera (idempotent, then reconnects the store). Garage can also
 be provisioned onto any Docker host with `provision.store.deploy` (see
 [Docker](./13-docker.md)).
 
 ---
 
-## 9. The Fabric panel
+## 12. Comparable retrieval evidence
 
-`fabric_panel.html` has three primary tabs:
+These modules let retrieval implementations be compared on identical,
+immutable inputs without granting any of them authority. None of them chooses
+a winner, falls back to another provider or activates anything.
 
-### Discover
+- **Comparator** (`retrieval_comparison.py`). Every provider must report
+  against the same `DatasetSnapshot`, the same content-identified query cases
+  (query text appears only as a SHA-256 digest), the same relevance citations,
+  and the exact record revisions returned. The report keeps recall, precision,
+  MRR, citation-revision accuracy, p50/p95 latency, failures,
+  index/update/rebuild/deletion time and storage separate; an unmeasured value
+  stays `null` rather than zero, and no composite score is produced.
+- **Execution** (`retrieval_execution.py`). A `RetrievalQueryBinding` holds
+  query text only during execution and verifies it against the case digest;
+  neither the binding representation, evidence nor report serialises it. The
+  executor runs at most 16 configured adapters over at most 200 cases,
+  sequentially, with a per-operation deadline, cooperative cancellation and
+  redacted error codes. `QueryProviderRetrievalAdapter` connects providers
+  that honour `DatasetSnapshot`/`QueryRequest` and requires a complete
+  index-to-`(record_id, revision_id)` map; `UnavailableRetrievalAdapter`
+  records an intentionally configured but absent integration without claiming
+  it was queried.
+- **Lifecycle** (`retrieval_lifecycle.py`). Records completed, unavailable,
+  failed, cancelled, timed-out, unsupported and not-requested phases per
+  adapter. Recovery and teardown are explicit opt-in phases under the same
+  deadline; recovery succeeds only after a fresh observation, teardown only
+  when its receipt names the exact snapshot, reports the projection inactive
+  and supplies a non-negative deletion measurement. Backend exception text is
+  never retained.
+- **Trial** (`retrieval_trial.py`). Joins query-quality and lifecycle
+  evidence into one common-corpus receipt using the same snapshot, cases and
+  adapter instances; profile or snapshot drift is rejected. A provider is
+  evidence-complete only when every requested dimension is complete; missing
+  integrations stay visible rather than scoring zero.
 
-Topic search → suggest sources → kick off acquisition. The "Deep Crawl →" button hands off a discovered URL to the Web Acquisition tab with the URL and topic pre-filled.
+**Participants**
 
-### Web Acquisition
+| Participant | Module | Boundary |
+|---|---|---|
+| Native vector | `native_retrieval.NativeFabricSnapshotProjection` | Rebuilds and verifies the full snapshot, one vector per record, reusing Fabric's `EmbeddingSpace`/`ProjectionSpec`; isolated in memory, integrity-checked around every query, idempotent teardown; never touches the shared indexes |
+| Native graph | `native_retrieval.NativeFabricSnapshotGraphProjection` | Bounded, unique `SnapshotGraphEdge`s within the snapshot; deterministic lexical seeds and a 1–8-hop traversal that never walks directed edges backwards; shared Neo4j untouched |
+| Qdrant / GraphRAG evidence | `external_retrieval.ExternalSnapshotBinding` | Content-identifies provider revision, projection revision, mode (`dense`/`sparse`/`hybrid`/`multivector`; `local`/`global`/`drift`) and the full citation manifest; every receipt must reproduce them. A missing driver yields provider-specific unavailable evidence |
+| Qdrant driver | `qdrant_retrieval.py` | REST over a bounded standard-library transport; one deterministic isolated collection per binding; snapshot-filtered queries returning citation payloads only; no credentials, shared collections or fallback |
+| GraphRAG driver | `graphrag_retrieval.py` | Host-supplied runtime; one deterministic workspace; accepts an index only when snapshot, projection, provider revision, mode, record count and citation manifest match; citation fields only cross the boundary |
+| Analytical | `analytical_retrieval.AnalyticalSnapshotRetrievalAdapter` | Predeclared structured filter plans selected by case id over DuckDB artifacts bound to a snapshot and record-index column; query text is never translated to SQL |
+| JEPA Worldview | `worldview/retrieval_adapter.JepaWorldviewRetrievalAdapter` | `worldview.retrieval.bind` pins the index to a `DatasetSnapshot` and checkpoint `ModelPackage`; drifted receipts are rejected and an unbound legacy checkpoint is reported unavailable |
 
-Multi-stage crawl UI. Fields: seed URL, topic, max depth, max pages, breadth, exclude words/URLs, content type filters. Live progress log + a shared crawl graph that's mirrored in the Discover tab.
-
-### Loom (pipeline workbench)
-
-Single-page workbench combining:
-
-- **Graph canvas** (full-height) showing entities, relations, and stitched cross-dataset edges
-- **Right-side drawer** (collapsible) with:
-  - View controls (source picker, filter, layout)
-  - Items list (Entities / Relations / Loom Edges sub-tabs)
-  - Dataset Config
-  - Automatic Triggers
-  - Four numbered pipeline stages
-  - Pipeline Log
-
-The entity graph and the stitched cross-dataset graph are separate views — switch via the View controls. Stitched edges have raised alpha for visibility and use the 7 distinct Loom edge type colours.
+Evidence profiles distinguish Fabric graph/vector retrieval, Qdrant,
+GraphRAG, analytical retrieval and **JEPA Worldview evidence**. "Worldview" is
+not accepted as an ambiguous provider kind: the older non-JEPA
+Worldview/Godseye lineage is distinct from the JEPA model. Its data can
+participate by first becoming canonical Fabric records and an immutable
+`DatasetSnapshot` (the Godseye line projects normalised geospatial records
+into immutable portable datasets without claiming JEPA authority); the
+comparison layer never reads its database or UI state directly. Agent RAG
+likewise projects revision-qualified Fabric hits into cited portable context.
 
 ---
 
-## 10. Recall
+## 13. Discovery and context routing contracts
 
-Once data is in the fabric, recall is just `fabric.query`. Higher-level recall caps wrap it for common patterns:
+Discovery work crosses subsystem boundaries through immutable,
+content-addressed envelopes (`vera/discovery_contract.py`):
 
-- `research.recall.search` — search across `research.*` datasets only
-- `research.recall.crawled_pages` — semantic search + domain filter on crawl datasets
-- `research.recall.session` — pull all jobs for a research session, cross-reference the memory graph chain
-- `research.recall.notebook` — fetch a notebook and its cells
+| Envelope | Schema | Id prefix |
+|---|---|---|
+| `DiscoveryRequest` | `vera.discovery-request/v1` | `dsr_` |
+| `SourceCandidate` | `vera.discovery-source-candidate/v1` | `dsc_` |
+| `CollectionOption` | `vera.discovery-collection-option/v1` | `dco_` |
+| `CollectionReceipt` | `vera.discovery-collection-receipt/v1` | `dcr_` |
+| `DiscoveryResult` | `vera.discovery-result/v1` | — |
 
-See [Research System](./07-research.md) for the full recall surface.
+A request fixes its source types, time, result limits, latency, byte and cost
+budgets (query ≤ 16 384 chars, ≤ 256 candidates, ≤ 32 options, ≤ 1000
+outputs). Candidates identify a versioned source (`api`, `capability`,
+`database`, `dataset`, `feed`, `file`, `repository`, `sitemap`, `web`) and
+offer explicit collection methods, resource needs (`cpu`, `gpu`, `network`,
+`storage`), expected latency and output kinds (`artifact`, `context`,
+`dataset`). Receipts preserve the exact request, candidate, option and
+provider revision — even for cancellation, timeouts and failures (statuses
+`succeeded`, `partial`, `failed`, `rejected`, `cancelled`, `timed_out`).
+Successful outputs reuse cited `ContextItem`, `DatasetSnapshot` and
+content-addressed artifact identities, with the receipt kept in their lineage.
+These are descriptive contracts: they neither crawl nor claim a CPU/GPU worker
+is available.
+
+**Routing and orchestration.** `discovery_routing.plan_discovery_execution`
+admits selected work only through exact, current `DiscoveryWorkerOffer`s and —
+when needed — an exact `GpuAdmissionReceipt`. `run_discovery_route`
+(`discovery_orchestration.py`) is provider-injected and two-stage: it scouts
+independent source providers concurrently, isolates timeouts and failures,
+ranks source/method combinations (`rank_collection_options`) and selects at
+most one method per source; collection has separate concurrency and deadline
+bounds, cleans up timed-out tasks and keeps healthy cited outputs when another
+source fails. Actual bytes, costs and context counts are checked against the
+reservations before a result is admitted, and rejected alternatives and
+stable failure classes remain available as evidence.
+
+**Context composition.** `ContextRegistry.select_discovery_result` derives a
+payload-free selection from the portable context authorities already present
+in a `DiscoveryResult`, validates the provider and ranker ids against its own
+manifest, and binds the selection to the exact result, policy and
+registry-manifest identities. Policy can restrict eligible providers, cap
+their count, and either reject or explicitly record unregistered providers.
+Composition refuses a selection after the registry changes. The selection
+holds provider, item, source and revision identities — never retrieved text —
+and the discovery result stays the authority for receipts and content.
+`run_discovery_context_route` chains route, selection and composition (see
+[Memory Graph §10](./05-memory-graph.md#10-portable-context-contracts)); no
+provider is discovered implicitly and the coordination layer never probes a
+source, model, worker or accelerator on its own.
+
+**Benchmarks.** `discovery_benchmark.py` (schema
+`vera.discovery-context-benchmark/v1`) is a payload-free, snapshot-bound
+comparison contract. Each case binds the discovery request, query digest,
+relevant source and record revisions and required support claims; each
+observation binds a variant revision, configuration digest, repetition and
+declared ablations with per-case timing, ranked authority/citation evidence,
+support, cost and CPU/GPU accounting. A candidate must improve both p95
+time-to-first-useful-context and nDCG while guarding MRR, citation coverage,
+answer support, freshness, redundancy, source selection, failure rate, policy
+violations and individual-case regressions; per-repetition evidence sits
+beside aggregates so averages cannot hide a bad case.
+`discovery_benchmark_runtime.py` is the separate live harness: it runs the
+full variant × case × repetition matrix sequentially, owns monotonic
+milestones, enforces a deadline per run, propagates cancellation and reduces
+failures to stable codes — a timeout or malformed result retains no partial
+hits, timing claims, queries, exception text or payloads.
+`snapshot_retrieval_runner` binds existing snapshot-aware retrieval adapters
+to it; answer-support claims need a separate explicit resolver, because
+retrieving a relevant record is not proof that a generated claim is supported.
+
+**Operator read model.** Completed routes and explicitly recorded benchmark
+comparisons are appended to a bounded (50-entry), payload-free read model
+(`discovery_operator_readmodel.py`) with candidate/option ranks, worker and
+GPU-admission identities, resource class, receipt counts/timing/cost, stable
+failures, output counts and baseline/candidate quality, latency, resource and
+blocker summaries. It is exposed by `operator.discovery.evidence`
+(`GET /operator/discovery/evidence`) and written by
+`operator.discovery.benchmark.record`
+(`POST /operator/discovery/benchmark/record`); it stores no queries or content
+and cannot run discovery or activate a winner.
+
+**Inventory.** `vera/inventory/discovery_context_baseline.py` keeps an
+offline, source-bound inventory of the discovery and context paths that feed
+the fabric. It distinguishes portable provider contracts from native adapters,
+labels JEPA Worldview paths explicitly, records which paths still need live
+source or accelerator evidence, and is content-addressed and checked against
+a reviewed semantic baseline. It never contacts sources, models or workers.
 
 ---
 
-## 11. Operations and failure diagnosis
+## 14. The Fabric panel
+
+`fabric_panel.html` is served at `/fabric/panel` and registered as the
+**Data Fabric** tab (`fabric-panel`). A left-hand sidebar switches between
+sections:
+
+| Section | Contents |
+|---|---|
+| **Overview** | Dashboard of the fabric with configurable widgets |
+| **Datasets** | Dataset list with counts; records browser (paged), schema, graph view, tags/auto-tag, clear/delete |
+| **Sources** | Registered sources (pull, edit, delete) and the **Source Catalog** of prebaked collectors |
+| **Discover** | Topic search → suggested sources, with a **Deep Crawl →** hand-off to Web Acquisition (seed URL and topic pre-filled); hosts the Discover+ view from `/ui/panels/discover-panel` |
+| **Query** | DSL search, a visual pipeline builder and saved pipelines (`fabric.pipelines.*`) |
+| **IoT & TS** | USB/serial, MQTT, HTTP polling, manual/OHLCV import (Stooq, CoinGecko, FRED), charting and stealth fetch |
+| **Graph** | Structural graph of datasets, sources, agents, skills and ontologies |
+| **Memory** | The memory graph (see [Memory Graph](./05-memory-graph.md#13-ui-panels-and-routes)) |
+| **Loom** | Pipeline workbench (below) |
+| **Schedule** | Collection schedule — source pull intervals |
+| **Bus** | Redis system-bus (`vera:events`) ingestion: filter prefixes, enable/disable, status |
+| **Stats** | Backend health and storage statistics |
+| **Skills** | Skills built from datasets |
+| **WorldView** | The Worldview panel, embedded (see [Worldview](./11-worldview.md)) |
+| **Vectors** | Vector store overview (see [Vector Browser](./25-vector-browser.md)) |
+| **Blobs** | Object-store browser |
+
+**Loom workbench.** A full-height graph canvas showing entities, relations
+and stitched cross-dataset edges, plus a collapsible right drawer with view
+controls (source picker, filter, layout), an items list (Entities /
+Relations / Loom Edges), **Dataset Config**, **Automatic Triggers**, the four
+numbered pipeline stages — **1 Entity Extraction** (NLP/regex),
+**2 Record Stitching (Loom)** (text similarity), **3 Graph Extraction**
+(relationship discovery) and **4 AI Link Analysis** (LLM-driven) — and a
+**Pipeline Log**. The entity graph and the stitched cross-dataset graph are
+separate views; stitched edges use raised alpha and distinct colours per Loom
+edge type.
+
+> [!NOTE]
+> The Discover+ view's markup and script (`fabric_discovery_panel.html` /
+> `.js`) are read from files beside `discovery.py`. When they are absent the
+> route serves a short notice instead; the `fabric.discover.*` capabilities
+> remain available through the API and the Discover section's other tools.
+
+---
+
+## 15. Configuration
+
+| Variable | Default | Effect |
+|---|---|---|
+| `FABRIC_SQLITE` | `vera/fabric/vera_fabric.db` | SQLite store path |
+| `FABRIC_FAISS` | `0` | `1` enables the in-RAM FAISS tier (hydrated from Chroma) |
+| `FABRIC_FAISS_SHARDS` / `FABRIC_FAISS_INDEX` | `4` / `flat` | FAISS layout |
+| `FABRIC_VECTOR_DIM` | `768` | Expected embedding dimension |
+| `FABRIC_MIN_SCORE` | `0.28` | `fabric.query` cosine floor |
+| `FABRIC_WEAK_BELOW` | `0.42` | `weak` relevance threshold |
+| `FABRIC_RRF_K` | `60` | Reciprocal-rank-fusion constant |
+| `FABRIC_CACHE_TTL` | `3600` | Redis query-cache TTL (s) |
+| `FABRIC_STREAM_KEY` | `vera:fabric:ingest` | Stream used by `fabric.stream_publish` |
+| `VERA_FABRIC_NO_EMBED` | `vera.ha.*,*.ha.entities,*.ha.states` | Dataset globs stored without vectors (empty = none) |
+| `VERA_EMBED_WAIT_S` / `VERA_EMBED_SLOW_COOLDOWN_S` | `5` / `30` | Embed wait and slow-embed cool-down |
+| `FABRIC_OBJECT_STORE` | `none` | Enable the S3-compatible blob store |
+| `FABRIC_S3_ENDPOINT` / `_ACCESS` / `_SECRET` / `_BUCKET` / `_REGION` | `http://localhost:3900` / — / — / `vera-data-fabric` / `garage` | Object-store connection |
+| `FABRIC_REVISION_SQLITE` | `vera/fabric/vera_fabric_revisions.db` | Canonical revision store |
+| `FABRIC_REVISION_POLICY` | read: all, write: `user` | Revision caller policy (JSON) |
+| `FABRIC_ARTIFACT_ROOT` | `vera/fabric/artifact_store` | Local artifact store |
+| `FABRIC_ARTIFACT_POLICY` | read: all, write: `user` | Artifact caller policy (JSON) |
+| `FABRIC_ARTIFACT_REPLICA` | `none` | `object_store` enables replication |
+| `FABRIC_ARTIFACT_MAX_PUT_BYTES` / `_MAX_GET_BYTES` | 64 MiB / 8 MiB | Artifact size ceilings |
+| `FABRIC_CRAWL_DELAY_S` | `2` | Web-acquisition politeness delay |
+| `FABRIC_DISCOVER_DELAY_S` | `FABRIC_CRAWL_DELAY_S` | Discovery crawl delay |
+| `FABRIC_HOST_FETCH_CONCURRENCY` | `2` | Concurrent fetches per host during discovery |
+| `FABRIC_SUBTABLE_MAX_ROWS` / `FABRIC_SPEC_FETCH_BYTES` | `500` / `2000000` | Sub-table and API-spec limits |
+| `FABRIC_NER_BACKEND` | `auto` | `gliner`, `spacy`, `heuristic` or `auto` |
+| `FABRIC_NER_MODEL` | `en_core_web_sm` | spaCy model |
+| `FABRIC_GLINER_MODEL` / `FABRIC_GLINER_LABELS` / `FABRIC_GLINER_THRESHOLD` | `urchade/gliner_medium-v2.1` / built-in set / `0.4` | GLiNER settings |
+| `COLLECTOR_*_DELAY_S` | CVE 6, arXiv 3, HN 1, wiki 1, docs 3, GitHub 10, default 2 | Collector politeness delays |
+
+Connection endpoints for Postgres, Chroma, Neo4j and the embed model come
+from `vera/config.py` (`cfg.POSTGRES_URL`, `cfg.CHROMA_HOST`,
+`cfg.CHROMA_PORT`, `cfg.NEO4J_URI`, `cfg.NEO4J_USER`, `cfg.NEO4J_PASS`,
+`cfg.OLLAMA_EMBED_URL`, `cfg.OLLAMA_EMBED_MODEL`); see
+[Configuration](./10-configuration.md).
+
+---
+
+## 16. Events
+
+| Event | Meaning |
+|---|---|
+| `fabric.ready` | Startup finished; lists active backends |
+| `fabric.ingested` | A batch was ingested (`record_ids` for downstream consumers such as the Worldview stream worker) |
+| `fabric.record.ingested` | Per-chunk progress during source pulls |
+| `fabric.source.added` / `.pulling` / `.pulled` / `.error` / `.index.expanded` | Source lifecycle |
+| `fabric.upserted`, `fabric.schema.declared`, `fabric.validated`, `fabric.gaps.attempted`, `fabric.gaps.resolved`, `fabric.fused`, `fabric.fuse.refreshed` | Curation |
+| `fabric.revision.committed` | A canonical revision was written |
+| `fabric.backfill` | Vector backfill progress |
+| `fabric.discover.progress` / `.surface` / `.subtable` / `.scan_deleted` | Discovery |
+| `fabric.web.acquire.progress` | Web acquisition |
+| `fabric.entity_graph.progress`, `fabric.entity_graph.linked_memory`, `fabric.extract_graph.progress` | Entity extraction |
+| `fabric.loom.progress`, `fabric.loom.auto` | Loom |
+| `fabric.collection.progress`, `fabric.synthesize.progress`, `fabric.kb.progress`, `fabric.skills.progress`, `fabric.ontology.progress` | Long-running builds |
+| `fabric.object.put` / `fabric.object.delete` | Blob store writes |
+| `fabric.nlp.config`, `fabric.graph.registered`, `fabric.pipeline.saved`, `fabric.pipeline.stage`, `fabric.tags.fan_out`, `fabric.ner.install.progress` | Configuration and tooling |
+
+---
+
+## 17. Worked examples
+
+Ingest, then query with an explicit relevance floor:
+
+```bash
+curl -s http://localhost:8999/mcp/call -H 'content-type: application/json' \
+  -d '{"name":"fabric.ingest","arguments":{
+        "dataset_id":"notes.vendors",
+        "records":"[{\"text\":\"Acme supplies 10G switches\",\"vendor\":\"Acme\"}]",
+        "source":"api","tags":"vendors"}}'
+
+curl -s http://localhost:8999/fabric/query -H 'content-type: application/json' \
+  -d '{"vector":"network switch suppliers","dataset_id":"notes.vendors","top_k":5,"min_score":0.3}'
+```
+
+Keep a reusable, keyed dataset and check its quality:
+
+```bash
+curl -s http://localhost:8999/mcp/call -H 'content-type: application/json' \
+  -d '{"name":"fabric.upsert","arguments":{
+        "dataset_id":"ref.prices","key":"symbol,date","mode":"merge",
+        "rows":"[{\"symbol\":\"ABC\",\"date\":\"2026-09-30\",\"close\":12.5}]"}}'
+
+curl -s http://localhost:8999/mcp/call -H 'content-type: application/json' \
+  -d '{"name":"fabric.validate","arguments":{"dataset_id":"ref.prices"}}'
+```
+
+Register an RSS source that pulls hourly:
+
+```bash
+curl -s http://localhost:8999/fabric/sources/add -H 'content-type: application/json' \
+  -d '{"url":"https://example.org/feed.xml","source_type":"rss","label":"Example feed",
+       "dataset_id":"news.example","interval":3600}'
+```
+
+Repair vectors after a Chroma reset (dry run, then commit):
+
+```bash
+curl -s -X POST http://localhost:8999/fabric/backfill_vectors -H 'content-type: application/json' -d '{}'
+curl -s -X POST http://localhost:8999/fabric/backfill_vectors -H 'content-type: application/json' -d '{"confirm":true}'
+```
+
+---
+
+## 18. Operations and failure diagnosis
 
 Treat the relational record store as the durable reference and vector, graph,
-cache, and object layers as independently observable projections.
+cache and object layers as independently observable projections.
 
 | Symptom | Likely layer | First checks |
 |---|---|---|
-| Dataset exists but semantic search misses it | embedding/Chroma/FAISS | embedder health, vector dimensions, backfill |
-| Text search works but graph is empty | Neo4j projection | graph availability, labels, post-ingest errors |
-| UI count changes between refreshes | graph limit or retry | snapshot limit, timeout, pending refresh |
-| Source repeatedly imports duplicates | hashing/source cursor | content hash, checkpoint, canonical URL |
-| Record exists but blob does not open | object store | bucket, key, credentials, presign endpoint |
-| New data appears late | ingestion stream | Redis consumer status and backlog |
+| Dataset exists but semantic search misses it | embedding / Chroma / FAISS | Embedder health, vector dimensions (`fabric.vectors.audit`), embedding exclusion globs, `fabric.backfill_vectors` |
+| `relevance.weak` is true for every query | Floor too high or no vectors | Retry with lower `min_score`; check the dataset actually has vectors |
+| Text search works but graph is empty | Neo4j projection | Graph availability, labels, post-ingest errors, `fabric.nlp.get` |
+| UI count changes between refreshes | Graph limit or retry | Snapshot limit, timeout, pending refresh |
+| Source repeatedly imports duplicates | Hashing / source cursor | Content hash, checkpoint, canonical URL; consider `fabric.upsert` with a key |
+| Many sources pull at once after restart | Missing persisted last-pull time | Check the source's `last_pulled` in SQLite |
+| Record exists but blob does not open | Object store | `fabric.objects.status` `last_error`, bucket, key, credentials, presign endpoint |
+| Bus events never become datasets | Bus disabled or filtered | `fabric.bus.status`; Redis availability |
+| Revision write refused | Caller policy | `FABRIC_REVISION_POLICY` admits the caller kind for that namespace; invalid JSON fails closed |
 
-Recovery proceeds from fabric.health and fabric.stats, through authoritative
-dataset/record counts, then repairs the smallest derived layer. Reconciliation
-must be idempotent, bounded by dataset, and observable through progress events.
-Destructive reset/delete capabilities require a verified authoritative copy.
+Recovery proceeds from `fabric.health` and `fabric.stats`, through
+authoritative dataset/record counts, then repairs the smallest derived layer.
+Reconciliation should be idempotent, bounded by dataset and observable
+through progress events. Destructive reset/delete capabilities require a
+verified authoritative copy.
 
-Documentation fixtures follow the same model: a few namespaced vera.* datasets
-are written only inside the selected sandbox, linked, and captured after the
-graph summary is ready. Production is never seeded for screenshots.
+Documentation fixtures follow the same model: a few namespaced `vera.*`
+datasets are written only inside the selected sandbox, linked, and captured
+after the graph summary is ready. Production is never seeded for screenshots.
 
 ---
 
-## See also
+## 19. Related pages
 
-- [Memory Graph](./05-memory-graph.md) — sister system; cap activity is mirrored to fabric `caps.*` datasets
-- [Vector Browser](./25-vector-browser.md) — inspect/audit the Chroma + FAISS stores behind the fabric
-- [Markets](./15-markets.md) & [Device Mesh](./14-mesh.md) — high-volume numeric sources that write straight to fabric datasets
+- [Memory Graph](./05-memory-graph.md) — sister system; canonical agent retrieval (`memory.seek`), context assembly and the memory graph
+- [Vector Browser](./25-vector-browser.md) — inspect/audit the Chroma and FAISS stores behind the fabric
 - [Research System](./07-research.md) — research artifacts are fabric records
-- [Capability Framework](./01-capability-framework.md) — the `fabric.*` caps surface
+- [Worldview](./11-worldview.md) — consumes `fabric.ingested`; JEPA retrieval evidence
+- [Skills & Ontologies](./18-skills-ontologies.md) — skills and ontologies built from datasets
+- [Markets](./15-markets.md) & [Device Mesh](./14-mesh.md) — high-volume numeric sources that write straight to fabric datasets
+- [Docker](./13-docker.md) — provisioning the Garage blob store
+- [ONNX Export & Runtime](./30-onnx.md) — embedding providers
+- [Capability Framework](./01-capability-framework.md) — the `fabric.*` capability surface
 
 ## Screenshots
 

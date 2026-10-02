@@ -1954,13 +1954,16 @@ async def llm_generate(
     # Prefer vLLM when: backend="vllm" OR (backend="auto" AND vLLM has online instances)
     _use_vllm = False
     if backend in ("vllm", "auto"):
-        try:
-            from Vera.vera.vllm_capabilities import VLLM_INSTANCES as _VI, vllm_generate as _vg
-            _online_vllm = [i for i in _VI.values() if i.status == "online"]
+        # The loader registers vllm/vllm_capabilities.py under its bare name; a
+        # package import would build a second copy whose instances are never
+        # health-polled (so never "online") and would re-register its caps.
+        _vllm_mod = (sys.modules.get("vllm_capabilities")
+                     or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+        if _vllm_mod is not None:
+            _online_vllm = [i for i in getattr(_vllm_mod, "VLLM_INSTANCES", {}).values()
+                            if i.status == "online"]
             if _online_vllm and (backend == "vllm" or prefer_gpu):
                 _use_vllm = True
-        except ImportError:
-            pass
 
     if _use_vllm:
         # Route through vllm.generate cap so its own event pipeline fires
@@ -2536,10 +2539,22 @@ async def ollama_instances_status(trace_id=None):
         return _o._node_threads_core.threads_for(
             has_gpu=bool(i.get("has_gpu")), node_num_thread=i.get("num_thread"),
             default=_o._CPU_NODE_THREADS)
+    # A superset of the orchestrator's registration it replaces (enabled and
+    # num_ctx came from there), so no caller loses a field to the load order.
     return {iid:{"url":i["url"],"label":i["label"],"has_gpu":i["has_gpu"],"status":i["status"],
+                 "enabled":i.get("enabled", True),
                  "latency_ms":i["latency_ms"],"models":i["models"],"in_use":i["in_use"],
-                 "errors":i["errors"],"last_check":i["last_check"],"num_thread":_nt(i)}
+                 "errors":i["errors"],"last_check":i["last_check"],"num_thread":_nt(i),
+                 "num_ctx":i.get("num_ctx", 4096)}
             for iid,i in OLLAMA_INSTANCES.items()}
+
+
+@APP.get("/ollama/instances", tags=["ollama"], include_in_schema=False)
+async def _ollama_instances_get_alias():
+    """GET /ollama/instances — the path the orchestrator's (replaced)
+    registration declared. Panels still call it, and this registration is
+    mounted at /ollama/cluster, so keep both answering the same thing."""
+    return await ollama_instances_status()
 
 @capability("ollama.generate_raw",
     http_method="POST", http_path="/ollama/generate_raw", http_tags=["ollama", "llm"],

@@ -734,7 +734,7 @@ async def _oc_tools_list():
         schema = cap.get("schema", {})
         tools.append({
             "name": name,
-            "description": cap.get("doc", "")[:200],
+            "description": (cap.get("description") or "")[:200],
             "parameters": {
                 "type": "object",
                 "properties": schema.get("properties", {}),
@@ -756,9 +756,12 @@ async def _oc_tool_call(capability_name: str, request: _Request):
     if not cap:
         return _JSONResponse({"error": f"Capability '{capability_name}' not found"}, status_code=404)
 
+    if not isinstance(body, dict):
+        return _JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
     try:
-        fn = cap["fn"]
-        result = await fn(**body) if asyncio.iscoroutinefunction(fn) else fn(**body)
+        # The registry stores the wrapped callable under "func" (events, policy,
+        # retries) - the same entry point /mcp/call uses.
+        result = await cap["func"](**body)
         return {"result": result, "capability": capability_name}
     except Exception as exc:
         return _JSONResponse({"error": str(exc)}, status_code=500)

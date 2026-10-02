@@ -1,456 +1,673 @@
 # 07 · Research System
 
-Vera's research subsystem is a self-contained pipeline server (`researcher_api.py`, default port `:8765`) that runs deep, multi-stage research jobs combining web search, recursive crawling, NLP analysis, and LLM synthesis. It exposes 11 named pipelines through Vera's capability framework, integrates with the data fabric for long-term recall, and writes activity to the memory graph for cross-session continuity.
+Vera's research subsystem runs deep, multi-stage research jobs that combine web
+search, recursive crawling, local NLP analysis and LLM synthesis, and produce a
+report, a long-form guide, generated code, or a whole file tree. It also owns
+the research **notebooks**, saved multi-stage **pipelines**, continuous
+**iteration** targets, the off-host **NLP** capability family (`nlp.*`), and the
+**Explode / Assess** structure-and-scoring tools.
 
-The 11 pipeline capabilities all live in `research_capabilities.py` and route requests to `researcher_api` over HTTP. `research_vera_bridge.py` and `research_fabric.py` keep the standalone researcher aligned with Vera's cluster routing and fabric persistence.
+The research engine lives in `vera/research/researcher_api.py`. When the module
+is loaded by the orchestrator (the normal deployment, "Vera mode") it registers
+its HTTP routes on the orchestrator's own FastAPI app and exposes roughly seventy
+`research.*` capabilities; there is no separate research process to run. The
+same file can still be started standalone on port `8765` for legacy use, in
+which case it uses a hand-configured Ollama instance list instead of Vera's
+cluster router. Persistence goes through the Data Fabric (`research_fabric.py`);
+there is no separate research database any more.
+
+**Maturity:** the core pipeline (single / parallel / deep × report / guide /
+code / filestore), notebooks, projects, bookmarks and iteration are in daily
+use. Workflow-IR and Run projections of saved pipelines are read-only views.
+The NLP capabilities run on compute nodes and fail closed when no node serves
+them. Explode and Assess are newer and persist nothing unless asked.
+
+## Contents
+
+- [1. Architecture](#1-architecture)
+- [2. Source map](#2-source-map)
+- [3. Model tiers and cluster routing](#3-model-tiers-and-cluster-routing)
+- [4. Starting research: `research.run` and its aliases](#4-starting-research-researchrun-and-its-aliases)
+  - [Modes and output modes](#modes-and-output-modes)
+- [5. Pipeline stages](#5-pipeline-stages)
+  - [Directive](#stage-1--directive-thinker)
+  - [Source gathering](#stage-2--source-gathering)
+  - [Analyst engine](#stage-3--analyst-engine)
+  - [Synthesis, writing, expansion, verification, references](#stages-48--synthesis-writing-expansion-verification-references)
+- [6. Sources](#6-sources)
+- [7. Code and filestore pipelines](#7-code-and-filestore-pipelines)
+- [8. Saved pipelines, Workflow IR and Run projection](#8-saved-pipelines-workflow-ir-and-run-projection)
+- [9. Continuous iteration](#9-continuous-iteration)
+- [10. Notebooks](#10-notebooks)
+- [11. Persistence and recall](#11-persistence-and-recall)
+- [12. Capability reference](#12-capability-reference)
+- [13. HTTP routes and WebSocket events](#13-http-routes-and-websocket-events)
+- [14. UI: panels and `<vera-research-card>`](#14-ui-panels-and-vera-research-card)
+- [15. NLP capabilities (`nlp.*`)](#15-nlp-capabilities-nlp)
+- [16. Explode and Assess](#16-explode-and-assess)
+- [17. Configuration](#17-configuration)
+- [18. Worked examples](#18-worked-examples)
+- [19. Failure modes and troubleshooting](#19-failure-modes-and-troubleshooting)
+- [20. Document-parser boundary](#20-document-parser-boundary)
+- [See also](#see-also)
 
 ---
 
 ## 1. Architecture
 
-```
-            ┌─────────────────────────────────────────┐
-            │  Vera Orchestrator  (port 8999)         │
-            │                                         │
-            │  research.* capabilities (11 pipelines) │
-            │  ├─ proxy to researcher_api over HTTP   │
-            │  ├─ poll for completion                 │
-            │  ├─ record activity to memory graph     │
-            │  └─ persist results to data fabric      │
-            │                                         │
-            │  research.recall.* capabilities         │
-            │  └─ semantic search over the corpus     │
-            └─────────────┬───────────────────────────┘
-                          │ HTTP
-                          ▼
-            ┌─────────────────────────────────────────┐
-            │  researcher_api  (port 8765)            │
-            │                                         │
-            │  ┌─────────┐   ┌────────┐   ┌────────┐ │
-            │  │ Thinker │   │ Writer │   │Analyst │ │
-            │  │   GPU   │   │  CPU A │   │  CPU B │ │
-            │  └─────────┘   └────────┘   └────────┘ │
-            │                                         │
-            │  Sources: SearXNG · Brave · DDG · arXiv │
-            │           NVD · GitHub · HackerNews     │
-            │                                         │
-            │  Pipeline stages:                       │
-            │  Direct → Search → NLP → Synthesise →   │
-            │  Write → Expand → Verify → Reference    │
-            └─────────────────────────────────────────┘
-                          │
-                          ▼
-            ┌─────────────────────────────────────────┐
-            │  research_vera_bridge                   │
-            │  - LLM routing through Vera cluster     │
-            │  - Fabric persistence                   │
-            │  - Activity tracking                    │
-            └─────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    caller["Chat / agent loop / DAG / panel"] -->|research.run or alias| run["cap_research_run\n(queues ResearchJob)"]
+    run --> job["run_job()"]
+    job -->|mode=single| single["run_single"]
+    job -->|mode=parallel| par["run_parallel"]
+    job -->|mode=deep| deep["run_deep"]
+    par -->|code/guide/filestore| single
+    deep -->|code/guide/filestore| single
+    single --> code["run_code_pipeline"]
+    single --> guide["run_guide_output"]
+    single --> fstore["run_filestore_output"]
+    single & par & deep --> gather["smart_gather / gather_all_sources"]
+    gather --> analyst["AnalystEngine (host-local NLP)"]
+    analyst --> writer["Writer LLM (streams tokens)"]
+    job --> ws["broadcast() → /ws/stream/{job_id}"]
+    job --> persist["DB.save_job → Data Fabric research.*"]
+    job --> findings["persist_research_to_fabric → research.findings"]
+    subgraph Cluster["Vera cluster router (routing profile 'research')"]
+      thinker["thinker"]; wr["writer"]; ver["verifier"]
+    end
+    single & par & deep -.get_instance.-> Cluster
 ```
 
----
+Every job is an in-memory `ResearchJob` (query, mode, output mode, sources,
+status, steps, citations, file tree, result). `run_job()` dispatches on `mode`,
+broadcasts progress to WebSocket subscribers, updates the owning project's
+rolling context, persists the job and its citations through the fabric, and —
+when the job finishes `done` — writes the findings back into the fabric so
+later research and discovery can build on them.
 
-## 2. The three-tier model
+## 2. Source map
 
-Research uses three LLM tiers, mapped to the Ollama cluster via `research.routing.resolve`:
+| File | Responsibility |
+|---|---|
+| `vera/research/researcher_api.py` | Job model, source gathering, analyst engine, all pipelines, notebooks, pipelines, iteration, HTTP routes, `research.*` capabilities, panel routes |
+| `vera/research/research_fabric.py` | `DB` persistence class over the Data Fabric (replaces the old `research_db.py`), recall helpers, activity recording helper |
+| `vera/research/alias_compatibility.py` | The `research.*` convenience aliases and their fixed `mode` / `output_mode` projection |
+| `vera/research/research_route_core.py` | Pure helpers for the verifier role's prompt-length escalation |
+| `vera/research/pipeline_workflow.py` | Deterministic Workflow IR projection of a saved pipeline |
+| `vera/research/pipeline_run_projection.py` | Non-authoritative shared Run projection of a pipeline run |
+| `vera/research/nlp_capabilities.py` | `nlp.rerank`, `nlp.classify`, `nlp.ner`, `nlp.zeroshot`, `nlp.qa`, `nlp.langid`, `nlp.embed`, `nlp.models` |
+| `vera/research/nlp_dispatch.py` / `nlp_dispatch_core.py` | Where `nlp.*` work runs: node discovery, the `nlp.local` switch, chunking |
+| `vera/research/explode_capabilities.py` / `code_explode_core.py` | `nlp.explode.*`, `code.explode`, `code.sources`, `explode.target` |
+| `vera/research/assess_capabilities.py` / `assess_core.py` | Scorer registry and `assess.*` capabilities |
+| `vera/research/research_panel.html` | Research tab UI |
+| `vera/research/notebook_panel.html` | Notebook tab UI |
+| `vera/research/nlp_panel.html` | NLP panel (injectable) |
+| `vera/research_card_element.js` | `<vera-research-card>`, the shared progress/report renderer |
 
-| Tier | Default node | Role |
-|---|---|---|
-| **THINKER** | GPU node | Slow, careful reasoning. Builds the `ResearchDirective`, plans expansions, synthesises deep reports. |
-| **WRITER** | CPU node A | Fast generation. Writes drafts, extracts findings per sub-question, fills file/code templates. |
-| **ANALYST** | CPU node B | NLP processing. Entity extraction, knowledge bullet extraction, citation scoring, fact verification. |
+## 3. Model tiers and cluster routing
 
-The three run **concurrently** during most pipeline stages — while Thinker is synthesising, Writer is drafting, and Analyst is processing citations. This is the core performance win over a sequential model.
+Research uses three logical tiers (`ModelTier` in `researcher_api.py`):
 
-`research.routing.resolve` is the cap researcher_api calls at startup to learn which Vera instances should fill each tier. The mapping respects current online status — if the GPU is down, THINKER falls back to a CPU.
-
----
-
-## 3. The 11 pipelines
-
-Each pipeline is a `research.<name>` capability that hits a `researcher_api` endpoint with pre-configured `mode` and `output_mode` flags.
-
-| Capability | Mode | Output | Description |
+| Tier | Routing role | Role-profile rule | Typical work |
 |---|---|---|---|
-| `research.report` | single | report | Default. Thinker directs → search → writer drafts → analyst verifies → references. |
-| `research.parallel` | parallel | report | Writer decomposes query into 3–5 sub-questions, gathers and extracts findings concurrently, Thinker synthesises. |
-| `research.deep` | deep | report | Recursive research: directive → recursive crawl → Thinker synthesises knowledge base → Writer drafts → expansion pass. |
-| `research.guide` | single | guide | Section-by-section long-form guide. Thinker outlines, Writer fills each section with sources. |
-| `research.code` | deep | code | Architect → implement → review chain. Thinker designs file structure, Writer implements file-by-file, Analyst reviews. |
-| `research.filestore` | deep | filestore | Generate a full file tree with content. Used for project scaffolding. |
-| `research.quick_search` | single | report | Compatibility name for `research.report`; it queues the same long-running synthesized report. Use `web.search` for direct result lists. |
-| `research.analysis` | single | report | Analyse provided citations without external sources. Optional rerun of an existing job's citations. |
-| `research.security` | parallel | report | NVD + GitHub + web. Optimised for CVEs and vulnerability research. |
-| `research.academic` | deep | report | arXiv + web in deep mode. For research papers, scientific surveys. |
-| `research.nlp_addon` | single | report | Triggers the standalone NLP server (`:8766`) for specialised analysis. |
+| `THINKER` | `thinker` | `job_type="research_planner"`, `prefer_gpu=True` | Builds the `ResearchDirective`, plans expansions, synthesises deep reports, architects code |
+| `WRITER` | `writer` | `job_type="research_writer"`, `prefer_gpu=True` | Intent detection, sub-question decomposition, drafting, citation scoring, file implementation |
+| `ANALYST` | `verifier` | `job_type="research_reader"`, `deny_gpu=True`, `escalate_chars=12000`, escalation `{deny_gpu: False, prefer_gpu: True}` | Structured analysis over the analyst digest, verification, code review |
+| `AUTO` | `writer` | — | Used by pipeline stages with `model_tier="auto"` |
 
-All pipelines accept a `query` (and `session_id`, `project_id` for tracking). Pipelines with iteration support also accept `context` and `context_mode="fresh|continue"`.
+At import time in Vera mode the module calls
+`register_routing_profile("research", …)` with these three roles. Every
+`get_instance(tier)` call then resolves through the orchestrator's
+`resolve_role("research", role, …)`, so research traffic obeys the routing
+rules and load balancing configured on the Model Routing page (a user override
+there wins). The static `DEFAULT_INSTANCES` list only supplies per-tier
+model/context defaults.
 
-The convenience capabilities above use one compatibility matrix for their
-`mode` and `output_mode` projection. Unknown aliases fail closed instead of
-silently selecting a pipeline. This keeps older callers working while making
-the direct-search boundary unambiguous.
+> [!IMPORTANT]
+> In Vera mode routing is authoritative: if the router returns no node,
+> `get_instance` returns `None` and the job fails with
+> "No Ollama instance available". It deliberately does **not** fall back to the
+> static host list. Only the standalone server uses the static list.
 
-Returns a job ID and initial status; the cap then polls until completion and emits progress events.
+**Length escalation.** A node must be chosen before the prompt is built, so the
+verifier role's `escalate_chars` threshold could never fire at selection time.
+`_escalated_for_prompt()` re-resolves the instance once the real prompt size is
+known, using `should_escalate()` from `research_route_core.py`. It only
+re-resolves instances the router originally chose, keeps the original node when
+the threshold is not crossed, and never trades a GPU node for a CPU node.
 
----
+## 4. Starting research: `research.run` and its aliases
 
-## 4. The pipeline stages
+`research.run` (`POST /research/run`) is the canonical entry point. It queues a
+job and returns `{job_id, status: "queued"}` immediately; callers poll
+`research.job.status` and then read `research.job.result`.
 
-Saved custom pipelines can be inspected as Workflow IR without running them.
-Request `GET /api/pipelines/{id}?include_workflow_ir=true` to receive the native
-pipeline plus a deterministic `workflow_ir` projection. Each saved stage becomes
-a typed research, transform, or synthesis task with stable order, state
-bindings, and a content hash. The complete native stage configuration remains
-in a namespaced extension so mode, output mode, source selection, NLP tools,
-query templates, and writer prompts are not silently discarded.
+| Argument | Default | Notes |
+|---|---|---|
+| `query` | — (required) | |
+| `mode` | `single` | `single` \| `parallel` \| `deep` |
+| `output_mode` | `report` | `report` \| `guide` \| `code` \| `filestore` |
+| `sources` | `""` | JSON array string or comma list of source IDs; empty = every enabled source |
+| `project_id` | `""` | Groups the job into a project whose rolling context it updates |
+| `context` | `""` | Prior text to include |
+| `context_mode` | `fresh` | `fresh` \| `continue` |
 
-This projection is deliberately non-authoritative and reports the native-stage
-execution gap for every task. The existing researcher still owns models,
-search/crawl behavior, streaming, cancellation, citations, persistence, and
-stage execution; inspecting the Workflow IR performs none of those actions.
-That boundary provides a stable definition identity for later Run, artifact,
-citation, and external-runtime adapters without changing current jobs.
+The older convenience names are **compatibility aliases** declared in
+`alias_compatibility.py`. Each wrapper projects to `research.run` with a fixed
+mode pair and registers `compatibility_alias_for`, so discovery clients can see
+the replacement. Unknown alias names raise rather than guessing.
 
-While a custom pipeline is active, its native lifecycle is also available as a
-non-authoritative shared Run projection. Request
-`GET /api/pipelines/runs/{run_id}?include_run_protocol=true` to inspect the
-parent pipeline Run and one child Run per started stage. Child `task_id` values
-refer to the exact Workflow IR stage identifiers; citation counts and validated
-native job IDs are retained as correlation metadata. Topics, query templates,
-prompts, generated output, citation text, and native error messages are never
-copied into the Run projection. The normal endpoint shape is unchanged unless
-the option is requested.
+| Alias | `mode` | `output_mode` | Replacement |
+|---|---|---|---|
+| `research.report` | single | report | `research.run` |
+| `research.parallel` | parallel | report | `research.run` |
+| `research.deep` | deep | report | `research.run` |
+| `research.code` | deep | code | `research.run` |
+| `research.guide` | single | guide | `research.run` |
+| `research.filestore` | deep | filestore | `research.run` |
+| `research.quick_search` | single | report | `research.report` |
 
-After a research stage has persisted successfully, its child Run also carries
-content-free `ArtifactRef` entries for the saved job and citation records. Each
-reference contains the physical Fabric record ID and dataset URI, so activity,
-workflow, and external-runtime views can correlate a stage with the same
-evidence held by the Data Fabric without duplicating source text in telemetry.
-Missing records are omitted, malformed identities are rejected, and the native
-research job remains the result authority.
+Aliases accept only `query`, `project_id`, `context` and `context_mode`.
 
-Research projections are recorded in the same bounded shared Run registry used
-by DAG and agent-loop observations. When `VERA_RUN_JOURNAL_PATH` configures its
-checksummed SQLite journal, parent and child events are checkpointed and the
-read-only catalog verifies and rebuilds them after restart; otherwise storage is
-explicitly reported as process-local memory. The research database and native
-WebSocket events remain the execution and result authorities in both modes.
-Deleting a pipeline run also removes its parent and child projections through
-checksum-verified journal deletion, rather than leaving an undisclosed shadow
-record behind.
+> [!NOTE]
+> Despite its name, `research.quick_search` queues the same long-running,
+> synthesised report as `research.report`. Use `web.search` for a direct list of
+> search results.
 
-A typical research run goes through these stages (with variations per output mode):
+### Modes and output modes
+
+`mode` controls how evidence is gathered; `output_mode` controls what is
+written. `run_parallel` and `run_deep` hand `code`, `guide` and `filestore`
+jobs straight to `run_single`, because those outputs do not benefit from
+parallel gathering.
+
+| Mode | report | guide | code | filestore |
+|---|---|---|---|---|
+| **single** | One gather round → write | `run_guide_output` (section by section) | `run_code_pipeline` | Directive → `run_filestore_output` |
+| **parallel** | Sub-question decomposition → concurrent gather/extract → synthesis | → single | → single | → single |
+| **deep** | Directive → recursive research tree → thinker synthesis → writer draft → expansion | → single | → single | → single |
+
+## 5. Pipeline stages
+
+A report run moves through the stages below (`JobStatus` values: `queued`,
+`thinking`, `searching`, `crawling`, `architecting`, `coding`, `reviewing`,
+`writing`, `verifying`, `chaining`, `done`, `error`, `cancelled`).
 
 ### Stage 1 — Directive (THINKER)
 
-The Thinker analyses the query and produces a `ResearchDirective`:
-
-- `output_style` — narrative report, structured guide, code spec, etc.
-- `key_questions` — what facts the report needs to answer
-- `sub_questions` — decomposition for parallel modes
-- `scope_focus` / `scope_exclusions` — what counts as on-topic
-- `writer_sys` — a tailored system prompt for the Writer based on this query
-- `nlp_tools` — which Analyst NLP phases to enable
-- `depth` — recursive depth for deep mode
-
-This stage emits a `directive` broadcast event so the panel can show the planned approach.
-
-### Stage 2 — Search (WRITER)
-
-Sources are searched in parallel:
-
-- **SearXNG** — the primary web search backend (configured via `VERA_SEARXNG_URL`)
-- **Brave** — fallback web search (requires `BRAVE_API_KEY`)
-- **DuckDuckGo** — secondary fallback
-- **arXiv** — scientific papers
-- **NVD** — CVE database
-- **GitHub** — repos, issues, code
-- **HackerNews** — discussion threads
-
-Research pipelines and the general `web.search` capability use the same engine
-ordering, failure fallback, pagination, deduplication, and redirect-decoding
-policy. Each subsystem retains its configuration-aware HTTP transport, but a
-failed or unavailable engine now advances through one shared deterministic
-dispatcher instead of following a research-only fallback chain.
-
-Configured platform search providers use that shared boundary too. When a
-provider matches a query, its native results lead the list and the ordinary
-search engines fill any remaining places. Provider errors are contained at the
-boundary, so an unavailable integration falls back to normal web search rather
-than failing the research run. Research can still run standalone without any
-platform provider registered.
-
-Search and crawl HTTP attempts also share the web client's request policy. That
-layer owns per-domain throttling and a bounded retry for transport failures and
-temporary `429`, `502`, `503`, or `504` responses. Other status codes return
-immediately, `Retry-After` delays are capped, and callers do not wrap the policy
-in another retry loop. Standalone researcher deployments retain a direct-request
-fallback when Vera's shared web client is unavailable.
-
-Recursive research and quick web crawls use the same crawl identity rules.
-HTTP(S) links are canonicalized before consuming the visit budget, fragments
-and explicit default ports cannot create duplicate work, embedded credentials
-and cross-scope links are rejected, and normalized repeated content is emitted
-only once. Failed pages remain isolated, so successful earlier pages are still
-available as partial evidence.
-
-The Writer goes through top results and extracts findings, populating the citations list. Citations stream into the panel as they're found.
-
-### Stage 3 — Analyst Engine (ANALYST, concurrent with Search/Synthesis)
-
-The Analyst runs 12 NLP phases on citations:
-
-1. Tokenisation
-2. Sentence splitting
-3. Entity extraction
-4. Relationship extraction
-5. Date / number extraction
-6. Knowledge bullet extraction
-7. Citation scoring
-8. (LLM phase, optional) Structural classification
-9. Topic clustering
-10. Contradiction detection
-11. Fact deduplication
-12. Compact context generation
-
-Phases 1–7 and 9–12 are host-local (no LLM) and finish in 0.1–2 s. Phase 8 uses the Analyst instance. The compact context generated by phase 12 is what the Writer sees instead of raw source text — significantly improving report quality.
-
-### Stage 4 — Synthesis (THINKER, deep modes only)
-
-The Thinker integrates findings across the knowledge base. Resolves contradictions, identifies key insights, plans the writing structure. Only runs in deep mode.
-
-### Stage 5 — Writing (WRITER)
-
-The Writer drafts the report using the directive's `writer_sys`, the compact analyst context, and the citation list. Streams tokens to the panel as they're generated.
-
-### Stage 6 — Expansion (optional, deep modes)
-
-Thinker scans the draft for thin sections and plans expansions. Writer gathers expansion sources and writes addendum sections.
-
-### Stage 7 — Verification
-
-Analyst pass over the final draft: flags unsupported claims, lists referenced facts, generates an analyst report section.
-
-### Stage 8 — References
-
-Numbered reference list appended. Citations get sequential `[N]` markers; the panel renders these as clickable chips that open the source.
-
----
-
-## 5. Modes vs. output modes
-
-The matrix:
-
-| Mode | Output: report | Output: guide | Output: code | Output: filestore |
-|---|---|---|---|---|
-| **single** | One search round → write | Section-by-section guide | Coding pipeline (architect → implement → review) | File tree gen |
-| **parallel** | Sub-question decomposition → parallel gather → synthesise | (routes to single) | (routes to single) | (routes to single) |
-| **deep** | Recursive research → thinker synthesises → writer drafts → expand | (routes to single) | (routes to single) | (routes to single) |
-
-The `output_mode` controls what gets written; the `mode` controls how the research is gathered. Code/Guide/Filestore output modes don't benefit from parallel gathering, so they're routed to single mode internally.
-
----
-
-## 6. Code pipeline
-
-`research.code` runs a distinct three-agent flow:
-
-1. **Architect (THINKER)** — designs the file structure and module boundaries, produces a spec.
-2. **Implement (WRITER)** — writes each file one at a time, wrapped in `=== FILE: path ===` markers. Files are parsed and materialised to disk as they're produced.
-3. **Review (ANALYST)** — reviews each file for issues, can request rewrites.
-
-A `chain_id` parameter lets you continue an existing code project across runs — the architect sees the previous output and adds to it rather than starting from scratch. This is how multi-run projects scale beyond a single LLM context.
-
----
-
-## 7. Filestore pipeline
-
-`research.filestore` produces a directory of generated files. The pipeline:
-
-1. Thinker builds a `research_directive` for the file structure.
-2. Search/gather runs to provide context.
-3. Analyst extracts knowledge bullets from citations.
-4. For each planned file, Writer generates the content wrapped in file markers.
-5. The complete file tree is materialised to the project directory and a README index is written.
-
-Output is the README plus all generated files. The panel shows the file tree as it's populated.
-
----
-
-## 8. researcher_api
-
-The standalone server lives at `:8765` by default. It owns:
-
-- **Job state** — `ResearchJob` dataclass with status, citations, file tree, result text.
-- **Project state** — `Project` dataclass with context summary across jobs in the same project.
-- **Instance pool** — `get_instance(ModelTier.X)` returns the best available Ollama instance for that tier. Uses `research.routing.resolve` to align with Vera's cluster.
-- **WebSocket broadcast** — every job gets a `/ws/research/{job_id}` channel. Events: `status`, `step`, `citation`, `token`, `directive`, `file_created`, `done`, `error`.
-- **SQLite DB** (`research_db.py`) — primary store for jobs, citations, pages, sessions, projects.
-- **Coding pipeline** (`agents.py` integration) — the three-agent code flow.
-
-researcher_api is intentionally a separate process. It has its own DB, its own port, its own scheduler. Vera's capability layer is a thin wrapper that submits jobs, polls them, and persists results — researcher_api can run standalone if needed.
-
-### Continuous-iteration scheduling
-
-Recurring iteration targets expose the same non-executing schedule contracts
-used by Vera's other native schedulers. API and capability responses include an
-after-completion schedule, catch-up policy, and lifecycle projection. The
-effective interval reflects the loop's ten-second minimum, and trigger,
-decision, and receipt events are emitted when an iteration is about to begin.
-These records contain stable opaque identities rather than the seed query or
-research content.
-
-The Research loop remains the sole execution authority. A persisted `running`
-target is resumed immediately after server startup even when its projected
-interval has not elapsed; this behavior is reported as `native_immediate`, not
-hidden behind a false shared-scheduler claim. Likewise, the existing stop
-operation deletes its target. Because no record remains, the adapter projects
-only `active` and `paused` targets and does not invent a durable cancellation.
-Projection, ledger, or event-stream failure cannot block native research work.
-
----
-
-## 9. The Vera bridge
-
-`research_vera_bridge.py` is the integration layer:
-
-### LLM routing
-
-When researcher_api makes an Ollama call, the bridge intercepts it and routes through Vera's `ollama.generate_raw` cap. This means:
-
-- The GPU + 2 CPU cluster is shared with chat/dream/IDE rather than the researcher maintaining its own pool.
-- Failover works across the whole cluster transparently.
-- A single point of metrics — all LLM usage shows up on Vera's cluster panel.
-
-If Vera is unreachable (`VERA_BASE_URL` unset or down), the bridge gracefully degrades to direct Ollama calls.
-
-### Fabric persistence
-
-Every job / citation / crawled page / notebook / cell is written to the data fabric in addition to research_db:
-
-- `research.jobs` — job records
-- `research.results` — final markdown
-- `research.citations` — deduplicated citation corpus
-- `research.crawl_pages` — all fetched pages
-- `research.notebooks` / `research.notebook_cells` — notebook content
-- `research.files` — generated code/files
-
-This means subsequent recall queries (`research.recall.*`, `fabric.query`) find research artifacts semantically, not just by ID.
-
-### Activity tracking
-
-Every search / crawl / LLM call hits the `research.activity.*` capabilities, which write to the memory graph's FOLLOWS_ACTIVITY chain. This lets the agentic loop and dream cycles see research as a sequence of causally-linked events rather than opaque job state.
-
----
-
-## 10. Recall
-
-`research_recall_capabilities.py` exposes semantic recall over the corpus:
-
-| Cap | Purpose |
+`build_research_directive()` produces a `ResearchDirective` with:
+`output_style`, `scope_focus`, `scope_exclude`, `key_questions`, `table_topics`,
+`needs_recency`, `depth`, `sub_questions`, `writer_instructions`,
+`source_priority`, `writer_sys` (a query-specific Writer system prompt) and
+`nlp_tools` (which analyst phases to run). A `directive` event is broadcast so
+the UI can show the plan.
+
+### Stage 2 — Source gathering
+
+`smart_gather()` first asks the fast model to classify the query (one of
+`general`, `structured_data`, `documentation`, `financial`, `osint`,
+`news_media`, `gaming`, `legal`, `academic`, `code`, `security`, `technical`)
+and to propose seed URLs, authoritative targets and keywords. It then runs the
+standard search, structured-URL fetches and documentation-site crawls in
+parallel, and `gather_all_sources()` fans out to every active source (see
+[§6](#6-sources)).
+
+Shared web policy:
+
+- Research and the general `web.search` capability use the same engine
+  ordering, failure fallback, pagination, deduplication and redirect-decoding
+  policy through one deterministic dispatcher (`vera/web/search_engines.py`).
+- Configured platform search providers use the same boundary: when a provider
+  matches a query its native results lead and ordinary engines fill the rest;
+  provider errors fall back to normal web search.
+- Every search and crawl HTTP attempt goes through the shared web client's
+  request policy (`web_client.request_with_policy`): per-domain throttling and a
+  bounded retry for transport failures and `429`/`502`/`503`/`504`, with capped
+  `Retry-After`. Standalone deployments without the web client use direct
+  requests.
+- Recursive research and quick crawls share crawl identity rules: links are
+  canonicalised before they consume the visit budget, fragments and default
+  ports cannot duplicate work, embedded credentials and out-of-scope links are
+  rejected, and repeated normalised content is emitted once. Failed pages stay
+  isolated so earlier successes remain usable.
+
+Candidates are ranked by `_rank_citations()` (relevance × authority ×
+freshness into `rank_score`). When `VERA_RERANK_ENABLED=1` the merged pool is
+additionally reordered by the `nlp.rerank` cross-encoder; any failure keeps the
+original order. In recursive nodes the writer batch-scores up to 16 candidates
+0–5 for relevance and redundancy before cross-source deduplication.
+
+### Stage 3 — Analyst engine
+
+`AnalystEngine` is a host-local NLP pipeline with an optional LLM phase. Its
+phases, in code order:
+
+| Phase | Name | `nlp_tools` key | LLM? |
+|---|---|---|---|
+| 1 | Text extraction and tokenisation | always | no |
+| 2 | Per-source TF scoring → source-density ranking | always | no |
+| 3 | Entity extraction (CVEs, CVSS, money, dates, versions, %, proper nouns) | `entities` | no |
+| 4 | Contradiction detection (opposing signal pairs near shared terms) | `contradictions` | no |
+| 5 | Anomaly detection in numeric data | `anomalies` | no |
+| 6 | Knowledge compaction (knowledge bullets) | always | no |
+| 7 | Gap detection | always | no |
+| 9 | Timeline extraction | `timeline` | no |
+| 10 | Key quotes and statistics | `key_quotes` | no |
+| 11 | Keyword co-occurrence clusters | `clusters` | no |
+| 12 | Per-source sentiment (−1…+1) | `sentiment` | no |
+| 8 | Structured analysis → synthesis plan, scored bullets | — | yes, when an analyst instance exists and ≥ 4 bullets |
+| 13 | Gap-fill searches (at most 2 gaps, 10 s timeout each) | — | no |
+
+`nlp_tools=None` runs every tool. The resulting `AnalystReport` (bullets, top
+sources, contradictions, gaps, entities, timeline, quotes, clusters, sentiment,
+synthesis plan) is what the Writer sees in place of raw source text.
+
+### Stages 4–8 — Synthesis, writing, expansion, verification, references
+
+- **Synthesis (THINKER, deep only)** integrates findings across the research
+  tree and plans the structure.
+- **Writing (WRITER)** drafts with the directive's `writer_sys`, the analyst
+  context and the numbered citation list, streaming `token` events.
+- **Expansion (deep)** — `_plan_expansions()` finds thin sections and
+  `_run_expansions()` gathers extra sources and writes addenda.
+- **Verification (ANALYST)** — `run_analyst_phase()` reviews the draft against
+  the evidence.
+- **References** — sequential `[N]` markers map to the citation list; the UI
+  renders them as clickable chips.
+
+## 6. Sources
+
+`DEFAULT_SOURCES` (persisted and editable via `research.sources.*`):
+
+| ID | Type | Enabled by default | Notes |
+|---|---|---|---|
+| `searxng` | web_search | yes | Host from source config, else `VERA_SEARXNG_URL`, else `http://<BACKEND_HOST>:8888` |
+| `brave` | web_search | no | Needs `api_key` in the source config |
+| `crawl4ai` | web_crawl | yes | Recursive crawl of result pages |
+| `commoncrawl` | web_archive | no | |
+| `wayback` | web_archive | yes | |
+| `neo4j` | neo4j | yes | Graph lookup |
+| `chroma` | chroma | yes | Vector lookup |
+| `github` | github | no | Needs `token` |
+| `hackernews` | news | yes | |
+| `arxiv` | news | yes | Only queried when explicitly in the active set |
+| `redis` | redis | no | |
+| `fabric` | fabric | yes | `top_k: 30` — Data Fabric recall |
+| `memory` | memory | yes | `top_k: 20` — memory graph |
+| `discovery` | discovery | yes | `top_k: 30` — discovery crawl store |
+| `worldview` | worldview | yes | `top_k: 15` — nearest neighbours via `worldview.query` ([Worldview](./11-worldview.md)) |
+
+The security intent additionally pulls NVD CVE records (`_gather_nvd`). Missing
+default sources are re-added at startup and duplicates are removed. The web
+search behaviour (`engine` = `searxng|brave|ddg`, `result_count` 8,
+`crawl_depth` 1, `crawl_breadth` 3, `crawl_timeout` 8.0 s, `include_archive`,
+`safe_search`) is set with `research.websearch.config.set`.
+
+## 7. Code and filestore pipelines
+
+**Code** (`run_code_pipeline`) is a three-agent chain: the Thinker architects
+the file plan, the Writer implements file by file inside `=== FILE: path ===`
+markers that are parsed and materialised as they arrive (`file_created`
+events), and the Analyst reviews. A `ChainContext` (`chain_id`, `run_number`,
+architecture, `files_planned` / `files_done` / `files_pending`, a continuity
+summary and accumulated code) lets a large project continue across runs without
+carrying the whole prior output: `research.chain.continue` starts the next run
+and `research.chain.status` reports progress. Incomplete chains are kept in an
+in-memory `chain_store`.
+
+**Filestore** builds a directive for the file structure, gathers context,
+extracts knowledge bullets and writes each planned file; the tree is
+materialised under `projects/` and listed in a README. Generated files are
+available through `research.job.files` / `research.job.file` and as a ZIP from
+`GET /api/history/{job_id}/files.zip`.
+
+## 8. Saved pipelines, Workflow IR and Run projection
+
+A saved pipeline is an ordered list of `PipelineStage`s:
+
+| Field | Default | Values |
+|---|---|---|
+| `name` | `Stage` | |
+| `kind` | `research` | `research` \| `transform` \| `synthesis` |
+| `mode` | `single` | `single` \| `parallel` \| `deep` |
+| `output_mode` | `report` | `report` \| `guide` \| `filestore` \| `code` |
+| `model_tier` | `auto` | `thinker` \| `writer` \| `analyst` \| `auto` |
+| `sources`, `nlp_tools` | `[]` | |
+| `query_template` | `{topic}` | `{topic}` = pipeline input, `{prev}` = previous stage output, `{all}` = every prior output |
+| `prompt` | `""` | Extra writer instruction |
+
+Pipelines are managed through `/api/pipelines` (list, get, save, delete) and run
+with `POST /api/pipelines/run` (`pipeline_id`, `topic` up to 4000 chars); live
+progress streams on `/ws/pipeline/{run_id}` (`pl_start`, `pl_stage_start`,
+`pl_stage_done`, `pl_done`).
+
+**Workflow IR.** `GET /api/pipelines/{id}?include_workflow_ir=true` returns the
+native pipeline plus a deterministic `workflow_ir` projection
+(`vera.research-pipeline-workflow/v1`). Each stage becomes a typed task
+(`research.acquire-and-synthesize`, `research.transform`,
+`research.synthesize`) with stable order, state bindings and a content hash. The
+full native stage configuration stays in a namespaced extension. The
+projection is non-authoritative and reports the native-stage execution gap for
+every task: the researcher still owns models, search, streaming, cancellation,
+citations, persistence and execution.
+
+**Run projection.** `GET /api/pipelines/runs/{run_id}?include_run_protocol=true`
+adds a parent Run and one child Run per started stage. Child `task_id`s are the
+Workflow IR stage IDs; citation counts and validated native job IDs are kept as
+correlation metadata. Topics, templates, prompts, output, citation text and
+native error messages are never copied. After a research stage has persisted,
+its child Run carries content-free `ArtifactRef`s (fabric record ID and dataset
+URI) for the saved job and citation records; missing records are omitted and
+malformed identities rejected.
+
+Projections are recorded in the shared bounded Run registry used by DAG and
+agent-loop observations. With `VERA_RUN_JOURNAL_PATH` set, parent and child
+events are checkpointed to a checksummed SQLite journal and rebuilt after
+restart; otherwise storage is reported as process-local memory. Deleting a
+pipeline run removes its projections through checksum-verified journal
+deletion. The research data and native WebSocket events remain the execution
+and result authorities in both modes.
+
+## 9. Continuous iteration
+
+An iteration target re-runs research on a schedule and walks outward from a
+seed. Create one with `research.iterate.create` / `POST /api/iterate`:
+
+| Field | Default |
 |---|---|
-| `research.recall.search` | Search `research.*` datasets by query |
-| `research.recall.jobs` | List jobs matching a filter (session, project, status) |
-| `research.recall.job` | Pull a complete job + its citations + result |
-| `research.recall.crawled_pages` | Search crawl datasets by query and/or domain |
-| `research.recall.notebook` | Pull a notebook + its cells |
-| `research.recall.notebooks_list` | List all notebooks |
-| `research.recall.session` | All jobs for a session, plus the FOLLOWS_ACTIVITY chain |
-| `research.recall.session.list` | List research sessions known to the fabric |
-| `research.recall.datasets` | List all research-related datasets with record counts |
-| `research.recall.history` | Recent research activity (job starts, completions, file writes) |
+| `target_type` | `project` (`project` \| `job` \| `notebook`) |
+| `target_id`, `seed_query` | required |
+| `mode` / `output_mode` | `single` / `report` |
+| `interval_secs` | `300` |
+| `autostart` | `true` |
 
-These caps are what the dream system, the chat agent, and the IDE agent use to find prior research — they call recall instead of submitting a fresh research job.
+The loop (`_run_iteration_loop`) chooses the next query, runs a job through
+`run_job_body`, and updates a traversal map (`research.iterate.map`). Progress
+streams on `/ws/iterate/{it_id}` (`iter_start`, `iter_job`, `iter_done`).
+`research.iterate.stop` stops **and deletes** the target.
 
----
+API and capability responses carry non-executing schedule evidence
+(`schedule_contract`, `schedule_policy`, `schedule_lifecycle`,
+`schedule_projection`) shared with Vera's other native schedulers. The
+projection states `authority: vera.research.iteration_loop`,
+`execution: native`, `restart_behavior: native_immediate` (a persisted
+`running` target resumes immediately at startup even if its interval has not
+elapsed), `stop_behavior: native_delete_record` and `executes: false`. Because
+stop deletes the record, only `active` and `paused` targets are projected.
+Trigger, decision and receipt events carry opaque identities rather than the
+seed query, and projection or event failures never block research.
 
-## 11. Notebooks
+## 10. Notebooks
 
-The notebook system (`notebook_panel.html`) is a Jupyter-style document where each cell is one of:
+A notebook is a page-organised document of cells, stored in the fabric
+(`research.notebooks`, `research.notebook_cells`, `research.notebook_pages`).
+Cells carry `cell_type` (the panel uses `markdown`, `code`, `mermaid`,
+`illustrate`, `image`, `image-gen`, `object`, `panel`), `lang`, `tag` (for
+example `research`, `flesh_out`, `to_code`, `summarise`), `content`,
+`generated`, `citations`, a chat `thread` and free-form `props`.
 
-- **research** — a research query that runs a pipeline and embeds the result
-- **note** — free text
-- **code** — generated code (or raw text editing)
-- **chat** — LLM conversation against the notebook context
+A cell is executed over `WS /ws/notebook/{nb_id}/cell/{cell_id}` with
+`action` = `generate`, `research` or `chat`. Each action receives a notebook
+context built from the title, description and the first 400 characters of
+every earlier cell (`_build_nb_context`). Other notebook operations: cell
+reordering and moving between pages, auto-naming a cell, building a notebook
+from a finished job (`research.notebook.from_job`), syncing to the graph
+(`POST /api/notebooks/{nb_id}/sync_graph`) and pushing Markdown to a Gitea repo
+(`POST /api/notebooks/{nb_id}/gitea`).
 
-Cells are saved to the fabric (`research.notebook_cells`) on every change. The notebook is one logical document; cells share context — later cells can reference earlier ones via `{cell:N}` placeholders.
+## 11. Persistence and recall
 
-Capabilities: `research.activity.cell_save`, `research.recall.notebook`, `research.recall.notebooks_list`.
+`research_fabric.DB` persists everything through the Data Fabric. Datasets:
 
----
+`research.jobs`, `research.searches`, `research.citations`,
+`research.crawl_pages`, `research.results`, `research.llm_calls`,
+`research.notebooks`, `research.notebook_cells`, `research.notebook_pages`,
+`research.projects`, `research.project_rounds`, `research.sessions`,
+`research.bookmarks`, `research.generated_files`, `research.source_configs`,
+`research.web_config`, `research.instance_configs`,
+`research.iteration_targets`, `research.pipelines`, `research.pipeline_runs`.
 
-## 12. NLP addon
+On completion `persist_research_to_fabric()` (unless
+`VERA_RESEARCH_PERSIST=0`) also ingests the report and citation index into
+`research.findings` and registers each web citation as a discovery page in
+`research.<slug>`.
 
-A separate server (`:8766`, configured via `VERA_NLP_URL`) runs specialised NLP modules:
+**Recall capabilities** (registered in `researcher_api.py`, backed by
+`research_fabric.py`):
 
-- Named entity recognition
-- Sentiment analysis
-- Topic modelling
-- Summarisation
-- Question generation
+| Capability | Arguments | Returns |
+|---|---|---|
+| `research.recall.search` | `query`, `dataset_id` (optional), `top_k` 20 | Semantic hits across the recall datasets |
+| `research.recall.job` | `job_id` | Job, citations and result hydrated from the fabric |
+| `research.recall.notebook` | `notebook_id` | Notebook + cells (falls back to the live store) |
+| `research.recall.session` | `session_id` | Session timeline |
+| `research.recall.datasets` | — | Fabric datasets whose IDs start with `research.` or `web.` |
 
-`research.nlp_addon` is a research pipeline that triggers these modules. The NLP panel (`nlp_panel.html`) is a standalone tab for ad-hoc NLP runs against arbitrary text or fabric datasets.
+`research_fabric.record_activity()` is an internal helper that records a
+research event as a memory-graph node (optionally linked to a parent with a
+`FOLLOWS_ACTIVITY` edge), writes an optional fabric record and emits a
+`<category>.recorded` event. It is a function, not a capability.
 
----
+> [!NOTE]
+> The module docstring of `research_fabric.py` still lists
+> `research.recall.notebook.list`, `research.recall.project*`,
+> `research.recall.crawled_pages` and `research.activity.*` capabilities. None
+> of those are registered; use the table above.
 
-## 13. Iteration mode
+## 12. Capability reference
 
-The research panel has an "Iterate" toggle. With it on, submitting a new query while a previous job is complete continues the same research thread:
+All capabilities below are registered by `researcher_api.py` in Vera mode. The
+HTTP path is the capability route (`/research/...`); the panel's legacy
+`/api/...` routes are listed in [§13](#13-http-routes-and-websocket-events).
 
-- The previous job's result becomes `prior_context` for the new job.
-- The new job is tagged `[Iter N]` in the thread display.
-- A "Dive" sub-query can drill into a specific section of a previous report.
+| Group | Capabilities |
+|---|---|
+| Run | `research.run`, aliases (see [§4](#4-starting-research-researchrun-and-its-aliases)), `research.chain.continue`, `research.chain.status` |
+| Job | `research.job.status`, `research.job.result`, `research.job.files`, `research.job.file`, `research.agent.stop`, `research.agents.status` |
+| Post-processing | `research.crawl_additional` (deep-crawl a URL into an existing job), `research.format_section`, `research.expand` (dive deeper into a passage) |
+| History | `research.history`, `research.history.delete` |
+| Sources & config | `research.sources`, `research.sources.update`, `research.sources.add`, `research.sources.delete`, `research.sources.test`, `research.websearch.config.get`, `research.websearch.config.set`, `research.models`, `research.config.instances.get`, `research.config.instances.set` |
+| Projects | `research.projects`, `research.projects.create`, `research.projects.get`, `research.projects.delete`, `research.projects.add_job` |
+| Database | `research.db.stats`, `research.db.search`, `research.db.export` |
+| Bookmarks | `research.bookmarks`, `research.bookmarks.add`, `research.bookmarks.update`, `research.bookmarks.delete` |
+| Notebooks | `research.notebook.create`, `.list`, `.get`, `.update`, `.delete`, `.cell.add`, `.cell.update`, `.cell.delete`, `.from_job` |
+| Iteration | `research.iterate.create`, `.list`, `.get`, `.start`, `.pause`, `.stop`, `.update`, `.map` |
+| Recall | `research.recall.search`, `.job`, `.notebook`, `.session`, `.datasets` |
+| Health | `research.health` → `{status, mode: "integrated", jobs_active, instances, sources}` |
 
-`context_mode="continue"` is what enables iteration server-side. `context_mode="fresh"` starts independent.
+## 13. HTTP routes and WebSocket events
 
----
+The panels use the original REST surface, which is mounted on the orchestrator
+app in Vera mode: `/api/research` (start), `/api/research/continue`,
+`/api/research/chain/{chain_id}`, `/api/research/{job_id}/crawl`,
+`/api/research/chat`, `/api/research/format_section`, `/api/agent/stop`,
+`/api/agents/status`, `/api/history[/{job_id}[/result|/files|/files.zip]]`,
+`/api/sources[/update|/add|/test|/{id}]`, `/api/websearch/config`,
+`/api/models`, `/api/config/instances`, `/api/projects[...]`,
+`/api/db/{stats,search,export}`, `/api/bookmarks[...]`, `/api/notebooks[...]`,
+`/api/pipelines[...]`, `/api/iterate[...]`, `/api/expand` and
+`/api/debug/screenshot`.
 
-## 14. The research panel
+| WebSocket | Purpose |
+|---|---|
+| `/ws/stream/{job_id}` | Job progress |
+| `/ws/notebook/{nb_id}/cell/{cell_id}` | Cell generate / research / chat |
+| `/ws/pipeline/{run_id}` | Pipeline run progress |
+| `/ws/iterate/{it_id}` | Iteration progress |
 
-`research_panel.html` is the primary UI:
+Job message types include `status`, `step`, `thinking`, `intent`, `directive`,
+`token`, `citations`, `crawl_progress`, `crawl_done`, `crawl_error`,
+`architecture`, `review`, `file_created`, `file_tree`, `chain_continue`,
+`persisted`, `error` and `done` (the `done` message carries the result,
+elapsed seconds, token count, citations, file list and chain state).
 
-- **Thread view** — every research run in this session becomes an entry in the thread, with mode/output badges, status, activity strip (live tool calls + crawl tray), and the rendered result.
-- **Mode/output selectors** — segmented buttons for `single|parallel|deep` and `report|guide|filestore|code`.
-- **Iterate toggle** — switches between fresh and continuation submissions.
-- **Bookmarks** — flag citations for keeping.
-- **Citations bar** — chips for every cited source, clickable to open.
-- **Agent cards** — live per-tier status (Thinker/Writer/Analyst) with model, tokens, elapsed time.
-- **Project selector** — group jobs into a Project so they share context.
+## 14. UI: panels and `<vera-research-card>`
 
-The thread is persistent — closing and reopening the panel preserves the last N entries.
+| Panel id | Title | Route | Mode | `tab_order` |
+|---|---|---|---|---|
+| `research-panel` | Research | `/research/panel` | tab | 55 |
+| `notebook-panel` | Notebook | `/notebook/panel` | tab | 56 |
+| `nlp-panel` | NLP | `/nlp/panel` | injectable | 57 |
 
-The older `research.report`, `research.parallel`, `research.deep`,
-`research.code`, `research.guide`, and `research.filestore` names are explicit
-compatibility aliases for `research.run`; `research.quick_search` is an alias
-for `research.report`. They retain their existing behavior while exposing the
-replacement as structured registry metadata. Their observed HTTP/MCP use can
-therefore inform a later migration review without making that review—or any
-removal—automatic.
+The **Research** panel shows a thread of runs with mode/output selectors
+(`single|parallel|deep`, `report|guide|filestore|code`), live per-tier agent
+cards, a citations bar, bookmarks, a project selector, saved pipelines, and an
+**Iterate** toggle: with it on, a new query continues the previous thread
+(`context_mode="continue"`, the previous result becomes `prior_context`, the
+entry is tagged `[Iter N]`) and a **Dive** action drills into a passage through
+`/research/expand`.
 
----
+**`<vera-research-card>`** (`vera/research_card_element.js`, served at
+`/ui/elements/research_card.js`) is the single research progress/report
+renderer used by both the chat panel and the agent-loop output. Callers create
+the element, set `jobId`, `push()` researcher messages verbatim (`token`,
+`thinking`, `step`, `directive`, `citations`, `crawl_*`, `architecture`,
+`review`, `iter_*`, `error`, `done`; the loop's `agent_loop.research_activity`
+envelope is unwrapped from its `kind`), and call `finish(markdown)`. Its layout
+is fixed from the first message to the final report — status, steps, research
+method, pages read, sources, report — and each region updates in place.
+
+## 15. NLP capabilities (`nlp.*`)
+
+Small ONNX models — cross-encoder reranking, classification, NER, zero-shot,
+QA, language ID and embeddings — are served by an NLP server on compute nodes
+(`edge/nlp_server.py`), not on the Vera host. Each capability first offers the
+call to `nlp_dispatch`, which picks a node serving NLP on `VERA_NLP_PORT`
+(default `8771`) and calls it over HTTP. Only if the operator switch
+`nlp.local` permits it does the call run in-process.
+
+| Capability | Purpose |
+|---|---|
+| `nlp.rerank` | Re-rank documents against a query (cross-encoder) — used by research when `VERA_RERANK_ENABLED=1` |
+| `nlp.classify` | Sequence / sentiment classification |
+| `nlp.ner` | Named entities (OntoNotes v5 labels); the node chunks long documents, the local path truncates at 1024 characters |
+| `nlp.zeroshot`, `nlp.qa`, `nlp.langid`, `nlp.embed` | Zero-shot labels, extractive QA, language ID, embeddings |
+| `nlp.models` | Availability, models and where work would actually run |
+| `nlp.config.get` / `nlp.config.set` | Read / flip the `nlp.local` switch (stored in Redis, read per call) |
+| `nlp.nodes` | Which nodes serve NLP and which would win |
+
+> [!WARNING]
+> With `nlp.local` off (the default) and no node serving, `nlp.*` calls
+> **fail with a reason** rather than silently running on the host.
+> Placement rules live in `nlp_dispatch_core.resolve_placement()`; model
+> packaging is described in [ONNX](./30-onnx.md).
+
+## 16. Explode and Assess
+
+**Explode** (`explode_capabilities.py`) turns one thing — a fabric record, a
+character range of one, several records, a pasted passage, or code — into a
+structured graph contract that `<vera-structgraph>` draws. It persists nothing.
+Each analysis is a *layer* (fabric NER, sentence-scoped typed relations,
+co-occurrence, node-tier NER, language ID, sentiment) that carries `layer` and
+`by`; every card has a source span and every edge a resolution (`exact` or
+`heuristic`).
+
+| Capability | Route | Purpose |
+|---|---|---|
+| `nlp.explode.prose` | `POST /nlp/explode/prose` | `text` \| `record_id` \| `record_ids`, `ranges`, `mode`, `layers` → contract |
+| `nlp.explode.layers` | `GET /nlp/explode/layers` | Registered layers and defaults |
+| `code.explode` | `POST /code/explode` | Code (`text`+`lang`, `path`/`paths` with one hop of imports, or `record_id`) → contract; extractor in `code_explode_core.py` |
+| `code.sources` | `GET /code/sources` | The repository code tree, for picking a target |
+| `explode.target` | `POST /explode/target` | Resolve a clicked thing into an explode target |
+
+The graph component's **Explode** sidebar panel is the main UI
+([Galaxy Graph](./09-galaxy-graph.md)).
+
+**Assess** (`assess_capabilities.py`) is a registry of *scorers* whose output is
+assessments `{key, score, confidence, by, on, evidence}` over prose or an
+Explode code contract. With `persist=true` (records only) assessments are
+written to the record's `data.assess`, which makes cross-record ranking one
+query.
+
+| Capability | Route | Purpose |
+|---|---|---|
+| `assess.scorers` | `GET /assess/scorers` | Registered scorers |
+| `assess.prose` | `POST /assess/prose` | `text` \| `record_id` (+ `scorers`, `persist`) → assessments |
+| `assess.code` | `POST /assess/code` | `path` \| `paths` \| `text` (+ `scorers`) → assessments over the code contract |
+| `assess.rank` | `POST /assess/rank` | Records ordered by a weighted composite of persisted assessments |
+
+## 17. Configuration
+
+| Variable | Default | Effect |
+|---|---|---|
+| `VERA_SEARXNG_URL` | — | SearXNG host when a source has no explicit `host`; fallback `http://<BACKEND_HOST>:8888` |
+| `VERA_RERANK_ENABLED` | `0` | Rerank merged citations with `nlp.rerank` |
+| `VERA_RESEARCH_PERSIST` | `1` | Write findings back to `research.findings` and `research.<slug>` |
+| `RESEARCH_FAST_TIMEOUT` | `90` | Seconds for fast-writer calls (intent detection, decomposition) |
+| `OLLAMA_KEEP_ALIVE` | `30m` | Keep-alive sent with research generations |
+| `OLLAMA_MAX_AUTO_CTX` | `0` | Cap on auto-detected context size (0 = no cap) |
+| `VERA_RUN_JOURNAL_PATH` | — | Enables the checksummed Run journal for pipeline projections |
+| `VERA_NLP_PORT` | `8771` | Port of the node NLP server |
+
+Persisted runtime configuration: sources, web-search config, instance defaults
+and projects are stored in the fabric and reloaded at startup; when the store is
+empty, `vera_config.json` in the working directory is used as a fallback for
+sources. Screenshots are written to `screenshots/` and served at
+`/screenshots`; generated project files go to `projects/`.
+
+## 18. Worked examples
+
+Start a deep report and poll it:
+
+```bash
+curl -s -X POST http://localhost:8999/research/run \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"state of post-quantum TLS deployment","mode":"deep"}'
+# → {"job_id":"…","status":"queued"}
+
+curl -s "http://localhost:8999/research/job/status?job_id=<id>"
+curl -s "http://localhost:8999/research/job/result?job_id=<id>"
+```
+
+Recall earlier work instead of researching again:
+
+```bash
+curl -s "http://localhost:8999/research/recall/search?query=post-quantum%20TLS&top_k=10"
+```
+
+Create an hourly iteration target on a project:
+
+```json
+{"target_type":"project","target_id":"<project_id>",
+ "seed_query":"open-source vector databases","interval_secs":3600}
+```
+
+## 19. Failure modes and troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| Job errors with "No Ollama instance available" | The cluster router returned no node for the research role; check the Model Routing page and node health |
+| Large digests stay on CPU | The verifier escalation only fires when the prompt exceeds `escalate_chars` and a GPU node is available |
+| No web results | SearXNG unreachable or the `searxng` source disabled; set `VERA_SEARXNG_URL`, run `research.sources.test` |
+| `worldview` source returns nothing | The Worldview model or index is not trained ([Worldview](./11-worldview.md)) |
+| `nlp.*` calls fail | No NLP node is serving and `nlp.local` is off — see `nlp.nodes` |
+| `research.quick_search` is slow | It is a full report; use `web.search` for direct results |
+| Iteration resumes immediately after restart | Expected: `restart_behavior: native_immediate` |
+
+## 20. Document-parser boundary
+
+Research consumes verified, cited records; it does not convert documents.
+`providers.document.*` (`status`, `plan`, `validate`, `corpus.evaluate`,
+`teardown.plan`) defines an offline, provider-neutral `DocumentParser` boundary
+around an original `ArtifactRef`. Plans carry supplied inspection evidence,
+resource ceilings, OCR policy, parser profile and a stable identity; supplied
+results are checked for source-bound element IDs, page/locator citations,
+parser/config provenance, derived-artifact budgets and explicit OCR use. The
+current Docling profile reports `not_imported` / `queued_live`: Vera does not
+open documents or run OCR in this layer. A bounded frozen-corpus evaluator
+compares only text/table/layout hashes and issue codes.
 
 ## See also
 
-- [Data Fabric](./06-data-fabric.md) — where research artifacts live
-- [Memory Graph](./05-memory-graph.md) — the activity chain for research runs
-- [Ollama Cluster](./04-ollama-cluster.md) — the tier-to-instance routing
-- [IDE Module](./08-ide.md) — code generation, which shares the same pipeline
-
-## Document-parser boundary
-
-Research citations may eventually consume rich document structure, but Research
-does not own conversion. `providers.document.*` now defines an offline,
-provider-neutral `DocumentParser` boundary around an original `ArtifactRef`.
-Plans carry supplied inspection evidence, resource ceilings, OCR policy, parser
-profile, and a stable identity. Supplied results are checked for source-bound
-element IDs, page/locator citations, parser/config provenance, derived-artifact
-budgets, and explicit OCR use before any future record or artifact write.
-
-The current Docling profile is `not_imported` and `queued_live`; Vera does not
-open documents or run OCR in this layer. A bounded frozen-corpus evaluator
-compares only text/table/layout hashes and issue codes, never document content.
-Research remains a consumer of verified cited records, not an implicit parser.
+- [Data Fabric](./06-data-fabric.md) — where research datasets live
+- [Memory Graph](./05-memory-graph.md) — the activity chain and `memory` source
+- [Ollama Cluster](./04-ollama-cluster.md) — routing profiles and node selection
+- [IDE Module](./08-ide.md) — code generation in the editor
+- [Galaxy Graph](./09-galaxy-graph.md) — the Explode panel
+- [Worldview](./11-worldview.md) — the `worldview` research source
+- [ONNX](./30-onnx.md) — the models behind `nlp.*`
+- [Web Browser](./24-web-browser.md) — the shared web client
 
 ## Screenshots
 
