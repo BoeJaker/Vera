@@ -80,7 +80,9 @@ def test_an_explicit_ask_decides_without_a_model():
             "write it up as a proper document": "canvas_html",
             "put it on the canvas": "canvas",
             "remember that the router is on .1": "memory",
-            "what is 12 times 9?": ""}
+            "what is 12 times 9?": "",
+            "how does TLS work, briefly": "none",              # asked short: the chat alone
+            "briefly, email me the gist": "email"}              # a named place still wins
     for q, want in asks.items():
         assert D.explicit_ask(q, allowed) == want, q
     assert D.explicit_ask("email me the report", ["canvas"]) == ""        # not offered: not chosen

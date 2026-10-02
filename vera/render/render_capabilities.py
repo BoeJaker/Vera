@@ -856,6 +856,8 @@ async def output_deliver_auto(content: str = "", question: str = "", session_id:
         # the request names a place: that decides (a small model got the plainest asks wrong); a short answer stays
         # in the chat; only what is left is the model's to judge
         asked = _delivery.explicit_ask(question, ids)
+        if asked == "none":
+            return {"ok": True, "channel": "none", "delivered": False, "why": "you asked for it short: the chat alone"}
         if asked:
             ch, why = asked, "you asked for it"
         elif len(content.strip()) < _delivery.SHORT_ANSWER:
