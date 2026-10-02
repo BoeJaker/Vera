@@ -4352,7 +4352,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     const c=_dlvCfg(); if(c.mode==='chat') return;
     text=String(text||'').trim(); if(text.length<40) return;           // a one-liner is the chat's alone
     const turn=++_dlvTurnSeq;
-    const args={content:text, request:String(request||'').slice(0,1500), session_id:SID||'', style:c.style||'',
+    const args={content:text, question:String(request||'').slice(0,1500), session_id:SID||'', style:c.style||'',
                 html_to_canvas:c.html==='canvas'};
     if(c.mode!=='auto') args.channel=(c.mode==='html'&&c.html==='canvas')?'canvas_html':c.mode;
     try{

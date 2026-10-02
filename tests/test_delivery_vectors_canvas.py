@@ -146,7 +146,7 @@ def test_the_model_picks_a_vector_and_it_is_delivered(monkeypatch):
     _stub(monkeypatch, "llm.generate", gen)
     _stub(monkeypatch, "report.html", report)
     _stub(monkeypatch, "canvas.add", add)
-    out = asyncio.run(R.output_deliver_auto(content="# Findings\n" + "y" * 600, request="what did the survey find",
+    out = asyncio.run(R.output_deliver_auto(content="# Findings\n" + "y" * 600, question="what did the survey find",
                                             session_id="s2", html_to_canvas=True))
     assert calls["gen"]["job_type"] == "delivery_pick"
     assert out["channel"] == "canvas_html" and out["delivered"] and calls["add"]["content"]["url"] == "/render/report/r2.html"
@@ -165,7 +165,7 @@ def test_an_explicit_ask_is_delivered_without_asking_a_model(monkeypatch):
         return {"ok": True, "id": "cv_session_s4"}
     _stub(monkeypatch, "llm.generate", gen)
     _stub(monkeypatch, "canvas.add", add)
-    out = asyncio.run(R.output_deliver_auto(content="- pack\n- book\n- leave", request="keep it somewhere I can see",
+    out = asyncio.run(R.output_deliver_auto(content="- pack\n- book\n- leave", question="keep it somewhere I can see",
                                             session_id="s4"))
     assert "gen" not in calls and out["channel"] == "canvas" and out["delivered"] and out["why"] == "you asked for it"
 
@@ -178,9 +178,9 @@ def test_most_answers_stay_in_the_chat(monkeypatch):
         calls["gen"] = kw
         return {"text": '{"channel": "none", "why": "the chat is enough"}'}
     _stub(monkeypatch, "llm.generate", gen)
-    short = asyncio.run(R.output_deliver_auto(content="z" * 80, request="what is 12 times 9", session_id="s3"))
+    short = asyncio.run(R.output_deliver_auto(content="z" * 80, question="what is 12 times 9", session_id="s3"))
     assert short["channel"] == "none" and short["delivered"] is False and "gen" not in calls   # short: no model
-    long_ = asyncio.run(R.output_deliver_auto(content="z" * 900, request="explain it", session_id="s3"))
+    long_ = asyncio.run(R.output_deliver_auto(content="z" * 900, question="explain it", session_id="s3"))
     assert long_["ok"] and long_["channel"] == "none" and long_["delivered"] is False and "gen" in calls
 
 
@@ -220,3 +220,11 @@ def test_the_canvas_draws_a_delivered_report_in_a_sandboxed_frame():
     assert 'data-live="report"' in CANVAS and "kind === 'report'" in CANVAS
     assert "inner.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox')" in CANVAS
     assert "allow-same-origin" not in CANVAS[CANVAS.index("kind === 'report'"):CANVAS.index("kind === 'report'") + 400]
+
+
+def test_the_ask_is_not_named_request():
+    """The capability layer drops an argument named `request` (it is FastAPI's) - live, every ask arrived empty."""
+    src = (ROOT / "vera" / "render" / "render_capabilities.py").read_text(encoding="utf-8")
+    sig = src[src.index("async def output_deliver_auto("):src.index("async def output_deliver_auto(") + 200]
+    assert "question: str" in sig and "request" not in sig
+    assert "question:String(request||'')" in CHAT
