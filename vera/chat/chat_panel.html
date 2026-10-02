@@ -2210,6 +2210,10 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="row"><label style="min-width:56px">STT</label><input type="checkbox" id="cfgStt" checked></div>
     <div class="row"><label style="min-width:56px">Auto-play</label><input type="checkbox" id="cfgAutoPlay" checked></div>
     <div class="row"><label style="min-width:56px" title="Silence that ends your turn and submits">Mic pause</label><input type="number" id="cfgVadPause" value="2.0" min="0.8" max="10" step="0.1" style="width:58px" title="Seconds of silence before the mic stops and submits"></div>
+    <div class="sec" style="margin-top:5px">Delivery</div>
+    <label class="row numrow" title="Where a finished answer ALSO goes - the chat always shows it. 'Let the model choose' asks a small model (off the GPU) whether the canvas, a report, a podcast, a note... would serve you better, and most answers stay in the chat alone"><select id="cfgDelivery" style="flex:1;min-width:0" onchange="CH._dlvPersist()"><option value="chat">The chat only</option><option value="auto">Let the model choose</option><option value="canvas">Canvas - the answer beside the chat</option><option value="canvas_html">HTML report on the canvas</option><option value="html">HTML report</option><option value="podcast">Podcast</option><option value="notebook">Notebook</option><option value="memory">Memory</option><option value="telegram">Telegram</option><option value="email">Email</option></select><span class="nlbl" style="flex:0 0 auto">Also deliver</span></label>
+    <label class="row numrow" title="The style a delivered answer is shaped into - the same profiles as Output format; the channel's own style when blank"><select id="cfgDeliveryStyle" style="flex:1;min-width:0" onchange="CH._dlvPersist()" onfocus="CH._dlvStyles()"><option value="">The channel's own style</option></select><span class="nlbl" style="flex:0 0 auto">Style</span></label>
+    <label class="row numrow" title="Where an HTML report shows - every HTML report: the button under a reply, a re-delivery, one the model chose"><select id="cfgHtmlOpen" style="flex:1;min-width:0" onchange="CH._dlvPersist()"><option value="canvas">On the canvas</option><option value="tab">A new tab</option><option value="link">A link only</option></select><span class="nlbl" style="flex:0 0 auto">HTML opens</span></label>
     <div class="sec" style="margin-top:5px">Motion</div>
     <label class="row numrow" title="The cursor at the end of a reply while it is being written"><select id="cfgMotionCursor" style="flex:1;min-width:0"><option value="bar">Bar - a thin line that breathes</option><option value="block">Block</option><option value="underscore">Underscore</option><option value="dot">Dot</option><option value="glow">Glow</option><option value="none">None</option></select><span class="nlbl" style="flex:0 0 auto">Cursor</span></label>
     <label class="row numrow" title="How a new message arrives in the transcript"><select id="cfgMotionReply" style="flex:1;min-width:0"><option value="rise">Rise - slides up as it fades in</option><option value="fade">Fade in</option><option value="none">None</option></select><span class="nlbl" style="flex:0 0 auto">Messages</span></label>
@@ -4249,19 +4253,21 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     const content = rec.getContent();
     if(!content.trim()){ appendSys('<span style="color:var(--dim2)">Message is empty — nothing to render.</span>'); return; }
     const title=(content.trim().split('\n').find(l=>l.trim())||'Report').replace(/^#+\s*/,'').slice(0,120);
-    appendSys('<span style="color:var(--dim2)">🖼 Building HTML report…</span>');
+    const where=_dlvCfg().html;
+    appendSys('<span style="color:var(--dim2)">🖼 Building HTML report'+(where==='canvas'?' for the canvas':'')+'…</span>');
     try{
+      // "HTML opens on the canvas": the same report, drawn on the session canvas instead of a tab (report.canvas)
       const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({name:'report.html',session_id:SID||'',arguments:{
-          content, title, mode:'auto'
+        body:JSON.stringify({name:(where==='canvas'?'report.canvas':'report.html'),session_id:SID||'',arguments:{
+          content, title, mode:'auto', session_id:SID||''
         }})});
       const j=await r.json();
       const c=j&&j.content;
       if(c&&c.ok&&c.url){
         const href=BASE+c.url;
         const gal=_galButton({title:title,url:c.url,kind:'html_report',download_url:c.download_url||'',artifact_id:c.artifact_id||'',source_id:SID||''});
-        appendSys('<span style="color:var(--ok)">🖼 HTML report ready — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open report</a> ('+esc(c.mode_used||'')+')</span>'+gal);
-        try{ window.open(href,'_blank','noopener'); }catch(_){}
+        appendSys('<span style="color:var(--ok)">🖼 HTML report '+(where==='canvas'?'on the canvas':'ready')+' — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open in a tab</a>'+(c.mode_used?' ('+esc(c.mode_used)+')':'')+'</span>'+gal);
+        _dlvReveal(where==='canvas'?'canvas_html':'html', href);
       } else appendSys('<span style="color:var(--err)">HTML report failed: '+esc((c&&c.error)||'unknown')+'</span>');
     }catch(e){ appendSys('<span style="color:var(--err)">HTML report failed: '+esc(String(e&&e.message||e))+'</span>'); }
   }
@@ -4283,26 +4289,88 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     const avail=(_redeliverChans||[]).filter(c=>c&&c.available!==false&&c.id!=='fabric');
     if(!avail.length){ appendSys('<span style="color:var(--err)">No delivery channels available.</span>'); return; }
     const btns=avail.map(c=>`<button class="mact" onclick="CH._redeliverDo('${mid}','${esc(c.id)}',this)" title="Re-deliver as ${esc(c.label||c.id)}">${esc(c.label||c.id)}</button>`).join(' ');
-    appendSys('<span style="color:var(--dim2)">⇄ Re-deliver this message as: </span>'+btns);
+    // a STYLE for whichever vector is pressed - the same profiles as Output format (the channel's own when blank)
+    const styles='<select class="rd-style" id="rdStyle_'+esc(mid)+'" title="The style it is shaped into" style="font-size:10px;max-width:150px">'+_dlvStyleOptions(_dlvCfg().style)+'</select>';
+    appendSys('<span style="color:var(--dim2)">⇄ Re-deliver this message as: </span>'+btns+' <span style="color:var(--dim2)">in</span> '+styles);
   }
   async function _redeliverDo(mid, channel, btn){
     const rec = _MSG_REGISTRY[mid]; if(!rec) return;
     const content = rec.getContent(); if(!content.trim()) return;
     const title=(content.trim().split('\n').find(l=>l.trim())||'Output').replace(/^#+\s*/,'').slice(0,120);
+    // "HTML opens on the canvas": the HTML vector lands there too
+    if(channel==='html'&&_dlvCfg().html==='canvas') channel='canvas_html';
+    const format=(document.getElementById('rdStyle_'+mid)||{}).value||'';
     if(btn){ btn.disabled=true; btn.textContent='…'; }
     try{
       const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({name:'output.redeliver',session_id:SID||'',arguments:{channel,content,title}})});
+        body:JSON.stringify({name:'output.redeliver',session_id:SID||'',arguments:{channel,content,title,format,session_id:SID||''}})});
       const j=await r.json(); const c=j&&j.content;
       if(c&&c.ok){
         let extra='',gal='';
-        if(c.url){ const href=BASE+c.url; extra=' — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open</a>'; try{window.open(href,'_blank','noopener');}catch(_){}
-          gal=_galButton({title:title,url:c.url,kind:(channel==='html'?'html_report':'other'),download_url:c.download_url||'',artifact_id:c.artifact_id||'',source_id:SID||''}); }
+        if(c.url){ const href=BASE+c.url; extra=' — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open</a>';
+          gal=_galButton({title:title,url:c.url,kind:(/html/.test(channel)?'html_report':'other'),download_url:c.download_url||'',artifact_id:c.artifact_id||'',source_id:SID||''}); }
         else if(c.job_id||c.episode_id) extra=' — started (renders async)';
+        _dlvReveal(channel, c.url?BASE+c.url:'');
         appendSys('<span style="color:var(--ok)">⇄ Re-delivered as '+esc(channel)+extra+'</span>'+gal);
       } else appendSys('<span style="color:var(--err)">Re-deliver failed: '+esc((c&&c.error)||'unknown')+'</span>');
     }catch(e){ appendSys('<span style="color:var(--err)">Re-deliver failed: '+esc(String(e&&e.message||e))+'</span>'); }
   }
+  /* ═══ DELIVERY — where a finished answer ALSO goes (owner, 2026-10-02: "could the output options be turned into a
+     proper system that can deliver a selection of styles via any of the available delivery methods and expose this
+     to the chat/agentic loops - add a configuration option to the ui that lets the llm pick a delivery method - also
+     id like for html delivery to be able to go to the canvas instead of automatically opening a new tab").
+     The vectors are the server's one channel registry (output.channels - the canvas among them now), the styles its
+     one format registry (the Output format list). Settings › Delivery chooses: the chat only, one vector always, or
+     a model's pick per answer (output.deliver_auto - a small model off the GPU, most answers stay in the chat). The
+     chat's replies and the agent loop's final answers both go through _deliverAfter. ═══ */
+  const _DLV_KEY='vera_chat_delivery';
+  function _dlvCfg(){ return { mode:(document.getElementById('cfgDelivery')||{}).value||'chat',
+    // the style list fills once Output format has loaded its profiles: until then the saved choice stands
+    style:(document.getElementById('cfgDeliveryStyle')||{}).value||_dlvSaved().style||'', html:(document.getElementById('cfgHtmlOpen')||{}).value||'canvas' }; }
+  function _dlvPersist(){ try{ localStorage.setItem(_DLV_KEY, JSON.stringify(_dlvCfg())); }catch(_){} }
+  // the styles are the Output format list's own options (one registry): copied, never a second list
+  function _dlvStyleOptions(sel){
+    const src=document.getElementById('cfgFormat'); const seen={};
+    let h='<option value="">The channel\'s own style</option>';
+    if(src) [...src.options].forEach(o=>{ const v=o.value; if(!v||seen[v]) return; seen[v]=1; h+='<option value="'+esc(v)+'"'+(v===sel?' selected':'')+'>'+esc(o.textContent||v)+'</option>'; });
+    return h;
+  }
+  function _dlvStyles(){ const el=document.getElementById('cfgDeliveryStyle'); if(!el) return; const cur=el.value||_dlvSaved().style||''; el.innerHTML=_dlvStyleOptions(cur); if(cur) el.value=cur; }
+  function _dlvSaved(){ try{ return JSON.parse(localStorage.getItem(_DLV_KEY)||'null')||{}; }catch(_){ return {}; } }
+  function _dlvRestore(){
+    const o=_dlvSaved();
+    [['cfgDelivery','mode'],['cfgHtmlOpen','html']].forEach(([id,k])=>{ const el=document.getElementById(id); if(el&&o[k]&&[...el.options].some(op=>op.value===o[k])) el.value=o[k]; });
+    _dlvStyles();
+  }
+  // show what was delivered where: the canvas column opens for a canvas vector; an HTML report follows "HTML opens"
+  function _dlvReveal(channel, href){
+    if(channel==='canvas'||channel==='canvas_html'){ try{ if(typeof _pages!=='undefined'&&!_pages.has('canvas')) togglePage('canvas'); else _canvasColumnMount(); }catch(_){} return; }
+    if(href&&channel==='html'&&_dlvCfg().html==='tab'){ try{ window.open(href,'_blank','noopener'); }catch(_){} }
+  }
+  let _dlvTurnSeq=0;
+  async function _deliverAfter(text, request){
+    const c=_dlvCfg(); if(c.mode==='chat') return;
+    text=String(text||'').trim(); if(text.length<40) return;           // a one-liner is the chat's alone
+    const turn=++_dlvTurnSeq;
+    const args={content:text, request:String(request||'').slice(0,1500), session_id:SID||'', style:c.style||'',
+                html_to_canvas:c.html==='canvas'};
+    if(c.mode!=='auto') args.channel=(c.mode==='html'&&c.html==='canvas')?'canvas_html':c.mode;
+    try{
+      const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:'output.deliver_auto',session_id:SID||'',arguments:args})});
+      const j=await r.json(); const d=(j&&j.content)||{};
+      if(turn!==_dlvTurnSeq) return;                                     // a newer answer has its own delivery
+      if(!d.ok){ appendSys('<span style="color:var(--err)">⇄ Delivery failed: '+esc(d.error||'unknown')+'</span>'); return; }
+      if(!d.delivered) return;                                            // the model kept it to the chat: nothing to say
+      const href=d.url?BASE+d.url:'';
+      appendSys('<span style="color:var(--ok)">⇄ Also delivered — '+esc(d.channel)+(d.style?' · '+esc(d.style):'')+'</span>'
+        +(href?' — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open</a>':'')
+        +(c.mode==='auto'&&d.why?' <span style="color:var(--dim2)">('+esc(d.why)+')</span>':''));
+      _dlvReveal(d.channel, href);
+    }catch(e){ appendSys('<span style="color:var(--err)">⇄ Delivery failed: '+esc(String(e&&e.message||e))+'</span>'); }
+  }
+  try{ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', _dlvRestore); else setTimeout(_dlvRestore, 0); }catch(_){}
+
   /* ★ Save to gallery — pins a produced artifact (HTML report, etc.) to the
      global artifacts gallery via gallery.add. The artifact payload is stashed by
      key so titles/urls with quotes survive the inline onclick. */
@@ -11858,6 +11926,9 @@ Your task: decide what to do next to advance toward the goal.
     // sees its own past panel-opens in the history and parrots them on later
     // turns — the cause of it re-opening exec-panel on "thanks" / "huh?".
     HISTORY.push({role:'assistant',content:_stripPanelMarkup(fullText),thinking:fullThink});
+    // Settings › Delivery: the answer may ALSO go to the canvas, a report, a podcast... - unless it called capabilities,
+    // when the continuation that reads their results is the answer (continueConversation delivers that one)
+    try{ if(!new RegExp(CAP_PLACEHOLDER_RE.source,'i').test(fullText||'')) _deliverAfter(_stripPanelMarkup(fullText), msg); }catch(_){}
     // the reply landed: what it MADE lands on the session canvas (keyed to the turn, through the resolver), then what is
     // in focus now (parks · recalls)
     try{ _cvLandReply(_cvRelMid).then(()=>{ try{ _cvRelevance(_cvRelMid, _cvRelText+'\n'+String(fullText||'').slice(0,1500)); }catch(_){} }); }catch(_){ try{ _cvRelevance(_cvRelMid, _cvRelText+'\n'+String(fullText||'').slice(0,1500)); }catch(__){} }
@@ -12176,6 +12247,8 @@ Your task: decide what to do next to advance toward the goal.
       if(finalText){
         try{ statusCard.body.dataset.markdown = String(finalText); }catch(_){}
         HISTORY.push({role:'assistant', content: String(finalText)});
+        // the agent loop's final answer goes the same way as a chat reply (Settings › Delivery)
+        try{ _deliverAfter(String(finalText), goal); }catch(_){}
       }
       scroll();
     });
@@ -12812,6 +12885,9 @@ Your task: decide what to do next to advance toward the goal.
     const chainAuto=!!document.getElementById('cfgCapAutoExec')?.checked;
     await processCapPlaceholders(txt||'',targetBody,chainAuto);
     if(txt)HISTORY.push({role:'assistant',content:txt});
+    // the answer after a capability IS the turn's answer: Settings › Delivery applies to it (a further capability
+    // call means yet another continuation follows - that one delivers)
+    try{ if(txt&&!new RegExp(CAP_PLACEHOLDER_RE.source,'i').test(txt)){ const ask=[...HISTORY].reverse().find(h=>h&&h.role==='user'); _deliverAfter(txt, ask?ask.content:''); } }catch(_){}
   }
 
   /* ═══ WEB SEARCH — configurable SearXNG + DDG fallback ═══ */
@@ -15290,6 +15366,7 @@ Your task: decide what to do next to advance toward the goal.
       {id:'agent', n:'Agent & model', from:[['rpCfg','Execution modes'],['rpCfg','Agent'],['rpCfg','Model override'],['rpLoop','Model override'],['rpCfg','Agent capabilities'],['rpCfg','DAG']], note:'who answers, on what, with which capabilities'},
       {id:'format', n:'Output format', from:[['rpCfg','Output format']], note:'markdown · thinking · the throbber'},
       {id:'motion', n:'Motion', from:[['rpCfg','Motion']], note:'the cursor, how messages and capabilities arrive'},
+      {id:'delivery', n:'Delivery', from:[['rpCfg','Delivery']], note:'where an answer also goes, in what style, and who chooses'},
       {id:'media', n:'Media & rendering', from:[['rpCfg','Media & rendering'],['rpCfg','Output']], note:'images · artifacts · live render · speech'},
       {id:'web', n:'Web search', from:[['rpCfg','Web Search']], note:'search before answering'},
       {id:'research', n:'Research streaming', from:[['rpCfg','Research Streaming']], note:'the researcher API'},
@@ -20617,7 +20694,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _scrollToBottom,
     _msgEdit,_msgEditCancel,_msgEditCommit,_msgResubmit,
     _msgExplode,_codeExplode,
-    _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_msgHtmlReport,_msgRedeliver,_redeliverDo,_gallerySave,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
+    _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_msgHtmlReport,_msgRedeliver,_redeliverDo,_dlvPersist,_dlvStyles,_deliverAfter,_gallerySave,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
     _saveModalClose,_saveModalConfirm,_saveModalNbCellTypeChange,
     getActivePanelState,dispatchPanelAction,requestPanelState,
     _startDispatchListener,_stopDispatchListener,

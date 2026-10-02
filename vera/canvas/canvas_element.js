@@ -727,6 +727,20 @@
        The head carries the switch, and the Preview setting decides which way it starts. */
     html: (c, size, key, el) => {
       const src = String(c.html || '');
+      /* A DELIVERED REPORT (owner, 2026-10-02: "html delivery to be able to go to the canvas instead of automatically
+         opening a new tab"): report.canvas puts the report's address here, not its markup - the document Vera serves,
+         drawn in a sandboxed frame (scripts for its diagrams; no same-origin, so it cannot reach the chat), with the
+         tab and the download one press away. */
+      const url = String(c.url || '');
+      if (!src && url && /^\/[^/]/.test(url)) {
+        const head = `<div class="vc-codehead">${esc(c.title || 'report')}<span class="sp"></span>`
+          + `<a class="ib" href="${esc(url)}" target="_blank" rel="noopener" title="Open the report in its own tab">open</a>`
+          + (c.download_url ? `<a class="ib" href="${esc(c.download_url)}" download title="Download the report">download</a>` : '') + '</div>';
+        const body = key
+          ? `<div class="vc-live vc-preview vc-report" data-live="report" data-key="${esc(key)}" data-src="${esc(url)}"><span class="vc-dim">opening the report…</span></div>`
+          : `<div class="vc-dim"><a href="${esc(url)}" target="_blank" rel="noopener">open the report</a></div>`;
+        return `<div class="vc-codewrap">${head}${body}</div>`;
+      }
       if (!src) return '<div class="vc-dim">nothing to draw yet</div>';
       const pset = key && el && el._prevOn && Object.prototype.hasOwnProperty.call(el._prevOn, key);
       const pdef = !el || typeof el.previewOn !== 'function' || el.previewOn();
@@ -1382,6 +1396,8 @@
      (.vc-diag below); previews never were. Same treatment: a real height per size, and the dragged size still
      wins through .it.sized. Specificity carries .vc-live.vc-preview over the size rules above. */
   .vc-live.vc-preview{height:260px}
+  /* a delivered report is a document to read, not a preview to glance at */
+  .vc-live.vc-report{height:420px}.it[data-size="xl"] .vc-live.vc-report{height:560px}
   .it[data-size="s"] .vc-live.vc-preview{height:200px}
   .it[data-size="l"] .vc-live.vc-preview{height:380px}
   .it[data-size="xl"] .vc-live.vc-preview{height:560px}
@@ -2800,6 +2816,10 @@
             ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
             this._rgFeed(inner, key);
             inner.addEventListener('vera-graph-node', (ev) => this._rgNode(key, (ev.detail || {}).node)); }
+          // a delivered report: Vera's own page, but written by a model - scripts may run (its diagrams), it may open
+          // a tab, it may not be same-origin with the chat
+          else if (kind === 'report') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
+            inner.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox'); h.textContent = ''; inner.src = h.dataset.src || 'about:blank'; }
           else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
@@ -2810,6 +2830,8 @@
           /* an html item's page is its `html`, not `code` - reading only `code` redrew every html item as an empty page on
              its first update; and the redraw is double-buffered (_previewSwap) so there is never a blank frame */
           this._previewSwap(el, previewDoc(h.dataset.lang || cc.lang, cc.code || cc.html || ''));
+        } else if (kind === 'report') { if (h.textContent) h.textContent = ''; const fr = el.firstChild, want = h.dataset.src || '';
+          if (fr && want && fr.getAttribute('src') !== want) fr.setAttribute('src', want);   // a re-render never reloads the same report
         } else if (kind === 'explode') { if (h.textContent) h.textContent = ''; this._explodeAttrs(el.firstChild, key);
         } else if (kind === 'rgraph') { if (h.textContent) h.textContent = ''; this._rgFeed(el.firstChild, key);
         } else if (kind === 'term' && h.dataset.ws) { const t = el.firstChild; if (t && t.getAttribute('ws') !== h.dataset.ws) { t.setAttribute('ws', h.dataset.ws); try { t.destroy && t.destroy(); t.connect(h.dataset.ws); } catch (e) {} } }
