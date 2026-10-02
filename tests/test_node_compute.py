@@ -60,6 +60,11 @@ def test_decide_goes_to_the_nodes_when_every_compute_worker_can_run_it():
     # a worker without the class is not counted, nor does it block
     ws.append(_w("ollama", {"numpy": True}, classes=("general",)))
     assert core.decide("worldview.train", ws, host_fallback=False)[0] == "node"
+    # a worker on older code (no libs reported) never reads the compute stream
+    old = {"role": "node-worker", "host": "cpu-247", "status": "idle",
+           "classes": json.dumps(["cpu_compute"])}
+    assert core.decide("worldview.train", ws + [old], host_fallback=False)[0] == "node"
+    assert core.decide("worldview.train", [old], host_fallback=False)[0] == "refuse"
 
 
 def test_decide_refuses_rather_than_running_on_the_host_by_default():

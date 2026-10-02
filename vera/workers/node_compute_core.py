@@ -142,10 +142,13 @@ def _classes_of(w: Dict[str, Any]) -> Tuple[str, ...]:
 
 
 def compute_workers(workers: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Live node workers that read the compute stream."""
+    """Live node workers that read the compute stream. A registration with no
+    `libs` is a worker on code from before the compute stream existed: it
+    cannot take a job, so it neither counts nor blocks (seen 2026-10-02: for
+    the 2 min an old registration outlives its restart, every job was refused)."""
     return [w for w in workers or ()
             if str(w.get("role") or "") == "node-worker"
-            and "cpu_compute" in _classes_of(w)]
+            and "cpu_compute" in _classes_of(w) and _libs_of(w)]
 
 
 def decide(fn: str, workers: Iterable[Dict[str, Any]], *, host_fallback: bool,
