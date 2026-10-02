@@ -47,7 +47,15 @@ def resolve_target(target: Dict[str, Any], default_base_url: str = "") -> Dict[s
 
     if kind == "live":
         base = target.get("base_url") or default_base_url or "http://localhost:8999"
-        start = _panel_url(base, target["panel_id"]) if target.get("panel_id") else base
+        # An EXPLICIT url wins here too - the sandbox branch below learned this in
+        # 2026-08 and live never did. The agentic loop passes the session's preview
+        # url WITH kind="live"; the url was dropped and the operator drove Vera's own
+        # dashboard (2026-10-02: 8 of 10 live-target runs failed - time_budget,
+        # too_many_errors - one spent 11 steps reading the dashboard's "60" values
+        # as the countdown it had been sent to check).
+        _u = str(target.get("url") or "").strip()
+        start = (_panel_url(base, target["panel_id"]) if target.get("panel_id")
+                 else (_u or base))
         return {"kind": "live", "base_url": base, "start_url": start, "canvas": False}
 
     if kind == "sandbox":
