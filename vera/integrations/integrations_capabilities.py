@@ -1242,7 +1242,7 @@ async def integration_effect_retry_plan(
     "integration.source.lifecycle", http_method="GET",
     http_path="/integrations/source/lifecycle", http_tags=["integration", "intake"],
     memory="off", silent=True,
-    description="Return the deterministic W3-06 external-source lifecycle contract. "
+    description="Return the deterministic external-source lifecycle contract. "
                 "This inspection surface performs no fetch, install, build, secret "
                 "resolution, activation, model call, network request, or execution.",
 )
@@ -1273,7 +1273,7 @@ async def integration_source_inspect(kind: str = "", document: Optional[Dict] = 
     http_path="/integrations/source/transition/plan",
     http_tags=["integration", "intake"], memory="off",
     description="Plan one adjacent external-source lifecycle transition without "
-                "applying it. W3-06 permits inspected/proposed planning only; build and "
+                "applying it. Only inspected/proposed planning is permitted; build and "
                 "later states remain queued. Inputs: source_id, current, target, "
                 "evidence_refs (list).",
 )
@@ -1293,7 +1293,7 @@ async def integration_source_transition_plan(
     "integration.source.build.status", http_method="GET",
     http_path="/integrations/source/build/status",
     http_tags=["integration", "intake"], memory="off", silent=True,
-    description="Return the deterministic W3-07 build/activation proposal contract. "
+    description="Return the deterministic build/activation proposal contract. "
                 "Python, CLI, OCI, and repository execution remain queued; this "
                 "surface performs no fetch, install, build, activation, secret "
                 "resolution, network request, or external execution.",

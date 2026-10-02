@@ -17,7 +17,9 @@ _SCALAR_METRICS = (
     "post_generation_ms",
     "last_stream_to_generation_return_ms",
     "last_stream_to_result_ready_ms",
-    "telemetry_emit_ms",
+    # telemetry_emit_ms is deliberately absent: it measures the emit of the
+    # event itself, so it exists only on code.author's returned result and can
+    # never appear in the stored stream this summary reads.
 )
 _PHASES = (
     "preparation",

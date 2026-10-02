@@ -9,7 +9,7 @@ interactive harness, event streams, workers, and Vera's planning engines.
 
 That simple centre supports a much larger system: local and hosted models,
 agentic loops, DAG workflows, semantic memory, a polyglot data fabric, browser
-operation, remote development, hardware nodes, and Loop Lab—Vera's isolated,
+operation, remote development, hardware nodes, and Loop Lab — Vera's isolated,
 reviewed self-improvement workflow.
 
 > [!NOTE]
@@ -19,6 +19,24 @@ reviewed self-improvement workflow.
 > welcome.
 
 ![Vera main dashboard](documentation/assets/overview/dashboard.png)
+
+## Contents
+
+- [Why Vera is different](#why-vera-is-different)
+- [What you can build](#what-you-can-build)
+- [Architecture in one minute](#architecture-in-one-minute)
+- [Before you install](#before-you-install)
+- [Quick start](#quick-start)
+  - [1. Clone and configure](#1-clone-and-configure)
+  - [2. Start the stack](#2-start-the-stack)
+  - [3. Verify and make your first capability call](#3-verify-and-make-your-first-capability-call)
+  - [4. Point Vera at a model](#4-point-vera-at-a-model)
+- [Your first capability](#your-first-capability)
+- [Documentation map](#documentation-map)
+- [Performance is a runtime property](#performance-is-a-runtime-property)
+- [Repository map](#repository-map)
+- [Project status and contribution](#project-status-and-contribution)
+- [License](#license)
 
 ## Why Vera is different
 
@@ -37,18 +55,19 @@ implementations for the UI, API, agent runtime, and worker cluster.
 
 A capability is more than a remotely callable function. Its registered name is
 a stable operation identity; its JSON schema tells callers how to supply data;
-its Capability Contract describes the task it fulfils, effects it may cause,
-resources and authority it needs, lifecycle, and operational expectations. The
-same wrapper then applies tracing, policy observation or enforcement, activity
-recording, error normalization, optional caching, and local or worker dispatch.
-This lets a model choose between several implementations of the same task using
-machine-readable evidence instead of guessing from similar names.
+its [Capability Contract](documentation/43-capability-contracts.md) describes
+the task it fulfils, effects it may cause, resources and authority it needs,
+lifecycle, and operational expectations. The same wrapper then applies tracing,
+[policy observation or enforcement](documentation/45-capability-policy.md),
+activity recording, error normalization, optional caching, and local or worker
+dispatch. This lets a model choose between several implementations of the same
+task using machine-readable evidence instead of guessing from similar names.
 
 Registration does not itself grant authority. A capability can be discoverable
 while policy still denies a particular call, and inspection capabilities can
 describe plans, contracts, runtime mappings, or health without executing the
-thing they describe. This separation—**describe, resolve, authorize, execute,
-observe**—is what allows Vera to interoperate with external MCP servers and
+thing they describe. This separation — **describe, resolve, authorize, execute,
+observe** — is what allows Vera to interoperate with external MCP servers and
 agent or workflow runtimes without absorbing each one into a new bespoke loop.
 
 The capability is therefore Vera's unit of interoperability, not merely its
@@ -67,7 +86,8 @@ authorize execution; a provider's advertised tool does not become trusted
 because it was found; and telemetry can inform selection without rewriting the
 declared contract. Native Python, workers, MCP tools, model providers, workflow
 engines, and remote agents can therefore share a control path while each runtime
-retains authority over its own execution state.
+retains authority over its own execution state. See
+[Interoperability foundations](documentation/46-interoperability-foundations.md).
 
 ## What you can build
 
@@ -107,13 +127,14 @@ retains authority over its own execution state.
 
 Vera starts the orchestrator first and connects optional backends lazily.
 Unavailable integrations degrade the capabilities that need them rather than
-preventing the entire registry from starting.
+preventing the entire registry from starting: an orchestrator with no Redis,
+Postgres, Chroma, Neo4j, or model node still serves the harness, `/health`, and
+thousands of registered capabilities.
 
 ## Before you install
 
 Vera's resource needs depend much more on model size and concurrency than on the
-web orchestrator itself. Do not use the old blanket RAM figures as a capacity
-promise.
+web orchestrator itself. Do not use blanket RAM figures as a capacity promise.
 
 | Deployment | Practical starting point | What it is for |
 |---|---|---|
@@ -127,17 +148,41 @@ artifacts all change the answer. Read the
 [performance and sizing guide](documentation/00-performance-and-sizing.md)
 before choosing hardware or defining an SLO.
 
+You need Git, Docker with Compose (for the recommended path), and Python 3.11
+(for `make secret` and native runs).
+
 ## Quick start
 
-The supported starting path is the Docker stack:
+The supported starting path is the Docker stack. It starts the orchestrator plus
+Redis, Postgres, ChromaDB, Neo4j, Garage (S3-compatible object storage), a
+code-server IDE, and a build service. Ollama model nodes are **not** part of the
+stack; they run on separate hosts that you point Vera at.
+
+### 1. Clone and configure
 
 ```bash
 git clone https://github.com/BoeJaker/Vera.git
 cd Vera
 cp .env.example .env
-make secret
-make up
-make logs
+make secret        # prints a Fernet key
+```
+
+Add the printed key to `.env` as `VERA_SECRET_KEY=<key>`. It encrypts stored
+credentials; without it a key is generated inside the container and lost on
+rebuild. `make secret` needs the `cryptography` package on the host
+(`pip install cryptography`). Never commit `.env`.
+
+> [!IMPORTANT]
+> `docker-compose.yml` passes only the variables listed in the `vera` service's
+> `environment:` block into the container, and `.env` is excluded from the
+> image. A setting that is not listed there must be added to that block (or set
+> in the process environment for a native run).
+
+### 2. Start the stack
+
+```bash
+make up            # docker compose up -d (builds the vera:latest image the first time)
+make logs          # follow orchestrator logs; Ctrl-C to stop following
 ```
 
 Without `make`:
@@ -150,14 +195,50 @@ Without `make`:
 .\build.ps1 up
 ```
 
-Then open:
+The first build can take a while: Python dependencies, Playwright Chromium, and
+the backing images all download.
+
+### 3. Verify and make your first capability call
+
+Open:
 
 - Harness: <http://localhost:8999/>
 - OpenAPI: <http://localhost:8999/docs>
 - Health: <http://localhost:8999/health>
 - MCP catalog: <http://localhost:8999/mcp/tools>
 
-For native installation, verification, and troubleshooting, follow
+Then call a capability through the MCP endpoint:
+
+```bash
+curl -s http://localhost:8999/mcp/call \
+  -H 'content-type: application/json' \
+  -d '{"name":"echo","arguments":{"message":"hello"}}'
+```
+
+```json
+{"type":"tool_result","tool_name":"echo","trace_id":"…",
+ "content":{"echo":"hello","ts":"…","trace_id":"…"}}
+```
+
+`make health` and `make caps` do the same checks from the repository. If
+`TLS_ENABLED=1`, use `https://` (the certificate is self-signed).
+
+### 4. Point Vera at a model
+
+The Ollama URLs in `.env.example` and `docker-compose.yml` default to example LAN
+addresses. Set `OLLAMA_GPU_URL`, `OLLAMA_CPU_A_URL`, `OLLAMA_CPU_B_URL`,
+`OLLAMA_EMBED_URL`, and `OLLAMA_MODEL` in `.env` to your own nodes, restart with
+`make up`, and check:
+
+```bash
+curl -s http://localhost:8999/mcp/call \
+  -H 'content-type: application/json' \
+  -d '{"name":"ollama.instances","arguments":{}}'
+```
+
+`/health` also reports each Ollama node as `online` or `offline`.
+
+For native installation, model configuration, and troubleshooting, follow
 [Getting started](docs/GETTING_STARTED.md).
 
 ## Your first capability
@@ -172,41 +253,122 @@ from Vera.vera.capability_orchestration import capability
     http_method="POST",
     http_path="/example/greet",
     http_tags=["example"],
+    contract={
+        "canonical_task": "example.greet",
+        "effects": ["none"],
+        "output_schema": {"type": "object", "required": ["message"],
+                          "properties": {"message": {"type": "string"}}},
+        "approval": {"status": "not_required"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "request_scoped"},
+        "idempotency": {"status": "idempotent"},
+        "resources": {"status": "declared", "classes": ["cpu"]},
+        "owner": "you",
+    },
 )
 async def greet(name: str, trace_id=None):
     return {"message": f"Hello, {name}!"}
 ```
 
-After the module is loaded, `example.greet` is discoverable through MCP,
-callable through the registry and HTTP route, visible to planners, and
-represented by its input schema in the harness.
-
-For production-facing tools, also declare a v2 `contract` with a canonical
-task, effects, output schema, policy posture, owner, and resource class. Legacy
-capabilities continue to work, but unknown declarations remain visible as
-migration gaps and are not silently interpreted as safe defaults.
+Load the module by listing its path in `VERA_MODULES` (comma-separated `.py`
+paths, loaded after Vera's own modules) and restart. Once loaded,
+`example.greet` is discoverable through MCP, callable through the registry and
+its HTTP route, visible to planners, and represented by its input schema in the
+harness:
 
 ```bash
-curl http://localhost:8999/mcp/call \
+curl -s http://localhost:8999/mcp/call \
   -H 'content-type: application/json' \
   -d '{"name":"example.greet","arguments":{"name":"Vera"}}'
+
+curl -s -X POST http://localhost:8999/example/greet \
+  -H 'content-type: application/json' -d '{"name":"Vera"}'
 ```
 
-See [Capability framework](documentation/01-capability-framework.md) for modes,
-streams, caching, memory, worker dispatch, errors, and UI registration.
+The `contract` block is optional — legacy capabilities keep working — but
+undeclared fields stay visible as `unknown` migration gaps rather than being
+treated as safe defaults. The contract above passes the strict gate
+(`cap.contract.gate`) and gets an `allow` shadow policy verdict. See
+[Capability framework](documentation/01-capability-framework.md) for modes,
+streams, caching, memory, worker dispatch, errors, and UI registration, and
+[Capability contracts](documentation/43-capability-contracts.md) for every
+contract field.
 
-## Explore by goal
+## Documentation map
 
-| If you want to… | Start here |
+Start with the [documentation hub](documentation/README.md) and the
+[visual gallery](documentation/GALLERY.md). The numbered guides:
+
+**Core runtime**
+
+| Guide | Covers |
 |---|---|
-| Understand capabilities and the UI | [Capability framework](documentation/01-capability-framework.md) · [Harness UI](documentation/02-harness-ui.md) |
-| Build workflows or agent loops | [DAG and loop engine](documentation/03-dag-engine.md) · [Agents and chat](documentation/19-agents-chat.md) |
-| Configure local models | [Ollama cluster](documentation/04-ollama-cluster.md) · [vLLM](documentation/21-vllm.md) |
-| Store and retrieve knowledge | [Memory graph](documentation/05-memory-graph.md) · [Data fabric](documentation/06-data-fabric.md) |
-| Operate websites or Vera itself | [Operator](documentation/34-operator.md) |
-| Develop Vera safely | [Loop Lab, sandboxes, review, and promotion](documentation/33-evolve.md) |
-| Size or troubleshoot a deployment | [Performance and sizing](documentation/00-performance-and-sizing.md) · [Workers and syslog](documentation/22-workers-jobs-syslog.md) |
-| Browse every subsystem | [Documentation hub](documentation/README.md) |
+| [00 · Performance and sizing](documentation/00-performance-and-sizing.md) | Hardware planning, runtime thresholds, SLOs |
+| [01 · Capability framework](documentation/01-capability-framework.md) | `@capability`, schemas, modes, events, invocation |
+| [02 · Harness UI](documentation/02-harness-ui.md) | Panels, custom elements, UI extension |
+| [03 · DAG and loop engine](documentation/03-dag-engine.md) | Workflows, planners, loops, Workflow IR |
+| [10 · Configuration](documentation/10-configuration.md) | Environment variables and backend endpoints |
+| [22 · Workers, jobs, and syslog](documentation/22-workers-jobs-syslog.md) | Distributed work, job recovery, logs |
+| [29 · Security](documentation/29-security.md) | Secrets and access boundaries |
+| [32 · Cluster encryption](documentation/32-cluster-encryption.md) | Encrypted cluster communication |
+
+**Models and machine learning**
+
+| Guide | Covers |
+|---|---|
+| [04 · Ollama cluster](documentation/04-ollama-cluster.md) | Nodes, routing, health, shared GPU gate |
+| [21 · vLLM](documentation/21-vllm.md) | OpenAI-compatible serving |
+| [16 · Machine learning](documentation/16-machine-learning.md) | Training, ModelPackage, evaluation contracts |
+| [30 · ONNX](documentation/30-onnx.md) | Export and runtime |
+| [11 · Worldview](documentation/11-worldview.md) · [49 · Worldview integration](documentation/49-worldview-integration.md) | JEPA world model |
+| [System 1 decision models (not live)](documentation/48-system-one-decision-models.md) | Small typed decision points that could move off the LLM |
+
+**Knowledge and data**
+
+| Guide | Covers |
+|---|---|
+| [05 · Memory graph](documentation/05-memory-graph.md) | Sessions, recall, graph traversal |
+| [06 · Data fabric](documentation/06-data-fabric.md) | Ingestion, vectors, graphs, SQL, objects |
+| [07 · Research](documentation/07-research.md) | Search and deep research |
+| [09 · Galaxy graph](documentation/09-galaxy-graph.md) · [25 · Vector browser](documentation/25-vector-browser.md) | Graph and vector inspection |
+| [18 · Skills and ontologies](documentation/18-skills-ontologies.md) | Reusable instructions and domain models |
+
+**Agents, interfaces, and applications**
+
+| Guide | Covers |
+|---|---|
+| [19 · Agents and chat](documentation/19-agents-chat.md) | Personas, conversations, tools |
+| [36 · Agent runtimes and providers](documentation/36-agent-runtimes-providers.md) | Container agent bridges, provider adapters |
+| [27 · OpenClaw](documentation/27-openclaw.md) | External agent gateway |
+| [34 · Operator](documentation/34-operator.md) · [24 · Web browser](documentation/24-web-browser.md) | Browser observation and action |
+| [20 · Flow Builder](documentation/20-flow-builder.md) · [26 · UI Builder](documentation/26-ui-builder.md) · [47 · PWA](documentation/47-pwa.md) | Visual workflows, UI, installable app |
+| [17 · Dream](documentation/17-dream.md) | Background reflection |
+| [15 · Markets](documentation/15-markets.md) · [37 · Business and commerce](documentation/37-business-commerce.md) | Domain studios |
+| [28 · Render](documentation/28-render.md) · [31 · Podcast](documentation/31-podcast.md) · [38 · Media and characters](documentation/38-media-characters.md) | Documents, audio, images |
+| [23 · Integrations](documentation/23-integrations.md) | Accounts, mail, calendar, external apps |
+
+**Operations and infrastructure**
+
+| Guide | Covers |
+|---|---|
+| [08 · IDE](documentation/08-ide.md) · [12 · Execution](documentation/12-execution.md) | Workspaces, remote execution, Run protocol |
+| [13 · Docker](documentation/13-docker.md) · [35 · Infrastructure and provisioning](documentation/35-infrastructure-provisioning.md) | Hosts, containers, fleet provisioning |
+| [14 · Device mesh](documentation/14-mesh.md) | ESP32 nodes and firmware |
+| [33 · Loop Lab](documentation/33-evolve.md) | Isolated changes, review, promotion |
+| [39 · Activity and boards](documentation/39-activity-boards.md) | Activity history and work coordination |
+| [41 · System inventory](documentation/41-system-inventory.md) · [42 · Performance baseline](documentation/42-performance-baseline.md) | Inventory and measured baselines |
+
+**Interoperability and governance**
+
+| Guide | Covers |
+|---|---|
+| [43 · Capability contracts](documentation/43-capability-contracts.md) | Contract v2 manifests, lint, coverage, gate, resolver |
+| [44 · Evaluation corpus](documentation/44-evaluation-corpus.md) | Frozen deterministic and queued-live lanes |
+| [45 · Capability policy](documentation/45-capability-policy.md) | Shadow verdicts, receipts, selective enforcement |
+| [46 · Interoperability foundations](documentation/46-interoperability-foundations.md) | Shared boundaries, A2A, runtime matrix |
+| [40 · AI ecosystem roadmap](documentation/40-ai-ecosystem-roadmap.md) | External libraries and standards: gaps and priorities |
 
 | Data Fabric | Agent Loop Graph |
 |---|---|
@@ -237,6 +399,8 @@ measurement guidance are in
 ```text
 vera/
 ├── capability_orchestration.py   core registry, HTTP/MCP surface, lifecycle
+├── capability_contract_core.py   Contract v2 projection, lint, coverage, gate
+├── capability_policy_core.py     shadow policy verdicts (+ capability_enforcement.py)
 ├── config.py                     backend and runtime configuration
 ├── dag/                          DAGs, loops, profiles, authoring
 ├── workers/                      distributed work and model routing
@@ -244,9 +408,16 @@ vera/
 ├── operator/                     browser operation and documentation capture
 ├── evolve/                       Loop Lab, sandboxes, review, promotion
 ├── monitor/                      performance diagnostics and gates
+├── execution/                    Run protocol, Workflow IR, telemetry, remote execution
+├── agentbridges/ · providers/    external agent runtimes and provider contracts
+├── models/                       ModelPackage, inference, training, evaluation contracts
 ├── agents/ · chat/ · research/   agent-facing applications
-├── ide/ · execution/             development and remote execution
+├── ide/                          development workspaces
 └── mesh/ · render/ · media/      edge, documents, images, and audio
+evaluations/                      frozen evaluation corpora (JSON)
+tests/                            pytest suite (make test-unit, make test-critical)
+documentation/                    numbered subsystem guides
+docs/                             getting started and UI framework notes
 ```
 
 The [documentation hub](documentation/README.md) maps the remaining packages
@@ -256,10 +427,12 @@ and studios.
 
 Vera changes quickly. Before submitting a change:
 
-1. open an issue or describe the problem and expected behavior;
-2. keep the change focused and add deterministic tests;
-3. update the relevant guide when behavior or configuration changes;
-4. never commit credentials, generated secrets, or local environment files; and
+1. open an issue or describe the problem and expected behaviour;
+2. keep the change focused and add deterministic tests (`make test-unit`);
+3. update the relevant guide when behaviour or configuration changes;
+4. never commit credentials, generated secrets, or local environment files
+   (`make install-hooks` enables the repository's secret-scan and commit hooks;
+   `make scan` scans tracked files); and
 5. use Vera's isolated development workflow for Vera repository changes.
 
 The canonical development and release workflow is documented in
