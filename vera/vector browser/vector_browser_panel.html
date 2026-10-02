@@ -1185,14 +1185,14 @@ async function probeModel() {
   if (!model) { el.innerHTML = '<span style="color:var(--warn)">Enter a model name</span>'; return; }
   el.innerHTML = '<span style="color:var(--dim2)">Probing…</span>';
   try {
-    // Set the model first, then probe via worldview/diagnose
+    // Set the model first, then probe via worldview/diagnose (embeds one probe string)
     const r = await api('/ollama/embed_config', { embed_model: model });
     if (r.error) { el.innerHTML = `<span style="color:var(--err)">${esc(r.error)}</span>`; return; }
     const probe = await api('/worldview/diagnose', {});
-    const dim = probe.embed_dim || probe.probe_dim || '?';
+    const dim = probe.probe_dim || '?';
     const ok = typeof dim === 'number' && dim > 0;
     el.innerHTML = `<span style="color:var(--${ok ? 'ok' : 'warn'})">
-      ${ok ? '✓' : '⚠'} model=${esc(model)} · dim=${dim}${ok ? '' : ' · probe returned no dim'}
+      ${ok ? '✓' : '⚠'} model=${esc(model)} · dim=${dim}${ok ? '' : ' · probe returned no dim' + (probe.probe_error ? ' (' + esc(String(probe.probe_error)) + ')' : '')}
     </span>`;
     await loadReencode();
   } catch(e) {

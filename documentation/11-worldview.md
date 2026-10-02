@@ -8,7 +8,7 @@ nearest-neighbour queries in latent space, predicts and rolls out concept
 trajectories, explores counterfactual swaps, scores anomalies and reports
 concept drift per dataset.
 
-The operational model and all 37 `worldview.*` capabilities live in
+The operational model and all 38 `worldview.*` capabilities live in
 `vera/worldview/worldview_jepa.py`. The rest of `vera/worldview/` holds
 provenance, evidence and shadow-comparison contracts; apart from
 `retrieval_provenance.py` and `legacy_snapshot_provenance.py`, those modules
@@ -167,11 +167,12 @@ read, blocking `STREAM_BLOCK_MS` (3000 ms). Defaults in `_STREAM_STATS`
 | Setting | Default |
 |---|---|
 | `event_filters` | `fabric.ingested`, `fabric.upserted`, `fabric.pipeline.stage`, `fabric.dataset.created` (an event matches a filter exactly or as a `filter.` prefix) |
-| `batch_size` | `64` records per event (clamped 1–500 by `worldview.stream.start`) |
+| `batch_size` | `64` records per encode batch (clamped 1–500 by `worldview.stream.start`); every `record_id` in an event is encoded, in batches of this size, before the event is acknowledged |
 | `dynamics_interval` | `60` s between dynamics fine-tunes (minimum 10) |
 
 For each matching event the worker calls `_stream_encode_new_records`
-(`:5175`): it fetches the event's `record_ids` (or, when the event has none, up
+once per `batch_size` slice of the event's `record_ids`: it fetches those
+records (or, when the event has none, up
 to `min(2 × batch_size, 1000)` records of the dataset in Chroma insertion
 order), skips records that already have a concept, encodes each through the GNN
 **without graph edges** (`encode_isolated`), assigns the nearest concept, and
@@ -182,7 +183,9 @@ runs once the GNN has been trained, and starts automatically (see
 Of the four filters, only `fabric.ingested` (`data_fabric.py:2724`) carries
 `record_ids` (at most 200 per event). `fabric.upserted` and
 `fabric.pipeline.stage` carry none, and `fabric.dataset.created` is not emitted
-anywhere in the codebase.
+anywhere in the codebase (it is kept in the list; it is harmless). The
+`fabric.backfill` events from `fabric.backfill_vectors` are not in the list:
+their payloads carry counts only, with no record IDs or `dataset_id`.
 
 ### 3.3 Internals at a glance
 
@@ -266,7 +269,8 @@ and picks one style uniformly: `temporal` (follow `TEMPORAL_NEXT`), `entity`
 (follow `ENTITY_LINK` / `CO_OCCURS`) or `random` (any out-edge); when the style
 has no matching edge it uses any out-edge, and it stops at a dead end. Walks
 become token sequences `[BOS, c1+2, c2+2, …]`. `transition_counts` is cleared
-and refilled from these walks. Each epoch runs mini-batches of `batch_size =
+and refilled from these walks; it is not changed anywhere else in training,
+and the stream fine-tune reads it without adding to it. Each epoch runs mini-batches of `batch_size =
 128` walks (EOS-padded) through next-token cross-entropy, with gradient
 clipping at `1.0`.
 
@@ -286,7 +290,7 @@ consumers:
 | `vera/fabric/fabric_panel.html:1775` | Hosts `/ui/panels/worldview-panel`; forwards `worldview.progress` events (`:6136`, `:6157`) | Live (UI) |
 | `vera/vera_graph_panel_worldview.js` | `/worldview/snapshot`, `query`, `anomalies`, `concepts`, `label_concepts`, `stats`, `train`, `loss_history`, `subviews*`; `graph.setLatentMap()` (`vera/vera_graph.js:5810`) | Live (UI) |
 | `vera/vector browser/vector_browser_panel.html:1255` | `/worldview/reembed_missing` | Live (UI) |
-| `vera/vector browser/vector_browser_panel.html:1191` | `/worldview/diagnose` — **no such route exists** | Broken call |
+| `vera/vector browser/vector_browser_panel.html:1191` | `POST /worldview/diagnose` (`worldview.diagnose`); the probe shows `probe_dim` | Live (UI) |
 | `vera/capability_orchestration.py:8180` | A sandbox without the module reads `worldview.stats` through to production | Sandbox read-through |
 | `vera/inventory/context_capability_probe_review.py:80`, `:83`; `vera/inventory/discovery_context_baseline.py:176`–`193` | Inventory metadata naming the JEPA capabilities and modules | Metadata |
 | `vera/worldview/context_ranker.py` (`WorldviewContextRanker`), `reranking_shadow.py`, `evidence_provider.py`, `worldview_shadow_*.py`, `worldview_projection_adapter.py`, `retrieval_adapter.py` | — | **Not live.** `ContextRegistry.register_ranker` (`vera/context_registry.py:175`) has no caller anywhere |
@@ -334,7 +338,7 @@ has_faiss, has_numpy, has_torch}`. The `model` block (`WorldView.stats`,
 | `train_steps.dynamics` | Cumulative Stage-3 optimiser steps — one per mini-batch of walks per epoch, **plus up to 3 per stream fine-tune** |
 | `train_loss.*` | Exponential moving average (`0.95·old + 0.05·new`) of per-step loss, not the last epoch's loss; per-epoch values are in `worldview.loss_history` |
 | `records_assigned` | `len(record_concepts)`: records of the last training graph plus records added by the stream. Replaced, not accumulated, by each training run |
-| `labelled_concepts` | Concepts with an LLM label. Labels survive retraining and are never invalidated |
+| `labelled_concepts` | Concepts with an LLM label. All labels are cleared when a training run completes at least one codebook step; the post-train auto-label repopulates up to `auto_label_k` (50) |
 | `transitions_observed` | Number of **distinct** `(from, to)` concept pairs in `transition_counts` (upper bound K² = 262,144), not a count of transitions |
 | `last_fabric_persist`, `last_fabric_load` | Timestamps (or `local`) |
 | `active_subview`, `active_subview_datasets` | Active sub-worldview |
@@ -358,11 +362,8 @@ How to read them honestly:
   assignment does not update them — so codebook statistics describe the last
   training graph, not the current population.
 - **Step-to-transition ratio** = `train_steps.dynamics / transitions_observed`.
-  `transition_counts` comes from synthetic walks over the sampled graph; after
-  training the code also adds pairs between consecutive records in Chroma's
-  return order (`:3650`), which carries no temporal meaning; and each stream
-  fine-tune samples walks *from* `transition_counts` and then adds them back.
-  A high ratio therefore means the dynamics model has seen the same small set
+  `transition_counts` comes only from synthetic walks over the sampled graph
+  (stream fine-tunes sample from it but do not add to it). A high ratio therefore means the dynamics model has seen the same small set
   of pairs many times, not that it has learned many observed transitions.
 - **Index versus assignments.** `index.vectors` should track
   `records_assigned`. After a restart the index is rebuilt from at most 20,000
@@ -397,7 +398,7 @@ survey of integration opportunities).
 
 ## 4. Capability reference
 
-All 37 capabilities are registered in `worldview_jepa.py`.
+All 38 capabilities are registered in `worldview_jepa.py`.
 
 | Capability | Route | Key inputs (defaults) | Purpose / notes |
 |---|---|---|---|
@@ -408,7 +409,7 @@ All 37 capabilities are registered in `worldview_jepa.py`.
 | `worldview.encode` | `POST /worldview/encode` | `text` \| `record_id` \| `embedding` | Latent + concept; a known `record_id` returns its stored concept, otherwise the vector is encoded without edges |
 | `worldview.predict` | `POST /worldview/predict` | `record_id` \| `concept` \| `text`, `top_k` 8 | Next-concept distribution from prefix `[BOS, c]` |
 | `worldview.rollout` | `POST /worldview/rollout` | start as above, `steps` 8, `temperature` 0.8, `top_k` 20 | Sampled trajectory; each step lists up to 3 member records of that concept (first assigned, not query-specific) |
-| `worldview.counterfactual` | `POST /worldview/counterfactual` | `start_concept`, `swap_at` 1, `swap_to`, `steps` 8, `temperature` 0.6 | Baseline rollout vs rollout with a pinned concept; returns `divergence_step` |
+| `worldview.counterfactual` | `POST /worldview/counterfactual` | `start_concept`, `swap_at` 1 (0-based generated step to replace; must be `< steps`), `swap_to`, `steps` 8, `temperature` 0.6, `seed` (optional) | Both timelines share the baseline's steps before `swap_at`; after it the baseline's sampled step and `swap_to` are each continued with the same seed. Returns `baseline`, `counterfactual`, `divergence_step` and the `seed` used (random when omitted) |
 | `worldview.query` | `POST /worldview/query` | `text`, `top_k` 10, `dataset_id` | Latent nearest neighbours; `dataset_id` filters after the top-k search |
 | `worldview.retrieval.bind` | `POST /worldview/retrieval/bind` | `snapshot_json`, `records_json`, `provider_revision`, `training_run_id` | Bind checkpoint + complete index to a `DatasetSnapshot` ([§13](#13-provenance-qualified-retrieval)) |
 | `worldview.retrieval.status` | `GET /worldview/retrieval/status` | — | Re-verify the binding |
@@ -423,11 +424,12 @@ All 37 capabilities are registered in `worldview_jepa.py`.
 | `worldview.label_concepts` | `POST /worldview/label_concepts` | `concepts`, `max_concepts` 20, `batch_size` 5 | LLM labels (2–5 words) from up to 8 member texts each |
 | `worldview.landscape` | `GET /worldview/landscape` | `top_k` 25, `dataset_id` | Top concepts with samples and predicted partners, for agents |
 | `worldview.detect_drift` | `POST /worldview/detect_drift` | `dataset_id` (required) | Concepts whose dataset share / global share is `> 2.0` or `< 0.3` |
-| `worldview.summarise` | `POST /worldview/summarise` | `dataset_id` | Readiness, steps, losses, totals, stream stats, top concepts, dataset breakdown (no anomalies, despite its description) |
+| `worldview.summarise` | `POST /worldview/summarise` | `dataset_id` | Readiness, steps, losses, totals, stream stats, top concepts, dataset breakdown. No anomaly scoring; use `worldview.anomalies` |
 | `worldview.loss_history` | `GET /worldview/loss_history` | — | Persisted per-epoch losses for all three stages |
 | `worldview.stats` | `GET /worldview/stats` | — | See [§3.7](#37-health-metrics-and-how-to-read-them) |
+| `worldview.diagnose` | `POST /worldview/diagnose` | `dataset_id`, `probe` true | Read-only: Chroma/SQLite counts, datasets, sample embedding dim and a hint (the same report as a failed train); with `probe`, embeds one probe string with the current embed model and returns `probe_dim` |
 | `worldview.config` | `GET /worldview/config` | — | Runtime config ([§7](#7-configuration)) |
-| `worldview.config_set` | `POST /worldview/config` | any config key | Update runtime config; `lr` applies immediately |
+| `worldview.config_set` | `POST /worldview/config` | any config key | Update runtime training config; `lr` applies immediately. Architecture keys are not stored: they come back in `rejected` with a `warning` |
 | `worldview.stream.start` | `POST /worldview/stream/start` | `event_filters`, `dynamics_interval` 60, `batch_size` 64 | Start the streaming worker (requires a trained GNN) |
 | `worldview.stream.stop` | `POST /worldview/stream/stop` | — | Stop it and save the local checkpoint |
 | `worldview.stream.status` | `GET /worldview/stream/status` | — | Worker state and counters |
@@ -508,8 +510,11 @@ Runtime config (`worldview.config` / `worldview.config_set`, `_WV_CONFIG` at
 > jitter, revival, k-means and auto-label keys). The architecture keys
 > (`latent_dim`, `hidden_dim`, `num_gnn_layers`, `num_concepts`, `vq_decay`,
 > `vq_commitment`, `dyn_dim`, `dyn_heads`, `dyn_layers`, `dyn_ctx`) and
-> `target_ema_decay` are stored but never read: the model is built once at
-> import from the environment, and the EMA decay is fixed at `0.996`. Runtime
+> `target_ema_decay` are never read: the model is built once at import from
+> the environment, and the EMA decay is fixed at `0.996`. `worldview.config_set`
+> therefore refuses them: they are not written to `_WV_CONFIG`, and the
+> response lists them under `rejected` (with the env var to set) plus a
+> `warning`. Runtime
 > config is not persisted. Changing the architecture needs environment
 > variables, a restart and a retrain, and a checkpoint with a different K is
 > refused at load.
@@ -526,7 +531,8 @@ Runtime config (`worldview.config` / `worldview.config_set`, `_WV_CONFIG` at
 3. If `WORLDVIEW_STREAM_AUTOSTART=1` and the GNN is trained, the stream worker
    starts. `worldview.train` also starts it after a successful run.
 4. Retraining replaces `record_concepts` and `transition_counts` with the new
-   graph's; labels are kept.
+   graph's. Labels are kept unless the run trained the codebook, in which case
+   they are cleared and the post-train auto-label relabels up to 50 concepts.
 
 ## 9. Known limitations
 
@@ -538,25 +544,23 @@ Current behaviour that affects anyone consuming Worldview output:
   `:3850`, `:3909`, `:4020`, `:5263`).
 - **First-order prediction.** `predict` and `landscape` condition only on
   `[BOS, c]`, so they behave like a transition table, not a history-aware model.
-- **Synthetic transitions.** Transitions come from random graph walks, plus
-  Chroma-order adjacency after training, plus the stream's self-sampled walks
-  (see [§3.7](#37-health-metrics-and-how-to-read-them)).
-- **Streaming gaps.** Only the first `batch_size` (64) of an event's up to 200
-  record IDs are processed and the event is acknowledged anyway; events without
+- **Synthetic transitions.** Transitions come from random graph walks, not
+  observed record-to-record events (see
+  [§3.7](#37-health-metrics-and-how-to-read-them)).
+- **Streaming gaps.** Events without
   IDs re-read the start of the dataset in insertion order and usually find
   nothing new; changed content of an already-assigned record is never
   re-encoded; `fabric.dataset.created` is never emitted; and events emitted
   before the group exists or trimmed from the stream are not seen.
 - **Anomalies** cover only the last training graph (cached in memory; rebuilt
   from Chroma and Neo4j after a restart). Streamed records are never scored.
-- **Counterfactuals** are unseeded samples, so `divergence_step` mixes the
-  effect of the swap with sampling noise; the pinned prefix repeats `swap_to`.
 - **Rollout members** are the first records assigned to each concept, not the
   ones nearest the query.
 - **Drift** is a ratio test with fixed thresholds and no significance test or
   time window.
-- **Labels** are never invalidated when the codebook is retrained or codes are
-  revived.
+- **Labels after codebook retraining.** Labels are cleared when a run trains
+  the codebook; until auto-label (or `worldview.label_concepts`) runs, concepts
+  are unlabelled, and auto-label covers at most `auto_label_k` (50) concepts.
 - **Corpus.** There is no Worldview-specific include/exclude list; an unscoped
   train uses whatever Chroma returns, including self-generated datasets.
 - **Retrieval binding versus streaming.** Any stream encode or dynamics update
@@ -564,6 +568,17 @@ Current behaviour that affects anyone consuming Worldview output:
   unavailable while streaming runs.
 - **Errors are quiet.** `context.recall` and the researcher log Worldview
   failures at debug level and return no results.
+
+> [!NOTE]
+> Fixed (no longer limitations): the stream worker now encodes every
+> `record_id` of an event before acknowledging it; training no longer adds
+> Chroma-return-order adjacency to `transition_counts`, and stream fine-tunes
+> no longer feed their sampled walks back into it; codebook retraining clears
+> concept labels; `worldview.counterfactual` shares the baseline prefix, takes
+> a `seed` and continues both timelines with the same seed, and no longer
+> repeats `swap_to` in its prefix; `worldview.config_set` rejects
+> architecture keys with a warning; `worldview.summarise` no longer claims to
+> return anomalies; `/worldview/diagnose` exists.
 
 ## 10. Projection-backed migration boundary
 
@@ -772,10 +787,10 @@ invent provenance or drop dangling edges merely to obtain a green report.
 | "No records with embeddings found" | Records lack Chroma vectors: run `worldview.reembed_missing` or `fabric.backfill_vectors` |
 | "Embedding dim mismatch" | `OLLAMA_EMBED_MODEL` differs from the model that filled Chroma |
 | Stream will not start | GNN untrained (`train_steps.gnn == 0`) |
-| New records never appear | They arrived via an event without `record_ids`, or beyond the first 64 IDs; run `worldview.rebuild_index` |
-| `config_set` of `num_concepts` has no effect | Architecture keys are inert; use environment variables and retrain |
+| New records never appear | They arrived via an event without `record_ids` (for example `fabric.upserted` or a vector backfill); run `worldview.rebuild_index` |
+| `config_set` returns `rejected` / `warning` | Architecture keys cannot change at runtime; set the named env var, restart and retrain |
 | Retrieval binding unavailable | Streaming changed the checkpoint; stop the stream and bind again |
-| Vector browser "probe" shows no dimension | It calls `/worldview/diagnose`, which does not exist |
+| Vector browser "probe" shows no dimension | `worldview.diagnose` could not embed with the configured model; the message shows `probe_error` |
 
 ## Related guides
 

@@ -136,7 +136,7 @@ The dashed node has no runtime edges: it is reachable only from tests (§2.4).
 | `vera/fabric/data_fabric.py:2722-2725` | Emits `fabric.ingested` with up to 200 `record_ids` for the stream worker | ✅ Live (feed) |
 | `vera/vera_graph_panel_worldview.js`, `vera/fabric/fabric_panel.html` (WorldView tab), `vera/vera_graph.js` (Concept nodes) | Operator UI: snapshot, query, anomalies, concepts, labelling, training, loss history, sub-views; subscribes to `worldview.progress` | 🖥️ UI only |
 | `vera/widgets/layouts/main.json:2511-2513`, `main-inference.json:1272-1274` | Dashboard widget fed by `worldview.stats` | 🖥️ UI only |
-| `vera/vector browser/vector_browser_panel.html:983, 1191, 1255` | Calls `/worldview/reembed_missing` and `/worldview/diagnose` — **the latter has no route** | 🖥️ UI (one dangling call) |
+| `vera/vector browser/vector_browser_panel.html:983, 1191, 1255` | Calls `/worldview/reembed_missing` and `POST /worldview/diagnose` (`worldview.diagnose`, read-only; the embed-model probe reads `probe_dim`) | 🖥️ UI only |
 | `vera/inventory/discovery_context_baseline.py:176-193`, `vera/inventory/context_capability_probe_review.py` | Inventory and probe metadata naming worldview providers | 📋 Metadata |
 | `vera/fabric/retrieval_comparison.py:20` | `jepa_worldview_evidence` provider kind for offline comparison | 🧪 Offline |
 | `vera/agents`, `vera/markets`, `vera/netmon`, `vera/mesh`, `vera/dream`, `vera/planning`, `vera/execution`, `vera/workers/syslog.py` | — | ❌ No worldview use |
@@ -166,7 +166,7 @@ path through `context.recall`, not by the pinned shadow seam.
 
 ### 2.5 Outputs, events and persistence
 
-- **Capabilities.** 37 registrations, each with a route under `/worldview/*`,
+- **Capabilities.** 38 registrations (including `worldview.diagnose`), each with a route under `/worldview/*`,
   plus `GET /ui/panels/worldview-panel`. The full table is on the
   [Worldview](11-worldview.md) page.
 - **Events.** `worldview.progress` with a `stage` field (`stream_encoded`,
@@ -225,10 +225,11 @@ BLAS thread pools (`OPENBLAS/MKL/OMP_NUM_THREADS`) default to 2, with
 available, otherwise CPU.
 
 > [!WARNING]
-> `worldview.config_set` accepts architecture keys (`latent_dim`, `hidden_dim`,
-> `num_gnn_layers`, `num_concepts`, `vq_*`, `dyn_*`, `target_ema_decay`) but
-> **nothing reads them**: the model is built once at import from the
-> environment, and the target-encoder EMA is fixed at 0.996. Resizing the model
+> The architecture keys (`latent_dim`, `hidden_dim`, `num_gnn_layers`,
+> `num_concepts`, `vq_*`, `dyn_*`, `target_ema_decay`) cannot change at
+> runtime: the model is built once at import from the environment, and the
+> target-encoder EMA is fixed at 0.996. `worldview.config_set` does not store
+> them; it returns them under `rejected` with a `warning`. Resizing the model
 > means changing the environment, restarting and retraining. A checkpoint with a
 > different concept count is refused at load.
 
@@ -280,21 +281,26 @@ account for:
 | Limitation | Where | Effect |
 |---|---|---|
 | Transition counts come only from synthetic random walks | `generate_walks` (`:2333`, cleared at `:2405`) | "Observed" transitions are walk statistics, not record-to-record events |
-| The stream fine-tune adds its own sampled walks back into `transition_counts` | `:5358-5363` | Self-reinforcing training with no new evidence; inflates dynamics step counts |
-| Spurious transitions from Chroma's return order after indexing | `:3652-3657` | Adds arbitrary pairs to the dynamics data |
 | Train/serve skew | index built with `encode_subgraph`; queries, stream and predict use `encode_isolated` | A query vector without edges is compared to vectors computed with their neighbourhoods |
 | `predict` and `landscape` condition on `[BOS, c]` only | `:3909` area | Effectively a first-order transition table |
 | `anomalies` covers only the last training graph | `:4226` | Streamed records are never scored; after a restart each call rebuilds the graph from Chroma and Neo4j |
 | `detect_drift` is a ratio with fixed thresholds (>2.0 or <0.3) | `:4865` | No significance test, no time window |
-| Stream processes only the first 64 of up to 200 ids per event, and acknowledges the event anyway | `:5203` | Large ingests are partially encoded |
 | The id-less fallback reads in Chroma insertion order | `:5210-5216` | Misses new records |
 | Content-changing upserts are not re-encoded | stream worker | Assignments go stale |
 | Consumer group created at `$` on a `maxlen=5000` stream | stream worker | Lag silently drops events |
-| `fabric.backfill` events are not subscribed | stream filters | Backfilled records are never stream-encoded |
-| Concept labels are never invalidated after a retrain | `worldview.label_concepts` | Labels can describe a different cluster than the one they now name |
-| `counterfactual` is unseeded and its pinned prefix repeats `swap_to` | `:3950` area | Divergence includes sampling noise |
-| `worldview.summarise` promises recent anomalies but returns none | summarise cap | Misleading description |
+| Vector backfills are not stream-encoded | stream filters | `fabric.backfill` events carry counts only (no record ids or `dataset_id`), so they are not subscribed; run `worldview.rebuild_index` after a backfill |
 | Training runs inside the orchestrator process on the host CPU | `:3495-3503` | Contends with request handling; contradicts the "no ML runtime on the host" principle stated in `edge/nlp_server.py` |
+
+> [!NOTE]
+> Fixed, and removed from this table: the stream fine-tune no longer adds its
+> sampled walks back into `transition_counts`; training no longer adds pairs
+> from Chroma's return order; the stream worker encodes every `record_id` of an
+> event (in `batch_size` batches) before acknowledging it; a training run that
+> trains the codebook clears concept labels (auto-label then relabels up to
+> 50); `worldview.counterfactual` takes an optional `seed`, shares the
+> baseline's steps before the swap and continues both timelines with the same
+> seed, and no longer repeats `swap_to` in its prefix; `worldview.summarise`
+> no longer promises anomalies.
 
 ---
 
@@ -313,8 +319,8 @@ account for:
    training, stream lag on `worldview_stream`, and checkpoint age. Every
    consumer checks and displays it.
 2. **Fix the correctness defects in §3.3** before trusting any output — above
-   all the self-reinforcing stream loop, the spurious Chroma-order transitions
-   and the train/serve skew.
+   the train/serve skew (the self-reinforcing stream loop and the Chroma-order
+   transitions are fixed).
 3. **Right-size the model.** Roughly K = 64–128 concepts, hidden 256, one GNN
    layer, a held-out split and a records-per-concept floor. Because
    `config_set` cannot resize the model, this is an environment change,
@@ -371,7 +377,6 @@ account for:
 | Collector novelty | `vera/fabric/data_fabric_collectors.py:496, 623, 710` (CVE, arXiv, HN) | concept, drift | Flag records landing in sparse concepts; feed a dream sensor or briefing | Q1 | Novel-topic flags the user opens | Low | P2 |
 | Read-only tools for the ontologist agent | `vera/agents/agents.py:4305` (`domain_caps`) | landscape, concepts, drift | Add `worldview.landscape`, `worldview.concepts`, `worldview.detect_drift` | Q1 | Agent task ratings | Trusting noisy concepts | P2 |
 | World-state features for System 1 **⇄ System 1** | `vera/evolve/delegate_trajectory_core.py` | concept, anomaly | Add a compact concept / anomaly vector to the decision model's input state | Q1 | Calibration with vs without (ablation) | Concept ids change on retrain | P2 |
-| Fix the vector-browser diagnose call | `vera/vector browser/vector_browser_panel.html:1191` | — | Point it at `worldview.stats` or add a diagnose capability | Q0 | The panel probe works | None | P2 |
 | Director/narrator "world state" briefing | `vera/dream/dream_capabilities.py:10924` (`_director_briefing`), `:12344` | concept, drift | A short "what moved in the fabric" block in the briefing | Q1 | Thought quality rating; tokens added | Prompt bloat; stale labels | P3 |
 | Syslog novelty gate **⇄ System 1** | `vera/workers/syslog.py:637-690` (`_run_monitor_check`) | anomaly → yes/no "novel?" | Skip the LLM for error batches that look routine | Q2 + a syslog sub-view | LLM calls avoided vs incidents missed | Suppressing a real incident | P3 |
 | Concept labels as GLiNER label proposals | `vera/fabric/fabric_web_acquisition.py:912, 4849` | concept labels | Offline, human-reviewed proposals only — never automatic | Q1 + stable labels | Entity precision on a fixed sample | Feedback loop | P3 |
@@ -388,8 +393,8 @@ important.** Concretely, in order:
 
 1. Add the health contract and wire it into recall, the research source and the
    dashboard widget, so failures and weak models are visible.
-2. Fix the stream's self-training loop and the spurious transitions; move
-   training to an idle-gated job — which is also the natural shape of
+2. Move training to an idle-gated job (the stream's self-training loop and
+   the spurious transitions are already fixed) — which is also the natural shape of
    "dreaming as consolidation".
 3. Right-size and retrain on a curated corpus with a held-out split.
 4. Run the existing with/without-worldview retrieval benchmark. Only if it shows
@@ -407,7 +412,7 @@ exploration tool and not be promoted into chat or decisions.
 
 | Idea | Why not (now) |
 |---|---|
-| **Planning by rollout or counterfactual** | The dynamics model predicts fabric *topic* concepts from synthetic walks. It has no action conditioning and no plan-step vocabulary, and counterfactual divergence is dominated by sampling noise. Scoring plans with it would be noise presented as foresight. |
+| **Planning by rollout or counterfactual** | The dynamics model predicts fabric *topic* concepts from synthetic walks. It has no action conditioning and no plan-step vocabulary, and even with a shared seed a counterfactual only shows how a synthetic-walk model reacts to a swapped topic. Scoring plans with it would be noise presented as foresight. |
 | **Network and IoT normality on this model** | Network presence and sensor readings are numeric and categorical; netmon keeps them in its own graph. The worldview's input is a text embedding plus graph edges, and pushing numeric rows through the text embedder pollutes the corpus. These need a separate small numeric model. |
 | **"Green but wedged" detection from the fabric model** | The `cap.call` stream is self-telemetry, which must not enter the fabric model's training loop. If pursued, it should be a separate sequence model over capability names and latencies. |
 | **A `sense.*` stream-normalisation family as a worldview dependency** | No `sense.*` capability exists. Design that family first; the worldview should consume its normalised output, not raw streams. |

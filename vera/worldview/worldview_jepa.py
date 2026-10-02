@@ -999,18 +999,30 @@ class WorldView:
     @torch.no_grad()
     def rollout(self, start_concept: int, steps: int = 8,
                 temperature: float = 0.8, top_k: int = 20,
-                pinned: Optional[List[Tuple[int, int]]] = None) -> List[int]:
+                prefix_concepts: Optional[List[int]] = None,
+                seed: Optional[int] = None) -> List[int]:
+        """Sample `steps` concepts after a prefix.
+
+        The prefix is `prefix_concepts` when given (it then replaces
+        `start_concept`), else `[start_concept]`. The returned list starts
+        with the prefix. `seed` makes the sampling reproducible without
+        disturbing the global torch RNG.
+        """
         if not self.ready:
             return []
-        prefix = [TOKEN_BOS, start_concept + NUM_SPECIAL_TOKENS]
-        if pinned:
-            for pos, c in pinned:
-                while len(prefix) <= pos + 2:
-                    prefix.append(c + NUM_SPECIAL_TOKENS)
-                prefix[pos + 2] = c + NUM_SPECIAL_TOKENS
+        concepts = list(prefix_concepts) if prefix_concepts else [start_concept]
+        prefix = [TOKEN_BOS] + [int(c) + NUM_SPECIAL_TOKENS for c in concepts]
         t = torch.tensor(prefix, dtype=torch.long, device=self.device)
-        seq = self.dynamics.rollout(t, steps,
-                                     temperature=temperature, top_k=top_k)
+        if seed is None:
+            seq = self.dynamics.rollout(t, steps,
+                                         temperature=temperature, top_k=top_k)
+        else:
+            cuda_devs = (list(range(torch.cuda.device_count()))
+                         if str(self.device).startswith("cuda") else [])
+            with torch.random.fork_rng(devices=cuda_devs):
+                torch.manual_seed(int(seed))
+                seq = self.dynamics.rollout(t, steps,
+                                             temperature=temperature, top_k=top_k)
         out = []
         for tok in seq.tolist():
             if tok < NUM_SPECIAL_TOKENS:
@@ -2417,6 +2429,17 @@ def generate_walks(graph: Dict, model: WorldView,
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _clear_stale_concept_labels(model) -> int:
+    """Drop every concept label after the codebook has been retrained.
+
+    Returns the number of labels removed. Labels are keyed by code index, and
+    a codebook step can move or re-initialise any code, so none can be trusted.
+    """
+    n = len(getattr(model, "concept_labels", {}) or {})
+    model.concept_labels = {}
+    return n
+
+
 async def _emit(stage, **kw):
     try:
         await emit_event({"type": "worldview.progress", "stage": stage, **kw})
@@ -3524,10 +3547,12 @@ async def cap_worldview_train(
         gc.collect()
         t_stage = time.time()
         loop = asyncio.get_running_loop()
+        cb_steps_done = 0
         for epoch in range(codebook_epochs):
             try:
                 loss = await loop.run_in_executor(
                     None, MODEL.train_codebook_step, g_x, g_s, g_d, g_et)
+                cb_steps_done += 1
                 cb_stats = MODEL.codebook.usage_stats()
                 ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
                 await _emit("codebook_epoch", epoch=epoch + 1, total=codebook_epochs,
@@ -3551,6 +3576,12 @@ async def cap_worldview_train(
                 await _emit("codebook_error", epoch=epoch + 1, error=str(e)[:200],
                              message=f"Codebook epoch {epoch+1} failed: {e}")
                 break
+        if cb_steps_done:
+            # A codebook step moves centroids and revives dead codes, so a
+            # label written for code k no longer describes code k's members.
+            # Drop them all; auto-label after training repopulates up to
+            # auto_label_k (default 50).
+            _clear_stale_concept_labels(MODEL)
         gc.collect()
 
     # Stage 3 — Dynamics (walks + transformer)
@@ -3647,18 +3678,9 @@ async def cap_worldview_train(
             await _emit("indexing_error",
                          message=f"Diagnostic encode raised: {de}")
 
-    # Also build transition counts for dynamics if codebook was trained
-    if indexed > 0 and MODEL.train_steps.get("codebook", 0) > 0:
-        try:
-            concepts = [MODEL.record_concepts.get(rid, -1) for rid in graph["rids"]]
-            concepts = [c for c in concepts if c >= 0]
-            for i in range(len(concepts) - 1):
-                k = (concepts[i], concepts[i + 1])
-                MODEL.transition_counts[k] = MODEL.transition_counts.get(k, 0) + 1
-            log.info("worldview: built %d transition pairs from %d assigned concepts",
-                      len(MODEL.transition_counts), len(concepts))
-        except Exception as e:
-            log.warning("worldview: transition count build failed: %s", e)
+    # No transitions are added here from consecutive graph["rids"]: that order
+    # is Chroma's return order, not a real sequence, so adjacent pairs would be
+    # spurious. transition_counts come from generate_walks over graph edges.
 
     MODEL.save()
     await _persist_to_fabric()
@@ -3940,8 +3962,13 @@ async def cap_worldview_rollout(
     http_method="POST", http_path="/worldview/counterfactual",
     http_tags=["worldview"], memory="off",
     description="Counterfactual: rollout with a concept swap mid-trajectory. "
-                "Input: start_concept (int!), swap_at (int), swap_to (int!), steps. "
-                "Output: {baseline, counterfactual, divergence_step}.",
+                "Input: start_concept (int!), swap_at (int, 0-based index of the "
+                "generated step to replace; trajectory position swap_at+1), "
+                "swap_to (int!), steps, temperature, seed (int, optional). "
+                "Both timelines share the baseline's steps before the swap, and "
+                "their continuations after it use the same seed, so divergence "
+                "reflects the swap rather than sampling noise. "
+                "Output: {baseline, counterfactual, divergence_step, seed}.",
 )
 async def cap_worldview_counterfactual(
     start_concept: int = -1,
@@ -3949,18 +3976,41 @@ async def cap_worldview_counterfactual(
     swap_to:       int = -1,
     steps:         int = 8,
     temperature:   float = 0.6,
+    seed:          Optional[int] = None,
     trace_id=None,
 ) -> Dict:
     if not MODEL.ready:
         return {"error": "WorldView not ready"}
     if start_concept < 0 or swap_to < 0:
         return {"error": "start_concept and swap_to required"}
+    if swap_at < 0 or swap_at >= steps:
+        return {"error": f"swap_at must be in [0, steps) — got {swap_at} with steps={steps}"}
+    if seed is None:
+        seed = random.randrange(2 ** 31)
+    seed = int(seed)
 
-    baseline = MODEL.rollout(start_concept, steps=steps, temperature=temperature)
-    counterfactual = MODEL.rollout(
-        start_concept, steps=steps, temperature=temperature,
-        pinned=[(swap_at, swap_to)],
-    )
+    # Shared history: start + the first `swap_at` generated steps.
+    head = MODEL.rollout(start_concept, steps=swap_at,
+                         temperature=temperature, seed=seed)
+    if len(head) < swap_at + 1:
+        return {"error": "baseline rollout ended (EOS) before the swap point",
+                "baseline_prefix": head, "seed": seed}
+    # Baseline's own concept at the swap point (one sampled step).
+    at_swap = MODEL.rollout(start_concept, steps=1, temperature=temperature,
+                            prefix_concepts=head, seed=seed + 1)
+    rest = steps - swap_at - 1
+    if len(at_swap) > len(head):
+        # Both continuations after the swap point use the same seed, so they
+        # see the same random draws and differ only through the swapped concept.
+        baseline = MODEL.rollout(start_concept, steps=rest,
+                                 temperature=temperature,
+                                 prefix_concepts=at_swap, seed=seed + 2)
+    else:
+        baseline = at_swap          # baseline hit EOS at the swap point
+    counterfactual = MODEL.rollout(start_concept, steps=rest,
+                                   temperature=temperature,
+                                   prefix_concepts=head + [int(swap_to)],
+                                   seed=seed + 2)
 
     members_by_concept = defaultdict(list)
     for rid, c in MODEL.record_concepts.items():
@@ -3987,6 +4037,7 @@ async def cap_worldview_counterfactual(
         "baseline":       _fmt(baseline),
         "counterfactual": _fmt(counterfactual),
         "divergence_step": divergence_step,
+        "seed":           seed,
     }
 
 
@@ -4917,8 +4968,10 @@ async def cap_worldview_detect_drift(
     http_method="POST", http_path="/worldview/summarise",
     http_tags=["worldview", "agent"], memory="off",
     description="Structured summary of worldview state for agents/DAGs. "
-                "Returns model health, top concepts, recent anomalies, "
-                "and streaming worker status in a single call. "
+                "Returns model health, training steps/losses, record and "
+                "concept totals, top concepts, dataset breakdown and "
+                "streaming worker status in a single call. It does not "
+                "score anomalies; use worldview.anomalies for that. "
                 "Input: dataset_id (str, optional). "
                 "Output: comprehensive dict.",
 )
@@ -4998,6 +5051,44 @@ async def cap_worldview_stats(trace_id=None) -> Dict:
     }
 
 
+@capability(
+    "worldview.diagnose",
+    http_method="POST", http_path="/worldview/diagnose",
+    http_tags=["worldview"], memory="off",
+    description="Read-only diagnostic of what WorldView training would see: "
+                "Chroma/SQLite record counts, datasets present, a sample "
+                "embedding's dim, and a hint. With probe=true (default) it "
+                "also embeds one short probe string with the CURRENTLY "
+                "configured embed model and reports its dim. Writes nothing. "
+                "Input: dataset_id (str, optional), probe (bool, default true). "
+                "Output: {probe_dim, probe_model, probe_error?, "
+                "model_embed_dim, chroma_*, sqlite_*, hint, ...}.",
+)
+async def cap_worldview_diagnose(
+    dataset_id: str = "",
+    probe:      bool = True,
+    trace_id=None,
+) -> Dict:
+    diag = await _diagnose_no_records(dataset_id)
+    diag["model_embed_dim"] = MODEL.embed_dim
+    diag["probe_dim"] = None
+    diag["probe_model"] = (getattr(_orch, "OLLAMA_EMBED_MODEL", None)
+                           or os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"))
+    if probe:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                emb, reason, _ = await _embed_direct(
+                    "worldview diagnose probe", diag["probe_model"], client)
+            if emb:
+                diag["probe_dim"] = len(emb)
+            else:
+                diag["probe_error"] = reason or "no embedding returned"
+        except Exception as e:
+            diag["probe_error"] = str(e)[:200]
+    return diag
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # UI PANEL  —  iframe-mounted via the standard register_ui() pattern
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5042,6 +5133,50 @@ _WV_CONFIG: Dict[str, Any] = {
 }
 
 
+# Keys in _WV_CONFIG that describe the model ARCHITECTURE. MODEL is built
+# once at import from the env constants above, and nothing reads these keys
+# from _WV_CONFIG, so config_set refuses them instead of silently storing
+# values that would never apply. Value = env var that does set it (None =
+# hard-coded in WorldView.__init__).
+_WV_ARCH_KEYS: Dict[str, Optional[str]] = {
+    "latent_dim":       "WORLDVIEW_LATENT_DIM",
+    "hidden_dim":       "WORLDVIEW_HIDDEN_DIM",
+    "num_gnn_layers":   "WORLDVIEW_GNN_LAYERS",
+    "num_concepts":     "WORLDVIEW_NUM_CONCEPTS",
+    "vq_decay":         "WORLDVIEW_VQ_DECAY",
+    "vq_commitment":    "WORLDVIEW_VQ_COMMIT",
+    "dyn_dim":          "WORLDVIEW_DYN_DIM",
+    "dyn_heads":        "WORLDVIEW_DYN_HEADS",
+    "dyn_layers":       "WORLDVIEW_DYN_LAYERS",
+    "dyn_ctx":          "WORLDVIEW_DYN_CTX",
+    "target_ema_decay": None,
+}
+
+
+def _split_config_updates(params: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Split supplied (non-None) config params into (applicable, rejected).
+
+    Rejected entries are architecture keys: they need an env change, a
+    restart and a retrain, so they are never written to _WV_CONFIG.
+    """
+    applicable: Dict[str, Any] = {}
+    rejected: List[Dict[str, Any]] = []
+    for key, val in params.items():
+        if val is None:
+            continue
+        if key in _WV_ARCH_KEYS:
+            env = _WV_ARCH_KEYS[key]
+            rejected.append({
+                "key": key, "requested": val,
+                "env": env,
+                "how": (f"set {env}, restart, then retrain" if env else
+                        "hard-coded in WorldView.__init__; not configurable"),
+            })
+        else:
+            applicable[key] = val
+    return applicable, rejected
+
+
 @capability(
     "worldview.config",
     http_method="GET", http_path="/worldview/config",
@@ -5057,12 +5192,16 @@ async def cap_worldview_config(trace_id=None) -> Dict:
     "worldview.config_set",
     http_method="POST", http_path="/worldview/config",
     http_tags=["worldview"], memory="off",
-    description="Update WorldView hyperparameters for the next training run. "
-                "Input: any subset of config keys. Changes that affect model "
-                "architecture (latent_dim, num_concepts, etc.) require a fresh "
-                "training run; optimizer params (lr, batch_size) take effect "
-                "immediately on the next epoch. "
-                "Output: {updated, config}.",
+    description="Update WorldView training hyperparameters. "
+                "Input: any subset of config keys. lr applies to the optimisers "
+                "immediately; the other training keys apply on the next "
+                "training run / stream pass. Architecture keys (latent_dim, "
+                "hidden_dim, num_gnn_layers, num_concepts, vq_decay, "
+                "vq_commitment, dyn_*, target_ema_decay) are NOT applied: the "
+                "model is built from WORLDVIEW_* env vars at import, so they "
+                "are returned under `rejected` with a `warning` (env change + "
+                "restart + retrain needed). "
+                "Output: {updated, config, rejected?, warning?}.",
 )
 async def cap_worldview_config_set(
     latent_dim:         int   = None,
@@ -5119,8 +5258,9 @@ async def cap_worldview_config_set(
         "vicreg_weight": vicreg_weight, "target_ema_decay": target_ema_decay,
         "auto_label": auto_label, "auto_label_k": auto_label_k,
     }
-    for key, val in params.items():
-        if val is not None and key in _WV_CONFIG:
+    applicable, rejected = _split_config_updates(params)
+    for key, val in applicable.items():
+        if key in _WV_CONFIG:
             old = _WV_CONFIG[key]
             _WV_CONFIG[key] = type(old)(val)
             updated.append({"key": key, "old": old, "new": _WV_CONFIG[key]})
@@ -5134,7 +5274,14 @@ async def cap_worldview_config_set(
 
     await _emit("config_updated", updated=updated,
                 message=f"Updated {len(updated)} config params")
-    return {"updated": updated, "config": {**_WV_CONFIG}}
+    out: Dict[str, Any] = {"updated": updated, "config": {**_WV_CONFIG}}
+    if rejected:
+        out["rejected"] = rejected
+        out["warning"] = ("Not applied (architecture keys, never read at "
+                          "runtime): " + ", ".join(r["key"] for r in rejected)
+                          + ". These need an env var change, a restart and "
+                          "a retrain.")
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5166,10 +5313,60 @@ _STREAM_STATS: Dict[str, Any] = {
     "last_error":        "",
     "pending_concepts":  [],      # concepts touched since last dynamics update
     "dynamics_interval": 60,      # seconds between dynamics fine-tune passes
+    # Only fabric.ingested carries record_ids. fabric.upserted and
+    # fabric.pipeline.stage fall back to a latest-by-dataset over-fetch.
+    # fabric.dataset.created is not emitted anywhere today (harmless to keep).
+    # fabric.backfill is deliberately absent: its start/progress/done payloads
+    # carry counts only, no record ids or dataset_id.
     "event_filters":     ["fabric.ingested", "fabric.upserted",
                           "fabric.pipeline.stage", "fabric.dataset.created"],
     "batch_size":        64,      # max records to process per ingestion event
 }
+
+
+def _chunk_ids(ids: List[str], size: int) -> List[List[str]]:
+    """Split ids into consecutive batches of at most `size` (size >= 1)."""
+    size = max(1, int(size or 1))
+    return [list(ids[i:i + size]) for i in range(0, len(ids), size)]
+
+
+def _stream_sample_walks(pending: List[int], all_concepts: List[int],
+                         transition_counts: Dict[Tuple[int, int], int],
+                         walk_len: int, n_walks: int = 0,
+                         rng: Optional[random.Random] = None) -> List[List[int]]:
+    """Sample token walks for the stream dynamics fine-tune.
+
+    Walks start at recently-touched concepts and follow `transition_counts`
+    (weighted), falling back to a random known concept when a concept has no
+    outgoing transitions. Read-only: `transition_counts` is never modified.
+    """
+    rng = rng or random
+    if not pending or not all_concepts:
+        return []
+    out_edges: Dict[int, List[Tuple[int, int]]] = {}
+    for (a, b), n in transition_counts.items():
+        if n > 0:
+            out_edges.setdefault(a, []).append((b, n))
+    walks = []
+    for _ in range(n_walks or min(500, len(pending) * 10)):
+        cur = rng.choice(pending)
+        seq = [cur]
+        for _ in range(walk_len - 1):
+            candidates = out_edges.get(cur)
+            if not candidates:
+                cur = rng.choice(all_concepts)
+            else:
+                r = rng.random() * sum(n for _, n in candidates)
+                cumulative = 0
+                for b, n in candidates:
+                    cumulative += n
+                    if r <= cumulative:
+                        cur = b
+                        break
+            seq.append(cur)
+        if len(seq) >= 2:
+            walks.append([TOKEN_BOS] + [c + NUM_SPECIAL_TOKENS for c in seq])
+    return walks
 
 
 async def _stream_encode_new_records(dataset_id: str, limit: int = 64,
@@ -5315,32 +5512,9 @@ async def _stream_dynamics_update() -> float:
     # this serially and is the only writer of MODEL.transition_counts, so there's
     # no concurrent-mutation risk.
     def _train() -> float:
-        # Build short walks biased towards recently-touched concepts
-        walks = []
-        for _ in range(min(500, len(pending) * 10)):
-            start = random.choice(pending)
-            seq = [start]
-            cur = start
-            for _ in range(_WV_CONFIG["walk_len"] - 1):
-                # Find transitions from cur
-                candidates = [(b, n) for (a, b), n in MODEL.transition_counts.items()
-                              if a == cur and n > 0]
-                if not candidates:
-                    cur = random.choice(all_concepts)     # fall back to random
-                else:
-                    # Weighted sample
-                    total_w = sum(n for _, n in candidates)
-                    r = random.random() * total_w
-                    cumulative = 0
-                    for b, n in candidates:
-                        cumulative += n
-                        if r <= cumulative:
-                            cur = b
-                            break
-                seq.append(cur)
-            if len(seq) >= 2:
-                walks.append([TOKEN_BOS] + [c + NUM_SPECIAL_TOKENS for c in seq])
-
+        walks = _stream_sample_walks(pending, all_concepts,
+                                     MODEL.transition_counts,
+                                     _WV_CONFIG["walk_len"])
         if not walks:
             return 0.0
 
@@ -5355,13 +5529,9 @@ async def _stream_dynamics_update() -> float:
             l = MODEL.train_dynamics_step(batch)
             losses.append(l)
 
-        # Update transition counts with new walks
-        for w in walks:
-            body = [t - NUM_SPECIAL_TOKENS for t in w if t >= NUM_SPECIAL_TOKENS]
-            for i in range(len(body) - 1):
-                k = (body[i], body[i + 1])
-                MODEL.transition_counts[k] = MODEL.transition_counts.get(k, 0) + 1
-
+        # The walks were sampled FROM transition_counts, so they are not new
+        # evidence: adding them back would make the counts reinforce
+        # themselves on every pass. transition_counts is left unchanged.
         return sum(losses) / len(losses) if losses else 0.0
 
     loop = asyncio.get_running_loop()
@@ -5455,9 +5625,17 @@ async def _wv_stream_worker():
                                 # many fabric events don't carry one
                                 record_ids = ev.get("record_ids") or ev.get("ids") or []
                                 batch_limit = _STREAM_STATS.get("batch_size", 64)
-                                n = await _stream_encode_new_records(
-                                    dataset_id, limit=batch_limit,
-                                    record_ids=record_ids)
+                                # Encode EVERY id the event carries, in batches
+                                # of batch_size, before the event is ACKed.
+                                n = 0
+                                if record_ids:
+                                    for chunk in _chunk_ids(list(record_ids), batch_limit):
+                                        n += await _stream_encode_new_records(
+                                            dataset_id, limit=len(chunk),
+                                            record_ids=chunk)
+                                else:
+                                    n = await _stream_encode_new_records(
+                                        dataset_id, limit=batch_limit)
                                 _STREAM_STATS["records_encoded"] += n
                                 _STREAM_STATS["records_indexed"] += n
                                 if n > 0:
@@ -5512,7 +5690,8 @@ async def _wv_stream_worker():
                 "them to concepts, and fine-tunes the dynamics model. "
                 "Input: event_filters (list[str], default ['fabric.ingested']), "
                 "dynamics_interval (int, seconds between dynamics updates, default 60), "
-                "batch_size (int, max records per event, default 64). "
+                "batch_size (int, records encoded per batch; all record_ids in an "
+                "event are processed in batches of this size before ACK, default 64). "
                 "Output: {running, stats}.",
 )
 async def cap_worldview_stream_start(
