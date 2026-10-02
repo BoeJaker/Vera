@@ -1153,16 +1153,18 @@ async def cap_mission_run(mission: str = "", target: str = "sandbox",
                         "empty=all), panels (list of panel ids for SELECTIVE "
                         "re-capture — leaves the rest untouched), settle_ms (extra "
                         "wait per panel, default 1400), full_page, base_url, capture, "
-                        "write_docs. Output: {screenshots, domains, capabilities, ...}.")
+                        "write_docs, seed (bool, default true — false captures the "
+                        "target's own data without writing fixtures to it). "
+                        "Output: {screenshots, domains, capabilities, ...}.")
 async def cap_docs_build(target: str = "sandbox", domains: Optional[List[str]] = None,
                          panels: Optional[List[str]] = None, settle_ms: int = 1400,
                          full_page: bool = False, base_url: str = "",
                          capture: bool = True, write_docs: bool = True,
-                         trace_id=None) -> Dict[str, Any]:
+                         seed: bool = True, trace_id=None) -> Dict[str, Any]:
     params = {"target": target, "domains": domains or [], "panels": panels or [],
               "settle_ms": int(settle_ms), "full_page": bool(full_page),
               "base_url": base_url, "capture": bool(capture),
-              "write_docs": bool(write_docs)}
+              "write_docs": bool(write_docs), "seed": bool(seed)}
     return await run_mission("documentation", params, _mission_ctx())
 
 

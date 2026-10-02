@@ -175,6 +175,10 @@ async def run_documentation_mission(params: Dict[str, Any],
     # Optional selective re-capture: only shoot these panel ids (any domain).
     panel_filter = set(str(x) for x in (params.get("panels") or []))
     full_page = bool(params.get("full_page", False))
+    # seed=False captures the target's own data as-is. Seeds WRITE to the target,
+    # so this is required when the target is prod (or a sandbox that shares prod's
+    # Neo4j/Chroma) and its real data should be shown untouched.
+    do_seed = bool(params.get("seed", True))
 
     docs_dir = os.path.join(repo_root, "documentation")
     assets_dir = os.path.join(docs_dir, "assets")
@@ -219,7 +223,7 @@ async def run_documentation_mission(params: Dict[str, Any],
             shots: List[Dict[str, Any]] = []
 
             # seed
-            seed_name = domain.get("seed")
+            seed_name = domain.get("seed") if do_seed else None
             if do_capture and seed_name:
                 await _emit("seed", f"[{slug}] seeding ({seed_name})")
                 await _seeds.run_seed(seed_name, _make_call_target(base_url))
