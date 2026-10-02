@@ -6306,9 +6306,9 @@ async def _release_fast_forward_isolated(root: str, branch: str, into: str,
 @capability("evolve.pipeline.promote", memory="on",
             http_method="POST", http_path="/evolve/pipeline/promote", http_tags=["evolve"],
             description="Promote a pipeline's change. Variant → set the overlay. Code → "
-                        "first syncs `branch` up to date with `to` (merges `to`'s latest "
-                        "into the branch's own worktree — halts with a conflict report, "
-                        "never auto-resolves, if that doesn't merge cleanly), then MERGEs "
+                        "first runs a merge preflight of `branch` against `to` (no "
+                        "worktree is touched; a conflict holds the pipeline with a "
+                        "conflict report and is never auto-resolved), then MERGEs "
                         "the branch into `to` (default bleeding-edge — the staging trunk; "
                         "2026-08-16) SAFELY: an isolated throwaway worktree when `to` isn't "
                         "checked out, or a guarded in-checkout merge (no branch switch, "

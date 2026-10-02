@@ -3474,8 +3474,13 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     _pin = str((eff_rule or {}).get("pin") or "")
     if _pin.startswith("vllm:") and not instance_id:
         try:
-            from Vera.vera.vllm.vllm_capabilities import (
-                vllm_generate as _vllm_gen, pick_vllm_instance as _vllm_pick)
+            # Use the copy the module loader registered (bare name): a package
+            # import builds a second module whose instances are never polled.
+            _vllm_mod = (sys.modules.get("vllm_capabilities")
+                         or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+            if _vllm_mod is None:
+                raise RuntimeError("vllm module not loaded")
+            _vllm_gen, _vllm_pick = _vllm_mod.vllm_generate, _vllm_mod.pick_vllm_instance
             _vid = _pin.split(":", 1)[1]
             _vid = None if _vid in ("", "*") else _vid
             if _vllm_pick(instance_id=_vid) is None:
@@ -8100,7 +8105,7 @@ async def eval_ontology_decision(detail: bool = False, limit: int = 50,
 @capability(
     "eval.policy.boundary", memory="off", silent=True,
     http_method="GET", http_path="/eval/policy/boundary", http_tags=["eval", "cap"],
-    description="Run the frozen deterministic W1-05 adversarial policy corpus. Covers "
+    description="Run the frozen deterministic adversarial policy corpus. Covers "
                 "prompt injection, alias bypass, callbacks, replayed approvals, secret "
                 "leakage, and confused deputy without invoking capabilities or networks.",
     contract={
@@ -8130,7 +8135,7 @@ async def eval_policy_boundary(detail: bool = False, limit: int = 50, trace_id=N
 @capability(
     "eval.run.telemetry", memory="off", silent=True,
     http_method="GET", http_path="/eval/run/telemetry", http_tags=["eval", "run"],
-    description="Run the frozen deterministic W1-06 portable telemetry corpus. "
+    description="Run the frozen deterministic portable telemetry corpus. "
                 "Covers OTLP shape, lineage, terminal/retry semantics, redaction, "
                 "failure isolation, structural bounds, and default-off behavior "
                 "using injected transports only.",
@@ -10559,7 +10564,7 @@ async def cap_workflow_ir_gaps(workflow: dict, adapter: str = "vera.native_dag",
 
 
 @capability("workflow.durability.fixture", memory="off",
-            description="Return the canonical LIB-15 durability fixture: normalized Workflow "
+            description="Return the canonical workflow durability fixture: normalized Workflow "
                         "IR, crash/recovery scenarios, expected Run events, and stable identity. "
                         "This inspection capability never executes a workflow or effect.",
             contract=_inspection_contract("workflow.durability.fixture", effects=["none"]))
@@ -10569,7 +10574,7 @@ async def cap_workflow_durability_fixture(trace_id=None):
 
 
 @capability("workflow.durability.gaps", memory="off",
-            description="Statically compare LIB-15 with either a named built-in Workflow IR "
+            description="Statically compare the durability fixture with either a named built-in Workflow IR "
                         "adapter or a supplied RuntimeDurabilityProfile. Provide exactly one of "
                         "adapter/profile. No runtime is imported or invoked.",
             contract=_inspection_contract("workflow.durability.analyze", effects=["none"]))
@@ -10591,7 +10596,7 @@ async def cap_workflow_durability_gaps(adapter: str = "", profile: dict = None,
 
 
 @capability("workflow.durability.dbos_mapping", memory="off",
-            description="Return the pinned, static LIB-15 to DBOS mapping manifest and all "
+            description="Return the pinned, static durability-fixture-to-DBOS mapping manifest and all "
                         "blocking semantic gaps. Does not import DBOS, generate runnable code, "
                         "connect to Postgres, or execute workflows/effects.",
             contract=_inspection_contract("workflow.durability.dbos_mapping", effects=["none"]))

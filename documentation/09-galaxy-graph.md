@@ -1,336 +1,444 @@
 # 09 · Galaxy Graph
 
-`vera_graph.js` is the reusable graph visualisation component that powers every node-edge view in Vera: the memory graph, the data fabric topology, the entity graph, the Loom cross-dataset stitch view, the network graph, and the Galaxy panel itself. It's a single web-component-style implementation, exposed on the global as `window.veraUI.Graph`, that handles fetch, layout, render, interaction, and a server-driven action registry — all in one file.
+Vera has one reusable 2D graph component, `vera/vera_graph.js`, published on
+the page as `window.veraUI.Graph`. It handles fetching, layout, canvas
+rendering, interaction, a server-driven node-action registry, live event
+streaming, plug-in **sidebar panels** and plug-in **display modes**. The Data
+Fabric graph views, the Discover crawl view, the entity and Loom views, the
+WorldView latent map and the inline `<vera-graph-embed>` all use it with
+different options.
 
-The Galaxy panel is the full-screen instance of this component, showing the entire knowledge graph across sessions and datasets. Sub-panels (memory graph, fabric panel, etc.) instantiate the same component with different sources.
+The **Galaxy** tab is a separate, full-screen **3D** star map
+(`vera/fabric/memory_map.html`, THREE.js) for exploring the capability estate,
+memory and fabric at scale. Both are covered here.
+
+**Where it lives:** `vera/vera_graph.js` (component), `vera/vera_graph_modes.js`
+(display modes), `vera/vera_graph_panel_*.js` (sidebar companions),
+`vera/vera_graph_panels.py` (serves the companions), `vera/graph_embed_element.js`
+(`<vera-graph-embed>`), `vera/graph/families.js` (unified-graph adapters) and
+`vera/fabric/memory_map.html` (3D Galaxy). **Maturity:** in daily use; the
+display modes and the families adapters are the newest parts.
+
+## Contents
+
+- [1. Components at a glance](#1-components-at-a-glance)
+- [2. Creating a graph](#2-creating-a-graph)
+  - [Options](#options)
+  - [Instance API](#instance-api)
+- [3. Layers and data sources](#3-layers-and-data-sources)
+- [4. Layouts](#4-layouts)
+- [5. Filtering and search](#5-filtering-and-search)
+- [6. The detail drawer](#6-the-detail-drawer)
+- [7. Server-driven node actions](#7-server-driven-node-actions)
+- [8. Live updates](#8-live-updates)
+- [9. Sidebar panels](#9-sidebar-panels)
+- [10. Display modes](#10-display-modes)
+- [11. `<vera-graph-embed>` and graph families](#11-vera-graph-embed-and-graph-families)
+- [12. Rendering, theming and edge classes](#12-rendering-theming-and-edge-classes)
+- [13. Performance](#13-performance)
+- [14. The 3D Galaxy panel](#14-the-3d-galaxy-panel)
+- [15. Routes and capabilities](#15-routes-and-capabilities)
+- [16. Integration patterns](#16-integration-patterns)
+- [17. Troubleshooting](#17-troubleshooting)
+- [See also](#see-also)
 
 ---
 
-## 1. Instantiation
+## 1. Components at a glance
 
-A host panel mounts the component by calling:
-
-```javascript
-window.veraUI.Graph.create(containerElement, {
-  source:       'fabric',            // 'fabric' | 'memory' | 'entity' | 'aux' | 'net'
-  layers:       ['fabric','entity'], // available source pickers
-  initialQuery: { dataset_id: 'research.results' },
-
-  // UI options
-  showLeftPanel: true,
-  showSearch:    true,
-  showRelayout:  true,
-  showFit:       true,
-
-  // Action options
-  actionsEnabled: true,              // enable the server-driven action registry
-  excludeSections: [],               // drawer sections to hide
-
-  // Event hooks
-  eventBus: hostBusSubscribe,        // optional: host-provided event bus
-  onAction: (actionId, node, inst) => false,   // optional: local override
-  onNodeClick: (node) => {...},
-  onEdgeClick: (edge) => {...},
-});
+```mermaid
+flowchart LR
+    host["Host panel\n(fabric_panel.html, discovery, chat…)"] -->|"<script src=/ui/vera-graph.js>"| G["veraUI.Graph.create()"]
+    G -->|loads itself| modes["/ui/vera-graph-modes.js\n(exploded · estate-3d · estate-2d · mermaid)"]
+    host -->|"companion <script>s"| panels["/ui/vera-graph-panel-*.js\nloom · worldview · discover · api · explode · example"]
+    panels -->|registerPanel| G
+    modes -->|registerMode| G
+    G -->|GET| snap["/fabric/graphs/snapshot\n/fabric/entity_graph/snapshot\n/memory/graph/full"]
+    G -->|GET / POST| act["/fabric/graph/node_actions\n/fabric/graph/run_node_action"]
+    G -->|WS| ws["/ws/mcp (subscribe_events)"]
 ```
 
-The component injects its own CSS (deduped by ID), builds a three-pane layout (left controls / canvas / right detail drawer), and connects to backend endpoints.
-
----
-
-## 2. Sources
-
-The `source` option controls which backend endpoint feeds the graph:
-
-| Source | Endpoint | Returns |
+| File | Served at | Role |
 |---|---|---|
-| `fabric` | `GET /fabric/graphs/snapshot?graph=fabric&dataset_id=...` | Datasets, sources, records |
-| `entity` | `GET /fabric/entity_graph/snapshot?dataset_id=...&include_datasets=1` | Entities + their mentions |
-| `aux` | `GET /fabric/aux_graph/snapshot` | Dataset relationships, lineage |
-| `memory` | `GET /memory/session/{nodes,edges}` | Memory records + session chains |
-| `net` | `GET /network/topology` | Live network: hosts, instances, workers |
+| `vera/vera_graph.js` | `/ui/vera-graph.js` | The component (route registered in `vera/ui builder/ui_capabilities.py`) |
+| `vera/vera_graph_modes.js` | `/ui/vera-graph-modes.js` | Display modes; `vera-graph.js` loads it automatically |
+| `vera/vera_graph_panel_loom.js` | `/ui/vera-graph-panel-loom.js` | Loom workbench sidebar |
+| `vera/vera_graph_panel_worldview.js` | `/ui/vera-graph-panel-worldview.js` | WorldView sidebar (training, latent map, concepts) |
+| `vera/vera_graph_panel_discover.js` | `/ui/vera-graph-panel-discover.js` | Discover+ crawl sidebar |
+| `vera/vera_graph_panel_api.js` | `/ui/vera-graph-panel-api.js` | API-browser sidebar |
+| `vera/vera_graph_panel_explode.js` | `/ui/vera-graph-panel-explode.js` | Explode sidebar |
+| `vera/vera_graph_panel_example.js` | `/ui/vera-graph-panel-example.js` | Reference panel |
+| `vera/graph_embed_element.js` | `/ui/vera-graph-embed.js` | `<vera-graph-embed>` chrome-less inline graph |
+| `vera/graph/families.js` | `/ui/graph/families.js` | Pure adapters for the unified graph document |
+| `vera/fabric/memory_map.html` | `/galaxy/panel` | 3D Galaxy tab |
 
-The source picker in the left panel switches between configured layers without reloading the component.
-
----
-
-## 3. Layouts
-
-Five layout modes are supported, switchable from the left panel:
-
-### Default (force-directed)
-
-Naïve force-directed simulation with:
-
-- **Repulsion** between all visible node pairs (O(n²) up to ~225 nodes, then spatial-grid binning kicks in for O(n))
-- **Spring force** along every edge (per-edge spring constants from `edgeStyleFn`)
-- **Gravity** towards the centre (configurable)
-- **Damping** that ramps up over time (frozen after ~280 ticks unless interacted with)
-
-Tunable from the left panel: spread, gravity, repulsion strength.
-
-### Force+Axis
-
-Force-directed with axis attractors. Two axis selectors:
-
-- **X axis**: time / importance / source / category
-- **Y axis**: type / importance / session
-
-Each node is pulled towards `_axVal(node, axis) * spread` while still respecting repulsion. Used when you want temporal or categorical structure without sacrificing visual untangling.
-
-### Timeline
-
-Pure static layout. X = time (with `px/hr` zoom control), Y = lane (one lane per node type, configurable lane height). No physics. Used for tracing the chronological flow of a session.
-
-### Hierarchy
-
-Tree layout. Pick a root type (session / Dataset / message / dag), and the component computes parent-child levels and lays out as a top-down tree. Configurable level gap and node gap. Used for clear parent-of relationships.
-
-### Radial
-
-Concentric rings. Configurable radius. Nodes arrange around the selected (or session) centre node. Used for showing what's directly connected to a focal node.
-
-The mode is switched via the View Mode chips, with per-layout controls revealed below.
-
----
-
-## 4. Filtering
-
-Two chip strips in the left panel:
-
-- **Node Types** — shows every distinct type in the loaded graph, with a count. Clicking a chip toggles visibility.
-- **Edge Types** — shows every relation type. Toggling hides those edges (and breaks visual clutter).
-
-A third strip (Source Types) appears for sources that distinguish them (memory mode does, fabric mode doesn't).
-
-User preferences (which chips are off) persist across reloads via `_userOffTypes`, `_userOffEdges`, `_userOffSources` sets, so deselecting "Hub" edges once keeps them off until explicitly re-enabled.
-
-### Search
-
-The top toolbar has a search input. As you type, nodes whose label matches are highlighted, and the camera centres on them.
-
----
-
-## 5. The detail drawer
-
-Clicking a node opens the right drawer with:
-
-- **Header**: node label, type chip, close button
-- **Built-in actions strip**: pin/unpin, focus, hide, expand neighbours
-- **Server actions section**: dynamically loaded from `GET /fabric/graph/node_actions?node_label=...&node_id=...`
-- **Properties**: every property on the node, rendered as key→value
-- **Edges**: the node's incoming and outgoing edges, clickable to traverse
-- **Expand**: three buttons — Context (semantic neighbours), Traverse (graph walk), Edges (expand current edges into visible nodes)
-- **Cap runner**: ad-hoc capability invocation against the node (e.g. "run fabric.entity_graph.extract on this Dataset")
-
-The drawer can be closed by clicking the × or anywhere outside the node.
-
----
-
-## 6. The server action registry
-
-Every node has a set of context-aware actions defined server-side. When the drawer opens for a node:
-
-1. The component calls `GET /fabric/graph/node_actions?node_label=Dataset&node_id=research.results`.
-2. The server returns a list of actions applicable to this node's label:
-   ```json
-   [
-     {
-       "id":         "extract_entities",
-       "label":      "Extract entities",
-       "icon":       "⬡",
-       "capability": "fabric.entity_graph.extract",
-       "options":    [
-         {"key": "min_mention_count", "type": "integer", "default": 2, "label": "Min mentions"},
-         {"key": "purge_first",       "type": "boolean", "default": false, "label": "Purge existing"}
-       ],
-       "context":    "Walk this dataset's records, extract named entities, write to entity graph",
-       "progress_event": "fabric.entity_graph.progress"
-     },
-     ...
-   ]
-   ```
-3. Each action renders with its options as inline form controls.
-4. Hitting Run posts to `POST /fabric/graph/run_node_action` with `{node_label, node_id, action_id, options}`.
-5. A live output strip opens (collapsible) and subscribes to the action's declared `progress_event` via the shared event bus.
-6. As entities/records/edges are emitted, they're added to the graph live.
-7. On completion, the graph re-fetches its current snapshot so any persisted side-effects show up.
-
-The component ships a `_LOCAL_FALLBACK` action map used when the server registry is unreachable, with common actions for `Dataset`, `Source`, `Entity`, and `FabricRecord`.
-
-The host can override with `onAction: (action_id, node, inst) => false` to suppress the default server roundtrip and handle the action locally.
-
----
-
-## 7. Live updates
-
-The component subscribes to the orchestrator's event stream and reacts to relevant event types. Three subscription paths, tried in order:
-
-1. **`opts.eventBus`** — function passed by the host that takes `(typePrefix, cb)` and returns an unsubscribe function. Used when the host already maintains a WS or SSE bridge.
-2. **Parent harness** — `vera_fabric_event` postMessages from `window.parent` (set up by `vera_panel_bridge.js`).
-3. **Direct WS** — opens its own `/ws/mcp` connection and sends `{action: "subscribe_events"}`.
-
-Events that drive updates:
-
-- `fabric.ingested` — refetch dataset count
-- `fabric.entity_graph.progress` — add new entity nodes / edges to the graph
-- `fabric.web.crawl.page` — add a page node to crawl visualisations
-- `memory.record.created` — append to the memory graph
-- `cap.call` / `cap.ok` — animate the relevant cap node (cluster topology view)
-
----
-
-## 8. Theme integration
-
-The component reads CSS variables from the parent document so it stays in step with the active theme:
+## 2. Creating a graph
 
 ```javascript
-function themeColor(v, fallback) {
-  const s = getComputedStyle(window.parent.document.documentElement).getPropertyValue(v).trim();
-  return s || fallback;
+const graph = window.veraUI.Graph.create(containerEl, {
+  defaultLayer: 'fabric',                 // initial layer (default 'fabric')
+  layerOpts:    { dataset_id: 'research.findings' }, // initial params
+  layers:       ['fabric', 'entity', 'memory', 'net'],
+  showLayerToggle: true,
+  height:       'fill',                   // px number, or 'fill' / '100%'
+  actionsEnabled: true,                   // server node actions (default true)
+  onNodeClick:  (node) => {},
+  onAction:     (actionId, node, inst) => true,   // return false to handle locally
+});
+graph.fetchSnapshot('fabric', { dataset_id: 'research.findings' });
+```
+
+`create()` injects its CSS once, builds a three-pane layout (left controls,
+canvas, right detail drawer), registers the instance so existing and future
+sidebar panels and display modes attach to it, and starts the live-event
+subscription.
+
+### Options
+
+Options read by `createGraph()` (grouped):
+
+| Group | Options |
+|---|---|
+| Data | `apiBase` (default `window._veraBase` or same origin), `defaultLayer`, `layerOpts`, `layers`, `layerMap`, `memoryLayer`, `memoryStore` |
+| Chrome | `height` (default `420`), `showSearch`, `showLegend`, `showLayerToggle`, `showLeftPanel`, `filtersOnly`, `layerUI`, `leftSections`, `drawerSections`, `excludeSections`, `sections`, `sidebar`, `sidebarPanels`, `defaultPanel`, `showRelevance`, `bottomDrawerHeight`, `autoOpenTerminal`, `fullDetailUrl` |
+| Behaviour | `actionsEnabled`, `autoIngestResults`, `subscribeLiveEvents` (default on), `livePrefixes`, `eventBus`, `edgeStyleFn` |
+| Callbacks | `onNodeClick`, `onNodeDblClick`, `onNodeSelect`, `onSelect`, `onNodeDetail`, `onAction`, `onActionDone`, `onActionResults`, `onActivity`, `onExpand`, `onCollapse` |
+
+### Instance API
+
+`create()` returns an instance with: `load({nodes, edges})`, `addNode`,
+`addEdge`, `fetchSnapshot(layer, params, {merge})`, `fetchMemory(mode, params)`,
+`expandNode` / `expandEntities`, `collapseNode`, `expandRecords`, `showDetail`,
+`hideDetail`, `runAction(actionId, node)`, `pulseNode(id)`, `focusNode`,
+`search`, `clear`, `setLayer`, `getNode`, `colorFor`, `applyLayout`,
+`setLatentMap(positions)` / `clearLatentMap()`, layer controls
+(`getLayers`, `setLayerVisible`, `setLayerPhysics`), `wake`, `fit`, `resize`,
+`stop`, `destroy`, `showNodeTable`, `showNodeContent`, `bottomDrawer`, and the
+`container`, `canvas` and `eventBus` handles.
+
+Module-level API on `window.veraUI.Graph`: `create`, `colors`, `nodeColor`,
+`edgeColor`, `isInferredEdge`, `eventBus`, `registerPanel`, `listPanels`,
+`registerMode`, `listModes`.
+
+## 3. Layers and data sources
+
+`fetchSnapshot(layer, params)` routes by layer name:
+
+| Layer | Endpoint | Notes |
+|---|---|---|
+| `memory` | `GET /memory/graph/full?mode=…&limit_nodes=…&limit_edges=…` | Modes include `session` (with `session_id`) and `recent` (`recent_hours`) |
+| `entity` | `GET /fabric/entity_graph/snapshot` | `dataset_id`, `entity_type`, `limit` (default 300), `include_datasets`, `include_records` |
+| anything else | `GET /fabric/graphs/snapshot?graph=<layer>` | `limit` (default 200), `dataset_id`, `label_filter` |
+
+With no `dataset_id` and no `label_filter`, structural defaults keep the first
+view collapsed: `fabric` shows `Dataset,Source,Category,Ontology,Skill,Agent,DAG`
+and `net` shows `NetHost,SshHost,Subnet,NetService,Container,DockerHost`.
+Unscoped fabric views also fetch `/fabric/datasets` to mark datasets that have
+children.
+
+Because every other name goes to `/fabric/graphs/snapshot`, any graph
+registered through `fabric.graphs.register` (for example a code graph) appears
+in the source row: the component lists `/fabric/graphs` and adds a button for
+each custom graph next to Fabric / Memory / Net. `merge: true` adds new nodes
+without disturbing the current layout.
+
+## 4. Layouts
+
+Layout chips in the left panel (`data-layout`):
+
+| Layout | Behaviour | Controls |
+|---|---|---|
+| `default` | Force-directed: grid-binned repulsion, per-edge springs, gravity, decaying damping. After 280 ticks a cooling pass ends; remaining auto-anneal cycles re-energise it (3–8 cycles depending on node count) before it freezes and auto-fits once | Spread, gravity, repulsion; **Re-layout** button |
+| `force-axis` | Nodes bucketed by (X, Y) axis values and laid out in a small grid around each zone; light physics declutters | X: type, cluster, layer, degree, label, time, importance, source, category. Y: cluster, type, layer, degree, importance, session, label. Spread |
+| `timeline` | Static. X = time, Y = one lane per type | Lane height (80), px per hour (60) |
+| `hierarchy` | Static top-down tree from a root type | Root: session, Dataset, message, dag; level gap (130), node gap (60) |
+| `radial` | Static rings around the selected node (or first visible) | Radius (200) |
+| `latent-map` | Static positions supplied by `setLatentMap()`; physics frozen | Set by the WorldView panel |
+
+## 5. Filtering and search
+
+- **Node Types** and **Edge Types** chip strips show every type in the loaded
+  graph with counts; clicking toggles visibility. A filter-mode button switches
+  between *exclude* (hide what you click) and *include* (show only what you
+  click). Choices are held in memory by the graph instance; resetting the
+  filters clears them, and they are not saved across page loads.
+- **Search** has two modes: *List* (result list, zoom to a hit) and
+  *Highlight* (highlight matches plus neighbours to a chosen depth 0–3).
+  **Deep** search also queries the graph database for nodes not loaded in the
+  view; collapsed sub-nodes are always searched.
+
+## 6. The detail drawer
+
+Clicking a node opens the right-hand drawer. Its header carries the label,
+type and buttons that open the node's content or a records/properties table in
+the bottom drawer, or the full untruncated detail (`fullDetailUrl`). Three
+tabs follow:
+
+| Tab | Contents |
+|---|---|
+| **Overview** | Node ID, link (when the node has a URL), expansion controls, properties, and incoming/outgoing connections (click to traverse) |
+| **Actions** | Server-driven actions for the node's label ([§7](#7-server-driven-node-actions)) |
+| **Tools** | A capability runner that lists `/mcp/tools` and runs any capability against the node with editable arguments |
+
+## 7. Server-driven node actions
+
+When the drawer opens it calls
+`GET /fabric/graph/node_actions?node_label=<label>&node_id=<id>`
+(`fabric.graph.node_actions`, registry `_NODE_ACTION_REGISTRY` in
+`vera/fabric/data_fabric.py`). Each action looks like:
+
+```json
+{
+  "id": "extract_entities",
+  "label": "Extract entities",
+  "icon": "◉",
+  "capability": "fabric.entity_graph.extract_v2",
+  "args": {"dataset_id": "$id"},
+  "stream": "fabric.entity_graph.progress",
+  "options": [
+    {"name": "limit", "type": "int", "default": 1000, "label": "Max records"},
+    {"name": "overwrite", "type": "bool", "default": false, "label": "Overwrite prior"}
+  ],
+  "context": "Pulls named entities from records, links each to every record it appears in."
 }
 ```
 
-Standard variables used:
+- Option types: `bool`, `int`, `float`, `select` (with `options`), `string`.
+- `$id` in `args` is replaced with the node ID.
+- `capability: "__local"` means the host handles it (e.g. *Browse records*);
+  `"__dispatch"` runs any capability named in the `capability` option with JSON
+  `extra_args` (the server adds `available_capabilities`).
+- Optional `confirm` text and `danger: true` add a confirmation step.
 
-| Variable | Use |
-|---|---|
-| `--bg0` / `--bg1` / `--bg2` | Backgrounds |
-| `--acc` / `--acc2` / `--acc3` / `--acc4` / `--acc5` | Node type colours |
-| `--text` / `--dim` / `--dim2` | Text colours |
-| `--border` | Borders |
-| `--ok` / `--err` / `--warn` | Status indicators |
-| `--mono` | Monospace font |
+Running an action posts `{node_label, node_id, action_id, options}` to
+`POST /fabric/graph/run_node_action`, opens a collapsible output strip that
+subscribes to the action's `stream` event, adds emitted nodes and edges live,
+and re-fetches the snapshot afterwards — but only when the view came from
+`fetchSnapshot`, so a hand-built view is not replaced. If the registry cannot be
+reached, `_LOCAL_FALLBACK` supplies actions for `Dataset` (browse, extract
+entities, run Loom, AI-analyse links, unified run, run capability, purge entity
+state) and other common labels. `onAction` returning `false` suppresses the
+server round trip.
 
-Theme changes are propagated via the `vera:theme` postMessage; the component reapplies on receive.
+## 8. Live updates
 
----
+The shared event bus (`veraUI.Graph.eventBus()`) is resolved in this order:
 
-## 9. Node rendering
+1. `opts.eventBus(prefix, cb)` supplied by the host;
+2. `vera_fabric_event` messages posted by the parent harness;
+3. its own WebSocket to `/ws/mcp`, sending `{action: "subscribe_events"}`
+   (opened only when something subscribes; up to five reconnects with growing
+   delay).
 
-Each node is drawn as:
+Unless `subscribeLiveEvents: false`, every graph subscribes to these prefixes
+(override with `livePrefixes`): `fabric.web.acquire.progress`,
+`fabric.entity_graph.progress`, `fabric.loom.progress`,
+`fabric.unified_run.progress`, `fabric.record.ingested`. Matching events (for
+example `page_added`, `data_detected` stages) add nodes and edges as long
+operations run, without the host wiring anything.
 
-- A circle (radius scaled by `n.r`, derived from `importance` or other metric)
-- A type-specific colour (from a fixed palette per `n.type`)
-- An outline (heavier when hovered, selected, or highlighted by search)
-- A text label below (clipped to ~24 chars)
-- A small type indicator below the label (zoom-gated)
-- An "expanded" dot in the corner if the node has hidden related nodes
+## 9. Sidebar panels
 
-The render loop uses HTML5 Canvas (not SVG), so it scales smoothly to thousands of nodes. The canvas is auto-sized to its container with `ResizeObserver`.
-
----
-
-## 10. Edge classification
-
-Edges fall into three categories:
-
-- **Structural** — define the primary topology (e.g. `CONTAINS`, `MENTIONED_IN`). Strong spring force; influence layout.
-- **Inferred** — semantic relationships (`SIMILAR_TO`, `CO_OCCURS`). Weak spring; visible but don't distort.
-- **Hub** — connect everything to a hub node (the session in memory mode). Hidden by default — toggling them on creates the "everything points to one node" view useful for session inspection.
-
-Edge styling is per-source: the memory graph uses Bezier curves; the fabric uses straight lines; entity graph uses dashed for inferred and solid for direct.
-
----
-
-## 11. Layered host configuration
-
-A host panel with multiple sources (e.g. the Galaxy panel) passes `layers: ['fabric','memory','entity','net']` to expose a source picker. Switching sources:
-
-1. Clears the current graph state.
-2. Calls the new source's fetch path.
-3. Rebuilds chips, layout controls, and the action registry.
-
-The component maintains independent layout state per source so flipping back to a previous layer preserves the prior layout.
-
----
-
-## 12. The Galaxy panel
-
-`vera/fabric/memory_map.html` (mounted at `/galaxy/panel`, registered with `tab_order=58`) is the dedicated full-screen **3D** instance — a THREE.js star map, distinct from the 2D canvas component described above.
-
-**Default connection.** On boot the panel connects to the Vera capability orchestrator (its own origin — it is served by the orchestrator) via `GET /mcp/tools` and renders the **capability galaxy**: the orchestrator core at the centre, one spiral arm per module, one star per registered capability. Live `cap.call` / `cap.ok` / `cap.err` events from the `/ws/mcp` event stream pulse the star that just ran (red on error). If the orchestrator is unreachable, it falls back to the built-in demo dataset.
-
-Other sources (Neo4j cypher, memory search, data fabric, chat history, Chroma vector space) are loaded from the ⚙ config modal exactly as before.
-
-**3D layouts.** The Clustering panel offers: free layout, by node type, vector semantic, graph community, by data source, spiral (degree), **galaxy (spiral arms)**, **orbit shells** (concentric type spheres), and timeline. The galaxy layout picks its arm grouping automatically — capability module, then data source, then community, then type — whichever yields 2–32 arms.
-
-**Rendering.** All node spheres are drawn through a single `THREE.InstancedMesh` (one draw call regardless of node count) with per-instance colour; edges were already merged into one `LineSegments`. Picking is screen-space projection rather than mesh raycasting, hover work is throttled to 25 Hz, and the pixel ratio is capped at 1.5. This keeps the view at full framerate into the tens of thousands of nodes.
-
-**Spatial streaming.** With a Neo4j-backed graph connected, the SPATIAL toggle streams batches in as you fly (time on X, community on Y, embedding on Z) and now also **unloads** regions the camera has left behind (`unloadRadius`), reloading them when you fly back — the world streams in and out around the camera like game chunks.
-
-**Navigation.** If the galaxy leaves the screen, a cyan edge-of-screen beacon points back at its centroid with the distance; clicking it — or pressing the Home key (`H` by default) — re-frames the graph. The background starfield rides with the camera (fog-exempt), so empty space always keeps a horizon reference.
-
-**Controls.** Every camera and starfighter movement key is remappable from the CONTROLS drawer in the left panel (click a key chip, press the new key; Esc cancels; duplicates within a group show pink). Bindings persist per-browser in `localStorage('gg_keybinds')`.
-
-**Easter egg.** Type `ship` while the canvas has focus. 🚀
-
----
-
-## 13. Performance budgets
-
-Two soft caps keep the physics loop responsive:
-
-- `MG_REPEL_BUDGET_PAIRS = 25000` — max pair-wise repulsion comparisons per frame (√50000 ≈ 225 nodes for full O(n²); above that, spatial grid binning takes over)
-- `MG_GRID_CELL = 320` (px) — spatial grid cell size, slightly larger than `repelDist`
-
-Above ~225 visible nodes, repulsion is restricted to the 3×3 spatial neighbourhood of each node — O(n) per frame instead of O(n²). All visible nodes still get axis attraction and integration on every frame (always cheap, O(n)).
-
-Static views (timeline, hierarchy, radial) skip physics entirely.
-
----
-
-## 14. Integration patterns
-
-A panel that just wants to drop in a graph:
+A companion file calls `veraUI.Graph.registerPanel(def)`; every graph on the
+page — existing or created later — gains a tab in its left rail.
 
 ```javascript
-const container = document.getElementById('my-graph');
-const graph = window.veraUI.Graph.create(container, {
-  source: 'fabric',
-  initialQuery: { dataset_id: 'web.crawl.example_com' },
-  actionsEnabled: true,
+window.veraUI.Graph.registerPanel({
+  id: 'my-panel', title: 'My panel', icon: '◇', order: 50,
+  mount(bodyEl, graph, api) { /* api: activate, isActive, graphContainer, apiBase, eventBus */ },
+  unmount(bodyEl, graph) {},
 });
 ```
 
-A panel that wants to override an action locally:
+| Panel | `id` | `order` | What it does | Backend |
+|---|---|---|---|---|
+| Loom | `loom` | 10 | View controls (entities / stitched / combined), items list, per-dataset pipeline config, entity extraction, Loom stitching, graph extraction, AI link analysis | `/fabric/entity_graph/*`, `/fabric/graphs/snapshot`, `/fabric/graph/query`, `/fabric/datasets/config`, `/fabric/loom/run` |
+| Discover+ | `discover` | 15 | Crawl controls, history grouped by topic, overwrite/expand/enhance | Discovery endpoints ([Data Fabric](./06-data-fabric.md)) |
+| Explode | `explode` | 15 | Structured diagram of one record, a slice, several records or a pasted passage, drawn over the stage | `/nlp/explode/layers`, `/nlp/explode/prose` ([Research §16](./07-research.md#16-explode-and-assess)) |
+| API | `api` | 16 | Browse discovered APIs, enumerate endpoints, map data, set up recurring pulls | `/fabric/api/list`, `/fabric/api/map`, `/fabric/surfaces/*`, `/fabric/sources/*`, `/fabric/browse` |
+| WorldView | `worldview` | 20 | Sub-worldviews, training with stage counters, latent map via `setLatentMap`, concept injection ("connected" or "zone"), anomalies, loss history | `/worldview/*` ([Worldview](./11-worldview.md)) |
+| Example | `example` | 90 | Reference implementation of the contract | — |
+
+`VERA_GRAPH_PANEL_SCRIPTS` in `vera_graph_panels.py` is the standard tag set
+(loom, worldview, discover, api, explode). The fabric panel and the discovery
+page include their own sets.
+
+## 10. Display modes
+
+`vera_graph_modes.js` registers alternative renderings of the **same** nodes
+and edges through `registerMode({id, mount})`; a mode selector on the graph
+switches between them and a click still opens the graph's detail drawer.
+
+| Mode id | Rendering |
+|---|---|
+| `exploded` | `<vera-exploded>` (`/ui/exploded_element.js`): a station per node type, showing what it read and what it made |
+| `estate-3d` | Isometric projection (`/ui/iso.js`, `window.VeraISO`): a plate per group (host, else type), a block per node, height by degree; first 400 nodes |
+| `estate-2d` | The same blocks seen from above |
+| `mermaid` | `<vera-mermaid>` flowchart, one subgraph per type, edges labelled by relation |
+
+## 11. `<vera-graph-embed>` and graph families
+
+`<vera-graph-embed>` is `vera_graph.js` with every piece of chrome switched off
+(no search, legend, left rail, layer switcher or node actions), for chat turns
+and canvas blocks. Attributes: `layer` (default `entity`), `params` (JSON
+passed to `fetchSnapshot`), `limit` (default 60), `height` (default 240),
+`expand`, `full-url`. It emits `vera-graph-node` on click so a host can, for
+example, scroll source code to a symbol.
+
+```html
+<vera-graph-embed layer="entity" limit="60" height="240"></vera-graph-embed>
+```
+
+`vera/graph/families.js` (`window.VeraGraphFamilies`) holds pure adapters that
+map context, memory, DAG runs, the agent loop, plans and the estate into one
+graph document (`toDoc`, `merge`, `counts`, `mix`, `sector`), keeping fields
+such as real-versus-inferred and a non-authoritative flag. The memory graph
+panel and the chat graph column use it; it has no DOM or fetch code and runs
+under Node for tests.
+
+## 12. Rendering, theming and edge classes
+
+- Nodes are drawn on an HTML5 canvas, sized by a `ResizeObserver`. Radius
+  comes from the node (`Dataset` 14, `FabricRecord` 8, `Entity` 6–20 by
+  mention count, others 10). Colour comes from one palette (`COL`) per type —
+  e.g. `Dataset #5a9e8f`, `Entity #c97a5a`, `Concept #d98cff`,
+  `WorldviewPoint #8a7ec0`.
+- Labels are clipped and zoom-gated; hovered, selected and search-matched
+  nodes get heavier outlines.
+- Edges are classed as **structural** (e.g. `CONTAINS`, `MENTIONED_IN`; strong
+  springs), **inferred** (e.g. `SIMILAR_TO`, `CO_OCCURS`; weak springs, drawn
+  lighter — `isInferredEdge()`), or **hub** edges to a session hub, which are
+  hidden by default.
+- Colours come from the host theme's CSS variables (`--bg0/1/2`, `--acc`…`--acc5`,
+  `--text`, `--dim`, `--dim2`, `--border`, `--ok`, `--err`, `--warn`, `--mono`,
+  `--radius`). A `vera:theme` postMessage clears the colour cache and redraws.
+
+## 13. Performance
+
+- **Repulsion** uses a spatial-hash grid with 150 px cells: each node is only
+  compared with nodes in its own and the eight neighbouring cells, so the cost
+  is roughly linear at thousands of nodes. The force `min(60, 1200/d²)` is
+  negligible beyond about 120 px.
+- **Damping** starts at `0.85` and decays with the tick count; the velocity cap
+  shrinks likewise. Layers can have physics switched off (`setLayerPhysics`) so
+  a structural backbone stays pinned while other nodes settle.
+- Static layouts (`timeline`, `hierarchy`, `radial`, `latent-map`) skip
+  physics.
+
+> [!NOTE]
+> The separate **Memory Graph** tab (`vera/fabric/memory_graph_panel.html`,
+> served at `/memgraph/panel`) has its own simulation with
+> `MG_REPEL_BUDGET_PAIRS = 25000` (full O(n²) repulsion up to about 225
+> visible nodes) and `MG_GRID_CELL = 320` px for larger graphs. Those
+> constants are not part of `vera_graph.js`.
+
+## 14. The 3D Galaxy panel
+
+`vera/fabric/memory_map.html` is served at `/galaxy/panel` by
+`vera/fabric/memory.py` and registered as the `memory-galaxy-panel` tab
+("Galaxy", `tab_order=58`).
+
+- **Default view.** On boot it reads `GET /mcp/tools` from its own origin and
+  renders the **capability galaxy**: the orchestrator at the centre, one spiral
+  arm per module, one star per capability. `cap.call` / `cap.ok` / `cap.err`
+  events from `/ws/mcp` pulse the star that ran (red on error). If the
+  orchestrator is unreachable it falls back to a built-in demo dataset.
+- **Other sources** (Neo4j Cypher, memory search, Data Fabric, chat history,
+  Chroma vector space) are chosen in the ⚙ configuration modal.
+- **3D layouts:** free, by node type, vector semantic, graph community, by data
+  source, spiral (degree), galaxy (spiral arms), orbit shells and timeline. The
+  galaxy layout picks its arm grouping automatically — capability module, then
+  data source, then community, then type — whichever yields 2–32 arms.
+- **Rendering:** one `THREE.InstancedMesh` for all node spheres (one draw call)
+  and one merged `LineSegments` for edges; screen-space picking; hover work
+  throttled to 25 Hz; pixel ratio capped at 1.5.
+- **Spatial streaming:** with a Neo4j-backed graph, the SPATIAL toggle streams
+  batches in as you fly (time on X, community on Y, embedding on Z) and unloads
+  regions behind the camera (`unloadRadius`), reloading them on return.
+- **Navigation:** an edge-of-screen beacon points back to the graph centroid;
+  clicking it or pressing Home (`H` by default) re-frames the graph. The
+  starfield moves with the camera so empty space keeps a horizon.
+- **Controls:** every camera and starfighter key is remappable in the CONTROLS
+  drawer; bindings persist in `localStorage('gg_keybinds')`.
+- **Easter egg:** type `ship` while the canvas has focus.
+
+## 15. Routes and capabilities
+
+`vera_graph_panels.py` serves each companion with `Cache-Control: no-cache`
+and registers silent capabilities so the files are discoverable:
+
+| Capability | Route |
+|---|---|
+| `ui.graph_panels.loom_js` | `GET /ui/vera-graph-panel-loom.js` |
+| `ui.graph_panels.example_js` | `GET /ui/vera-graph-panel-example.js` |
+| `ui.graph_panels.worldview_js` | `GET /ui/vera-graph-panel-worldview.js` |
+| `ui.graph_panels.api_js` | `GET /ui/vera-graph-panel-api.js` |
+| `ui.graph_panels.discover_js` | `GET /ui/vera-graph-panel-discover.js` |
+| `ui.graph_panels.explode_js` | `GET /ui/vera-graph-panel-explode.js` |
+| `ui.graph_embed_js` | `GET /ui/vera-graph-embed.js` |
+
+`/ui/vera-graph-modes.js` and `/ui/graph/families.js` are plain routes without
+a capability. Backend capabilities the component relies on:
+`fabric.graph.node_actions`, `fabric.graph.run_node_action`, the
+`/fabric/graphs/snapshot` and `/fabric/entity_graph/snapshot` snapshot
+endpoints, and `/memory/graph/full`.
+
+## 16. Integration patterns
+
+Drop in a graph scoped to one dataset:
+
+```html
+<script src="/ui/vera-graph.js"></script>
+<script src="/ui/vera-graph-panel-loom.js"></script>
+<div id="g" style="height:600px"></div>
+<script>
+  const g = veraUI.Graph.create(document.getElementById('g'), {
+    defaultLayer: 'fabric', height: 'fill', actionsEnabled: true,
+  });
+  g.fetchSnapshot('fabric', { dataset_id: 'web.crawl.example_com' });
+</script>
+```
+
+Handle an action locally:
 
 ```javascript
-const graph = window.veraUI.Graph.create(container, {
-  source: 'fabric',
-  onAction: (id, node, inst) => {
-    if (id === 'browse') {
-      // Open in my own UI instead of the default
-      myPanel.openDataset(node.id);
-      return false;   // suppress default server call
-    }
-    return true;      // let default fire
+veraUI.Graph.create(el, {
+  onAction: (id, node) => {
+    if (id === 'browse') { myPanel.openDataset(node.id); return false; }
+    return true;   // let the server action run
   },
 });
 ```
 
-A panel that wants to feed events from its own WebSocket:
+Feed events from your own socket:
 
 ```javascript
-function busSubscribe(typePrefix, cb) {
-  myWs.on('message', (ev) => {
-    if (ev.type.startsWith(typePrefix)) cb(ev);
-  });
-  return () => { /* unsubscribe */ };
+function busSubscribe(prefix, cb) {
+  const h = (ev) => { if (ev.type.startsWith(prefix)) cb(ev); };
+  mySocket.addListener(h);
+  return () => mySocket.removeListener(h);
 }
-const graph = window.veraUI.Graph.create(container, {
-  source: 'memory',
-  eventBus: busSubscribe,
-});
+veraUI.Graph.create(el, { defaultLayer: 'memory', eventBus: busSubscribe });
 ```
 
----
+## 17. Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| A sidebar panel is missing | The companion `<script>` must load **after** `/ui/vera-graph.js` |
+| Graph replaced by the "oldest 200 nodes" after an action | Only views loaded through `fetchSnapshot` are re-fetched; load hand-built views with `load()` |
+| No live updates | The host blocks `/ws/mcp`, or `subscribeLiveEvents: false`; supply `eventBus` |
+| Custom graph not in the source row | `/fabric/graphs` must list it (`fabric.graphs.register`) |
+| Latent chip does nothing | The WorldView panel calls `setLatentMap`; the model must be trained |
+| Galaxy shows demo data | `/mcp/tools` was unreachable from the panel's origin |
 
 ## See also
 
-- [Memory Graph](./05-memory-graph.md) — the data behind the memory source
-- [Data Fabric](./06-data-fabric.md) — the data behind the fabric / entity / aux sources
-- [Harness UI](./02-harness-ui.md) — how the Galaxy tab is registered
+- [Memory Graph](./05-memory-graph.md) — data behind the `memory` layer
+- [Data Fabric](./06-data-fabric.md) — snapshots, entity graph, Loom, node actions
+- [Research](./07-research.md) — Explode and Assess
+- [Worldview](./11-worldview.md) — the latent map and WorldView panel
+- [Harness UI](./02-harness-ui.md) — how tabs are registered
 
 ## Screenshots
 

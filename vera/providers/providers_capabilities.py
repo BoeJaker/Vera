@@ -481,7 +481,7 @@ async def cap_providers_usage(limit: int = 100, trace_id=None) -> Dict:
     "providers.structured.status", memory="off", silent=True,
     http_method="GET", http_path="/providers/structured/status",
     http_tags=["providers", "structured"],
-    description="Return the offline LIB-04 structured-generation contract and "
+    description="Return the offline structured-generation contract and "
                 "static provider-native, Instructor, and Outlines profiles. "
                 "Does not import optional providers, call a model, or decode tokens.",
 )
@@ -562,7 +562,7 @@ async def cap_structured_retry_plan(
     "providers.document.status", memory="off", silent=True,
     http_method="GET", http_path="/providers/document/status",
     http_tags=["providers", "document"],
-    description="Return the offline LIB-06 portable DocumentParser contract and "
+    description="Return the offline portable DocumentParser contract and "
                 "static Docling profile. Does not import Docling, open a document, "
                 "run OCR, access the network, or execute conversion.",
 )
