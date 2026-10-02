@@ -3708,7 +3708,7 @@ span.vw-sampled{opacity:.85}
     + '.vw-tip small{display:block;margin-top:5px;padding-top:4px;border-top:1px solid var(--bd,rgba(255,255,255,.08));font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-tip a{color:inherit;text-decoration:none}'
     + ':host{position:relative}.vw-as{position:absolute;top:4px;right:4px;z-index:6;opacity:.38;transition:opacity .15s}.vw-as:hover,.vw-as:focus-within,.vw-as.open{opacity:1}:host-context(.dash-grid.editing) .vw-as{display:none}'   /* the owner (2026-09-28): the view-as list appears only when the ⇄ is pressed, never on mouseover. It used to fade in on the widget's hover and sat at opacity 0 the rest of the time - still the topmost thing in the corner, so a click there opened the list unseen. Now the ⇄ is always faintly there and nothing changes on the widget's hover */
     + '.vw-as-b{all:unset;cursor:pointer;width:22px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;font-size:12px;color:var(--b-t2,#8a92a0);background:var(--b-s2,#1f232b);box-shadow:inset 0 0 0 1px var(--b-bd,rgba(255,255,255,.12))}.vw-as-b:hover{color:var(--b-ac,#6ea8d8)}'
-    + '.vw-as-m{position:fixed;z-index:2147483001;min-width:170px;display:flex;flex-direction:column;padding:4px;border-radius:8px;background:var(--b-s1,var(--s1,#15171c));box-shadow:0 10px 30px -10px rgba(0,0,0,.65),inset 0 0 0 1px var(--b-bd,rgba(255,255,255,.12))}'
+    + '.vw-as-m{position:fixed;z-index:2147483001;min-width:170px;display:flex;flex-direction:column;padding:4px;border-radius:8px;background:var(--b-s1,var(--s1,#15171c));box-shadow:0 10px 30px -10px rgba(0,0,0,.65),inset 0 0 0 1px var(--b-bd,rgba(255,255,255,.12))}.vw-as-m[hidden]{display:none}'   /* the owner (2026-10-02, Loop Lab): the list faded but never went, and stayed put while the page scrolled - its display:flex outranked the hidden attribute, so a "closed" list was still laid out at its fixed place, drawn at the ⇄'s idle opacity */
     + '.vw-as-m > small{padding:3px 8px 4px;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--b-t3,#6b7280)}.vw-as-m button{all:unset;cursor:pointer;display:flex;gap:8px;align-items:center;padding:4px 8px;border-radius:5px;font-size:11.5px;color:var(--b-t1,#d8dce4)}'
     + '.vw-as-m button:hover{background:var(--b-s2,#1f232b)}.vw-as-m button.on{color:var(--b-ac,#6ea8d8)}.vw-as-m button i{width:16px;height:14px;display:inline-flex;align-items:center;justify-content:center;font-style:normal;color:var(--b-t2,#8a92a0)}.vw-as-m button i svg{width:14px;height:14px}';
   const TIP_CSS_S = fontScale(TIP_CSS);
@@ -4176,7 +4176,13 @@ span.vw-sampled{opacity:.85}
       box.innerHTML = '<button type="button" class="vw-as-b" aria-label="View this as another form">\u21c4</button><div class="vw-as-m" hidden><small>view as</small>'
         + alts.map((f) => '<button type="button" data-as="' + esc(f) + '" class="' + (f === form ? 'on' : '') + '"><i>' + glyphOf(f, this._data) + '</i>' + esc(f) + (f === canon(form0) ? ' \u00b7 as made' : '') + '</button>').join('') + '</div>';
       const m = box.querySelector('.vw-as-m'), b = box.querySelector('.vw-as-b');
-      const close = () => { m.hidden = true; box.classList.remove('open'); document.removeEventListener('click', close, true); };
+      /* open, the list is pinned to where the ⇄ was; a scroll that moves the ⇄ (capture: any scroller around it), a resize
+         or Escape closes it rather than leave it standing still while the page moves under it. A scroll elsewhere - a live
+         log following its newest line - moves nothing and leaves it open */
+      let at = null;
+      const onKey = (e) => { if (e.key === 'Escape') close(); };
+      const onScroll = () => { const r = b.getBoundingClientRect(); if (!at || Math.abs(r.top - at.top) > 2 || Math.abs(r.left - at.left) > 2) close(); };
+      const close = () => { m.hidden = true; box.classList.remove('open'); document.removeEventListener('click', close, true); document.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', close); document.removeEventListener('keydown', onKey, true); };
       b.addEventListener('click', (ev) => { ev.stopPropagation(); if (!m.hidden) { close(); return; } const r = b.getBoundingClientRect(); m.hidden = false; box.classList.add('open');
         const vw = document.documentElement.clientWidth || window.innerWidth || 1200, vh = document.documentElement.clientHeight || window.innerHeight || 800;
         const mw = m.offsetWidth || 170, mh = m.offsetHeight || 200, want = { x: Math.max(4, Math.min(vw - mw - 4, r.right - mw)), y: (r.bottom + 4 + mh > vh) ? Math.max(4, r.top - mh - 4) : r.bottom + 4 };
@@ -4186,7 +4192,8 @@ span.vw-sampled{opacity:.85}
            widget's body...); then left/top count from that box instead. Measure where it landed and shift by the
            difference, so it sits where it was meant to whatever is around the widget */
         const got = m.getBoundingClientRect(); if (Math.abs(got.left - want.x) > 1 || Math.abs(got.top - want.y) > 1) { m.style.left = (want.x - (got.left - want.x)) + 'px'; m.style.top = (want.y - (got.top - want.y)) + 'px'; }
-        setTimeout(() => document.addEventListener('click', close, true), 0); });
+        at = b.getBoundingClientRect();
+        setTimeout(() => { if (m.hidden) return; document.addEventListener('click', close, true); document.addEventListener('scroll', onScroll, true); window.addEventListener('resize', close); document.addEventListener('keydown', onKey, true); }, 0); });
       m.addEventListener('click', (ev) => { const x = ev.target.closest && ev.target.closest('[data-as]'); if (!x) return; ev.stopPropagation(); const f = x.getAttribute('data-as');
         this._viewAs = f === canon(form0) ? '' : f; try { if (this._viewAs) localStorage.setItem('vera.widget.as.' + key(rec), this._viewAs); else localStorage.removeItem('vera.widget.as.' + key(rec)); } catch (_) {}
         close(); this.render(); this.dispatchEvent(new CustomEvent('widget:view-as', { bubbles: true, composed: true, detail: { record: rec, form: this._viewAs || form0 } })); });

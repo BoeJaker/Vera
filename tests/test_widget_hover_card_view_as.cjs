@@ -16,5 +16,8 @@ t('nothing about view-as changes on the widget\'s hover: no reveal on :host(:hov
 t('the ⇄ carries no title, so the hover card never pops a card over it', !/class="vw-as-b" title=/.test(WE) && /class="vw-as-b" aria-label="View this as another form"/.test(WE));
 t('the list opens only on the ⇄ press', /b\.addEventListener\('click', \(ev\) => \{ ev\.stopPropagation\(\); if \(!m\.hidden\)/.test(WE) && !/b\.addEventListener\('(pointerenter|mouseenter|mouseover|pointerover)'/.test(WE));
 t('the list stays on screen: measured without the scrollbar, and shifted by where it actually landed (a containing block)', /const vw = document\.documentElement\.clientWidth \|\| window\.innerWidth/.test(WE) && /const got = m\.getBoundingClientRect\(\); if \(Math\.abs\(got\.left - want\.x\) > 1/.test(WE));
+// 2026-10-02 (owner, Loop Lab): "the ⇄ modals ... fade but dont dissapear and stay in place as the rest of the page scrolls"
+t('a closed list is gone: its display:flex does not outrank hidden', /\.vw-as-m\[hidden\]\{display:none\}/.test(WE));
+t('open, a scroll that moves the ⇄, a resize or Escape closes it; closing removes every listener', /document\.addEventListener\('scroll', onScroll, true\); window\.addEventListener\('resize', close\); document\.addEventListener\('keydown', onKey, true\);/.test(WE) && /document\.removeEventListener\('scroll', onScroll, true\); window\.removeEventListener\('resize', close\); document\.removeEventListener\('keydown', onKey, true\);/.test(WE) && /Math\.abs\(r\.top - at\.top\) > 2/.test(WE));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
