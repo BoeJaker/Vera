@@ -2465,6 +2465,14 @@ def _inflight_sweep() -> None:
         log.debug("inflight sweep: %s", e)
 
 
+# The person's "keep this off the GPU" for the request in hand (owner, 2026-10-02: "i even tried turning 2 gpu toggles
+# off in the chat settings and it still went to the gpu"). prefer_gpu=False only ever meant "do not PREFER it": the
+# least-busy pick, or a routing rule's pin, still landed on the GPU node. Set by the chat and the loop when the GPU
+# toggle is unticked; every generation made for that request - the reply, a two-tier pass, the opener, the loop's
+# roles, the caps they call - leaves the GPU nodes out while a CPU node is online. An instance the caller pins still
+# wins. A contextvar: it follows the request into the tasks it starts and never reaches another request.
+NO_GPU: "contextvars.ContextVar[bool]" = contextvars.ContextVar("vera_no_gpu", default=False)
+
 def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
                   model: Optional[str] = None, job_type: Optional[str] = None,
                   rule_override: Optional[dict] = None,
@@ -2501,6 +2509,13 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
     if instance_id and instance_id in online:
         _note(f"caller pinned instance '{instance_id}'")
         return _out(instance_id)
+    if NO_GPU.get():
+        _nong = {iid: i for iid, i in online.items() if not i.get("has_gpu")}
+        if _nong:
+            online = _nong; prefer_gpu = False
+            _note("GPU off for this request: GPU nodes excluded")
+        else:
+            _note("GPU off for this request, but no CPU node is online: the GPU serves it")
 
     # ── Routing rule: caller-supplied override (per-cap rule), else the active
     #    profile's job-type rule, else the built-in default. ──────────────────

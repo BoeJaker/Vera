@@ -5547,6 +5547,16 @@ IMPORTANT:
     const manual=document.getElementById('cfgModel')?.value||'';if(manual)return manual;
     const name=document.getElementById('agentBarSel')?.value||'';const a=AGENTS.find(x=>x.name===name);return a?.model||'';
   }
+  /* WHERE A TURN RUNS, for every request the turn makes (owner, 2026-10-02: "i set the model and instance using the
+     dropdowns and it still went to the gpu node ... i even tried turning 2 gpu toggles off"). The reply took the config's
+     instance, but the continuation after a capability and a stepwise step sent none, and every path sent the agent's
+     prefer_gpu OR'd with the toggle - so unticking it changed nothing. The toggle is set from the agent when the agent
+     is chosen, so what it shows now is the choice: ticked prefers the GPU, unticked keeps the turn OFF it (no_gpu). */
+  function _gpuOn(a){ const g=document.getElementById('cfgGpu'); return g?!!g.checked:!!(a&&a.prefer_gpu); }
+  function _routeFields(a){
+    const on=_gpuOn(a);
+    return { model_override:effectiveModel(), instance_id:document.getElementById('cfgInst')?.value||'', prefer_gpu:on, no_gpu:!on };
+  }
 
   /* ── Markdown ── */
   /* Markdown renderer with code-fence enrichment.
@@ -10800,7 +10810,7 @@ Your task: decide what to do next to advance toward the goal.
       try{
         const resp=await fetch(BASE+'/agents/chat/stream',{
           method:'POST',headers:{'Content-Type':'application/json'},signal:abort.signal,
-          body:JSON.stringify({agent_name:agentName,message:stepPrompt,history:[],session_id:SID,model_override:effectiveModel(),prefer_gpu:!!(a?.prefer_gpu),think:false,tts:false})
+          body:JSON.stringify({agent_name:agentName,message:stepPrompt,history:[],session_id:SID,..._routeFields(a),think:false,tts:false})
         });
         if(!resp.ok)break;
         const reader=resp.body.getReader();const dec=new TextDecoder();let buf='';
@@ -11620,7 +11630,7 @@ Your task: decide what to do next to advance toward the goal.
           history:JSON.stringify(HISTORY.slice(-20)),
           session_id:SID,model_override:modelOverride,
           instance_id:document.getElementById('cfgInst')?.value||'',
-          prefer_gpu:!!(document.getElementById('cfgGpu')?.checked||(a?.prefer_gpu)),
+          prefer_gpu:_gpuOn(a), no_gpu:!_gpuOn(a),
           think:!!(document.getElementById('cfgThink')?.checked||(a?.think)),
           tts:useTts,
           output_format:outFmt,  // shared format profile (vera.output_formats)
@@ -12196,9 +12206,11 @@ Your task: decide what to do next to advance toward the goal.
              || effectiveModel()
              || a?.model || '',
       instance_id: document.getElementById('loopInstanceOverride')?.value?.trim()
+                   || document.getElementById('cfgInst')?.value
                    || a?.instance_id || '',
-      prefer_gpu: document.getElementById('loopPreferGpu')?.checked!==false
-                  && a?.prefer_gpu!==false,
+      // the loop pane's GPU toggle AND the chat's: either one unticked keeps the run off the GPU
+      prefer_gpu: document.getElementById('loopPreferGpu')?.checked!==false && _gpuOn(a),
+      no_gpu: !(document.getElementById('loopPreferGpu')?.checked!==false && _gpuOn(a)),
       attach_skills: (a?.skill_ids||[]).join(','),
       attach_ontologies: (a?.ontology_ids||[]).join(','),
       session_id: SID||'',
@@ -12775,7 +12787,7 @@ Your task: decide what to do next to advance toward the goal.
     let txt='';
     try{
       const resp=await fetch(BASE+'/agents/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({agent_name:agentName,message:prompt,history:JSON.stringify(HISTORY.slice(-6)),session_id:SID,model_override:effectiveModel(),prefer_gpu:!!(a?.prefer_gpu),think:false,tts:useTts})
+        body:JSON.stringify({agent_name:agentName,message:prompt,history:JSON.stringify(HISTORY.slice(-6)),session_id:SID,..._routeFields(a),think:false,tts:useTts})
       });
       if(!resp.ok)return;
       const reader=resp.body.getReader();const dec=new TextDecoder();let buf='';
