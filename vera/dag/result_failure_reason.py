@@ -43,8 +43,8 @@ from typing import Any, Dict
 
 #: Checked in order. Earlier fields are more specific statements of the error;
 #: later ones are progressively more general places a cause might be recorded.
-BODY_FIELDS = ("stderr", "error", "stdout", "body", "text", "message",
-               "reason", "detail")
+BODY_FIELDS = ("stderr", "err", "error", "stdout", "out", "body", "text",
+               "message", "reason", "detail")
 
 #: Only consulted when every BODY_FIELD is empty.
 NARRATIVE_FIELDS = ("summary", "note")

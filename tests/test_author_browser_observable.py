@@ -57,6 +57,12 @@ def _author_prompt_source() -> str:
     start = body.index("FINISH the behaviour")
     end = body.index("This call authors EXACTLY ONE file", start)
     seg = body[start:end]
+    # The browser rules are sent for WEB files only (census 2026-10-02: given to
+    # Python too, the "call render() at the end" rule put a module-level call in
+    # stats.py). For a web file the prompt is this section + that constant.
+    cstart = body.index("_CODE_AUTHOR_BROWSER_RULES = (")
+    cend = body.index("_CODE_AUTHOR_PY_MODULE_RULE = (", cstart)
+    seg = seg + body[cstart:cend]
     # Join adjacent string literals so this reads the PROMPT the model gets, not
     # the source layout. Without it a phrase that happens to wrap across two
     # source lines is invisible to a substring check - which is a property of
@@ -127,3 +133,14 @@ def test_the_rule_says_what_to_DO_not_only_what_to_avoid():
     src = _author_prompt_source()
     assert "Call the render/update function once at the end" in src
     assert "set the name ON THE SAME LINES you build the element" in src
+
+
+def test_the_browser_rules_are_sent_for_web_files_only():
+    """Sent to every language they were obeyed in Python - a module-level render()
+    in stats.py crashed the tests that imported it (census 2026-10-02)."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(here, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8") as fh:
+        body = fh.read()
+    assert "_CODE_AUTHOR_BROWSER_RULES if lang in _CODE_AUTHOR_WEB_LANGS" in body
+    langs = body[body.index("_CODE_AUTHOR_WEB_LANGS = frozenset("):][:300]
+    assert '"html"' in langs and '"javascript"' in langs and '"python"' not in langs
