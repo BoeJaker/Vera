@@ -9030,11 +9030,19 @@ async def obs_stream_history(name: str = "", limit: int = 50, trace_id=None):
 
 @capability("obs.redis", memory="off", silent=True,
             http_method="GET", http_path="/redis/inspect", http_tags=["obs"],
-            description="Redis server info and vera:* stream key statistics.")
-async def obs_redis(trace_id=None):
+            description="Redis server info and vera:* stream key statistics. keys (bool=true): "
+                        "false answers the server figures alone (clients, memory, uptime) - the "
+                        "key statistics are KEYS plus a TYPE per key, ~8 s on prod (2026-10-02), "
+                        "which a health tile does not need.")
+async def obs_redis(keys: bool = True, trace_id=None):
     if not REDIS: return {"error":"Redis not connected"}
     try:
-        info=await REDIS.info(); keys=await REDIS.keys("vera:*"); stats={}
+        info=await REDIS.info()
+        if not keys:
+            return {"connected_clients":info.get("connected_clients"),
+                    "used_memory_human":info.get("used_memory_human"),
+                    "uptime_days":info.get("uptime_in_days"),"keys":None}
+        keys=await REDIS.keys("vera:*"); stats={}
         for k in keys:
             ks=k.decode() if isinstance(k,bytes) else k
             t=(await REDIS.type(k)).decode()
