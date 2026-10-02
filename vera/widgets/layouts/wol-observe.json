@@ -869,6 +869,9 @@
        "memory": "used_memory_human",
        "up days": "uptime_days"
       }
+     },
+     "args": {
+      "keys": false
      }
     },
     "open": "estate/ops",
