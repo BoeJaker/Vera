@@ -25829,6 +25829,12 @@ async def cap_dag_agent_loop_v7(goal: str, **kwargs):
     if not v6 or not v6.get("func"):
         return {"error": "dag.agent_loop_v6 not registered — v7 delegates to it"}
     kwargs.setdefault("enable_tiering", True)
+    # V7's default planning style (user, 2026-10-02): stepwise-reviewed - see
+    # planner_styles.V7_DEFAULT_LOOP_STYLE. An explicit style (including 'auto')
+    # is always honoured; only an absent/empty one takes the default.
+    if not str(kwargs.get("plan_style") or "").strip():
+        kwargs["plan_style"] = (getattr(_plan_styles, "V7_DEFAULT_LOOP_STYLE", "")
+                                if _plan_styles is not None else "") or "stepwise-reviewed"
     kwargs.setdefault("enable_step_finalize", True)
     # v7 default failure recovery is 'extra_step' (continue-from-partial-output) —
     # cheaper and less prone to wandering than branching. A caller may still pass
@@ -26083,7 +26089,12 @@ async def workshop_agent_loop_stream(request: Request):
                                      "extra_step" if _v7_default else "") or "").strip().lower()
     v6_enable_tiering    = bool(body.get("enable_tiering", _v7_default))
     v6_plan_tier         = (body.get("plan_tier", "auto") or "auto").strip().lower()
-    v6_plan_style        = (body.get("plan_style", "auto") or "auto").strip().lower()
+    # v7's default style is stepwise-reviewed (planner_styles.V7_DEFAULT_LOOP_STYLE);
+    # v6 keeps auto. An explicit style in the body always wins.
+    _style_default = ((getattr(_plan_styles, "V7_DEFAULT_LOOP_STYLE", "")
+                       if _plan_styles is not None else "") or "stepwise-reviewed") \
+        if _v7_default else "auto"
+    v6_plan_style        = (body.get("plan_style") or _style_default).strip().lower()
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
     v6_intent_core       = (body.get("intent_core", "off") or "off").strip().lower()

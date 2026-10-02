@@ -526,8 +526,25 @@ LOOP_STYLES: Dict[str, Dict[str, Any]] = {
                           "run_planner": False, "master_plan": False, "recon": False,
                           "shape_guards": False, "lens_brief": False,
                           "stepwise_controller": True, "step_critic": True},
+    # BROAD-STEPWISE-REVIEWED (user, 2026-10-02: "possibly add a broad-stepwise-
+    # reviewed too"): broad-stepwise's work-streams, each grown step by step, plus
+    # stepwise-reviewed's CPU critic on every finished step. Broad-stepwise has
+    # the weakest census quality of the stepwise family (0.947, 8.3/11 clean) and
+    # stepwise-reviewed the best (1.000, 11/11 on both days) - this measures
+    # whether the critic carries broad's spread without its misses.
+    "broad-stepwise-reviewed": {"label": "Broad-stepwise-reviewed (work-streams, step by step, CPU critic)",
+                                "run_planner": False, "master_plan": False, "recon": False,
+                                "shape_guards": False, "lens_brief": False,
+                                "stepwise_controller": True, "broad": True, "stream_steps": 1,
+                                "step_critic": True},
 }
 DEFAULT_LOOP_STYLE = "auto"
+#: The style v7 runs when the caller names none (user, 2026-10-02). Census
+#: 27 Sep - 2 Oct over the 11 achievable default goals: stepwise-reviewed 1.000
+#: mean quality, 11/11 clean on both of its days, fastest (4878 s/run); auto
+#: 0.975, 10/11 clean, 6537 s/run. `auto` stays a style you can ask for (and the
+#: fallback for an unknown name), and the census keeps measuring it.
+V7_DEFAULT_LOOP_STYLE = "stepwise-reviewed"
 
 
 def loop_style_ids() -> List[str]:
