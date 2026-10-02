@@ -387,7 +387,7 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
       <button type="button" class="nav-btn active" data-pane="overview" data-view="estate" title="Overview" onclick="P.show('overview',this)"><span class="gl">▦</span>Overview</button>
       <button type="button" class="nav-btn" data-pane="activity" data-view="estate" data-label="Activity" title="Everything the nodes are doing: running now, every call (prod, sandboxes, external) with prompt, response and stats" onclick="P.show('activity',this)"><span class="gl">↯</span>Activity</button>
       <button type="button" class="nav-btn" data-pane="estate" data-view="estate" title="Map" onclick="P.show('estate',this)"><span class="gl">⬡</span>Map</button>
-      <button type="button" class="nav-btn" data-pane="observe" data-view="estate" title="Observe" onclick="P.show('observe',this)"><span class="gl">◎</span>Observe</button>
+      <button type="button" class="nav-btn" data-pane="observe" data-view="estate" title="Health - Vera's own health" onclick="P.show('observe',this)"><span class="gl">◎</span>Health</button>
       <button type="button" class="nav-btn" data-pane="ops" data-view="estate" title="Live ops" onclick="P.show('ops',this)"><span class="gl">✦</span>Live ops</button>
       <div class="nav-grp" data-view="estate">Machines</div>
       <button type="button" class="nav-btn" data-pane="machines" data-view="estate" title="All" onclick="P.show('machines',this)"><span class="gl">▤</span>All</button>
@@ -1209,10 +1209,10 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
     <div class="pane" id="pane-observe" style="padding:0;overflow:hidden">
       <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
       <div class="pane-tb" style="flex-shrink:0;padding:12px 12px 0;margin-bottom:8px">
-        <span class="pane-tb-title" style="color:var(--acc4)">OBSERVE</span>
+        <span class="pane-tb-title" style="color:var(--acc4)">HEALTH</span>
         <span class="tb-sep"></span>
         <div style="display:flex;gap:2px">
-          <span class="j-tab active" id="obss-events" onclick="P.obsSub('events')" data-vera-sub="events" style="padding:3px 9px;font-size:9px">Events</span>
+          <span class="j-tab active" id="obss-events" onclick="P.obsSub('events')" data-vera-sub="events" style="padding:3px 9px;font-size:9px">Overview</span>
           <span class="j-tab" id="obss-perf" onclick="P.obsSub('perf')" data-vera-sub="perf" style="padding:3px 9px;font-size:9px;color:#e6bd66">⚡ Perf</span>
         </div>
         <span class="tb-sep" data-obs-events></span>
@@ -7590,10 +7590,10 @@ async function ndRun(){
   const body=_ndProvArgs();
   if(!body.components.length){ $('nd-prov-out').textContent='Pick at least one component.'; return; }
   const btn=$('nd-run-btn'); btn.disabled=true;
-  $('nd-prov-out').textContent='Provisioning… (installs can take several minutes — progress also streams to Observe)';
+  $('nd-prov-out').textContent='Provisioning… (installs can take several minutes — progress also streams to Health)';
   const r=await api('/nodes/provision','POST',body);
   btn.disabled=false;
-  if(!r){ $('nd-prov-out').textContent='No response (still running server-side — check Observe).'; return; }
+  if(!r){ $('nd-prov-out').textContent='No response (still running server-side — check Health).'; return; }
   if(r.error){ $('nd-prov-out').textContent='Failed: '+r.error; return; }
   const lines=(r.results||[]).map(x=>(x.ok?'✓ ':(x.skipped?'✗ (skipped) ':'✗ '))+x.component+' ['+(x.backend||'-')+']'
     +(x.error?'  — '+x.error:'')
