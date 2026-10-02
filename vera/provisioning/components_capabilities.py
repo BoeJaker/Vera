@@ -162,6 +162,34 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                 "rembg, upscale). Every node runs it; models load from the shared store, a "
                 "CPU node runs them on CPU, and routing stays GPU-first.",
     },
+    "node_agent": {
+        # The node agent, in the layout every node already runs it in (see
+        # edge/vera-node-agent.service): the media server's install dir and ./env,
+        # its own unit. It was installed by hand and nothing redeployed it - on
+        # 2026-10-02 the nodes still ran the 2026-09-16 copy, so /node/status had
+        # no `gpus` and the stuck-runner core was weeks behind.
+        # No env_file: /etc/default/vera-node-agent holds the node's own
+        # VERA_NODE_TOKEN, and a deploy must never write over it.
+        "label": "Node agent (monitor + control)", "port": 8770, "python": True,
+        "install_dir": "/home/Servers/StableDiffustionWhisper",
+        "venv": "env",
+        "files": [("edge/vera_node_agent.py", "vera_node_agent.py"),
+                  # imported by the agent - the two always ship together
+                  ("edge/node_runner_core.py", "node_runner_core.py")],
+        "unit_file": ("edge/vera-node-agent.service", "vera-node-agent.service"),
+        "service": "vera-node-agent",
+        # already in ./env on every node (the media server's venv); a fresh node
+        # gets them, an existing one is left as it is (no -U)
+        "pip": ["fastapi", "uvicorn", "pydantic"],
+        "health": "/node/status",
+        # it reads /proc and answers within a second, or it is broken
+        "start_timeout": 60,
+        "log": "/var/log/vera_node_agent.log",
+        "sync": True, "systemd": True,
+        "desc": "Vera's monitor and control plane on a compute node: cores, load, memory, "
+                "every GPU, and the runners - which are stuck, and stopping one (token-"
+                "gated). Every node runs it on :8770.",
+    },
     "onnx_runtime": {
         # ⚠ 8772, NOT 8770. The node agent (edge/vera_node_agent.py) listens on
         # 8770 on EVERY node, so this component declared a port it could never
@@ -470,7 +498,7 @@ async def cap_components(trace_id=None) -> Dict:
     redact_result=True,
     description="Push a bundled component's file(s) to a stored host (into "
                 "~/.vera/edge) and optionally install deps + launch it. Inputs: "
-                "host_id (str!), component (gpu_inference|onnx_runtime|nlp_server|"
+                "host_id (str!), component (gpu_inference|node_agent|onnx_runtime|nlp_server|"
                 "mesh_gateway), port (int — override), install_deps (bool=false), "
                 "launch (bool=true), systemd (bool=false — install as a service, "
                 "needs sudo), sudo (bool=true), vera_url (str — required for "
@@ -690,17 +718,22 @@ async def _launch_layout(host_id: str, rec: Dict, comp: Dict, port: int, has_gpu
     restart it, and wait for its health endpoint - a model load can take
     minutes, and "the unit started" is not "the server serves"."""
     s = _sudo_for(rec, sudo)
-    env_path = comp["env_file"]
-    profile = media_env_profile(has_gpu, port=port, app_dir=install_dir)
     unit_src, unit_name = comp["unit_file"]
     unit = _read_local(unit_src)
     if unit is None:
         return {"ok": False, "error": f"unit file missing in repo: {unit_src}"}
     svc = comp.get("service") or unit_name.rsplit(".", 1)[0]
-    cmd = " && ".join([
-        f"{{ [ -f {env_path} ] && [ ! -f {env_path}.pre-vera ] && {s}cp {env_path} {env_path}.pre-vera || true; }}",
-        _push_cmd_as(profile.encode("utf-8"), f"{env_path}.new", s),
-        f"{s}mv {env_path}.new {env_path}",
+    # A profile only for a component that declares one (the media server). The
+    # node agent's env file is the node's own - its token - and is never written.
+    env_steps: List[str] = []
+    if comp.get("env_file"):
+        env_path = comp["env_file"]
+        profile = media_env_profile(has_gpu, port=port, app_dir=install_dir)
+        env_steps = [
+            f"{{ [ -f {env_path} ] && [ ! -f {env_path}.pre-vera ] && {s}cp {env_path} {env_path}.pre-vera || true; }}",
+            _push_cmd_as(profile.encode("utf-8"), f"{env_path}.new", s),
+            f"{s}mv {env_path}.new {env_path}"]
+    cmd = " && ".join(env_steps + [
         _push_cmd_as(unit, f"/etc/systemd/system/{unit_name}", s),
         f"{s}systemctl daemon-reload", f"{s}systemctl enable {svc}",
         f"{s}systemctl restart {svc}", f'echo "VERA_LAUNCHED service={svc}"'])
@@ -721,7 +754,7 @@ async def _launch_layout(host_id: str, rec: Dict, comp: Dict, port: int, has_gpu
         if not line.startswith("VERA_HEALTH "):
             return {"ok": False, "log": log_tail,
                     "error": f"{svc} did not answer {comp['health']} within {deadline}s "
-                             f"(see /var/log/gpu_inference.log on the node)"}
+                             f"(see {comp.get('log') or '/var/log/gpu_inference.log'} on the node)"}
         try:
             health = json.loads(line[len("VERA_HEALTH "):])
         except ValueError:
@@ -1278,7 +1311,7 @@ async def _ollama_node_hosts() -> List[Dict[str, str]]:
     description="Bring every node that runs a component onto the version this host would "
                 "deploy (see provision.component.version) - 'update all nodes to the same "
                 "version'. Only components every node runs the same way are syncable "
-                "(nlp_server, model_builder). Per node: already current -> left alone; never deployed -> "
+                "(gpu_inference, node_agent, nlp_server, model_builder). Per node: already current -> left alone; never deployed -> "
                 "left alone (a sync updates, it does not spread); otherwise redeployed, "
                 "reinstalling dependencies only when they changed. One node at a time, "
                 "never while a census goal is in flight, never from a dev sandbox. Inputs: "
