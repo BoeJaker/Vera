@@ -32,4 +32,8 @@ const PROSE = { ok: true, kind: 'prose', layers: [{ id: 'ner', label: 'entities'
 const p = X.contractScene(PROSE);
 t('prose: a station per paragraph, a plate per entity kind; a relation across paragraphs is counted, not drawn', p.turns.length === 2 && p.layers.length === 3 && p.turns[0].links.length === 1 && p.across === 1);
 t('the chat\'s own scene is untouched: five layers when a scene names none', X.layout({ turns: [{ mid: 'm1', who: 'you', text: 'hi', read: [], say: [], made: [], land: [] }] }, 'iso', 1200, 800, {}).bands.length === 5);
+const SRC = require('node:fs').readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'exploded_element.js'), 'utf8');
+t('iso navigates as Live ops does: zoom 5%-400%, ctrl-drag turns it, a double-click focuses a plate, the pan keeps 80 px in the frame',
+  /const ZMIN = 0\.05, ZMAX = 4, KEEP = 80;/.test(SRC) && /rot: \(e\.ctrlKey \|\| e\.metaKey\) && this\._S\.mode === 'iso'/.test(SRC) && /this\._S\.isoFocus = hit\.layer && this\._S\.isoFocus !== hit\.layer \? hit\.layer : null;/.test(SRC)
+  && /const mx = Math\.max\(0, W \* \(1 \+ p\.z\) \/ 2 - KEEP\)/.test(SRC) && !/Math\.max\(0\.4, Math\.min\(3,/.test(SRC));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);
