@@ -84,13 +84,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
     <div><h1>Image Studio</h1><div class="sub">Visual Suite</div></div>
   </div>
   <nav id="nav">
-    <button class="nav-btn active" data-go="generate" onclick="go('generate')"><span class="gl">✦</span>Generate</button>
-    <button class="nav-btn" data-go="overview" onclick="go('overview')" title="The studio as widgets: images, sprites, characters"><span class="gl">◫</span>Overview</button>
-    <button class="nav-btn" data-go="gallery" onclick="go('gallery')"><span class="gl">▣</span>Gallery</button>
-    <button class="nav-btn" data-go="loras" onclick="go('loras')"><span class="gl">★</span>LoRAs</button>
-    <button class="nav-btn" data-go="thumbnails" onclick="go('thumbnails')"><span class="gl">▤</span>Thumbnails</button>
-    <button class="nav-btn" data-go="sprites" onclick="go('sprites')"><span class="gl">◳</span>Sprites</button>
-    <button class="nav-btn" data-go="companion" onclick="go('companion')"><span class="gl">☺</span>Companion</button>
+    <button data-label="Generate" data-desc="Make an image" data-desc-long="Generate an image: pick a pipeline - txt2img, img2img, IP-Adapter identity, ControlNet pose, Real-ESRGAN upscale, background removal - with its init image and settings." class="nav-btn active" data-go="generate" onclick="go('generate')"><span class="gl">✦</span>Generate</button>
+    <button data-label="Overview" data-desc="The studio as widgets" data-desc-long="The studio as widgets: images, sprites and characters at a glance." class="nav-btn" data-go="overview" onclick="go('overview')" title="The studio as widgets: images, sprites, characters"><span class="gl">◫</span>Overview</button>
+    <button data-label="Gallery" data-desc="Every stored generation" data-desc-long="The gallery: every stored generation, durable on disk." class="nav-btn" data-go="gallery" onclick="go('gallery')"><span class="gl">▣</span>Gallery</button>
+    <button data-label="LoRAs" data-desc="Find and install LoRAs" data-desc-long="The LoRA marketplace: search Civitai and HuggingFace (by downloads, rating, newest, base model) or your own store, and install LoRAs." class="nav-btn" data-go="loras" onclick="go('loras')"><span class="gl">★</span>LoRAs</button>
+    <button data-label="Thumbnails" data-desc="Make thumbnails" data-desc-long="Thumbnails: generate thumbnail images." class="nav-btn" data-go="thumbnails" onclick="go('thumbnails')"><span class="gl">▤</span>Thumbnails</button>
+    <button data-label="Sprites" data-desc="Make sprites" data-desc-long="Sprites: generate sprite sheets and game sprites." class="nav-btn" data-go="sprites" onclick="go('sprites')"><span class="gl">◳</span>Sprites</button>
+    <button data-label="Companion" data-desc="The character companion" data-desc-long="The companion: the character studio - characters and their looks." class="nav-btn" data-go="companion" onclick="go('companion')"><span class="gl">☺</span>Companion</button>
   </nav>
   <div id="status-tile">
     <div class="lbl">GPU tiers</div>

@@ -38,12 +38,12 @@ html,body{ margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);o
       <div><h1>Comms</h1><div class="sub">Accounts &amp; Messaging</div></div>
     </div>
     <nav id="nav">
-      <button type="button" class="nav-btn" data-k="system"   title="System"><span class="gl">📡</span>System</button>
-      <button type="button" class="nav-btn" data-k="accounts" title="Accounts"><span class="gl">👤</span>Accounts</button>
-      <button type="button" class="nav-btn" data-k="calendar" title="Calendar"><span class="gl">🗓</span>Calendar</button>
-      <button type="button" class="nav-btn" data-k="email"    title="Email"><span class="gl">✉</span>Email</button>
-      <button type="button" class="nav-btn" data-k="telegram" title="Telegram"><span class="gl">✈</span>Telegram</button>
-      <button type="button" class="nav-btn" data-k="printer"  title="Printer"><span class="gl">🖨</span>Printer</button>
+      <button data-label="System" data-desc="Everything the system said or flagged" data-desc-long="System comms (/syscomms/panel): everything the system has said or flagged - Telegram, actions, n8n, reports - filterable to issues only." type="button" class="nav-btn" data-k="system"   title="System"><span class="gl">📡</span>System</button>
+      <button data-label="Accounts" data-desc="Shared identities for mail and calendar" data-desc-long="Accounts (/accounts/panel): shared identities set up once - their mail credentials power Email and their calendar credentials power Calendar (app password or OAuth)." type="button" class="nav-btn" data-k="accounts" title="Accounts"><span class="gl">👤</span>Accounts</button>
+      <button data-label="Calendar" data-desc="The calendar" data-desc-long="Calendar (/cal/panel): calendars from the accounts' sources, their layers and events." type="button" class="nav-btn" data-k="calendar" title="Calendar"><span class="gl">🗓</span>Calendar</button>
+      <button data-label="Email" data-desc="The accounts' mailboxes" data-desc-long="Email (/mail/panel): the mailboxes of the configured accounts." type="button" class="nav-btn" data-k="email"    title="Email"><span class="gl">✉</span>Email</button>
+      <button data-label="Telegram" data-desc="The Telegram bot" data-desc-long="Telegram (/telegram/panel): the bot's lifecycle, chat whitelist, message history, sending and the event bridge." type="button" class="nav-btn" data-k="telegram" title="Telegram"><span class="gl">✈</span>Telegram</button>
+      <button data-label="Printer" data-desc="The thermal printer" data-desc-long="The thermal printer (/print/panel): print to the connected receipt printer." type="button" class="nav-btn" data-k="printer"  title="Printer"><span class="gl">🖨</span>Printer</button>
     </nav>
   </aside>
   <div id="frames">
