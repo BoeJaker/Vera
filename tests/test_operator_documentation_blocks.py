@@ -35,7 +35,22 @@ old
 """
 
 
-def _run(monkeypatch, tmp_path: Path, fail=(), **params):
+class _Ctx:
+    def __init__(self):
+        self.scripts = []
+        self.routes = []
+
+    async def add_init_script(self, script):
+        self.scripts.append(script)
+
+    async def route(self, matcher, handler):
+        self.routes.append((matcher, handler))
+
+
+VOID = {"id": "void", "type": "dark", "vars": {"--bg": "#000"}}
+
+
+def _run(monkeypatch, tmp_path: Path, fail=(), started=None, **params):
     shot_urls = []
 
     async def _ensure(target, call_cap, default_base):
@@ -43,11 +58,17 @@ def _run(monkeypatch, tmp_path: Path, fail=(), **params):
 
     async def _fetch(client, url):
         if url.endswith("/ui/panels"):
-            return [{"id": "alpha", "label": "Alpha"}, {"id": "beta", "label": "Beta"}]
+            return [{"id": "alpha", "label": "Alpha"}, {"id": "beta", "label": "Beta"},
+                    {"id": "stray", "label": "Unmapped"}]
+        if url.endswith("/ui/themes"):
+            return {"active": "ash", "themes": [VOID]}
         return [{"name": "demo.ping", "description": "Ping."}]
 
-    async def _start(base_url):
-        return SimpleNamespace(session_id="s1", page=None)
+    async def _start(base_url, viewport=None):
+        sess = SimpleNamespace(session_id="s1", page=None, context=_Ctx(), viewport=viewport)
+        if started is not None:
+            started.append(sess)
+        return sess
 
     async def _close(session_id):
         return None
@@ -61,6 +82,7 @@ def _run(monkeypatch, tmp_path: Path, fail=(), **params):
         return {"ok": True, "readiness": []}
 
     monkeypatch.setattr(_dm, "DOMAINS", [DOMAIN, PAGES])
+    monkeypatch.setattr(_dm, "PANEL_DOCS", {"alpha": "demo", "beta": "demo"})
     monkeypatch.setattr(_targets, "ensure_target", _ensure)
     monkeypatch.setattr(_doc, "_fetch_json", _fetch)
     monkeypatch.setattr(_doc, "_shoot_panel", _shoot)
@@ -118,6 +140,55 @@ def test_the_gallery_never_links_a_shot_removed_from_disk(monkeypatch, tmp_path)
     gallery = next((tmp_path / "documentation").glob("GALLERY*.md")).read_text(encoding="utf-8")
     assert "assets/demo/alpha.png" not in gallery
     assert "assets/demo/beta.png" in gallery
+
+
+def test_the_capture_browser_gets_doc_prefs_not_the_servers(monkeypatch, tmp_path):
+    started = []
+    _run(monkeypatch, tmp_path, started=started, write_caps=False)
+
+    sess = started[0]
+    assert sess.viewport == {"width": 1440, "height": 900}
+    script = sess.context.scripts[0]
+    assert '"vera:ui:scale": "1"' in script
+    assert "lhm" in script and "true" in script
+
+
+def test_capture_prefs_and_viewport_can_be_overridden(monkeypatch, tmp_path):
+    started = []
+    _run(monkeypatch, tmp_path, started=started, write_caps=False,
+         viewport={"width": 1920, "height": 1080}, ui_storage={"vera:ui:scale": "1.2"})
+
+    assert started[0].viewport == {"width": 1920, "height": 1080}
+    assert '"vera:ui:scale": "1.2"' in started[0].context.scripts[0]
+
+
+def test_the_docs_theme_is_pinned_by_answering_ui_theme(monkeypatch, tmp_path):
+    started = []
+    _run(monkeypatch, tmp_path, started=started, write_caps=False)
+
+    ctx = started[0].context
+    assert '"vera:ui:theme": "void"' in ctx.scripts[0]
+    matcher, _ = ctx.routes[0]
+    assert matcher("https://vera.test/ui/theme") is True
+    assert matcher("https://vera.test/ui/themes") is False
+
+
+def test_unmapped_live_panels_are_reported_not_guessed(monkeypatch, tmp_path):
+    result, urls, _ = _run(monkeypatch, tmp_path, write_caps=False)
+
+    assert result["unmapped_panels"] == ["stray"]
+    assert all("stray" not in u for u in urls)
+
+
+def test_a_page_that_calls_the_model_runs_only_when_named(monkeypatch, tmp_path):
+    PAGES["pages"].append({"name": "hero", "path": "/chat_panel", "on_request": True})
+    try:
+        _, urls, _ = _run(monkeypatch, tmp_path, domains=["overview"])
+        assert "https://vera.test/chat_panel" not in urls
+        _, urls, _ = _run(monkeypatch, tmp_path, domains=["overview"], panels=["hero"])
+        assert urls == ["https://vera.test/chat_panel"]
+    finally:
+        PAGES["pages"].pop()
 
 
 def test_pages_are_shot_by_path_to_a_stable_name_without_a_doc(monkeypatch, tmp_path):

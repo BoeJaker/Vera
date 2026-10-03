@@ -45,7 +45,7 @@ def test_empty_context_files_shapes():
 def test_the_loop_passes_them_and_the_writer_uses_them():
     i = SRC.index("# ── code.author / prose.author / code.edit missing")
     block = SRC[i:i + 6000]
-    assert "_research_sources_core.sources_block(history)" in block
+    assert "_research_sources_core.sources_block(" in block and "list(history)" in block
     w = SRC[SRC.index("async def cap_prose_author("):]
     w = w[:w.index("gen = CAPABILITY_REGISTRY.get(\"llm.generate\")")]
     assert "sources: str = \"\"" in w and "SOURCE MATERIAL" in w

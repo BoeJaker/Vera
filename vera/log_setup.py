@@ -154,15 +154,38 @@ _SECRET_PATTERNS = (
                r"[\"'\s:=]{1,4})([A-Za-z0-9_\-.]{12,})", re.I),
 )
 
+# Connection strings carry their password in the userinfo: the startup line
+# "Redis connected: redis://vera:<pw>@localhost:6379" and every worker retry
+# warning wrote prod's Redis password in clear (2026-10-03).
+_URL_USERINFO = re.compile(r"(\b[a-z][a-z0-9+.\-]*://[^\s:/@'\"]+:)([^\s@/'\"]+)(@)", re.I)
+# NAME_PASS=…, NEO4J_PASSWORD=…, VAULT_TOKEN=… - env-style assignments.
+_ENV_SECRET = re.compile(
+    r"(\b[A-Z0-9_]*(?:PASS|PASSWORD|SECRET|TOKEN|API_KEY|APIKEY)[A-Z0-9_]*\s*=\s*[\"']?)"
+    r"([^\s\"']+)")
+# A file written by decoding an inline payload: the node-worker deploy ran
+# `printf %s <base64> | base64 -d > /opt/vera/worker/worker.env` over SSH and
+# asyncssh logged the whole command at INFO - Redis, Postgres and Neo4j
+# credentials, encoded but not protected (45 lines on 2026-10-03). The payload
+# is dropped whatever it decodes to; the command around it stays readable.
+_INLINE_PAYLOAD = re.compile(
+    r"((?:printf\s+%s|echo(?:\s+-n)?)\s+['\"]?)([A-Za-z0-9+/=]{24,})(['\"]?\s*\|\s*base64\s+(?:-d|--decode))")
+
 
 def redact(text: str) -> str:
     """Mask credentials in a log line. Keeps enough to correlate (the bot id,
-    the parameter name) and drops the part that authenticates."""
+    the parameter name, the user in a URL, the command shape) and drops the
+    part that authenticates."""
     out = str(text)
     if "/bot" in out:
         out = _SECRET_PATTERNS[0].sub(r"\1\2\3<redacted>", out)
     if any(w in out.lower() for w in ("key", "token", "password", "secret")):
         out = _SECRET_PATTERNS[1].sub(r"\1<redacted>", out)
+    if "://" in out and "@" in out:
+        out = _URL_USERINFO.sub(r"\1<redacted>\3", out)
+    if "=" in out:
+        out = _ENV_SECRET.sub(r"\1<redacted>", out)
+    if "base64" in out:
+        out = _INLINE_PAYLOAD.sub(r"\1<redacted>\3", out)
     return out
 
 
@@ -196,7 +219,9 @@ class RedactingFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            if isinstance(record.msg, str) and ("/bot" in record.msg or ":" in record.msg):
+            # Every pattern in redact() has its own cheap substring guard, so
+            # no pre-filter here: "NEO4J_PASS=..." has neither "/bot" nor ":".
+            if isinstance(record.msg, str):
                 record.msg = redact(record.msg)
             if record.args:
                 if isinstance(record.args, dict):

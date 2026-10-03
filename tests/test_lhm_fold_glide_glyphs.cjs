@@ -11,23 +11,24 @@ const UI = fs.readFileSync(path.join(__dirname, '..', 'vera', 'vera-ui.js'), 'ut
 const CHAT = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_panel.html'), 'utf8');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
-// ── a word given as an icon is its first letter; a symbol stays as given ─────────────────────────────────────────
+// ── a symbol stays as given; a word or a letter given as an icon is NOT drawn as letters (owner, 2026-10-03: "sub LHMs
+//    should not use letters as icons in the rail") - it is the glyph its name maps to ──────────────────────────────────
 {
-  const a = LHM.indexOf('  function _glyph('), b = LHM.indexOf('  // the fold, animated (FLIP)');
+  const a = LHM.indexOf('  var _KW_GLYPHS = ['), b = LHM.indexOf('  // the fold, animated (FLIP)');
   t('the glyph rule is in the library', a > 0 && b > a);
   const ctx = { window: { Intl }, Intl, Symbol, Array, String };
   vm.createContext(ctx); vm.runInContext(LHM.slice(a, b) + '\nthis.g=_glyph;', ctx);
-  t('a word is its first letter', ctx.g('pokedex', '▭') === 'P', ctx.g('pokedex', '▭'));
+  t('a word is never its first letter', ctx.g('pokedex', '▭') !== 'P' && !/^[A-Za-z0-9]{1,2}$/.test(ctx.g('pokedex', '▭')), ctx.g('pokedex', '▭'));
+  t('a letter given as an icon is not drawn', ctx.g('E', '•', 'Email') === '\u2709', ctx.g('E', '•', 'Email'));
   t('a symbol is kept', ctx.g('⚙', '▭') === '⚙' && ctx.g('▷_', '▭') === '▷_');
-  t('nothing given is the fallback', ctx.g('', '▭') === '▭' && ctx.g(null, '•') === '•');
+  t('nothing given and no name is the fallback', ctx.g('', '▭') === '▭' && ctx.g(null, '•') === '•');
   t('an emoji with its variation selector is kept whole', ctx.g('⚙️', '▭') === '⚙️');
 }
 
-// ── every menu glyph goes through the rule: the side list, the top-level list, both rails ────────────────────────
-t('the side list rows', /_el\('span', 'ico', _glyph\(o\.icon, '▭'\)\)/.test(LHM) && /_el\('span', 'ico', _glyph\(p\.icon, '▭'\)\)/.test(LHM));
+// ── every menu glyph goes through the rule, with the option's name: the side list, the top-level list, both rails ────
+t('the side list rows', /_el\('span', 'ico', _glyph\(o\.icon, '▭', o\.label \|\| o\.id\)\)/.test(LHM) && /_el\('span', 'ico', _glyph\(p\.icon, '▭', p\.label \|\| p\.id\)\)/.test(LHM));
 t('the top-level list rows', (LHM.match(/_el\('span', 'lhm-ri', _glyph\(/g) || []).length === 3);
-t('the quick menu rail and an absorbed rail', /m\.iconHtml \? null : _glyph\(m\.icon, '•'\)/.test(LHM) && /\(m\.id === act\.menu \? ' on' : ''\), _glyph\(m\.icon, '•'\)\)/.test(LHM));
-
+t('the quick menu rail and an absorbed rail', /m\.iconHtml \? null : _glyph\(m\.icon, '•', m\.label\)/.test(LHM) && /\(m\.id === act\.menu \? ' on' : ''\), _menuGlyph\(m\)\)/.test(LHM));
 // ── a glyph sits in a fixed, centred box, larger than before ─────────────────────────────────────────────────────
 t('the side list glyph: a 22 px box, 16 px, centred', /'\.lhm-side \.lhm-s-row \.ico\{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;line-height:1;[^']*font-size:16px/.test(LHM));
 t('the top-level list glyph: a 22 px box, 16 px, centred', /'\.lhm-top \.lhm-row \.lhm-ri\{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;line-height:1;[^']*font-size:16px/.test(LHM));
@@ -39,7 +40,7 @@ t('side() watches its own fold', /if\(cfg\.rail && cfg\.rail\.on\) wrap\.classLi
 t('the watch reads the class the menu left', /attributeFilter: \['class'\], attributeOldValue: true/.test(LHM));
 t('a class set as the list is drawn is not a fold', /Date\.now\(\) - born < 250/.test(LHM));
 t('FLIP: measured in both states, our own toggles discarded', /wrap\.classList\.toggle\('railed', wasRailed\); var first = at\(\); wrap\.classList\.toggle\('railed', nowRailed\);/.test(LHM) && /_lhmFlipMO\.takeRecords\(\)/.test(LHM));
-t('the glide keeps the width\'s easing', /duration: 340, easing: 'cubic-bezier\(\.2,\.8,\.2,1\)'/.test(LHM));
+t('the glide keeps the width\'s easing', /duration: _motion\.ms\(\), easing: _motion\.ease\(\)/.test(LHM) && /':root\{--lhm-dur:\.34s;--lhm-ease:cubic-bezier\(\.2,\.8,\.2,1\);--lhm-fade:\.22s\}'/.test(LHM));
 t('what the rail hides fades back in', /@keyframes lhmUnfold/.test(LHM) && /\.lhm-side\.lhm-unfold \.lhm-s-grp/.test(LHM));
 t('reduced motion is respected', /prefers-reduced-motion: reduce\)'\)\.matches\) return;/.test(LHM) && /@media \(prefers-reduced-motion:reduce\)\{\.lhm-side\.lhm-unfold \*/.test(LHM));
 
@@ -52,13 +53,16 @@ t('reduced motion is respected', /prefers-reduced-motion: reduce\)'\)\.matches\)
     classList: { contains(c) { return c === 'railed' ? wrap.railed : wrap._cls.has(c); }, toggle(c, on) { if (c === 'railed') wrap.railed = on; }, add(c) { wrap._cls.add(c); }, remove(c) { wrap._cls.delete(c); } },
     querySelectorAll() { return rows; } };
   const rows = [mkEl(80, 120), mkEl(110, 150)];
-  const ctx = { window: {}, matchMedia: () => ({ matches: false }), setTimeout: () => 0, clearTimeout() {}, Math, Array };
+  const mo = { d: 340 }; const ctx = { window: {}, matchMedia: () => ({ matches: false }), setTimeout: () => 0, clearTimeout() {}, Math, Array, _motion: { ms: () => mo.d, ease: () => 'cubic-bezier(.2,.8,.2,1)' } };
   vm.createContext(ctx); vm.runInContext(LHM.slice(a, b) + '\nthis.flip=_railFlip;', ctx);
   ctx.flip(wrap, true);   // unfolded: was the rail, now the list
   t('each row glides from its rail place to its list place', anims.length === 2 && anims[0].k[0].transform === 'translate(0px,-40px)' && anims[0].k[1].transform === 'none', JSON.stringify(anims[0]));
   t('unfolding fades the hidden parts in', wrap._cls.has('lhm-unfold'));
+  t('it glides for the token\'s duration, on its easing', anims[0].o.duration === 340 && anims[0].o.easing === 'cubic-bezier(.2,.8,.2,1)', JSON.stringify(anims[0].o));
   anims.length = 0; ctx.flip(wrap, false);
   t('no fold, no motion', anims.length === 0);
+  anims.length = 0; mo.d = 0; wrap.railed = true; ctx.flip(wrap, false);
+  t('reduced motion (the token at 0): no glide', anims.length === 0);
 }
 
 // ── the text sizes, stepped up ───────────────────────────────────────────────────────────────────────────────────

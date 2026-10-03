@@ -865,18 +865,6 @@ Models › **Training** shows the workers that train and their libraries, where 
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-#### Monitor
-
-![Monitor](assets/ollama-cluster/system-monitor.png)
-
-*Monitor  ·  captured `default`*
-
-#### Estate
-
-![Estate](assets/ollama-cluster/workers-ollama.png)
-
-*Estate  ·  captured `default`*
-
 #### Models
 
 ![Models](assets/ollama-cluster/models.png)
@@ -888,6 +876,12 @@ Models › **Training** shows the workers that train and their libraries, where 
 ![Models & NLP](assets/ollama-cluster/node-models.png)
 
 *Models & NLP  ·  captured `default`*
+
+#### Specialist models
+
+![Specialist models](assets/ollama-cluster/specialist-models.png)
+
+*Specialist models  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

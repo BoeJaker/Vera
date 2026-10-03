@@ -9,7 +9,7 @@ const DIR = fs.readFileSync(path.join(__dirname, '..', 'vera', 'ui', 'directives
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
 t('Ctrl/⌘/middle-click is side by side', /function _splitKey\(ev\)\{ return !!\(ev && \(ev\.ctrlKey \|\| ev\.metaKey \|\| ev\.button === 1\)\); \}/.test(LHM));
-t('a docked menu\'s items and icons pass it', /if\(_splitKey\(ev\) && opts\.onSplit\) opts\.onSplit\(cur\.id \+ '\/' \+ way\); else pickFn\(cur\.id \+ '\/' \+ t\.id\);/.test(LHM) && /if\(_splitKey\(ev\) && opts\.onSplit\) opts\.onSplit\(m\.id\); else pickFn\(m\.id\);/.test(LHM));
+t('a docked menu\'s items and icons pass it', /if\(_splitKey\(ev\) && opts\.onSplit\) opts\.onSplit\(owner\.id \+ '\/' \+ way\); else pickFn\(owner\.id \+ '\/' \+ t\.id\);/.test(LHM) && /if\(_splitKey\(ev\) && opts\.onSplit\) opts\.onSplit\(m\.id\); else pickFn\(m\.id\);/.test(LHM));
 t('the side list\'s options and panel rows too, each with a ⧉', /if\(_splitKey\(ev\) && cfg\.onBeside\) cfg\.onBeside\(p\.id, sec, t\);/.test(LHM) && /if\(cfg\.onBeside\) _beside\(r, function\(\)\{ cfg\.onBeside\(p\.id\); \}/.test(LHM) && /if\(opts\.onSplit\) _beside\(e,/.test(LHM));
 t('the harness opens it beside, a second instance when open', /function _lhmOpenBeside\(pid, navId\)\{/.test(HAR) && /if\(_openTabs\.has\(pid\)\)\{ target = _tabClone\(pid\); if\(!target\) return null; \}/.test(HAR));
 t('an instance is its own tab and frame, told its id', /const cid = pid \+ '--' \+ n;/.test(HAR) && /type: 'vera:panel:init', panel_id: cid/.test(HAR) && /t2\.dataset\.cloneOf = pid;/.test(HAR));

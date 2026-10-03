@@ -60,7 +60,7 @@ flowchart LR
     LL["Loop Lab (/evolve/panel)"]
     DP["Dispatch (ide_claude_sessions_panel.html)"]
   end
-  VS -->|/vscode/{id}/...| PX["Same-origin proxy"]
+  VS -->|"/vscode/&#123;id&#125;/..."| PX["Same-origin proxy"]
   PX --> CS1["central code-server"]
   PX --> CS2["sandbox worker sidecars"]
   PX --> CS3["remote code-server hosts"]
@@ -955,17 +955,17 @@ Local state files in `vera/ide/`: `.vera_workspaces.json`,
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-#### Workspace Changes
+#### VS Code with a project open
 
-![Workspace Changes](assets/ide/ide-workspace-changes.png)
+![The central code-server with a project open and a source file in the editor.](assets/ide/ide-panel-editor.png)
 
-*Workspace Changes  ·  captured `default`*
+*The central code-server with a project open and a source file in the editor.  ·  captured `default`*
 
-#### IDE
+#### The IDE panel
 
-![IDE](assets/ide/ide-panel.png)
+![The IDE panel: the central VS Code, the classic workbench, remotes and the dispatch queue.](assets/ide/ide-panel-panel.png)
 
-*IDE  ·  captured `default`*
+*The IDE panel: the central VS Code, the classic workbench, remotes and the dispatch queue.  ·  captured `default`*
 
 #### Remote IDE
 
@@ -973,23 +973,17 @@ Local state files in `vera/ide/`: `.vera_workspaces.json`,
 
 *Remote IDE  ·  captured `default`*
 
+#### Dispatch
+
+![Dispatch](assets/ide/ide-claude-dispatch.png)
+
+*Dispatch  ·  captured `default`*
+
 #### Source Inspection
 
 ![Source Inspection](assets/ide/ide-inspect-panel.png)
 
 *Source Inspection  ·  captured `default`*
-
-#### Estate Map
-
-![Estate Map](assets/ide/interaction-map.png)
-
-*Estate Map  ·  captured `default`*
-
-#### Workspaces
-
-![Workspaces](assets/ide/workspaces.png)
-
-*Workspaces  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

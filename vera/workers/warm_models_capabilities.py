@@ -38,6 +38,10 @@ try:
     from Vera.vera.workers import warm_models_core as core
 except ImportError:                                        # pragma: no cover
     from vera.workers import warm_models_core as core      # type: ignore
+try:
+    from Vera.vera.http_tls_core import shared_ssl_context as _tls   # one TLS context for every client (not one per call)
+except ImportError:                                                 # pragma: no cover
+    from vera.http_tls_core import shared_ssl_context as _tls         # type: ignore
 
 log = logging.getLogger("vera.ollama.warm")
 
@@ -129,7 +133,7 @@ def _instances() -> Dict[str, Dict[str, Any]]:
 
 async def _get(url: str, timeout: float = 6.0) -> Optional[Dict[str, Any]]:
     try:
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout, verify=_tls()) as c:
             r = await c.get(url)
             return r.json() if r.status_code == 200 else None
     except Exception:
@@ -321,7 +325,7 @@ async def _post(url: str, body: Dict[str, Any], timeout: float = _TIMEOUT) -> Di
     hdr = _orch.vera_origin_header(job_type="warm", cap="ollama.warm")
     t0 = time.time()
     try:
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout, verify=_tls()) as c:
             r = await c.post(url, json=body, headers=hdr)
             ok = r.status_code == 200
             return {"ok": ok, "status": r.status_code, "s": round(time.time() - t0, 1),

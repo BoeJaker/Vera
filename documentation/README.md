@@ -27,12 +27,14 @@ reference guides when you need implementation details.
 ## See Vera
 
 These screenshots were captured from the running Vera UI with Operator on
-2026-08-16. They are stored in the repository, so they render on GitHub and in
-offline documentation.
+2026-10-03, at 100% UI scale in the Void theme. They are stored in the
+repository, so they render on GitHub and in offline documentation.
 
 For every currently captured subsystem view, open the
 [generated visual gallery](GALLERY.md). Operator refreshes that replaceable
 gallery without overwriting this authored guide.
+
+[![Chat: a live turn, the agent opening a panel, the Context menu on the left](assets/overview/chat.png)](assets/overview/chat.png)
 
 | Main dashboard | Capability Hub |
 |---|---|
@@ -42,9 +44,9 @@ gallery without overwriting this authored guide.
 |---|---|
 | [![Performance Monitor](assets/overview/perf-monitor.png)](assets/overview/perf-monitor.png) | [![Loop Lab](assets/overview/evolve.png)](assets/overview/evolve.png) |
 
-| Data Fabric | Agent Loop Graph |
+| Data Fabric | Operator Studio |
 |---|---|
-| [![Data Fabric](assets/overview/fabric-panel.png)](assets/overview/fabric-panel.png) | [![Agent Loop Graph](assets/overview/loop-graph.png)](assets/overview/loop-graph.png) |
+| [![Data Fabric](assets/overview/fabric-panel.png)](assets/overview/fabric-panel.png) | [![Operator Studio](assets/overview/operator-studio.png)](assets/overview/operator-studio.png) |
 
 ## Choose a path
 
@@ -76,6 +78,7 @@ gallery without overwriting this authored guide.
 
 ### Build agents and interfaces
 
+- [Chat UI](50-chat-ui.md)
 - [Agents and chat](19-agents-chat.md)
 - [Agent runtimes and providers](36-agent-runtimes-providers.md)
 - [Flow Builder](20-flow-builder.md)
@@ -165,6 +168,7 @@ each section is tagged.
 | 47 | [PWA](47-pwa.md) | Installable app: manifest, service worker, offline shell, generated icons |
 | 48 | [System 1 decision models](48-system-one-decision-models.md) | 🚧 **Not live.** Calibrated typed-decision tier: design, ledger, and a survey of 57 decision points |
 | 49 | [Worldview integration](49-worldview-integration.md) | How the JEPA world model is wired in today, known limitations, and a 🚧 not-live opportunity survey |
+| 50 | [Chat UI](50-chat-ui.md) | Every control in the chat: header, rail menus, Context menu, composer, slash commands, messages and reading modes |
 
 ## Status tags
 

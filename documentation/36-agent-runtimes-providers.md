@@ -42,6 +42,34 @@ describe is labelled `queued_live` until it is implemented and verified.
 
 ---
 
+## At a glance
+
+```mermaid
+flowchart LR
+    V["Vera's own engines<br/>DAGs · agentic loops"]
+    subgraph AB["Agent Bridges — vera/agentbridges/"]
+        SA["smolagents"] & LG["LangGraph"] & PA["PydanticAI"]
+    end
+    CT["Throwaway container<br/>one goal each · normalised lifecycle"]
+    OLL["Local Ollama cluster"]
+    subgraph PR["API Providers — vera/providers/"]
+        HM["Hosted-model connections<br/>usage · cost"]
+        SG["Structured generation ·<br/>document parsing contracts"]
+    end
+    subgraph CAT["Catalog — vera/catalog/ · vera/models/"]
+        MS["Model selection for<br/>available hardware"]
+        INF["Portable inference contracts ·<br/>inventory · deployments"]
+    end
+    V -->|delegate| AB --> CT --> OLL
+    V --> PR
+    CAT -.->|describes| OLL & PR
+```
+
+Contracts drawn here as describing rather than running — the comparison
+matrix, A2A mapping, structured generation and document parsing — validate,
+plan and report evidence; their live paths are labelled `queued_live` until
+implemented and verified.
+
 ## 1. Supported layers
 
 | Layer | Examples | Contract |

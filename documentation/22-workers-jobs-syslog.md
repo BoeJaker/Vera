@@ -659,18 +659,6 @@ Events emitted here: `workers.registry.pruned`, `job_persist.recovery_done`,
 ![Node workers](assets/workers-jobs-syslog/node-workers.png)
 
 *Node workers  ·  captured `default`*
-
-#### Specialist models
-
-![Specialist models](assets/workers-jobs-syslog/specialist-models.png)
-
-*Specialist models  ·  captured `default`*
-
-#### Estate
-
-![Estate](assets/workers-jobs-syslog/workers-ollama.png)
-
-*Estate  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

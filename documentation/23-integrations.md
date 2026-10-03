@@ -794,12 +794,6 @@ implementation and `ready_for_execution: false`.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-#### Accounts
-
-![Accounts](assets/integrations/accounts-panel.png)
-
-*Accounts  ·  captured `default`*
-
 #### Comms
 
 ![Comms](assets/integrations/comms-panel.png)
@@ -812,11 +806,29 @@ implementation and `ready_for_execution: false`.
 
 *Calendar  ·  captured `default`*
 
+#### n8n
+
+![n8n](assets/integrations/n8n-panel.png)
+
+*n8n  ·  captured `default`*
+
+#### Home
+
+![Home](assets/integrations/ha-panel.png)
+
+*Home  ·  captured `default`*
+
 #### System Comms
 
 ![System Comms](assets/integrations/syscomms.png)
 
 *System Comms  ·  captured `default`*
+
+#### Integrations
+
+![Integrations](assets/integrations/integrations.png)
+
+*Integrations  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

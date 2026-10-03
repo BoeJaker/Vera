@@ -8,7 +8,7 @@ import asyncio
 import pytest
 
 from vera.operator.missions.documentation import (
-    _MEANINGFUL_CONTENT_JS, _READY_COUNT_JS, _READY_PAINTED_JS, _READY_TEXT_JS)
+    _DEEP_TEXT_JS, _MEANINGFUL_CONTENT_JS, _READY_COUNT_JS, _READY_PAINTED_JS, _READY_TEXT_JS)
 
 playwright = pytest.importorskip("playwright.async_api")
 
@@ -84,6 +84,14 @@ def test_a_visible_placeholder_line_means_not_ready_whatever_surrounds_it(placeh
 def test_words_that_merely_mention_loading_are_not_placeholders():
     html = FILLER + f"<p>{WORDS}</p><p>Demo data loaded from the fabric</p>"
     assert _run(html, _MEANINGFUL_CONTENT_JS) is True
+
+
+def test_deep_text_sees_a_widget_inside_a_shadow_root():
+    html = ("<div id='host'></div><script>"
+            "document.getElementById('host').attachShadow({mode:'open'})"
+            ".innerHTML = '<style>.x{}</style><span>READ FAILED</span>';</script>")
+    out = _run(html, _DEEP_TEXT_JS)
+    assert "READ FAILED" in out and ".x{}" not in out
 
 
 def test_hidden_text_is_not_content():

@@ -22,7 +22,7 @@ t('and its menu slot is translucent over it', /body\.chat-open #lhmNav\.chatmenu
 t('the menu folds by width, not a display switch', /#rightRail\.lhm-host\.slim > \.lhm-det\{display:flex!important;width:0!important;/.test(CHAT) && /#rightRail\.lhm-host > \.lhm-det\{transition:width \.36s/.test(CHAT));
 t('never while its edge is being dragged', /body\.dragging-split #rightRail\.lhm-host > \.lhm-det\{transition:none\}/.test(CHAT));
 t('"is it open" is its width now, so the active icon still folds and opens it', /_det\.getBoundingClientRect\(\)\.width > 4/.test(LHM) && !/_det\.getClientRects\(\)\.length/.test(LHM));
-t('the harness slot grows and shrinks on the same easing', /\.lhm-nav\{transition:width \.36s cubic-bezier/.test(HAR));
+t('the harness slot grows and shrinks on the same easing', /\.lhm-nav\{transition:width var\(--lhm-dur,\.34s\) var\(--lhm-ease,cubic-bezier\(\.2,\.8,\.2,1\)\)/.test(HAR));
 t('reduced motion is respected', /@media \(prefers-reduced-motion:reduce\)\{ #rightRail\.lhm-host > \.lhm-det\{transition:none\}/.test(CHAT));
 
 // ── the columns arrive ──────────────────────────────────────────────────────────────────────────────────────────

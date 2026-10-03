@@ -11839,6 +11839,26 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
     if not text.strip():
         return {"ok": False, "error": "the writer returned nothing"}
     blocks = _v5_extract_code_blocks(text, name_hint=(path or task))
+    # A reply that is the writer's own PLANNING is not the document (writer_output_core):
+    # ask once more for only the document; never save the notes.
+    if not blocks and _writer_output_core.looks_like_planning(text):
+        await emit_event({"type": "prose.author.planning_reply", "path": path,
+                          "chars": len(text)})
+        try:
+            res = await fn(prompt=prompt + _writer_output_core.RETRY_NOTE, system=sys_prompt,
+                           output_format="code", profile=LOOP_ROUTING_PROFILE, role="writer",
+                           files=files or None, session_id=session_id,
+                           think=(False if think is None else think),
+                           caller="prose.author.retry", trace_id=trace_id, stream_cb=stream_cb)
+        except Exception as e:
+            return {"ok": False, "error": f"generation failed: {e}"}
+        text = _v5_unwrap_json_code(_strip_think(_v5_gen_text(res) or "")[0])
+        blocks = _v5_extract_code_blocks(text, name_hint=(path or task))
+        if not blocks and _writer_output_core.looks_like_planning(text):
+            return {"ok": False, "path": path,
+                    "error": ("the writer returned its planning notes twice instead of the "
+                              "document - nothing was saved; ask again with a shorter, more "
+                              "specific task")}
     content = (blocks[0]["code"] if blocks
               else _v5_strip_marker_line(_unescape_collapsed_code(text.strip())))
     # An UNCLOSED wrapper fence defeats block extraction, and the fallback kept the
@@ -14298,6 +14318,24 @@ try:
 except Exception:                                     # pragma: no cover
     from vera.dag import edit_rewrite_core as _edit_rewrite_core
 
+# A size/count bar the planner invented is a guide for the verifier (probe 3 Oct).
+try:
+    from Vera.vera.dag import criterion_bars_core as _criterion_bars_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import criterion_bars_core as _criterion_bars_core
+
+# A call that can write files makes the run's file registry forget what it names.
+try:
+    from Vera.vera.dag import registry_stale_core as _registry_stale_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import registry_stale_core as _registry_stale_core
+
+# A writer reply that is its own planning notes is not the document (probe 3 Oct).
+try:
+    from Vera.vera.dag import writer_output_core as _writer_output_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import writer_output_core as _writer_output_core
+
 # Double-escaped newlines in model-written Python (probe 2026-10-01: 24% of
 # exec.python.run calls wrote a literal backslash-n instead of a newline).
 try:
@@ -16593,6 +16631,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 _chain_success[_h_sig] = {"result": invoke.get("result"), "preview": preview[:_budget]}
             history.append({"tool": hop_tool, "ok": entry_ok, "preview": preview[:_budget],
                             "args": h_args, "ms": elapsed})
+            _research_sources_core.remember(sid, history[-1])
+            # A call that can write and names a registered file: forget its cached copy.
+            _registry_stale_core.forget_named(artifacts, hop_tool, h_args)
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                               "cycle": cur, "step_id": step_id, "tool": hop_tool, "ok": entry_ok,
                               "elapsed_ms": elapsed, "preview": preview[:_budget],
@@ -17402,11 +17443,16 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # none of them and wrote "(Note: The provided context files were empty...)" into
         # the deliverable. With no files named, hand it the step's web results.
         if tool == "prose.author" and isinstance(args, dict) \
-                and _research_sources_core.context_files_empty(args.get("context_files")) \
-                and not str(args.get("sources") or "").strip():
-            _srcs = _research_sources_core.sources_block(history)
+                and _research_sources_core.wants_sources(
+                    args.get("context_files"), args.get("sources"),
+                    known=list(workdir_files or []) + list(saved_run_files or {})):
+            # The run's research too - it is usually an EARLIER step (probe 3 Oct, 1e84cf1d).
+            _srcs = _research_sources_core.sources_block(
+                _research_sources_core.recall(sid) + list(history))
             if _srcs:
-                args["sources"] = _srcs
+                # Keep what the executor named (a URL, a title) in front of the material.
+                _given = str(args.get("sources") or "").strip()
+                args["sources"] = (_given + "\n\n" if _given else "") + _srcs
                 await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                                   "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                   "session_id": sid,
@@ -18871,7 +18917,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # path exist in the registry and to satisfy `_v5_path_is_proven`'s
         # own parse_ok+size check. A fresh author clears any earlier ran_ok:
         # the content just changed, so the OLD proof no longer applies to it.
-        if invoke_ok and tool in ("code.author", "code.edit") and isinstance(invoke.get("result"), dict):
+        # prose.author too (probe 3 Oct, 7c5bf52c: report.md v2 was written but the registry
+        # kept serving v1, so the verifier failed a finished report twice more).
+        if invoke_ok and tool in ("code.author", "code.edit", "prose.author") and isinstance(invoke.get("result"), dict):
             _cres = invoke["result"]
             _cpath = _v5_art_key(str(_cres.get("path") or args.get("path") or ""))
             if _cpath:
@@ -18962,6 +19010,10 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             research_latest = preview[:_budget]
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
+        _research_sources_core.remember(sid, history[-1])
+        # A call that can write and names a registered file: forget its cached copy, so
+        # the next read goes to disk (registry_stale_core; probe 3 Oct, a stale report.md).
+        _registry_stale_core.forget_named(artifacts, tool, args)
         await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                           "ok": entry_ok, "elapsed_ms": elapsed,
@@ -21674,8 +21726,15 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
                       "they conflict — see instructions):\n"
                       + "\n".join(f"  Q: {c.get('question','')}\n  A: {c.get('answer','')}"
                                   for c in _clar[:5]) + "\n")
+    # A size/count bar the planner invented (">1500 words") is a guide, not a requirement
+    # (criterion_bars_core; probe 3 Oct: one such bar failed a step three times).
+    try:
+        _bars_note = _criterion_bars_core.note(crit, str(step.get('goal') or ''))
+    except Exception:
+        _bars_note = ""
     prompt = (f"SUCCESS CRITERION: {crit}\n\nSTEP GOAL: {step.get('goal', '')}\n"
-              f"STEP ENDED ok={bool(res.get('ok'))}\n"
+              + _bars_note
+              + f"STEP ENDED ok={bool(res.get('ok'))}\n"
               + clar_block
               + (f"TOOL CALLS & THEIR RESULTS (across ALL cycles of this step — judge "
                  f"the criterion against these, not only the final summary):\n{hist}\n"

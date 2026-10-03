@@ -1,6 +1,6 @@
 # 03 · DAG Engine and Agentic Loops
 
-![Agent Loop Graph captured from the running Vera UI](assets/overview/loop-graph.png)
+![A stored DAG opened in the DAG Workshop: its steps, initial state and portable IR inspection](assets/dag-engine/dag-workshop-dag.png)
 
 Vera composes capabilities into multi-step work in two ways. A **DAG** is a fixed
 list of nodes, each calling one capability and writing its result into a shared
@@ -1665,17 +1665,11 @@ curl -s -X POST localhost:8999/dag/agent_loop_v8 -H 'content-type: application/j
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-#### DAG Workshop
+#### A DAG from the library
 
-![DAG Workshop](assets/dag-engine/dag-workshop.png)
+![A stored DAG opened from the library: its steps, initial state and portable IR inspection.](assets/dag-engine/dag-workshop-dag.png)
 
-*DAG Workshop  ·  captured `default`*
-
-#### Exec
-
-![Exec](assets/dag-engine/exec-panel.png)
-
-*Exec  ·  captured `default`*
+*A stored DAG opened from the library: its steps, initial state and portable IR inspection.  ·  captured `default`*
 
 #### Agent Loop Config
 
