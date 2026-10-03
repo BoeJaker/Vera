@@ -45,6 +45,8 @@ t('a status is fitted to its verdict and every check', /if \(f === 'status'\) re
 t('the status sample is neutral - checking, every check grey', /status: \(\) => \(\{ status: 'checking', message: 'waiting for the first reading'/.test(WE));
 t('the pane is named Health where it is shown; its id stays observe', /data-pane="observe" data-view="estate" title="Health - Vera's own health" onclick="P\.show\('observe',this\)"><span class="gl">◎<\/span>Health<\/butt/.test(PANEL) && /<span class="pane-tb-title" style="color:var\(--acc4\)">HEALTH<\/span>/.test(PANEL) && !/>Observe<\/butt/.test(PANEL));
 
+/* (2026-10-03, prod) VeraDash injected the widget element ~2 s in, after the panes' start-up reads held all six connections: on a slow prod it queued 28-50 s and every tile stayed empty (with it in the head: defined at 0.5 s, all tiles live by 20 s) */
+t('the panel asks for the widget element at parse time, marked so VeraDash does not add it again', /<script src="\/ui\/vera-dashboard\.js"><\/script>\s*<!--[\s\S]*?-->\s*<script src="\/ui\/widgets\/widget_element\.js" defer data-vera-widget-el="1"><\/script>/.test(PANEL) && /document\.querySelector\('script\[data-vera-widget-el\]'\)/.test(VD));
 // the elements (hidden here, still used elsewhere and by the picker)
 t('the stream and log elements keep their fixes', /\.row\{padding:3px 7px;border-radius:3px;font-size:12px;/.test(LES) && /disconnectedCallback\(\) \{\s*this\._gone = true;/.test(LES) && /\.entry-msg\{font-size:12px;/.test(SLE));
 
