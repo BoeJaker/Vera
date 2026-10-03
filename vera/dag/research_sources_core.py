@@ -13,6 +13,7 @@ Pure: the step history in, a bounded SOURCE MATERIAL text out ("" when there is 
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Any, Dict, List, Sequence
 
 #: Tool-name prefixes whose results are source material for a write-up.
@@ -30,7 +31,19 @@ def _is_source(h: Any) -> bool:
 def sources_block(history: Sequence[Any], max_sources: int = MAX_SOURCES,
                   max_chars: int = MAX_CHARS) -> str:
     """The step's successful web.* results, most recent first, as one bounded block."""
-    picked: List[Dict[str, Any]] = [h for h in reversed(list(history or [])) if _is_source(h)][:max_sources]
+    picked: List[Dict[str, Any]] = []
+    seen = set()
+    for h in reversed(list(history or [])):
+        if not _is_source(h):
+            continue
+        a = h.get("args") if isinstance(h.get("args"), dict) else {}
+        key = (h.get("tool"), str(a.get("query") or a.get("url") or ""), str(h.get("preview"))[:120])
+        if key in seen:
+            continue                      # the same result, recorded for the run AND the step
+        seen.add(key)
+        picked.append(h)
+        if len(picked) >= max_sources:
+            break
     if not picked:
         return ""
     share = max(400, max_chars // len(picked))
@@ -51,3 +64,33 @@ def context_files_empty(value: Any) -> bool:
         return not any(str(v).strip() for v in value)
     s = str(value).strip()
     return s in ("", "[]", "null", "None")
+
+
+
+# ── The RUN's research, not just the step's ─────────────────────────────────────
+# Probe 3 Oct (1e84cf1d, strategic-vector-db-report): web.research/web.fetch ran in steps
+# 1-2, prose.author in step 3 - whose own history held no web results, so nothing was
+# handed over and the report cited "[data-dynamics.io blog post]" with no URL ("cites
+# sources" failed). Successful web results are remembered per session, bounded.
+MAX_RUNS = 64
+MAX_PER_RUN = 12
+_RUN: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
+
+
+def remember(session_id: str, entry: Any) -> None:
+    """Record one step-history entry for the run when it is source material."""
+    if not session_id or not _is_source(entry):
+        return
+    a = entry.get("args") if isinstance(entry.get("args"), dict) else {}
+    lst = _RUN.setdefault(session_id, [])
+    _RUN.move_to_end(session_id)
+    lst.append({"tool": entry.get("tool"), "ok": True,
+                "args": {k: a[k] for k in ("query", "url", "q") if k in a},
+                "preview": str(entry.get("preview"))[:4000]})
+    del lst[:-MAX_PER_RUN]
+    while len(_RUN) > MAX_RUNS:
+        _RUN.popitem(last=False)
+
+
+def recall(session_id: str) -> List[Dict[str, Any]]:
+    return list(_RUN.get(session_id or "", []))
