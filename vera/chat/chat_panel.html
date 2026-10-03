@@ -1007,48 +1007,8 @@ body.has-panel #chatStack.resized{ flex:0 0 auto; }
    Replaces the plain <pre><code> rendering. Wraps fenced code
    blocks with a header strip (language pill + Copy / Preview /
    Run buttons) so the user can interact with code inline. */
-.code-card{margin:6px 0;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--bg2)}
-.code-card pre{margin:0;padding:10px 12px;overflow:auto;background:var(--bg0);font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--text);max-height:420px}
-.code-card pre code{font-family:inherit;background:transparent;padding:0;color:inherit;white-space:pre}
-.code-card .code-bar{display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg1);border-bottom:1px solid var(--border);font-family:var(--mono);font-size:9px}
-.code-card .code-lang{color:var(--acc);text-transform:uppercase;letter-spacing:.7px;font-weight:600}
-.code-card .cb-act{padding:1px 6px;font-size:9px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);border-radius:3px;cursor:pointer;transition:all .14s}
-.code-card .cb-act:hover{border-color:var(--acc);color:var(--acc)}
-.code-card .cb-act.run{color:var(--acc2);border-color:var(--acc2)}
-.code-card .cb-act.run:hover{background:var(--acc2);color:var(--bg0)}
-.code-card .cb-act:disabled{opacity:.5;cursor:default}
-.code-card .code-exec-out{border-top:1px solid var(--border);background:var(--bg0);font-family:var(--mono);font-size:11px;line-height:1.5;max-height:340px;overflow:auto}
-.code-card .code-exec-out pre{margin:0;padding:6px 12px;white-space:pre-wrap;word-break:break-word;background:transparent}
-.code-card .code-exec-out .ce-stdout{color:var(--text)}
-.code-card .code-exec-out .ce-stderr{color:#e0a060}
-.code-card .code-exec-out .ce-err{padding:6px 12px;color:#e06060}
-.code-card .code-exec-out .ce-meta{padding:6px 12px;color:var(--dim2);font-size:9.5px}
-.code-card .code-exec-out .ce-foot{padding:5px 12px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center}
-.code-card .code-exec-out .ce-foot .ce-meta{padding:0}
-.code-card .code-exec-out .ce-ok{color:var(--acc2);font-weight:600}
-.code-card .code-exec-out .ce-bad{color:#e06060;font-weight:600}
-/* Syntax highlight tokens (self-contained highlighter — see highlightCode).
-   Colours are theme vars so they track the light/dark palette. */
-.hl-kw{color:var(--acc);font-weight:600}
-.hl-str{color:var(--acc2)}
-.hl-com{color:var(--dim);font-style:italic}
-.hl-add{background:rgba(95,207,154,.14);color:var(--acc2);display:inline-block;width:100%}
-.hl-del{background:rgba(232,112,107,.14);color:var(--err);display:inline-block;width:100%}
-.hl-hunk{color:var(--acc);display:inline-block;width:100%}
-.hl-num{color:var(--acc3)}
-.hl-fn{color:var(--acc4)}
-.hl-type{color:var(--acc4)}
-.hl-tag{color:var(--acc)}
-.hl-attr{color:var(--acc2)}
-/* "streaming…" marker on an in-progress (unclosed) code fence */
-.code-card .cb-stream{color:var(--dim2);font-size:9px;font-style:italic;letter-spacing:0}
-.code-card .cb-stream::after{content:'';display:inline-block;width:5px;height:5px;margin-left:5px;border-radius:50%;background:var(--acc);animation:cbpulse 1s ease-in-out infinite;vertical-align:middle}
-@keyframes cbpulse{0%,100%{opacity:.25}50%{opacity:1}}
-/* Per-completed-block lint diagnostics strip */
-.code-card .code-lint{border-top:1px solid var(--border);background:var(--bg0);font-family:var(--mono);font-size:10px;line-height:1.55;padding:4px 10px}
-.code-card .code-lint .cl-err{color:var(--err)}
-.code-card .code-lint .cl-warn{color:var(--warn)}
-.code-card .code-lint .cl-ico{margin-right:5px}
+/* the code card, its highlight tokens, run output, lint strip and streaming marker: ONE stylesheet, the shared output
+   kit's (vera_output.js adds it to the page) - the agent loop and the canvas draw the same card from the same rules. */
 
 /* ── DOC CHIPS ─────────────────────────────────────────────────
    Pinned-paste UX: large pastes become chips above the input bar
@@ -1790,10 +1750,7 @@ body[data-cols~="canvas"] #cvResize{animation:triFade .44s ease}
 html.hdr-absorbed #topBar{height:0!important;min-height:0!important;padding-top:0!important;padding-bottom:0!important;border:0!important;overflow:visible!important;visibility:hidden}
 html.hdr-absorbed #topBar #toolsSheet{visibility:visible}
 /* the drawing, in the block that wrote it (defect 90) */
-.code-card .cb-prev{display:none}
-.code-card.prev .cb-prev{display:block;border-top:1px solid var(--border,rgba(255,255,255,.09))}
-.code-card.prev .cb-prev iframe{display:block;width:100%;height:320px;border:0;background:#fff}
-.code-card.prev > pre{display:none}
+/* (the in-place preview's rules are the shared output kit's) */
 #rightRail.lhm-host .lhm-quick .gal-host{margin-bottom:8px}
 #rightRail.lhm-host .lhm-quick .gal-style{margin-left:auto}
 #rightRail.lhm-host .lhm-quick .gal-style button{font-size:9px;white-space:nowrap}
@@ -2360,6 +2317,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="sec" style="margin-top:5px">Session Memory</div>
     <script src="/ui/vera-notes.js"></script>
 <script src="/ui/elements/vera_markdown.js"></script>
+<script src="/ui/elements/vera_output.js"></script>
 <script src="/ui/widgets/widget_element.js"></script>
     <vera-session-notes id="ctxNotesEl" scope="chat" title="Chat session memory"></vera-session-notes>
     <div class="sec" style="margin-top:5px">Sources</div>
@@ -5746,8 +5704,11 @@ IMPORTANT:
       f.setAttribute('referrerpolicy','no-referrer'); f.srcdoc=_cbDoc(blk.lang, blk.code); host.appendChild(f); }
   }
   let _codeBlockSeq=0;
-  const _CODE_BLOCKS={}; // id -> {lang, code, filename}
+  // ONE registry with the shared output kit (vera_output.js): a card drawn by the chat, the agent loop or the canvas
+  // is the same {lang, code, filename} wherever it is read - Run, Save, Explode and an edit all see one copy
+  const _CODE_BLOCKS=(typeof VeraOut!=='undefined'&&VeraOut.blocks)||{}; // id -> {lang, code, filename}
   function _registerCodeBlock(lang, code, filename){
+    if(typeof VeraOut!=='undefined') return VeraOut.register(lang, code, filename);
     const id='cb'+(++_codeBlockSeq);
     _CODE_BLOCKS[id]={lang:lang||'',code:code||'',filename:filename||''};
     return id;
@@ -5890,6 +5851,7 @@ IMPORTANT:
   }
   const _hlCache=new Map();
   function highlightCode(code, lang){
+    if(typeof VeraOut!=='undefined') return VeraOut.highlight(code, lang);   // the one highlighter (vera_output.js); below, its fallback
     code=String(code==null?'':code);
     const fam=_HL_FAMILY[(lang||'').toLowerCase()]||null;
     const key=(fam||'_')+' '+code;
@@ -5940,6 +5902,7 @@ IMPORTANT:
     return null;
   }
   function _lintCode(lang, code){
+    if(typeof VeraOut!=='undefined') return VeraOut.lintCode(lang, code);    // the one linter (vera_output.js); below, its fallback
     const l=(lang||'').toLowerCase(), fam=_HL_FAMILY[l], out=[];
     if(!code || !code.trim()) return out;
     if(l==='json'){
@@ -5962,6 +5925,8 @@ IMPORTANT:
   const _lintCache=new Map();
   function _lintRenderedBlocks(container){
     if(!container) return;
+    // the shared kit lints the finished cards, opens whole pages and draws its diagrams - the same pass the loop and the canvas run
+    if(typeof VeraOut!=='undefined'){ try{ VeraOut.hydrate(container); }catch(_){} return; }
     if(document.getElementById('cfgLintCode')?.checked===false) return; // optional toggle, default on
     container.querySelectorAll('.code-card[data-cb]').forEach(card=>{
       if(card.getAttribute('data-incomplete')==='1') return;   // skip the in-progress block
@@ -8717,6 +8682,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     // opts.title names a card that did not come from a fence (render.html passes the cap's title); a fence's own
     // filename still wins, because that is what the author wrote above the block
     const fname=_parseFenceFilename(info||'')||String(opts.title||'');
+    // THE CARD IS THE SHARED ONE (vera_output.js): the same card, actions and look the agent loop and the canvas
+    // draw - Copy · Edit · Explode · Preview · Pop out · Pane · Run · Save · Canvas - with the chat's own explode
+    // panel, artifact save, pop-out and pane plugged in as its hooks (_voHooks). Below: the fallback without it.
+    if(typeof VeraOut!=='undefined') return VeraOut.card(lang, raw, {filename:fname, incomplete:!!st.incomplete});
     const id=_registerCodeBlock(lang,raw,fname);
     const langLbl=esc((lang||'plain').toLowerCase())+(fname?` · <span style="color:var(--acc,#5a9e8f)">${esc(fname)}</span>`:'');
     if(st.incomplete){
@@ -8761,6 +8730,21 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
          + `<div class="code-exec-out" data-exec-out="${id}" style="display:none"></div>`
          + `</div>`;
   }
+  /* the chat's way of doing what the shared code card offers: its inline explode panel, its artifact save (the Code
+     tab follows), its floating pop-out and preview pane, its session - and an EDIT kept with the message, so Copy,
+     the canvas and every delivery carry the version the reader made */
+  (function _voHooks(){
+    if(typeof VeraOut==='undefined') return;
+    Object.assign(VeraOut.hooks, {
+      session:()=>SID||'',
+      explode:(blk,id,b)=>{ _codeExplode(id,b); return true; },
+      save:(blk,id,b)=>{ _codeSaveArtifact(id,b); return true; },
+      pop:(blk,id)=>{ _codePop(id); return true; },
+      pane:(blk,id)=>{ _codePreview(id); return true; },
+      edited:(blk,id,d,card)=>{ try{ const body=card.closest('.msg-body'); const md=body&&body.dataset.markdown;
+        if(md&&d.before&&md.indexOf(d.before)>=0) body.dataset.markdown=md.replace(d.before, d.code); }catch(_){} },
+    });
+  })();
   function renderMd(t,opts){
     opts=opts||{};
     if(window.VeraMD && typeof VeraMD.render==='function' && VeraMD.version>=2){
