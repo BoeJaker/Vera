@@ -1007,48 +1007,8 @@ body.has-panel #chatStack.resized{ flex:0 0 auto; }
    Replaces the plain <pre><code> rendering. Wraps fenced code
    blocks with a header strip (language pill + Copy / Preview /
    Run buttons) so the user can interact with code inline. */
-.code-card{margin:6px 0;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--bg2)}
-.code-card pre{margin:0;padding:10px 12px;overflow:auto;background:var(--bg0);font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--text);max-height:420px}
-.code-card pre code{font-family:inherit;background:transparent;padding:0;color:inherit;white-space:pre}
-.code-card .code-bar{display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg1);border-bottom:1px solid var(--border);font-family:var(--mono);font-size:9px}
-.code-card .code-lang{color:var(--acc);text-transform:uppercase;letter-spacing:.7px;font-weight:600}
-.code-card .cb-act{padding:1px 6px;font-size:9px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);border-radius:3px;cursor:pointer;transition:all .14s}
-.code-card .cb-act:hover{border-color:var(--acc);color:var(--acc)}
-.code-card .cb-act.run{color:var(--acc2);border-color:var(--acc2)}
-.code-card .cb-act.run:hover{background:var(--acc2);color:var(--bg0)}
-.code-card .cb-act:disabled{opacity:.5;cursor:default}
-.code-card .code-exec-out{border-top:1px solid var(--border);background:var(--bg0);font-family:var(--mono);font-size:11px;line-height:1.5;max-height:340px;overflow:auto}
-.code-card .code-exec-out pre{margin:0;padding:6px 12px;white-space:pre-wrap;word-break:break-word;background:transparent}
-.code-card .code-exec-out .ce-stdout{color:var(--text)}
-.code-card .code-exec-out .ce-stderr{color:#e0a060}
-.code-card .code-exec-out .ce-err{padding:6px 12px;color:#e06060}
-.code-card .code-exec-out .ce-meta{padding:6px 12px;color:var(--dim2);font-size:9.5px}
-.code-card .code-exec-out .ce-foot{padding:5px 12px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center}
-.code-card .code-exec-out .ce-foot .ce-meta{padding:0}
-.code-card .code-exec-out .ce-ok{color:var(--acc2);font-weight:600}
-.code-card .code-exec-out .ce-bad{color:#e06060;font-weight:600}
-/* Syntax highlight tokens (self-contained highlighter — see highlightCode).
-   Colours are theme vars so they track the light/dark palette. */
-.hl-kw{color:var(--acc);font-weight:600}
-.hl-str{color:var(--acc2)}
-.hl-com{color:var(--dim);font-style:italic}
-.hl-add{background:rgba(95,207,154,.14);color:var(--acc2);display:inline-block;width:100%}
-.hl-del{background:rgba(232,112,107,.14);color:var(--err);display:inline-block;width:100%}
-.hl-hunk{color:var(--acc);display:inline-block;width:100%}
-.hl-num{color:var(--acc3)}
-.hl-fn{color:var(--acc4)}
-.hl-type{color:var(--acc4)}
-.hl-tag{color:var(--acc)}
-.hl-attr{color:var(--acc2)}
-/* "streaming…" marker on an in-progress (unclosed) code fence */
-.code-card .cb-stream{color:var(--dim2);font-size:9px;font-style:italic;letter-spacing:0}
-.code-card .cb-stream::after{content:'';display:inline-block;width:5px;height:5px;margin-left:5px;border-radius:50%;background:var(--acc);animation:cbpulse 1s ease-in-out infinite;vertical-align:middle}
-@keyframes cbpulse{0%,100%{opacity:.25}50%{opacity:1}}
-/* Per-completed-block lint diagnostics strip */
-.code-card .code-lint{border-top:1px solid var(--border);background:var(--bg0);font-family:var(--mono);font-size:10px;line-height:1.55;padding:4px 10px}
-.code-card .code-lint .cl-err{color:var(--err)}
-.code-card .code-lint .cl-warn{color:var(--warn)}
-.code-card .code-lint .cl-ico{margin-right:5px}
+/* the code card, its highlight tokens, run output, lint strip and streaming marker: ONE stylesheet, the shared output
+   kit's (vera_output.js adds it to the page) - the agent loop and the canvas draw the same card from the same rules. */
 
 /* ── DOC CHIPS ─────────────────────────────────────────────────
    Pinned-paste UX: large pastes become chips above the input bar
@@ -1256,10 +1216,10 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
 /* FULL — the chrome is always there, not only on hover */
 html[data-den="full"] .msg-actions{opacity:1}
 /* HOVER */
-html[data-den="hover"] .mwrap{position:relative;transition:padding-bottom .17s ease}
-html[data-den="hover"] .mwrap:hover{padding-bottom:34px}
-html[data-den="hover"] .msg-actions{position:absolute;left:62px;right:16px;bottom:6px;margin:0;opacity:0;pointer-events:none;transition:opacity .15s}
-html[data-den="hover"] .mwrap:hover .msg-actions{opacity:1;pointer-events:auto}
+html[data-den="hover"] .mwrap{position:relative}
+/* (the action row used to be laid OVER the reply's last lines here, with the message growing 34px on hover to make
+   room - owner, 2026-10-03: "in hover mode they appear over the text of the response instead of below the text".
+   It keeps its own place under the text now: see the action-row rules under #msgs.) */
 html[data-den="hover"] .msg-gutter,html[data-den="hover"] .mtime{opacity:0;transition:opacity .15s}
 html[data-den="hover"] .mwrap:hover .msg-gutter,html[data-den="hover"] .mwrap:hover .mtime{opacity:1}
 html[data-den="hover"] .cap-inline:not(.open) .cap-result{display:none!important}
@@ -1548,11 +1508,6 @@ body.hdr-folded #hdrMore::after{content:'';position:absolute;right:5px;top:5px;w
 #msgs .mwrap.u{background:transparent;border-left:none}
 #msgs .mwrap.u.pin{border-left:none;box-shadow:none}
 #msgs .mwrap + .mwrap.u{box-shadow:inset 0 1px 0 var(--bd,var(--border,rgba(255,255,255,.09)))}
-/* the chrome row keeps the board's five actions in view; the rest are the same buttons behind ⋯ */
-#msgs .msg-actions .mact:nth-child(n+6){display:none}
-#msgs .msg-actions.all .mact{display:inline-flex}
-#msgs .msg-actions .mact-more{border:none;border-radius:var(--r-sm,7px);font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;padding:3px 7px;color:var(--t3,var(--dim,#6b7280));background:var(--surf2);cursor:pointer}
-#msgs .msg-actions.all .mact-more{color:var(--ac,var(--acc,#5a9e8f))}
 #msgs .mwrap .msg-user-line{display:flex;gap:14px;margin:0}
 #msgs .mwrap.u .msg-user-line{background:var(--surf);border-radius:var(--ui-radius,10px);padding:12px 14px}
 #msgs .mwrap.a .msg-user-line{padding:12px 14px 4px}
@@ -1563,9 +1518,31 @@ body.hdr-folded #hdrMore::after{content:'';position:absolute;right:5px;top:5px;w
 #msgs .msg-body p{margin:0 0 9px}
 #msgs .mtime{display:none}
 #msgs .mwrap.u.pin{position:static}
-#msgs .msg-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 0 58px;padding:0 14px 4px 0;border:none;background:transparent}
-#msgs .msg-actions .mact{border:none;border-radius:var(--r-sm,7px);font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;padding:3px 9px;color:var(--t3,var(--dim,#6b7280));background:var(--surf2);height:auto}
-#msgs .msg-actions .mact:hover{color:var(--ac,var(--acc,#5a9e8f));background:var(--surf2)}
+/* THE REPLY'S ACTION ROW (owner, 2026-10-03): ghost buttons, icon + word, under the text - never over it. Quiet until
+   the message is pointed at; "Send to" opens the one menu of everything that delivers the message elsewhere. */
+#msgs .msg-actions{display:flex;align-items:center;gap:2px;flex-wrap:wrap;margin:6px 0 0 58px;padding:0 14px 6px 0;border:none;background:transparent;position:relative;opacity:.5;transition:opacity .15s}
+#msgs .mwrap:hover .msg-actions,#msgs .msg-actions:focus-within,#msgs .msg-actions:has(.ma-dd.open){opacity:1}
+#msgs .msg-actions .mact{display:inline-flex;align-items:center;gap:5px;border:none;border-radius:var(--r-sm,6px);background:transparent;color:var(--t3,var(--dim,#6b7280));font:500 10.5px/1 var(--f-ui,var(--sans,system-ui,sans-serif));padding:5px 8px;height:auto;cursor:pointer;transition:background .12s,color .12s}
+#msgs .msg-actions .mact:hover,#msgs .msg-actions .mact:focus-visible,#msgs .msg-actions .ma-dd.open .ma-ddb{background:var(--surf2,rgba(255,255,255,.06));color:var(--t1,var(--text,#d8dce4));outline:none}
+#msgs .msg-actions .mact svg,#msgs .msg-actions .ma-it svg{width:13px;height:13px;flex:0 0 auto}
+#msgs .msg-actions .mact.ok{color:var(--ok,#7bc47f)}#msgs .msg-actions .mact.err{color:var(--err,#e06c6c)}
+#msgs .msg-actions .ma-sep{width:1px;height:14px;background:var(--bd,var(--border,rgba(255,255,255,.09)));margin:0 4px}
+#msgs .msg-actions .ma-dd{position:relative}
+#msgs .msg-actions .ma-menu{display:none;position:absolute;left:0;top:calc(100% + 4px);z-index:60;min-width:250px;padding:5px;border-radius:var(--ui-radius,10px);background:var(--surf,var(--bg1,#1a1d24));box-shadow:var(--elev,0 12px 34px -16px rgba(0,0,0,.7)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+#msgs .msg-actions .ma-menu.up{top:auto;bottom:calc(100% + 4px)}
+#msgs .msg-actions .ma-dd.open .ma-menu{display:block}
+/* the message whose menu is open rises above its neighbours - the pinned question at the top drew over a menu that
+   had opened upward */
+#msgs .mwrap:has(.ma-dd.open){position:relative;z-index:80}
+#msgs .msg-actions .ma-it{display:flex;align-items:flex-start;gap:10px;width:100%;border:none;background:none;text-align:left;padding:7px 9px;border-radius:var(--r-sm,6px);color:var(--t1,var(--text,#d8dce4));font:12px/1.3 var(--f-ui,var(--sans,system-ui,sans-serif));cursor:pointer}
+#msgs .msg-actions .ma-it svg{margin-top:1px;color:var(--t3,var(--dim,#6b7280))}
+#msgs .msg-actions .ma-it:hover,#msgs .msg-actions .ma-it:focus{background:var(--surf2,rgba(255,255,255,.06));outline:none}
+#msgs .msg-actions .ma-it:hover svg,#msgs .msg-actions .ma-it:focus svg{color:var(--ac,var(--acc,#5a9e8f))}
+#msgs .msg-actions .ma-it small{display:block;margin-top:2px;color:var(--t3,var(--dim,#6b7280));font-size:10.5px}
+#msgs .msg-actions .ma-menu hr{border:none;height:1px;background:var(--bd,var(--border,rgba(255,255,255,.09)));margin:4px 2px}
+/* hover tier: the row keeps its place UNDER the text (it was laid over the last lines of the reply) and shows on hover */
+html[data-den="hover"] #msgs .msg-actions{position:relative;left:auto;right:auto;bottom:auto;margin:6px 0 0 58px;opacity:0;visibility:hidden;pointer-events:none}
+html[data-den="hover"] #msgs .mwrap:hover .msg-actions,html[data-den="hover"] #msgs .msg-actions:focus-within,html[data-den="hover"] #msgs .msg-actions:has(.ma-dd.open){opacity:1;visibility:visible;pointer-events:auto}
 #msgs .cap-inline{border:none;border-radius:var(--ui-radius,10px);background:var(--surf);box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14)),inset 2px 0 0 var(--ac2,var(--acc2,#8fb87a));margin:3px 0 10px;padding:0;overflow:hidden;font-size:10.5px;white-space:normal}
 #msgs .cap-inline:hover{box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.20),0 10px 30px -16px rgba(0,0,0,.60)),inset 2px 0 0 var(--ac2,var(--acc2,#8fb87a))}
 #msgs .cap-inline-header{display:flex;align-items:center;gap:9px;padding:8px 13px;margin:0;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;color:var(--ac2,var(--acc2,#8fb87a))}
@@ -1773,10 +1750,7 @@ body[data-cols~="canvas"] #cvResize{animation:triFade .44s ease}
 html.hdr-absorbed #topBar{height:0!important;min-height:0!important;padding-top:0!important;padding-bottom:0!important;border:0!important;overflow:visible!important;visibility:hidden}
 html.hdr-absorbed #topBar #toolsSheet{visibility:visible}
 /* the drawing, in the block that wrote it (defect 90) */
-.code-card .cb-prev{display:none}
-.code-card.prev .cb-prev{display:block;border-top:1px solid var(--border,rgba(255,255,255,.09))}
-.code-card.prev .cb-prev iframe{display:block;width:100%;height:320px;border:0;background:#fff}
-.code-card.prev > pre{display:none}
+/* (the in-place preview's rules are the shared output kit's) */
 #rightRail.lhm-host .lhm-quick .gal-host{margin-bottom:8px}
 #rightRail.lhm-host .lhm-quick .gal-style{margin-left:auto}
 #rightRail.lhm-host .lhm-quick .gal-style button{font-size:9px;white-space:nowrap}
@@ -2343,6 +2317,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="sec" style="margin-top:5px">Session Memory</div>
     <script src="/ui/vera-notes.js"></script>
 <script src="/ui/elements/vera_markdown.js"></script>
+<script src="/ui/elements/vera_output.js"></script>
 <script src="/ui/widgets/widget_element.js"></script>
     <vera-session-notes id="ctxNotesEl" scope="chat" title="Chat session memory"></vera-session-notes>
     <div class="sec" style="margin-top:5px">Sources</div>
@@ -4371,6 +4346,52 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   }
   try{ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', _dlvRestore); else setTimeout(_dlvRestore, 0); }catch(_){}
 
+  /* the reply's action row: its glyphs (one stroke weight, currentColor - they follow the theme) */
+  const _svg=(d)=>'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>';
+  const _MA_ICO={
+    copy:_svg('<rect x="5.5" y="5.5" width="8" height="8" rx="1.6"/><path d="M10.5 5.5V3.6A1.1 1.1 0 0 0 9.4 2.5H3.6A1.1 1.1 0 0 0 2.5 3.6v5.8a1.1 1.1 0 0 0 1.1 1.1h1.9"/>'),
+    explode:_svg('<circle cx="8" cy="8" r="1.8"/><circle cx="3" cy="3.5" r="1.2"/><circle cx="13" cy="3.5" r="1.2"/><circle cx="3.5" cy="12.8" r="1.2"/><circle cx="12.8" cy="12.5" r="1.2"/><path d="M6.6 6.7 4 4.4M9.4 6.7 12 4.4M6.7 9.4l-2.3 2.5M9.4 9.3l2.4 2.3"/>'),
+    canvas:_svg('<rect x="2" y="2.5" width="12" height="11" rx="1.6"/><path d="M8.5 2.5v11M8.5 7h5.5"/>'),
+    send:_svg('<path d="M2.5 8h10M9 4.5 12.5 8 9 11.5"/>'),
+    edit:_svg('<path d="M10.8 2.7 13.3 5.2 6 12.5l-3.2.7.7-3.2z"/>'),
+    resend:_svg('<path d="M13 8a5 5 0 1 1-1.6-3.7"/><path d="M13.2 2.8v2.7h-2.7"/>'),
+    html:_svg('<path d="M4 2.5h5.5L12.5 5.5v8H4z"/><path d="M9.5 2.5v3h3M6 9.5h4.5M6 11.5h3"/>'),
+    podcast:_svg('<rect x="6" y="2" width="4" height="7.5" rx="2"/><path d="M3.8 7.8a4.2 4.2 0 0 0 8.4 0M8 12v2"/>'),
+    notebook:_svg('<path d="M4 2.5h8.5v11H4a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 4 2.5z"/><path d="M5.5 2.5v11M7.5 6h3.5"/>'),
+    ide:_svg('<path d="m5.5 5-3 3 3 3M10.5 5l3 3-3 3"/>'),
+    project:_svg('<path d="M2.5 4.5h4l1.5 1.5h5.5v7h-11z"/>'),
+    think:_svg('<path d="M5.2 11.5h5.6M6 13.5h4M8 2.5a4 4 0 0 0-2.4 7.2c.4.3.6.8.6 1.3h3.6c0-.5.2-1 .6-1.3A4 4 0 0 0 8 2.5z"/>'),
+    channel:_svg('<path d="M2.5 5.5h9M9 3l2.5 2.5L9 8M13.5 10.5h-9M7 8l-2.5 2.5L7 13"/>')};
+  // "Send to": one menu, opened under its button (above it when the page has no room below), keyboard-walkable
+  function _maClose(){ document.querySelectorAll('.ma-dd.open').forEach(x=>x.classList.remove('open')); }
+  function _maMenu(btn){
+    const dd=btn&&btn.closest('.ma-dd'); if(!dd) return;
+    const open=!dd.classList.contains('open'); _maClose(); if(!open) return;
+    dd.classList.add('open'); const m=dd.querySelector('.ma-menu'); if(!m) return;
+    m.classList.remove('up'); const r=m.getBoundingClientRect(); if(r.bottom>window.innerHeight-8&&r.height<r.top) m.classList.add('up');
+    try{ m.querySelector('.ma-it').focus(); }catch(_){}
+  }
+  document.addEventListener('mousedown',e=>{ if(!(e.target&&e.target.closest&&e.target.closest('.ma-dd'))) _maClose(); },true);
+  document.addEventListener('keydown',e=>{
+    const m=document.querySelector('.ma-dd.open .ma-menu'); if(!m) return;
+    if(e.key==='Escape'){ e.preventDefault(); const b=m.parentElement.querySelector('.ma-ddb'); _maClose(); try{ b.focus(); }catch(_){} return; }
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); const its=[...m.querySelectorAll('.ma-it')]; const i=its.indexOf(document.activeElement);
+      const n=its[(i+(e.key==='ArrowDown'?1:-1)+its.length)%its.length]; if(n) n.focus(); }
+  });
+  // the reply onto the session canvas, as a reading item (the canvas delivery vector)
+  async function _msgToCanvas(mid, btn){
+    const rec=_MSG_REGISTRY[mid]; if(!rec) return; const content=rec.getContent(); if(!String(content||'').trim()) return;
+    const title=(content.trim().split('\n').find(l=>l.trim())||'From the chat').replace(/^#+\s*/,'').slice(0,120);
+    if(btn) btn.classList.remove('ok','err');
+    try{
+      const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:'output.redeliver',session_id:SID||'',arguments:{channel:'canvas',content,title,session_id:SID||''}})});
+      const j=await r.json(); const c=(j&&j.content)||{};
+      if(btn) btn.classList.add(c.ok?'ok':'err');
+      if(c.ok) _dlvReveal('canvas'); else appendSys('<span style="color:var(--err)">Canvas: '+esc(c.error||'failed')+'</span>');
+    }catch(e){ if(btn) btn.classList.add('err'); }
+  }
+
   /* ★ Save to gallery — pins a produced artifact (HTML report, etc.) to the
      global artifacts gallery via gallery.add. The artifact payload is stashed by
      key so titles/urls with quotes survive the inline onclick. */
@@ -4437,21 +4458,31 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     // Hidden by default; revealed on .mwrap:hover via CSS.
     const actions=document.createElement('div');
     actions.className='msg-actions';
-    const editBtns = role==='user'
-      ? `<button class="mact" onclick="CH._msgEdit('${mid}')" title="Edit & resubmit (rewinds chat from here)">✎ Edit</button>`
-      + `<button class="mact" onclick="CH._msgResubmit('${mid}')" title="Resubmit unchanged (rewinds chat from here)">↻ Resend</button>`
-      : '';
-    actions.innerHTML= editBtns
-        + `<button class="mact" onclick="CH._msgCopy('${mid}',this)" title="Copy message text to clipboard">Copy</button>`
-      + `<button class="mact" onclick="CH._msgExplode('${mid}',this)" title="Explode this message into a structured diagram — its code, or its prose">Explode</button>`
-      + `<button class="mact" onclick="CH._msgSaveToNotebook('${mid}')" title="Save this message as a cell in a notebook">+ Notebook</button>`
-      + `<button class="mact" onclick="CH._msgSaveToIde('${mid}')" title="Save this message to a file via the IDE">+ IDE</button>`
-      + `<button class="mact" onclick="CH._msgSaveToProject('${mid}')" title="Add this message to a project (or a new one) in the dream system">+ Project</button>`
-      + `<button class="mact" onclick="CH._msgThinkLater('${mid}')" title="Mark this for later thought — a dream thinking-loop Vera revisits when idle">&#128173; Think later</button>`
-      + `<button class="mact" onclick="CH._msgPodcast('${mid}')" title="Turn this message into a spoken podcast episode (multi-voice TTS)">&#127908; Podcast</button>`
-      + `<button class="mact" onclick="CH._msgHtmlReport('${mid}')" title="Re-deliver this message as a rich, self-contained HTML report (themed doc + Mermaid + infographics)">&#128444; As HTML</button>`
-      + `<button class="mact" onclick="CH._msgRedeliver('${mid}')" title="Re-deliver this message through another channel (podcast / email / telegram / notebook / …) — original untouched">&#8646; Re-deliver</button>`
-      + `<button class="mact-more" onclick="this.parentElement.classList.toggle('all')" title="Every action for this message">⋯</button>`;
+    /* THE REPLY'S ACTIONS (owner, 2026-10-03: "i dont like the style of the menu at the bottom of responses - its just a
+       bunch of vanilla looking buttons ... and the menu is not ergonomic"): the few you use every time stand in the row
+       as icon + word; everything that SENDS the message somewhere is one "Send to…" menu, each entry saying what it
+       does. Same handlers as before - only the face changed. */
+    const _ma=(ico,label,act,tip,cls)=>`<button class="mact${cls?' '+cls:''}" onclick="${act}" title="${tip}">${_MA_ICO[ico]||''}<span>${label}</span></button>`;
+    const _mi=(ico,label,act,hint)=>`<button class="ma-it" role="menuitem" onclick="CH._maClose();${act}">${_MA_ICO[ico]||''}<span class="ma-l">${label}<small>${hint}</small></span></button>`;
+    actions.innerHTML=(role==='user'
+        ? _ma('edit','Edit',`CH._msgEdit('${mid}')`,'Edit and resubmit - rewinds the chat from here')
+        + _ma('resend','Resend',`CH._msgResubmit('${mid}')`,'Resubmit unchanged - rewinds the chat from here')
+        : '')
+      + _ma('copy','Copy',`CH._msgCopy('${mid}',this)`,'Copy the message text')
+      + _ma('explode','Explode',`CH._msgExplode('${mid}',this)`,'A structured diagram of this message - its code, or its prose')
+      + _ma('canvas','Canvas',`CH._msgToCanvas('${mid}',this)`,'Put this message on the session canvas, beside the chat')
+      + `<span class="ma-sep"></span><div class="ma-dd">`
+      +   _ma('send','Send to',`CH._maMenu(this)`,'Deliver this message somewhere else - the original stays here','ma-ddb')
+      +   `<div class="ma-menu" role="menu">`
+      +     _mi('html','HTML report',`CH._msgHtmlReport('${mid}')`,'a rich document - on the canvas or a tab (Settings › Delivery)')
+      +     _mi('podcast','Podcast',`CH._msgPodcast('${mid}')`,'a spoken episode, multi-voice')
+      +     _mi('notebook','Notebook',`CH._msgSaveToNotebook('${mid}')`,'a cell in a notebook')
+      +     _mi('ide','A file in the IDE',`CH._msgSaveToIde('${mid}')`,'saved through the IDE')
+      +     _mi('project','A project',`CH._msgSaveToProject('${mid}')`,'added to a dream-system project')
+      +     _mi('think','Think about it later',`CH._msgThinkLater('${mid}')`,'Vera revisits it when idle')
+      +     `<hr>`
+      +     _mi('channel','Another channel…',`CH._msgRedeliver('${mid}')`,'email, telegram, memory - with a style')
+      +   `</div></div>`;
     wrap.appendChild(actions);
 
     // Register so the save handlers can find the message's text. The body
@@ -5673,8 +5704,11 @@ IMPORTANT:
       f.setAttribute('referrerpolicy','no-referrer'); f.srcdoc=_cbDoc(blk.lang, blk.code); host.appendChild(f); }
   }
   let _codeBlockSeq=0;
-  const _CODE_BLOCKS={}; // id -> {lang, code, filename}
+  // ONE registry with the shared output kit (vera_output.js): a card drawn by the chat, the agent loop or the canvas
+  // is the same {lang, code, filename} wherever it is read - Run, Save, Explode and an edit all see one copy
+  const _CODE_BLOCKS=(typeof VeraOut!=='undefined'&&VeraOut.blocks)||{}; // id -> {lang, code, filename}
   function _registerCodeBlock(lang, code, filename){
+    if(typeof VeraOut!=='undefined') return VeraOut.register(lang, code, filename);
     const id='cb'+(++_codeBlockSeq);
     _CODE_BLOCKS[id]={lang:lang||'',code:code||'',filename:filename||''};
     return id;
@@ -5817,6 +5851,7 @@ IMPORTANT:
   }
   const _hlCache=new Map();
   function highlightCode(code, lang){
+    if(typeof VeraOut!=='undefined') return VeraOut.highlight(code, lang);   // the one highlighter (vera_output.js); below, its fallback
     code=String(code==null?'':code);
     const fam=_HL_FAMILY[(lang||'').toLowerCase()]||null;
     const key=(fam||'_')+' '+code;
@@ -5867,6 +5902,7 @@ IMPORTANT:
     return null;
   }
   function _lintCode(lang, code){
+    if(typeof VeraOut!=='undefined') return VeraOut.lintCode(lang, code);    // the one linter (vera_output.js); below, its fallback
     const l=(lang||'').toLowerCase(), fam=_HL_FAMILY[l], out=[];
     if(!code || !code.trim()) return out;
     if(l==='json'){
@@ -5889,6 +5925,8 @@ IMPORTANT:
   const _lintCache=new Map();
   function _lintRenderedBlocks(container){
     if(!container) return;
+    // the shared kit lints the finished cards, opens whole pages and draws its diagrams - the same pass the loop and the canvas run
+    if(typeof VeraOut!=='undefined'){ try{ VeraOut.hydrate(container); }catch(_){} return; }
     if(document.getElementById('cfgLintCode')?.checked===false) return; // optional toggle, default on
     container.querySelectorAll('.code-card[data-cb]').forEach(card=>{
       if(card.getAttribute('data-incomplete')==='1') return;   // skip the in-progress block
@@ -7458,10 +7496,17 @@ IMPORTANT:
        made both columns flicker (owner, 2026-09-25): the reply's markup is rebuilt on every token, so the hide and
        the "on the canvas" line were destroyed and re-made several times a second. The swap happens once, when the
        message is finished — until then you watch it fill in where you always did. */
-    Promise.resolve(_cvLandFrom(bubEl, _cvRelMid, (bubEl.dataset&&bubEl.dataset.mid)||_cvRelMid, true))
+    _cvLiveRun=Promise.resolve(_cvLandFrom(bubEl, _cvRelMid, (bubEl.dataset&&bubEl.dataset.mid)||_cvRelMid, true))
       .catch(()=>{}).then(()=>{ _cvLiveBusy=false; });
   }
+  /* THE LAST ITEM WAITED FOR THE NEXT MESSAGE (owner, 2026-10-03: "the canvas has a bug where the last element added
+     does not fully display untill the next message is sent"). The reply's final landing ran while the last live landing
+     was still in flight: neither knew the other had the key, the final one's canvas.add met the key the live one had
+     just made - and the resolver SHOWS an existing key, it does not rewrite it - so the item kept its half-streamed
+     content until a later turn landed it again. The final landing now waits for the live one, then updates. */
+  let _cvLiveRun=null;
   async function _cvLandReply(mid){
+    if(_cvLiveRun){ try{ await _cvLiveRun; }catch(_){} }
     if(!SID||!mid) return 0; const q=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); if(!q) return 0;
     let w=q.nextElementSibling; while(w&&!(w.classList&&w.classList.contains('mwrap')&&w.classList.contains('a'))) w=w.nextElementSibling;
     const body=w&&w.querySelector('.msg-body'); if(!body||body.querySelector('.think-throb')) return 0;
@@ -7489,6 +7534,9 @@ IMPORTANT:
       }
       // the reply is the maker: the run leaves ITS block, while the turn stays the question the station is keyed by
       try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid, from:from||mid}});
+        /* THE KEY WAS ALREADY THERE (resolved 'shown'): the resolver brings an item back, it does not rewrite it - so
+           what this landing holds is sent as an update, or the item keeps whatever an earlier landing gave it */
+        if(r&&r.ok&&r.resolved==='shown'){ try{ await _capCall('canvas.update',{session_id:SID, key, content:m.content}); }catch(_){} }
         if(r&&r.ok){ _CV_SIG[key]=sig; if(!live) _cvOnCanvas(m, key); }
         if(!(r&&r.ok)) continue; _CV_LANDED[key]=true; n++;
         (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:m.n, d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply'), col:m.col, kind:m.k, key, form:m.kind==='widget'?(m.content.widget||''):undefined, mermaid:m.kind==='diagram'?m.content.mermaid:undefined, record:m.kind==='widget'?(m.content.record||undefined):undefined});
@@ -8634,6 +8682,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     // opts.title names a card that did not come from a fence (render.html passes the cap's title); a fence's own
     // filename still wins, because that is what the author wrote above the block
     const fname=_parseFenceFilename(info||'')||String(opts.title||'');
+    // THE CARD IS THE SHARED ONE (vera_output.js): the same card, actions and look the agent loop and the canvas
+    // draw - Copy · Edit · Explode · Preview · Pop out · Pane · Run · Save · Canvas - with the chat's own explode
+    // panel, artifact save, pop-out and pane plugged in as its hooks (_voHooks). Below: the fallback without it.
+    if(typeof VeraOut!=='undefined') return VeraOut.card(lang, raw, {filename:fname, incomplete:!!st.incomplete, pane:true});
     const id=_registerCodeBlock(lang,raw,fname);
     const langLbl=esc((lang||'plain').toLowerCase())+(fname?` · <span style="color:var(--acc,#5a9e8f)">${esc(fname)}</span>`:'');
     if(st.incomplete){
@@ -8678,6 +8730,21 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
          + `<div class="code-exec-out" data-exec-out="${id}" style="display:none"></div>`
          + `</div>`;
   }
+  /* the chat's way of doing what the shared code card offers: its inline explode panel, its artifact save (the Code
+     tab follows), its floating pop-out and preview pane, its session - and an EDIT kept with the message, so Copy,
+     the canvas and every delivery carry the version the reader made */
+  (function _voHooks(){
+    if(typeof VeraOut==='undefined') return;
+    Object.assign(VeraOut.hooks, {
+      session:()=>SID||'',
+      explode:(blk,id,b)=>{ _codeExplode(id,b); return true; },
+      save:(blk,id,b)=>{ _codeSaveArtifact(id,b); return true; },
+      pop:(blk,id)=>{ _codePop(id); return true; },
+      pane:(blk,id)=>{ _codePreview(id); return true; },
+      edited:(blk,id,d,card)=>{ try{ const body=card.closest('.msg-body'); const md=body&&body.dataset.markdown;
+        if(md&&d.before&&md.indexOf(d.before)>=0) body.dataset.markdown=md.replace(d.before, d.code); }catch(_){} },
+    });
+  })();
   function renderMd(t,opts){
     opts=opts||{};
     if(window.VeraMD && typeof VeraMD.render==='function' && VeraMD.version>=2){
@@ -12249,6 +12316,11 @@ Your task: decide what to do next to advance toward the goal.
         HISTORY.push({role:'assistant', content: String(finalText)});
         // the agent loop's final answer goes the same way as a chat reply (Settings › Delivery)
         try{ _deliverAfter(String(finalText), goal); }catch(_){}
+        /* ...and what it MADE reaches the session canvas the way a reply's does (owner, 2026-10-03: "code and output
+           produced by the agentic loop should be able to reach the canvas just like the chat"): the final pane is drawn
+           with the shared cards now, so the reply's harvest reads it - code, diagrams, widgets - keyed to this turn */
+        try{ setTimeout(()=>{ const fb=aloEl.shadowRoot&&aloEl.shadowRoot.querySelector('[data-part="final-body"]');
+          if(fb) _cvLandFrom(fb, uMsg.mid, statusCard.mid||uMsg.mid); }, 700); }catch(_){}
       }
       scroll();
     });
@@ -20694,7 +20766,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _scrollToBottom,
     _msgEdit,_msgEditCancel,_msgEditCommit,_msgResubmit,
     _msgExplode,_codeExplode,
-    _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_msgHtmlReport,_msgRedeliver,_redeliverDo,_dlvPersist,_dlvStyles,_deliverAfter,_gallerySave,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
+    _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_msgHtmlReport,_msgRedeliver,_redeliverDo,_maMenu,_maClose,_msgToCanvas,_dlvPersist,_dlvStyles,_deliverAfter,_gallerySave,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
     _saveModalClose,_saveModalConfirm,_saveModalNbCellTypeChange,
     getActivePanelState,dispatchPanelAction,requestPanelState,
     _startDispatchListener,_stopDispatchListener,

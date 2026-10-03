@@ -192,7 +192,11 @@
      validity), and the diagnostics once the code has SETTLED. A code item still being streamed is half a brace, and
      flagging it on every beat is noise - the chat lints only closed fences for the same reason. */
   function codeLintHtml(c, key, el) {
-    const VC = root.VeraCode; if (!VC || typeof VC.summary !== 'function') return '';
+    // the chat's VeraCode gives the summary line and the lint; on a page without the chat, the shared kit's linter
+    const VO = root.VeraOut;
+    const VC = (root.VeraCode && typeof root.VeraCode.summary === 'function') ? root.VeraCode
+      : (VO && typeof VO.lintCode === 'function') ? { summary: (l, code) => ({ parts: [String(code).split('\n').length + ' lines'], cls: 'ok' }), lint: VO.lintCode } : null;
+    if (!VC) return '';
     const code = String(c.code || ''); const lang = String(c.lang || '');
     if (!code.trim()) return '';
     let settled = true;
@@ -261,7 +265,10 @@
   const BLOCK = {
     /* a document item draws with the reader's renderer (mdx): a research report's tables, numbered lists, quotes and
        figures were pipes and bare lines under the note subset */
-    markdown: c => `<div class="vc-md">${mdx(c.md || c.text || '')}</div>`,
+    // a reading item through the shared kit when it is on the page: its fences are the same cards as the chat's and the
+    // loop's (Copy · Edit · Explode · Preview · Run · Save); the canvas's own mdx where it is not
+    markdown: c => `<div class="vc-md">${root.VeraOut && typeof root.VeraOut.render === 'function'
+      ? root.VeraOut.render(String(c.md || c.text || ''), { canvas: false }) : mdx(c.md || c.text || '')}</div>`,
 
     /* A MONTH, WITH WHAT IS ON IT. Backed by the diary rather than by a copy of it: the month buttons and a day
        press go back to cal.events.list, so the item is a VIEW of the calendar and not a screenshot taken once.
@@ -407,20 +414,39 @@
       const pdef = !el || typeof el.previewOn !== 'function' || el.previewOn();   // the canvas's Preview setting
       const prev = PREVIEWABLE(c.lang) && (pset ? !!el._prevOn[key] : (pdef && WHOLE_PAGE(c.lang, c.code)));
       if (key && el) { el._prevSeen = el._prevSeen || {}; el._prevSeen[key] = prev; }
-      const head = `<div class="vc-codehead">${esc(c.filename || c.lang || 'code')}<span class="sp"></span>`
-        + (PREVIEWABLE(c.lang) && key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
-        + '</div>';
+      /* THE SAME CARD AS THE CHAT'S AND THE LOOP'S (owner, 2026-10-03: "all rendering of output types needs to be
+         consistent and use the same element"): the shared kit's bar - Copy, Run, Save, Pop out, in its look - with the
+         canvas's own actions beside them in the same style: Edit (the item's editor, kept with the item), Preview (the
+         column's live layer, which survives a redraw). The body stays the canvas's: line-addressable, so an explode item
+         bound to this one still lights its spans. */
+      const VO = root.VeraOut;
+      const vid = key ? 'cv-' + key : '';
+      let head;
+      if (VO && vid) {
+        VO.blocks[vid] = { lang: String(c.lang || ''), code: String(c.code || ''), filename: String(c.filename || c.path || '') };
+        const extra = VO.hostBtn('data-act="edit"', 'edit', 'Edit', 'Edit this code - the item keeps your version')
+          + (PREVIEWABLE(c.lang) ? VO.hostBtn('data-act="cprev"', 'prev', prev ? 'Source' : 'Preview', prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network', prev) : '');
+        head = VO.bar(vid, c.lang, c.filename || c.path || '', { actions: ['copy', 'pop', 'run', 'save'], extra });
+      } else {
+        head = `<div class="vc-codehead">${esc(c.filename || c.lang || 'code')}<span class="sp"></span>`
+          + (PREVIEWABLE(c.lang) && key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
+          + '</div>';
+      }
       // Every line is ADDRESSABLE (data-line). An explode item bound to this one scrolls to a card's span and
       // highlights those lines, and a selection here is read back as a line range — the two-way span binding
       // (EXPLODE.md §8.3). The number sits in a gutter the selection does not reach, so copying still yields code.
       const lines = String(c.code || '').replace(/\n$/, '').split('\n');
       // coloured by the chat's own highlighter when the page has it; a line count that disagrees is plain text instead
-      let hl = null; const VC = root.VeraCode;
+      // coloured by the one highlighter (the shared kit; the chat's VeraCode where the kit is not on the page)
+      let hl = null; const VC = (VO && typeof VO.highlight === 'function') ? VO : root.VeraCode;
       if (!prev && VC && typeof VC.highlight === 'function') { try { hl = splitHl(VC.highlight(String(c.code || '').replace(/\n$/, ''), c.lang)); if (hl.length !== lines.length) hl = null; } catch (e) { hl = null; } }
       const bodyHtml = prev
         ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>`
         : `<pre class="vc-pre vc-code"><code>${lines.map((l, i) => `<span class="vc-line" data-line="${i + 1}"><i class="vc-lno">${i + 1}</i>${hl ? (hl[i] || ' ') : (esc(l) || ' ')}</span>`).join('')}</code></pre>`;
-      return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${head}${bodyHtml}${codeLintHtml(c, key, el)}</div>`;
+      // as the kit's card (data-cb + its output strip) when the kit is here, so Copy, Run and Save find their code and Run its strip
+      const kit = VO && vid;
+      return `<div class="vc-codewrap${kit ? ' code-card vc-kit' : ''}" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}${kit ? ` data-cb="${esc(vid)}"` : ''}>${head}${bodyHtml}${codeLintHtml(c, key, el)}`
+        + (kit ? `<div class="code-exec-out" data-exec-out="${esc(vid)}" style="display:none"></div>` : '') + '</div>';
     },
 
     /* AN EXPLODE ITEM — the structured diagram of something, in the canvas beside what it is a diagram OF
@@ -871,6 +897,12 @@
   .vc-out{max-height:200px;overflow:auto}
   .vc-codehead{font-size:9.5px;color:var(--dim,#6b7480);margin-bottom:2px;
     letter-spacing:.04em}
+  /* a code item drawn as the shared kit's card: the item is already the frame, so the card is not a box inside it;
+     its bar sits flush on the code, and the canvas's own line-numbered body keeps its look */
+  .vc-codewrap.vc-kit{margin:0;border:none;border-radius:0;background:transparent;overflow:visible}
+  .vc-codewrap.vc-kit > .code-bar{margin:0 0 4px;border-radius:var(--r-sm,5px);border-bottom:none}
+  .vc-codewrap.vc-kit > pre.vc-pre{max-height:none}
+  .vc-codewrap.vc-kit .cb-act.on{color:var(--acc,#5a9e8f)}
   .vc-note{border-left:2px solid var(--acc,#5a9e8f);padding:3px 0 3px 8px;
     color:var(--fg2,#c3cad4);white-space:pre-wrap}
   .vc-by{color:var(--dim,#6b7480);font-size:11px;margin-left:5px}
@@ -2060,6 +2092,20 @@
       this._stageW = W;
       const maxCard = this._max ? st.querySelector('.it.maxed') : null;   // placed on its own, below
       const cards = [...st.querySelectorAll('.it')].filter((c) => c !== maxCard);
+      /* AN ITEM THAT GROWS AFTER IT WAS PLACED IS PLACED AGAIN (owner, 2026-10-03: "the last element added does not fully
+         display untill the next message is sent"). The stage measured each card once, when it was placed; a card that
+         grew afterwards - its markdown and widgets finishing, a run's output, an explode panel, an editor opened -
+         kept the slot of its first height, ran over the item below it and past the end of the stage until something
+         else (the next message) placed the stage again. Each card's height is watched now; a real change re-places. */
+      if (!this._cardRO && typeof ResizeObserver !== 'undefined') {
+        this._cardH = new WeakMap();
+        this._cardRO = new ResizeObserver((entries) => {
+          let moved = false;
+          entries.forEach((e) => { const h = Math.round(e.contentRect.height); if (this._cardH.get(e.target) !== h) { if (this._cardH.has(e.target)) moved = true; this._cardH.set(e.target, h); } });
+          if (moved && !this._cardRaf) this._cardRaf = requestAnimationFrame(() => { this._cardRaf = 0; this._placeNow(); });
+        });
+      }
+      if (this._cardRO) cards.forEach((c) => { if (!c._roOn) { c._roOn = true; this._cardRO.observe(c); } });
       /* what each card wants, read off the card and independent of the count — so the count can be chosen from it */
       const descOf = (c) => ({ type: c.dataset.type || '', size: c.dataset.size || 'm', fuse: c.dataset.fuse || '',
         folded: c.classList.contains('compact') || c.classList.contains('overfold'),
@@ -2464,6 +2510,10 @@
          alignment is the exception: there the transcript owns the column's scroll and setView has just written it. */
       if (stage && !this.strictAlign() && body.scrollTop !== keepTop) body.scrollTop = Math.min(keepTop, Math.max(0, body.scrollHeight - body.clientHeight));
       this._mountLive(body);
+      /* the shared output kit in this shadow root (its click handler, its style) and on what was just drawn (lint,
+         whole pages, diagrams) - loaded once when a page that shows the canvas did not load it, then drawn again */
+      if (root.VeraOut) { try { root.VeraOut.wire(this.shadowRoot); root.VeraOut.hydrate(layers.items); } catch (e) {} }
+      else if (!this._voLoading) { this._voLoading = true; ensureLib('/ui/elements/vera_output.js', '').then((ok) => { if (ok && root.VeraOut && this._doc) { this._html = null; this.render(this._doc); } }); }
       if (this._editKey) { const ta = body.querySelector('.it[data-key="' + this._editKey.replace(/"/g, '\\"') + '"] textarea'); if (ta && !this._editFocused) { this._editFocused = true; try { ta.focus(); } catch (e) {} } }
       if (body.querySelector('vera-mermaid')) ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid');
       if (window.mermaid && body.querySelector('.mermaid')) {
