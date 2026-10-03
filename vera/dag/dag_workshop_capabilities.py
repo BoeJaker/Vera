@@ -12118,10 +12118,20 @@ def _v5_apply_edits(content: str, edits: List[Dict[str, Any]]) -> Dict[str, Any]
             while _pos != -1 and len(_at) < 6:
                 _at.append(out.count("\n", 0, _pos) + 1)
                 _pos = out.find(find, _pos + 1)
+            # Plus the line ABOVE each match, so the retry copies real context
+            # instead of guessing it again (edit_anchor_hint.ambiguous_context).
+            try:
+                _ctx = (_edit_anchor_hint.ambiguous_context(out, find)
+                        if _edit_anchor_hint is not None
+                        and hasattr(_edit_anchor_hint, "ambiguous_context") else "")
+            except Exception:
+                _ctx = ""
             errors.append(f"edit {i + 1}: `find` matches {n} places (lines "
                           f"{', '.join(str(a) for a in _at)}) — extend it with an "
                           "adjacent unique line (a def/comment above or below) so it "
-                          "matches exactly once")
+                          "matches exactly once"
+                          + (f"; {_ctx}. Copy the line above the match you mean, EXACTLY, "
+                             "into both `find` and `replace`" if _ctx else ""))
             continue
         out = out.replace(find, repl, 1)
         applied.append({"find_preview": find[:80], "removed": len(find), "added": len(repl),
