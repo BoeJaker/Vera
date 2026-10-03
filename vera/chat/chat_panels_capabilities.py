@@ -259,6 +259,20 @@ async def _serve_vera_ui_js():
                     media_type="application/javascript")
 
 
+# Serve vera-settings.js — one Settings page for every panel, in the chat's Settings
+# page's look: a panel marks its settings item data-vera-settings="<its section>".
+@APP.get("/ui/vera-settings.js", include_in_schema=False)
+async def _serve_vera_settings_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent / "vera-settings.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript")
+    return Response(content="console.warn('vera-settings.js not found');",
+                    media_type="application/javascript")
+
+
 # Serve vera-lhm.js — the one left-hand menu (UI redesign): a rail of quick menus
 # beside a detail column, the ☰ top-level list, every part a widget; the same
 # code draws a page's own menu and, in the harness, another page's absorbed one.

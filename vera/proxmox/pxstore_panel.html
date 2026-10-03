@@ -133,7 +133,7 @@ details.fold .twrap{background:var(--bg1)}
       <button data-label="Vera Data" data-desc="Move Vera's data off its VM disk" data-desc-long="Vera data: create a dataset on the big pool, NFS-export it to Vera's VM and move Vera's data directories onto it, so the VM's disk does not fill up." class="nav-btn" data-p="veradata" onclick="P.show('veradata',this)"><span class="gl">🗄</span><span>Vera Data</span></button>
       <button data-label="Estate &amp; Backup" data-desc="The whole estate's storage and backups" data-desc-long="The whole estate in one place: ZFS pools, datasets, non-ZFS mounts, per-guest disk use on every PVE node and volume/image sizes on every Docker host; backups go to Proxmox Backup Server." class="nav-btn" data-p="estate" onclick="P.show('estate',this)"><span class="gl">⛃</span><span>Estate &amp; Backup</span></button>
       <div class="sb-sep" style="height:1px;background:var(--border);margin:6px 8px"></div>
-      <button data-label="Setup" data-desc="SSH access for storage operations" data-desc-long="Setup: storage operations run over root SSH to each PVE node and file-fabric operations over SSH to VFS-02 - map every node to an SSH credential (credentials are managed in the Estate's Connections)." class="nav-btn" data-p="setup" onclick="P.show('setup',this)"><span class="gl">⚙</span><span>Setup</span></button>
+      <button data-vera-settings="#p-setup" data-label="Setup" data-desc="SSH access for storage operations" data-desc-long="Setup: storage operations run over root SSH to each PVE node and file-fabric operations over SSH to VFS-02 - map every node to an SSH credential (credentials are managed in the Estate's Connections)." class="nav-btn" data-p="setup" onclick="P.show('setup',this)"><span class="gl">⚙</span><span>Setup</span></button>
     </nav>
     <div id="status-tile">
       <div class="lbl">Node SSH</div>
@@ -1417,5 +1417,6 @@ P.init().then(()=>{
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>
