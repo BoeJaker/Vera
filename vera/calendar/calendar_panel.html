@@ -403,10 +403,10 @@ body.rail-hidden #rail{ display:none; }
     </div>
 
     <div id="lhm-tabs">
-      <button class="lt active" data-t="layers" onclick="lhmTab('layers')"><span class="g">▦</span>Layers</button>
-      <button class="lt" data-t="events" onclick="lhmTab('events')"><span class="g">☰</span>Events</button>
-      <button class="lt" data-t="agent" onclick="lhmTab('agent')"><span class="g">✦</span>Agent<span class="badge"></span></button>
-      <button class="lt" data-t="dump" onclick="lhmTab('dump')"><span class="g">🧠</span>Dump</button>
+      <button data-label="Layers" data-desc="Which calendars are shown" data-desc-long="Calendar layers: which calendars are shown (all, none, or each one)." class="lt active" data-t="layers" onclick="lhmTab('layers')"><span class="g">▦</span>Layers</button>
+      <button data-label="Events" data-desc="The events list" data-desc-long="The events in the calendar, as a list." class="lt" data-t="events" onclick="lhmTab('events')"><span class="g">☰</span>Events</button>
+      <button data-label="Agent" data-desc="The scheduling assistant" data-desc-long="The scheduling assistant: ask it to act on the diary with real tools - you see each edit live." class="lt" data-t="agent" onclick="lhmTab('agent')"><span class="g">✦</span>Agent<span class="badge"></span></button>
+      <button data-label="Dump" data-desc="Brain-dump to events, todos, notes" data-desc-long="Brain dump: write freely and Organise proposes events, todos and notes - nothing is saved until you accept." class="lt" data-t="dump" onclick="lhmTab('dump')"><span class="g">🧠</span>Dump</button>
     </div>
 
     <div id="lhm-body">
@@ -462,9 +462,9 @@ body.rail-hidden #rail{ display:none; }
 
     <div id="lhm-foot">
       <div class="frow">
-        <button class="foot-btn active" data-sec="calendar" onclick="mainSection('calendar')">🗓 Calendar</button>
-        <button class="foot-btn" data-sec="sources" onclick="mainSection('sources')">☁ Sources</button>
-        <button class="foot-btn" data-sec="settings" onclick="mainSection('settings')">⚙ Settings</button>
+        <button data-label="Calendar" data-desc="The calendar itself" data-desc-long="The calendar: month, week and day views of every shown layer; sync it now." class="foot-btn active" data-sec="calendar" onclick="mainSection('calendar')">🗓 Calendar</button>
+        <button data-label="Sources" data-desc="Connect cloud calendars" data-desc-long="Cloud calendars: connect ICS URLs, CalDAV or Google; credentials are encrypted at rest and never shown again." class="foot-btn" data-sec="sources" onclick="mainSection('sources')">☁ Sources</button>
+        <button data-label="Settings" data-desc="Calendar settings" data-desc-long="Calendar settings: the model for the assistant and organiser, the auto-sync interval, the timezone and persistence." class="foot-btn" data-sec="settings" onclick="mainSection('settings')">⚙ Settings</button>
       </div>
       <div id="sync-tile">
         <div class="lbl">Sync</div>
