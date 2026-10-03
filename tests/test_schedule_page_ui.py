@@ -31,7 +31,7 @@ def test_schedule_page_exists_and_is_wired(src):
     assert '<div class="sec" id="sec-schedule"' in src
     assert 'data-sec="schedule" onclick="nav(\'schedule\')"' in src
     assert "schedule:loadSchedule," in src
-    assert "{id:'schedule', label:'Schedule'}" in src
+    assert "{id:'schedule', label:'Schedule'," in src
     assert '<script src="/ui/elements/calendar.js"></script>' in src
 
 

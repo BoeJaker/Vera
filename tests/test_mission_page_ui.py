@@ -46,7 +46,7 @@ def test_loop_lab_is_six_pages(src):
     assert 'class="rail-grp"' not in src[src.index('id="nav"'):src.index("</div>", src.index('id="nav"'))], "six pages need no groups"
     nav = src[src.index("VeraPanelBridge.registerNav(["):]
     nav = nav[:nav.index("]);")]
-    assert "{id:'mission', label:'Mission control'}" in nav
+    assert "{id:'mission', label:'Mission control'," in nav
     for old in ("'test'", "'watch'", "'errors'", "'activity'", "'master'"):
         assert old not in nav, old
     for m in re.finditer(r'<button class="btn(?: on)?" data-sec="([a-z]+)" onclick="([^"]*)"', src):
