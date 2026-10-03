@@ -298,6 +298,12 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .lhm-nav #lhmMenuHost > iframe{flex:1;width:100%;height:100%;border:0;background:transparent}
 #lhmNav.chatmenu #lhmNavTabs{flex:0 0 auto!important;min-height:0}
 #lhmNav.chatmenu #lhmMenuHost.on{flex:1 1 auto}
+/* THE SETTINGS PAGE COVERS THE WHOLE MENU (owner, 2026-10-03: "the settings menu in the chat ui ... should use the full
+   height available to the lhm (not leaving the top portion of the lhm with the burger button visible - it must be
+   covered)"). While the chat's menu shows a page, the slot is that page: the ☰ bar and tab list above it, the events
+   feed and the foot below it step aside - the page carries its own title and ✕ (and Esc). */
+#lhmNav.lhm-nav.chatmenu.page > :not(#lhmMenuHost){display:none!important}
+#lhmNav.lhm-nav.chatmenu.page > #lhmMenuHost.on{flex:1 1 auto;height:100%}
 
 /* ── Panels area: multi-tab split ── */
 .panels{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:row}
