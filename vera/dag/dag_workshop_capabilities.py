@@ -16593,6 +16593,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 _chain_success[_h_sig] = {"result": invoke.get("result"), "preview": preview[:_budget]}
             history.append({"tool": hop_tool, "ok": entry_ok, "preview": preview[:_budget],
                             "args": h_args, "ms": elapsed})
+            _research_sources_core.remember(sid, history[-1])
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                               "cycle": cur, "step_id": step_id, "tool": hop_tool, "ok": entry_ok,
                               "elapsed_ms": elapsed, "preview": preview[:_budget],
@@ -17404,7 +17405,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         if tool == "prose.author" and isinstance(args, dict) \
                 and _research_sources_core.context_files_empty(args.get("context_files")) \
                 and not str(args.get("sources") or "").strip():
-            _srcs = _research_sources_core.sources_block(history)
+            # The run's research too - it is usually an EARLIER step (probe 3 Oct, 1e84cf1d).
+            _srcs = _research_sources_core.sources_block(
+                _research_sources_core.recall(sid) + list(history))
             if _srcs:
                 args["sources"] = _srcs
                 await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
@@ -18962,6 +18965,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             research_latest = preview[:_budget]
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
+        _research_sources_core.remember(sid, history[-1])
         await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                           "ok": entry_ok, "elapsed_ms": elapsed,
