@@ -112,6 +112,8 @@ MAX_CAPS_IN_PROMPT = int(os.getenv("MAX_CAPS_IN_PROMPT", "25"))
 # ("create" -> markets.custom.create; "race" -> netscan.target.traceroute).
 # Cached vectors are now ALWAYS loaded; this flag only decides whether the
 # missing ones are embedded. Dev sandboxes set it to 0 explicitly.
+#: How long the startup embed pass waits for Redis before skipping (seconds).
+CAP_EMBED_REDIS_WAIT_S = 60
 EMBED_CAPS_ON_START = bool(getattr(cfg, "EMBED_CAPS_ON_START",
                                    os.getenv("EMBED_CAPS_ON_START", "1") == "1"))
 
@@ -277,9 +279,32 @@ class CapabilityIndex:
         This means a warm restart with no cap changes produces ZERO Ollama calls.
         """
         do_embed = EMBED_CAPS_ON_START if embed_missing is None else bool(embed_missing)
+        # One pass at a time: two startup calls 3 s apart used to run side by side.
+        if self._embed_running:
+            log.info("CapabilityIndex: an embed pass is already running - not starting another")
+            return
 
         # ── Load cache from Redis ────────────────────────────────────────
+        # Redis is often not connected yet when the startup pass begins. It used to
+        # read that as "nothing cached" and re-embed EVERY cap: after each restart on
+        # 3 Oct 2026 (16:10, 16:48, 18:52, 19:30, 21:32) 2,695 caps were re-embedded
+        # over ~14 min on the GPU host's CPU instance, starving the GPU runner - loop
+        # generation fell from ~17 to 2.9 tok/s and one verifier call timed out after
+        # 240 s - while a second call 3 s later found all 2,696 vectors cached. Wait for
+        # Redis; if it is still not there, or the read fails, skip rather than embed
+        # blind (caps.embed_run fills any gap later).
         r = _redis()
+        if r is None:
+            for _ in range(int(CAP_EMBED_REDIS_WAIT_S)):
+                await asyncio.sleep(1.0)
+                r = _redis()
+                if r is not None:
+                    break
+        if r is None:
+            log.warning("CapabilityIndex: Redis not available - skipping the embed pass "
+                        "rather than re-embedding all %d caps blind (caps.embed_run retries)",
+                        len(self._index))
+            return
         # cached maps name -> {"vec": [...], "hash": "..."}
         cached: Dict[str, dict] = {}
         if r:
@@ -299,7 +324,9 @@ class CapabilityIndex:
                 if cached:
                     log.info("CapabilityIndex: loaded %d cached embedding entries from Redis", len(cached))
             except Exception as e:
-                log.debug("cap embed cache load: %s", e)
+                log.warning("CapabilityIndex: could not read the embedding cache (%s) - "
+                            "skipping the embed pass rather than re-embedding every cap", e)
+                return
 
         # ── Determine which caps need (re-)embedding ─────────────────────────
         need_embed: List[tuple] = []
