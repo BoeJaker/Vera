@@ -38,9 +38,16 @@ old
 class _Ctx:
     def __init__(self):
         self.scripts = []
+        self.routes = []
 
     async def add_init_script(self, script):
         self.scripts.append(script)
+
+    async def route(self, matcher, handler):
+        self.routes.append((matcher, handler))
+
+
+VOID = {"id": "void", "type": "dark", "vars": {"--bg": "#000"}}
 
 
 def _run(monkeypatch, tmp_path: Path, fail=(), started=None, **params):
@@ -51,7 +58,10 @@ def _run(monkeypatch, tmp_path: Path, fail=(), started=None, **params):
 
     async def _fetch(client, url):
         if url.endswith("/ui/panels"):
-            return [{"id": "alpha", "label": "Alpha"}, {"id": "beta", "label": "Beta"}]
+            return [{"id": "alpha", "label": "Alpha"}, {"id": "beta", "label": "Beta"},
+                    {"id": "stray", "label": "Unmapped"}]
+        if url.endswith("/ui/themes"):
+            return {"active": "ash", "themes": [VOID]}
         return [{"name": "demo.ping", "description": "Ping."}]
 
     async def _start(base_url, viewport=None):
@@ -72,6 +82,7 @@ def _run(monkeypatch, tmp_path: Path, fail=(), started=None, **params):
         return {"ok": True, "readiness": []}
 
     monkeypatch.setattr(_dm, "DOMAINS", [DOMAIN, PAGES])
+    monkeypatch.setattr(_dm, "PANEL_DOCS", {"alpha": "demo", "beta": "demo"})
     monkeypatch.setattr(_targets, "ensure_target", _ensure)
     monkeypatch.setattr(_doc, "_fetch_json", _fetch)
     monkeypatch.setattr(_doc, "_shoot_panel", _shoot)
@@ -149,6 +160,35 @@ def test_capture_prefs_and_viewport_can_be_overridden(monkeypatch, tmp_path):
 
     assert started[0].viewport == {"width": 1920, "height": 1080}
     assert '"vera:ui:scale": "1.2"' in started[0].context.scripts[0]
+
+
+def test_the_docs_theme_is_pinned_by_answering_ui_theme(monkeypatch, tmp_path):
+    started = []
+    _run(monkeypatch, tmp_path, started=started, write_caps=False)
+
+    ctx = started[0].context
+    assert '"vera:ui:theme": "void"' in ctx.scripts[0]
+    matcher, _ = ctx.routes[0]
+    assert matcher("https://vera.test/ui/theme") is True
+    assert matcher("https://vera.test/ui/themes") is False
+
+
+def test_unmapped_live_panels_are_reported_not_guessed(monkeypatch, tmp_path):
+    result, urls, _ = _run(monkeypatch, tmp_path, write_caps=False)
+
+    assert result["unmapped_panels"] == ["stray"]
+    assert all("stray" not in u for u in urls)
+
+
+def test_a_page_that_calls_the_model_runs_only_when_named(monkeypatch, tmp_path):
+    PAGES["pages"].append({"name": "hero", "path": "/chat_panel", "on_request": True})
+    try:
+        _, urls, _ = _run(monkeypatch, tmp_path, domains=["overview"])
+        assert "https://vera.test/chat_panel" not in urls
+        _, urls, _ = _run(monkeypatch, tmp_path, domains=["overview"], panels=["hero"])
+        assert urls == ["https://vera.test/chat_panel"]
+    finally:
+        PAGES["pages"].pop()
 
 
 def test_pages_are_shot_by_path_to_a_stable_name_without_a_doc(monkeypatch, tmp_path):

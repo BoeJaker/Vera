@@ -1137,12 +1137,6 @@ redis-cli ZREVRANGE vera:cap:recent 0 9
 
 *Cap List  ·  captured `default`*
 
-#### Dream
-
-![Dream](assets/capability-framework/dream-panel.png)
-
-*Dream  ·  captured `default`*
-
 #### Cap Ontology
 
 ![Cap Ontology](assets/capability-framework/cap-ontology.png)
@@ -1154,18 +1148,6 @@ redis-cli ZREVRANGE vera:cap:recent 0 9
 ![MCP Servers](assets/capability-framework/mcp-catalog-panel.png)
 
 *MCP Servers  ·  captured `default`*
-
-#### n8n
-
-![n8n](assets/capability-framework/n8n-panel.png)
-
-*n8n  ·  captured `default`*
-
-#### Integrations
-
-![Integrations](assets/capability-framework/integrations.png)
-
-*Integrations  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

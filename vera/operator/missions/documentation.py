@@ -13,6 +13,7 @@ scaffolds and the gallery (skipping image capture with a clear note).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -54,15 +55,59 @@ DOC_VIEWPORT = {"width": 1440, "height": 900}
 DOC_UI_STORAGE = {
     "vera:ui:scale": "1",
     "vera_tab_prefs": json.dumps({"lhm": True}),
+    # Per-turn block backgrounds off: the docs show the chat as plain turns.
+    "vera:ui:blocks": "off",
+    # The README's chat turn should show the agent acting, not an approval card
+    # waiting for a click. Only an on_request page ever sends a message.
+    "vera_ask_before_acting": "0",
 }
 
+# Docs are shot in one theme whatever prod is set to today. The theme is
+# server-authoritative - every page reconciles to GET /ui/theme after painting
+# its cache - so a localStorage seed alone is overwritten. The capture browser
+# therefore answers its own /ui/theme with this theme; the server is untouched.
+DOC_THEME = "void"
 
-async def _seed_browser_prefs(session, overrides: Optional[Dict[str, Any]] = None) -> None:
+
+async def _theme_payload(base_url: str, theme_id: str, attempts: int = 4) -> Optional[Dict[str, Any]]:
+    import httpx
+    data = None
+    # A loaded or restarting target drops single requests; one miss must not
+    # decide the theme of a whole run.
+    async with httpx.AsyncClient(verify=False) as client:
+        for attempt in range(attempts):
+            data = await _fetch_json(client, base_url.rstrip("/") + "/ui/themes")
+            if isinstance(data, dict):
+                break
+            await asyncio.sleep(3 * (attempt + 1))
+    themes = (data or {}).get("themes") if isinstance(data, dict) else None
+    items = themes.values() if isinstance(themes, dict) else (themes or [])
+    for t in items:
+        if isinstance(t, dict) and t.get("id") == theme_id and isinstance(t.get("vars"), dict):
+            return {"theme": theme_id, "vars": t["vars"], "type": t.get("type") or ""}
+    return None
+
+
+async def _seed_browser_prefs(session, overrides: Optional[Dict[str, Any]] = None,
+                              theme: Optional[Dict[str, Any]] = None) -> None:
     prefs = dict(DOC_UI_STORAGE)
+    if theme:
+        # Paint the pinned theme from the first frame, as the UI's own cache would.
+        prefs.update({"vera:ui:theme": theme["theme"],
+                      "vera:ui:themeVars": json.dumps(theme["vars"]),
+                      "vera:ui:themeVarsFor": theme["theme"]})
     prefs.update({str(k): str(v) for k, v in (overrides or {}).items()})
     script = ("(() => { try { const p = " + json.dumps(prefs) + ";"
               " for (const k in p) localStorage.setItem(k, p[k]); } catch (e) {} })();")
     await session.context.add_init_script(script)
+    if theme:
+        from urllib.parse import urlparse
+        body = json.dumps(theme)
+
+        async def _answer(route):
+            await route.fulfill(status=200, content_type="application/json", body=body)
+
+        await session.context.route(lambda u: urlparse(u).path == "/ui/theme", _answer)
 
 
 def _iso() -> str:
@@ -214,7 +259,12 @@ async def run_documentation_mission(params: Dict[str, Any],
         try:
             session = await _be.start_session(base_url=base_url,
                                               viewport=dict(params.get("viewport") or DOC_VIEWPORT))
-            await _seed_browser_prefs(session, params.get("ui_storage"))
+            theme_id = str(params.get("theme") or DOC_THEME)
+            theme = await _theme_payload(base_url, theme_id)
+            if theme is None:
+                await _emit("warn", f"theme '{theme_id}' not found on target; "
+                                    "capturing in the server's theme")
+            await _seed_browser_prefs(session, params.get("ui_storage"), theme)
         except Exception as e:
             do_capture = False
             capture_note = f"browser start failed: {e}"
@@ -240,12 +290,8 @@ async def run_documentation_mission(params: Dict[str, Any],
     try:
         for domain in domains:
             slug = domain["slug"]
+            # PANEL_DOCS assigns each live panel to exactly one domain.
             dpanels = by_domain.get(slug, [])
-            # include explicitly-listed panel ids that exist live but weren't assigned here
-            listed = {p.lower() for p in domain.get("panel_ids", [])}
-            for p in panels:
-                if str(p.get("id", "")).lower() in listed and p not in dpanels:
-                    dpanels.append(p)
             caps = _caps_for_domain(domain, all_caps)
             shots: List[Dict[str, Any]] = []
 
@@ -266,6 +312,10 @@ async def run_documentation_mission(params: Dict[str, Any],
                                    for state in _capture_states(domain, pid))
             for page in domain.get("pages") or []:
                 pid = str(page["name"])
+                # A page that calls the model (on_request) runs only when a
+                # caller names it - never as part of a routine full run.
+                if page.get("on_request") and pid not in panel_filter:
+                    continue
                 targets.append(({"id": pid, "label": page.get("label") or pid}, pid,
                                 dict(page, capture_path=page["path"]), _safe_name(pid)))
 
@@ -278,10 +328,17 @@ async def run_documentation_mission(params: Dict[str, Any],
                 # A selective re-capture shoots only the named panels.
                 if do_capture and session is not None and (not panel_filter or pid in panel_filter):
                     cap_url = panel_capture_url(base_url, p, state)
-                    capture = await _shoot_panel(
-                        session, cap_url["url"], abspath,
-                        settle_ms=max(settle_ms, int(state.get("settle_ms", 0) or 0)),
-                        full_page=bool(state.get("full_page", full_page)), state=state)
+                    shoot_kw = dict(settle_ms=max(settle_ms, int(state.get("settle_ms", 0) or 0)),
+                                    full_page=bool(state.get("full_page", full_page)), state=state)
+                    capture = await _shoot_panel(session, cap_url["url"], abspath, **shoot_kw)
+                    # The target restarting mid-run (another promotion) failed every
+                    # remaining navigation at once - 32 panels in one run. Wait for it
+                    # to answer again and retry this panel once.
+                    if (not capture["ok"]
+                            and str(capture.get("failed_condition", "")).startswith("navigation")
+                            and await _wait_target_up(base_url)):
+                        await _emit("warn", f"[{slug}] {label}: target came back, retrying")
+                        capture = await _shoot_panel(session, cap_url["url"], abspath, **shoot_kw)
                     if capture["ok"]:
                         captured, via = True, cap_url["via"]
                         readiness = capture.get("readiness", [])
@@ -383,6 +440,9 @@ async def run_documentation_mission(params: Dict[str, Any],
             "domains": len(domains), "panels_discovered": len(panels),
             "screenshots": total_shots, "capabilities": len(all_caps),
             "capture_failures": capture_failures,
+            # Live panels no doc claims - placed by editing PANEL_DOCS, never guessed.
+            "unmapped_panels": sorted(p["id"] for p in panels
+                                      if not _dm.domain_for_panel(p)),
             "captured": do_capture, "capture_note": capture_note,
             "docs_written": bool(write_docs), "manifest": "documentation/assets/manifest.json"}
 
@@ -478,6 +538,20 @@ _MEANINGFUL_CONTENT_JS = """() => {
   return text.length > 40 || media;
 }"""
 
+# Every visible rendered text in the page - shadow roots and same-origin frames
+# included, <style>/<script> excluded - as one string.
+_DEEP_TEXT_JS = """() => { let s = '';
+  const walk = (r, d) => { if (!r || d > 4) return;
+    const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      if (n.nodeType === 3) { const p = n.parentElement;
+        if (p && !/^(STYLE|SCRIPT|NOSCRIPT|TEMPLATE)$/.test(p.tagName)
+            && (!p.checkVisibility || p.checkVisibility())) s += n.nodeValue + ' '; }
+      else { if (n.shadowRoot) walk(n.shadowRoot, d + 1);
+        if (n.tagName === 'IFRAME') { let doc = null; try { doc = n.contentDocument; } catch (e) {}
+          if (doc && doc.body) walk(doc.body, d + 1); } } } };
+  walk(document.body, 0); return s; }"""
+
 # "Loading" anywhere means not yet: a status line reads "1 nodes · 0 edges
 # loading" while the graph is still arriving, and passed a start-only check.
 _READY_TEXT_JS = """sel => { const e = document.querySelector(sel);
@@ -563,6 +637,14 @@ async def _wait_ready(page, settle_ms: int,
         ms = explicit_ms or 20000
         await _observe(f"count:{ready_count}", True, ms,
                        page.wait_for_function(_READY_COUNT_JS, arg=ready_count, timeout=ms))
+    # Text that must NOT be on screen when the shot is taken - a widget grid
+    # whose reads failed renders every tile as "read failed" over sample data.
+    # Widgets draw inside shadow roots, which body.innerText never sees.
+    for bad in state.get("reject_texts") or []:
+        ms = explicit_ms or 20000
+        await _observe(f"absent:{bad}", True, ms, page.wait_for_function(
+            "t => !(" + _DEEP_TEXT_JS + ")().toLowerCase().includes(t)",
+            arg=str(bad).lower(), timeout=ms))
     ready_painted = str(state.get("ready_painted") or "")
     if ready_painted:
         ms = explicit_ms or 20000
@@ -585,6 +667,152 @@ async def _wait_ready(page, settle_ms: int,
     except Exception:
         pass
     return evidence
+
+
+async def _wait_target_up(base_url: str, max_s: float = 180.0, every_s: float = 6.0) -> bool:
+    """True once GET /health answers 200 (within max_s)."""
+    import httpx
+    deadline = time.time() + max_s
+    async with httpx.AsyncClient(verify=False, timeout=8) as client:
+        while time.time() < deadline:
+            try:
+                r = await client.get(base_url.rstrip("/") + "/health")
+                if r.status_code == 200:
+                    return True
+            except Exception:
+                pass
+            await asyncio.sleep(every_s)
+    return False
+
+
+_STEP_KINDS = ("click", "fill", "press", "hover", "select", "wait_for", "wait_ms",
+               "code_server_login", "chat_send")
+
+# Length of the rendered text, shadow roots and same-origin frames included -
+# a reply is finished when this stops changing.
+_TRANSCRIPT_SIZE_JS = """() => { let n = 0; const walk = (r, d) => { if (!r || d > 4) return;
+  const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  for (let x = w.nextNode(); x; x = w.nextNode()) {
+    if (x.nodeType === 3) { const p = x.parentElement; if (p && !/^(STYLE|SCRIPT)$/.test(p.tagName)) n += x.nodeValue.length; }
+    else { if (x.shadowRoot) walk(x.shadowRoot, d + 1);
+      if (x.tagName === 'IFRAME') { let doc = null; try { doc = x.contentDocument; } catch (e) {} if (doc && doc.body) walk(doc.body, d + 1); } } } };
+  walk(document.body, 0); return n; }"""
+
+
+async def _gpu_free(origin: str) -> bool:
+    import httpx
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=15) as client:
+            d = (await client.get(origin + "/health")).json()
+        gate, census = d.get("gpu_gate") or {}, d.get("census") or {}
+        return int(gate.get("held") or 0) == 0 and not census.get("busy")
+    except Exception:
+        return False
+
+
+async def _chat_send(page, text: str, ms: int) -> None:
+    """Hold one turn of a real conversation in the chat page being captured.
+
+    Only used by pages marked on_request (the README's chat): it calls the
+    model. Waits for a free GPU slot and no census first - one GPU call at a
+    time - then waits until the reply has stopped changing and the slot is
+    free again."""
+    from urllib.parse import urlparse
+    u = urlparse(page.url)
+    origin = f"{u.scheme}://{u.netloc}"
+    deadline = time.time() + ms / 1000
+    while not await _gpu_free(origin):
+        if time.time() > deadline:
+            raise TimeoutError("GPU slot never freed")
+        await asyncio.sleep(10)
+    box = page.locator('textarea[placeholder^="Type a message"]').first
+    await box.click(timeout=15000)
+    await box.fill(text, timeout=15000)
+    await box.press("Enter")
+    await page.wait_for_timeout(5000)
+    last, stable = -1, 0
+    while time.time() < deadline:
+        await page.wait_for_timeout(5000)
+        size = await page.evaluate(_TRANSCRIPT_SIZE_JS)
+        stable = stable + 1 if size == last else 0
+        last = size
+        if stable >= 3 and await _gpu_free(origin):
+            return
+    raise TimeoutError("reply did not settle")
+
+
+async def _code_server_login(page, instance_id: str, ms: int) -> None:
+    """Log the capture browser into a code-server instance behind Vera's proxy.
+
+    The password is fetched at capture time from the target's own
+    ide.vscode.password.reveal and typed into the login form - it is never part
+    of a capture state, a log line or the repository. A page that is not the
+    login form (already logged in) is left alone."""
+    import httpx
+    from urllib.parse import urlparse
+    form = page.locator('input[type="password"]').first
+    try:
+        await form.wait_for(state="visible", timeout=min(ms, 8000))
+    except Exception:
+        return
+    u = urlparse(page.url)
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        r = await client.post(f"{u.scheme}://{u.netloc}/mcp/call",
+                              json={"name": "ide.vscode.password.reveal",
+                                    "arguments": {"instance_id": instance_id}})
+    data = r.json() if r.status_code == 200 else {}
+    body = data.get("content", data.get("result", data)) if isinstance(data, dict) else {}
+    secret = (body or {}).get("password") if isinstance(body, dict) else None
+    if not secret:
+        raise RuntimeError(f"no code-server password for instance '{instance_id}'")
+    await form.fill(secret, timeout=ms)
+    await form.press("Enter")
+    await page.wait_for_selector('input[type="password"]', state="detached", timeout=ms)
+
+
+async def _run_steps(page, steps: List[Dict[str, Any]]) -> None:
+    """Put a panel into the state the docs show - a menu opened, an item
+    selected, a tab chosen. A panel loaded and left alone was mostly an empty
+    shell ("Select an agent from the list"). Steps are declarative and trusted
+    (they come from domain_map), each one of _STEP_KINDS; a step that cannot be
+    done fails the capture by name rather than shooting the wrong state.
+    Selectors pierce open shadow roots (Playwright CSS does)."""
+    for i, step in enumerate(steps):
+        kind = next((k for k in _STEP_KINDS if k in step), "")
+        sel = str(step.get(kind) or "") if kind not in ("wait_ms", "press") else ""
+        ms = int(step.get("timeout_ms") or 15000)
+        try:
+            if kind == "wait_ms":
+                await page.wait_for_timeout(int(step["wait_ms"]))
+            elif kind == "code_server_login":
+                await _code_server_login(page, sel, ms)
+            elif kind == "chat_send":
+                await _chat_send(page, sel, int(step.get("timeout_ms") or 900000))
+            elif kind == "wait_for":
+                await page.wait_for_selector(sel, state="visible", timeout=ms)
+            elif kind == "press":
+                target = step.get("on")
+                if target:
+                    await page.locator(target).first.press(str(step["press"]), timeout=ms)
+                else:
+                    await page.keyboard.press(str(step["press"]))
+            else:
+                loc = page.locator(sel).nth(int(step.get("nth") or 0))
+                if kind == "click":
+                    await loc.click(timeout=ms)
+                elif kind == "hover":
+                    await loc.hover(timeout=ms)
+                elif kind == "fill":
+                    await loc.fill(str(step.get("text") or ""), timeout=ms)
+                elif kind == "select":
+                    await loc.select_option(str(step.get("value") or ""), timeout=ms)
+                else:
+                    raise ValueError(f"unknown step {step!r}")
+            if step.get("then_ms"):
+                await page.wait_for_timeout(int(step["then_ms"]))
+        except Exception as exc:
+            raise PanelReadinessError(f"step{i + 1}:{kind}:{sel or step.get(kind)}", ms,
+                                      type(exc).__name__) from exc
 
 
 async def _shoot_panel(session, url: str, abspath: str, *, settle_ms: int = 1400,
@@ -617,6 +845,7 @@ async def _shoot_panel(session, url: str, abspath: str, *, settle_ms: int = 1400
             except Exception as exc:
                 raise PanelReadinessError(f"click:{click}", 10000,
                                           type(exc).__name__) from exc
+        await _run_steps(page, state.get("steps") or [])
         readiness = await _wait_ready(page, settle_ms, state)
         os.makedirs(os.path.dirname(abspath), exist_ok=True)
         await page.screenshot(path=abspath, full_page=bool(full_page), type="png")

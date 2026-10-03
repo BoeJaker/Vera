@@ -42,6 +42,26 @@ IDE; `browser.*` needs Playwright and Chromium installed on the host.
 
 ---
 
+## At a glance
+
+```mermaid
+flowchart LR
+    subgraph Callers
+        RS["Research"] & DR["Dream cycles"] & CH["Agent chats"] & IDE["IDE"]
+    end
+    subgraph Tiers["Three tiers of web access"]
+        W["web.*<br/>search · fetch · crawl"]
+        API["web.api.*<br/>Reddit · GitHub · Hacker News …<br/>through their own APIs"]
+        BR["browser.*<br/>Playwright · Chromium<br/>render · interact · navigate"]
+    end
+    WC["web_client.py — one hardened HTTP layer<br/>fingerprint · per-domain throttling · retries ·<br/>block detection · reader-proxy fallback"]
+    NET(("The web"))
+    Callers --> W & API & BR
+    W --> WC --> NET
+    API --> NET
+    BR --> NET
+```
+
 ## 1. Choosing an acquisition path
 
 Use the least powerful path that fits the job:
@@ -368,11 +388,7 @@ does not fix an authorization or policy error.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-#### Web APIs
-
-![Web APIs](assets/web-browser/web_api.png)
-
-*Web APIs  ·  captured `default`*
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

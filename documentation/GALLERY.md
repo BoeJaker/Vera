@@ -8,11 +8,12 @@ documentation`) against a loop-lab sandbox and refreshed in place.
 > `docs.build`. Only the images and reference tables are regenerated — authored
 > prose is preserved.
 
-*Last generated: 2026-10-03 14:47 UTC*
-**39 domains · 70 screenshots · 2689 capabilities**
+*Last generated: 2026-10-03 19:42 UTC*
+**42 domains · 102 screenshots · 2689 capabilities**
 
 | Domain | Preview | Capabilities |
 |---|---|---|
+| [**Performance & Sizing**](00-performance-and-sizing.md) | [<img src="assets/performance/perf-monitor.png" width="280">](00-performance-and-sizing.md) | 7 |
 | [**Capability Framework**](01-capability-framework.md) | [<img src="assets/capability-framework/cap-hub.png" width="280">](01-capability-framework.md) | 25 |
 | [**Harness UI**](02-harness-ui.md) | [<img src="assets/harness-ui/cap-hub.png" width="280">](02-harness-ui.md) | 53 |
 | [**DAG & Loop Engine**](03-dag-engine.md) | [<img src="assets/dag-engine/dag-workshop.png" width="280">](03-dag-engine.md) | 37 |
@@ -24,11 +25,11 @@ documentation`) against a loop-lab sandbox and refreshed in place.
 | [**Galaxy Graph**](09-galaxy-graph.md) | [<img src="assets/galaxy-graph/memory-galaxy-panel-galaxy.png" width="280">](09-galaxy-graph.md) | 0 |
 | [**Configuration**](10-configuration.md) | [<img src="assets/configuration/markets.png" width="280">](10-configuration.md) | 0 |
 | [**Worldview**](11-worldview.md) | [<img src="assets/worldview/worldview-latent-map.png" width="280">](11-worldview.md) | 39 |
-| [**Execution**](12-execution.md) | _(no screenshot)_ | 23 |
+| [**Execution**](12-execution.md) | [<img src="assets/execution/exec-panel-run.png" width="280">](12-execution.md) | 23 |
 | [**Docker**](13-docker.md) | _(no screenshot)_ | 25 |
 | [**Mesh Manager**](14-mesh.md) | [<img src="assets/mesh/mesh.png" width="280">](14-mesh.md) | 96 |
-| [**Markets & Quant Studio**](15-markets.md) | _(no screenshot)_ | 130 |
-| [**Machine Learning**](16-machine-learning.md) | _(no screenshot)_ | 36 |
+| [**Markets & Quant Studio**](15-markets.md) | [<img src="assets/markets/markets.png" width="280">](15-markets.md) | 130 |
+| [**Machine Learning**](16-machine-learning.md) | [<img src="assets/machine-learning/ml-lab.png" width="280">](16-machine-learning.md) | 36 |
 | [**Dream**](17-dream.md) | [<img src="assets/dream/project-panel.png" width="280">](17-dream.md) | 145 |
 | [**Skills & Ontologies**](18-skills-ontologies.md) | [<img src="assets/skills-ontologies/skills-editor.png" width="280">](18-skills-ontologies.md) | 8 |
 | [**Agents & Chat**](19-agents-chat.md) | [<img src="assets/agents-chat/chat2.png" width="280">](19-agents-chat.md) | 1 |
@@ -38,7 +39,7 @@ documentation`) against a loop-lab sandbox and refreshed in place.
 | [**Integrations (Comms)**](23-integrations.md) | [<img src="assets/integrations/accounts-panel.png" width="280">](23-integrations.md) | 0 |
 | [**Web Browser**](24-web-browser.md) | [<img src="assets/web-browser/web_api.png" width="280">](24-web-browser.md) | 12 |
 | [**Vector Browser**](25-vector-browser.md) | [<img src="assets/vector-browser/vector-browser-panel-overview.png" width="280">](25-vector-browser.md) | 0 |
-| [**UI Builder**](26-ui-builder.md) | _(no screenshot)_ | 53 |
+| [**UI Builder**](26-ui-builder.md) | [<img src="assets/ui-builder/widget-registry.png" width="280">](26-ui-builder.md) | 53 |
 | [**OpenClaw**](27-openclaw.md) | _(no screenshot)_ | 13 |
 | [**Render & Media**](28-render.md) | [<img src="assets/render/perf-monitor.png" width="280">](28-render.md) | 14 |
 | [**Security**](29-security.md) | _(no screenshot)_ | 20 |
@@ -52,3 +53,5 @@ documentation`) against a loop-lab sandbox and refreshed in place.
 | [**Business & Commerce**](37-business-commerce.md) | [<img src="assets/business-commerce/business.png" width="280">](37-business-commerce.md) | 159 |
 | [**Media & Characters**](38-media-characters.md) | [<img src="assets/media-characters/stable-diffusion.png" width="280">](38-media-characters.md) | 71 |
 | [**Activity & Boards**](39-activity-boards.md) | [<img src="assets/activity-boards/activity-track.png" width="280">](39-activity-boards.md) | 28 |
+| [**Install / PWA**](47-pwa.md) | _(no screenshot)_ | 3 |
+| [**Chat UI**](50-chat-ui.md) | [<img src="assets/chat-ui/canvas-open.png" width="280">](50-chat-ui.md) | 25 |

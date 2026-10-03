@@ -45,6 +45,28 @@ raising. Diffusion can be slow when SD runs on CPU.
 
 ---
 
+## At a glance
+
+```mermaid
+flowchart LR
+    subgraph Node["Media node (probed tiers, graceful fallback)"]
+        SD["Stable Diffusion<br/>ControlNet · IP-Adapter ·<br/>rembg · ESRGAN"]
+        TTS["TTS"] & STT["STT"]
+        VIS["Vision models"]
+    end
+    subgraph Caps["Capability groups"]
+        IMG["image.* · sd.*"] --> SD
+        AU["tts.* · stt.*"] --> TTS & STT
+        MED["media.* · vision.*<br/>illustration · image search ·<br/>vision for text-only agents"] --> VIS
+        ARC["images.*<br/>archive · Image Studio"]
+        CHR["character.*<br/>companions for agents"]
+        SPR["spritegen.*<br/>pixel-art sprites"]
+    end
+    SD --> ARC
+    SPR --> SD
+    MED --> CHATS["Chats · reports"]
+```
+
 ## 1. Asset lifecycle
 
 1. Resolve the model/backend and its health (`image.sd_capabilities`, `character.capabilities`, `spritegen.capabilities`, `vision.models`).
@@ -347,23 +369,17 @@ unsafe content, text accuracy and continuity before publication.
 - [Flow Builder & UI Elements](./20-flow-builder.md) — the reusable-element pattern
 
 <!-- VERA:AUTO:screenshots START -->
-#### Image Gen
-
-![Image Gen](assets/media-characters/stable-diffusion.png)
-
-*Image Gen  ·  captured `default`*
-
 #### Babblefish
 
 ![Babblefish](assets/media-characters/babblefish.png)
 
 *Babblefish  ·  captured `default`*
 
-#### Image Studio
+#### Image Studio gallery
 
-![Image Studio](assets/media-characters/image-studio.png)
+![The image archive: every stored generation, durable on disk.](assets/media-characters/image-studio-gallery.png)
 
-*Image Studio  ·  captured `default`*
+*The image archive: every stored generation, durable on disk.  ·  captured `default`*
 
 #### Companion
 

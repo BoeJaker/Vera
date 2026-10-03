@@ -301,23 +301,7 @@ so they can be reproduced.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-#### Perf
-
-![Perf](assets/render/perf-monitor.png)
-
-*Perf  ·  captured `default`*
-
-#### Artifacts
-
-![Artifacts](assets/render/gallery.png)
-
-*Artifacts  ·  captured `default`*
-
-#### Widget gallery
-
-![Widget gallery](assets/render/widget-gallery.png)
-
-*Widget gallery  ·  captured `default`*
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

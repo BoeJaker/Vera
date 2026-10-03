@@ -40,6 +40,27 @@ instance and API key, and is reached through the Automations hub.
 
 ---
 
+## At a glance
+
+```mermaid
+flowchart LR
+    subgraph EL["vera/elements/ — reusable web components"]
+        FB["&lt;vera-flow-builder&gt;"]
+        OTH["other elements"]
+    end
+    H["Harness<br/>(registered includes)"]
+    subgraph Users["Panels that embed it"]
+        D["Dream"] & F["Fabric"] & R["Research"] & M["Markets"] & C["Chat"]
+    end
+    IR["Workflow IR bridge<br/>descriptive · non-executing"]
+    subgraph N8N["n8n integration (Automations hub)"]
+        WF["n8n workflows"] -->|become| CAPS["Vera capabilities"]
+        DAG["Vera DAGs"] -->|export to| WF
+    end
+    EL --> H --> Users
+    FB <--> IR
+```
+
 ## 1. Source map
 
 | Path | Responsibility |

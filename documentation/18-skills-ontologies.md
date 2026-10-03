@@ -442,35 +442,17 @@ capability-ontology neighbourhood before blaming the model.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-#### Skills
+#### An agent's identity
 
-![Skills](assets/skills-ontologies/skills-editor.png)
+![An agent opened in the Agents editor: its identity, model, personality, tools, skills and ontologies.](assets/skills-ontologies/agents-skills-ontologies-agent.png)
 
-*Skills  ·  captured `default`*
-
-#### Ontologies
-
-![Ontologies](assets/skills-ontologies/ontologies-browser.png)
-
-*Ontologies  ·  captured `default`*
-
-#### Agents
-
-![Agents](assets/skills-ontologies/agents-skills-ontologies.png)
-
-*Agents  ·  captured `default`*
+*An agent opened in the Agents editor: its identity, model, personality, tools, skills and ontologies.  ·  captured `default`*
 
 #### Registry
 
 ![Registry](assets/skills-ontologies/agent-registry.png)
 
 *Registry  ·  captured `default`*
-
-#### skills list
-
-![skills list](assets/skills-ontologies/skills-list.png)
-
-*skills list  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

@@ -18,7 +18,7 @@ reviewed self-improvement workflow.
 > requests, documentation improvements, and reproducible bug reports are very
 > welcome.
 
-![Vera main dashboard](documentation/assets/overview/dashboard.png)
+![Vera's chat: a conversation about the cluster, with the Context menu open on the left showing what went into the prompt](documentation/assets/overview/chat.png)
 
 ## Contents
 
@@ -107,22 +107,66 @@ retains authority over its own execution state. See
 
 ## Architecture in one minute
 
-```text
- People · Agents · MCP clients · REST clients · Scheduled programs
-                              │
-                    ┌─────────▼─────────┐
-                    │ Capability registry│
-                    │ schema · policy   │
-                    │ events · tracing  │
-                    └─────────┬─────────┘
-                              │
-       ┌──────────────┬───────┼────────┬───────────────┐
-       ▼              ▼       ▼        ▼               ▼
-   LLM routing    DAG/loops  Workers  Operator     UI panels
-       │              │       │        │               │
-       └──────────────┴───────┼────────┴───────────────┘
-                              ▼
-        Redis · Postgres · Chroma/FAISS · Neo4j · object storage
+```mermaid
+flowchart TB
+    subgraph Callers["Who calls a capability"]
+        direction LR
+        P["People<br/>web harness · chat"]
+        A["Agents<br/>DAGs · agentic loops"]
+        M["MCP clients<br/>Claude Code · Codex"]
+        R["REST clients ·<br/>schedules"]
+    end
+
+    subgraph Orchestrator["Orchestrator — one FastAPI process"]
+        direction TB
+        REG["Capability registry<br/>name · schema · contract"]
+        WR["Call wrapper<br/>policy · tracing · events ·<br/>activity · errors · caching"]
+        UI["UI panels · widgets ·<br/>event stream"]
+        REG --> WR
+    end
+
+    subgraph Run["Where the work runs"]
+        direction LR
+        LOCAL["In process"]
+        WK["Workers<br/>Redis job streams ·<br/>node workers on model hosts"]
+        LLM["LLM routing<br/>GPU node · CPU nodes ·<br/>one GPU slot at a time"]
+        OP["Operator<br/>headless Chromium"]
+        LAB["Loop Lab<br/>per-branch sandboxes"]
+    end
+
+    subgraph Stores["State"]
+        direction LR
+        RE["Redis<br/>events · streams · state"]
+        PG["Postgres"]
+        VEC["Chroma · FAISS<br/>vectors"]
+        NEO["Neo4j<br/>memory & fabric graphs"]
+        OBJ["Object storage"]
+    end
+
+    Callers --> REG
+    UI <--> WR
+    WR --> LOCAL & WK & LLM & OP & LAB
+    Run --> Stores
+```
+
+Every call goes through the same wrapper, whoever makes it and wherever it
+runs:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Caller (UI · agent · MCP · REST)
+    participant W as Call wrapper
+    participant X as Capability (in process or on a worker)
+    participant E as Event stream
+    C->>W: name + JSON arguments
+    W->>W: resolve contract · observe or enforce policy
+    W->>E: call started (trace id)
+    W->>X: dispatch locally or to a worker
+    X-->>W: result or error
+    W->>W: normalise errors · record activity · cache
+    W->>E: call finished
+    W-->>C: result
 ```
 
 Vera starts the orchestrator first and connects optional backends lazily.

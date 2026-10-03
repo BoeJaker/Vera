@@ -36,6 +36,23 @@ WAV.
 
 ---
 
+## At a glance
+
+```mermaid
+flowchart LR
+    subgraph Entry["Entry points"]
+        POD["Chat · Pod composer"] & LOOP["Agentic loop"] & DRM["Dream · podcast channel"] & RED["output.redeliver"]
+    end
+    subgraph Src["Sources"]
+        FF["Fabric feeds"] & CR["Capability results"] & WS["Workspace files"] & URL["URLs"] & NT["Notes"]
+    end
+    G["Gather"] --> S["LLM writes a<br/>speaker-tagged script"] --> T["Voice each segment<br/>TTS media node<br/>Kokoro · Coqui"] --> ST["Stitch<br/>MP3 with ffmpeg, else WAV"]
+    ST --> LIB["Local library"] & FAB["Data fabric"] & OBJ["Object store<br/>(when configured)"]
+    ST --> CARD["Playable card<br/>in the conversation"]
+    Entry --> G
+    Src --> G
+```
+
 ## 1. Pipeline
 
 ```

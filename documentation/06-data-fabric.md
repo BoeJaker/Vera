@@ -1209,18 +1209,6 @@ after the graph summary is ready. Production is never seeded for screenshots.
 ![Backend health and storage statistics across the polyglot fabric.](assets/data-fabric/fabric-panel-stats.png)
 
 *Backend health and storage statistics across the polyglot fabric.  ·  captured `default`*
-
-#### ML Lab
-
-![ML Lab](assets/data-fabric/ml-lab.png)
-
-*ML Lab  ·  captured `default`*
-
-#### fabric stats
-
-![fabric stats](assets/data-fabric/fabric-stats.png)
-
-*fabric stats  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities
