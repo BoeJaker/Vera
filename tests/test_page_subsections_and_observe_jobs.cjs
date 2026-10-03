@@ -15,9 +15,10 @@ t('the Estate\'s sub-tab strips name their sections - Observe\'s Events and Perf
 const ids = O.widgets.map((w) => w.record && w.record.id);
 /* 2026-09-28 (owner): "the widgets in observe panel are not focused on errors and they must be" - the warnings and errors
    lead now; the jobs - Vera's and the LLM's - follow them, still above the event stream and the log */
-const ERRS = ['obs-errors', 'obs-warnings', 'obs-recent-errors', 'obs-error-trend', 'obs-error-log', 'obs-errors-by-cap'];
+const ERRS = ['obs-errors', 'obs-error-trend', 'obs-error-log', 'obs-errors-by-cap'];
 /* 2026-10-02 (owner): Observe became Health - Vera's own health first, then the errors; the jobs and the LLM traffic stay, lower down */
-t('the Health front page opens on Vera\'s own health, then the errors; the job stream sits above the live feeds and the LLM traffic below them', ['h-checks', 'h-findings', 'h-stores'].every((id) => ids.filter((k) => !/^sec-/.test(k)).slice(0, 3).includes(id)) && ERRS.every((id) => ids.indexOf(id) > 2) && ids.indexOf('obs-job-stream') < ids.indexOf('obs-stream') && ['obs-inflight', 'obs-gpu-gate', 'obs-llm-by-worker', 'obs-llm-rate', 'obs-vera-work', 'obs-llm-routing'].every((id) => ids.indexOf(id) >= 0) && ids.indexOf('obs-llm-routing') > ids.indexOf('obs-syslog'));
+/* 2026-10-03 (owner): only health on Health - the job stream, model traffic and the rest of the duplicates are gone */
+t('the Health front page opens on Vera\'s own health, then why (the errors), then the host', ['h-findings', 'h-stores'].every((id) => ids.filter((k) => !/^sec-/.test(k)).slice(0, 2).includes(id)) && ['obs-error-log', 'obs-errors-by-cap', 'obs-error-trend'].every((id) => ids.indexOf(id) > ids.indexOf('sec-h-errors')) && ids.indexOf('obs-errors') < ids.indexOf('sec-h-errors') && ['h-host', 'h-proc-ram'].every((id) => ids.indexOf(id) > ids.indexOf('sec-h-host')) && ids.indexOf('sec-h-errors') < ids.indexOf('sec-h-host') && !ids.includes('obs-job-stream') && !ids.includes('obs-llm-routing'));
 const cells = {}; let overlap = '', rows = 0; O.widgets.filter((w) => !w.hidden && Array.isArray(w.at)).forEach((w) => { for (let i = w.at[0]; i < w.at[0] + w.span[0]; i++) for (let j = w.at[1]; j < w.at[1] + w.span[1]; j++) { const k = i + ',' + j; if (cells[k]) overlap = overlap || w.record.id; cells[k] = 1; rows = Math.max(rows, j + 1); } });
 const holes = []; for (let j = 0; j < rows; j++) for (let i = 0; i < 12; i++) if (!cells[i + ',' + j]) holes.push(i + ',' + j);
 // the tallest a tile may be is VeraDash's MAX_ROWS (six until 2026-09-28)
