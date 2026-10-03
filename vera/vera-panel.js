@@ -227,6 +227,8 @@
     }
     var items = Array.prototype.map.call(btns, function (b) {
       var it = { id: idOf(b), label: labelOf(b), group: groupOf(b), icon: iconOf(b), desc: descOf(b), desc_long: descLongOf(b) };
+      // an item drawn with an SVG icon (Dream, the DAG workshop, Telegram) hands it on; the host draws only what its cleaner keeps
+      if (!it.icon) { var sv = b.querySelector && b.querySelector('svg'); if (sv && sv.outerHTML && sv.outerHTML.length <= 3000) it.icon_svg = sv.outerHTML; }
       var ge = it.group ? groupEl(b) : null;
       if (ge) { it.group_icon = (ge.getAttribute('data-icon') || '').trim(); it.group_desc = (ge.getAttribute('data-desc') || '').trim(); it.group_desc_long = (ge.getAttribute('data-desc-long') || '').trim(); }
       // the panel's own menu (standalone) shows it on hover too; the name is pinned first, so the title never renames the item

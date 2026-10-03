@@ -342,6 +342,48 @@
     var k = glyphFor(m.label || t); if(k !== GLYPH_NEUTRAL) return k;
     var a = String(m.icon_alt || '').trim(); return _isMark(a) ? a : GLYPH_NEUTRAL;
   }
+  /* A PANEL'S OWN SVG ICON (Dream, the DAG workshop, Telegram draw their menu icons as SVG). It arrives as markup from the
+     panel's frame, so it is rebuilt here from a whitelist, never inserted as given: shape elements only, geometric and
+     stroke attributes only, no url()/script in any value. Anything else - a <script>, <style>, <use>, <image>, <a>,
+     <foreignObject>, an event attribute - and there is no SVG icon at all (the item falls back to a glyph).
+     <title>/<desc> are dropped quietly. Pure string work, so it is tested without a DOM. */
+  var _SVG_TAGS = { svg: 1, g: 1, path: 1, circle: 1, rect: 1, line: 1, polyline: 1, polygon: 1, ellipse: 1 };
+  var _SVG_SKIP = { title: 1, desc: 1 };
+  var _SVG_ATTRS = { viewbox: 'viewBox', d: 1, cx: 1, cy: 1, r: 1, rx: 1, ry: 1, x: 1, y: 1, x1: 1, y1: 1, x2: 1, y2: 1, width: 1, height: 1, points: 1,
+    fill: 1, stroke: 1, 'stroke-width': 1, 'stroke-linecap': 1, 'stroke-linejoin': 1, 'stroke-dasharray': 1, 'fill-rule': 1, 'clip-rule': 1, opacity: 1, transform: 1 };
+  function _svgClean(src){
+    var s = String(src == null ? '' : src); if(!/^\s*<svg[\s>]/i.test(s) || s.length > 4000) return '';
+    var out = '', stack = [], skip = 0, re = /<\s*(\/)?\s*([a-zA-Z][\w:-]*)([^<>]*?)(\/)?\s*>/g, m, last = 0;
+    while((m = re.exec(s))){
+      if(/[<>]/.test(s.slice(last, m.index))) return '';   // a stray bracket between tags: not markup we read
+      last = re.lastIndex;
+      var close = !!m[1], tag = m[2].toLowerCase(), selfc = !!m[4];
+      if(_SVG_SKIP[tag]){ if(!selfc) skip += close ? -1 : 1; continue; }
+      if(!_SVG_TAGS[tag]) return '';
+      if(close){ if(stack.pop() !== tag) return ''; out += '</' + tag + '>'; continue; }
+      var attrs = '', rest = m[3], ar = /([a-zA-Z][\w:-]*)\s*=\s*("([^"]*)"|'([^']*)')/g, a;
+      if(/\son\w+\s*=/i.test(' ' + rest)) return '';
+      while((a = ar.exec(rest))){
+        var k = a[1].toLowerCase(), v = a[3] != null ? a[3] : a[4], nm = _SVG_ATTRS[k];
+        if(!nm || /[<>"&]|url\s*\(|script|expression|data:/i.test(v)) continue;
+        attrs += ' ' + (nm === 1 ? k : nm) + '="' + v + '"';
+      }
+      out += '<' + tag + attrs + (selfc ? '/>' : '>'); if(!selfc) stack.push(tag);
+    }
+    if(stack.length || skip || /[<>]/.test(s.slice(last))) return '';
+    return out;
+  }
+  // a published menu's rail icon: {text} or {html}. The panel's own mark; else its own SVG; else the glyph its name maps to;
+  // else (a group) its first item's mark or SVG; else the neutral mark
+  function _menuIcon(m){
+    if(!m) return { text: GLYPH_NEUTRAL };
+    var t = String(m.icon || '').trim(); if(_isMark(t)) return { text: t };
+    var own = _svgClean(m.icon_svg); if(own) return { html: own };
+    var k = glyphFor(m.label || t); if(k !== GLYPH_NEUTRAL) return { text: k };
+    var a = String(m.icon_alt || '').trim(); if(_isMark(a)) return { text: a };
+    var alt = _svgClean(m.icon_alt_svg); if(alt) return { html: alt };
+    return { text: GLYPH_NEUTRAL };
+  }
   /* WHAT AN OPTION IS FOR (owner, 2026-10-03: "menu options have descriptions ... visible on mouseover and could even aide
      the agents"). Two per option: desc, short, for the pointer; desc_long, for an agent, kept on the element as
      data-desc-long and carried in the published spec. A hover reads "Label - short description". */
@@ -981,7 +1023,7 @@ function _ebar(title, onAdd, onDone){
     else rail.appendChild(_el('div', 'lhm-rsp'));
     var act = spec.active || {}, menus = spec.menus || [], icons = [];
     menus.forEach(function(m){
-      var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), _menuGlyph(m)); _descOn(ico, m); ico.title = _tip(m.label, m.desc) + (opts.onSplit ? ' · Ctrl/⌘- or middle-click: open it side by side' : '');
+      var mi = _menuIcon(m), ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), mi.html ? null : mi.text); if(mi.html) ico.innerHTML = mi.html; _descOn(ico, m); ico.title = _tip(m.label, m.desc) + (opts.onSplit ? ' · Ctrl/⌘- or middle-click: open it side by side' : '');
       if(m.badge) ico.appendChild(_el('span', 'lhm-badge', String(m.badge)));
       ico.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(m.id); else pickFn(m.id); });
       ico.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(m.id); } });
