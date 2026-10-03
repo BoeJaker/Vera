@@ -273,7 +273,53 @@ chat. Open a specific session with `/chat_panel?session_id=<id>`.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### A canvas
+
+![A live canvas: the list of canvases and one opened with its blocks.](assets/chat-ui/canvas-open.png)
+
+*A live canvas: the list of canvases and one opened with its blocks.  ·  captured `default`*
+
+#### Sessions menu
+
+![Sessions: past conversations, newest first, with New, Refresh and Title all.](assets/chat-ui/chat2-sessions.png)
+
+*Sessions: past conversations, newest first, with New, Refresh and Title all.  ·  captured `default`*
+
+#### Context menu
+
+![Context: what goes into the prompt, by source, with the context plot and the memory graph.](assets/chat-ui/chat2-context.png)
+
+*Context: what goes into the prompt, by source, with the context plot and the memory graph.  ·  captured `default`*
+
+#### Activity menu
+
+![Activity: what is running, the call DAG and the monitor stream.](assets/chat-ui/chat2-activity.png)
+
+*Activity: what is running, the call DAG and the monitor stream.  ·  captured `default`*
+
+#### Loop menu
+
+![Loop: the current loop, its activity graph, loop runs and goals.](assets/chat-ui/chat2-loop.png)
+
+*Loop: the current loop, its activity graph, loop runs and goals.  ·  captured `default`*
+
+#### Workspace menu
+
+![Workspace: every registered panel, ready to open beside the chat.](assets/chat-ui/chat2-workspace.png)
+
+*Workspace: every registered panel, ready to open beside the chat.  ·  captured `default`*
+
+#### Ops glance
+
+![Ops glance: the capabilities available to the agent, by family.](assets/chat-ui/chat2-ops.png)
+
+*Ops glance: the capabilities available to the agent, by family.  ·  captured `default`*
+
+#### Slash commands
+
+![Typing / in the composer lists the slash commands.](assets/chat-ui/chat2-slash.png)
+
+*Typing / in the composer lists the slash commands.  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

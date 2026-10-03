@@ -489,11 +489,11 @@ how a freshly registered panel appears without restarting the orchestrator.
 ## Screenshots (operator-captured)
 
 <!-- VERA:AUTO:screenshots START -->
-#### Capabilities
+#### Driven
 
-![Capabilities](assets/harness-ui/cap-hub.png)
+![Driven](assets/harness-ui/driven.png)
 
-*Capabilities  ·  captured `default`*
+*Driven  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

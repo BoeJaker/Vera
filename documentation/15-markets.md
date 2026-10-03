@@ -906,7 +906,11 @@ Bars live in `fabric_records` under `mkt.*` datasets ([06](./06-data-fabric.md))
 ## Screenshots (operator-captured)
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Markets
+
+![Markets](assets/markets/markets.png)
+
+*Markets  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

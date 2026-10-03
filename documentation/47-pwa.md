@@ -310,3 +310,9 @@ curl -s -X POST http://localhost:8999/pwa/config -H 'content-type: application/j
 - [Configuration](./10-configuration.md) — TLS and host settings that decide secure-context
 - [Security](./29-security.md) — certificates and trust
 - [Loop Lab](./33-evolve.md) — per-branch sandboxes
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+<!-- VERA:AUTO:screenshots END -->

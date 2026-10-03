@@ -526,7 +526,17 @@ System tools used opportunistically: `arp`, `ping` (LAN scan); `docker` (Docker 
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### A command run on the host
+
+![A command run through the exec panel, with its captured output.](assets/execution/exec-panel-run.png)
+
+*A command run through the exec panel, with its captured output.  ·  captured `default`*
+
+#### A workspace bound to a container
+
+![A workspace bound to a container: its terminal, files and metrics, with memory and chat widgets beside them.](assets/execution/workspaces-postgres.png)
+
+*A workspace bound to a container: its terminal, files and metrics, with memory and chat widgets beside them.  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

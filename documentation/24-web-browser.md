@@ -388,11 +388,7 @@ does not fix an authorization or policy error.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-#### Web APIs
-
-![Web APIs](assets/web-browser/web_api.png)
-
-*Web APIs  ·  captured `default`*
+_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

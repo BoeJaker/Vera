@@ -439,3 +439,13 @@ guarantee for another installation.
 - [Operator](34-operator.md)
 - [Performance baseline](42-performance-baseline.md)
 - [Configuration](10-configuration.md)
+
+## Screenshots
+
+<!-- VERA:AUTO:screenshots START -->
+#### Perf
+
+![Perf](assets/performance/perf-monitor.png)
+
+*Perf  ·  captured `default`*
+<!-- VERA:AUTO:screenshots END -->

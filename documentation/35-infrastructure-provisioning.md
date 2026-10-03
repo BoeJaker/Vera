@@ -849,11 +849,29 @@ profiles, and rebooting a different machine after an address changed.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
+#### Monitor
+
+![Monitor](assets/infrastructure-provisioning/system-monitor.png)
+
+*Monitor  ·  captured `default`*
+
+#### Estate Map
+
+![Estate Map](assets/infrastructure-provisioning/interaction-map.png)
+
+*Estate Map  ·  captured `default`*
+
 #### Foundry
 
 ![Foundry](assets/infrastructure-provisioning/foundry.png)
 
 *Foundry  ·  captured `default`*
+
+#### Estate
+
+![Estate](assets/infrastructure-provisioning/workers-ollama.png)
+
+*Estate  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

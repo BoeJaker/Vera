@@ -256,7 +256,17 @@ the backing capability directly.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Widgets
+
+![Widgets](assets/ui-builder/widget-registry.png)
+
+*Widgets  ·  captured `default`*
+
+#### Widget gallery
+
+![Widget gallery](assets/ui-builder/widget-gallery.png)
+
+*Widget gallery  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

@@ -1173,35 +1173,11 @@ relative to `vera/`.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-#### Markets
-
-![Markets](assets/configuration/markets.png)
-
-*Markets  ·  captured `default`*
-
-#### Email
-
-![Email](assets/configuration/email-panel.png)
-
-*Email  ·  captured `default`*
-
-#### Home
-
-![Home](assets/configuration/ha-panel.png)
-
-*Home  ·  captured `default`*
-
 #### Platforms
 
 ![Platforms](assets/configuration/platform-config.png)
 
 *Platforms  ·  captured `default`*
-
-#### Godseye
-
-![Godseye](assets/configuration/godseye.png)
-
-*Godseye  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

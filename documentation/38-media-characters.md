@@ -369,23 +369,17 @@ unsafe content, text accuracy and continuity before publication.
 - [Flow Builder & UI Elements](./20-flow-builder.md) — the reusable-element pattern
 
 <!-- VERA:AUTO:screenshots START -->
-#### Image Gen
-
-![Image Gen](assets/media-characters/stable-diffusion.png)
-
-*Image Gen  ·  captured `default`*
-
 #### Babblefish
 
 ![Babblefish](assets/media-characters/babblefish.png)
 
 *Babblefish  ·  captured `default`*
 
-#### Image Studio
+#### Image Studio gallery
 
-![Image Studio](assets/media-characters/image-studio.png)
+![The image archive: every stored generation, durable on disk.](assets/media-characters/image-studio-gallery.png)
 
-*Image Studio  ·  captured `default`*
+*The image archive: every stored generation, durable on disk.  ·  captured `default`*
 
 #### Companion
 

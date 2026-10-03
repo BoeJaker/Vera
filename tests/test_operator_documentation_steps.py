@@ -85,6 +85,33 @@ def test_a_step_that_cannot_be_done_fails_by_name():
     assert err.value.condition == "step2:click:#absent"
 
 
+def test_rejected_text_on_screen_fails_the_capture(tmp_path: Path):
+    class _P(_Page):
+        async def goto(self, *a, **k):
+            return None
+
+        async def wait_for_load_state(self, *a, **k):
+            return None
+
+        async def wait_for_function(self, expr, arg=None, timeout=None):
+            if arg == "read failed":
+                raise TimeoutError("still there")
+
+        async def evaluate(self, *a, **k):
+            return None
+
+        async def screenshot(self, **k):
+            self.log.append(("shot",))
+
+    page = _P()
+    result = asyncio.run(_doc._shoot_panel(
+        SimpleNamespace(page=page), "https://vera.test/", str(tmp_path / "x.png"),
+        state={"reject_texts": ["Read failed"]}))
+    assert result["ok"] is False
+    assert result["failed_condition"] == "absent:Read failed"
+    assert ("shot",) not in page.log
+
+
 def test_code_server_login_is_skipped_when_no_login_form_is_shown():
     page = _Page()
     asyncio.run(_doc._run_steps(page, [{"code_server_login": "central"}]))

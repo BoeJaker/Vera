@@ -25,8 +25,8 @@ def test_no_panel_is_claimed_by_two_docs():
     ("workspaces", "Workspaces", "execution"),
     ("markets", "Markets", "markets"),
     ("ha-panel", "Home", "integrations"),
-    ("dream-panel", "Dream", "dream"),
-    ("ml-lab", "ML Lab", "machine-learning"),
+    ("project-panel", "Projects", "dream"),
+    ("exec-panel", "Exec", "execution"),
     ("perf-monitor", "Perf", "performance"),
 ])
 def test_misplaced_panels_now_land_in_their_own_doc(panel, label, expected):

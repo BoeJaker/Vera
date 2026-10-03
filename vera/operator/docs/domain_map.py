@@ -38,7 +38,9 @@ DOMAINS: List[Dict[str, Any]] = [
           "caption": "A stored DAG opened from the library: its steps, initial state and portable IR inspection.",
           "steps": [{"click": ':text("test if boejaker.com is up")', "then_ms": 3000}],
           "ready_selector": ':text("STEPS")'},
-     ]}},
+     ],
+         # Its counters read for well over 30s on a busy prod.
+         "automations": [{"ready_timeout_ms": 75000}]}},
     {"slug": "ollama-cluster", "doc": "04-ollama-cluster.md", "title": "Ollama Cluster",
      "cap_prefixes": ["ollama"], "panel_ids": ["workers-ollama", "model-routing"],
      "match": ["ollama", "routing"], "seed": None},
@@ -157,6 +159,8 @@ DOMAINS: List[Dict[str, Any]] = [
      "capture_states": {"agents-skills-ontologies": [
          {"name": "agent", "label": "An agent's identity",
           "caption": "An agent opened in the Agents editor: its identity, model, personality, tools, skills and ontologies.",
+          # The editor is an iframe of this panel; steps cannot reach into frames.
+          "capture_path": "/ui/panels/agents-panel",
           "steps": [{"click": ':text("agentic-planner")', "then_ms": 4000}]},
      ]}},
     {"slug": "agents-chat", "doc": "19-agents-chat.md", "title": "Agents & Chat",
@@ -189,7 +193,8 @@ DOMAINS: List[Dict[str, Any]] = [
           "ready_text": "#chromaPageInfo", "settle_ms": 2200},
      ]}},
     {"slug": "ui-builder", "doc": "26-ui-builder.md", "title": "UI Builder",
-     "cap_prefixes": ["ui"], "panel_ids": ["ui-builder"], "match": ["ui-builder", "builder"], "seed": None},
+     "cap_prefixes": ["ui"], "panel_ids": ["ui-builder"], "match": ["ui-builder", "builder"], "seed": None,
+     "capture_states": {"ui-builder": [{"ready_timeout_ms": 75000}]}},
     {"slug": "openclaw", "doc": "27-openclaw.md", "title": "OpenClaw",
      "cap_prefixes": ["openclaw"], "panel_ids": [], "match": ["openclaw", "claw"], "seed": None},
     {"slug": "render", "doc": "28-render.md", "title": "Render & Media",
@@ -263,7 +268,9 @@ DOMAINS: List[Dict[str, Any]] = [
              {"name": "loop", "label": "Loop menu",
               "caption": "Loop: the current loop, its activity graph, loop runs and goals.",
               "capture_path": "/chat_panel",
-              "steps": [{"wait_ms": 6000}, {"click": '.lhm-rail [data-menu="loop"]', "then_ms": 5000}]},
+              "steps": [{"wait_ms": 6000}, {"click": '.lhm-rail [data-menu="loop"]', "then_ms": 5000}],
+              # Its graph says "Waiting for an agentic run" until a loop runs.
+              "ready_selector": '.lhm-rail [data-menu="loop"]'},
              {"name": "workspace", "label": "Workspace menu",
               "caption": "Workspace: every registered panel, ready to open beside the chat.",
               "capture_path": "/chat_panel",
@@ -294,9 +301,9 @@ DOMAINS: List[Dict[str, Any]] = [
          # the model, so it runs only when named (panels=["chat"]).
          {"name": "chat", "path": "/chat_panel", "label": "Chat", "on_request": True,
           "steps": [
-              {"chat_send": "Open the Models & NLP panel (node-models) beside the chat, then "
-                            "tell me which models each inference node has warm. Report only "
-                            "what the panel shows.",
+              {"chat_send": "Call ollama.instances and give me a short table of each "
+                            "inference node: its status, latency and the models it has "
+                            "loaded. Use only what the call returns.",
                "timeout_ms": 900000},
               {"click": '.lhm-rail [data-menu="context"]', "then_ms": 6000},
           ],
@@ -306,18 +313,24 @@ DOMAINS: List[Dict[str, Any]] = [
           "ready_timeout_ms": 60000, "settle_ms": 4000},
          # The shell fills ~70 widgets after load; a short settle caught
          # "never updated" and empty "no data" tiles.
-         # The Stack monitor layout from the dashboard's own menu: its charts,
-         # temperatures and guests read better than the default lists.
+         # The Inference layout from the dashboard's own menu: host CPU,
+         # capacity gauges, fleet, census progress and live events read better
+         # than the default lists.
          {"name": "dashboard", "path": "/", "label": "Main dashboard",
-          "steps": [{"wait_ms": 10000},
-                    {"click": ':text-is("Stack monitor")', "then_ms": 20000}],
+          # The layout menu ignores a click until the default layout has
+          # finished loading.
+          "steps": [{"wait_for": ':text("ROUTING")', "timeout_ms": 45000, "then_ms": 15000},
+                    {"click": ':text("Inference · models")', "then_ms": 20000}],
+          # Only this layout has this widget: a missed switch fails instead of
+          # shooting the default layout.
+          "ready_selector": ':text("HOST CPU")', "ready_timeout_ms": 60000,
+          # Tiles show sample data under "reading…" until their read returns.
+          "reject_texts": ["read failed", "reading…"],
           "settle_ms": 5000},
          {"name": "cap-hub", "path": "/cap_hub/panel", "label": "Capability Hub"},
          {"name": "evolve", "path": "/evolve/panel", "label": "Loop Lab",
           "ready_timeout_ms": 60000},
          {"name": "fabric-panel", "path": "/fabric/panel", "label": "Data Fabric"},
-         {"name": "loop-graph", "path": "/ui/panel/window?id=loop-graph",
-          "label": "Agent loop graph"},
          {"name": "operator-studio", "path": "/operator/panel", "label": "Operator Studio"},
          {"name": "perf-monitor", "path": "/perf/panel", "label": "Performance Monitor"},
      ]},
@@ -332,7 +345,9 @@ DOMAINS: List[Dict[str, Any]] = [
 # skills-editor, ontologies-browser, skills-list, job-stream, live-event-stream,
 # accounts-panel, email-panel, web_api, gallery, vera-mermaid, sprite-companion,
 # stable-diffusion, kokoro-tts, whisper-stt, activity-track, chat-with-data, and
-# pwa (a capture browser on another hostname only ever shows its TLS error).
+# pwa (a capture browser on another hostname only ever shows its TLS error),
+# research-panel, notebook-panel, ml-lab and dream-panel (empty on prod today);
+# automations and ui-builder (never settle on prod within 75 s).
 # telegram-panel shows the admin chat id
 # and the bot's identity, so it is never captured for the docs.
 PANEL_DOCS: Dict[str, str] = {
@@ -344,13 +359,11 @@ PANEL_DOCS: Dict[str, str] = {
     "driven": "harness-ui",
     # DAG + loop engine, and the one page for everything that runs on its own
     "dag-workshop": "dag-engine", "agent-loop-config": "dag-engine",
-    "automations": "dag-engine",
     # inference cluster
     "models": "ollama-cluster", "node-models": "ollama-cluster",
     "specialist-models": "ollama-cluster",
     "memory-graph": "memory-graph",
     "fabric-panel": "data-fabric",
-    "research-panel": "research", "notebook-panel": "research",
     # the IDE and nothing else
     "ide-panel": "ide", "ide-remote-panel": "ide",
     "ide-claude-dispatch": "ide", "ide-inspect-panel": "ide",
@@ -361,8 +374,7 @@ PANEL_DOCS: Dict[str, str] = {
     "exec-panel": "execution", "workspaces": "execution",
     "mesh": "mesh",
     "markets": "markets",
-    "ml-lab": "machine-learning",
-    "dream-panel": "dream", "project-panel": "dream",
+    "project-panel": "dream",
     "agents-skills-ontologies": "skills-ontologies", "agent-registry": "skills-ontologies",
     "flow-builder": "flow-builder",
     "system-log": "workers-jobs-syslog", "node-workers": "workers-jobs-syslog",
@@ -370,7 +382,7 @@ PANEL_DOCS: Dict[str, str] = {
     "integrations": "integrations", "n8n-panel": "integrations",
     "ha-panel": "integrations", "syscomms": "integrations",
     "vector-browser-panel": "vector-browser",
-    "ui-builder": "ui-builder", "widget-gallery": "ui-builder", "widget-registry": "ui-builder",
+    "widget-gallery": "ui-builder", "widget-registry": "ui-builder",
     "evolve": "evolve",
     "operator-studio": "operator",
     # the estate: machines, their map and the stack monitor

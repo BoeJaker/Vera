@@ -538,6 +538,20 @@ _MEANINGFUL_CONTENT_JS = """() => {
   return text.length > 40 || media;
 }"""
 
+# Every visible rendered text in the page - shadow roots and same-origin frames
+# included, <style>/<script> excluded - as one string.
+_DEEP_TEXT_JS = """() => { let s = '';
+  const walk = (r, d) => { if (!r || d > 4) return;
+    const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      if (n.nodeType === 3) { const p = n.parentElement;
+        if (p && !/^(STYLE|SCRIPT|NOSCRIPT|TEMPLATE)$/.test(p.tagName)
+            && (!p.checkVisibility || p.checkVisibility())) s += n.nodeValue + ' '; }
+      else { if (n.shadowRoot) walk(n.shadowRoot, d + 1);
+        if (n.tagName === 'IFRAME') { let doc = null; try { doc = n.contentDocument; } catch (e) {}
+          if (doc && doc.body) walk(doc.body, d + 1); } } } };
+  walk(document.body, 0); return s; }"""
+
 # "Loading" anywhere means not yet: a status line reads "1 nodes · 0 edges
 # loading" while the graph is still arriving, and passed a start-only check.
 _READY_TEXT_JS = """sel => { const e = document.querySelector(sel);
@@ -623,6 +637,14 @@ async def _wait_ready(page, settle_ms: int,
         ms = explicit_ms or 20000
         await _observe(f"count:{ready_count}", True, ms,
                        page.wait_for_function(_READY_COUNT_JS, arg=ready_count, timeout=ms))
+    # Text that must NOT be on screen when the shot is taken - a widget grid
+    # whose reads failed renders every tile as "read failed" over sample data.
+    # Widgets draw inside shadow roots, which body.innerText never sees.
+    for bad in state.get("reject_texts") or []:
+        ms = explicit_ms or 20000
+        await _observe(f"absent:{bad}", True, ms, page.wait_for_function(
+            "t => !(" + _DEEP_TEXT_JS + ")().toLowerCase().includes(t)",
+            arg=str(bad).lower(), timeout=ms))
     ready_painted = str(state.get("ready_painted") or "")
     if ready_painted:
         ms = explicit_ms or 20000
