@@ -101,6 +101,13 @@ def test_a_canvas_filled_only_with_its_background_is_not_painted():
     assert _run(_canvas(""), _READY_PAINTED_JS, "#cv") is False
 
 
+def test_a_faint_background_grid_is_not_painted():
+    draw = ("g.strokeStyle = '#0d0d0d';"
+            "for (let x = 0; x < 600; x += 12) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 400); g.stroke(); }"
+            "for (let y = 0; y < 400; y += 12) { g.beginPath(); g.moveTo(0, y); g.lineTo(600, y); g.stroke(); }")
+    assert _run(_canvas(draw), _READY_PAINTED_JS, "#cv") is False
+
+
 def test_a_canvas_with_a_drawn_graph_is_painted():
     draw = ("g.fillStyle = '#4fa3ff';"
             "for (let i = 0; i < 300; i++) { g.beginPath();"

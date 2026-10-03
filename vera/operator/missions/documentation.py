@@ -450,20 +450,26 @@ _READY_COUNT_JS = """sel => { const e = document.querySelector(sel);
   return !!m && Number((m[1] || m[0]).replace(/,/g, '')) > 0; }"""
 
 
-# A canvas that holds only its background colour has drawn nothing: the memory
-# graph's status line read "906 nodes" over a blank canvas, and every
-# text/count condition passed. Sampled, so a large canvas stays cheap. A canvas
-# without a readable 2D context (WebGL, tainted) cannot be judged and passes.
+# A canvas that holds only its background has drawn nothing: the memory graph's
+# status line read "906 nodes" over a blank canvas, and every text/count
+# condition passed. "Background" includes a faint grid, which differs from the
+# fill by a few levels and fooled a plain any-other-colour test; drawn marks
+# stand well clear of the dominant luminance. Sampled, so a large canvas stays
+# cheap. A canvas without a readable 2D context (WebGL, tainted) cannot be
+# judged and passes.
 _READY_PAINTED_JS = """sel => { const c = document.querySelector(sel);
   if (!c || !c.width || !c.height) return false;
   let g = null; try { g = c.getContext('2d'); } catch (e) { return true; }
   if (!g) return true;
   let d; try { d = g.getImageData(0, 0, c.width, c.height).data; } catch (e) { return true; }
-  const first = d[0] + ',' + d[1] + ',' + d[2]; let other = 0;
+  const lum = [], hist = new Map();
   for (let i = 0; i < d.length; i += 4 * 61) {
-    if (d[i] + ',' + d[i + 1] + ',' + d[i + 2] !== first && ++other > 20) return true;
+    const l = Math.round((d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000);
+    lum.push(l); hist.set(l, (hist.get(l) || 0) + 1);
   }
-  return false; }"""
+  let bg = 0, best = -1;
+  for (const [l, n] of hist) if (n > best) { best = n; bg = l; }
+  return lum.filter(l => Math.abs(l - bg) > 40).length > 20; }"""
 
 
 async def _wait_ready(page, settle_ms: int,
