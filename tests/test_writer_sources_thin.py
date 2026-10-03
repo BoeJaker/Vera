@@ -27,5 +27,5 @@ def test_wants_sources():
 
 
 def test_wiring_keeps_what_the_executor_named():
-    assert "_research_sources_core.wants_sources(args.get(\"context_files\"), args.get(\"sources\"))" in SRC
+    assert "_research_sources_core.wants_sources(" in SRC and "args.get(\"context_files\"), args.get(\"sources\")," in SRC
     assert 'args["sources"] = (_given + "\\n\\n" if _given else "") + _srcs' in SRC

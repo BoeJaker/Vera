@@ -119,7 +119,42 @@ def bookkeeping_only(value: Any) -> bool:
     return bool(names) and all(n in BOOKKEEPING for n in names)
 
 
-def wants_sources(context_files: Any, given_sources: Any) -> bool:
+def _entries(value: Any) -> List[str]:
+    if context_files_empty(value):
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    s = str(value).strip()
+    if s.startswith("["):
+        try:
+            import json as _json
+            got = _json.loads(s)
+            if isinstance(got, list):
+                return [str(v).strip() for v in got if str(v).strip()]
+        except Exception:
+            s = s.strip("[]")
+    return [x.strip().strip("'\"") for x in s.split(",") if x.strip().strip("'\"")]
+
+
+def names_real_files(value: Any, known: Any = None) -> bool:
+    """Does `context_files` name at least one REAL, non-bookkeeping file?
+
+    Probe 3 Oct (6145c6cf): the executor passed context_files=["wgall.com research
+    output"] and ["<content extracted from web.research query: ...>"] - descriptions, not
+    files - and the handoff stood down for them. With the run's file listing (`known`) an
+    entry counts only when its basename is in it; without one, only when it looks like a
+    path (no spaces or angle brackets, has an extension)."""
+    names = [e.replace("\\", "/").rsplit("/", 1)[-1] for e in _entries(value)]
+    names = [n for n in names if n and n not in BOOKKEEPING]
+    if not names:
+        return False
+    if known:
+        have = {str(k).replace("\\", "/").rsplit("/", 1)[-1] for k in known if str(k).strip()}
+        return any(n in have for n in names)
+    return any(("." in n and not any(c in n for c in " <>")) for n in names)
+
+
+def wants_sources(context_files: Any, given_sources: Any, known: Any = None) -> bool:
     """Should the loop hand the run's research to this writer call?"""
-    no_material = context_files_empty(context_files) or bookkeeping_only(context_files)
+    no_material = not names_real_files(context_files, known)
     return no_material and len(str(given_sources or "").strip()) < THIN_SOURCES_CHARS
