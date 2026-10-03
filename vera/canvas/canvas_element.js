@@ -3326,10 +3326,15 @@
        the page's bare text when the reader found nothing to call a body (or is not on this instance). Kept small
        enough to write into the item: a reader answer is its fields and at most 40k of markdown. */
     async _readPage(url) {
-      let r = null; try { r = await this.callResult('browser.reader', { url, max_chars: 40000 }); } catch (e) { r = null; }
+      /* reader.page first (canvas-enrichment slice 2 - owner, 2026-10-03: "the reader mode should not be processed as the
+         user clicks it - takes a while to load"): a page the research, a fetch or a click read in the last week opens
+         from the reader cache at once; one never read is read the cheap way (the fetched page, in memory) before the
+         slow one (a real render). browser.reader stays the fallback on an instance without reader.page. */
+      let r = null; try { r = await this.callResult('reader.page', { url, max_chars: 40000 }); } catch (e) { r = null; }
+      if (!(r && r.ok) && !(r && /no article/i.test(String(r.error || '')))) { try { r = await this.callResult('browser.reader', { url, max_chars: 40000 }); } catch (e) { r = null; } }
       const mdTxt = String((r && r.markdown) || '');
       if (mdTxt.trim().length > 200) {
-        const keep = ['title', 'byline', 'site', 'published', 'image', 'minutes', 'words', 'composite', 'parts', 'url'];
+        const keep = ['title', 'byline', 'site', 'published', 'image', 'minutes', 'words', 'composite', 'parts', 'url', 'entities', 'via', 'cached'];
         const reader = { markdown: mdTxt.slice(0, 40000) }; keep.forEach((k) => { if (r[k] != null && r[k] !== '') reader[k] = r[k]; });
         return { reader };
       }
