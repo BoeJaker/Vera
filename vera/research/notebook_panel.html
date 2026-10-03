@@ -70,11 +70,6 @@ input,select,textarea{font:inherit;color:inherit;background:none;border:none;out
 #sidebar{background:var(--s1);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden}
 /* Embed / focus mode — a single notebook with no notebook-list chrome. */
 html.nb-embed #sidebar{display:none}
-#nb-views{display:flex;flex-direction:column;gap:2px;padding:7px 7px 6px;border-bottom:1px solid var(--bd);flex-shrink:0}
-#nb-views .nav-btn{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:6px;border:1px solid transparent;background:transparent;color:var(--t2);font:inherit;font-size:11.5px;text-align:left;cursor:pointer;transition:background .12s,color .12s}
-#nb-views .nav-btn:hover{background:var(--s2);color:var(--t1)}
-#nb-views .nav-btn.active{background:var(--s2);border-color:var(--bd2);color:var(--ac)}
-#nb-views .gl{width:16px;text-align:center;flex-shrink:0}
 #sidebar-head{padding:9px 11px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:7px;flex-shrink:0}
 #sidebar-head span{font-size:10px;color:var(--t3);letter-spacing:.1em;text-transform:uppercase;flex:1}
 #nb-search{padding:6px 11px;border-bottom:1px solid var(--bd)}
@@ -323,7 +318,7 @@ html.nb-embed #sidebar{display:none}
   <div id="sidebar">
     <!-- THE NOTEBOOK'S VIEWS ARE ITS MENU (owner, 2026-10-03: "sub uis ... available from the lhm instead" - top bars are
          for settings and status). Docked in the harness this nav becomes the panel's LHM menu; standalone it heads this column. -->
-    <nav id="nb-views" data-vera-lhm aria-label="Notebook views">
+    <nav id="nb-views" class="vp-menu inline" data-vera-lhm aria-label="Notebook views">
       <button class="nav-btn active" data-view="notes" data-icon="✎" data-label="Notes" data-desc="Write and run the open notebook's cells" data-desc-long="The notebook editor: the open notebook's pages and cells - write, run and reorder cells. The default view; Document and Graph return here." onclick="nbView('notes')"><span class="gl">✎</span>Notes</button>
       <button class="nav-btn" data-view="document" data-icon="▤" data-label="Document" data-desc="Read the notebook as one document" data-desc-long="Read-only document view of the open notebook: every cell's text and output laid out as one page, printable. Needs a notebook open." onclick="nbView('document')"><span class="gl">▤</span>Document</button>
       <button class="nav-btn" data-view="graph" data-icon="✦" data-label="Graph" data-desc="The notebook as an entity graph" data-desc-long="The open notebook's entities and their links as a graph (run Sync in the top bar to extract entities into the knowledge graph first). Needs a notebook open." onclick="nbView('graph')"><span class="gl">✦</span>Graph</button>
@@ -1636,5 +1631,6 @@ function toast(msg){ const t=document.createElement('div'); t.className='toast';
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/vera-panel.js"></script>
 </body>
 </html>

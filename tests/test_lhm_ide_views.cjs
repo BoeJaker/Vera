@@ -10,7 +10,7 @@ const header = H.slice(H.indexOf('<header>'), H.indexOf('</header>'));
 t('the header no longer switches the view', header.length > 100 && !/data-view=/.test(header) && !/id="views"/.test(header));
 t('the header keeps the instance, its status and actions', /id="inst-sel"/.test(header) && /id="inst-status"/.test(header) && /id="btn-connect"/.test(header) && /id="btn-refresh"/.test(header));
 
-const nav = (H.match(/<nav id="views" data-vera-lhm[\s\S]*?<\/nav>/) || [''])[0];
+const nav = (H.match(/<nav id="views"[^>]*data-vera-lhm[\s\S]*?<\/nav>/) || [''])[0];
 t('the views are the panel\'s menu (data-vera-lhm), a column beside the page', !!nav && /<div class="ide-body">\s*<!--[\s\S]*?-->\s*<nav id="views"/.test(H) && H.indexOf(nav) < H.indexOf('<main>'));
 const btns = nav.match(/<button class="nav-btn[^"]*"[^>]*>/g) || [];
 const views = ['vscode', 'classic', 'remotes', 'looplab', 'dispatch'];

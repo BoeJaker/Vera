@@ -11,7 +11,7 @@ const top = H.slice(H.indexOf('<div id="topbar">'), H.indexOf('<div id="body">')
 t('the top bar no longer switches the view', top.length > 100 && !/openGraphView\(|enterViewMode\(|nbView\(/.test(top), top.match(/onclick="[^"]*"/g));
 t('the top bar keeps its settings, status and actions', /openSettings\(event\)/.test(top) && /syncToGraph\(\)/.test(top) && /exportNotebook\('md'\)/.test(top) && /id="conn-dot"/.test(top));
 
-const nav = (H.match(/<nav id="nb-views" data-vera-lhm[\s\S]*?<\/nav>/) || [''])[0];
+const nav = (H.match(/<nav id="nb-views"[^>]*data-vera-lhm[\s\S]*?<\/nav>/) || [''])[0];
 t('the views are the panel\'s menu (data-vera-lhm), in its own column', !!nav && H.indexOf(nav) > H.indexOf('<div id="sidebar">'));
 const btns = nav.match(/<button class="nav-btn[^"]*"[^>]*>/g) || [];
 t('three views: Notes, Document, Graph', btns.length === 3 && ['notes', 'document', 'graph'].every((v) => btns.some((b) => b.includes('data-view="' + v + '"'))));

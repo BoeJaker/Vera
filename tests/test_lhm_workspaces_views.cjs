@@ -10,7 +10,7 @@ const main = H.slice(H.indexOf('<div id="main">'), H.indexOf('<iframe id="intFra
 t('the header no longer switches the view', main.length > 50 && !/setView\(/.test(main) && !/class="seg"/.test(main));
 t('the header keeps its actions (Apps, Edit, + Widget, Save) and the title', /openApps\(\)/.test(main) && /id="editBtn"/.test(main) && /id="addBtn"/.test(main) && /id="saveBtn"/.test(main) && /id="wsTitle"/.test(main));
 
-const nav = (H.match(/<nav id="wsViews" data-vera-lhm[\s\S]*?<\/nav>/) || [''])[0];
+const nav = (H.match(/<nav id="wsViews"[^>]*data-vera-lhm[\s\S]*?<\/nav>/) || [''])[0];
 t('the views are the panel\'s menu, a column of its own (outside #side, which Integrations mode hides)', !!nav && H.indexOf(nav) < H.indexOf('<div id="side">') && /body\.intmode #side/.test(H) && !/body\.intmode[^{]*#wsViews/.test(H));
 const btns = nav.match(/<button class="nav-btn[^"]*"[^>]*>/g) || [];
 t('Workspaces and Integrations, by the ids setView lights', btns.length === 2 && /id="segWs"[^>]*onclick="setView\('ws'\)"/.test(nav) && /id="segInt"[^>]*onclick="setView\('int'\)"/.test(nav));
