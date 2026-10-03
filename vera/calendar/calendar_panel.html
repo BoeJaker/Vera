@@ -464,7 +464,7 @@ body.rail-hidden #rail{ display:none; }
       <div class="frow">
         <button data-label="Calendar" data-desc="The calendar itself" data-desc-long="The calendar: month, week and day views of every shown layer; sync it now." class="foot-btn active" data-sec="calendar" onclick="mainSection('calendar')">🗓 Calendar</button>
         <button data-label="Sources" data-desc="Connect cloud calendars" data-desc-long="Cloud calendars: connect ICS URLs, CalDAV or Google; credentials are encrypted at rest and never shown again." class="foot-btn" data-sec="sources" onclick="mainSection('sources')">☁ Sources</button>
-        <button data-label="Settings" data-desc="Calendar settings" data-desc-long="Calendar settings: the model for the assistant and organiser, the auto-sync interval, the timezone and persistence." class="foot-btn" data-sec="settings" onclick="mainSection('settings')">⚙ Settings</button>
+        <button data-vera-settings="section.section[data-sec='settings']" data-label="Settings" data-desc="Calendar settings" data-desc-long="Calendar settings: the model for the assistant and organiser, the auto-sync interval, the timezone and persistence." class="foot-btn" data-sec="settings" onclick="mainSection('settings')">⚙ Settings</button>
       </div>
       <div id="sync-tile">
         <div class="lbl">Sync</div>
@@ -1826,5 +1826,6 @@ setInterval(()=>{ renderAgenda(); if(VIEW!=="month") renderView(); },300000);
 <script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>
