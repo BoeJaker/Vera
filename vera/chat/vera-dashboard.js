@@ -1137,7 +1137,9 @@
       var f = String(form || '').toLowerCase();
       if (/^(section|panel|composite|element|vgraph|graph|map|globe|topology|pipes|context_graph|cellmap|matrix|heat|calendar|month|schedule|calnav|iso)$/.test(f) || /@iso$|iso/.test(f)) return '';
       if (f === 'reading') return 'reading';
-      if (/^(numbers|pills|status)$/.test(f)) return 'chips';
+      if (/^(numbers|pills)$/.test(f)) return 'chips';
+      /* a status draws its verdict, then one row per check (owner, 2026-10-03: Health's Stores showed two of its four) */
+      if (f === 'status') return 'status';
       if (/^(ranked|bars|kv)$/.test(f)) return 'rowsv';   // (thermo and temps stand their readings side by side: their author's height)
       if (/^(thermo|temps|gauge|column|histogram|pulse)$/.test(f)) return '';
       return FIT_CAT[SHAPE_OF[f]] || '';
@@ -1167,6 +1169,8 @@
       var content;
       if (cat === 'level') content = 74;   // one figure (its data may carry a history: that is its trend, not more figures)
       else if (cat === 'chips') { if (n == null) return 0; content = 34 * Math.ceil(Math.max(1, n) / Math.max(1, Math.floor(px / 120))) + 8; }
+      // the form shows as many checks as fit below its verdict ((height - 48) / 18 of them): room for every one
+      else if (cat === 'status') { if (n == null) return 0; content = 56 + Math.min(n, 12) * 20; }
       else if (cat === 'series') content = px >= 500 ? 210 : 170;
       else if (cat === 'parts') content = 150;
       else if (cat === 'stages') content = 110;
