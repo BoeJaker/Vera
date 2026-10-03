@@ -12327,7 +12327,15 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
     if not saved.get("ok"):
         return {"ok": False, "error": str(saved.get("error") or "save failed"), "path": path}
     before, after = len(current.splitlines()), len(res["content"].splitlines())
-    return {"ok": True, "path": saved.get("path", path),
+    # The old value still DISPLAYED after the edit changed it (stale_value_core): first
+    # after `ok`, so it is inside the history preview the executor and verifier read.
+    try:
+        _stale_msg = _stale_value_core.describe(
+            _stale_value_core.stale_display_values(current, res["content"]))
+    except Exception:
+        _stale_msg = ""
+    return {"ok": True, **({"warning": _stale_msg} if _stale_msg else {}),
+            "path": saved.get("path", path),
             "fs_path": saved.get("fs_path", ""), "version": saved.get("version"),
             "lang": lang, "applied": res["applied"], "errors": res["errors"],
             "syntax_ok": True, "checked_with": _v5_check_syntax(res["content"], lang, path).get("checker", ""),
@@ -14199,6 +14207,12 @@ try:
     from Vera.vera.dag import operator_url_core as _operator_url_core
 except Exception:                                     # pragma: no cover
     from vera.dag import operator_url_core as _operator_url_core
+
+# An edit that changes a value must change what the page shows (census 3 Oct).
+try:
+    from Vera.vera.dag import stale_value_core as _stale_value_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import stale_value_core as _stale_value_core
 
 # Double-escaped newlines in model-written Python (probe 2026-10-01: 24% of
 # exec.python.run calls wrote a literal backslash-n instead of a newline).
@@ -21368,6 +21382,13 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
             _wrong = None
         if _wrong:
             return {"met": False, "reason": _wrong}
+        # A parsed file is not a finished edit when the page still shows the value
+        # the edit changed (census 3 Oct: 60 -> 90 in code, display left at 01:00).
+        _pv = str(_last.get("preview") or "")
+        if _stale_value_core.MARKER in _pv:
+            _at = _pv.index(_stale_value_core.MARKER)
+            return {"met": False,
+                    "reason": _pv[_at:_at + 400].replace('\\"', '"').split('", "')[0]}
         _ex = await _v6_check_paths_exist(session_id, [_authored]) if session_id else {_authored: True}
         if _ex.get(_authored, True):
             return {"met": True,
