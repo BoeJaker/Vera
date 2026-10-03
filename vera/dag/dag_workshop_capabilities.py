@@ -14304,6 +14304,12 @@ try:
 except Exception:                                     # pragma: no cover
     from vera.dag import criterion_bars_core as _criterion_bars_core
 
+# A call that can write files makes the run's file registry forget what it names.
+try:
+    from Vera.vera.dag import registry_stale_core as _registry_stale_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import registry_stale_core as _registry_stale_core
+
 # Double-escaped newlines in model-written Python (probe 2026-10-01: 24% of
 # exec.python.run calls wrote a literal backslash-n instead of a newline).
 try:
@@ -16600,6 +16606,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             history.append({"tool": hop_tool, "ok": entry_ok, "preview": preview[:_budget],
                             "args": h_args, "ms": elapsed})
             _research_sources_core.remember(sid, history[-1])
+            # A call that can write and names a registered file: forget its cached copy.
+            _registry_stale_core.forget_named(artifacts, hop_tool, h_args)
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                               "cycle": cur, "step_id": step_id, "tool": hop_tool, "ok": entry_ok,
                               "elapsed_ms": elapsed, "preview": preview[:_budget],
@@ -18973,6 +18981,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
         _research_sources_core.remember(sid, history[-1])
+        # A call that can write and names a registered file: forget its cached copy, so
+        # the next read goes to disk (registry_stale_core; probe 3 Oct, a stale report.md).
+        _registry_stale_core.forget_named(artifacts, tool, args)
         await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                           "ok": entry_ok, "elapsed_ms": elapsed,
