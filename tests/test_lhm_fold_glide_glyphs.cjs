@@ -11,23 +11,24 @@ const UI = fs.readFileSync(path.join(__dirname, '..', 'vera', 'vera-ui.js'), 'ut
 const CHAT = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_panel.html'), 'utf8');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
-// ── a word given as an icon is its first letter; a symbol stays as given ─────────────────────────────────────────
+// ── a symbol stays as given; a word or a letter given as an icon is NOT drawn as letters (owner, 2026-10-03: "sub LHMs
+//    should not use letters as icons in the rail") - it is the glyph its name maps to ──────────────────────────────────
 {
-  const a = LHM.indexOf('  function _glyph('), b = LHM.indexOf('  // the fold, animated (FLIP)');
+  const a = LHM.indexOf('  var _KW_GLYPHS = ['), b = LHM.indexOf('  // the fold, animated (FLIP)');
   t('the glyph rule is in the library', a > 0 && b > a);
   const ctx = { window: { Intl }, Intl, Symbol, Array, String };
   vm.createContext(ctx); vm.runInContext(LHM.slice(a, b) + '\nthis.g=_glyph;', ctx);
-  t('a word is its first letter', ctx.g('pokedex', '▭') === 'P', ctx.g('pokedex', '▭'));
+  t('a word is never its first letter', ctx.g('pokedex', '▭') !== 'P' && !/^[A-Za-z0-9]{1,2}$/.test(ctx.g('pokedex', '▭')), ctx.g('pokedex', '▭'));
+  t('a letter given as an icon is not drawn', ctx.g('E', '•', 'Email') === '\u2709', ctx.g('E', '•', 'Email'));
   t('a symbol is kept', ctx.g('⚙', '▭') === '⚙' && ctx.g('▷_', '▭') === '▷_');
-  t('nothing given is the fallback', ctx.g('', '▭') === '▭' && ctx.g(null, '•') === '•');
+  t('nothing given and no name is the fallback', ctx.g('', '▭') === '▭' && ctx.g(null, '•') === '•');
   t('an emoji with its variation selector is kept whole', ctx.g('⚙️', '▭') === '⚙️');
 }
 
-// ── every menu glyph goes through the rule: the side list, the top-level list, both rails ────────────────────────
-t('the side list rows', /_el\('span', 'ico', _glyph\(o\.icon, '▭'\)\)/.test(LHM) && /_el\('span', 'ico', _glyph\(p\.icon, '▭'\)\)/.test(LHM));
+// ── every menu glyph goes through the rule, with the option's name: the side list, the top-level list, both rails ────
+t('the side list rows', /_el\('span', 'ico', _glyph\(o\.icon, '▭', o\.label \|\| o\.id\)\)/.test(LHM) && /_el\('span', 'ico', _glyph\(p\.icon, '▭', p\.label \|\| p\.id\)\)/.test(LHM));
 t('the top-level list rows', (LHM.match(/_el\('span', 'lhm-ri', _glyph\(/g) || []).length === 3);
-t('the quick menu rail and an absorbed rail', /m\.iconHtml \? null : _glyph\(m\.icon, '•'\)/.test(LHM) && /\(m\.id === act\.menu \? ' on' : ''\), _glyph\(m\.icon, '•'\)\)/.test(LHM));
-
+t('the quick menu rail and an absorbed rail', /m\.iconHtml \? null : _glyph\(m\.icon, '•', m\.label\)/.test(LHM) && /\(m\.id === act\.menu \? ' on' : ''\), _menuGlyph\(m\)\)/.test(LHM));
 // ── a glyph sits in a fixed, centred box, larger than before ─────────────────────────────────────────────────────
 t('the side list glyph: a 22 px box, 16 px, centred', /'\.lhm-side \.lhm-s-row \.ico\{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;line-height:1;[^']*font-size:16px/.test(LHM));
 t('the top-level list glyph: a 22 px box, 16 px, centred', /'\.lhm-top \.lhm-row \.lhm-ri\{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;line-height:1;[^']*font-size:16px/.test(LHM));

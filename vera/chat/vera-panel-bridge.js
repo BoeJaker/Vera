@@ -129,7 +129,7 @@
     if(d.type !== 'vera:panel:state' && d.type !== 'vera:hdr:offer') return;
     var k = _kidOf(ev.source); if(!k) return;
     if(d.type === 'vera:panel:state'){
-      var nv = d.state && d.state.nav; k.nav = (nv && Array.isArray(nv.items)) ? { items: nv.items.slice(0, 60).map(function(it){ return { id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48) }; }), active: String(nv.active || '') } : null;
+      var nv = d.state && d.state.nav; k.nav = (nv && Array.isArray(nv.items)) ? { items: nv.items.slice(0, 60).map(function(it){ return { id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48), desc: String(it.desc || '').slice(0, 140), desc_long: String(it.desc_long || '').slice(0, 600) }; }), active: String(nv.active || '') } : null;
       if(k.nav && nv.lhm && Array.isArray(nv.lhm.widgets)) k.nav.widgets = nv.lhm.widgets.slice(0, 8).map(String);   // the child's menu widgets ride up with its sections
       try{ ev.source.postMessage({ type: (_hostedUp || document.documentElement.classList.contains('vpb-nav-hosted')) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){}
       publishStateDebounced();
@@ -167,7 +167,10 @@
   // optional. They ride in the lhm spec (spec.widgets); a nesting page passes its shown child's up with the child's sections.
   function _navWidgets(){ try{ var el = document.querySelector('[data-lhm-widgets]'); if(!el) return [];
     return String(el.getAttribute('data-lhm-widgets') || '').split(/[\s,]+/).filter(function(s){ return /^[\w.:-]+(@(xs|s|m|l|xl))?$/.test(s); }).slice(0, 8); }catch(e){ return []; } }
-  function _navIcon(it){ var t = String(it.icon || '').trim(); if(t) return t; return (String(it.label || it.id || '').trim().charAt(0) || '\u2022').toUpperCase(); }
+  /* an item's own mark, or none: never its initial (owner, 2026-10-03: "sub LHMs should not use letters as icons"). The host
+     draws an unmarked item with the glyph its name maps to (VeraLHM.glyphFor) - one table, in the library that draws it. */
+  function _navIcon(it){ var t = String((it && it.icon) || '').trim(); return (!t || /^[A-Za-z0-9]{1,2}$/.test(t)) ? '' : t; }
+  function _navTab(it){ return { id: it.id, label: it.label, icon: _navIcon(it), desc: it.desc || '', desc_long: it.desc_long || '' }; }
   function _navLhm(){
     if(!_navItems || !_navItems.length || (_navLhmOpts && _navLhmOpts.lhm === false)) return null;
     // the panel's name: its page title carries the product's name first ("Vera — Estate"), which the menu's head does not need
@@ -177,17 +180,18 @@
     var act = { menu: '', tab: '' }, menus;
     if(groups.filter(function(g){ return g.name; }).length >= 2){
       menus = groups.map(function(g, gi){ var id = '\u00a7g' + gi; g.items.forEach(function(it){ if(it.id === _navActiveId){ act.menu = id; act.tab = it.id; } });
-        return { id: id, icon: _navIcon(g.items[0]), label: g.name || 'More', title: g.name || 'More', tabs: g.items.map(function(it){ return { id: it.id, label: it.label }; }) }; });
+        var g0 = g.items[0] || {};
+        return { id: id, icon: _navIcon({ icon: g0.group_icon }), icon_alt: _navIcon(g0), label: g.name || 'More', title: g.name || 'More', desc: g0.group_desc || '', desc_long: g0.group_desc_long || '', tabs: g.items.map(_navTab) }; });
     } else {
-      var all = _navItems.map(function(it){ return { id: it.id, label: it.label }; });
+      var all = _navItems.map(_navTab);
       menus = _navItems.map(function(it, i){ var id = '\u00a7i' + i; if(it.id === _navActiveId){ act.menu = id; act.tab = it.id; }
-        return { id: id, icon: _navIcon(it), label: it.label, title: title || 'Sections', tabs: all }; });
+        return { id: id, icon: _navIcon(it), label: it.label, title: title || 'Sections', desc: it.desc || '', desc_long: it.desc_long || '', tabs: all }; });
     }
     if(!act.menu && menus.length) act.menu = menus[0].id;
     var kid = (typeof _activeKid === 'function') ? _activeKid() : null, ps = (act.menu && typeof _pageSubs === 'function') ? _pageSubs() : null;
     if((kid || ps) && act.menu){
       // the page's own sub-sections, and a framed child's sections under the one that shows it (or under the item, as before)
-      var kidSub = kid ? kid.nav.items.map(function(it){ return { id: 'c:' + it.id, label: String(it.label || it.id), depth: ps ? 2 : 1 }; }) : [], sub = kidSub;
+      var kidSub = kid ? kid.nav.items.map(function(it){ return { id: 'c:' + it.id, label: String(it.label || it.id), desc: it.desc || '', desc_long: it.desc_long || '', depth: ps ? 2 : 1 }; }) : [], sub = kidSub;
       if(ps){ sub = []; ps.items.forEach(function(it){ sub.push({ id: 's:' + it.id, label: it.label, depth: 1 }); if(it.id === ps.active) sub = sub.concat(kidSub); }); if(!ps.active) sub = sub.concat(kidSub); }
       menus.forEach(function(m){ if(m.id !== act.menu) return; var at = -1; m.tabs.forEach(function(tb, i){ if(tb.id === _navActiveId) at = i; });
         m.tabs = m.tabs.slice(0, at + 1).concat(sub, m.tabs.slice(at + 1)); });
@@ -965,7 +969,13 @@
     // switch didn't originate from an injected click.
     registerNav: function(items, selectFn){
       _navItems = (items || []).map(function(it){
-        return {id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48), group: it.group ? String(it.group) : '', icon: it.icon ? String(it.icon) : ''};
+        var o = {id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48), group: it.group ? String(it.group) : '', icon: it.icon ? String(it.icon) : ''};
+        // what the item is for: desc (short, the pointer's) and desc_long (an agent's: panel.query reads nav.items); and the
+        // group's own mark and descriptions, which the harness draws on the group's ONE rail icon
+        var cl = function(v, n){ return String(v || '').replace(/\s+/g, ' ').trim().slice(0, n); };
+        o.desc = cl(it.desc, 140); o.desc_long = cl(it.desc_long, 600);
+        if(it.group_icon) o.group_icon = cl(it.group_icon, 4); if(it.group_desc) o.group_desc = cl(it.group_desc, 140); if(it.group_desc_long) o.group_desc_long = cl(it.group_desc_long, 600);
+        return o;
       });
       if(typeof selectFn === 'function') _navSelectFn = selectFn;
       publishStateDebounced();

@@ -286,13 +286,48 @@
   }
   function _el(tag, cls, text){ var e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = text; return e; }
   function _esc(s){ return String(s == null ? '' : s); }
-  // a menu option's glyph: a symbol as given; a WORD given as an icon (a panel registered with icon "pokedex") is its
-  // first letter, so the rail shows one character in its box rather than a clipped word
-  function _glyph(s, dflt){
-    var t = String(s == null ? '' : s).trim(); if(!t) return dflt || '';
-    var n = 0; try{ if(window.Intl && Intl.Segmenter){ var it = new Intl.Segmenter().segment(t)[Symbol.iterator](); while(!it.next().done) n++; } else n = Array.from(t).length; }catch(e){ n = t.length; }
-    return (n > 2 && /^[A-Za-z]/.test(t)) ? t.charAt(0).toUpperCase() : t;
+  /* NO LETTERS IN THE RAIL (owner, 2026-10-03: "sub LHMs should not use letters as icons in the rail"). A menu option's
+     glyph is the symbol it was given. Given none - or a word, or a letter or two (a panel registered with icon "pokedex",
+     an item whose only mark was its initial) - it is the glyph its NAME maps to below, and failing that one neutral
+     mark, the same for every unknown item. One table, here, for every menu the harness or the chat draws. */
+  var _KW_GLYPHS = [
+    [/overview|summary|home|dashboard|start/, '◫'], [/setting|config|preference|option/, '⚙'],
+    [/\blogs?\b|event|stream|history|timeline|activity|feed/, '≡'], [/search|find|browse|explor|catalog/, '⌕'],
+    [/mail|inbox/, '✉'], [/chat|message|comms|conversation|telegram/, '✉'],
+    [/calendar|schedule|agenda|month|week/, '▦'], [/network|topolog|graph|mesh|map\b/, '⋈'],
+    [/model|train|\bml\b|lab\b|nlp/, '◈'], [/agent|persona|specialist/, '◉'],
+    [/skill|tool|capabilit|\bcaps?\b/, '⚒'], [/ontolog|schema|types?\b/, '⬡'],
+    [/memory|vector|embed|fabric|knowledge|\bkb\b|dataset/, '✣'], [/file|\bdocs?\b|document|note|page|report|research/, '▤'],
+    [/image|gallery|media|photo|studio|sprite|video/, '▣'], [/code|exec|terminal|shell|\bide\b|sandbox/, '⌨'],
+    [/test|check|\bqa\b|review/, '✓'], [/\bruns?\b|job|queue|task|loop|goal/, '▶'],
+    [/monitor|health|perf|metric|stat|system|status|observ/, '◔'], [/market|price|trade|portfolio|finance|business|store|commerce|shop/, '¤'],
+    [/storage|disk|backup|volume|drive/, '⛁'], [/docker|container|worker|node|machine|host|proxmox|server|estate|compute/, '▥'],
+    [/security|trust|secret|cert|key|auth|identity|account|user|people|contact/, '⚿'],
+    [/automat|flow|workflow|\bdag\b|pipeline|trigger|integration/, '⇄'], [/build|foundry|deploy|release/, '⚑'],
+    [/widget|\bui\b|panel|builder|layout|canvas/, '▧'], [/help|about|info|guide/, 'ⓘ']
+  ];
+  var GLYPH_NEUTRAL = '◇';
+  function _isMark(t){ return !!t && !/^[A-Za-z0-9]{1,2}$/.test(t) && !(/^[A-Za-z]/.test(t) && Array.from(t).length > 2); }
+  function glyphFor(name){ var s = String(name == null ? '' : name).toLowerCase(); for(var i = 0; i < _KW_GLYPHS.length; i++){ if(_KW_GLYPHS[i][0].test(s)) return _KW_GLYPHS[i][1]; } return GLYPH_NEUTRAL; }
+  // s: the icon given; dflt: what an unnamed option shows; name: the option's label, mapped when s is not a mark
+  function _glyph(s, dflt, name){
+    var t = String(s == null ? '' : s).trim(); if(_isMark(t)) return t;
+    if(name != null && String(name).trim()) return glyphFor(name);
+    if(t) return glyphFor(t);
+    return dflt || GLYPH_NEUTRAL;
   }
+  /* a published menu's rail glyph (owner, 2026-10-03: "one icon per group for menu items that have sub items"): the
+     group's own mark, else the glyph its name maps to, else its first item's mark (icon_alt), else the neutral one */
+  function _menuGlyph(m){
+    if(!m) return GLYPH_NEUTRAL; var t = String(m.icon || '').trim(); if(_isMark(t)) return t;
+    var k = glyphFor(m.label || t); if(k !== GLYPH_NEUTRAL) return k;
+    var a = String(m.icon_alt || '').trim(); return _isMark(a) ? a : GLYPH_NEUTRAL;
+  }
+  /* WHAT AN OPTION IS FOR (owner, 2026-10-03: "menu options have descriptions ... visible on mouseover and could even aide
+     the agents"). Two per option: desc, short, for the pointer; desc_long, for an agent, kept on the element as
+     data-desc-long and carried in the published spec. A hover reads "Label - short description". */
+  function _tip(label, desc){ var l = String(label == null ? '' : label), d = String(desc == null ? '' : desc).trim(); return d && d !== l ? l + ' — ' + d : l; }
+  function _descOn(el, o){ if(!el || !o) return el; if(o.desc) el.setAttribute('data-desc', String(o.desc)); if(o.desc_long) el.setAttribute('data-desc-long', String(o.desc_long)); return el; }
   // the fold, animated (FLIP): the rows and the header's two toggles are measured in the state the menu left and the one
   // it entered, then each glides from the first to the second on the width's own easing - so a glyph in the rail travels
   // to its option in the list instead of jumping there
@@ -347,9 +382,9 @@
     top.addEventListener('click', function(){ toggleTop(); });
     _rail.appendChild(top);
     (_cfg.menus || []).forEach(function(m){
-      var ico = _el('div', 'lhm-ico' + (m.id === _active && !_topMode ? ' on' : ''), m.iconHtml ? null : _glyph(m.icon, '•'));
+      var ico = _el('div', 'lhm-ico' + (m.id === _active && !_topMode ? ' on' : ''), m.iconHtml ? null : _glyph(m.icon, '•', m.label));
       if(m.iconHtml) ico.innerHTML = m.iconHtml;   // the board's SVG glyph for this menu
-      ico.title = m.label + (m.tabs && m.tabs.length > 1 ? ' — ' + m.tabs.map(function(t){ return t.label; }).join(' · ') : '');
+      ico.title = m.desc ? _tip(m.label, m.desc) : m.label + (m.tabs && m.tabs.length > 1 ? ' — ' + m.tabs.map(function(t){ return t.label; }).join(' · ') : ''); _descOn(ico, m);
       ico.setAttribute('data-menu', m.id);
       var badge = 0; try{ badge = m.badge ? +m.badge() : 0; }catch(e){}
       if(badge){ ico.appendChild(_el('span', 'lhm-badge', String(badge))); }
@@ -539,7 +574,7 @@ function _ebar(title, onAdd, onDone){
     if(!open.length) _top.appendChild(_el('div', 'lhm-empty', 'Nothing open beside the chat. A menu, the aide or you can open a panel here.'));
     open.forEach(function(o){
       var r = _el('div', 'lhm-row');
-      r.appendChild(_el('span', 'lhm-ri', _glyph(o.icon, '▭')));
+      r.appendChild(_el('span', 'lhm-ri', _glyph(o.icon, '▭', o.label)));
       r.appendChild(_el('span', 'lhm-rn', o.label || o.id));
       r.appendChild(_el('span', 'lhm-rm', [o.origin || '', o.placement || ''].filter(Boolean).join(' · ')));
       if(o.close){ var x = _el('button', 'lhm-rx', '✕'); x.title = 'Close'; x.addEventListener('click', function(ev){ ev.stopPropagation(); try{ o.close(); }catch(e){} render(); }); r.appendChild(x); }
@@ -553,13 +588,13 @@ function _ebar(title, onAdd, onDone){
       q.addEventListener('input', function(){ _topQ = q.value; _renderTop(); var i2 = _top.querySelector('.lhm-tsearch input'); if(i2){ i2.focus(); i2.selectionStart = i2.selectionEnd = i2.value.length; } });
       var qq = (_topQ || '').toLowerCase(); var shown = panels.filter(function(p){ return !qq || String(p.label || p.id).toLowerCase().indexOf(qq) >= 0 || String(p.id).toLowerCase().indexOf(qq) >= 0; });
       _top.appendChild(_el('div', 'lhm-sec', 'Panels · ' + panels.length + (qq ? ' · ' + shown.length + ' match' : '') + ' · ⌘K'));
-      shown.slice(0, 120).forEach(function(p){ var r = _el('div', 'lhm-row'); r.appendChild(_el('span', 'lhm-ri', _glyph(p.icon, '▭'))); r.appendChild(_el('span', 'lhm-rn', p.label || p.id)); r.appendChild(_el('span', 'lhm-rm', p.id)); r.addEventListener('click', function(){ try{ if(p.open) p.open(); }catch(e){} }); _top.appendChild(r); });
+      shown.slice(0, 120).forEach(function(p){ var r = _el('div', 'lhm-row'); r.title = _tip(p.label || p.id, p.desc); _descOn(r, p); r.appendChild(_el('span', 'lhm-ri', _glyph(p.icon, '▭', p.label || p.id))); r.appendChild(_el('span', 'lhm-rn', p.label || p.id)); r.appendChild(_el('span', 'lhm-rm', p.id)); r.addEventListener('click', function(){ try{ if(p.open) p.open(); }catch(e){} }); _top.appendChild(r); });
       if(!shown.length) _top.appendChild(_el('div', 'lhm-empty', 'No panel matches.'));
     }
     _top.appendChild(_el('div', 'lhm-sec', 'Menus · ' + (_cfg.menus || []).length));
     (_cfg.menus || []).forEach(function(m){
       var r = _el('div', 'lhm-row' + (m.id === _active ? ' on' : ''));
-      r.appendChild(_el('span', 'lhm-ri', _glyph(m.icon, '•')));
+      r.appendChild(_el('span', 'lhm-ri', _glyph(m.icon, '•', m.label)));
       r.appendChild(_el('span', 'lhm-rn', m.label));
       r.appendChild(_el('span', 'lhm-rm', (m.tabs || []).map(function(t){ return t.label; }).join(' · ')));
       r.addEventListener('click', function(){ pick(m.id); });
@@ -744,7 +779,7 @@ function _ebar(title, onAdd, onDone){
     if(!_cfg) return null;
     return {
       title: _cfg.title || '', active: { menu: _active, tab: _activeTab, top: _topMode },
-      menus: (_cfg.menus || []).map(function(m){ var b = 0; try{ b = m.badge ? +m.badge() : 0; }catch(e){} return { id: m.id, icon: m.icon || '•', label: m.label, title: m.title || m.label, badge: b, tabs: (m.tabs || []).map(function(t){ return { id: t.id, label: t.label }; }) }; }),
+      menus: (_cfg.menus || []).map(function(m){ var b = 0; try{ b = m.badge ? +m.badge() : 0; }catch(e){} return { id: m.id, icon: m.icon || '•', label: m.label, title: m.title || m.label, desc: m.desc || '', desc_long: m.desc_long || '', badge: b, tabs: (m.tabs || []).map(function(t){ return { id: t.id, label: t.label, desc: t.desc || '', desc_long: t.desc_long || '' }; }) }; }),
       open: _openNow().map(function(o){ return { id: o.id, label: o.label, icon: o.icon || '', origin: o.origin || '', placement: o.placement || '' }; })
     };
   }
@@ -758,7 +793,7 @@ function _ebar(title, onAdd, onDone){
   function navState(){
     if(!_embedded || !_cfg) return null;
     var s = spec(); if(!s) return null;
-    return { items: s.menus.map(function(m){ return { id: m.id, label: m.label }; }), active: s.active.menu, lhm: s };
+    return { items: s.menus.map(function(m){ return { id: m.id, label: m.label, desc: m.desc, desc_long: m.desc_long }; }), active: s.active.menu, lhm: s };
   }
   function _publish(force){
     var nav = navState(); if(!nav) return;
@@ -883,7 +918,7 @@ function _ebar(title, onAdd, onDone){
     else rail.appendChild(_el('div', 'lhm-rsp'));
     var act = spec.active || {};
     (spec.menus || []).forEach(function(m){
-      var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), _glyph(m.icon, '•')); ico.title = m.label + (opts.onSplit ? ' \u00b7 Ctrl/\u2318- or middle-click: open it side by side' : '');
+      var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), _menuGlyph(m)); _descOn(ico, m); ico.title = _tip(m.label, m.desc) + (opts.onSplit ? ' \u00b7 Ctrl/\u2318- or middle-click: open it side by side' : '');
       if(m.badge) ico.appendChild(_el('span', 'lhm-badge', String(m.badge)));
       ico.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(m.id); else pickFn(m.id); });
       ico.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(m.id); } });
@@ -896,7 +931,7 @@ function _ebar(title, onAdd, onDone){
     if(cur){
       tabs.appendChild(_el('div', 'lhm-ttl', cur.title || cur.label));
       (cur.tabs || []).forEach(function(t, ti){
-        var e = _el('div', 'lhm-tab' + (t.id === act.tab ? ' on' : '') + (t.depth ? ' sub' : '') + (t.depth > 1 ? ' sub2' : ''), t.label); e.title = t.label;
+        var e = _el('div', 'lhm-tab' + (t.id === act.tab ? ' on' : '') + (t.depth ? ' sub' : '') + (t.depth > 1 ? ' sub2' : ''), t.label); e.title = _tip(t.label, t.desc); _descOn(e, t);
         var way = _wayTo(cur.tabs, ti);
         e.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(cur.id + '/' + way); else pickFn(cur.id + '/' + t.id); });
         e.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(cur.id + '/' + way); } });
@@ -954,7 +989,7 @@ function _ebar(title, onAdd, onDone){
     if(!open.length) bd.appendChild(_el('div', 'lhm-s-empty', 'Nothing open. Pick a panel below, or the aide can open one here.'));
     open.forEach(function(o){
       var r = _el('div', 'lhm-s-row lhm-s-now open' + (o.active ? ' on' : '')); r.title = 'opened by ' + (o.origin || 'you') + (o.placement ? ' · ' + o.placement : '');
-      r.appendChild(_el('span', 'ico', _glyph(o.icon, '▭')));
+      r.appendChild(_el('span', 'ico', _glyph(o.icon, '▭', o.label || o.id)));
       var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', o.label || o.id)); nm.appendChild(_el('em', '', [o.origin || 'you', o.placement || ''].filter(Boolean).join(' · '))); r.appendChild(nm);
       if(o.close){ var x = _el('span', 'x', '✕'); x.title = 'Close'; x.addEventListener('click', function(ev){ ev.stopPropagation(); try{ o.close(); }catch(e){} }); r.appendChild(x); }
       r.addEventListener('click', function(){ if(o.focus) o.focus(); });
@@ -964,18 +999,18 @@ function _ebar(title, onAdd, onDone){
     var g2 = _el('div', 'lhm-s-grp', 'Panels'); g2.setAttribute('data-w', 'panels · tree'); bd.appendChild(g2);
     (cfg.panels || []).forEach(function(p){
       var pan = _el('div', 'lhm-s-pan' + (p.active ? ' on' : ''));
-      var r = _el('div', 'lhm-s-row' + (p.active ? ' on' : p.open ? ' open' : '')); r.setAttribute('data-w', 'panel · ' + (p.label || p.id)); r.title = p.label || p.id;
-      r.appendChild(_el('span', 'ico', _glyph(p.icon, '▭'))); var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', p.label || p.id)); r.appendChild(nm);
+      var r = _el('div', 'lhm-s-row' + (p.active ? ' on' : p.open ? ' open' : '')); r.setAttribute('data-w', 'panel · ' + (p.label || p.id)); r.title = _tip(p.label || p.id, p.desc); _descOn(r, p);
+      r.appendChild(_el('span', 'ico', _glyph(p.icon, '▭', p.label || p.id))); var nm = _el('span', 'nm'); nm.appendChild(_el('span', '', p.label || p.id)); r.appendChild(nm);
       if(p.ct) r.appendChild(_el('span', 'ct', String(p.ct)));
       r.addEventListener('click', function(ev){ if(cfg.onPanel) cfg.onPanel(p.id, ev); });
       if(cfg.onBeside) _beside(r, function(){ cfg.onBeside(p.id); }, 'Open this panel side by side - a second one when it is open already');
       pan.appendChild(r);
       (p.sections || []).forEach(function(sec, i){
         var se = _el('div', 'lhm-s-sec' + (sec.on ? ' on' : ''));
-        var h = _el('div', 'lhm-s-sech'); h.appendChild(_el('i')); h.appendChild(_el('span', '', sec.label || sec.id));
+        var h = _el('div', 'lhm-s-sech'); h.title = _tip(sec.label || sec.id, sec.desc); _descOn(h, sec); h.appendChild(_el('i')); h.appendChild(_el('span', '', sec.label || sec.id));
         h.addEventListener('click', function(ev){ ev.stopPropagation(); if(cfg.onSection) cfg.onSection(p.id, sec.id, i); });
         se.appendChild(h);
-        if(sec.on) (sec.tabs || []).forEach(function(t){ var o = _el('div', 'lhm-s-opt' + (t.on ? ' on' : ''), t.label || t.id);
+        if(sec.on) (sec.tabs || []).forEach(function(t){ var o = _el('div', 'lhm-s-opt' + (t.on ? ' on' : ''), t.label || t.id); o.title = _tip(t.label || t.id, t.desc); _descOn(o, t);
       o.addEventListener('click', function(ev){ ev.stopPropagation(); if(_splitKey(ev) && cfg.onBeside) cfg.onBeside(p.id, sec, t); else if(cfg.onTab) cfg.onTab(p.id, sec, t); });
       o.addEventListener('auxclick', function(ev){ if(ev.button === 1 && cfg.onBeside){ ev.preventDefault(); ev.stopPropagation(); cfg.onBeside(p.id, sec, t); } });
       if(cfg.onBeside) _beside(o, function(){ cfg.onBeside(p.id, sec, t); });
@@ -1023,10 +1058,10 @@ function _ebar(title, onAdd, onDone){
     if(!secs.length) return null;
     var row = _el('div', 'lhm-strips'); row.setAttribute('data-w', 'sub-tabs · strip');
     if(cfg.title) row.appendChild(_el('span', 'lhm-st-p', cfg.title));
-    secs.forEach(function(s, i){ var b = _el('button', 'lhm-st' + (s.on ? ' on' : ''), s.label || s.id); b.type = 'button'; b.addEventListener('click', function(){ if(cfg.onSection) cfg.onSection(s.id, i); }); row.appendChild(b); });
+    secs.forEach(function(s, i){ var b = _el('button', 'lhm-st' + (s.on ? ' on' : ''), s.label || s.id); b.type = 'button'; b.title = _tip(s.label || s.id, s.desc); _descOn(b, s); b.addEventListener('click', function(){ if(cfg.onSection) cfg.onSection(s.id, i); }); row.appendChild(b); });
     var tabs = cfg.tabs || [];
-    if(tabs.length){ row.appendChild(_el('span', 'lhm-st-sep')); tabs.forEach(function(t){ var b = _el('button', 'lhm-st-o' + (t.on ? ' on' : ''), t.label || t.id); b.type = 'button';
-      if(cfg.onBeside) b.title = (t.label || t.id) + ' \u00b7 Ctrl/\u2318- or middle-click: open it side by side';
+    if(tabs.length){ row.appendChild(_el('span', 'lhm-st-sep')); tabs.forEach(function(t){ var b = _el('button', 'lhm-st-o' + (t.on ? ' on' : ''), t.label || t.id); b.type = 'button'; b.title = _tip(t.label || t.id, t.desc); _descOn(b, t);
+      if(cfg.onBeside) b.title += ' \u00b7 Ctrl/\u2318- or middle-click: open it side by side';
       b.addEventListener('click', function(ev){ if(_splitKey(ev) && cfg.onBeside) cfg.onBeside(t); else if(cfg.onTab) cfg.onTab(t); });
       b.addEventListener('auxclick', function(ev){ if(ev.button === 1 && cfg.onBeside){ ev.preventDefault(); cfg.onBeside(t); } });
       row.appendChild(b); }); }
@@ -1034,7 +1069,7 @@ function _ebar(title, onAdd, onDone){
     return row;
   }
 
-  window.VeraLHM = { mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, navState: navState, absorb: absorb, side: side, sideEdit: sideEdit, sideAdd: sideAdd, strips: strips, css: _css,
+  window.VeraLHM = { glyphFor: glyphFor, glyph: _glyph, mount: mount, pick: pick, setActiveTab: setActiveTab, toggleTop: toggleTop, toggleEdit: toggleEdit, render: render, spec: spec, navState: navState, absorb: absorb, side: side, sideEdit: sideEdit, sideAdd: sideAdd, strips: strips, css: _css,
     openRecord: openRecord, closeRecord: closeRecord, saveAsTemplate: saveAsTemplate, placeInto: placeInto,
     compose: compose, composeUndo: composeUndo, saveAsMenu: saveAsMenu, addMenus: addMenus, deep: deep, openPicker: openPicker, closePicker: closePicker,
     get active(){ return { menu: _active, tab: _activeTab, top: _topMode, editing: _editing, hosted: _hosted, embedded: _embedded }; } };

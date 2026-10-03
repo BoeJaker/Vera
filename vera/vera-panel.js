@@ -215,7 +215,24 @@
       return g ? String(g.getAttribute('data-nav-group') || '').slice(0, 40) : '';
     }
     function iconOf(b) { var di = b.getAttribute && b.getAttribute('data-icon'); if (di) return Array.from(di.trim()).slice(0, 2).join(''); var g = b.querySelector('.gl'); return g ? Array.from((g.textContent || '').trim()).slice(0, 2).join('') : ''; }
-    var items = Array.prototype.map.call(btns, function (b) { return { id: idOf(b), label: labelOf(b), group: groupOf(b), icon: iconOf(b) }; });
+    /* WHAT AN ITEM IS FOR (owner, 2026-10-03: descriptions "visible on mouseover and could even aide the agents"): data-desc,
+       short, for the pointer - or a title the item does not take its name from (it has a data-label); data-desc-long, for
+       an agent. A group heading (.nav-grp, or the [data-nav-group] box) may carry data-icon / data-desc / data-desc-long
+       for the group's one rail icon. */
+    function descOf(b) { var d = (b.getAttribute('data-desc') || '').trim(); if (d) return d; var t = (b.getAttribute('title') || '').trim(); return (t && b.getAttribute('data-label') && t !== labelOf(b)) ? t : ''; }
+    function descLongOf(b) { return (b.getAttribute('data-desc-long') || '').trim(); }
+    function groupEl(b) {
+      for (var el = b.previousElementSibling; el; el = el.previousElementSibling) { if (el.classList && el.classList.contains('nav-grp')) return el; }
+      return (b.closest && b.closest('[data-nav-group]')) || null;
+    }
+    var items = Array.prototype.map.call(btns, function (b) {
+      var it = { id: idOf(b), label: labelOf(b), group: groupOf(b), icon: iconOf(b), desc: descOf(b), desc_long: descLongOf(b) };
+      var ge = it.group ? groupEl(b) : null;
+      if (ge) { it.group_icon = (ge.getAttribute('data-icon') || '').trim(); it.group_desc = (ge.getAttribute('data-desc') || '').trim(); it.group_desc_long = (ge.getAttribute('data-desc-long') || '').trim(); }
+      // the panel's own menu (standalone) shows it on hover too; the name is pinned first, so the title never renames the item
+      if (it.desc) { try { if (!b.getAttribute('data-label')) b.setAttribute('data-label', it.label); b.title = it.label + ' — ' + it.desc; } catch (e) {} }
+      return it;
+    });
     // ".active" is the canonical mark; ".on" is still accepted for a panel
     // that has not moved to this markup yet — scoped to just these nav
     // buttons, so it's never ambiguous with an unrelated "on" state

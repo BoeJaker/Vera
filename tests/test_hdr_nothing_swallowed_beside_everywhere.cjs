@@ -50,7 +50,7 @@ t('the bridge walks the way a step at a time, each once its level is there', /st
 t('a nested pick asked for before its level loaded is tried again; a newer pick cancels it', /_navPend\+\+;/.test(BR) && /if\(!steps\.length \|\| tok !== _navPend\) return;/.test(BR));
 t('the harness nav_select walks the way (each step is still one _navSelect)', /nav_select: _navPick,/.test(BR) && /var r = _navSelect\(\{id: steps\[0\]\}\);/.test(BR));
 t('a child section is sent only to a shown child that has it', /the shown nested panel has no /.test(BR));
-t('the rail\'s icons say Ctrl/middle-click opens beside', /ico\.title = m\.label \+ \(opts\.onSplit \?/.test(LHM));
+t('the rail\'s icons say Ctrl/middle-click opens beside', /ico\.title = _tip\(m\.label, m\.desc\) \+ \(opts\.onSplit \?/.test(LHM));
 t('the strips (tabs mode) open beside by Ctrl/middle-click', /if\(_splitKey\(ev\) && cfg\.onBeside\) cfg\.onBeside\(t\); else if\(cfg\.onTab\) cfg\.onTab\(t\);/.test(LHM) && /onBeside: _localLhm\[pid\] \? null : \(tab\) => \{ _lhmOpenBeside\(/.test(HAR));
 t('the tab bar\'s hover list: Ctrl/middle-click and a ⧉ on every row', /bs\.className = 'tdd-bs'/.test(HAR) && /if\(beside && \(ev\.ctrlKey \|\| ev\.metaKey\)\)\{ beside\(\); return; \}/.test(HAR));
 t('a panel\'s own menu in its frame asks the harness to open it beside (vera:lhm:tab)',
