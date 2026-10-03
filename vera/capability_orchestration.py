@@ -5485,22 +5485,46 @@ async def _offload_config() -> Dict[str, Any]:
     return _OFFLOAD_CACHE["cfg"] or {}
 
 
-async def _offload_workers() -> List[Dict[str, Any]]:
-    now = time.monotonic()
-    if now - _OFFLOAD_CACHE["w_at"] > 3 and REDIS is not None:
-        out = []
+# The node workers, refreshed every 3 s - by ONE scan at a time. It used to be one per caller: _node_offload runs on
+# every capability call while a stage is on, w_at only moved once a scan finished, and a SCAN of the whole keyspace
+# 10 keys per round trip takes seconds - so every call in those seconds started another. Profiled on prod 2026-10-03:
+# a quarter of the event loop's time, and capability endpoints (/ui/panels, /health) answering in 3-6 s while static
+# pages answered in ms. Now: one refresh in flight, callers take the last list meanwhile (the very first waits for
+# it), a failed scan keeps the last list, and a scan step reads 500 keys.
+_OFFLOAD_W_TASK: Optional["asyncio.Future"] = None
+
+
+async def _offload_workers_scan() -> List[Dict[str, Any]]:
+    out = []
+    async for k in REDIS.scan_iter("vera:workers:*", count=500):
         try:
-            async for k in REDIS.scan_iter("vera:workers:*"):
-                try:
-                    vals = await REDIS.hmget(k, "role", "status", "classes")
-                except Exception:
-                    continue
-                role, status, classes = [(v.decode() if isinstance(v, bytes) else (v or "")) for v in vals]
-                if role == "node-worker":
-                    out.append({"role": role, "status": status, "classes": classes})
+            vals = await REDIS.hmget(k, "role", "status", "classes")
+        except Exception:
+            continue
+        role, status, classes = [(v.decode() if isinstance(v, bytes) else (v or "")) for v in vals]
+        if role == "node-worker":
+            out.append({"role": role, "status": status, "classes": classes})
+    return out
+
+
+async def _offload_workers() -> List[Dict[str, Any]]:
+    global _OFFLOAD_W_TASK
+    if REDIS is None or time.monotonic() - _OFFLOAD_CACHE["w_at"] <= 3:
+        return _OFFLOAD_CACHE["workers"]
+    if _OFFLOAD_W_TASK is None or _OFFLOAD_W_TASK.done():
+        async def _refresh():
+            try:
+                _OFFLOAD_CACHE["workers"] = await _offload_workers_scan()
+            except Exception:
+                pass                                    # keep the last list
+            _OFFLOAD_CACHE["w_at"] = time.monotonic()
+            _OFFLOAD_CACHE["w_filled"] = True
+        _OFFLOAD_W_TASK = asyncio.ensure_future(_refresh())
+    if not _OFFLOAD_CACHE.get("w_filled"):              # nothing known yet: the first caller(s) wait for it
+        try:
+            await asyncio.shield(_OFFLOAD_W_TASK)
         except Exception:
             pass
-        _OFFLOAD_CACHE.update(w_at=now, workers=out)
     return _OFFLOAD_CACHE["workers"]
 
 
