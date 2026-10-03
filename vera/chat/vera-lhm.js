@@ -945,8 +945,14 @@ function _ebar(title, onAdd, onDone){
   /* the rows set the rhythm (a row can be taller - a section nested under it, the edit bar above them): after layout each
      icon takes the margin that sets it level with its row, top to bottom, and the rail scrolls with the list. Run again
      whenever the list changes size; a host redraw drops the old watcher. */
+  /* ONE watcher for the docked rail, whatever element it is drawn into. It was kept on the host, and the harness redraws a
+     docked menu into a NEW host on every state the panel publishes - so each redraw left its watcher observing a detached
+     list, holding it (and its whole menu) alive, and queued two forced layouts of its own: on a busy panel, hundreds an
+     hour. The previous watcher and its pending pass are dropped before the next is made. */
+  var _alignRO = null, _alignT = 0;
   function _alignRail(host, rail, list, pairs){
-    if(host && host._lhmAlignRO){ try{ host._lhmAlignRO.disconnect(); }catch(e){} host._lhmAlignRO = null; }
+    if(_alignRO){ try{ _alignRO.disconnect(); }catch(e){} _alignRO = null; }
+    if(_alignT){ clearTimeout(_alignT); _alignT = 0; }
     if(!pairs.length || !rail || !list) return;
     function y(e, sc){ return e.getBoundingClientRect().top + (sc.scrollTop || 0); }
     function run(){
@@ -958,8 +964,8 @@ function _ebar(title, onAdd, onDone){
     list.addEventListener('scroll', function(){ rail.scrollTop = list.scrollTop; });
     var raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : null;
     if(!raf) return;
-    raf(run); setTimeout(run, 260);
-    if(typeof ResizeObserver === 'function' && host){ var q = 0; var ro = new ResizeObserver(function(){ if(q) return; q = raf(function(){ q = 0; run(); }); }); ro.observe(list); host._lhmAlignRO = ro; }
+    raf(run); _alignT = setTimeout(function(){ _alignT = 0; run(); }, 260);
+    if(typeof ResizeObserver === 'function'){ var q = 0; var ro = new ResizeObserver(function(){ if(q) return; q = raf(function(){ q = 0; run(); }); }); ro.observe(list); _alignRO = ro; }
   }
   function absorb(host, spec, pickFn, opts){
     if(!host || !spec) return null;

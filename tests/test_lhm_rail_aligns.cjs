@@ -26,7 +26,8 @@ class El {
 }
 var doc = { createElement: (tg) => new El(tg), getElementById: () => ({}), head: new El('head'), documentElement: new El('html'), querySelector: () => null, querySelectorAll: () => [], addEventListener() {} };
 const win = { addEventListener() {}, localStorage: { getItem: () => null, setItem() {} }, customElements: null }; win.parent = win;
-const ctx = { window: win, document: doc, localStorage: win.localStorage, getComputedStyle: () => ({ getPropertyValue: () => '' }), requestAnimationFrame: (fn) => { fn(); return 1; }, setTimeout: () => 0, clearTimeout() {}, console, JSON, Math, Array, Object, String, Date, Promise, Symbol, Intl, parseFloat, isNaN };
+const RO_LIVE = { n: 0, made: 0 }; class FakeRO { constructor(cb) { this.on = false; RO_LIVE.made++; } observe() { if (!this.on) { this.on = true; RO_LIVE.n++; } } disconnect() { if (this.on) { this.on = false; RO_LIVE.n--; } } }
+const ctx = { ResizeObserver: FakeRO, window: win, document: doc, localStorage: win.localStorage, getComputedStyle: () => ({ getPropertyValue: () => '' }), requestAnimationFrame: (fn) => { fn(); return 1; }, setTimeout: () => 0, clearTimeout() {}, console, JSON, Math, Array, Object, String, Date, Promise, Symbol, Intl, parseFloat, isNaN };
 vm.createContext(ctx); vm.runInContext(LHM, ctx);
 const L = win.VeraLHM;
 const draw = (spec, key) => { const host = new El('div'); const wrap = L.absorb(host, spec, () => {}, { editKey: key }); const rail = wrap.children.find((c) => c.cls.has('lhm-rail')), tabs = wrap.children.find((c) => c.cls.has('lhm-tabs')); return { rail, tabs, icons: rail.children.filter((c) => c.cls.has('lhm-ico')) }; };
@@ -69,6 +70,15 @@ const off = (a, b) => Math.abs(a.getBoundingClientRect().top - b.getBoundingClie
   const d = draw({ title: 'Long', active: { menu: '§i0', tab: 'i0' }, menus: items.map((it, i) => ({ id: '§i' + i, label: it.label, tabs: items })) }, 'long');
   d.tabs.scrollTop = 140; (d.tabs.listeners.scroll || []).forEach((fn) => fn());
   t('the rail scrolls with the list', d.rail.scrollTop === 140);
+}
+
+// the harness redraws a docked menu into a NEW host on every published state: only one watcher may ever be live (it was
+// one per redraw, each holding a detached menu alive - 2026-10-03, found after the user saw panels load slower)
+{
+  const items = Array.from({ length: 6 }, (_, i) => ({ id: 'i' + i, label: 'I' + i }));
+  const spec = { title: 'P', active: { menu: '\u00a7i0', tab: 'i0' }, menus: items.map((it, i) => ({ id: '\u00a7i' + i, label: it.label, tabs: items })) };
+  const made0 = RO_LIVE.made; for (let k = 0; k < 50; k++) draw(spec, 'busy');
+  t('50 redraws into fresh hosts leave ONE live watcher', RO_LIVE.n === 1, 'live ' + RO_LIVE.n + ', made ' + (RO_LIVE.made - made0));
 }
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
