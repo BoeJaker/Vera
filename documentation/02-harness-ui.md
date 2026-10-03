@@ -180,6 +180,25 @@ only for compatibility.
 
 ## 3. Panel discovery and loading
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant M as Module
+    participant O as Orchestrator
+    participant S as Harness shell (GET /)
+    participant P as Panel iframe
+    M->>O: register_ui(panel_id, label, html, mode, tab_order)
+    S->>O: GET /ui/panels (once per session, retried every 3 s while empty)
+    O-->>S: registered panels
+    S->>S: sort by tab_order · dispatch by mode<br/>(tab · inject · element · mount)
+    S->>S: rewrite root-relative src to the backend origin
+    S->>S: restore custom tabs from localStorage
+    Note over S,P: an iframe is parked until its tab is first shown
+    S->>P: load /<panel route>
+    P->>O: vera-ui.js — theme · appearance · scale
+    O-->>S: WebSocket event feed (live updates)
+```
+
 `GET /ui/panels` returns the list of registered panels:
 
 ```json

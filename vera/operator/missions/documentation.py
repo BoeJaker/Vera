@@ -13,6 +13,7 @@ scaffolds and the gallery (skipping image capture with a clear note).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -65,10 +66,17 @@ DOC_UI_STORAGE = {
 DOC_THEME = "void"
 
 
-async def _theme_payload(base_url: str, theme_id: str) -> Optional[Dict[str, Any]]:
+async def _theme_payload(base_url: str, theme_id: str, attempts: int = 4) -> Optional[Dict[str, Any]]:
     import httpx
+    data = None
+    # A loaded or restarting target drops single requests; one miss must not
+    # decide the theme of a whole run.
     async with httpx.AsyncClient(verify=False) as client:
-        data = await _fetch_json(client, base_url.rstrip("/") + "/ui/themes")
+        for attempt in range(attempts):
+            data = await _fetch_json(client, base_url.rstrip("/") + "/ui/themes")
+            if isinstance(data, dict):
+                break
+            await asyncio.sleep(3 * (attempt + 1))
     themes = (data or {}).get("themes") if isinstance(data, dict) else None
     items = themes.values() if isinstance(themes, dict) else (themes or [])
     for t in items:
@@ -313,10 +321,17 @@ async def run_documentation_mission(params: Dict[str, Any],
                 # A selective re-capture shoots only the named panels.
                 if do_capture and session is not None and (not panel_filter or pid in panel_filter):
                     cap_url = panel_capture_url(base_url, p, state)
-                    capture = await _shoot_panel(
-                        session, cap_url["url"], abspath,
-                        settle_ms=max(settle_ms, int(state.get("settle_ms", 0) or 0)),
-                        full_page=bool(state.get("full_page", full_page)), state=state)
+                    shoot_kw = dict(settle_ms=max(settle_ms, int(state.get("settle_ms", 0) or 0)),
+                                    full_page=bool(state.get("full_page", full_page)), state=state)
+                    capture = await _shoot_panel(session, cap_url["url"], abspath, **shoot_kw)
+                    # The target restarting mid-run (another promotion) failed every
+                    # remaining navigation at once - 32 panels in one run. Wait for it
+                    # to answer again and retry this panel once.
+                    if (not capture["ok"]
+                            and str(capture.get("failed_condition", "")).startswith("navigation")
+                            and await _wait_target_up(base_url)):
+                        await _emit("warn", f"[{slug}] {label}: target came back, retrying")
+                        capture = await _shoot_panel(session, cap_url["url"], abspath, **shoot_kw)
                     if capture["ok"]:
                         captured, via = True, cap_url["via"]
                         readiness = capture.get("readiness", [])
@@ -625,6 +640,98 @@ async def _wait_ready(page, settle_ms: int,
     return evidence
 
 
+async def _wait_target_up(base_url: str, max_s: float = 180.0, every_s: float = 6.0) -> bool:
+    """True once GET /health answers 200 (within max_s)."""
+    import httpx
+    deadline = time.time() + max_s
+    async with httpx.AsyncClient(verify=False, timeout=8) as client:
+        while time.time() < deadline:
+            try:
+                r = await client.get(base_url.rstrip("/") + "/health")
+                if r.status_code == 200:
+                    return True
+            except Exception:
+                pass
+            await asyncio.sleep(every_s)
+    return False
+
+
+_STEP_KINDS = ("click", "fill", "press", "hover", "select", "wait_for", "wait_ms",
+               "code_server_login")
+
+
+async def _code_server_login(page, instance_id: str, ms: int) -> None:
+    """Log the capture browser into a code-server instance behind Vera's proxy.
+
+    The password is fetched at capture time from the target's own
+    ide.vscode.password.reveal and typed into the login form - it is never part
+    of a capture state, a log line or the repository. A page that is not the
+    login form (already logged in) is left alone."""
+    import httpx
+    from urllib.parse import urlparse
+    form = page.locator('input[type="password"]').first
+    try:
+        await form.wait_for(state="visible", timeout=min(ms, 8000))
+    except Exception:
+        return
+    u = urlparse(page.url)
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        r = await client.post(f"{u.scheme}://{u.netloc}/mcp/call",
+                              json={"name": "ide.vscode.password.reveal",
+                                    "arguments": {"instance_id": instance_id}})
+    data = r.json() if r.status_code == 200 else {}
+    body = data.get("content", data.get("result", data)) if isinstance(data, dict) else {}
+    secret = (body or {}).get("password") if isinstance(body, dict) else None
+    if not secret:
+        raise RuntimeError(f"no code-server password for instance '{instance_id}'")
+    await form.fill(secret, timeout=ms)
+    await form.press("Enter")
+    await page.wait_for_selector('input[type="password"]', state="detached", timeout=ms)
+
+
+async def _run_steps(page, steps: List[Dict[str, Any]]) -> None:
+    """Put a panel into the state the docs show - a menu opened, an item
+    selected, a tab chosen. A panel loaded and left alone was mostly an empty
+    shell ("Select an agent from the list"). Steps are declarative and trusted
+    (they come from domain_map), each one of _STEP_KINDS; a step that cannot be
+    done fails the capture by name rather than shooting the wrong state.
+    Selectors pierce open shadow roots (Playwright CSS does)."""
+    for i, step in enumerate(steps):
+        kind = next((k for k in _STEP_KINDS if k in step), "")
+        sel = str(step.get(kind) or "") if kind not in ("wait_ms", "press") else ""
+        ms = int(step.get("timeout_ms") or 15000)
+        try:
+            if kind == "wait_ms":
+                await page.wait_for_timeout(int(step["wait_ms"]))
+            elif kind == "code_server_login":
+                await _code_server_login(page, sel, ms)
+            elif kind == "wait_for":
+                await page.wait_for_selector(sel, state="visible", timeout=ms)
+            elif kind == "press":
+                target = step.get("on")
+                if target:
+                    await page.locator(target).first.press(str(step["press"]), timeout=ms)
+                else:
+                    await page.keyboard.press(str(step["press"]))
+            else:
+                loc = page.locator(sel).nth(int(step.get("nth") or 0))
+                if kind == "click":
+                    await loc.click(timeout=ms)
+                elif kind == "hover":
+                    await loc.hover(timeout=ms)
+                elif kind == "fill":
+                    await loc.fill(str(step.get("text") or ""), timeout=ms)
+                elif kind == "select":
+                    await loc.select_option(str(step.get("value") or ""), timeout=ms)
+                else:
+                    raise ValueError(f"unknown step {step!r}")
+            if step.get("then_ms"):
+                await page.wait_for_timeout(int(step["then_ms"]))
+        except Exception as exc:
+            raise PanelReadinessError(f"step{i + 1}:{kind}:{sel or step.get(kind)}", ms,
+                                      type(exc).__name__) from exc
+
+
 async def _shoot_panel(session, url: str, abspath: str, *, settle_ms: int = 1400,
                        full_page: bool = False,
                        state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -655,6 +762,7 @@ async def _shoot_panel(session, url: str, abspath: str, *, settle_ms: int = 1400
             except Exception as exc:
                 raise PanelReadinessError(f"click:{click}", 10000,
                                           type(exc).__name__) from exc
+        await _run_steps(page, state.get("steps") or [])
         readiness = await _wait_ready(page, settle_ms, state)
         os.makedirs(os.path.dirname(abspath), exist_ok=True)
         await page.screenshot(path=abspath, full_page=bool(full_page), type="png")

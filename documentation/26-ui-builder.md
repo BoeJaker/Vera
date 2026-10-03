@@ -32,6 +32,24 @@ nothing in the request path currently enforces it ([§5](#5-capability-access-co
 
 ---
 
+## At a glance
+
+```mermaid
+flowchart LR
+    TD["theme_defs.py<br/>single source of themes"]
+    subgraph UIC["ui_capabilities.py"]
+        TH["Theme engine<br/>themes · style packs · density ·<br/>UI scale · loading animation"]
+        PC["Panel CRUD<br/>a person or an LLM authors panels"]
+        ACL["Capability ACLs<br/>stored and reported — advisory"]
+    end
+    API["JSON API<br/>/ui/theme · /ui/appearance · /ui/scale"]
+    CSS["Served stylesheet +<br/>vera-ui.js · vera-panel.* · vera-graph.js"]
+    HAR["Harness · every panel"]
+    TD --> TH --> API & CSS --> HAR
+    PC --> HAR
+    ACL -.-> HAR
+```
+
 ## 1. Source map
 
 | Path | Responsibility |

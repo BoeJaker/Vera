@@ -70,6 +70,35 @@ the dependency as unavailable, rather than breaking start-up.
 
 ## Module map
 
+```mermaid
+flowchart LR
+    subgraph Data["Data layer"]
+        CC["CCXT crypto"] & YH["Yahoo stocks · ETFs · FX"] & CU["custom · macro ·<br/>on-chain series"] --> BARS["Bars · quotes ·<br/>live ticks"]
+    end
+    subgraph Analysis["Analysis layer"]
+        IND["Indicator engine<br/>25 kinds + custom"]
+        ANN["Chart annotations"]
+        SEN["Sentiment · news OSINT"]
+    end
+    subgraph Lab["Lab layer"]
+        ML["ML predictors"]
+        BT["Strategy DSL ·<br/>backtester · sweeps"]
+        MON["Live monitor · alerts"]
+        PF["Portfolio ledger ·<br/>UK CGT"]
+    end
+    subgraph Front["Front ends"]
+        QS["Quant Studio<br/>(the Markets tab)"]
+        WB["Classic workbench"]
+        CP["Vera copilot"]
+    end
+    EV["Self-improvement loop<br/>markets.evolve.*"]
+    BR["Broker links<br/>(real orders: confirm=true)"]
+    BARS --> Analysis --> Lab
+    Lab --> Front
+    EV -.-> Lab
+    PF -.-> BR
+```
+
 | Module | Layer |
 |---|---|
 | `markets_capabilities.py` | CCXT crypto ingestion, watchlist, background job runner, auto-update scheduler, broker links, panel registration |

@@ -42,6 +42,24 @@ repository tree.
 
 ---
 
+## At a glance
+
+```mermaid
+flowchart LR
+    subgraph Now["What is happening now? — Activity (no storage of its own)"]
+        direction TB
+        DC["Dream cycles"] & AL["Agentic loop runs"] & V8["V8 loop programs"] & BG["Live background loops"] & CA["Capability activity"] & RP["Run projections"] & SB["Sandbox containers"] --> TL["One timeline"]
+        TL --> ACT["Actions: stop · deduplicate loops ·<br/>remove a stream · browse files"]
+    end
+    subgraph Next["What is owned and expected next? — Boards"]
+        direction TB
+        MD["Markdown-file work plane<br/>outside the repository"]
+        MD --> LN["Lanes · lease claims ·<br/>agent messages · plan import"]
+        LN --> PD["Pipeline dispatch · sync"]
+    end
+    INT["Interaction tracking"] --> SCH["Scheduling · model-routing policy"]
+```
+
 ## 1. Data model
 
 | Surface | Source | Use |

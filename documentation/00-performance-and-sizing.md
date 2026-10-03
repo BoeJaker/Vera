@@ -209,6 +209,27 @@ Each application is also recorded as a `note` event in the stall feed.
 
 ## 5. Runtime diagnostics
 
+```mermaid
+flowchart LR
+    subgraph Proc["Orchestrator process"]
+        WD["Loop-lag watchdog<br/>sleeps 0.5 s, measures lateness"]
+        SD["Stack-dumper thread<br/>watches the watchdog heartbeat"]
+        GC["Paced GC<br/>startup objects frozen ·<br/>young collections on a pacer"]
+        LOG["Log ring + rotated files"]
+    end
+    EV[("PERF_EVENTS ring<br/>stall · hang · gc · note")]
+    WD -->|"lag ≥ 500 ms"| EV
+    SD -->|"stall ≥ 1 s: main-thread stack<br/>+ where (stall_trace_core)"| EV
+    GC --> EV
+    subgraph Caps["perf.* capabilities"]
+        SC["perf.scan → findings"] --> GT["perf.gate → verdict"]
+        ST["perf.stalls"] & LT["perf.log.tail · files"] & RM["perf.remediate"]
+    end
+    EV --> ST & SC
+    LOG --> LT
+    PM["Performance Monitor panel"] --> Caps
+```
+
 ### Event-loop watchdog and stall stacks
 
 Vera is an asyncio service: while the event loop is blocked by synchronous work

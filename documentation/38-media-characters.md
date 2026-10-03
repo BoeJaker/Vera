@@ -45,6 +45,28 @@ raising. Diffusion can be slow when SD runs on CPU.
 
 ---
 
+## At a glance
+
+```mermaid
+flowchart LR
+    subgraph Node["Media node (probed tiers, graceful fallback)"]
+        SD["Stable Diffusion<br/>ControlNet · IP-Adapter ·<br/>rembg · ESRGAN"]
+        TTS["TTS"] & STT["STT"]
+        VIS["Vision models"]
+    end
+    subgraph Caps["Capability groups"]
+        IMG["image.* · sd.*"] --> SD
+        AU["tts.* · stt.*"] --> TTS & STT
+        MED["media.* · vision.*<br/>illustration · image search ·<br/>vision for text-only agents"] --> VIS
+        ARC["images.*<br/>archive · Image Studio"]
+        CHR["character.*<br/>companions for agents"]
+        SPR["spritegen.*<br/>pixel-art sprites"]
+    end
+    SD --> ARC
+    SPR --> SD
+    MED --> CHATS["Chats · reports"]
+```
+
 ## 1. Asset lifecycle
 
 1. Resolve the model/backend and its health (`image.sd_capabilities`, `character.capabilities`, `spritegen.capabilities`, `vision.models`).

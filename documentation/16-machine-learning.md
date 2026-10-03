@@ -42,6 +42,28 @@ decision.
 
 ---
 
+## At a glance
+
+```mermaid
+flowchart LR
+    subgraph Data["Fabric datasets (ml.*)"]
+        SYN["Synthetic generators"] & OHLCV["Stooq OHLCV ·<br/>CoinGecko · FRED"] & MKT["mkt.* from Markets"]
+    end
+    PREP["ml.data.prepare<br/>features · split"]
+    MOD["Workshop module<br/>JSON compute graph"]
+    TRAIN["Training engine<br/>NumPy · sgd / adam / adamw"]
+    AG["ml.agent.build_and_test<br/>LLM proposes · trains · revises"]
+    CKPT["Best weights<br/>Redis, 7-day expiry"]
+    ONNX["ONNX export<br/>.onnx + sidecar"]
+    CAP["Registered inference<br/>capability"]
+    UI["ML Lab<br/>Build · Train · Agent"]
+    Data --> PREP --> TRAIN
+    MOD --> TRAIN --> CKPT
+    AG --> MOD
+    CKPT --> ONNX --> CAP
+    UI --- MOD & TRAIN & AG
+```
+
 ## 1. Source map
 
 | File | Responsibility |

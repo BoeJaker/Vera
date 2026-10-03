@@ -82,6 +82,19 @@ print(cfg)                      # → VeraConfig(redis=..., pg=..., chroma=..., 
 
 ### Precedence
 
+```mermaid
+flowchart LR
+    ENV["1 · Process environment<br/>shell · systemd · Compose environment:"]
+    DOT["2 · .env files<br/>repo root, then ./.env<br/>only keys not already set"]
+    DEF["3 · Code default<br/>os.getenv(KEY, default)"]
+    CFG["VeraConfig (cfg)<br/>evaluated once at import"]
+    MOD["Module tunables<br/>read where used"]
+    RED["Redis<br/>settings changed in the UI:<br/>routing · node priorities ·<br/>themes · PWA · policy toggles"]
+    ENV -->|wins over| DOT -->|wins over| DEF
+    ENV & DOT & DEF --> CFG & MOD
+    RED -.->|runtime settings| MOD
+```
+
 From highest to lowest:
 
 1. **The process environment** — variables exported in the shell, set by

@@ -37,6 +37,24 @@ per-branch sandboxes. Installation requires an origin the browser trusts
 - [10. Troubleshooting](#10-troubleshooting)
 - [Related](#related)
 
+## At a glance
+
+```mermaid
+flowchart LR
+    subgraph Server["vera/pwa/"]
+        CORE["pwa_core.py — app-free<br/>config schema · manifest ·<br/>cache policy · head tags ·<br/>pure-Python icon rasteriser"]
+        CAPS["pwa_capabilities.py<br/>routes · persistence ·<br/>capabilities · panel"]
+        CORE --> CAPS
+    end
+    subgraph Browser
+        SW["sw.js<br/>narrow service worker"]
+        CL["pwa_client.js<br/>install · update · theme colour"]
+        OFF["offline.html<br/>shell when the box is unreachable"]
+    end
+    H["Harness UI"] --> CL --> SW --> OFF
+    CAPS --> SW & CL
+```
+
 ## 1. Source map
 
 | File | Responsibility |

@@ -60,7 +60,7 @@ flowchart LR
     LL["Loop Lab (/evolve/panel)"]
     DP["Dispatch (ide_claude_sessions_panel.html)"]
   end
-  VS -->|/vscode/{id}/...| PX["Same-origin proxy"]
+  VS -->|"/vscode/&#123;id&#125;/..."| PX["Same-origin proxy"]
   PX --> CS1["central code-server"]
   PX --> CS2["sandbox worker sidecars"]
   PX --> CS3["remote code-server hosts"]
