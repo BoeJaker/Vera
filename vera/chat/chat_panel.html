@@ -368,6 +368,8 @@ html[data-blocks="off"] .wblk{background:transparent}
 /* a piece of the reply that is being drawn on the canvas instead: hidden, never removed, and a line in its place
    that takes you to it. Closing the canvas brings every one of them straight back (_cvRestoreInline). */
 .cv-elsewhere{display:none!important}
+/* a page being written, drawn beside its reply (the streaming frame is never moved, so it never reloads on a paint) */
+.cb-live-out iframe{display:block;width:100%;height:100%;border:0;background:#fff}
 .cv-moved{display:inline-flex;align-items:center;gap:6px;margin:4px 0;padding:2px 9px;font:inherit;font-size:9.5px;
   color:var(--dim2);background:none;border:1px dashed var(--border);border-radius:11px;cursor:pointer;max-width:100%;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -6165,12 +6167,21 @@ IMPORTANT:
      and double-buffered - the new page loads behind the old one and replaces it when it has painted - so it never
      blanks. The finished reply's card opens its page itself (the kit's auto-preview); the canvas streams its own. */
   const _HTML_LIVE={};
+  /* (2026-10-03, measured: the frame loaded 202 times in an 11 s stream - once per paint. A frame MOVED in the document
+     reloads, and the frame was moved into each paint's fresh card. It lives beside the reply now, never moved, and loads
+     only on its own swaps; and a page still being written follows its newest line, as the code does.) */
+  const _HTML_TAIL='<script>try{scrollTo(0,document.documentElement.scrollHeight)}catch(e){}<\/script>';
   function _htmlLiveSwap(L, doc){
     const holder=L.holder; L.doc=doc; L.at=Date.now();
     const nf=document.createElement('iframe'); nf.setAttribute('sandbox','allow-scripts'); nf.setAttribute('referrerpolicy','no-referrer');
     const first=!holder.querySelector('iframe'); if(!first) nf.style.cssText='position:absolute;left:0;top:0;width:100%;visibility:hidden';
     nf.onload=()=>{ holder.querySelectorAll('iframe').forEach(f=>{ if(f!==nf) f.remove(); }); nf.style.cssText=''; };
-    holder.appendChild(nf); nf.srcdoc=doc;
+    holder.appendChild(nf); nf.srcdoc=doc+_HTML_TAIL;
+  }
+  // the reply is finished: its own card opens the finished page (the kit's auto-preview); the streaming frame goes
+  function _htmlLiveEnd(bubEl){
+    try{ const key=(bubEl&&bubEl.dataset&&bubEl.dataset.mid)||'live'; const L=_HTML_LIVE[key]; if(!L) return;
+      clearTimeout(L.t); if(L.holder&&L.holder.parentNode) L.holder.remove(); delete _HTML_LIVE[key]; }catch(_){}
   }
   function _htmlLive(bubEl, key){
     if(!_cvOneplaceOff()) return;       // the canvas is open: the page streams there, and only there
@@ -6180,8 +6191,10 @@ IMPORTANT:
     const src=blk?blk.code:String(code.textContent||'');
     if(!/<\s*(!doctype\s+html|html[\s>]|body[\s>]|svg[\s>])/i.test(src)) return;     // a fragment waits for its fence to close
     let L=_HTML_LIVE[key];
-    if(!L){ L=_HTML_LIVE[key]={holder:document.createElement('div'), doc:'', at:0, want:'', t:0}; L.holder.className='cb-prev cb-live'; L.holder.style.cssText='position:relative;min-height:320px'; }
-    card.classList.add('prev'); card.appendChild(L.holder);
+    if(!L){ L=_HTML_LIVE[key]={holder:document.createElement('div'), doc:'', at:0, want:'', t:0}; L.holder.className='cb-live-out';
+      L.holder.style.cssText='position:relative;height:340px;margin:6px 0 4px;border:1px solid var(--border,rgba(255,255,255,.09));border-radius:var(--ui-radius,6px);overflow:hidden;background:#fff'; }
+    card.classList.add('prev');                                   // the card shows its bar; its page is drawn just below
+    if(L.holder.previousElementSibling!==bubEl) bubEl.after(L.holder);   // placed ONCE beside the reply, never moved again
     L.want=src; if(src===L.doc) return;
     const wait=350-(Date.now()-L.at);
     if(wait<=0) _htmlLiveSwap(L, src);
@@ -12092,6 +12105,7 @@ Your task: decide what to do next to advance toward the goal.
     try{ _lintRenderedBlocks(bubEl); }catch(_){}
     // the canvas is open: the finished reply's code and diagrams stay where they were streaming - on the canvas
     try{ _cvHoldForCanvas(bubEl, false); }catch(_){}
+    try{ _htmlLiveEnd(bubEl); }catch(_){}
     // Auto-open the preview pane for the last renderable code block, if enabled.
     _maybeAutoPreview(bubEl);
     // Auto-persist labeled code blocks into the artifact system (no manual Save).
