@@ -3810,7 +3810,7 @@ const CH = (() => {
       + '<span style="color:var(--acc,#5a9e8f)">explode</span><span class="xp-l" style="color:var(--text,#d8d0c6)"></span>'
       + '<span class="xp-w" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>'
       + '<button class="cb-act xp-x" title="Close this diagram">close</button></div>'
-      + '<div class="xp-body" style="height:340px"></div>';
+      + '<div class="xp-body"></div>';   // the embed sizes itself: its diagram, the grip, the caption
     box.querySelector('.xp-l').textContent=label||'';
     box.querySelector('.xp-w').textContent=why||'';
     box.querySelector('.xp-x').onclick=()=>{ box.remove(); };
