@@ -58,22 +58,45 @@ def display_forms(old: int, new: int) -> List[Tuple[str, "re.Pattern[str]"]]:
     forms.append(("%d minutes" % old, re.compile(
         r"(?<![\w.])%d\s*(?:min|mins|minute|minutes)\b" % old, re.I)))
     forms.append((">%d<" % old, re.compile(r">\s*%d\s*<" % old)))
+    # Text that ENDS on the value: `Seconds Remaining: 60</div>` (probe 3 Oct, e364ef40).
+    forms.append(("%d before a closing tag" % old, re.compile(r"(?<![\w.])%d\s*</" % old)))
     return forms
 
 
-def stale_display_values(before: str, after: str) -> List[Dict[str, object]]:
-    """The old value still DISPLAYED after an edit changed it: [{old, new, form, line, text}]."""
+_TASK_FROM_TO = re.compile(r"\bfrom\s+(\d+)\b[^\n.;]{0,40}?\bto\s+(\d+)\b", re.I)
+
+
+def task_pairs(task: str) -> List[Tuple[int, int]]:
+    """(old, new) value changes the edit's TASK names: "from 60 seconds to 90 seconds".
+
+    Probe 3 Oct (e364ef40, author-then-edit): the editor turned `- 1` into `- 90 / 60`
+    and never touched the 60 the page shows, so the diff had no 60 -> 90 pair to
+    follow. The task said it plainly."""
+    out: List[Tuple[int, int]] = []
+    for m in _TASK_FROM_TO.finditer(task or ""):
+        o, n = int(m.group(1)), int(m.group(2))
+        if o != n and (o, n) not in out:
+            out.append((o, n))
+    return out
+
+
+def stale_display_values(before: str, after: str, task: str = "") -> List[Dict[str, object]]:
+    """The old value still DISPLAYED after an edit changed it: [{old, new, form, line, text}].
+    Pairs come from the diff (checked outside the lines the edit touched) and from the
+    edit's task (checked everywhere - the edit may never have reached that value)."""
     pairs, touched = changed_numbers(before, after)
-    if not pairs:
+    from_task = [p for p in task_pairs(task) if p not in pairs]
+    if not pairs and not from_task:
         return []
     lines = after.splitlines()
     out: List[Dict[str, object]] = []
-    for old, new in pairs:
+    for old, new in [(p, True) for p in pairs] + [(p, False) for p in from_task]:
+        old, new, skip_touched = old[0], old[1], new
         if old < 2:
             continue                              # 0/1 are everywhere and mean nothing
         for label, pat in display_forms(old, new):
             for i, ln in enumerate(lines):
-                if i in touched or not pat.search(ln):
+                if (skip_touched and i in touched) or not pat.search(ln):
                     continue
                 out.append({"old": old, "new": new, "form": label, "line": i + 1,
                             "text": " ".join(ln.split())[:120]})
