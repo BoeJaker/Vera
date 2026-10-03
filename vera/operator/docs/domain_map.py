@@ -1,10 +1,12 @@
 """domain_map.py — the documentation domains.
 
 Each domain maps a ``documentation/NN-slug.md`` file to the **capability groups**
-and **UI panels** that belong to it. Panels are matched to a domain at runtime
-from the live ``/ui/panels`` registry using ``panel_ids`` (exact) and ``match``
-(substring, tested against panel id + label + tags), so the map does not break
-when a panel id changes.
+and **UI panels** that belong to it. Which doc a live panel belongs to is decided
+by ONE explicit table, ``PANEL_DOCS`` - never by substring matching. Matching on
+id/label/tags put the Estate Map and the Workspaces page in the IDE doc, Markets
+/ Email / Home Assistant / Godseye under Configuration, Dream under the
+Capability Framework (2026-10-03). A panel missing from the table is reported
+as unmapped by the mission rather than guessed into a doc.
 
 ``seed`` names a fixture in :mod:`vera.operator.missions.seeds` that populates
 representative data before the panel is shot (``None`` = capture as-loaded).
@@ -18,6 +20,9 @@ from typing import Any, Dict, List, Optional
 
 # One dict per documentation file. Order == doc number.
 DOMAINS: List[Dict[str, Any]] = [
+    {"slug": "performance", "doc": "00-performance-and-sizing.md",
+     "title": "Performance & Sizing", "cap_prefixes": ["perf"], "panel_ids": [],
+     "match": [], "seed": None},
     {"slug": "capability-framework", "doc": "01-capability-framework.md",
      "title": "Capability Framework", "cap_prefixes": ["mcp", "obs"],
      "panel_ids": ["cap-hub", "cap-list", "cap-search", "mcp-servers"],
@@ -188,6 +193,10 @@ DOMAINS: List[Dict[str, Any]] = [
      "title": "Activity & Boards", "cap_prefixes": ["activity", "board", "capacity"],
      "panel_ids": ["activity", "activity-timeline", "activity-track"],
      "match": ["activity", "board"], "seed": None},
+    {"slug": "pwa", "doc": "47-pwa.md", "title": "Install / PWA",
+     "cap_prefixes": ["pwa"], "panel_ids": [], "match": [], "seed": None},
+    {"slug": "chat-ui", "doc": "50-chat-ui.md", "title": "Chat UI",
+     "cap_prefixes": ["chat", "canvas"], "panel_ids": [], "match": [], "seed": None},
     # The README and the lead image of several docs: whole routes, not panels,
     # so this domain claims no live panel and has no doc of its own.
     {"slug": "overview", "doc": "", "title": "Overview", "cap_prefixes": [],
@@ -206,6 +215,76 @@ DOMAINS: List[Dict[str, Any]] = [
          {"name": "perf-monitor", "path": "/perf/panel", "label": "Performance Monitor"},
      ]},
 ]
+
+# The ONLY assignment of live panels to docs. Reviewed panel by panel against
+# what each one shows (2026-10-03). Left out on purpose: godseye (a 3D intel
+# globe with no doc of its own) and pokedex_app (a demo app).
+PANEL_DOCS: Dict[str, str] = {
+    "perf-monitor": "performance",
+    # capability framework
+    "cap-hub": "capability-framework", "cap-list": "capability-framework",
+    "cap-ontology": "capability-framework", "cap-search": "capability-framework",
+    "mcp-servers": "capability-framework", "mcp-catalog-panel": "capability-framework",
+    # harness: the control plane that drives the UI
+    "driven": "harness-ui",
+    # DAG + loop engine, and the one page for everything that runs on its own
+    "dag-workshop": "dag-engine", "agent-loop-output": "dag-engine",
+    "agent-loop-config": "dag-engine", "loop-graph": "dag-engine",
+    "automations": "dag-engine",
+    # inference cluster
+    "models": "ollama-cluster", "node-models": "ollama-cluster",
+    "node-activity": "ollama-cluster", "specialist-models": "ollama-cluster",
+    "memory-graph": "memory-graph",
+    "fabric-panel": "data-fabric", "fabric-stats": "data-fabric",
+    "research-panel": "research", "notebook-panel": "research", "nlp-panel": "research",
+    # the IDE and nothing else
+    "ide-panel": "ide", "ide-remote-panel": "ide", "ide-workspace-changes": "ide",
+    "ide-claude-dispatch": "ide", "ide-inspect-panel": "ide",
+    "memory-galaxy-panel": "galaxy-graph",
+    "platform-config": "configuration",
+    "worldview": "worldview",
+    # execution surfaces: one-shot commands and long-lived bound workspaces
+    "exec-panel": "execution", "workspaces": "execution",
+    "mesh": "mesh",
+    "markets": "markets",
+    "ml-lab": "machine-learning",
+    "dream-panel": "dream", "project-panel": "dream",
+    "skills-editor": "skills-ontologies", "ontologies-browser": "skills-ontologies",
+    "agents-skills-ontologies": "skills-ontologies", "agent-registry": "skills-ontologies",
+    "skills-list": "skills-ontologies",
+    "flow-builder": "flow-builder",
+    "job-stream": "workers-jobs-syslog", "live-event-stream": "workers-jobs-syslog",
+    "system-log": "workers-jobs-syslog", "node-workers": "workers-jobs-syslog",
+    "accounts-panel": "integrations", "comms-panel": "integrations",
+    "calendar-panel": "integrations", "email-panel": "integrations",
+    "telegram-panel": "integrations", "integrations": "integrations",
+    "n8n-panel": "integrations", "ha-panel": "integrations", "syscomms": "integrations",
+    "web_api": "web-browser",
+    "vector-browser-panel": "vector-browser",
+    "ui-builder": "ui-builder", "widget-gallery": "ui-builder", "widget-registry": "ui-builder",
+    "gallery": "render", "vera-mermaid": "render",
+    "evolve": "evolve",
+    "operator-studio": "operator",
+    # the estate: machines, their map and the stack monitor
+    "foundry": "infrastructure-provisioning", "workers-ollama": "infrastructure-provisioning",
+    "interaction-map": "infrastructure-provisioning",
+    "system-monitor": "infrastructure-provisioning",
+    "agentbridge-catalog-panel": "agent-runtimes-providers",
+    "business": "business-commerce",
+    "image-studio": "media-characters", "character-studio": "media-characters",
+    "sprite-companion": "media-characters", "babblefish": "media-characters",
+    "stable-diffusion": "media-characters", "thermal-printer": "media-characters",
+    "kokoro-tts": "media-characters", "whisper-stt": "media-characters",
+    "activity": "activity-boards", "activity-timeline": "activity-boards",
+    "activity-track": "activity-boards",
+    "pwa": "pwa",
+    "chat2": "chat-ui", "chat-with-data": "chat-ui", "canvas": "chat-ui",
+}
+
+# panel_ids/match are derived from PANEL_DOCS so nothing else can claim a panel.
+for _d in DOMAINS:
+    _d["panel_ids"] = [pid for pid, slug in PANEL_DOCS.items() if slug == _d["slug"]]
+    _d["match"] = []
 
 _BY_SLUG = {d["slug"]: d for d in DOMAINS}
 
@@ -238,12 +317,5 @@ def panel_matches_domain(panel: Dict[str, Any], domain: Dict[str, Any]) -> bool:
 
 
 def domain_for_panel(panel: Dict[str, Any]) -> Optional[str]:
-    """First domain slug that claims this panel (exact id wins over match)."""
-    pid = str(panel.get("id") or "").lower()
-    for d in DOMAINS:
-        if pid and pid in {p.lower() for p in d.get("panel_ids", [])}:
-            return d["slug"]
-    for d in DOMAINS:
-        if panel_matches_domain(panel, d):
-            return d["slug"]
-    return None
+    """The doc slug PANEL_DOCS assigns this panel, or None if it is unmapped."""
+    return PANEL_DOCS.get(str(panel.get("id") or ""))

@@ -54,15 +54,49 @@ DOC_VIEWPORT = {"width": 1440, "height": 900}
 DOC_UI_STORAGE = {
     "vera:ui:scale": "1",
     "vera_tab_prefs": json.dumps({"lhm": True}),
+    # Per-turn block backgrounds off: the docs show the chat as plain turns.
+    "vera:ui:blocks": "off",
 }
 
+# Docs are shot in one theme whatever prod is set to today. The theme is
+# server-authoritative - every page reconciles to GET /ui/theme after painting
+# its cache - so a localStorage seed alone is overwritten. The capture browser
+# therefore answers its own /ui/theme with this theme; the server is untouched.
+DOC_THEME = "void"
 
-async def _seed_browser_prefs(session, overrides: Optional[Dict[str, Any]] = None) -> None:
+
+async def _theme_payload(base_url: str, theme_id: str) -> Optional[Dict[str, Any]]:
+    import httpx
+    async with httpx.AsyncClient(verify=False) as client:
+        data = await _fetch_json(client, base_url.rstrip("/") + "/ui/themes")
+    themes = (data or {}).get("themes") if isinstance(data, dict) else None
+    items = themes.values() if isinstance(themes, dict) else (themes or [])
+    for t in items:
+        if isinstance(t, dict) and t.get("id") == theme_id and isinstance(t.get("vars"), dict):
+            return {"theme": theme_id, "vars": t["vars"], "type": t.get("type") or ""}
+    return None
+
+
+async def _seed_browser_prefs(session, overrides: Optional[Dict[str, Any]] = None,
+                              theme: Optional[Dict[str, Any]] = None) -> None:
     prefs = dict(DOC_UI_STORAGE)
+    if theme:
+        # Paint the pinned theme from the first frame, as the UI's own cache would.
+        prefs.update({"vera:ui:theme": theme["theme"],
+                      "vera:ui:themeVars": json.dumps(theme["vars"]),
+                      "vera:ui:themeVarsFor": theme["theme"]})
     prefs.update({str(k): str(v) for k, v in (overrides or {}).items()})
     script = ("(() => { try { const p = " + json.dumps(prefs) + ";"
               " for (const k in p) localStorage.setItem(k, p[k]); } catch (e) {} })();")
     await session.context.add_init_script(script)
+    if theme:
+        from urllib.parse import urlparse
+        body = json.dumps(theme)
+
+        async def _answer(route):
+            await route.fulfill(status=200, content_type="application/json", body=body)
+
+        await session.context.route(lambda u: urlparse(u).path == "/ui/theme", _answer)
 
 
 def _iso() -> str:
@@ -214,7 +248,12 @@ async def run_documentation_mission(params: Dict[str, Any],
         try:
             session = await _be.start_session(base_url=base_url,
                                               viewport=dict(params.get("viewport") or DOC_VIEWPORT))
-            await _seed_browser_prefs(session, params.get("ui_storage"))
+            theme_id = str(params.get("theme") or DOC_THEME)
+            theme = await _theme_payload(base_url, theme_id)
+            if theme is None:
+                await _emit("warn", f"theme '{theme_id}' not found on target; "
+                                    "capturing in the server's theme")
+            await _seed_browser_prefs(session, params.get("ui_storage"), theme)
         except Exception as e:
             do_capture = False
             capture_note = f"browser start failed: {e}"
@@ -240,12 +279,8 @@ async def run_documentation_mission(params: Dict[str, Any],
     try:
         for domain in domains:
             slug = domain["slug"]
+            # PANEL_DOCS assigns each live panel to exactly one domain.
             dpanels = by_domain.get(slug, [])
-            # include explicitly-listed panel ids that exist live but weren't assigned here
-            listed = {p.lower() for p in domain.get("panel_ids", [])}
-            for p in panels:
-                if str(p.get("id", "")).lower() in listed and p not in dpanels:
-                    dpanels.append(p)
             caps = _caps_for_domain(domain, all_caps)
             shots: List[Dict[str, Any]] = []
 
@@ -383,6 +418,9 @@ async def run_documentation_mission(params: Dict[str, Any],
             "domains": len(domains), "panels_discovered": len(panels),
             "screenshots": total_shots, "capabilities": len(all_caps),
             "capture_failures": capture_failures,
+            # Live panels no doc claims - placed by editing PANEL_DOCS, never guessed.
+            "unmapped_panels": sorted(p["id"] for p in panels
+                                      if not _dm.domain_for_panel(p)),
             "captured": do_capture, "capture_note": capture_note,
             "docs_written": bool(write_docs), "manifest": "documentation/assets/manifest.json"}
 
