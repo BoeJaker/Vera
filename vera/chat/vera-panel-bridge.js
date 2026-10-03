@@ -170,7 +170,7 @@
   /* an item's own mark, or none: never its initial (owner, 2026-10-03: "sub LHMs should not use letters as icons"). The host
      draws an unmarked item with the glyph its name maps to (VeraLHM.glyphFor) - one table, in the library that draws it. */
   function _navIcon(it){ var t = String((it && it.icon) || '').trim(); return (!t || /^[A-Za-z0-9]{1,2}$/.test(t)) ? '' : t; }
-  function _navTab(it){ return { id: it.id, label: it.label, icon: _navIcon(it), desc: it.desc || '', desc_long: it.desc_long || '' }; }
+  function _navTab(it){ return { id: it.id, label: it.label, icon: _navIcon(it), icon_svg: it.icon_svg || '', desc: it.desc || '', desc_long: it.desc_long || '' }; }
   function _navLhm(){
     if(!_navItems || !_navItems.length || (_navLhmOpts && _navLhmOpts.lhm === false)) return null;
     // the panel's name: its page title carries the product's name first ("Vera — Estate"), which the menu's head does not need
@@ -181,11 +181,11 @@
     if(groups.filter(function(g){ return g.name; }).length >= 2){
       menus = groups.map(function(g, gi){ var id = '\u00a7g' + gi; g.items.forEach(function(it){ if(it.id === _navActiveId){ act.menu = id; act.tab = it.id; } });
         var g0 = g.items[0] || {};
-        return { id: id, icon: _navIcon({ icon: g0.group_icon }), icon_alt: _navIcon(g0), label: g.name || 'More', title: g.name || 'More', desc: g0.group_desc || '', desc_long: g0.group_desc_long || '', tabs: g.items.map(_navTab) }; });
+        return { id: id, icon: _navIcon({ icon: g0.group_icon }), icon_alt: _navIcon(g0), icon_alt_svg: g0.icon_svg || '', label: g.name || 'More', title: g.name || 'More', desc: g0.group_desc || '', desc_long: g0.group_desc_long || '', tabs: g.items.map(_navTab) }; });
     } else {
       var all = _navItems.map(_navTab);
       menus = _navItems.map(function(it, i){ var id = '\u00a7i' + i; if(it.id === _navActiveId){ act.menu = id; act.tab = it.id; }
-        return { id: id, icon: _navIcon(it), label: it.label, title: title || 'Sections', desc: it.desc || '', desc_long: it.desc_long || '', tabs: all }; });
+        return { id: id, icon: _navIcon(it), icon_svg: it.icon_svg || '', label: it.label, title: title || 'Sections', desc: it.desc || '', desc_long: it.desc_long || '', tabs: all }; });
     }
     if(!act.menu && menus.length) act.menu = menus[0].id;
     var kid = (typeof _activeKid === 'function') ? _activeKid() : null, ps = (act.menu && typeof _pageSubs === 'function') ? _pageSubs() : null;
@@ -983,7 +983,8 @@
         // group's own mark and descriptions, which the harness draws on the group's ONE rail icon
         var cl = function(v, n){ return String(v || '').replace(/\s+/g, ' ').trim().slice(0, n); };
         o.desc = cl(it.desc, 140); o.desc_long = cl(it.desc_long, 600);
-        if(it.group_icon) o.group_icon = cl(it.group_icon, 4); if(it.group_desc) o.group_desc = cl(it.group_desc, 140); if(it.group_desc_long) o.group_desc_long = cl(it.group_desc_long, 600);
+        if(it.group_icon) o.group_icon = cl(it.group_icon, 4);
+        if(it.icon_svg && String(it.icon_svg).length <= 3000) o.icon_svg = String(it.icon_svg);   // drawn by the host only through its SVG cleaner if(it.group_desc) o.group_desc = cl(it.group_desc, 140); if(it.group_desc_long) o.group_desc_long = cl(it.group_desc_long, 600);
         return o;
       });
       if(typeof selectFn === 'function') _navSelectFn = selectFn;

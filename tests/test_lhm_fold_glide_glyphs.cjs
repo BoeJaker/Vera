@@ -28,7 +28,7 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
 // ── every menu glyph goes through the rule, with the option's name: the side list, the top-level list, both rails ────
 t('the side list rows', /_el\('span', 'ico', _glyph\(o\.icon, '▭', o\.label \|\| o\.id\)\)/.test(LHM) && /_el\('span', 'ico', _glyph\(p\.icon, '▭', p\.label \|\| p\.id\)\)/.test(LHM));
 t('the top-level list rows', (LHM.match(/_el\('span', 'lhm-ri', _glyph\(/g) || []).length === 3);
-t('the quick menu rail and an absorbed rail', /m\.iconHtml \? null : _glyph\(m\.icon, '•', m\.label\)/.test(LHM) && /\(m\.id === act\.menu \? ' on' : ''\), _menuGlyph\(m\)\)/.test(LHM));
+t('the quick menu rail and an absorbed rail', /m\.iconHtml \? null : _glyph\(m\.icon, '•', m\.label\)/.test(LHM) && /\(m\.id === act\.menu \? ' on' : ''\), mi\.html \? null : mi\.text\)/.test(LHM));
 // ── a glyph sits in a fixed, centred box, larger than before ─────────────────────────────────────────────────────
 t('the side list glyph: a 22 px box, 16 px, centred', /'\.lhm-side \.lhm-s-row \.ico\{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;line-height:1;[^']*font-size:16px/.test(LHM));
 t('the top-level list glyph: a 22 px box, 16 px, centred', /'\.lhm-top \.lhm-row \.lhm-ri\{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;line-height:1;[^']*font-size:16px/.test(LHM));
