@@ -26,8 +26,10 @@ t('the agent is offered with its model and caps, and drawn as one chip', H.inclu
   && HAR.includes("if(g.grp === 'agent'){ G.classList.add('hp-agent');") && HAR.includes('header .hp-grp.hp-agent{gap:8px;height:30px;'));
 
 t('the estate storage is a delivery channel over report.store', /"storage": \{\s*"label": "Estate storage", "cap": "report\.store"/.test(D) && D.includes('"report.store":     _build_store,'));
-t('...report.store keeps the report and its source in the object store, with a link', RC.includes('"report.store", memory="off",') && RC.includes('rep, put, sign = _cap("report.html"), _cap("fabric.objects.put"), _cap("fabric.objects.presign")')
-  && RC.includes('pre = (prefix or "").strip().strip("/") or ("reports/" + time.strftime("%Y-%m"))') && RC.includes('g = await sign(key=key, method="get", expires=7 * 24 * 3600)'));
+t('...report.store keeps the report and its source in the object store, with a link', RC.includes('"report.store", memory="off",') && RC.includes('rep, put = _cap("report.html"), _cap("fabric.objects.put")')
+  && RC.includes('pre = (prefix or "").strip().strip("/") or ("reports/" + time.strftime("%Y-%m"))') && RC.includes('link = "/render/stored?key=" + _q(key, safe="/")'));
+t('...the link goes through Vera (the store\'s presigned links name its internal endpoint), and serves only reports/', RC.includes('@APP.get("/render/stored", include_in_schema=False)')
+  && RC.includes('if not k.startswith("reports/") or ".." in k.split("/"):'));
 t('...re-delivery hands back where it went', RC.includes('"episode_id", "store_url", "key", "bucket"):'));
 t('...and Send to offers it everywhere', K.includes("mitem('storage', 'save', 'Estate storage',") && K.includes("const r = await cap('output.redeliver', { channel: 'storage', content: md, title, session_id: session() });"));
 console.log(fails ? fails + ' FAILED' : 'all passed');

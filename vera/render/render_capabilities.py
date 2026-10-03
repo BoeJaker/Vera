@@ -798,13 +798,13 @@ async def report_canvas(content: str = "", title: str = "", mode: str = "auto", 
                 "beside its markdown source, under reports/<year-month>/. Input: content (str!), title (str), "
                 "mode (auto|author|template|pandoc), illustrate (int), session_id (str), prefix (str - default "
                 "reports/<year-month>/). Output: {ok, url, download_url, artifact_id, title, bucket, key, source_key, "
-                "store_url (a link that fetches it from the store, valid 7 days)}.",
+                "store_url (a link, through Vera, that serves it from the store)}.",
 )
 async def report_store(content: str = "", title: str = "", mode: str = "auto", illustrate: int = 0,
                        session_id: str = "", prefix: str = "", trace_id=None):
     if not (content or "").strip():
         return {"ok": False, "error": "content required"}
-    rep, put, sign = _cap("report.html"), _cap("fabric.objects.put"), _cap("fabric.objects.presign")
+    rep, put = _cap("report.html"), _cap("fabric.objects.put")
     if not rep or not put:
         return {"ok": False, "error": "report.html or the object store (fabric.objects.put) unavailable"}
     r = await rep(content=content, title=title or "", mode=mode or "auto",
@@ -826,13 +826,9 @@ async def report_store(content: str = "", title: str = "", mode: str = "auto", i
         return {"ok": False, "error": p.get("error") or "the object store did not take the report", "url": r.get("url") or ""}
     s = await put(key=src_key, content_base64=_b64.b64encode(content.encode("utf-8")).decode("ascii"),
                   content_type="text/markdown; charset=utf-8")
-    link = ""
-    if sign:
-        try:
-            g = await sign(key=key, method="get", expires=7 * 24 * 3600)
-            link = str(g.get("url") or "") if isinstance(g, dict) else ""
-        except Exception:
-            link = ""
+    # the link goes through Vera (/render/stored): the store's presigned links name its internal endpoint
+    from urllib.parse import quote as _q
+    link = "/render/stored?key=" + _q(key, safe="/")
     out = {"ok": True, "url": r.get("url") or "", "download_url": r.get("download_url") or "",
            "artifact_id": r.get("artifact_id") or name, "title": r.get("title") or title or "Report",
            "bucket": p.get("bucket") or "", "key": key, "source_key": src_key if (isinstance(s, dict) and s.get("ok")) else "",
@@ -1174,6 +1170,27 @@ async def render_report_view(name: str):
     if not target.is_file() or target.suffix.lower() != ".html":
         return JSONResponse({"error": "not found"}, status_code=404)
     return HTMLResponse(target.read_text(encoding="utf-8", errors="replace"))
+
+
+@APP.get("/render/stored", include_in_schema=False)
+async def render_stored_view(key: str = ""):
+    """A report kept in the estate's object store (report.store), served through Vera - the store's own presigned
+    links name its internal endpoint (localhost:3900), which no browser elsewhere can reach. Only what report.store
+    writes (reports/...) is served here; anything else in the bucket is not this route's to hand out."""
+    k = str(key or "").lstrip("/")
+    if not k.startswith("reports/") or ".." in k.split("/"):
+        return JSONResponse({"error": "only reports/… keys are served here"}, status_code=400)
+    get = _cap("fabric.objects.get")
+    if not get:
+        return JSONResponse({"error": "the object store is unavailable"}, status_code=503)
+    r = await get(key=k)
+    r = r if isinstance(r, dict) else {}
+    if r.get("error") or not r.get("content_base64"):
+        return JSONResponse({"error": r.get("error") or "not found", "key": k}, status_code=404)
+    import base64 as _b64
+    from fastapi.responses import Response
+    ctype = str(r.get("content_type") or ("text/html; charset=utf-8" if k.endswith(".html") else "text/markdown; charset=utf-8"))
+    return Response(content=_b64.b64decode(r["content_base64"]), media_type=ctype)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

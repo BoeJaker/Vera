@@ -791,7 +791,7 @@
       // the estate's object store: the HTML report and its source, kept (report.store), with a link that fetches it
       if (a === 'storage') { flash(row.querySelector('.ma-ddb'), true, 'Saving…');
         const r = await cap('output.redeliver', { channel: 'storage', content: md, title, session_id: session() });
-        if (r && r.ok) notify(row, 'Saved to the estate storage' + (r.key ? ' · ' + esc(r.key) : '') + (r.store_url ? ' · <a href="' + esc(r.store_url) + '" target="_blank" rel="noopener">open it</a>' : ''));
+        if (r && r.ok) notify(row, 'Saved to the estate storage' + (r.key ? ' · ' + esc(r.key) : '') + (r.store_url ? ' · <a href="' + esc(BASE() + r.store_url) + '" target="_blank" rel="noopener">open it</a>' : ''));
         else notify(row, '<span style="color:var(--err,#e06c6c)">Could not save to the estate storage' + (r && r.error ? ': ' + esc(r.error) : '') + '</span>');
         return done(!!(r && r.ok), 'Saved'); }
       if (a === 'channel') return channelPick(row, ctx);
