@@ -32,5 +32,27 @@ for (const [name, file] of Object.entries(DESCRIBED)) {
   t(name + ': no letter given as an icon', icons.every((i) => !/^[A-Za-z0-9]{1,2}$/.test(i)));
 }
 
+// menus whose items are not .nav-btn (view tabs, segment buttons, an icon rail): every item, by its id attribute
+const BY_ID = [
+  ['Research', ['vera', 'research', 'research_panel.html'], 'id', ['nv-r', 'nv-p', 'nv-s', 'nv-m', 'nv-lib', 'nv-nb', 'nv-pl', 'nv-nlp', 'nv-h', 'nv-bm', 'nv-cfg']],
+  ['Calendar', ['vera', 'calendar', 'calendar_panel.html'], 'data-t', ['layers', 'events', 'agent', 'dump']],
+  ['Calendar sections', ['vera', 'calendar', 'calendar_panel.html'], 'data-sec', ['calendar', 'sources', 'settings']],
+  ['Perf', ['vera', 'monitor', 'perf_panel.html'], 'data-v', ['scan', 'stalls', 'logs']],
+  ['Stack monitor', ['vera', 'monitor', 'system_monitor_panel.html'], 'id', ['smv-dash', 'smv-classic']],
+  ['Home Assistant', ['vera', 'homeassistant', 'ha_panel.html'], 'data-t', ['control', 'entities', 'notify', 'config']],
+  ['Vector browser', ['vera', 'vector browser', 'vector_browser_panel.html'], 'data-tab', ['overview', 'chroma', 'faiss', 'audit', 'compare', 'reencode']],
+  ['ML lab', ['vera', 'machine learning', 'ml_lab_panel.html'], 'id', ['seg-build', 'seg-train', 'seg-agent']],
+  ['Cap ontology', ['vera', 'ontologies', 'cap_ontology_panel.html'], 'id', ['vt-matrix', 'vt-graph', 'vt-list']],
+  ['Storage (pxstore)', ['vera', 'proxmox', 'pxstore_panel.html'], 'data-p', ['overview', 'fs', 'docker', 'store', 'veradata', 'estate', 'setup']],
+];
+for (const [name, file, attr, ids] of BY_ID) {
+  const H = fs.readFileSync(path.join(__dirname, '..', ...file), 'utf8');
+  const bad = ids.filter((id) => {
+    const tags = (H.match(new RegExp('<(?:button|div|a)\\b[^>]*\\s' + attr + '="' + id.replace(/[-]/g, '\\-') + '"[^>]*>', 'g')) || []);
+    return !tags.some((tg) => /data-label="[^"]+"/.test(tg) && /data-desc="[^"]{8,140}"/.test(tg) && /data-desc-long="[^"]{12,600}"/.test(tg));
+  });
+  t(name + ': every one of its ' + ids.length + ' menu items has a name, a short and a long description', bad.length === 0, bad.join(', '));
+}
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

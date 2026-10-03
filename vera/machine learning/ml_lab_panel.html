@@ -149,9 +149,9 @@ table.rounds tr:hover td{background:var(--bg2)}
   <div id="topbar">
     <div class="tb-logo">ML Lab</div>
     <div class="seg" role="tablist" data-vera-lhm>
-      <button class="seg-btn active" id="seg-build" role="button" data-label="Build" data-icon="🔨" onclick="showArea('build')">🔨 Build</button>
-      <button class="seg-btn" id="seg-train" role="button" data-label="Train" data-icon="🎓" onclick="showArea('train')">🎓 Train</button>
-      <button class="seg-btn" id="seg-agent" role="button" data-label="Agent" data-icon="🤖" onclick="showArea('agent')">🤖 Agent</button>
+      <button data-label="Build" data-desc="Agentic build and test" data-desc-long="Agentic build &amp; test: describe a goal; the agent designs an architecture, trains and evaluates it, and revises it over several rounds, keeping the best by validation loss." class="seg-btn active" id="seg-build" role="button" data-icon="🔨" onclick="showArea('build')">🔨 Build</button>
+      <button data-label="Train" data-desc="Train a model" data-desc-long="Train a model." class="seg-btn" id="seg-train" role="button" data-icon="🎓" onclick="showArea('train')">🎓 Train</button>
+      <button data-label="Agent" data-desc="The ML agent" data-desc-long="The ML lab's agent." class="seg-btn" id="seg-agent" role="button" data-icon="🤖" onclick="showArea('agent')">🤖 Agent</button>
     </div>
     <div id="tb-right">
       <div class="tb-stat">
