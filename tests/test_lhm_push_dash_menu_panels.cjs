@@ -30,7 +30,7 @@ t('the dashboard menu is declared after _dashCtl (no temporal dead zone at boot)
   vm.runInContext('var _navItems = null, _navActiveId = "";\n' + BR.slice(a, b) + '\nthis.lhm=_navLhm; this.res=_navResolve; this.set=function(i,a){ _navItems=i; _navActiveId=a; };', ctx);
   ctx.set([{ id: 'overview', label: 'Overview', group: 'Overview', icon: '\u25a6' }, { id: 'ops', label: 'Live ops', group: 'Overview', icon: '\u2726' }, { id: 'machines', label: 'All', group: 'Machines', icon: '\u25a4' }, { id: 'docker', label: 'Docker', group: 'Machines', icon: '\u25e7' }], 'docker');
   let s = ctx.lhm();
-  t('grouped: a rail icon per group, its items as the list', s.menus.length === 2 && s.menus[1].label === 'Machines' && s.menus[1].tabs.length === 2 && s.menus[0].icon === '\u25a6', JSON.stringify(s.menus.map((m) => m.label)));
+  t('grouped: a rail icon per group, its items as the list', s.menus.length === 2 && s.menus[1].label === 'Machines' && s.menus[1].tabs.length === 2 && s.menus[0].icon_alt === '\u25a6', JSON.stringify(s.menus.map((m) => m.label)));
   t('the open item lights its group and itself', s.active.menu === '\u00a7g1' && s.active.tab === 'docker');
   t('titled with the panel\'s name, not its page title', s.title === 'Estate', s.title);
   t('a pick in the list selects that item', ctx.res('\u00a7g0/ops') === 'ops');
@@ -38,15 +38,15 @@ t('the dashboard menu is declared after _dashCtl (no temporal dead zone at boot)
   t('a plain item id still selects as before', ctx.res('ops') === 'ops');
   ctx.set([{ id: 'datasets', label: 'Datasets', icon: '\u25eb' }, { id: 'sources', label: 'Sources' }], 'sources');
   s = ctx.lhm();
-  t('flat: a rail icon per item (a letter when it has no glyph), the whole list beside it', s.menus.length === 2 && s.menus[1].icon === 'S' && s.menus[0].tabs.length === 2 && s.active.menu === '\u00a7i1');
+  t('flat: a rail icon per item (no mark of its own: none published - never a letter; 2026-10-03), the whole list beside it', s.menus.length === 2 && s.menus[1].icon === '' && s.menus[0].tabs.length === 2 && s.active.menu === '\u00a7i1');
   t('a flat icon selects its item', ctx.res('\u00a7i0') === 'datasets');
 }
 t('the bridge publishes it with the items', /st\.nav = \{items: _navItems, active: _navActiveId\}; var _lhm = _navLhm\(\); if\(_lhm\) st\.nav\.lhm = _lhm;/.test(BR));
 t('and resolves picks before selecting', /id = _navResolve\(String\(id\)\);/.test(BR));
-t('the panel shell gives each item its group and glyph', /return \{ id: idOf\(b\), label: labelOf\(b\), group: groupOf\(b\), icon: iconOf\(b\) \};/.test(PJ) && /el\.classList\.contains\('nav-grp'\)/.test(PJ));
+t('the panel shell gives each item its group and glyph', /var it = \{ id: idOf\(b\), label: labelOf\(b\), group: groupOf\(b\), icon: iconOf\(b\), desc: descOf\(b\), desc_long: descLongOf\(b\) \};/.test(PJ) && /el\.classList\.contains\('nav-grp'\)/.test(PJ));
 
 const LHM = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'vera-lhm.js'), 'utf8');
-t('an absorbed menu\'s list reads at the menu\'s size', /'\.lhm-absorbed \.lhm-tab\{padding:7px 9px;[^']*font-size:11\.5px;/.test(LHM) && !/\.lhm-absorbed \.lhm-tab\{[^']*font-size:9\.5px/.test(LHM) && /e\.title = t\.label;/.test(LHM));
+t('an absorbed menu\'s list reads at the menu\'s size', /'\.lhm-absorbed \.lhm-tab\{padding:7px 9px;[^']*font-size:11\.5px;/.test(LHM) && !/\.lhm-absorbed \.lhm-tab\{[^']*font-size:9\.5px/.test(LHM) && /e\.title = _tip\(t\.label, t\.desc\);/.test(LHM));
 t('the dashboard rail\'s \u2630 gives the every-tab list', /if\(menu === '\\u2630'\)\{ _lhmAbsorbTop = true; _lhmNavSync\(\); return; \}/.test(HAR));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
