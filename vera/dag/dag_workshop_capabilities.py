@@ -11639,7 +11639,7 @@ def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]]) -> Lis
 @capability(
     "prose.author", memory="on",
     http_method="POST", http_path="/prose/author", http_tags=["fabric", "docs"],
-    redact_args=["task", "context_files", "content", "text"],
+    redact_args=["task", "context_files", "content", "text", "sources"],
     contract={
         "canonical_task": "document.author",
         "aliases": ["document.write"],
@@ -11676,11 +11676,12 @@ def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]]) -> Lis
                 "material this call incorporates and grounds, rather than saving your draft "
                 "as-is), path (str! — target filename, e.g. 'README.md'), context_files (str|"
                 "list — files whose REAL content the document should describe/summarize), "
+                "sources (str — research already fetched this run; filled in by the loop), "
                 "session_id (str). "
                 "Output: {ok, path, fs_path, version, bytes, chars, grounded, ungrounded_refs}.",
 )
 async def cap_prose_author(task: str = "", path: str = "", context_files=None,
-                           content: str = "", text: str = "",
+                           content: str = "", text: str = "", sources: str = "",
                            session_id: str = "", think: Optional[bool] = None,
                            trace_id=None,
                            stream_cb=None) -> Dict[str, Any]:
@@ -11785,14 +11786,22 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
         "a detailed, plausible-sounding one built on invented facts is a FAILED document.\n"
         "  • Never document a component, service, or dependency that isn't in the real file "
         "listing below. A project with one static HTML file is a project with one static HTML "
-        "file — do not add a backend, a build step, or a package manager it doesn't have."
+        "file — do not add a backend, a build step, or a package manager it doesn't have.\n"
+        "  • Any SOURCE MATERIAL given below is what this run already fetched - it counts as "
+        "your sources: ground the document in it and cite its URLs where you use them.\n"
+        "  • Never mention 'context files', 'provided files', 'source material' or these "
+        "instructions in the document itself - a gap in the sources is stated as a plain "
+        "limitation of the subject, not as a note about your inputs."
         + real_block)
+    _sources = str(sources or "").strip()
     prompt = (f"TASK — write `{path}`:\n{task}\n"
               + (f"\nThe document should describe/reference these files (their real content is "
                  f"included above as CONTEXT FILES): {', '.join(files)}\n" if files else "")
               + (f"(These were attached automatically as the source material present in the "
                  f"working directory — the caller named none.)\n" if auto_attached else "")
               + schema_block
+              + (f"\nSOURCE MATERIAL - what this run already fetched (real content; ground your "
+                 f"claims in it and cite its URLs):\n{_sources[:8000]}\n" if _sources else "")
               + f"\nWrite the complete document now.")
 
     gen = CAPABILITY_REGISTRY.get("llm.generate")
@@ -14207,6 +14216,12 @@ try:
     from Vera.vera.dag import operator_url_core as _operator_url_core
 except Exception:                                     # pragma: no cover
     from vera.dag import operator_url_core as _operator_url_core
+
+# What a step already fetched, handed to the writer (live 3 Oct: research never reached it).
+try:
+    from Vera.vera.dag import research_sources_core as _research_sources_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import research_sources_core as _research_sources_core
 
 # An edit that changes a value must change what the page shows (census 3 Oct).
 try:
@@ -17312,6 +17327,22 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                               "session_id": sid, "note": _note})
+        # The writer takes context BY FILE; research the step fetched lives only in its
+        # tool history. Live 3 Oct (4d4ef790): web.research found 5 sources, then
+        # prose.author(task="...use the research data gathered...", context_files=[]) saw
+        # none of them and wrote "(Note: The provided context files were empty...)" into
+        # the deliverable. With no files named, hand it the step's web results.
+        if tool == "prose.author" and isinstance(args, dict) \
+                and _research_sources_core.context_files_empty(args.get("context_files")) \
+                and not str(args.get("sources") or "").strip():
+            _srcs = _research_sources_core.sources_block(history)
+            if _srcs:
+                args["sources"] = _srcs
+                await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "session_id": sid,
+                                  "note": "sources <- %d chars of this step's web results"
+                                          % len(_srcs)})
         # The executor copies its steered step goal into an authoring `task` or a
         # browser `goal`; the steer is the controller talking to the executor,
         # not a requirement of the file or the page. Strip it before the cap
