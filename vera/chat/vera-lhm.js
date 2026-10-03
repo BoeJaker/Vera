@@ -192,7 +192,18 @@
     '.lhm-absorbed .lhm-tab,.lhm-side .lhm-s-opt,.lhm-side .lhm-s-row{position:relative}',
     '.lhm-absorbed .lhm-tab:hover .lhm-bs,.lhm-side .lhm-s-opt:hover .lhm-bs,.lhm-side .lhm-s-row:hover .lhm-bs{opacity:1}',
     '.lhm-side.railed .lhm-bs{display:none}',
-    '.lhm-absorbed .lhm-tabs{flex:1;display:flex;flex-direction:column;gap:1px;padding:6px 4px;min-width:0;overflow-y:auto}',
+    /* gap 2px, as the rail's: it was 1px here, so each row sat 1px higher than its icon - 13px off by the 13th */
+    '.lhm-absorbed .lhm-tabs{flex:1;display:flex;flex-direction:column;gap:2px;padding:6px 4px;min-width:0;overflow-y:auto}',
+    '.lhm-absorbed .lhm-rail{overflow:hidden}',
+    /* a grouped menu's group, one row per group, as tall as its rail icon; the open group's items sit indented under it */
+    '.lhm-absorbed .lhm-grp-h{height:34px;box-sizing:border-box;flex-shrink:0;display:flex;align-items:center;gap:7px;padding:0 9px;border-radius:var(--r-sm,6px);font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11.5px;font-weight:600;color:var(--t2,var(--dim2,#8a92a0));cursor:pointer;white-space:nowrap;overflow:hidden;transition:background var(--lhm-fade,.22s) var(--lhm-ease,ease),color var(--lhm-fade,.22s) var(--lhm-ease,ease)}',
+    '.lhm-absorbed .lhm-grp-h:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}',
+    '.lhm-absorbed .lhm-grp-h.on{color:var(--t1,var(--text,#d8dce4))}',
+    '.lhm-absorbed .lhm-grp-h .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}',
+    '.lhm-absorbed .lhm-grp-h b{font-family:var(--mono);font-weight:400;font-size:9.5px;color:var(--t3,var(--dim,#6b7280))}',
+    '.lhm-absorbed .lhm-grp-h i{width:0;height:0;border:4px solid transparent;border-left-color:currentColor;opacity:.6;flex-shrink:0;transition:transform var(--lhm-dur,.34s) var(--lhm-ease,ease)}',
+    '.lhm-absorbed .lhm-grp-h.on i{transform:rotate(90deg) translateX(-2px);border-left-color:var(--ac,var(--acc,#5a9e8f));opacity:1}',
+    '.lhm-absorbed .lhm-tab.in-grp{padding-left:22px}.lhm-absorbed .lhm-tab.in-grp.sub{padding-left:34px}.lhm-absorbed .lhm-tab.in-grp.sub2{padding-left:46px}',
     '.lhm-absorbed .lhm-tab{padding:7px 9px;border-radius:var(--r-sm,6px);font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11.5px;line-height:1.3;color:var(--t2,var(--dim2,#8a92a0));cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;transition:background .15s,color .15s}',
     '.lhm-absorbed .lhm-tab:hover{color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20))}',
     '.lhm-absorbed .lhm-tab.on{color:var(--t1,var(--text,#d8dce4));font-weight:600;background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent));box-shadow:inset 2px 0 0 var(--ac,var(--acc,#5a9e8f))}',
@@ -925,6 +936,31 @@ function _ebar(title, onAdd, onDone){
     tabs.appendChild(ws);
   }
   var _absSeen = {};   // panel (editKey) -> the menu its docked LHM last showed; __panel: the panel last shown
+  // flat: every menu lists the same top-level items (a nested child's sections only ride in the open one)
+  function _absFlat(menus){
+    if(!menus || menus.length < 2) return true;
+    var ids = function(m){ return (m.tabs || []).filter(function(t){ return !t.depth; }).map(function(t){ return String(t.id); }).join('\u0001'); };
+    var a = ids(menus[0]); return menus.every(function(m){ return ids(m) === a; });
+  }
+  /* the rows set the rhythm (a row can be taller - a section nested under it, the edit bar above them): after layout each
+     icon takes the margin that sets it level with its row, top to bottom, and the rail scrolls with the list. Run again
+     whenever the list changes size; a host redraw drops the old watcher. */
+  function _alignRail(host, rail, list, pairs){
+    if(host && host._lhmAlignRO){ try{ host._lhmAlignRO.disconnect(); }catch(e){} host._lhmAlignRO = null; }
+    if(!pairs.length || !rail || !list) return;
+    function y(e, sc){ return e.getBoundingClientRect().top + (sc.scrollTop || 0); }
+    function run(){
+      if(!rail.isConnected) return;
+      pairs.forEach(function(p){ p[0].style.marginTop = ''; });
+      pairs.forEach(function(p){ var d = y(p[1], list) - y(p[0], rail); if(d > 0.5) p[0].style.marginTop = d + 'px'; });
+      rail.scrollTop = list.scrollTop;
+    }
+    list.addEventListener('scroll', function(){ rail.scrollTop = list.scrollTop; });
+    var raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : null;
+    if(!raf) return;
+    raf(run); setTimeout(run, 260);
+    if(typeof ResizeObserver === 'function' && host){ var q = 0; var ro = new ResizeObserver(function(){ if(q) return; q = raf(function(){ q = 0; run(); }); }); ro.observe(list); host._lhmAlignRO = ro; }
+  }
   function absorb(host, spec, pickFn, opts){
     if(!host || !spec) return null;
     opts = opts || {}; _css(host.ownerDocument);
@@ -937,31 +973,53 @@ function _ebar(title, onAdd, onDone){
       top.addEventListener('click', function(){ if(opts.onTop) opts.onTop(); });
       rail.appendChild(top); }
     else rail.appendChild(_el('div', 'lhm-rsp'));
-    var act = spec.active || {};
-    (spec.menus || []).forEach(function(m){
-      var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), _menuGlyph(m)); _descOn(ico, m); ico.title = _tip(m.label, m.desc) + (opts.onSplit ? ' \u00b7 Ctrl/\u2318- or middle-click: open it side by side' : '');
+    var act = spec.active || {}, menus = spec.menus || [], icons = [];
+    menus.forEach(function(m){
+      var ico = _el('div', 'lhm-ico' + (m.id === act.menu ? ' on' : ''), _menuGlyph(m)); _descOn(ico, m); ico.title = _tip(m.label, m.desc) + (opts.onSplit ? ' · Ctrl/⌘- or middle-click: open it side by side' : '');
       if(m.badge) ico.appendChild(_el('span', 'lhm-badge', String(m.badge)));
       ico.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(m.id); else pickFn(m.id); });
       ico.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(m.id); } });
-      rail.appendChild(ico);
+      rail.appendChild(ico); icons.push(ico);
     });
     rail.appendChild(_el('div', 'lhm-sp'));
     wrap.appendChild(rail);
     var tabs = _el('div', 'lhm-tabs'); tabs.setAttribute('data-w', 'tabs · absorbed');
-    var cur = (spec.menus || []).filter(function(m){ return m.id === act.menu; })[0];
+    var cur = menus.filter(function(m){ return m.id === act.menu; })[0];
+    /* EACH RAIL ICON STANDS LEVEL WITH ITS ROW (owner, 2026-10-03: "the icons in the lhm rail line up to the text menu
+       items"; "one icon per group for menu items that have sub items"). A FLAT menu (every menu one item, each listing them
+       all - the bridge's shape for a menu without groups) lists its items, icon i beside item i. A GROUPED one lists every
+       group as a heading - its icon level with it - and the open group's items under its heading. pairs: [icon, row]. */
+    var pairs = [];
+    function itemRow(owner, t, ti, inGrp){
+      var e = _el('div', 'lhm-tab' + (t.id === act.tab ? ' on' : '') + (t.depth ? ' sub' : '') + (t.depth > 1 ? ' sub2' : '') + (inGrp ? ' in-grp' : ''), t.label); e.title = _tip(t.label, t.desc); _descOn(e, t);
+      var way = _wayTo(owner.tabs, ti);
+      e.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(owner.id + '/' + way); else pickFn(owner.id + '/' + t.id); });
+      e.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(owner.id + '/' + way); } });
+      if(opts.onSplit) _beside(e, function(){ opts.onSplit(owner.id + '/' + way); });
+      return e;
+    }
     if(cur){
-      tabs.appendChild(_el('div', 'lhm-ttl', cur.title || cur.label));
-      (cur.tabs || []).forEach(function(t, ti){
-        var e = _el('div', 'lhm-tab' + (t.id === act.tab ? ' on' : '') + (t.depth ? ' sub' : '') + (t.depth > 1 ? ' sub2' : ''), t.label); e.title = _tip(t.label, t.desc); _descOn(e, t);
-        var way = _wayTo(cur.tabs, ti);
-        e.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(cur.id + '/' + way); else pickFn(cur.id + '/' + t.id); });
-        e.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(cur.id + '/' + way); } });
-        if(opts.onSplit) _beside(e, function(){ opts.onSplit(cur.id + '/' + way); });
-        tabs.appendChild(e);
-      });
+      if(_absFlat(menus)){
+        tabs.appendChild(_el('div', 'lhm-ttl', cur.title || cur.label));
+        var tops = [];
+        (cur.tabs || []).forEach(function(t, ti){ var e = itemRow(cur, t, ti, false); tabs.appendChild(e); if(!t.depth) tops.push(e); });
+        if(menus.length > 1) icons.forEach(function(ico, i){ if(tops[i]) pairs.push([ico, tops[i]]); });
+      } else {
+        tabs.appendChild(_el('div', 'lhm-ttl', spec.title || cur.title || cur.label));
+        menus.forEach(function(m, mi){
+          var open = m.id === cur.id, n = (m.tabs || []).filter(function(t){ return !t.depth; }).length;
+          var h = _el('div', 'lhm-grp-h' + (open ? ' on' : '')); h.title = _tip(m.label, m.desc); _descOn(h, m); h.setAttribute('data-w', 'group · ' + (m.label || m.id));
+          h.appendChild(_el('i')); h.appendChild(_el('span', 'nm', m.label || m.id)); if(n) h.appendChild(_el('b', '', String(n)));
+          h.addEventListener('click', function(ev){ if(_splitKey(ev) && opts.onSplit) opts.onSplit(m.id); else pickFn(m.id); });
+          h.addEventListener('auxclick', function(ev){ if(ev.button === 1 && opts.onSplit){ ev.preventDefault(); opts.onSplit(m.id); } });
+          tabs.appendChild(h); if(icons[mi]) pairs.push([icons[mi], h]);
+          if(open) (m.tabs || []).forEach(function(t, ti){ tabs.appendChild(itemRow(m, t, ti, true)); });
+        });
+      }
     }
     try{ _absWidgets(host, tabs, spec, cur, opts, function(){ absorb(host, spec, pickFn, opts); }); }catch(e){}
     wrap.appendChild(tabs);
+    _alignRail(host, rail, tabs, pairs);
     /* the host redraws this menu on every state the panel publishes, often into a new element: what was last shown is kept
        by panel (editKey), so only a real change moves - another panel's menu rises in whole, another of its menus rises
        in as its list; the same menu redrawn stays still */
