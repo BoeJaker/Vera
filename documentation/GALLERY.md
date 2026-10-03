@@ -8,8 +8,8 @@ documentation`) against a loop-lab sandbox and refreshed in place.
 > `docs.build`. Only the images and reference tables are regenerated — authored
 > prose is preserved.
 
-*Last generated: 2026-10-03 12:45 UTC*
-**39 domains · 74 screenshots · 2689 capabilities**
+*Last generated: 2026-10-03 14:47 UTC*
+**39 domains · 70 screenshots · 2689 capabilities**
 
 | Domain | Preview | Capabilities |
 |---|---|---|

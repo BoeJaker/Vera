@@ -160,7 +160,9 @@ DOMAINS: List[Dict[str, Any]] = [
     {"slug": "cluster-encryption", "doc": "32-cluster-encryption.md", "title": "Cluster Encryption",
      "cap_prefixes": ["netsec"], "panel_ids": [], "match": ["encryption", "wireguard"], "seed": None},
     {"slug": "evolve", "doc": "33-evolve.md", "title": "Loop Lab (Evolve)",
-     "cap_prefixes": ["evolve"], "panel_ids": ["evolve"], "match": ["evolve", "loop lab"], "seed": None},
+     "cap_prefixes": ["evolve"], "panel_ids": ["evolve"], "match": ["evolve", "loop lab"], "seed": None,
+     # Loop Lab's widgets read ~10-30s before their placeholders clear.
+     "capture_states": {"evolve": [{"ready_timeout_ms": 60000}]}},
     {"slug": "operator", "doc": "34-operator.md", "title": "Operator",
      "cap_prefixes": ["operator", "docs"], "panel_ids": ["operator-studio"],
      "match": ["operator"], "seed": None},
@@ -195,7 +197,8 @@ DOMAINS: List[Dict[str, Any]] = [
          # "never updated" and empty "no data" tiles.
          {"name": "dashboard", "path": "/", "label": "Main dashboard", "settle_ms": 15000},
          {"name": "cap-hub", "path": "/cap_hub/panel", "label": "Capability Hub"},
-         {"name": "evolve", "path": "/evolve/panel", "label": "Loop Lab"},
+         {"name": "evolve", "path": "/evolve/panel", "label": "Loop Lab",
+          "ready_timeout_ms": 60000},
          {"name": "fabric-panel", "path": "/fabric/panel", "label": "Data Fabric"},
          {"name": "loop-graph", "path": "/ui/panel/window?id=loop-graph",
           "label": "Agent loop graph"},
