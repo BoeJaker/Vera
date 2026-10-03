@@ -12312,6 +12312,49 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
             else:
                 last_err = "; ".join(res["errors"][:4])
         if attempt >= attempts:
+            # Anchors that keep missing on a SMALL file: ask once for the complete revised
+            # file instead, accepted only if it parses, stays about the same size and keeps
+            # most of the original lines (edit_rewrite_core). 36 of 57 code.edit failure
+            # parts, 30 Sep - 3 Oct, were anchors the editor retyped instead of copying.
+            _errs = (res or {}).get("errors") or ([last_err] if last_err else [])
+            if _edit_rewrite_core.eligible(current, _errs):
+                try:
+                    _rw_raw = await fn(prompt=_edit_rewrite_core.prompt(path, lang, current, task, last_err),
+                                       system=("You are the EDITOR of Vera's coding cohort. Return the "
+                                               "COMPLETE revised file with only the requested change - "
+                                               "one fenced block, no commentary."),
+                                       profile=LOOP_ROUTING_PROFILE, role="coder",
+                                       options=_edit_gen_options, session_id=session_id,
+                                       caller="code.edit.rewrite", trace_id=trace_id)
+                    _rw_text = _strip_think(_v5_gen_text(_rw_raw) or "")[0]
+                    _rw_blocks = _v5_extract_code_blocks(_rw_text, name_hint=path)
+                    _rw_new = (_rw_blocks[0]["code"] if _rw_blocks else _v5_clean_code_body(_rw_text))
+                    _rw_ok, _rw_why = _edit_rewrite_core.accept(current, _rw_new)
+                    _rw_syn = _v5_check_syntax(_rw_new, lang, path) if _rw_ok else {"ok": False}
+                    if _rw_ok and _rw_syn.get("ok"):
+                        _rw_saved = await code_store_save(path, _rw_new, session_id=session_id, repo=repo,
+                                                          message=f"code.edit (whole-file): {task[:70]}",
+                                                          lang=lang)
+                        if _rw_saved.get("ok"):
+                            try:
+                                _rw_stale = _stale_value_core.describe(
+                                    _stale_value_core.stale_display_values(current, _rw_new))
+                            except Exception:
+                                _rw_stale = ""
+                            return {"ok": True, **({"warning": _rw_stale} if _rw_stale else {}),
+                                    "mode": "rewrite", "path": _rw_saved.get("path", path),
+                                    "fs_path": _rw_saved.get("fs_path", ""),
+                                    "version": _rw_saved.get("version"), "lang": lang,
+                                    "syntax_ok": True, "checked_with": _rw_syn.get("checker", ""),
+                                    "applied": [], "errors": [],
+                                    "diff_summary": f"whole-file revision; {len(current.splitlines())} → "
+                                                    f"{len(_rw_new.splitlines())} lines",
+                                    "note": ("anchored edits missed 3 times, so the change was applied "
+                                             "as a checked whole-file revision (parses, same size, "
+                                             "original lines kept)")}
+                    last_err += (f"\n(whole-file fallback refused: {_rw_why or _rw_syn.get('error') or 'did not parse'})")
+                except Exception as e:
+                    last_err += f"\n(whole-file fallback failed: {e})"
             return {"ok": False, "path": path, "error": last_err,
                     "errors": (res or {}).get("errors", []),
                     "hint": "anchors must be copied exactly from the file and be unique"}
@@ -14248,6 +14291,12 @@ try:
     from Vera.vera.dag import doc_fence_core as _doc_fence_core
 except Exception:                                     # pragma: no cover
     from vera.dag import doc_fence_core as _doc_fence_core
+
+# A small file whose anchored edits keep missing is revised whole - and checked.
+try:
+    from Vera.vera.dag import edit_rewrite_core as _edit_rewrite_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import edit_rewrite_core as _edit_rewrite_core
 
 # Double-escaped newlines in model-written Python (probe 2026-10-01: 24% of
 # exec.python.run calls wrote a literal backslash-n instead of a newline).
