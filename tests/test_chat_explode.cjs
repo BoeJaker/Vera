@@ -37,9 +37,11 @@ t('the diagram is the shared embed, not a second renderer',
   /createElement\('vera-graph-embed'\)/.test(HTML) && /setAttribute\('renderer','struct'\)/.test(HTML));
 t('the slash command asks the SERVER what a thing is, rather than guessing it is a record',
   /fetch\(BASE\+'\/explode\/target'/.test(HTML) && /tg\.why/.test(HTML));
-t('a second Explode on the same thing closes the first, rather than stacking diagrams',
-  (HTML.match(/const old=wrap\.querySelector\(':scope > \.xp-inline'\); if\(old\)\{ old\.remove\(\); return; \}/) || []).length === 1
-  && /const old=card\.querySelector\(':scope > \.xp-inline'\); if\(old\)/.test(HTML));
+t('Explode opens the exploded scene with the structure (cards · front · iso), and again on the same thing goes back',
+  /if\(_xpl\.doc&&_xpl\.doc\.key===key\)\{ _xplDocClear\(\); return; \}/.test(HTML) && /window\.VeraExploded\.contractScene\(doc,\{label\}\)/.test(HTML)
+  && /_xplShowDoc\('msg:'\+mid, '\/code\/explode'/.test(HTML) && /_xplShowDoc\('msg:'\+mid, '\/nlp\/explode\/prose'/.test(HTML) && /_xplShowDoc\('code:'\+id, '\/code\/explode'/.test(HTML)
+  && /_xplShowDoc\('slash:'\+what,/.test(HTML) && /_xplEl\.setScene\(_xpl\.doc\?_xpl\.doc\.scene:_xplScene\(\)\)/.test(HTML));
+t('the chip over the scene keeps the structured diagram and the way back to the chat', /data-xd="diagram"/.test(HTML) && /data-xd="back"/.test(HTML) && /_xpPanel\(host, _xpl\.doc\.attrs/.test(HTML));
 t('the embed library is loaded once, on demand, not on every chat load',
   /_XP_LIB = new Promise/.test(HTML) && /ui\/vera-graph-embed\.js/.test(HTML));
 
