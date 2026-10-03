@@ -5,11 +5,11 @@ const path = require('node:path'), fs = require('node:fs');
 const C = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js'), 'utf8');
 let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fails++; };
 
-t('a code item IS the kit\'s card (VeraOut.card): every action the chat\'s has', C.includes("const cardHtml = VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming });"));
+t('a code item IS the kit\'s card (VeraOut.card): every action the chat\'s has', C.includes("const cardHtml = VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming, autoPrev: false });"));
 t('...inside the wrap an explode item binds to (its numbered lines are the kit\'s)', C.includes('return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : \'\'}>${cardHtml}</div>`;'));
 t('...the streaming card while the chat is writing into it', C.includes('const streaming = !!(el && el._liveOv && el._liveOv[key]);'));
 t('the canvas plugs in only what it does its own way: Preview (live layer), Explode (bound item), an edit kept with the item',
-  C.includes("preview: (blk, id, b) => viaAct('cprev', b),") && C.includes("explode: (blk, id, b) => viaAct('explode', b),") && C.includes("return this.call('canvas.update', Object.assign(this._ref(key), { content: Object.assign({}, bl.content || {}, { code: d.code }) }));"));
+  C.includes("preview: (blk, id, b) => viaAct('cprev', b),") && C.includes("explode: (blk, id, b) => viaAct('explode', b),") && C.includes("return this.call('canvas.update', Object.assign(this._ref(key), { content: Object.assign({}, was, next) }));") && C.includes("const was = bl.content || {}; const next = { code: d.code };"));
 t('an edit in progress is never redrawn away', C.includes("if (this._html !== mark && layers.items.querySelector('.code-card.editing')) this._editHeld = true;") && C.includes("addEventListener('vera:code:editend'"));
 t('a reading item renders through the kit and carries the shared prose row, with its own Edit and Explode', C.includes("row = VO.proseMenu('cvp-' + key, { md, canvas: false, explode: false,") && C.includes("own('edit', 'edit', 'Edit'") && C.includes("own('explode', 'explode', 'Explode'"));
 t('the shadow root takes the kit with the canvas\'s hooks and hydrates each draw, loading the kit when a page did not',

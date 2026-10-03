@@ -60,7 +60,7 @@
   const runnable = (lang) => SERVER_RUN.has(String(lang || '').toLowerCase());
   const EXT = { python: 'py', py: 'py', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', html: 'html', css: 'css',
     json: 'json', bash: 'sh', sh: 'sh', shell: 'sh', sql: 'sql', go: 'go', rust: 'rs', ruby: 'rb', php: 'php',
-    yaml: 'yaml', yml: 'yaml', markdown: 'md', md: 'md', svg: 'svg', jsx: 'jsx', tsx: 'tsx', java: 'java', c: 'c', cpp: 'cpp' };
+    yaml: 'yaml', yml: 'yaml', markdown: 'md', md: 'md', svg: 'svg', jsx: 'jsx', tsx: 'tsx', java: 'java', c: 'c', cpp: 'cpp', mermaid: 'mmd' };
   const langClass = (lang) => { const L = String(lang || '').toLowerCase().replace(/[^a-z0-9_-]/g, ''); return L ? ' class="language-' + L + '"' : ''; };
   // a filename out of a fence's info line: `app.py`, `file=app.py`, `path=src/app.py`, `title=app.py`
   function fenceFilename(info) {
@@ -309,7 +309,11 @@
        o.canvas    false where it already IS on the canvas               o.pane       the host has a preview pane
        o.body      draw its own body in place of the source (the canvas's live-layer preview, which survives a redraw)
        o.prevOn    that body is showing the drawing (the Preview button says Source)
-       o.extra     its own buttons after the kit's, in the same look     o.cls        classes on the card */
+       o.extra     its own buttons after the kit's, in the same look     o.cls        classes on the card
+       o.autoPrev  false where the host decides what is drawn (the canvas: a page it switched to source stays source) */
+  // the code a card holds, as a fence: what "Send to" hands on (an IDE file gets the bare code instead)
+  const fenceOf = (id) => { const b = blocks[id] || {}; return '```' + (b.lang || '') + (b.filename ? ' file=' + b.filename : '') + '\n' + String(b.code || '').replace(/\n$/, '') + '\n```'; };
+  const sendFor = (id, title, skip) => sendMenu('cb:' + id, { getMd: () => fenceOf(id), raw: () => String((blocks[id] || {}).code || ''), title, skip });
   function card(lang, code, o) {
     o = o || {}; lang = String(lang || ''); code = String(code || '');
     const L = lang.toLowerCase(), fname = String(o.filename || ''), id = o.id || register(lang, code, fname);
@@ -318,7 +322,7 @@
     const cls = 'code-card' + (o.cls ? ' ' + o.cls : '');
     if (o.incomplete) return '<div class="' + cls + '" data-cb="' + id + '" data-incomplete="1"><div class="code-bar"><span class="code-lang">' + lbl
       + '</span><div class="cb-sp"></div><span class="cb-stream">streaming</span></div>' + (o.body || codeBody(code, lang, o.lines)) + '</div>';
-    const page = wholePage(lang, code) && !o.body;
+    const page = wholePage(lang, code) && !o.body && o.autoPrev !== false;
     const nSym = Object.keys(symbols(code, lang)).length;
     return '<div class="' + cls + '" data-cb="' + id + '"' + (page ? ' data-auto-prev="1"' : '') + '><div class="code-bar"><span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>'
       + btn('copy', 'copy', 'Copy', 'Copy to the clipboard')
@@ -332,13 +336,38 @@
       + btn('save', 'save', 'Save', "Save it to the session's artifacts")
       + (o.canvas === false ? '' : btn('canvas', 'canvas', 'Canvas', 'Put this code on the session canvas'))
       + (o.extra || '')
+      + sendFor(id, fname || (L || 'code'), ['podcast'])
       + '</div>' + (o.body || codeBody(code, lang, o.lines))
       + '<div class="code-exec-out" data-exec-out="' + id + '" style="display:none"></div></div>';
+  }
+  /* A DIAGRAM IS A CARD TOO (owner, 2026-10-03: "mermaid diagrams rendered in the chat and canvas need the unified menu
+     style and the relevant options for along the top same as the rendered code output and elsewhere"). The same bar
+     in the same look over the drawing: Copy (its source), Edit (the diagram is redrawn from your version), Source (the
+     mermaid under the drawing), Pop out, Save, Canvas, Send to. The drawing is the host's: the kit's own slot by
+     default, the chat's live slot or the canvas's live layer where they hand one in (o.body).
+       VeraOut.diagram(code, {id, title, body, canvas, extra, cls}) */
+  function diagram(code, o) {
+    o = o || {}; code = String(code || ''); const title = String(o.title || '');
+    const id = o.id || register('mermaid', code, '');
+    if (o.id) blocks[id] = Object.assign(blocks[id] || {}, { lang: 'mermaid', code, filename: '' });
+    blocks[id].title = title;
+    const lbl = 'mermaid' + (title ? ' · <span class="cb-file">' + esc(title) + '</span>' : '');
+    return '<div class="code-card vo-diagram' + (o.cls ? ' ' + o.cls : '') + '" data-cb="' + id + '"><div class="code-bar"><span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>'
+      + btn('copy', 'copy', 'Copy', 'Copy the mermaid source')
+      + btn('edit', 'edit', 'Edit', 'Edit the source - the diagram is redrawn from your version')
+      + btn('dsrc', 'outline', 'Source', 'Show the mermaid source under the diagram', 'cb-srcbtn')
+      + btn('dpop', 'pop', 'Pop out', 'Open the diagram in a window over the page')
+      + btn('dsvg', 'save', 'SVG', 'Download the drawing as SVG') + btn('dpng', 'save', 'PNG', 'Download the drawing as PNG')
+      + btn('save', 'save', 'Save', "Save the source to the session's artifacts")
+      + (o.canvas === false ? '' : btn('canvas', 'canvas', 'Canvas', 'Put this diagram on the session canvas'))
+      + (o.extra || '')
+      + sendFor(id, title || 'Diagram', ['podcast'])
+      + '</div>' + (o.body || '<div class="vo-mm" data-vo-mm="' + id + '"></div>') + codeBody(code, 'mermaid') + '</div>';
   }
   // a whole fence: diagrams and widgets draw as themselves, everything else is a code card
   function fence(lang, info, code, st, opts) {
     st = st || {}; opts = opts || {}; const L = String(lang || '').toLowerCase();
-    if (L === 'mermaid' && !st.incomplete) { const id = register('mermaid', code, ''); return '<div class="vo-mm" data-vo-mm="' + id + '"></div>'; }
+    if (L === 'mermaid' && !st.incomplete) return diagram(code, { canvas: opts.canvas });
     return card(lang, code, { filename: fenceFilename(info) || String(opts.title || ''), incomplete: !!st.incomplete, canvas: opts.canvas });
   }
   function render(md, opts) {
@@ -415,9 +444,31 @@
       catch (e) { flash(b, false, 'Failed'); }
     },
     pop(blk) { try { const u = URL.createObjectURL(new Blob([previewDoc(blk.lang, blk.code)], { type: 'text/html' })); window.open(u, '_blank', 'noopener'); } catch (_) {} },
+    // a diagram over the page: the chat's own diagram window hears vm:popout (from any root - the event is composed)
+    dpop(blk, id, b, c) { try { (c || document).dispatchEvent(new CustomEvent('vm:popout', { bubbles: true, composed: true, detail: { code: blk.code, title: blk.title || 'Diagram' } })); } catch (_) {} },
+    /* PANE, WHERE THERE IS NO PANE (owner, 2026-10-03: "the pane button on code doe nothing"): the chat's preview pane
+       lives in its side menu, which the chat-only page does not show - the page loaded into a frame nobody could see.
+       A host whose pane is on screen draws it there (its hook says so); otherwise it opens here, large, over the page. */
+    pane(blk) {
+      const m = document.createElement('div'); m.className = 'vo-modal';
+      m.innerHTML = '<div class="vo-modal-box" role="dialog" aria-label="Preview"><div class="vo-modal-h"><span class="code-lang"></span><span class="cb-sp"></span>'
+        + '<button class="cb-act" data-vom="pop">Pop out</button><button class="cb-act" data-vom="close">Close</button></div>'
+        + '<div class="vo-modal-b"><iframe class="vo-modal-fr" sandbox="allow-scripts" title="Preview"></iframe></div></div>';
+      m.querySelector('.code-lang').textContent = (blk.lang || 'plain') + (blk.filename ? ' · ' + blk.filename : '') + ' · preview';
+      m.querySelector('iframe').srcdoc = previewDoc(blk.lang, blk.code);
+      const close = () => { m.remove(); document.removeEventListener('keydown', key, true); };
+      const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+      m.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('[data-vom]');
+        if (a && a.getAttribute('data-vom') === 'pop') { DEFAULT.pop(blk); return; } if (a || e.target === m) close(); });
+      document.addEventListener('keydown', key, true);
+      adopt(document); document.body.appendChild(m);
+    },
     async canvas(blk, id, b) {
       const sid = session(); if (!sid) { flash(b, false, 'No session'); return; }
-      try { const r = await cap('canvas.add', { session_id: sid, kind: 'code', key: 'code:' + hash(blk.lang + '\u0000' + blk.code),
+      const dg = String(blk.lang).toLowerCase() === 'mermaid';
+      try { const r = await cap('canvas.add', dg
+          ? { session_id: sid, kind: 'diagram', key: 'diagram:' + hash(blk.code), content: { mermaid: blk.code, title: blk.title || 'Diagram' }, at: 'now' }
+          : { session_id: sid, kind: 'code', key: 'code:' + hash(blk.lang + '\u0000' + blk.code),
           content: { code: blk.code, lang: blk.lang, filename: blk.filename || '', title: blk.filename || (blk.lang || 'code') }, at: 'now' });
         flash(b, !!(r && r.ok), r && r.ok ? 'On canvas' : 'Failed');
         if (r && r.ok) document.dispatchEvent(new CustomEvent('vera:output:canvas', { detail: { id, key: r.key || '' } })); }
@@ -441,6 +492,12 @@
     if (name === 'edit') return edit(id);
     if (name === 'run') return run(id, b);
     if (name === 'outline') return outline(id, b, c);
+    if (name === 'dsrc') { const on = c.classList.toggle('src'); const s = b && b.querySelector('span'); if (s) s.textContent = on ? 'Hide source' : 'Source'; return; }
+    // the drawing's own downloads (the drawing is bare inside the card): where the host keeps it elsewhere it finds it
+    if (name === 'dsvg' || name === 'dpng') { const fmt = name === 'dsvg' ? 'svg' : 'png'; const hk = hookFor(c, 'dimg');
+      if (hk) { try { if (hk(blk, id, b, c, fmt)) return; } catch (_) {} }
+      const vm = c.querySelector('vera-mermaid'); if (vm && typeof vm._download === 'function') { try { vm._download(fmt); return; } catch (_) {} }
+      flash(b, false, 'Not drawn yet'); return; }
     const h = hookFor(c, name);
     if (h) { try { if (await h(blk, id, b, c)) return; } catch (e) { console.warn('VeraOut hook ' + name, e); } }
     if (name === 'preview') return preview(id);
@@ -454,25 +511,64 @@
      screenful's worth of rows); its bar opens the same code full screen, or - where the page has one - in the session's
      VS Code. Apply keeps your version: the card is redrawn and relinted, Run, Preview, Save, Canvas and Explode all use
      it, and the host hears about it (an `edited` hook, and a composed 'vera:code:edited' event) to keep it. */
+  /* THE EDITOR READS LIKE THE CARD (owner, 2026-10-03: "in the code editor there is not line numbers, lintiing or the
+     hover helper that displays function definitions - it needs to have these"). The text is typed into a textarea
+     laid exactly over the highlighted code - the same highlighter, the same font and rows - with the line numbers in a
+     gutter that stays put when the code scrolls sideways; the lint under it reruns as you type; and a pause over a call
+     shows what it is, as it does on the card (the definitions read from what you are typing). The inline editor and
+     the full-screen one are this one editor. */
+  function mountEditor(c, text, lang) {
+    const box = document.createElement('div'); box.className = 'vo-ed';
+    box.innerHTML = '<div class="vo-ed-sc"><pre class="vo-ed-g" aria-hidden="true"></pre><div class="vo-ed-c"><pre class="vo-ed-h" aria-hidden="true"><code' + langClass(lang) + '></code></pre>'
+      + '<textarea class="cb-editor vo-ed-ta" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea></div></div><div class="vo-ed-lint code-lint" style="display:none"></div>';
+    const sc = box.querySelector('.vo-ed-sc'), gut = box.querySelector('.vo-ed-g'), hl = box.querySelector('.vo-ed-h code'), ta = box.querySelector('textarea'), lint = box.querySelector('.vo-ed-lint');
+    ta.value = String(text || '');
+    let raf = 0, lt = 0, rows = 0;
+    const lintNow = () => { let d = []; try { d = lintCode(lang, ta.value); } catch (_) {}
+      lint.innerHTML = d.slice(0, 6).map((x) => '<div class="cl-' + (x.sev === 'err' ? 'err' : 'warn') + '"><span class="cl-ico">' + (x.sev === 'err' ? '&#9888;' : '&#9679;') + '</span>' + esc((x.line ? 'L' + x.line + ': ' : '') + x.msg) + '</div>').join('');
+      lint.style.display = d.length ? '' : 'none'; };
+    const paint = () => { raf = 0; const v = ta.value;
+      hl.innerHTML = highlight(v, lang) + '\n';      // the trailing row keeps a last empty line its height
+      const k = v.split('\n').length; if (k !== rows) { rows = k; let s = ''; for (let i = 1; i <= k; i++) s += i + '\n'; gut.textContent = s; }
+      clearTimeout(lt); lt = setTimeout(lintNow, 250); };
+    const refresh = () => { if (!raf) raf = requestAnimationFrame(paint); };
+    ta.addEventListener('input', refresh);
+    // what a name is, under the pointer: the textarea is on top, so the token under it is found by looking through it
+    let ht = 0;
+    ta.addEventListener('mousemove', (e) => { clearTimeout(ht); const x = e.clientX, y = e.clientY; ht = setTimeout(() => {
+      const rt = ta.getRootNode ? ta.getRootNode() : document; const look = rt && rt.elementFromPoint ? rt : document;
+      let el = null; ta.style.pointerEvents = 'none'; try { el = look.elementFromPoint(x, y); } catch (_) {} ta.style.pointerEvents = '';
+      const tok = el && el.closest && el.closest('.vo-ed-h span.hl-fn, .vo-ed-h span.hl-type');
+      if (tok) { try { tipShow(tok, c, ta.value); } catch (_) {} } else tipHide(); }, 220); });
+    ta.addEventListener('mouseleave', () => { clearTimeout(ht); tipHide(); });
+    ta.addEventListener('keydown', () => tipHide());
+    paint(); lintNow();
+    return { box, ta, sc, refresh };
+  }
+  // the editor's keys: Tab indents, Ctrl+Enter applies, Esc cancels
+  function edKeys(ed, done) {
+    ed.ta.addEventListener('keydown', (e) => { const ta = ed.ta;
+      if (e.key === 'Tab') { e.preventDefault(); const s = ta.selectionStart, en = ta.selectionEnd; ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(en); ta.selectionStart = ta.selectionEnd = s + 2; ed.refresh(); }
+      else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); done(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); done(false); } });
+  }
   function edit(id) {
     const c = cardOf(id), blk = blocks[id]; if (!c || !blk || c.classList.contains('editing')) return;
     const pre = c.querySelector(':scope > pre') || c.querySelector(':scope > .vc-live, :scope > .cb-prev'); if (!pre) return;
     c.classList.add('editing'); if (c.classList.contains('prev')) preview(id, false);
-    const ta = document.createElement('textarea'); ta.className = 'cb-editor'; ta.spellcheck = false; ta.value = blk.code;
+    const ed = mountEditor(c, blk.code, blk.lang);
     const rows = blk.code.split('\n').length;
-    ta.style.height = Math.round(Math.min(window.innerHeight * 0.7, Math.max(320, rows * 17.5 + 40))) + 'px';
+    ed.sc.style.height = Math.round(Math.min(window.innerHeight * 0.7, Math.max(320, rows * 17.5 + 40))) + 'px';
     const bar = document.createElement('div'); bar.className = 'cb-editbar';
     bar.innerHTML = '<span class="cb-edithint">editing · Ctrl+Enter applies · Esc cancels</span><span class="cb-sp"></span>'
-      + btn('edit-full', 'full', 'Full screen', 'Edit it full screen, with line numbers')
+      + btn('edit-full', 'full', 'Full screen', 'Edit it full screen')
       + (hookFor(c, 'vscode') ? btn('edit-vscode', 'vscode', 'VS Code', "Open it in the session's VS Code") : '')
       + '<button class="cb-act" data-vo="edit-cancel">Cancel</button><button class="cb-act run" data-vo="edit-apply">Apply</button>';
-    pre.after(ta); ta.after(bar);
-    ta.addEventListener('keydown', (e) => {
-      if (e.key === 'Tab') { e.preventDefault(); const s = ta.selectionStart, en = ta.selectionEnd; ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(en); ta.selectionStart = ta.selectionEnd = s + 2; }
-      else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); editDone(id, true); }
-      else if (e.key === 'Escape') { e.preventDefault(); editDone(id, false); } });
-    try { ta.focus(); } catch (_) {}
+    pre.after(ed.box); ed.box.after(bar);
+    edKeys(ed, (apply) => editDone(id, apply));
+    try { ed.ta.focus({ preventScroll: true }); } catch (_) {}
   }
+  const edText = (c) => { const ta = c && c.querySelector(':scope > .vo-ed .cb-editor'); return ta ? ta : null; };
   // the code a card holds, set - redrawn with its numbered lines, relinted, its old output cleared, the host told
   function applyCode(id, next) {
     const c = cardOf(id), blk = blocks[id]; if (!c || !blk || next === blk.code) return;
@@ -480,6 +576,8 @@
     const pre = c.querySelector(':scope > pre');
     if (pre) { const t = document.createElement('div'); t.innerHTML = codeBody(next, blk.lang, !pre.classList.contains('vo-lines') ? false : undefined); pre.replaceWith(t.firstChild); }
     c.dataset.edited = '1'; lintCard(c);
+    // a diagram is redrawn from the new source where its drawing is in the card (the canvas redraws its own on update)
+    if (c.classList.contains('vo-diagram')) { const vm = c.querySelector('vera-mermaid'); if (vm && typeof vm.render === 'function') { try { vm.render(next); } catch (_) {} } }
     const out = c.querySelector(':scope > .code-exec-out'); if (out) { out.style.display = 'none'; out.innerHTML = ''; }
     if (c.classList.contains('prev')) preview(id, true);
     const detail = { id, lang: blk.lang, code: next, before, filename: blk.filename };
@@ -488,52 +586,49 @@
   }
   function editDone(id, apply) {
     const c = cardOf(id), blk = blocks[id]; if (!c || !blk) return;
-    const ta = c.querySelector(':scope > .cb-editor'), bar = c.querySelector(':scope > .cb-editbar');
-    const next = ta ? ta.value : blk.code; if (ta) ta.remove(); if (bar) bar.remove(); c.classList.remove('editing');
+    const box = c.querySelector(':scope > .vo-ed'), ta = edText(c), bar = c.querySelector(':scope > .cb-editbar');
+    const next = ta ? ta.value : blk.code; if (box) box.remove(); if (bar) bar.remove(); c.classList.remove('editing'); tipHide();
     if (apply) applyCode(id, next);
     try { c.dispatchEvent(new CustomEvent('vera:code:editend', { bubbles: true, composed: true, detail: { id } })); } catch (_) {}
   }
   // full screen: a page-wide editor with a line gutter that follows its scroll; Apply writes back through the card
   function editFull(id) {
     const c = cardOf(id), blk = blocks[id]; if (!c || !blk) return;
-    const inline = c.querySelector(':scope > .cb-editor'); const text = inline ? inline.value : blk.code;
+    const inline = edText(c); const text = inline ? inline.value : blk.code;
     const m = document.createElement('div'); m.className = 'vo-modal';
     m.innerHTML = '<div class="vo-modal-box" role="dialog" aria-label="Edit code"><div class="vo-modal-h"><span class="code-lang"></span><span class="cb-sp"></span>'
       + '<span class="cb-edithint">Ctrl+Enter applies · Esc cancels</span><button class="cb-act" data-vom="cancel">Cancel</button><button class="cb-act run" data-vom="apply">Apply</button></div>'
-      + '<div class="vo-modal-b"><pre class="vo-gutter"></pre><textarea class="vo-modal-ta" spellcheck="false"></textarea></div></div>';
+      + '<div class="vo-modal-b"></div></div>';
     m.querySelector('.code-lang').textContent = (blk.lang || 'plain') + (blk.filename ? ' · ' + blk.filename : '');
-    const ta = m.querySelector('textarea'), gut = m.querySelector('.vo-gutter'); ta.value = text;
-    const num = () => { const n = ta.value.split('\n').length; let s = ''; for (let i = 1; i <= n; i++) s += i + '\n'; gut.textContent = s; };
-    num(); ta.addEventListener('input', num); ta.addEventListener('scroll', () => { gut.scrollTop = ta.scrollTop; });
-    const close = (apply) => { const v = ta.value; m.remove();
-      if (inline) { inline.value = v; if (apply) editDone(id, true); } else if (apply) applyCode(id, v); };
+    const ed = mountEditor(c, text, blk.lang); m.querySelector('.vo-modal-b').appendChild(ed.box);
+    const close = (apply) => { const v = ed.ta.value; m.remove(); tipHide();
+      if (inline) { inline.value = v; inline.dispatchEvent(new Event('input')); if (apply) editDone(id, true); } else if (apply) applyCode(id, v); };
     m.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('[data-vom]'); if (a) close(a.getAttribute('data-vom') === 'apply'); else if (e.target === m) close(false); });
-    ta.addEventListener('keydown', (e) => {
-      if (e.key === 'Tab') { e.preventDefault(); const s = ta.selectionStart, en = ta.selectionEnd; ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(en); ta.selectionStart = ta.selectionEnd = s + 2; num(); }
-      else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); close(true); }
-      else if (e.key === 'Escape') { e.preventDefault(); close(false); } });
-    adopt(document); document.body.appendChild(m); try { ta.focus(); } catch (_) {}
+    edKeys(ed, close);
+    adopt(document); document.body.appendChild(m); try { ed.ta.focus(); } catch (_) {}
   }
 
   // ── the reader's helpers: what a name is, where it is defined, where else it is used ────────────────────
   // every definition in the scope a card is read in: its message, its canvas item, its loop answer - so a call in one
   // block finds the function another block of the same reply defined
   function scopeOf(c) { return (c.closest && c.closest('.msg-body, .it[data-key], [data-part], .alo-final-val, .vo-md')) || c.parentNode || c; }
-  function definitions(c) {
-    const out = {};
+  // (text: what an open editor holds for card c - its definitions are read from what is being typed)
+  function definitions(c, text) {
+    const out = {}; const own = c.getAttribute('data-cb');
     scopeOf(c).querySelectorAll('.code-card[data-cb]').forEach((k) => { const id = k.getAttribute('data-cb'), blk = blocks[id]; if (!blk) return;
-      const sy = symbols(blk.code, blk.lang); Object.keys(sy).forEach((n) => { if (!out[n] || id === c.getAttribute('data-cb')) out[n] = Object.assign({ id, file: blk.filename || blk.lang || '' }, sy[n]); }); });
+      const sy = symbols(id === own && text != null ? text : blk.code, blk.lang); Object.keys(sy).forEach((n) => { if (!out[n] || id === own) out[n] = Object.assign({ id, file: blk.filename || blk.lang || '' }, sy[n]); }); });
     return out;
   }
   let tip = null, tipT = 0;
-  function tipShow(tok) {
-    const c = tok.closest('.code-card'); if (!c) return;
+  function tipShow(tok, card, text) {
+    const c = card || tok.closest('.code-card'); if (!c) return;
+    const inEd = text != null;
     const name = String(tok.textContent || '').trim(); if (!/^[A-Za-z_$][\w$]*$/.test(name)) return;
-    const d = definitions(c)[name];
+    const d = definitions(c, text)[name];
     const line = tok.closest('.vc-line'); const atDef = d && line && d.id === c.getAttribute('data-cb') && +line.dataset.line === d.line;
     let html;
     if (d && !atDef) html = '<div class="vo-tip-k">' + esc(d.kind) + (d.id !== c.getAttribute('data-cb') ? ' · ' + esc(d.file) : '') + ' · line ' + d.line + '</div><code>' + esc(d.sig) + '</code>'
-      + (d.doc ? '<div class="vo-tip-d">' + esc(d.doc) + '</div>' : '') + '<div class="vo-tip-a">click to go to it</div>';
+      + (d.doc ? '<div class="vo-tip-d">' + esc(d.doc) + '</div>' : '') + (inEd ? '' : '<div class="vo-tip-a">click to go to it</div>');
     else if (atDef) html = '<div class="vo-tip-k">' + esc(d.kind) + ' · defined here</div>' + (d.doc ? '<div class="vo-tip-d">' + esc(d.doc) + '</div>' : '')
       + '<div class="vo-tip-a">' + usesOf(c, name) + ' use' + (usesOf(c, name) === 1 ? '' : 's') + ' in this block</div>';
     else if (BUILTIN[name]) html = '<div class="vo-tip-k">built-in</div><code>' + esc(BUILTIN[name]) + '</code>';
@@ -586,7 +681,7 @@
       if (a === 'edit-apply') return editDone(id, true);
       if (a === 'edit-cancel') return editDone(id, false);
       if (a === 'edit-full') return editFull(id);
-      if (a === 'edit-vscode') { const h = hookFor(c, 'vscode'); const ta = c.querySelector(':scope > .cb-editor'); if (h) h(Object.assign({}, blocks[id], { code: ta ? ta.value : blocks[id].code }), id, b, c); return; }
+      if (a === 'edit-vscode') { const h = hookFor(c, 'vscode'); const ta = edText(c); if (h) h(Object.assign({}, blocks[id], { code: ta ? ta.value : blocks[id].code }), id, b, c); return; }
       if (a === 'xp-close') { const x = b.closest('.xp-inline'); if (x) x.remove(); return; }
       act(a, id, b, c);
     });
@@ -610,6 +705,8 @@
         const n = its[(i + (e.key === 'ArrowDown' ? 1 : -1) + its.length) % its.length]; if (n) n.focus(); }
     });
     root.addEventListener('mousedown', (e) => { if (!(e.target && e.target.closest && e.target.closest('.vo-acts .ma-dd'))) menuClose(root); }, true);
+    // a card's menu is placed over the page: it does not follow a scroll, so a scroll closes it
+    root.addEventListener('scroll', (e) => { if (!(e.target && e.target.closest && e.target.closest('.ma-menu'))) root.querySelectorAll('.vo-send .ma-dd.open').forEach((x) => x.classList.remove('open')); }, true);
     if (root !== document) adopt(root);
     return root;
   }
@@ -634,29 +731,52 @@
       + (o.explode === false ? '' : mact('explode', 'explode', 'Explode', 'A structured diagram of this - its code, or its prose'))
       + (o.canvas === false ? '' : mact('canvas', 'canvas', 'Canvas', 'Put this on the session canvas, beside the chat'))
       + (o.extra || '')
-      + '<span class="ma-sep"></span><div class="ma-dd">'
+      + '<span class="ma-sep"></span>' + sendDd(o) + '</div>';
+  }
+  // the "Send to" dropdown: the same deliveries wherever it is drawn (o.skip: the ones that make no sense there)
+  function sendDd(o) {
+    o = o || {}; const has = (n) => !!hooks[n]; const no = (n) => (o.skip || []).indexOf(n) >= 0;
+    return '<div class="ma-dd">'
       +   mact('menu', 'send', 'Send to', 'Deliver this somewhere else - the original stays where it is', 'ma-ddb')
       +   '<div class="ma-menu" role="menu">'
       +     mitem('html', 'html', 'HTML report', 'a rich document - on the canvas or a tab (Settings › Delivery)')
-      +     mitem('podcast', 'podcast', 'Podcast', 'a spoken episode, multi-voice')
+      +     (no('podcast') ? '' : mitem('podcast', 'podcast', 'Podcast', 'a spoken episode, multi-voice'))
       +     mitem('notebook', 'notebook', 'Notebook', 'a cell in a notebook')
       +     (has('ide') ? mitem('ide', 'ide', 'A file in the IDE', 'saved through the IDE') : '')
       +     (has('project') ? mitem('project', 'project', 'A project', 'added to a dream-system project') : '')
       +     (has('think') ? mitem('think', 'think', 'Think about it later', 'Vera revisits it when idle') : '')
       +     '<hr>' + mitem('channel', 'channel', 'Another channel…', 'email, telegram, memory - with a style')
-      +   '</div></div></div>';
+      +   '</div></div>';
+  }
+  /* SEND TO, ON EVERY CARD (owner, 2026-10-03: "id also like the 'send to' menu to be integrated into the code and
+     markdown and html rendering so it can be sent to other outputs"): a code card, a page, a diagram carry the same
+     menu as the prose row, in their own bar. It hands on the code as a fence (a file in the IDE gets the bare code).
+       VeraOut.sendMenu(id, {getMd, raw, title, skip}) */
+  function sendMenu(id, o) {
+    o = o || {}; prose[id] = { md: String(o.md || ''), title: String(o.title || ''), getMd: o.getMd || null, raw: o.raw || null };
+    return '<div class="vo-acts vo-send" data-vo-prose="' + esc(id) + '">' + sendDd(o) + '</div>';
   }
   function menuClose(root) { (root || document).querySelectorAll('.vo-acts .ma-dd.open').forEach((x) => x.classList.remove('open')); }
   function notify(el, html) { const h = hookFor(el, 'notify'); if (h) { try { h(html); } catch (_) {} } }
   async function proseAct(b) {
     const row = b.closest('.vo-acts'); const id = row && row.getAttribute('data-vo-prose'); const p = prose[id]; if (!p) return;
-    const a = b.getAttribute('data-vp'); const md = p.getMd ? String(p.getMd() || '') : p.md;
+    const a = b.getAttribute('data-vp'); const md = (a === 'ide' && p.raw) ? String(p.raw() || '') : p.getMd ? String(p.getMd() || '') : p.md;
     const title = p.title || (md.trim().split('\n').find((l) => l.trim()) || 'Output').replace(/^#+\s*/, '').slice(0, 120);
     const ctx = { id, md, title, btn: b, row };
     if (a === 'menu') { const dd = b.closest('.ma-dd'); const open = !dd.classList.contains('open'); menuClose(row.getRootNode ? row.getRootNode() : document);
       if (!open) return; dd.classList.add('open'); const m = dd.querySelector('.ma-menu'); m.classList.remove('up');
-      const r = m.getBoundingClientRect(); if (r.bottom > window.innerHeight - 8 && r.height < r.top) m.classList.add('up');
-      try { m.querySelector('.ma-it').focus(); } catch (_) {} return; }
+      if (row.classList.contains('vo-send')) {
+        // in a card's bar: over the page, not inside the card (a card clips what overflows it)
+        m.style.position = 'fixed'; m.style.zIndex = '10060'; m.style.left = '0px'; m.style.top = '0px';   // measured as it will be drawn
+        const r = b.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
+        const wantL = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8));
+        const wantT = r.bottom + 4 + h > window.innerHeight - 8 && r.top - h - 4 > 8 ? r.top - h - 4 : r.bottom + 4;
+        m.style.left = wantL + 'px'; m.style.top = wantT + 'px';
+        // an ancestor that makes a containing block (a transform, a filter, contain) moves "fixed" off the viewport: put it right
+        const got = m.getBoundingClientRect();
+        if (Math.abs(got.left - wantL) > 0.5 || Math.abs(got.top - wantT) > 0.5) { m.style.left = (2 * wantL - got.left) + 'px'; m.style.top = (2 * wantT - got.top) + 'px'; }
+      } else { const r = m.getBoundingClientRect(); if (r.bottom > window.innerHeight - 8 && r.height < r.top) m.classList.add('up'); }
+      try { m.querySelector('.ma-it').focus({ preventScroll: true }); } catch (_) {} return; }
     menuClose(row.getRootNode ? row.getRootNode() : document);
     const h = hookFor(row, 'prose_' + a) || (HOSTWIDE[a] ? hookFor(row, a) : null);
     if (h) { try { if (await h(ctx)) return; } catch (e) { console.warn('VeraOut prose ' + a, e); } }
@@ -705,7 +825,8 @@
     const mm = root.querySelectorAll('.vo-mm[data-vo-mm]:not([data-drawn])');
     if (mm.length) ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid').then(() => mm.forEach((slot) => {
       const blk = blocks[slot.getAttribute('data-vo-mm')]; if (!blk || slot.dataset.drawn) return; slot.dataset.drawn = '1';
-      const el = document.createElement('vera-mermaid'); el.setAttribute('popout', ''); slot.appendChild(el);
+      // inside a diagram card the card's bar is the chrome: the drawing is bare
+      const el = document.createElement('vera-mermaid'); el.setAttribute(slot.closest('.vo-diagram') ? 'bare' : 'popout', ''); slot.appendChild(el);
       try { el.render(blk.code); } catch (_) { slot.textContent = blk.code; } }));
   }
 
@@ -766,7 +887,7 @@
 .code-card .vo-outline{display:flex;flex-direction:column;padding:4px;gap:1px;background:var(--bg1,#14161b);border-bottom:1px solid var(--border,rgba(255,255,255,.09));max-height:220px;overflow:auto}
 .code-card .vo-ol-it{display:flex;align-items:baseline;gap:8px;border:none;background:none;text-align:left;padding:4px 8px;border-radius:var(--r-sm,5px);color:var(--text,#d8dce4);font:11px var(--mono,ui-monospace,monospace);cursor:pointer}
 .code-card .vo-ol-it:hover{background:var(--surf2,rgba(255,255,255,.06))}
-.code-card .vo-ol-k{width:58px;color:var(--dim2,#8a92a0);font-size:9.5px;text-transform:uppercase;letter-spacing:.06em}.code-card .vo-ol-it i{margin-left:auto;font-style:normal;color:var(--dim,#6b7280);font-size:9.5px}
+.code-card .vo-ol-k{flex:0 0 auto;min-width:64px;white-space:nowrap;color:var(--dim2,#8a92a0);font-size:9.5px;text-transform:uppercase;letter-spacing:.06em}.code-card .vo-ol-it b{white-space:nowrap}.code-card .vo-ol-it i{margin-left:auto;padding-left:12px;white-space:nowrap;font-style:normal;color:var(--dim,#6b7280);font-size:9.5px}
 .vo-tip{position:fixed;z-index:10050;display:none;padding:8px 10px;border-radius:var(--ui-radius,8px);background:var(--surf,var(--bg1,#1a1d24));color:var(--text,#d8dce4);box-shadow:var(--elev,0 12px 34px -16px rgba(0,0,0,.7)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.12)));font:11.5px/1.45 var(--f-ui,var(--sans,system-ui,sans-serif));pointer-events:none}
 .vo-tip code{display:block;font:11px/1.5 var(--mono,ui-monospace,monospace);color:var(--acc4,#8fa7d9);white-space:pre-wrap;word-break:break-word}
 .vo-tip .vo-tip-k{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a92a0);margin-bottom:3px}
@@ -780,8 +901,35 @@
 .vo-modal-h .cb-act:hover{background:var(--surf2,rgba(255,255,255,.06));color:var(--text,#d8dce4)}.vo-modal-h .cb-act.run{color:var(--acc2,#8fb87a)}
 .vo-modal-h .cb-edithint{color:var(--dim2,#8a92a0);margin-right:6px}
 .vo-modal-b{flex:1;display:flex;min-height:0}
-.vo-gutter{margin:0;padding:12px 8px 12px 10px;min-width:3.4em;text-align:right;overflow:hidden;color:var(--dim,#6b7280);opacity:.6;font:12.5px/1.55 var(--mono,ui-monospace,monospace);background:var(--bg1,#14161b);user-select:none}
-.vo-modal-ta{flex:1;margin:0;padding:12px 14px;border:none;outline:none;resize:none;background:transparent;color:var(--text,#d8dce4);font:12.5px/1.55 var(--mono,ui-monospace,monospace);tab-size:2;white-space:pre;overflow:auto}
+.vo-modal-fr{flex:1;width:100%;height:100%;border:0;background:#fff}
+/* the editor: the highlighted code under a transparent textarea, the same metrics to the pixel (a page's own pre and
+   textarea rules must not move one off the other), the line numbers in a gutter that stays when the code scrolls across */
+.vo-ed{border-top:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg0,#0e0f12)}
+.vo-ed-sc{display:flex;overflow:auto;box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
+.vo-ed .vo-ed-g{position:sticky;left:0;z-index:1;flex:0 0 auto;margin:0!important;padding:10px 8px 10px 6px!important;min-width:2.6em;max-height:none!important;overflow:visible!important;text-align:right;color:var(--dim,#6b7280);background:var(--bg1,#14161b)!important;border:0!important;user-select:none;-webkit-user-select:none;font:11.5px/1.5 var(--mono,ui-monospace,monospace)!important}
+.vo-ed-c{position:relative;display:grid;flex:1 0 auto}
+.vo-ed .vo-ed-h,.vo-ed .vo-ed-ta{grid-area:1/1;margin:0!important;padding:10px 12px!important;border:0!important;border-radius:0!important;box-shadow:none!important;font:11.5px/1.5 var(--mono,ui-monospace,monospace)!important;letter-spacing:normal!important;word-spacing:normal!important;tab-size:2;-moz-tab-size:2;white-space:pre!important;overflow-wrap:normal!important;word-break:normal!important;overflow:hidden!important;box-sizing:border-box!important;text-align:left}
+.vo-ed .vo-ed-h{color:var(--text,#d8dce4);background:transparent!important;max-height:none!important}
+.vo-ed .vo-ed-h code{font:inherit!important;white-space:pre!important;background:transparent;padding:0!important;color:inherit}
+.vo-ed .vo-ed-ta{width:100%;height:100%;min-width:0;min-height:0;resize:none;outline:none;background:transparent!important;color:transparent!important;-webkit-text-fill-color:transparent;caret-color:var(--text,#d8dce4)}
+.vo-ed .vo-ed-ta::selection{background:color-mix(in srgb,var(--acc,#5a9e8f) 32%,transparent)}
+.vo-ed .vo-ed-lint{border-top:1px solid var(--border,rgba(255,255,255,.09))}
+.vo-modal .vo-ed{flex:1;display:flex;flex-direction:column;min-height:0;border-top:0}
+.vo-modal .vo-ed-sc{flex:1;min-height:0}
+.vo-modal .vo-ed .vo-ed-g{font-size:12.5px!important;line-height:1.55!important;padding:12px 8px 12px 10px!important}
+.vo-modal .vo-ed .vo-ed-h,.vo-modal .vo-ed .vo-ed-ta{font-size:12.5px!important;line-height:1.55!important;padding:12px 14px!important}
+.vo-ed .code-lint .cl-err{color:var(--err,#e06c6c)}.vo-ed .code-lint .cl-warn{color:var(--warn,#d9a54a)}
+.vo-ed .code-lint{background:var(--bg0,#0e0f12);font-family:var(--mono,ui-monospace,monospace);font-size:10px;line-height:1.55;padding:4px 10px}
+/* a diagram card: the drawing, its source under it on request */
+.code-card.vo-diagram > pre{display:none}
+.code-card.vo-diagram.src > pre{display:block;border-top:1px solid var(--border,rgba(255,255,255,.09))}
+.code-card.vo-diagram.editing > pre{display:none}
+.code-card.vo-diagram > .vo-mm,.code-card.vo-diagram > .mm-slot{margin:0!important;padding:8px;background:var(--bg0,#0e0f12)}
+/* "Send to" in a card's bar: the bar's own look; the menu opens over the page */
+.code-bar .vo-send,.vc-codehead .vo-send{display:inline-flex}
+.code-bar .vo-send .mact,.vc-codehead .vo-send .mact{padding:3px 7px;font:500 10px/1 var(--f-ui,var(--sans,system-ui,sans-serif));color:var(--dim2,#8a92a0)}
+.code-bar .vo-send svg,.vc-codehead .vo-send svg{width:12px;height:12px}
+.code-bar .vo-send:has(.vo-chs),.vc-codehead .vo-send:has(.vo-chs){flex-basis:100%;flex-wrap:wrap}
 /* the prose row (the same as the chat's reply row, for writing drawn anywhere) */
 .vo-acts{display:flex;align-items:center;gap:2px;flex-wrap:wrap;position:relative}
 .vo-acts .mact{display:inline-flex;align-items:center;gap:5px;border:none;border-radius:var(--r-sm,6px);background:transparent;color:var(--t3,var(--dim,#6b7280));font:500 10.5px/1 var(--f-ui,var(--sans,system-ui,sans-serif));padding:5px 8px;cursor:pointer}
@@ -807,7 +955,7 @@
     if (root === document) host.insertBefore(st, host.firstChild); else host.appendChild(st);   // the document's own sheets still win there
   }
 
-  window.VeraOut = { version: 2, render, card, bar, hostBtn, icons: I, fence, highlight, lintCode, lintCard, hydrate, wire, adopt, preview, run, edit, editFull, applyCode, symbols, codeBody, proseMenu, prose,
+  window.VeraOut = { version: 2, render, card, diagram, sendMenu, bar, hostBtn, icons: I, fence, highlight, lintCode, lintCard, hydrate, wire, adopt, preview, run, edit, editFull, applyCode, symbols, codeBody, proseMenu, prose,
     register, blocks, hooks, previewable, runnable, wholePage, previewDoc, fenceFilename, langClass, ensureLib, css: CSS };
   const boot = () => { adopt(document); wire(document); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();

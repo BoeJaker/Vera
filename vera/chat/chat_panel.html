@@ -865,6 +865,12 @@ body.has-cols #chatStack{flex:1 1 0;min-width:360px}
 /* the measure is the column's: never wider than the space the chat has (the columns, the grown graph, the harness frame) */
 #chatColumn{--measure:min(736px, calc(100% - 32px))}
 body.ctx-grown #chatColumn,body.ctx-remote #chatColumn{--measure:min(736px, calc(100% - var(--ctx-gutter,16px) - 32px))}
+/* Full: the conversation uses the room there is (setViewMode) */
+body[data-width="full"] #chatColumn{--measure:min(1240px, calc(100% - 32px))}
+body[data-width="full"].ctx-grown #chatColumn,body[data-width="full"].ctx-remote #chatColumn{--measure:min(1240px, calc(100% - var(--ctx-gutter,16px) - 32px))}
+/* ...and the minimal layout's own 760px caps (the turn, its strips) give way to the measure */
+body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #msgs > .mwrap,body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{max-width:100%}
+body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #ctxStrip,body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #docChips,body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #docEditor,body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #podcastBar{max-width:var(--measure)}
 /* the canvas column's handle: dragged, the canvas keeps its width; the chat flows into the rest */
 #cvResize{display:none;width:5px;flex:0 0 5px;cursor:col-resize;background:transparent;transition:background .15s;z-index:10;align-self:stretch}
 #cvResize:hover,#cvResize.drag{background:var(--acc)!important}
@@ -1508,6 +1514,8 @@ body.hdr-folded #hdrMore::after{content:'';position:absolute;right:5px;top:5px;w
 #msgs .mwrap{width:var(--measure);max-width:100%;margin:0 auto;box-sizing:border-box;padding:calc(var(--mgap) * .55) 0;border-bottom:none;gap:0;background:transparent}
 #msgs .mwrap + .mwrap{box-shadow:inset 0 1px 0 var(--bd,var(--border,rgba(255,255,255,.09)))}
 #msgs .mwrap.u{background:transparent;border-left:none}
+/* a message's explode panel sits on the reply's own column - past the gutter, inside the padding - not the turn's full width */
+#msgs .mwrap > .xp-inline{margin-left:72px!important;margin-right:14px!important}
 #msgs .mwrap.u.pin{border-left:none;box-shadow:none}
 #msgs .mwrap + .mwrap.u{box-shadow:inset 0 1px 0 var(--bd,var(--border,rgba(255,255,255,.09)))}
 #msgs .mwrap .msg-user-line{display:flex;gap:14px;margin:0}
@@ -2074,7 +2082,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
 
   <!-- Layout toggles -->
   <div class="tb-group" title="Panel layout">
-    <button class="tb-btn" id="viewToggleBtn" onclick="CH.toggleViewMode()" title="Toggle minimal / full layout — minimal centres the input box for empty sessions">Min</button>
+    <button class="tb-btn" id="viewToggleBtn" onclick="CH.toggleViewMode()" title="The width of the conversation: Min is the usual width, Full uses the room there is">Min</button>
     <button class="tb-btn" onclick="CH.toggleRight()" title="Toggle the side menu (history, config, context, graphs…)">Menu</button>
   </div>
   <span class="xmseg pseg" title="Open a section beside the chat — the tri-page, with the columns you pick">
@@ -6132,6 +6140,8 @@ IMPORTANT:
         // Bare inside an art-card (the card is the frame) and fills it;
         // standalone inline gets its own toolbar + a pop-out button.
         if(bare){ el.setAttribute('bare',''); el.setAttribute('fill',''); }
+        // inside a diagram card (VeraOut.diagram) the card's bar is the chrome - Copy, Edit, Source, Pop out, SVG, PNG
+        else if(slot.closest('.vo-diagram')){ el.setAttribute('bare',''); el.removeAttribute('popout'); }
         else{ el.setAttribute('popout',''); }
         slot.innerHTML=''; slot.appendChild(el);
         try{ el.render(code); }catch(_){}
@@ -7560,11 +7570,12 @@ IMPORTANT:
     if(!bubEl||_cvOneplaceOff()) return;
     bubEl.querySelectorAll('.code-card, .mm-slot').forEach(el=>{
       if(el.closest('.cap-inline')) return;                       // a tool card's own drawing is the tool card's
+      if(el.classList.contains('mm-slot')&&el.parentElement&&el.parentElement.closest('.code-card')) return;   // a diagram card moves whole
       if(!el.classList.contains('cv-elsewhere')) el.classList.add('cv-elsewhere');
       const nx=el.nextElementSibling; if(nx&&nx.classList&&nx.classList.contains('cv-moved')) return;
       const lang=((el.querySelector('code')||{}).className||'').match(/language-([\w-]+)/);
       const chip=document.createElement('button'); chip.className='cv-moved'; chip.type='button';
-      chip.title='On the session canvas'; chip.textContent=(el.classList.contains('mm-slot')?'diagram':(lang?lang[1]:'code'))+(streaming?' · streaming to the canvas ↗':' · on the canvas ↗');
+      chip.title='On the session canvas'; chip.textContent=(el.classList.contains('mm-slot')||el.classList.contains('vo-diagram')?'diagram':(lang?lang[1]:'code'))+(streaming?' · streaming to the canvas ↗':' · on the canvas ↗');
       el.after(chip);
     });
   }
@@ -8780,7 +8791,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       if(_MM_LIVE_KEY && !_mmLiveTaken){ _mmLiveTaken=true; const mid='mml-'+_MM_LIVE_KEY; _MM_BLOCKS[mid]=raw; return `<div class="mm-slot mm-live" data-mm="${mid}" data-mm-live="1" data-live="1" style="margin:8px 0"></div>`; }
       // every other fence: a slot the hydrator fills once it is closed (a second diagram still being typed stays a
       // code card until it closes, as it always has - only one drawing can be the live one)
-      if(!st.incomplete && (opts.liveMermaid!==false || _MM_LIVE_KEY)){ const mid='mm'+(++_mmSeq); _MM_BLOCKS[mid]=raw; return `<div class="mm-slot" data-mm="${mid}" style="margin:8px 0"></div>`; }
+      if(!st.incomplete && (opts.liveMermaid!==false || _MM_LIVE_KEY)){ const mid='mm'+(++_mmSeq); _MM_BLOCKS[mid]=raw; const slot=`<div class="mm-slot" data-mm="${mid}" style="margin:8px 0"></div>`;
+        // the diagram card (vera_output.js): the code card's bar over the drawing - Copy, Edit, Source, Pop out, Save,
+        // Canvas, Send to (owner, 2026-10-03: "mermaid diagrams ... need the unified menu style and the relevant options")
+        return (typeof VeraOut!=='undefined' && VeraOut.diagram) ? VeraOut.diagram(raw, {body:slot}) : slot; }
     }
     // ```widget fences are widgets in the reply (the record the model wrote)
     if(L==='widget' && !st.incomplete){ try{ const w=_widgetFence(raw); if(w) return w; }catch(_){} }
@@ -8845,8 +8859,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       explode:(blk,id,b)=>{ _codeExplode(id,b); return true; },
       save:(blk,id,b)=>{ _codeSaveArtifact(id,b); return true; },
       pop:(blk,id)=>{ _codePop(id); return true; },
-      pane:(blk,id)=>{ _codePreview(id); return true; },
-      edited:(blk,id,d,card)=>{ try{ const body=card.closest('.msg-body'); const md=body&&body.dataset.markdown;
+      pane:(blk,id)=>{ const r=document.getElementById('rightRail'); if(!r||r.getBoundingClientRect().width<40||getComputedStyle(r).display==='none') return false;
+        _codePreview(id); const f=document.getElementById('codePreviewFrame'); return !!(f&&f.getBoundingClientRect().width>40); },
+      edited:(blk,id,d,card)=>{ try{ const sl=card.querySelector('.mm-slot[data-mm]'); if(sl) _MM_BLOCKS[sl.dataset.mm]=d.code; }catch(_){}
+        try{ const body=card.closest('.msg-body'); const md=body&&body.dataset.markdown;
         if(md&&d.before&&md.indexOf(d.before)>=0) body.dataset.markdown=md.replace(d.before, d.code); }catch(_){} },
       // ── what the page does for a card or a piece of writing ANYWHERE on it - the canvas's items and the loop's
       //    answers included (these reach every root: the kit's HOSTWIDE set) ──
@@ -9002,7 +9018,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   const _LANG_EXT={html:'html',htm:'html',css:'css',js:'js',javascript:'js',
     jsx:'jsx',ts:'ts',tsx:'tsx',python:'py',py:'py',json:'json',markdown:'md',
     md:'md',bash:'sh',sh:'sh',shell:'sh',yaml:'yaml',yml:'yaml',svg:'svg',
-    sql:'sql',go:'go',rust:'rs',rs:'rs',java:'java',c:'c',cpp:'cpp',plain:'txt',text:'txt'};
+    sql:'sql',go:'go',rust:'rs',rs:'rs',java:'java',c:'c',cpp:'cpp',plain:'txt',text:'txt',mermaid:'mmd'};
   async function _codeSaveArtifact(id, btn){
     const blk=_CODE_BLOCKS[id]; if(!blk) return;
     const ext=_LANG_EXT[(blk.lang||'').toLowerCase()]||'txt';
@@ -20565,22 +20581,21 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
      The user can also pin "full" view explicitly via the view
      toggle button (top bar) — that disables the minimal CSS
      altogether. Persists across reloads in localStorage. */
+  /* FULL IS WIDER, MIN IS AS IT IS (owner, 2026-10-03: "there is a full and min mode in the chat ui - its not working it
+     should be full is a wider width to the chat messages and min is the default (the width it is now)"). The switch
+     used to turn the minimal layout off altogether, and every width is the column's measure (--measure), which it
+     never touched - so the conversation stayed the same width either way. It is now the measure alone: the layout
+     is the same, Full widens the conversation (data-width="full"), Min keeps today's width. */
   function setViewMode(mode){
-    const body=document.body;
-    if(mode==='full'){
-      body.dataset.view='full';
-      try{localStorage.setItem('vera_view_mode','full');}catch(_){}
-    } else {
-      body.dataset.view='minimal';
-      try{localStorage.setItem('vera_view_mode','minimal');}catch(_){}
-    }
-    // Update toggle button label if present
+    const body=document.body; const full=mode==='full';
+    body.dataset.view='minimal';
+    if(full) body.dataset.width='full'; else delete body.dataset.width;
+    try{localStorage.setItem('vera_view_mode', full?'full':'minimal');}catch(_){}
     const btn=document.getElementById('viewToggleBtn');
-    if(btn) btn.textContent = mode==='minimal'?'Min':'Full';
+    if(btn){ btn.textContent = full?'Full':'Min'; btn.title = full?'Full width - the conversation uses the room there is (press for the usual width)':'The usual width (press for full width - the conversation uses the room there is)'; }
   }
   function toggleViewMode(){
-    const cur=document.body.dataset.view||'minimal';
-    setViewMode(cur==='minimal'?'full':'minimal');
+    setViewMode(document.body.dataset.width==='full'?'minimal':'full');
   }
 
   function cycleTheme(){const r=document.documentElement;r.dataset.theme=r.dataset.theme==='light'?'':'light';}
