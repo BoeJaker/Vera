@@ -12338,7 +12338,7 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
                         if _rw_saved.get("ok"):
                             try:
                                 _rw_stale = _stale_value_core.describe(
-                                    _stale_value_core.stale_display_values(current, _rw_new))
+                                    _stale_value_core.stale_display_values(current, _rw_new, task=task))
                             except Exception:
                                 _rw_stale = ""
                             return {"ok": True, **({"warning": _rw_stale} if _rw_stale else {}),

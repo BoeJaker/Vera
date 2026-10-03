@@ -50,3 +50,4 @@ def test_code_edit_uses_it_before_giving_up():
     assert "_edit_rewrite_core.eligible(current" in tail
     assert "_edit_rewrite_core.accept(current" in tail
     assert '"mode": "rewrite"' in tail
+    assert "stale_display_values(current, _rw_new, task=task)" in tail
