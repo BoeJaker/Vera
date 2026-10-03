@@ -45,13 +45,12 @@ def test_every_declared_tier_has_rules_and_a_button():
     assert DEFAULT_DENSITY in named
 
 
-def test_the_controls_sit_in_the_top_bar_beside_the_layout_toggles():
-    i = HTML.index('id="denGroup"')
-    assert HTML.index('id="blocksBtn"') > i
-    assert HTML.index('<!-- Layout toggles -->') > i
+def test_the_level_of_detail_is_in_the_appearance_menu_not_the_bar():
+    # (owner, 2026-10-03: "full hover and zen are allready in the top bar in the appearance menu - no need for them to
+    # have seperate dedicated buttons in the top bar")
+    assert 'id="denGroup"' not in HTML
     assert 'onclick="CH.toggleBlocks()"' in HTML
-    # the group appears once: one set of controls, not one per re-render
-    assert HTML.count('id="denGroup"') == 1
+    assert HTML.index('id="blocksBtn"') < HTML.index('<!-- Layout toggles -->')
 
 
 # ── the handlers exist, are exported, and run from init ─────────────────────

@@ -1306,6 +1306,11 @@ html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !imp
 /* ...except in the harness's menu frame, which IS the menu: folded, it keeps its rail (owner: "its not leaving a rail when
    the lhm hides/collapses") - this outranks the rule above, which took the whole frame to nothing */
 html[data-only="menu"] body #rightRail.lhm-host.slim{width:100% !important;min-width:0 !important}
+/* FOLDED BY THE HARNESS, THE MENU IS ITS RAIL (owner, 2026-10-03: "if you open the settings menu in chat and then it
+   collapses because it looses focus it leaves text visibly cut off ... should probably just collapse to a settings cog
+   icon at the top and blank the rest out"): the harness narrows this frame to the rail when the pointer leaves, and
+   says so (vera:lhm:folded) - the open menu and the Settings page are blanked, the rail's icons stay */
+html[data-only="menu"].lhm-folded #settingsPage,html[data-only="menu"].lhm-folded #rightRail.lhm-host > .lhm-det{visibility:hidden!important}
 #rightRail.lhm-host > .lhm-det > .ctx-tab-bar .ctab{padding:6px 9px}
 /* ═══ The composer's modes (chat-modes; the Canvas and Paste boards) — chips in the composer's foot, strips above
    it for voice · council · diffuse, attachments as cards in the question. The top-bar buttons stay; these mirror. ═══ */
@@ -2071,11 +2076,8 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
   <div class="tb-sep"></div>
 
   <!-- Level of detail and Blocks — the appearance the whole UI shares (data-den / data-blocks on <html>) -->
-  <div class="tb-group" id="denGroup" title="Level of detail — Full shows everything; Hover shows a turn's chrome when you point at it; Zen keeps the words, the output and the time">
-    <button class="tb-btn" data-den="full"  onclick="CH.setDensity('full')">Full</button>
-    <button class="tb-btn" data-den="hover" onclick="CH.setDensity('hover')">Hover</button>
-    <button class="tb-btn" data-den="zen"   onclick="CH.setDensity('zen')">Zen</button>
-  </div>
+  <!-- Full · Hover · Zen are in the appearance menu (Aa) - not a second time here (owner, 2026-10-03) -->
+
   <button class="tb-btn" id="blocksBtn" onclick="CH.toggleBlocks()" title="Blocks — the per-turn backgrounds and rules; off is a flatter, quieter transcript">Blocks</button>
   <button class="tb-btn" id="xplBtn" onclick="CH._xplToggle()" title="Pull the transcript apart into layers: what each turn read on the left, what it produced on the right">Explode</button>
   <span class="tb-xm" id="xplSeg"><button class="tb-btn" data-xm="cards" onclick="CH.explodeMode('cards')" title="Every pane as layer cards">Cards</button><button class="tb-btn" data-xm="front" onclick="CH.explodeMode('front')" title="The layers pulled apart in depth">Front</button><button class="tb-btn" data-xm="iso" onclick="CH.explodeMode('iso')" title="The layers across an isometric plane">Iso</button></span>
@@ -4783,26 +4785,22 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
 
   /* ── Session ──
      Session-id lifecycle:
-       - On page load: if localStorage has a session_id less than
-         SESSION_RESUME_HOURS old, restore it (preserves continuity across
+       - On page load: if localStorage has a session_id, restore it, whatever its age (continuity across
          reloads). Otherwise generate a fresh `chat-<ts>` id.
        - Explicit "+ New" button calls newSession() which forces a fresh id.
        - opts.sessionId (passed by harness) overrides everything.
      This avoids the previous behaviour of creating a brand-new :Session
      node on every panel refresh — which would accumulate dozens of empty
      "assistant" session nodes over a normal day's use.                 */
-  const SESSION_RESUME_HOURS = 4;
+  /* THE CHAT YOU LEFT IS THE CHAT YOU COME BACK TO (owner, 2026-10-03: "if i leave the chat ui for a while and come back
+     to it the chat is wiped but the canvas remains"). A reload resumed the stored session only while it was under four
+     hours old - counted from when the session STARTED, a stamp nothing refreshed - so any reload after that (the harness
+     parking an idle frame, the browser discarding a tab, a restart) opened an empty session beside the canvas that was
+     still there. The stored session is resumed whatever its age; a new one is the reader's choice (+ New). */
   function initSid(id){
     let resolved = id || '';
     if(!resolved){
-      try{
-        const stored = localStorage.getItem('vera_session_id') || '';
-        const tsRaw  = localStorage.getItem('vera_session_id_ts') || '';
-        const ageMs  = tsRaw ? (Date.now() - parseInt(tsRaw, 10)) : Infinity;
-        if(stored && ageMs < SESSION_RESUME_HOURS * 3600 * 1000){
-          resolved = stored;
-        }
-      }catch(_){}
+      try{ resolved = localStorage.getItem('vera_session_id') || ''; }catch(_){}
     }
     if(!resolved) resolved = 'chat-' + Date.now();
     SID = resolved;
@@ -15513,7 +15511,7 @@ Your task: decide what to do next to advance toward the goal.
      meta:()=>_activePanelId?('open · '+_lhmTxt('chatPanelTitle')):'nothing open beside the chat', cta:{label:'Open a panel beside the chat →', run:()=>railTab('Panels')}},
     {id:'sandbox',  icon:'⌨', label:'Sandbox',   tabs:[{id:'code',label:'Code'}],
      meta:()=>_lhmTxt('sbxSessionStatus').slice(0,48), cta:{label:'Open the terminal →', run:()=>_sessionSbxTerminal()}},
-    {id:'ops',      icon:'✦', label:'Ops glance', tabs:[{id:'Caps',label:'Caps'}],
+    {id:'ops',      icon:'✦', label:'Capabilities', tabs:[{id:'Caps',label:'Caps'}],   // (owner, 2026-10-03: "should be called Capabilities not Ops Glance")
      meta:()=>_lhmTxt('capBadge'), cta:{label:'Reload capabilities', run:()=>_capsReload()}},
     {id:'settings', icon:'⚙', label:'Settings',  tabs:[{id:'Cfg',label:'Config'}],
      meta:()=>{ const s=document.getElementById('cfgAgent'); return s&&s.selectedOptions&&s.selectedOptions[0]?('agent · '+s.selectedOptions[0].textContent.trim()):''; }, cta:{label:'Open Settings ⌘,', run:()=>_settingsPage(true)}},
@@ -15679,6 +15677,8 @@ Your task: decide what to do next to advance toward the goal.
 var _EMBED_CHAT=(function(){ try{ const q=new URLSearchParams(location.search); return { agent:q.get('agent')||'', system:String(q.get('system')||'').slice(0,8000), session:q.get('session')||'', title:q.get('title')||'', embed:q.get('embed')==='1' }; }catch(_){ return { agent:'', system:'', session:'', title:'', embed:false }; } })();
 try{ if(_EMBED_CHAT.title) document.title=_EMBED_CHAT.title; }catch(_){}
 const _EMBED=(function(){ try{ const q=new URLSearchParams(location.search); return { only:q.get('only')||'', harness:q.get('harness')==='yes' }; }catch(_){ return { only:'', harness:false }; } })();
+// the harness folds the menu frame to its rail (auto-hide, «): this frame shows the rail alone until it opens again (owner, 2026-10-03)
+if(_EMBED.only==='menu') window.addEventListener('message', ev=>{ const d=ev.data; if(!d||typeof d!=='object'||d.type!=='vera:lhm:folded'||ev.source!==window.parent) return; document.documentElement.classList.toggle('lhm-folded', !!d.on); });
 const _LHMBC=(function(){ try{ return new BroadcastChannel('vera:chat:lhm'); }catch(_){ return null; } })();
 function _lhmPost(act, args){ try{ if(_LHMBC) _LHMBC.postMessage({ act, args:args||{}, sid:SID||'', from:_EMBED.only||'full', t:Date.now() }); }catch(_){} }
 function _embedMount(){
@@ -15772,7 +15772,7 @@ function _embedMount(){
   /* ── THE QUICK MENUS as the Canvas board draws them: every menu's body is a list of widgets ─────────────────
      Context: the context galaxy (the context_graph widget form — galaxy · iso · flow · time, the family chips, All
      edges), the budget bar (8 families as shares of the window), "In this prompt" rows, the CTA to the full graph.
-     Sessions · Activity · Loop · Workspace · Sandbox · Ops glance · Settings: the board's compact bodies, read from
+     Sessions · Activity · Loop · Workspace · Sandbox · Capabilities · Settings: the board's compact bodies, read from
      the chat's own state. The old pane of every menu is one press away ("Full ▸" in the header) in the same panel. */
   const _CTX_FAM_LABEL={agent:'Agent + system',skill:'Skills',ontology:'Ontologies',memory:'Memory recalls',vector:'Vector matches',graph:'Graph (Neo4j)',fabric:'Fabric records',cap:'Capabilities',web:'Web',news:'News',run:'Runs',related_qa:'Related Q&A',worldview:'Worldview',entities:'Entities',urls:'URLs',both:'Vector + graph'};
   let _qGalView='galaxy', _qGalAll=false, _qSrcOn='', _qSessQ='', _qPanelQ='';   // _qGalOff is declared with _ctxLayers, which reads it
@@ -16105,7 +16105,7 @@ function _embedMount(){
       if(!(window.customElements&&customElements.get('vera-terminal'))){ const s=document.createElement('script'); s.src='/ui/vera-terminal.js'; s.async=true; document.head.appendChild(s); } }
     el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='on') _sessionSbxToggle(true); else if(a==='term') _sessionSbxTerminal(); else if(a==='vscode') _sessionSbxVscode(); else if(a==='code'){ _dkScroll('paneCode'); _artifactsRefresh(); } else if(a==='refresh'){ _sbxQ.sid=''; _sessionSbxRefresh(); } }catch(_){} }));
   }
-  // Ops glance: the capability estate at a glance (loaded · in reach for this agent · queued) as the board's cards
+  // Capabilities: the capability estate at a glance (loaded · in reach for this agent · queued) as the board's cards
   function _quickOps(el){
     const all=(typeof ALL_CAPS!=='undefined'&&Array.isArray(ALL_CAPS))?ALL_CAPS:[]; const badge=_lhmTxt('capBadge'); let reach=all.length; try{ const a=(typeof AGENTS!=='undefined'&&Array.isArray(AGENTS))?AGENTS.find(x=>x.name===(document.getElementById('cfgAgent')||{}).value):null; if(a) reach=(_getAgentCaps(a)||[]).length; }catch(_){}
     const groups={}; all.forEach(c=>{ const g=String(c.name||'').split('.')[0]||'?'; groups[g]=(groups[g]||0)+1; }); const top=Object.entries(groups).sort((a,b)=>b[1]-a[1]).slice(0,6);
@@ -16245,7 +16245,8 @@ function _embedMount(){
       if(el.tagName==='DIV'&&!el.className&&!id) return;   // the spacer
       if(id==='hdrMore'){ el.dataset.hid='more'; out.push({ grp:'more', prio:0, items:[{ hid:'more', kind:'more', label:'\u22ef', title:el.title||'All chat tools', on:el.classList.contains('on') }] }); return; }
       if(el.classList.contains('agent')){ const s=el.querySelector('select'); if(!s) return; s.dataset.hid='agent';
-        out.push({ grp:'agent', prio:1, items:[{ hid:'agent', kind:'select', value:s.value, title:String(((document.getElementById('agentMeta')||{}).textContent)||el.title||'').slice(0,160),
+        const cb=document.getElementById('capBadge');
+        out.push({ grp:'agent', prio:1, items:[{ hid:'agent', kind:'select', value:s.value, meta:String(((document.getElementById('agentMeta')||{}).textContent)||'').trim().slice(0,48), caps:!!(cb&&!cb.classList.contains('hidden')), title:String(((document.getElementById('agentMeta')||{}).textContent)||el.title||'').slice(0,160),
           options:[...s.options].slice(0,80).map(o=>[o.value, String(o.textContent||'').trim().slice(0,40)]) }] }); return; }
       if(el.classList.contains('sess')){ const n=document.getElementById('sessionName'); if(!n) return; n.dataset.hid='session';
         out.push({ grp:'session', prio:1, items:[{ hid:'session', kind:'text', label:String(n.textContent||'').trim().slice(0,60), title:'Rename the session \u00b7 '+String(((document.getElementById('sessMeta')||{}).textContent)||'').trim() }] }); return; }
