@@ -40,7 +40,7 @@ t('side() watches its own fold', /if\(cfg\.rail && cfg\.rail\.on\) wrap\.classLi
 t('the watch reads the class the menu left', /attributeFilter: \['class'\], attributeOldValue: true/.test(LHM));
 t('a class set as the list is drawn is not a fold', /Date\.now\(\) - born < 250/.test(LHM));
 t('FLIP: measured in both states, our own toggles discarded', /wrap\.classList\.toggle\('railed', wasRailed\); var first = at\(\); wrap\.classList\.toggle\('railed', nowRailed\);/.test(LHM) && /_lhmFlipMO\.takeRecords\(\)/.test(LHM));
-t('the glide keeps the width\'s easing', /duration: 340, easing: 'cubic-bezier\(\.2,\.8,\.2,1\)'/.test(LHM));
+t('the glide keeps the width\'s easing', /duration: _motion\.ms\(\), easing: _motion\.ease\(\)/.test(LHM) && /':root\{--lhm-dur:\.34s;--lhm-ease:cubic-bezier\(\.2,\.8,\.2,1\);--lhm-fade:\.22s\}'/.test(LHM));
 t('what the rail hides fades back in', /@keyframes lhmUnfold/.test(LHM) && /\.lhm-side\.lhm-unfold \.lhm-s-grp/.test(LHM));
 t('reduced motion is respected', /prefers-reduced-motion: reduce\)'\)\.matches\) return;/.test(LHM) && /@media \(prefers-reduced-motion:reduce\)\{\.lhm-side\.lhm-unfold \*/.test(LHM));
 
@@ -53,13 +53,16 @@ t('reduced motion is respected', /prefers-reduced-motion: reduce\)'\)\.matches\)
     classList: { contains(c) { return c === 'railed' ? wrap.railed : wrap._cls.has(c); }, toggle(c, on) { if (c === 'railed') wrap.railed = on; }, add(c) { wrap._cls.add(c); }, remove(c) { wrap._cls.delete(c); } },
     querySelectorAll() { return rows; } };
   const rows = [mkEl(80, 120), mkEl(110, 150)];
-  const ctx = { window: {}, matchMedia: () => ({ matches: false }), setTimeout: () => 0, clearTimeout() {}, Math, Array };
+  const mo = { d: 340 }; const ctx = { window: {}, matchMedia: () => ({ matches: false }), setTimeout: () => 0, clearTimeout() {}, Math, Array, _motion: { ms: () => mo.d, ease: () => 'cubic-bezier(.2,.8,.2,1)' } };
   vm.createContext(ctx); vm.runInContext(LHM.slice(a, b) + '\nthis.flip=_railFlip;', ctx);
   ctx.flip(wrap, true);   // unfolded: was the rail, now the list
   t('each row glides from its rail place to its list place', anims.length === 2 && anims[0].k[0].transform === 'translate(0px,-40px)' && anims[0].k[1].transform === 'none', JSON.stringify(anims[0]));
   t('unfolding fades the hidden parts in', wrap._cls.has('lhm-unfold'));
+  t('it glides for the token\'s duration, on its easing', anims[0].o.duration === 340 && anims[0].o.easing === 'cubic-bezier(.2,.8,.2,1)', JSON.stringify(anims[0].o));
   anims.length = 0; ctx.flip(wrap, false);
   t('no fold, no motion', anims.length === 0);
+  anims.length = 0; mo.d = 0; wrap.railed = true; ctx.flip(wrap, false);
+  t('reduced motion (the token at 0): no glide', anims.length === 0);
 }
 
 // ── the text sizes, stepped up ───────────────────────────────────────────────────────────────────────────────────

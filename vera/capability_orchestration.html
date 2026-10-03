@@ -667,7 +667,7 @@ body.chat-open .body-wrap{position:relative;z-index:1;background:transparent}
 body.chat-open .main{background:transparent}
 body.chat-open #lhmNav.chatmenu{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
 /* the menu's slot opens, grows (the graph) and shrinks on one easing, and the tab beside it follows */
-.lhm-nav{transition:width .36s cubic-bezier(.2,.8,.2,1),background .3s ease}
+.lhm-nav{transition:width var(--lhm-dur,.34s) var(--lhm-ease,cubic-bezier(.2,.8,.2,1)),background .3s ease}   /* one motion for every LHM: vera-lhm.js's tokens */
 .main{transition:padding .36s cubic-bezier(.2,.8,.2,1)}
 @media (prefers-reduced-motion:reduce){ .lhm-nav,.main{transition:none} }
 /* ── ONE TOP BAR: the open panel's controls, drawn here (the panel offers them; a press goes back to the panel) ── */
@@ -711,7 +711,7 @@ html[data-blocks="off"] #lhmNav.lhm-nav:not(.show),html[data-blocks="off"] body.
 .body-wrap.lhm .main.ah-rail:not(.autohide-reserve-v){padding-left:54px}
 .body-wrap.lhm .main.ah-rail.chatmenu:not(.autohide-reserve-v){padding-left:47px}
 /* THE MENU FOLDS SMOOTHLY: auto-hide's reveal eases its width like the fold does (and pushes the page - below) */
-.body-wrap.lhm #lhmNav.lhm-nav.autohide{transition:width .34s cubic-bezier(.2,.8,.2,1),box-shadow .3s ease,background .3s ease}
+.body-wrap.lhm #lhmNav.lhm-nav.autohide{transition:width var(--lhm-dur,.34s) var(--lhm-ease,cubic-bezier(.2,.8,.2,1)),box-shadow .3s ease,background .3s ease}
 /* BLOCKS OFF, AT ANY WIDTH (owner, 2026-09-27: "if the chat menu expands it still has an opaque background - only the rail
    is transparent. i want the entire lhm - when opened any amount, to be transparent with blocks off"): folded, open, or
    revealed from auto-hide over the page - no ground, no glass, no shadow */
@@ -721,7 +721,7 @@ html[data-blocks="off"] #lhmNav.lhm-nav,html[data-blocks="off"] body.chat-open #
    keeps the menu IN the row, as its rail; revealed, its width eases open and the page beside it narrows in the same
    motion - the chat's menu, a panel's absorbed menu and the harness's own list alike, since they are all this one slot.
    Every other change of its width (the fold, the chat's graph and Settings growing it) eases the same way. */
-.body-wrap.lhm #lhmNav.lhm-nav{transition:width .34s cubic-bezier(.2,.8,.2,1),min-width .34s cubic-bezier(.2,.8,.2,1),background .3s ease}
+.body-wrap.lhm #lhmNav.lhm-nav{transition:width var(--lhm-dur,.34s) var(--lhm-ease,cubic-bezier(.2,.8,.2,1)),min-width var(--lhm-dur,.34s) var(--lhm-ease,cubic-bezier(.2,.8,.2,1)),background .3s ease}
 .body-wrap.lhm #lhmNav.lhm-nav.autohide{position:relative;top:auto;left:auto;bottom:auto;transform:none;opacity:1;pointer-events:auto;flex-shrink:0;z-index:2}
 .body-wrap.lhm .main.ah-rail,.body-wrap.lhm .main.ah-rail.chatmenu,.body-wrap.lhm .main.autohide-reserve-v,.body-wrap.lhm .main.autohide-reserve-v.absorbed,.body-wrap.lhm .main.autohide-reserve-v.absorbed.chatmenu,.body-wrap.lhm .main.autohide-reserve-v.railed,.body-wrap.lhm .main.autohide-reserve-v.chatmenu.railed{padding-left:0!important}
 /* THE DASHBOARD ON THE CHAT'S GROUND (owner: "can the harness dashboard have the same background and menu setup as the chat

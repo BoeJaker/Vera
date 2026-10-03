@@ -11,7 +11,7 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
 // ── the push ────────────────────────────────────────────────────────────────────────────────────────────────────
 t('auto-hide keeps the menu in the row', /\.body-wrap\.lhm #lhmNav\.lhm-nav\.autohide\{position:relative;top:auto;left:auto;bottom:auto;transform:none;opacity:1;pointer-events:auto;flex-shrink:0/.test(HAR));
 t('so the page keeps no gutter for it (it moves aside with the menu instead)', /\.body-wrap\.lhm \.main\.ah-rail,[^{]*\.body-wrap\.lhm \.main\.autohide-reserve-v\.absorbed\.chatmenu,[^{]*\{padding-left:0!important\}/.test(HAR));
-t('and every change of the menu\'s width eases', /\.body-wrap\.lhm #lhmNav\.lhm-nav\{transition:width \.34s/.test(HAR));
+t('and every change of the menu\'s width eases', /\.body-wrap\.lhm #lhmNav\.lhm-nav\{transition:width var\(--lhm-dur,\.34s\) var\(--lhm-ease,cubic-bezier\(\.2,\.8,\.2,1\)\)/.test(HAR));
 t('the reveal no longer floats with a shadow', !/autohide\.show\{box-shadow:0 18px 50px/.test(HAR));
 
 // ── the dashboard ───────────────────────────────────────────────────────────────────────────────────────────────

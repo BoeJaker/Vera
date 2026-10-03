@@ -66,12 +66,15 @@ html.vpb-nav-hosted [data-vera-lhm] { display: none; }
 html.vpb-nav-hosted #sidebar[data-vera-lhm].vp-has-content { display: flex; }
 html.vpb-nav-hosted #sidebar[data-vera-lhm].vp-has-content > :is(#side-head, #nav, #lhm-tabs, .lhm-tabs) { display: none; }
 
+:root { --lhm-dur: .34s; --lhm-ease: cubic-bezier(.2,.8,.2,1); --lhm-fade: .22s; }   /* the LHM motion tokens - the same three vera-lhm.js sets */
+@media (prefers-reduced-motion: reduce) { :root { --lhm-dur: 0s; --lhm-fade: 0s; } }
+
 /* ── Sidebar ──────────────────────────────────────────────────────────── */
 #sidebar[data-vera-lhm] {
   width: var(--lhm-width); flex-shrink: 0;
   background: var(--bg1, #16181d); border-right: 1px solid var(--border, rgba(255,255,255,.09));
   display: flex; flex-direction: column;
-  transition: width .16s ease;
+  transition: width var(--lhm-dur, .34s) var(--lhm-ease, cubic-bezier(.2,.8,.2,1));   /* one motion for every LHM (vera-lhm.js) */
   overflow: hidden;
 }
 #sidebar[data-vera-lhm] #side-head {
@@ -100,7 +103,7 @@ html.vpb-nav-hosted #sidebar[data-vera-lhm].vp-has-content > :is(#side-head, #na
   transition: color .14s, background .14s;
 }
 #sidebar[data-vera-lhm] #lhm-toggle:hover { color: var(--fg, var(--text, #d8dde3)); background: var(--bg2, #1a1f26); }
-#sidebar[data-vera-lhm] #lhm-toggle svg { width: 12px; height: 12px; transition: transform .16s; }
+#sidebar[data-vera-lhm] #lhm-toggle svg { width: 12px; height: 12px; transition: transform var(--lhm-dur, .34s) var(--lhm-ease, cubic-bezier(.2,.8,.2,1)); }
 
 #sidebar[data-vera-lhm] #nav { flex: 1; padding: 8px 6px; overflow-y: auto; }
 #sidebar[data-vera-lhm] .nav-btn {

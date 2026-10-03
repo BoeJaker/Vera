@@ -34,6 +34,14 @@
   if(window.VeraLHM) return;   // idempotent
 
   var CSS = [
+    /* ONE MOTION FOR EVERY MENU (owner, 2026-10-03: "animations of the LHMs need to be unified, smooth and complete"): the slot
+       opening and folding, a fold to the rail, a menu switching, a panel's own sidebar collapsing - one duration, one easing,
+       one fade, from these three. Reduced motion zeroes them, so every one of them stops at once. */
+    ':root{--lhm-dur:.34s;--lhm-ease:cubic-bezier(.2,.8,.2,1);--lhm-fade:.22s}',
+    '@media (prefers-reduced-motion:reduce){:root{--lhm-dur:0s;--lhm-fade:0s}}',
+    '@keyframes lhmSwap{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}',
+    '.lhm-swap{animation:lhmSwap var(--lhm-fade) var(--lhm-ease) both}',
+    '@media (prefers-reduced-motion:reduce){.lhm-swap{animation:none!important}}',
     /* the rail */
     '.lhm-rail{width:46px;flex:0 0 46px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;background:var(--bg1);border-right:1px solid var(--border);box-sizing:border-box;overflow:hidden}',
     'html[data-blocks="off"] .lhm-rail{background:transparent;border-right-color:transparent}',
@@ -207,7 +215,7 @@
     '.lhm-side .lhm-s-rl:hover{color:var(--text);background:var(--bg2)}',
     '.lhm-side.railed .lhm-s-top{flex-direction:column;height:auto;padding:6px 0;gap:4px}',
     '.lhm-side.railed .lhm-s-top > :not(.lhm-s-tb):not(.lhm-s-rl){display:none}',
-    '.lhm-side .lhm-s-row > :not(.ico){transition:opacity .22s ease}',
+    '.lhm-side .lhm-s-row > :not(.ico){transition:opacity var(--lhm-fade) var(--lhm-ease)}',
     '.lhm-side.railed .lhm-s-grp,.lhm-side.railed .lhm-s-empty,.lhm-side.railed .lhm-s-sec,.lhm-side.railed .lhm-s-w,.lhm-side.railed .lhm-s-reg,.lhm-side.railed .lhm-s-now,.lhm-side.railed .lhm-ebar,.lhm-side.railed .lhm-s-note{display:none!important}',
     '.lhm-side.railed .lhm-s-row{flex-shrink:0}',
     '.lhm-side.railed .lhm-s-row > :not(.ico){opacity:0;pointer-events:none}',
@@ -216,7 +224,7 @@
        their menu options"): each row glides from its place in the rail to its place in the list with the width\'s easing
        (_railFlip), and what the rail hides - headings, sections, widgets - fades in once the rows are moving */
     '@keyframes lhmUnfold{from{opacity:0}to{opacity:1}}',
-    '.lhm-side.lhm-unfold .lhm-s-grp,.lhm-side.lhm-unfold .lhm-s-empty,.lhm-side.lhm-unfold .lhm-s-sec,.lhm-side.lhm-unfold .lhm-s-w,.lhm-side.lhm-unfold .lhm-s-reg,.lhm-side.lhm-unfold .lhm-s-now,.lhm-side.lhm-unfold .lhm-s-note,.lhm-side.lhm-unfold .lhm-s-top > :not(.lhm-s-tb):not(.lhm-s-rl){animation:lhmUnfold .3s ease .1s both}',
+    '.lhm-side.lhm-unfold .lhm-s-grp,.lhm-side.lhm-unfold .lhm-s-empty,.lhm-side.lhm-unfold .lhm-s-sec,.lhm-side.lhm-unfold .lhm-s-w,.lhm-side.lhm-unfold .lhm-s-reg,.lhm-side.lhm-unfold .lhm-s-now,.lhm-side.lhm-unfold .lhm-s-note,.lhm-side.lhm-unfold .lhm-s-top > :not(.lhm-s-tb):not(.lhm-s-rl){animation:lhmUnfold var(--lhm-fade) var(--lhm-ease) calc(var(--lhm-fade) / 2) both}',
     '@media (prefers-reduced-motion:reduce){.lhm-side.lhm-unfold *{animation:none!important}.lhm-side .lhm-s-row > :not(.ico){transition:none}}',
     '.lhm-side.railed .lhm-s-row.on{box-shadow:inset 2px 0 0 var(--acc)}',
     '/* ICONS BY TIER (owner: "respect the full - hover - zen styles only displaying the icons inline to the menu options in full mode"): Full draws a menu option\'s icon beside it; Hover shows it when the option is pointed at; Zen leaves the words. A folded rail is its icons, whatever the tier. */',
@@ -328,6 +336,15 @@
      data-desc-long and carried in the published spec. A hover reads "Label - short description". */
   function _tip(label, desc){ var l = String(label == null ? '' : label), d = String(desc == null ? '' : desc).trim(); return d && d !== l ? l + ' — ' + d : l; }
   function _descOn(el, o){ if(!el || !o) return el; if(o.desc) el.setAttribute('data-desc', String(o.desc)); if(o.desc_long) el.setAttribute('data-desc-long', String(o.desc_long)); return el; }
+  // the motion tokens, for what script animates (the fold's glide): the same duration and easing the CSS uses; 0 under
+  // reduced motion, which the token itself carries
+  var _motion = {
+    _v: function(n, d){ try{ var v = getComputedStyle(document.documentElement).getPropertyValue(n).trim(); return v || d; }catch(e){ return d; } },
+    ms: function(){ var v = _motion._v('--lhm-dur', '.34s'); var n = parseFloat(v); return isNaN(n) ? 340 : (/ms$/.test(v) ? n : n * 1000); },
+    ease: function(){ return _motion._v('--lhm-ease', 'cubic-bezier(.2,.8,.2,1)'); }
+  };
+  // a menu that changed what it shows rises in, rather than jumping: the class is replayed on every swap
+  function _swap(el){ if(!el || !el.classList) return; el.classList.remove('lhm-swap'); void el.offsetWidth; el.classList.add('lhm-swap'); }
   // the fold, animated (FLIP): the rows and the header's two toggles are measured in the state the menu left and the one
   // it entered, then each glides from the first to the second on the width's own easing - so a glyph in the rail travels
   // to its option in the list instead of jumping there
@@ -335,6 +352,7 @@
     var nowRailed = wrap.classList.contains('railed');
     if(wasRailed === nowRailed || !wrap.isConnected || !wrap.animate) return;
     try{ if(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return; }catch(e){}
+    if(!_motion.ms()) return;   // reduced motion: the token is 0
     var els = Array.prototype.slice.call(wrap.querySelectorAll('.lhm-s-row:not(.lhm-s-now):not(.lhm-s-reg),.lhm-s-tb,.lhm-s-rl'));
     function at(){ return els.map(function(e){ var r = e.getBoundingClientRect(); return r.height ? r : null; }); }
     var last = at();
@@ -342,9 +360,9 @@
     if(wrap._lhmFlipMO) wrap._lhmFlipMO.takeRecords();   // our own two toggles are not a fold
     els.forEach(function(e, i){ var a = first[i], b = last[i]; if(!a || !b) return;
       var dx = a.left - b.left, dy = a.top - b.top; if(Math.abs(dx) < .5 && Math.abs(dy) < .5) return;
-      try{ e.animate([{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }], { duration: 340, easing: 'cubic-bezier(.2,.8,.2,1)' }); }catch(err){} });
+      try{ e.animate([{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }], { duration: _motion.ms(), easing: _motion.ease() }); }catch(err){} });
     if(!nowRailed){ wrap.classList.remove('lhm-unfold'); void wrap.offsetWidth; wrap.classList.add('lhm-unfold');
-      clearTimeout(wrap._lhmUnfoldT); wrap._lhmUnfoldT = setTimeout(function(){ wrap.classList.remove('lhm-unfold'); }, 460); }
+      clearTimeout(wrap._lhmUnfoldT); wrap._lhmUnfoldT = setTimeout(function(){ wrap.classList.remove('lhm-unfold'); }, _motion.ms() + 120); }
   }
   // watch a side menu for the fold, whoever makes it (« in its header, auto-hide leaving it as its rail); a class set in
   // the same breath as the render (the host syncing the new list to its state) is part of drawing it, not a fold
@@ -621,11 +639,13 @@ function _ebar(title, onAdd, onDone){
     if(!m){ var mt = _menuOfTab(id); if(mt){ m = mt; menuId = mt.id; tabId = id; } }
     if(!m) return false;
     if(!tabId) tabId = (m._last && (m.tabs || []).some(function(t){ return t.id === m._last; })) ? m._last : ((m.tabs || [])[0] || {}).id || '';
+    var moved = !!_active && (_active !== menuId || _topMode);   // another menu (or back from the top list): it rises in
     _active = menuId; _activeTab = tabId; m._last = tabId; _topMode = false;
     var el = _tabEl(tabId);
     if(el && !opts.silent){ _picking = true; try{ el.click(); }catch(e){} _picking = false; }
     if(_cfg.onPick){ try{ _cfg.onPick(menuId, tabId); }catch(e){} }
     render();
+    if(moved){ if(_quick && _quick.style.display !== 'none'){ _swap(_hd); _swap(_quick); } else _swap(_det); }
     return true;
   }
   // the owner's own UI switched tab (a direct click) — keep the rail and the header in step
@@ -904,6 +924,7 @@ function _ebar(title, onAdd, onDone){
     });
     tabs.appendChild(ws);
   }
+  var _absSeen = {};   // panel (editKey) -> the menu its docked LHM last showed; __panel: the panel last shown
   function absorb(host, spec, pickFn, opts){
     if(!host || !spec) return null;
     opts = opts || {}; _css(host.ownerDocument);
@@ -941,6 +962,13 @@ function _ebar(title, onAdd, onDone){
     }
     try{ _absWidgets(host, tabs, spec, cur, opts, function(){ absorb(host, spec, pickFn, opts); }); }catch(e){}
     wrap.appendChild(tabs);
+    /* the host redraws this menu on every state the panel publishes, often into a new element: what was last shown is kept
+       by panel (editKey), so only a real change moves - another panel's menu rises in whole, another of its menus rises
+       in as its list; the same menu redrawn stays still */
+    var seenKey = opts.editKey || '', seen = _absSeen[seenKey], nowMenu = (cur && cur.id) || '';
+    if(_absSeen.__panel !== undefined && _absSeen.__panel !== seenKey) _swap(wrap);
+    else if(seen !== undefined && seen !== nowMenu) _swap(tabs);
+    _absSeen.__panel = seenKey; _absSeen[seenKey] = nowMenu;
     host.appendChild(wrap);
     return wrap;
   }
