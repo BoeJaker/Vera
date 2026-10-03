@@ -41,16 +41,16 @@ html,body,button,input,select,textarea,span,div{font-variant-emoji:text}
       <div><h1>Agents</h1><div class="sub">skills &middot; ontologies</div></div>
     </div>
     <nav id="nav">
-      <button type="button" class="nav-btn active" data-pane="agents"     title="Agents"     onclick="show('agents',this)"><span class="gl">◆</span>Agents</button>
-      <button type="button" class="nav-btn"        data-pane="skills"     title="Skills"     onclick="show('skills',this)"><span class="gl">✦</span>Skills</button>
-      <button type="button" class="nav-btn"        data-pane="ontologies" title="Ontologies" onclick="show('ontologies',this)"><span class="gl">⬡</span>Ontologies</button>
+      <button data-label="Agents" data-desc="The agents" data-desc-long="Agents (/ui/panels/agents-panel): the agents Vera can run and their configuration." type="button" class="nav-btn active" data-pane="agents"     title="Agents"     onclick="show('agents',this)"><span class="gl">◆</span>Agents</button>
+      <button data-label="Skills" data-desc="The skills" data-desc-long="Skills (/ui/panels/skills-panel): the skills agents can use." type="button" class="nav-btn"        data-pane="skills"     title="Skills"     onclick="show('skills',this)"><span class="gl">✦</span>Skills</button>
+      <button data-label="Ontologies" data-desc="The ontologies" data-desc-long="Ontologies (/ui/panels/ontologies-panel): the ontologies agents and skills draw on." type="button" class="nav-btn"        data-pane="ontologies" title="Ontologies" onclick="show('ontologies',this)"><span class="gl">⬡</span>Ontologies</button>
       <!-- The agent registry: what an EXTERNAL agent drives Vera with. It sits
            here rather than in a tab of its own because it is a skills surface -
            it projects into and out of the two stores either side of it. -->
-      <button type="button" class="nav-btn"        data-pane="registry"   title="Registry"   onclick="show('registry',this)"><span class="gl">▤</span>Registry</button>
+      <button data-label="Registry" data-desc="Everything registered, searchable" data-desc-long="The registry (/ui/panels/registry-panel): skills, tools, loops and other registered items, searchable by kind, with + new." type="button" class="nav-btn"        data-pane="registry"   title="Registry"   onclick="show('registry',this)"><span class="gl">▤</span>Registry</button>
       <!-- Agent bridges: the external agent runtimes Vera can drive. Formerly a
            top-level tab; the shell now opens it here. -->
-      <button type="button" class="nav-btn"        data-pane="bridges"    title="Agent Bridges" onclick="show('bridges',this)"><span class="gl">⇄</span>Bridges</button>
+      <button data-label="Agent Bridges" data-desc="Bridges to external agents" data-desc-long="Agent bridges (/agentbridge/panel): the catalog of bridges that connect Vera to external agents." type="button" class="nav-btn"        data-pane="bridges"    title="Agent Bridges" onclick="show('bridges',this)"><span class="gl">⇄</span>Bridges</button>
     </nav>
   </aside>
   <div id="panes">
