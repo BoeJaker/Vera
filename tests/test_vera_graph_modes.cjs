@@ -13,5 +13,14 @@ t('exploded, estate 3D, estate 2D are registered', /G\.registerMode\(\{ id: 'exp
 t('through the renderers the product has: <vera-exploded> and the one iso projection', /customElements\.get\('vera-exploded'\)/.test(M) && /ISO\.scene\(ISO\.proj\(tilt, azim, k\), boxes\)/.test(M));
 t('2D is the projection seen straight down (the tops)', /estate\(90\)/.test(M) && /f\.k === 't'/.test(M));
 t('hover lights a block and says what it is; click opens the node', /brightness\(1\.45\)/.test(M) && /api\.open\(byN\[id\]\)/.test(M));
+t('Live ops is a method of the graph: Estate > Live ops\' own lattice, loaded on demand', /G\.registerMode\(\{ id: 'ops-iso',   label: 'Live ops'/.test(M) && /need\('\/ui\/iso-lattice\.js'/.test(M) && /window\.VeraLattice\.mount\(box,/.test(M));
+// the mapping itself: planes by reach from the hub, areas by the hub's branches, a node's own plane/area wins
+(() => { const reg = {}; global.window = { veraUI: { Graph: { registerMode: (d) => { reg[d.id] = d; } } } }; eval(M); const L = window.veraUI.Graph.latticeOf;
+  const N = [{ id: 'hub', type: 'hub' }, { id: 'c1', label: 'Nodes', type: 'category' }, { id: 'c2', label: 'Workers', type: 'category' }, { id: 'n1', type: 'node', props: { status: 'down' } }, { id: 'n2', type: 'node' }, { id: 'w1', type: 'worker', props: { plane: 'jobs', area: 'gpu' } }];
+  const E = [{ from: 'hub', to: 'c1' }, { from: 'hub', to: 'c2' }, { from: 'c1', to: 'n1' }, { from: 'c1', to: 'n2' }, { from: 'c2', to: 'w1' }];
+  const d = L(N, E), by = {}; d.nodes.forEach((n) => { by[n.id] = n; });
+  t('planes run hub -> category -> node; areas are the hub\'s branches; props.plane/area win; a down status is down',
+    d.planes[0].id === 'hub' && d.planes[1].id === 'category' && by.n1.area === 'Nodes' && by.n2.area === 'Nodes' && by.w1.plane === 'jobs' && by.w1.area === 'gpu' && by.n1.status === 'down' && by.n2.status === 'ok' && d.links.length === 5 && !!reg['ops-iso']);
+})();
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
