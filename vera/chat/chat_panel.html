@@ -12316,6 +12316,11 @@ Your task: decide what to do next to advance toward the goal.
         HISTORY.push({role:'assistant', content: String(finalText)});
         // the agent loop's final answer goes the same way as a chat reply (Settings › Delivery)
         try{ _deliverAfter(String(finalText), goal); }catch(_){}
+        /* ...and what it MADE reaches the session canvas the way a reply's does (owner, 2026-10-03: "code and output
+           produced by the agentic loop should be able to reach the canvas just like the chat"): the final pane is drawn
+           with the shared cards now, so the reply's harvest reads it - code, diagrams, widgets - keyed to this turn */
+        try{ setTimeout(()=>{ const fb=aloEl.shadowRoot&&aloEl.shadowRoot.querySelector('[data-part="final-body"]');
+          if(fb) _cvLandFrom(fb, uMsg.mid, statusCard.mid||uMsg.mid); }, 700); }catch(_){}
       }
       scroll();
     });

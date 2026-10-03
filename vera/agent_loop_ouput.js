@@ -77,6 +77,16 @@
     document.head.appendChild(_s);
   }
 
+  /* ONE WAY OUTPUT IS DRAWN (owner, 2026-10-03: "markdown in the previews for the agentic loop final output dont render
+     markdown, code isnt linted and is missing the buttons other code rendering areas have like explode"). The loop draws
+     its markdown and its code through the shared <vera-markdown> + output kit (vera_output.js) - the same card, actions
+     and look as the chat and the canvas - and loads them itself where a page did not. */
+  [['/ui/elements/vera_markdown.js','data-vera-md',() => window.VeraMD],
+   ['/ui/elements/vera_output.js','data-vera-out',() => window.VeraOut]].forEach(([src, mark, have]) => {
+    if(have() || document.querySelector('script['+mark+']')) return;
+    const s = document.createElement('script'); s.src = src; s.setAttribute(mark, '1'); document.head.appendChild(s);
+  });
+
   // ───────────────────── Helpers (scoped to this module) ────────────────────
   function _esc(s){
     return String(s==null?'':s)
@@ -228,6 +238,9 @@
   // agent loop emits without pulling in a full parser.
   function _renderMarkdown(md){
     if(!md) return '';
+    if(window.VeraOut && typeof VeraOut.render === 'function'){
+      try{ return `<div class="vo-md">${VeraOut.render(String(md))}</div>`; }catch(_){ /* fall back below */ }
+    }
     let s = _esc(md);
     s = s.replace(/```(\w*)\n([\s\S]*?)```/g,
       (_, lang, body) => `<pre class="md-code"${lang?` data-lang="${_esc(lang)}"`:''}>${body}</pre>`);
@@ -721,6 +734,7 @@
       if(this._mounted) return;
       this._mounted = true;
       this._render();
+      this._outKit();
       // Delegated handler for the ⤢ expand/compact toggles on the Timeline,
       // Triage and Run-complete cards (shadow DOM — inline onclick can't reach
       // component methods, so delegate from the shadow root).
@@ -756,6 +770,20 @@
         this._showThinking = this.getAttribute('show-thinking') !== 'false';
       }
       this._applyMaxHeight();
+    }
+
+    /* the shared output kit in this shadow root: its click handler and style (wire), and every card that lands is
+       linted, a whole page opened and a diagram drawn (hydrate) - once the kit has loaded, whenever that is */
+    _outKit(){
+      const go = () => {
+        if(!window.VeraOut){ return false; }
+        try{ VeraOut.wire(this._sr); VeraOut.hydrate(this._sr); }catch(_){}
+        if(!this._outMO){ let t = 0; this._outMO = new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { try{ VeraOut.hydrate(this._sr); }catch(_){} }, 150); });
+          this._outMO.observe(this._sr, {childList:true, subtree:true}); }
+        return true;
+      };
+      if(go()) return;
+      let n = 0; const iv = setInterval(() => { if(go() || ++n > 40) clearInterval(iv); }, 250);
     }
 
     disconnectedCallback(){
@@ -1634,7 +1662,7 @@
         this._cycleEl(`<div class="alo-cycle-h">
           <span class="alo-cycle-tool">⚡ Fast path · ${_esc(ev.cap||'')}</span>
           <span class="alo-cycle-status">single cap</span>
-        </div>${ev.preview?`<div class="alo-cycle-preview" style="white-space:pre-wrap">${_esc(String(ev.preview))}</div>`:''}`, 'done');
+        </div>${ev.preview?`<div class="alo-cycle-preview" style="max-height:320px;overflow:auto">${_smartRender(String(ev.preview))}</div>`:''}`, 'done');
         return;
       }
 
@@ -3855,7 +3883,7 @@
       } else if(summary){
         html += `<div class="alo-final-row">
           <div class="alo-final-lbl">${done?'Answer':'Result'}</div>
-          <div class="alo-final-val summary">${_esc(summary)}</div>
+          <div class="alo-final-val">${_smartRender(summary)}</div>
         </div>`;
       }
 
