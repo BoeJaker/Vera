@@ -394,6 +394,84 @@ def panel_capture_url(base_url: str, panel: Dict[str, Any],
     return {"url": f"{base}/ui/panel/window?id={panel.get('id')}", "via": "window"}
 
 
+# Default readiness: the panel shows real content. Registry widgets render into
+# open shadow roots and the panel window wraps route panels in a same-origin
+# iframe; body.innerText sees neither, so 15 populated panels read as empty (a
+# palette button's emoji was the whole "page"). Walk shadow roots and same-origin
+# frames, counting only rendered text: <style>/<script> bodies and hidden tabs
+# would otherwise make any styled widget look populated.
+# A visible placeholder line ("Loading…", "reading sysmon.status…", "Checking
+# the estate…", "Waiting for an agentic run…") means not yet, however much
+# toolbar text surrounds it: with only a length bar, eight panels were shot
+# mid-load.
+_MEANINGFUL_CONTENT_JS = """() => {
+  const b = document.body; if (!b || b.scrollHeight <= 120) return false;
+  const SKIP = /^(STYLE|SCRIPT|NOSCRIPT|TEMPLATE)$/;
+  const PENDING = /^\\s*(loading|reading|checking|waiting for)\\b/i;
+  let text = '', media = false, pending = false;
+  const walk = (root, depth) => {
+    if (!root || depth > 4 || text.length > 4000) return;
+    if (root.querySelector && root.querySelector('canvas,svg,img[src],table tbody tr')) media = true;
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n && text.length <= 4000; n = w.nextNode()) {
+      if (n.nodeType === 3) {
+        const p = n.parentElement;
+        if (p && !SKIP.test(p.tagName) && (!p.checkVisibility || p.checkVisibility())) {
+          text += n.nodeValue + ' ';
+          if (PENDING.test(n.nodeValue)) pending = true;
+        }
+      } else {
+        if (n.shadowRoot) walk(n.shadowRoot, depth + 1);
+        if (n.tagName === 'IFRAME') {
+          let d = null; try { d = n.contentDocument; } catch (e) {}
+          if (d && d.body) walk(d.body, depth + 1);
+        }
+      }
+    }
+  };
+  walk(b, 0);
+  if (pending) return false;
+  text = text.replace(/\\s+/g, ' ').trim();
+  return text.length > 40 || media;
+}"""
+
+# "Loading" anywhere means not yet: a status line reads "1 nodes · 0 edges
+# loading" while the graph is still arriving, and passed a start-only check.
+_READY_TEXT_JS = """sel => { const e = document.querySelector(sel);
+  if (!e) return false; const t = (e.innerText || e.textContent || '').trim();
+  return t.length > 2 && !/^(starting|\\u2014|[.]{3})/i.test(t) && !/\\bloading\\b/i.test(t); }"""
+
+# Count the first QUANTITY ("400 nodes"), not the first digit: "2D VIEW -- 0
+# nodes" is an empty view whose first digit belongs to its title.
+_READY_COUNT_JS = """sel => { const e = document.querySelector(sel);
+  if (!e) return false; const t = e.innerText || e.textContent || '';
+  if (/\\bloading\\b/i.test(t)) return false;
+  const m = t.match(/(\\d[\\d,]*)\\s+[A-Za-z]/) || t.match(/\\d[\\d,]*/);
+  return !!m && Number((m[1] || m[0]).replace(/,/g, '')) > 0; }"""
+
+
+# A canvas that holds only its background has drawn nothing: the memory graph's
+# status line read "906 nodes" over a blank canvas, and every text/count
+# condition passed. "Background" includes a faint grid, which differs from the
+# fill by a few levels and fooled a plain any-other-colour test; drawn marks
+# stand well clear of the dominant luminance. Sampled, so a large canvas stays
+# cheap. A canvas without a readable 2D context (WebGL, tainted) cannot be
+# judged and passes.
+_READY_PAINTED_JS = """sel => { const c = document.querySelector(sel);
+  if (!c || !c.width || !c.height) return false;
+  let g = null; try { g = c.getContext('2d'); } catch (e) { return true; }
+  if (!g) return true;
+  let d; try { d = g.getImageData(0, 0, c.width, c.height).data; } catch (e) { return true; }
+  const lum = [], hist = new Map();
+  for (let i = 0; i < d.length; i += 4 * 61) {
+    const l = Math.round((d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000);
+    lum.push(l); hist.set(l, (hist.get(l) || 0) + 1);
+  }
+  let bg = 0, best = -1;
+  for (const [l, n] of hist) if (n > best) { best = n; bg = l; }
+  return lum.filter(l => Math.abs(l - bg) > 40).length > 20; }"""
+
+
 async def _wait_ready(page, settle_ms: int,
                       state: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Wait for declarative panel readiness and return bounded evidence.
@@ -420,33 +498,33 @@ async def _wait_ready(page, settle_ms: int,
     ready_selector = str(state.get("ready_selector") or "")
     ready_text = str(state.get("ready_text") or "")
     ready_count = str(state.get("ready_count") or "")
+    # A slow backend (prod's full fabric graph, a worldview projection) needs
+    # longer than the defaults; a state may raise its own explicit waits.
+    explicit_ms = int(state.get("ready_timeout_ms") or 0)
+    # Only the fallback blocks on this, so a longer wait costs time only on a
+    # panel with no explicit state - and a loaded prod needed more than 10s.
+    content_required = not (ready_selector or ready_text or ready_count)
+    content_ms = (explicit_ms or 30000) if content_required else 10000
     await _observe(
-        "meaningful_content", not (ready_selector or ready_text or ready_count), 10000,
-        page.wait_for_function(
-            "() => { const b=document.body; if(!b) return false; "
-            "const text=(b.innerText||'').replace(/loading[….]*/ig,'').trim(); "
-            "return b.scrollHeight > 120 && (text.length > 40 "
-            "|| b.querySelector('canvas,svg,img[src],table tbody tr')); }",
-            timeout=10000))
+        "meaningful_content", content_required, content_ms,
+        page.wait_for_function(_MEANINGFUL_CONTENT_JS, timeout=content_ms))
     if ready_selector:
-        await _observe(f"selector:{ready_selector}", True, 15000,
-                       page.wait_for_selector(ready_selector, state="visible", timeout=15000))
+        ms = explicit_ms or 15000
+        await _observe(f"selector:{ready_selector}", True, ms,
+                       page.wait_for_selector(ready_selector, state="visible", timeout=ms))
     if ready_text:
-        await _observe(
-            f"text:{ready_text}", True, 20000,
-            page.wait_for_function(
-                """sel => { const e=document.querySelector(sel);
-                if(!e) return false; const t=(e.innerText||e.textContent||'').trim();
-                return t.length > 2 && !/^(loading|starting|—|[.]{3})/i.test(t); }""",
-                arg=ready_text, timeout=20000))
+        ms = explicit_ms or 20000
+        await _observe(f"text:{ready_text}", True, ms,
+                       page.wait_for_function(_READY_TEXT_JS, arg=ready_text, timeout=ms))
     if ready_count:
-        await _observe(
-            f"count:{ready_count}", True, 20000,
-            page.wait_for_function(
-                """sel => { const e=document.querySelector(sel);
-                if(!e) return false; const m=(e.innerText||e.textContent||'').match(/\\d[\\d,]*/);
-                return !!m && Number(m[0].replace(/,/g,'')) > 0; }""",
-                arg=ready_count, timeout=20000))
+        ms = explicit_ms or 20000
+        await _observe(f"count:{ready_count}", True, ms,
+                       page.wait_for_function(_READY_COUNT_JS, arg=ready_count, timeout=ms))
+    ready_painted = str(state.get("ready_painted") or "")
+    if ready_painted:
+        ms = explicit_ms or 20000
+        await _observe(f"painted:{ready_painted}", True, ms,
+                       page.wait_for_function(_READY_PAINTED_JS, arg=ready_painted, timeout=ms))
     try:
         await page.evaluate("""async () => {
           if (document.fonts && document.fonts.ready) await document.fonts.ready;
@@ -479,6 +557,17 @@ async def _shoot_panel(session, url: str, abspath: str, *, settle_ms: int = 1400
                                       type(exc).__name__) from exc
         state = state or {}
         click = str(state.get("click") or "")
+        # A view built at click time from data that is still arriving stays
+        # empty: the galaxy's 2D view snapshots its nodes when opened, and was
+        # opened at 1.2s with 0 nodes while the data landed at ~10s.
+        click_after = str(state.get("click_after_count") or "")
+        if click and click_after:
+            ms = int(state.get("ready_timeout_ms") or 0) or 30000
+            try:
+                await page.wait_for_function(_READY_COUNT_JS, arg=click_after, timeout=ms)
+            except Exception as exc:
+                raise PanelReadinessError(f"click_after:{click_after}", ms,
+                                          type(exc).__name__) from exc
         if click:
             try:
                 await page.locator(click).first.click(timeout=10000)
