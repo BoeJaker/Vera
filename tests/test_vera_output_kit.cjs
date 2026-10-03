@@ -15,17 +15,17 @@ t('the kit loads and says what it is', V && V.version >= 1 && typeof V.card === 
 // ── the card ──
 const py = V.card('python', "print('x'", { filename: 'a.py' });
 t('a card carries the chat\'s markup the harvesters read', /class="code-card" data-cb="cb\d+"/.test(py) && py.includes('<code class="language-python">') && py.includes('class="code-exec-out"'));
-t('a python card: copy, edit, explode, run, save, canvas', ['copy', 'edit', 'explode', 'run', 'save', 'canvas'].every((a) => py.includes('data-act="' + a + '"')) && !py.includes('data-act="preview"'));
-t('buttons carry data-act, never a host global', !/onclick=/.test(py) && !py.includes('CH.'));
+t('a python card: copy, edit, explode, run, save, canvas', ['copy', 'edit', 'explode', 'run', 'save', 'canvas'].every((a) => py.includes('data-vo="' + a + '"')) && !py.includes('data-vo="preview"'));
+t('buttons carry data-vo - never data-act (a host\'s own handler) nor a host global', !/onclick=/.test(py) && !py.includes('CH.') && !py.includes('data-act='));
 const page = V.card('html', '<!doctype html><html><body>x</body></html>');
-t('a whole page previews on sight; a page card has preview + pop out, no run', page.includes('data-auto-prev="1"') && page.includes('data-act="preview"') && page.includes('data-act="pop"') && !page.includes('data-act="run"'));
+t('a whole page previews on sight; a page card has preview + pop out, no run', page.includes('data-auto-prev="1"') && page.includes('data-vo="preview"') && page.includes('data-vo="pop"') && !page.includes('data-vo="run"'));
 const frag = V.card('html', '<b>x</b>');
 t('a fragment waits to be asked', !frag.includes('data-auto-prev'));
 const live = V.card('python', 'def f(', { incomplete: true });
-t('a block still being typed is marked, with no actions', live.includes('data-incomplete="1"') && live.includes('cb-stream') && !live.includes('data-act='));
+t('a block still being typed is marked, with no actions', live.includes('data-incomplete="1"') && live.includes('cb-stream') && !live.includes('data-vo='));
 const id = (py.match(/data-cb="(cb\d+)"/) || [])[1];
 t('the registry holds the source', V.blocks[id] && V.blocks[id].code === "print('x'" && V.blocks[id].filename === 'a.py');
-t('no canvas button where the host says so', !V.card('js', 'x', { canvas: false }).includes('data-act="canvas"'));
+t('no canvas button where the host says so', !V.card('js', 'x', { canvas: false }).includes('data-vo="canvas"'));
 
 // ── highlight, lint ──
 t('keywords, strings, comments are tokens', V.highlight('def f(): return "s" # c', 'python').includes('<span class="hl-kw">def</span>')
@@ -42,5 +42,8 @@ t('render: a diagram fence is a diagram slot, not code', out.includes('class="vo
 t('render: a host may draw a fence itself', V.render('```x\n1\n```', { fence: () => '<i>mine</i>' }).includes('<i>mine</i>'));
 t('fence filenames: file=, path=, bare', V.fenceFilename('file=app.py') === 'app.py' && V.fenceFilename('path=src/x.ts') === 'src/x.ts' && V.fenceFilename('python main.py') === 'main.py');
 t('a script previews in a page that reports its error', V.previewDoc('js', 'boom()').includes('catch(e)') && V.previewDoc('html', '<p>') === '<p>');
+// ── a host that draws its own body: the same bar, the actions it lists, its own buttons after them ──
+const bar = V.bar('cv-k', 'python', 'a.py', { actions: ['copy', 'run'], extra: V.hostBtn('data-act="edit"', 'edit', 'Edit', 'x') });
+t('bar(): only the listed kit actions, then the host\'s', bar.includes('data-vo="copy"') && bar.includes('data-vo="run"') && !bar.includes('data-vo="save"') && bar.includes('data-act="edit"'));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

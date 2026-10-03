@@ -91,7 +91,8 @@ t('your fold is remembered per canvas', /localStorage\.setItem\('vera:canvas:fol
 t('a click on a folded header opens it', /if \(it\.classList\.contains\('ufold'\)\) this\._setFold\(it\.dataset\.key, false\);/.test(CV));
 
 // ── research on the canvas ────────────────────────────────────────────────────────────────────────────────────────
-t('a document item draws with the reader\'s renderer', /markdown: c => `<div class="vc-md">\$\{mdx\(c\.md \|\| c\.text \|\| ''\)\}<\/div>`/.test(CV));
+// (2026-10-03: through the shared output kit when it is on the page - the same cards as the chat's - and mdx without it)
+t('a document item draws with the reader\'s renderer', /markdown: c => `<div class="vc-md">\$\{root\.VeraOut[\s\S]{0,200}: mdx\(c\.md \|\| c\.text \|\| ''\)\}<\/div>`/.test(CV));
 t('the report lands, with its citations', /_cvLandReport\(fullText, _cvRelMid\|\|'', jobId, cits\)/.test(CHAT) && /md\+='\\n\\n## Sources\\n\\n'/.test(CHAT));
 t('the citations are kept from either path', /if\(m\.type==='citations'&&Array\.isArray\(m\.citations\)\) cits=m\.citations;/.test(CHAT) && /if\(Array\.isArray\(res\.citations\)\) cits=res\.citations;/.test(CHAT));
 

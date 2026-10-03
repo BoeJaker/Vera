@@ -207,7 +207,25 @@
     run: ICO('<path d="M5 3.2v9.6L12.6 8z"/>'),
     save: ICO('<path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10"/>'),
     canvas: ICO('<rect x="2" y="2.5" width="12" height="11" rx="1.6"/><path d="M8.5 2.5v11M8.5 7h5.5"/>') };
-  const btn = (act, ico, label, tip, cls) => '<button class="cb-act' + (cls ? ' ' + cls : '') + '" data-act="' + act + '" title="' + esc(tip) + '">' + (I[ico] || '') + '<span>' + label + '</span></button>';
+  /* the kit's buttons say data-vo, never data-act: a host that runs its own delegated data-act handler (the canvas, the
+     agent loop) must not take a kit click for one of its own actions - both have an "edit", a "save", an "explode" */
+  const btn = (act, ico, label, tip, cls) => '<button class="cb-act' + (cls ? ' ' + cls : '') + '" data-vo="' + act + '" title="' + esc(tip) + '">' + (I[ico] || '') + '<span>' + label + '</span></button>';
+  // the card's head for a host that draws its own body (the canvas's line-addressable code item): the same bar and
+  // buttons, the actions a host lists (default: all that apply), and the host's own buttons after them
+  function bar(id, lang, filename, o) {
+    o = o || {}; const L = String(lang || '').toLowerCase(); const want = (a) => !o.actions || o.actions.indexOf(a) >= 0;
+    const lbl = esc(L || 'plain') + (filename ? ' · <span class="cb-file">' + esc(filename) + '</span>' : '');
+    return '<div class="code-bar"><span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>'
+      + (want('copy') ? btn('copy', 'copy', 'Copy', 'Copy to the clipboard') : '')
+      + (want('edit') ? btn('edit', 'edit', 'Edit', 'Edit this code in place') : '')
+      + (want('explode') ? btn('explode', 'explode', 'Explode', 'A structured diagram of this code') : '')
+      + (previewable(lang) && want('pop') ? btn('pop', 'pop', 'Pop out', 'Draw it in a window of its own') : '')
+      + (runnable(lang) && want('run') ? btn('run', 'run', 'Run', 'Execute it on the Vera host and show the output here (the exec sandbox applies)', 'run') : '')
+      + (want('save') ? btn('save', 'save', 'Save', "Save it to the session's artifacts") : '')
+      + (o.extra || '') + '</div>';
+  }
+  // a host's own button in the card's look (its own attribute, its own handler)
+  const hostBtn = (attrs, ico, label, tip, on) => '<button class="cb-act' + (on ? ' on' : '') + '" ' + attrs + ' title="' + esc(tip) + '">' + (I[ico] || '') + '<span>' + label + '</span></button>';
   function card(lang, code, o) {
     o = o || {}; lang = String(lang || ''); code = String(code || '');
     const L = lang.toLowerCase(), fname = String(o.filename || ''), id = o.id || register(lang, code, fname);
@@ -222,7 +240,7 @@
       + btn('explode', 'explode', 'Explode', 'A structured diagram of this code - symbols, calls, imports, lint')
       + (previewable(lang) ? btn('preview', 'prev', page ? 'Source' : 'Preview', 'Draw it here - a sandboxed frame, no network', 'cb-prevbtn')
           + btn('pop', 'pop', 'Pop out', 'Draw it in a window of its own')
-          + (hooks.pane ? btn('pane', 'prev', 'Pane', 'Open it in the preview pane, larger') : '') : '')
+          + (o.pane ? btn('pane', 'prev', 'Pane', 'Open it in the preview pane, larger') : '') : '')   // only where the host has a pane (the chat says so)
       + (runnable(lang) ? btn('run', 'run', 'Run', 'Execute it on the Vera host and show the output here (the exec sandbox applies)', 'run') : '')
       + btn('save', 'save', 'Save', "Save it to the session's artifacts")
       + (o.canvas === false ? '' : btn('canvas', 'canvas', 'Canvas', 'Put this code on the session canvas'))
@@ -291,7 +309,7 @@
     async explode(blk, id, b, c) {
       const old = c.querySelector(':scope > .xp-inline'); if (old) { old.remove(); return; }
       const box = document.createElement('div'); box.className = 'xp-inline';
-      box.innerHTML = '<div class="xp-h"><span class="xp-t">explode</span><span class="xp-l"></span><span class="cb-sp"></span><button class="cb-act" data-act="xp-close">close</button></div><div class="xp-body"></div>';
+      box.innerHTML = '<div class="xp-h"><span class="xp-t">explode</span><span class="xp-l"></span><span class="cb-sp"></span><button class="cb-act" data-vo="xp-close">close</button></div><div class="xp-body"></div>';
       box.querySelector('.xp-l').textContent = (blk.filename || blk.lang || 'code') + ' · ' + blk.code.split('\n').length + ' lines';
       c.appendChild(box);
       try { await ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
@@ -324,7 +342,12 @@
     if (name === 'edit') return edit(id);
     if (name === 'preview') return preview(id);
     if (name === 'run') return run(id, b);
-    if (hooks[name]) { try { if (await hooks[name](blk, id, b, c)) return; } catch (e) { console.warn('VeraOut hook ' + name, e); } }
+    // the hooks of the root the card is in: a shadow root's own (wire(root, hooks)), the document's VeraOut.hooks - a
+    // card in the loop's or the canvas's shadow root is never handed to the chat's explode or save, which look for it
+    // in the document and would quietly find nothing
+    const rt = c && c.getRootNode ? c.getRootNode() : document;
+    const H = (rt && rt.__voHooks) || (rt === document ? hooks : null);
+    if (H && H[name]) { try { if (await H[name](blk, id, b, c)) return; } catch (e) { console.warn('VeraOut hook ' + name, e); } }
     if (DEFAULT[name]) return DEFAULT[name](blk, id, b, c);
   }
 
@@ -341,7 +364,7 @@
     ta.style.height = Math.max(120, Math.min(560, pre.offsetHeight + 24)) + 'px';
     const bar = document.createElement('div'); bar.className = 'cb-editbar';
     bar.innerHTML = '<span class="cb-edithint">editing · Ctrl+Enter applies · Esc cancels</span><span class="cb-sp"></span>'
-      + '<button class="cb-act" data-act="edit-cancel">Cancel</button><button class="cb-act run" data-act="edit-apply">Apply</button>';
+      + '<button class="cb-act" data-vo="edit-cancel">Cancel</button><button class="cb-act run" data-vo="edit-apply">Apply</button>';
     pre.after(ta); ta.after(bar);
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Tab') { e.preventDefault(); const s = ta.selectionStart, en = ta.selectionEnd; ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(en); ta.selectionStart = ta.selectionEnd = s + 2; }
@@ -359,18 +382,19 @@
     c.dataset.edited = '1'; lintCard(c);
     const out = c.querySelector(':scope > .code-exec-out'); if (out) { out.style.display = 'none'; out.innerHTML = ''; }
     const detail = { id, lang: blk.lang, code: next, before, filename: blk.filename };
-    try { if (hooks.edited) hooks.edited(blk, id, detail, c); } catch (_) {}
+    try { const rt = c.getRootNode ? c.getRootNode() : document; const H = (rt && rt.__voHooks) || (rt === document ? hooks : null); if (H && H.edited) H.edited(blk, id, detail, c); } catch (_) {}
     c.dispatchEvent(new CustomEvent('vera:code:edited', { bubbles: true, composed: true, detail }));
   }
 
   // ── wiring ──────────────────────────────────────────────────────────────────────────────────────────────
-  function wire(root) {
+  function wire(root, rootHooks) {
     root = root || document; roots.add(root);
+    if (rootHooks && root !== document) root.__voHooks = Object.assign(root.__voHooks || {}, rootHooks);
     if (root.__voWired) return root; root.__voWired = true;
     root.addEventListener('click', (e) => {
-      const b = e.target && e.target.closest && e.target.closest('.code-card [data-act]'); if (!b) return;
+      const b = e.target && e.target.closest && e.target.closest('.code-card [data-vo]'); if (!b) return;
       const c = b.closest('.code-card'); const id = c && c.getAttribute('data-cb'); if (!id) return;
-      const a = b.getAttribute('data-act'); e.preventDefault(); e.stopPropagation();
+      const a = b.getAttribute('data-vo'); e.preventDefault(); e.stopPropagation();
       if (a === 'edit-apply') return editDone(id, true);
       if (a === 'edit-cancel') return editDone(id, false);
       if (a === 'xp-close') { const x = b.closest('.xp-inline'); if (x) x.remove(); return; }
@@ -453,7 +477,7 @@
     if (root === document) host.insertBefore(st, host.firstChild); else host.appendChild(st);   // the document's own sheets still win there
   }
 
-  window.VeraOut = { version: 1, render, card, fence, highlight, lintCode, lintCard, hydrate, wire, adopt, preview, run, edit,
+  window.VeraOut = { version: 1, render, card, bar, hostBtn, icons: I, fence, highlight, lintCode, lintCard, hydrate, wire, adopt, preview, run, edit,
     register, blocks, hooks, previewable, runnable, wholePage, previewDoc, fenceFilename, langClass, ensureLib, css: CSS };
   const boot = () => { adopt(document); wire(document); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();

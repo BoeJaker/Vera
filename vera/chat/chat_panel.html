@@ -8685,7 +8685,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     // THE CARD IS THE SHARED ONE (vera_output.js): the same card, actions and look the agent loop and the canvas
     // draw - Copy · Edit · Explode · Preview · Pop out · Pane · Run · Save · Canvas - with the chat's own explode
     // panel, artifact save, pop-out and pane plugged in as its hooks (_voHooks). Below: the fallback without it.
-    if(typeof VeraOut!=='undefined') return VeraOut.card(lang, raw, {filename:fname, incomplete:!!st.incomplete});
+    if(typeof VeraOut!=='undefined') return VeraOut.card(lang, raw, {filename:fname, incomplete:!!st.incomplete, pane:true});
     const id=_registerCodeBlock(lang,raw,fname);
     const langLbl=esc((lang||'plain').toLowerCase())+(fname?` · <span style="color:var(--acc,#5a9e8f)">${esc(fname)}</span>`:'');
     if(st.incomplete){
