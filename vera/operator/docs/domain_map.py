@@ -191,7 +191,9 @@ DOMAINS: List[Dict[str, Any]] = [
     {"slug": "overview", "doc": "", "title": "Overview", "cap_prefixes": [],
      "panel_ids": [], "match": [], "seed": None,
      "pages": [
-         {"name": "dashboard", "path": "/", "label": "Main dashboard", "settle_ms": 4000},
+         # The shell fills ~70 widgets after load; a short settle caught
+         # "never updated" and empty "no data" tiles.
+         {"name": "dashboard", "path": "/", "label": "Main dashboard", "settle_ms": 15000},
          {"name": "cap-hub", "path": "/cap_hub/panel", "label": "Capability Hub"},
          {"name": "evolve", "path": "/evolve/panel", "label": "Loop Lab"},
          {"name": "fabric-panel", "path": "/fabric/panel", "label": "Data Fabric"},
