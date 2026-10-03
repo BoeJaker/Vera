@@ -25,6 +25,7 @@
 
    <vera-exploded>  API: setScene({turns:[{mid, who, t, text, reply, read:[card], say:[card], made:[card],
                     land:[card], activity?:[call], estate?:[node]}], sel}) · mode(name) · select(mid) · fit() · state() · solo(on) · stack(on) · tilt(deg) · swing(deg) · pan(dx, dy)
+                    iso: ctrl-drag turns the scene about its centre; a double-click on a plate focuses it; the zoom runs 5% to 400%
                     · layers({activity, estate}) · galaxy(on)
    card = {n, d, col, kind, body?, score?, p?, m?, rows?, form?, data?, record? (a placed widget's record: form · source · frame · draw · data), mermaid? (a diagram's source)}
    a turn IN PROGRESS: turn.pending:true (+ turn.phrase, the thinking phrase the chat rolls) — or a card of kind 'pending'
@@ -88,6 +89,8 @@
      small also leaves the plot using a third of it. The sheet takes its height from its width at the plot's proportion,
      so the whole galaxy is inside it and as big as the band can carry (Notes/42 defect 61). */
   const galH = (w) => Math.round(Math.max(110, Math.min(240, w * 0.66)));
+  // the view's zoom, as Estate > Live ops has it: far enough out to see a long session whole, far enough in to read a card
+  const ZMIN = 0.05, ZMAX = 4, KEEP = 80;
 
   /* ── a structure as a scene: the code and prose explodes (layers · groups · cards · edges), pure ──────────────────── */
   const XPAL = ['var(--xp-dv1)', 'var(--xp-dv2)', 'var(--xp-dv3)', 'var(--xp-ac)', 'var(--xp-ac2)', '#e0a23c', '#56b6c2', '#c678dd'];
@@ -936,6 +939,10 @@ vera-exploded .xnd .xnl{display:none;position:absolute;left:50%;top:100%;transfo
 vera-exploded .xp-band{position:absolute;pointer-events:none;clip-path:var(--cp);background:color-mix(in srgb,var(--bc) 7%,transparent)}
 vera-exploded .xp-band.empty{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--bc) 6%,transparent) 0 6px,transparent 6px 14px)}
 vera-exploded .xp-band.on{background:color-mix(in srgb,var(--bc) 11%,transparent)}
+/* a plate in focus (double-click): it lit, the rest hushed */
+vera-exploded .xp-band.xp-focus{background:color-mix(in srgb,var(--bc) 20%,transparent)}
+vera-exploded .xp-hush{opacity:.16;transition:opacity .2s}
+vera-exploded.xp-focusing .xp-e{opacity:.45}
 vera-exploded .xp-lb.more{font-size:8.5px;letter-spacing:.04em;text-transform:none;transform:translate(-100%,-50%);pointer-events:auto;cursor:pointer}
 vera-exploded .xp-lb.empty{font-size:8.5px;letter-spacing:.06em;text-transform:none;font-style:italic;opacity:.7;transform:translate(-50%,-50%)}
 vera-exploded .xp-lb.lane{transform:translate(-100%,-50%)}vera-exploded .xp-lb.prompt{transform:translate(-50%,-100%)}
@@ -1073,7 +1080,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         const wrap = this._r.wrap;
         // the wheel zooms the whole scene about the pointer: plates, runs, cards, widgets and nodes grow together
         // ctrl (or Command, or a pinch) zooms the scene; a plain wheel scrolls the page past it (defect 75)
-      wrap.addEventListener('wheel', (e) => { if (this._S.mode === 'cards') return; if (!(e.ctrlKey || e.metaKey)) return; e.preventDefault(); const p = this._S.pan; const nz = Math.max(0.4, Math.min(3, p.z * (e.deltaY > 0 ? 0.9 : 1.12))); const r = wrap.getBoundingClientRect(); const qx = e.clientX - (r.left + r.width / 2), qy = e.clientY - (r.top + r.height / 2); const k = nz / p.z; this._S.pan = { z: nz, x: qx - (qx - p.x) * k, y: qy - (qy - p.y) * k }; this._applyPan(); }, { passive: false });
+      wrap.addEventListener('wheel', (e) => { if (this._S.mode === 'cards') return; if (!(e.ctrlKey || e.metaKey)) return; e.preventDefault(); const p = this._S.pan; const nz = Math.max(ZMIN, Math.min(ZMAX, p.z * (e.deltaY > 0 ? 0.9 : 1.12))); const r = wrap.getBoundingClientRect(); const qx = e.clientX - (r.left + r.width / 2), qy = e.clientY - (r.top + r.height / 2); const k = nz / p.z; this._S.pan = { z: nz, x: qx - (qx - p.x) * k, y: qy - (qy - p.y) * k }; this._applyPan(); }, { passive: false });
         /* PICK UP AND DROP: a widget on the canvas plane (data-drag) follows the pointer once it has moved a little; the plate
            under the pointer lights as the drop target, an item under it says the widget would land before it; the drop is
            reported to the host (vera:xpl:move), which re-anchors the record — the scene redraws from the host's answer.
@@ -1087,6 +1094,8 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           if (this._S.mode === 'cards') { const k = this._S.pan.z || 1; return { x: ((cx - r.left) / zoom + v.scrollLeft) / k, y: ((cy - r.top) / zoom + v.scrollTop) / k }; }
           return { x: (cx - r.left) / zoom, y: (cy - r.top) / zoom }; };
         this._dragLocal = local;
+        // the first press of a double-click, in the scene's own coordinates (a second press on the same spot keeps the first)
+        this.addEventListener('pointerdown', (e) => { const d = this._down, now = Date.now(); if (d && now - d.t < 600 && Math.abs(d.cx - e.clientX) + Math.abs(d.cy - e.clientY) < 8) return; this._down = { t: now, cx: e.clientX, cy: e.clientY, l: local(e.clientX, e.clientY) }; });
         this.addEventListener('pointermove', (e) => { const g = this._dragW; if (!g) return; const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
           if (!g.on) { if (Math.abs(dx) + Math.abs(dy) < 6) return; g.on = true; g.el.classList.add('xp-lift'); wrap.classList.add('dropping'); g.l0 = local(g.x0, g.y0); try { this.setPointerCapture(g.pid); } catch (_) {} }
           const l = local(e.clientX, e.clientY); g.el.style.translate = (l.x - g.l0.x).toFixed(1) + 'px ' + (l.y - g.l0.y).toFixed(1) + 'px';   /* the translate property composes BEFORE the class transform, so the item's own foot-anchoring (translate + the fit's counter-scale) stays under the lift */
@@ -1101,8 +1110,11 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           if (held) this._schedule();
           const wg = this._itemOf(g.id); this.dispatchEvent(new CustomEvent('vera:xpl:move', { detail: { id: g.id, key: g.key || (wg && wg.key) || '', from: g.from, to: g.to || g.from, before: g.before, at: g.at, layer: g.layer, mode: this._S.mode, card: wg ? wg.card : null }, bubbles: true })); };
         this.addEventListener('pointerup', dropEnd); this.addEventListener('pointercancel', dropEnd);
-        wrap.addEventListener('pointerdown', (e) => { if (e.button || this._S.mode === 'cards' || (e.target.closest && e.target.closest('.xp-it,.xp-rc,.xp-cp,.xit,.xig,.xnd,button,.xp-lb.station'))) return; this._drag = { x0: e.clientX, y0: e.clientY, px: this._S.pan.x, py: this._S.pan.y, id: e.pointerId, moved: false }; });
-        wrap.addEventListener('pointermove', (e) => { const g = this._drag; if (!g) return; const dx = e.clientX - g.x0, dy = e.clientY - g.y0; if (!g.moved && Math.abs(dx) + Math.abs(dy) > 4) { g.moved = true; wrap.classList.add('dragging'); try { wrap.setPointerCapture(g.id); } catch (_) {} } if (g.moved) { this._S.pan.x = g.px + dx; this._S.pan.y = g.py + dy; this._applyPan(); } });
+        wrap.addEventListener('pointerdown', (e) => { if (e.button || this._S.mode === 'cards' || (e.target.closest && e.target.closest('.xp-it,.xp-rc,.xp-cp,.xit,.xig,.xnd,button,.xp-lb.station'))) return; this._drag = { x0: e.clientX, y0: e.clientY, px: this._S.pan.x, py: this._S.pan.y, id: e.pointerId, moved: false, rot: (e.ctrlKey || e.metaKey) && this._S.mode === 'iso', t0: this._S.tilt == null ? 30 : this._S.tilt, a0: this._S.azim == null ? 45 : this._S.azim }; });
+        wrap.addEventListener('pointermove', (e) => { const g = this._drag; if (!g) return; const dx = e.clientX - g.x0, dy = e.clientY - g.y0; if (!g.moved && Math.abs(dx) + Math.abs(dy) > 4) { g.moved = true; wrap.classList.add('dragging'); try { wrap.setPointerCapture(g.id); } catch (_) {} } if (!g.moved) return;
+          if (g.rot) { this._S.azim = Math.max(25, Math.min(65, g.a0 - dx * 0.22)); this._S.tilt = Math.max(12, Math.min(60, g.t0 + dy * 0.18));   // ctrl-drag: the scene turns about its centre
+            if (!this._rotRaf) this._rotRaf = (root.requestAnimationFrame || ((f) => setTimeout(f, 16)))(() => { this._rotRaf = 0; this._schedule(); this._isoCentre(); }); return; }
+          this._S.pan.x = g.px + dx; this._S.pan.y = g.py + dy; this._applyPan(); });
         const up = () => { if (this._drag) { wrap.classList.remove('dragging'); this._drag = null; } }; wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
         if (root.ResizeObserver) { this._ro = new ResizeObserver(() => this._schedule()); this._ro.observe(wrap); }
         this._schedule();
@@ -1136,6 +1148,12 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           });
         } catch (_) {}
       }
+      /* The plate in focus (a double-click on it): its band lit, every other band and every item standing on another plate
+         hushed. A card's id is mid:layer:index, so the layer is read off it. */
+      _isoHush() { const f = this._S.mode === 'iso' ? this._S.isoFocus : null, sr = this.shadowRoot || this;
+        sr.querySelectorAll('.xp-band').forEach((b) => { const on = !!f && b.classList.contains(f); b.classList.toggle('xp-hush', !!f && !on); b.classList.toggle('xp-focus', on); });
+        sr.querySelectorAll('.xit[data-id],.xig[data-id],.xp-it[data-id]').forEach((el) => { const k = String(el.dataset.id || '').split(':')[1] || ''; el.classList.toggle('xp-hush', !!f && k !== f); });
+        this.classList.toggle('xp-focusing', !!f); }
       _isoCentre() {
         if (this._S.mode !== 'iso') return;
         const raf = root.requestAnimationFrame || ((f) => setTimeout(f, 16));
@@ -1175,6 +1193,9 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
       // the laid-out item behind a DOM id (a card or an iso widget), for the events that name one
       _dive(e) {
         const el = e.target.closest && e.target.closest('.xp-it,.xp-rc,.xit,.xig,.xnd');
+        if ((!el || !el.dataset.id) && this._S.mode === 'iso' && this._dragLocal && !(e.target.closest && e.target.closest('button,.xp-lb'))) {   // a plate, not a card: focus it
+          const d = this._down, l = d && d.l && Date.now() - d.t < 900 ? d.l : this._dragLocal(e.clientX, e.clientY), hit = this._dropAt(l.x, l.y, '') || {};   /* where the FIRST click of the two landed on the scene: a re-centre between them moves the plate, not the point */
+          this._S.isoFocus = hit.layer && this._S.isoFocus !== hit.layer ? hit.layer : null; this._isoHush(); e.preventDefault(); return; }
         if (!el || !el.dataset.id) return;
         e.preventDefault();
         const it = this._itemOf(el.dataset.id) || {};
@@ -1272,7 +1293,10 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
       setBudget(used, max) { this._S.budget = (max > 0) ? { used: +used || 0, max: +max } : null; this._schedule(); }
       focus(li) { this._S.focus = li == null || this._S.focus === li ? null : li; if (li != null) this._S.layer = li; this._schedule(); return this._S.focus; }
       // the pan zoom is one transform on the view: nothing counter-scales against it (the items' --inv follows the fit alone)
-      _applyPan() { const p = this._S.pan; if (this._r.view) this._r.view.style.transform = this._S.mode === 'cards' ? 'none' : 'translate(' + p.x + 'px,' + p.y + 'px) scale(' + p.z + ')'; if (this._r.zoom) this._r.zoom.textContent = Math.round(p.z * 100) + '%';
+      _applyPan() { const p = this._S.pan;
+        // never lost: whatever the pan and the zoom, KEEP px of the scene stay in the frame (the view scales about its centre)
+        if (this._S.mode !== 'cards' && this._r.wrap) { const W = this._r.wrap.clientWidth, H = this._r.wrap.clientHeight; if (W > 0 && H > 0) { const mx = Math.max(0, W * (1 + p.z) / 2 - KEEP), my = Math.max(0, H * (1 + p.z) / 2 - KEEP); p.x = Math.max(-mx, Math.min(mx, p.x)); p.y = Math.max(-my, Math.min(my, p.y)); } }
+        if (this._r.view) this._r.view.style.transform = this._S.mode === 'cards' ? 'none' : 'translate(' + p.x + 'px,' + p.y + 'px) scale(' + p.z + ')'; if (this._r.zoom) this._r.zoom.textContent = Math.round(p.z * 100) + '%';
         // cards: the stage scales about its corner and the wrap's inner box follows, so the scroll range is the zoomed scene's
         if (this._S.mode === 'cards' && this._r.view) { const st = this._r.view.querySelector('.xp-stage'), w = this._r.view.querySelector('.xp-stage-w'); if (st && w) { st.style.transform = 'scale(' + p.z + ')'; w.style.width = Math.round(parseFloat(st.style.width) * p.z) + 'px'; w.style.height = Math.round(parseFloat(st.style.height) * p.z) + 'px'; } } }
       _click(e) {
@@ -1280,7 +1304,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         const t = e.target;
         const eb = t.closest && t.closest('[data-edit]'); if (eb) { const it = eb.closest('[data-id]'); const id = it ? it.dataset.id : ''; const [mid] = id.split(':'); const wg = this._itemOf(id); e.stopPropagation(); this.dispatchEvent(new CustomEvent('vera:xpl:edit', { detail: { id, mid, key: (it && it.dataset.key) || (wg && wg.key) || '', card: wg ? wg.card : null }, bubbles: true })); return; }
         const mb = t.closest && t.closest('button[data-m]'); if (mb) { this.mode(mb.dataset.m); return; }
-        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'stack') this.stack(); else if (k === 'wsz') this.widgetSize(); else if (k === 'landw') { this._S.landCols = Math.max(1, Math.min(6, (this._S.landCols || 1) + (e.shiftKey ? -1 : 1))); writePref('vera_xpl_landcols', this._S.landCols); this._schedule(); } else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'solo') this.solo(true); else if (k === 'all') { this._S.solo = false; this._S.stack = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); } else if (k === 'panl' || k === 'panr' || k === 'panu' || k === 'pand') this.pan(k === 'panl' ? 80 : k === 'panr' ? -80 : 0, k === 'panu' ? 80 : k === 'pand' ? -80 : 0); else if (k === 'tiltu' || k === 'tiltd') this.tilt(this._S.tilt + (k === 'tiltu' ? 6 : -6)); else if (k === 'swl' || k === 'swr') this.swing(this._S.azim + (k === 'swl' ? -5 : 5)); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.auto = false; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min((((this._S.scene && this._S.scene.layers) || []).length || LAYERS.length) - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
+        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'stack') this.stack(); else if (k === 'wsz') this.widgetSize(); else if (k === 'landw') { this._S.landCols = Math.max(1, Math.min(6, (this._S.landCols || 1) + (e.shiftKey ? -1 : 1))); writePref('vera_xpl_landcols', this._S.landCols); this._schedule(); } else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'solo') this.solo(true); else if (k === 'all') { this._S.solo = false; this._S.stack = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); } else if (k === 'panl' || k === 'panr' || k === 'panu' || k === 'pand') this.pan(k === 'panl' ? 80 : k === 'panr' ? -80 : 0, k === 'panu' ? 80 : k === 'pand' ? -80 : 0); else if (k === 'tiltu' || k === 'tiltd') this.tilt(this._S.tilt + (k === 'tiltu' ? 6 : -6)); else if (k === 'swl' || k === 'swr') this.swing(this._S.azim + (k === 'swl' ? -5 : 5)); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.auto = false; p.z = Math.max(ZMIN, Math.min(ZMAX, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min((((this._S.scene && this._S.scene.layers) || []).length || LAYERS.length) - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
         const cb = t.closest && t.closest('.xp-cb'); if (cb) { if (cb.dataset.layer) { const L = Object.assign({}, this._S.layers); L[cb.dataset.layer] = !L[cb.dataset.layer]; this.layers(L); return; } if (cb.dataset.galaxy) { this.galaxy(); return; } if (cb.dataset.rel) this._S.related = !this._S.related; else if (cb.dataset.lane) { this._S.lanesOff = Object.assign({}, this._S.lanesOff); this._S.lanesOff[cb.dataset.lane] = !this._S.lanesOff[cb.dataset.lane]; } this._schedule(); return; }
         const dot = t.closest && t.closest('.xp-dot'); if (dot) { this.select(dot.dataset.mid); return; }
         const st = t.closest && t.closest('.xp-lb.station'); if (st) { this.select(st.dataset.mid); return; }
@@ -1437,6 +1461,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         (o.widgets || []).slice().sort((a, b) => a.y - b.y).forEach((wg) => { h += wg.draw === 'group' ? xigHtml(wg) : xitHtml(wg); });
         if (o.mode === 'cards') { const k = S.pan.z || 1; h = '<div class="xp-stage-w" style="width:' + Math.round(o.size.w * k) + 'px;height:' + Math.round(o.size.h * k) + 'px;overflow:hidden"><div class="xp-stage" style="width:' + o.size.w + 'px;height:' + o.size.h + 'px;transform:scale(' + k + ')">' + h + '</div></div>'; }
         const sx = view.scrollLeft, sy = view.scrollTop; view.innerHTML = h; this._applyPan();   // the stage is rebuilt; where it was scrolled to is kept
+        if (o.mode === 'iso') this._isoHush();
         if (h.indexOf('<vera-mermaid') >= 0) ensureMermaid(this.ownerDocument);
         if (o.mode === 'cards' && (sx || sy)) { view.scrollLeft = sx; view.scrollTop = sy; }
         // CARDS: measure every card's height (a tall one pushes the rows under it down) and lay out once more when one
