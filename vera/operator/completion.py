@@ -144,3 +144,29 @@ def nudge_for(history) -> str:
     if claims_completion(last.get("thought") or ""):
         return NUDGE
     return unchanged_nudge(items)
+
+
+_GENERIC_DONE = re.compile(r"^\W*(goal\s+(is\s+)?(complete|completed|achieved|met|done)|done|complete|"
+                           r"completed|success(ful)?|verified|task\s+complete)\W*$", re.IGNORECASE)
+
+
+def evidence_summary(summary: str, history, current_seen: str = "", limit: int = 4) -> str:
+    """A `done` whose summary says nothing ("goal complete") gets what the page showed.
+
+    Prod 2026-10-03 operator A/B: three of six runs on a working countdown ended `done`
+    with the summary "goal complete" - the loop that asked "report the values you saw"
+    got no values. The page text after each action is already in the history (`seen`);
+    the distinct values in order ARE the report. A summary with any substance is kept as
+    it is."""
+    s = str(summary or "").strip()
+    if s and not _GENERIC_DONE.match(s):
+        return s
+    trail = []
+    for h in list(history or []) + [{"seen": current_seen}]:
+        v = " ".join(str((h or {}).get("seen") or "").split())[:80] if isinstance(h, dict) else ""
+        if v and (not trail or trail[-1] != v):
+            trail.append(v)
+    if not trail:
+        return s or "goal complete"
+    return "%s. Observed on the page, in order: %s" % (
+        s or "goal complete", " -> ".join(repr(v) for v in trail[-limit:]))
