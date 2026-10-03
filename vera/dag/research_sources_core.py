@@ -94,3 +94,32 @@ def remember(session_id: str, entry: Any) -> None:
 
 def recall(session_id: str) -> List[Dict[str, Any]]:
     return list(_RUN.get(session_id or "", []))
+
+
+
+# ── When the executor names its OWN context ─────────────────────────────────────
+# Probe 3 Oct (7c5bf52c): prose.author(context_files=["/workspace/journal.json"],
+# sources="https://lushbinary.com/...") - the run's bookkeeping file and a bare URL. Both
+# made the handoff stand down, so the writer got a link and none of the research.
+BOOKKEEPING = frozenset({"journal.json"})
+#: A `sources` value shorter than this is a pointer (a URL, a title), not material.
+THIN_SOURCES_CHARS = 1500
+
+
+def bookkeeping_only(value: Any) -> bool:
+    """context_files naming only the run's own bookkeeping (journal.json)."""
+    if context_files_empty(value):
+        return False
+    if isinstance(value, (list, tuple)):
+        items = [str(v) for v in value]
+    else:
+        s = str(value).strip().strip("[]")
+        items = [x.strip().strip("'\"") for x in s.split(",")]
+    names = [i.replace("\\", "/").rsplit("/", 1)[-1] for i in items if i.strip()]
+    return bool(names) and all(n in BOOKKEEPING for n in names)
+
+
+def wants_sources(context_files: Any, given_sources: Any) -> bool:
+    """Should the loop hand the run's research to this writer call?"""
+    no_material = context_files_empty(context_files) or bookkeeping_only(context_files)
+    return no_material and len(str(given_sources or "").strip()) < THIN_SOURCES_CHARS

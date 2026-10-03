@@ -17409,13 +17409,14 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # none of them and wrote "(Note: The provided context files were empty...)" into
         # the deliverable. With no files named, hand it the step's web results.
         if tool == "prose.author" and isinstance(args, dict) \
-                and _research_sources_core.context_files_empty(args.get("context_files")) \
-                and not str(args.get("sources") or "").strip():
+                and _research_sources_core.wants_sources(args.get("context_files"), args.get("sources")):
             # The run's research too - it is usually an EARLIER step (probe 3 Oct, 1e84cf1d).
             _srcs = _research_sources_core.sources_block(
                 _research_sources_core.recall(sid) + list(history))
             if _srcs:
-                args["sources"] = _srcs
+                # Keep what the executor named (a URL, a title) in front of the material.
+                _given = str(args.get("sources") or "").strip()
+                args["sources"] = (_given + "\n\n" if _given else "") + _srcs
                 await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                                   "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                                   "session_id": sid,
