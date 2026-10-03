@@ -2260,6 +2260,8 @@
     render(doc) {
       const root = this.shadowRoot;
       const blocks = doc.blocks || [];
+      // what the host is streaming into an item outranks whatever an older revision says it holds (liveUpdate)
+      if (this._liveOv) blocks.forEach((b) => { const ov = b && b.key != null && this._liveOv[String(b.key)]; if (ov) b.content = Object.assign({}, b.content || {}, ov); });
       root.getElementById('title').textContent = doc.title || 'Canvas';
       root.getElementById('count').textContent =
         blocks.length + (blocks.length === 1 ? ' block' : ' blocks');
@@ -2496,9 +2498,24 @@
       const layers = this._layers(body);
       const mark = this.canvasId + '\u0000' + html;    // another canvas's identical markup is not this canvas's
       if (this._html !== mark || !layers.items.childElementCount) {
+        /* AN ITEM BEING WRITTEN FOLLOWS ITS LAST LINE (owner, 2026-10-03: "it also doesnt auto scroll to the most recent
+           line if the user is already scrolled to the bottom or not been scrolled up"). Redrawing the markup put every
+           scrolling part of every item back at its top. What each one was doing is read first - at its end (or never
+           scrolled), or held somewhere by the reader - and given back: the first follows the new end, the second keeps
+           its place. */
+        const sc = {};
+        layers.items.querySelectorAll('.it[data-key]').forEach((it) => {
+          const k = it.dataset.key; const parts = it.querySelectorAll('.it-bd, pre, .vc-out');
+          parts.forEach((el, j) => { if (el.scrollHeight > el.clientHeight + 2) sc[k + '\u0000' + j] = { top: el.scrollTop, end: el.scrollHeight - el.scrollTop - el.clientHeight < 24 }; else sc[k + '\u0000' + j] = { top: 0, end: true }; });
+        });
         this._html = mark;
         layers.items.innerHTML = html;
         if (!stage) body.scrollTop = keepTop;
+        layers.items.querySelectorAll('.it[data-key]').forEach((it) => {
+          const k = it.dataset.key; it.querySelectorAll('.it-bd, pre, .vc-out').forEach((el, j) => {
+            const s = sc[k + '\u0000' + j]; if (!s || el.scrollHeight <= el.clientHeight + 2) return;
+            el.scrollTop = s.end ? el.scrollHeight : s.top; });
+        });
       }
       this._bind(body);
       if (stage) this._placeNow();
@@ -2670,6 +2687,21 @@
     _blockOf(key) { const bl = (this._doc && this._doc.blocks) || []; key = String(key); return bl.find(b => b && b.key != null && String(b.key) === key) || (key.startsWith('blk:') ? bl.find(b => b && !b.key && String(b.id) === key.slice(4)) : null) || null; }
     /* how a write names the block: the resolver's key, or — a keyless block of an agent's canvas — its block_id */
     _bidOf(key) { const b = this._blockOf(key); return b && !b.key ? String(b.id) : ''; }
+    /* THE ITEM BEING WRITTEN, AS IT IS WRITTEN (owner, 2026-10-03: "the streaming to the canvas is not smooth like the
+       chat"). The host's writes go to the server a few times a second and come back as a revision; between them the
+       item stood still and then jumped. The host hands the growing content here on every paint instead: the item's
+       content in this canvas's document is replaced and the column redrawn on the next frame - the write that
+       persists it still follows, and the revision it brings back changes nothing that is already drawn. */
+    liveUpdate(key, content) {
+      const b = this._blockOf(key); if (!b || !content || typeof content !== 'object') return false;
+      // held over every document until the host says the stream is done: a revision that left the server before the
+      // last write would otherwise draw the item a step back
+      (this._liveOv = this._liveOv || {})[String(key)] = content;
+      b.content = Object.assign({}, b.content || {}, content);
+      if (!this._liveRaf) this._liveRaf = requestAnimationFrame(() => { this._liveRaf = 0; if (this._doc) this.render(this._doc); });
+      return true;
+    }
+    liveDone(key) { if (!this._liveOv) return; if (key == null) this._liveOv = null; else delete this._liveOv[String(key)]; }
     _ref(key) { const bid = this._bidOf(key); return bid ? { block_id: bid } : { key }; }
     /* every action on the column — the old per-item controls (pin · park · size · remove) and the board's new ones
        (add · open · edit · answer · take · in context) — one dispatcher */
