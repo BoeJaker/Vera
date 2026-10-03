@@ -44,11 +44,6 @@
   .chip.warn{color:var(--warn)} .chip.warn .dot{background:var(--warn)}
   .grow{flex:1}
   .ide-body{flex:1;display:flex;min-height:0}
-  #views{width:170px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;padding:8px 6px;background:var(--bg1);border-right:1px solid var(--line);overflow-y:auto}
-  #views .nav-btn{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:7px;border:1px solid transparent;background:none;color:var(--fg-dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;white-space:nowrap;transition:background .12s,color .12s}
-  #views .nav-btn:hover{background:var(--bg2);color:var(--fg)}
-  #views .nav-btn.active{background:var(--bg3);color:var(--fg);box-shadow:inset 2px 0 0 var(--accent)}
-  #views .gl{width:16px;text-align:center;flex-shrink:0}
   main{flex:1;position:relative;min-height:0;min-width:0}
   .view{position:absolute;inset:0;display:none;flex-direction:column}
   .view.active{display:flex}
@@ -115,7 +110,7 @@
   <!-- THE IDE'S VIEWS ARE ITS MENU (owner, 2026-10-03: a sub-UI - a top-bar option that replaces the page with other HTML -
        belongs in the LHM; the header keeps the instance, its status and actions). Docked in the harness this nav is the
        panel's LHM menu (Loop Lab's and Dispatch's own menus nest under them); standalone it is this column. -->
-  <nav id="views" data-vera-lhm aria-label="IDE views">
+  <nav id="views" class="vp-menu" data-vera-lhm aria-label="IDE views">
     <button class="nav-btn active" data-view="vscode" data-icon="⌨" data-label="VS Code" data-desc="The VS Code instance picked in the header" data-desc-long="VS Code (code-server) - the central instance, a remote one or a session-sandbox worker, chosen in the header's instance list - embedded through Vera's same-origin proxy. Its password and the desktop Connect are in the header."><span class="gl">⌨</span>VS Code</button>
     <button class="nav-btn" data-view="classic" data-icon="▤" data-label="Workbench" data-desc="The original Vera IDE" data-desc-long="The classic Vera IDE workbench (/ide/panel): file browser, editor, AI chat, run, agent, project builder, docs, version control, tests and sandbox policy."><span class="gl">▤</span>Workbench</button>
     <button class="nav-btn" data-view="remotes" data-icon="⇄" data-label="Remotes &amp; Queue" data-desc="Remote IDEs and the task queue" data-desc-long="Remote IDE connections and the queue of tasks handed to them (/ide/remote/panel)."><span class="gl">⇄</span>Remotes &amp; Queue</button>
@@ -345,5 +340,6 @@ $('#btn-deploy').onclick=async()=>{
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-select.js"></script>
+<script src="/ui/vera-panel.js"></script>
 </body>
 </html>

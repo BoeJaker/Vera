@@ -22,11 +22,6 @@
   #side{width:220px;min-width:180px;border-right:1px solid var(--line);display:flex;
     flex-direction:column;background:var(--bg1)}
   #main{flex:1;display:flex;flex-direction:column;min-width:0}
-  #wsViews{width:150px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;padding:8px 6px;border-right:1px solid var(--line);background:var(--bg1)}
-  #wsViews .nav-btn{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;border:1px solid transparent;background:none;color:var(--t2);font:inherit;font-size:12px;text-align:left;cursor:pointer;white-space:nowrap}
-  #wsViews .nav-btn:hover{background:var(--bg2);color:var(--fg)}
-  #wsViews .nav-btn.on{background:var(--bg2);color:var(--fg);font-weight:600;box-shadow:inset 2px 0 0 var(--acc)}
-  #wsViews .gl{width:16px;text-align:center;flex-shrink:0}
   header{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line)}
   .ttl{font-weight:600}
   .spacer{flex:1}
@@ -120,7 +115,7 @@
   <!-- THE PANEL'S VIEWS ARE ITS MENU (owner, 2026-10-03: a sub-UI - a top-bar option that replaces the page with other
        HTML - belongs in the LHM). Integrations loads the integrations hub in place of the grid. Docked, this nav is the
        panel's LHM menu; standalone it is its own column (outside #side, which Integrations mode hides). -->
-  <nav id="wsViews" data-vera-lhm aria-label="Workspace views">
+  <nav id="wsViews" class="vp-menu" data-vera-lhm aria-label="Workspace views">
     <button class="nav-btn on" id="segWs" data-view="ws" data-icon="▦" data-label="Workspaces" data-desc="Your workspaces and their widgets" data-desc-long="Workspaces: saved grids of terminal, file-explorer, app and panel widgets bound to a container or VM. Pick one in the list beside it; Edit, + Widget and Save are in the header." onclick="setView('ws')"><span class="gl">▦</span>Workspaces</button>
     <button class="nav-btn" id="segInt" data-view="int" data-icon="⇄" data-label="Integrations" data-desc="The integrations hub" data-desc-long="The integrations hub (/integrations/panel) in place of the workspace grid: the external apps and services Vera connects to, which app widgets can mount." onclick="setView('int')"><span class="gl">⇄</span>Integrations</button>
   </nav>
@@ -570,5 +565,6 @@ function setView(v){ const isInt = v==='int';
 
 loadWorkspaces();
 </script>
+<script src="/ui/vera-panel.js"></script>
 </body>
 </html>

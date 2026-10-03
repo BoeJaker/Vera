@@ -328,7 +328,32 @@
     syncSubs(); setInterval(syncSubs, 700);
   }
 
-  function init() { initCollapse(); initSections(); initNavBridge(); }
+  /* ── 4. ONE LOOK FOR A MENU THAT IS NOT THE CANONICAL SIDEBAR (owner, 2026-10-03: "each panel use a common lhm styling
+     that matches the lhm of the harness"). A page whose menu cannot be the canonical <aside id="sidebar"> (its own
+     #sidebar already holds a list, its views are a column beside the page) marks it class="vp-menu" - a column - or
+     "vp-menu inline" - a block heading a column - and gets the canonical item look from here, without vera-panel.css's
+     page-wide rules (.chip, .opt, .field ...). The values are the canonical sidebar's (vera-panel.css #sidebar[data-vera-lhm]
+     .nav-btn; test_lhm_shared_menu_look keeps them equal); colours fall back through the names the page's own theme uses. */
+  var VPM_BG1 = 'var(--bg1, var(--s1, #16181d))', VPM_BG2 = 'var(--bg2, var(--s2, #1a1f26))',
+      VPM_BD = 'var(--border, var(--line, var(--bd, rgba(255,255,255,.09))))', VPM_BD2 = 'var(--border2, var(--bd2, var(--line, rgba(255,255,255,.16))))',
+      VPM_FG2 = 'var(--fg2, var(--dim2, var(--t2, var(--fg-dim, #9aa3ad))))', VPM_FG = 'var(--fg, var(--text, var(--t1, #d8dde3)))',
+      VPM_ACC = 'var(--acc, var(--accent, var(--ac, #5a9e8f)))';
+  function initMenuLook() {
+    if (!document.querySelector('.vp-menu') || document.getElementById('vp-menu-css')) return;
+    var st = document.createElement('style'); st.id = 'vp-menu-css';
+    st.textContent =
+      '.vp-menu{width:var(--lhm-width,184px);flex-shrink:0;display:flex;flex-direction:column;padding:8px 6px;overflow-y:auto;background:' + VPM_BG1 + ';border-right:1px solid ' + VPM_BD + '}' +
+      '.vp-menu.inline{width:auto;border-right:none;border-bottom:1px solid ' + VPM_BD + ';overflow:visible}' +
+      '.vp-menu .nav-btn{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;background:transparent;border:1px solid transparent;color:' + VPM_FG2 + ';border-radius:var(--ui-radius,5px);font:inherit;font-size:11px;cursor:pointer;text-align:left;margin-bottom:2px;white-space:nowrap;overflow:hidden;transition:background .12s,color .12s,border-color .12s}' +
+      '.vp-menu .nav-btn:hover{background:' + VPM_BG2 + ';color:' + VPM_FG + '}' +
+      '.vp-menu .nav-btn.active,.vp-menu .nav-btn.on{background:' + VPM_BG2 + ';border-color:' + VPM_BD2 + ';color:' + VPM_ACC + '}' +
+      '.vp-menu .nav-btn svg{width:14px;height:14px;flex-shrink:0;opacity:.82}.vp-menu .nav-btn.active svg{opacity:1}' +
+      '.vp-menu .nav-btn .gl{width:15px;flex-shrink:0;text-align:center;opacity:.85;font-size:13px}' +
+      'html.vpb-nav-hosted .vp-menu{display:none!important}';   // docked: the harness draws this menu
+    (document.head || document.documentElement).appendChild(st);
+  }
+
+  function init() { initMenuLook(); initCollapse(); initSections(); initNavBridge(); }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
