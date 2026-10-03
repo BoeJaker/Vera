@@ -71,16 +71,23 @@
 
   /* a settings section, read: {title, lead, cards:[element]} - the first heading is the title, a paragraph straight
      under it the lead, every other top-level block a card */
-  function sectionParts(sec){
+  function sectionParts(sec, depth){
     var title = '', lead = '', cards = [], kids = Array.prototype.slice.call(sec.children || []);
     kids.forEach(function(k){
       var tag = String(k.tagName || '').toUpperCase();
       if(tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEMPLATE') return;
       if(!title && /^H[1-4]$/.test(tag)){ title = _txt(k); return; }
+      /* a header block - a heading and words, nothing to set - before any card: the title and its line */
+      if(!title && !cards.length && !_fields(k) && !_hasButton(k)){ var hh = k.querySelector && k.querySelector('h1,h2,h3,h4,h5,.title,.card-title'); if(hh && _txt(hh)){ title = _txt(hh); var rest = _txt(k).replace(_txt(hh), '').trim(); if(rest && rest.length < 320) lead = rest; k.setAttribute('data-vs-lead', ''); return; } }
       // the line under the title: a paragraph, or the first block that holds text but nothing to set (an explanation)
       if(title && !lead && !cards.length && (tag === 'P' || (!_fields(k) && !_hasButton(k) && _txt(k).length && _txt(k).length < 320))){ lead = _txt(k); k.setAttribute('data-vs-lead', ''); return; }
       cards.push(k);
     });
+    /* the whole section in one wrapper (Research, Loop Lab): look inside it - its blocks are the cards */
+    if(cards.length === 1 && (depth || 0) < 3 && cards[0].children && cards[0].children.length > 1 && !_head(cards[0]) || (cards.length === 1 && (depth || 0) < 3 && cards[0].children && cards[0].children.length > 2)){
+      var inner = sectionParts(cards[0], (depth || 0) + 1);
+      if(inner.cards.length > 1) return { title: title || inner.title, lead: lead || inner.lead, cards: inner.cards };
+    }
     return { title: title, lead: lead, cards: cards };
   }
   function _fields(k){ return !!(k.querySelector && k.querySelector('input:not([type=hidden]),select,textarea')) || /^(INPUT|SELECT|TEXTAREA)$/.test(String(k.tagName || '').toUpperCase()); }
@@ -120,7 +127,7 @@
     var idx = _el('nav', 'vs-idx'), ih = _el('div', 'vs-idx-hd'), srch = _el('label', 'vs-srch', '⌕'), q = _el('input'); q.type = 'search'; q.placeholder = 'Find a setting'; srch.appendChild(q); ih.appendChild(srch); idx.appendChild(ih);
     var ib = _el('div', 'vs-idx-bd'); var grp = _el('div', 'vs-grp'); grp.appendChild(document.createTextNode(_panelName() + ' ')); var grpCt = _el('b', '', ''); grp.appendChild(grpCt); ib.appendChild(grp);
     idx.appendChild(ib); bd.appendChild(idx);
-    var cn = _el('main', 'vs-cn'), sh = _el('div', 'vs-sec-h'); sh.appendChild(_el('h3', '', parts.title || (trigger.getAttribute('data-label') || _txt(trigger) || 'Settings')));   /* no heading: the item's own name */ if(parts.lead) sh.appendChild(_el('span', 'lbl', parts.lead)); cn.appendChild(sh);
+    var cn = _el('main', 'vs-cn'), sh = _el('div', 'vs-sec-h'); sh.appendChild(_el('h3', '', String(parts.title || '').replace(/^[^A-Za-z0-9]+/, '') || (trigger.getAttribute('data-label') || _txt(trigger).replace(/^[^A-Za-z0-9]+/, '') || 'Settings')));   /* no heading: the item's own name */ if(parts.lead) sh.appendChild(_el('span', 'lbl', parts.lead)); cn.appendChild(sh);
     var grid = _el('div', 'vs-grid'); cn.appendChild(grid); bd.appendChild(cn); page.appendChild(bd);
     var rows = [];
     parts.cards.forEach(function(k, i){
