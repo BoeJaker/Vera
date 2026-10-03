@@ -18,6 +18,10 @@ const DESCRIBED = {
   'Comms': ['vera', 'accounts', 'comms_panel.html'],
   'Capabilities': ['vera', 'capabilities', 'cap_hub.html'],
   'Agents': ['vera', 'agents_skills_ontologies_panel.html'],
+  'Estate / Models': ['vera', 'workers', 'workers_ollama_panel.html'],
+  'Email': ['vera', 'email', 'email_panel.html'],
+  'Net ops': ['vera', 'proxmox', 'netops_panel.html'],
+  'UI Builder': ['vera', 'ui builder', 'ui_builder_panel.html'],
 };
 for (const [name, file] of Object.entries(DESCRIBED)) {
   const H = fs.readFileSync(path.join(__dirname, '..', ...file), 'utf8');

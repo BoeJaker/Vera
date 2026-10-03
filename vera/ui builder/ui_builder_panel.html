@@ -34,11 +34,11 @@ button{cursor:pointer;font-family:var(--sans)}input,select,textarea{background:v
     <div><h1>UI Builder</h1><div class="sub">Themes &amp; panels</div></div>
   </div>
   <nav id="nav">
-    <button class="nav-btn active" data-s="themes" onclick="switchSec(this)"><span class="gl">🎨</span> Themes</button>
-    <button class="nav-btn" data-s="loader" onclick="switchSec(this)"><span class="gl">◴</span> Loading</button>
-    <button class="nav-btn" data-s="builder" onclick="switchSec(this)"><span class="gl">▤</span> Panel Builder</button>
-    <button class="nav-btn" data-s="generate" onclick="switchSec(this)"><span class="gl">✦</span> Generate</button>
-    <button class="nav-btn" data-s="panels" onclick="switchSec(this)"><span class="gl">▦</span> Panels</button>
+    <button data-label="Themes" data-desc="Edit and apply themes" data-desc-long="The theme editor: the active theme's variables, auto-contrast, new dark/light themes, a full preview; save, apply and store themes in the fabric." class="nav-btn active" data-s="themes" onclick="switchSec(this)"><span class="gl">🎨</span> Themes</button>
+    <button data-label="Loading" data-desc="The loading animation" data-desc-long="The loading animation shown while panels and frames load across the whole UI; applies live to every panel (default: an evolving graph of drifting nodes and edges)." class="nav-btn" data-s="loader" onclick="switchSec(this)"><span class="gl">◴</span> Loading</button>
+    <button data-label="Panel Builder" data-desc="Build a panel by hand" data-desc-long="The panel builder: write a panel's HTML and JavaScript, set its id, label, mode (own tab, media sub-panel, mount point) and capabilities, preview and save it." class="nav-btn" data-s="builder" onclick="switchSec(this)"><span class="gl">▤</span> Panel Builder</button>
+    <button data-label="Generate" data-desc="Have an agent build a panel" data-desc-long="The agentic panel generator: describe a panel and an agent builds it, with a mode, a data-fetch loop budget and a style hint (dashboard, list, graph, form, freeform)." class="nav-btn" data-s="generate" onclick="switchSec(this)"><span class="gl">✦</span> Generate</button>
+    <button data-label="Panels" data-desc="Every registered panel" data-desc-long="The panel browser: every registered panel - edit, delete, view its HTML, source and capabilities." class="nav-btn" data-s="panels" onclick="switchSec(this)"><span class="gl">▦</span> Panels</button>
   </nav>
   <div id="status-tile">
     <div class="lbl">Active Theme</div>
