@@ -212,3 +212,66 @@ def find(index: Dict[str, Any], text: str, entities: Sequence[Dict[str, Any]] = 
         picks.extend(mine[:max(1, max_items // max(1, len(doms)))])
     return {"domains": [{"id": d, "label": DOMAIN[d]["label"], "score": sc.get(d, 0)} for d in doms],
             "surfaces": [{k: v for k, v in p.items() if k not in ("score", "about")} for p in picks][:max_items]}
+
+
+# ── what the model is told (slice 4): the canvas beside the reply, in a few lines ─────────────────────────────
+_NAMEY = ("symbol", "name", "title", "label", "ticker", "pair", "id", "host", "node", "account", "customer", "product")
+_FIGURE = re.compile(r"(price|last|value|total|balance|equity|pnl|profit|revenue|change|pct|percent|count|qty|amount|"
+                     r"usage|load|cpu|gpu|mem|free|used)", re.I)
+
+
+def _rows_of(res: Any) -> List[Any]:
+    if isinstance(res, list):
+        return res
+    if isinstance(res, dict):
+        for k, v in res.items():
+            if isinstance(v, list) and v and isinstance(v[0], (dict, str, int, float)):
+                return v
+    return []
+
+
+def _fmt(v: Any) -> str:
+    if isinstance(v, float):
+        return ("%.4g" % v) if abs(v) < 1e6 else ("%.3g" % v)
+    return str(v)[:40]
+
+
+def summarise(res: Any, max_chars: int = 220) -> str:
+    """A read's answer in one line a model can talk about: how many rows and the first few by name (with a figure when
+    a row has one), or the headline figures of a single record."""
+    rows = _rows_of(res)
+    if rows:
+        bits = []
+        for r in rows[:5]:
+            if isinstance(r, dict):
+                nm = next((str(r[k]) for k in _NAMEY if r.get(k) not in (None, "")), "")
+                fig = next(("%s %s" % (k, _fmt(v)) for k, v in r.items() if _FIGURE.search(str(k)) and isinstance(v, (int, float))), "")
+                bits.append((nm + (" (" + fig + ")" if fig else "")).strip() or "?")
+            else:
+                bits.append(_fmt(r))
+        s = "%d row%s: %s" % (len(rows), "" if len(rows) == 1 else "s", "; ".join(b for b in bits if b))
+        return s[:max_chars]
+    if isinstance(res, dict):
+        figs = ["%s %s" % (k, _fmt(v)) for k, v in res.items() if isinstance(v, (int, float)) and not isinstance(v, bool)][:6]
+        return ("; ".join(figs) or ", ".join(list(res.keys())[:6]))[:max_chars]
+    return _fmt(res)[:max_chars]
+
+
+def prompt_block(placed: Sequence[Dict[str, Any]], *, max_chars: int = 1200, pending: int = 0) -> str:
+    """The note the model gets: what was put on the canvas for this question, by domain, each in a line. The two
+    accounts keep their own labels. ~300 tokens at most (owner, 2026-10-03: "Yes, ~300 tokens")."""
+    if not placed and not pending:
+        return ""
+    lines = ["## On the canvas beside this reply",
+             "Placed for this question; the user can see these. Refer to them when useful (\"the chart beside this\"); "
+             "do not restate their figures in full. Each is named with what it belongs to - keep those apart."]
+    for p in placed:
+        what = p.get("title") or p.get("cap") or p.get("panel") or "item"
+        line = "- [%s] %s" % (p.get("domain_label") or p.get("domain") or "the estate", what)
+        if p.get("summary"):
+            line += ": " + p["summary"]
+        lines.append(line)
+    if pending:
+        lines.append("- (%d more %s still arriving on the canvas)" % (pending, "item is" if pending == 1 else "items are"))
+    out = "\n".join(lines)
+    return out if len(out) <= max_chars else out[:max_chars - 24].rsplit("\n", 1)[0] + "\n- (more on the canvas)"

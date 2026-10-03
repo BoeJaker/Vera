@@ -19,7 +19,7 @@ import asyncio
 import logging
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability
 
@@ -371,3 +371,97 @@ async def cap_surface_find(text: str = "", entities: Any = None, ner: bool = Fal
     out = sc.find(idx, text, ents, max_items=max(1, int(max_items or 6)))
     out.update(ok=True, ms=int((time.monotonic() - t0) * 1000))
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE CANVAS BEFORE THE ANSWER (canvas-enrichment slice 4 - owner, 2026-10-03: PRE budget "1.5s but remember it could
+# still do the richer canvas after the chat request is sent to the llm while waiting for it to return a response";
+# the model told what is shown, ~300 tokens; the two accounts distinct to the model). turn.prepare reads the turn,
+# asks the surface index, and starts every read at once. What lands within the budget is on the canvas AND in the
+# note the model gets; what is slower keeps running while the model writes (DURING) and lands when it arrives. Items
+# are keyed as canvas.enrich keys them, so the after-the-reply pass brings the same item back instead of doubling it.
+# No model is called; the NLP tier and plain reads only.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DURING: set = set()
+
+
+@capability(
+    "turn.prepare", memory="off",
+    http_method="POST", http_path="/turn/prepare", http_tags=["canvas"],
+    description="Before the model answers a turn: find the surfaces that answer it (surface.find - its domains, the "
+                "dashboard widgets, the glance reads, the reads its named things fill, the panels), start every read at "
+                "once, place on the session canvas what lands within budget_s, and return the note that tells the model "
+                "what is shown (by domain; your trading account and your business accounts named apart). Reads slower "
+                "than the budget keep running and land while the model writes. No model is called. Inputs: text (str! - "
+                "the question), session_id (str!), mid (str), budget_s (float=1.5), tell (bool=true - build the note), "
+                "max_items (int=5). Output: {ok, domains, placed:[{key, cap?, panel?, title, domain, summary}], pending, "
+                "prompt, ms}.")
+async def cap_turn_prepare(text: str = "", session_id: str = "", mid: str = "", budget_s: float = 1.5,
+                           tell: bool = True, max_items: int = 5, trace_id=None) -> Dict[str, Any]:
+    t0 = time.monotonic()
+    if not str(text or "").strip() or not session_id:
+        return {"ok": False, "error": "text and session_id required"}
+    budget = max(0.0, min(5.0, float(budget_s if budget_s is not None else 1.5)))
+    body = tc.prose(text)[:2000]
+    ents = tc.merge(body, [])
+    try:
+        ents = tc.merge(body, await asyncio.wait_for(_ner(body), max(0.2, budget * 0.45)))
+    except asyncio.TimeoutError:
+        pass
+    found = sc.find(await _surface_index(), text, ents, max_items=max(1, int(max_items or 5)))
+    surfaces = found.get("surfaces") or []
+    if not surfaces:
+        return {"ok": True, "domains": found.get("domains") or [], "placed": [], "pending": 0, "prompt": "",
+                "ms": int((time.monotonic() - t0) * 1000)}
+    anchor = {"turn": mid, "mid": mid, "from": "enrich"} if mid else {"from": "enrich"}
+    # a panel only for a domain that brought nothing else - a whole page is the last resort, not the first
+    has_reads = {s["domain"] for s in surfaces if s["kind"] != "panel"}
+    chosen = [s for s in surfaces if s["kind"] != "panel" or s["domain"] not in has_reads]
+
+    async def place(s: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        dl = {"domain": s["domain"], "domain_label": s.get("domain_label") or s["domain"]}
+        if s["kind"] == "panel":
+            key = "pre:panel:" + s["panel"]
+            await _call("canvas.add", session_id=session_id, kind="panel", key=key, at="now", size="l",
+                        content={"panel": s["panel"], "title": s.get("panel")}, anchor=anchor)
+            return dict(dl, key=key, panel=s["panel"], title="the %s panel" % s["panel"], summary="open beside the reply")
+        cap, args = s["cap"], dict(s.get("args") or {})
+        try:
+            res = await asyncio.wait_for(_call(cap, **args), STEP_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            return None
+        if _is_empty(res):
+            return None
+        title = str(((s.get("record") or {}).get("title")) or cap.replace(".", " \u00b7 "))
+        content = await _widget_content(cap, args, res, title)
+        block, size, kind = "widget", "m", "widget"
+        if not content:
+            rec = ec.records_item(cap, args, res, kind="rows", why=s.get("why") or "", title=title)
+            if not rec:
+                return None
+            content, block, size, kind = rec, "records", "l", "rows"
+        else:
+            content["why"] = s.get("why") or ""
+        key = ec.item_key(cap, args, kind)
+        await _call("canvas.add", session_id=session_id, kind=block, content=content, key=key, at="now", size=size,
+                    anchor=anchor)
+        return dict(dl, key=key, cap=cap, title=title, summary=sc.summarise(res))
+
+    tasks = [asyncio.ensure_future(place(s)) for s in chosen]
+    left = max(0.05, budget - (time.monotonic() - t0))
+    done, pending = await asyncio.wait(tasks, timeout=left)
+    placed = []
+    for t in done:
+        try:
+            r = t.result()
+        except Exception:
+            r = None
+        if r:
+            placed.append(r)
+    for t in pending:                          # DURING: they land while the model writes
+        _DURING.add(t)
+        t.add_done_callback(_DURING.discard)
+    return {"ok": True, "domains": found.get("domains") or [], "placed": placed, "pending": len(pending),
+            "prompt": sc.prompt_block(placed, pending=len(pending)) if tell else "",
+            "ms": int((time.monotonic() - t0) * 1000)}

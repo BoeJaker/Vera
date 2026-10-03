@@ -69,3 +69,20 @@ def test_a_business_turn_is_business_not_trading():
 
 def test_nothing_specific_finds_nothing():
     assert sc.find(IDX, "thanks, that's great", [])["surfaces"] == []
+
+
+def test_a_read_in_one_line_rows_by_name_with_a_figure_or_a_records_figures():
+    s = sc.summarise({"positions": [{"symbol": "BTC/USD", "qty": 0.5, "pnl": 120.5}, {"symbol": "ETH/USD", "qty": 2}], "ok": True})
+    assert s.startswith("2 rows: BTC/USD (qty 0.5); ETH/USD (qty 2)")
+    assert "revenue 1200" in sc.summarise({"revenue": 1200, "expenses": 800, "ok": True})
+
+
+def test_the_note_names_each_item_with_what_it_belongs_to_and_stays_short():
+    placed = [{"title": "Portfolio positions", "domain_label": "your trading account (broker, portfolio, positions)", "summary": "2 rows: BTC/USD"},
+              {"title": "Ledger", "domain_label": "your business accounts (ledger, orders, inventory, tax)", "summary": "revenue 1200"}]
+    note = sc.prompt_block(placed, pending=1)
+    assert note.startswith("## On the canvas beside this reply")
+    assert "- [your trading account (broker, portfolio, positions)] Portfolio positions: 2 rows: BTC/USD" in note
+    assert "- [your business accounts (ledger, orders, inventory, tax)] Ledger: revenue 1200" in note
+    assert "1 more item is still arriving" in note
+    assert len(sc.prompt_block(placed * 40)) <= 1200 and sc.prompt_block([]) == ""
