@@ -45,7 +45,7 @@ if (wt) {
   const flat = [{ id: 'system' }, { id: 'calendar' }, { id: 'c:layers', depth: 1 }, { id: 'c:events', depth: 1 }, { id: 'email' }];
   t('a child section under a plain item', _wayTo(flat, 3) === 'calendar>c:events', _wayTo(flat, 3));
 }
-t('a docked menu\'s entry opens beside along that way', /opts\.onSplit\(cur\.id \+ '\/' \+ way\)/.test(LHM) && /if\(opts\.onSplit\) _beside\(e, function\(\)\{ opts\.onSplit\(cur\.id \+ '\/' \+ way\); \}\);/.test(LHM));
+t('a docked menu\'s entry opens beside along that way', /opts\.onSplit\(owner\.id \+ '\/' \+ way\)/.test(LHM) && /if\(opts\.onSplit\) _beside\(e, function\(\)\{ opts\.onSplit\(owner\.id \+ '\/' \+ way\); \}\);/.test(LHM));
 t('the bridge walks the way a step at a time, each once its level is there', /steps\.slice\(1\)\.every\(function\(x\)\{ return \/\^\[cs\]:\/\.test\(x\); \}\)/.test(BR) && /function _navChain\(steps, tok, n\)\{/.test(BR) && /if\(n < 60\) _navChain\(steps, tok, n \+ 1\);/.test(BR));
 t('a nested pick asked for before its level loaded is tried again; a newer pick cancels it', /_navPend\+\+;/.test(BR) && /if\(!steps\.length \|\| tok !== _navPend\) return;/.test(BR));
 t('the harness nav_select walks the way (each step is still one _navSelect)', /nav_select: _navPick,/.test(BR) && /var r = _navSelect\(\{id: steps\[0\]\}\);/.test(BR));
