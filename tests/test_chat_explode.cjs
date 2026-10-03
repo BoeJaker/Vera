@@ -26,7 +26,8 @@ const _xpFences = src ? eval('(' + src[0].replace(/^function /, 'function ') + '
 
 // ── the three ways in ────────────────────────────────────────────────────────────────────────────────────────
 t('a message carries an Explode action, beside Copy',
-  /onclick="CH\._msgExplode\('\$\{mid\}',this\)"/.test(HTML) && /_msgExplode/.test(HTML.split('const api=')[0]));
+  (/onclick="CH\._msgExplode\('\$\{mid\}',this\)"/.test(HTML) || /_ma\('explode','Explode',`CH\._msgExplode\('\$\{mid\}',this\)`/.test(HTML))   // the action row builds it through _ma (2026-10-03)
+  && /_msgExplode/.test(HTML.split('const api=')[0]));
 t('a code fence carries its own Explode button, beside Copy',
   /onclick="CH\._codeExplode\('\$\{id\}',this\)"/.test(HTML));
 t('/explode is a slash command, and says what it takes',
