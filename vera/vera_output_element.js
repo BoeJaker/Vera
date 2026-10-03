@@ -206,7 +206,83 @@
     pop: ICO('<path d="M9.5 2.5h4v4M13.5 2.5 8 8M6.5 3.5h-3v9h9v-3"/>'),
     run: ICO('<path d="M5 3.2v9.6L12.6 8z"/>'),
     save: ICO('<path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10"/>'),
-    canvas: ICO('<rect x="2" y="2.5" width="12" height="11" rx="1.6"/><path d="M8.5 2.5v11M8.5 7h5.5"/>') };
+    canvas: ICO('<rect x="2" y="2.5" width="12" height="11" rx="1.6"/><path d="M8.5 2.5v11M8.5 7h5.5"/>'),
+    outline: ICO('<path d="M3 4h10M5 8h8M5 12h8"/><circle cx="2.5" cy="8" r=".6"/><circle cx="2.5" cy="12" r=".6"/>'),
+    full: ICO('<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>'),
+    vscode: ICO('<path d="M11.5 2.5 6 7.6 3.2 5.4 2 6.1v3.8l1.2.7L6 8.4l5.5 5.1 2.5-1.2V3.7z"/>'),
+    send: ICO('<path d="M2.5 8h10M9 4.5 12.5 8 9 11.5"/>'),
+    html: ICO('<path d="M4 2.5h5.5L12.5 5.5v8H4z"/><path d="M9.5 2.5v3h3M6 9.5h4.5M6 11.5h3"/>'),
+    podcast: ICO('<rect x="6" y="2" width="4" height="7.5" rx="2"/><path d="M3.8 7.8a4.2 4.2 0 0 0 8.4 0M8 12v2"/>'),
+    notebook: ICO('<path d="M4 2.5h8.5v11H4a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 4 2.5z"/><path d="M5.5 2.5v11M7.5 6h3.5"/>'),
+    ide: ICO('<path d="m5.5 5-3 3 3 3M10.5 5l3 3-3 3"/>'),
+    project: ICO('<path d="M2.5 4.5h4l1.5 1.5h5.5v7h-11z"/>'),
+    think: ICO('<path d="M5.2 11.5h5.6M6 13.5h4M8 2.5a4 4 0 0 0-2.4 7.2c.4.3.6.8.6 1.3h3.6c0-.5.2-1 .6-1.3A4 4 0 0 0 8 2.5z"/>'),
+    channel: ICO('<path d="M2.5 5.5h9M9 3l2.5 2.5L9 8M13.5 10.5h-9M7 8l-2.5 2.5L7 13"/>') };
+
+  /* ── the code body: one numbered line per line (owner, 2026-10-03: line numbers, the place a definition is jumped to,
+     and the canvas's explode binding - which lights a span of .vc-line rows - all read the same markup now). The number
+     is in a gutter selection never reaches, so a copy is still the code. */
+  function splitHl(html) {
+    const out = []; const open = []; let cur = '';
+    const re = /(<span\b[^>]*>)|(<\/span>)|(\n)|([^<\n]+)|(<)/g; let m;
+    while ((m = re.exec(String(html || '')))) {
+      if (m[1]) { open.push(m[1]); cur += m[1]; }
+      else if (m[2]) { open.pop(); cur += m[2]; }
+      else if (m[3]) { cur += '</span>'.repeat(open.length); out.push(cur); cur = open.join(''); }
+      else cur += m[0];
+    }
+    out.push(cur); return out;
+  }
+  /* ── WHAT THE CODE DEFINES (owner, 2026-10-03: "could the code rendered in vera display details of a function on
+     mouseover on a call site of the function, and have other useful helpers like this"). A light reading of the source -
+     functions, methods and classes with the line they start on, their signature and the comment or docstring that goes
+     with them - for every language family the highlighter knows. Not a parser: enough to name what a call points at. */
+  const symCache = new Map();
+  function symbols(code, lang) {
+    const L = String(lang || '').toLowerCase(), fam = FAMILY[L] || '', key = fam + '\u0000' + code;
+    if (symCache.has(key)) return symCache.get(key);
+    const out = {}, lines = String(code || '').split('\n');
+    const docFor = (i) => {
+      const d = [];
+      for (let j = i - 1; j >= 0 && j >= i - 8; j--) { const t = lines[j].trim(); const m = t.match(/^(?:#+|\/\/+|\/\*\*?|\*+\/?)\s?(.*?)\s*(?:\*\/)?$/); if (t && m && !/^#!/.test(t)) d.unshift(m[1]); else break; }
+      if (fam === 'hash') { const n = (lines[i + 1] || '').trim(); const m = n.match(/^(?:[rbu]?)("""|''')(.*)$/);
+        if (m) { let s = m[2]; const end = s.indexOf(m[1]); if (end >= 0) s = s.slice(0, end); else for (let j = i + 2; j < lines.length && j < i + 10; j++) { const t = lines[j].trim(); const k = t.indexOf(m[1]); if (k >= 0) { s += ' ' + t.slice(0, k); break; } s += ' ' + t; } d.push(s); } }
+      return d.join(' ').replace(/\s+/g, ' ').trim().slice(0, 320);
+    };
+    const add = (name, kind, i, sig) => { if (!name || out[name]) return; out[name] = { name, kind, line: i + 1, sig: String(sig).trim().replace(/[{:]\s*$/, '').slice(0, 180), doc: docFor(i) }; };
+    lines.forEach((ln, i) => { let m;
+      if (fam === 'hash') {
+        if ((m = ln.match(/^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/))) add(m[1], 'function', i, ln);
+        else if ((m = ln.match(/^\s*class\s+([A-Za-z_]\w*)/))) add(m[1], 'class', i, ln);
+        else if ((m = ln.match(/^\s*(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\)\s*\{/))) add(m[1], 'function', i, ln);
+      } else {
+        if ((m = ln.match(/\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/))) add(m[1], 'function', i, ln);
+        else if ((m = ln.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)/))) add(m[1], 'function', i, ln);
+        else if ((m = ln.match(/\bclass\s+([A-Za-z_$][\w$]*)/))) add(m[1], 'class', i, ln);
+        else if ((m = ln.match(/\bfunc\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(/))) add(m[1], 'function', i, ln);
+        else if ((m = ln.match(/\bfn\s+([A-Za-z_]\w*)/))) add(m[1], 'function', i, ln);
+        else if ((m = ln.match(/^\s*(?:(?:public|private|protected|static|async|override|virtual|final|export|default)\s+)*(?:[\w<>\[\],.*&]+\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{\s*$/)) && !/^(if|for|while|switch|catch|return|else|function)$/.test(m[1])) add(m[1], 'method', i, ln);
+      } });
+    if (symCache.size > 300) symCache.clear();
+    symCache.set(key, out); return out;
+  }
+  // the names every reply leans on: a call to one of these is explained without a definition in sight
+  const BUILTIN = {
+    print: 'print(*values, sep=" ", end="\\n") - write the values to standard output', len: 'len(obj) - the number of items in a container',
+    range: 'range(start, stop[, step]) - a sequence of integers', open: 'open(file, mode="r") - open a file and return a file object',
+    enumerate: 'enumerate(iterable, start=0) - pairs of (index, item)', zip: 'zip(*iterables) - tuples taking one item from each',
+    sorted: 'sorted(iterable, key=None, reverse=False) - a new sorted list', isinstance: 'isinstance(obj, cls) - is obj an instance of cls',
+    map: 'map(fn, iterable) - fn applied to each item', filter: 'filter(fn, iterable) - the items fn keeps', sum: 'sum(iterable, start=0) - the total',
+    min: 'min(iterable) - the smallest item', max: 'max(iterable) - the largest item', str: 'str(obj) - the text form', int: 'int(x) - an integer',
+    dict: 'dict(**kw) - a mapping', list: 'list(iterable) - a list', set: 'set(iterable) - a set', input: 'input(prompt) - a line from standard input',
+    require: 'require(id) - load a CommonJS module', fetch: 'fetch(url, init) - a Promise of the HTTP Response', setTimeout: 'setTimeout(fn, ms) - run fn once after ms',
+    parseInt: 'parseInt(text, radix) - an integer from text', Promise: 'Promise - a value that arrives later', JSON: 'JSON.parse / JSON.stringify - text <-> values' };
+  function codeBody(code, lang, lines) {
+    const src = String(code || '').replace(/\n$/, ''); const hl = highlight(src, lang);
+    if (lines === false) return '<pre><code' + langClass(lang) + '>' + hl + '</code></pre>';
+    return '<pre class="vo-lines vc-pre vc-code"><code' + langClass(lang) + '>' + splitHl(hl).map((l, i) =>
+      '<span class="vc-line" data-line="' + (i + 1) + '"><i class="vc-lno">' + (i + 1) + '</i>' + (l || ' ') + '</span>').join('') + '</code></pre>';
+  }
   /* the kit's buttons say data-vo, never data-act: a host that runs its own delegated data-act handler (the canvas, the
      agent loop) must not take a kit click for one of its own actions - both have an "edit", a "save", an "explode" */
   const btn = (act, ico, label, tip, cls) => '<button class="cb-act' + (cls ? ' ' + cls : '') + '" data-vo="' + act + '" title="' + esc(tip) + '">' + (I[ico] || '') + '<span>' + label + '</span></button>';
@@ -226,25 +302,37 @@
   }
   // a host's own button in the card's look (its own attribute, its own handler)
   const hostBtn = (attrs, ico, label, tip, on) => '<button class="cb-act' + (on ? ' on' : '') + '" ' + attrs + ' title="' + esc(tip) + '">' + (I[ico] || '') + '<span>' + label + '</span></button>';
+  /* THE ONE CODE CARD (owner, 2026-10-03: "the code renderer in the canvas does not have the same options as the one in
+     the chat - it should - and it should be using the same underlying code"). Every surface calls this. A host may:
+       o.id        keep a stable id (the canvas: one per item key)      o.filename   the file it is
+       o.lines     numbered lines (default on)                           o.incomplete still streaming: no actions yet
+       o.canvas    false where it already IS on the canvas               o.pane       the host has a preview pane
+       o.body      draw its own body in place of the source (the canvas's live-layer preview, which survives a redraw)
+       o.prevOn    that body is showing the drawing (the Preview button says Source)
+       o.extra     its own buttons after the kit's, in the same look     o.cls        classes on the card */
   function card(lang, code, o) {
     o = o || {}; lang = String(lang || ''); code = String(code || '');
     const L = lang.toLowerCase(), fname = String(o.filename || ''), id = o.id || register(lang, code, fname);
-    if (o.id) blocks[id] = { lang, code, filename: fname };
+    if (o.id) blocks[id] = Object.assign(blocks[id] || {}, { lang, code, filename: fname });
     const lbl = esc(L || 'plain') + (fname ? ' · <span class="cb-file">' + esc(fname) + '</span>' : '');
-    if (o.incomplete) return '<div class="code-card" data-cb="' + id + '" data-incomplete="1"><div class="code-bar"><span class="code-lang">' + lbl
-      + '</span><div class="cb-sp"></div><span class="cb-stream">streaming</span></div><pre><code' + langClass(lang) + '>' + highlight(code, lang) + '</code></pre></div>';
-    const page = wholePage(lang, code);
-    return '<div class="code-card" data-cb="' + id + '"' + (page ? ' data-auto-prev="1"' : '') + '><div class="code-bar"><span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>'
+    const cls = 'code-card' + (o.cls ? ' ' + o.cls : '');
+    if (o.incomplete) return '<div class="' + cls + '" data-cb="' + id + '" data-incomplete="1"><div class="code-bar"><span class="code-lang">' + lbl
+      + '</span><div class="cb-sp"></div><span class="cb-stream">streaming</span></div>' + (o.body || codeBody(code, lang, o.lines)) + '</div>';
+    const page = wholePage(lang, code) && !o.body;
+    const nSym = Object.keys(symbols(code, lang)).length;
+    return '<div class="' + cls + '" data-cb="' + id + '"' + (page ? ' data-auto-prev="1"' : '') + '><div class="code-bar"><span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>'
       + btn('copy', 'copy', 'Copy', 'Copy to the clipboard')
-      + btn('edit', 'edit', 'Edit', 'Edit this code in place - Run, Preview and Save use your version')
+      + btn('edit', 'edit', 'Edit', 'Edit this code - in place, or full screen; Run, Preview and Save use your version')
       + btn('explode', 'explode', 'Explode', 'A structured diagram of this code - symbols, calls, imports, lint')
-      + (previewable(lang) ? btn('preview', 'prev', page ? 'Source' : 'Preview', 'Draw it here - a sandboxed frame, no network', 'cb-prevbtn')
+      + (nSym > 1 ? btn('outline', 'outline', 'Outline', 'Its functions and classes - pick one to go to it') : '')
+      + (previewable(lang) ? btn('preview', 'prev', (page || o.prevOn) ? 'Source' : 'Preview', 'Draw it here - a sandboxed frame, no network', 'cb-prevbtn')
           + btn('pop', 'pop', 'Pop out', 'Draw it in a window of its own')
           + (o.pane ? btn('pane', 'prev', 'Pane', 'Open it in the preview pane, larger') : '') : '')   // only where the host has a pane (the chat says so)
       + (runnable(lang) ? btn('run', 'run', 'Run', 'Execute it on the Vera host and show the output here (the exec sandbox applies)', 'run') : '')
       + btn('save', 'save', 'Save', "Save it to the session's artifacts")
       + (o.canvas === false ? '' : btn('canvas', 'canvas', 'Canvas', 'Put this code on the session canvas'))
-      + '</div><pre><code' + langClass(lang) + '>' + highlight(code, lang) + '</code></pre>'
+      + (o.extra || '')
+      + '</div>' + (o.body || codeBody(code, lang, o.lines))
       + '<div class="code-exec-out" data-exec-out="' + id + '" style="display:none"></div></div>';
   }
   // a whole fence: diagrams and widgets draw as themselves, everything else is a code card
@@ -336,34 +424,47 @@
       catch (e) { flash(b, false, 'Failed'); }
     } };
   function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
+  /* the hooks for a card in this root: a shadow root's own (wire(root, hooks)) first, the page's (VeraOut.hooks) for
+     the document - and for a few things that belong to the PAGE wherever the card is drawn (its session, its notices,
+     its VS Code, its save dialogs), the page's from any root. A card in the loop's or the canvas's shadow root is never
+     handed the chat's explode or save, which look for it in the document and would quietly find nothing. */
+  const HOSTWIDE = { session: 1, notify: 1, vscode: 1, ide: 1, project: 1, think: 1, notebook: 1, html: 1, podcast: 1, reveal: 1 };
+  function hookFor(el, name) {
+    const rt = el && el.getRootNode ? el.getRootNode() : document;
+    const own = rt && rt.__voHooks; if (own && own[name]) return own[name];
+    if (rt === document || HOSTWIDE[name]) return hooks[name] || null;
+    return null;
+  }
   async function act(name, id, b, c) {
     const blk = blocks[id]; if (!blk) return;
     if (name === 'copy') { try { await navigator.clipboard.writeText(blk.code); flash(b, true, 'Copied'); } catch (_) { flash(b, false, 'Failed'); } return; }
     if (name === 'edit') return edit(id);
-    if (name === 'preview') return preview(id);
     if (name === 'run') return run(id, b);
-    // the hooks of the root the card is in: a shadow root's own (wire(root, hooks)), the document's VeraOut.hooks - a
-    // card in the loop's or the canvas's shadow root is never handed to the chat's explode or save, which look for it
-    // in the document and would quietly find nothing
-    const rt = c && c.getRootNode ? c.getRootNode() : document;
-    const H = (rt && rt.__voHooks) || (rt === document ? hooks : null);
-    if (H && H[name]) { try { if (await H[name](blk, id, b, c)) return; } catch (e) { console.warn('VeraOut hook ' + name, e); } }
+    if (name === 'outline') return outline(id, b, c);
+    const h = hookFor(c, name);
+    if (h) { try { if (await h(blk, id, b, c)) return; } catch (e) { console.warn('VeraOut hook ' + name, e); } }
+    if (name === 'preview') return preview(id);
     if (DEFAULT[name]) return DEFAULT[name](blk, id, b, c);
   }
 
   // ── editing ─────────────────────────────────────────────────────────────────────────────────────────────
-  /* THE CODE IS YOURS TO CHANGE (owner, 2026-10-03: "need the ability to edit code that has been output"). Edit turns
-     the block into an editor of the same size; Apply keeps your version - the card is redrawn and relinted, Run,
-     Preview, Save, Canvas and Explode all use it from then on - and the host hears about it (hooks.edited, and a
-     composed 'vera:code:edited' event) so the chat or the canvas can keep it with the message or the item. */
+  /* THE CODE IS YOURS TO CHANGE (owner, 2026-10-03: "need the ability to edit code that has been output" · "the visible
+     lines in the editor are not enough - about 3 or 4 ... possibly open a full editor ... or even let you open it in a
+     vscode instance"). Edit opens an editor as tall as the code needs (up to most of the window, never less than a
+     screenful's worth of rows); its bar opens the same code full screen, or - where the page has one - in the session's
+     VS Code. Apply keeps your version: the card is redrawn and relinted, Run, Preview, Save, Canvas and Explode all use
+     it, and the host hears about it (an `edited` hook, and a composed 'vera:code:edited' event) to keep it. */
   function edit(id) {
     const c = cardOf(id), blk = blocks[id]; if (!c || !blk || c.classList.contains('editing')) return;
-    const pre = c.querySelector(':scope > pre'); if (!pre) return;
+    const pre = c.querySelector(':scope > pre') || c.querySelector(':scope > .vc-live, :scope > .cb-prev'); if (!pre) return;
     c.classList.add('editing'); if (c.classList.contains('prev')) preview(id, false);
     const ta = document.createElement('textarea'); ta.className = 'cb-editor'; ta.spellcheck = false; ta.value = blk.code;
-    ta.style.height = Math.max(120, Math.min(560, pre.offsetHeight + 24)) + 'px';
+    const rows = blk.code.split('\n').length;
+    ta.style.height = Math.round(Math.min(window.innerHeight * 0.7, Math.max(320, rows * 17.5 + 40))) + 'px';
     const bar = document.createElement('div'); bar.className = 'cb-editbar';
     bar.innerHTML = '<span class="cb-edithint">editing · Ctrl+Enter applies · Esc cancels</span><span class="cb-sp"></span>'
+      + btn('edit-full', 'full', 'Full screen', 'Edit it full screen, with line numbers')
+      + (hookFor(c, 'vscode') ? btn('edit-vscode', 'vscode', 'VS Code', "Open it in the session's VS Code") : '')
       + '<button class="cb-act" data-vo="edit-cancel">Cancel</button><button class="cb-act run" data-vo="edit-apply">Apply</button>';
     pre.after(ta); ta.after(bar);
     ta.addEventListener('keydown', (e) => {
@@ -372,18 +473,98 @@
       else if (e.key === 'Escape') { e.preventDefault(); editDone(id, false); } });
     try { ta.focus(); } catch (_) {}
   }
+  // the code a card holds, set - redrawn with its numbered lines, relinted, its old output cleared, the host told
+  function applyCode(id, next) {
+    const c = cardOf(id), blk = blocks[id]; if (!c || !blk || next === blk.code) return;
+    const before = blk.code; blk.code = next;
+    const pre = c.querySelector(':scope > pre');
+    if (pre) { const t = document.createElement('div'); t.innerHTML = codeBody(next, blk.lang, !pre.classList.contains('vo-lines') ? false : undefined); pre.replaceWith(t.firstChild); }
+    c.dataset.edited = '1'; lintCard(c);
+    const out = c.querySelector(':scope > .code-exec-out'); if (out) { out.style.display = 'none'; out.innerHTML = ''; }
+    if (c.classList.contains('prev')) preview(id, true);
+    const detail = { id, lang: blk.lang, code: next, before, filename: blk.filename };
+    try { const h = hookFor(c, 'edited'); if (h) h(blk, id, detail, c); } catch (_) {}
+    c.dispatchEvent(new CustomEvent('vera:code:edited', { bubbles: true, composed: true, detail }));
+  }
   function editDone(id, apply) {
     const c = cardOf(id), blk = blocks[id]; if (!c || !blk) return;
     const ta = c.querySelector(':scope > .cb-editor'), bar = c.querySelector(':scope > .cb-editbar');
     const next = ta ? ta.value : blk.code; if (ta) ta.remove(); if (bar) bar.remove(); c.classList.remove('editing');
-    if (!apply || next === blk.code) return;
-    const before = blk.code; blk.code = next;
-    const code = c.querySelector(':scope > pre > code'); if (code) code.innerHTML = highlight(next, blk.lang);
-    c.dataset.edited = '1'; lintCard(c);
-    const out = c.querySelector(':scope > .code-exec-out'); if (out) { out.style.display = 'none'; out.innerHTML = ''; }
-    const detail = { id, lang: blk.lang, code: next, before, filename: blk.filename };
-    try { const rt = c.getRootNode ? c.getRootNode() : document; const H = (rt && rt.__voHooks) || (rt === document ? hooks : null); if (H && H.edited) H.edited(blk, id, detail, c); } catch (_) {}
-    c.dispatchEvent(new CustomEvent('vera:code:edited', { bubbles: true, composed: true, detail }));
+    if (apply) applyCode(id, next);
+    try { c.dispatchEvent(new CustomEvent('vera:code:editend', { bubbles: true, composed: true, detail: { id } })); } catch (_) {}
+  }
+  // full screen: a page-wide editor with a line gutter that follows its scroll; Apply writes back through the card
+  function editFull(id) {
+    const c = cardOf(id), blk = blocks[id]; if (!c || !blk) return;
+    const inline = c.querySelector(':scope > .cb-editor'); const text = inline ? inline.value : blk.code;
+    const m = document.createElement('div'); m.className = 'vo-modal';
+    m.innerHTML = '<div class="vo-modal-box" role="dialog" aria-label="Edit code"><div class="vo-modal-h"><span class="code-lang"></span><span class="cb-sp"></span>'
+      + '<span class="cb-edithint">Ctrl+Enter applies · Esc cancels</span><button class="cb-act" data-vom="cancel">Cancel</button><button class="cb-act run" data-vom="apply">Apply</button></div>'
+      + '<div class="vo-modal-b"><pre class="vo-gutter"></pre><textarea class="vo-modal-ta" spellcheck="false"></textarea></div></div>';
+    m.querySelector('.code-lang').textContent = (blk.lang || 'plain') + (blk.filename ? ' · ' + blk.filename : '');
+    const ta = m.querySelector('textarea'), gut = m.querySelector('.vo-gutter'); ta.value = text;
+    const num = () => { const n = ta.value.split('\n').length; let s = ''; for (let i = 1; i <= n; i++) s += i + '\n'; gut.textContent = s; };
+    num(); ta.addEventListener('input', num); ta.addEventListener('scroll', () => { gut.scrollTop = ta.scrollTop; });
+    const close = (apply) => { const v = ta.value; m.remove();
+      if (inline) { inline.value = v; if (apply) editDone(id, true); } else if (apply) applyCode(id, v); };
+    m.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('[data-vom]'); if (a) close(a.getAttribute('data-vom') === 'apply'); else if (e.target === m) close(false); });
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') { e.preventDefault(); const s = ta.selectionStart, en = ta.selectionEnd; ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(en); ta.selectionStart = ta.selectionEnd = s + 2; num(); }
+      else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); close(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); close(false); } });
+    adopt(document); document.body.appendChild(m); try { ta.focus(); } catch (_) {}
+  }
+
+  // ── the reader's helpers: what a name is, where it is defined, where else it is used ────────────────────
+  // every definition in the scope a card is read in: its message, its canvas item, its loop answer - so a call in one
+  // block finds the function another block of the same reply defined
+  function scopeOf(c) { return (c.closest && c.closest('.msg-body, .it[data-key], [data-part], .alo-final-val, .vo-md')) || c.parentNode || c; }
+  function definitions(c) {
+    const out = {};
+    scopeOf(c).querySelectorAll('.code-card[data-cb]').forEach((k) => { const id = k.getAttribute('data-cb'), blk = blocks[id]; if (!blk) return;
+      const sy = symbols(blk.code, blk.lang); Object.keys(sy).forEach((n) => { if (!out[n] || id === c.getAttribute('data-cb')) out[n] = Object.assign({ id, file: blk.filename || blk.lang || '' }, sy[n]); }); });
+    return out;
+  }
+  let tip = null, tipT = 0;
+  function tipShow(tok) {
+    const c = tok.closest('.code-card'); if (!c) return;
+    const name = String(tok.textContent || '').trim(); if (!/^[A-Za-z_$][\w$]*$/.test(name)) return;
+    const d = definitions(c)[name];
+    const line = tok.closest('.vc-line'); const atDef = d && line && d.id === c.getAttribute('data-cb') && +line.dataset.line === d.line;
+    let html;
+    if (d && !atDef) html = '<div class="vo-tip-k">' + esc(d.kind) + (d.id !== c.getAttribute('data-cb') ? ' · ' + esc(d.file) : '') + ' · line ' + d.line + '</div><code>' + esc(d.sig) + '</code>'
+      + (d.doc ? '<div class="vo-tip-d">' + esc(d.doc) + '</div>' : '') + '<div class="vo-tip-a">click to go to it</div>';
+    else if (atDef) html = '<div class="vo-tip-k">' + esc(d.kind) + ' · defined here</div>' + (d.doc ? '<div class="vo-tip-d">' + esc(d.doc) + '</div>' : '')
+      + '<div class="vo-tip-a">' + usesOf(c, name) + ' use' + (usesOf(c, name) === 1 ? '' : 's') + ' in this block</div>';
+    else if (BUILTIN[name]) html = '<div class="vo-tip-k">built-in</div><code>' + esc(BUILTIN[name]) + '</code>';
+    else return;
+    const doc = tok.ownerDocument || document;
+    if (!tip) { tip = doc.createElement('div'); tip.className = 'vo-tip'; }
+    adopt(document); document.body.appendChild(tip);
+    tip.innerHTML = html; tip.style.display = 'block';
+    const r = tok.getBoundingClientRect(); const w = Math.min(420, window.innerWidth - 16);
+    tip.style.maxWidth = w + 'px'; tip.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+    const below = r.bottom + 6, h = tip.offsetHeight; tip.style.top = (below + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 6) : below) + 'px';
+  }
+  function tipHide() { if (tip) tip.style.display = 'none'; }
+  function usesOf(c, name) { let n = 0; c.querySelectorAll(':scope > pre code span.hl-fn, :scope > pre code span.hl-type').forEach((s) => { if (s.textContent === name) n++; }); return n; }
+  function occurrences(c, name, on) { c.querySelectorAll(':scope > pre code span.hl-fn, :scope > pre code span.hl-type, :scope > pre code span.vo-occ').forEach((s) => s.classList.toggle('vo-occ', !!on && s.textContent === name)); }
+  function jumpTo(c, name) {
+    const d = definitions(c)[name]; if (!d) return false;
+    const target = cardOf(d.id); if (!target) return false;
+    const line = target.querySelector('.vc-line[data-line="' + d.line + '"]'); if (!line) return false;
+    try { line.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) { line.scrollIntoView(); }
+    line.classList.remove('vo-jump'); void line.offsetWidth; line.classList.add('vo-jump'); setTimeout(() => line.classList.remove('vo-jump'), 1600);
+    return true;
+  }
+  // Outline: the block's functions and classes as a short menu under the button; a pick goes to it
+  function outline(id, b, c) {
+    const old = c.querySelector(':scope > .vo-outline'); if (old) { old.remove(); return; }
+    const sy = symbols(blocks[id].code, blocks[id].lang); const names = Object.keys(sy).sort((a, z) => sy[a].line - sy[z].line);
+    if (!names.length) return;
+    const box = document.createElement('div'); box.className = 'vo-outline';
+    box.innerHTML = names.map((n) => '<button class="vo-ol-it" data-vo-go="' + esc(n) + '"><span class="vo-ol-k">' + esc(sy[n].kind) + '</span><b>' + esc(n) + '</b><i>line ' + sy[n].line + '</i></button>').join('');
+    const bar = c.querySelector(':scope > .code-bar'); bar.after(box);
   }
 
   // ── wiring ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -392,16 +573,118 @@
     if (rootHooks && root !== document) root.__voHooks = Object.assign(root.__voHooks || {}, rootHooks);
     if (root.__voWired) return root; root.__voWired = true;
     root.addEventListener('click', (e) => {
+      const go = e.target && e.target.closest && e.target.closest('.code-card [data-vo-go]');
+      if (go) { const c = go.closest('.code-card'); e.preventDefault(); e.stopPropagation(); jumpTo(c, go.getAttribute('data-vo-go')); const ol = go.closest('.vo-outline'); if (ol) ol.remove(); return; }
+      // a call (or a class) defined in reach: a click on it goes to the definition
+      const tok = e.target && e.target.closest && e.target.closest('.code-card pre code span.hl-fn, .code-card pre code span.hl-type');
+      if (tok && !e.target.closest('.cb-editor')) { const c = tok.closest('.code-card'); if (jumpTo(c, String(tok.textContent || '').trim())) { e.preventDefault(); return; } }
+      const pv = e.target && e.target.closest && e.target.closest('.vo-acts [data-vp]');
+      if (pv) { e.preventDefault(); e.stopPropagation(); proseAct(pv); return; }
       const b = e.target && e.target.closest && e.target.closest('.code-card [data-vo]'); if (!b) return;
       const c = b.closest('.code-card'); const id = c && c.getAttribute('data-cb'); if (!id) return;
       const a = b.getAttribute('data-vo'); e.preventDefault(); e.stopPropagation();
       if (a === 'edit-apply') return editDone(id, true);
       if (a === 'edit-cancel') return editDone(id, false);
+      if (a === 'edit-full') return editFull(id);
+      if (a === 'edit-vscode') { const h = hookFor(c, 'vscode'); const ta = c.querySelector(':scope > .cb-editor'); if (h) h(Object.assign({}, blocks[id], { code: ta ? ta.value : blocks[id].code }), id, b, c); return; }
       if (a === 'xp-close') { const x = b.closest('.xp-inline'); if (x) x.remove(); return; }
       act(a, id, b, c);
     });
+    // what a name is: hovering a call or a class shows its definition; every use of it in the block lights
+    root.addEventListener('mouseover', (e) => {
+      const tok = e.target && e.target.closest && e.target.closest('.code-card pre code span.hl-fn, .code-card pre code span.hl-type'); if (!tok) return;
+      const c = tok.closest('.code-card'); const name = String(tok.textContent || '').trim();
+      clearTimeout(tipT); tipT = setTimeout(() => { try { tipShow(tok); } catch (_) {} }, 220);
+      occurrences(c, name, true);
+      const d = definitions(c)[name]; tok.classList.toggle('vo-def', !!d);
+    });
+    root.addEventListener('mouseout', (e) => {
+      const tok = e.target && e.target.closest && e.target.closest('.code-card pre code span.hl-fn, .code-card pre code span.hl-type'); if (!tok) return;
+      clearTimeout(tipT); tipHide(); const c = tok.closest('.code-card'); if (c) occurrences(c, '', false);
+    });
+    // the prose menu opens, walks with the keyboard and closes on Escape or a click elsewhere
+    root.addEventListener('keydown', (e) => {
+      const m = root.querySelector && root.querySelector('.vo-acts .ma-dd.open .ma-menu'); if (!m) return;
+      if (e.key === 'Escape') { e.preventDefault(); menuClose(root); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const its = [...m.querySelectorAll('.ma-it')]; const i = its.indexOf((root.activeElement || document.activeElement));
+        const n = its[(i + (e.key === 'ArrowDown' ? 1 : -1) + its.length) % its.length]; if (n) n.focus(); }
+    });
+    root.addEventListener('mousedown', (e) => { if (!(e.target && e.target.closest && e.target.closest('.vo-acts .ma-dd'))) menuClose(root); }, true);
     if (root !== document) adopt(root);
     return root;
+  }
+
+  // ── prose: the same actions under every piece of writing ────────────────────────────────────────────────
+  /* WRITING GETS THE SAME MENU WHEREVER IT IS (owner, 2026-10-03: "prose sent to the canvas also needs the same options
+     as code (like the menu under responses) so it can be converted into other formats sent to other areas or saved or
+     edited"). The chat's reply row and a canvas reading item draw this one row: Copy · Explode · Canvas, then one
+     "Send to" menu - an HTML report, a podcast, a notebook, a file in the IDE, a project, a thought for later, any
+     other channel with a style. Every action works from the text it is given; a page that has its own way of doing one
+     (the chat's save dialogs, its HTML-opens setting) plugs it in, and anything it does not is done through the
+     capability that does it.
+       VeraOut.proseMenu(id, {md, title, canvas, explode, extra, lead})   lead/extra: the host's own buttons */
+  const prose = {};
+  const mact = (act, ico, label, tip, cls) => '<button class="mact' + (cls ? ' ' + cls : '') + '" data-vp="' + act + '" title="' + esc(tip) + '">' + (I[ico] || '') + '<span>' + label + '</span></button>';
+  const mitem = (act, ico, label, hint) => '<button class="ma-it" role="menuitem" data-vp="' + act + '">' + (I[ico] || '') + '<span class="ma-l">' + label + '<small>' + hint + '</small></span></button>';
+  function proseMenu(id, o) {
+    o = o || {}; prose[id] = { md: String(o.md || ''), title: String(o.title || ''), getMd: o.getMd || null };
+    const has = (n) => !!hooks[n];
+    return '<div class="msg-actions vo-acts" data-vo-prose="' + esc(id) + '">' + (o.lead || '')
+      + mact('copy', 'copy', 'Copy', 'Copy the text')
+      + (o.explode === false ? '' : mact('explode', 'explode', 'Explode', 'A structured diagram of this - its code, or its prose'))
+      + (o.canvas === false ? '' : mact('canvas', 'canvas', 'Canvas', 'Put this on the session canvas, beside the chat'))
+      + (o.extra || '')
+      + '<span class="ma-sep"></span><div class="ma-dd">'
+      +   mact('menu', 'send', 'Send to', 'Deliver this somewhere else - the original stays where it is', 'ma-ddb')
+      +   '<div class="ma-menu" role="menu">'
+      +     mitem('html', 'html', 'HTML report', 'a rich document - on the canvas or a tab (Settings › Delivery)')
+      +     mitem('podcast', 'podcast', 'Podcast', 'a spoken episode, multi-voice')
+      +     mitem('notebook', 'notebook', 'Notebook', 'a cell in a notebook')
+      +     (has('ide') ? mitem('ide', 'ide', 'A file in the IDE', 'saved through the IDE') : '')
+      +     (has('project') ? mitem('project', 'project', 'A project', 'added to a dream-system project') : '')
+      +     (has('think') ? mitem('think', 'think', 'Think about it later', 'Vera revisits it when idle') : '')
+      +     '<hr>' + mitem('channel', 'channel', 'Another channel…', 'email, telegram, memory - with a style')
+      +   '</div></div></div>';
+  }
+  function menuClose(root) { (root || document).querySelectorAll('.vo-acts .ma-dd.open').forEach((x) => x.classList.remove('open')); }
+  function notify(el, html) { const h = hookFor(el, 'notify'); if (h) { try { h(html); } catch (_) {} } }
+  async function proseAct(b) {
+    const row = b.closest('.vo-acts'); const id = row && row.getAttribute('data-vo-prose'); const p = prose[id]; if (!p) return;
+    const a = b.getAttribute('data-vp'); const md = p.getMd ? String(p.getMd() || '') : p.md;
+    const title = p.title || (md.trim().split('\n').find((l) => l.trim()) || 'Output').replace(/^#+\s*/, '').slice(0, 120);
+    const ctx = { id, md, title, btn: b, row };
+    if (a === 'menu') { const dd = b.closest('.ma-dd'); const open = !dd.classList.contains('open'); menuClose(row.getRootNode ? row.getRootNode() : document);
+      if (!open) return; dd.classList.add('open'); const m = dd.querySelector('.ma-menu'); m.classList.remove('up');
+      const r = m.getBoundingClientRect(); if (r.bottom > window.innerHeight - 8 && r.height < r.top) m.classList.add('up');
+      try { m.querySelector('.ma-it').focus(); } catch (_) {} return; }
+    menuClose(row.getRootNode ? row.getRootNode() : document);
+    const h = hookFor(row, 'prose_' + a) || (HOSTWIDE[a] ? hookFor(row, a) : null);
+    if (h) { try { if (await h(ctx)) return; } catch (e) { console.warn('VeraOut prose ' + a, e); } }
+    const done = (ok, msg) => { flash(a === 'copy' || a === 'canvas' || a === 'explode' ? b : row.querySelector('.ma-ddb'), ok, ok ? (msg || 'Done') : 'Failed'); };
+    try {
+      if (a === 'copy') { await navigator.clipboard.writeText(md); return done(true, 'Copied'); }
+      if (a === 'canvas') { const r = await cap('output.redeliver', { channel: 'canvas', content: md, title, session_id: session() }); return done(!!(r && r.ok), 'On canvas'); }
+      if (a === 'html') { const r = await cap('report.canvas', { content: md, title, mode: 'auto', session_id: session() }); if (r && r.ok) notify(row, 'HTML report on the canvas'); return done(!!(r && r.ok), 'Sent'); }
+      if (a === 'podcast') { const r = await cap('podcast.generate', { topic: title, sources: [{ type: 'text', text: md, label: title }], wait: false }); return done(!!(r && (r.job_id || r.episode_id || r.ok)), 'Started'); }
+      if (a === 'notebook') { const r = await cap('output.redeliver', { channel: 'notebook', content: md, title, session_id: session() }); return done(!!(r && r.ok), 'Saved'); }
+      if (a === 'channel') return channelPick(row, ctx);
+      if (a === 'explode') return done(false);
+      if (a.indexOf('ch:') === 0) { const sel = row.querySelector('.vo-chs select'); const r = await cap('output.redeliver', { channel: a.slice(3), content: md, title, format: sel ? sel.value : '', session_id: session() });
+        const box = row.querySelector('.vo-chs'); if (box) box.remove();
+        if (r && r.ok) { const rv = hookFor(row, 'reveal'); if (rv) try { rv(a.slice(3), r.url || ''); } catch (_) {} notify(row, 'Delivered as ' + esc(a.slice(3))); }
+        return done(!!(r && r.ok), 'Sent'); }
+    } catch (e) { done(false); }
+  }
+  // every other channel, with a style for it - listed under the row, the same picker wherever the row is
+  let chans = null;
+  async function channelPick(row, ctx) {
+    const old = row.querySelector('.vo-chs'); if (old) { old.remove(); return; }
+    if (!chans) { try { const r = await cap('output.channels', {}); chans = ((r && r.channels) || []).filter((c) => c && c.available !== false && c.id !== 'fabric'); } catch (_) { chans = []; } }
+    const box = document.createElement('div'); box.className = 'vo-chs';
+    let styles = ''; try { const r = await cap('output.delivery_menu', {}); styles = ((r && r.styles) || []).map((s) => '<option value="' + esc(s.id) + '">' + esc(s.label || s.id) + '</option>').join(''); } catch (_) {}
+    box.innerHTML = '<span class="vo-chs-l">send as</span>' + chans.map((c) => '<button class="mact" data-vp="ch:' + esc(c.id) + '">' + esc(c.label || c.id) + '</button>').join('')
+      + '<span class="vo-chs-l">in</span><select title="The style it is shaped into"><option value="">the channel\'s own style</option>' + styles + '</select>';
+    row.appendChild(box);
   }
   const libs = {};
   function ensureLib(src, tag) {
@@ -469,7 +752,54 @@
 .hl-add{background:rgba(95,207,154,.14);color:var(--acc2,#8fb87a);display:inline-block;width:100%}
 .hl-del{background:rgba(232,112,107,.14);color:var(--err,#e06c6c);display:inline-block;width:100%}
 .hl-hunk{color:var(--acc,#5a9e8f);display:inline-block;width:100%}
-.hl-num{color:var(--acc3,#c9a96e)}.hl-fn{color:var(--acc4,#8fa7d9)}.hl-type{color:var(--acc4,#8fa7d9)}.hl-tag{color:var(--acc,#5a9e8f)}.hl-attr{color:var(--acc2,#8fb87a)}`;
+.hl-num{color:var(--acc3,#c9a96e)}.hl-fn{color:var(--acc4,#8fa7d9)}.hl-type{color:var(--acc4,#8fa7d9)}.hl-tag{color:var(--acc,#5a9e8f)}.hl-attr{color:var(--acc2,#8fb87a)}
+/* numbered lines: the number in a gutter a selection never takes */
+.code-card pre.vo-lines{padding-left:4px}
+.code-card pre.vo-lines code{display:block}
+.code-card .vc-line{display:block;padding-left:2px;border-left:2px solid transparent;transition:background .15s}
+.code-card .vc-lno{display:inline-block;width:2.4em;margin-right:.75em;text-align:right;font-style:normal;color:var(--dim,#6b7280);opacity:.55;user-select:none;-webkit-user-select:none}
+.code-card .vc-line.vo-jump{background:color-mix(in srgb,var(--acc,#5a9e8f) 22%,transparent);border-left-color:var(--acc,#5a9e8f)}
+.code-card .vc-line.vo-jump .vc-lno{opacity:1;color:var(--acc,#5a9e8f)}
+/* the reader's helpers: every use of the name in view, a name with a definition in reach, the outline */
+.code-card code span.vo-occ{background:color-mix(in srgb,var(--acc,#5a9e8f) 20%,transparent);border-radius:2px;box-shadow:0 0 0 1px color-mix(in srgb,var(--acc,#5a9e8f) 35%,transparent)}
+.code-card code span.vo-def{text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer}
+.code-card .vo-outline{display:flex;flex-direction:column;padding:4px;gap:1px;background:var(--bg1,#14161b);border-bottom:1px solid var(--border,rgba(255,255,255,.09));max-height:220px;overflow:auto}
+.code-card .vo-ol-it{display:flex;align-items:baseline;gap:8px;border:none;background:none;text-align:left;padding:4px 8px;border-radius:var(--r-sm,5px);color:var(--text,#d8dce4);font:11px var(--mono,ui-monospace,monospace);cursor:pointer}
+.code-card .vo-ol-it:hover{background:var(--surf2,rgba(255,255,255,.06))}
+.code-card .vo-ol-k{width:58px;color:var(--dim2,#8a92a0);font-size:9.5px;text-transform:uppercase;letter-spacing:.06em}.code-card .vo-ol-it i{margin-left:auto;font-style:normal;color:var(--dim,#6b7280);font-size:9.5px}
+.vo-tip{position:fixed;z-index:10050;display:none;padding:8px 10px;border-radius:var(--ui-radius,8px);background:var(--surf,var(--bg1,#1a1d24));color:var(--text,#d8dce4);box-shadow:var(--elev,0 12px 34px -16px rgba(0,0,0,.7)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.12)));font:11.5px/1.45 var(--f-ui,var(--sans,system-ui,sans-serif));pointer-events:none}
+.vo-tip code{display:block;font:11px/1.5 var(--mono,ui-monospace,monospace);color:var(--acc4,#8fa7d9);white-space:pre-wrap;word-break:break-word}
+.vo-tip .vo-tip-k{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a92a0);margin-bottom:3px}
+.vo-tip .vo-tip-d{margin-top:5px;color:var(--text,#d8dce4)}.vo-tip .vo-tip-a{margin-top:5px;font-size:10px;color:var(--acc,#5a9e8f)}
+/* the full-screen editor */
+.vo-modal{position:fixed;inset:0;z-index:10040;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center}
+.vo-modal-box{width:min(1200px,94vw);height:88vh;display:flex;flex-direction:column;border-radius:var(--ui-radius,10px);overflow:hidden;background:var(--bg0,#0e0f12);box-shadow:0 30px 80px -20px rgba(0,0,0,.8),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.12)))}
+.vo-modal-h{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 14px;background:var(--bg1,#14161b);border-bottom:1px solid var(--border,rgba(255,255,255,.09));font:10px var(--mono,ui-monospace,monospace)}
+.vo-modal-h .code-lang{color:var(--acc,#5a9e8f);text-transform:uppercase;letter-spacing:.7px;font-weight:600}.vo-modal-h .cb-sp{flex:1}
+.vo-modal-h .cb-act{display:inline-flex;align-items:center;gap:4px;padding:5px 10px;font:500 11px/1 var(--f-ui,var(--sans,system-ui,sans-serif));border:none;background:transparent;color:var(--dim2,#8a92a0);border-radius:var(--r-sm,5px);cursor:pointer}
+.vo-modal-h .cb-act:hover{background:var(--surf2,rgba(255,255,255,.06));color:var(--text,#d8dce4)}.vo-modal-h .cb-act.run{color:var(--acc2,#8fb87a)}
+.vo-modal-h .cb-edithint{color:var(--dim2,#8a92a0);margin-right:6px}
+.vo-modal-b{flex:1;display:flex;min-height:0}
+.vo-gutter{margin:0;padding:12px 8px 12px 10px;min-width:3.4em;text-align:right;overflow:hidden;color:var(--dim,#6b7280);opacity:.6;font:12.5px/1.55 var(--mono,ui-monospace,monospace);background:var(--bg1,#14161b);user-select:none}
+.vo-modal-ta{flex:1;margin:0;padding:12px 14px;border:none;outline:none;resize:none;background:transparent;color:var(--text,#d8dce4);font:12.5px/1.55 var(--mono,ui-monospace,monospace);tab-size:2;white-space:pre;overflow:auto}
+/* the prose row (the same as the chat's reply row, for writing drawn anywhere) */
+.vo-acts{display:flex;align-items:center;gap:2px;flex-wrap:wrap;position:relative}
+.vo-acts .mact{display:inline-flex;align-items:center;gap:5px;border:none;border-radius:var(--r-sm,6px);background:transparent;color:var(--t3,var(--dim,#6b7280));font:500 10.5px/1 var(--f-ui,var(--sans,system-ui,sans-serif));padding:5px 8px;cursor:pointer}
+.vo-acts .mact:hover,.vo-acts .mact:focus-visible,.vo-acts .ma-dd.open .ma-ddb{background:var(--surf2,rgba(255,255,255,.06));color:var(--t1,var(--text,#d8dce4));outline:none}
+.vo-acts .mact.ok{color:var(--ok,#7bc47f)}.vo-acts .mact.err{color:var(--err,#e06c6c)}
+.vo-acts svg{width:13px;height:13px;flex:0 0 auto}
+.vo-acts .ma-sep{width:1px;height:14px;background:var(--bd,var(--border,rgba(255,255,255,.09)));margin:0 4px}
+.vo-acts .ma-dd{position:relative}
+.vo-acts .ma-menu{display:none;position:absolute;left:0;top:calc(100% + 4px);z-index:60;min-width:250px;padding:5px;border-radius:var(--ui-radius,10px);background:var(--surf,var(--bg1,#1a1d24));box-shadow:var(--elev,0 12px 34px -16px rgba(0,0,0,.7)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+.vo-acts .ma-menu.up{top:auto;bottom:calc(100% + 4px)}.vo-acts .ma-dd.open .ma-menu{display:block}
+.vo-acts .ma-it{display:flex;align-items:flex-start;gap:10px;width:100%;border:none;background:none;text-align:left;padding:7px 9px;border-radius:var(--r-sm,6px);color:var(--t1,var(--text,#d8dce4));font:12px/1.3 var(--f-ui,var(--sans,system-ui,sans-serif));cursor:pointer}
+.vo-acts .ma-it svg{margin-top:1px;color:var(--t3,var(--dim,#6b7280))}
+.vo-acts .ma-it:hover,.vo-acts .ma-it:focus{background:var(--surf2,rgba(255,255,255,.06));outline:none}
+.vo-acts .ma-it small{display:block;margin-top:2px;color:var(--t3,var(--dim,#6b7280));font-size:10.5px}
+.vo-acts .ma-menu hr{border:none;height:1px;background:var(--bd,var(--border,rgba(255,255,255,.09)));margin:4px 2px}
+.vo-acts .vo-chs{flex-basis:100%;display:flex;align-items:center;flex-wrap:wrap;gap:2px;margin-top:4px;padding:4px;border-radius:var(--r-sm,6px);background:var(--surf2,rgba(255,255,255,.04))}
+.vo-acts .vo-chs-l{font:9.5px var(--mono,ui-monospace,monospace);color:var(--t3,var(--dim,#6b7280));margin:0 4px}
+.vo-acts .vo-chs select{font-size:10.5px;max-width:170px}`;
   function adopt(root) {
     root = root || document; const host = root === document ? document.head : root;
     if (!host || (host.querySelector && host.querySelector(':scope > style[data-vera-output]'))) return;
@@ -477,7 +807,7 @@
     if (root === document) host.insertBefore(st, host.firstChild); else host.appendChild(st);   // the document's own sheets still win there
   }
 
-  window.VeraOut = { version: 1, render, card, bar, hostBtn, icons: I, fence, highlight, lintCode, lintCard, hydrate, wire, adopt, preview, run, edit,
+  window.VeraOut = { version: 2, render, card, bar, hostBtn, icons: I, fence, highlight, lintCode, lintCard, hydrate, wire, adopt, preview, run, edit, editFull, applyCode, symbols, codeBody, proseMenu, prose,
     register, blocks, hooks, previewable, runnable, wholePage, previewDoc, fenceFilename, langClass, ensureLib, css: CSS };
   const boot = () => { adopt(document); wire(document); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();

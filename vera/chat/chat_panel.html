@@ -4203,9 +4203,10 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   /* Turn this message into a spoken podcast episode (podcast.generate with the
      message as the source). Non-blocking — the episode renders in the Podcast
      library / surfaces via podcast.progress events. */
-  async function _msgPodcast(mid){
-    const rec = _MSG_REGISTRY[mid]; if(!rec) return;
-    const content = rec.getContent();
+  async function _msgPodcast(mid, given){
+    // a message by id, or any text given (the shared prose row on a canvas item or a loop's answer)
+    const rec = _MSG_REGISTRY[mid]; if(!rec && given==null) return;
+    const content = given!=null ? String(given) : rec.getContent();
     if(!content.trim()){ appendSys('<span style="color:var(--dim2)">Message is empty — nothing to voice.</span>'); return; }
     const topic=(content.trim().split('\n').find(l=>l.trim())||'Vera episode').slice(0,120);
     appendSys('<span style="color:var(--dim2)">🎙 Generating podcast episode…</span>');
@@ -4223,9 +4224,9 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   /* Re-deliver this message as a rich, self-contained HTML report (report.html)
      — themed doc + Mermaid + inline-SVG infographics. The original message is
      untouched; the report opens inline and can be pinned to the gallery. */
-  async function _msgHtmlReport(mid){
-    const rec = _MSG_REGISTRY[mid]; if(!rec) return;
-    const content = rec.getContent();
+  async function _msgHtmlReport(mid, given){
+    const rec = _MSG_REGISTRY[mid]; if(!rec && given==null) return;
+    const content = given!=null ? String(given) : rec.getContent();
     if(!content.trim()){ appendSys('<span style="color:var(--dim2)">Message is empty — nothing to render.</span>'); return; }
     const title=(content.trim().split('\n').find(l=>l.trim())||'Report').replace(/^#+\s*/,'').slice(0,120);
     const where=_dlvCfg().html;
@@ -4374,6 +4375,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   document.addEventListener('mousedown',e=>{ if(!(e.target&&e.target.closest&&e.target.closest('.ma-dd'))) _maClose(); },true);
   document.addEventListener('keydown',e=>{
     const m=document.querySelector('.ma-dd.open .ma-menu'); if(!m) return;
+    if(m.closest('.vo-acts')) return;   // the shared kit's row walks its own menu
     if(e.key==='Escape'){ e.preventDefault(); const b=m.parentElement.querySelector('.ma-ddb'); _maClose(); try{ b.focus(); }catch(_){} return; }
     if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); const its=[...m.querySelectorAll('.ma-it')]; const i=its.indexOf(document.activeElement);
       const n=its[(i+(e.key==='ArrowDown'?1:-1)+its.length)%its.length]; if(n) n.focus(); }
@@ -4464,9 +4466,19 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
        does. Same handlers as before - only the face changed. */
     const _ma=(ico,label,act,tip,cls)=>`<button class="mact${cls?' '+cls:''}" onclick="${act}" title="${tip}">${_MA_ICO[ico]||''}<span>${label}</span></button>`;
     const _mi=(ico,label,act,hint)=>`<button class="ma-it" role="menuitem" onclick="CH._maClose();${act}">${_MA_ICO[ico]||''}<span class="ma-l">${label}<small>${hint}</small></span></button>`;
-    actions.innerHTML=(role==='user'
+    // ONE ROW FOR WRITING, wherever it is drawn: the shared kit's prose row (vera_output.js) - the canvas's reading items
+    // and the loop's answer carry the same one - with this message's own Edit/Resend in front; the chat's ways of doing
+    // each action are the kit's hooks (_voHooks). Below: the chat's own row, where the kit is not on the page.
+    const _userLead=role==='user'
         ? _ma('edit','Edit',`CH._msgEdit('${mid}')`,'Edit and resubmit - rewinds the chat from here')
         + _ma('resend','Resend',`CH._msgResubmit('${mid}')`,'Resubmit unchanged - rewinds the chat from here')
+        : '';
+    if(typeof VeraOut!=='undefined'&&VeraOut.proseMenu){
+      const _row=document.createElement('div'); _row.innerHTML=VeraOut.proseMenu(mid, {lead:_userLead, getMd:()=>(_MSG_REGISTRY[mid]?_MSG_REGISTRY[mid].getContent():'')});
+      actions.innerHTML=_row.firstChild.innerHTML; actions.classList.add('vo-acts'); actions.setAttribute('data-vo-prose', mid);
+    } else
+    actions.innerHTML=(role==='user'
+        ? _userLead
         : '')
       + _ma('copy','Copy',`CH._msgCopy('${mid}',this)`,'Copy the message text')
       + _ma('explode','Explode',`CH._msgExplode('${mid}',this)`,'A structured diagram of this message - its code, or its prose')
@@ -6161,6 +6173,7 @@ IMPORTANT:
     holder.appendChild(nf); nf.srcdoc=doc;
   }
   function _htmlLive(bubEl, key){
+    if(!_cvOneplaceOff()) return;       // the canvas is open: the page streams there, and only there
     const card=bubEl.querySelector('.code-card[data-incomplete="1"]'); if(!card) return;
     const code=card.querySelector('code.language-html, code.language-svg'); if(!code) return;
     const id=card.getAttribute('data-cb'); const blk=(typeof VeraOut!=='undefined'&&VeraOut.blocks[id])||null;
@@ -6180,6 +6193,7 @@ IMPORTANT:
     let html=''; try{ html=_renderStreamingMarkdown(fullText); } finally { _MM_LIVE_KEY=''; _mmLiveTaken=false; }
     bubEl.innerHTML=html+'<span class="cur"></span>';
     try{ _htmlLive(bubEl, key); }catch(_){}
+    try{ _cvHoldForCanvas(bubEl, true); }catch(_){}
     const slot=bubEl.querySelector('.mm-slot[data-mm-live]');
     if(!slot) return;
     _ensureMermaidJs();
@@ -7396,7 +7410,10 @@ IMPORTANT:
       if(made){ out.push(made); return; }
       out.push({kind:'markdown', n:n.split(' ')[0]||'capability', d:'capability \u00b7 '+(el.classList.contains('error')?'failed':'done'), content:{md:'**'+n+'**\n\n'+(res?'```\n'+res+'\n```':'')}, col:'var(--acc2)', k:'cap'}); });
 
-    cvHook('code', 'pre code', (el, out, i) => { const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; const s=String(el.textContent||''); if(!s.trim()) return;
+    cvHook('code', 'pre code', (el, out, i) => { const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||'';
+      // the source from the card's registry entry (a card's DOM carries line numbers and edits the text does not)
+      const _card=el.closest&&el.closest('.code-card[data-cb]'); const _blk=_card&&typeof VeraOut!=='undefined'&&VeraOut.blocks[_card.getAttribute('data-cb')];
+      const s=_blk?String(_blk.code||''):String(el.textContent||''); if(!s.trim()) return;
       if(lang==='mermaid'){ out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{mermaid:s.slice(0,24000)}, col:'#a78bfa', k:'diagram'}); return; }
       if(lang==='widget') return;
       out.push({kind:'code', n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', content:{code:s.slice(0,12000), lang}, col:'#fb923c', k:'code'}); });
@@ -7505,6 +7522,9 @@ IMPORTANT:
          twice. The card (and a diagram's slot) is what moves; the chip says where it went. */
       el=(el.closest&&el.closest('.code-card'))||el;
       el.classList.add('cv-elsewhere'); el.dataset.cvKey=key;
+      // the line the paint already left (_cvHoldForCanvas) now knows which item it points at
+      { const nx=el.nextElementSibling; if(nx&&nx.classList.contains('cv-moved')&&!nx.dataset.cvKey){ nx.dataset.cvKey=key; nx.textContent=(m.n?String(m.n).slice(0,48):'item')+' · on the canvas ↗';
+          nx.addEventListener('click',()=>{ try{ _capCall('canvas.add',{session_id:SID, key}); }catch(_){} try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} }); } }
       if(!el.nextElementSibling||!el.nextElementSibling.classList.contains('cv-moved')){
         const chip=document.createElement('button'); chip.className='cv-moved'; chip.type='button';
         chip.dataset.cvKey=key; chip.title='On the session canvas — click to bring it into view there';
@@ -7516,6 +7536,25 @@ IMPORTANT:
     }catch(_){}
   }
   function _cvOneplaceOff(){ return !_pages.has('canvas') || _cvOneplace()==='both'; }
+  /* WHILE THE CANVAS IS OPEN, CODE NEVER STREAMS INTO THE CHAT (owner, 2026-10-03: "the chat message area still has the
+     code streaming to it if the canvas is open - it should not do this"). The harvest only hid a block once the reply
+     had finished (a bubble being written was left alone: hiding a diagram's slot on the harvest's beat and showing it
+     on the next token made it flicker). Every paint now hides the reply's code cards and diagram slots itself - the
+     same state every frame, so nothing blinks - with the line saying where they are going; the live landing still
+     reads them (a hidden card is still in the DOM), and the canvas draws them as they grow. The finished reply is
+     held the same way at once, so a card never flashes back in before its item is confirmed on the canvas. */
+  function _cvHoldForCanvas(bubEl, streaming){
+    if(!bubEl||_cvOneplaceOff()) return;
+    bubEl.querySelectorAll('.code-card, .mm-slot').forEach(el=>{
+      if(el.closest('.cap-inline')) return;                       // a tool card's own drawing is the tool card's
+      if(!el.classList.contains('cv-elsewhere')) el.classList.add('cv-elsewhere');
+      const nx=el.nextElementSibling; if(nx&&nx.classList&&nx.classList.contains('cv-moved')) return;
+      const lang=((el.querySelector('code')||{}).className||'').match(/language-([\w-]+)/);
+      const chip=document.createElement('button'); chip.className='cv-moved'; chip.type='button';
+      chip.title='On the session canvas'; chip.textContent=(el.classList.contains('mm-slot')?'diagram':(lang?lang[1]:'code'))+(streaming?' · streaming to the canvas ↗':' · on the canvas ↗');
+      el.after(chip);
+    });
+  }
   /* the column closed (or the reader asked for both): everything the canvas was holding comes back into the reply */
   function _cvRestoreInline(){
     try{ document.querySelectorAll('#msgs .cv-elsewhere').forEach(el=>el.classList.remove('cv-elsewhere'));
@@ -7539,8 +7578,27 @@ IMPORTANT:
      just made - and the resolver SHOWS an existing key, it does not rewrite it - so the item kept its half-streamed
      content until a later turn landed it again. The final landing now waits for the live one, then updates. */
   let _cvLiveRun=null;
+  /* THE CANVAS DRAWS AS SMOOTHLY AS THE CHAT (owner, 2026-10-03: "the streaming to the canvas is not smooth like the
+     chat"). The live landing writes a growing item to the server a couple of times a second and the canvas drew it
+     when the revision came back - a still item, then a jump. Every ~100 ms of paint the same harvest hands what has
+     grown straight to the open canvas (liveUpdate), which draws it on the next frame; the server writes go on as
+     before and persist it. Only items already landed - a new one still arrives through canvas.add. */
+  let _cvLocalAt=0;
+  function _cvLiveLocal(bubEl){
+    if(!SID||!bubEl||!_pages.has('canvas')||Date.now()-_cvLocalAt<100) return;
+    const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv||typeof cv.liveUpdate!=='function') return;
+    _cvLocalAt=Date.now();
+    const made=_cvHarvest(bubEl), mid=_cvRelMid;
+    made.forEach((m,i)=>{ const key=m.key||('turn:'+mid+':'+m.k+':'+i); if(!_CV_LANDED[key]) return;
+      let sig=''; try{ sig=JSON.stringify(m.content); }catch(_){ return; }
+      if(_CV_LOCAL_SIG[key]===sig) return; _CV_LOCAL_SIG[key]=sig;
+      try{ cv.liveUpdate(key, m.content); }catch(_){} });
+  }
+  const _CV_LOCAL_SIG={};
   async function _cvLandReply(mid){
     if(_cvLiveRun){ try{ await _cvLiveRun; }catch(_){} }
+    // the stream is over: what the canvas was holding over its revisions gives way to the stored item again
+    try{ setTimeout(()=>{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&cv.liveDone) cv.liveDone(); }, 2500); }catch(_){}
     if(!SID||!mid) return 0; const q=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); if(!q) return 0;
     let w=q.nextElementSibling; while(w&&!(w.classList&&w.classList.contains('mwrap')&&w.classList.contains('a'))) w=w.nextElementSibling;
     const body=w&&w.querySelector('.msg-body'); if(!body||body.querySelector('.think-throb')) return 0;
@@ -8777,6 +8835,27 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       pane:(blk,id)=>{ _codePreview(id); return true; },
       edited:(blk,id,d,card)=>{ try{ const body=card.closest('.msg-body'); const md=body&&body.dataset.markdown;
         if(md&&d.before&&md.indexOf(d.before)>=0) body.dataset.markdown=md.replace(d.before, d.code); }catch(_){} },
+      // ── what the page does for a card or a piece of writing ANYWHERE on it - the canvas's items and the loop's
+      //    answers included (these reach every root: the kit's HOSTWIDE set) ──
+      notify:(html)=>{ appendSys('<span style="color:var(--ok)">'+html+'</span>'); },
+      reveal:(channel, url)=>{ try{ _dlvReveal(channel, url?BASE+url:''); }catch(_){} },
+      // the session's VS Code: the code saved into the session's artifacts, then its VS Code opened
+      vscode:async (blk)=>{ const name=blk.filename||('snippet.'+((_LANG_EXT[String(blk.lang||'').toLowerCase()])||'txt'));
+        try{ const r=await fetch(BASE+'/exec/sandbox/write_artifact',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({filename:name, content:blk.code||'', session_id:SID||''})}); const j=await r.json();
+          appendSys('<span style="color:var(--ok)">Saved '+esc(name)+' to the session\'s artifacts'+(j&&j.path?' ('+esc(j.path)+')':'')+' - opening VS Code…</span>'); }
+        catch(e){ appendSys('<span style="color:var(--err)">Could not save '+esc(name)+': '+esc(String(e&&e.message||e))+'</span>'); }
+        try{ await _sessionSbxVscode(); }catch(_){} return true; },
+      // the prose row's deliveries, from the text it is given (a message, a canvas item, a loop's answer)
+      html:(ctx)=>{ _msgHtmlReport(ctx.id, ctx.md); return true; },
+      podcast:(ctx)=>{ _msgPodcast(ctx.id, ctx.md); return true; },
+      notebook:(ctx)=>{ _saveModalOpen('nb-msg', 'Save to notebook', ctx.md); return true; },
+      ide:(ctx)=>{ _saveModalOpen('ide-msg', 'Save to a file', ctx.md); return true; },
+      project:(ctx)=>{ _saveModalOpen('proj-msg', 'Add to a project', ctx.md); return true; },
+      think:(ctx)=>{ _saveModalOpen('think-msg', 'Mark for later thought', ctx.md); return true; },
+      // a chat message's own explode and canvas (a message has its own place in the transcript to draw them)
+      prose_explode:(ctx)=>{ if(_MSG_REGISTRY[ctx.id]){ _msgExplode(ctx.id, ctx.btn); return true; } return false; },
+      prose_canvas:(ctx)=>{ if(_MSG_REGISTRY[ctx.id]){ _msgToCanvas(ctx.id, ctx.btn); return true; } return false; },
     });
   })();
   function renderMd(t,opts){
@@ -11765,6 +11844,7 @@ Your task: decide what to do next to advance toward the goal.
         clearTimeout(bubEl._hold); bubEl._hold=setTimeout(()=>{ bubEl.style.minHeight=''; }, 1200); }catch(_){}
       _paintStream(bubEl, fullText);
       try{ _cvLandLive(bubEl); }catch(_){}   // and the canvas keeps up with it, item by item as they appear
+      try{ _cvLiveLocal(bubEl); }catch(_){}  // ...and draws what has grown at once, not when the write comes back
       bubEl.querySelectorAll('.code-card pre').forEach((p,i)=>{
         const s=_sc[i];
         const streaming=!!p.closest('.code-card[data-incomplete]');
@@ -12010,6 +12090,8 @@ Your task: decide what to do next to advance toward the goal.
     }
     // Lint the completed code blocks once the final DOM is in place (C).
     try{ _lintRenderedBlocks(bubEl); }catch(_){}
+    // the canvas is open: the finished reply's code and diagrams stay where they were streaming - on the canvas
+    try{ _cvHoldForCanvas(bubEl, false); }catch(_){}
     // Auto-open the preview pane for the last renderable code block, if enabled.
     _maybeAutoPreview(bubEl);
     // Auto-persist labeled code blocks into the artifact system (no manual Save).

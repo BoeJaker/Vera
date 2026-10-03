@@ -45,5 +45,21 @@ t('a script previews in a page that reports its error', V.previewDoc('js', 'boom
 // ── a host that draws its own body: the same bar, the actions it lists, its own buttons after them ──
 const bar = V.bar('cv-k', 'python', 'a.py', { actions: ['copy', 'run'], extra: V.hostBtn('data-act="edit"', 'edit', 'Edit', 'x') });
 t('bar(): only the listed kit actions, then the host\'s', bar.includes('data-vo="copy"') && bar.includes('data-vo="run"') && !bar.includes('data-vo="save"') && bar.includes('data-act="edit"'));
+// ── the reader's helpers ──
+const sy = V.symbols('def area(w, h):\n    """The area."""\n    return w * h\n\n# adds them up\ndef total(xs):\n    return sum(xs)\n\nclass Box:\n    pass\n', 'python');
+t('symbols: functions and classes with their line, signature and docs', sy.area && sy.area.line === 1 && sy.area.sig === 'def area(w, h)' && sy.area.doc === 'The area.'
+  && sy.total && sy.total.doc === 'adds them up' && sy.Box && sy.Box.kind === 'class');
+const js = V.symbols('/** says hi */\nfunction hi(name) {\n  return name;\n}\nconst add = (a, b) => a + b;\nclass P {}\n', 'js');
+t('symbols: js function, arrow, class', js.hi && js.hi.doc === 'says hi' && js.add && js.add.kind === 'function' && js.P);
+const body = V.codeBody('a = 1\nb = 2\n', 'python');
+t('a code body is numbered lines, the number out of the copy', (body.match(/class="vc-line" data-line="\d+"/g) || []).length === 2 && body.includes('<i class="vc-lno">1</i>') && body.includes('class="vo-lines vc-pre vc-code"'));
+t('a card with several definitions offers an outline', V.card('python', 'def a():\n  pass\ndef b():\n  pass\n').includes('data-vo="outline"') && !V.card('python', 'x = 1').includes('data-vo="outline"'));
+t('a host may draw its own body (the canvas live preview) and say it is showing the drawing', V.card('html', '<p>x</p>', { body: '<div class="live"></div>', prevOn: true }).includes('<div class="live"></div>') && V.card('html', '<p>x</p>', { body: '<div></div>', prevOn: true }).includes('<span>Source</span>'));
+// ── prose ──
+const row = V.proseMenu('p1', { md: '# Hi', lead: '<b>lead</b>' });
+t('the prose row: the host\'s own first, copy / explode / canvas, then one Send to menu', row.indexOf('<b>lead</b>') < row.indexOf('data-vp="copy"') && row.includes('data-vp="explode"') && row.includes('data-vp="canvas"') && row.includes('data-vp="menu"'));
+t('...whose menu holds the deliveries every row has', ['html', 'podcast', 'notebook', 'channel'].every((a) => row.includes('data-vp="' + a + '"')));
+t('...and the text it works from', V.prose.p1 && V.prose.p1.md === '# Hi');
+t('where it already is on the canvas, no Canvas; where it explodes its own way, no Explode', !V.proseMenu('p2', { md: 'x', canvas: false, explode: false }).match(/data-vp="(canvas|explode)"/));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
