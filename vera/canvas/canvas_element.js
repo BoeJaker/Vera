@@ -443,7 +443,9 @@
       if (VO && vid && typeof VO.card === 'function') {
         const streaming = !!(el && el._liveOv && el._liveOv[key]);
         const live = prev ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>` : null;
-        const cardHtml = VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming });
+        // autoPrev off: the canvas decides what is drawn - a page it switched to source stays source (owner, 2026-10-03:
+        // "the source button on html in the canvas doent open the source": the kit drew the page straight back over it)
+        const cardHtml = VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming, autoPrev: false });
         return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${cardHtml}</div>`;
       }
       // (without the kit on the page: the canvas's own numbered body and Preview switch)
@@ -490,6 +492,13 @@
       if (typeof document === 'undefined') return `<pre class="vc-pre vc-dim"><code>${esc(src)}</code></pre>` + cap;
       const title = String(c.title || c.caption || 'Diagram');
       const live = !!(el && el._live && el._live[key]);
+      /* THE DIAGRAM CARD (owner, 2026-10-03: "mermaid diagrams rendered in the chat and canvas need the unified menu
+         style and the relevant options for along the top same as the rendered code output"): the kit's bar - Copy, Edit,
+         Source, Pop out, Save, Send to - over the column's live drawing; Pop out is the canvas's own "open in the chat" */
+      const VO = root.VeraOut;
+      if (key && VO && typeof VO.diagram === 'function') return `<div class="vc-codewrap vc-diagwrap" data-w="canvas.diagram">`
+        + VO.diagram(src, { id: 'cvd-' + key, title, canvas: false, cls: 'vc-kit',
+          body: `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div>` }) + `</div>` + cap;
       if (key) return `<div class="vc-diag" data-w="canvas.diagram"><div class="vc-th"><i class="dot${live ? ' on' : ' wait'}"></i><b>${esc(title)}</b><span class="mono">mermaid · ${src.split('\n').length} lines</span><span class="sp"></span>`
         + '<button class="ib" data-act="dgopen" title="Open it in the chat — the chat\'s own diagram pop-out">Open in the chat ↗</button><button class="ib" data-act="dgcopy" title="Copy the mermaid source">copy</button><button class="ib" data-act="dgsrc" title="Show the source">source</button></div>'
         + `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div><pre class="vc-pre vc-dgsrc" hidden><code>${esc(src)}</code></pre></div>` + cap;
@@ -781,9 +790,14 @@
       const pdef = !el || typeof el.previewOn !== 'function' || el.previewOn();
       const prev = key ? (pset ? !!el._prevOn[key] : pdef) : pdef;
       if (key && el) { el._prevSeen = el._prevSeen || {}; el._prevSeen[key] = prev; }
+      // ...and Send to, as every card has it (owner, 2026-10-03: "the 'send to' menu ... integrated into the code and
+      // markdown and html rendering")
+      const VO = root.VeraOut;
+      const send = key && VO && typeof VO.sendMenu === 'function'
+        ? VO.sendMenu('cvh-' + key, { getMd: () => '```html\n' + src.replace(/\n$/, '') + '\n```', raw: () => src, title: String(c.title || 'page'), skip: ['podcast'] }) : '';
       const head = `<div class="vc-codehead">${esc(c.title || 'html')}<span class="sp"></span>`
         + (key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Draw it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
-        + '</div>';
+        + send + '</div>';
       const body = prev && key
         ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="html"><span class="vc-dim">drawing…</span></div>`
         : `<pre class="vc-pre vc-code"><code>${esc(src)}</code></pre>`;
@@ -1472,6 +1486,9 @@
   /* the diagram's slot takes the diagram's own height at the slot's width (--dh, set when it renders), up to the size's
      ceiling — s 120 · m 400 · l 640 · xl the diagram's own — never a fixed strip; a dragged size still wins */
   .vc-diag .vc-live{height:var(--dh,150px);max-height:400px}.it[data-size="s"] .vc-diag .vc-live{max-height:120px}.it[data-size="l"] .vc-diag .vc-live{max-height:640px}.it[data-size="xl"] .vc-diag .vc-live{max-height:none}
+  /* ...the same in the diagram card (the kit's bar over the live drawing) */
+  .vc-diagwrap .vc-live{height:var(--dh,150px);max-height:400px}.it[data-size="s"] .vc-diagwrap .vc-live{max-height:120px}.it[data-size="l"] .vc-diagwrap .vc-live{max-height:640px}.it[data-size="xl"] .vc-diagwrap .vc-live{max-height:none}
+  .it.sized .vc-diagwrap > .code-card,.it.openin .vc-diagwrap > .code-card,.it.maxed .vc-diagwrap > .code-card{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
   .it[data-type="diagram"] .it-bd{max-height:none}
   .vc-dgsrc{margin-top:6px;max-height:160px}
   vera-mermaid.vc-mm{display:block;min-height:120px;margin:.3em 0}`;
@@ -2746,8 +2763,14 @@
       this.__voh = {
         preview: (blk, id, b) => viaAct('cprev', b),
         explode: (blk, id, b) => viaAct('explode', b),
+        dpop: (blk, id, b) => viaAct('dgopen', b),      // a diagram's Pop out: the canvas's own "open in the chat"
+        // a diagram's SVG / PNG: the drawing is in the column's live layer, not in the card
+        dimg: (blk, id, b, c, fmt) => { const L = this._live && this._live[keyOf(c)]; const vm = L && L.querySelector && L.querySelector('vera-mermaid');
+          if (vm && typeof vm._download === 'function') { vm._download(fmt); return true; } return false; },
         edited: (blk, id, d, c) => { const key = keyOf(c); const bl = key && this._blockOf(key); if (!bl) return;
-          return this.call('canvas.update', Object.assign(this._ref(key), { content: Object.assign({}, bl.content || {}, { code: d.code }) })); } };
+          const was = bl.content || {}; const next = { code: d.code };
+          if (bl.type === 'diagram' || was.mermaid != null) { next.mermaid = d.code; if (was.source != null) next.source = d.code; }   // a diagram draws from `mermaid` first
+          return this.call('canvas.update', Object.assign(this._ref(key), { content: Object.assign({}, was, next) })); } };
       // an edit in progress is never redrawn away: the column waits for it, then draws what it missed
       this.shadowRoot.addEventListener('vera:code:editend', () => { if (this._editHeld) { this._editHeld = false; this._html = null; if (this._doc) this.render(this._doc); } });
       return this.__voh;
