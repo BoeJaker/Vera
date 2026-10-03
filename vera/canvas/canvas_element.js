@@ -2709,11 +2709,33 @@
       // held over every document until the host says the stream is done: a revision that left the server before the
       // last write would otherwise draw the item a step back
       (this._liveOv = this._liveOv || {})[String(key)] = content;
+      (this._liveAt = this._liveAt || {})[String(key)] = Date.now();
       b.content = Object.assign({}, b.content || {}, content);
-      if (!this._liveRaf) this._liveRaf = requestAnimationFrame(() => { this._liveRaf = 0; if (this._doc) this.render(this._doc); });
+      this._liveRedraw(); this._liveExpire();
       return true;
     }
-    liveDone(key) { if (!this._liveOv) return; if (key == null) this._liveOv = null; else delete this._liveOv[String(key)]; }
+    /* THE STREAM IS OVER, SO IS THE STREAMING CARD (owner, 2026-10-03: "sometimes the code is stuck in the 'streaming'
+       state and the controls on the top of the code in the canvas dont appear"). Two ways it stuck: the end let go of the
+       item but drew nothing, so a card whose last revision had already come back stayed the streaming card (no bar)
+       until something else redrew the column; and a stream that never ended in the chat's landing (stopped, failed,
+       the page's own error) never let go at all. Now the end redraws, and an item nothing has grown for a few seconds
+       lets go by itself. */
+    liveDone(key) {
+      if (!this._liveOv) return;
+      if (key == null) { this._liveOv = null; this._liveAt = null; } else { delete this._liveOv[String(key)]; if (this._liveAt) delete this._liveAt[String(key)]; }
+      this._liveRedraw();
+    }
+    _liveRedraw() { if (!this._liveRaf) this._liveRaf = requestAnimationFrame(() => { this._liveRaf = 0; if (this._doc) this.render(this._doc); }); }
+    _liveExpire() {
+      if (this._liveT) return;
+      this._liveT = setTimeout(() => {
+        this._liveT = 0; if (!this._liveOv) return;
+        const now = Date.now(); let gone = false;
+        Object.keys(this._liveOv).forEach((k) => { if (now - ((this._liveAt && this._liveAt[k]) || 0) > 8000) { delete this._liveOv[k]; if (this._liveAt) delete this._liveAt[k]; gone = true; } });
+        if (gone) this._liveRedraw();
+        if (Object.keys(this._liveOv).length) this._liveExpire();
+      }, 2000);
+    }
     /* what the canvas does its own way for the shared code card (vera_output.js hooks, this shadow root only): Preview in
        the live layer and Explode as the bound explode item - through this column's one dispatcher, as its own buttons
        always went - and an applied edit kept with the item (canvas.update), so it is there after any redraw */
@@ -2915,7 +2937,7 @@
           inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
           // a code item previews its code; an html item previews the page it IS (its content field is `html`)
           h.textContent = ''; const cc = this._contentOf(key) || {}; const pd = this._pdoc(key, h.dataset.lang || cc.lang, cc.code || cc.html || ''); inner._doc = pd; inner.srcdoc = pd; }
-          else if (kind === 'explode') { inner = document.createElement('vera-graph-embed'); h.textContent = '';
+          else if (kind === 'explode') { inner = document.createElement('vera-graph-embed'); h.textContent = ''; inner.setAttribute('resize', 'off');   // the item is sized by the canvas
             ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
             this._explodeAttrs(inner, key);
             // the diagram answers the reader: a card click scrolls the bound code item to that span and lights it

@@ -746,7 +746,7 @@
 .code-card[data-edited] .code-lang::after{content:' · edited';color:var(--warn,#d9a54a);text-transform:none;letter-spacing:0}
 .code-card .xp-inline{border-top:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg1,#14161b)}
 .code-card .xp-h{display:flex;align-items:center;gap:8px;padding:3px 6px 3px 10px;font:9px var(--mono,ui-monospace,monospace);color:var(--dim2,#8a92a0)}
-.code-card .xp-t{color:var(--acc,#5a9e8f)}.code-card .xp-body{height:340px}
+.code-card .xp-t{color:var(--acc,#5a9e8f)}.code-card .xp-body{min-height:0}
 .vo-mm{margin:8px 0}
 .hl-kw{color:var(--acc,#5a9e8f);font-weight:600}.hl-str{color:var(--acc2,#8fb87a)}.hl-com{color:var(--dim,#6b7280);font-style:italic}
 .hl-add{background:rgba(95,207,154,.14);color:var(--acc2,#8fb87a);display:inline-block;width:100%}
