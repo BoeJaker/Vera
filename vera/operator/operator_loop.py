@@ -47,6 +47,7 @@ from . import nav_pin as _nav_pin
 from . import operator_progress as _progress
 from . import repeat_guard as _repeat_guard
 from . import thinker as _thinker
+from . import completion as _completion
 
 log = logging.getLogger("vera.operator.loop")
 
@@ -299,6 +300,11 @@ async def run_loop(goal: str, session, *,
             done = True
             reason = "done"
             summary = args.get("summary") or thought or "goal complete"
+            # "goal complete" is not a report - append what the page showed (completion.py).
+            try:
+                summary = _completion.evidence_summary(summary, history, _observed_text(obs))
+            except Exception:
+                pass
             rec = {"i": i, "phase": "done", "thought": thought, "summary": summary,
                    "url": getattr(obs, "url", ""),
                    "screenshot": getattr(obs, "screenshot_path", "")}
