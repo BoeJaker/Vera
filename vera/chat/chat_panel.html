@@ -6146,11 +6146,40 @@ IMPORTANT:
   // A streaming paint: the message body is re-rendered on every token; the ONE <vera-mermaid> of the fence that is
   // still open survives the repaint (it is moved into the fresh slot, not remade) and streams the complete lines.
   const _MM_LIVE_EL={};
+  /* A PAGE DRAWS AS IT IS WRITTEN, as a diagram does (owner, 2026-10-03: "it should be able to stream the preview to
+     the canvas and to the chat, just like the mermaid diagrams can"). While the reply's html block is still open and is
+     a whole page (a doctype, <html>, <body> or <svg>), the card shows the page, not the source: ONE frame per message
+     survives the repaints (moved into the fresh card each paint, as the live diagram is), redrawn at most every 350 ms
+     and double-buffered - the new page loads behind the old one and replaces it when it has painted - so it never
+     blanks. The finished reply's card opens its page itself (the kit's auto-preview); the canvas streams its own. */
+  const _HTML_LIVE={};
+  function _htmlLiveSwap(L, doc){
+    const holder=L.holder; L.doc=doc; L.at=Date.now();
+    const nf=document.createElement('iframe'); nf.setAttribute('sandbox','allow-scripts'); nf.setAttribute('referrerpolicy','no-referrer');
+    const first=!holder.querySelector('iframe'); if(!first) nf.style.cssText='position:absolute;left:0;top:0;width:100%;visibility:hidden';
+    nf.onload=()=>{ holder.querySelectorAll('iframe').forEach(f=>{ if(f!==nf) f.remove(); }); nf.style.cssText=''; };
+    holder.appendChild(nf); nf.srcdoc=doc;
+  }
+  function _htmlLive(bubEl, key){
+    const card=bubEl.querySelector('.code-card[data-incomplete="1"]'); if(!card) return;
+    const code=card.querySelector('code.language-html, code.language-svg'); if(!code) return;
+    const id=card.getAttribute('data-cb'); const blk=(typeof VeraOut!=='undefined'&&VeraOut.blocks[id])||null;
+    const src=blk?blk.code:String(code.textContent||'');
+    if(!/<\s*(!doctype\s+html|html[\s>]|body[\s>]|svg[\s>])/i.test(src)) return;     // a fragment waits for its fence to close
+    let L=_HTML_LIVE[key];
+    if(!L){ L=_HTML_LIVE[key]={holder:document.createElement('div'), doc:'', at:0, want:'', t:0}; L.holder.className='cb-prev cb-live'; L.holder.style.cssText='position:relative;min-height:320px'; }
+    card.classList.add('prev'); card.appendChild(L.holder);
+    L.want=src; if(src===L.doc) return;
+    const wait=350-(Date.now()-L.at);
+    if(wait<=0) _htmlLiveSwap(L, src);
+    else if(!L.t) L.t=setTimeout(()=>{ L.t=0; if(L.want!==L.doc) _htmlLiveSwap(L, L.want); }, wait);
+  }
   function _paintStream(bubEl, fullText){
     const key=(bubEl&&bubEl.dataset&&bubEl.dataset.mid)||'live';
     _MM_LIVE_KEY=key; _mmLiveTaken=false;
     let html=''; try{ html=_renderStreamingMarkdown(fullText); } finally { _MM_LIVE_KEY=''; _mmLiveTaken=false; }
     bubEl.innerHTML=html+'<span class="cur"></span>';
+    try{ _htmlLive(bubEl, key); }catch(_){}
     const slot=bubEl.querySelector('.mm-slot[data-mm-live]');
     if(!slot) return;
     _ensureMermaidJs();
@@ -7461,7 +7490,7 @@ IMPORTANT:
   function _cvOneplace(){ const s=document.getElementById('cfgCvWhere'); return (s&&s.value)||'canvas'; }
   function _cvOnCanvas(m, key){
     try{
-      const el=m&&m._el; if(!el||!el.classList) return;
+      let el=m&&m._el; if(!el||!el.classList) return;
       if(_cvOneplaceOff()) return;
       /* ⛔ NEVER A BUBBLE THAT IS STILL BEING WRITTEN, whoever asks. _paintStream rebuilds the whole bubble on every
          token and survives it by keeping ONE vera-mermaid and re-appending it to the fresh .mm-slot — and .mm-slot is
@@ -7470,6 +7499,11 @@ IMPORTANT:
          (owner, 2026-09-25: "the chat is still flickering the mermaid render as its streamed - it didnt do this
          before you added the canvas streaming"). The cursor span is the streaming bubble's own mark. */
       const bub=el.closest&&el.closest('.msg-body'); if(bub&&bub.querySelector('.cur,.think-throb')) return;
+      /* THE WHOLE CARD GOES, not the code inside it (owner, 2026-10-03: "if the canvas is open the code is supposed to
+         display on the canvas not in the chat"). The code hook hands back the <code> element; hiding only that left the
+         card standing in the reply - its bar, its run strip, and for a page its whole preview - so the block was drawn
+         twice. The card (and a diagram's slot) is what moves; the chip says where it went. */
+      el=(el.closest&&el.closest('.code-card'))||el;
       el.classList.add('cv-elsewhere'); el.dataset.cvKey=key;
       if(!el.nextElementSibling||!el.nextElementSibling.classList.contains('cv-moved')){
         const chip=document.createElement('button'); chip.className='cv-moved'; chip.type='button';
