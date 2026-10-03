@@ -446,8 +446,8 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
         <span class="tb-sep"></span>
         <!-- Sub-tabs: Nodes / Jobs -->
         <div style="display:flex;gap:1px;margin-right:8px">
-          <button class="btn sm wk-sub active" data-wksub="nodes" onclick="P.wkSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
-          <button class="btn sm wk-sub" data-wksub="jobs" onclick="P.wkSubTab('jobs',this)" style="border-radius:0 3px 3px 0">Jobs</button>
+          <button class="btn sm wk-sub active" data-wksub="nodes" data-vera-sub="wk-nodes" data-desc="The worker nodes" data-desc-long="Vera worker nodes: each node, its role, status and the capability classes it can run." onclick="P.wkSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
+          <button class="btn sm wk-sub" data-wksub="jobs" data-vera-sub="wk-jobs" data-desc="Jobs the workers ran" data-desc-long="The jobs the worker nodes are running and have run, with their state and timings." onclick="P.wkSubTab('jobs',this)" style="border-radius:0 3px 3px 0">Jobs</button>
         </div>
         <span class="tb-sep"></span>
         <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
@@ -621,11 +621,11 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
         <span class="tb-sep"></span>
         <!-- Sub-tabs: Nodes / Jobs / Catalog / Benchmark / Traffic -->
         <div style="display:flex;gap:1px;margin-right:8px">
-          <button class="btn sm ol-sub active" data-olsub="nodes" onclick="P.olSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
-          <button class="btn sm ol-sub" data-olsub="jobs" onclick="P.olSubTab('jobs',this)" style="border-radius:0">Jobs</button>
-          <button class="btn sm ol-sub" data-olsub="catalog" onclick="P.olSubTab('catalog',this)" style="border-radius:0">Catalog<span id="ol-dl-badge" style="display:none;margin-left:4px;font-size:8px;padding:0 4px;border-radius:7px;background:#e6b800;color:#111;font-weight:700">0</span></button>
-          <button class="btn sm ol-sub" data-olsub="benchmark" onclick="P.olSubTab('benchmark',this)" style="border-radius:0">Benchmark</button>
-          <button class="btn sm ol-sub" data-olsub="wrapper" onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0" title="Who is calling each node, and what else runs on it — read from the node's own access log">Traffic</button>
+          <button class="btn sm ol-sub active" data-olsub="nodes" data-vera-sub="ol-nodes" data-desc="The Ollama nodes" data-desc-long="Every Ollama node: online state, latency, the models it holds and what is loaded now." onclick="P.olSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
+          <button class="btn sm ol-sub" data-olsub="jobs" data-vera-sub="ol-jobs" data-desc="Generation jobs" data-desc-long="The Ollama generation jobs: running and recent, per node, with model and timing." onclick="P.olSubTab('jobs',this)" style="border-radius:0">Jobs</button>
+          <button class="btn sm ol-sub" data-olsub="catalog" data-vera-sub="ol-catalog" data-label="Catalog" data-desc="Models to pull, and pulls running" data-desc-long="The model catalog: browse and pull models onto the nodes; the badge counts downloads in progress." onclick="P.olSubTab('catalog',this)" style="border-radius:0">Catalog<span id="ol-dl-badge" style="display:none;margin-left:4px;font-size:8px;padding:0 4px;border-radius:7px;background:#e6b800;color:#111;font-weight:700">0</span></button>
+          <button class="btn sm ol-sub" data-olsub="benchmark" data-vera-sub="ol-benchmark" data-desc="Benchmark the nodes" data-desc-long="Benchmark models across the nodes and compare their speed." onclick="P.olSubTab('benchmark',this)" style="border-radius:0">Benchmark</button>
+          <button class="btn sm ol-sub" data-olsub="wrapper" data-vera-sub="ol-traffic" data-label="Traffic" data-desc="Who calls each node" data-desc-long="Traffic: who is calling each node, and what else runs on it, read from the node's own access log." onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0" title="Who is calling each node, and what else runs on it — read from the node's own access log">Traffic</button>
         </div>
         <span class="tb-sep"></span>
         <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>

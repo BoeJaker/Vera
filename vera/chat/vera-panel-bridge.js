@@ -119,7 +119,7 @@
   function _pageSubs(){ try{
     var els = Array.prototype.slice.call(document.querySelectorAll('[data-vera-sub]')).filter(_subShown).slice(0, 24); if(!els.length) return null;
     var on = els.filter(function(el){ return /\b(active|on|selected)\b/.test(String(el.className || '')) || el.getAttribute('aria-selected') === 'true'; })[0];
-    return { items: els.map(function(el){ return { id: String(el.getAttribute('data-vera-sub')), label: _subLabel(el), el: el }; }), active: on ? String(on.getAttribute('data-vera-sub')) : '' };
+    return { items: els.map(function(el){ return { id: String(el.getAttribute('data-vera-sub')), label: _subLabel(el), desc: String(el.getAttribute('data-desc') || '').slice(0, 140), desc_long: String(el.getAttribute('data-desc-long') || '').slice(0, 600), el: el }; }), active: on ? String(on.getAttribute('data-vera-sub')) : '' };
   }catch(e){ return null; } }
   function _kidsHosted(on){ _hostedUp = !!on; _kids.forEach(function(k){ try{ k.win.postMessage({ type: on ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){} }); }
   window.addEventListener('message', function(ev){
@@ -192,7 +192,7 @@
     if((kid || ps) && act.menu){
       // the page's own sub-sections, and a framed child's sections under the one that shows it (or under the item, as before)
       var kidSub = kid ? kid.nav.items.map(function(it){ return { id: 'c:' + it.id, label: String(it.label || it.id), desc: it.desc || '', desc_long: it.desc_long || '', depth: ps ? 2 : 1 }; }) : [], sub = kidSub;
-      if(ps){ sub = []; ps.items.forEach(function(it){ sub.push({ id: 's:' + it.id, label: it.label, depth: 1 }); if(it.id === ps.active) sub = sub.concat(kidSub); }); if(!ps.active) sub = sub.concat(kidSub); }
+      if(ps){ sub = []; ps.items.forEach(function(it){ sub.push({ id: 's:' + it.id, label: it.label, desc: it.desc || '', desc_long: it.desc_long || '', depth: 1 }); if(it.id === ps.active) sub = sub.concat(kidSub); }); if(!ps.active) sub = sub.concat(kidSub); }
       menus.forEach(function(m){ if(m.id !== act.menu) return; var at = -1; m.tabs.forEach(function(tb, i){ if(tb.id === _navActiveId) at = i; });
         m.tabs = m.tabs.slice(0, at + 1).concat(sub, m.tabs.slice(at + 1)); });
       if(kid && kid.nav.active) act.tab = 'c:' + kid.nav.active; else if(ps && ps.active) act.tab = 's:' + ps.active;
@@ -732,6 +732,7 @@
       // visible there — this is never assumed, only confirmed by the host.
       document.documentElement.classList.add('vpb-nav-hosted');
       _kidsHosted(true);
+      _hdrReoffer();   // its sub-sections now ride in the docked menu: the bar it offers drops them
     } else if(t === 'vera:panel:nav_unhosted'){
       // The inverse — the host's own top-level menu just stopped reliably
       // covering these sections (its "keep inner nav visible while the main
@@ -739,6 +740,7 @@
       // nav at all right now), so un-hide this panel's own rail again.
       document.documentElement.classList.remove('vpb-nav-hosted');
       _kidsHosted(false);
+      _hdrReoffer();   // and back in the bar when the menu is not docked
     } else if(t === 'vera:panel:query'){
       // Explicit freshness ping — bypass the changed-state dedupe. Without
       // this, an idle panel whose state hasn't changed republishes NOTHING,
@@ -819,7 +821,12 @@
       out.push(el);
     });
     out = out.filter(function(el){ if(_hdrNative(el)) return true; for(var i = 0; i < out.length; i++){ if(out[i] !== el && el.contains(out[i])) return false; } return true; });
-    return out.filter(function(el){ return _hdrShownIn(el, bar); });
+    /* A PAGE'S SUB-SECTIONS RIDE IN ITS MENU, NOT THE TOP BAR (owner, 2026-10-03: "sub uis ... available from the lhm
+       instead" - top bars are for settings and status). While this page's menu is docked, the docked menu lists every
+       shown data-vera-sub tab under the open item (_pageSubs); offering them up here too put the same sections in two
+       places. Undocked - standalone, or a page with no menu to dock - they stay in the bar, the only way to reach them. */
+    var subsDocked = false; try{ subsDocked = document.documentElement.classList.contains('vpb-nav-hosted') && !!(_navItems && _navItems.length); }catch(e){}
+    return out.filter(function(el){ return _hdrShownIn(el, bar) && !(subsDocked && el.matches && el.matches('[data-vera-sub]')); });
   }
   function _hdrOn(el){ return /\b(on|active|selected|current)\b/.test(String(el.className && el.className.baseVal != null ? el.className.baseVal : el.className || '')) || el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-selected') === 'true' || (el.getAttribute('aria-current') || 'false') !== 'false'; }
   function _hdrLabel(el, t){ return (_hdrText(el) || t || el.getAttribute('data-label') || '\u00b7').slice(0, 24); }
@@ -902,6 +909,8 @@
     try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: groups, hello: hello }, '*'); }catch(e){}
   }
   var _hdrHello = true;
+  // the bar again, at once - its contents depend on whether this page's menu is docked (see _hdrCtls)
+  function _hdrReoffer(){ try{ if(_hdrBar){ _hdrSig = ''; setTimeout(function(){ try{ _hdrOffer(true); }catch(e){} }, 0); } }catch(e){} }
   function _hdrSoon(){ if(_hdrT) return; _hdrT = setTimeout(function(){ _hdrT = null; _hdrOffer(); }, 160); }
   function _hdrFind(){
     if(_hdrBar && document.contains(_hdrBar)) return;

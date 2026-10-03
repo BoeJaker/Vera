@@ -5,7 +5,7 @@ const path = require('node:path'), fs = require('node:fs');
 const R = (p) => fs.readFileSync(path.join(__dirname, '..', ...p.split('/')), 'utf8');
 const BR = R('vera/chat/vera-panel-bridge.js'), LHM = R('vera/chat/vera-lhm.js'), WO = R('vera/workers/workers_ollama_panel.html'), O = JSON.parse(R('vera/widgets/layouts/wol-observe.json'));
 let fails = 0; const t = (name, cond, x) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (x || ''))); if (!cond) fails++; };
-t('a page\'s own sub-sections (data-vera-sub) are listed under the open item, a framed child\'s one level deeper', BR.includes('function _pageSubs(){') && BR.includes("sub.push({ id: 's:' + it.id, label: it.label, depth: 1 });") && BR.includes("depth: ps ? 2 : 1"));
+t('a page\'s own sub-sections (data-vera-sub) are listed under the open item, a framed child\'s one level deeper', BR.includes('function _pageSubs(){') && BR.includes("sub.push({ id: 's:' + it.id, label: it.label, desc: it.desc || '', desc_long: it.desc_long || '', depth: 1 });") && BR.includes("depth: ps ? 2 : 1"));
 t('a pick of one clicks its tab, and a switch re-publishes the menu', BR.includes("if(id.indexOf('s:') === 0){ var ps = _pageSubs()") && BR.includes("hit.el.click();") && BR.includes("(ps ? ps.items.map(function(it){ return it.id; }).join(',') + '>' + ps.active : '')"));
 t('a strip in a bar the harness absorbed still counts as shown', BR.includes("if(cs.display === 'none' && !n.hasAttribute('data-vpb-hdr-bar')) return false;"));
 const VP = R('vera/vera-panel.js');
