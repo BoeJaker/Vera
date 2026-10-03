@@ -70,9 +70,10 @@ def _make_default_think(call_cap, provider: str, model: str,
 
     Measured in census run 18: each operator.think spent 35-60s generating
     560-946 tokens to decide ONE browser action, and every one of the fifteen
-    steps was phase="act" - the reasoning was not buying observation. Off by
-    default (None = the model's own default) since this trades decision quality
-    for speed and that is the caller's call, not ours.
+    steps was phase="act" - the reasoning was not buying observation. `None`
+    means "the default", which is OFF since 2026-10-03 (thinker.default_think:
+    measured on prod, thinking on was slower AND left two of four checks
+    unanswered); pass True to ask for it.
     """
     async def _think(goal, observation, history, canvas):
         return await _thinker.decide(goal, observation, history, call_cap,
