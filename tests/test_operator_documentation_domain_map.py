@@ -24,7 +24,7 @@ def test_no_panel_is_claimed_by_two_docs():
     ("interaction-map", "Estate Map", "infrastructure-provisioning"),
     ("workspaces", "Workspaces", "execution"),
     ("markets", "Markets", "markets"),
-    ("email-panel", "Email", "integrations"),
+    ("ha-panel", "Home", "integrations"),
     ("dream-panel", "Dream", "dream"),
     ("ml-lab", "ML Lab", "machine-learning"),
     ("perf-monitor", "Perf", "performance"),

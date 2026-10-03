@@ -180,6 +180,17 @@ def test_unmapped_live_panels_are_reported_not_guessed(monkeypatch, tmp_path):
     assert all("stray" not in u for u in urls)
 
 
+def test_a_page_that_calls_the_model_runs_only_when_named(monkeypatch, tmp_path):
+    PAGES["pages"].append({"name": "hero", "path": "/chat_panel", "on_request": True})
+    try:
+        _, urls, _ = _run(monkeypatch, tmp_path, domains=["overview"])
+        assert "https://vera.test/chat_panel" not in urls
+        _, urls, _ = _run(monkeypatch, tmp_path, domains=["overview"], panels=["hero"])
+        assert urls == ["https://vera.test/chat_panel"]
+    finally:
+        PAGES["pages"].pop()
+
+
 def test_pages_are_shot_by_path_to_a_stable_name_without_a_doc(monkeypatch, tmp_path):
     result, urls, _ = _run(monkeypatch, tmp_path, domains=["overview"])
 

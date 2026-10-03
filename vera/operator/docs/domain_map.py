@@ -32,7 +32,13 @@ DOMAINS: List[Dict[str, Any]] = [
      "match": ["dashboard", "harness"], "seed": None},
     {"slug": "dag-engine", "doc": "03-dag-engine.md", "title": "DAG & Loop Engine",
      "cap_prefixes": ["dag", "loops"], "panel_ids": ["dag-workshop"],
-     "match": ["dag", "loop"], "seed": "dag"},
+     "match": ["dag", "loop"], "seed": "dag",
+     "capture_states": {"dag-workshop": [
+         {"name": "dag", "label": "A DAG from the library",
+          "caption": "A stored DAG opened from the library: its steps, initial state and portable IR inspection.",
+          "steps": [{"click": ':text("test if boejaker.com is up")', "then_ms": 3000}],
+          "ready_selector": ':text("STEPS")'},
+     ]}},
     {"slug": "ollama-cluster", "doc": "04-ollama-cluster.md", "title": "Ollama Cluster",
      "cap_prefixes": ["ollama"], "panel_ids": ["workers-ollama", "model-routing"],
      "match": ["ollama", "routing"], "seed": None},
@@ -71,7 +77,23 @@ DOMAINS: List[Dict[str, Any]] = [
      "match": ["research", "notebook", "nlp"], "seed": None},
     {"slug": "ide", "doc": "08-ide.md", "title": "IDE & Remote",
      "cap_prefixes": ["ide"], "panel_ids": ["ide-panel", "ide-remote-panel", "workspaces", "remote-connections"],
-     "match": ["ide", "vscode", "workspace", "remote"], "seed": None},
+     "match": ["ide", "vscode", "workspace", "remote"], "seed": None,
+     "capture_states": {"ide-panel": [
+         # VS Code in action: the central code-server with a project and a file
+         # open. The login password is fetched from the target at capture time.
+         {"name": "editor", "label": "VS Code with a project open",
+          "caption": "The central code-server with a project open and a source file in the editor.",
+          "capture_path": "/vscode/central/?folder=/home/coder/projects/vera",
+          "steps": [{"code_server_login": "central", "timeout_ms": 30000},
+                    {"wait_for": ".monaco-workbench", "timeout_ms": 60000, "then_ms": 5000},
+                    {"press": "Control+P", "then_ms": 1500},
+                    {"fill": ".quick-input-box input", "text": "operator_loop.py", "then_ms": 1500},
+                    {"press": "Enter", "then_ms": 4000}],
+          "ready_selector": ".monaco-editor", "settle_ms": 2000},
+         {"name": "panel", "label": "The IDE panel",
+          "caption": "The IDE panel: the central VS Code, the classic workbench, remotes and the dispatch queue.",
+          "settle_ms": 12000},
+     ]}},
     {"slug": "galaxy-graph", "doc": "09-galaxy-graph.md", "title": "Galaxy Graph",
      "cap_prefixes": [], "panel_ids": ["memory-galaxy-panel"],
      "match": ["galaxy"], "seed": "memory",
@@ -103,14 +125,27 @@ DOMAINS: List[Dict[str, Any]] = [
           "settle_ms": 2800, "ready_timeout_ms": 90000},
      ]}},
     {"slug": "execution", "doc": "12-execution.md", "title": "Execution",
-     "cap_prefixes": ["exec"], "panel_ids": [], "match": ["exec", "execution"], "seed": None},
+     "cap_prefixes": ["exec"], "panel_ids": [], "match": ["exec", "execution"], "seed": None,
+     "capture_states": {
+         "exec-panel": [
+             {"name": "run", "label": "A command run on the host",
+              "caption": "A command run through the exec panel, with its captured output.",
+              "steps": [{"click": ':text("Run (capture)")', "then_ms": 5000}]},
+         ],
+         "workspaces": [
+             {"name": "postgres", "label": "A workspace bound to a container",
+              "caption": "A workspace bound to a container: its terminal, files and metrics, with memory and chat widgets beside them.",
+              "steps": [{"click": ':text-is("Postgres")', "then_ms": 6000}]},
+         ]}},
     {"slug": "docker", "doc": "13-docker.md", "title": "Docker",
      "cap_prefixes": ["docker"], "panel_ids": [], "match": ["docker"], "seed": None},
     {"slug": "mesh", "doc": "14-mesh.md", "title": "Mesh Manager",
      "cap_prefixes": ["mesh"], "panel_ids": ["mesh"], "match": ["mesh"], "seed": None},
     {"slug": "markets", "doc": "15-markets.md", "title": "Markets & Quant Studio",
      "cap_prefixes": ["markets", "mkt", "backtest"], "panel_ids": ["markets-studio"],
-     "match": ["markets", "quant"], "seed": "markets"},
+     "match": ["markets", "quant"], "seed": "markets",
+     # The chart draws its bars well after the page reports content.
+     "capture_states": {"markets": [{"settle_ms": 15000}]}},
     {"slug": "machine-learning", "doc": "16-machine-learning.md", "title": "Machine Learning",
      "cap_prefixes": ["ml"], "panel_ids": [], "match": ["machine", "training"], "seed": None},
     {"slug": "dream", "doc": "17-dream.md", "title": "Dream",
@@ -118,7 +153,12 @@ DOMAINS: List[Dict[str, Any]] = [
     {"slug": "skills-ontologies", "doc": "18-skills-ontologies.md", "title": "Skills & Ontologies",
      "cap_prefixes": ["skills", "ontology"],
      "panel_ids": ["skills-editor", "ontologies-browser", "agents-skills-ontologies"],
-     "match": ["skill", "ontolog"], "seed": None},
+     "match": ["skill", "ontolog"], "seed": None,
+     "capture_states": {"agents-skills-ontologies": [
+         {"name": "agent", "label": "An agent's identity",
+          "caption": "An agent opened in the Agents editor: its identity, model, personality, tools, skills and ontologies.",
+          "steps": [{"click": ':text("agentic-planner")', "then_ms": 4000}]},
+     ]}},
     {"slug": "agents-chat", "doc": "19-agents-chat.md", "title": "Agents & Chat",
      "cap_prefixes": ["agents", "chat"], "panel_ids": ["chat2", "agents-editor"],
      "match": ["chat", "agent"], "seed": "chat"},
@@ -175,7 +215,9 @@ DOMAINS: List[Dict[str, Any]] = [
      "title": "Infrastructure & Provisioning",
      "cap_prefixes": ["foundry", "build", "provision", "proxmox", "network", "netmon", "remote"],
      "panel_ids": ["foundry"],
-     "match": ["foundry", "provision", "proxmox", "network"], "seed": None},
+     "match": ["foundry", "provision", "proxmox", "network"], "seed": None,
+     # The estate overview checks every machine before it settles.
+     "capture_states": {"workers-ollama": [{"ready_timeout_ms": 90000}]}},
     {"slug": "agent-runtimes-providers", "doc": "36-agent-runtimes-providers.md",
      "title": "Agent Runtimes & Providers",
      "cap_prefixes": ["agentbridge", "providers", "catalog", "smolagents", "langgraph", "pydanticai"],
@@ -188,7 +230,12 @@ DOMAINS: List[Dict[str, Any]] = [
      "title": "Media & Characters",
      "cap_prefixes": ["image", "images", "media", "character", "spritegen", "stt", "tts", "babblefish"],
      "panel_ids": ["image-studio", "character-studio", "sprite-companion", "babblefish"],
-     "match": ["image", "media", "character", "sprite", "babblefish"], "seed": None},
+     "match": ["image", "media", "character", "sprite", "babblefish"], "seed": None,
+     "capture_states": {"image-studio": [
+         {"name": "gallery", "label": "Image Studio gallery",
+          "caption": "The image archive: every stored generation, durable on disk.",
+          "steps": [{"click": ':text-is("Gallery")', "then_ms": 6000}]},
+     ]}},
     {"slug": "activity-boards", "doc": "39-activity-boards.md",
      "title": "Activity & Boards", "cap_prefixes": ["activity", "board", "capacity"],
      "panel_ids": ["activity", "activity-timeline", "activity-track"],
@@ -196,15 +243,75 @@ DOMAINS: List[Dict[str, Any]] = [
     {"slug": "pwa", "doc": "47-pwa.md", "title": "Install / PWA",
      "cap_prefixes": ["pwa"], "panel_ids": [], "match": [], "seed": None},
     {"slug": "chat-ui", "doc": "50-chat-ui.md", "title": "Chat UI",
-     "cap_prefixes": ["chat", "canvas"], "panel_ids": [], "match": [], "seed": None},
+     "cap_prefixes": ["chat", "canvas"], "panel_ids": [], "match": [], "seed": None,
+     # chat2 wraps /chat_panel in an iframe; steps cannot reach into a frame, so
+     # every state shoots the chat page itself with one rail menu open.
+     "capture_states": {
+         "chat2": [
+             {"name": "sessions", "label": "Sessions menu",
+              "caption": "Sessions: past conversations, newest first, with New, Refresh and Title all.",
+              "capture_path": "/chat_panel",
+              "steps": [{"wait_ms": 6000}, {"click": '.lhm-rail [data-menu="sessions"]', "then_ms": 5000}]},
+             {"name": "context", "label": "Context menu",
+              "caption": "Context: what goes into the prompt, by source, with the context plot and the memory graph.",
+              "capture_path": "/chat_panel",
+              "steps": [{"wait_ms": 6000}, {"click": '.lhm-rail [data-menu="context"]', "then_ms": 5000}]},
+             {"name": "activity", "label": "Activity menu",
+              "caption": "Activity: what is running, the call DAG and the monitor stream.",
+              "capture_path": "/chat_panel",
+              "steps": [{"wait_ms": 6000}, {"click": '.lhm-rail [data-menu="activity"]', "then_ms": 5000}]},
+             {"name": "loop", "label": "Loop menu",
+              "caption": "Loop: the current loop, its activity graph, loop runs and goals.",
+              "capture_path": "/chat_panel",
+              "steps": [{"wait_ms": 6000}, {"click": '.lhm-rail [data-menu="loop"]', "then_ms": 5000}]},
+             {"name": "workspace", "label": "Workspace menu",
+              "caption": "Workspace: every registered panel, ready to open beside the chat.",
+              "capture_path": "/chat_panel",
+              "steps": [{"wait_ms": 6000}, {"click": '.lhm-rail [data-menu="workspace"]', "then_ms": 5000}]},
+             {"name": "ops", "label": "Ops glance",
+              "caption": "Ops glance: the capabilities available to the agent, by family.",
+              "capture_path": "/chat_panel",
+              "steps": [{"wait_ms": 6000}, {"click": '.lhm-rail [data-menu="ops"]', "then_ms": 5000}]},
+             {"name": "slash", "label": "Slash commands",
+              "caption": "Typing / in the composer lists the slash commands.",
+              "capture_path": "/chat_panel",
+              "steps": [{"wait_ms": 6000},
+                        {"click": 'textarea[placeholder^="Type a message"]'},
+                        {"press": "/", "then_ms": 2500}]},
+         ],
+         "canvas": [
+             {"name": "open", "label": "A canvas",
+              "caption": "A live canvas: the list of canvases and one opened with its blocks.",
+              "steps": [{"wait_ms": 4000}, {"click": ':text("Session canvas")', "then_ms": 5000}]},
+         ]}},
     # The README and the lead image of several docs: whole routes, not panels,
     # so this domain claims no live panel and has no doc of its own.
     {"slug": "overview", "doc": "", "title": "Overview", "cap_prefixes": [],
      "panel_ids": [], "match": [], "seed": None,
      "pages": [
+         # The README's first picture: a real turn, the agent driving a panel
+         # open beside the chat, and the Context menu open on the left. It calls
+         # the model, so it runs only when named (panels=["chat"]).
+         {"name": "chat", "path": "/chat_panel", "label": "Chat", "on_request": True,
+          "steps": [
+              {"chat_send": "Open the Models & NLP panel (node-models) beside the chat, then "
+                            "tell me which models each inference node has warm. Report only "
+                            "what the panel shows.",
+               "timeout_ms": 900000},
+              {"click": '.lhm-rail [data-menu="context"]', "then_ms": 6000},
+          ],
+          # A panel the agent opened beside the chat can keep a "Loading…" line
+          # in a corner; the shot is ready once the Context menu is open.
+          "ready_selector": ':text("IN THIS PROMPT")',
+          "ready_timeout_ms": 60000, "settle_ms": 4000},
          # The shell fills ~70 widgets after load; a short settle caught
          # "never updated" and empty "no data" tiles.
-         {"name": "dashboard", "path": "/", "label": "Main dashboard", "settle_ms": 15000},
+         # The Stack monitor layout from the dashboard's own menu: its charts,
+         # temperatures and guests read better than the default lists.
+         {"name": "dashboard", "path": "/", "label": "Main dashboard",
+          "steps": [{"wait_ms": 10000},
+                    {"click": ':text-is("Stack monitor")', "then_ms": 20000}],
+          "settle_ms": 5000},
          {"name": "cap-hub", "path": "/cap_hub/panel", "label": "Capability Hub"},
          {"name": "evolve", "path": "/evolve/panel", "label": "Loop Lab",
           "ready_timeout_ms": 60000},
@@ -218,27 +325,34 @@ DOMAINS: List[Dict[str, Any]] = [
 
 # The ONLY assignment of live panels to docs. Reviewed panel by panel against
 # what each one shows (2026-10-03). Left out on purpose: godseye (a 3D intel
-# globe with no doc of its own) and pokedex_app (a demo app).
+# globe with no doc of its own), pokedex_app (a demo app), and panels whose only
+# state on prod is empty or broken - a doc should not lead with "Waiting for
+# events" or "none registered": cap-search, mcp-servers, agent-loop-output,
+# loop-graph, node-activity, fabric-stats, nlp-panel, ide-workspace-changes,
+# skills-editor, ontologies-browser, skills-list, job-stream, live-event-stream,
+# accounts-panel, email-panel, web_api, gallery, vera-mermaid, sprite-companion,
+# stable-diffusion, kokoro-tts, whisper-stt, activity-track, chat-with-data, and
+# pwa (a capture browser on another hostname only ever shows its TLS error).
+# telegram-panel shows the admin chat id
+# and the bot's identity, so it is never captured for the docs.
 PANEL_DOCS: Dict[str, str] = {
     "perf-monitor": "performance",
     # capability framework
     "cap-hub": "capability-framework", "cap-list": "capability-framework",
-    "cap-ontology": "capability-framework", "cap-search": "capability-framework",
-    "mcp-servers": "capability-framework", "mcp-catalog-panel": "capability-framework",
+    "cap-ontology": "capability-framework", "mcp-catalog-panel": "capability-framework",
     # harness: the control plane that drives the UI
     "driven": "harness-ui",
     # DAG + loop engine, and the one page for everything that runs on its own
-    "dag-workshop": "dag-engine", "agent-loop-output": "dag-engine",
-    "agent-loop-config": "dag-engine", "loop-graph": "dag-engine",
+    "dag-workshop": "dag-engine", "agent-loop-config": "dag-engine",
     "automations": "dag-engine",
     # inference cluster
     "models": "ollama-cluster", "node-models": "ollama-cluster",
-    "node-activity": "ollama-cluster", "specialist-models": "ollama-cluster",
+    "specialist-models": "ollama-cluster",
     "memory-graph": "memory-graph",
-    "fabric-panel": "data-fabric", "fabric-stats": "data-fabric",
-    "research-panel": "research", "notebook-panel": "research", "nlp-panel": "research",
+    "fabric-panel": "data-fabric",
+    "research-panel": "research", "notebook-panel": "research",
     # the IDE and nothing else
-    "ide-panel": "ide", "ide-remote-panel": "ide", "ide-workspace-changes": "ide",
+    "ide-panel": "ide", "ide-remote-panel": "ide",
     "ide-claude-dispatch": "ide", "ide-inspect-panel": "ide",
     "memory-galaxy-panel": "galaxy-graph",
     "platform-config": "configuration",
@@ -249,20 +363,14 @@ PANEL_DOCS: Dict[str, str] = {
     "markets": "markets",
     "ml-lab": "machine-learning",
     "dream-panel": "dream", "project-panel": "dream",
-    "skills-editor": "skills-ontologies", "ontologies-browser": "skills-ontologies",
     "agents-skills-ontologies": "skills-ontologies", "agent-registry": "skills-ontologies",
-    "skills-list": "skills-ontologies",
     "flow-builder": "flow-builder",
-    "job-stream": "workers-jobs-syslog", "live-event-stream": "workers-jobs-syslog",
     "system-log": "workers-jobs-syslog", "node-workers": "workers-jobs-syslog",
-    "accounts-panel": "integrations", "comms-panel": "integrations",
-    "calendar-panel": "integrations", "email-panel": "integrations",
-    "telegram-panel": "integrations", "integrations": "integrations",
-    "n8n-panel": "integrations", "ha-panel": "integrations", "syscomms": "integrations",
-    "web_api": "web-browser",
+    "comms-panel": "integrations", "calendar-panel": "integrations",
+    "integrations": "integrations", "n8n-panel": "integrations",
+    "ha-panel": "integrations", "syscomms": "integrations",
     "vector-browser-panel": "vector-browser",
     "ui-builder": "ui-builder", "widget-gallery": "ui-builder", "widget-registry": "ui-builder",
-    "gallery": "render", "vera-mermaid": "render",
     "evolve": "evolve",
     "operator-studio": "operator",
     # the estate: machines, their map and the stack monitor
@@ -272,13 +380,9 @@ PANEL_DOCS: Dict[str, str] = {
     "agentbridge-catalog-panel": "agent-runtimes-providers",
     "business": "business-commerce",
     "image-studio": "media-characters", "character-studio": "media-characters",
-    "sprite-companion": "media-characters", "babblefish": "media-characters",
-    "stable-diffusion": "media-characters", "thermal-printer": "media-characters",
-    "kokoro-tts": "media-characters", "whisper-stt": "media-characters",
+    "babblefish": "media-characters", "thermal-printer": "media-characters",
     "activity": "activity-boards", "activity-timeline": "activity-boards",
-    "activity-track": "activity-boards",
-    "pwa": "pwa",
-    "chat2": "chat-ui", "chat-with-data": "chat-ui", "canvas": "chat-ui",
+    "chat2": "chat-ui", "canvas": "chat-ui",
 }
 
 # panel_ids/match are derived from PANEL_DOCS so nothing else can claim a panel.

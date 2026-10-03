@@ -57,6 +57,9 @@ DOC_UI_STORAGE = {
     "vera_tab_prefs": json.dumps({"lhm": True}),
     # Per-turn block backgrounds off: the docs show the chat as plain turns.
     "vera:ui:blocks": "off",
+    # The README's chat turn should show the agent acting, not an approval card
+    # waiting for a click. Only an on_request page ever sends a message.
+    "vera_ask_before_acting": "0",
 }
 
 # Docs are shot in one theme whatever prod is set to today. The theme is
@@ -309,6 +312,10 @@ async def run_documentation_mission(params: Dict[str, Any],
                                    for state in _capture_states(domain, pid))
             for page in domain.get("pages") or []:
                 pid = str(page["name"])
+                # A page that calls the model (on_request) runs only when a
+                # caller names it - never as part of a routine full run.
+                if page.get("on_request") and pid not in panel_filter:
+                    continue
                 targets.append(({"id": pid, "label": page.get("label") or pid}, pid,
                                 dict(page, capture_path=page["path"]), _safe_name(pid)))
 
@@ -657,7 +664,59 @@ async def _wait_target_up(base_url: str, max_s: float = 180.0, every_s: float = 
 
 
 _STEP_KINDS = ("click", "fill", "press", "hover", "select", "wait_for", "wait_ms",
-               "code_server_login")
+               "code_server_login", "chat_send")
+
+# Length of the rendered text, shadow roots and same-origin frames included -
+# a reply is finished when this stops changing.
+_TRANSCRIPT_SIZE_JS = """() => { let n = 0; const walk = (r, d) => { if (!r || d > 4) return;
+  const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  for (let x = w.nextNode(); x; x = w.nextNode()) {
+    if (x.nodeType === 3) { const p = x.parentElement; if (p && !/^(STYLE|SCRIPT)$/.test(p.tagName)) n += x.nodeValue.length; }
+    else { if (x.shadowRoot) walk(x.shadowRoot, d + 1);
+      if (x.tagName === 'IFRAME') { let doc = null; try { doc = x.contentDocument; } catch (e) {} if (doc && doc.body) walk(doc.body, d + 1); } } } };
+  walk(document.body, 0); return n; }"""
+
+
+async def _gpu_free(origin: str) -> bool:
+    import httpx
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=15) as client:
+            d = (await client.get(origin + "/health")).json()
+        gate, census = d.get("gpu_gate") or {}, d.get("census") or {}
+        return int(gate.get("held") or 0) == 0 and not census.get("busy")
+    except Exception:
+        return False
+
+
+async def _chat_send(page, text: str, ms: int) -> None:
+    """Hold one turn of a real conversation in the chat page being captured.
+
+    Only used by pages marked on_request (the README's chat): it calls the
+    model. Waits for a free GPU slot and no census first - one GPU call at a
+    time - then waits until the reply has stopped changing and the slot is
+    free again."""
+    from urllib.parse import urlparse
+    u = urlparse(page.url)
+    origin = f"{u.scheme}://{u.netloc}"
+    deadline = time.time() + ms / 1000
+    while not await _gpu_free(origin):
+        if time.time() > deadline:
+            raise TimeoutError("GPU slot never freed")
+        await asyncio.sleep(10)
+    box = page.locator('textarea[placeholder^="Type a message"]').first
+    await box.click(timeout=15000)
+    await box.fill(text, timeout=15000)
+    await box.press("Enter")
+    await page.wait_for_timeout(5000)
+    last, stable = -1, 0
+    while time.time() < deadline:
+        await page.wait_for_timeout(5000)
+        size = await page.evaluate(_TRANSCRIPT_SIZE_JS)
+        stable = stable + 1 if size == last else 0
+        last = size
+        if stable >= 3 and await _gpu_free(origin):
+            return
+    raise TimeoutError("reply did not settle")
 
 
 async def _code_server_login(page, instance_id: str, ms: int) -> None:
@@ -705,6 +764,8 @@ async def _run_steps(page, steps: List[Dict[str, Any]]) -> None:
                 await page.wait_for_timeout(int(step["wait_ms"]))
             elif kind == "code_server_login":
                 await _code_server_login(page, sel, ms)
+            elif kind == "chat_send":
+                await _chat_send(page, sel, int(step.get("timeout_ms") or 900000))
             elif kind == "wait_for":
                 await page.wait_for_selector(sel, state="visible", timeout=ms)
             elif kind == "press":
