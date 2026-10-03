@@ -543,6 +543,8 @@ function openSettings(ev){
       <button class="tbtn" onclick="resetSettings()">Reset</button>
     </div>
     <div style="font-size:9.5px;color:var(--t3);padding:0 8px 6px">Origin: ${esc(_ORIGIN)}</div>`;
+  /* the canonical Settings page (the chat's), when it is loaded; the pop-up otherwise */
+  if(window.VeraSettings && VeraSettings.openSection){ VeraSettings.openSection(pop, { label: 'Notebook settings' }); return; }
   showPopAt(pop, ev);
 }
 function saveSettings(){
@@ -1632,5 +1634,6 @@ function toast(msg){ const t=document.createElement('div'); t.className='toast';
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>
