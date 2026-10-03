@@ -136,7 +136,10 @@
     } else { k.hdr = d; _hdrRelay(); }
   });
   // what is shown changes as this page switches its own item: look again, cheaply
-  setInterval(function(){ if(!_nestOn()) return; var k = _activeKid(); var ps = (typeof _pageSubs === 'function') ? _pageSubs() : null; var sig = (k ? k.frame.getAttribute('src') + '|' + k.nav.active : '') + '|' + (ps ? ps.items.map(function(it){ return it.id; }).join(',') + '>' + ps.active : ''); if(sig !== _kidSig){ _kidSig = sig; publishStateDebounced(); _hdrRelay(); } }, 1000);
+  /* ...and which shown child's BAR is relayed: a child with a bar but no menu (Fabric's Memory Graph) changed nothing above
+     when this page hid it, so its bar stayed in the harness over every other section (2026-10-03, found by a sweep) */
+  function _barKidSig(){ for(var i = _kids.length - 1; i >= 0; i--){ if(_kidShown(_kids[i]) && _kids[i].hdr) return String(_kids[i].frame.getAttribute('src') || i); } return ''; }
+  setInterval(function(){ if(!_nestOn()) return; var k = _activeKid(); var ps = (typeof _pageSubs === 'function') ? _pageSubs() : null; var sig = (k ? k.frame.getAttribute('src') + '|' + k.nav.active : '') + '|' + (ps ? ps.items.map(function(it){ return it.id; }).join(',') + '>' + ps.active : '') + '|bar:' + _barKidSig(); if(sig !== _kidSig){ _kidSig = sig; publishStateDebounced(); _hdrRelay(); } }, 1000);
   var _kidSig = '';
   function _hdrRelay(){
     if(typeof _hdrBar !== 'undefined' && _hdrBar) return;   // this page has its own bar
