@@ -11839,6 +11839,26 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
     if not text.strip():
         return {"ok": False, "error": "the writer returned nothing"}
     blocks = _v5_extract_code_blocks(text, name_hint=(path or task))
+    # A reply that is the writer's own PLANNING is not the document (writer_output_core):
+    # ask once more for only the document; never save the notes.
+    if not blocks and _writer_output_core.looks_like_planning(text):
+        await emit_event({"type": "prose.author.planning_reply", "path": path,
+                          "chars": len(text)})
+        try:
+            res = await fn(prompt=prompt + _writer_output_core.RETRY_NOTE, system=sys_prompt,
+                           output_format="code", profile=LOOP_ROUTING_PROFILE, role="writer",
+                           files=files or None, session_id=session_id,
+                           think=(False if think is None else think),
+                           caller="prose.author.retry", trace_id=trace_id, stream_cb=stream_cb)
+        except Exception as e:
+            return {"ok": False, "error": f"generation failed: {e}"}
+        text = _v5_unwrap_json_code(_strip_think(_v5_gen_text(res) or "")[0])
+        blocks = _v5_extract_code_blocks(text, name_hint=(path or task))
+        if not blocks and _writer_output_core.looks_like_planning(text):
+            return {"ok": False, "path": path,
+                    "error": ("the writer returned its planning notes twice instead of the "
+                              "document - nothing was saved; ask again with a shorter, more "
+                              "specific task")}
     content = (blocks[0]["code"] if blocks
               else _v5_strip_marker_line(_unescape_collapsed_code(text.strip())))
     # An UNCLOSED wrapper fence defeats block extraction, and the fallback kept the
@@ -14303,6 +14323,12 @@ try:
     from Vera.vera.dag import criterion_bars_core as _criterion_bars_core
 except Exception:                                     # pragma: no cover
     from vera.dag import criterion_bars_core as _criterion_bars_core
+
+# A writer reply that is its own planning notes is not the document (probe 3 Oct).
+try:
+    from Vera.vera.dag import writer_output_core as _writer_output_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import writer_output_core as _writer_output_core
 
 # Double-escaped newlines in model-written Python (probe 2026-10-01: 24% of
 # exec.python.run calls wrote a literal backslash-n instead of a newline).
@@ -18881,7 +18907,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # path exist in the registry and to satisfy `_v5_path_is_proven`'s
         # own parse_ok+size check. A fresh author clears any earlier ran_ok:
         # the content just changed, so the OLD proof no longer applies to it.
-        if invoke_ok and tool in ("code.author", "code.edit") and isinstance(invoke.get("result"), dict):
+        # prose.author too (probe 3 Oct, 7c5bf52c: report.md v2 was written but the registry
+        # kept serving v1, so the verifier failed a finished report twice more).
+        if invoke_ok and tool in ("code.author", "code.edit", "prose.author") and isinstance(invoke.get("result"), dict):
             _cres = invoke["result"]
             _cpath = _v5_art_key(str(_cres.get("path") or args.get("path") or ""))
             if _cpath:
