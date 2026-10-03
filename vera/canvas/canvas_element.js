@@ -717,6 +717,26 @@
     },
 
 
+    /* WHAT A TURN NAMES (canvas-enrichment slice 1 - owner, 2026-10-03: "the nlp enrichment is still few and far
+       between"). turn.understand's answer: the people, organisations, places, products, tickers, money and dates
+       the reply named, as chips in their groups with how often each was named. Pressed, a chip opens under its
+       group: the sentences it was named in, and "look it up" - the fabric's records and a web search for it,
+       landed beside this item as browsers (turn.entity.look). */
+    entities: (c, size, key, el) => {
+      const groups = Array.isArray(c && c.groups) ? c.groups : [];
+      if (!groups.length) return '<div class="vc-dim">nothing named</div>';
+      const open = (el && el._entOpen && el._entOpen[key]) || '';
+      return '<div class="vc-ent" data-w="canvas.entities">' + groups.map((g, gi) => {
+        const ents = Array.isArray(g.entities) ? g.entities : [];
+        const chips = ents.map((e, ei) => { const id = gi + ':' + ei;
+          return `<button class="vc-chip${open === id ? ' on' : ''}" data-act="entopen" data-ent="${id}" title="${esc(e.type + (e.count > 1 ? ' · named ' + e.count + ' times' : ''))}">${esc(e.text)}${e.count > 1 ? `<i>${e.count}</i>` : ''}</button>`; }).join('');
+        const [ogi, oei] = open.split(':').map(Number); const oe = (ogi === gi && ents[oei]) || null;
+        const detail = oe ? `<div class="vc-ent-d"><div class="vc-ent-h"><b>${esc(oe.text)}</b><span class="mono">${esc(oe.type)}</span><span class="sp"></span>`
+          + `<button class="ib" data-act="entlook" data-ent="${gi}:${oei}" title="The fabric's records and a web search for it, beside this item">look it up</button></div>`
+          + (Array.isArray(oe.sentences) && oe.sentences.length ? oe.sentences.map((s) => `<p>${esc(s)}</p>`).join('') : '') + '</div>' : '';
+        return `<div class="vc-ent-g"><div class="vc-ent-gl">${esc(g.group || '')}</div><div class="vc-ent-cs">${chips}</div>${detail}</div>`;
+      }).join('') + '</div>';
+    },
     /* ── elements for what a capability answers with (canvas.run, and the chat's adapter) ────────────────────── */
     // a nested answer as a tree you can open and close, rather than a wall of braces in a code fence
     json: (c) => {
@@ -1491,6 +1511,16 @@
   .it.sized .vc-diagwrap > .code-card,.it.openin .vc-diagwrap > .code-card,.it.maxed .vc-diagwrap > .code-card{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
   .it[data-type="diagram"] .it-bd{max-height:none}
   .vc-dgsrc{margin-top:6px;max-height:160px}
+  /* what a turn names: chips in their groups, a pressed one opens under its group */
+  .vc-ent{display:flex;flex-direction:column;gap:8px}
+  .vc-ent-gl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7480));margin-bottom:3px}
+  .vc-ent-cs{display:flex;flex-wrap:wrap;gap:4px}
+  .vc-chip{display:inline-flex;align-items:center;gap:5px;border:0;border-radius:99px;padding:3px 9px;font:inherit;font-size:11px;cursor:pointer;background:var(--s2,var(--bg2,#1c2026));color:var(--t1,var(--fg,#dce1e8));box-shadow:inset 0 0 0 1px var(--bd,var(--border,#2a2f37))}
+  .vc-chip i{font-style:normal;font-size:9px;color:var(--t3,var(--dim,#6b7480))}
+  .vc-chip:hover,.vc-chip.on{box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f));color:var(--ac,var(--acc,#5a9e8f))}
+  .vc-ent-d{margin-top:6px;padding:6px 8px;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1c2026))}
+  .vc-ent-h{display:flex;align-items:center;gap:8px;margin-bottom:4px}.vc-ent-h .mono{font-family:var(--f-mono,ui-monospace,monospace);font-size:9px;color:var(--t3,var(--dim,#6b7480))}.vc-ent-h .sp{flex:1}
+  .vc-ent-d p{margin:3px 0;font-size:11px;line-height:1.5;color:var(--t2,var(--fg2,#c3cad4))}
   vera-mermaid.vc-mm{display:block;min-height:120px;margin:.3em 0}`;
 
   /* ── THE PLACER (Notes/38 §3.5; the canvas's final form §2), pure: items → a column and a top for each. An item sits
@@ -2876,6 +2906,13 @@
         // flip what is on SCREEN: the first press on a page that opened drawn turns it off, not on
         this._prevOn[key] = !(this._prevSeen && this._prevSeen[key]);
         this._open.add(key); if (this._doc) this.render(this._doc); return; }
+      // a named thing: open its sentences under its group (a second press closes), or look it up beside the item
+      if (act === 'entopen') { this._entOpen = this._entOpen || {}; const id = String(btn.dataset.ent || ''); this._entOpen[key] = this._entOpen[key] === id ? '' : id; this._open.add(key); if (this._doc) this.render(this._doc); return; }
+      if (act === 'entlook') { const c = this._contentOf(key) || {}; const [gi, ei] = String(btn.dataset.ent || '').split(':').map(Number);
+        const e = ((((c.groups || [])[gi]) || {}).entities || [])[ei]; if (!e) return; btn.textContent = 'looking…'; btn.disabled = true;
+        this.callResult('turn.entity.look', { session_id: this._sid(), text: e.text, type: e.type, mid: c.mid || '' })
+          .then((r) => { btn.textContent = r && r.ok ? ((r.items || []).length ? 'beside this →' : 'nothing found') : 'failed'; btn.disabled = false; this.refresh && this.refresh(); });
+        return; }
       if (act === 'dgcopy') { const c = this._contentOf(key) || {}; try { navigator.clipboard.writeText(String(c.mermaid || c.code || c.source || '')); } catch (e) {} return; }
       if (act === 'dgsrc') { const p = it && it.querySelector('.vc-dgsrc'); if (p) p.hidden = !p.hidden; return; }
       if (act === 'tshare') { const h = it.querySelector('.vc-live[data-ws]'); const ws = h ? h.dataset.ws : ''; try { navigator.clipboard.writeText(location.origin + ws); } catch (e) {} return; }

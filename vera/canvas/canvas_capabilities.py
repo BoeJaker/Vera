@@ -134,6 +134,12 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
                             "'research'|'rows', items:[{id:str, title:str, url?:str, domain?:str, snippet?:str, "
                             "when?:str, score?:num, meta?:{str:str}, ref?:{record_id, dataset_id}}], total?:int, "
                             "next?:{cap:str, args:obj}, why?:str}"},
+    "entities": {"desc": "What a turn NAMES - its people, organisations, places, products, events, tickers, money and "
+                         "dates - as chips grouped by kind, each with how often it was named; pressed, a chip shows "
+                         "the sentences it was named in and looks it up (the fabric, the web) beside it. Landed by "
+                         "turn.understand from the NLP tier's entity model.",
+                 "content": "{title?:str, mid?:str, groups:[{group:str, entities:[{text:str, type:str, count:int, "
+                            "sentences?:[str]}]}], count?:int}"},
     "loop":     {"desc": "An agentic run as an item: its goal, status and steps (each a "
                          "capability) — written by the chat and by the loop itself (P7).",
                  "content": "{goal:str, status:str, steps:[{n:str, cap?:str, status?:str, ms?:str}], run?:str}"},

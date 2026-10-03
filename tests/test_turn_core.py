@@ -1,0 +1,65 @@
+"""turn_core: what a turn names - chunking, merging the NLP tier's answers with the patterns, the canvas item
+(canvas-enrichment plan, slice 1)."""
+import importlib.util
+import pathlib
+
+_P = pathlib.Path(__file__).resolve().parent.parent / "vera" / "canvas" / "turn_core.py"
+_spec = importlib.util.spec_from_file_location("turn_core", _P)
+tc = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(tc)
+
+TEXT = ("Apple hired Tim Cook in Cupertino in 1998. Microsoft opened an office in London. "
+        "Tim Cook later ran Apple, and BTC/USD rose to $42,000 on 3 January 2024. See https://example.com/a.")
+
+
+def _ner(off, ents):
+    return off, {"entities": ents}
+
+
+def test_chunks_are_sentence_aligned_and_cover_the_text():
+    long = " ".join("Sentence number %d is here." % i for i in range(200))
+    parts = tc.chunks(long, size=300)
+    assert len(parts) > 5 and all(len(c) <= 300 for _, c in parts)
+    assert all(c.endswith(".") for _, c in parts[:-1])
+    off, c = parts[3]
+    assert long[off:off + 10] == c[:10]
+
+
+def test_code_fences_are_not_prose():
+    assert "def area" not in tc.prose("Here:\n```python\ndef area(w): pass\n```\nDone.")
+
+
+def test_merge_counts_names_keeps_sentences_and_drops_weak_and_unsalient():
+    tagged = [_ner(0, [{"entity": "ORG", "word": " Apple", "score": 0.99, "start": 0, "end": 5},
+                       {"entity": "PERSON", "word": " Tim Cook", "score": 0.99, "start": 12, "end": 20},
+                       {"entity": "GPE", "word": " Cupertino", "score": 0.99, "start": 24, "end": 33},
+                       {"entity": "DATE", "word": " 1998", "score": 0.99, "start": 37, "end": 41},
+                       {"entity": "CARDINAL", "word": " one", "score": 0.99, "start": 0, "end": 3},
+                       {"entity": "ORG", "word": " Weakco", "score": 0.3, "start": 0, "end": 6}]),
+              _ner(84, [{"entity": "PERSON", "word": "Tim Cook", "score": 0.97, "start": 0, "end": 8},
+                        {"entity": "ORG", "word": "Apple", "score": 0.98, "start": 20, "end": 25}])]
+    ents = tc.merge(TEXT, tagged)
+    by = {(e["type"], e["text"]): e for e in ents}
+    assert by[("PERSON", "Tim Cook")]["count"] == 2 and by[("ORG", "Apple")]["count"] == 2
+    assert ("CARDINAL", "one") not in by and ("ORG", "Weakco") not in by
+    assert any("Cupertino" in s for s in by[("GPE", "Cupertino")]["sentences"])
+    assert ents[0]["count"] == 2                                   # most named first
+
+
+def test_patterns_find_tickers_and_links_but_not_any_acronym():
+    ents = tc.merge(TEXT + " The API and the CEO met.", [])
+    names = {(e["type"], e["text"]) for e in ents}
+    assert ("TICKER", "BTC/USD") in names and ("URL", "https://example.com/a") in names
+    assert not any(e["text"] in ("API", "CEO") for e in ents)
+
+
+def test_salient_and_the_canvas_item():
+    ents = tc.merge(TEXT, [_ner(0, [{"entity": "ORG", "word": "Apple", "score": 0.9, "start": 0, "end": 5},
+                                    {"entity": "PERSON", "word": "Tim Cook", "score": 0.9, "start": 12, "end": 20},
+                                    {"entity": "DATE", "word": "1998", "score": 0.9, "start": 37, "end": 41}])])
+    assert {e["type"] for e in tc.salient(ents)} >= {"ORG", "PERSON"} and all(e["type"] != "DATE" for e in tc.salient(ents))
+    it = tc.item(ents, mid="m4", subject="Apple")
+    assert it["title"] == "Mentioned · Apple" and it["mid"] == "m4"
+    groups = [g["group"] for g in it["groups"]]
+    assert groups.index("people") < groups.index("organisations") < groups.index("dates")
+    assert it["count"] == sum(len(g["entities"]) for g in it["groups"])

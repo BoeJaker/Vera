@@ -1,0 +1,146 @@
+"""What a turn is about: the things it names, found by the NLP tier and a few patterns, merged into one list.
+
+The NLP tier's entity model (nlp.ner on the CPU nodes - an OntoNotes model: PERSON, ORG, GPE, LOC, DATE, MONEY ...)
+reads a passage at a time, so a reply is cut into sentence-aligned chunks, each read on its own, and the mentions
+put back together: one entity per (type, name), with how often it was named and the sentences it was named in.
+Patterns add what a general tagger does not know: tickers (BTC, $ETH, BTC/USD) and addresses.
+
+Pure: text and the tagger's answers in, a list and a canvas item out. The capabilities (turn.understand,
+turn.entity.look) do the I/O. See shared-planning/canvas-enrichment/PLAN.md, slice 1.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
+
+#: the labels worth a chip - a thing the reply is ABOUT. Counts, ordinals, percentages and times of day are not.
+SALIENT = ("PERSON", "ORG", "GPE", "LOC", "NORP", "FAC", "PRODUCT", "EVENT", "WORK_OF_ART", "LAW", "MONEY", "DATE",
+           "TICKER", "URL")
+#: how each is named to a reader
+LABEL = {"PERSON": "people", "ORG": "organisations", "GPE": "places", "LOC": "places", "NORP": "groups",
+         "FAC": "places", "PRODUCT": "products", "EVENT": "events", "WORK_OF_ART": "works", "LAW": "laws",
+         "MONEY": "money", "DATE": "dates", "TICKER": "tickers", "URL": "links"}
+#: the order the groups are shown in
+ORDER = ("people", "organisations", "places", "groups", "products", "events", "works", "laws", "tickers", "money",
+         "dates", "links")
+
+MIN_SCORE = 0.6
+CHUNK = 1200
+
+_SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
+_FENCE = re.compile(r"```[\s\S]*?```")
+_URL = re.compile(r"https?://[^\s)\]>\"']+")
+# BTC, ETH/USD, $SOL, BTC-USD: a ticker is short, upper case and stands as a word; a lone common acronym is not one
+_TICKER = re.compile(r"(?<![\w$])\$?([A-Z]{2,6})(?:[/-](USD[TC]?|EUR|GBP|BTC|ETH))?(?![\w])")
+_KNOWN_TICKERS = set("""BTC ETH SOL XRP ADA DOGE DOT AVAX MATIC LINK LTC BCH XLM ATOM UNI TRX ETC FIL APT ARB OP NEAR
+SHIB PEPE BNB TON SUI USDT USDC DAI AAPL MSFT NVDA TSLA AMZN GOOG GOOGL META NFLX AMD INTC SPY QQQ""".split())
+
+
+def prose(text: str) -> str:
+    """The prose of a reply: code fences out (a function name is not a person), whitespace kept."""
+    return _FENCE.sub(" ", str(text or ""))
+
+
+def chunks(text: str, size: int = CHUNK) -> List[Tuple[int, str]]:
+    """Sentence-aligned pieces no longer than `size`, each with its offset in the text."""
+    t = str(text or "")
+    if not t.strip():
+        return []
+    out: List[Tuple[int, str]] = []
+    start, cur = 0, ""
+    pos = 0
+    for s in _SENT.split(t):
+        i = t.find(s, pos)
+        if i < 0:
+            i = pos
+        pos = i + len(s)
+        if cur and len(cur) + 1 + len(s) > size:
+            out.append((start, cur))
+            start, cur = i, s
+        else:
+            if not cur:
+                start = i
+            cur = (cur + " " + s) if cur else s
+        while len(cur) > size:                     # one sentence longer than a chunk: cut it at a space
+            cut = cur.rfind(" ", 0, size)
+            cut = cut if cut > size // 2 else size
+            out.append((start, cur[:cut]))
+            start, cur = start + cut, cur[cut:].lstrip()
+    if cur.strip():
+        out.append((start, cur))
+    return out
+
+
+def sentence_at(text: str, at: int) -> str:
+    """The sentence a mention sits in (for the chip's detail)."""
+    t = str(text or "")
+    a = max(t.rfind(". ", 0, at), t.rfind("\n", 0, at), t.rfind("? ", 0, at), t.rfind("! ", 0, at))
+    b = min([x for x in (t.find(". ", at), t.find("\n", at), t.find("? ", at), t.find("! ", at)) if x >= 0] or [len(t)])
+    return t[a + 1 if a >= 0 else 0: b + 1].strip()[:300]
+
+
+def _norm(word: str) -> str:
+    return re.sub(r"\s+", " ", str(word or "")).strip().strip(".,;:()[]\"'")
+
+
+def merge(text: str, tagged: Iterable[Tuple[int, Dict[str, Any]]], min_score: float = MIN_SCORE) -> List[Dict[str, Any]]:
+    """The tagger's answers (each with the offset of the chunk it read) and the patterns, as one list: one entity
+    per (type, name), counted, with up to three sentences it was named in, most named first."""
+    t = str(text or "")
+    found: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    def add(typ: str, word: str, at: int, score: float):
+        w = _norm(word)
+        if len(w) < 2 or typ not in SALIENT:
+            return
+        k = (typ, w.lower())
+        e = found.get(k)
+        if not e:
+            e = found[k] = {"text": w, "type": typ, "group": LABEL.get(typ, typ.lower()), "count": 0, "score": 0.0,
+                            "spans": [], "sentences": []}
+        e["count"] += 1
+        e["score"] = max(e["score"], round(float(score), 3))
+        if len(e["spans"]) < 6:
+            e["spans"].append([at, at + len(word)])
+        s = sentence_at(t, at)
+        if s and s not in e["sentences"] and len(e["sentences"]) < 3:
+            e["sentences"].append(s)
+
+    for off, ans in tagged:
+        for x in (ans or {}).get("entities") or []:
+            try:
+                sc = float(x.get("score") or 0)
+            except (TypeError, ValueError):
+                sc = 0.0
+            if sc < min_score:
+                continue
+            typ = str(x.get("entity") or x.get("entity_group") or x.get("label") or "").upper().replace("B-", "").replace("I-", "")
+            add(typ, str(x.get("word") or x.get("text") or ""), off + int(x.get("start") or 0), sc)
+    for m in _URL.finditer(t):
+        add("URL", m.group(0), m.start(), 1.0)
+    for m in _TICKER.finditer(t):
+        sym = m.group(1)
+        if sym in _KNOWN_TICKERS or m.group(0).startswith("$") or m.group(2):
+            add("TICKER", m.group(0).lstrip("$"), m.start(), 1.0)
+    out = list(found.values())
+    out.sort(key=lambda e: (-e["count"], -e["score"], e["text"].lower()))
+    return out
+
+
+def salient(entities: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The things the reply is about - not its dates, money or links, which say when and how much, not what."""
+    return [e for e in entities if e.get("type") not in ("DATE", "MONEY", "URL")]
+
+
+def item(entities: Sequence[Dict[str, Any]], *, mid: str = "", subject: str = "", limit: int = 40) -> Dict[str, Any]:
+    """The canvas `entities` item: the groups in a fixed order, each its entities, most named first."""
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for e in list(entities)[:limit]:
+        groups.setdefault(e.get("group") or "other", []).append(
+            {"text": e["text"], "type": e["type"], "count": e["count"], "sentences": e.get("sentences", [])[:3]})
+    ordered = [{"group": g, "entities": groups[g]} for g in ORDER if g in groups]
+    ordered += [{"group": g, "entities": v} for g, v in groups.items() if g not in ORDER]
+    n = sum(len(g["entities"]) for g in ordered)
+    return {"title": ("Mentioned · " + subject) if subject else "Mentioned", "mid": mid, "groups": ordered,
+            "count": n}

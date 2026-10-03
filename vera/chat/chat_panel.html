@@ -6909,6 +6909,16 @@ IMPORTANT:
     try{ document.dispatchEvent(new CustomEvent('vera:canvas:enriched',{detail:{mid, result:r}})); }catch(_){}
     return r;
   }
+  /* WHAT THE REPLY NAMES (canvas-enrichment slice 1 - owner, 2026-10-03: "the nlp enrichment is still few and far
+     between"): the NLP tier's entity model was live and never asked. turn.understand reads the reply (code fences
+     out) and, when it names three things or more, places them as one `entities` item anchored to the turn; the
+     answer is kept with the message for whatever reads it next. The canvas's ✦ switch turns this off with the rest. */
+  async function _cvEntities(mid, reply){
+    const t=String(reply||''); if(!SID||!_cvEnrichOn()||t.replace(/```[\s\S]*?```/g,'').trim().length<160) return null;
+    let r=null; try{ r=await _capCall('turn.understand',{ text:t.slice(0,12000), session_id:SID, mid:String(mid||''), place:true }); }catch(_){ return null; }
+    try{ if(r&&r.ok&&mid&&_MSG_REGISTRY[mid]) _MSG_REGISTRY[mid].entities=r.entities||[]; }catch(_){}
+    return r;
+  }
   function _cvEnrichToggle(btn){ const on=!_cvEnrichOn(); try{ localStorage.setItem('vera:canvas:enrich', on?'1':'0'); }catch(_){} _cvEnrichPaint(btn); }
   function _cvEnrichPaint(btn){ const b=btn||document.getElementById('cvEnrichBtn'); if(!b) return; const on=_cvEnrichOn(); b.classList.toggle('on',on); b.style.opacity=on?'':'.55'; b.setAttribute('aria-pressed',on?'true':'false'); }
   setTimeout(()=>_cvEnrichPaint(),0);
@@ -7041,6 +7051,9 @@ IMPORTANT:
 
   /* A TIMELINE OUT OF WHAT THE RESEARCH FOUND.
 
+     (2026-10-03: what follows was true when written; it is not now - nlp.ner answers on the CPU nodes in about half a
+     second with an OntoNotes model that HAS a DATE label, and turn.understand uses it for every reply. The dates here
+     still come from the matcher below, which keeps working when the nodes are down.)
      The plan was to lean on the research system's NLP for this. It does not work: nlp.ner answers
      "optimum/transformers not installed" on prod and on the mirror, and the model it would load if it were
      installed is dslim/bert-base-NER - CoNLL-2003, whose labels are PER, ORG, LOC and MISC. There is no DATE
@@ -12159,6 +12172,9 @@ Your task: decide what to do next to advance toward the goal.
     // and what ELSE on the estate is relevant to the turn - a dashboard read as its widget, the news, the web, the
     // fabric's records as browsers (canvas.enrich; no model is called). Its own items, keyed and anchored to the turn.
     try{ _cvEnrich(_cvRelMid, _cvRelText, String(fullText||'')); }catch(_){}
+    // ...and what the reply NAMES - its people, organisations, places, tickers, dates - read by the NLP tier's entity
+    // model (turn.understand, CPU nodes) and kept as one chip item on the canvas when it names enough things
+    try{ _cvEntities(_cvRelMid, String(fullText||'')); }catch(_){}
 
     // NOTE: NO /memory/record/turn call here — handled server-side by agents.py
 
