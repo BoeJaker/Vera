@@ -36,7 +36,12 @@
    laned afterwards (cardsRouter · isoRouter), so no two legs share a length and a bundle stays parallel. The ACTIVITY layer
    hangs the turn's capability calls off the card that triggered each; the ESTATE layer draws where they ran. Both are
    optional and remembered; so is the mini galaxy on the graph band (off: the board's lanes alone).
-   window.VeraExploded = { layout, frontRuns, LAYERS, version } — layout() and frontRuns() are pure (node-testable). */
+   A STRUCTURE as a scene (scene.layers + turn.links): the code and prose explodes (code.explode, nlp.explode.prose) drawn
+   in the same three styles — contractScene(doc) makes the scene: a station per top-level group (a file, a paragraph), a
+   plate per kind of card (module · class · method, person · place · date) or per layer when the kinds do not split it, the
+   contract's own relations as the runs. Any scene may name its plates: scene.layers = [{key, name, sub, col}] (a key never
+   carries ':'), a turn's cards under each key, turn.links = [{from, to, kind, title}] by card id.
+   window.VeraExploded = { layout, frontRuns, LAYERS, contractScene, version } — layout(), frontRuns() and contractScene() are pure (node-testable). */
 (function (root) {
   'use strict';
   const LAYERS = [
@@ -84,9 +89,55 @@
      so the whole galaxy is inside it and as big as the band can carry (Notes/42 defect 61). */
   const galH = (w) => Math.round(Math.max(110, Math.min(240, w * 0.66)));
 
+  /* ── a structure as a scene: the code and prose explodes (layers · groups · cards · edges), pure ──────────────────── */
+  const XPAL = ['var(--xp-dv1)', 'var(--xp-dv2)', 'var(--xp-dv3)', 'var(--xp-ac)', 'var(--xp-ac2)', '#e0a23c', '#56b6c2', '#c678dd'];
+  const KORD = ['file', 'module', 'class', 'function', 'async_function', 'method', 'variable', 'import', 'person', 'org', 'organization', 'location', 'gpe', 'date', 'time', 'event', 'job_title'];
+  // a relation's colour by its kind: what holds what (thin), what calls what, what imports what, the rest
+  const linkCol = (k) => { k = String(k || '').toUpperCase(); return k === 'CONTAINS' ? 'var(--xp-t3)' : k === 'CALLS' ? 'var(--xp-ac)' : k === 'IMPORTS' ? 'var(--xp-dv2)' : k === 'MATCHES' || k === 'COREF' ? 'var(--xp-t3)' : 'var(--xp-ac2)'; };
+  function contractScene(doc, o) {
+    o = o || {}; doc = doc || {};
+    const cards = Array.isArray(doc.cards) ? doc.cards : [], edges = Array.isArray(doc.edges) ? doc.edges : [], groups = Array.isArray(doc.groups) ? doc.groups : [];
+    const LI = {}; (doc.layers || []).forEach((l) => { if (l && l.id != null) LI[l.id] = l; });
+    const kinds = [], lays = []; cards.forEach((c) => { const k = String(c.kind || 'item'), l = String(c.layer || ''); if (kinds.indexOf(k) < 0) kinds.push(k); if (lays.indexOf(l) < 0) lays.push(l); });
+    // a plate per kind when the kinds split the cards into a readable few, else per layer (the contract's own grouping)
+    const by = o.by === 'layer' || o.by === 'kind' ? o.by : ((kinds.length >= 2 && kinds.length <= 7) || lays.length < 2 ? 'kind' : 'layer');
+    const rank = (k) => { const i = KORD.indexOf(String(k).toLowerCase()); return i < 0 ? KORD.length : i; };
+    const raw = (by === 'kind' ? kinds.slice().sort((a, b) => rank(a) - rank(b)) : lays).slice(0, 8);
+    const keyOf = (s) => 'k_' + String(s).replace(/[^A-Za-z0-9_-]/g, '_');   /* a plate's key never carries ':' - a card's id in the scene is mid:layer:index */
+    const layers = raw.map((k, i) => ({ key: keyOf(k), name: by === 'layer' ? String((LI[k] && LI[k].label) || k || 'cards') : String(k).replace(/_/g, ' '), sub: by === 'layer' ? String((LI[k] && LI[k].by) || '') : (doc.kind === 'prose' ? 'entities' : 'symbols'), col: XPAL[i % XPAL.length] }));
+    const colOf = {}; layers.forEach((L) => { colOf[L.key] = L.col; });
+    const G = {}; groups.forEach((g) => { if (g && g.id != null) G[g.id] = g; });
+    const top = (gid) => { let g = G[gid], n = 0; while (g && g.parent != null && G[g.parent] && n++ < 24) g = G[g.parent]; return g ? String(g.id) : String(gid == null ? 'all' : gid); };
+    const turns = [], T = {}, home = {}, ext = {};
+    // a card into a station's plate (once): what it holds - code, rows, a score
+    const put = (t, c) => { const L = keyOf(by === 'kind' ? String(c.kind || 'item') : String(c.layer || '')); if (!t[L] || t[L].some((x) => x.id === String(c.id))) return;
+      const code = String(c.code || ''), rows = (Array.isArray(c.fields) ? c.fields : []).slice(0, 4).map((f) => ({ k: String((f && f.k) || ''), v: String(f && f.v != null ? f.v : '').slice(0, 80) }));
+      const card = { id: String(c.id), n: String(c.title || c.id).slice(0, 80), d: String(c.subtitle || c.kind || ''), col: colOf[L], kind: code ? 'code' : 'record', body: code ? code.split('\n').slice(0, 8).join('\n') : (rows[0] ? rows[0].v : '') };
+      if (c.score != null && isFinite(+c.score)) card.score = +c.score;
+      if (!code && rows.length > 1) card.rows = rows;
+      if (code) { card.code = true; card.text = code; card.lang = String(c.lang || ''); }
+      t[L].push(card); };
+    cards.forEach((c) => { const tg = top(c.group);
+      // what the source uses but does not define (an external group) stands in every station that reaches it, not one of its own
+      if (G[tg] && String(G[tg].kind) === 'external') { ext[String(c.id)] = c; return; }
+      let t = T[tg];
+      if (!t) { const g = G[tg] || {}; t = T[tg] = { mid: 'x' + turns.length, who: String(g.kind || doc.kind || 'source'), t: '', text: String(g.label || tg).slice(0, 160), links: [] }; layers.forEach((L) => { t[L.key] = []; }); turns.push(t); }
+      put(t, c); home[String(c.id)] = t; });
+    let across = 0;
+    edges.forEach((e) => { let a = home[String(e.from)], b = home[String(e.to)];
+      if (a && !b && ext[String(e.to)]) { put(a, ext[String(e.to)]); b = a; } else if (b && !a && ext[String(e.from)]) { put(b, ext[String(e.from)]); a = b; }
+      if (!a || !b || String(e.from) === String(e.to)) return; if (a !== b) { across++; return; }
+      const rl = LI[e.layer]; a.links.push({ from: String(e.from), to: String(e.to), kind: String(e.kind || ''), title: String(e.label || (rl && rl.label) || e.kind || 'relates').slice(0, 80) }); });
+    turns.forEach((t) => { const n = layers.reduce((s, L) => s + t[L.key].length, 0); t.t = n + ' card' + (n === 1 ? '' : 's') + ' · ' + t.links.length + ' relation' + (t.links.length === 1 ? '' : 's'); });
+    return { kind: 'contract', source: String(doc.kind || ''), label: String(o.label || ''), by, layers, turns, sel: turns.length ? turns[0].mid : '', across };
+  }
+
   /* ── the layout, pure ─────────────────────────────────────────────────────────────────────────────── */
   function layout(scene, mode, W, H, o) {
     o = o || {}; let turns = (scene && scene.turns) || []; mode = mode === 'front' || mode === 'iso' ? mode : 'cards';
+    const LAYS = scene && Array.isArray(scene.layers) && scene.layers.length ? scene.layers : LAYERS, XC = LAYS !== LAYERS;   // a structure names its own plates
+    // a link between two of a turn's cards, by id: the card's place in its plate (layer key : index), or nothing
+    const linkAt = (t, id) => { for (let i = 0; i < LAYS.length; i++) { const k = LAYS[i].key, j = ((t && t[k]) || []).findIndex((c) => c && String(c.id) === String(id)); if (j >= 0) return [i, j, k + ':' + j]; } return null; };
     const selIdx = Math.max(0, turns.findIndex((t) => t.mid === (scene && scene.sel))); let sel = turns.length ? Math.max(0, selIdx) : 0;
     const out = { mode, stations: turns.length, sel, plates: [], labels: [], cards: [], edges: [], panels: [], leaders: [], graphs: [], gnodes: [], size: { w: W, h: H }, fit: { s: 1, x: 0, y: 0 }, inv: 1 };
     const den = o.den === 'hover' || o.den === 'zen' ? o.den : 'full';
@@ -125,7 +176,7 @@
       // calls off the card that triggered each of them under the produced cards; the ESTATE layer is a sixth plate.
       const ACT = !!(o.layers && o.layers.activity), EST = !!(o.layers && o.layers.estate), GAL = o.galaxy !== false;   // the board draws the galaxy sheet beside the lanes; the chip hides it
       const ESTL = { key: 'estate', name: 'estate', sub: 'where it ran', col: 'var(--xp-dv3)', kind: 'nodes' };
-      const COLSL = EST ? LAYERS.concat([ESTL]) : LAYERS, NP = COLSL.length;
+      const COLSL = EST ? LAYS.concat([ESTL]) : LAYS, NP = COLSL.length;
       const kW = Math.max(0.5, Math.min(1, (W - 96) / (NP * 430 + (NP - 1) * 54)));   // the margins, and room for the rounding
       const SWD = Math.round(430 * kW), SGP = Math.round(54 * kW), CW = SWD - 32, NX = Math.round(120 * kW), VP = 64, CH = 54, PADX = 40, PADY = 92, ROWGAP = 60, NR = 44, HEAD = 60, FOOT = 24, MINH = 150;
       const HM = o.heights || {};
@@ -197,6 +248,8 @@
         ests.forEach((e, ei) => { estRuns(e, (ai) => bx('act:' + ai)).forEach(([ai, title]) => R.add(bx('act:' + ai), bx('est:' + ei), 'var(--xp-dv3)', 'est', title, null, { trunk: 'est:' + ei, tend: 'b' })); if (e.via != null && bx('est:' + e.via)) R.add(bx('est:' + e.via), bx('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it'); });
         // the RELATIONS between the turn's context records - the only runs that answer to the tier and the switch
         g.rels.forEach((r) => { const a = boxes['node:' + r.from], b = boxes['node:' + r.to], Rc = RELC[r.kind] || RELC.cite; if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)]); });
+        // a structure's own relations, card to card
+        if (XC) (t.links || []).forEach((r) => { const a = linkAt(t, r.from), b = linkAt(t, r.to); if (a && b && a[2] !== b[2] && bx(a[2]) && bx(b[2])) R.add(bx(a[2]), bx(b[2]), linkCol(r.kind), 'link', r.title); });
         R.flush();
         out.rows.push({ mid: t.mid, si, y: px(rowTop), h: px(rowH + 22) });
         rowTop += 22 + rowH + ROWGAP;
@@ -214,18 +267,18 @@
       // square-on, full size, the rest hushed — and again puts it back in the line.
       const t = turns[sel], g = gData(t);
       const PW = Math.round(Math.max(400, Math.min(568, (W - 40) / 2.6))), PH = Math.round(Math.max(420, Math.min(640, H - 200)));   // the runs' floor lies below the panels and the host's composer floats over the foot
-      const PDX = Math.max(300, Math.min(520, (W - 80) / 3.2)), PDZ = 126, li0 = o.layer == null ? 2 : o.layer, foc = o.focus == null ? null : o.focus;
-      const CAX = LAYERS.map((_, i) => i + (i >= 1 ? 0.3 : 0) + (i >= 4 ? 0.3 : 0));
+      const PDX = Math.max(300, Math.min(520, (W - 80) / 3.2)), PDZ = 126, li0 = Math.max(0, Math.min(LAYS.length - 1, o.layer == null ? (XC ? 0 : 2) : o.layer)), foc = o.focus == null ? null : o.focus;
+      const CAX = LAYS.map((_, i) => XC ? i : i + (i >= 1 ? 0.3 : 0) + (i >= 4 ? 0.3 : 0));   // the chat's own wider gaps where its layers meet the graph and the canvas
       const idOf = (c) => String((c && (c.id != null ? c.id : c.n)) || '');
       // the context graph's layer is a card per family: the lane, its count and top relevance, its members as rows
       const lanes = LANES.filter((l) => g.laneList.indexOf(l) >= 0);
       const laneCards = lanes.map((l) => { const ms = g.nodes.filter((n) => n.lane === l).sort((a, b) => b.score - a.score); return { n: l, d: ms.length + ' · top ' + ms[0].score.toFixed(2), col: ms[0].col || LAYERS[0].col, kind: 'panel', lane: l, rows: ms.slice(0, 6).map((m) => ({ k: m.label, v: m.score.toFixed(2) })) }; });
-      LAYERS.forEach((L, li) => { const off = CAX[li] - CAX[li0], a = Math.abs(li - li0); const list = L.kind === 'graph' ? laneCards : cardsOf(t, L.key);
+      LAYS.forEach((L, li) => { const off = CAX[li] - CAX[li0], a = Math.abs(li - li0); const list = L.kind === 'graph' ? laneCards : cardsOf(t, L.key);
         out.panels.push({ layer: L.key, name: L.name, sub: L.sub, col: L.col, li, n: list.length, w: PW, h: PH, px: off * PDX, pz: -Math.abs(off) * PDZ, gen: L.key === 'say' && !!pendOf(t),
           tf: foc === li ? 'translateX(0px) translateZ(24px) rotateY(0deg)' : 'translateX(' + (off * PDX).toFixed(0) + 'px) translateZ(' + (-Math.abs(off) * PDZ).toFixed(0) + 'px) rotateY(26deg)',
           cls: (foc === li ? 'focus ' : foc != null ? 'hushed ' : '') + (a === 0 ? 'on' : a === 1 ? 'near' : a >= 3 ? 'gone' : 'far') + (list.length > 5 ? ' many' : ''), d: (a * 0.07).toFixed(2) + 's', el: 1 + li, focL: foc === li ? 'back' : 'focus',
           cards: (a > 2 ? [] : list).map((c, ci) => ({ id: t.mid + ':' + L.key + ':' + (L.kind === 'graph' ? c.lane : ci), mid: t.mid, layer: L.key, ci, card: c, col: c.col || L.col })), graph: L.kind === 'graph' ? g : null }); });
-      for (let i = 0; i + 1 < LAYERS.length; i++) { const oa = CAX[i] - CAX[li0], ob = CAX[i + 1] - CAX[li0]; const ax = oa * PDX, az = -Math.abs(oa) * PDZ, bx = ob * PDX, bz = -Math.abs(ob) * PDZ; out.leaders.push({ tf: 'translateX(' + ax.toFixed(0) + 'px) translateZ(' + az.toFixed(0) + 'px) rotateY(' + (Math.atan2(-(bz - az), bx - ax) * 180 / Math.PI).toFixed(1) + 'deg)', w: Math.sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az)).toFixed(0) + 'px', cls: (i === 0 || i === 3) ? 'across' : 'same' }); }
+      for (let i = 0; i + 1 < LAYS.length; i++) { const oa = CAX[i] - CAX[li0], ob = CAX[i + 1] - CAX[li0]; const ax = oa * PDX, az = -Math.abs(oa) * PDZ, bx = ob * PDX, bz = -Math.abs(ob) * PDZ; out.leaders.push({ tf: 'translateX(' + ax.toFixed(0) + 'px) translateZ(' + az.toFixed(0) + 'px) rotateY(' + (Math.atan2(-(bz - az), bx - ax) * 180 / Math.PI).toFixed(1) + 'deg)', w: Math.sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az)).toFixed(0) + 'px', cls: (i === 0 || i === 3) ? 'across' : 'same' }); }
       // the relations, the same ones the iso scene draws, as panel:card pairs — laid out for the carousel by frontRuns
       // once the element has measured where the cards sit: the context entry into the record it became (a memory's
       // dashed), every read into the exchange, the exchange into what it made, what it made into where it landed, and
@@ -238,6 +291,7 @@
       if (says.length) { reads.slice(0, 4).forEach((c, j) => R([1, j], [2, 0], 'in', 'the passage the answer is based on')); if (!reads.length && lanes.length) R([0, 0], [2, 0], 'in', 'the context this turn read'); mades.slice(0, 4).forEach((c, j) => R([2, 0], [3, j], 'out', 'produced by this turn')); }
       mades.slice(0, 4).forEach((c, j) => { if (lands[j] || lands[0]) R([3, j], [4, lands[j] ? j : 0], 'link', 'this became a canvas item'); });
       lands.forEach((c, j) => { if (nodeLane[idOf(c)] === 'canvas' && lanes.indexOf('canvas') >= 0) R([4, j], [0, lanes.indexOf('canvas')], 'mem', 'pinned back into the next prompt'); });
+      if (XC) (t.links || []).slice(0, 40).forEach((r) => { const a = linkAt(t, r.from), b = linkAt(t, r.to); if (a && b && a[2] !== b[2]) rels.push({ a: [a[0], a[1]], b: [b[0], b[1]], kind: 'link', col: linkCol(r.kind), title: r.title }); });
       out.frontRels = rels; out.layer0 = li0; out.focus = foc; out.panel = { w: PW, h: PH };
       // the carousel measures about 3000px across five panels and 1640 across three at 1:1 — the board's fit for the room
       const five = (W - 60) / 3000, three = (W - 40) / 1640; out.fitZ = +Math.min(1, five >= 0.8 ? five : Math.max(0.45, three)).toFixed(3);
@@ -269,13 +323,13 @@
     const GU = UXS * KI, GV = KI;   // a station unit and an entity unit, in ground px
     const proj0 = (U, V, z) => { const p = P(U, V, z || 0); return { x: p[0], y: p[1] }; }; const proj = proj0;
     const ESTL = { key: 'estate', name: 'estate', sub: 'where it ran', col: 'var(--xp-dv3)', kind: 'nodes' }, ACTL = { key: 'activity', name: 'activity', sub: 'what ran', col: 'var(--xp-ac2)', kind: 'acts' };
-    const STA = LAYERS.concat(ACT ? [ACTL] : [], EST ? [ESTL] : []);
+    const STA = LAYS.concat(ACT ? [ACTL] : [], EST ? [ESTL] : []);
     const graphs = turns.map(gData), actsL = turns.map((t) => ACT ? actsOf(t) : []), estsL = turns.map((t) => EST ? estOf(t) : []);
     const colsOf = (n, mx) => Math.max(1, Math.min(mx || MAXC, Math.ceil(n / RPC)));
     // every station is as wide as its fullest turn needs (a column per six items past the first), so the stations line up
     // across the floors; the context plate is the wide one (relevance spreads across it)
     const colsAt = STA.map((L) => Math.max.apply(null, turns.map((t, si) => L.kind === 'graph' ? 1 : L.kind === 'acts' ? colsOf(actsL[si].length) : L.kind === 'nodes' ? colsOf(estsL[si].length) : L.key === 'land' ? Math.max(LANDC, colsOf(Math.min(CAPL, cardsOf(t, L.key).length), MAXCL)) : colsOf(Math.min(CAP, cardsOf(t, L.key).length))).concat([1])));
-    const halfW = (i) => i === 0 ? 0.64 : 0.44, GAP = 0.12;
+    const halfW = (i) => i === 0 && !XC ? 0.64 : 0.44, GAP = 0.12;   // the context plate is the wide one
     const uOrg = []; { let u = 0; STA.forEach((L, i) => { uOrg[i] = u; u += 2 * halfW(i) + (colsAt[i] - 1) * DU + GAP; }); }
     const uC = (i, cj) => uOrg[i] + halfW(i) + (cj || 0) * DU;                       // a column's centre line
     const uA = (i) => uOrg[i], uB = (i) => uOrg[i] + 2 * halfW(i) + (colsAt[i] - 1) * DU;   // a plate's u extent
@@ -301,7 +355,7 @@
         const ll = proj((uA(i) + 0.04) * GU, (vA - 0.3) * GV, z);
         const count = L.kind === 'graph' ? g.nodes.length : L.kind === 'acts' ? acts.length : L.kind === 'nodes' ? ests.length : list.length;
         out.labels.push({ si, x: ll.x, y: ll.y, n: L.name, k: L.kind === 'acts' ? count + ' call' + (count === 1 ? '' : 's') : String(count), cls: 'layer sm ' + L.key, col: L.col, st: i });
-        if (empty) { const e = proj((U0 + U1) / 2, (V0 + V1) / 2, z); out.labels.push({ si, x: e.x, y: e.y, n: L.key === 'say' ? 'no reply yet' : L.key === 'read' ? 'nothing read' : L.key === 'made' ? 'nothing produced' : L.key === 'land' ? 'nothing landed' : L.key === 'graph' ? 'nothing read' : L.key === 'activity' ? 'no calls' : 'nowhere yet', k: '', cls: 'layer sm empty', col: 'var(--xp-t3)' }); return; }
+        if (empty) { const e = proj((U0 + U1) / 2, (V0 + V1) / 2, z); out.labels.push({ si, x: e.x, y: e.y, n: XC ? 'none here' : L.key === 'say' ? 'no reply yet' : L.key === 'read' ? 'nothing read' : L.key === 'made' ? 'nothing produced' : L.key === 'land' ? 'nothing landed' : L.key === 'graph' ? 'nothing read' : L.key === 'activity' ? 'no calls' : 'nowhere yet', k: '', cls: 'layer sm empty', col: 'var(--xp-t3)' }); return; }
         if (L.kind === 'graph') {
           // the PROMPT LINE down the plate's middle: a record sits nearer it the more relevant it is (alternate sides), a
           // lane per family along the plate; the twelve most relevant on the plate, the rest a count
@@ -389,6 +443,7 @@
           add(gp('act:' + from[1]), gp('act:' + ai), 'var(--xp-ac2)', cls, title); }); void tree; }
       estsL[si].forEach((e, ei) => { estRuns(e, (ai) => gp('act:' + ai)).forEach(([ai, title]) => add(gp('act:' + ai), gp('est:' + ei), 'var(--xp-dv3)', 'est', title)); if (e.via != null && gp('est:' + e.via)) add(gp('est:' + e.via), gp('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it', null, { direct: true }); });
       g.rels.forEach((r) => { const a = gp('node:' + r.from), b = gp('node:' + r.to), Rc = RELC[r.kind] || RELC.cite; if (a && b) add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true }); });
+      if (XC) (t.links || []).forEach((r) => { const a = linkAt(t, r.from), b = linkAt(t, r.to); if (a && b && a[2] !== b[2]) add(gp(a[2]), gp(b[2]), linkCol(r.kind), 'link', r.title); });
       // PORTS: the runs at one pin, in the order of their far ends, each on its own port line (a pin with one run keeps it
       // at the pin); LANES: the runs through one gap, in the order of their targets. Runs that share a pin AND a gap are
       // COLLECTED: one trunk leaves (or reaches) the pin along its row, a short comb fans them onto their port lines, and
@@ -1225,7 +1280,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         const t = e.target;
         const eb = t.closest && t.closest('[data-edit]'); if (eb) { const it = eb.closest('[data-id]'); const id = it ? it.dataset.id : ''; const [mid] = id.split(':'); const wg = this._itemOf(id); e.stopPropagation(); this.dispatchEvent(new CustomEvent('vera:xpl:edit', { detail: { id, mid, key: (it && it.dataset.key) || (wg && wg.key) || '', card: wg ? wg.card : null }, bubbles: true })); return; }
         const mb = t.closest && t.closest('button[data-m]'); if (mb) { this.mode(mb.dataset.m); return; }
-        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'stack') this.stack(); else if (k === 'wsz') this.widgetSize(); else if (k === 'landw') { this._S.landCols = Math.max(1, Math.min(6, (this._S.landCols || 1) + (e.shiftKey ? -1 : 1))); writePref('vera_xpl_landcols', this._S.landCols); this._schedule(); } else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'solo') this.solo(true); else if (k === 'all') { this._S.solo = false; this._S.stack = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); } else if (k === 'panl' || k === 'panr' || k === 'panu' || k === 'pand') this.pan(k === 'panl' ? 80 : k === 'panr' ? -80 : 0, k === 'panu' ? 80 : k === 'pand' ? -80 : 0); else if (k === 'tiltu' || k === 'tiltd') this.tilt(this._S.tilt + (k === 'tiltu' ? 6 : -6)); else if (k === 'swl' || k === 'swr') this.swing(this._S.azim + (k === 'swl' ? -5 : 5)); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.auto = false; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min(LAYERS.length - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
+        const ab = t.closest && t.closest('[data-a]'); if (ab) { const k = ab.dataset.a; if (k === 'fit') this.fit(); else if (k === 'stack') this.stack(); else if (k === 'wsz') this.widgetSize(); else if (k === 'landw') { this._S.landCols = Math.max(1, Math.min(6, (this._S.landCols || 1) + (e.shiftKey ? -1 : 1))); writePref('vera_xpl_landcols', this._S.landCols); this._schedule(); } else if (k === 'place') { const ts = this._S.scene.turns || []; const t = ts.find((x) => x.mid === this._S.scene.sel) || ts[ts.length - 1]; this.dispatchEvent(new CustomEvent('vera:xpl:place', { detail: { mid: t ? t.mid : '' }, bubbles: true })); } else if (k === 'close') this.dispatchEvent(new CustomEvent('vera:xpl:close', { bubbles: true })); else if (k === 'solo') this.solo(true); else if (k === 'all') { this._S.solo = false; this._S.stack = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); } else if (k === 'panl' || k === 'panr' || k === 'panu' || k === 'pand') this.pan(k === 'panl' ? 80 : k === 'panr' ? -80 : 0, k === 'panu' ? 80 : k === 'pand' ? -80 : 0); else if (k === 'tiltu' || k === 'tiltd') this.tilt(this._S.tilt + (k === 'tiltu' ? 6 : -6)); else if (k === 'swl' || k === 'swr') this.swing(this._S.azim + (k === 'swl' ? -5 : 5)); else if (k === 'zin' || k === 'zout') { const p = this._S.pan; p.auto = false; p.z = Math.max(0.4, Math.min(3, p.z * (k === 'zin' ? 1.2 : 0.83))); this._applyPan(); } else if (k === 'prev' || k === 'next') { this._S.layer = Math.max(0, Math.min((((this._S.scene && this._S.scene.layers) || []).length || LAYERS.length) - 1, this._S.layer + (k === 'next' ? 1 : -1))); this._schedule(); } return; }
         const cb = t.closest && t.closest('.xp-cb'); if (cb) { if (cb.dataset.layer) { const L = Object.assign({}, this._S.layers); L[cb.dataset.layer] = !L[cb.dataset.layer]; this.layers(L); return; } if (cb.dataset.galaxy) { this.galaxy(); return; } if (cb.dataset.rel) this._S.related = !this._S.related; else if (cb.dataset.lane) { this._S.lanesOff = Object.assign({}, this._S.lanesOff); this._S.lanesOff[cb.dataset.lane] = !this._S.lanesOff[cb.dataset.lane]; } this._schedule(); return; }
         const dot = t.closest && t.closest('.xp-dot'); if (dot) { this.select(dot.dataset.mid); return; }
         const st = t.closest && t.closest('.xp-lb.station'); if (st) { this.select(st.dataset.mid); return; }
@@ -1396,7 +1451,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
     }
     root.customElements.define('vera-exploded', VeraExploded);
   }
-  const api = { layout, frontRuns, LAYERS, ensureCss, ensureIso, ensureRoutes, graphData, cardsRouter, isoRouter, landRuns, actsOf, estOf, actParent, actTree, actRuns, planeSize, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 12 };
+  const api = { layout, frontRuns, LAYERS, contractScene, ensureCss, ensureIso, ensureRoutes, graphData, cardsRouter, isoRouter, landRuns, actsOf, estOf, actParent, actTree, actRuns, planeSize, widgetOf, groupOf, valueOf, isoBody, faceHtml, diagramHtml, ICON, version: 12 };
   root.VeraExploded = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
