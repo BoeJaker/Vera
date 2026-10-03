@@ -241,6 +241,24 @@ THINK_MAX_TOKENS = max(64, int(os.getenv("VERA_OPERATOR_THINK_TOKENS", "2048") o
 THINK_JOB_TYPE = (os.getenv("VERA_OPERATOR_THINK_JOB", "loop_executor") or "loop_executor").strip()
 
 
+def default_think():
+    """The thinking pass for an operator decision when the caller names none: OFF.
+
+    User, 2026-10-03: "id say its good to turn it off" - after a real operator.run A/B on
+    prod (same pages, interleaved): with the model's own default (thinking on) two of four
+    checks never answered - a broken and a working countdown both clicked Start until the
+    repeat guard stopped them (370 s, 336 s) - and the two that did took 85 s and 66 s;
+    with thinking off all four finished, in 66 / 137 / 35 / 23 s. Earlier that week two of
+    five thinks were lost to the 2048-token cap mid "Thinking Process:". Override with
+    VERA_OPERATOR_THINK=on (always think) or =model (the model's own default)."""
+    v = (os.getenv("VERA_OPERATOR_THINK", "off") or "off").strip().lower()
+    if v in ("on", "true", "1", "yes"):
+        return True
+    if v in ("model", "default", "none", "auto"):
+        return None
+    return False
+
+
 def _split_provider(provider: str) -> tuple:
     p = (provider or "ollama").strip()
     if ":" in p:
@@ -256,6 +274,8 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
                  think=None) -> Dict[str, Any]:
     """Run one think step through the LLM. Returns a decision dict (see
     ``parse_decision``) plus {provider, error}. Never raises."""
+    if think is None:
+        think = default_think()
     prompt = build_prompt(goal, observation, history, canvas=canvas)
     name, pmodel = _split_provider(provider)
     model = model or pmodel

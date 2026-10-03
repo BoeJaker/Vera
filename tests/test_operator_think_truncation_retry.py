@@ -1,4 +1,5 @@
-"""A think reply cut off mid-"Thinking Process" is asked again with thinking off
+"""(Thinking is OFF by default since 2026-10-03; these ask for it explicitly.)
+A think reply cut off mid-"Thinking Process" is asked again with thinking off
 (prod 2026-10-02, operator run b7e3c5a00e: 2 of 5 thinks lost 5.5 min to the cap)."""
 
 import asyncio
@@ -39,24 +40,24 @@ def _decide(replies, **kw):
 
 
 def test_a_truncated_thinking_reply_is_retried_without_thinking():
-    d, calls = _decide([PROSE, GOOD])
-    assert calls == [None, False]
+    d, calls = _decide([PROSE, GOOD], think=True)
+    assert calls == [True, False]
     assert d["action"] == "done" and d["retried_without_thinking"] is True and not d.get("error")
 
 
 def test_the_retry_failing_keeps_the_truncation_error():
-    d, calls = _decide([PROSE, PROSE])
-    assert calls == [None, False]
+    d, calls = _decide([PROSE, PROSE], think=True)
+    assert calls == [True, False]
     assert "cut off at the output limit" in d["error"]
 
 
 def test_no_retry_when_thinking_was_already_off_or_the_reply_parsed():
     d, calls = _decide([PROSE], think=False)
     assert calls == [False] and "cut off" in d["error"]
-    d, calls = _decide([GOOD])
-    assert calls == [None] and d["action"] == "done"
+    d, calls = _decide([GOOD], think=True)
+    assert calls == [True] and d["action"] == "done"
 
 
 def test_an_untruncated_parse_failure_is_not_retried():
-    d, calls = _decide([{"text": "no json here at all"}])
-    assert calls == [None] and d.get("error")
+    d, calls = _decide([{"text": "no json here at all"}], think=True)
+    assert calls == [True] and d.get("error")
