@@ -24450,6 +24450,36 @@ async def cap_dag_agent_loop_v6(
     tier_info: Dict[str, Any] = {}
     intent = "mixed"          # goal KIND (build/research/action/mixed) — see below
     _intent_info: Dict[str, Any] = {}
+    # ── INTENT CORE before the TIER brief (roadmap G3, 2026-10-03) ──────────────
+    # The tier pass reads only the first 24 catalogue entries, and it ran BEFORE the
+    # intent was known - so the core never reached it. With the core on, decide the
+    # intent first (heuristic; the LLM only for 'mixed' - the same call as below,
+    # just earlier) and reorder, so the tier brief already leads with the caps this
+    # kind of goal uses. Under stepwise styles the tier brief and the fast path are
+    # the only prefix readers left; the master/broad planners read 24/40 later.
+    _ic_mode = _intent_core.resolve_mode(intent_core) if _intent_core is not None else "off"
+    _ic_applied = False
+    if enable_tiering and _ic_mode != "off":
+        _intent_info = await _v7_decide_intent(
+            goal, use_llm=(plan_tier or "auto").strip().lower() == "auto",
+            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+            session_id=sid)
+        intent = _intent_info.get("intent", "mixed")
+        try:
+            _ic_order, _ic_info = _intent_core.apply(
+                catalog_names, intent, goal, known=CAPABILITY_REGISTRY.keys(),
+                blocked=_catalog_block)
+            _ic_order = _guard_filter_catalog(sid, _ic_order) or list(catalog_names)
+            _ic_info["added"] = [c for c in _ic_info.get("added") or [] if c in _ic_order]
+            _ic_info["front"] = _ic_order[:_intent_core.FRONT]
+            _ic_info["tier_brief_head"] = _ic_order[:24]
+            catalog_names = _ic_order
+            _ic_applied = True
+            await emit_event({"type": "agent_loop_v6.intent_core", "session_id": sid,
+                              "stream_id": stream_id, "mode": _ic_mode, "before_tier": True,
+                              **_ic_info})
+        except Exception as _ice:
+            log.warning("intent core (before tier): %s", _ice)
     if enable_tiering:
         _tier_catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
         tier_info = await _v7_decide_tier(
@@ -24468,10 +24498,11 @@ async def cap_dag_agent_loop_v6(
         # GOAL INTENT (build/research/action/mixed) — the KIND of work, which
         # drives the plan SHAPE (direct-authoring vs research-first) and the
         # phase/HITL tuning below. Same cheap LLM budget as the tier pass.
-        _intent_info = await _v7_decide_intent(
-            goal, use_llm=(plan_tier or "auto").strip().lower() == "auto",
-            model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
-            session_id=sid)
+        if not _ic_applied:          # decided before the tier pass when the core is on
+            _intent_info = await _v7_decide_intent(
+                goal, use_llm=(plan_tier or "auto").strip().lower() == "auto",
+                model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
+                session_id=sid)
         intent = _intent_info.get("intent", "mixed")
         await emit_event({"type": "agent_loop_v6.intent", "session_id": sid,
                           "stream_id": stream_id, "intent": intent,
@@ -24481,8 +24512,7 @@ async def cap_dag_agent_loop_v6(
     # ── INTENT CORE (opt-in): the intent is known now, so the caps it uses move
     #    to the front. Stages that read a prefix see them: fast path 16, master
     #    planner 24, broad 40. Nothing is removed; the cap-guard still applies. ──
-    _ic_mode = _intent_core.resolve_mode(intent_core) if _intent_core is not None else "off"
-    if _ic_mode != "off":
+    if _ic_mode != "off" and not _ic_applied:     # tiering off: apply here, as before
         try:
             _ic_order, _ic_info = _intent_core.apply(
                 catalog_names, intent, goal, known=CAPABILITY_REGISTRY.keys(),

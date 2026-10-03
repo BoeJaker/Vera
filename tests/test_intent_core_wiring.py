@@ -30,10 +30,15 @@ def test_runner_default_is_off():
 
 
 def test_applied_after_the_intent_pass_and_before_the_fast_path():
-    intent_ev = SRC.index('"type": "agent_loop_v6.intent", "session_id": sid')
+    # G3 (2026-10-03): with tiering on, the intent is decided and the core applied BEFORE
+    # the tier brief; the original after-intent application remains for tiering off.
     core = SRC.index('"type": "agent_loop_v6.intent_core"')
+    tier_brief = SRC.index('_tier_catalog_brief = "\\n".join(')
+    intent_ev = SRC.index('"type": "agent_loop_v6.intent", "session_id": sid')
     fast = SRC.index("shortcut = await _v7_single_cap_shortcut(")
-    assert intent_ev < core < fast
+    assert core < tier_brief < intent_ev < fast
+    late = SRC.index('"type": "agent_loop_v6.intent_core"', core + 1)
+    assert intent_ev < late < fast
     # v7's master planner (the v5 runner above has its own copy) comes after it too
     assert SRC.find("mp = await _v5_master_plan(goal, catalog_brief", core) > fast
 
