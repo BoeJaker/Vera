@@ -43,6 +43,28 @@ class PanelReadinessError(RuntimeError):
         super().__init__(f"readiness condition '{condition}' was not met within {timeout_ms}ms")
 
 
+DOC_VIEWPORT = {"width": 1440, "height": 900}
+
+# Per-browser UI prefs the capture browser starts with. Vera keeps these in
+# localStorage, each overriding a server-wide default that is someone's own
+# preference: prod's global UI scale is 1.4, so every capture came out zoomed
+# 140% into a 1440x900 window, and the shell defaulted to its top tabs rather
+# than the left-hand menu the docs describe. Seeding them here changes only
+# this browser - the server values are never written.
+DOC_UI_STORAGE = {
+    "vera:ui:scale": "1",
+    "vera_tab_prefs": json.dumps({"lhm": True}),
+}
+
+
+async def _seed_browser_prefs(session, overrides: Optional[Dict[str, Any]] = None) -> None:
+    prefs = dict(DOC_UI_STORAGE)
+    prefs.update({str(k): str(v) for k, v in (overrides or {}).items()})
+    script = ("(() => { try { const p = " + json.dumps(prefs) + ";"
+              " for (const k in p) localStorage.setItem(k, p[k]); } catch (e) {} })();")
+    await session.context.add_init_script(script)
+
+
 def _iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -190,7 +212,9 @@ async def run_documentation_mission(params: Dict[str, Any],
     session = None
     if do_capture:
         try:
-            session = await _be.start_session(base_url=base_url)
+            session = await _be.start_session(base_url=base_url,
+                                              viewport=dict(params.get("viewport") or DOC_VIEWPORT))
+            await _seed_browser_prefs(session, params.get("ui_storage"))
         except Exception as e:
             do_capture = False
             capture_note = f"browser start failed: {e}"

@@ -811,12 +811,6 @@ implementation and `ready_for_execution: false`.
 ![Calendar](assets/integrations/calendar-panel.png)
 
 *Calendar  ·  captured `default`*
-
-#### System Comms
-
-![System Comms](assets/integrations/syscomms.png)
-
-*System Comms  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

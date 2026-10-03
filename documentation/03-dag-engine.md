@@ -1676,12 +1676,6 @@ curl -s -X POST localhost:8999/dag/agent_loop_v8 -H 'content-type: application/j
 ![Exec](assets/dag-engine/exec-panel.png)
 
 *Exec  ·  captured `default`*
-
-#### Agent Loop Config
-
-![Agent Loop Config](assets/dag-engine/agent-loop-config.png)
-
-*Agent Loop Config  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

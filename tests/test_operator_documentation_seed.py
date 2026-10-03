@@ -27,8 +27,12 @@ def _run(monkeypatch, tmp_path: Path, **params):
     async def _fetch(client, url):
         return [{"id": "p1", "label": "P1"}] if url.endswith("/ui/panels") else []
 
-    async def _start(base_url):
-        return SimpleNamespace(session_id="s1", page=None)
+    class _Ctx:
+        async def add_init_script(self, script):
+            return None
+
+    async def _start(base_url, viewport=None):
+        return SimpleNamespace(session_id="s1", page=None, context=_Ctx())
 
     async def _close(session_id):
         return None

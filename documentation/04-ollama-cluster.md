@@ -871,12 +871,6 @@ Models › **Training** shows the workers that train and their libraries, where 
 
 *Monitor  ·  captured `default`*
 
-#### Estate
-
-![Estate](assets/ollama-cluster/workers-ollama.png)
-
-*Estate  ·  captured `default`*
-
 #### Models
 
 ![Models](assets/ollama-cluster/models.png)

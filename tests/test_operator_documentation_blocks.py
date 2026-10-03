@@ -35,7 +35,15 @@ old
 """
 
 
-def _run(monkeypatch, tmp_path: Path, fail=(), **params):
+class _Ctx:
+    def __init__(self):
+        self.scripts = []
+
+    async def add_init_script(self, script):
+        self.scripts.append(script)
+
+
+def _run(monkeypatch, tmp_path: Path, fail=(), started=None, **params):
     shot_urls = []
 
     async def _ensure(target, call_cap, default_base):
@@ -46,8 +54,11 @@ def _run(monkeypatch, tmp_path: Path, fail=(), **params):
             return [{"id": "alpha", "label": "Alpha"}, {"id": "beta", "label": "Beta"}]
         return [{"name": "demo.ping", "description": "Ping."}]
 
-    async def _start(base_url):
-        return SimpleNamespace(session_id="s1", page=None)
+    async def _start(base_url, viewport=None):
+        sess = SimpleNamespace(session_id="s1", page=None, context=_Ctx(), viewport=viewport)
+        if started is not None:
+            started.append(sess)
+        return sess
 
     async def _close(session_id):
         return None
@@ -118,6 +129,26 @@ def test_the_gallery_never_links_a_shot_removed_from_disk(monkeypatch, tmp_path)
     gallery = next((tmp_path / "documentation").glob("GALLERY*.md")).read_text(encoding="utf-8")
     assert "assets/demo/alpha.png" not in gallery
     assert "assets/demo/beta.png" in gallery
+
+
+def test_the_capture_browser_gets_doc_prefs_not_the_servers(monkeypatch, tmp_path):
+    started = []
+    _run(monkeypatch, tmp_path, started=started, write_caps=False)
+
+    sess = started[0]
+    assert sess.viewport == {"width": 1440, "height": 900}
+    script = sess.context.scripts[0]
+    assert '"vera:ui:scale": "1"' in script
+    assert "lhm" in script and "true" in script
+
+
+def test_capture_prefs_and_viewport_can_be_overridden(monkeypatch, tmp_path):
+    started = []
+    _run(monkeypatch, tmp_path, started=started, write_caps=False,
+         viewport={"width": 1920, "height": 1080}, ui_storage={"vera:ui:scale": "1.2"})
+
+    assert started[0].viewport == {"width": 1920, "height": 1080}
+    assert '"vera:ui:scale": "1.2"' in started[0].context.scripts[0]
 
 
 def test_pages_are_shot_by_path_to_a_stable_name_without_a_doc(monkeypatch, tmp_path):
