@@ -2,7 +2,7 @@
 //   node tests/test_ops_panel.cjs
 const fs = require('fs'), path = require('path');
 const R = path.join(__dirname, '..');
-const H = fs.readFileSync(path.join(R, 'vera', 'estate', 'ops_panel.html'), 'utf8');
+const H = fs.readFileSync(path.join(R, 'vera', 'estate', 'ops_panel.html'), 'utf8') + '\n' + fs.readFileSync(path.join(R, 'vera', 'ui', 'iso_lattice.js'), 'utf8');   // the page and its drawing engine
 let fails = 0;
 const t = (name, ok, why) => { console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : '  ' + (why || ''))); if (!ok) fails++; };
 const KINDS = ['server', 'dial', 'tank', 'thermo', 'tower', 'crates', 'chip', 'mast', 'conveyor', 'stack'];
@@ -58,9 +58,12 @@ t('2D pipes have room: 12 px gutter tracks in a 110 px gutter, 7 px row tracks i
 t('zoom reaches 5% (the chrome shrinks gently below 40%) and fit shows the whole lattice', H.includes('clamp(z0 * (e.deltaY > 0 ? .88 : 1.14), .05, 4)') && H.includes('function fitView(all){') && H.includes("else if (k === 'fit'){ render(); fitView(true); }"));
 t('every widget shows its value on a tag below it; widgets bigger (k 28) with a lane of 2.4', H.includes('      out.labels.push({ id: n.id, x: g[0], y: bb.y1 + 4,') && !H.includes('if (i === 0 || S.sel === n.id) out.labels.push') && H.includes('k = 28 * ws * (w.s || 1)'));
 t('one way to move: the plot never grows or scrolls, the canvas zooms from its top-left corner, and the view is clamped so the picture never leaves the window', H.includes('.plot{flex:1 1 auto;min-height:420px;') && H.includes('.pzv{position:absolute;left:0;top:0;transform-origin:0 0;') && H.includes('function clampView(){') && H.includes('function applyZoom(){ clampView();'));
-t('entry animations let go when they finish and their classes are cleared after the build', !H.includes(' both;animation-delay:var(--ed') && H.includes("S.entT = setTimeout(() => { document.querySelectorAll('#pzv .ent')"));
+t('entry animations let go when they finish and their classes are cleared after the build', !H.includes(' both;animation-delay:var(--ed') && H.includes("S.entT = setTimeout(() => { v.querySelectorAll('.ent')"));
 t('a size change keeps the zoom and the middle of the view (no refit); cards keep their own size at any zoom; the 3D tilt opens at 26 deg', H.includes("S.wsz = parseFloat(t.dataset.wsz); saveV(); keepCentre(() => render()); return;") && H.includes('scale(var(--uic,1))') && H.includes("(S.layout3d === 'flat' ? 34 : 26)") && !H.includes(': 12.6)'));
 t('each plane sizes its own columns and is centred; a full-width rail keeps risers on a floor; a new 3D view opens at 25% or more', H.includes('uOf = (pl) => FLAT ? uOff[pl] : (UW - UWp[pl]) / 2,') && !H.includes('rail: true') && H.includes('riserOf[key] = clamp(riserOf[key], Math.max(lo(A.pl), lo(B.pl)), Math.min(hi(A.pl), hi(B.pl)));') && H.includes('all ? 0.05 : 0.25'));
 t('one plate per plane with a margin all round; a pin stands just right of its gutter so its widgets fill the cell; the Metrics tab carries key figures, bars, history range, latency percentiles, requests through and each widget value', H.includes('const u = domLp[n.plane][n.domain] + c * cellW(n.plane, n.domain) + 2.4 * SP + uOf(n.plane),') && H.includes('const uL = -0.8 * SP,') && H.includes('function metricsHtml(n){') && H.includes("else if (cur === 'metrics'){ body = metricsHtml(n); }"));
+const PG = fs.readFileSync(path.join(R, 'vera', 'estate', 'ops_panel.html'), 'utf8'), LT = fs.readFileSync(path.join(R, 'vera', 'ui', 'iso_lattice.js'), 'utf8');
+t('the lattice is one engine (/ui/iso-lattice.js): the page draws through it and keeps no copy of its layout, routing or widgets', PG.includes('<script src="/ui/iso-lattice.js"></script>') && PG.includes('const LAT = window.VeraLattice.engine({') && PG.includes('const lay = LAT.draw(opts);') && !PG.includes('function layout(W, H){') && !PG.includes('function isoWidgets(lay, W, H){') && LT.includes('function layout(W, H){') && LT.includes('function mount(host, o){'));
+t('the engine carries the plot CSS the page wears, rule for rule', (() => { const css = PG.slice(PG.indexOf('<style>'), PG.indexOf('</style>')); const m = LT.match(/const CSS = ('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*");/); if (!m) return false; const body = eval(m[1]); return body.split('\n').filter((l) => l.trim() && !l.startsWith(':host') && !l.startsWith('  --')).every((l) => css.includes(l)); })());
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
