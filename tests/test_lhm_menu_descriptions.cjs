@@ -10,6 +10,8 @@ const DESCRIBED = {
   'Notebook': ['vera', 'research', 'notebook_panel.html'],
   'IDE': ['vera', 'ide', 'vscode_panel.html'],
   'Workspaces': ['vera', 'remote', 'workspace_panel.html'],
+  'DAG workshop': ['vera', 'dag', 'dag_workshop_panel.html'],
+  'Telegram': ['vera', 'telegram', 'telegram_panel.html'],
 };
 for (const [name, file] of Object.entries(DESCRIBED)) {
   const H = fs.readFileSync(path.join(__dirname, '..', ...file), 'utf8');

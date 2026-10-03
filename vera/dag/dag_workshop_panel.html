@@ -581,39 +581,39 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
     <div><h1>DAG Workshop</h1><div class="sub">Capabilities &amp; loops</div></div>
   </div>
   <nav id="nav">
-    <button class="nav-btn active" data-section="library" onclick="dwSection('library')">
+    <button class="nav-btn active" data-section="library" data-label="Library" data-desc="Find saved DAGs by meaning" data-desc-long="The DAG library: semantic search over saved DAG workflows (e.g. &quot;analyse a webpage&quot;), filter by kind, open one to run or edit. The badge counts them." onclick="dwSection('library')">
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
       Library<span class="dw-nb-badge" id="nav-lib-count">—</span>
     </button>
-    <button class="nav-btn" data-section="builder" onclick="dwSection('builder')">
+    <button class="nav-btn" data-section="builder" data-label="Builder" data-desc="Build a DAG from a goal" data-desc-long="The DAG builder: plan a DAG from a goal, then edit it visually or as JSON before running or saving it." onclick="dwSection('builder')">
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><line x1="6" y1="9" x2="12" y2="15"/><line x1="18" y1="9" x2="12" y2="15"/></svg>
       Builder
     </button>
-    <button class="nav-btn" data-section="agentloop" onclick="dwSection('agentloop')">
+    <button class="nav-btn" data-section="agentloop" data-label="Agent Loop" data-desc="Run an agentic loop on a goal" data-desc-long="The agent loop runner: describe a goal in natural language and run (or stop) an agentic loop on it." onclick="dwSection('agentloop')">
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><circle cx="12" cy="14" r="2"/></svg>
       Agent Loop
     </button>
-    <button class="nav-btn" data-section="loopbuilder" onclick="dwSection('loopbuilder')">
+    <button class="nav-btn" data-section="loopbuilder" data-label="Loop Builder" data-desc="Compose a loop from blocks" data-desc-long="The loop builder: compose a custom agentic flow from primitive blocks - drag from the palette, edit in the inspector, then run or save; can start from a loop variant (v3, v4 ...)." onclick="dwSection('loopbuilder')">
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><line x1="10" y1="6.5" x2="14" y2="6.5"/><line x1="6.5" y1="10" x2="6.5" y2="14"/><line x1="17.5" y1="10" x2="17.5" y2="14"/></svg>
       Loop Builder
     </button>
-    <button class="nav-btn" data-section="loops" onclick="dwSection('loops');loopsLoad()">
+    <button class="nav-btn" data-section="loops" data-label="Specialist Loops" data-desc="Loops pinned to a specialist" data-desc-long="Specialist loops: each pins an engine, a specialist agent and a scoped panel/capability family; Run loads a profile into the Agent Loop runner. The badge counts them." onclick="dwSection('loops');loopsLoad()">
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.5 2.5M16.5 16.5L19 19M19 5l-2.5 2.5M7.5 16.5L5 19"/></svg>
       Specialist Loops<span class="dw-nb-badge" id="nav-loops-count">—</span>
     </button>
-    <button class="nav-btn" data-section="loopeval" onclick="dwSection('loopeval')">
+    <button class="nav-btn" data-section="loopeval" data-label="Loop Eval / Sim" data-desc="Evaluate loops; Loop Lab" data-desc-long="Loop evaluation and simulation, with a link to Loop Lab (CI/CD to test, evaluate, improve and gate changes to the agent loops)." onclick="dwSection('loopeval')">
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
       Loop Eval / Sim
     </button>
-    <button class="nav-btn" data-section="registered" onclick="dwSection('registered')">
+    <button class="nav-btn" data-section="registered" data-label="Registered Caps" data-desc="DAGs promoted to capabilities" data-desc-long="The DAGs currently promoted to live capabilities. The badge counts them." onclick="dwSection('registered')">
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
       Registered Caps<span class="dw-nb-badge" id="nav-reg-count">—</span>
     </button>
-    <button class="nav-btn" data-section="streams" onclick="dwSection('streams')">
+    <button class="nav-btn" data-section="streams" data-label="Streams" data-desc="Active and recent streams" data-desc-long="Active and recent output streams, filterable by kind (llm, agent_loop ...). The badge counts them." onclick="dwSection('streams')">
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><path d="M2 12h4l3-9 4 18 3-9h6"/></svg>
       Streams<span class="dw-nb-badge" id="nav-stream-count">—</span>
     </button>
-    <button class="nav-btn" data-section="jobs" onclick="dwSection('jobs');jobsRefresh()">
+    <button class="nav-btn" data-section="jobs" data-label="Jobs &amp; Streams" data-desc="The jobs and streams observatory" data-desc-long="The jobs &amp; streams observatory: running and recent jobs with their streams, auto-refreshing. The badge counts them." onclick="dwSection('jobs');jobsRefresh()">
       <svg class="dw-nb-ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Jobs &amp; Streams<span class="dw-nb-badge" id="nav-jobs-count">—</span>
     </button>
