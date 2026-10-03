@@ -223,3 +223,27 @@ def describe_missing_anchor(content: str, find: str, *, edit_no: int = 1) -> str
     return (f"{head}. Nothing in the file resembles it, so the anchor is not a "
             "near miss - you are editing the wrong file, or the content you "
             "expect was never written. Read the file before editing it again.")
+
+
+def ambiguous_context(content: str, find: str, *, limit: int = 4) -> str:
+    """For an anchor that matches several places: the nearest non-blank line ABOVE each
+    match, so the editor can copy the one that makes its anchor unique.
+
+    Prod 30 Sep - 3 Oct: of the code.edit failures, the largest group was an anchor
+    matching several places (19 of 57 failure parts) - "matches 11 places (lines 91, 133,
+    ...) - extend it with an adjacent unique line" - and the retry, told only the line
+    numbers, guessed the context again. '' when `find` does not repeat."""
+    if not find or content.count(find) < 2:
+        return ""
+    lines = content.splitlines()
+    shown: List[str] = []
+    pos = content.find(find)
+    while pos != -1 and len(shown) < limit:
+        at = content.count("\n", 0, pos)              # 0-based line of the match
+        j = at - 1
+        while j >= 0 and not lines[j].strip():
+            j -= 1
+        above = repr(lines[j].strip()[:90]) if j >= 0 else "(start of file)"
+        shown.append("line %d (line above, %s: %s)" % (at + 1, j + 1 if j >= 0 else "-", above))
+        pos = content.find(find, pos + 1)
+    return "where each match sits - " + "; ".join(shown)
