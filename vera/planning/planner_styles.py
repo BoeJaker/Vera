@@ -759,8 +759,9 @@ CRITIC_SYSTEM = (
     "You are the REVIEWER beside an agentic loop. The loop has just finished one step; you "
     "check it against the GOAL while the loop carries on. Be concrete and brief, as plain "
     "bullet lines under these labels (omit a label with nothing under it):\n"
-    "MISSING: parts of the goal this step was meant to cover but did not, or that no step has "
-    "covered yet\n"
+    "MISSING: parts of THIS step's own job (its title and success criterion) that it did not do. "
+    "Work a LATER step is for is not missing - the run is not over; name it only if this step's "
+    "result makes it harder\n"
     "WRONG: anything in the step's result that contradicts the goal or is unsupported (a value "
     "that was not applied, a file that was not written, a claim with no source)\n"
     "NEXT: what the next step must do or check because of this\n"
@@ -786,8 +787,10 @@ MAX_CRITIC_RESULT_CHARS = 3000
 CRITIC_WRITE_TOOLS = frozenset({"code.author", "code.edit", "prose.author",
                                 "sandbox.session.fs.write", "artifact.write", "fs.write"})
 CRITIC_MAX_FILES = 3
-CRITIC_FILE_CHARS = 1500
-CRITIC_EVIDENCE_CHARS = 4000
+#: Raised 3 Oct (was 1500/4000): reviewing a 5-10 KB report the critic wrote "the file is
+#: truncated at 1500 chars; cannot verify coverage". It runs off the main path, in parallel.
+CRITIC_FILE_CHARS = 4000
+CRITIC_EVIDENCE_CHARS = 9000
 
 
 def critic_written_paths(history: Sequence[Any], limit: int = CRITIC_MAX_FILES) -> List[str]:
@@ -849,16 +852,23 @@ def critic_prompt(goal: str, done_when: str, step: Dict[str, Any], result: Dict[
             + (("\n\n" + evidence) if evidence else ""))
 
 
+#: A labelled line that says nothing ("MISSING: None.", "WRONG: none", "NEXT: OK"). Since
+#: 30 Sep 81 of 86 critiques counted as flags, many of them only such lines - an empty
+#: review reached the controller and the gate as REVIEWER NOTES. "None ..., but X" keeps.
+_EMPTY_LABELLED = re.compile(r"^(?:missing|wrong|next)\s*:\s*(?:none|n/?a|nothing|ok)\b(?!.*\bbut\b)",
+                             re.IGNORECASE)
+
+
 def critic_note(text: Any) -> str:
     """The critique as bounded bullet lines; '' when the reviewer found nothing
-    to add ("OK") or said nothing."""
+    to add ("OK", or only labels with None/OK under them) or said nothing."""
     t = str(text or "").strip()
     if not t or t.strip(" .").upper() == "OK":
         return ""
     lines: List[str] = []
     for raw in _LINE_SPLIT.split(t):
         line = _BULLET_STRIP.sub("", raw).strip()
-        if line and line.strip(" .").upper() != "OK":
+        if line and line.strip(" .").upper() != "OK" and not _EMPTY_LABELLED.match(line):
             lines.append(line[:MAX_BULLET_CHARS])
         if len(lines) >= 8:
             break
