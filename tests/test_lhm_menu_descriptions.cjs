@@ -22,6 +22,7 @@ const DESCRIBED = {
   'Email': ['vera', 'email', 'email_panel.html'],
   'Net ops': ['vera', 'proxmox', 'netops_panel.html'],
   'UI Builder': ['vera', 'ui builder', 'ui_builder_panel.html'],
+  'Markets': ['vera', 'markets', 'markets_studio_panel.html'],
 };
 for (const [name, file] of Object.entries(DESCRIBED)) {
   const H = fs.readFileSync(path.join(__dirname, '..', ...file), 'utf8');
@@ -52,6 +53,21 @@ for (const [name, file, attr, ids] of BY_ID) {
     return !tags.some((tg) => /data-label="[^"]+"/.test(tg) && /data-desc="[^"]{8,140}"/.test(tg) && /data-desc-long="[^"]{12,600}"/.test(tg));
   });
   t(name + ': every one of its ' + ids.length + ' menu items has a name, a short and a long description', bad.length === 0, bad.join(', '));
+}
+
+// menus built in script: Business (a description map its _navBtn reads), Loop Lab (registerNav items), Markets' late buttons
+{
+  const B = fs.readFileSync(path.join(__dirname, '..', 'vera', 'business', 'business_panel.html'), 'utf8');
+  const navIds = [...B.slice(B.indexOf('const NAV = ['), B.indexOf('const ALL_SECTIONS')).matchAll(/\['(\w+)','/g)].map((m) => m[1]);
+  const storeIds = [...B.slice(B.indexOf('const STORE_SECTIONS=['), B.indexOf('function openStore')).matchAll(/\['(\w+)','/g)].map((m) => m[1]);
+  const navDesc = B.slice(B.indexOf('const NAV_DESC = {'), B.indexOf('const STORE_DESC = {')), storeDesc = B.slice(B.indexOf('const STORE_DESC = {'), B.indexOf('function _navBtn('));
+  t('Business: every section (' + navIds.length + ') and store section (' + storeIds.length + ') is described', navIds.length >= 13 && storeIds.length >= 10 && navIds.every((id) => new RegExp('\\b' + id + ":\\['(?:[^'\\\\]|\\\\.){8,}','(?:[^'\\\\]|\\\\.){12,}'\\]").test(navDesc)) && storeIds.concat('__back').every((id) => new RegExp('\\b' + id + ":\\['(?:[^'\\\\]|\\\\.){8,}','(?:[^'\\\\]|\\\\.){12,}'\\]").test(storeDesc)), navIds.concat(storeIds).join(','));
+  t('Business: its menu buttons carry them', /const d=\(STORE_OPEN\?STORE_DESC:NAV_DESC\)\[id\]; b\.dataset\.label=label; if\(d\)\{ b\.dataset\.desc=d\[0\]; b\.dataset\.descLong=d\[1\]; \}/.test(B));
+  const E = fs.readFileSync(path.join(__dirname, '..', 'vera', 'evolve', 'evolve_panel.html'), 'utf8');
+  const items = (E.slice(E.indexOf('VeraPanelBridge.registerNav(['), E.indexOf(']);', E.indexOf('VeraPanelBridge.registerNav(['))).match(/\{id:'[^']+'[^}]*\}/g) || []);
+  t('Loop Lab: all ' + items.length + ' items carry an icon, a short and a long description', items.length === 6 && items.every((x) => /icon:'[^']+'/.test(x) && /desc:'[^']{8,}'/.test(x) && /desc_long:'[^']{8,}'/.test(x)));
+  const M = fs.readFileSync(path.join(__dirname, '..', 'vera', 'markets', 'markets_studio_panel.html'), 'utf8');
+  t('Markets: its late buttons (News, Flow, Dash) are described too', ['news', 'flow', 'dash'].every((v) => new RegExp("b\\.dataset\\.view='" + v + "';[^\\n]*b\\.dataset\\.desc='[^']{8,}'; b\\.dataset\\.descLong='[^']{20,}';").test(M)));
 }
 
 console.log(fails ? fails + ' FAILED' : 'all passed');

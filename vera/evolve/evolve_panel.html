@@ -1049,8 +1049,13 @@ function nav(sec){
 // — every button above already carries data-sec, which VeraPanelBridge's
 // generic nav_select fallback matches directly.
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
-  {id:'work', label:'Work'}, {id:'ship', label:'Ship'}, {id:'agents', label:'Agents'},
-  {id:'mission', label:'Mission control'}, {id:'schedule', label:'Schedule'}, {id:'settings', label:'Settings'},
+  // icon, desc (short, on hover) and desc_long (for agents) ride into the docked menu (2026-10-03)
+  {id:'work', label:'Work', icon:'\u25a4', desc:'Every task and driver run', desc_long:'Every task and every driver run - census, suite, improvement, single - in one table, with what is live on top.'},
+  {id:'ship', label:'Ship', icon:'\u2197', desc:'Every branch and its pipeline', desc_long:'Every branch - its pipeline, review, sandbox and tests - in one table, with the commit graph, race lanes, authorship and gate strip below it.'},
+  {id:'agents', label:'Agents', icon:'\u2609', desc:'Every agent session', desc_long:'Every agent session - Claude Code, Codex, a Vera loop, an edit-queue agent - with its board items, pipelines and sandboxes, and the board by lane.'},
+  {id:'mission', label:'Mission control', icon:'\u25c9', desc:'Every event; what needs a person', desc_long:'Every event - actions, errors, gates - in one table, with what is live and what needs a person above it.'},
+  {id:'schedule', label:'Schedule', icon:'\u25a6', desc:'A calendar of Loop Lab work', desc_long:'A calendar of Loop Lab work - censuses, suites, tasks, pipeline steps, board items - started by the scheduler only when the box is free.'},
+  {id:'settings', label:'Settings', icon:'\u2699', desc:'Loop Lab settings', desc_long:'Loop Lab settings.'},
 ]);
 
 /* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
