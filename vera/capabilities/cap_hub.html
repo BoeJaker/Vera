@@ -517,7 +517,7 @@ select option { background: var(--bg2); }
     </div>
     <nav id="nav">
       <button data-label="Browse" data-desc="Every capability, searchable" data-desc-long="Browse capabilities: every capability, filtered by group, source (local, MCP proxy, distributed) and tracking; track/skip each, call it, see its source and relations." type="button" class="nav-btn active" data-pane="browse"   title="Browse"      onclick="show('browse')"><span class="gl">⌕</span>Browse</button>
-      <button data-label="Tracking" data-desc="What is recorded, and call limits" data-desc-long="Tracking: which capability calls are recorded as activity, how many calls each group may make per session, and the limits that stop runaway chains of calls." type="button" class="nav-btn"        data-pane="tracking" title="Tracking"    onclick="show('tracking')"><span class="gl">◎</span>Tracking</button>
+      <button data-vera-settings="#pane-tracking" data-label="Tracking" data-desc="What is recorded, and call limits" data-desc-long="Tracking: which capability calls are recorded as activity, how many calls each group may make per session, and the limits that stop runaway chains of calls." type="button" class="nav-btn"        data-pane="tracking" title="Tracking"    onclick="show('tracking')"><span class="gl">◎</span>Tracking</button>
       <button data-label="Ontology" data-desc="The capability ontology" data-desc-long="The capability ontology: capabilities and the relations between them, as a matrix, graph or list." type="button" class="nav-btn"        data-pane="ontology" title="Ontology"    onclick="show('ontology')"><span class="gl">⬡</span>Ontology</button>
       <button data-label="MCP Servers" data-desc="Remote MCP servers" data-desc-long="MCP servers: remote MCP servers registered with Vera, whose tools are proxied as capabilities (source mcp); register a server or browse the catalog." type="button" class="nav-btn"        data-pane="mcp"      title="MCP Servers" onclick="show('mcp')"><span class="gl">▤</span>MCP Servers</button>
       <button data-label="Modules" data-desc="Capability modules loaded" data-desc-long="Modules: the capability modules loaded at startup and how many capabilities each added; a module that failed shows its status." type="button" class="nav-btn"        data-pane="modules"  title="Modules"     onclick="show('modules')"><span class="gl">▦</span>Modules</button>
@@ -2688,5 +2688,6 @@ customElements.define('vera-job-stream', class extends HTMLElement {
 <link rel="stylesheet" href="/ui/vera-panel.css">
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>

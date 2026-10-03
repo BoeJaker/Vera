@@ -20,7 +20,10 @@ const pairs = [
 for (const [name, chat, shared] of pairs) t(name + ' - as the chat\'s page', chat.test(CHAT) && shared.test(VS), 'chat ' + chat.test(CHAT) + ' shared ' + shared.test(VS));
 
 // behaviour
-t('the item opens it before the panel\'s own handler (capture on the document)', /document\.addEventListener\('click', function\(ev\)\{\n    var t = ev\.target && ev\.target\.closest \? ev\.target\.closest\('\[data-vera-settings\]'\) : null;\n    if\(!t\) return;\n    ev\.preventDefault\(\); ev\.stopPropagation\(\);\n    open\(t\);\n  \}, true\);/.test(VS));
+t('the item opens it before the panel\'s own handler (capture on the document)', /document\.addEventListener\('click', function\(ev\)\{\n    var t = ev\.target && ev\.target\.closest \? ev\.target\.closest\('\[data-vera-settings\]'\) : null;\n    if\(!t \|\| _pass\) return;[^\n]*\n    ev\.preventDefault\(\); ev\.stopPropagation\(\);\n    open\(t\);\n  \}, true\);/.test(VS));
+t('the panel\'s own handler still runs first (a replayed click), so whatever fills the section loads', /if\(!_cur\)\{ _pass = true; try\{ trigger\.click\(\); \}catch\(e\)\{\} finally\{ _pass = false; \} \}/.test(VS));
+t('openSection: a panel that builds its settings when asked hands its element over', /function openSection\(sec, opts\)\{/.test(VS) && /window\.VeraSettings = \{[^}]*openSection/.test(VS));
+t('a block whose place the panel re-drew goes back into the section, never lost', /else if\(sec\)\{ sec\.appendChild\(m\.el\); \}/.test(VS));
 t('blocks are MOVED in and back where they were', /var mark = document\.createComment\('vera-settings'\); k\.parentNode\.insertBefore\(mark, k\);/.test(VS) && /m\.mark\.parentNode\.insertBefore\(m\.el, m\.mark\)/.test(VS) && !/cloneNode/.test(VS));
 t('Esc closes, Ctrl/Cmd + , opens', /if\(ev\.key === 'Escape' && _cur\)\{ ev\.preventDefault\(\); close\(\); return; \}/.test(VS) && /\(ev\.ctrlKey \|\| ev\.metaKey\) && ev\.key === ','/.test(VS));
 t('an explanation is the line under the title, not a card; only cards with fields or a heading are listed', /lead = _txt\(k\); k\.setAttribute\('data-vs-lead', ''\); return;/.test(VS) && /var nm = cardTitle\(k\); if\(!nm\)\{ rows\.push\(\{ row: null, card: card \}\); return; \}/.test(VS));
@@ -30,7 +33,8 @@ t('served at /ui/vera-settings.js', /@APP\.get\("\/ui\/vera-settings\.js", inclu
 
 // the panels on it: their settings item points at a section that exists, and the page loads the script
 const PANELS = [['Telegram', ['vera', 'telegram', 'telegram_panel.html']], ['Email', ['vera', 'email', 'email_panel.html']], ['Storage', ['vera', 'proxmox', 'pxstore_panel.html']],
-  ['Dream', ['vera', 'dream', 'dream_panel.html']], ['Research', ['vera', 'research', 'research_panel.html']], ['Calendar', ['vera', 'calendar', 'calendar_panel.html']], ['Loop Lab', ['vera', 'evolve', 'evolve_panel.html']]];
+  ['Dream', ['vera', 'dream', 'dream_panel.html']], ['Research', ['vera', 'research', 'research_panel.html']], ['Calendar', ['vera', 'calendar', 'calendar_panel.html']], ['Loop Lab', ['vera', 'evolve', 'evolve_panel.html']],
+  ['Home Assistant', ['vera', 'homeassistant', 'ha_panel.html']], ['Capabilities', ['vera', 'capabilities', 'cap_hub.html']]];
 for (const [name, file] of PANELS) {
   const H = R(...file);
   const sel = (H.match(/data-vera-settings="([^"]+)"/) || [])[1] || '';
@@ -38,6 +42,11 @@ for (const [name, file] of PANELS) {
   t(name + ': its settings item opens the shared page, on a section that exists', !!sel && exists, sel);
   t(name + ': loads /ui/vera-settings.js', /<script src="\/ui\/vera-settings\.js"><\/script>/.test(H));
 }
+
+// the Notebook builds its settings popup when the gear is pressed, then hands it over
+{ const NB = R('vera', 'research', 'notebook_panel.html');
+  t('Notebook: the gear opens its popup in the shared page', /if\(window\.VeraSettings && VeraSettings\.openSection\)\{ VeraSettings\.openSection\(pop, \{ label: 'Notebook settings' \}\); return; \}/.test(NB));
+  t('Notebook: loads /ui/vera-settings.js', /<script src="\/ui\/vera-settings\.js"><\/script>/.test(NB)); }
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

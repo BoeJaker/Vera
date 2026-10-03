@@ -77,6 +77,8 @@
       var tag = String(k.tagName || '').toUpperCase();
       if(tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEMPLATE') return;
       if(!title && /^H[1-4]$/.test(tag)){ title = _txt(k); return; }
+      /* a short first line with nothing to set (a pop-up's title) */
+      if(!title && !cards.length && !_fields(k) && !_hasButton(k) && _txt(k).length && _txt(k).length <= 60 && !(k.children && k.children.length > 3)){ title = _txt(k); k.setAttribute('data-vs-lead', ''); return; }
       /* a header block - a heading and words, nothing to set - before any card: the title and its line */
       if(!title && !cards.length && !_fields(k) && !_hasButton(k)){ var hh = k.querySelector && k.querySelector('h1,h2,h3,h4,h5,.title,.card-title'); if(hh && _txt(hh)){ title = _txt(hh); var rest = _txt(k).replace(_txt(hh), '').trim(); if(rest && rest.length < 320) lead = rest; k.setAttribute('data-vs-lead', ''); return; } }
       // the line under the title: a paragraph, or the first block that holds text but nothing to set (an explanation)
@@ -110,12 +112,21 @@
     return String(f.getAttribute && (f.getAttribute('placeholder') || f.getAttribute('aria-label') || f.getAttribute('name') || f.id) || 'Settings').replace(/[-_]+/g, ' ').trim().slice(0, 48);
   }
 
-  var _page = null, _cur = null;
+  var _page = null, _cur = null, _pass = false;
   function isOpen(){ return !!_cur; }
+  /* a panel's settings item: its OWN handler runs first - it shows its section and starts whatever fills it (a health list,
+     a table loaded on show) - then the section's blocks come into the page */
   function open(trigger){
     var sel = trigger && trigger.getAttribute && trigger.getAttribute('data-vera-settings');
     var sec = sel ? document.querySelector(sel) : null;
     if(!sec) return false;
+    if(!_cur){ _pass = true; try{ trigger.click(); }catch(e){} finally{ _pass = false; } }
+    return openSection(sec, { label: trigger.getAttribute('data-label') || _txt(trigger), trigger: trigger });
+  }
+  /* the page over any element holding settings - for a panel whose settings are built when asked for (the Notebook's ⚙):
+     it fills its element, then calls VeraSettings.openSection(el, {label}) */
+  function openSection(sec, opts){
+    opts = opts || {}; if(!sec) return false;
     close(); _css();
     var parts = sectionParts(sec), moved = [];
     var page = _el('div', 'vs-page'); page.setAttribute('data-w', 'settings · page'); page.setAttribute('role', 'dialog'); page.setAttribute('aria-label', 'Settings');
@@ -127,7 +138,7 @@
     var idx = _el('nav', 'vs-idx'), ih = _el('div', 'vs-idx-hd'), srch = _el('label', 'vs-srch', '⌕'), q = _el('input'); q.type = 'search'; q.placeholder = 'Find a setting'; srch.appendChild(q); ih.appendChild(srch); idx.appendChild(ih);
     var ib = _el('div', 'vs-idx-bd'); var grp = _el('div', 'vs-grp'); grp.appendChild(document.createTextNode(_panelName() + ' ')); var grpCt = _el('b', '', ''); grp.appendChild(grpCt); ib.appendChild(grp);
     idx.appendChild(ib); bd.appendChild(idx);
-    var cn = _el('main', 'vs-cn'), sh = _el('div', 'vs-sec-h'); sh.appendChild(_el('h3', '', String(parts.title || '').replace(/^[^A-Za-z0-9]+/, '') || (trigger.getAttribute('data-label') || _txt(trigger).replace(/^[^A-Za-z0-9]+/, '') || 'Settings')));   /* no heading: the item's own name */ if(parts.lead) sh.appendChild(_el('span', 'lbl', parts.lead)); cn.appendChild(sh);
+    var cn = _el('main', 'vs-cn'), sh = _el('div', 'vs-sec-h'); sh.appendChild(_el('h3', '', String(parts.title || '').replace(/^[^A-Za-z0-9]+/, '') || (String(opts.label || '').replace(/^[^A-Za-z0-9]+/, '') || 'Settings')));   /* no heading: the item's own name */ if(parts.lead) sh.appendChild(_el('span', 'lbl', parts.lead)); cn.appendChild(sh);
     var grid = _el('div', 'vs-grid'); cn.appendChild(grid); bd.appendChild(cn); page.appendChild(bd);
     var rows = [];
     parts.cards.forEach(function(k, i){
@@ -142,21 +153,23 @@
     if(!parts.cards.length) grid.appendChild(_el('div', 'vs-empty', 'This panel has no settings to show.'));
     q.addEventListener('input', function(){ var v = q.value.trim().toLowerCase(); rows.forEach(function(r){ var hit = !v || _txt(r.card).toLowerCase().indexOf(v) >= 0 || (r.row && _txt(r.row).toLowerCase().indexOf(v) >= 0); if(r.row) r.row.hidden = !hit; r.card.hidden = !hit; }); });
     document.body.appendChild(page);
-    _page = page; _cur = { trigger: trigger, sec: sec, moved: moved };
+    _page = page; _cur = { trigger: opts.trigger || null, sec: sec, moved: moved };
     try{ q.focus(); }catch(e){}
     return true;
   }
   // every block goes back where it was, in its order - with whatever was typed into it
   function close(){
     if(!_cur) return false;
-    _cur.moved.forEach(function(m){ if(m.mark.parentNode){ m.mark.parentNode.insertBefore(m.el, m.mark); m.mark.parentNode.removeChild(m.mark); } });
+    var sec = _cur.sec;
+    _cur.moved.forEach(function(m){ if(m.mark.parentNode){ m.mark.parentNode.insertBefore(m.el, m.mark); m.mark.parentNode.removeChild(m.mark); }
+      else if(sec){ sec.appendChild(m.el); } });   /* the panel re-drew the section while the page was open: back into it, never lost */
     if(_page && _page.parentNode) _page.parentNode.removeChild(_page);
     _page = null; _cur = null; return true;
   }
   // the item opens the page, before the panel's own handler can show its in-page section (capture, on the document)
   document.addEventListener('click', function(ev){
     var t = ev.target && ev.target.closest ? ev.target.closest('[data-vera-settings]') : null;
-    if(!t) return;
+    if(!t || _pass) return;   /* _pass: our own replay of the item's click, for the panel's handler */
     ev.preventDefault(); ev.stopPropagation();
     open(t);
   }, true);
@@ -165,5 +178,5 @@
     if((ev.ctrlKey || ev.metaKey) && ev.key === ','){ var t = document.querySelector('[data-vera-settings]'); if(t){ ev.preventDefault(); if(_cur) close(); else open(t); } }
   }, true);
 
-  window.VeraSettings = { open: open, close: close, isOpen: isOpen, sectionParts: sectionParts, cardTitle: cardTitle, css: _css };
+  window.VeraSettings = { open: open, openSection: openSection, close: close, isOpen: isOpen, sectionParts: sectionParts, cardTitle: cardTitle, css: _css };
 })();
