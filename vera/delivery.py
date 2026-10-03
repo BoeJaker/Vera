@@ -186,6 +186,14 @@ def _build_canvas_report(rendered: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
     return args
 
 
+def _build_store(rendered: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """The rich HTML report (report.html), kept in the estate's object store (report.store) as well as served."""
+    args = _build_html(rendered, {**ctx, "target": ""})
+    if ctx.get("target"):
+        args["session_id"] = ctx["target"]
+    return args
+
+
 _BUILDERS: Dict[str, Callable[[str, Dict[str, Any]], Dict[str, Any]]] = {
     "tg.notify":        _build_telegram,
     "memory.store":     _build_memory,
@@ -197,6 +205,7 @@ _BUILDERS: Dict[str, Callable[[str, Dict[str, Any]], Dict[str, Any]]] = {
     "report.html":      _build_html,
     "canvas.add":       _build_canvas,
     "report.canvas":    _build_canvas_report,
+    "report.store":     _build_store,
 }
 
 
@@ -256,6 +265,14 @@ DELIVERY_CHANNELS: Dict[str, Dict[str, Any]] = {
         "needs_target": True, "target_field": "session_id",
         "target_label": "Chat session id or canvas id (blank = calling session)",
     },
+    # THE ESTATE'S STORAGE IS A DELIVERY VECTOR (owner, 2026-10-03: "can the vera estate cloud storage be a delivery
+    # mechanism so we could save reports there as an output option"): the rich HTML report and its source, kept in the
+    # estate's object store (the fabric's bucket, under reports/<year-month>/) with a link to fetch it.
+    "storage": {
+        "label": "Estate storage", "cap": "report.store", "default_format": "",
+        "needs_target": False, "target_field": "session_id",
+        "target_label": "Chat session id (blank = calling session)",
+    },
 }
 
 # What each channel is FOR, in one line - the menu a model reads when it may pick where its answer goes
@@ -264,6 +281,7 @@ CHANNEL_USE: Dict[str, str] = {
     "canvas":      "a long or structured answer the user will keep open beside the chat (lists, plans, notes)",
     "canvas_html": "a rich visual document - sections, diagrams, infographics - shown on the canvas",
     "html":        "a rich standalone document the user may open in its own tab or keep in the gallery",
+    "storage":     "a report the user wants kept as a file in the estate's storage",
     "podcast":     "something meant to be listened to - a briefing, a story, a long explanation",
     "email":       "something the user asked to receive by email",
     "telegram":    "a short note the user should get on their phone",

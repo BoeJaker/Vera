@@ -66,7 +66,7 @@ def test_the_rail_has_the_designs_eight_menus():
     menus = re.findall(r"\{id:'([a-z]+)',\s*icon:'([^']+)',\s*label:'([^']+)'", block)
     assert [m[0] for m in menus] == ["sessions", "context", "activity", "loop", "workspace", "sandbox", "ops", "settings"]
     assert all(m[1] for m in menus), "every rail menu carries an icon"
-    assert [m[2] for m in menus] == ["Sessions", "Context", "Activity", "Loop", "Workspace", "Sandbox", "Ops glance", "Settings"]
+    assert [m[2] for m in menus] == ["Sessions", "Context", "Activity", "Loop", "Workspace", "Sandbox", "Capabilities", "Settings"]
 
 
 def test_every_menu_has_a_meta_line_and_one_cta():

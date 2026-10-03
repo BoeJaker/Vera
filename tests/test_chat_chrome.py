@@ -22,7 +22,7 @@ def test_the_design_stylesheet_is_last_in_the_head_and_carries_the_boards_rules_
     i = HTML.index('<style id="designChrome">')
     assert HTML.index("</head>") > i and "<style" not in HTML[i + 10:HTML.index("</head>")], "the last stylesheet, so it outranks the old rules"
     css = HTML[i:HTML.index("</style>", i)]
-    for s in ("#topBar{height:52px", "#topBar .agent{", "#topBar .sess #sessionName{", "#topBar #denGroup{display:flex;background:var(--surf2", "#topBar #ctxMeter{",
+    for s in ("#topBar{height:52px", "#topBar .agent{", "#topBar .sess #sessionName{", "#topBar #ctxMeter{",
               "#toolsSheet{display:none;position:absolute", "#rightRail.lhm-host .lhm-rail{width:46px", "#rightRail.lhm-host .lhm-det{width:288px",
               "#msgs .mwrap{width:var(--measure", "#msgs .mwrap.u .msg-user-line{background:var(--surf", "#msgs .msg-gutter.a{color:var(--ac",
               "#msgs .cap-inline{border:none;border-radius:var(--ui-radius", "#msgs .msg-actions .mact:nth-child(n+6){display:none}",
@@ -37,7 +37,7 @@ def test_the_header_is_the_boards_and_every_old_control_stays_alive():
     assert '<div class="sess">' in HTML and 'id="sessMeta"' in HTML and 'onclick="CH.autoName()"' in HTML
     assert 'id="hdrMore" onclick="CH._toolsSheet()"' in HTML and 'id="hdrAa" onclick="CH._appearanceSheet(event)"' in HTML and 'id="toolsSheet"' in HTML
     assert '<span class="xmseg pseg"' in HTML and 'id="colCanvasBtn"' in HTML and 'id="colGraphBtn"' in HTML
-    for ctl in ("autoActBtn", "autoLoopBtn", "capsBtn", "panelsBtn", "webSearchBtn", "ttsBtn", "micBtn", "councilTopBtn", "sdTopBtn", "podTopBtn", "buddyTopBtn", "viewToggleBtn", "denGroup", "blocksBtn", "xplBtn", "xplSeg"):
+    for ctl in ("autoActBtn", "autoLoopBtn", "capsBtn", "panelsBtn", "webSearchBtn", "ttsBtn", "micBtn", "councilTopBtn", "sdTopBtn", "podTopBtn", "buddyTopBtn", "viewToggleBtn", "blocksBtn", "xplBtn", "xplSeg"):
         assert 'id="%s"' % ctl in HTML, ctl
     assert 'onclick="CH._chatSaveToNotebook()"' in HTML and 'onclick="CH._chatSaveToIde()"' in HTML and 'onclick="CH.toggleRight()"' in HTML
     fn = HTML[HTML.index("function _chromeMount(){"):HTML.index("function _lhmMount(){")]

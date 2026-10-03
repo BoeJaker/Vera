@@ -742,6 +742,7 @@
       +     mitem('html', 'html', 'HTML report', 'a rich document - on the canvas or a tab (Settings › Delivery)')
       +     (no('podcast') ? '' : mitem('podcast', 'podcast', 'Podcast', 'a spoken episode, multi-voice'))
       +     mitem('notebook', 'notebook', 'Notebook', 'a cell in a notebook')
+      +     mitem('storage', 'save', 'Estate storage', 'the report kept as a file in the estate\'s storage, with a link')
       +     (has('ide') ? mitem('ide', 'ide', 'A file in the IDE', 'saved through the IDE') : '')
       +     (has('project') ? mitem('project', 'project', 'A project', 'added to a dream-system project') : '')
       +     (has('think') ? mitem('think', 'think', 'Think about it later', 'Vera revisits it when idle') : '')
@@ -787,6 +788,12 @@
       if (a === 'html') { const r = await cap('report.canvas', { content: md, title, mode: 'auto', session_id: session() }); if (r && r.ok) notify(row, 'HTML report on the canvas'); return done(!!(r && r.ok), 'Sent'); }
       if (a === 'podcast') { const r = await cap('podcast.generate', { topic: title, sources: [{ type: 'text', text: md, label: title }], wait: false }); return done(!!(r && (r.job_id || r.episode_id || r.ok)), 'Started'); }
       if (a === 'notebook') { const r = await cap('output.redeliver', { channel: 'notebook', content: md, title, session_id: session() }); return done(!!(r && r.ok), 'Saved'); }
+      // the estate's object store: the HTML report and its source, kept (report.store), with a link that fetches it
+      if (a === 'storage') { flash(row.querySelector('.ma-ddb'), true, 'Saving…');
+        const r = await cap('output.redeliver', { channel: 'storage', content: md, title, session_id: session() });
+        if (r && r.ok) notify(row, 'Saved to the estate storage' + (r.key ? ' · ' + esc(r.key) : '') + (r.store_url ? ' · <a href="' + esc(r.store_url) + '" target="_blank" rel="noopener">open it</a>' : ''));
+        else notify(row, '<span style="color:var(--err,#e06c6c)">Could not save to the estate storage' + (r && r.error ? ': ' + esc(r.error) : '') + '</span>');
+        return done(!!(r && r.ok), 'Saved'); }
       if (a === 'channel') return channelPick(row, ctx);
       if (a === 'explode') return done(false);
       if (a.indexOf('ch:') === 0) { const sel = row.querySelector('.vo-chs select'); const r = await cap('output.redeliver', { channel: a.slice(3), content: md, title, format: sel ? sel.value : '', session_id: session() });

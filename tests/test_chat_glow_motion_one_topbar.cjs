@@ -70,7 +70,7 @@ t('and leaves before it is taken out', /a\.onfinish=\(\)=>\{ col\._leaving=false
 }
 {
   t('the harness takes the offer from the open tab and tells the panel it holds it', /d\.type !== 'vera:hdr:offer'/.test(HAR) && /o\.src\.postMessage\(\{ type: 'vera:hdr:absorbed', on \}/.test(HAR));
-  t('its stats, activity, style and theme step into a drawer', /const _HDR_DRAWER_IDS = \['hdrPills', 'hdrMetrics', 'hdrMetricCfgWrap', 'vao-pill', 'hdrStyleSeg', 'hdrSwatches'\];/.test(HAR));
+  t('its stats, style and theme step into a drawer; the activity dropdown stays in the bar', /const _HDR_DRAWER_IDS = \['hdrPills', 'hdrMetrics', 'hdrMetricCfgWrap', 'hdrStyleSeg', 'hdrSwatches'\];/.test(HAR));
   t('and come back when no panel holds the bar', /else if\(el\.parentNode === dr && el\._hdrMark && el\._hdrMark\.parentNode\)/.test(HAR));
   t('what does not fit goes, lowest priority first', /function _hdrFit\(host\)/.test(HAR) && /\+g\.dataset\.prio > 1/.test(HAR));
   t('the bar follows every change of tab', /_tabRender = function\(\)\{ const r = __tabRender\.apply\(this, arguments\); try\{ _hdrSync\(\); \}catch\(_\)\{\} return r; \};/.test(HAR));

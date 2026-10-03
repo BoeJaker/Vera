@@ -732,7 +732,7 @@ async def output_redeliver(channel: str = "", content: str = "", title: str = ""
     out: Dict[str, Any] = {"ok": ok, "channel": channel, "cap": cap_name,
                            "title": title, "format_used": fmt, "result": res}
     for k in ("url", "download_url", "filename", "artifact_id", "job_id",
-              "episode_id"):
+              "episode_id", "store_url", "key", "bucket"):
         if res.get(k):
             out[k] = res[k]
     if res.get("error"):
@@ -784,6 +784,61 @@ async def report_canvas(content: str = "", title: str = "", mode: str = "auto", 
            "key": key, "resolved": a.get("resolved") or ""}
     if not a.get("ok"):
         out["error"] = a.get("error") or "canvas.add failed"
+    return out
+
+
+# THE ESTATE'S STORAGE AS A DELIVERY VECTOR (owner, 2026-10-03: "can the vera estate cloud storage be a delivery
+# mechanism so we could save reports there as an output option"). The same rich report report.html makes, kept in the
+# estate's object store (the fabric's bucket) with its markdown source beside it - reports/<year-month>/<name>.html and
+# .md - and a link that fetches it. The local copy is still served (url), so the chat can open it as it does any report.
+@capability(
+    "report.store", memory="off",
+    http_method="POST", http_path="/render/report_store", http_tags=["render", "output", "storage"],
+    description="Build a rich HTML report (report.html) and KEEP IT in the estate's object store (the fabric's bucket) "
+                "beside its markdown source, under reports/<year-month>/. Input: content (str!), title (str), "
+                "mode (auto|author|template|pandoc), illustrate (int), session_id (str), prefix (str - default "
+                "reports/<year-month>/). Output: {ok, url, download_url, artifact_id, title, bucket, key, source_key, "
+                "store_url (a link that fetches it from the store, valid 7 days)}.",
+)
+async def report_store(content: str = "", title: str = "", mode: str = "auto", illustrate: int = 0,
+                       session_id: str = "", prefix: str = "", trace_id=None):
+    if not (content or "").strip():
+        return {"ok": False, "error": "content required"}
+    rep, put, sign = _cap("report.html"), _cap("fabric.objects.put"), _cap("fabric.objects.presign")
+    if not rep or not put:
+        return {"ok": False, "error": "report.html or the object store (fabric.objects.put) unavailable"}
+    r = await rep(content=content, title=title or "", mode=mode or "auto",
+                  illustrate=int(illustrate or 0), session_id=session_id)
+    r = r if isinstance(r, dict) else {}
+    name = str(r.get("filename") or "")
+    if not r.get("ok") or not name:
+        return {"ok": False, "error": r.get("error") or "report.html made no document"}
+    try:
+        doc = (_OUT_DIR / name).read_bytes()
+    except OSError as e:
+        return {"ok": False, "error": f"the report could not be read back: {e}"}
+    import base64 as _b64
+    pre = (prefix or "").strip().strip("/") or ("reports/" + time.strftime("%Y-%m"))
+    key, src_key = f"{pre}/{name}", f"{pre}/{name[:-5] if name.endswith('.html') else name}.md"
+    p = await put(key=key, content_base64=_b64.b64encode(doc).decode("ascii"), content_type="text/html; charset=utf-8")
+    p = p if isinstance(p, dict) else {}
+    if not p.get("ok"):
+        return {"ok": False, "error": p.get("error") or "the object store did not take the report", "url": r.get("url") or ""}
+    s = await put(key=src_key, content_base64=_b64.b64encode(content.encode("utf-8")).decode("ascii"),
+                  content_type="text/markdown; charset=utf-8")
+    link = ""
+    if sign:
+        try:
+            g = await sign(key=key, method="get", expires=7 * 24 * 3600)
+            link = str(g.get("url") or "") if isinstance(g, dict) else ""
+        except Exception:
+            link = ""
+    out = {"ok": True, "url": r.get("url") or "", "download_url": r.get("download_url") or "",
+           "artifact_id": r.get("artifact_id") or name, "title": r.get("title") or title or "Report",
+           "bucket": p.get("bucket") or "", "key": key, "source_key": src_key if (isinstance(s, dict) and s.get("ok")) else "",
+           "store_url": link, "bytes": len(doc)}
+    await emit_event({"type": "report.store", "key": key, "bucket": out["bucket"], "title": out["title"],
+                      "session_id": session_id})
     return out
 
 

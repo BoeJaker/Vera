@@ -987,6 +987,64 @@
     (document.body || document.documentElement).appendChild(wrap);
   }
 
+  /* THE APPEARANCE MENU, ON ANY PAGE (owner, 2026-10-03: "sometimes in the chat ui the appearance menu doesnt open ... it
+     opens the full settings panel for the chat instead of the appearance modal"). The chat's Aa asked for this and,
+     finding nothing (only the harness had its own), opened Settings. The same rows the harness's Aa has - style, level
+     of detail, blocks, zoom, text, the themes - anchored under the button that was pressed; a second press closes it. */
+  function openAppearance(ev){
+    if(ev && ev.stopPropagation) ev.stopPropagation();
+    var old = document.getElementById('veraAppearance'); if(old){ old.remove(); return; }
+    if(Date.now() - (openAppearance._shut || 0) < 350) return;   // the press that closed it (outside-click) is the same press
+    var btn = ev && ev.currentTarget && ev.currentTarget.getBoundingClientRect ? ev.currentTarget : null;
+    var menu = document.createElement('div'); menu.id = 'veraAppearance'; menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Appearance');
+    menu.style.cssText = 'position:fixed;z-index:2147483000;min-width:230px;max-height:78vh;overflow-y:auto;padding:6px;'+
+      'background:var(--s1,var(--bg2,#16181d));border:1px solid var(--bd2,var(--border2,rgba(128,128,128,.4)));border-radius:8px;'+
+      'box-shadow:0 12px 34px rgba(0,0,0,.5);font:11px var(--f-ui,var(--sans,system-ui,sans-serif));color:var(--t1,var(--text,#ddd))';
+    var root = document.documentElement;
+    var rows = document.createElement('div');
+    rows.style.cssText = 'display:flex;flex-direction:column;gap:5px;padding:5px 6px 8px;margin-bottom:5px;border-bottom:1px solid var(--bd2,var(--border2,rgba(128,128,128,.3)))';
+    function row(label, opts, get, set){
+      var r = document.createElement('div'); r.style.cssText = 'display:flex;align-items:center;gap:3px';
+      var lab = document.createElement('span'); lab.textContent = label; lab.style.cssText = 'font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3,var(--dim2,#888));min-width:52px'; r.appendChild(lab);
+      function paint(){ Array.prototype.forEach.call(r.querySelectorAll('button'), function(b){ var on = b.dataset.v === get(); b.style.background = on ? 'var(--ac,var(--acc,#5a9e8f))' : 'var(--s3,var(--bg3,rgba(128,128,128,.12)))'; b.style.color = on ? 'var(--on-acc,#fff)' : 'var(--t2,var(--dim2,#aaa))'; }); }
+      opts.forEach(function(o){ var b = document.createElement('button'); b.type = 'button'; b.dataset.v = o[0]; b.textContent = o[1]; b.title = o[2] || '';
+        b.style.cssText = 'font:inherit;font-size:10px;padding:3px 8px;border:1px solid var(--bd2,var(--border2,rgba(128,128,128,.3)));border-radius:4px;cursor:pointer';
+        b.onclick = function(e){ e.stopPropagation(); set(o[0]); paint(); }; r.appendChild(b); });
+      paint(); return r;
+    }
+    rows.appendChild(row('Style', [['standard', 'Standard'], ['newspaper', 'News'], ['terminal', 'Term'], ['pixel', 'Pixel']], function(){ return root.getAttribute('data-style') || 'standard'; }, function(v){ setAppearance({style:v}); }));
+    rows.appendChild(row('Detail', [['full', 'Full', 'Every control shown'], ['hover', 'Hover', 'Controls appear on hover'], ['zen', 'Zen', 'The page alone']], function(){ return root.getAttribute('data-den') || 'full'; }, function(v){ setAppearance({den:v}); }));
+    rows.appendChild(row('Blocks', [['on', 'On'], ['off', 'Off']], function(){ return root.getAttribute('data-blocks') || 'on'; }, function(v){ setAppearance({blocks:v === 'on'}); }));
+    menu.appendChild(rows);
+    try{ menu.appendChild(_makeScaleControl()); }catch(e){}
+    try{ menu.appendChild(_makeTextControl()); }catch(e){}
+    var list = document.createElement('div'); list.innerHTML = '<div style="padding:6px 8px;color:var(--t3,#888)">themes…</div>'; menu.appendChild(list);
+    fetch(BASE + '/ui/themes').then(function(r){ return r.json(); }).then(function(data){
+      var themes = (data && data.themes) || {}; list.innerHTML = '';
+      Object.keys(themes).forEach(function(tid){
+        var t = themes[tid], active = tid === _current;
+        var it = document.createElement('div');
+        it.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer;white-space:nowrap;'+(active ? 'background:var(--bd,rgba(128,128,128,.14))' : '');
+        it.onmouseover = function(){ if(!active) it.style.background = 'var(--s3,var(--bg3,rgba(128,128,128,.1)))'; };
+        it.onmouseout = function(){ if(!active) it.style.background = ''; };
+        it.onclick = function(e){ e.stopPropagation(); window.veraUI.setTheme(tid); menu.remove(); };
+        it.innerHTML = '<span style="width:12px;height:12px;border-radius:50%;flex-shrink:0;background:'+(t.accent||'#888')+';border:1.5px solid '+(active?'var(--t1,#fff)':'transparent')+'"></span>'+
+          '<span style="color:'+(active?'var(--t1,var(--text,#fff))':'var(--t2,var(--dim,#999))')+'">'+String(t.label||tid).replace(/</g,'&lt;')+'</span>';
+        list.appendChild(it);
+      });
+    }).catch(function(){ list.innerHTML = ''; });
+    (document.body || document.documentElement).appendChild(menu);
+    var r = btn ? btn.getBoundingClientRect() : { bottom: 48, right: window.innerWidth - 12 };
+    menu.style.top = Math.round(r.bottom + 5) + 'px';
+    menu.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
+    setTimeout(function(){
+      function close(e){ if(menu.contains(e.target)) return; if(btn && btn.contains(e.target)) openAppearance._shut = Date.now(); menu.remove(); document.removeEventListener('click', close, true); document.removeEventListener('keydown', esc, true); }
+      function esc(e){ if(e.key === 'Escape'){ menu.remove(); document.removeEventListener('click', close, true); document.removeEventListener('keydown', esc, true); } }
+      document.addEventListener('click', close, true); document.addEventListener('keydown', esc, true);
+    }, 0);
+    return menu;
+  }
+
   // ── Shared read states ─────────────────────────────────────────────────────
   // A panel read has four mutually exclusive states. Keeping this primitive in
   // the universal additive script lets panels share semantics without sharing
@@ -1104,6 +1162,7 @@
     applyVars: applyVars,
     injectPicker: injectPicker,
     injectFloatingPicker: injectFloatingPicker,
+    openAppearance: openAppearance,
     onAccent: _deriveOnAccent,
     // Appearance: style pack · density tier · blocks
     setAppearance: setAppearance,
