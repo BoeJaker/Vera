@@ -955,7 +955,41 @@ Local state files in `vera/ide/`: `.vera_workspaces.json`,
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Workspace Changes
+
+![Workspace Changes](assets/ide/ide-workspace-changes.png)
+
+*Workspace Changes  ·  captured `default`*
+
+#### IDE
+
+![IDE](assets/ide/ide-panel.png)
+
+*IDE  ·  captured `default`*
+
+#### Remote IDE
+
+![Remote IDE](assets/ide/ide-remote-panel.png)
+
+*Remote IDE  ·  captured `default`*
+
+#### Source Inspection
+
+![Source Inspection](assets/ide/ide-inspect-panel.png)
+
+*Source Inspection  ·  captured `default`*
+
+#### Estate Map
+
+![Estate Map](assets/ide/interaction-map.png)
+
+*Estate Map  ·  captured `default`*
+
+#### Workspaces
+
+![Workspaces](assets/ide/workspaces.png)
+
+*Workspaces  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

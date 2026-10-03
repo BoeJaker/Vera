@@ -186,6 +186,20 @@ DOMAINS: List[Dict[str, Any]] = [
      "title": "Activity & Boards", "cap_prefixes": ["activity", "board", "capacity"],
      "panel_ids": ["activity", "activity-timeline", "activity-track"],
      "match": ["activity", "board"], "seed": None},
+    # The README and the lead image of several docs: whole routes, not panels,
+    # so this domain claims no live panel and has no doc of its own.
+    {"slug": "overview", "doc": "", "title": "Overview", "cap_prefixes": [],
+     "panel_ids": [], "match": [], "seed": None,
+     "pages": [
+         {"name": "dashboard", "path": "/", "label": "Main dashboard", "settle_ms": 4000},
+         {"name": "cap-hub", "path": "/cap_hub/panel", "label": "Capability Hub"},
+         {"name": "evolve", "path": "/evolve/panel", "label": "Loop Lab"},
+         {"name": "fabric-panel", "path": "/fabric/panel", "label": "Data Fabric"},
+         {"name": "loop-graph", "path": "/ui/panel/window?id=loop-graph",
+          "label": "Agent loop graph"},
+         {"name": "operator-studio", "path": "/operator/panel", "label": "Operator Studio"},
+         {"name": "perf-monitor", "path": "/perf/panel", "label": "Performance Monitor"},
+     ]},
 ]
 
 _BY_SLUG = {d["slug"]: d for d in DOMAINS}

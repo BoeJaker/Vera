@@ -668,7 +668,11 @@ the weather location used by the home dashboard.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Mesh
+
+![Mesh](assets/mesh/mesh.png)
+
+*Mesh  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

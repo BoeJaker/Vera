@@ -212,13 +212,13 @@ result before a screenshot is accepted.
 
 ![The overview reports vector counts, dimensions, and alignment across configured stores.](assets/vector-browser/vector-browser-panel-overview.png)
 
-*The overview reports vector counts, dimensions, and alignment across configured stores.  ·  captured `seeded`*
+*The overview reports vector counts, dimensions, and alignment across configured stores.  ·  captured `default`*
 
 #### Chroma vector records
 
 ![The record browser shows dataset ownership and embedding health without exposing full vectors.](assets/vector-browser/vector-browser-panel-chroma.png)
 
-*The record browser shows dataset ownership and embedding health without exposing full vectors.  ·  captured `seeded`*
+*The record browser shows dataset ownership and embedding health without exposing full vectors.  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

@@ -452,13 +452,13 @@ publishing a blank frame.
 
 ![The navigable memory galaxy renders records and relationships as a spatial graph.](assets/galaxy-graph/memory-galaxy-panel-galaxy.png)
 
-*The navigable memory galaxy renders records and relationships as a spatial graph.  ·  captured `seeded`*
+*The navigable memory galaxy renders records and relationships as a spatial graph.  ·  captured `default`*
 
 #### Memory galaxy 2D physics view
 
 ![The alternate physics view makes clusters and relationship structure directly inspectable.](assets/galaxy-graph/memory-galaxy-panel-physics.png)
 
-*The alternate physics view makes clusters and relationship structure directly inspectable.  ·  captured `seeded`*
+*The alternate physics view makes clusters and relationship structure directly inspectable.  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

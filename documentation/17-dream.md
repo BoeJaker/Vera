@@ -762,7 +762,11 @@ Create a thinking loop on an RSS feed:
 ## Screenshots (operator-captured)
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Projects
+
+![Projects](assets/dream/project-panel.png)
+
+*Projects  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

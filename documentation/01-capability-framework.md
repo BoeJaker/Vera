@@ -1125,7 +1125,47 @@ redis-cli ZREVRANGE vera:cap:recent 0 9
 ## Screenshots (operator-captured)
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Capabilities
+
+![Capabilities](assets/capability-framework/cap-hub.png)
+
+*Capabilities  ·  captured `default`*
+
+#### Cap List
+
+![Cap List](assets/capability-framework/cap-list.png)
+
+*Cap List  ·  captured `default`*
+
+#### Dream
+
+![Dream](assets/capability-framework/dream-panel.png)
+
+*Dream  ·  captured `default`*
+
+#### Cap Ontology
+
+![Cap Ontology](assets/capability-framework/cap-ontology.png)
+
+*Cap Ontology  ·  captured `default`*
+
+#### MCP Servers
+
+![MCP Servers](assets/capability-framework/mcp-catalog-panel.png)
+
+*MCP Servers  ·  captured `default`*
+
+#### n8n
+
+![n8n](assets/capability-framework/n8n-panel.png)
+
+*n8n  ·  captured `default`*
+
+#### Integrations
+
+![Integrations](assets/capability-framework/integrations.png)
+
+*Integrations  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

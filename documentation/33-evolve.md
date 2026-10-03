@@ -1277,7 +1277,11 @@ curl -s -X POST localhost:8999/evolve/release/prod -H 'content-type: application
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Loop Lab
+
+![Loop Lab](assets/evolve/evolve.png)
+
+*Loop Lab  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

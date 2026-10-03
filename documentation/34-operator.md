@@ -789,7 +789,11 @@ browser is present.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Operator
+
+![Operator](assets/operator/operator-studio.png)
+
+*Operator  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

@@ -1665,7 +1665,23 @@ curl -s -X POST localhost:8999/dag/agent_loop_v8 -H 'content-type: application/j
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### DAG Workshop
+
+![DAG Workshop](assets/dag-engine/dag-workshop.png)
+
+*DAG Workshop  ·  captured `default`*
+
+#### Exec
+
+![Exec](assets/dag-engine/exec-panel.png)
+
+*Exec  ·  captured `default`*
+
+#### Agent Loop Config
+
+![Agent Loop Config](assets/dag-engine/agent-loop-config.png)
+
+*Agent Loop Config  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

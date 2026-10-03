@@ -1154,17 +1154,21 @@ async def cap_mission_run(mission: str = "", target: str = "sandbox",
                         "re-capture — leaves the rest untouched), settle_ms (extra "
                         "wait per panel, default 1400), full_page, base_url, capture, "
                         "write_docs, seed (bool, default true — false captures the "
-                        "target's own data without writing fixtures to it). "
+                        "target's own data without writing fixtures to it), "
+                        "write_caps (bool, default true — false refreshes only the "
+                        "screenshot blocks and keeps each doc's capability table). "
                         "Output: {screenshots, domains, capabilities, ...}.")
 async def cap_docs_build(target: str = "sandbox", domains: Optional[List[str]] = None,
                          panels: Optional[List[str]] = None, settle_ms: int = 1400,
                          full_page: bool = False, base_url: str = "",
                          capture: bool = True, write_docs: bool = True,
-                         seed: bool = True, trace_id=None) -> Dict[str, Any]:
+                         seed: bool = True, write_caps: bool = True,
+                         trace_id=None) -> Dict[str, Any]:
     params = {"target": target, "domains": domains or [], "panels": panels or [],
               "settle_ms": int(settle_ms), "full_page": bool(full_page),
               "base_url": base_url, "capture": bool(capture),
-              "write_docs": bool(write_docs), "seed": bool(seed)}
+              "write_docs": bool(write_docs), "seed": bool(seed),
+              "write_caps": bool(write_caps)}
     return await run_mission("documentation", params, _mission_ctx())
 
 

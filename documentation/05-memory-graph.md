@@ -1018,7 +1018,7 @@ line, so an empty session landing view cannot be mistaken for a useful graph.
 
 ![A populated recent-activity graph with memory records, sessions, and their relationships.](assets/memory-graph/memory-graph-recent.png)
 
-*A populated recent-activity graph with memory records, sessions, and their relationships.  ·  captured `seeded`*
+*A populated recent-activity graph with memory records, sessions, and their relationships.  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

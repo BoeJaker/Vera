@@ -794,7 +794,29 @@ implementation and `ready_for_execution: false`.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Accounts
+
+![Accounts](assets/integrations/accounts-panel.png)
+
+*Accounts  ·  captured `default`*
+
+#### Comms
+
+![Comms](assets/integrations/comms-panel.png)
+
+*Comms  ·  captured `default`*
+
+#### Calendar
+
+![Calendar](assets/integrations/calendar-panel.png)
+
+*Calendar  ·  captured `default`*
+
+#### System Comms
+
+![System Comms](assets/integrations/syscomms.png)
+
+*System Comms  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities
