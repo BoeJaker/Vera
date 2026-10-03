@@ -53,6 +53,18 @@ def test_patterns_find_tickers_and_links_but_not_any_acronym():
     assert not any(e["text"] in ("API", "CEO") for e in ents)
 
 
+def test_a_surname_after_the_full_name_is_the_same_person_and_the_is_dropped():
+    text = "Tim Cook runs Apple. Later Cook spoke. The European Union replied to Apple's filing."
+    ents = tc.merge(text, [_ner(0, [{"entity": "PERSON", "word": "Tim Cook", "score": 0.9, "start": 0, "end": 8},
+                                    {"entity": "PERSON", "word": "Cook", "score": 0.9, "start": 26, "end": 30},
+                                    {"entity": "ORG", "word": "The European Union", "score": 0.9, "start": 37, "end": 55},
+                                    {"entity": "ORG", "word": "Apple's", "score": 0.9, "start": 67, "end": 74},
+                                    {"entity": "ORG", "word": "Apple", "score": 0.9, "start": 14, "end": 19}])])
+    by = {(e["type"], e["text"]): e for e in ents}
+    assert by[("PERSON", "Tim Cook")]["count"] == 2 and ("PERSON", "Cook") not in by
+    assert ("ORG", "European Union") in by and by[("ORG", "Apple")]["count"] == 2
+
+
 def test_salient_and_the_canvas_item():
     ents = tc.merge(TEXT, [_ner(0, [{"entity": "ORG", "word": "Apple", "score": 0.9, "start": 0, "end": 5},
                                     {"entity": "PERSON", "word": "Tim Cook", "score": 0.9, "start": 12, "end": 20},

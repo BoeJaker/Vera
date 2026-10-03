@@ -81,7 +81,9 @@ def sentence_at(text: str, at: int) -> str:
 
 
 def _norm(word: str) -> str:
-    return re.sub(r"\s+", " ", str(word or "")).strip().strip(".,;:()[]\"'")
+    w = re.sub(r"\s+", " ", str(word or "")).strip().strip(".,;:()[]\"'")
+    w = re.sub(r"'s$|’s$", "", w)                       # "Apple's" is Apple
+    return re.sub(r"^(?:the|The)\s+", "", w)                 # "The European Union" is the European Union
 
 
 def merge(text: str, tagged: Iterable[Tuple[int, Dict[str, Any]]], min_score: float = MIN_SCORE) -> List[Dict[str, Any]]:
@@ -123,9 +125,30 @@ def merge(text: str, tagged: Iterable[Tuple[int, Dict[str, Any]]], min_score: fl
         sym = m.group(1)
         if sym in _KNOWN_TICKERS or m.group(0).startswith("$") or m.group(2):
             add("TICKER", m.group(0).lstrip("$"), m.start(), 1.0)
-    out = list(found.values())
+    out = _fold_short_names(list(found.values()))
     out.sort(key=lambda e: (-e["count"], -e["score"], e["text"].lower()))
     return out
+
+
+def _fold_short_names(ents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """A person named in full once and by surname after ("Tim Cook" ... "Cook") is one person: the short form's
+    mentions go to the full name when exactly one full name of that type ends (or starts) with it."""
+    keep: List[Dict[str, Any]] = []
+    for e in ents:
+        if e["type"] in ("PERSON", "ORG") and " " not in e["text"]:
+            low = e["text"].lower()
+            full = [f for f in ents if f is not e and f["type"] == e["type"] and " " in f["text"]
+                    and (f["text"].lower().endswith(" " + low) or f["text"].lower().startswith(low + " "))]
+            if len(full) == 1:
+                f = full[0]
+                f["count"] += e["count"]
+                f["spans"] = (f["spans"] + e["spans"])[:6]
+                for s in e["sentences"]:
+                    if s not in f["sentences"] and len(f["sentences"]) < 3:
+                        f["sentences"].append(s)
+                continue
+        keep.append(e)
+    return keep
 
 
 def salient(entities: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
