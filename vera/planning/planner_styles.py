@@ -764,15 +764,78 @@ CRITIC_SYSTEM = (
     "WRONG: anything in the step's result that contradicts the goal or is unsupported (a value "
     "that was not applied, a file that was not written, a claim with no source)\n"
     "NEXT: what the next step must do or check because of this\n"
-    "Judge only from the result shown. Never invent a value. If the step fully did its part, "
+    "Judge from the result and, when shown, from FILES and TOOL RESULTS - those are the real, "
+    "current content, read for you from the run's own workspace. A file shown under FILES exists: "
+    "never call it missing or unwritten. If what you need is not shown, say under NEXT what to "
+    "check instead of calling it wrong. Never invent a value. If the step fully did its part, "
     "answer exactly: OK. At most 8 lines.")
 #: A critique bigger than this is trimmed - it is advice for a prompt.
 MAX_CRITIQUE_CHARS = 900
 MAX_CRITIC_RESULT_CHARS = 3000
 
+# ── What the reviewer can SEE (user, 2026-10-03: "does the reviewer have the same access
+# to files as the executing agent? ... errors that sounded like it couldn't find the files
+# created during the agentic loop"). It had none: one LLM call given the step's summary
+# text, and a system prompt that said "judge only from the result shown". Prod 2 Oct 19:25
+# - 3 Oct 11:30: 31 of 70 critiques flagged a step, 6 of them saying in so many words that
+# the content was "not provided" ("cannot verify if it contains at least 3 distinct
+# reasons") - critiques of files that existed. Now the critic reads the files the step
+# wrote through the loop's own read path (code store, then the session workspace) and sees
+# the step's last tool results, both bounded.
+#: Tools whose `path` argument names a file the step wrote.
+CRITIC_WRITE_TOOLS = frozenset({"code.author", "code.edit", "prose.author",
+                                "sandbox.session.fs.write", "artifact.write", "fs.write"})
+CRITIC_MAX_FILES = 3
+CRITIC_FILE_CHARS = 1500
+CRITIC_EVIDENCE_CHARS = 4000
+
+
+def critic_written_paths(history: Sequence[Any], limit: int = CRITIC_MAX_FILES) -> List[str]:
+    """The files this step wrote, most recent last: `path` of every successful call to a
+    writing tool, de-duplicated."""
+    out: List[str] = []
+    for h in history or []:
+        if not isinstance(h, dict) or h.get("tool") not in CRITIC_WRITE_TOOLS or h.get("ok") is False:
+            continue
+        a = h.get("args") if isinstance(h.get("args"), dict) else {}
+        p = str(a.get("path") or a.get("relpath") or "").strip()
+        if p:
+            if p in out:
+                out.remove(p)
+            out.append(p)
+    return out[-max(0, int(limit)):] if limit else []
+
+
+def critic_tool_lines(history: Sequence[Any], limit: int = 6) -> List[str]:
+    """The step's last tool calls as one line each: tool, ok/FAILED, what it returned."""
+    lines: List[str] = []
+    for h in list(history or [])[-max(0, int(limit)):]:
+        if not isinstance(h, dict) or not h.get("tool") or str(h.get("tool")).startswith("("):
+            continue
+        prev = " ".join(str(h.get("preview") or h.get("error") or "").split())[:220]
+        lines.append("  %s -> %s%s" % (h.get("tool"), "FAILED" if h.get("ok") is False else "ok",
+                                       (": " + prev) if prev else ""))
+    return lines
+
+
+def critic_evidence(files: Sequence[Any], tool_lines: Sequence[str] = ()) -> str:
+    """FILES / TOOL RESULTS for the critic's prompt; '' when there is nothing to show."""
+    parts: List[str] = []
+    if tool_lines:
+        parts.append("TOOL RESULTS THIS STEP (latest last):\n" + "\n".join(tool_lines))
+    for path, text in files or []:
+        t = str(text or "")
+        if not t.strip():
+            continue                      # unread is not evidence of absence - show nothing
+        cut = len(t) > CRITIC_FILE_CHARS
+        parts.append("FILE %s (current content%s):\n%s"
+                     % (path, (", first %d of %d chars" % (CRITIC_FILE_CHARS, len(t))) if cut else "",
+                        t[:CRITIC_FILE_CHARS]))
+    return "\n\n".join(parts)[:CRITIC_EVIDENCE_CHARS]
+
 
 def critic_prompt(goal: str, done_when: str, step: Dict[str, Any], result: Dict[str, Any],
-                  done_steps: Sequence[Dict[str, Any]] = ()) -> str:
+                  done_steps: Sequence[Dict[str, Any]] = (), evidence: str = "") -> str:
     prior = "\n".join("  step %s: %s -> %s" % (s.get("id"), str(s.get("title") or "")[:80],
                                                "ok" if s.get("ok") else "FAILED")
                       for s in list(done_steps)[-8:])
@@ -782,7 +845,8 @@ def critic_prompt(goal: str, done_when: str, step: Dict[str, Any], result: Dict[
             % (goal, done_when or "(not stated)", prior or "  (none)", step.get("id"),
                step.get("title") or "", step.get("success") or "(not stated)",
                "met" if result.get("met") else ("ok" if result.get("ok") else "failed"),
-               out[:MAX_CRITIC_RESULT_CHARS] or "(no output)"))
+               out[:MAX_CRITIC_RESULT_CHARS] or "(no output)")
+            + (("\n\n" + evidence) if evidence else ""))
 
 
 def critic_note(text: Any) -> str:

@@ -14324,7 +14324,7 @@ class _V6StepCritic:
         self._last_submitted = step.get("id")
         brief = [{"id": r.get("id"), "title": r.get("title"), "ok": r.get("ok")} for r in done]
         self._q.put_nowait((dict(step), {k: res.get(k) for k in ("id", "summary", "final", "output",
-                                                                   "ok", "met")},
+                                                                   "ok", "met", "history")},
                             brief, done_when))
         if self._runner is None or self._runner.done():
             self._runner = asyncio.ensure_future(self._run())
@@ -14341,10 +14341,25 @@ class _V6StepCritic:
             step, res, done, done_when = item
             t1 = time.monotonic()
             note, err = "", ""
+            # What the step wrote, read the way the loop reads it (code store, then the
+            # session workspace), and its last tool results - the reviewer used to see
+            # only the step's own summary (planner_styles.critic_evidence).
+            evidence = ""
+            try:
+                _hist = res.get("history") or []
+                _files = []
+                for _p in PSx.critic_written_paths(_hist):
+                    try:
+                        _files.append((_p, await _v5_load_current(_p, session_id=self.sid)))
+                    except Exception:
+                        pass
+                evidence = PSx.critic_evidence(_files, PSx.critic_tool_lines(_hist))
+            except Exception as e:
+                log.debug("step critic evidence failed: %s", e)
             try:
                 _gpu = self.route == "gpu"
                 raw = await _safe_ollama_generate_dw(
-                    PSx.critic_prompt(self.goal, done_when, step, res, done),
+                    PSx.critic_prompt(self.goal, done_when, step, res, done, evidence=evidence),
                     system=PSx.CRITIC_SYSTEM, json_mode=False,
                     # the CPU brief model choice does not apply to the GPU route
                     model=("" if _gpu else (self.model or "")),
