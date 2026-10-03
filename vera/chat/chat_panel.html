@@ -1808,6 +1808,19 @@ html.hdr-absorbed #topBar #toolsSheet{visibility:visible}
 #rightRail.lhm-host .lhm-quick .lhm-dk-b > *{display:flex!important;flex-direction:column;position:relative!important;inset:auto!important;width:auto!important;max-width:100%;flex:none!important;min-height:0;margin:0!important;border:0!important;background:transparent!important;padding:6px 8px!important;gap:5px;overflow:hidden}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .lhm-dk-b > *{height:var(--dk-h,280px)!important;padding:0!important;gap:0}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph svg{background:transparent!important}
+/* A SMALL GRAPH IS ITS DRAWING (owner, 2026-10-03: "make the memory graph in the chat ui lhm respect the blocks off styling
+   giving it no background if blocks are off. same for dag graphs and loop graphs also all the buttons at the top of such
+   a small render of those graph elements need to be hidden under a burger button"). Blocks off: no ground behind it.
+   Its controls - the load row, the search and layout row, the legend, the loop graph's own buttons - wait behind the ☰
+   in its heading. */
+html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .lhm-dk-b{background:transparent!important;box-shadow:none!important}
+html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .vg-canvas-area,html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .vera-graph-host{background:transparent!important}
+html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph vera-loop-graph{--lg-bg:transparent}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph > .grp{display:flex;align-items:center}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-burger{margin-left:auto;border:0;background:transparent;color:var(--t3,var(--dim,#6b7280));font:inherit;font-size:12px;line-height:1;padding:2px 6px;border-radius:var(--r-sm,5px);cursor:pointer}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-burger:hover,#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph.dk-tools .dk-burger{color:var(--t1,var(--text,#d8dce4));background:var(--surf2,rgba(255,255,255,.06))}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph:not(.dk-tools) :is(#memGraphCtrl,#dagGraphCtrl,#memLegend,.vg-header,.vg-bottom-area,.vg-legend){display:none!important}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph:not(.dk-tools) #paneLoopGraph > div:first-child{display:none!important}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-list .lhm-dk-b > *{height:auto!important;max-height:380px!important;overflow:auto!important}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-log .lhm-dk-b > *{height:240px!important;padding:0!important;gap:0}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-frame .lhm-dk-b > *{height:460px!important;padding:0!important;gap:0}
@@ -16190,9 +16203,14 @@ function _embedMount(){
       if(!_dkHome[p.id]){ const mk=document.createComment('lhm-dock '+p.id); pane.parentNode.insertBefore(mk, pane); _dkHome[p.id]={ mark:mk, el:pane }; }
       let w=el.querySelector(':scope > .lhm-dk[data-dock="'+p.id+'"]');
       if(!w){ w=document.createElement('div'); w.className='wid lhm-dk '+(p.cls||''); w.dataset.dock=p.id; w.setAttribute('data-w', p.n.toLowerCase()+' \u00b7 '+String(p.cls||'dk-pane').replace('dk-',''));
-        w.innerHTML='<div class="grp">'+esc(p.n)+'</div><div class="lhm-dk-b"></div>'; if(p.h) w.style.setProperty('--dk-h', p.h+'px'); el.appendChild(w); }   // a graph fits itself to its box when it loads, so the box is sized first
+        w.innerHTML='<div class="grp">'+esc(p.n)+'</div><div class="lhm-dk-b"></div>'; if(p.h) w.style.setProperty('--dk-h', p.h+'px'); el.appendChild(w);   // a graph fits itself to its box when it loads, so the box is sized first
+        // a small graph's controls behind ☰ (shown again by it, for this pane, until the menu is redrawn)
+        if(String(p.cls||'').indexOf('dk-graph')>=0){ const bg=document.createElement('button'); bg.type='button'; bg.className='dk-burger'; bg.textContent='\u2630'; bg.title='The graph\'s controls - load, search, layout, fit, legend';
+          bg.addEventListener('click',ev=>{ ev.stopPropagation(); const on=w.classList.toggle('dk-tools'); const lg=w.querySelector('vera-loop-graph'); if(lg){ if(on) lg.removeAttribute('tools'); else lg.setAttribute('tools','hidden'); } });
+          w.querySelector('.grp').appendChild(bg); } }
       const b=w.querySelector('.lhm-dk-b');
       if(pane.parentNode!==b) b.appendChild(pane);
+      { const lg=w.classList.contains('dk-graph')&&pane.querySelector('vera-loop-graph'); if(lg){ if(w.classList.contains('dk-tools')) lg.removeAttribute('tools'); else lg.setAttribute('tools','hidden'); } }
       if(p.load&&(_dkLoaded[p.id]||{}).sid!==(SID||'')){ _dkMark(p.id); try{ p.load(); }catch(_){} }   // docked, or the session changed under it
     });
     // the menu's own settings: a fold at its foot, the page's cards inside while it is open
@@ -20678,7 +20696,14 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     try{
       const box=BOX();
       const empty=!box || box.children.length===0 || !!box.querySelector('.min-welcome');
-      const known=Array.isArray(SESSIONS) && SESSIONS.some(x=>x.session_id===SID);
+      /* THE TRANSCRIPT COMES BACK WITH THE FRAME (owner, 2026-10-03: "the chat wipe/reset happend in minutes"). The
+         harness unloads a chat tab hidden for 45 s (_parkPanel) and reloads it when it is shown; this asked whether the
+         session was in SESSIONS - the history list, fetched without being awaited and capped at the 80 newest messages
+         of every session - 700 ms after load. Usually it was not there yet, so the chat came back empty beside the
+         canvas, which is keyed by the same session and so stayed. The session's own messages are asked for instead. */
+      let known=Array.isArray(SESSIONS) && SESSIONS.some(x=>x.session_id===SID);
+      if(empty && !known && SID){ try{ const r=await api('/memory/search','POST',{query:'',limit:3,record_type:'message',category:'chat',session_id:SID});
+        known=(r&&Array.isArray(r.results)?r.results:[]).some(x=>((x&&(x.record||x))||{}).session_id===SID); }catch(_){} }
       if(empty && known && !document.body.classList.contains('has-msgs')){
         await loadSession(SID);   // loadSession already replays this session's loops
         _loadedSession=true;

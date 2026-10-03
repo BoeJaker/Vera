@@ -63,11 +63,21 @@
       this.style.position = 'relative';
       if (!this.style.height) this.style.height = '100%';
       this.style.background = '#000';
+      // only MOVED (a host redrew around it): the same shell carries on, and the keyboard comes back to it
+      if (this._dropT) { clearTimeout(this._dropT); this._dropT = 0; this._doFit(true); if (this._hadFocus) this.focus(); return; }
       const p = this.getAttribute('ws');
       if (p && !this._connected) this.connect(p);
     }
 
-    disconnectedCallback() { this.destroy(); }
+    /* A MOVE IS NOT AN END (owner, 2026-10-03: "the embedded terminal in the chat lhm works if you use the 'open the
+       terminal in a full page' option but not actually in the lhm - you cant type in it there"). The chat's menu redraws
+       its body and puts this element back in its slot; the old disconnect destroyed the terminal on every redraw and
+       the reconnect opened a new shell without the keyboard. It is torn down only if it is not back within a moment. */
+    disconnectedCallback() {
+      this._hadFocus = !!(this.contains(document.activeElement));
+      clearTimeout(this._dropT);
+      this._dropT = setTimeout(() => { this._dropT = 0; if (!this.isConnected) this.destroy(); }, 1500);
+    }
 
     async connect(wsPath) {
       this._wsPath = wsPath || this._wsPath;

@@ -889,6 +889,13 @@ header .hdr-right{margin-left:0;gap:6px}
 .w-title{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:var(--label-size,9px);font-weight:var(--label-weight,600);letter-spacing:var(--label-track,.09em);text-transform:var(--label-case,uppercase);color:var(--t2,var(--dim2,#8a92a0));flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .w-head{padding:8px var(--pad,11px) 0;height:auto;min-height:26px}
 .w-head .w-dot{width:6px;height:6px}
+/* THE DASHBOARD'S TILES (owner, 2026-10-03: "in the dashboard each widget has a green dot in the top left - can you remove
+   it, also can the title text for a widget be slightly larger ... lots of widgets have unstyled scroll bars - need to be
+   minimalist in style"). The dot says only "fine" almost always: it goes, and stays for a tile that is warning or
+   failing, where it says something. Titles a step larger. Scrollbars thin and quiet on the board. */
+.dash-grid .w-head .w-dot:not(.warn):not(.err){display:none}
+.dash-grid .w-head .w-title{font-size:calc(var(--label-size,9px) + 1.5px)}
+.dash-grid,.dash-grid *{scrollbar-width:thin;scrollbar-color:var(--bd2,var(--border2,rgba(255,255,255,.16))) transparent}
 /* the counters as the board's hero numbers */
 .w-body .kpi{gap:4px;justify-content:flex-start;padding-top:2px}
 .w-body .kpi-val{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:34px!important;font-weight:700;letter-spacing:-.035em!important;line-height:1;color:var(--t1,var(--text,#d8dce4))}

@@ -75,6 +75,8 @@
           :host{display:block;width:100%;height:100%;min-height:160px;position:relative;
                 font-family:var(--mono,monospace);background:var(--lg-bg,var(--bg0,#15140f))}
           .wrap{position:absolute;inset:0;overflow:hidden}
+          /* tools="hidden": a host that keeps the controls behind its own menu (the chat's docked graph, a small render) */
+          :host([tools="hidden"]) .bar .btns,:host([tools="hidden"]) .legend{display:none}
           svg{width:100%;height:100%;display:block;cursor:grab;background:
               radial-gradient(circle at 1px 1px, rgba(255,255,255,.03) 1px, transparent 0) 0 0/22px 22px}
           svg.drag{cursor:grabbing}
