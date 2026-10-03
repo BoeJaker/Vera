@@ -17443,7 +17443,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # none of them and wrote "(Note: The provided context files were empty...)" into
         # the deliverable. With no files named, hand it the step's web results.
         if tool == "prose.author" and isinstance(args, dict) \
-                and _research_sources_core.wants_sources(args.get("context_files"), args.get("sources")):
+                and _research_sources_core.wants_sources(
+                    args.get("context_files"), args.get("sources"),
+                    known=list(workdir_files or []) + list(saved_run_files or {})):
             # The run's research too - it is usually an EARLIER step (probe 3 Oct, 1e84cf1d).
             _srcs = _research_sources_core.sources_block(
                 _research_sources_core.recall(sid) + list(history))
