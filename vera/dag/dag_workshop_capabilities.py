@@ -14298,6 +14298,12 @@ try:
 except Exception:                                     # pragma: no cover
     from vera.dag import edit_rewrite_core as _edit_rewrite_core
 
+# A size/count bar the planner invented is a guide for the verifier (probe 3 Oct).
+try:
+    from Vera.vera.dag import criterion_bars_core as _criterion_bars_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import criterion_bars_core as _criterion_bars_core
+
 # Double-escaped newlines in model-written Python (probe 2026-10-01: 24% of
 # exec.python.run calls wrote a literal backslash-n instead of a newline).
 try:
@@ -21678,8 +21684,15 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
                       "they conflict — see instructions):\n"
                       + "\n".join(f"  Q: {c.get('question','')}\n  A: {c.get('answer','')}"
                                   for c in _clar[:5]) + "\n")
+    # A size/count bar the planner invented (">1500 words") is a guide, not a requirement
+    # (criterion_bars_core; probe 3 Oct: one such bar failed a step three times).
+    try:
+        _bars_note = _criterion_bars_core.note(crit, str(step.get('goal') or ''))
+    except Exception:
+        _bars_note = ""
     prompt = (f"SUCCESS CRITERION: {crit}\n\nSTEP GOAL: {step.get('goal', '')}\n"
-              f"STEP ENDED ok={bool(res.get('ok'))}\n"
+              + _bars_note
+              + f"STEP ENDED ok={bool(res.get('ok'))}\n"
               + clar_block
               + (f"TOOL CALLS & THEIR RESULTS (across ALL cycles of this step — judge "
                  f"the criterion against these, not only the final summary):\n{hist}\n"
