@@ -45,6 +45,7 @@ const BY_ID = [
   ['ML lab', ['vera', 'machine learning', 'ml_lab_panel.html'], 'id', ['seg-build', 'seg-train', 'seg-agent']],
   ['Cap ontology', ['vera', 'ontologies', 'cap_ontology_panel.html'], 'id', ['vt-matrix', 'vt-graph', 'vt-list']],
   ['Storage (pxstore)', ['vera', 'proxmox', 'pxstore_panel.html'], 'data-p', ['overview', 'fs', 'docker', 'store', 'veradata', 'estate', 'setup']],
+  ['Widgets', ['vera', 'widgets', 'widget_registry_panel.html'], 'id', ['wv-templates', 'wv-gallery', 'wv-sources']],
 ];
 for (const [name, file, attr, ids] of BY_ID) {
   const H = fs.readFileSync(path.join(__dirname, '..', ...file), 'utf8');
