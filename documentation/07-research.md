@@ -672,7 +672,17 @@ compares only text/table/layout hashes and issue codes.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Research
+
+![Research](assets/research/research-panel.png)
+
+*Research  ·  captured `default`*
+
+#### Notebook
+
+![Notebook](assets/research/notebook-panel.png)
+
+*Notebook  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

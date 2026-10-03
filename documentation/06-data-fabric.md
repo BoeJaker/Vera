@@ -1196,25 +1196,31 @@ after the graph summary is ready. Production is never seeded for screenshots.
 
 ![The populated structural graph connects datasets, sources, agents, skills, and ontologies.](assets/data-fabric/fabric-panel-graph.png)
 
-*The populated structural graph connects datasets, sources, agents, skills, and ontologies.  ·  captured `seeded`*
+*The populated structural graph connects datasets, sources, agents, skills, and ontologies.  ·  captured `default`*
 
 #### Data Fabric sources
 
 ![Source management, acquisition status, and dataset routing.](assets/data-fabric/fabric-panel-sources.png)
 
-*Source management, acquisition status, and dataset routing.  ·  captured `seeded`*
+*Source management, acquisition status, and dataset routing.  ·  captured `default`*
 
 #### Data Fabric statistics
 
 ![Backend health and storage statistics across the polyglot fabric.](assets/data-fabric/fabric-panel-stats.png)
 
-*Backend health and storage statistics across the polyglot fabric.  ·  captured `seeded`*
+*Backend health and storage statistics across the polyglot fabric.  ·  captured `default`*
 
 #### ML Lab
 
 ![ML Lab](assets/data-fabric/ml-lab.png)
 
-*ML Lab  ·  captured `seeded`*
+*ML Lab  ·  captured `default`*
+
+#### fabric stats
+
+![fabric stats](assets/data-fabric/fabric-stats.png)
+
+*fabric stats  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

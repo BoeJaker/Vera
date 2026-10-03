@@ -815,7 +815,17 @@ instructions.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Chat
+
+![Chat](assets/agents-chat/chat2.png)
+
+*Chat  ·  captured `default`*
+
+#### Chat with Data
+
+![Chat with Data](assets/agents-chat/chat-with-data.png)
+
+*Chat with Data  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

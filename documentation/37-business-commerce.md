@@ -497,6 +497,11 @@ the internal product, unit or order, and the shipment. Common problems are:
 - [Device Mesh](./14-mesh.md) — ESP32 nodes used as printer transports
 
 <!-- VERA:AUTO:screenshots START -->
+#### Business
+
+![Business](assets/business-commerce/business.png)
+
+*Business  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 <!-- VERA:AUTO:capabilities START -->

@@ -556,6 +556,11 @@ needed to fix it.
 - [IDE](./08-ide.md) and [Activity & Boards](./39-activity-boards.md) — coding bridges and work ownership
 
 <!-- VERA:AUTO:screenshots START -->
+#### Agent Bridges
+
+![Agent Bridges](assets/agent-runtimes-providers/agentbridge-catalog-panel.png)
+
+*Agent Bridges  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 <!-- VERA:AUTO:capabilities START -->

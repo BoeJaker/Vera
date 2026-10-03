@@ -470,7 +470,11 @@ how a freshly registered panel appears without restarting the orchestrator.
 ## Screenshots (operator-captured)
 
 <!-- VERA:AUTO:screenshots START -->
-_No screenshots captured yet — run `docs.build` (or `operator.mission.run documentation`)._
+#### Capabilities
+
+![Capabilities](assets/harness-ui/cap-hub.png)
+
+*Capabilities  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

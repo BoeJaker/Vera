@@ -811,7 +811,11 @@ rendered-item count. If the optional JEPA runtime, model, or capability family
 is unavailable, capture fails explicitly instead of publishing its empty shell.
 
 <!-- VERA:AUTO:screenshots START -->
-_No populated JEPA Worldview screenshot is currently available._
+#### WorldView latent map
+
+![The latent map exposes WorldView concepts, projection controls, and model state.](assets/worldview/worldview-latent-map.png)
+
+*The latent map exposes WorldView concepts, projection controls, and model state.  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 <!-- VERA:AUTO:capabilities START -->

@@ -849,6 +849,11 @@ profiles, and rebooting a different machine after an address changed.
 ## Screenshots
 
 <!-- VERA:AUTO:screenshots START -->
+#### Foundry
+
+![Foundry](assets/infrastructure-provisioning/foundry.png)
+
+*Foundry  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 ## Capabilities

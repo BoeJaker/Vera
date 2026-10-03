@@ -179,6 +179,9 @@ async def run_documentation_mission(params: Dict[str, Any],
     # so this is required when the target is prod (or a sandbox that shares prod's
     # Neo4j/Chroma) and its real data should be shown untouched.
     do_seed = bool(params.get("seed", True))
+    # write_caps=False refreshes only the screenshot blocks and leaves each
+    # doc's capability table as it is.
+    write_caps = bool(params.get("write_caps", True))
 
     docs_dir = os.path.join(repo_root, "documentation")
     assets_dir = os.path.join(docs_dir, "assets")
@@ -228,78 +231,91 @@ async def run_documentation_mission(params: Dict[str, Any],
                 await _emit("seed", f"[{slug}] seeding ({seed_name})")
                 await _seeds.run_seed(seed_name, _make_call_target(base_url))
 
-            # capture each panel
-            dom_asset_dir = os.path.join(assets_dir, slug)
+            # Every capture target: each live panel's states, then the domain's
+            # fixed pages - whole routes saved under a stable name, e.g. the
+            # overview images the README leads with, which are not panels.
+            targets = []
             for p in dpanels:
                 pid = p.get("id", "")
-                if not pid:
-                    continue
-                if panel_filter and pid not in panel_filter:
-                    continue  # selective re-capture skips everything else
-                mode = "seeded" if seed_name else "default"
-                for state in _capture_states(domain, pid):
-                    shot_id = _state_name(pid, state)
-                    rel = f"assets/{slug}/{shot_id}.png"
-                    abspath = os.path.join(docs_dir, rel)
-                    label = state.get("label") or p.get("label") or pid
-                    if do_capture and session is not None:
-                        cap_url = panel_capture_url(base_url, p, state)
-                        capture = await _shoot_panel(
-                            session, cap_url["url"], abspath,
-                            settle_ms=max(settle_ms, int(state.get("settle_ms", 0) or 0)),
-                            full_page=bool(state.get("full_page", full_page)), state=state)
-                        if not capture["ok"]:
-                            failure = {
-                                "domain": slug, "panel_id": pid, "shot_id": shot_id,
-                                "condition": capture.get("failed_condition", "capture"),
-                                "error": capture.get("error", "capture failed"),
-                            }
-                            capture_failures.append(failure)
-                            await _emit("warn", f"[{slug}] {label}: {failure['error']}",
-                                        **failure)
-                            continue
+                if pid:
+                    targets.extend((p, pid, state, _state_name(pid, state))
+                                   for state in _capture_states(domain, pid))
+            for page in domain.get("pages") or []:
+                pid = str(page["name"])
+                targets.append(({"id": pid, "label": page.get("label") or pid}, pid,
+                                dict(page, capture_path=page["path"]), _safe_name(pid)))
+
+            mode = "seeded" if seed_name else "default"
+            for p, pid, state, shot_id in targets:
+                rel = f"assets/{slug}/{shot_id}.png"
+                abspath = os.path.join(docs_dir, rel)
+                label = state.get("label") or p.get("label") or pid
+                via, readiness, captured = "", [], False
+                # A selective re-capture shoots only the named panels.
+                if do_capture and session is not None and (not panel_filter or pid in panel_filter):
+                    cap_url = panel_capture_url(base_url, p, state)
+                    capture = await _shoot_panel(
+                        session, cap_url["url"], abspath,
+                        settle_ms=max(settle_ms, int(state.get("settle_ms", 0) or 0)),
+                        full_page=bool(state.get("full_page", full_page)), state=state)
+                    if capture["ok"]:
+                        captured, via = True, cap_url["via"]
+                        readiness = capture.get("readiness", [])
                         total_shots += 1
                         await _emit("shot", f"[{slug}] {label}",
                                     domain=slug, panel_id=pid, shot_id=shot_id,
                                     label=label, rel=rel,
-                                    url=f"/docs/asset?path={rel}", via=cap_url["via"])
-                    elif not os.path.exists(abspath):
-                        continue
-                    os.makedirs(dom_asset_dir, exist_ok=True)
-                    shots.append({"panel_id": shot_id, "source_panel_id": pid,
-                                  "label": label, "rel_path": rel,
-                                  "caption": state.get("caption") or label,
-                                  "mode": mode, "via": (cap_url["via"] if do_capture else ""),
-                                  "readiness": (capture.get("readiness", [])
-                                                if do_capture and session is not None else [])})
+                                    url=f"/docs/asset?path={rel}", via=via)
+                    else:
+                        failure = {
+                            "domain": slug, "panel_id": pid, "shot_id": shot_id,
+                            "condition": capture.get("failed_condition", "capture"),
+                            "error": capture.get("error", "capture failed"),
+                        }
+                        capture_failures.append(failure)
+                        await _emit("warn", f"[{slug}] {label}: {failure['error']}",
+                                    **failure)
+                # An image already on disk stays in the doc when this run did not
+                # replace it - a failed capture, or a panel a selective re-capture
+                # left out. Rebuilding the block from this run's shots alone
+                # deleted every other panel from the doc.
+                if not os.path.exists(abspath):
+                    continue
+                shots.append({"panel_id": shot_id, "source_panel_id": pid,
+                              "label": label, "rel_path": rel,
+                              "caption": state.get("caption") or label,
+                              "mode": mode, "via": via, "readiness": readiness,
+                              "captured": captured})
 
-            # write doc auto-blocks
-            number = domain["doc"].split("-")[0]
-            doc_path = os.path.join(docs_dir, domain["doc"])
-            if write_docs:
+            # write doc auto-blocks (a domain of pages alone may have no doc)
+            doc_name = domain.get("doc") or ""
+            if write_docs and doc_name:
+                doc_path = os.path.join(docs_dir, doc_name)
                 existing = None
                 if os.path.exists(doc_path):
                     with open(doc_path, "r", encoding="utf-8") as f:
                         existing = f.read()
                 content = _scaffold.build_doc(
-                    existing, number=number, title=domain["title"],
+                    existing, number=doc_name.split("-")[0], title=domain["title"],
                     screenshots_content=_scaffold.render_screenshots_block(shots),
-                    caps_content=_scaffold.render_caps_block(caps))
+                    caps_content=(_scaffold.render_caps_block(caps) if write_caps else None))
                 with open(doc_path, "w", encoding="utf-8") as f:
                     f.write(content)
 
             # Always merge into the existing manifest entry so a partial run (a
             # selective re-capture, or a domain that captured fewer panels this
-            # time) never drops previously-recorded images.
+            # time) never drops previously-recorded images. Only shots taken in
+            # this run replace an entry's metadata.
             prev = dict(manifest_prev.get("domains", {}).get(slug, {}))
             prev_panels = {pp.get("id"): pp for pp in prev.get("panels", [])}
             for s in shots:
-                prev_panels[s["panel_id"]] = {
-                    "id": s["panel_id"], "label": s["label"], "shot": s["rel_path"],
-                    "mode": s["mode"], "via": s.get("via", ""),
-                    "readiness": s.get("readiness", [])}
+                if s["captured"] or s["panel_id"] not in prev_panels:
+                    prev_panels[s["panel_id"]] = {
+                        "id": s["panel_id"], "label": s["label"], "shot": s["rel_path"],
+                        "mode": s["mode"], "via": s.get("via", ""),
+                        "readiness": s.get("readiness", [])}
             manifest["domains"][slug] = {
-                "doc": domain["doc"], "title": domain["title"],
+                "doc": doc_name, "title": domain["title"],
                 "panels": list(prev_panels.values()), "cap_count": len(caps),
             }
             await _emit("domain", f"[{slug}] {len(shots)} shots · {len(caps)} caps",
@@ -312,9 +328,12 @@ async def run_documentation_mission(params: Dict[str, Any],
     # partial run still produces a complete index.
     for d in _dm.DOMAINS:
         info = manifest["domains"].get(d["slug"])
-        if not info:
+        if not info or not d.get("doc"):
             continue
-        pnls = info.get("panels", [])
+        # The manifest remembers shots that were later removed; disk decides
+        # what exists, as docs.assets does, so no cover links a missing file.
+        pnls = [pp for pp in info.get("panels", [])
+                if pp.get("shot") and os.path.exists(os.path.join(docs_dir, pp["shot"]))]
         gallery_entries.append({
             "slug": d["slug"], "title": info.get("title", d["title"]),
             "doc": info.get("doc", d["doc"]),

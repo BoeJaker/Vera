@@ -386,6 +386,29 @@ coordination surfaces rather than product documentation or UI labels.
 - [Agent Runtimes & Providers](./36-agent-runtimes-providers.md)
 
 <!-- VERA:AUTO:screenshots START -->
+#### Activity Tracking
+
+![Activity Tracking](assets/activity-boards/activity-track.png)
+
+*Activity Tracking  ·  captured `default`*
+
+#### Node activity
+
+![Node activity](assets/activity-boards/node-activity.png)
+
+*Node activity  ·  captured `default`*
+
+#### Activity
+
+![Activity](assets/activity-boards/activity-timeline.png)
+
+*Activity  ·  captured `default`*
+
+#### Activity
+
+![Activity](assets/activity-boards/activity.png)
+
+*Activity  ·  captured `default`*
 <!-- VERA:AUTO:screenshots END -->
 
 <!-- VERA:AUTO:capabilities START -->
