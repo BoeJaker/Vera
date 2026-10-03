@@ -267,8 +267,21 @@
        figures were pipes and bare lines under the note subset */
     // a reading item through the shared kit when it is on the page: its fences are the same cards as the chat's and the
     // loop's (Copy · Edit · Explode · Preview · Run · Save); the canvas's own mdx where it is not
-    markdown: c => `<div class="vc-md">${root.VeraOut && typeof root.VeraOut.render === 'function'
-      ? root.VeraOut.render(String(c.md || c.text || ''), { canvas: false }) : mdx(c.md || c.text || '')}</div>`,
+    /* ...and under it the same row a chat reply carries (owner, 2026-10-03: "prose sent to the canvas also needs the same
+       options as code (like the menu under responses) so it can be converted into other formats sent to other areas or
+       saved or edited"): Copy, then the item's own Edit (kept with the item) and Explode (the bound explode item), then
+       "Send to" - an HTML report, a podcast, a notebook, a file, a project, any channel with a style. */
+    markdown: (c, size, key, el) => {
+      const VO = root.VeraOut; const md = String(c.md || c.text || '');
+      const body = VO && typeof VO.render === 'function' ? VO.render(md, { canvas: false }) : mdx(md);
+      let row = '';
+      if (VO && typeof VO.proseMenu === 'function' && key) {
+        const own = (act, ico, label, tip) => `<button class="mact" data-act="${act}" title="${esc(tip)}">${(VO.icons && VO.icons[ico]) || ''}<span>${label}</span></button>`;
+        row = VO.proseMenu('cvp-' + key, { md, canvas: false, explode: false,
+          extra: own('edit', 'edit', 'Edit', 'Edit this text - the item keeps your version') + own('explode', 'explode', 'Explode', 'A structured diagram of this text, beside it') });
+      }
+      return `<div class="vc-md">${body}</div>` + (row ? `<div class="vc-prose-row">${row}</div>` : '');
+    },
 
     /* A MONTH, WITH WHAT IS ON IT. Backed by the diary rather than by a copy of it: the month buttons and a day
        press go back to cal.events.list, so the item is a VIEW of the calendar and not a screenshot taken once.
@@ -421,34 +434,30 @@
          bound to this one still lights its spans. */
       const VO = root.VeraOut;
       const vid = key ? 'cv-' + key : '';
-      let head;
-      if (VO && vid) {
-        VO.blocks[vid] = { lang: String(c.lang || ''), code: String(c.code || ''), filename: String(c.filename || c.path || '') };
-        const extra = VO.hostBtn('data-act="edit"', 'edit', 'Edit', 'Edit this code - the item keeps your version')
-          + (PREVIEWABLE(c.lang) ? VO.hostBtn('data-act="cprev"', 'prev', prev ? 'Source' : 'Preview', prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network', prev) : '');
-        head = VO.bar(vid, c.lang, c.filename || c.path || '', { actions: ['copy', 'pop', 'run', 'save'], extra });
-      } else {
-        head = `<div class="vc-codehead">${esc(c.filename || c.lang || 'code')}<span class="sp"></span>`
-          + (PREVIEWABLE(c.lang) && key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
-          + '</div>';
+      /* THE KIT'S CARD, ENTIRE (owner, 2026-10-03: "the code renderer in the canvas does not have the same options as the
+         one in the chat - it should - and it should be using the same underlying code"): VeraOut.card draws it - the
+         same bar, every action (Copy · Edit · Explode · Outline · Preview · Pop out · Run · Save), the numbered lines an
+         explode item binds to, the reader's helpers - with only what the canvas does its own way plugged in: Preview
+         draws in the column's live layer (it survives a redraw), Explode makes the bound explode item, an edit is kept
+         with the item. While the chat is still streaming into it, it is the kit's streaming card. */
+      if (VO && vid && typeof VO.card === 'function') {
+        const streaming = !!(el && el._liveOv && el._liveOv[key]);
+        const live = prev ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>` : null;
+        const cardHtml = VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming });
+        return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${cardHtml}</div>`;
       }
-      // Every line is ADDRESSABLE (data-line). An explode item bound to this one scrolls to a card's span and
-      // highlights those lines, and a selection here is read back as a line range — the two-way span binding
-      // (EXPLODE.md §8.3). The number sits in a gutter the selection does not reach, so copying still yields code.
+      // (without the kit on the page: the canvas's own numbered body and Preview switch)
+      const head = `<div class="vc-codehead">${esc(c.filename || c.lang || 'code')}<span class="sp"></span>`
+        + (PREVIEWABLE(c.lang) && key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
+        + '</div>';
       const lines = String(c.code || '').replace(/\n$/, '').split('\n');
-      // coloured by the chat's own highlighter when the page has it; a line count that disagrees is plain text instead
-      // coloured by the one highlighter (the shared kit; the chat's VeraCode where the kit is not on the page)
-      let hl = null; const VC = (VO && typeof VO.highlight === 'function') ? VO : root.VeraCode;
+      let hl = null; const VC = root.VeraCode;
       if (!prev && VC && typeof VC.highlight === 'function') { try { hl = splitHl(VC.highlight(String(c.code || '').replace(/\n$/, ''), c.lang)); if (hl.length !== lines.length) hl = null; } catch (e) { hl = null; } }
       const bodyHtml = prev
         ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>`
         : `<pre class="vc-pre vc-code"><code>${lines.map((l, i) => `<span class="vc-line" data-line="${i + 1}"><i class="vc-lno">${i + 1}</i>${hl ? (hl[i] || ' ') : (esc(l) || ' ')}</span>`).join('')}</code></pre>`;
-      // as the kit's card (data-cb + its output strip) when the kit is here, so Copy, Run and Save find their code and Run its strip
-      const kit = VO && vid;
-      return `<div class="vc-codewrap${kit ? ' code-card vc-kit' : ''}" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}${kit ? ` data-cb="${esc(vid)}"` : ''}>${head}${bodyHtml}${codeLintHtml(c, key, el)}`
-        + (kit ? `<div class="code-exec-out" data-exec-out="${esc(vid)}" style="display:none"></div>` : '') + '</div>';
+      return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${head}${bodyHtml}${codeLintHtml(c, key, el)}</div>`;
     },
-
     /* AN EXPLODE ITEM — the structured diagram of something, in the canvas beside what it is a diagram OF
        (EXPLODE.md §8.3). content:
          {binds?: the KEY of a code item in this canvas — its code is what gets exploded, and the two are bound
@@ -899,10 +908,11 @@
     letter-spacing:.04em}
   /* a code item drawn as the shared kit's card: the item is already the frame, so the card is not a box inside it;
      its bar sits flush on the code, and the canvas's own line-numbered body keeps its look */
-  .vc-codewrap.vc-kit{margin:0;border:none;border-radius:0;background:transparent;overflow:visible}
-  .vc-codewrap.vc-kit > .code-bar{margin:0 0 4px;border-radius:var(--r-sm,5px);border-bottom:none}
-  .vc-codewrap.vc-kit > pre.vc-pre{max-height:none}
-  .vc-codewrap.vc-kit .cb-act.on{color:var(--acc,#5a9e8f)}
+  .vc-codewrap > .code-card.vc-kit{margin:0;border:none;border-radius:0;background:transparent;overflow:visible}
+  .vc-codewrap > .code-card.vc-kit > .code-bar{margin:0 0 4px;border-radius:var(--r-sm,5px);border-bottom:none}
+  .vc-codewrap > .code-card.vc-kit > pre.vc-pre{max-height:none}
+  /* the reading item's row (the shared prose row) under its text */
+  .vc-prose-row{margin-top:6px;padding-top:4px;border-top:1px solid color-mix(in srgb,var(--border,#2a2f37) 60%,transparent)}
   .vc-note{border-left:2px solid var(--acc,#5a9e8f);padding:3px 0 3px 8px;
     color:var(--fg2,#c3cad4);white-space:pre-wrap}
   .vc-by{color:var(--dim,#6b7480);font-size:11px;margin-left:5px}
@@ -2497,7 +2507,9 @@
       const keepTop = body.scrollTop;
       const layers = this._layers(body);
       const mark = this.canvasId + '\u0000' + html;    // another canvas's identical markup is not this canvas's
-      if (this._html !== mark || !layers.items.childElementCount) {
+      // a code card being edited in place (the kit's editor) keeps the column as it is until the edit ends
+      if (this._html !== mark && layers.items.querySelector('.code-card.editing')) this._editHeld = true;
+      else if (this._html !== mark || !layers.items.childElementCount) {
         /* AN ITEM BEING WRITTEN FOLLOWS ITS LAST LINE (owner, 2026-10-03: "it also doesnt auto scroll to the most recent
            line if the user is already scrolled to the bottom or not been scrolled up"). Redrawing the markup put every
            scrolling part of every item back at its top. What each one was doing is read first - at its end (or never
@@ -2529,7 +2541,7 @@
       this._mountLive(body);
       /* the shared output kit in this shadow root (its click handler, its style) and on what was just drawn (lint,
          whole pages, diagrams) - loaded once when a page that shows the canvas did not load it, then drawn again */
-      if (root.VeraOut) { try { root.VeraOut.wire(this.shadowRoot); root.VeraOut.hydrate(layers.items); } catch (e) {} }
+      if (root.VeraOut) { try { root.VeraOut.wire(this.shadowRoot, this._voHooks()); root.VeraOut.hydrate(layers.items); } catch (e) {} }
       else if (!this._voLoading) { this._voLoading = true; ensureLib('/ui/elements/vera_output.js', '').then((ok) => { if (ok && root.VeraOut && this._doc) { this._html = null; this.render(this._doc); } }); }
       if (this._editKey) { const ta = body.querySelector('.it[data-key="' + this._editKey.replace(/"/g, '\\"') + '"] textarea'); if (ta && !this._editFocused) { this._editFocused = true; try { ta.focus(); } catch (e) {} } }
       if (body.querySelector('vera-mermaid')) ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid');
@@ -2702,6 +2714,22 @@
       return true;
     }
     liveDone(key) { if (!this._liveOv) return; if (key == null) this._liveOv = null; else delete this._liveOv[String(key)]; }
+    /* what the canvas does its own way for the shared code card (vera_output.js hooks, this shadow root only): Preview in
+       the live layer and Explode as the bound explode item - through this column's one dispatcher, as its own buttons
+       always went - and an applied edit kept with the item (canvas.update), so it is there after any redraw */
+    _voHooks() {
+      if (this.__voh) return this.__voh;
+      const viaAct = (act, b) => { if (!b) return false; const was = b.dataset.act; b.dataset.act = act; try { this._act(b); } finally { if (was == null) delete b.dataset.act; else b.dataset.act = was; } return true; };
+      const keyOf = (c) => { const it = c && c.closest && c.closest('.it[data-key]'); return it ? it.dataset.key : ''; };
+      this.__voh = {
+        preview: (blk, id, b) => viaAct('cprev', b),
+        explode: (blk, id, b) => viaAct('explode', b),
+        edited: (blk, id, d, c) => { const key = keyOf(c); const bl = key && this._blockOf(key); if (!bl) return;
+          return this.call('canvas.update', Object.assign(this._ref(key), { content: Object.assign({}, bl.content || {}, { code: d.code }) })); } };
+      // an edit in progress is never redrawn away: the column waits for it, then draws what it missed
+      this.shadowRoot.addEventListener('vera:code:editend', () => { if (this._editHeld) { this._editHeld = false; this._html = null; if (this._doc) this.render(this._doc); } });
+      return this.__voh;
+    }
     _ref(key) { const bid = this._bidOf(key); return bid ? { block_id: bid } : { key }; }
     /* every action on the column — the old per-item controls (pin · park · size · remove) and the board's new ones
        (add · open · edit · answer · take · in context) — one dispatcher */

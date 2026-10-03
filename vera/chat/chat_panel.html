@@ -4203,9 +4203,10 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   /* Turn this message into a spoken podcast episode (podcast.generate with the
      message as the source). Non-blocking — the episode renders in the Podcast
      library / surfaces via podcast.progress events. */
-  async function _msgPodcast(mid){
-    const rec = _MSG_REGISTRY[mid]; if(!rec) return;
-    const content = rec.getContent();
+  async function _msgPodcast(mid, given){
+    // a message by id, or any text given (the shared prose row on a canvas item or a loop's answer)
+    const rec = _MSG_REGISTRY[mid]; if(!rec && given==null) return;
+    const content = given!=null ? String(given) : rec.getContent();
     if(!content.trim()){ appendSys('<span style="color:var(--dim2)">Message is empty — nothing to voice.</span>'); return; }
     const topic=(content.trim().split('\n').find(l=>l.trim())||'Vera episode').slice(0,120);
     appendSys('<span style="color:var(--dim2)">🎙 Generating podcast episode…</span>');
@@ -4223,9 +4224,9 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   /* Re-deliver this message as a rich, self-contained HTML report (report.html)
      — themed doc + Mermaid + inline-SVG infographics. The original message is
      untouched; the report opens inline and can be pinned to the gallery. */
-  async function _msgHtmlReport(mid){
-    const rec = _MSG_REGISTRY[mid]; if(!rec) return;
-    const content = rec.getContent();
+  async function _msgHtmlReport(mid, given){
+    const rec = _MSG_REGISTRY[mid]; if(!rec && given==null) return;
+    const content = given!=null ? String(given) : rec.getContent();
     if(!content.trim()){ appendSys('<span style="color:var(--dim2)">Message is empty — nothing to render.</span>'); return; }
     const title=(content.trim().split('\n').find(l=>l.trim())||'Report').replace(/^#+\s*/,'').slice(0,120);
     const where=_dlvCfg().html;
@@ -4374,6 +4375,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   document.addEventListener('mousedown',e=>{ if(!(e.target&&e.target.closest&&e.target.closest('.ma-dd'))) _maClose(); },true);
   document.addEventListener('keydown',e=>{
     const m=document.querySelector('.ma-dd.open .ma-menu'); if(!m) return;
+    if(m.closest('.vo-acts')) return;   // the shared kit's row walks its own menu
     if(e.key==='Escape'){ e.preventDefault(); const b=m.parentElement.querySelector('.ma-ddb'); _maClose(); try{ b.focus(); }catch(_){} return; }
     if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); const its=[...m.querySelectorAll('.ma-it')]; const i=its.indexOf(document.activeElement);
       const n=its[(i+(e.key==='ArrowDown'?1:-1)+its.length)%its.length]; if(n) n.focus(); }
@@ -4464,9 +4466,19 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
        does. Same handlers as before - only the face changed. */
     const _ma=(ico,label,act,tip,cls)=>`<button class="mact${cls?' '+cls:''}" onclick="${act}" title="${tip}">${_MA_ICO[ico]||''}<span>${label}</span></button>`;
     const _mi=(ico,label,act,hint)=>`<button class="ma-it" role="menuitem" onclick="CH._maClose();${act}">${_MA_ICO[ico]||''}<span class="ma-l">${label}<small>${hint}</small></span></button>`;
-    actions.innerHTML=(role==='user'
+    // ONE ROW FOR WRITING, wherever it is drawn: the shared kit's prose row (vera_output.js) - the canvas's reading items
+    // and the loop's answer carry the same one - with this message's own Edit/Resend in front; the chat's ways of doing
+    // each action are the kit's hooks (_voHooks). Below: the chat's own row, where the kit is not on the page.
+    const _userLead=role==='user'
         ? _ma('edit','Edit',`CH._msgEdit('${mid}')`,'Edit and resubmit - rewinds the chat from here')
         + _ma('resend','Resend',`CH._msgResubmit('${mid}')`,'Resubmit unchanged - rewinds the chat from here')
+        : '';
+    if(typeof VeraOut!=='undefined'&&VeraOut.proseMenu){
+      const _row=document.createElement('div'); _row.innerHTML=VeraOut.proseMenu(mid, {lead:_userLead, getMd:()=>(_MSG_REGISTRY[mid]?_MSG_REGISTRY[mid].getContent():'')});
+      actions.innerHTML=_row.firstChild.innerHTML; actions.classList.add('vo-acts'); actions.setAttribute('data-vo-prose', mid);
+    } else
+    actions.innerHTML=(role==='user'
+        ? _userLead
         : '')
       + _ma('copy','Copy',`CH._msgCopy('${mid}',this)`,'Copy the message text')
       + _ma('explode','Explode',`CH._msgExplode('${mid}',this)`,'A structured diagram of this message - its code, or its prose')
@@ -8823,6 +8835,27 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       pane:(blk,id)=>{ _codePreview(id); return true; },
       edited:(blk,id,d,card)=>{ try{ const body=card.closest('.msg-body'); const md=body&&body.dataset.markdown;
         if(md&&d.before&&md.indexOf(d.before)>=0) body.dataset.markdown=md.replace(d.before, d.code); }catch(_){} },
+      // ── what the page does for a card or a piece of writing ANYWHERE on it - the canvas's items and the loop's
+      //    answers included (these reach every root: the kit's HOSTWIDE set) ──
+      notify:(html)=>{ appendSys('<span style="color:var(--ok)">'+html+'</span>'); },
+      reveal:(channel, url)=>{ try{ _dlvReveal(channel, url?BASE+url:''); }catch(_){} },
+      // the session's VS Code: the code saved into the session's artifacts, then its VS Code opened
+      vscode:async (blk)=>{ const name=blk.filename||('snippet.'+((_LANG_EXT[String(blk.lang||'').toLowerCase()])||'txt'));
+        try{ const r=await fetch(BASE+'/exec/sandbox/write_artifact',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({filename:name, content:blk.code||'', session_id:SID||''})}); const j=await r.json();
+          appendSys('<span style="color:var(--ok)">Saved '+esc(name)+' to the session\'s artifacts'+(j&&j.path?' ('+esc(j.path)+')':'')+' - opening VS Code…</span>'); }
+        catch(e){ appendSys('<span style="color:var(--err)">Could not save '+esc(name)+': '+esc(String(e&&e.message||e))+'</span>'); }
+        try{ await _sessionSbxVscode(); }catch(_){} return true; },
+      // the prose row's deliveries, from the text it is given (a message, a canvas item, a loop's answer)
+      html:(ctx)=>{ _msgHtmlReport(ctx.id, ctx.md); return true; },
+      podcast:(ctx)=>{ _msgPodcast(ctx.id, ctx.md); return true; },
+      notebook:(ctx)=>{ _saveModalOpen('nb-msg', 'Save to notebook', ctx.md); return true; },
+      ide:(ctx)=>{ _saveModalOpen('ide-msg', 'Save to a file', ctx.md); return true; },
+      project:(ctx)=>{ _saveModalOpen('proj-msg', 'Add to a project', ctx.md); return true; },
+      think:(ctx)=>{ _saveModalOpen('think-msg', 'Mark for later thought', ctx.md); return true; },
+      // a chat message's own explode and canvas (a message has its own place in the transcript to draw them)
+      prose_explode:(ctx)=>{ if(_MSG_REGISTRY[ctx.id]){ _msgExplode(ctx.id, ctx.btn); return true; } return false; },
+      prose_canvas:(ctx)=>{ if(_MSG_REGISTRY[ctx.id]){ _msgToCanvas(ctx.id, ctx.btn); return true; } return false; },
     });
   })();
   function renderMd(t,opts){

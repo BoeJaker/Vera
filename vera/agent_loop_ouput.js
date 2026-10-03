@@ -3870,11 +3870,14 @@
       }
 
       const deliv = ev.deliverable || ev.handover_output;
+      // the answer carries the same row as a chat reply and a canvas item: copy, canvas, send it anywhere (vera_output.js)
+      const proseRow = (md) => (window.VeraOut && typeof VeraOut.proseMenu === 'function')
+        ? `<div class="alo-prose-row" style="margin-top:6px">${VeraOut.proseMenu('alo-' + Date.now().toString(36), {md: String(md || ''), explode: false})}</div>` : '';
       if(deliv){
         html += `<div class="alo-final-row">
           <div class="alo-final-lbl" style="color:var(--acc,#5a9e8f)">${ev.deliverable?'📦 Deliverable':'★ Synthesised answer'}</div>
           <div class="alo-final-val">
-            <div class="alo-handover-body">${_renderMarkdown(deliv)}</div>
+            <div class="alo-handover-body">${_renderMarkdown(deliv)}</div>${proseRow(deliv)}
             ${summary?`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:9.5px;color:var(--dim,#a89f92)">show original raw answer</summary>
               <div class="alo-final-val summary" style="margin-top:4px;font-size:10px">${_esc(summary)}</div>
             </details>`:''}
@@ -3883,7 +3886,7 @@
       } else if(summary){
         html += `<div class="alo-final-row">
           <div class="alo-final-lbl">${done?'Answer':'Result'}</div>
-          <div class="alo-final-val">${_smartRender(summary)}</div>
+          <div class="alo-final-val">${_smartRender(summary)}${proseRow(summary)}</div>
         </div>`;
       }
 
