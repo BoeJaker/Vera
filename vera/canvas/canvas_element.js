@@ -2914,7 +2914,7 @@
           else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
           inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
           // a code item previews its code; an html item previews the page it IS (its content field is `html`)
-          h.textContent = ''; const cc = this._contentOf(key) || {}; const pd = previewDoc(h.dataset.lang || cc.lang, cc.code || cc.html || ''); inner._doc = pd; inner.srcdoc = pd; }
+          h.textContent = ''; const cc = this._contentOf(key) || {}; const pd = this._pdoc(key, h.dataset.lang || cc.lang, cc.code || cc.html || ''); inner._doc = pd; inner.srcdoc = pd; }
           else if (kind === 'explode') { inner = document.createElement('vera-graph-embed'); h.textContent = '';
             ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
             this._explodeAttrs(inner, key);
@@ -2939,7 +2939,7 @@
         } else if (kind === 'preview') { if (h.textContent) h.textContent = ''; const cc = this._contentOf(key) || {};
           /* an html item's page is its `html`, not `code` - reading only `code` redrew every html item as an empty page on
              its first update; and the redraw is double-buffered (_previewSwap) so there is never a blank frame */
-          this._previewSwap(el, previewDoc(h.dataset.lang || cc.lang, cc.code || cc.html || ''));
+          this._previewSwap(el, this._pdoc(key, h.dataset.lang || cc.lang, cc.code || cc.html || ''));
         } else if (kind === 'report') { if (h.textContent) h.textContent = ''; const fr = el.firstChild, want = h.dataset.src || '';
           if (fr && want && fr.getAttribute('src') !== want) fr.setAttribute('src', want);   // a re-render never reloads the same report
         } else if (kind === 'explode') { if (h.textContent) h.textContent = ''; this._explodeAttrs(el.firstChild, key);
@@ -3069,6 +3069,10 @@
        black/white on every streamed beat, and kept flickering while the chat streamed on after it (owner,
        2026-09-27). The next document loads in a second frame BEHIND the one on screen and replaces it once it has
        painted; while one is loading only the newest document is kept, and a swap is at most every half second. */
+    /* a page the chat is still writing follows its newest line: each swap is a fresh page, which opens at its top - so
+       as the page grew past the frame its new content was never in view (owner, 2026-10-03: "the canvas is better but
+       still bad"). While the item is streaming its document carries the scroll to its end; finished, it opens as itself. */
+    _pdoc(key, lang, src) { const d = previewDoc(lang, src); return (this._liveOv && this._liveOv[String(key)]) ? d + '<script>try{scrollTo(0,document.documentElement.scrollHeight)}catch(e){}<\/script>' : d; }
     _previewSwap(wrap, doc) {
       if (!wrap) return;
       const shown = () => [...wrap.querySelectorAll(':scope > iframe.vc-pframe')].filter((f) => !f._pending).pop() || null;
