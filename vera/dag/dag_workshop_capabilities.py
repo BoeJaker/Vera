@@ -11841,6 +11841,10 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
     blocks = _v5_extract_code_blocks(text, name_hint=(path or task))
     content = (blocks[0]["code"] if blocks
               else _v5_strip_marker_line(_unescape_collapsed_code(text.strip())))
+    # An UNCLOSED wrapper fence defeats block extraction, and the fallback kept the
+    # fence line in the delivered file (live 3 Oct, why_tests.md). doc_fence_core.
+    if not blocks:
+        content = _doc_fence_core.unwrap(content)
     if not content.strip():
         return {"ok": False, "error": "no document content in the generation"}
 
@@ -14238,6 +14242,12 @@ try:
     from Vera.vera.dag import stale_value_core as _stale_value_core
 except Exception:                                     # pragma: no cover
     from vera.dag import stale_value_core as _stale_value_core
+
+# A document wrapped in an unclosed fence keeps no fence line (live 3 Oct).
+try:
+    from Vera.vera.dag import doc_fence_core as _doc_fence_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import doc_fence_core as _doc_fence_core
 
 # Double-escaped newlines in model-written Python (probe 2026-10-01: 24% of
 # exec.python.run calls wrote a literal backslash-n instead of a newline).
