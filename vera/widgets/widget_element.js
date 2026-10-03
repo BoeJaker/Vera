@@ -3576,6 +3576,10 @@ span.vw-sampled{opacity:.85}
 
   /* ── the element ──────────────────────────────────────────────────────── */
   const ELEMENT_CSS = fontScale(`:host{display:block;color:var(--text,#d8dce4);font-family:var(--sans,system-ui,sans-serif);font-size:11px;min-width:0}
+/* scrollbars, minimal (owner, 2026-10-03: "lots of widgets have unstyled scroll bars"): a page's own scrollbar styling
+   never reaches into this shadow root, so every widget scrolled with the browser's default - thin and quiet here instead */
+*{scrollbar-width:thin;scrollbar-color:var(--bd2,var(--border2,rgba(255,255,255,.16))) transparent}
+.vw-fit{overflow:hidden!important}
 :host([data-state="reading"]) .vw-sampled{opacity:.42;filter:saturate(.4)}
 [data-b],[data-tip]{transition:filter .14s ease,opacity .14s ease,stroke-width .14s ease}
 .vw-root.lit .vb-isow i.f[data-b]:not(.hot):not(.warm),.vw-root.lit .vw-arc:not(.hot){filter:brightness(.62) saturate(.7)}
@@ -4273,6 +4277,11 @@ span.vw-sampled{opacity:.85}
       if (state === 'live' && !this.hasAttribute('data-entered') && !this._entering) { this._entering = true; setTimeout(() => { this.setAttribute('data-entered', ''); this._entering = false; }, 900); }
       // a bare element (a dashboard tile's body) measures too: its host sizes it, and the forms fit what they are given
       if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body') || (this.hasAttribute('bare') ? (this._sh.querySelector('.vw-root') || this) : null); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0;   /* bare: the root is the box the content has */ if (hb > 0 || wb > 0) this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
+      /* NOTHING TO SCROLL, NO SCROLLBAR (owner, 2026-10-03: "some of the widgets get an internal scrollbar on hover but
+         there is nothing to scroll"): a face a few pixels taller than its box (a rounding, a margin - 355 in 352,
+         measured on the dashboard) showed a scrollbar for nothing. Within 6 px the box keeps it, unscrolled. */
+      { const sc = [...this._sh.querySelectorAll('.vw-root,.vw-body,.vw-slot-b')]; const fit = () => sc.forEach((e) => { const over = e.scrollHeight - e.clientHeight; e.classList.toggle('vw-fit', over > 0 && over <= 6); });
+        fit(); requestAnimationFrame(fit); }
       this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size, sample: sampled, empty: readEmpty, stale } }));   // the state rides on the host: data-state
     }
     /* ── THE FACE'S OWN WIDTH, when it has one ────────────────────────────────────────────────────────────────
