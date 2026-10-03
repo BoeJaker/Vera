@@ -38,6 +38,55 @@ def test_named_secrets_are_masked_too():
     assert "<redacted>" in log_setup.redact('"access_token": "abcdefghijklmnop"')
 
 
+# Assembled, so no credential-looking literal is stored.
+PW = "Zq" + "9" * 10 + "xY"
+
+
+def test_a_password_in_a_connection_url_is_masked_but_the_user_survives():
+    out = log_setup.redact("Redis connected (attempt 1): redis://vera:" + PW + "@localhost:6379 v7.4.8")
+    assert PW not in out
+    assert "redis://vera:<redacted>@localhost:6379" in out, out
+
+
+def test_env_style_secret_assignments_are_masked():
+    for name in ("NEO4J_PASS", "POSTGRES_PASSWORD", "VAULT_TOKEN", "OPENAI_API_KEY"):
+        out = log_setup.redact(f'export {name}="{PW}"; next')
+        assert PW not in out and name in out and "next" in out, out
+
+
+def test_an_inline_base64_payload_decoded_into_a_file_is_dropped():
+    import base64
+    payload = base64.b64encode(("REDIS_URL=redis://vera:" + PW + "@h:6379\n").encode()).decode()
+    cmd = ("set -e; ( umask 077; printf %s " + payload +
+           " | base64 -d > /opt/vera/worker/worker.env ); chmod 600 /opt/vera/worker/worker.env")
+    out = log_setup.redact(cmd)
+    assert payload not in out
+    assert "printf %s <redacted> | base64 -d > /opt/vera/worker/worker.env" in out, out
+
+
+def test_a_record_with_no_colon_is_still_redacted():
+    rec = logging.LogRecord("x", logging.INFO, __file__, 1, "NEO4J_PASS=" + PW, None, None)
+    log_setup.RedactingFilter().filter(rec)
+    assert PW not in rec.getMessage()
+
+
+def test_the_asyncssh_command_line_is_redacted_through_its_args():
+    import base64
+    payload = base64.b64encode(b"NEO4J_PASS=" + PW.encode() + b"\n").decode()
+    rec = logging.LogRecord("asyncssh", logging.INFO, __file__, 1, "  Command: %s",
+                            ("printf %s " + payload + " | base64 -d > /x/worker.env",), None)
+    log_setup.RedactingFilter().filter(rec)
+    assert payload not in rec.getMessage()
+
+
+def test_ordinary_lines_with_equals_and_urls_are_untouched():
+    for line in ("ollama_req [abc] model=qwen3.5:9b inst=gpu-250 job=chat",
+                 "HTTP Request: POST http://192.168.0.250:11436/api/embed \"HTTP/1.1 200 OK\"",
+                 "cap=docs.build took=12.3s ok=True",
+                 "printf %s hello | wc -c"):
+        assert log_setup.redact(line) == line, line
+
+
 def _record(msg, *args):
     return logging.LogRecord("httpx", logging.INFO, __file__, 1, msg, args, None)
 
