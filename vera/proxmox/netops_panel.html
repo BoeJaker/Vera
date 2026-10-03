@@ -66,10 +66,10 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div><h1>Network</h1><div class="sub">Firewall &amp; traffic</div></div>
   </div>
   <nav id="nav">
-    <button class="nav-btn active" data-sec="fw" title="Proxmox firewall">
+    <button data-label="Firewall" data-desc="The Proxmox firewall rules" data-desc-long="The Proxmox firewall: rules at cluster, node or per-guest scope through the PVE firewall API - the same rules the Network graph shows as policy edges (draw a line = ACCEPT, cut = delete)." class="nav-btn active" data-sec="fw" title="Proxmox firewall">
       <span class="gl">🛡</span><span>Firewall</span>
     </button>
-    <button class="nav-btn" data-sec="traffic" title="Live traffic via NWM-01">
+    <button data-label="Traffic (NWM-01)" data-desc="Live traffic through the monitor" data-desc-long="Live traffic through the NWM-01 monitor container: Flows reads the live conntrack table (top connections and talkers); Capture runs a timed tcpdump." class="nav-btn" data-sec="traffic" title="Live traffic via NWM-01">
       <span class="gl">📡</span><span>Traffic (NWM-01)</span>
     </button>
   </nav>
