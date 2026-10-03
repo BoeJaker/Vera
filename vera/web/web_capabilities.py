@@ -729,6 +729,14 @@ async def cap_web_fetch(
                           "dataset": ds_for_ingest, "entities": ents,
                           "error": (err or "")[:200]})
 
+    # the reader version, kept as the page is read (canvas-enrichment slice 2): the html already fetched is read as an
+    # article in the background and kept in the reader cache, so reading it again - the model, the canvas - is instant
+    if html and not block_reason and status < 400:
+        _rmod = sys.modules.get("Vera.vera.web.browser_capabilities") or sys.modules.get("browser_capabilities")
+        _rr = getattr(_rmod, "reader_read", None) if _rmod else None
+        if _rr:
+            _spawn(_rr(url, html=html, mode="fetch"))
+
     ds_for_ingest = ""
     if ingest_to_fabric and text and not block_reason:
         ds_for_ingest = ((dataset_id or "").strip()
@@ -1099,11 +1107,27 @@ async def cap_web_research(
 
     # 2. Pull the useful content from the top results IN PARALLEL. ingest_to_fabric
     #    stays False — this is a fast read, not a crawl-and-store.
-    fetches = await asyncio.gather(
-        *[cap_web_fetch(url=h["url"], timeout=fetch_timeout,
-                        max_chars=max_chars, ingest_to_fabric=False) for h in top],
-        return_exceptions=True,
-    )
+    #    THE ARTICLE, NOT THE PAGE (canvas-enrichment slice 2 - owner, 2026-10-03: "reader mode should be cached as the
+    #    site is crawled - ideally this is the output the LLM should see to cut out rubbish from its input"): each page
+    #    is read through reader.page - the reader cache, else the fetched page read as an article and kept - so the
+    #    model reads the article (and the canvas's reader mode opens it at once later); a page reader.page cannot read
+    #    falls back to the plain fetch, as before.
+    reader = (_orch.CAPABILITY_REGISTRY.get("reader.page") or {}).get("func")
+
+    async def _read(h):
+        if reader:
+            try:
+                r = await asyncio.wait_for(reader(url=h["url"], max_chars=max_chars, mode="fetch"), fetch_timeout + 8.0)
+                if isinstance(r, dict) and r.get("ok") and str(r.get("markdown") or "").strip():
+                    md = str(r["markdown"])
+                    return {"title": r.get("title") or "", "text": md, "chars": len(md), "blocked": False,
+                            "via_reader": r.get("via") == "reader-proxy", "reader": True, "cached": bool(r.get("cached")),
+                            "byline": r.get("byline") or "", "published": r.get("published") or ""}
+            except Exception as e:                               # the plain fetch below is the fallback
+                log.debug("web.research reader [%s]: %s", h.get("url"), e)
+        return await cap_web_fetch(url=h["url"], timeout=fetch_timeout, max_chars=max_chars, ingest_to_fabric=False)
+
+    fetches = await asyncio.gather(*[_read(h) for h in top], return_exceptions=True)
 
     sources: List[Dict[str, Any]] = []
     for h, f in zip(top, fetches):
@@ -1119,6 +1143,11 @@ async def cap_web_research(
             src["chars"]      = f.get("chars", len(f.get("text", "")))
             src["blocked"]    = bool(f.get("blocked"))
             src["via_reader"] = bool(f.get("via_reader"))
+            if f.get("reader"):
+                src["reader"], src["cached"] = True, bool(f.get("cached"))
+                for k in ("byline", "published"):
+                    if f.get(k):
+                        src[k] = f[k]
         else:
             err = str(f) if isinstance(f, Exception) else (f or {}).get("error", "")
             src.update({"text": "", "chars": 0, "blocked": True, "error": err[:160]})
