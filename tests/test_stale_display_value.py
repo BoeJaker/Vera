@@ -49,7 +49,7 @@ def test_no_number_change_no_findings():
 def test_the_edit_reports_it_and_the_verifier_does_not_pass_it():
     i = SRC.index("async def cap_code_edit(")
     body = SRC[i:i + 20000]
-    assert "_stale_value_core.stale_display_values(current, res[\"content\"])" in body
+    assert "_stale_value_core.stale_display_values(current, res[\"content\"], task=task)" in body
     assert '**({"warning": _stale_msg} if _stale_msg else {})' in body
     v = SRC[SRC.index("async def _v6_verify_step("):]
     v = v[:v.index("verified its syntax deterministically")]

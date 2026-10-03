@@ -12354,7 +12354,7 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
     # after `ok`, so it is inside the history preview the executor and verifier read.
     try:
         _stale_msg = _stale_value_core.describe(
-            _stale_value_core.stale_display_values(current, res["content"]))
+            _stale_value_core.stale_display_values(current, res["content"], task=task))
     except Exception:
         _stale_msg = ""
     return {"ok": True, **({"warning": _stale_msg} if _stale_msg else {}),
