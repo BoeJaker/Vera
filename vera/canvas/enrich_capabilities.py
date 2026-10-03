@@ -284,3 +284,90 @@ async def cap_turn_entity_look(session_id: str = "", text: str = "", type: str =
                             size="l", anchor=anchor)
         items.append({"key": key, "cap": cap, "resolved": (added or {}).get("resolved") if isinstance(added, dict) else None})
     return {"ok": True, "items": items, "skipped": skipped}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE SURFACE INDEX (canvas-enrichment slice 3): what each part of the estate's UI can show, by domain - the reads that
+# fit a turn, the dashboard widgets already drawn over them, the panels - and what the turn names that fills their
+# arguments. surface.find is what the before-the-model step (slice 4) asks; it calls nothing but the NLP tier.
+# ─────────────────────────────────────────────────────────────────────────────
+
+try:
+    from Vera.vera.canvas import surface_core as sc
+except ImportError:                                   # pragma: no cover
+    from vera.canvas import surface_core as sc
+
+import json as _json
+import os as _os
+
+_SURF: Dict[str, Any] = {"at": 0.0, "index": None}
+SURFACE_TTL_S = 600.0
+
+
+def _layouts() -> List[Dict[str, Any]]:
+    d = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "widgets", "layouts")
+    out = []
+    try:
+        for n in sorted(_os.listdir(d)):
+            if n.endswith(".json"):
+                try:
+                    with open(_os.path.join(d, n), encoding="utf-8") as fh:
+                        out.append(_json.load(fh))
+                except (OSError, ValueError):
+                    continue
+    except OSError:
+        pass
+    return out
+
+
+async def _surface_index(refresh: bool = False) -> Dict[str, Any]:
+    if not refresh and _SURF["index"] is not None and time.monotonic() - _SURF["at"] < SURFACE_TTL_S:
+        return _SURF["index"]
+    ws = _sources_mod()
+    pl = await _call("ui.panel.list")
+    panels = (pl or {}).get("panels") or [] if isinstance(pl, dict) else []
+    idx = sc.build(CAPABILITY_REGISTRY, getattr(ws, "MEASURED", {}) if ws else {}, _layouts(), panels)
+    _SURF.update(at=time.monotonic(), index=idx)
+    return idx
+
+
+@capability(
+    "surface.index", memory="off", silent=True,
+    http_method="GET", http_path="/surface/index", http_tags=["canvas"],
+    description="The surface index: what each part of the estate's UI can show, by domain (markets, your trading "
+                "account, your business accounts, the estate, the diary, research) - every read that only reads, with "
+                "the kinds of thing its parameters take (a symbol, a url, a node, a path, a dataset); every dashboard "
+                "widget over such a read; every panel. Built from the registry, the measured widget sources, the "
+                "layouts and the panel list; kept 10 minutes. Inputs: refresh (bool), domain (str - list that domain's "
+                "surfaces). Output: {counts:{domain:{read, widget, panel}}, domains:[{id, label}], surfaces?:[...]}.")
+async def cap_surface_index(refresh: bool = False, domain: str = "", trace_id=None) -> Dict[str, Any]:
+    idx = await _surface_index(bool(refresh))
+    out: Dict[str, Any] = {"counts": idx["counts"], "domains": [{"id": d["id"], "label": d["label"]} for d in sc.DOMAINS]}
+    if domain:
+        out["surfaces"] = [{k: v for k, v in s.items() if k != "record"} for s in idx["surfaces"] if s["domain"] == domain][:300]
+    return out
+
+
+@capability(
+    "surface.find", memory="off",
+    http_method="POST", http_path="/surface/find", http_tags=["canvas"],
+    description="Which surfaces answer a turn: reads the turn's words and the things it names (turn_core patterns, and "
+                "the NLP tier's entities when ner=true), scores the domains, and answers - for the top ones - the "
+                "dashboard widgets, the glance reads, the reads the named things fill (a ticker into a symbol "
+                "parameter...) and the panels, each with its arguments and why. The two accounts are kept apart: a "
+                "turn that only says 'my account' gets both, named apart. No model is called. Inputs: text (str!), "
+                "entities (list - from turn.understand, else found here), ner (bool=false), max_items (int=6). Output: "
+                "{domains:[{id, label, score}], surfaces:[{kind, cap?, panel?, args, domain, domain_label, why, record?}], ms}.")
+async def cap_surface_find(text: str = "", entities: Any = None, ner: bool = False, max_items: int = 6,
+                           trace_id=None) -> Dict[str, Any]:
+    t0 = time.monotonic()
+    if not str(text or "").strip():
+        return {"ok": False, "error": "text required"}
+    ents = list(entities) if isinstance(entities, list) else None
+    if ents is None:
+        body = tc.prose(text)
+        ents = tc.merge(body, await _ner(body)) if ner else tc.merge(body, [])
+    idx = await _surface_index()
+    out = sc.find(idx, text, ents, max_items=max(1, int(max_items or 6)))
+    out.update(ok=True, ms=int((time.monotonic() - t0) * 1000))
+    return out
