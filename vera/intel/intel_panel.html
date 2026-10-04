@@ -292,12 +292,14 @@ async function openTopic(id) {
     </div>
     <div class="card"><vera-intel-timeline topic="${esc(id)}" days="90"></vera-intel-timeline></div>
     <div class="card"><div class="row"><h3 class="grow" style="margin:0">Numbers this topic watches</h3>
+        <button class="btn" onclick="pmSuggest()" title="prediction markets that would measure its open questions">% Markets for its questions</button>
         <button class="btn" onclick="checkInd()" title="look for moves now - no model">↻ Check</button></div>
       <div class="small muted">A price, a macro series or any bar dataset. A spike, a level shift or a new regime joins the timeline and the next assessment, with the stories that landed around it.</div>
       <div id="indList" class="small"></div>
-      <div class="row" style="margin-top:8px"><select id="indKind" style="width:auto"><option value="price">price</option><option value="macro">macro series</option><option value="probability">probability (dataset)</option><option value="count">count (dataset)</option></select>
+      <div class="row" style="margin-top:8px"><select id="indKind" style="width:auto"><option value="price">price</option><option value="macro">macro series</option><option value="probability">prediction market</option><option value="count">count (dataset)</option></select>
         <input type="text" id="indQ" class="grow" placeholder="bitcoin, AAPL, GBP/USD - or a macro id like CPIAUCSL - or mkt.… dataset id" style="width:auto">
         <button class="btn" onclick="addInd()">Watch</button></div>
+      <div id="pmRows" class="small"></div>
     </div>
     <div class="grid2">
       <div class="card"><div class="row"><h3 class="grow" style="margin:0">Signals</h3>
@@ -330,9 +332,32 @@ async function addInd() {
   if (!q) return;
   const args = {topic_id: CUR, kind};
   if (/^mkt\./.test(q)) args.dataset_id = q; else args.query = q;
+  if (kind === 'probability' && !args.dataset_id) return pmFind(q);
   const r = await call('intel.indicator.add', args);
   $('wsMsg').textContent = r.error || r.message || '';
   if (!r.error) { $('indQ').value = ''; loadInd(); }
+}
+function pmRow(m) {
+  const p = m.prob == null ? '–' : Math.round(m.prob * 100) + '%';
+  return `<div class="sig"><div class="sc">${esc(p)}</div><div>${safeUrl(m.url) ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.question)}</a>` : esc(m.question)}
+    <div class="muted">${esc(m.source)}${m.event && m.event !== m.question ? ' · ' + esc(m.event) : ''}${m.volume ? ' · vol ' + esc(String(Math.round(m.volume))) : ''}${m.end ? ' · ends ' + esc(String(m.end).slice(0, 10)) : ''}</div></div>
+    <div class="ops"><button class="btn" onclick="pmWatch('${esc(m.source)}','${esc(m.id)}',this)">Watch</button></div></div>`;
+}
+async function pmFind(q) {
+  $('pmRows').innerHTML = '<div class="muted">searching…</div>';
+  const r = await call('intel.pm.search', {query: q, limit: 8});
+  $('pmRows').innerHTML = (r.rows || []).map(pmRow).join('') || `<div class="muted">${esc((r.errors || []).join('; ') || r.error || 'no open market found')}</div>`;
+}
+async function pmSuggest() {
+  $('pmRows').innerHTML = '<div class="muted">matching its questions to markets…</div>';
+  const r = await call('intel.pm.suggest', {topic_id: CUR, per_question: 2});
+  $('pmRows').innerHTML = (r.suggestions || []).map(s => `<div style="margin-top:6px"><b>${esc(s.question)}</b></div>` + s.markets.map(pmRow).join('')).join('')
+    || `<div class="muted">${esc((r.errors || []).join('; ') || r.error || 'no market matches its open questions')}</div>`;
+}
+async function pmWatch(source, id, btn) {
+  const r = await call('intel.indicator.add', {topic_id: CUR, kind: 'probability', market_source: source, market_id: id});
+  if (btn) { btn.textContent = r.error ? '✗' : '✓'; btn.disabled = true; btn.title = r.error || ''; }
+  if (!r.error) loadInd();
 }
 async function rmInd(iid) { await call('intel.indicator.remove', {topic_id: CUR, indicator_id: iid}); loadInd(); }
 async function checkInd() {

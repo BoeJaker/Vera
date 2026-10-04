@@ -56,3 +56,9 @@ def test_material_needs_a_story_or_a_huge_spike():
     d = {"kind": "regime", "magnitude": 0.9, "stories": [{"title": "x"}]}
     assert chg.material([a, b, c, d]) == [b, c]
     assert "around then: x" in chg.prompt_lines([dict(b, text="BTC up 8%")])
+
+
+def test_a_market_that_sits_still_still_reports_its_jump():
+    vals = [0.31] * 60 + [0.54] * 5
+    found = chg.detect(list(range(65)), vals, kind="probability")
+    assert found and found[0]["kind"] == "spike" and found[0]["index"] == 60

@@ -54,15 +54,17 @@ def change(kind: str, i: int, t: Any, magnitude: float, direction: str, detail: 
 
 
 def spikes(ts: Sequence[Any], values: Sequence[float], *, window: int = 40, z: float = 5.0,
-           kind: str = "pct", min_history: int = 20) -> List[Dict[str, Any]]:
-    """One-bar moves larger than `z` robust sigmas of the trailing window's moves."""
+           kind: str = "pct", min_history: int = 20, min_sigma: float = 0.0) -> List[Dict[str, Any]]:
+    """One-bar moves larger than `z` robust sigmas of the trailing window's moves.
+    `min_sigma` floors the sigma, so a series that mostly sits still (a prediction
+    market between trades) still reports its jumps."""
     r = returns(values, kind)
     out = []
     for i in range(len(r)):
         hist = r[max(0, i - window):i]
         if len(hist) < min_history:
             continue
-        sig = mad_sigma(hist)
+        sig = max(mad_sigma(hist), min_sigma)
         if sig <= 0:
             continue
         zz = (r[i] - _median(hist)) / sig
@@ -150,7 +152,7 @@ def detect(ts: Sequence[Any], values: Sequence[float], *, kind: str = "price") -
     de-duplicated (changes within 5 bars of each other are one change; the spike, then the shift, is kept)."""
     vals = [float(v) for v in values]
     rk = "abs" if kind in ("probability", "rate", "count", "geo_rate", "macro") else "pct"
-    found = spikes(ts, vals, kind=rk) + cusum(ts, vals) + bocpd(ts, vals)
+    found = spikes(ts, vals, kind=rk, min_sigma=0.005 if kind == "probability" else 0.0) + cusum(ts, vals) + bocpd(ts, vals)
     by_i: Dict[int, Dict[str, Any]] = {}
     pri = {"spike": 0, "shift": 1, "regime": 2}
     for c in sorted(found, key=lambda c: (c["index"], pri[c["kind"]])):

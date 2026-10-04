@@ -104,7 +104,7 @@ def _load(tmp_path, *, nlp=True):
         return {"embeddings": [_vec(t) for t in texts]}
 
     async def nlp_rerank(query="", documents=None, top_k=5, trace_id=None):
-        return {"ranked": [{"index": i, "score": 4.0 if "pilot" in d.lower() else -6.0} for i, d in enumerate(documents)]}
+        return {"ranked": [{"index": i, "score": 4.0 if ("pilot" in d.lower() or "boe" in d.lower()) else -6.0} for i, d in enumerate(documents)]}
 
     async def nlp_ner(text="", task="ner", labels=None, threshold=0.4, trace_id=None):
         orch.CALLS.append(("nlp.ner", {"labels": list(labels or [])}))
@@ -557,3 +557,52 @@ def test_indicators_find_moves_corroborate_and_reach_the_assessment(tmp_path):
     ind = lst["indicators"][0]["id"]
     assert _R(orch, "intel.indicator.remove", topic_id=t["id"], indicator_id=ind)["ok"]
     assert all(i["id"] != ind for i in _R(orch, "intel.indicator.list", topic_id=t["id"])["indicators"])
+
+
+def test_prediction_markets_search_suggest_watch_and_move(tmp_path):
+    import time as _t
+    mod, orch = _load(tmp_path)
+    now = int(_t.time()) // 3600 * 3600
+    gamma = {"events": [
+        {"title": "BoE rate decision", "slug": "boe-dec", "closed": False, "markets": [
+            {"id": "11", "question": "Will the BoE cut rates in December?", "outcomes": '["Yes", "No"]',
+             "outcomePrices": '["0.31", "0.69"]', "clobTokenIds": '["tokYes", "tokNo"]', "volumeNum": "5000",
+             "active": True, "closed": False, "endDate": "2026-12-20T00:00:00Z"},
+            {"id": "12", "question": "Will the BoE cut rates in August?", "outcomes": '["Yes", "No"]',
+             "outcomePrices": '["0", "1"]', "clobTokenIds": '["a", "b"]', "closed": True}]}]}
+    hist = {"history": [{"t": now - (199 - i) * 3600, "p": 0.31 + 0.002 * ((i * 7) % 3)} for i in range(196)]
+            + [{"t": now - (199 - i) * 3600, "p": 0.54} for i in range(196, 200)]}
+    seen = []
+
+    async def http_json(url, params=None, timeout=20.0):
+        seen.append((url, dict(params or {})))
+        if url.endswith("/public-search"):
+            return gamma
+        if url.endswith("/search-markets"):
+            return [{"id": "mf1", "question": "BoE cut rates in December 2026?", "outcomeType": "BINARY",
+                     "probability": 0.4, "volume": 300, "closeTime": 1798761540000, "url": "https://manifold.markets/x"},
+                    {"id": "mf2", "question": "Resolved one", "outcomeType": "BINARY", "isResolved": True}]
+        if url.endswith("/markets/11"):
+            return gamma["events"][0]["markets"][0]
+        if url.endswith("/prices-history"):
+            return hist
+        raise AssertionError(url)
+    mod._http_json = http_json
+    t = _R(orch, "intel.topic.save", name="UK rates", questions="Will the BoE cut rates in December?")["topic"]
+    rows = _R(orch, "intel.pm.search", query="BoE December cut")["rows"]
+    assert {r["source"] for r in rows} == {"polymarket", "manifold"} and all(r["id"] not in ("12", "mf2") for r in rows)
+    pmk = next(r for r in rows if r["source"] == "polymarket")
+    assert pmk["token"] == "tokYes" and pmk["prob"] == 0.31 and pmk["url"] == "https://polymarket.com/event/boe-dec"
+    sug = _R(orch, "intel.pm.suggest", topic_id=t["id"])["suggestions"]
+    assert sug and sug[0]["question"].startswith("Will the BoE")
+    # watching needs a market id; a bare query gives candidates instead
+    bad = _R(orch, "intel.indicator.add", topic_id=t["id"], kind="probability", query="BoE cut")
+    assert "market_source" in bad["error"] and bad["candidates"]
+    ind = _R(orch, "intel.indicator.add", topic_id=t["id"], kind="probability", market_source="polymarket",
+             market_id="11")["indicator"]
+    assert ind["dataset_id"] == "pm:polymarket:tokYes" and ind["market"]["token"] == "tokYes"
+    ch = _R(orch, "intel.indicator.check", topic_id=t["id"])["changes"]
+    assert ch and ch[0]["direction"] == "up" and "23 points" in ch[0]["text"]
+    assert any(u.endswith("/prices-history") and p.get("market") == "tokYes" for u, p in seen)
+    again = _R(orch, "intel.pm.suggest", topic_id=t["id"])["suggestions"]
+    assert all(m["id"] != "11" for x in again for m in x["markets"])           # a watched market is not suggested again
