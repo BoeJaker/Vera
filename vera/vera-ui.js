@@ -1134,6 +1134,22 @@
     });
   }
 
+  /* A THEME COLOUR FOR A CANVAS (the UI bootstrap, 2026-10-04): a canvas, a chart library or an SVG built in script cannot
+     read var(). veraUI.color('--acc') is the theme's colour now; veraUI.color('--acc', .3) the same at 30% - resolved
+     through a hidden element, so the theme's own names, fallbacks and color-mix all work - cached until the theme, the
+     style or the appearance changes. Redraw on the 'vera:theme' message to follow a switch. Never a hex in a canvas. */
+  var _colCache = {}, _colEl = null;
+  try{ new MutationObserver(function(){ _colCache = {}; }).observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'data-theme', 'data-style', 'class'] }); }catch(e){}
+  function themeColor(name, alpha){
+    var v = String(name || '--acc'); if(v.indexOf('--') !== 0) v = '--' + v;
+    var k = v + '|' + (alpha == null ? 1 : alpha); if(_colCache[k]) return _colCache[k];
+    try{
+      if(!_colEl){ _colEl = document.createElement('i'); _colEl.style.display = 'none'; document.documentElement.appendChild(_colEl); }
+      _colEl.style.color = (alpha == null || alpha >= 1) ? 'var(' + v + ')' : 'color-mix(in srgb, var(' + v + ') ' + Math.round(alpha * 100) + '%, transparent)';
+      return (_colCache[k] = getComputedStyle(_colEl).color);
+    }catch(e){ return ''; }
+  }
+
   function _ensureReadStateStyles(){
     if(document.getElementById('vera-read-state-style')) return;
     var style = document.createElement('style');
@@ -1257,6 +1273,7 @@
     // uses this instead of rolling its own CSS animation loop.
     pulseOnce: pulseOnce,
     readState: readState,
+    color: themeColor,
     renderReadState: renderReadState,
   };
 

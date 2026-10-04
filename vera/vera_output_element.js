@@ -396,8 +396,17 @@
     return out.length ? out : [{ title: '', body: '', notes: '' }];
   }
   // a table's rows from CSV / TSV / pipes (quotes honoured), the header first
+  /* a model writes markdown inside a sheet fence (a real turn, 2026-10-04: a '# title', a pipe table with **bold** cells
+     and formulas, a '> tip' under it): a pipe table in it is THE table; otherwise the separator is read from the data
+     lines - never from a heading or a note - and a cell's emphasis marks are not its value */
+  const cellClean = (c) => String(c == null ? '' : c).trim().replace(/^(\*\*|__)(.*)\1$/, '$2').replace(/^`(.*)`$/, '$1').trim();
   function rowsOf(src, lang) {
-    const text = String(src || '').replace(/\r/g, '').replace(/^\n+|\n+$/g, ''); if (!text.trim()) return [];
+    const all = String(src || '').replace(/\r/g, '').split('\n');
+    const sep = (l) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(l);
+    const si = all.findIndex((l, i) => sep(l) && i > 0 && all[i - 1].indexOf('|') >= 0);
+    if (si > 0) { const out = [all[si - 1]]; for (let i = si + 1; i < all.length && all[i].indexOf('|') >= 0 && all[i].trim(); i++) out.push(all[i]);
+      return out.map((l) => l.trim().replace(/^\||\|$/g, '').split('|').map(cellClean)); }
+    const text = all.filter((l) => l.trim() && !/^\s*(#{1,6}\s|>)/.test(l)).join('\n'); if (!text.trim()) return [];
     const first = text.split('\n')[0];
     const d = lang === 'tsv' ? '\t' : lang === 'csv' ? ',' : (first.split('\t').length > first.split(',').length ? '\t' : first.indexOf('|') >= 0 && first.indexOf(',') < 0 ? '|' : ',');
     if (d === '|') return text.split('\n').filter((l) => l.trim() && !/^\s*\|?\s*:?-{3,}/.test(l)).map((l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()));
@@ -409,7 +418,7 @@
       if (ch === '\n') { row.push(cell.trim()); rows.push(row); row = []; cell = ''; continue; }
       cell += ch; }
     row.push(cell.trim()); rows.push(row);
-    return rows.filter((r) => r.some((c) => c !== ''));
+    return rows.filter((r) => r.some((c) => c !== '')).map((r) => r.map(cellClean));
   }
   const NUMRE = /^\s*[-+(]?\s*[$£€¥]?\s*\d[\d,]*(\.\d+)?\s*%?\s*\)?\s*$/;
   const numOf = (s) => { const t = String(s == null ? '' : s).trim(); if (!NUMRE.test(t)) return null;

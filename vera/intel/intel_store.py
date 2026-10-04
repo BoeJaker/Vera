@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -39,9 +40,18 @@ class IntelStore:
             c.executescript(_SCHEMA)
 
     def _conn(self) -> sqlite3.Connection:
-        c = sqlite3.connect(self.path, timeout=15)
-        c.execute("PRAGMA journal_mode=WAL")
-        return c
+        """Open the store, retrying a transient 'unable to open database file'
+        (seen on prod under load); a persistent failure still raises."""
+        last: Optional[Exception] = None
+        for attempt in range(4):
+            try:
+                c = sqlite3.connect(self.path, timeout=15)
+                c.execute("PRAGMA journal_mode=WAL")
+                return c
+            except sqlite3.OperationalError as e:
+                last = e
+                time.sleep(0.05 * (attempt + 1))
+        raise last  # type: ignore[misc]
 
     # ── kv (config, cursors, last-run marks) ──
     def get_kv(self, k: str, default: Any = None) -> Any:
@@ -102,7 +112,8 @@ class IntelStore:
     def put_signal(self, s: Dict[str, Any]) -> None:
         with self._lock, self._conn() as c:
             c.execute("INSERT INTO signals(id,topic_id,seen,score,enriched,reported,rec) VALUES(?,?,?,?,?,?,?) "
-                      "ON CONFLICT(id) DO UPDATE SET score=excluded.score, enriched=excluded.enriched, rec=excluded.rec",
+                      "ON CONFLICT(id) DO UPDATE SET seen=excluded.seen, score=excluded.score, enriched=excluded.enriched, "
+                      "rec=excluded.rec",   # the indexed columns always match the record
                       (s["id"], s.get("topic_id", ""), s.get("seen", ""), s.get("score"),
                        1 if s.get("enriched") else 0, 1 if s.get("reported") else 0, json.dumps(s)))
 

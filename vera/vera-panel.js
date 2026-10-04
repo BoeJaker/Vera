@@ -343,11 +343,20 @@
      menu column - the same items, words, descriptions and icons - each item pressing the panel's own tab, the lit one
      following the panel. The strip's tabs step aside; anything else in the strip (a search, a button) stays. Docked, the
      column steps aside and the strip is back, as before. A panel can keep its strip: data-vp-strip-keep on the menu. */
+  /* WHICH WAY A MENU RUNS, from where its items sit: the second item below the first is a column, beside it a strip. The
+     menu's own box said it wrongly while the page was still laying out (Research's column read as a strip, 2026-10-04). */
+  function isColumn(host, btns) {
+    if (host.id === 'sidebar' || host.tagName === 'ASIDE' || (host.classList.contains('vp-menu') && !host.classList.contains('inline'))) return true;
+    try {
+      var a = btns[0] && btns[0].getBoundingClientRect(), b = btns[1] && btns[1].getBoundingClientRect();
+      if (a && b && (a.width || a.height) && (b.width || b.height)) return Math.abs(b.top - a.top) > Math.abs(b.left - a.left);
+      var fd = getComputedStyle(host).flexDirection; if (/column/.test(fd) && getComputedStyle(host).display.indexOf('flex') >= 0) return true;
+      var hr = host.getBoundingClientRect(); return hr.height > hr.width * 1.5 && hr.width < 420;
+    } catch (e) { return false; }
+  }
   function initStripMenu(host, btns, items) {
     if (!host || host._vpStrip || host.hasAttribute('data-vp-strip-keep')) return null;
-    var column = host.id === 'sidebar' || host.tagName === 'ASIDE' || host.classList.contains('vp-menu');
-    if (!column) { try { var hr = host.getBoundingClientRect(); column = hr.height > hr.width * 1.5 && hr.width < 420; } catch (e) {} }
-    if (column || btns.length < 2) return null;
+    if (isColumn(host, btns) || btns.length < 2) return null;
     host._vpStrip = true;
     if (!document.getElementById('vp-strip-css')) { var st = document.createElement('style'); st.id = 'vp-strip-css';
       st.textContent = 'body.vp-has-strip-menu{padding-left:var(--lhm-width,184px)!important;box-sizing:border-box}'
@@ -392,9 +401,7 @@
   function initMenuWidgets(host, btns, idOf, groupOf, items) {
     if (!host || host._vpMw || !window.fetch) return;
     /* a menu that is a column (the canonical sidebar, a .vp-menu column, an aside) - never a tab strip across the page */
-    var column = host.id === 'sidebar' || host.tagName === 'ASIDE' || (host.classList.contains('vp-menu') && !host.classList.contains('inline'));
-    if (!column) { try { var hr = host.getBoundingClientRect(); column = hr.height > hr.width * 1.5 && hr.width < 420; } catch (e) {} }
-    if (!column) return;
+    if (!(host.classList.contains('vp-strip-menu') || isColumn(host, btns))) return;
     host._vpMw = true;
     var grouped = (function () { var g = {}; items.forEach(function (it) { if (it.group) g[it.group] = 1; }); return Object.keys(g).length >= 2; })();
     var path = location.pathname, panel = '', store = null, editing = false, elAsked = false;

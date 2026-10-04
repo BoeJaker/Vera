@@ -64,6 +64,15 @@ def test_tables_from_fences_and_prose_named_by_their_heading():
     assert xc.tables_of("```sheet\na,b\n1,2")[0]["rows"] == [["a", "b"], ["1", "2"]]      # still being written: what has come
 
 
+def test_a_sheet_fence_with_markdown_in_it_is_read_by_its_table():
+    real = ("```sheet\n# Monthly Home-Lab Budget\n\n| Item | Monthly | Yearly |\n|---|---|---|\n| Hosting | 150 | =B2*12 |\n"
+            "| **Total** | **=SUM(B2:B2)** | **=SUM(C2:C2)** |\n\n> [!TIP]\n> Enter your costs.\n```")
+    t = xc.tables_of(real)
+    assert len(t) == 1 and t[0]["name"] == "Monthly Home-Lab Budget"
+    assert t[0]["rows"][2] == ["Total", "=SUM(B2:B2)", "=SUM(C2:C2)"]
+    assert xc.evaluate(t[0]["rows"])[2] == ["Total", 150, 1800]
+
+
 def test_cells_are_read_as_a_spreadsheet_would_and_formulas_worked_out():
     assert xc.cell_value("1,234") == {"number": 1234, "pct": False}
     assert xc.cell_value("12.5%")["number"] == 0.125 and xc.cell_value("(3)")["number"] == -3

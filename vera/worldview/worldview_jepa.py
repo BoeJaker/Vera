@@ -5241,6 +5241,29 @@ async def cap_worldview_stats(trace_id=None) -> Dict:
 
 
 @capability(
+    "worldview.health",
+    http_method="GET", http_path="/worldview/health",
+    http_tags=["worldview"], memory="off", silent=True,
+    description="Health verdict for the JEPA worldview: status ok|degraded|stale|untrained, "
+                "reasons, and the metrics behind them (records per concept, codebook "
+                "perplexity vs K, dynamics steps per observed transition, index coverage, "
+                "checkpoint age). Without a held-out evaluation the best verdict is "
+                "'degraded'. Consumers use the worldview's output as evidence only when "
+                "status is 'ok'. Output: {status, reasons[], metrics{}}.",
+)
+async def cap_worldview_health(trace_id=None) -> Dict:
+    try:
+        from Vera.vera.worldview import worldview_health_core as _whc
+    except ImportError:                                   # pragma: no cover
+        from vera.worldview import worldview_health_core as _whc
+    try:
+        return _whc.verdict(MODEL.stats(), WV_INDEX.stats())
+    except Exception as e:                                # a broken model is not healthy
+        log.warning("worldview.health: %s", e)
+        return {"status": "untrained", "reasons": [f"health check failed: {e}"], "metrics": {}}
+
+
+@capability(
     "worldview.diagnose",
     http_method="POST", http_path="/worldview/diagnose",
     http_tags=["worldview"], memory="off",

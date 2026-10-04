@@ -833,7 +833,7 @@ Hardware is stored in `vera:catalog:node_hw` (SSH mapping in `vera:catalog:node_
 
 ---
 
-## 9. Model training on the nodes
+## 9. Node jobs: training and gate test shards
 
 Model training runs on the node workers, not the Vera host (`compute.*`, `vera/workers/node_compute_*`). Three trainers use it: `worldview.train` (the JEPA's GNN, codebook and dynamics stages, torch), the ML Lab trainer (`ml.train`, numpy) and the markets models (`markets.ml.*`, scikit-learn). The host still gathers the inputs from its own stores and keeps the result. A node runs only the numeric loop.
 
@@ -847,7 +847,31 @@ Worker provisioning installs torch (CPU build) and scikit-learn, pinned to the h
 
 The worldview's live stream updates stay on the host: a few dynamics mini-batches per minute, where shipping the model would cost more than the work. So do inference calls on a trained model (`worldview.query`, `ml.train.predict`, ONNX runs).
 
-Models › **Training** shows the workers that train and their libraries, where each trainer would run right now and why, the switches, and the recent jobs with the node each ran on.
+### Scheduling
+
+A job goes to **one** node, the one with the most room for it, on that node's own queue (`vera:tasks:node:host:<host_id>`). A node is admitted only when it meets all three conditions:
+
+- **Free CPU:** the cores free by its last metrics tick (the worker publishes CPU %, cores, available memory and load every 10 s) cover what the job needs (`node_compute_core.NEEDS`: training 1–4 cores, a test shard 1.5 cores and 3 GB) on top of the node's **reserve** for its own Ollama runners, NLP and media servers (default 2 cores and 8 GB). Jobs this host already sent there, which the metrics may not show yet, count too.
+- **Free memory:** the same rule applies to available memory against the job's need and the reserve.
+- **Idle worker:** the node's worker is idle, since a worker runs one task at a time.
+
+While no node has room, a job waits, up to `max_wait_s` (default 900 s). After that it runs on the host if host fallback is on, or fails with each node's reason. A node that never starts a job within 2 min, or that stops heartbeating, is excluded, and the job is planned once more elsewhere. Set the reserve, threads and wait with `compute.config.set`.
+
+### Gate test pool
+
+A pipeline gate's critical-tier pytest run can be split into shards over the host's test container and every node with room (`evolve.test_pool.*`, `vera/evolve/test_runner_*`). It is off until turned on with `evolve.test_pool.config.set enabled=true`.
+
+- **Code shipped:** each node shard gets the branch worktree's tracked and untracked files as one archive.
+- **What a shard runs:** `pytest <its files> -m critical` in the node's pinned test venv (`/opt/vera/testenv`), with the gate container's layout and environment.
+- **Shard sizes:** shards are balanced by per-file durations recorded from every run (`vera:evolve:test_durations`).
+- **Merging:** results merge into the same summary, history row and failure details as a single run.
+- **Collection errors:** every test file is collected by some shard, so a file that fails to import still fails the gate.
+- **Failed shards:** a shard a node could not run (no room, lost, stale venv, pytest never started) reruns on the host, so a missing shard is never a pass.
+- **Leases:** each runner is leased separately (the host's container is one runner, each node another). Gates run side by side when runners are free, instead of one at a time.
+
+The test venv is the gate image's `pip freeze` (the GPU stack dropped), installed with `--no-deps`; a package that will not build is reported, not fatal. `nodes.testenv.sync` builds or refreshes it, and each release's node sync runs it (a no-op where the venv is current). A node runs shards only while its venv matches the image the host runs now (`nodes.testenv.status`). `evolve.test_pool.parity` runs a branch's tier on the host alone and through the pool and compares the exact pass and fail sets.
+
+Models › **Node jobs** shows each node's free CPU and memory, its libraries and test venv, where each job type would run right now and why, the switches (test pool, host fallback, reserve, threads, wait), and the recent jobs with the node each ran on.
 
 ---
 

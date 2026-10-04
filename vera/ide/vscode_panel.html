@@ -81,7 +81,7 @@
     <select id="inst-sel" title="VS Code instance"></select>
     <span class="chip" id="inst-status"><span class="dot"></span><span>—</span></span>
     <span class="grow"></span>
-    <button class="btn" id="btn-worker" title="Interactive workers — code-server on a session sandbox">＋ Worker</button>
+    <button data-lhm-cta="" data-label="New worker" data-desc="Start an interactive code-server worker on a session sandbox" class="btn" id="btn-worker" title="Interactive workers — code-server on a session sandbox">＋ Worker</button>
     <button class="btn" id="btn-pw" title="Password for this instance">🔑</button>
     <button class="btn" id="btn-solo" title="Open this instance in its own browser tab">⧉</button>
     <button class="btn" id="btn-connect" title="Connect a desktop VS Code to Vera (queue Claude Code tasks) + fix the webview SSL cert">🔌 Connect</button>
@@ -341,5 +341,8 @@ $('#btn-deploy').onclick=async()=>{
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
+<!-- the bridge, in the page itself: nested in a host panel (an IDE view, an Estate pane) the harness does not inject it,
+     and without it the host never hears this page - its primary action (data-lhm-cta) or its menu -->
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

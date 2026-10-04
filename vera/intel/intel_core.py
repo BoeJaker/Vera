@@ -119,6 +119,7 @@ def normalise_topic(raw: Dict[str, Any], existing: Optional[Dict[str, Any]] = No
         "min_score": _num(raw.get("min_score", base.get("min_score", 5)), 5),
         "dream_loop": bool(raw.get("dream_loop", base.get("dream_loop", False))),
         "discovery": bool(raw.get("discovery", base.get("discovery", True))),
+        "vendors": bool(raw.get("vendors", base.get("vendors", False))),   # vendor pages are wanted here
         "color": str(raw.get("color", base.get("color", "")) or "").strip(),
         "created": base.get("created") or now_iso(),
         "updated": now_iso(),
@@ -797,7 +798,7 @@ def build_report(topics: Sequence[Dict[str, Any]], per_topic: Dict[str, Dict[str
     names = ", ".join(t["name"] for t in topics[:3]) + (" +" + str(len(topics) - 3) if len(topics) > 3 else "")
     return {
         "id": hashlib.sha1(f"report|{ts}|{','.join(t['id'] for t in topics)}".encode()).hexdigest()[:12],
-        "title": title or f"Intel brief - {names}",
+        "title": title or (f"Intel brief - {names}" if topics else f"Intel brief - {ts[:10]}"),
         "ts": ts, "period_hours": period_hours,
         "topic_ids": [t["id"] for t in topics],
         "counts": {"topics": len(topics), "signals": n_sig},

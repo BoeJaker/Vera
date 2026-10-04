@@ -236,7 +236,13 @@ def stream_for(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
     return class_stream(cls) if cls else HOST_TASK_STREAM
 
 
-def streams_to_read(*, is_worker: bool, classes: Optional[Iterable[str]] = None) -> Tuple[str, ...]:
+#: A node worker's own queue (node_compute_core.NODE_STREAM): the host sends a
+#: scheduled job to the one node it chose.
+NODE_HOST_STREAM = "vera:tasks:node:host:{host_id}"
+
+
+def streams_to_read(*, is_worker: bool, classes: Optional[Iterable[str]] = None,
+                    host_id: str = "") -> Tuple[str, ...]:
     """The host reads everything. A node worker reads the shared legacy stream
     (tasks queued by a process running older code) and its own classes' streams
     - never the host stream, never a class it was not given - plus the
@@ -244,8 +250,10 @@ def streams_to_read(*, is_worker: bool, classes: Optional[Iterable[str]] = None)
     if not is_worker:
         return (TASK_STREAM, HOST_TASK_STREAM) + tuple(class_stream(c) for c in CLASSES)
     mine = clean_classes(classes)
+    own = ((NODE_HOST_STREAM.format(host_id=host_id),)
+           if host_id and any(c in NODE_ONLY_CLASSES for c in mine) else ())
     return ((TASK_STREAM,) + tuple(class_stream(c) for c in mine)
-            + tuple(node_only_stream(c) for c in mine if c in NODE_ONLY_CLASSES))
+            + tuple(node_only_stream(c) for c in mine if c in NODE_ONLY_CLASSES) + own)
 
 
 def may_run_here(cap_name: str, *, is_worker: bool,

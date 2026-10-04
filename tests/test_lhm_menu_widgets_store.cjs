@@ -27,7 +27,7 @@ t('standalone: the panel\'s own menu shows the same widgets, under the open item
   && /return grouped \? 'g:' \+ \(groupOf\(b\) \|\| 'More'\)\.slice\(0, 80\) : 'i:' \+ String\(idOf\(b\)\)\.slice\(0, 80\);/.test(VP));
 t('standalone: read by page path, saved with it', /fetch\('\/ui\/lhm\/widgets\?path=' \+ encodeURIComponent\(path\)\)/.test(VP) && /fetch\('\/ui\/lhm\/widgets\/set', \{ method: 'POST'/.test(VP));
 t('standalone: ✎ - + Add widget from the chat\'s widget sheet, ✕ to take one out', /S\.open\(\{ mode: 'add', into: 'side', title: 'Add to this menu', templates: true, sizes: \['xs', 's', 'm'\] \}\)/.test(VP) && /rm\.title = 'Take it out of this menu';/.test(VP));
-t('standalone: only in a menu that is a column, and out of the way when docked or folded', /var column = host\.id === 'sidebar' \|\| host\.tagName === 'ASIDE'/.test(VP) && /html\.vpb-nav-hosted \.vp-mw,body\.lhm-collapsed \.vp-mw,/.test(VP));
+t('standalone: only in a menu that is a column, and out of the way when docked or folded', /if \(!\(host\.classList\.contains\('vp-strip-menu'\) \|\| isColumn\(host, btns\)\)\) return;/.test(VP) && /html\.vpb-nav-hosted \.vp-mw,body\.lhm-collapsed \.vp-mw,/.test(VP));
 t('standalone: the widget element is loaded only when a widget is drawn or added', /sc\.src = '\/ui\/widgets\/widget_element\.js';/.test(VP));
 
 console.log(fails ? fails + ' FAILED' : 'all passed');

@@ -401,16 +401,31 @@ def table_at(lines: Sequence[str], i: int):
     return rows, j
 
 
+def _clean(c: str) -> str:
+    """A cell without its emphasis marks: **Total** is Total, **=SUM(B2:B5)** a formula."""
+    s = str(c if c is not None else "").strip()
+    m = re.match(r"^(\*\*|__)(.*)\1$", s) or re.match(r"^(`)(.*)`$", s)
+    return m.group(2).strip() if m else s
+
+
 def _delimited(body: str, delim: Optional[str] = None) -> List[List[str]]:
-    text = str(body or "").strip("\n")
+    """A sheet fence's rows. A model writes markdown in one (a real turn, 2026-10-04: a '# title', a pipe table with
+    **bold** formulas, a '> tip'): a pipe table in it is the table; otherwise the separator is read from the data lines,
+    never from a heading or a note."""
+    lines = str(body or "").replace("\r", "").split("\n")
+    for i in range(len(lines)):
+        t = table_at(lines, i)
+        if t:
+            return [[_clean(c) for c in r] for r in t[0]]
+    text = "\n".join(l for l in lines if l.strip() and not re.match(r"^\s*(#{1,6}\s|>)", l))
     if not text.strip():
         return []
     if delim is None:
         first = text.split("\n", 1)[0]
         delim = "\t" if first.count("\t") > first.count(",") else ("," if "," in first else ("|" if "|" in first else ","))
     if delim == "|":
-        return [_cells(l) for l in text.split("\n") if l.strip() and not _SEP.match(l)]
-    return [r for r in csv.reader(io.StringIO(text), delimiter=delim) if any(c.strip() for c in r)]
+        return [[_clean(c) for c in _cells(l)] for l in text.split("\n") if l.strip() and not _SEP.match(l)]
+    return [[_clean(c) for c in r] for r in csv.reader(io.StringIO(text), delimiter=delim) if any(c.strip() for c in r)]
 
 
 def tables_of(md: str) -> List[Dict[str, Any]]:
@@ -423,9 +438,10 @@ def tables_of(md: str) -> List[Dict[str, Any]]:
         if kind not in ("sheet", "spreadsheet", "csv", "tsv", "xlsx", "table"):
             continue
         nm = re.search(r"(?:name|title)=\"?([^\"\n]+)\"?", info or "")
+        hd = re.search(r"^#{1,6}\s+(.+)$", body, re.M)            # a heading inside the fence names the sheet
         rows = _delimited(body, "\t" if kind == "tsv" else ("," if kind == "csv" else None))
         if rows:
-            out.append({"name": (nm.group(1).strip() if nm else ""), "rows": rows})
+            out.append({"name": (nm.group(1).strip() if nm else (hd.group(1).strip() if hd else "")), "rows": rows})
     prose = _FENCES.sub("", src)
     lines = prose.replace("\r", "").split("\n")
     i = 0
@@ -458,7 +474,7 @@ _NUM = re.compile(r"^\s*[-+(]?\s*[$£€¥]?\s*\d[\d,]*(\.\d+)?\s*%?\s*\)?\s*$")
 def cell_value(s: str) -> Any:
     """A cell as the spreadsheet should hold it: a formula kept ("=SUM(A2:A4)"), a number read ("1,234", "$5", "12%",
     "(3)"), anything else text."""
-    t = str(s if s is not None else "").strip()
+    t = _clean(s)
     if t.startswith("="):
         return {"formula": t}
     if _NUM.match(t):

@@ -466,6 +466,14 @@
          explode item binds to, the reader's helpers - with only what the canvas does its own way plugged in: Preview
          draws in the column's live layer (it survives a redraw), Explode makes the bound explode item, an edit is kept
          with the item. While the chat is still streaming into it, it is the kit's streaming card. */
+      /* A DECK, A SHEET, A PAGE (```slides / ```sheet ```csv ```tsv / ```document) is drawn as what it is - the kit's file
+         card - not as its source: a long one streams out of the chat onto the canvas as a code item (owner, 2026-10-04:
+         a 4-slide deck landed here as 55 lines of markdown). Drawn as it streams in; its Edit is kept with the item. */
+      const fk = VO && vid && typeof VO.fileKind === 'function' ? VO.fileKind(c.lang) : '';
+      if (fk && typeof VO.fileCard === 'function') {
+        const streaming = !!(el && el._liveOv && el._liveOv[key]);
+        return `<div class="vc-codewrap vc-filewrap">${VO.fileCard(fk, String(c.lang || ''), String(c.code || ''), { id: vid, canvas: false, cls: 'vc-kit', incomplete: streaming, title: String(c.title || c.filename || '') })}</div>`;
+      }
       if (VO && vid && typeof VO.card === 'function') {
         const streaming = !!(el && el._liveOv && el._liveOv[key]);
         const live = prev ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>` : null;
@@ -1083,6 +1091,13 @@
   :host([data-tier="hover"]) .it:not(.compact) > .it-hd,:host([data-tier="zen"]) .it:not(.compact) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
   :host([data-tier="hover"]) .it:not(.compact) > .it-ft,:host([data-tier="zen"]) .it:not(.compact) > .it-ft{position:absolute;left:0;right:0;bottom:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:0 0 var(--r,8px) var(--r,8px)}
   :host([data-tier="hover"]) .it:not(.compact):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft),:host([data-tier="zen"]) .it:not(.compact):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft){opacity:1;pointer-events:auto}
+  /* ...in bands of their own (owner, 2026-10-04: "the top and bottom bar appear over the top of the element instead of
+     above and below - sometimes it can block entire parts of the elements"): an overlay at the item's edge covered its
+     first and last lines - a short note's header and rail met in the middle and hid it whole. The item keeps their room
+     all the time, so they fade in above and below its content, over nothing - and its height still never changes
+     because you pointed at it (the reason they are overlays). */
+  :host([data-tier="hover"]) .it:not(.compact):has(> .it-hd),:host([data-tier="zen"]) .it:not(.compact):has(> .it-hd){padding-top:var(--vc-hd-band,29px)}
+  :host([data-tier="hover"]) .it:not(.compact):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}
   :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-codehead,
   :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-th{opacity:.35}
   /* the solo expand of an item whose drawer draws its own head: a corner mark, not a row of its own */
@@ -2534,7 +2549,12 @@
         /* the WIDTH you dragged it to, as a data attribute rather than a style: the placer applies it (it is the one
            thing that knows the columns it has to fit into), and it must survive the markup being rewritten */
         const pw = this._pw[key];
-        const editable = EDITABLE.includes(b.type);
+        /* ONE EDIT PER ITEM (owner, 2026-10-04: two Edit buttons on a code item). A code item's card bar has the kit's
+           editor (numbered, linted, full screen; saved through the `edited` hook) and a reading item's row has its own
+           Edit - the header's would be the second. It stays where nothing else edits: a note, a page, any item drawn
+           without the kit. */
+        const kitEdits = !!(root.VeraOut && key && (b.type === 'code' || b.type === 'markdown'));
+        const editable = EDITABLE.includes(b.type) && !kitEdits;
         const bid = b._bid ? String(b.id) : '';   // a keyless block: addressed by its id (canvas.update · canvas.remove · canvas.move)
         /* ONE HEADER PER ITEM. Several kinds draw a head of their own — a code item its filename and its preview
            switch, a terminal its host and its dot, an explode item what it is bound to — and the card drew ANOTHER

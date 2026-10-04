@@ -238,6 +238,48 @@ _BUILTIN_ENTRIES: List[Dict[str, Any]] = [
         "tags": ["pipeline", "review", "census", "how-to"],
     },
     {
+        "kind": "skill", "name": "vera-design",
+        "summary": "Build or change any Vera UI - panel, widget, graph, menu, settings, appearance - so it matches every "
+                   "other page and follows the theme: start from the UI bootstrap, keep the contracts, verify live.",
+        "body": (
+            "START FROM THE BOOTSTRAP\n"
+            "  ui.templates                 the starting files: panel.html, widget.json, widget.html, graph.html\n"
+            "                               (served /ui/templates/<name>; source vera/ui/templates/)\n"
+            "  /ui/bootstrap.css            the page: .vb-root .vb-topbar .vb-section .card .btn .badge .kv\n"
+            "  scripts, in order            vera-ui.js, vera-panel.js, vera-panel-bridge.js, vera-settings.js\n"
+            "                               (+ widget_element.js / vera-graph.js when used); own work on\n"
+            "                               DOMContentLoaded\n\n"
+            "THE RULES A PAGE KEEPS\n"
+            "1. Colour only from the theme's names, each with a fallback: var(--bg1,#16181d). Tints are\n"
+            "   color-mix(in srgb,var(--acc) 12%,transparent). A canvas asks veraUI.color('--acc', .3). Data\n"
+            "   colours are --dv1..--dv7. Never a bare hex or rgba.\n"
+            "2. One menu: <aside id=sidebar data-vera-lhm> of button.nav-btn, each with data-label,\n"
+            "   data-desc (pointer), data-desc-long (agents), an icon (data-icon/.gl/svg) - never a letter;\n"
+            "   groups are .nav-grp.\n"
+            "3. The top bar is status and settings; anything that replaces the page is a menu item or a\n"
+            "   data-vera-sub sub-view.\n"
+            "4. The menu ends like the chat's: data-lhm-cta on the panel's one primary action (New/Run/Build -\n"
+            "   never Refresh or Save), data-lhm-widgets='template@size' for an item's default widgets.\n"
+            "5. Settings: a section, opened by data-vera-settings='#section'; built on demand ->\n"
+            "   VeraSettings.openSection(el,{label,onClose}). Never copy fields, never prompt().\n"
+            "6. Appearance is the shared parts': overlays keep their ground by position (data-vera-float),\n"
+            "   large opaque in-flow grounds go with blocks off (data-vera-ground), content keeps its own\n"
+            "   (data-vera-keep-ground). The glow is the body's background.\n"
+            "7. Widgets are <vera-widget>; graphs are veraUI.Graph.create or <vera-graph-embed>. No third\n"
+            "   renderer.\n"
+            "8. Generated code uses block comments: an appended // swallows the rest of the line.\n\n"
+            "VERIFY LIVE\n"
+            "  node tests (doc 51 'Checks') + parse every edited page's inline scripts (the gate does not).\n"
+            "  Playwright on prod with context.route serving the worktree's files (handler factory,\n"
+            "  utf-8 reads). In the harness wait for [data-tab] count > 20 before switchTab; open a\n"
+            "  warm-up page first. Never press a real primary action - stub its handler. Measure\n"
+            "  computed colours, positions, counts, then read the screenshot.\n\n"
+            "REFERENCE: documentation/51-ui-design-system.md (layers, token table, attribute contracts)."),
+        "source": {"origin": "claude-code", "path": ".claude/skills/vera-design/SKILL.md"},
+        "interop": {"cap": "ui.templates"},
+        "tags": ["ui", "design", "panels", "widgets", "how-to"],
+    },
+    {
         "kind": "skill", "name": "Using this registry",
         "summary": "How to record a skill, tool, loop, technique or harness "
                    "here - and what a usable entry has to contain.",

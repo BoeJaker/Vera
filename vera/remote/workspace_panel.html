@@ -124,7 +124,7 @@
       <button class="btn sm" onclick="loadWorkspaces()">↻</button></header>
     <div class="list" id="wslist"></div>
     <div style="padding:8px;border-top:1px solid var(--line)">
-      <button class="btn pri" style="width:100%" onclick="newWorkspace()">+ New workspace</button>
+      <button data-lhm-cta="" data-label="New workspace" data-desc="Create a remote workspace" class="btn pri" style="width:100%" onclick="newWorkspace()">+ New workspace</button>
     </div>
   </div>
 
@@ -566,5 +566,8 @@ function setView(v){ const isInt = v==='int';
 loadWorkspaces();
 </script>
 <script src="/ui/vera-panel.js"></script>
+<!-- the bridge, in the page itself: nested in a host panel (an IDE view, an Estate pane) the harness does not inject it,
+     and without it the host never hears this page - its primary action (data-lhm-cta) or its menu -->
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

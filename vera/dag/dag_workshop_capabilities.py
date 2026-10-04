@@ -8742,7 +8742,11 @@ def _v5_pos_within_url(s: str, pos: int) -> bool:
     b = pos
     while b > 0 and s[b - 1] not in ' \t\n\r"\'<>()[]{}':
         b -= 1
-    return "://" in s[b:pos]
+    # pos + 1: a path regex cannot start at the FIRST slash of "https://" (":" is no
+    # path character), so its match starts at the SECOND - and s[b:pos] is then
+    # "https:/", one short of "://". Every https://host.tld/x.html URL was read as the
+    # invented path /host.tld/x.html and refused (4 Oct 2026, three census goals).
+    return "://" in s[b:pos + 1]
 
 
 _V5_FILEREF_RE = re.compile(
@@ -14293,6 +14297,15 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _intent_zs = None
 
+# Switchboard (vera/minds, four-minds FM-0.1): the run's feature modes.
+try:
+    from Vera.vera.minds import switchboard_core as _minds_core
+except ImportError:                                   # pragma: no cover
+    try:
+        from vera.minds import switchboard_core as _minds_core
+    except ImportError:
+        _minds_core = None
+
 # Intent core (roadmap G): once the goal's intent is known, the caps that
 # intent uses move to the front of the catalogue. Ordering only, opt-in.
 try:
@@ -14343,6 +14356,11 @@ try:
     from Vera.vera.dag import verify_paths_core as _verify_paths_core
 except Exception:                                     # pragma: no cover
     from vera.dag import verify_paths_core as _verify_paths_core
+# A tool's `url` argument, cleaned before the invented-path guard reads it (4 Oct).
+try:
+    from Vera.vera.web import url_core as _url_core
+except Exception:                                     # pragma: no cover
+    from vera.web import url_core as _url_core
 
 # A call that can write files makes the run's file registry forget what it names.
 try:
@@ -17461,6 +17479,19 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                               "session_id": sid, "note": _note})
+        # The writer's reasoning pass is not the executor's to switch on. prose.author
+        # defaults it OFF for a measured reason (see cap_prose_author), but `think` is in
+        # its schema and the executor set think=true on 37 of 207 loop calls: the writer
+        # then reasons until its budget runs out (4 Oct 2026: 3,121 tokens -> 977 chars;
+        # a 4,000-token cap hit -> "INCOMPLETE"). Probe the same day: think off 95 tokens,
+        # 2.8 s; on/unset 2,500 tokens of reasoning and NO answer.
+        if tool == "prose.author" and isinstance(args, dict) and "think" in args:
+            _dropped_think = args.pop("think")
+            await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "session_id": sid,
+                              "note": "think=%r dropped - the writer runs without its "
+                                      "reasoning pass" % (_dropped_think,)})
         # The writer takes context BY FILE; research the step fetched lives only in its
         # tool history. Live 3 Oct (4d4ef790): web.research found 5 sources, then
         # prose.author(task="...use the research data gathered...", context_files=[]) saw
@@ -18259,6 +18290,15 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # invoking and hand back the directory's REAL contents. Bounded, then
         # fail open so a genuinely absolute path (a host mount the step was told
         # about) can still be used.
+        # A `url` argument is a URL however it was typed: "/valkey.io/blog/x" is
+        # https://valkey.io/blog/x, not an invented absolute FILE path (4 Oct census).
+        if isinstance(args, dict) and isinstance(args.get("url"), str):
+            _nu = _url_core.normalize_url(args["url"])
+            if _nu != args["url"].strip() and _nu.startswith(("http://", "https://")):
+                await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "session_id": sid, "note": "url %r -> %s" % (args["url"][:120], _nu)})
+                args = {**args, "url": _nu}
         _foreign = _v5_foreign_abs_paths(args, artifact_dir_path) if path_redirects < _MAX_PATH_REDIRECTS else []
         if _foreign:
             # Probe before judging: a path that REALLY exists where the call will
@@ -21510,14 +21550,26 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
             # GUESS a cause (e.g. paraphrasing a write failure as a vague "denial/
             # permission" error) instead of quoting what actually went wrong, which
             # then steers a retry at the wrong fix. Keep the real text.
-            _lines.append(f"- {h.get('tool')} → FAILED: {str(h.get('preview') or '')[:400]}")
+            _pv = str(h.get('preview') or '')
+            _lines.append(f"- {h.get('tool')} → FAILED: {_pv[:400]}"
+                          + (" ...[preview clipped]" if len(_pv) > 400 else ""))
             continue
         _sf = _soft_failed(h)
+        _pv = str(h.get('preview') or '')
+        _clip = " ...[preview clipped]" if len(_pv) > 500 else ""
         _lines.append(
             f"- {h.get('tool')} ok BUT ITS OUTPUT REPORTS AN ERROR ({_sf}): "
-            f"{str(h.get('preview') or '')[:500]}" if _sf else
-            f"- {h.get('tool')} ok: {str(h.get('preview') or '')[:500]}")
+            f"{_pv[:500]}{_clip}" if _sf else
+            f"- {h.get('tool')} ok: {_pv[:500]}{_clip}")
     hist = "\n".join(_lines)
+    # What the step FETCHED, as the writer sees it (research_sources_core). The judge
+    # was shown 500-char previews only and failed fetch steps for "only a truncated
+    # 'Table of Contents' snippet" - our clip, not the fetch (4 Oct 2026: one goal
+    # retried its fetch steps 3+3 times and spent 24 min on it).
+    try:
+        _fetched = _research_sources_core.sources_block(_calls, max_chars=6000)
+    except Exception:
+        _fetched = ""
     # A criterion about tests PASSING is settled by the last test-shaped run in
     # this step, not by a judge reading a `cat` of the test file: run72
     # build-multifile (24 Sep 2026) was verified met that way after pytest had
@@ -21753,6 +21805,10 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
            "THIS run — do not fail the step for not doing the thing the user said to skip, and do "
            "not weigh an EARLIER failed attempt at that thing against it either.\n"
            + _verify_evidence.EVIDENCE_RULE + "\n"
+           "The tool lines are SHORT PREVIEWS cut by us (marked 'preview clipped'): a preview "
+           "that ends early, or shows only the start of a page or its table of contents, is NOT "
+           "evidence that the tool returned too little. Judge content against WHAT THIS STEP "
+           "FETCHED and the files, when shown.\n"
            'Respond ONLY with JSON: {"met":true,"reason":"<one sentence quoting the evidence>"}')
     _clar = res.get("user_clarifications") or []
     clar_block = ""
@@ -21775,6 +21831,9 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
                  f"the criterion against these, not only the final summary):\n{hist}\n"
                  if hist else "")
               + (last_block or "")
+              + (f"WHAT THIS STEP FETCHED (the web results' own text, up to 6000 chars - judge "
+                 f"CONTENT requirements against THIS, not against the short previews above):\n"
+                 f"{_fetched}\n" if _fetched else "")
               + (exist_block or "")
               + (f"OUTPUTS:\n{outs}\n" if outs else "")
               + f"RESULT SUMMARY (last cycle only - the executor's OWN ACCOUNT, not evidence; the tool "
@@ -24057,6 +24116,11 @@ async def cap_dag_agent_loop_v6(
     # intent uses to the front once the intent is known - the fast path reads
     # the first 16, the master planner and tier brief 24. 'off' = as built.
     intent_core:        str  = "off",
+    # Switchboard (vera/minds, four-minds FM-0.1): this run's requested feature
+    # modes {feature_id: mode}. Validated before anything runs (fail closed);
+    # resolved with the global layer; published on switchboard_core.RUN_MINDS;
+    # emitted as agent_loop_v6.minds and returned as result["minds"].
+    minds:              Optional[Dict[str, str]] = None,
     # Per-run role models + effort (dag/role_override_core.py): an MoE executor
     # or a bigger coder on a chosen node ('auto' = the GPU if it fits, else a CPU
     # node); effort 'bigger-coder' (qwen3-coder:30b) or 'max' (the bigger coder
@@ -24119,6 +24183,30 @@ async def cap_dag_agent_loop_v6(
         _LOOP_SESSION_CV.set(sid)
     except Exception:
         pass
+    _minds_rec: Dict[str, Any] = {"requested": {}, "modes": {}, "source": {}, "digest": "default"}
+    if _minds_core is not None:
+        _mv = _minds_core.validate(minds or {})
+        if not _mv["ok"]:
+            return {"error": "minds: " + _minds_core.explain(_mv), "minds": _mv,
+                    "session_id": sid, "done": False}
+        _minds_glob: Dict[str, Any] = {}
+        try:
+            _raw = await _redis().get("vera:minds:switchboard") if _redis() is not None else None
+            if _raw:
+                _minds_glob = json.loads(_raw if isinstance(_raw, str) else _raw.decode("utf-8")) or {}
+        except Exception as _mge:                   # a broken global layer never stops a run
+            log.debug("minds global layer unreadable: %s", _mge)
+        _minds_eff = _minds_core.resolve(call=minds or {}, global_=_minds_glob)
+        _minds_core.RUN_MINDS.set(_minds_eff)    # set every run: nothing leaks between runs
+        _minds_rec = {"requested": dict(minds or {}), "modes": _minds_eff["modes"],
+                      "source": _minds_eff["source"], "digest": _mv["digest"]}
+        try:
+            await emit_event({"type": "agent_loop_v6.minds", "session_id": sid,
+                              "digest": _mv["digest"], "requested": _minds_rec["requested"],
+                              "modes": _minds_eff["modes"], "ignored": _minds_eff["ignored"],
+                              "killed": _minds_eff["killed"]})
+        except Exception:
+            pass
     # Same gap, same reason: make this run's liveness DEFINITIVE from every launch
     # path, so a quiet run is not called dead and cancel has a task to cancel.
     _register_loop_task(sid)
@@ -26078,6 +26166,7 @@ async def cap_dag_agent_loop_v6(
         "deliverable": deliverable,
         "done_when": done_when, "tier": tier, "phase_policy": phase_policy,
         "plan_style": _plan_style_rec,
+        "minds": _minds_rec,
         "journal": journal,
         "stream_id": stream_id, "session_id": sid, "done": True,
     }
@@ -26390,6 +26479,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
     v6_intent_core       = (body.get("intent_core", "off") or "off").strip().lower()
+    v6_minds             = body.get("minds") if isinstance(body.get("minds"), dict) else None
     v6_executor_model    = (body.get("executor_model", "") or "").strip()
     v6_executor_node     = (body.get("executor_node", "auto") or "auto").strip().lower()
     v6_coder_model       = (body.get("coder_model", "") or "").strip()
@@ -26547,6 +26637,7 @@ async def workshop_agent_loop_stream(request: Request):
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
             intent_core=v6_intent_core,
+            minds=v6_minds,
             executor_model=v6_executor_model, executor_node=v6_executor_node,
             coder_model=v6_coder_model, coder_node=v6_coder_node, effort=v6_effort,
             auto_escalate=v6_auto_escalate,

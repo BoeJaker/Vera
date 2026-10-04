@@ -153,3 +153,13 @@ def test_draft_notes_never_become_code():
     d = ops.compile_draft({"title": "x", "steps": [{"cap": "a.b", "note": note}]}, "https://h", "d")
     code = d["nodes"][1]["parameters"]["jsCode"]
     assert "const note=" in code and chr(13) not in code and chr(0x2028) not in code
+
+
+def test_page_genre():
+    lab = ops.GENRE_LABELS
+    r = {"labels": [{"label": lab["marketing"], "score": 0.81}, {"label": lab["news"], "score": 0.12}]}
+    assert ops.genre_of(r) == ("marketing", 0.81)
+    assert ops.genre_of({"labels": [{"label": lab["news"], "score": 0.3}]}) == ("", 0.3)     # unsure: no genre
+    assert ops.genre_of({}) == ("", 0.0)
+    assert ops.genre_factor("marketing") == 0.5 and ops.genre_factor("marketing", vendors_ok=True) == 1.0
+    assert ops.genre_factor("listing") == 0.35 and ops.genre_factor("news") == 1.0
