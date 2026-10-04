@@ -217,7 +217,8 @@ def find(index: Dict[str, Any], text: str, entities: Sequence[Dict[str, Any]] = 
                     continue
                 fill = {p: by_type[t][0] for p, t in (s.get("takes") or {}).items() if t not in ("TEXT",) and by_type.get(t)}
                 if fill and all(r in fill for r in s.get("needs") or []):
-                    cands.append(dict(s, args=fill, score=2.6 + (0.4 if tail in _GLANCE else 0),
+                    # what the turn NAMED, filled in: the most specific thing there is - above the headlines
+                    cands.append(dict(s, args=fill, score=4.6 + (0.2 if tail in _GLANCE else 0),
                                       why="%s for %s" % (s["cap"], ", ".join(fill.values()))))
                 elif not s.get("needs") and s.get("shape") in _DRAWABLE:
                     cands.append(dict(s, args={}, score=2.0 + (0.5 if tail in _GLANCE else 0),
@@ -265,6 +266,16 @@ def _fmt(v: Any) -> str:
 def summarise(res: Any, max_chars: int = 220) -> str:
     """A read's answer in one line a model can talk about: how many rows and the first few by name (with a figure when
     a row has one), or the headline figures of a single record."""
+    # a columnar series ({t:[...], equity:[...]}): how many points, and each measure's last value and change
+    if isinstance(res, dict) and isinstance(res.get("t"), list) and len(res["t"]) > 1:
+        cols = [(k, v) for k, v in res.items() if k != "t" and isinstance(v, list) and len(v) == len(res["t"])
+                and all(isinstance(x, (int, float)) for x in v[-3:])]
+        if cols:
+            bits = []
+            for k, v in cols[:3]:
+                chg = ("%+.1f%%" % ((v[-1] - v[0]) / v[0] * 100)) if v[0] else ""
+                bits.append("%s last %s%s" % (k, _fmt(v[-1]), (" (" + chg + ")") if chg else ""))
+            return ("%d points: %s" % (len(res["t"]), "; ".join(bits)))[:max_chars]
     rows = _rows_of(res)
     if rows:
         bits = []
