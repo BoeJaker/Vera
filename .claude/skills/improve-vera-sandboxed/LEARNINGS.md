@@ -63,3 +63,19 @@ rules; new ones start here. Newest at the bottom.
 - evidence: shared-planning intelligence/HANDOVER-2026-10-04-claude-d5e6f826.md; census sessions 2f20173f,
   3377d775, b32f075e
 - status: open (belongs in §0)
+
+## 2026-10-04 — CORRECTION to "`evolve.pipeline.test` cannot gate a branch no worktree holds any more"
+- task: landing intel's MoE routing (claude:d5e6f826)
+- what happened: `evolve.pipeline.test(id)` returned "no worktree for this pipeline" again, this time with the
+  branch still checked out in the hand-made worktree. Meanwhile the pipeline's own gate (run by `adopt`) was sitting
+  at "critical tier queued behind another gate in this process", and it later passed and promoted.
+- cause (corrected): pipelines recorded by `adopt` from a hand-made worktree carry no worktree, so `pipeline.test`
+  can never re-run their gate, whatever is checked out. `adopt` runs the gate itself; its critical tier can queue
+  behind other sessions' gates for a long time, and the client call times out while the server keeps going.
+- rule now: after `adopt`, never call `pipeline.test`; read `evolve.pipeline.get(id)` (`current`, `steps`,
+  `gate_passed`) until the gate finishes. If you add commits after adopting, adopt again (a new pipeline gates them
+  all) and mark the old one superseded. And never leave a background "adopt then promote" script running while you
+  supersede its pipeline: it will still promote.
+- evidence: pipelines a1d0c70e (promoted by the still-running script after it was marked superseded) and eb6a77b3
+  (re-adopted, gated both commits, 7dc90221)
+- status: open (belongs in §7)
