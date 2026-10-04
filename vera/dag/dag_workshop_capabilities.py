@@ -14323,6 +14323,11 @@ try:
     from Vera.vera.dag import criterion_bars_core as _criterion_bars_core
 except Exception:                                     # pragma: no cover
     from vera.dag import criterion_bars_core as _criterion_bars_core
+# A tool's `url` argument, cleaned before the invented-path guard reads it (4 Oct).
+try:
+    from Vera.vera.web import url_core as _url_core
+except Exception:                                     # pragma: no cover
+    from vera.web import url_core as _url_core
 
 # A call that can write files makes the run's file registry forget what it names.
 try:
@@ -18238,10 +18243,6 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # A `url` argument is a URL however it was typed: "/valkey.io/blog/x" is
         # https://valkey.io/blog/x, not an invented absolute FILE path (4 Oct census).
         if isinstance(args, dict) and isinstance(args.get("url"), str):
-            try:
-                from Vera.vera.web import url_core as _url_core
-            except ImportError:                                  # pragma: no cover
-                from vera.web import url_core as _url_core
             _nu = _url_core.normalize_url(args["url"])
             if _nu != args["url"].strip() and _nu.startswith(("http://", "https://")):
                 await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
