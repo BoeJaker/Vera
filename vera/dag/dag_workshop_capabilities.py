@@ -11619,14 +11619,28 @@ _V5_PKG_CMD_RE = re.compile(
     r"(?:install|ci|build|run|get|add)\b[^`\n]*", re.I)
 
 
-def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]]) -> List[str]:
-    """Install/build command lines in generated prose that name a package
-    manager whose manifest file isn't actually present in the sandbox — the
-    exact shape of the observed failure. `real_files=None` (listing could not
-    be determined) never flags anything: silence, not a false accusation,
-    when there is nothing real to check against."""
+try:                                                  # 4 Oct: project docs only
+    from Vera.vera.dag import prose_grounding_core as _prose_grounding_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import prose_grounding_core as _prose_grounding_core
+
+
+def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]],
+                              path: str = "", task: str = "") -> List[str]:
+    """Install/build command lines in generated prose that install or build the run's
+    OWN project through a manifest that isn't present in the sandbox - the exact shape
+    of the observed failure. Only for a project document (README/INSTALL/... or a task
+    asking for setup/run instructions), and a named package (`pip install qdrant-client`)
+    never needs a manifest: prose_grounding_core (4 Oct 2026, a vector-DB report failed
+    for saying `pip install`). `real_files=None` (listing could not be determined)
+    never flags anything: silence, not a false accusation, when there is nothing real
+    to check against."""
     if real_files is None:
         return []
+    if path or task:
+        if not _prose_grounding_core.is_project_doc(path, task):
+            return []
+        return _prose_grounding_core.ungrounded_install_refs(text, real_files)
     names = {os.path.basename(f).lower() for f in real_files if isinstance(f, str)}
     out: List[str] = []
     for m in _V5_PKG_CMD_RE.finditer(text or ""):
@@ -11869,7 +11883,7 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
         return {"ok": False, "error": "no document content in the generation"}
 
     # ── One repair pass if it still names a manifest that isn't really there ──
-    ungrounded = _v5_prose_ungrounded_refs(content, real_files)
+    ungrounded = _v5_prose_ungrounded_refs(content, real_files, path=path or "", task=task or "")
     if ungrounded:
         await emit_event({"type": "prose.author.repair", "path": path,
                           "ungrounded_refs": ungrounded})
@@ -11897,7 +11911,8 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
                 applied = _v5_apply_edits(content, edits)
                 if applied.get("ok"):
                     content = applied["content"]
-                    ungrounded = _v5_prose_ungrounded_refs(content, real_files)
+                    ungrounded = _v5_prose_ungrounded_refs(content, real_files,
+                                                           path=path or "", task=task or "")
         except Exception as e:
             log.debug("prose.author repair failed: %s", e)
 
