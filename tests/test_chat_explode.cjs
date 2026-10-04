@@ -50,6 +50,6 @@ t('the embed library is loaded once, on demand, not on every chat load',
 t('the embed can be asked for one function\'s flow', /var flow = this\.getAttribute\('flow'\); if \(flow\) body\.flow = flow;/.test(EMBED));
 t('the embed can be asked for several records, as lanes', /body\.record_ids = this\.getAttribute\('records'\)/.test(EMBED));
 
-t('a card\'s own structure explodes the card into the scene (cards, front, iso), its whole code read', /_xplShowContract\('card:' \+ d\.id, doc,/.test(HTML) && /text:s\.slice\(0,20000\), lang\}/.test(HTML));
+t('a card\'s own structure explodes the card into the scene (cards, front, iso), its whole code read', /_xplShowContract\('card:' \+ d\.id, doc,/.test(HTML) && /text:s\.slice\(0,200000\), lang\}/.test(HTML));
 t('the chip opens the structure as a vera-graph opening on Structure 3D', /data-xd="graph"/.test(HTML) && /g\.load\(veraUI\.Graph\.fromContract\(doc\)\)/.test(HTML) && /g\.setMode\('struct-iso'\)/.test(HTML));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);
