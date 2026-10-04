@@ -78,6 +78,38 @@ NODE_SAFE_CAPS: Dict[str, Tuple[str, str]] = {
                                           "inputs the host put in Redis"),
 }
 
+#: Capabilities vetted for nodes by evidence (cap_footprint_core: the static
+#: audit AND the host footprint observed while they ran both clean), cap ->
+#: (class, why). Loaded from Redis by every process (set_vetted), so vetting
+#: needs no release; host-only (VERA_WORKER_HOST_ONLY) and the mutator rule
+#: still win over it.
+VETTED: Dict[str, Tuple[str, str]] = {}
+#: The class vetted capabilities run in on a node: off on every node until an
+#: operator enables it there (Workers > roles).
+VETTED_CLASS = "extended"
+
+
+def set_vetted(mapping: Optional[Dict[str, object]]) -> bool:
+    """Replace the vetted set; True when it changed. Values: (class, why) or
+    {"cls", "why"}."""
+    new: Dict[str, Tuple[str, str]] = {}
+    for cap, v in (mapping or {}).items():
+        if isinstance(v, dict):
+            cls, why = str(v.get("cls") or VETTED_CLASS), str(v.get("why") or "vetted")
+        elif isinstance(v, (tuple, list)) and len(v) == 2:
+            cls, why = str(v[0]), str(v[1])
+        else:
+            continue
+        if cls not in CLASSES:
+            cls = VETTED_CLASS
+        new[str(cap)] = (cls, why)
+    if new == VETTED:
+        return False
+    VETTED.clear()
+    VETTED.update(new)
+    return True
+
+
 #: Final name segments that change process-local settings. Such a cap is
 #: host-only even inside a node-safe namespace (`nlp.config.set` flips
 #: `nlp.local` in the process that runs it).
@@ -137,6 +169,8 @@ def placement(cap_name: str, *, node_ok: Iterable[str] = (),
         return "any", "admitted by VERA_WORKER_NODE_OK"
     if name in NODE_SAFE_CAPS:
         return "any", NODE_SAFE_CAPS[name][1]
+    if name in VETTED:
+        return "any", "vetted: " + VETTED[name][1]
     if ns in NODE_SAFE:
         return "any", NODE_SAFE[ns]
     return "host", "not vetted as node-safe"
@@ -160,6 +194,10 @@ CLASSES: Dict[str, Dict[str, object]] = {
                     "desc": "model training for the host - worldview, ML Lab and "
                             "markets models (compute.run)",
                     "namespaces": ()},
+    "extended": {"label": "Extended (vetted)",
+                 "desc": "capabilities proven node-safe by evidence: the static audit and "
+                         "the host footprint seen while they ran (nodes.parity)",
+                 "namespaces": ()},
     "media":   {"label": "Media (GPU)",
                 "desc": "STT and TTS calls to the gpu_inference server; diffusion "
                         "stays on the host (it archives into the fabric)",
@@ -206,6 +244,8 @@ def class_of(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
         return ""
     if cap_name in NODE_SAFE_CAPS:
         return NODE_SAFE_CAPS[cap_name][0]
+    if cap_name in VETTED:
+        return VETTED[cap_name][0]
     ns = namespace(cap_name)
     for cls, spec in CLASSES.items():
         if ns in spec["namespaces"]:

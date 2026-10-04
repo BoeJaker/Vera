@@ -871,6 +871,15 @@ A pipeline gate's critical-tier pytest run can be split into shards over the hos
 
 The test venv is the gate image's `pip freeze` (the GPU stack dropped), installed with `--no-deps`; a package that will not build is reported, not fatal. `nodes.testenv.sync` builds or refreshes it, and each release's node sync runs it (a no-op where the venv is current). A node runs shards only while its venv matches the image the host runs now (`nodes.testenv.status`). `evolve.test_pool.parity` runs a branch's tier on the host alone and through the pool and compares the exact pass and fail sets.
 
+### Node parity: which capabilities a node worker may run
+
+A node worker runs a capability only when it is node-safe: hand-vetted namespaces and capabilities (`worker_placement_core.NODE_SAFE*`), or capabilities **vetted by evidence**. A capability is vetted only when both halves of the evidence agree:
+
+- **The static audit** (`nodes.parity.audit`, `node_cap_audit`) follows each capability's code path through its module and into other Vera modules (not into the orchestrator, which every process shares). It looks for host-only resources: the host's SQLite stores and the fabric, Docker, subprocesses, SSH, local files, git, a browser, loopback services, environment variables a worker does not get, writes to module state, and reads of module state the host changes at runtime. A capability that calls a host-bound capability in-process is itself host-bound.
+- **The footprint** comes from the tracer on the Vera host: an audit hook attributes every file open, SQLite connect, process spawn and socket connect to the capabilities running at that moment (`RUNNING_CAPS`, carried into executor threads too). The host-bound kinds are `file_read`, `file_write`, `sqlite`, `subprocess` and `socket_local` (the host's own API, a unix socket such as `docker.sock`, a loopback port that is not a shared backend). Shared backends, the nodes and external hosts are fine. A capability needs at least 3 observed runs before a clean footprint counts. `caps.footprint` shows any capability's footprint.
+
+`nodes.parity.status` gives every capability's verdict (`safe`, `vetted`, `unproven`, `host` with the reason) per namespace. `nodes.parity.vet` (dry run by default) adds the capabilities the evidence clears to the vetted set (`vera:node_workers:vetted`), and drops any whose footprint has since shown a host touch. Every process reloads the set, so vetting needs no release. Vetted capabilities run in the **Extended (vetted)** class, which no node takes until an operator enables it there (Workers › roles). The host-only brake (`VERA_WORKER_HOST_ONLY`) and the rule that keeps settings-changing capabilities on the host still win.
+
 Models › **Node jobs** shows each node's free CPU and memory, its libraries and test venv, where each job type would run right now and why, the switches (test pool, host fallback, reserve, threads, wait), and the recent jobs with the node each ran on.
 
 ---

@@ -1,0 +1,126 @@
+"""Node parity by evidence: a capability may run on a node worker only when the
+static audit of its code path AND the footprint observed on the host while it
+ran both show nothing host-bound (owner, 2026-10-04: parity vetted in tiers).
+
+These pin the classifier (what counts as host-bound), the verdict, the
+cross-module static audit, and how a vetted capability is placed.
+"""
+import json
+import os
+
+import pytest
+
+from vera.workers import cap_footprint_core as fc
+from vera.workers import node_cap_audit as audit
+from vera.workers import worker_placement_core as wp
+
+pytestmark = pytest.mark.critical
+
+SHARED = {("localhost", 6379), ("192.168.0.138", 5432)}
+PORTS = {6379, 5432, 7687, 8000}
+NODES = {"192.168.0.246", "192.168.0.250"}
+HOST = {"192.168.0.138"}
+
+
+def _sock(addr):
+    return fc.classify("socket.connect", (None, addr), shared=SHARED, shared_ports=PORTS,
+                       nodes=NODES, host_ips=HOST)
+
+
+def test_files():
+    roots = ("/home/u/Vera/",)
+    assert fc.classify_open("/home/u/Vera/vera/ui/x.html", "r", 0, roots) is None
+    assert fc.classify_open("/home/u/Vera/vera/data/state.json", "w", 0, roots)[0] == "file_write"
+    assert fc.classify_open("/usr/lib/python3/x.py", "r", 0) is None
+    assert fc.classify_open("/tmp/x", "w", 0) is None
+    assert fc.classify_open("/home/u/.vera/secret.key", "r", 0)[0] == "file_read"
+    assert fc.classify_open("/srv/data/f.bin", None, os.O_WRONLY)[0] == "file_write"
+    assert fc.classify_open(7, "r", 0) is None
+
+
+def test_sockets():
+    assert _sock(("localhost", 6379))[0] == "socket_shared"
+    assert _sock(("127.0.0.1", 5432))[0] == "socket_shared"       # a shared port on loopback
+    assert _sock(("127.0.0.1", 8999))[0] == "socket_local"        # the host's own API
+    assert _sock("/var/run/docker.sock") == ("socket_local", "unix:/var/run/docker.sock")
+    assert _sock(("192.168.0.246", 11434))[0] == "socket_node"
+    assert _sock(("140.82.112.3", 443))[0] == "socket_external"
+    assert _sock(("192.168.0.138", 8200))[0] == "socket_local"    # the host's LAN IP, not shared
+    assert fc.classify("sqlite3.connect", ("/home/u/fabric.db",))[0] == "sqlite"
+    assert fc.classify("subprocess.Popen", ("docker", ["docker", "ps"], None, None))[0] == "subprocess"
+
+
+def test_merge_bounds_targets_and_counts_runs():
+    fp = None
+    for i in range(10):
+        fp = fc.merge(fp, {"socket_external": 1}, {"socket_external": {f"h{i}:443"}}, 1, 100.0 + i)
+    assert fp["runs"] == 10 and fp["kinds"]["socket_external"] == 10
+    assert len(fp["targets"]["socket_external"]) == fc.MAX_TARGETS
+    assert fp["first"] == 100.0 and fp["last"] == 109.0
+
+
+def test_verdict_needs_both_halves():
+    clean = {"runs": 5, "kinds": {"socket_shared": 9}}
+    assert fc.verdict(clean, [])[0] == "vetted"
+    assert fc.verdict(clean, ["sqlite"]) == ("host", "source: sqlite")
+    assert fc.verdict({"runs": 5, "kinds": {"subprocess": 1}, "targets": {"subprocess": ["git"]}}, [])[0] == "host"
+    assert fc.verdict({"runs": 1}, [])[0] == "unproven"
+    assert fc.verdict(None, [])[0] == "unproven"
+    assert fc.verdict(clean, [], static_known=False)[0] == "unproven"
+
+
+def test_a_caller_of_a_host_bound_cap_is_host_bound():
+    rows = {"a.pure": {"markers": [], "calls": ["b.mid"]},
+            "b.mid": {"markers": [], "calls": ["c.db"]},
+            "c.db": {"markers": ["sqlite"], "calls": []},
+            "d.ok": {"markers": [], "calls": ["llm.generate"]},
+            "e.st": {"markers": [], "state": True, "calls": []}}
+    eff = fc.static_markers(rows, safe={"llm.generate"})
+    assert eff["c.db"] == ["sqlite"] and eff["b.mid"] == ["calls_hostbound"]
+    assert eff["a.pure"] == ["calls_hostbound"] and eff["d.ok"] == [] and eff["e.st"] == ["state"]
+
+
+def test_vetted_caps_are_placed_in_the_extended_class():
+    try:
+        assert wp.set_vetted({"canvas.render": {"cls": "extended", "why": "evidence"}})
+        assert not wp.set_vetted({"canvas.render": {"cls": "extended", "why": "evidence"}})
+        assert wp.placement("canvas.render")[0] == "any"
+        assert wp.class_of("canvas.render", env={}) == "extended"
+        assert wp.may_run_here("canvas.render", is_worker=True, classes=["general"])[0] is False
+        assert wp.may_run_here("canvas.render", is_worker=True, classes=["extended"])[0] is True
+        # the brakes still win
+        wp.set_vetted({"canvas.config.set": ("extended", "x")})
+        assert wp.placement("canvas.config.set")[0] == "host"
+        assert wp.placement_from_env("canvas.render",
+                                     {"VERA_WORKER_HOST_ONLY": "canvas"})[0] == "host"
+        # no node takes it by default
+        assert "extended" not in wp.DEFAULT_CLASSES_CPU
+    finally:
+        wp.set_vetted({})
+
+
+def test_static_audit_follows_calls_across_modules(tmp_path):
+    v = tmp_path / "vera"
+    (v / "store").mkdir(parents=True)
+    (v / "store" / "db.py").write_text(
+        "import sqlite3\n\ndef put(x):\n    c = sqlite3.connect('/var/x.db')\n    c.execute('x')\n")
+    (v / "caps.py").write_text(
+        "import os\n"
+        "from Vera.vera.store.db import put\n"
+        "from Vera.vera.capability_orchestration import capability, emit_event\n"
+        "_CACHE = {}\n\n"
+        "@capability('demo.save')\nasync def save(x=''):\n    put(x)\n\n"
+        "@capability('demo.pure')\nasync def pure(x=''):\n    return {'n': len(x)}\n\n"
+        "@capability('demo.key')\nasync def key():\n    return os.getenv('SOME_API_KEY')\n\n"
+        "@capability('demo.remember')\nasync def remember(x=''):\n    _CACHE[x] = 1\n\n"
+        "@capability('demo.recall')\nasync def recall(x=''):\n    return _CACHE.get(x)\n\n"
+        "@capability('demo.chain')\nasync def chain():\n    return await _call('demo.save')\n")
+    rows = audit.audit(str(tmp_path))
+    assert rows["demo.save"]["markers"] == ["sqlite"] and "store.db" in rows["demo.save"]["via"]
+    assert rows["demo.pure"]["markers"] == [] and not rows["demo.pure"]["state"]
+    assert "env" in rows["demo.key"]["markers"]
+    assert rows["demo.remember"]["state"] is True
+    assert "reads_state" in rows["demo.recall"]["markers"]
+    assert rows["demo.chain"]["calls"] == ["demo.save"]
+    eff = fc.static_markers(rows, safe=set())
+    assert eff["demo.chain"] == ["calls_hostbound"] and eff["demo.pure"] == []
