@@ -5402,6 +5402,10 @@ def _session_stamp(event: dict) -> None:
 
 async def emit_event(event: dict):
     event.setdefault("ts", now_iso())
+    if _IS_WORKER:
+        # the host relays tagged events to its own WebSocket clients
+        # (worker_event_relay): a node has no UI clients of its own
+        event.setdefault("_from_worker", PROCESS_TAG)
     _prov_stamp(event)     # compact git {ver, br, dirty} → correlate any event to code
     _session_stamp(event)  # {sid, via} → correlate any event to the session that triggered it
     _origin_stamp(event)   # {kind, node} → which Vera PROCESS (prod / which sandbox) submitted it
@@ -5451,6 +5455,8 @@ async def emit_event(event: dict):
 
 async def emit_stream(name: str, trace_id: str, payload: Any, capability: str):
     msg={"stream":name,"trace_id":trace_id,"capability":capability,"payload":payload,"ts":now_iso()}
+    if _IS_WORKER:
+        msg["_from_worker"] = PROCESS_TAG     # relayed by the host (worker_event_relay)
     if REDIS:
         try:
             await asyncio.gather(
@@ -6159,6 +6165,55 @@ async def _worker_activity(worker_id: str, cap_name: str, cap: dict, payload: di
 #: This process, for its reply stream (a hostname is not enough: prod and
 #: stray orchestrators share one host).
 PROCESS_TAG = f"{os.uname().nodename}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+
+
+async def worker_event_relay():
+    """Events and streams a NODE WORKER emits, to this host's WebSocket
+    clients. A cap run on a node emits to Redis (stream + pub/sub) like any
+    process, but only the host has UI clients, and it fanned out only its own
+    events - so an event from a node reached no live view (node parity,
+    2026-10-04). Only messages a worker tagged are relayed: the host's own are
+    delivered where they are emitted, so nothing arrives twice."""
+    if _IS_WORKER:
+        return
+    while REDIS is None:
+        await asyncio.sleep(2)
+    while True:
+        try:
+            ps = REDIS.pubsub()
+            await ps.subscribe("vera:events:live")
+            await ps.psubscribe("stream:*")
+            log.info("Worker event relay started")
+            async for m in ps.listen():
+                kind = m.get("type")
+                if kind not in ("message", "pmessage"):
+                    continue
+                raw = m.get("data")
+                try:
+                    data = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+                except Exception:
+                    continue
+                if not isinstance(data, dict) or not data.get("_from_worker"):
+                    continue
+                if kind == "message":
+                    payload, want = {"type": "event", "data": data}, "__events__"
+                else:
+                    ch = m.get("channel")
+                    ch = ch.decode() if isinstance(ch, (bytes, bytearray)) else str(ch or "")
+                    want = ch[len("stream:"):]
+                    payload = {"type": "stream", "data": data}
+                    for cb in STREAM_SUBS.get(want, []):
+                        asyncio.create_task(cb(data))
+                seen = set()
+                for ws, sub in list(WS_CONNECTIONS):
+                    if sub == want and id(ws) not in seen:
+                        seen.add(id(ws))
+                        _ws_enqueue(ws, payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.debug("worker event relay: %s - reconnecting", e)
+            await asyncio.sleep(5)
 
 
 async def reply_listener():
@@ -11912,6 +11967,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(result_listener())
     asyncio.create_task(reply_listener())
     asyncio.create_task(cancel_listener())
+    asyncio.create_task(worker_event_relay())
     asyncio.create_task(scheduler_loop())
     asyncio.create_task(instance_health_loop(interval=20))
     asyncio.create_task(_load_ollama_persistence())   # hydrate routing/nodes/embed from Redis

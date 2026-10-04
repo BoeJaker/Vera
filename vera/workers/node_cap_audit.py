@@ -33,9 +33,9 @@ MARKERS = {
     # a worker's environment carries only the backend URLs: anything else read
     # from the environment (API keys, host config) is missing on a node
     "env": re.compile(r"os\.getenv|os\.environ|\bgetenv\(|\bcfg\.[A-Z]"),
-    # an event emitted on a node reaches no live UI: the host fans events out
-    # to its own WebSocket clients and does not relay vera:events:live
-    "events": re.compile(r"\bemit_event\(|\bemit_stream\("),
+    # (emit_event / emit_stream are NOT host-bound: the host relays events and
+    # streams a node worker emits to its UI - capability_orchestration.
+    # worker_event_relay, 2026-10-04)
     # measures the machine (and process) it runs on: on a node it would
     # describe the node, not the host it is asked about
     "local_metrics": re.compile(r"\bpsutil\.|os\.getpid\(|resource\.getrusage|os\.getloadavg"),
@@ -67,6 +67,15 @@ def _module_level(body):
 #: (a SQLite connection) is caught by the store markers instead.
 _HANDLE_RE = re.compile(r"(REDIS|POOL|CLIENT|CONN|DRIVER|ENGINE|SESSION_HTTP|HTTPX|_RE)$|^(NEO|CHROMA)$",
                         re.IGNORECASE)
+
+#: Module-level names that are clients of SHARED backends (or a module stand-in)
+#: under names the handle pattern cannot know: every process holds its own to
+#: the same store (2026-10-04 tally of what made caps reads_state).
+_SHARED_NAMES = {
+    "fabric.data_fabric": {"FABRIC_NEO", "FABRIC_PG", "FABRIC_CHROMA", "OBJECT_STORE"},
+    "fabric.memory": {"MEMORY"},
+    "worldview.worldview_jepa": {"torch"},
+}
 
 #: Module-level objects of these types hold no host state worth tracking.
 _STATELESS_TYPES = {"Path", "ContextVar", "Lock", "RLock", "Event", "Semaphore",
@@ -200,7 +209,9 @@ def audit(root):
             m = MODS[mk]
             seg = ast.get_source_segment(m["src"], node) or ""
             hits = {x for x, rx in MARKERS.items() if rx.search(seg)}
-            w = written(mk) | m.get("instances", set())
+            w = (written(mk) | m.get("instances", set())) - _SHARED_NAMES.get(mk, set())
+            if mk == "capability_orchestration":
+                w = w - ORCH_LOAD_TIME
             if any(isinstance(c, ast.Name) and c.id in w for c in ast.walk(node)):
                 hits.add("reads_state")
             if orch_reads(m, node):
