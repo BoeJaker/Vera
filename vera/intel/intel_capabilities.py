@@ -367,9 +367,12 @@ async def cap_topic_get(id: str = "", trace_id=None):
 
 
 @capability("intel.topic.save", http_method="POST", http_path="/intel/topic/save", http_tags=["intel"],
-            schema=enum_schema(depth=list(core.DEPTHS), cadence=list(core.CADENCES), status=list(core.STATUSES)),
+            schema=enum_schema(depth=list(core.DEPTHS), cadence=list(core.CADENCES), status=list(core.STATUSES),
+                               kind=[""] + list(ops.TOPIC_KINDS)),
             description="Create or update a tracked topic. Input: name (str!), id (to update), brief (what it is), "
                         "why (why it matters), questions / queries / entities / exclude / sites (lists or lines), "
+                        "kind (general|finance|property|osint|tech - which entity types its sources are tagged "
+                        "with; blank = worked out from its words), labels (extra entity types), "
                         "depth (scan|standard|deep), cadence, status, deliver (channels), min_score, dream_loop "
                         "(also run a dream think-loop on it), parent. Output: {ok, topic}.")
 async def cap_topic_save(name: str = "", id: str = "", brief: str = None, why: str = None,
@@ -377,20 +380,20 @@ async def cap_topic_save(name: str = "", id: str = "", brief: str = None, why: s
                          exclude: Any = None, sites: Any = None, depth: str = "", cadence: str = "",
                          status: str = "", deliver: Any = None, min_score: float = None,
                          dream_loop: bool = None, discovery: bool = None, vendors: bool = None, parent: str = "",
-                         color: str = "", origin: str = "", trace_id=None):
+                         color: str = "", origin: str = "", kind: str = None, labels: Any = None, trace_id=None):
     st = store()
     existing = st.get_topic(id) if id else (st.get_topic(core.slug(name)) if name else None)
     raw: Dict[str, Any] = {"name": name, "id": id, "depth": depth, "cadence": cadence, "status": status,
                            "parent": parent, "color": color, "origin": origin}
     for k, v in (("brief", brief), ("why", why), ("min_score", min_score), ("dream_loop", dream_loop),
-                 ("discovery", discovery), ("vendors", vendors)):
+                 ("discovery", discovery), ("vendors", vendors), ("kind", kind)):
         if v is not None:
             raw[k] = v
     for k, v in (("questions", questions), ("queries", queries), ("entities", entities),
-                 ("exclude", exclude), ("sites", sites), ("deliver", deliver)):
+                 ("exclude", exclude), ("sites", sites), ("deliver", deliver), ("labels", labels)):
         if v is not None:
             raw[k] = _list_arg(v)
-    raw = {k: v for k, v in raw.items() if v not in ("", None) or k in ("brief", "why")}
+    raw = {k: v for k, v in raw.items() if v not in ("", None) or k in ("brief", "why", "kind")}
     try:
         t = core.normalise_topic(raw, existing)
     except ValueError as e:
@@ -791,10 +794,11 @@ async def _read_and_tag(t: Dict[str, Any], s: Dict[str, Any]) -> Tuple[Dict[str,
     text = str(page.get("markdown") or s.get("snippet") or "")
     s2 = dict(s)
     if text:
-        ner = await _nlp("nlp.ner", text=text[:20000], task="gliner", labels=ops.GLINER_LABELS, threshold=0.4)
+        ner = await _nlp("nlp.ner", text=text[:20000], task="gliner", labels=ops.topic_labels(t), threshold=0.4)
         ents = ops.ner_entities(ner)
         if ents:
             s2["entities"] = ents
+            s2["entity_types"] = ops.entity_types(ner, ents)
         ev = []
         for q in (t.get("questions") or [])[:4]:
             a = ops.qa_answer(q, await _nlp("nlp.qa", question=q, context=text[:6000]))

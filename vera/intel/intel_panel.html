@@ -417,6 +417,8 @@ function editTopic(id) {
       <div><label class="f">Entities to follow</label><textarea id="eEnt">${esc(L(t.entities))}</textarea></div>
       <div><label class="f">Sites to watch (domains)</label><textarea id="eSites">${esc(L(t.sites))}</textarea></div></div>
     <label class="f">Exclude anything mentioning</label><input type="text" id="eEx" value="${esc((t.exclude||[]).join(', '))}">
+    <div class="row"><div class="grow"><label class="f">Kind (which entity types sources are tagged with)</label><select id="eKind">${opt(['','general','finance','property','osint','tech'], t.kind||'').replace('<option value="">','<option value="">from its words')}</select></div>
+      <div class="grow"><label class="f">Extra entity types (comma separated)</label><input type="text" id="eLabels" value="${esc((t.labels||[]).join(', '))}" placeholder="e.g. data centre operator, grid connection"></div></div>
     <div class="row"><div class="grow"><label class="f">Depth</label><select id="eDepth">${opt(['scan','standard','deep'], t.depth)}</select></div>
       <div class="grow"><label class="f">Cadence</label><select id="eCad">${opt(['nightly','twice-daily','weekly','manual'], t.cadence)}</select></div>
       <div class="grow"><label class="f">Status</label><select id="eStat">${opt(['active','paused','archived'], t.status)}</select></div>
@@ -432,7 +434,8 @@ async function saveTopic(id) {
   const r = await call('intel.topic.save', {id: id || '', name: $('eName').value, brief: $('eBrief').value, why: $('eWhy').value,
     questions: lines($('eQs').value), queries: lines($('eQueries').value), entities: lines($('eEnt').value), sites: lines($('eSites').value),
     exclude: $('eEx').value, depth: $('eDepth').value, cadence: $('eCad').value, status: $('eStat').value,
-    min_score: +$('eMin').value, discovery: $('eDisc').checked, dream_loop: $('eDream').checked});
+    min_score: +$('eMin').value, discovery: $('eDisc').checked, dream_loop: $('eDream').checked,
+    kind: $('eKind').value, labels: $('eLabels').value.split(',').map(x => x.trim()).filter(Boolean)});
   if (r.error) return msg('eMsg', r.error, 'err');
   $('dlg').close(); await loadTopics(); openTopic(r.topic.id); tile();
 }

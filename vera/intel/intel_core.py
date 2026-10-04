@@ -121,6 +121,8 @@ def normalise_topic(raw: Dict[str, Any], existing: Optional[Dict[str, Any]] = No
         "discovery": bool(raw.get("discovery", base.get("discovery", True))),
         "vendors": bool(raw.get("vendors", base.get("vendors", False))),   # vendor pages are wanted here
         "mute_sites": _clean_list(raw.get("mute_sites", base.get("mute_sites")), 60),
+        "kind": str(raw.get("kind", base.get("kind", "")) or "").strip().lower(),   # "" = worked out from the words
+        "labels": _clean_list(raw.get("labels", base.get("labels")), 12),           # extra entity types to tag
         "color": str(raw.get("color", base.get("color", "")) or "").strip(),
         "created": base.get("created") or now_iso(),
         "updated": now_iso(),

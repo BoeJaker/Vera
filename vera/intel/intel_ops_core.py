@@ -40,6 +40,59 @@ SAVED_TOPIC = "saved"
 GLINER_LABELS = ["organization", "company", "person", "product", "technology", "software",
                  "law", "regulation", "government agency", "event", "money", "location"]
 
+# GLiNER is zero-shot over its labels, and it scores a descriptive label better than
+# a bare word, so each kind of topic asks for the things that kind of topic is about.
+LABEL_SETS: Dict[str, List[str]] = {
+    "general": GLINER_LABELS,
+    "finance": ["company", "stock market index", "currency", "central bank", "financial regulator",
+                "economic policy", "commodity", "cryptocurrency", "investment fund", "person",
+                "government agency", "money"],
+    "property": ["property developer", "real estate investment trust", "property agency or consultancy",
+                 "planning authority", "development site", "building or scheme", "company", "investor",
+                 "person", "location", "money", "law or regulation"],
+    "osint": ["vessel", "aircraft", "military unit or armed group", "military facility", "weapon system",
+              "government agency", "political leader", "person", "city or region", "country", "event",
+              "organization"],
+    "tech": ["company", "AI model", "software product", "open source project", "hardware or chip",
+             "research lab", "programming language or framework", "person", "technology standard",
+             "law or regulation", "money"],
+}
+_KIND_WORDS: Dict[str, Tuple[str, ...]] = {
+    "finance": ("market", "stock", "equity", "bond", "rate", "inflation", "fed ", "central bank", "crypto",
+                "bitcoin", "forex", "currency", "earnings", "macro", "commodit", "oil price", "yield"),
+    "property": ("property", "real estate", "estate agent", "reit", "planning", "valuation", "landlord",
+                 "housing", "residential", "commercial real", "lettings", "industrial", "development site",
+                 "proptech"),
+    "osint": ("military", "conflict", "war ", "vessel", "shipping", "aircraft", "sanction", "osint",
+              "geopolit", "border", "missile", "navy", "troops", "election"),
+    "tech": (" ai ", "ai-", "llm", "model", "software", "open source", "github", "chip", "gpu", "agentic",
+             "machine learning", "developer", "framework", "robot"),
+}
+TOPIC_KINDS = tuple(LABEL_SETS)
+
+
+def topic_kind(topic: Dict[str, Any]) -> str:
+    """The topic's kind: what the user set, otherwise the kind whose words its name,
+    brief and searches use most (general when nothing stands out)."""
+    k = str((topic or {}).get("kind") or "").strip().lower()
+    if k in LABEL_SETS:
+        return k
+    text = " " + " ".join([str(topic.get("name") or ""), str(topic.get("brief") or ""),
+                           " ".join(topic.get("queries") or [])]).lower() + " "
+    votes = {kind: sum(text.count(w) for w in words) for kind, words in _KIND_WORDS.items()}
+    best = max(votes.items(), key=lambda kv: kv[1])
+    return best[0] if best[1] > 0 else "general"
+
+
+def topic_labels(topic: Dict[str, Any], limit: int = 16) -> List[str]:
+    """The GLiNER labels for a topic: its own first, then its kind's."""
+    out: List[str] = []
+    for lab in list((topic or {}).get("labels") or []) + LABEL_SETS[topic_kind(topic or {})]:
+        lab = str(lab).strip()
+        if lab and lab.lower() not in (x.lower() for x in out):
+            out.append(lab)
+    return out[:limit]
+
 
 def _dice(a: str, b: str) -> float:
     def grams(s: str) -> Dict[str, int]:
@@ -140,6 +193,26 @@ def ner_entities(result: Dict[str, Any], min_score: float = 0.45, limit: int = 2
         if w not in seen or sc > seen[w]:
             seen[w] = sc
     return [w for w, _ in sorted(seen.items(), key=lambda kv: -kv[1])][:limit]
+
+
+def entity_types(result: Dict[str, Any], keep: Iterable[str]) -> Dict[str, str]:
+    """{entity: label} for the entities kept, from the best-scoring mention of each."""
+    keep_s = set(keep)
+    best: Dict[str, Tuple[float, str]] = {}
+    for e in (result or {}).get("entities") or []:
+        if not isinstance(e, dict):
+            continue
+        w = re.sub(r"\s+", " ", str(e.get("word") or e.get("text") or "")).strip(" .,;:'\"")
+        lab = str(e.get("entity") or e.get("label") or e.get("entity_group") or "").strip()
+        if w not in keep_s or not lab:
+            continue
+        try:
+            sc = float(e.get("score") or 0)
+        except (TypeError, ValueError):
+            sc = 0.0
+        if w not in best or sc > best[w][0]:
+            best[w] = (sc, lab)
+    return {w: lab for w, (_, lab) in best.items()}
 
 
 def qa_answer(question: str, result: Dict[str, Any], threshold: float = 0.35) -> Optional[Dict[str, Any]]:
