@@ -57,6 +57,42 @@ def test_role_label_reads_objects_too():
     assert rc.role_label(Rec()) == "Tool call"
 
 
+# ── what recall leaves out (owner, 2026-10-04) ────────────────────────────────
+def test_exclusions_parse_and_reject_junk():
+    assert rc.parse_exclusions("cap_call,dag_step,transcript") == (("cap_call", "dag_step"), True)
+    assert rc.parse_exclusions("") == ((), False)
+    assert rc.parse_exclusions(" Cap_Call , x'); drop table --, transcript") == (("cap_call",), True)
+
+
+def test_default_filters_leave_activity_out():
+    f = rc.default_recall_filters({"session_id": "s"})
+    assert f == {"session_id": "s", "exclude_record_types": ["cap_call", "dag_step"], "exclude_transcripts": True}
+    assert rc.default_recall_filters(None) == {"exclude_record_types": ["cap_call", "dag_step"],
+                                               "exclude_transcripts": True}
+
+
+def test_asking_for_activity_gets_everything():
+    assert rc.default_recall_filters({"include_activity": True, "tags": ["a"]}) == {"tags": ["a"]}
+    assert rc.default_recall_filters({"record_type": "cap_call"}) == {"record_type": "cap_call"}
+
+
+def test_an_empty_policy_changes_nothing():
+    assert rc.default_recall_filters({"q": 1}, types=(), transcripts=False) == {"q": 1}
+
+
+def test_default_filters_do_not_mutate_the_callers_dict():
+    mine = {"include_activity": True}
+    rc.default_recall_filters(mine)
+    assert mine == {"include_activity": True}
+
+
+def test_embed_worthy():
+    assert rc.embed_worthy("message", "how is the gpu gate configured")
+    assert not rc.embed_worthy("cap_call", "[board.item.upsert] ...")
+    assert not rc.embed_worthy("message", "[Claude Code · x] Watching for the final gate.")
+    assert rc.embed_worthy("cap_call", "x", types=(), transcripts=False)
+
+
 # ── content_key / collapse_repeats ────────────────────────────────────────────
 def _hit(rid, text, score):
     return {"record": {"id": rid, "text": text}, "score": score}
