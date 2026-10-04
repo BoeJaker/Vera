@@ -1259,6 +1259,50 @@ async def _lookup(name: str) -> List[Dict[str, Any]]:
     return res
 
 
+async def _refresh_suggestions(t: Dict[str, Any], *, every_days: int = 7) -> None:
+    """Keep a topic's suggested numbers fresh (weekly) for the brief to offer."""
+    st = store()
+    have = st.get_kv(f"ind_suggest:{t['id']}", {}) or {}
+    at = core.parse_ts(have.get("at"))
+    if at and at > datetime.now(timezone.utc) - timedelta(days=every_days):
+        return
+    r = await cap_indicator_suggest(topic_id=t["id"])
+    if not r.get("error"):
+        st.set_kv(f"ind_suggest:{t['id']}", {"at": core.now_iso(), "prices": r.get("prices") or [],
+                                             "markets": [{k: m.get(k) for k in ("source", "id", "question", "prob", "match")}
+                                                         for m in r.get("markets") or []]})
+
+
+def _watch_actions(t: Dict[str, Any], *, n: int = 2, mark: bool = True) -> List[Dict[str, Any]]:
+    """Up to `n` suggested numbers as one-tap Watch buttons - each offered at most
+    once a month, never one already watched."""
+    st = store()
+    sug = st.get_kv(f"ind_suggest:{t['id']}", {}) or {}
+    watched = {i.get("dataset_id") for i in _indicators(t["id"])}
+    watched_pm = {f"pm:{i['market'].get('source')}:{i['market'].get('id')}" for i in _indicators(t["id"]) if i.get("market")}
+    offered = st.get_kv("watch_offered", {}) or {}
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    out: List[Dict[str, Any]] = []
+    cands = [(f"price:{p['provider']}:{p['symbol']}", f"Watch {p.get('name') or p['symbol']}"[:70], p.get("name") or "",
+              f"mkt.{p['provider'].lower()}.{_mkt_slug(p['symbol'])}.1d") for p in sug.get("prices") or []]
+    cands += [(f"pm:{m['source']}:{m['id']}", f"Watch the odds: {m.get('question') or ''}"[:70], "",
+               f"pm:{m['source']}:") for m in sug.get("markets") or [] if (m.get("match") or 0) > 1]
+    for target, label, name, ds in cands:
+        if len(out) >= n:
+            break
+        key = f"{t['id']}|{target}"
+        last = core.parse_ts(offered.get(key))
+        if (last and last > cutoff) or ds in watched or target in watched_pm:
+            continue
+        a = core.make_action("watch", label=label, topic_id=t["id"], target=target, query=name)
+        if a:
+            out.append(a)
+            offered[key] = core.now_iso()
+    if mark and out:
+        st.set_kv("watch_offered", dict(sorted(offered.items(), key=lambda kv: kv[1])[-600:]))
+    return out
+
+
 @capability("intel.indicator.suggest", http_method="GET", http_path="/intel/indicator/suggest", http_tags=["intel"],
             memory="off", silent=True,
             description="Numbers a topic could watch, proposed from what its sources say (no model call): the "
@@ -1365,7 +1409,7 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
         moves = _changes(t["id"], since=since)
         if not sigs and not snap and not moves:
             continue
-        acts = core.actions_for(t, sigs, snap)
+        acts = core.actions_for(t, sigs, snap) + _watch_actions(t, mark=only_new)
         per[t["id"]] = {"signals": sigs, "snapshot": snap, "actions": acts, "moves": moves}
     topics = [t for t in topics if t["id"] in per]
     notes = list(st.get_kv("notes_report", []) or []) if (only_new and not topic_ids) else []
@@ -1854,6 +1898,10 @@ async def _job_topic_inner(job: Dict[str, Any], p: Dict[str, Any], should_contin
         out["moves"] = len(await check_indicators(st.get_topic(t["id"]) or t))
     except Exception as ex:  # noqa: BLE001
         log.warning("intel: indicator check failed for %s: %s", t["id"], ex)
+    try:
+        await _refresh_suggestions(t)
+    except Exception as ex:  # noqa: BLE001
+        log.warning("intel: suggestions failed for %s: %s", t["id"], ex)
     await _progress(job, 1, 3)
     if await _stop_reason(should_continue) or (p.get("until") and _past(p["until"])):
         return {"yielded": "pre-empted after sweep", **out}
