@@ -797,7 +797,7 @@ def build_report(topics: Sequence[Dict[str, Any]], per_topic: Dict[str, Dict[str
     names = ", ".join(t["name"] for t in topics[:3]) + (" +" + str(len(topics) - 3) if len(topics) > 3 else "")
     return {
         "id": hashlib.sha1(f"report|{ts}|{','.join(t['id'] for t in topics)}".encode()).hexdigest()[:12],
-        "title": title or f"Intel brief - {names}",
+        "title": title or (f"Intel brief - {names}" if topics else f"Intel brief - {ts[:10]}"),
         "ts": ts, "period_hours": period_hours,
         "topic_ids": [t["id"] for t in topics],
         "counts": {"topics": len(topics), "signals": n_sig},

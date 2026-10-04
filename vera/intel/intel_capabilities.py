@@ -927,6 +927,9 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
             doc["follow_up_actions"] = [{k: a.get(k) for k in ("token", "kind", "label", "glyph", "query")} for a in fu]
             for a in fu:
                 st.put_action(dict(a, report_id=doc["id"]), report_id=doc["id"])
+    if not _has_content(doc):
+        doc["empty"] = True
+        return doc                    # nothing to say: never stored, so the report list holds only real briefs
     for tid, d in per.items():
         for a in d["actions"]:
             st.put_action(dict(a, report_id=doc["id"]), report_id=doc["id"])

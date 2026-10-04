@@ -433,3 +433,9 @@ def test_phase1_review_regressions(tmp_path):
     for _ in range(3):
         _run(mod._tick())
     assert int((mod.store().get_kv("budget") or {}).get("opportunistic", 0)) == 0
+
+
+def test_an_empty_brief_is_never_stored(tmp_path):
+    mod, orch = _load(tmp_path)
+    r = _R(orch, "intel.report.build")
+    assert r["empty"] and _R(orch, "intel.report.list")["rows"] == []

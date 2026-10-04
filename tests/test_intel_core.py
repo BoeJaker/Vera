@@ -223,3 +223,17 @@ def test_highlighter_never_rescans_its_own_markup():
     assert h.count("<span") == h.count("</span>")
     assert 'class="k">class</span>' in h and 'class="c"># note</span>' in h
     assert "&lt;span" not in h
+
+
+def test_store_retries_a_transient_open_failure(tmp_path, monkeypatch):
+    import sqlite3 as _sq
+    st = IntelStore(tmp_path / "i.db")
+    real = _sq.connect
+    calls = {"n": 0}
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _sq.OperationalError("unable to open database file")
+        return real(*a, **k)
+    monkeypatch.setattr(_sq, "connect", flaky)
+    assert st.topics() == [] and calls["n"] == 2
