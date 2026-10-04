@@ -49,6 +49,29 @@ def search_query(text: str) -> str:
     return " ".join(q.split())[:200]
 
 
+# the words of a question that are not its topic: a text search ANDs every word, so "what did we decide last time about
+# the memory half-life?" found nothing in 1.5 s where "memory half-life" found five in 0.2 s (prod, 2026-10-04)
+_FILLER = frozenset("""
+a an the this that these those it its is are was were be been being am do does did done doing have has had having
+i me my we us our you your he she they them their what which who whom whose when where why how whether if
+about on of for to in into at by with from as and or but so than then there here again ever any some
+can could would should will shall may might must just still also very really please tell know think
+remember recall said say says told tell asked ask discussed discuss talked talk decided decide agreed
+last time earlier before previously ago yesterday once back remind
+""".split())
+
+
+def memory_query(text: Any) -> str:
+    """The topic of a turn that refers back, for a memory search: the referring-back cue, the asking and the
+    question words removed. Falls back to the turn's own words when nothing else is left."""
+    t = " ".join(str(text or "").split())
+    q = _PAST.sub(" ", t)
+    q = search_query(q)
+    words = [w for w in re.findall(r"[\w][\w'\-./]*", q) if w.lower().strip("'") not in _FILLER]
+    out = " ".join(words)[:200]
+    return out or t[:200]
+
+
 def needs(text: Any, *, today: Optional[date] = None, knowledge_year: int = 0) -> Dict[str, Dict[str, Any]]:
     t = " ".join(str(text or "").split())
     out = {"web": _need(False, 0.0, "nothing asks for the web"),
@@ -59,7 +82,8 @@ def needs(text: Any, *, today: Optional[date] = None, knowledge_year: int = 0) -
     past = bool(_PAST.search(t))
     if past or (internal and _FRESH.search(t)):
         out["memory_deep"] = _need(True, 0.8 if past else 0.6,
-                                   "refers back" if past else "asks what is latest in Vera's own work")
+                                   "refers back" if past else "asks what is latest in Vera's own work",
+                                   memory_query(t))
     if _URL.search(t):
         return out   # a URL is fetched as the page itself, not searched for
     if _ASK.search(t):
