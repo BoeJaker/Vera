@@ -710,3 +710,16 @@ def test_decisions_and_outcomes_are_mirrored_to_the_shared_ledger(tmp_path):
     kinds = {r.get("schema") for r in got}
     assert {"vera.decision/v0", "vera.outcome/v0"} <= kinds
     assert len([r for r in got if r["schema"] == "vera.decision/v0"]) == len(mod.store().decisions(limit=500))
+
+
+def test_corpus_export(tmp_path):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    mod.store().put_topic(mod.core.normalise_topic({"name": "From your notes", "id": mod.ops.NOTES_TOPIC}))
+    mod.store().put_signal(mod.core.normalise_signal(mod.ops.NOTES_TOPIC, {"url": "https://x.example/n", "title": "a note"}))
+    out = _R(orch, "intel.corpus.export", max_share=1.0)
+    assert out["schema"] == "vera.intel-corpus/v1" and out["records"]
+    assert all(r["topic_id"] == t["id"] for r in out["records"]) and out["stats"]["private_dropped"] == 1
+    assert out["sequences"]["stories"][t["id"]] and all("vec" not in r for r in out["records"])
+    assert any("vec" in r for r in _R(orch, "intel.corpus.export", max_share=1.0, vectors=True)["records"])

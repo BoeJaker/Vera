@@ -751,3 +751,74 @@ def alert_text(topic_name: str, snap: Dict[str, Any], why: str, url: str = "") -
     if url:
         lines.append(url)
     return "\n".join(lines)
+
+
+# ── the worldview's corpus (four-minds FM-8.3 / FM-8.4 / FM-13.5) ────────────
+
+CORPUS_SCHEMA = "vera.intel-corpus/v1"
+PRIVATE_SOURCES = {"notes", "files", "drop", "note"}      # the owner's own files never leave intel (principle 16)
+CORPUS_FIELDS = ("id", "topic_id", "title", "site", "kind", "url", "score", "entities", "entity_types", "stance",
+                 "genre", "summary", "competitors", "source")
+
+
+def _epoch(ts: Any) -> Optional[float]:
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def corpus_rows(signals: Sequence[Dict[str, Any]], *, max_share: float = 0.15, min_score: float = 0.0,
+                private_topics: Sequence[str] = ()) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Signals as corpus records (oldest first) and the stratification report. No
+    record from the owner's notes or files; no site above `max_share` of the
+    records (strongest kept); `t` is when the story first appeared."""
+    keep = []
+    dropped_private = 0
+    for s in signals:
+        if s.get("topic_id") in private_topics or str(s.get("source") or "") in PRIVATE_SOURCES:
+            dropped_private += 1
+            continue
+        if (s.get("score") or 0) < min_score or not s.get("title"):
+            continue
+        t = _epoch(s.get("published")) or _epoch(s.get("seen"))
+        if t is None:
+            continue
+        r = {k: s.get(k) for k in CORPUS_FIELDS if s.get(k) not in (None, "", [], {})}
+        r["t"] = t
+        r["seen"] = s.get("seen")
+        r["also"] = len(s.get("also") or [])
+        keep.append(r)
+    by_site: Dict[str, List[Dict[str, Any]]] = {}
+    for r in keep:
+        by_site.setdefault(str(r.get("site") or "?"), []).append(r)
+    cap = max(1, int(max_share * len(keep))) if keep and 0 < max_share < 1 else len(keep)
+    out: List[Dict[str, Any]] = []
+    capped = {}
+    for site, rows in by_site.items():
+        rows = sorted(rows, key=lambda r: -(r.get("score") or 0))
+        if len(rows) > cap and len(by_site) > 1:
+            capped[site] = len(rows) - cap
+            rows = rows[:cap]
+        out += rows
+    out.sort(key=lambda r: r["t"])
+    shares = {}
+    for r in out:
+        shares[str(r.get("site") or "?")] = shares.get(str(r.get("site") or "?"), 0) + 1
+    top = max(shares.values()) / len(out) if out else 0.0
+    return out, {"records": len(out), "private_dropped": dropped_private, "capped": capped,
+                 "sites": len(shares), "max_site_share": round(top, 3)}
+
+
+def sequences(rows: Sequence[Dict[str, Any]], snapshots: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Per topic, the observed order of stories and of assessments - real
+    transitions (FM-8.4), not random walks."""
+    stories: Dict[str, List[str]] = {}
+    for r in sorted(rows, key=lambda r: r["t"]):
+        stories.setdefault(r["topic_id"], []).append(r["id"])
+    snaps: Dict[str, List[Dict[str, Any]]] = {}
+    for sn in sorted(snapshots, key=lambda x: str(x.get("ts") or "")):
+        snaps.setdefault(sn.get("topic_id"), []).append(
+            {"id": sn.get("id"), "ts": sn.get("ts"), "headline": sn.get("headline"),
+             "confidence": sn.get("confidence"), "changed": len(sn.get("changed") or [])})
+    return {"stories": stories, "assessments": snaps}
