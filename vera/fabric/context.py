@@ -1116,41 +1116,55 @@ async def _recall_entity_crawl(seed_ids: List[str], query: str,
     if not neo or not getattr(neo, "available", False):
         return [], []
 
-    # If the caller didn't supply seeds, do a quick fabric query to find some.
-    seeds = [s for s in (seed_ids or []) if s]
-    if not seeds and hasattr(fab, "execute_query"):
+    async def _fabric_seeds() -> List[str]:
+        """A quick fabric query for seed records of its own."""
+        if not hasattr(fab, "execute_query"):
+            return []
         try:
             q = {"text": query, "vector": query, "top_k": max(6, top_k),
                  "include_data": False}
             if fabric_dataset:
                 q["dataset_id"] = fabric_dataset
             fq = await fab.execute_query(q)
-            seeds = [r["id"] for r in (fq.get("results") or []) if r.get("id")][:8]
+            return [r["id"] for r in (fq.get("results") or []) if r.get("id")][:8]
         except Exception as e:
             log.debug("recall entity seed query: %s", e)
-    if not seeds:
-        return [], []
+            return []
 
     # LIMIT is concatenated (not parameterised) to match the rest of the
     # codebase and stay compatible across Neo4j versions.
     lim = max(1, int(top_k) * 4)
-    try:
-        rows = await neo.query(
-            "MATCH (e:Entity)-[:MENTIONED_IN]->(r:FabricRecord) "
-            "WHERE r.id IN $seeds "
-            "WITH e, collect(DISTINCT r.id) AS seed_recs "
-            "MATCH (e)-[:MENTIONED_IN]->(r2:FabricRecord) "
-            "WHERE NOT r2.id IN $seeds "
-            "RETURN e.id AS entity, e.name AS entity_name, "
-            "       seed_recs[0] AS seed_id, r2.id AS rid "
-            "LIMIT " + str(lim),
-            {"seeds": seeds},
-        )
-    except Exception as e:
-        log.debug("recall entity crawl query: %s", e)
-        return [], []
-    if rows and isinstance(rows[0], dict) and rows[0].get("error"):
-        log.debug("recall entity crawl: %s", rows[0]["error"])
+
+    async def _crawl(seeds: List[str]) -> List[Dict]:
+        try:
+            got = await neo.query(
+                "MATCH (e:Entity)-[:MENTIONED_IN]->(r:FabricRecord) "
+                "WHERE r.id IN $seeds "
+                "WITH e, collect(DISTINCT r.id) AS seed_recs "
+                "MATCH (e)-[:MENTIONED_IN]->(r2:FabricRecord) "
+                "WHERE NOT r2.id IN $seeds "
+                "RETURN e.id AS entity, e.name AS entity_name, "
+                "       seed_recs[0] AS seed_id, r2.id AS rid "
+                "LIMIT " + str(lim),
+                {"seeds": seeds},
+            )
+        except Exception as e:
+            log.debug("recall entity crawl query: %s", e)
+            return []
+        if got and isinstance(got[0], dict) and got[0].get("error"):
+            log.debug("recall entity crawl: %s", got[0]["error"])
+            return []
+        return got or []
+
+    # The caller's seeds first. The chat hands in the ids its memory search found - MEMORY records, which are never
+    # FabricRecords - so they match nothing (context-and-ui E21, 2026-10-05: 0 results with them, 8 without). When
+    # the given seeds reach no entity, the crawl starts from a fabric query of its own, as it does with no seeds.
+    seeds = [s for s in (seed_ids or []) if s]
+    rows = await _crawl(seeds) if seeds else []
+    if not rows:
+        seeds = await _fabric_seeds()
+        rows = await _crawl(seeds) if seeds else []
+    if not rows:
         return [], []
 
     # Bound per-entity fanout so a hub entity can't flood the result set.
