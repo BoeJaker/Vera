@@ -107,6 +107,10 @@ try:                                                    # one hit per repeated t
     from Vera.vera.fabric import recall_core as _recall_core
 except ImportError:                                     # pragma: no cover
     from . import recall_core as _recall_core
+try:                                                    # one 0..1 hybrid score (RF-05)
+    from Vera.vera.fabric import memory_score_core as _memory_score_core
+except ImportError:                                     # pragma: no cover
+    from . import memory_score_core as _memory_score_core
 
 log = logging.getLogger("vera.memory")
 
@@ -196,6 +200,9 @@ def _lucene_escape(q: str) -> str:
 # comment at that call site for why. Generous for a real search query's
 # intent, nowhere near Neo4j's 1024-Lucene-clause cap even in the worst
 # case (every character its own word).
+# Candidates each backend returns per hit asked for: the merge collapses repeated texts,
+# so `limit` distinct hits need more than `limit` raw ones (context-and-ui E11).
+_CANDIDATES_PER_HIT = 3
 _HYBRID_SEARCH_QUERY_MAX_CHARS = 600
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1628,7 +1635,7 @@ class HybridMemoryStore:
         embedding = await embed_text(query) if "chroma" in active else None
         tasks = {
             name: asyncio.wait_for(
-                b.search(query, limit=limit*2, filters=filters, embedding=embedding),
+                b.search(query, limit=limit * _CANDIDATES_PER_HIT, filters=filters, embedding=embedding),
                 _BACKEND_OP_TIMEOUT_S,
             )
             for name, b in active.items()
@@ -1640,15 +1647,27 @@ class HybridMemoryStore:
             if isinstance(result, TimeoutError):
                 log.warning("Memory backend %s search timed out after %.1fs",
                             name, _BACKEND_OP_TIMEOUT_S)
-        return self._merge_and_rank(tasks.keys(), all_results, limit)
+        return self._merge_and_rank(tasks.keys(), all_results, limit, query)
 
-    def _merge_and_rank(self, names, all_results, limit: int) -> List[Dict]:
+    def _merge_and_rank(self, names, all_results, limit: int, query: str = "") -> List[Dict]:
+        """Merge backend hits by record id and rank them.
+
+        Two or more backends on a real query: each score goes onto 0..1 and backends that
+        found the same record combine (memory_score_core), so the score every consumer
+        thresholds is one scale (RF-05). One backend, or an empty query (importance
+        listing): the backend's own score, as before."""
+        names = list(names)
         merged: Dict[str, Tuple[MemoryRecord, float]] = {}
+        lists: Dict[str, List[Tuple[str, float]]] = {}
         for name, results in zip(names, all_results):
             if isinstance(results, Exception): continue
+            lists[name] = [(rec.id, score) for rec, score in results]
             for rec, score in results:
                 if rec.id not in merged or merged[rec.id][1] < score:
                     merged[rec.id] = (rec, score)
+        if len(names) > 1 and (query or "").strip():
+            fused = _memory_score_core.combine(lists)
+            merged = {rid: (rec, fused.get(rid, 0.0)) for rid, (rec, _s) in merged.items()}
         return self._rank_pairs(merged.values(), limit)
 
     @staticmethod
@@ -1679,14 +1698,15 @@ class HybridMemoryStore:
         names = [n for n in ("postgres", "neo4j") if n in self._backends]
         if not names:
             return []
-        tasks = {n: self._backends[n].search(query, limit=limit * 2, filters=filters, embedding=None)
+        tasks = {n: self._backends[n].search(query, limit=limit * _CANDIDATES_PER_HIT, filters=filters,
+                                             embedding=None)
                  for n in names}
         try:
             results = await asyncio.wait_for(
                 asyncio.gather(*tasks.values(), return_exceptions=True), timeout=timeout)
         except asyncio.TimeoutError:
             results = [TimeoutError("fast tier timed out")] * len(tasks)
-        return self._merge_and_rank(tasks.keys(), results, limit)
+        return self._merge_and_rank(tasks.keys(), results, limit, query)
 
     async def search_fast_and_slow(
         self,
@@ -1728,7 +1748,7 @@ class HybridMemoryStore:
         embed_task = asyncio.create_task(embed_text(query))
 
         fast_names = [n for n in ("postgres", "neo4j") if n in self._backends]
-        fast_tasks = {n: self._backends[n].search(query, limit=limit * 2,
+        fast_tasks = {n: self._backends[n].search(query, limit=limit * _CANDIDATES_PER_HIT,
                                                    filters=filters, embedding=None)
                       for n in fast_names}
         if fast_tasks:
@@ -1740,16 +1760,8 @@ class HybridMemoryStore:
                 fast_all = [TimeoutError("fast-tier timed out")] * len(fast_tasks)
         else:
             fast_all = []
-        fast_out = self._merge_and_rank(fast_tasks.keys(), fast_all, limit)
-
-        # Keep the raw (record, score) pairs too, cheaply, so the slow task
-        # can reuse them without re-parsing fast_out's dict shape.
-        fast_pairs: Dict[str, Tuple[MemoryRecord, float]] = {}
-        for name, results in zip(fast_tasks.keys(), fast_all):
-            if isinstance(results, Exception): continue
-            for rec, score in results:
-                if rec.id not in fast_pairs or fast_pairs[rec.id][1] < score:
-                    fast_pairs[rec.id] = (rec, score)
+        fast_out = self._merge_and_rank(fast_tasks.keys(), fast_all, limit, query)
+        fast_names_run = list(fast_tasks.keys())
 
         async def _slow() -> List[Dict]:
             try:
@@ -1761,14 +1773,12 @@ class HybridMemoryStore:
             if chroma is not None and embedding:
                 try:
                     chroma_results = await chroma.search(
-                        query, limit=limit * 2, filters=filters, embedding=embedding)
+                        query, limit=limit * _CANDIDATES_PER_HIT, filters=filters, embedding=embedding)
                 except Exception:
                     chroma_results = []
-            merged = dict(fast_pairs)
-            for rec, score in chroma_results:
-                if rec.id not in merged or merged[rec.id][1] < score:
-                    merged[rec.id] = (rec, score)
-            return self._rank_pairs(merged.values(), limit)
+            # The fast tier's hits are reused, not re-queried; scored on the same scale.
+            return self._merge_and_rank(fast_names_run + ["chroma"], list(fast_all) + [chroma_results],
+                                        limit, query)
 
         slow_task = asyncio.create_task(_slow())
         return fast_out, slow_task
