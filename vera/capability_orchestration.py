@@ -8331,6 +8331,18 @@ async def mcp_call_endpoint(name: str, arguments: str = "", trace_id=None):
     return {"type": "tool_result", "tool_name": name, "trace_id": tid, "content": result}
 
 
+# Capabilities whose session_id argument FILTERS what they find. The caller's attribution id
+# (the MCP bridge sends one with every Claude/Codex call) is not injected into them: it scoped
+# each agent's memory.search / memory.recall to records from its own session, which is
+# almost always nothing (2026-10-04). An explicit session_id in arguments still filters.
+_SESSION_FILTER_CAPS = frozenset({"memory.search", "memory.recall"})
+
+
+def _inject_attribution_session(cap_name: str, own_props: Dict[str, Any]) -> bool:
+    """Whether /mcp/call fills a missing session_id argument with the caller's session."""
+    return "session_id" in (own_props or {}) and cap_name not in _SESSION_FILTER_CAPS
+
+
 def _mcp_call_accepted(cap: Dict[str, Any]) -> set:
     """The argument names /mcp/call lets through to `cap`.
 
@@ -8465,7 +8477,7 @@ def _make_mcp_call_handler():
             # injecting it into dag.agent_loop_v7 made every run from one caller
             # share ONE loop session (found 2026-09-27, before it reached main).
             _own = ((cap.get("schema") or {}).get("properties") or {})
-            if "session_id" in _own:
+            if _inject_attribution_session(name, _own):
                 args.setdefault("session_id", session_id)
             try:
                 _vera_syslog = sys.modules.get("syslog")
