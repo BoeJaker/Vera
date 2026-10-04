@@ -26,7 +26,7 @@ t('chat: it does not pin (so nothing scrolls behind it)', /#msgs \.mwrap\.u\.pin
 
 // what floats over the page keeps its ground
 t('design: sheets, overlays, pickers and anything marked floating keep their ground', /\[class\*="sheet"\], \[id\*="sheet"\], \[class\*="overlay"\]/.test(CSS) && /\[popover\], \[aria-modal="true"\], \[role="listbox"\], \[role="tooltip"\], \[data-vera-float\]/.test(CSS));
-t('vera-ui: what is drawn fixed/absolute over the page, above it, is marked data-vera-float', /function _isFloat\(el\)\{/.test(UI) && /e\.setAttribute\('data-vera-float', ''\)/.test(UI) && /if\(r\.height >= H \* \.9 && r\.width < W \* \.9\) return false;/.test(UI));
+t('vera-ui: what is drawn fixed/absolute over the page, above it, is marked data-vera-float', /function _isFloat\(el\)\{/.test(UI) && /e\.setAttribute\('data-vera-float', ''\)/.test(UI) && /if\(c\.position === 'absolute' && r\.height >= H \* \.9 && r\.width < W \* \.9\) return false;/.test(UI));
 t('vera-ui: the marks follow what changes (one observer, debounced), not a loop', /new MutationObserver\(function\(recs\)\{/.test(UI) && /t = setTimeout\(flush, 120\)/.test(UI) && !/setInterval\(_markFloats/.test(UI));
 
 // a ground no name gives away
@@ -56,5 +56,12 @@ t('standalone: the floating button opens the same appearance menu (style, detail
   && /rows\.appendChild\(row\('Detail', \[\['full', 'Full'/.test(UI) && /rows\.appendChild\(row\('Blocks', \[\['on', 'On'\], \['off', 'Off'\]\]/.test(UI));
 t('standalone: a low button opens the menu upwards', /menu\.style\.bottom = Math\.round\(window\.innerHeight - r\.top \+ 5\) \+ 'px';/.test(UI));
 
+// 2026-10-04 (owner): "the details panel that opens from the right is having its background stripped if blocks are off but its
+// a menu that opens over other elements - this was fixed and has regressed"; "the lhm isnt transparent on all panels like the chat
+// ui lhm - so the glow background can be seen through it"
+t('a fixed full-height drawer floats (keeps its ground); only in-flow parts can be a page ground', /if\(c\.position === 'fixed' \|\| c\.position === 'absolute'\) return false;/.test(UI) && !/c\.position === 'fixed' && !\(r\.height >= H \* \.9/.test(UI));
+const HN = R('vera', 'capability_orchestration.html');
+t('every panel\'s menu is the chat\'s glass over the glow (LHM layout)', /body:has\(\.body-wrap\.lhm\) #veraWashH\{opacity:1\}/.test(HN) && /\.body-wrap\.lhm\{position:relative;z-index:1;background:transparent\}/.test(HN)
+  && /\.body-wrap\.lhm #lhmNav\.lhm-nav\{background:color-mix\(in srgb,var\(--s1,var\(--bg1,#151719\)\) 52%,transparent\);-webkit-backdrop-filter:blur\(16px\) saturate\(1\.15\)/.test(HN) && /\.body-wrap\.lhm #lhmNav \.lhm-rail\{background:transparent\}/.test(HN));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

@@ -479,7 +479,9 @@
       var z = parseInt(c.zIndex, 10); if(!(z >= 1)) return false;
       var r = el.getBoundingClientRect(); if(r.width < 60 || r.height < 24) return false;
       var W = window.innerWidth, H = window.innerHeight;
-      if(r.height >= H * .9 && r.width < W * .9) return false;                 /* a page column */
+      /* a full-height column that is FIXED over the page is a drawer (the widget details drawer, 2026-10-04: it read as a page
+         column and lost its ground with blocks off); only an absolute one inside the page's own box can be its column */
+      if(c.position === 'absolute' && r.height >= H * .9 && r.width < W * .9) return false;
       if(r.top <= 1 && r.width >= W * .9 && r.height < 120) return false;      /* a page bar */
       return true;
     }catch(e){ return false; }
@@ -498,7 +500,8 @@
       if(el.matches('[class*="paper"], [class*="preview"], [class*="receipt"], [class*="canvas"], [data-vera-keep-ground], canvas, iframe[data-vera-keep-ground]')) return false;
       var r = el.getBoundingClientRect(); var W = window.innerWidth, H = window.innerHeight;
       if(r.width < 80 || r.height < 40 || r.width * r.height < W * H * .05) return false;
-      var c = getComputedStyle(el); if(c.position === 'fixed' && !(r.height >= H * .9 || (r.top <= 1 && r.width >= W * .9))) return false;
+      /* in the page's flow only: anything drawn fixed or absolute over it is not its ground (the details drawer was taken for one) */
+      var c = getComputedStyle(el); if(c.position === 'fixed' || c.position === 'absolute') return false;
       return _alphaOf(c.backgroundColor) >= .6;
     }catch(e){ return false; }
   }
