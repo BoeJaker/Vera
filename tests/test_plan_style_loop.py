@@ -157,7 +157,8 @@ def test_the_controller_is_told_about_stepwise_only_in_stepwise():
 
 def test_an_explicit_style_skips_the_single_cap_fast_path():
     b = _body("cap_dag_agent_loop_v6")
-    assert 'if _plan_style_eff != "auto":\n        enable_fast_path = False' in b
+    # ...unless v7 only defaulted it (test_fast_path_default_style.py).
+    assert 'if _plan_style_eff != "auto" and not plan_style_defaulted:\n        enable_fast_path = False' in b
 
 
 # ── the controller's prompt, for real ───────────────────────────────────────
