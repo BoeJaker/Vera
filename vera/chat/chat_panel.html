@@ -6090,12 +6090,44 @@ IMPORTANT:
     if(!els.length)return;
     const pool=_thinkPhrases().concat(_thinkRefs());
     els.forEach(el=>{
+      if(el.dataset.phase) return;   // saying what the turn is actually doing: no stock phrase over it
       const next=pool[Math.floor(Math.random()*pool.length)];
       if(!next||next===el.textContent)return;
       el.classList.remove('swap'); void el.offsetWidth;   // retrigger fade-in
       el.textContent=next; el.classList.add('swap');
     });
   },2600);
+  /* ═══ THE TURN SAYS WHAT IT IS DOING (owner, 2026-10-04: "any pre or post processing of messages should be
+     clearly communicated in the chat throbber i.e. 'searching the web'"). The stream sends phase frames when asked
+     ({type:'phase', turn_id, id, stage, label, state, at_ms, ms?, ...} - the shape the chat turn record is built
+     from too), and this page adds its own for the steps it takes before the request. Every frame is kept on its
+     message (wrap._phases); while a step is running its label replaces the stock phrases, and when none is the
+     stock phrases come back. 'vera:chat:phases' = '0' asks for none. ═══ */
+  const _phasesOn=()=>{ try{ return localStorage.getItem('vera:chat:phases')!=='0'; }catch(_){ return true; } };
+  // message ids repeat across sessions; the turn record needs one that does not
+  const _phaseTurnId=(wrap)=>{ const m=wrap&&wrap.dataset?wrap.dataset.mid:''; return m?((SID?SID+':':'')+m):''; };
+  function _phaseNote(wrap, f){
+    if(!wrap||!f||f.type!=='phase') return;
+    (wrap._phases||(wrap._phases=[])).push(f);
+    const live=wrap._phaseLive||(wrap._phaseLive=new Map()), key=f.stage+':'+f.id;
+    if(f.state==='start') live.set(key, f); else live.delete(key);
+    const el=wrap.querySelector('.think-throb .phrase'); if(!el) return;
+    let cur=null; live.forEach(v=>{ cur=v; });   // the step started last is the one to name
+    if(cur&&cur.label){
+      const t=cur.label+'…';
+      if(el.textContent!==t){ el.classList.remove('swap'); void el.offsetWidth; el.textContent=t; el.classList.add('swap'); }
+      el.dataset.phase=cur.stage;
+    } else delete el.dataset.phase;
+  }
+  // a step this page takes itself before the request, in the same shape
+  function _phaseLocal(wrap, stage, id, label, state){
+    if(!wrap||!_phasesOn()) return;
+    const now=performance.now(), t0=wrap._phaseT0||(wrap._phaseT0=now);
+    const f={ type:'phase', turn_id:_phaseTurnId(wrap), id, stage, label, state, at_ms:Math.round(now-t0), local:true };
+    if(state!=='start'){ const st=(wrap._phaseStarts||{})[stage+':'+id]; if(st!=null) f.ms=Math.round(now-st); }
+    else (wrap._phaseStarts||(wrap._phaseStarts={}))[stage+':'+id]=now;
+    _phaseNote(wrap, f);
+  }
   async function _genThinkPhrases(){
     const st=document.getElementById('thinkPhraseStatus');
     const theme=(document.getElementById('cfgThinkTheme')?.value||'').trim();
@@ -11751,7 +11783,9 @@ Your task: decide what to do next to advance toward the goal.
     const bubEl=aMsg.body; // alias for the body div
 
     // Always fetch fresh agent data so domain_caps changes take effect immediately
+    _phaseLocal(aMsg.wrap,'needs','agent','finding the agent','start');
     const a=await _getCurrentAgent()||AGENTS.find(x=>x.name===agentName);
+    _phaseLocal(aMsg.wrap,'needs','agent','finding the agent','done');
     try{ const g=aMsg.wrap.querySelector('.msg-gutter'); if(g && a?.label) g.textContent=a.label; }catch(_){}
     // Explicit "open the X panel" → resolve & mount it in code (the model is
     // unreliable at picking the right panel id). This is the ONLY pre-response
@@ -11780,7 +11814,9 @@ Your task: decide what to do next to advance toward the goal.
     // changes the dropdown mid-stream.
     const outFmt=document.getElementById('cfgFormat')?.value||'';
     // Fetch skills/ontologies/DAGs context block (async, may be empty)
+    _phaseLocal(aMsg.wrap,'acquire','assemble','gathering skills and context','start');
     const ctxBlock=await _fetchContextBlock(a,msg);
+    _phaseLocal(aMsg.wrap,'acquire','assemble','gathering skills and context','done');
 
     // ── Context freshness guard ───────────────────────────────────────
     // In live-context mode, if CTX_NODES were gathered for a DIFFERENT input
@@ -11806,7 +11842,9 @@ Your task: decide what to do next to advance toward the goal.
     if(document.getElementById('ctxInject')?.checked && _ctxLiveOn()
        && msg.trim().length>2 && !_ctxMatches(msg)){
       const _fetchP=ctxFetch(false,msg,true).catch(()=>{});
+      _phaseLocal(aMsg.wrap,'acquire','memory','checking memory for this question','start');
       await Promise.race([_fetchP, new Promise(res=>setTimeout(res,600))]);
+      _phaseLocal(aMsg.wrap,'acquire','memory','checking memory for this question','done');
     }
     // Recompute injection now that context is guaranteed to match this msg,
     // then reconcile the "+N ctx" pill on the already-painted user message.
@@ -11931,7 +11969,9 @@ Your task: decide what to do next to advance toward the goal.
     const myAbort = _GLOBAL_ABORT;
     _streamStart();
     // the room, as the model will see it this turn (the control plane's manifest)
+    _phaseLocal(aMsg.wrap,'needs','room','noting what is open','start');
     const roomText = await _uiRoomText();
+    _phaseLocal(aMsg.wrap,'needs','room','noting what is open','done');
 
     try{
       const resp=await fetch(BASE+'/agents/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -11976,6 +12016,8 @@ Your task: decide what to do next to advance toward the goal.
           // 'vera:canvas:tell' = '0' keeps the placing and leaves the model untold.
           canvas_enrich:_cvEnrichOn()||undefined, canvas_text:msg, canvas_mid:_cvRelMid||'',
           canvas_tell:_cvTellOn(), chat_files:true,
+          // what the turn is doing, as it happens (the throbber names it); the turn's id ties the frames to it
+          phase_frames:_phasesOn()||undefined, turn_id:_phaseTurnId(aMsg.wrap)||undefined,
         })
       });
       if(!resp.ok){bubEl.textContent='✗ HTTP '+resp.status;return;}
@@ -12003,6 +12045,7 @@ Your task: decide what to do next to advance toward the goal.
               // Coalesced to one paint per frame; see _scheduleStreamRender.
               _scheduleStreamRender();}
             else if(ev.type==='thinking'){fullThink+=ev.text||'';thkEl.style.display='block';thkEl.textContent=fullThink;}
+            else if(ev.type==='phase'){ _phaseNote(aMsg.wrap, ev); }
             /* What this turn is waiting for, refreshed until the first token.
                The server only names jobs Vera itself started; when it cannot
                see what is holding the node it says so rather than claiming the

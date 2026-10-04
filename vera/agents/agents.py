@@ -90,6 +90,10 @@ try:
     from Vera.vera.agents import queue_status_core as _queue_status
 except Exception:                       # worktree / app-free import
     from vera.agents import queue_status_core as _queue_status
+try:
+    from Vera.vera.agents import turn_phases_core as _phases
+except Exception:                       # worktree / app-free import
+    from vera.agents import turn_phases_core as _phases
 
 # Lazy import helper for DAG execution — avoids circular import at load time
 def _get_dag_runner():
@@ -1932,7 +1936,14 @@ async def agent_chat_stream_endpoint(request: Request):
     _web_limit   = max(1, min(10, int(body.get("web_search_limit", 5) or 5)))
     _web_engine  = (body.get("web_search_engine") or "auto").strip() or "auto"
     _web_task    = None
+    _web_t0      = 0.0
+    # Phase frames (turn_phases_core): what the turn is doing, said as it happens, for a client that asks. Timed
+    # from the endpoint's entry, so the steps already done before the stream opened are reported with their real
+    # durations, and the chat turn record (four-minds FM-0.3) is built from the same frames.
+    _ph = (_phases.PhaseClock(str(body.get("turn_id") or uuid.uuid4().hex[:12]), _ep_t0, _time.monotonic)
+           if body.get("phase_frames") else None)
     if _web_enabled and _web_query:
+        _web_t0 = _time.monotonic()
         async def _run_web_search():
             try:
                 return await asyncio.wait_for(
@@ -1983,6 +1994,39 @@ async def agent_chat_stream_endpoint(request: Request):
             await _q.put(
                 ("data: " + json.dumps({"type": "web_searching",
                                         "query": _web_query[:200]}) + "\n\n").encode())
+        _web_phase = None
+        _model_t0 = _time.monotonic()
+        if _ph is not None:
+            try:
+                # what happened before the stream could open, with the time each step really took
+                for _f in _phases.from_marks(_ph, _ep_marks):
+                    await _q.put(("data: " + json.dumps(_f) + "\n\n").encode())
+                if _web_task is not None:
+                    await _q.put(_ph.sse("acquire", "web", _phases.web_label(_web_query), "start", t=_web_t0))
+
+                    async def _web_phase_done():
+                        # its own watcher: tier 1 of a two-tier reply never waits for the search, but the person
+                        # should still see when it finished and what it found
+                        try:
+                            _wr = await _web_task
+                        except asyncio.CancelledError:
+                            raise                   # torn down with the stream: say nothing more
+                        except Exception:
+                            await _q.put(_ph.sse("acquire", "web", _phases.web_label(_web_query), "fail",
+                                                 ms=(_time.monotonic() - _web_t0) * 1000))
+                            return
+                        _rs = (_wr.get("results") or []) if isinstance(_wr, dict) else []
+                        _st = "done" if _rs else ("fail" if isinstance(_wr, dict) and _wr.get("error") else "done")
+                        await _q.put(_ph.sse(
+                            "acquire", "web", _phases.web_label(_web_query), _st,
+                            ms=(_time.monotonic() - _web_t0) * 1000, count=len(_rs),
+                            sources=[{"title": r.get("title") or r.get("url"), "url": r.get("url")}
+                                     for r in _rs[:_web_limit] if isinstance(r, dict)]))
+                    _web_phase = asyncio.create_task(_web_phase_done())
+                _model_t0 = _time.monotonic()
+                await _q.put(_ph.sse("model", "answer", "writing the answer", "start", t=_model_t0))
+            except Exception as _e:
+                log.debug("phase frames (pre-stream) skipped: %s", _e)
 
         async def _pump_main():
             try:
@@ -2102,6 +2146,7 @@ async def agent_chat_stream_endpoint(request: Request):
                     raise item
                 yield item
 
+        _first_sent = False
         try:
             async for chunk in _merged():
                 # Light-touch content sniff. Stream frames come as
@@ -2124,9 +2169,22 @@ async def agent_chat_stream_endpoint(request: Request):
                         _resp_chars += len(_text)
                         if sum(len(s) for s in _resp_head) < _CAPTURE_MAX:
                             _resp_head.append(_text)
+                        if _ph is not None and not _first_sent and _text:
+                            _first_sent = True          # the first token: the time to it is the turn's TTFT
+                            try:
+                                yield _ph.sse("model", "answer", "writing the answer", "first")
+                            except Exception:
+                                pass
                     elif _kind == "audio":
                         _audio_chunks += 1
                 yield chunk
+            if _ph is not None:
+                try:
+                    yield _ph.sse("model", "answer", "writing the answer", "done",
+                                  ms=(_time.monotonic() - _model_t0) * 1000,
+                                  count=_resp_chars or None)
+                except Exception:
+                    pass
         except (RuntimeError, ConnectionResetError, BrokenPipeError) as e:
             if "transport" in str(e).lower() or "closed" in str(e).lower():
                 log.debug("Client disconnected during stream: %s", e)
@@ -2135,7 +2193,7 @@ async def agent_chat_stream_endpoint(request: Request):
         finally:
             # Tear down the merge plumbing — an opener still in flight after
             # the main stream finished (or the client vanished) is pointless.
-            for _t in (_op_pump, _opener_task, _main_pump, _web_task):
+            for _t in (_op_pump, _opener_task, _main_pump, _web_task, _web_phase):
                 if _t is not None and not _t.done():
                     _t.cancel()
             elapsed_ms = round((_time.monotonic() - _stream_t0) * 1000)
