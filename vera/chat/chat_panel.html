@@ -587,6 +587,14 @@ body.has-msgs #noticeDock,body.has-panel #noticeDock{display:none}
 .ctx-pill{font-size:8px;padding:1px 5px;border-radius:9px;border:1px solid rgba(90,158,143,.3);color:var(--acc);background:rgba(90,158,143,.08);margin-top:3px;display:inline-block}
 .audio-row{display:flex;align-items:center;gap:5px;margin-top:4px;padding:3px 7px;background:var(--bg0);border-radius:3px;border:1px solid var(--border)}
 .audio-row audio{height:20px;flex:1}
+/* the turn footer: how the reply was made, collapsed (its rows are the chat:turn-phases widget) */
+.turn-phases{margin-top:4px;font-size:9px;color:var(--dim, #7d8590)}
+.turn-phases>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:5px;padding:1px 6px;border-radius:9px;border:1px solid var(--border, #2a2f37);user-select:none}
+.turn-phases>summary::-webkit-details-marker{display:none}
+.turn-phases>summary::before{content:'\25B8';font-size:8px;color:var(--acc2, #8fb3c9)}
+.turn-phases[open]>summary::before{content:'\25BE'}
+.turn-phases>summary:hover{color:var(--text, #e6edf3);border-color:color-mix(in srgb, var(--acc2, #8fb3c9) 45%, transparent)}
+.turn-phases>vera-widget{display:block;margin-top:5px;max-width:560px}
 .sd-img{max-width:100%;border-radius:5px;margin-top:6px;display:block;border:1px solid var(--border)}
 .sd-card{border:1px solid rgba(201,149,90,.3);background:rgba(201,149,90,.04);border-radius:7px;padding:9px 11px;width:100%}
 .council-resp{border:1px solid var(--border);border-radius:5px;padding:6px 9px;margin-bottom:5px;font-size:11px}
@@ -6193,6 +6201,57 @@ IMPORTANT:
     if(state!=='start'){ const st=(wrap._phaseStarts||{})[stage+':'+id]; if(st!=null) f.ms=Math.round(now-st); }
     else (wrap._phaseStarts||(wrap._phaseStarts={}))[stage+':'+id]=now;
     _phaseNote(wrap, f);
+  }
+  /* ═══ THE TURN FOOTER (context-and-ui; owner 2026-10-04: pre/post processing "clearly communicated"). When a reply
+     ends, its own phase frames become one row per step - when it started, how long it took, how it ended - drawn by
+     the registered widget template chat:turn-phases (the gantt form) inside a collapsed line under the reply. The
+     page's own steps are timed from the turn's start; the server's from when the request went, so they are shifted
+     by that. Page-local like the frames themselves: a reloaded transcript has no footer. ═══ */
+  function _phaseRows(wrap){
+    const frames=(wrap&&wrap._phases)||[]; if(!frames.some(f=>f&&!f.local)) return null;
+    const shift=(wrap._phaseSentAt!=null&&wrap._phaseT0!=null)?Math.max(0,wrap._phaseSentAt-wrap._phaseT0):0;
+    const by=new Map(), skipped=[]; let first=null, end=0;
+    frames.forEach(f=>{
+      if(!f||f.type!=='phase') return;
+      const at=(f.at_ms||0)+(f.local?0:shift), k=f.stage+':'+f.id;
+      if(f.state==='first'){ first=at; return; }
+      if(f.state==='skip'){ skipped.push(f.label||f.id); return; }
+      const r=by.get(k)||{ id:k, name:f.label||f.id, start:null, end:null, state:'', detail:'', count:null };
+      if(f.state==='start'){ if(r.start==null) r.start=at; }
+      else{
+        r.end=at; r.state=f.state; if(r.start==null) r.start=Math.max(0, at-(f.ms||0));
+        if(f.label) r.name=f.label; if(f.detail) r.detail=f.detail; if(f.count!=null) r.count=f.count;
+      }
+      by.set(k,r);
+    });
+    const secs=(ms)=>ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(1)+' s';
+    const rows=[...by.values()].filter(r=>r.start!=null).map(r=>{
+      const e=r.end!=null?r.end:r.start, d=Math.max(0,e-r.start); end=Math.max(end,e);
+      const row={ id:r.id, name:r.name+' · '+secs(d)+(r.count!=null?' · '+r.count+(r.id==='model:answer'?' chars':' found'):''), start:r.start, end:Math.max(e, r.start+1),
+                  detail:r.detail, state:(r.state==='done'?'done':(r.state==='fail'?'failed':'')) };
+      if(r.state==='late') row.col='var(--warn, #d9a441)';
+      return row;
+    }).sort((a,b)=>a.start-b.start);
+    return rows.length?{ rows, total:end, first, skipped }:null;
+  }
+  function _phaseFooter(wrap, bubEl){
+    if(!wrap||!bubEl||!_phasesOn()) return;
+    const ph=_phaseRows(wrap); if(!ph) return;
+    const old=wrap.querySelector(':scope .turn-phases'); if(old) old.remove();
+    const secs=(ms)=>ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(1)+' s';
+    const det=document.createElement('details'); det.className='turn-phases';
+    const sum=document.createElement('summary');
+    sum.textContent=ph.rows.length+' step'+(ph.rows.length===1?'':'s')+' · '+secs(ph.total)
+      +(ph.first!=null?' · first word at '+secs(ph.first):'')+(ph.skipped.length?' · skipped: '+ph.skipped.join(', '):'');
+    det.appendChild(sum);
+    det.addEventListener('toggle',()=>{
+      if(!det.open||det.querySelector('vera-widget')) return;
+      const w=document.createElement('vera-widget'); w.setAttribute('bare',''); w.setAttribute('size','m');
+      w.record={ id:'chat:turn-phases', form:'gantt', title:'How this turn was made', data:{ stages:ph.rows },
+                 draw:{ rows:Math.min(16, ph.rows.length), names:230 } };
+      det.appendChild(w);
+    });
+    bubEl.insertAdjacentElement('afterend', det);
   }
   async function _genThinkPhrases(){
     const st=document.getElementById('thinkPhraseStatus');
@@ -12040,6 +12099,7 @@ Your task: decide what to do next to advance toward the goal.
     _phaseLocal(aMsg.wrap,'needs','room','noting what is open','done');
 
     try{
+      if(aMsg.wrap) aMsg.wrap._phaseSentAt=performance.now();   // the server times its frames from here
       const resp=await fetch(BASE+'/agents/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
         signal: myAbort.signal,
         body:JSON.stringify({
@@ -12279,6 +12339,8 @@ Your task: decide what to do next to advance toward the goal.
     _maybeAutoPreview(bubEl);
     // Auto-persist labeled code blocks into the artifact system (no manual Save).
     try{ _maybeAutoSaveArtifacts(bubEl); }catch(_){}
+    // how the turn was made: its steps, collapsed under the reply
+    try{ _phaseFooter(aMsg.wrap, bubEl); }catch(_){}
     // NOTE: audio is played in-stream via _enqueueAudio above.
     // Show a playback indicator row if audio was received (for replaying)
     if(_hadAudio&&useTts){
