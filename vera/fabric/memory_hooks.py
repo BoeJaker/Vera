@@ -1014,18 +1014,23 @@ async def get_memory_context_deep(query: str, limit: int = 8, budget_s: float = 
     The fast tier (Postgres + Neo4j) is always used; the vector leg replaces it with the merged result only if it
     lands in what is left of the budget. A vector result that misses the budget is cancelled, not stashed - the
     session's pending slot belongs to the agent's own two-tier memory. Never raises.
-    Returns {text, hits, vector (bool: the vector leg made it), ms}."""
+    Returns {text, hits, vector (bool: the vector leg made it), ms, fast_ms, fast_hits (the text tier's own time and
+    hits), found (hits before they were read as memories)}."""
     out: Dict[str, Any] = {"text": "", "hits": 0, "vector": False, "ms": 0.0}
     MEMORY, _ = _memory()
     if not MEMORY or not hasattr(MEMORY, "search_fast_and_slow") or not str(query or "").strip():
         return out
     t0 = time.monotonic()
+    info: Dict[str, Any] = {}
     hits, out["vector"] = await _recall_core.fast_then_vector(
         lambda fast_timeout: MEMORY.search_fast_and_slow(query=query, limit=limit, fast_timeout=fast_timeout),
-        budget_s)
+        budget_s, info=info)
     items = [f for f in (_extract_record_fields(it) for it in (hits or [])) if f][:limit]
     out.update(text=_recall_core.retitle_block(_chatmem_format(items), _DEEP_HEADING), hits=len(items),
-               ms=round((time.monotonic() - t0) * 1000, 1))
+               ms=round((time.monotonic() - t0) * 1000, 1), found=len(hits or []),
+               fast_ms=info.get("fast_ms"), fast_hits=info.get("fast_hits"))
+    if info.get("error"):
+        out["error"] = info["error"]
     return out
 
 
@@ -1112,6 +1117,25 @@ async def memory_agent_context(
         tags        = tag_list,
     )
     return {"context": context, "found": bool(context), "depth": "full" if full else "fast"}
+
+
+@capability(
+    "memory.context.deep",
+    http_method="POST", http_path="/memory/context/deep", http_tags=["memory"],
+    memory="off",
+    description="The deep memory search a chat turn gets when it refers back ('last time', 'what did we decide'): "
+                "every session and agent, the keyword and graph tier always and the vector tier only if it answers "
+                "inside the budget. Read-only. Inputs: query, limit (int=8), budget_s (float=1.5). Output: {text, "
+                "hits, vector, ms, fast_ms, fast_hits, found} - the block a turn would be given, and how long each "
+                "tier took.",
+)
+async def memory_context_deep(query: str, limit: int = 8, budget_s: float = 1.5, trace_id=None):
+    try:
+        limit = max(1, min(int(limit or 8), 30))
+        budget_s = max(0.2, min(float(budget_s or 1.5), 10.0))
+    except (TypeError, ValueError):
+        limit, budget_s = 8, 1.5
+    return await get_memory_context_deep(query, limit=limit, budget_s=budget_s)
 
 
 @capability(

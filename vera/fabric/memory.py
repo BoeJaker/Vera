@@ -1744,11 +1744,8 @@ class HybridMemoryStore:
         tasks = {n: self._backends[n].search(query, limit=limit * _CANDIDATES_PER_HIT, filters=filters,
                                              embedding=None)
                  for n in names}
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*tasks.values(), return_exceptions=True), timeout=timeout)
-        except asyncio.TimeoutError:
-            results = [TimeoutError("fast tier timed out")] * len(tasks)
+        # what finished in time counts: one slow backend no longer throws away the other's hits
+        results = await _recall_core.gather_within(tasks, timeout)
         return self._merge_and_rank(tasks.keys(), results, limit, query)
 
     async def search_fast_and_slow(
@@ -1796,12 +1793,8 @@ class HybridMemoryStore:
                                                    filters=filters, embedding=None)
                       for n in fast_names}
         if fast_tasks:
-            try:
-                fast_all = await asyncio.wait_for(
-                    asyncio.gather(*fast_tasks.values(), return_exceptions=True),
-                    timeout=fast_timeout)
-            except asyncio.TimeoutError:
-                fast_all = [TimeoutError("fast-tier timed out")] * len(fast_tasks)
+            # what finished in time counts: one slow backend no longer throws away the other's hits
+            fast_all = await _recall_core.gather_within(fast_tasks, fast_timeout)
         else:
             fast_all = []
         fast_out = self._merge_and_rank(fast_tasks.keys(), fast_all, limit, query)
