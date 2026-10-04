@@ -140,6 +140,22 @@ def requirements(fn: str) -> Tuple[str, ...]:
     return spec[2] if spec else ()
 
 
+#: run_on_node(serial=<name>): a cluster-wide one-at-a-time slot per name.
+SERIAL_KEY = "vera:compute:serial:{name}"
+#: The slot's TTL; its holder refreshes it every third of this while it runs.
+SERIAL_TTL_S = 120
+
+
+def serial_name(name: Any) -> str:
+    """A slot name, or '' for none: lowercase letters, digits, '-', '_', '.'."""
+    s = str(name or "").strip().lower()
+    return s if s and len(s) <= 64 and all(c.isalnum() or c in "-_." for c in s) else ""
+
+
+def serial_key(name: str) -> str:
+    return SERIAL_KEY.format(name=name)
+
+
 def node_missing(fn: str, libs: Dict[str, bool]) -> List[str]:
     """What a node worker lacks to run `fn`, judged on the node itself. Only
     importable libraries: a requirement that is not one (`testenv`, a venv on

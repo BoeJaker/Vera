@@ -181,11 +181,76 @@ async def node_plan(fn: str, exclude=()) -> Dict[str, Any]:
                      exclude=exclude)
 
 
+_SERIAL_RELEASE_LUA = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+    "return redis.call('del', KEYS[1]) end return 0")
+
+
 async def run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
                       on_progress: Optional[Callable[[Dict[str, Any]], Any]] = None,
                       stop: Optional[Callable[[], bool]] = None,
                       trace_id: str = "", max_wait_s: Optional[int] = None,
-                      host_fallback: Optional[bool] = None) -> Dict[str, Any]:
+                      host_fallback: Optional[bool] = None,
+                      serial: str = "") -> Dict[str, Any]:
+    """_run_on_node, optionally inside a cluster-wide one-at-a-time slot.
+
+    `serial` names the slot (e.g. "training"): of all the jobs - on every
+    host process - that name the same slot, one runs at a time. The slot is a
+    Redis key the holder refreshes while its job runs (TTL core.SERIAL_TTL_S),
+    so a host that dies holding it frees it on its own. Waiting for the slot
+    counts toward max_wait_s."""
+    r = _orch.REDIS
+    name = core.serial_name(serial)
+    if serial and not name:
+        raise NodeComputeError(f"{fn}: bad serial slot name {serial!r}")
+    if not name or r is None:
+        return await _run_on_node(fn, inputs, label=label, on_progress=on_progress, stop=stop,
+                                  trace_id=trace_id, max_wait_s=max_wait_s,
+                                  host_fallback=host_fallback)
+    cfg = await _config()
+    cap = cfg["max_wait_s"] if max_wait_s is None else max(0, int(max_wait_s))
+    key, token, t0 = core.serial_key(name), uuid.uuid4().hex, time.time()
+    noted = False
+    while not await r.set(key, token, nx=True, ex=core.SERIAL_TTL_S):
+        if stop and stop():
+            raise NodeComputeError(f"{fn}: stopped while waiting for the '{name}' slot")
+        if time.time() - t0 >= cap:
+            holder = _s(await r.get(key))
+            raise NodeComputeError(f"{fn}: the '{name}' slot stayed taken for "
+                                   f"{int(time.time() - t0)} s (held by {holder or 'another job'})")
+        if not noted:
+            noted = True
+            await emit_event({"type": "compute.waiting", "fn": fn, "label": label,
+                              "why": f"waiting for the '{name}' slot"})
+        await asyncio.sleep(5)
+
+    async def keep():
+        while True:
+            await asyncio.sleep(core.SERIAL_TTL_S / 3)
+            try:
+                if _s(await r.get(key)) == token:
+                    await r.expire(key, core.SERIAL_TTL_S)
+            except Exception:
+                pass
+    keeper = asyncio.create_task(keep())
+    try:
+        left = max(0, int(cap - (time.time() - t0)))
+        return await _run_on_node(fn, inputs, label=label, on_progress=on_progress, stop=stop,
+                                  trace_id=trace_id, max_wait_s=left,
+                                  host_fallback=host_fallback)
+    finally:
+        keeper.cancel()
+        try:
+            await r.eval(_SERIAL_RELEASE_LUA, 1, key, token)
+        except Exception:
+            pass
+
+
+async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
+                       on_progress: Optional[Callable[[Dict[str, Any]], Any]] = None,
+                       stop: Optional[Callable[[], bool]] = None,
+                       trace_id: str = "", max_wait_s: Optional[int] = None,
+                       host_fallback: Optional[bool] = None) -> Dict[str, Any]:
     """Run an allow-listed function on the node worker with the most room for
     it and return its outputs. `on_progress` (async) receives each progress
     dict; `stop()` is polled and, once true, asks the node to stop at its next

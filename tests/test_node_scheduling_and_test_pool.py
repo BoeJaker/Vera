@@ -90,6 +90,80 @@ def test_a_node_checks_only_the_libraries_it_can_import():
     assert nc.node_missing("worldview.train", {"numpy": True, "torch": False}) == ["torch"]
 
 
+def test_serial_slot_names():
+    assert nc.serial_name("Training") == "training"
+    assert nc.serial_name("") == "" and nc.serial_name("a b") == "" and nc.serial_name("x" * 65) == ""
+    assert nc.serial_key("training") == "vera:compute:serial:training"
+
+
+_SERIAL_SCRIPT = r'''
+import asyncio, importlib.util, sys, time, types
+root = sys.argv[1]
+
+class FakeRedis:
+    def __init__(self): self.kv = {}
+    async def set(self, k, v, nx=False, ex=None):
+        if nx and k in self.kv: return None
+        self.kv[k] = v.encode() if isinstance(v, str) else v; return True
+    async def get(self, k): return self.kv.get(k)
+    async def expire(self, k, s): return True
+    async def eval(self, script, n, key, token):
+        if self.kv.get(key) == token.encode(): del self.kv[key]; return 1
+        return 0
+
+orch = types.ModuleType("Vera.vera.capability_orchestration")
+orch.REDIS = FakeRedis()
+orch.capability = lambda *a, **k: (lambda f: f)
+async def emit_event(e): pass
+orch.emit_event = emit_event
+for name in ("Vera", "Vera.vera", "Vera.vera.workers"):
+    sys.modules[name] = types.ModuleType(name)
+sys.modules["Vera.vera.capability_orchestration"] = orch
+sys.modules["Vera"].vera = sys.modules["Vera.vera"]
+sys.modules["Vera.vera"].capability_orchestration = orch
+spec = importlib.util.spec_from_file_location("Vera.vera.workers.node_compute_core", root + "/vera/workers/node_compute_core.py")
+core = importlib.util.module_from_spec(spec); spec.loader.exec_module(core)
+sys.modules["Vera.vera.workers.node_compute_core"] = core
+sys.modules["Vera.vera.workers"].node_compute_core = core
+spec = importlib.util.spec_from_file_location("ncc", root + "/vera/workers/node_compute_capabilities.py")
+ncc = importlib.util.module_from_spec(spec); spec.loader.exec_module(ncc)
+
+order = []
+async def fake_inner(fn, inputs, **kw):
+    order.append(("start", inputs["n"])); await asyncio.sleep(0.3); order.append(("end", inputs["n"]))
+    return {"n": inputs["n"]}
+ncc._run_on_node = fake_inner
+async def cfg(): return core.merge_config({"max_wait_s": 30})
+ncc._config = cfg
+_sleep = asyncio.sleep
+async def fast_sleep(s): await _sleep(min(s, 0.05))
+ncc.asyncio.sleep = fast_sleep
+
+async def main():
+    res = await asyncio.gather(ncc.run_on_node("ml.train", {"n": 1}, serial="training"),
+                               ncc.run_on_node("ml.train", {"n": 2}, serial="training"))
+    assert [r["n"] for r in res] == [1, 2]
+    # one at a time: the second starts only after the first ends
+    assert order[1][0] == "end", order
+    assert core.serial_key("training") not in orch.REDIS.kv     # released
+    # a slot held elsewhere past max_wait_s: refused, naming the holder
+    orch.REDIS.kv[core.serial_key("training")] = b"other-host"
+    try:
+        await ncc.run_on_node("ml.train", {"n": 3}, serial="training", max_wait_s=0)
+        raise SystemExit("not refused")
+    except ncc.NodeComputeError as e:
+        assert "other-host" in str(e), e
+    print("ok")
+asyncio.run(main())
+'''
+
+
+def test_a_serial_slot_runs_one_job_at_a_time_cluster_wide():
+    import subprocess as sp
+    r = sp.run([sys.executable, "-c", _SERIAL_SCRIPT, ROOT], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and r.stdout.strip().endswith("ok"), (r.stdout + r.stderr)[-3000:]
+
+
 def test_every_function_has_a_resource_need():
     assert set(nc.FUNCTIONS) <= set(nc.NEEDS)
 
