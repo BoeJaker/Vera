@@ -259,3 +259,12 @@ rows = conn.execute("SELECT * FROM fabric_records WHERE dataset_id=?", (ds_id,))
 - **`silent=True` on high-frequency caps** — suppresses `cap.call`/`cap.ok` events; combine with `memory="off"` for polling caps.
 - **Module load order matters for cross-references** — if your module calls a cap from `data_fabric`, it must be listed after `data_fabric.py` in `_module_files`. Use `sys.modules.get()` access pattern if uncertain.
 - **`emit_event` is a no-op if Redis is down** — it swallows exceptions, so capability logic always continues. Don't use it as a synchronisation primitive.
+
+
+## Coordination and autopsy
+
+- **Working alongside other agents:** follow `vera-coordinate`. Plans, handovers and evidence go only in
+  `<git-common-dir>/vera-work/shared-planning/<unit>/`. Tasks and findings go on the board (search before filing;
+  comment on the related item). Status rides on the records you already write, and chat gets one line.
+- **Close with an autopsy:** if a step here failed, misled or slowed you, append an entry to this skill's
+  `LEARNINGS.md` (format: `skill-smith` §3). If it needs a code or tool change, file a `kind:skill-issue` board item.
