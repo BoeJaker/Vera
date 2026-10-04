@@ -723,3 +723,39 @@ def test_corpus_export(tmp_path):
     assert all(r["topic_id"] == t["id"] for r in out["records"]) and out["stats"]["private_dropped"] == 1
     assert out["sequences"]["stories"][t["id"]] and all("vec" not in r for r in out["records"])
     assert any("vec" in r for r in _R(orch, "intel.corpus.export", max_share=1.0, vectors=True)["records"])
+
+
+def test_geocoder_caches_rate_limits_and_tags_signals(tmp_path):
+    mod, orch = _load(tmp_path)
+    calls = []
+
+    async def http_json(url, params=None, timeout=20.0, headers=None):
+        calls.append((url, dict(params or {}), dict(headers or {})))
+        if "nominatim" in url:
+            if params["q"] == "Atlantis":
+                return []
+            return [{"lat": "53.79", "lon": "-1.54", "name": params["q"], "addresstype": "city",
+                     "boundingbox": ["53.6", "53.9", "-1.7", "-1.3"],
+                     "address": {"country": "United Kingdom", "country_code": "gb", "state": "England"}}]
+        return []
+    mod._http_json = http_json
+    mod.geo.MIN_INTERVAL_S = 0.0
+    r = _R(orch, "geo.lookup", name="Leeds")
+    assert r["ok"] and r["place"]["cc"] == "gb" and r["place"]["bbox"] == [53.6, 53.9, -1.7, -1.3]
+    assert "vera-intel" in calls[0][2]["User-Agent"] and "@" not in calls[0][2]["User-Agent"]
+    _R(orch, "geo.lookup", name="leeds ")
+    assert len(calls) == 1                                                      # cached
+    assert not _R(orch, "geo.lookup", name="Atlantis")["ok"]
+    _R(orch, "geo.lookup", name="Atlantis")
+    assert len(calls) == 2                                                      # a miss is cached too
+
+    async def nlp_ner(text="", task="ner", labels=None, threshold=0.4, trace_id=None):
+        return {"entities": [{"word": "Acme", "entity": "company", "score": 0.9},
+                             {"word": "Leeds", "entity": "location", "score": 0.8}]}
+    orch.CAPABILITY_REGISTRY["nlp.ner"] = {"func": nlp_ner, "raw": nlp_ner}
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    _run(mod.enrich_topic(mod.store().get_topic(t["id"])))
+    tagged = [s for s in mod.store().signals(t["id"]) if s.get("places")]
+    assert tagged and tagged[0]["places"][0]["name"] == "Leeds" and tagged[0]["places"][0]["cc"] == "gb"
+    assert len(calls) == 2                                                      # Leeds came from the cache
