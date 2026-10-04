@@ -181,7 +181,9 @@ def test_static_audit_follows_calls_across_modules(tmp_path):
     rows = audit.audit(str(tmp_path))
     assert "reads_state" in rows["demo.scale.get"]["markers"], rows["demo.scale.get"]
     assert "reads_state" in rows["demo.model.stats"]["markers"], rows["demo.model.stats"]
-    assert "events" in rows["demo.notify"]["markers"]
+    # emitting an event is fine on a node: the host relays workers' events to
+    # its UI (worker_event_relay)
+    assert rows["demo.notify"]["markers"] == [], rows["demo.notify"]
     assert "local_metrics" in rows["demo.cpu"]["markers"]
     # a helper run by reference (from a tuple), not by a direct call
     assert "local_metrics" in rows["demo.scan"]["markers"], rows["demo.scan"]
