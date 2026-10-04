@@ -45,8 +45,8 @@ t('a tab pick keeps the memory graph drawn (toggles on, never overwrites the cla
 // element instead of above and below" - in Hover/Zen the bars are overlays (so an item never resizes under the pointer);
 // the item now keeps their bands, so they fade in over nothing
 { const CV = R('vera/canvas/canvas_element.js');
-  t('hover/zen: an item keeps bands for its header and rail, so they never cover its content', CV.includes(':host([data-tier="hover"]) .it:not(.compact):has(> .it-hd),:host([data-tier="zen"]) .it:not(.compact):has(> .it-hd){padding-top:var(--vc-hd-band,29px)}')
-    && CV.includes(':host([data-tier="hover"]) .it:not(.compact):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}')); }
+  t('hover/zen: an item keeps bands for its header and rail, so they never cover its content', CV.includes(':host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-hd:not(.own-fold)),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-hd:not(.own-fold)){padding-top:var(--vc-hd-band,29px)}')
+    && CV.includes(':host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}')); }
 // owner, 2026-10-04: "the memory graph in the lhm of chat needs me to press reload to load in" - it was read on a session
 // load and a tab pick only; a finished reply now re-reads it (twice, as its memories land) in the chat and the menu frame
 t('a finished reply re-reads the memory graph, here and in the menu instance', H.includes('try{ _memAfterTurn(); }catch(_){}   // a reply finished')
@@ -64,12 +64,23 @@ t('a finished reply re-reads the memory graph, here and in the menu instance', H
 // owner, 2026-10-04: folded items flicker when hovered and sometimes do not preview; elements greedy with width; chips
 // hard to tell apart; Apply at the foot of a long editor
 { const CV = R('vera/canvas/canvas_element.js'), VO = R('vera/vera_output_element.js');
-  t('any folded item previews after a pause, over the column, never re-placing it', CV.includes("if (!key || this._peekKey === key || this._rz || it.classList.contains('ghost') || !it.classList.contains('compact')) return;")
+  t('any folded item previews after a pause, over the column, never re-placing it', CV.includes("if (!key || this._peekKey === key || this._rz || it.classList.contains('ghost') || !(it.classList.contains('compact') || it.classList.contains('overfold'))) return;")
     && CV.includes("this._peekT = setTimeout(() => { if (this._hovKey === key) this._peekOpen(key); }, 220);") && !/_hoverOpen\(it\) \{[\s\S]{0,600}this\._placeNow\(\)/.test(CV));
   t('...to the column it is still its folded line (placer and height watcher)', CV.includes("const measured = c.classList.contains('peek') && c._peekH ? c._peekH : c.offsetHeight;")
     && CV.includes("if (e.target.classList.contains('peek')) return;   // a preview opening is not a card growing") && CV.includes('const hovered = false;'));
   t('...at least a reading width, inside the stage; redrawn open', CV.includes('want = Math.min(W, Math.max(cur, 440))') && CV.includes('if (this._peekKey) { const pk = this._peekKey; this._peekKey = null; this._peekOpen(pk); }'));
   t('a folded chip shows its kind and its title (two lines), not its key, turn or buttons', CV.includes('.it.compact > .it-hd :is(.k,.src,.sc,.mx,.xp,.fu-w){display:none}') && CV.includes('-webkit-line-clamp:2'));
   t('the editor\'s Apply / Cancel sit above the code (kit and canvas editors)', VO.includes('pre.after(bar); bar.after(ed.box);') && CV.includes('<div class="edit" data-w="canvas.update"><div class="edit-a">')); }
+// owner, 2026-10-04: "if collapsed some canvas elements are only appearing on hover" / resized elements "dont fill the space"
+{ const CV = R('vera/canvas/canvas_element.js');
+  t('a column-folded item is a chip: own-head kinds draw the header line for it; hover/zen never hide a folded head',
+    CV.includes('`<div class="it-hd${ownHead && !compact ? \' own-fold\' : \'\'}">') && CV.includes('.stage .it.overfold > .it-hd.own-fold{display:flex}')
+    && CV.includes(':host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-hd,') && CV.includes("hFold: hd && hd.offsetHeight ? hd.offsetHeight + 2 : 28,"));
+  t('...and previews on hover like any fold', CV.includes("!(it.classList.contains('compact') || it.classList.contains('overfold'))) return;") && CV.includes("if (it._peekWas !== 'overfold') it.classList.add('compact');"));
+  t('a resized item\'s drawing takes the room: widget slot, records list, table, deck/sheet/page card',
+    CV.includes('.it:is(.sized,.openin,.maxed) > .it-bd > :is(.vc-wid,.vc-rbx,.vc-filewrap){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}')
+    && CV.includes('.it:is(.sized,.openin,.maxed) > .it-bd > .vc-wid > .vc-live{flex:1 1 auto;height:auto;min-height:60px}')
+    && CV.includes('.it:is(.sized,.openin,.maxed) > .it-bd > .vc-tablewrap{flex:1 1 auto;min-height:0;overflow:auto}'));
+  t('...and a drag starts from the height the item had, read before it is marked sized', CV.includes("const h0 = it.offsetHeight, w0 = it.offsetWidth; it.classList.add('sized', 'resizing');")); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
