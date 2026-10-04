@@ -209,7 +209,7 @@ def test_registers_caps_panel_tick_and_profile(tmp_path):
     assert kw.get("singleton") and kw.get("skip_in_sandbox")
     roles = orch.PROFILES["intel"]["roles"]
     assert roles["assess"]["model"] == "qwen3.6:35b-a3b" and roles["assess"]["pin"] == "cpu-247" and roles["assess"]["deny_gpu"]
-    assert roles["enrich"]["deny_gpu"] and "model" not in roles["enrich"]
+    assert roles["enrich"]["deny_gpu"] and roles["enrich"]["model"] == "qwen3.6:35b-a3b" and roles["notes"]["pin"] == "cpu-247"
 
 
 def test_the_whole_cycle(tmp_path):
