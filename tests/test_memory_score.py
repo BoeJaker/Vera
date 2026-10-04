@@ -57,8 +57,8 @@ def _run(coro):
 
 def test_hybrid_search_reports_0_1_and_keeps_keyword_hits_first(monkeypatch):
     async def _embed(q):
-        return [0.1] * 4
-    monkeypatch.setattr(memory, "embed_text", _embed)
+        return [0.1] * 4, "ok"
+    monkeypatch.setattr(memory, "embed_text_outcome", _embed)
     neo, chroma = _B([("k1", 7.4), ("k2", 4.3)]), _B([("v1", 0.46), ("v2", 0.44)])
     out = _run(_store(neo4j=neo, chroma=chroma).search("census minds", limit=4))
     ids = [r["record"]["id"] for r in out]
@@ -77,8 +77,8 @@ def test_single_backend_and_empty_query_keep_raw_scores(monkeypatch):
 
 def test_fast_and_slow_tiers_share_the_scale(monkeypatch):
     async def _embed(q):
-        return [0.1] * 4
-    monkeypatch.setattr(memory, "embed_text", _embed)
+        return [0.1] * 4, "ok"
+    monkeypatch.setattr(memory, "embed_text_outcome", _embed)
     st = _store(neo4j=_B([("k1", 4.3)]), postgres=_B([]), chroma=_B([("k1", 0.5), ("v1", 0.55)]))
 
     async def go():
