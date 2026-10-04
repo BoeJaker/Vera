@@ -155,7 +155,7 @@ _LHM_BUILTINS: List[Dict[str, Any]] = [
      "can": ["switch the mode", "open a node"], "placed": ["dashboard", "canvas"]},
     {"id": "graph:topology", "name": "Stack topology graph", "form": "vgraph",
      "reads": {"cap": "topology.snapshot", "args": {}, "every": "2m"},
-     "frame": "the estate as a graph . estate-2d / 3d", "draw": {"form": "vgraph", "size": "L"},
+     "frame": "the estate as a graph . Live ops 3D / 2D", "draw": {"form": "vgraph", "size": "L", "mode": "ops-iso"},
      "can": ["switch the mode", "open a node"], "placed": ["dashboard", "canvas"]},
     {"id": "graph:mesh", "name": "Mesh graph", "form": "vgraph",
      "reads": {"cap": "mesh.topology", "args": {}, "every": "2m"},

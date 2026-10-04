@@ -601,7 +601,7 @@ function mount(host, o){
     root.querySelectorAll('.vlb [data-v]').forEach((b) => b.classList.toggle('on', b.dataset.v === S.view));
     root.querySelectorAll('.vlb [data-l]').forEach((b) => { b.classList.toggle('on', b.dataset.l === S.layout3d); b.disabled = S.view !== '3d'; }); }
   const plot = q('plot'), v = q('pzv');
-  const onWheel = (e) => { e.preventDefault(); const r = plot.getBoundingClientRect(); E.zoomAt(e.deltaY > 0 ? .88 : 1.14, e.clientX - r.left, e.clientY - r.top); E.applyZoom(); };
+  const onWheel = (e) => { if (!(e.ctrlKey || e.metaKey) && o.wheel !== 'zoom') return; e.preventDefault(); const r = plot.getBoundingClientRect(); E.zoomAt(e.deltaY > 0 ? .88 : 1.14, e.clientX - r.left, e.clientY - r.top); E.applyZoom(); };
   plot.addEventListener('wheel', onWheel, { passive: false });
   plot.addEventListener('mousedown', (e) => { if (e.button || e.target.closest('.vlb')) return; S.moved = false; const rot = (e.ctrlKey || e.metaKey) && S.view === '3d';
     const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 26) : S.tilt, A = S.azim == null ? 45 : S.azim; S.drag = { mode: rot ? 'rot' : 'pan', x0: e.clientX, y0: e.clientY, vx0: S.vx, vy0: S.vy, t0: T, a0: A }; e.preventDefault(); });
@@ -612,15 +612,18 @@ function mount(host, o){
   const onUp = () => { if (S.drag){ S.drag = null; E.applyZoom(); } };
   window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
   root.addEventListener('click', (e) => { const t = e.target;
-    const b = t.closest && t.closest('.vlb button'); if (b){ if (b.dataset.v){ S.view = b.dataset.v; render(); E.fitView(true); } else if (b.dataset.l){ S.layout3d = b.dataset.l; S.focus = null; render(); E.fitView(true); } else E.fitView(true); return; }
+    const b = t.closest && t.closest('.vlb button'); if (b){ if (b.dataset.v){ S.view = b.dataset.v; render(); fit(); } else if (b.dataset.l){ S.layout3d = b.dataset.l; S.focus = null; render(); fit(); } else fit(true); return; }
     if (S.moved) return;
     const nd = t.closest && t.closest('[data-node],[data-wnode]'); if (nd){ const n = ID()[nd.dataset.node || nd.dataset.wnode]; S.sel = n ? n.id : null; S.rt = S.sel; render(); if (n && o.onPick) o.onPick(n); return; }
     if (S.rt){ S.rt = null; render(); } });
   root.addEventListener('dblclick', (e) => { const fl = e.target.closest && e.target.closest('[data-floor]'); if (fl && S.view === '3d'){ S.focus = S.focus === fl.dataset.floor ? null : fl.dataset.floor; render(); return; }
     const nd = e.target.closest && e.target.closest('[data-node],[data-wnode]'); if (nd && o.onOpen){ const n = ID()[nd.dataset.node || nd.dataset.wnode]; if (n) o.onOpen(n); } });
-  let ro = null; if (window.ResizeObserver){ ro = new ResizeObserver(() => { if (S.snap) render(); }); ro.observe(host); }
+  // a fit wants a host with a size: until it has one the fit waits, and the first size it gets fits the view
+  let fitWant = false; const sized = () => host.clientWidth > 0 && host.clientHeight > 0;
+  const fit = (all) => { if (!sized()){ fitWant = true; return; } fitWant = false; E.fitView(!!all); };
+  let ro = null; if (window.ResizeObserver){ ro = new ResizeObserver(() => { if (!S.snap || !sized()) return; render(); if (fitWant) fit(); }); ro.observe(host); }
   if (o.planes) set(o);
-  return { set, render, fit: () => E.fitView(true), option(k, val){ S[k] = val; render(); }, state: S, engine: E,
+  return { set, render, fit, option(k, val){ S[k] = val; render(); }, state: S, engine: E,
     destroy(){ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); if (ro) ro.disconnect(); root.innerHTML = ''; } };
 }
 window.VeraLattice = { engine, mount, CSS };

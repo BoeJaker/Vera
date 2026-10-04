@@ -1947,7 +1947,7 @@
     },
     "draw": {
      "body": "record",
-     "mode": "estate-3d",
+     "mode": "ops-iso",
      "chrome": "min",
      "colour": "status"
     },
@@ -2124,7 +2124,7 @@
     },
     "draw": {
      "body": "record",
-     "mode": "estate-3d",
+     "mode": "ops-iso",
      "chrome": "min",
      "colour": "status"
     },
