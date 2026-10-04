@@ -462,3 +462,37 @@ def test_vendor_pages_are_demoted_and_not_read_by_the_model(tmp_path):
     # a topic that wants vendors keeps them
     _R(orch, "intel.topic.save", id=t["id"], name=t["name"], vendors=True)
     assert mod.store().get_topic(t["id"])["vendors"] is True
+
+
+def test_decisions_feedback_links_and_export(tmp_path):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    _run(mod.enrich_topic(mod.store().get_topic(t["id"])))
+    rows = mod.store().decisions(limit=100)
+    qs = {r["question_id"] for r in rows}
+    assert {"intel.signal_relevant", "intel.enrich_worth"} <= qs
+    assert all(r["schema"] == "vera.decision/v0" and r["p"] is None and r["state_ref"]["kind"] == "signal" for r in rows)
+    sig = next(s for s in mod.store().signals(t["id"]) if "pilot" in s["title"].lower())
+    # a link open counts, then redirects to the stored url only
+    resp = _run(mod._go_signal(sig["id"]))
+    assert resp.status_code == 302 and resp.headers["location"] == sig["url"]
+    assert _run(mod._go_signal("deadbeef")).status_code == 404
+    # explicit feedback, and mute_site keeps the site out of the next sweep
+    assert _R(orch, "intel.feedback", signal_id=sig["id"], verdict="useful")["outcomes"] >= 2
+    repo = next(s for s in mod.store().signals(t["id"]) if "repo" in s["title"].lower())
+    _R(orch, "intel.feedback", signal_id=repo["id"], verdict="mute_site")
+    assert "github.com" in mod.store().get_topic(t["id"])["mute_sites"]
+    stats = _R(orch, "intel.decisions.stats")
+    sr = stats["questions"]["intel.signal_relevant"]
+    assert sr["with_outcome"] >= 2 and sr["precision"] is not None
+    assert any(k.startswith("nlp.") for day in stats["spend"].values() for k in day)
+    assert any(k.startswith("model.") for day in stats["spend"].values() for k in day)
+    ex = _R(orch, "intel.decisions.export")
+    assert ex["decisions"] and ex["outcomes"] and "outcomes" not in ex["decisions"][0]
+    assert {o["source"] for o in ex["outcomes"]} >= {"link.opened", "user.feedback.useful", "user.feedback.mute_site"}
+    # a second sweep with the site muted brings no github hit back
+    mod.store().delete_topic(t["id"], purge=True)
+    mod.store().put_topic(dict(t, mute_sites=["github.com"]))
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    assert not any("github" in (s.get("url") or "") for s in mod.store().signals(t["id"]))

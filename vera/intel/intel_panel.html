@@ -155,6 +155,10 @@ vera-widget{display:block}
         <div class="row"><span class="grow small muted">Notes are diffed - only real edits reach a model; their searches feed the notes topic.</span>
           <button class="btn" onclick="runFiles()">Read folders now</button></div>
         <div id="acNotes" class="small"></div>
+        <h2 style="margin-top:14px">How the gates are doing</h2>
+        <div class="small muted">Each gate's decisions, how many you have rated (👍 👎 🔇, opened links, report buttons, alerts acted on) and how often it was right.</div>
+        <div id="acGates" class="small"></div>
+        <h3>Model and NLP time (last 7 days)</h3><div id="acSpend" class="small"></div>
         <h2 style="margin-top:14px">Automation proposals</h2>
         <div class="row"><span class="grow small muted">Weekly: ideas from the intelligence, each compiled into an inactive n8n draft.</span>
           <button class="btn" onclick="runAdvise()">Propose now</button></div>
@@ -311,8 +315,14 @@ async function loadSignals() {
       <div class="small muted">${esc(s.site||'')} · ${esc(s.kind||'')} · ${esc((s.seen||'').slice(0,10))}</div>
       <div>${esc(s.snippet||'')}</div>${s.so_what?`<div class="why">${esc(s.so_what)}</div>`:''}</div>
       <div class="ops">${s.chars?`<button class="btn" onclick="readSignal('${esc(s.id)}')">Read</button>`:''}
-        <button class="btn" onclick="researchOn('${esc(s.id)}')" title="research.run on this">Research</button></div></div>`;
+        <button class="btn" onclick="researchOn('${esc(s.id)}')" title="research.run on this">Research</button>
+        <span class="row" style="gap:4px"><button class="btn" title="useful - teaches the gates" onclick="fb('${esc(s.id)}','useful',this)">👍</button><button class="btn" title="not useful" onclick="fb('${esc(s.id)}','not_useful',this)">👎</button><button class="btn" title="never show this site again for this topic" onclick="fb('${esc(s.id)}','mute_site',this)">🔇</button></span></div></div>`;
   }).join('') : '<div class="muted small" style="padding:8px 0">Nothing in this window.</div>';
+}
+async function fb(id, verdict, btn) {
+  const r = await call('intel.feedback', {signal_id: id, verdict});
+  if (btn) { btn.textContent = r.error ? '✗' : '✓'; btn.disabled = true; }
+  if (verdict === 'mute_site' && !r.error) loadSignals();
 }
 async function readSignal(id) {
   const r = await call('intel.signal.get', {id}); const s = r.signal || {};
@@ -489,7 +499,18 @@ async function loadActivity() {
   $('acWanted').innerHTML = (s.wanted||[]).map(w => `<div>⌕ ${esc(w.query)} <span class="muted">(${esc(w.topic_id)})</span></div>`).join('') || '<span class="muted">none</span>';
   $('acNotes').innerHTML = (n.rows||[]).slice(0, 30).map(r => `<div class="act"><div class="grow"><b>${esc(r.name)}</b><div class="muted">${esc((r.summary||'').slice(0,220))}</div>`
     + ((r.action_items||[]).length ? '<ul>' + r.action_items.slice(0,5).map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '') + `</div><span class="muted">${esc(r.meta||'')}</span></div>`).join('') || '<span class="muted">no notes read yet</span>';
+  loadGates();
   $('acProps').innerHTML = (p.rows||[]).slice(0, 15).map(r => `<div class="act"><div class="grow"><b>${esc(r.title)}</b> <span class="chip">${esc(r.category)}</span><div class="muted">${esc((r.rationale||'').slice(0,200))}</div></div><span class="muted">${r.draft_id ? 'draft '+esc(r.draft_id) : esc(r.error||'')}</span></div>`).join('') || '<span class="muted">none yet</span>';
+}
+async function loadGates() {
+  const g = await call('intel.decisions.stats', {days: 30});
+  const q = g.questions || {};
+  $('acGates').innerHTML = Object.keys(q).length ? '<table style="width:100%"><tr><th align=left>gate</th><th>decisions</th><th>rated</th><th>right</th></tr>'
+    + Object.entries(q).map(([k, v]) => `<tr><td>${esc(k.replace('intel.', ''))}</td><td align=center>${v.decisions}</td><td align=center>${v.with_outcome}</td><td align=center>${v.precision == null ? '–' : Math.round(v.precision * 100) + '%'}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">no decisions yet</span>';
+  const sp = g.spend || {};
+  $('acSpend').innerHTML = Object.entries(sp).map(([day, rec]) => `<div><b>${esc(day)}</b> ` + Object.entries(rec).map(([k, v]) =>
+    `<span class="chip">${esc(k)} · ${v.calls} calls · ${Math.round(v.seconds / 60)} min</span>`).join('') + '</div>').join('') || '<span class="muted">nothing yet</span>';
 }
 async function runCmd() { const t = $('acCmd').value.trim(); if (!t) return; $('acOut').textContent = '…'; const r = await call('intel.command', {text: t}); $('acOut').textContent = r.text || r.error || JSON.stringify(r); tile(); }
 async function runFiles() { const r = await call('intel.files.run', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }

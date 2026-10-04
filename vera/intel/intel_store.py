@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS actions  (token TEXT PRIMARY KEY, report_id TEXT, top
 CREATE TABLE IF NOT EXISTS deliveries(id INTEGER PRIMARY KEY AUTOINCREMENT, report_id TEXT, channel TEXT,
                                       ts TEXT, ok INTEGER, rec TEXT);
 CREATE TABLE IF NOT EXISTS kv       (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS decisions(decision_id TEXT PRIMARY KEY, ts TEXT, question_id TEXT, ref_kind TEXT,
+                                     ref_id TEXT, answer TEXT, rec TEXT);
+CREATE INDEX IF NOT EXISTS ix_dec_ref ON decisions(ref_kind, ref_id);
+CREATE INDEX IF NOT EXISTS ix_dec_q_ts ON decisions(question_id, ts);
+CREATE TABLE IF NOT EXISTS outcomes (id INTEGER PRIMARY KEY AUTOINCREMENT, decision_id TEXT, ts TEXT, rec TEXT);
+CREATE INDEX IF NOT EXISTS ix_out_dec ON outcomes(decision_id);
 """
 
 
@@ -254,6 +260,60 @@ class IntelStore:
         q += " ORDER BY created DESC LIMIT ?"; a.append(int(limit))
         with self._conn() as c:
             return [json.loads(r[0]) for r in c.execute(q, a).fetchall()]
+
+    # ── decisions and outcomes (four-minds Decision/Outcome v0, kept verbatim) ──
+    def put_decision(self, d: Dict[str, Any]) -> None:
+        ref = d.get("state_ref") or {}
+        with self._lock, self._conn() as c:
+            c.execute("INSERT OR REPLACE INTO decisions(decision_id,ts,question_id,ref_kind,ref_id,answer,rec) "
+                      "VALUES(?,?,?,?,?,?,?)", (d["decision_id"], d.get("ts", ""), d.get("question_id", ""),
+                                                ref.get("kind", ""), ref.get("id", ""), str(d.get("answer")),
+                                                json.dumps(d)))
+
+    def decisions_for(self, ref_kind: str, ref_id: str) -> List[Dict[str, Any]]:
+        with self._conn() as c:
+            rows = c.execute("SELECT rec FROM decisions WHERE ref_kind=? AND ref_id=? ORDER BY ts",
+                             (ref_kind, ref_id)).fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def put_outcome(self, o: Dict[str, Any]) -> None:
+        with self._lock, self._conn() as c:
+            c.execute("INSERT INTO outcomes(decision_id,ts,rec) VALUES(?,?,?)",
+                      (o["decision_id"], o.get("ts", ""), json.dumps(o)))
+
+    def decisions(self, *, question_id: str = "", since: str = "", limit: int = 500,
+                  with_outcomes: bool = True) -> List[Dict[str, Any]]:
+        q, a = "SELECT rec FROM decisions WHERE 1=1", []
+        if question_id:
+            q += " AND question_id=?"; a.append(question_id)
+        if since:
+            q += " AND ts>=?"; a.append(since)
+        q += " ORDER BY ts DESC LIMIT ?"; a.append(int(limit))
+        with self._conn() as c:
+            rows = [json.loads(r[0]) for r in c.execute(q, a).fetchall()]
+            if with_outcomes and rows:
+                ids = [r["decision_id"] for r in rows]
+                outs: Dict[str, List[Dict[str, Any]]] = {}
+                for i in range(0, len(ids), 500):
+                    chunk = ids[i:i + 500]
+                    for (rec,) in c.execute("SELECT rec FROM outcomes WHERE decision_id IN (%s)"
+                                            % ",".join("?" * len(chunk)), chunk).fetchall():
+                        o = json.loads(rec)
+                        outs.setdefault(o["decision_id"], []).append(o)
+                for r in rows:
+                    r["outcomes"] = outs.get(r["decision_id"], [])
+        return rows
+
+    def outcomes_since(self, since: str = "", limit: int = 5000) -> List[Dict[str, Any]]:
+        with self._conn() as c:
+            return [json.loads(r[0]) for r in c.execute(
+                "SELECT rec FROM outcomes WHERE ts>=? ORDER BY ts LIMIT ?", (since, int(limit))).fetchall()]
+
+    def prune_decisions(self, before: str) -> int:
+        with self._lock, self._conn() as c:
+            c.execute("DELETE FROM outcomes WHERE decision_id IN (SELECT decision_id FROM decisions WHERE ts<?)",
+                      (before,))
+            return c.execute("DELETE FROM decisions WHERE ts<?", (before,)).rowcount
 
     # ── deliveries ──
     def log_delivery(self, report_id: str, channel: str, ts: str, ok: bool, rec: Dict[str, Any]) -> None:
