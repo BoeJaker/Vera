@@ -1164,7 +1164,7 @@ async def cap_context_for_agent(query: str = "", agent: str = "", profile: str =
         if mc and mc.get("func"):
             try:
                 r = await mc["func"](session_id=session_id or "", query=query or "",
-                                     agent_name=agent or "", limit=5)
+                                     agent_name=agent or "", limit=5, depth="full")
                 memories = (r or {}).get("context", "") or ""
             except Exception as e:
                 log.debug("context agent memories: %s", e)
