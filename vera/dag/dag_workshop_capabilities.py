@@ -8742,7 +8742,11 @@ def _v5_pos_within_url(s: str, pos: int) -> bool:
     b = pos
     while b > 0 and s[b - 1] not in ' \t\n\r"\'<>()[]{}':
         b -= 1
-    return "://" in s[b:pos]
+    # pos + 1: a path regex cannot start at the FIRST slash of "https://" (":" is no
+    # path character), so its match starts at the SECOND - and s[b:pos] is then
+    # "https:/", one short of "://". Every https://host.tld/x.html URL was read as the
+    # invented path /host.tld/x.html and refused (4 Oct 2026, three census goals).
+    return "://" in s[b:pos + 1]
 
 
 _V5_FILEREF_RE = re.compile(
@@ -21546,14 +21550,26 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
             # GUESS a cause (e.g. paraphrasing a write failure as a vague "denial/
             # permission" error) instead of quoting what actually went wrong, which
             # then steers a retry at the wrong fix. Keep the real text.
-            _lines.append(f"- {h.get('tool')} → FAILED: {str(h.get('preview') or '')[:400]}")
+            _pv = str(h.get('preview') or '')
+            _lines.append(f"- {h.get('tool')} → FAILED: {_pv[:400]}"
+                          + (" ...[preview clipped]" if len(_pv) > 400 else ""))
             continue
         _sf = _soft_failed(h)
+        _pv = str(h.get('preview') or '')
+        _clip = " ...[preview clipped]" if len(_pv) > 500 else ""
         _lines.append(
             f"- {h.get('tool')} ok BUT ITS OUTPUT REPORTS AN ERROR ({_sf}): "
-            f"{str(h.get('preview') or '')[:500]}" if _sf else
-            f"- {h.get('tool')} ok: {str(h.get('preview') or '')[:500]}")
+            f"{_pv[:500]}{_clip}" if _sf else
+            f"- {h.get('tool')} ok: {_pv[:500]}{_clip}")
     hist = "\n".join(_lines)
+    # What the step FETCHED, as the writer sees it (research_sources_core). The judge
+    # was shown 500-char previews only and failed fetch steps for "only a truncated
+    # 'Table of Contents' snippet" - our clip, not the fetch (4 Oct 2026: one goal
+    # retried its fetch steps 3+3 times and spent 24 min on it).
+    try:
+        _fetched = _research_sources_core.sources_block(_calls, max_chars=6000)
+    except Exception:
+        _fetched = ""
     # A criterion about tests PASSING is settled by the last test-shaped run in
     # this step, not by a judge reading a `cat` of the test file: run72
     # build-multifile (24 Sep 2026) was verified met that way after pytest had
@@ -21789,6 +21805,10 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
            "THIS run — do not fail the step for not doing the thing the user said to skip, and do "
            "not weigh an EARLIER failed attempt at that thing against it either.\n"
            + _verify_evidence.EVIDENCE_RULE + "\n"
+           "The tool lines are SHORT PREVIEWS cut by us (marked 'preview clipped'): a preview "
+           "that ends early, or shows only the start of a page or its table of contents, is NOT "
+           "evidence that the tool returned too little. Judge content against WHAT THIS STEP "
+           "FETCHED and the files, when shown.\n"
            'Respond ONLY with JSON: {"met":true,"reason":"<one sentence quoting the evidence>"}')
     _clar = res.get("user_clarifications") or []
     clar_block = ""
@@ -21811,6 +21831,9 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
                  f"the criterion against these, not only the final summary):\n{hist}\n"
                  if hist else "")
               + (last_block or "")
+              + (f"WHAT THIS STEP FETCHED (the web results' own text, up to 6000 chars - judge "
+                 f"CONTENT requirements against THIS, not against the short previews above):\n"
+                 f"{_fetched}\n" if _fetched else "")
               + (exist_block or "")
               + (f"OUTPUTS:\n{outs}\n" if outs else "")
               + f"RESULT SUMMARY (last cycle only - the executor's OWN ACCOUNT, not evidence; the tool "
