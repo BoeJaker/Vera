@@ -105,3 +105,13 @@ def test_headline_reads_lead_and_a_passing_time_word_does_not_bring_the_diary():
     assert biz and biz[0] == "business.dashboard"
     r2 = sc.find(idx, "how is the btc price doing this week?", [{"text": "BTC", "type": "TICKER"}])
     assert [d["id"] for d in r2["domains"]] == ["markets"]
+
+
+def test_a_read_the_turn_named_comes_before_the_headlines_and_a_series_is_summarised():
+    reg = dict(REG, **{"markets.chart": S({"symbol": {}})})
+    idx = sc.build(reg, MEASURED, LAYOUTS, PANELS)
+    r = sc.find(idx, "how is bitcoin doing?", [{"text": "BTC", "type": "TICKER"}], max_items=3)
+    top2 = r["surfaces"][:2]
+    assert {x["cap"] for x in top2} == {"markets.chart", "markets.symbol.chart"} and all(x["args"] == {"symbol": "BTC"} for x in top2)
+    s = sc.summarise({"t": [1, 2, 3], "equity": [100.0, 105.0, 110.0], "ok": True})
+    assert s == "3 points: equity last 110.0 (+10.0%)"
