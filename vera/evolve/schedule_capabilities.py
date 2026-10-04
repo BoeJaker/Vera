@@ -302,7 +302,8 @@ def _clear_own_control_sync() -> None:
                         _ctl.make_control("resume", reason="scheduler: clearing its own control before a new run", by=_BY))
 
 
-def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = "") -> Dict[str, Any]:
+def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = "",
+                        minds: Optional[Dict[str, str]] = None, minds_label: str = "") -> Dict[str, Any]:
     d = Path(_CENSUS_DIR)
     _clear_own_control_sync()
     env = dict(os.environ)
@@ -318,6 +319,14 @@ def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = 
     env.pop("CENSUS_INTENT_CORE", None)
     if intent_core and intent_core != "off":
         env["CENSUS_INTENT_CORE"] = intent_core
+    # The switchboard set (CENSUS_MINDS contract v1, four-minds ROADMAP §4.1): compact
+    # JSON plus its label; never inherited. The harness validates it against the build
+    # under test before goal 1 and archives the run as <template>[-style-][-core-]-<label>.
+    env.pop("CENSUS_MINDS", None)
+    env.pop("CENSUS_MINDS_LABEL", None)
+    if minds:
+        env["CENSUS_MINDS"] = json.dumps(minds, separators=(",", ":"), sort_keys=True)
+        env["CENSUS_MINDS_LABEL"] = minds_label
     try:
         p = subprocess.Popen(["sh", "census_all.sh"], cwd=str(d), env=env,
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -407,12 +416,15 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
                     "error": (res or {}).get("error", "")}
         res = await asyncio.to_thread(_launch_census_sync, t.get("template", "default"),
                                       str(t.get("plan_style") or ""),
-                                      str(t.get("intent_core") or ""))
+                                      str(t.get("intent_core") or ""),
+                                      dict(t.get("minds") or {}),
+                                      str(t.get("minds_label") or ""))
         if res.get("ok"):
             await _set_owner({"schedule_id": rec["id"], "started_at": core.iso(_now()),
                               "pid": res.get("pid"), "template": t.get("template", "default"),
                               "plan_style": str(t.get("plan_style") or ""),
-                              "intent_core": str(t.get("intent_core") or "")})
+                              "intent_core": str(t.get("intent_core") or ""),
+                              "minds_label": str(t.get("minds_label") or "")})
         return res
     if kind == "suite":
         return await _call("evolve.suite.start", tag=t.get("tag", ""), profile=t.get("profile", ""),

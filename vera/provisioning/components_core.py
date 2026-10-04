@@ -63,6 +63,10 @@ def worker_backend_env(env: Dict[str, str], cfg: Dict[str, object], backend_host
 #: for the ML Lab trainer, comes with requirements.txt). torch from the CPU
 #: index: the default wheel pulls ~2 GB of CUDA libraries a worker never uses.
 WORKER_ML_PIP = (
+    # psutil: the worker's own CPU/RAM metrics (workers.py) - without it the
+    # metrics loop never starts and node scheduling sees no free CPU or memory
+    # on any node (found 2026-10-04: no node had ever published metrics)
+    ("psutil",),
     ("--index-url", "https://download.pytorch.org/whl/cpu", "torch"),
     ("scikit-learn", "scipy"),
 )

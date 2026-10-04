@@ -8613,6 +8613,49 @@ async def _do_restart(delay: float, gate=None) -> None:
         log.error("DEV RESTART FAILED — Vera is still running on the OLD code: %s", e)
 
 
+@capability("sys.activity.declare", memory="off", silent=True,
+            http_method="POST", http_path="/sys/activity/declare", http_tags=["sys"],
+            description="Say that a test, probe, benchmark or other workload is running, so "
+                        "/health's `activity` shows it to everyone. Inputs: id (str - reuse it "
+                        "to refresh), kind (probe|test|benchmark|census|experiment|maintenance|"
+                        "other), label (str), by (str - who, e.g. claude:<session>), ttl_s "
+                        "(int=1800, max 6 h; refresh before it lapses), session_ids (str - "
+                        "loop sessions it drives, comma-separated). Clear with "
+                        "sys.activity.clear when done.")
+async def cap_sys_activity_declare(id: str = "", kind: str = "other", label: str = "",
+                                   by: str = "", ttl_s: int = 1800, session_ids: str = "",
+                                   trace_id=None):
+    if REDIS is None:
+        return {"ok": False, "error": "redis unavailable"}
+    from datetime import timezone as _tz
+    aid = (str(id or "").strip() or os.urandom(5).hex())[:64]
+    key = _activity_health_core.KEY_PREFIX + aid
+    prev = {}
+    try:
+        raw = await REDIS.get(key)
+        prev = json.loads(raw) if raw else {}
+    except Exception:
+        prev = {}
+    rec = {"id": aid, "kind": _activity_health_core.norm_kind(kind),
+           "label": str(label or "")[:120], "by": str(by or "")[:80],
+           "session_ids": [s.strip() for s in str(session_ids or "").split(",") if s.strip()][:10],
+           "since": prev.get("since") or datetime.now(_tz.utc).isoformat(timespec="seconds"),
+           "updated": datetime.now(_tz.utc).isoformat(timespec="seconds")}
+    ttl = _activity_health_core.clamp_ttl(ttl_s)
+    await REDIS.set(key, json.dumps(rec), ex=ttl)
+    return {"ok": True, "id": aid, "ttl_s": ttl, "activity": rec}
+
+
+@capability("sys.activity.clear", memory="off", silent=True,
+            http_method="POST", http_path="/sys/activity/clear", http_tags=["sys"],
+            description="End a workload declared with sys.activity.declare. Input: id (str!).")
+async def cap_sys_activity_clear(id: str = "", trace_id=None):
+    if REDIS is None or not str(id or "").strip():
+        return {"ok": False, "error": "id required" if REDIS is not None else "redis unavailable"}
+    n = await REDIS.delete(_activity_health_core.KEY_PREFIX + str(id).strip()[:64])
+    return {"ok": True, "cleared": bool(n)}
+
+
 @capability("sys.debug.tasks", memory="off", silent=True,
             http_method="GET", http_path="/sys/debug/tasks", http_tags=["sys"],
             description="READ-ONLY. Where every asyncio task in this process is waiting: each "
@@ -8923,6 +8966,66 @@ async def _health_gpu_gate() -> Dict[str, Any]:
         return {"busy": None, "error": str(e)[:120]}
 
 
+try:
+    from Vera.vera import activity_health_core as _activity_health_core
+except Exception:                                    # pragma: no cover
+    from . import activity_health_core as _activity_health_core
+
+
+async def _health_activity() -> Dict[str, Any]:
+    """Loops, gates and declared tests/probes in flight (activity_health_core). Never raises."""
+    loops, gates, declared = [], [], []
+    try:
+        dm = (sys.modules.get("dag_workshop_capabilities")
+              or sys.modules.get("Vera.vera.dag.dag_workshop_capabilities"))
+        for sid, task in list((getattr(dm, "_AGENT_LOOP_TASKS", None) or {}).items())[:20]:
+            if task is None or task.done():
+                continue
+            goal = ""
+            try:
+                if REDIS is not None:
+                    goal = await REDIS.hget(f"vera:loop:run:{sid}", "goal") or ""
+                    goal = goal.decode("utf-8", "replace") if isinstance(goal, bytes) else str(goal)
+            except Exception:
+                pass
+            loops.append({"session_id": str(sid), "goal": goal[:80]})
+    except Exception as e:
+        log.debug("health activity loops: %s", e)
+    try:
+        em = (sys.modules.get("evolve_capabilities")
+              or sys.modules.get("Vera.vera.evolve.evolve_capabilities"))
+        gates = [dict(g) for g in (getattr(em, "_GATES_ACTIVE", None) or {}).values()]
+    except Exception as e:
+        log.debug("health activity gates: %s", e)
+    try:
+        declared = await _activity_declared()
+    except Exception as e:
+        log.debug("health activity declared: %s", e)
+    return _activity_health_core.summarise(loops, gates, declared)
+
+
+async def _activity_declared() -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    if REDIS is None:
+        return out
+    async for key in REDIS.scan_iter(match=_activity_health_core.KEY_PREFIX + "*", count=200):
+        raw = await REDIS.get(key)
+        if not raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except Exception:
+            continue
+        try:
+            rec["expires_in_s"] = int(await REDIS.ttl(key))
+        except Exception:
+            pass
+        out.append(rec)
+        if len(out) >= 20:
+            break
+    return sorted(out, key=lambda d: str(d.get("since") or ""))
+
+
 async def _health_census() -> Dict[str, Any]:
     """The census in one line for /health, from the census module (registered
     under its bare filename, like census_before_restart reaches it)."""
@@ -8946,7 +9049,10 @@ async def _health_census() -> Dict[str, Any]:
                         "state, template, goal, done/total, control, by} is the "
                         "loop census - busy means a census goal is in flight (any "
                         "GPU call taints its row; yield it with census.control.set "
-                        "action=yield and wait for acked, resume after).")
+                        "action=yield and wait for acked, resume after). `activity` "
+                        "{busy, summary, loops, gates, declared} is everything else in "
+                        "flight: agent loops, gates, and tests/probes declared with "
+                        "sys.activity.declare.")
 async def obs_health(trace_id=None):
     return {"redis":await _backend_answers("redis"),
             "postgres":await _backend_answers("postgres"),"chroma":bool(CHROMA),
@@ -8957,6 +9063,7 @@ async def obs_health(trace_id=None):
                       for iid,i in OLLAMA_INSTANCES.items()},
             "gpu_gate":await _health_gpu_gate(),
             "census":await _health_census(),
+            "activity":await _health_activity(),
             "mode":"distributed" if REDIS else "local"}
 
 

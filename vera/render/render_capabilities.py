@@ -1364,8 +1364,9 @@ async def render_stored_view(key: str = ""):
 _GALLERY_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Artifacts</title>
 <style>
-:root{--bg:#14161a;--card:#1b1e24;--ink:#e8e9ec;--dim:#9aa1ad;--acc:#6fb6a5;--bd:#2a2e37;}
-@media (prefers-color-scheme:light){:root{--bg:#fbfbfa;--card:#fff;--ink:#1c1d22;--dim:#5c6270;--acc:#5a9e8f;--bd:#e6e6e9;}}
+/* the theme's colours (2026-10-04, a dark-theme sweep: this page's own --ink stayed dark on a dark theme). vera-ui.js sets
+   --bg --dim --acc --bd itself; --card and --ink are this page's names for the theme's surface and text */
+:root{--bg:#14161a;--card:var(--bg1,var(--s1,#1b1e24));--ink:var(--text,var(--t1,#e8e9ec));--dim:#9aa1ad;--acc:#6fb6a5;--bd:#2a2e37;}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
 font:14px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
 .bar{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--bd);
@@ -1379,7 +1380,7 @@ button{cursor:pointer}
 .c{background:var(--card);border:1px solid var(--bd);border-radius:12px;overflow:hidden;
 display:flex;flex-direction:column;}
 .mlink{display:block}
-.thumb{height:130px;background:#0000000f;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.thumb{height:130px;background:color-mix(in srgb,var(--ink) 6%,transparent);display:flex;align-items:center;justify-content:center;overflow:hidden;}
 .thumb img{width:100%;height:100%;object-fit:cover;}
 .ph{font-size:2.6rem;opacity:.6}
 .body{padding:11px 12px;display:flex;flex-direction:column;gap:6px;flex:1;}
@@ -1387,7 +1388,7 @@ display:flex;flex-direction:column;}
 .t{font-weight:600;line-height:1.3;}
 .note{color:var(--dim);font-size:.82rem;}
 .tags{display:flex;flex-wrap:wrap;gap:4px;}
-.tag{background:#6fb6a522;color:var(--acc);border-radius:5px;padding:1px 6px;font-size:.72rem;}
+.tag{background:color-mix(in srgb,var(--acc) 14%,transparent);color:var(--acc);border-radius:5px;padding:1px 6px;font-size:.72rem;}
 .meta{color:var(--dim);font-size:.72rem;margin-top:auto;}
 .acts{display:flex;gap:6px;flex-wrap:wrap;}
 .acts .btn{font-size:.78rem;padding:4px 9px;border-radius:6px;text-decoration:none;color:var(--ink);

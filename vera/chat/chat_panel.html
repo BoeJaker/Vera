@@ -4377,6 +4377,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   }
   let _dlvTurnSeq=0;
   async function _deliverAfter(text, request){
+    try{ _memAfterTurn(); }catch(_){}   // a reply finished: its memories are being written - the graph follows
     const c=_dlvCfg(); if(c.mode==='chat') return;
     text=String(text||'').trim(); if(text.length<40) return;           // a one-liner is the chat's alone
     const turn=++_dlvTurnSeq;
@@ -13578,15 +13579,14 @@ Your task: decide what to do next to advance toward the goal.
     if(CTX_SRCS.has('memory')&&!stale()){
       // Fetch ~3x the desired k so the rerank has headroom — server ignores
       // hits below its own min similarity, so this is an upper bound.
-      // fast=true (the pre-send freshness-guard call in send()) restricts to
-      // postgres+neo4j: chroma's vector leg requires a query embedding that
-      // memory.search computes unconditionally when chroma is in play —
-      // live-measured 4.65s vs 0.08s with it excluded (2026-08 chat-send-
-      // latency investigation) on this instance's shared embed nodes. The
-      // on-type live-preview call (fast=false) keeps the richer chroma-
-      // inclusive search since nothing is blocking on it.
+      // Only a fetch YOU ask for (Fetch now, the result-count selects, opening the popover: force=true) waits for
+      // chroma's vector leg. It needs a query embedding first - live-measured 4.65s vs 0.08s without it (2026-08)
+      // and again 5.31s vs 0.38s on 2026-10-04 with the IDENTICAL top 12 - and everything below this await (agent
+      // context, session edges, graph neighbours, recall, web) waits behind it, so the automatic fetches (typing,
+      // after a reply, the pre-send guard) search postgres+neo4j only. With memory injection on, the turn
+      // still gets the vector search: the server's two-tier memory delivers it to the next turn.
       const mBody={query,limit:Math.max(k*3,12)};
-      if(fast) mBody.backends='postgres,neo4j';
+      if(fast||!force) mBody.backends='postgres,neo4j';
       const hr=await fetchA('/memory/search','POST',mBody);
       if(!stale()){
         const candidates=[];
@@ -13880,6 +13880,16 @@ Your task: decide what to do next to advance toward the goal.
   }
 
   /* ═══ SESSION MEMORY GRAPH — with edge filter ═══ */
+  /* THE GRAPH FOLLOWS THE TURNS (owner, 2026-10-04: "the memory graph in the lhm of chat needs me to press reload to load
+     in"): it was read when a session loaded and when its tab was picked, never again - a new chat's graph stayed empty,
+     and an old one stayed a turn behind, while every reply stored more. When a reply finishes, the chat reads the
+     graph again once its memories have had time to land (twice: the stores are written after the reply), and tells the
+     menu instance - the harness's LHM, a frame of its own - to do the same. */
+  let _memTurnT=[];
+  function _memAfterTurn(){
+    if(_EMBED.only!=='menu') _lhmPost('memory',{});
+    _memTurnT.forEach(clearTimeout); _memTurnT=[4000, 15000].map(ms=>setTimeout(()=>{ try{ if(SID) memGraphLoad(); }catch(_){} }, ms));
+  }
   async function memGraphLoad(){
     if(!SID){document.getElementById('memGraphStatus').textContent='No session';return;}
     document.getElementById('memGraphStatus').textContent='Loading…';
@@ -15789,6 +15799,7 @@ function _embedMount(){
          on whatever they had, which on the board is the whole context graph the user actually looks at. */
       else if(m.act==='focus'){ _grFocusMid=a.mid||''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid); }catch(_){} } try{ _ctxFollow(true); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
+      else if(m.act==='memory'){ try{ _memAfterTurn(); }catch(_){} }   // a reply finished in the chat: the memory graph follows
       else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
       else if(m.act==='runs'){ _runsApply(a.which, a.off); }
       // updateFrameUI too: the legacy strip and Frames pane are views onto CTX_FRAMES like any other, and the

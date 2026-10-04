@@ -34,3 +34,32 @@ rules; new ones start here. Newest at the bottom.
 - rule now: never schedule a long-running cap; use a background kind or the idle queue
 - evidence: recon-fixes RF-09; `vera/evolve/schedule_capabilities.py:428-431`, `:580-586`
 - status: open
+
+## 2026-10-04 — `evolve.pipeline.test` cannot gate a branch no worktree holds any more
+- task: landing intel fixes (claude:d5e6f826)
+- what happened: `adopt` recorded pipeline 9be2da0d, but its gate run was cut by a prod restart. A re-run of
+  `evolve.pipeline.test(id)` then returned "no worktree for this pipeline (branch step may have failed)", because
+  the hand-made worktree had meanwhile been switched to a new branch stacked on it.
+- cause: the pipeline resolves the worktree by branch at test time; a hand-made worktree holds one branch at a time
+- rule now: keep a branch checked out until its pipeline is promoted. To stack work, either finish the first
+  pipeline first, or land the stacked branch (it contains both) and mark the first pipeline `blocked` with
+  "superseded by <id>" in the review.
+- evidence: pipelines 9be2da0d (superseded) and 741cd57d (landed, f13bcefb)
+- status: open (belongs in §3/§7)
+
+## 2026-10-04 — `/health` can say no census while `census.live` blocks every idle-queue job
+- task: verifying intel's first live jobs (claude:d5e6f826)
+- what happened: `/health` showed `census.busy: false` (the scheduled control loop: intent-core-probe done 7/7),
+  while `census.live` showed a 12-goal default census in progress. The idle queue's busy probe reads `census.live`,
+  so every background job (intel, embed backfill, agent re-index) stayed blocked with "a census is running". Twice
+  it was a run outside the scheduler: once wedged by a stuck model, then a fresh run driven through a long-lived
+  older Vera process (its loop held the GPU gate as `LLM:<that pid>:...`).
+- cause: `/health`'s census block reflects only the scheduled harness control; `census.live` reflects any loop
+  registered as a census goal
+- rule now: before concluding "no census", read BOTH `/health` and `census.live`, and
+  `/workshop/agent_loop/sessions?status=running` (its `updated_at` tells live from stale). If the queue says "a
+  census is running" and the schedule list has nothing in window, report it to the owner rather than yielding or
+  cancelling a run you don't own.
+- evidence: shared-planning intelligence/HANDOVER-2026-10-04-claude-d5e6f826.md; census sessions 2f20173f,
+  3377d775, b32f075e
+- status: open (belongs in §0)
