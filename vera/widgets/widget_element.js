@@ -89,13 +89,14 @@
   // board's captions too (the motion and iso forms land in the next slices)
   // a form id the catalogue names but this file does not draw in its own right resolves to the nearest face; the board's
   // captions and the WidgetConfig board's own ids too
-  const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', form: 'kv', rate: 'counter',
+  // (form is drawn by R.form now - it falls back to the kv face when it has no draw.fields, so it is no longer an alias)
+  const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', rate: 'counter',
                   iso: 'table', controls: 'pills', button: 'string', header: 'string', galaxy: 'context_graph', battery: 'level', tablei: 'table', checks: 'checklist',
                   memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines', cores: 'cellmap', 'core-matrix': 'cellmap', 'status-matrix': 'cellmap', cpumap: 'cellmap' };
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
                   stack: 'items', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', globe: 'points',
-                  calendar: 'calendar', string: 'string', kv: 'values', pipes: 'graph', context_graph: 'graph', structgraph: 'graph', scatter: 'points', panel: 'panel', composite: 'composite',
+                  calendar: 'calendar', string: 'string', kv: 'values', form: 'values', pipes: 'graph', context_graph: 'graph', structgraph: 'graph', scatter: 'points', panel: 'panel', composite: 'composite',
                   // the Widgets board's still forms, drawn in their own right
                   feed: 'events', gallery: 'items', terminal: 'string', agenda: 'calendar', people: 'items', links: 'items', announcement: 'string', board: 'items', hero: 'level', gauge: 'level', carousel: 'items',
                   'small-multiples': 'series', ring: 'level', area: 'series', histogram: 'values', waterfall: 'values', treemap: 'parts', radar: 'values', gantt: 'stages', flow: 'graph', bullet: 'values',
@@ -158,7 +159,7 @@
       if ((form === 'pipes' || form === 'context_graph') && Array.isArray(x.nodes)) return x;
       if (form === 'globe' && ['points', 'pins', 'hosts', 'events', 'nodes', 'items', 'rows'].some((k) => Array.isArray(x[k]))) return x;   // the globe reads its record whole: the points AND the links, the night, the page size
       if (form === 'stepper' && (Array.isArray(x.stages) || Array.isArray(x.steps))) return x;
-      const ks = Object.keys(x); if ((form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'stack') && ks.length >= 2 && ks.every((k) => typeof x[k] === 'number')) return x;
+      const ks = Object.keys(x); if ((form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'form' || form === 'stack') && ks.length >= 2 && ks.every((k) => typeof x[k] === 'number')) return x;
       for (const k of ['data', 'result', 'items', 'rows', 'points', 'series', 'history', 'values', 'entries', 'results']) if (x[k] != null) { const f = formByShape(x[k], depth + 1); if (f) return dataFor(x[k], form, depth + 1); }
       for (const k of ['data', 'result', 'items', 'rows', 'points', 'series', 'history', 'values', 'entries', 'results']) if (Array.isArray(x[k]) && !x[k].length) return x[k];   // an empty read is empty, not an envelope to list
       if (/^(items|events|stages)$/.test(DRAWN[form] || '')) { const la = ks.filter((k) => Array.isArray(x[k])); if (la.length === 1) return dataFor(x[la[0]], form, depth + 1); }   // a list form reads the answer's one list, whatever it is called ({todos, count})
@@ -468,7 +469,7 @@
     if (form === 'lines') { const ls = linesOf(d); return ls.length ? ls.slice(0, 2).map((s) => (s.n ? esc(s.n) + ' ' : '') + fmt(s.pts[s.pts.length - 1].v)).join(' · ') : ''; }   /* the first two series' latest */
     if (DRAWN[form] === 'level') { const l = level(d); if (!l) return ''; const u = l.unit || ((l.bounded && form !== 'counter' && form !== 'hero' && l.lo === 0 && l.hi === 100) ? '%' : ''); return fmt(l.v) + (u && u !== '%' ? ' ' : '') + esc(u); }
     if (form === 'trace' || form === 'scatter') { const s = series(d); return s.length ? fmt(s[s.length - 1]) : ''; }
-    if (form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'stack' || form === 'matrix') { const kv = keyed(d); return kv.length ? kv.length + ' · ' + esc(kv[0][0]) + ' ' + fmt(kv[0][1]) : ''; }
+    if (form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'form' || form === 'stack' || form === 'matrix') { const kv = keyed(d); return kv.length ? kv.length + ' · ' + esc(kv[0][0]) + ' ' + fmt(kv[0][1]) : ''; }
     if (form === 'stepper') { const st = (d.stages || d.steps || d); const arr = Array.isArray(st) ? st : []; const done = arr.filter((s) => s && (s.done || s.state === 'done' || s.status === 'done')).length; return arr.length ? done + ' / ' + arr.length : ''; }
     if (form === 'string') return esc(String(typeof d === 'string' ? d : (d.text ?? d.value ?? d.title ?? '')).slice(0, 24));
     // a structured graph at sticker size: what it found, which is the only thing that fits
@@ -644,6 +645,32 @@
     const rh = Math.round(15 * ((o2 && o2.textK) || 1)) + 2;   /* a pair's height at the page's text size (14 px assumed a text size the dashboard no longer uses) */
     const n = Math.max(1, Math.min((o2 && o2.draw && o2.draw.limit) || 12, Math.floor(((H || 70) - 2 - (all.length > 2 ? rh : 0)) / rh))); const ks = all.slice(0, n);   // the pairs that fit, a line kept for '+ N more'
     return '<div class="vw-log vw-kv">' + ks.map((k) => '<div><span class="k">' + esc(k) + '</span><span>' + esc(String(o[k])) + '</span></div>').join('') + (all.length > n ? '<div class="more">+ ' + (all.length - n) + ' more</div>' : '') + '</div>';
+  };
+  /* A FORM THAT SAVES (owner, 2026-10-04: set up agents from the chat's menu with "a reusable writable form", the first
+     piece of the modular UI). draw.fields [{key, label, type: text|textarea|number|bool|select|list, options, rows,
+     help}] are drawn over the record the source read (agent.get → the agent); what is typed is kept on the element
+     (ui._edits, never re-read over); Save sends ONLY what changed through draw.save {cap, args, from: {arg: path in the
+     record}, edits_as: 'fields' | '' (spread), label}. A form can save only through a capability on FORM_WRITES - a
+     record placed by a model can never turn Save into anything else (the catalogue refuses it too: widget_record).
+     Without draw.fields the form shows its values, as it did before. */
+  const FORM_WRITES = new Set(['agent.patch', 'agent.create']);
+  R.form = (d, H, o) => {
+    const dr = (o && o.draw) || {}; const fields = Array.isArray(dr.fields) ? dr.fields.filter((f) => f && f.key) : [];
+    if (!fields.length) return R.kv(d, H, o);
+    const src = (d && typeof d === 'object' && !Array.isArray(d)) ? d : {}, ed = (o && o.ui && o.ui._edits) || {};
+    const val = (f) => (Object.prototype.hasOwnProperty.call(ed, f.key) ? ed[f.key] : pick(src, f.key));
+    const row = (f) => {
+      const k = esc(f.key), t = f.type || 'text', v = val(f); let input;
+      if (t === 'textarea') input = '<textarea data-vf="' + k + '" rows="' + Math.max(2, Math.min(16, +f.rows || 4)) + '">' + esc(v == null ? '' : String(v)) + '</textarea>';
+      else if (t === 'bool') input = '<input type="checkbox" data-vf="' + k + '" data-vft="bool"' + (v === true || v === 'true' ? ' checked' : '') + '>';
+      else if (t === 'select') input = '<select data-vf="' + k + '">' + (Array.isArray(f.options) ? f.options : []).map((x) => { const ov = (x && typeof x === 'object') ? x.value : x, ol = (x && typeof x === 'object') ? (x.label || x.value) : x; return '<option value="' + esc(ov) + '"' + (String(ov) === String(v == null ? '' : v) ? ' selected' : '') + '>' + esc(ol) + '</option>'; }).join('') + '</select>';
+      else if (t === 'list') input = '<input type="text" data-vf="' + k + '" data-vft="list" value="' + esc(Array.isArray(v) ? v.join(', ') : (v == null ? '' : v)) + '">';
+      else input = '<input type="' + (t === 'number' ? 'number' : 'text') + '" data-vf="' + k + '"' + (t === 'number' ? ' data-vft="number" step="any"' : '') + ' value="' + esc(v == null ? '' : String(v)) + '">';
+      return '<label class="vw-fm-row' + (t === 'bool' ? ' vw-fm-bool' : '') + (Object.prototype.hasOwnProperty.call(ed, f.key) ? ' dirty' : '') + '"><span class="vw-fm-l">' + esc(f.label || f.key) + '</span>' + input + (f.help ? '<small>' + esc(f.help) + '</small>' : '') + '</label>';
+    };
+    const n = Object.keys(ed).length, st = (o && o.ui && o.ui._fmStatus) || (n ? n + ' changed' : '');
+    const foot = (dr.save && dr.save.cap) ? '<div class="vw-fm-foot"><span class="vw-fm-st" data-vf-status>' + esc(st) + '</span><button type="button" class="vw-fm-save" data-vf-save' + (n ? '' : ' disabled') + '>' + esc(dr.save.label || 'Save') + '</button></div>' : '';
+    return '<div class="vw-fm">' + fields.map(row).join('') + foot + '</div>';
   };
   R.scatter = (d, H) => {
     const pts = rows(d).map((p) => [num(p.x ?? p.t ?? p[0]), num(p.y ?? p.v ?? p.value ?? p[1]), num(p.size ?? p.r ?? 3)]); if (pts.length < 2) return EMPTY('a scatter needs points');
@@ -2950,7 +2977,7 @@
     + '[data-item]{cursor:pointer}';
 
   /* ── draw at a size: the composition around the form ─────────────────── */
-  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞', lines: '≋', cellmap: '▦' };
+  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', form: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞', lines: '≋', cellmap: '▦' };
   // the glyph a size below M carries (the Sizes board): a ring for a level or a share, a spark for a series, a tube for
   // named values, a dot for events and graphs, the count glyph for the rest — drawn from the data, never a character
   function glyphOf(form, data) {
@@ -2976,7 +3003,8 @@
     const d = dataFor(data, f);
     // nothing to draw yet (no result, an empty one, or a placeholder string handed to a form that draws numbers): the
     // form's SAMPLE face, marked — never "no data yet" (opts.sample === false keeps the bare answer for a caller that asks)
-    if (f !== 'panel' && f !== 'composite' && f !== 'calnav' && f !== 'element' && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
+    const editing = f === 'form' && opts.draw && Array.isArray(opts.draw.fields) && opts.draw.fields.length;   // a form to fill in has a face of its own, empty or not
+    if (f !== 'panel' && f !== 'composite' && f !== 'calnav' && f !== 'element' && !editing && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
       if (opts.sample === false) { let own = ''; try { own = R[fi](d == null || typeof d === 'string' ? [] : d, H, Object.assign({ size: size }, opts)); } catch (_) { own = ''; } return (typeof own === 'string' && own) ? own : EMPTY('no data yet'); }
       return sampleFace(draw(f0, sample(f), size, Object.assign({}, opts, { sample: false, map: false })), size, opts.sampleTag);
     }
@@ -2985,10 +3013,10 @@
       return sampleFace(draw(f0, data, size, Object.assign({}, opts, { sample: false, record: Object.assign({}, opts.record || {}, sample('composite')) })), size, opts.sampleTag);
     }
     if (size === 'xs') return '<span class="vw-xs" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i>' + (figure(f, data) || '—') + '</span>';
-    if (size === 's' && !CI_FORMS.test(f) && (DRAWN[f] === 'items' || f === 'kv' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f, d, opts); if (cs) return cs; }
+    if (size === 's' && !CI_FORMS.test(f) && (DRAWN[f] === 'items' || f === 'kv' || f === 'form' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f === 'form' ? 'kv' : f, d, opts); if (cs) return cs; }
     if (size === 's' && f !== 'calnav') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
-    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || CI_FORMS.test(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|numbers|month|schedule|calnav|vgraph|cellmap)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
+    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || CI_FORMS.test(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|form|numbers|month|schedule|calnav|vgraph|cellmap)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
     // L: the form plus its detail list beside it; XL: the form, its table, its log
     // the detail list beside the form holds the rows its body has room for (~16 px a row) - eight in a two-row tile ran
     // past its foot - and a form that already names every value it draws (ranked bars, pills, a number grid, a
@@ -3580,6 +3608,20 @@ span.vw-sampled{opacity:.85}
 /* scrollbars, minimal (owner, 2026-10-03: "lots of widgets have unstyled scroll bars"): a page's own scrollbar styling
    never reaches into this shadow root, so every widget scrolled with the browser's default - thin and quiet here instead */
 *{scrollbar-width:thin;scrollbar-color:var(--bd2,var(--border2,rgba(255,255,255,.16))) transparent}
+/* the writable form (R.form): label over field, a quiet ground per field, Save at the foot */
+.vw-fm{display:flex;flex-direction:column;gap:7px;min-width:0}
+.vw-fm-row{display:flex;flex-direction:column;gap:3px;min-width:0}
+.vw-fm-row.vw-fm-bool{flex-direction:row;align-items:center;gap:7px}
+.vw-fm-l{font-size:9.5px;letter-spacing:.04em;color:var(--t3,var(--dim2,#8a92a0))}
+.vw-fm-row.dirty .vw-fm-l{color:var(--ac,var(--acc,#5a9e8f))}
+.vw-fm-row small{font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+.vw-fm input[type=text],.vw-fm input[type=number],.vw-fm textarea,.vw-fm select{font:inherit;font-size:10.5px;color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20));border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,5px);padding:4px 6px;min-width:0;width:100%;box-sizing:border-box}
+.vw-fm textarea{resize:vertical;font-family:var(--mono,ui-monospace,monospace);line-height:1.45}
+.vw-fm :is(input,textarea,select):focus{outline:none;border-color:var(--ac,var(--acc,#5a9e8f))}
+.vw-fm-foot{display:flex;align-items:center;gap:8px;position:sticky;bottom:0;padding-top:4px;background:inherit}
+.vw-fm-st{flex:1;font-size:9.5px;color:var(--t3,var(--dim2,#8a92a0))}
+.vw-fm-save{font:inherit;font-size:10px;padding:4px 12px;border:0;border-radius:var(--r-pill,99px);cursor:pointer;color:var(--on-ac,var(--on-acc,#fff));background:var(--ac,var(--acc,#5a9e8f))}
+.vw-fm-save[disabled]{opacity:.45;cursor:default}
 .vw-fit{overflow:hidden!important}
 :host([data-state="reading"]) .vw-sampled{opacity:.42;filter:saturate(.4)}
 [data-b],[data-tip]{transition:filter .14s ease,opacity .14s ease,stroke-width .14s ease}
@@ -4180,6 +4222,37 @@ span.vw-sampled{opacity:.85}
     // minutes away (a backup census reads every five), and until then the tile would have nothing true to show
     _retrySoon(fn) { if (this._retry || !this.isConnected) return; this._retry = setTimeout(() => { this._retry = null; if (this.isConnected) fn(); }, RETRY_S * 1000); }
     _act(id) { this.dispatchEvent(new CustomEvent('widget:' + id, { bubbles: true, composed: true, detail: { record: this._rec, data: this._data, key: key(this._rec) } })); }
+    // the writable form (R.form): keep an edit, mark its row, enable Save - no re-render, so the field keeps focus
+    _formEdit(i) {
+      const ed = this._ui._edits || (this._ui._edits = {}), t = i.dataset.vft, k = i.dataset.vf;
+      ed[k] = t === 'bool' ? !!i.checked : (t === 'number' ? (i.value === '' ? '' : Number(i.value)) : i.value);
+      const row = i.closest('.vw-fm-row'); if (row) row.classList.add('dirty');
+      const sv = this._sh.querySelector('[data-vf-save]'); if (sv) sv.disabled = false;
+      this._ui._fmStatus = Object.keys(ed).length + ' changed';
+      const st = this._sh.querySelector('[data-vf-status]'); if (st) st.textContent = this._ui._fmStatus;
+    }
+    async _formSave() {
+      const rec = this._rec || {}, dr = rec.draw || {}, sv = dr.save || {}, cap = String(sv.cap || '');
+      const say = (t) => { this._ui._fmStatus = t; const st = this._sh.querySelector('[data-vf-status]'); if (st) st.textContent = t; };
+      if (!FORM_WRITES.has(cap)) { say('saving through ' + (cap || 'nothing') + ' is not allowed'); return; }
+      const ed = Object.assign({}, this._ui._edits || {}); if (!Object.keys(ed).length) { say('nothing changed'); return; }
+      const src = (this._data && typeof this._data === 'object' && !Array.isArray(this._data)) ? this._data : {};
+      const args = Object.assign({}, (sv.args && typeof sv.args === 'object') ? sv.args : {});
+      Object.keys(sv.from || {}).forEach((a) => { const v = pick(src, sv.from[a]); if (v !== undefined && v !== null && v !== '') args[a] = v; });
+      if (sv.edits_as) args[String(sv.edits_as)] = ed; else Object.assign(args, ed);
+      const btn = this._sh.querySelector('[data-vf-save]'); if (btn) btn.disabled = true;
+      say('saving…');
+      try {
+        const r = await fetch((this.base || '') + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: cap, arguments: args }) });
+        const j = await r.json().catch(() => ({})); const c = (j && j.content !== undefined) ? j.content : j;
+        const err = !r.ok ? ('HTTP ' + r.status) : (c && (c.error || (c.ok === false ? 'refused' : '')));
+        if (err) { say('not saved — ' + String(err).slice(0, 140)); if (btn) btn.disabled = false; return; }
+        const rej = (c && Array.isArray(c.rejected)) ? c.rejected : [];
+        this._ui._edits = {}; say(rej.length ? 'saved; not changed: ' + rej.map((x) => x.field + ' (' + x.why + ')').join(', ') : 'saved ✓');
+        this.dispatchEvent(new CustomEvent('widget:saved', { bubbles: true, composed: true, detail: { record: rec, cap, args, result: c } }));
+        this.read(true);
+      } catch (e) { say('not saved — ' + String((e && e.message) || e).slice(0, 140)); if (btn) btn.disabled = false; }
+    }
     // the ⇄ control: the forms of the data's family that would draw this answer; the pick redraws in place
     _viewAsWire(form0, form, rec) {
       if (this.hasAttribute('no-view-as') || (/^(xs|s)$/.test(this.size) && !this.hasAttribute('bare'))) return;
@@ -4227,7 +4300,8 @@ span.vw-sampled{opacity:.85}
       // nothing read yet — no source, a source that waits for a click, a read in flight, a read that failed — draws the
       // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
       const wasRead = !!this._read, dataM = mapped(rec, form, this._data), have = this._data !== undefined && !isEmpty(dataFor(dataM, form));   // what the form would draw of the answer
-      const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite' && form !== 'element';   // an element draws itself: it is never a sample      // the sample face: no source, or never read
+      const fillIn = canon(form) === 'form' && rec.draw && Array.isArray(rec.draw.fields) && rec.draw.fields.length > 0;   // a form to fill in is never a sample
+      const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite' && form !== 'element' && !fillIn;   // an element draws itself: it is never a sample      // the sample face: no source, or never read
       const readEmpty = wasRead && !have && !this._err, stale = wasRead && !!this._err && have;
       // the face's STATE, on the host (data-state) and in widget:rendered: reading (a read is on its way - the sample face
       // is drawn faint, never as though it were the reading) · failed (a read that never answered) · sample (nothing to
@@ -4268,6 +4342,9 @@ span.vw-sampled{opacity:.85}
       this._sh.querySelectorAll('[data-vb-set]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); setUi(b.dataset.vbSet); if (b.dataset.vbSet2) setUi(b.dataset.vbSet2); if (/^(off|view):/.test(b.dataset.vbSet) && /^(month|schedule|calnav|agenda)$/.test(canon(this._rec.form))) this._calMove(b.dataset.vbSet); else this.render(); }));
       this._sh.querySelectorAll('[data-vb-input]').forEach((i) => i.addEventListener('input', () => { this._ui[i.dataset.vbInput] = /^-?\d+(\.\d+)?$/.test(i.value) ? Number(i.value) : i.value; this.render(); }));
       this._sh.querySelectorAll('[data-vb-link]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); this.dispatchEvent(new CustomEvent('widget:open', { bubbles: true, composed: true, detail: { record: this._rec, href: a.dataset.vbLink, key: key(this._rec) } })); }));
+      // the writable form: an edit is kept without a re-render (typing keeps its focus); Save sends what changed
+      this._sh.querySelectorAll('[data-vf]').forEach((i) => { const on = () => this._formEdit(i); i.addEventListener('input', on); i.addEventListener('change', on); });
+      { const sv = this._sh.querySelector('[data-vf-save]'); if (sv) sv.addEventListener('click', (ev) => { ev.preventDefault(); this._formSave(); }); }
       hydrate(this._sh);
       this._viewAsWire(form0, form, rec);
       motionAfter(this._sh, was);

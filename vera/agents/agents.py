@@ -91,6 +91,10 @@ try:
 except Exception:                       # worktree / app-free import
     from vera.agents import queue_status_core as _queue_status
 try:
+    from Vera.vera.agents import agent_patch_core as _agent_patch
+except Exception:                       # worktree / app-free import
+    from vera.agents import agent_patch_core as _agent_patch
+try:
     from Vera.vera.agents import turn_phases_core as _phases
 except Exception:                       # worktree / app-free import
     from vera.agents import turn_phases_core as _phases
@@ -5352,6 +5356,43 @@ async def agent_update(
     saved = await AGENT_REGISTRY.save(rec)
     await emit_event({"type": "agent.updated", "id": saved.id, "name": saved.name})
     return {"id": saved.id, "name": saved.name, "label": saved.label}
+
+
+@capability(
+    "agent.patch", memory="off",
+    http_method="POST", http_path="/agents/patch", http_tags=["agents"],
+    description="Change some fields of an existing agent and keep every other field as it is (agent.update "
+                "rebuilds the whole agent from its parameters, so anything not sent is reset). Inputs: agent_id or "
+                "name (str) - which agent; fields (object) - {field: new value}, e.g. {\"system_prompt\": \"...\", "
+                "\"temperature\": 0.3, \"domain_caps\": \"web.search, memory.search\"}. Values are converted to each "
+                "field's type (yes/no, numbers, lists from comma-separated text); id, created_at and author never "
+                "change. Output: {ok, id, name, changed: [fields], rejected: [{field, why}]}.",
+)
+async def agent_patch(agent_id: str = "", name: str = "", fields: Optional[Dict[str, Any]] = None, trace_id=None):
+    existing = None
+    if agent_id:
+        existing = await AGENT_REGISTRY.get(agent_id)
+    if not existing and name:
+        existing = await AGENT_REGISTRY.get_by_name(name)
+    if not existing:
+        return {"ok": False, "error": f"Agent not found: {agent_id or name}"}
+    if isinstance(fields, str):
+        try:
+            fields = json.loads(fields or "{}")
+        except Exception:
+            return {"ok": False, "error": "fields must be an object"}
+    if not isinstance(fields, dict) or not fields:
+        return {"ok": False, "error": "fields must be a non-empty object of {field: value}"}
+    import dataclasses as _dc
+    types = _agent_patch.field_types(AgentRecord)
+    current = {f.name: getattr(existing, f.name) for f in _dc.fields(AgentRecord)}
+    new, changed, rejected = _agent_patch.apply_patch(current, fields, types)
+    if not changed:
+        return {"ok": True, "id": existing.id, "name": existing.name, "changed": [], "rejected": rejected}
+    rec = AgentRecord(**new)
+    saved = await AGENT_REGISTRY.save(rec)
+    await emit_event({"type": "agent.updated", "id": saved.id, "name": saved.name, "fields": changed})
+    return {"ok": True, "id": saved.id, "name": saved.name, "changed": changed, "rejected": rejected}
 
 @capability(
     "agent.list", memory="off",
