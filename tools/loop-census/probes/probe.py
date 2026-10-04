@@ -55,9 +55,17 @@ def deadline():
 
 
 def stop(sid, proc):
+    # A finished run is left alone: a cancel would overwrite its 'done' with 'cancelled'
+    # (4 Oct 2026: every probe's record said cancelled).
+    if _rev.finished(sid):
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return
     http("POST", "/workshop/agent_loop/cancel", {"session_id": sid})
     for _ in range(90):
-        if sid not in (running() or [sid]):
+        if _rev.finished(sid) or sid not in (running() or [sid]):
             break
         time.sleep(5)
     try:
@@ -97,7 +105,7 @@ def full(sid, goal, budget):
         time.sleep(10)
         if proc.poll() is not None and sid not in (running() or [sid]):
             break
-    if sid in (running() or [sid]):
+    if not _rev.finished(sid) and sid in (running() or [sid]):
         log("%s over budget - cancelling" % sid)
     stop(sid, proc)
     ev = events(sid)
