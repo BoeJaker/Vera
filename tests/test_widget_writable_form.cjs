@@ -35,5 +35,7 @@ t('edits are kept without a re-render; Save is wired', W.includes("this._sh.quer
   && W.includes("if (sv) sv.addEventListener('click', (ev) => { ev.preventDefault(); this._formSave(); });"));
 t('Save refuses a capability not on the list, before any request', /if \(!FORM_WRITES\.has\(cap\)\) \{ say\('saving through ' \+ \(cap \|\| 'nothing'\) \+ ' is not allowed'\); return; \}/.test(W));
 t('Save sends only the edits (under edits_as) plus the record fields it names, then reads again', W.includes('if (sv.edits_as) args[String(sv.edits_as)] = ed; else Object.assign(args, ed);') && W.includes('this.read(true);'));
+t('a form to fill in is as tall as its fields (no size containment collapsing it)', W.includes('.vw-root[data-form="form"] .vw-body:has(.vw-fm){display:block;flex:none;container-type:inline-size;overflow:visible}')
+  && W.includes('.vw-root[data-form="form"]:has(.vw-fm){height:auto}'));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
