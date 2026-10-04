@@ -22,7 +22,9 @@
 /* ── the page: the menu column and the main column ── */
 html, body { height: 100%; margin: 0; }
 body.vb { background: var(--bg0, var(--bg, #0e0f12)); color: var(--text, var(--t1, #d4dae4)); font: 12.5px/1.5 var(--font-ui, var(--sans, system-ui, sans-serif)); }
-.vb-root { display: grid; grid-template-columns: auto 1fr; height: 100vh; min-height: 0; }
+/* 100%, never 100vh: with the UI zoom on (vera-ui.js zooms <html> and sizes it to fit) 100vh runs past the window - the
+   menu's foot (its fold, its widgets) went out of sight on Research, 2026-10-04 */
+.vb-root { display: grid; grid-template-columns: auto 1fr; height: 100%; min-height: 0; }
 .vb-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
 /* ── the top bar: the page's name, its status, its settings - nothing that changes the page ── */

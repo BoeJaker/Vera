@@ -68,7 +68,9 @@
   function _el(tag, cls, text){ var e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = text; return e; }
   function _txt(e){ return String((e && e.textContent) || '').replace(/\s+/g, ' ').trim(); }
   /* a heading's words without the buttons it carries (Commerce's card title read 'Settingsclose') */
-  function _htxt(e){ if(!e || !e.querySelector || !e.querySelector('button')) return _txt(e); var c = e.cloneNode(true); Array.prototype.forEach.call(c.querySelectorAll('button'), function(b){ b.parentNode.removeChild(b); }); return _txt(c); }
+  /* ... and without a count badge in it (Capabilities' Tracking read '8Tracked groups'): an element that is only a number */
+  function _htxt(e){ if(!e || !e.querySelector) return _txt(e); var c = e.cloneNode(true);
+    Array.prototype.forEach.call(c.querySelectorAll('*'), function(b){ if(b.parentNode && (b.tagName === 'BUTTON' || /^\s*\d+\s*$/.test(b.textContent || ''))) b.parentNode.removeChild(b); }); return _txt(c); }
   function _panelName(){ return String(document.title || 'This panel').replace(/^\s*Vera\s*[—–\-·|:/]\s*/i, '').trim() || 'This panel'; }
 
   /* a settings section, read: {title, lead, cards:[element]} - the first heading is the title, a paragraph straight

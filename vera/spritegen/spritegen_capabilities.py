@@ -993,15 +993,16 @@ async def _serve_sprite_js():
 _COMPANION_HTML = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <style>
-:root{color-scheme:dark}
+/* the theme's colours (2026-10-04: a theme sweep found this page's light text on a light theme - it hard-coded a dark
+   palette over a see-through page); each name has the old colour as its fallback */
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;background:transparent;font-family:system-ui,sans-serif;font-size:11px;color:#ddd5c8;overflow:hidden}
-.bar{display:flex;gap:6px;align-items:center;padding:5px 7px;background:#1f1d1acc;border-bottom:1px solid #3a3530}
-select{background:#181614;border:1px solid #3a3530;color:#ddd5c8;padding:2px 5px;border-radius:3px;font-size:11px;max-width:150px}
-label{display:inline-flex;gap:3px;align-items:center;color:#8a7e70;cursor:pointer;white-space:nowrap}
+html,body{height:100%;background:transparent;font-family:var(--font-ui,system-ui,sans-serif);font-size:11px;color:var(--text,var(--t1,#ddd5c8));overflow:hidden}
+.bar{display:flex;gap:6px;align-items:center;padding:5px 7px;background:color-mix(in srgb,var(--bg1,#1f1d1a) 80%,transparent);border-bottom:1px solid var(--border,#3a3530)}
+select{background:var(--bg0,#181614);border:1px solid var(--border,#3a3530);color:var(--text,#ddd5c8);padding:2px 5px;border-radius:3px;font-size:11px;max-width:150px}
+label{display:inline-flex;gap:3px;align-items:center;color:var(--dim2,#8a7e70);cursor:pointer;white-space:nowrap}
 .stage{position:relative;height:calc(100% - 29px);overflow:hidden;
-  background:conic-gradient(#22201d 25%,#1b1917 0 50%,#22201d 0 75%,#1b1917 0) 0 0/22px 22px}
-.hint{position:absolute;left:8px;bottom:6px;color:#6a6058;font-size:10px;pointer-events:none}
+  background:conic-gradient(var(--bg2,#22201d) 25%,var(--bg1,#1b1917) 0 50%,var(--bg2,#22201d) 0 75%,var(--bg1,#1b1917) 0) 0 0/22px 22px}
+.hint{position:absolute;left:8px;bottom:6px;color:var(--dim2,#6a6058);font-size:10px;pointer-events:none}
 </style></head><body>
 <div class="bar">
   <select id="pick" onchange="mount(this.value)"><option value="">— sprite —</option></select>

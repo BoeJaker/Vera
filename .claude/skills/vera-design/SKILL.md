@@ -43,7 +43,9 @@ says what a UI change must look like and how to prove it.
    - A floating menu is found by its position. Give it a z-index.
 7. **Widgets are `<vera-widget>`**, and graphs are `veraUI.Graph.create` or `<vera-graph-embed>`. Never a third renderer,
    never a hand-drawn widget.
-8. **In generated code, block comments only.** A `//` appended to a generated or joined line swallows the code after it.
+8. **Heights are `100%`, never `100vh`.** With the UI zoom on, `vera-ui.js` zooms `<html>` and sizes it to fit, so `100vh`
+   runs past the window. Research's menu foot was cut off that way.
+9. **In generated code, block comments only.** A `//` appended to a generated or joined line swallows the code after it.
    It hid the menu groups' descriptions until 2026-10-04.
 
 ## 3. Verify live - the evidence, not the source

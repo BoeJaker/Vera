@@ -93,6 +93,11 @@ panel and per menu (`i:<item id>` or `g:<group name>`). The docked menu and the 
   (`.hint`, `.help`, `.subtitle`, …). A selected tab and anything inside an open menu always show.
 - **The glow** is on the body's own background, over whatever colour the page paints.
 
+## Page height
+
+A page's root is `height: 100%` on `html`, `body` and the layout root, never `100vh`. With the UI zoom on, `vera-ui.js`
+zooms `<html>` and sizes it to fit the window, so a `100vh` root runs past the bottom of the window.
+
 ## Settings
 
 Give the panel a settings section: a heading, a line, then one block per group of fields. Mark the item or button that
