@@ -23,5 +23,15 @@ t('the dashboard drops the "fine" dot, keeps warn/err', HAR.includes('.dash-grid
 t('...titles a step larger', HAR.includes('.dash-grid .w-head .w-title{font-size:calc(var(--label-size,9px) + 1.5px)}'));
 t('...thin, quiet scrollbars on the board and inside every widget', HAR.includes('.dash-grid,.dash-grid *{scrollbar-width:thin;') && W.includes('*{scrollbar-width:thin;scrollbar-color:var(--bd2,var(--border2,rgba(255,255,255,.16))) transparent}'));
 t('...and a face a few pixels taller than its box does not scroll', W.includes("e.classList.toggle('vw-fit', over > 0 && over <= 6);") && W.includes('.vw-fit{overflow:hidden!important}'));
+// owner, 2026-10-04: "the memory graph in the chat LHM has stopped displaying memories" - a tab pick overwrote the pane's
+// class and with it 'vg' (its Vera graph drawn); only 'on' is the tab's to set
+t('a tab pick keeps the memory graph drawn (toggles on, never overwrites the class)', H.includes("mp.classList.add('ctx-pane'); mp.classList.toggle('on', name==='memgraph');")
+  && !H.includes("document.getElementById('paneMemGraph').className='ctx-pane'"));
+// owner, 2026-10-04: "pressing edit on code in the canvas only lets you edit the first few lines" - the editor opened at
+// its 72 px minimum; it now takes its text's height (to 70% of the window) and grows as it is typed into
+{ const CV = R('vera/canvas/canvas_element.js');
+  t('the canvas editor is as tall as its text and grows with it; Tab indents code', CV.includes('if (ta) this._editWire(ta); }')
+    && CV.includes("ta.style.height = Math.min(ta.scrollHeight + 4, Math.round((root.innerHeight || 900) * 0.7)) + 'px';") && CV.includes("ta.addEventListener('input', fit);")
+    && CV.includes("if (ev.key !== 'Tab' || ev.ctrlKey || ev.altKey || ev.metaKey) return;")); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
