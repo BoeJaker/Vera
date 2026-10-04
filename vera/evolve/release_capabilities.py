@@ -141,7 +141,15 @@ async def census_summary() -> Dict[str, Any]:
         import sys as _sys
         dm = (_sys.modules.get("dag_workshop_capabilities")
               or _sys.modules.get("Vera.vera.dag.dag_workshop_capabilities"))
-        s["loops"] = core.live_loop_ids(getattr(dm, "_AGENT_LOOP_TASKS", None) or {})
+        ids = list(core.live_loop_ids(getattr(dm, "_AGENT_LOOP_TASKS", None) or {}))
+        # ...and runs started through /mcp/call (census goals, probes), which have no task
+        # in that registry: their Redis run state (dag._live_loop_session_ids).
+        _live = getattr(dm, "_live_loop_session_ids", None)
+        if _live is not None:
+            for sid in await _live():
+                if sid not in ids:
+                    ids.append(sid)
+        s["loops"] = ids
     except Exception as e:
         log.debug("live loops unavailable: %s", e)
     return s
