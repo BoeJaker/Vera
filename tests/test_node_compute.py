@@ -145,6 +145,9 @@ def test_worker_training_libraries_are_pinned_to_the_hosts():
     cmd = cc.worker_ml_pip_cmd("/v", pins)
     assert "torch==2.7.1" in cmd and "https://download.pytorch.org/whl/cpu" in cmd
     assert "scikit-learn==1.7.1" in cmd
+    # the worker's metrics need psutil: without it no node publishes free
+    # CPU/memory and node scheduling admits nothing (2026-10-04)
+    assert "install -q psutil" in cmd
     # each group may fail without stopping the worker's setup (set -e)
     assert cmd.count("|| echo") == len(cc.WORKER_ML_PIP)
     full = cc.native_worker_cmd(root="/opt/vera/worker", repo="", redis_url="redis://h:6379",

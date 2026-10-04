@@ -148,8 +148,41 @@ def audit(root):
             w = written(mk)
             if any(isinstance(c, ast.Name) and c.id in w for c in ast.walk(node)):
                 hits.add("reads_state")
+            if orch_reads(m, node):
+                hits.add("orch_state")
             INFO[k] = (hits, set(CALL_CAP.findall(seg)), writes_state(node, m["mutable"]))
         return INFO[k]
+
+
+    #: Orchestrator state filled once while modules load - the same in every
+    #: process, a worker included. Everything else it writes at runtime
+    #: (instance health, in-flight counts, logs, routing stats, the worker
+    #: registry ...) is the HOST's: a worker has the structure, never the data.
+    ORCH_LOAD_TIME = {"CAPABILITY_REGISTRY", "LOADED_MODULES", "UI_PANELS", "SHUTDOWN_HOOKS",
+                      "STREAM_SUBS", "SCHEDULED_TASKS", "CAP_ROUTING_DECLARED",
+                      "ROLE_PROFILES_DECLARED", "_LOG_QLISTENERS"}
+    ORCH = "capability_orchestration"
+    ORCH_RUNTIME = (written(ORCH) - ORCH_LOAD_TIME) if ORCH in MODS else set()
+
+
+    def orch_reads(m, node):
+        """Does this function read orchestrator runtime state? Through a name
+        imported from it, `<alias>.NAME`, or getattr(<alias>, "NAME")."""
+        if not ORCH_RUNTIME:
+            return False
+        direct = {n for n, (tmk, attr) in m["imports"].items() if tmk == ORCH and attr in ORCH_RUNTIME}
+        aliases = {a for a, tmk in m["aliases"].items() if tmk == ORCH}
+        for c in ast.walk(node):
+            if isinstance(c, ast.Name) and c.id in direct:
+                return True
+            if (isinstance(c, ast.Attribute) and isinstance(c.value, ast.Name)
+                    and c.value.id in aliases and c.attr in ORCH_RUNTIME):
+                return True
+            if (isinstance(c, ast.Call) and getattr(c.func, "id", "") == "getattr" and len(c.args) >= 2
+                    and isinstance(c.args[0], ast.Name) and c.args[0].id in aliases
+                    and isinstance(c.args[1], ast.Constant) and c.args[1].value in ORCH_RUNTIME):
+                return True
+        return False
 
 
     #: The runtime every process shares (a worker runs the same orchestrator):

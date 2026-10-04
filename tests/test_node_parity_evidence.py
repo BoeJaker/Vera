@@ -115,7 +115,25 @@ def test_static_audit_follows_calls_across_modules(tmp_path):
         "@capability('demo.remember')\nasync def remember(x=''):\n    _CACHE[x] = 1\n\n"
         "@capability('demo.recall')\nasync def recall(x=''):\n    return _CACHE.get(x)\n\n"
         "@capability('demo.chain')\nasync def chain():\n    return await _call('demo.save')\n")
+    # a stand-in orchestrator: health the host updates at runtime vs. a
+    # registry filled while modules load
+    (v / "capability_orchestration.py").write_text(
+        "OLLAMA_INSTANCES = {}\nCAPABILITY_REGISTRY = {}\n\n"
+        "def _health_tick():\n    OLLAMA_INSTANCES['a'] = {'ok': True}\n\n"
+        "def capability(name):\n    def d(f):\n        CAPABILITY_REGISTRY[name] = f\n        return f\n    return d\n")
+    (v / "orchcaps.py").write_text(
+        "import Vera.vera.capability_orchestration as _orch\n"
+        "from Vera.vera.capability_orchestration import OLLAMA_INSTANCES, capability\n\n"
+        "@capability('demo.health')\nasync def health():\n    return dict(_orch.OLLAMA_INSTANCES)\n\n"
+        "@capability('demo.health2')\nasync def health2():\n    return list(OLLAMA_INSTANCES)\n\n"
+        "@capability('demo.health3')\nasync def health3():\n    return getattr(_orch, 'OLLAMA_INSTANCES', {})\n\n"
+        "@capability('demo.caps')\nasync def caps():\n    return sorted(_orch.CAPABILITY_REGISTRY)\n")
     rows = audit.audit(str(tmp_path))
+    # host runtime state read through the orchestrator: a worker's copy is empty
+    for c in ("demo.health", "demo.health2", "demo.health3"):
+        assert "orch_state" in rows[c]["markers"], (c, rows[c])
+    # state filled at load time is the same in every process
+    assert rows["demo.caps"]["markers"] == []
     assert rows["demo.save"]["markers"] == ["sqlite"] and "store.db" in rows["demo.save"]["via"]
     assert rows["demo.pure"]["markers"] == [] and not rows["demo.pure"]["state"]
     assert "env" in rows["demo.key"]["markers"]
