@@ -70,5 +70,8 @@ t('a menu-less panel\'s primary action reaches the harness (state.cta) and ends 
 
 t('a NESTED menu-less panel\'s primary action ends its host\'s open menu; a press goes down to it', /k\.cta = \(d\.state && Array\.isArray\(d\.state\.cta\)\)/.test(BR) && /function _shownKidCta\(\)\{/.test(BR) && /if\(m\.id === act\.menu && !\(c && c\.for\)\)\{ var kc = _shownKidCta\(\); if\(kc\) m\.cta = \{ id: 'c:cta:' \+ kc\.cta\[0\]\.i/.test(BR) && /if\(id\.indexOf\('c:cta:'\) === 0\)\{/.test(BR));
 
+for (const [d, f] of [['ide', 'vscode_panel.html'], ['ide', 'ide_remote_panel.html'], ['web', 'web_api_panel.html'], ['remote', 'workspace_panel.html'], ['mcp', 'mcp_catalog_panel.html'], ['operator', 'operator_studio_panel.html'], ['integrations', 'integrations_panel.html']])
+  t(f + ': loads the bridge itself (nested, the harness does not inject it)', /<script src="\/ui\/vera-panel-bridge\.js"><\/script>/.test(R('vera', d, f)));
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
