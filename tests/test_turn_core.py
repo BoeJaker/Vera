@@ -65,6 +65,15 @@ def test_a_surname_after_the_full_name_is_the_same_person_and_the_is_dropped():
     assert ("ORG", "European Union") in by and by[("ORG", "Apple")]["count"] == 2
 
 
+def test_a_name_cut_inside_a_word_is_widened_to_the_word_but_only_where_the_offset_is_true():
+    text = "Ethereum was proposed by Vitalik Buterin in 2013."
+    ents = tc.merge(text, [_ner(0, [{"entity": "PERSON", "word": "italik Buterin", "score": 0.9, "start": 26, "end": 40}])])
+    assert [e["text"] for e in ents if e["type"] == "PERSON"] == ["Vitalik Buterin"]
+    # an offset that does not point at the word leaves the tagger's word as it came
+    ents = tc.merge(text, [_ner(0, [{"entity": "PERSON", "word": "Buterin", "score": 0.9, "start": 3, "end": 10}])])
+    assert [e["text"] for e in ents if e["type"] == "PERSON"] == ["Buterin"]
+
+
 def test_salient_and_the_canvas_item():
     ents = tc.merge(TEXT, [_ner(0, [{"entity": "ORG", "word": "Apple", "score": 0.9, "start": 0, "end": 5},
                                     {"entity": "PERSON", "word": "Tim Cook", "score": 0.9, "start": 12, "end": 20},
