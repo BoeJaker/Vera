@@ -193,6 +193,7 @@ _CRITICAL_MODULES = {
     "test_autonomous_lock_core",  # closed-loop Phase A — hard main-lockout while autonomous mode is engaged
     "test_orchestrator_core",  # closed-loop Phase B — orchestrator decision logic (dispatch/idle, interlock, no v7)
     "test_session_watch_core",  # closed-loop Phase C — auto-resume gate: never re-run finished/human/declared work
+    "test_recall_core",          # recalled tool calls/dreams were injected as "User:"; repeats filled the slots (2026-10-04)
     "test_board_core",          # Agent Boards leasing — claim resolution + Phase E handoff (only holder can hand off)
     "test_gate_sweep",          # Ollama-gate leaked-lease sweep — MUST never clear a peer host's live slot (double-books GPU)
     "test_ollama_slot_permit",   # leaked per-node generation permit wedged ALL generation (2026-08-29)

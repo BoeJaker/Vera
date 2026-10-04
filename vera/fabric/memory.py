@@ -103,6 +103,10 @@ try:                                                    # RF-77
     from Vera.vera.fabric import chroma_bound_core as _chroma_bound
 except ImportError:                                     # pragma: no cover
     from . import chroma_bound_core as _chroma_bound
+try:                                                    # one hit per repeated text (recall_core)
+    from Vera.vera.fabric import recall_core as _recall_core
+except ImportError:                                     # pragma: no cover
+    from . import recall_core as _recall_core
 
 log = logging.getLogger("vera.memory")
 
@@ -1645,12 +1649,44 @@ class HybridMemoryStore:
             for rec, score in results:
                 if rec.id not in merged or merged[rec.id][1] < score:
                     merged[rec.id] = (rec, score)
+        return self._rank_pairs(merged.values(), limit)
+
+    @staticmethod
+    def _rank_pairs(pairs, limit: int) -> List[Dict]:
+        """Best first, then one hit per repeated text (recall_core.collapse_repeats), then the limit - so `limit`
+        hits are `limit` different texts, each saying how many copies it stood for."""
         ranked = sorted(
-            merged.values(),
+            pairs,
             key=lambda x: x[1] * (0.5 + 0.5 * x[0].importance),
             reverse=True,
-        )[:int(limit)]
-        return [{"record": r.to_dict(), "score": round(s, 4)} for r, s in ranked]
+        )
+        return _recall_core.collapse_repeats(
+            [{"record": r.to_dict(), "score": round(s, 4)} for r, s in ranked], limit=int(limit))
+
+    async def search_fast(
+        self,
+        query:   str,
+        limit:   int             = 10,
+        filters: Optional[Dict]  = None,
+        timeout: float           = 2.5,
+    ) -> List[Dict]:
+        """The fast tier alone: Postgres + Neo4j, no embedding, bounded by `timeout`.
+
+        For callers that only look (a live preview of what a turn would recall): unlike search_fast_and_slow it
+        starts no embed and leaves no background task behind, so calling it on every keystroke costs nothing on
+        the shared embed nodes."""
+        query = (query or "")[:_HYBRID_SEARCH_QUERY_MAX_CHARS]
+        names = [n for n in ("postgres", "neo4j") if n in self._backends]
+        if not names:
+            return []
+        tasks = {n: self._backends[n].search(query, limit=limit * 2, filters=filters, embedding=None)
+                 for n in names}
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks.values(), return_exceptions=True), timeout=timeout)
+        except asyncio.TimeoutError:
+            results = [TimeoutError("fast tier timed out")] * len(tasks)
+        return self._merge_and_rank(tasks.keys(), results, limit)
 
     async def search_fast_and_slow(
         self,
@@ -1732,12 +1768,7 @@ class HybridMemoryStore:
             for rec, score in chroma_results:
                 if rec.id not in merged or merged[rec.id][1] < score:
                     merged[rec.id] = (rec, score)
-            ranked = sorted(
-                merged.values(),
-                key=lambda x: x[1] * (0.5 + 0.5 * x[0].importance),
-                reverse=True,
-            )[:int(limit)]
-            return [{"record": r.to_dict(), "score": round(s, 4)} for r, s in ranked]
+            return self._rank_pairs(merged.values(), limit)
 
         slow_task = asyncio.create_task(_slow())
         return fast_out, slow_task
