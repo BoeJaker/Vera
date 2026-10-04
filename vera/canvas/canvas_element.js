@@ -399,6 +399,14 @@
       const shot = String(c.shot || '');
       const text = String(c.text || '');
       const rdr = c.reader && typeof c.reader === 'object' ? c.reader : null;
+      /* A PAGE, DEEPER (canvas-enrichment slice 6 - owner, 2026-10-03: "the canvas elements mentioned here need to be much
+         better more engaging and informative, interactive, deep"). A page read once is in the reader cache, so the item
+         carries its reading at once (the canvas asks the cache, never the web, for every source it draws): who wrote it,
+         how long it is, the people, organisations and places it names - each a chip that looks the name up beside it -
+         the other sites it points to, and an Explode of the page itself. */
+      const meta = rdr ? [rdr.site, rdr.byline, rdr.published ? String(rdr.published).slice(0, 10) : '', rdr.minutes ? rdr.minutes + ' min read' : ''].filter(Boolean).map(String) : [];
+      const ents = rdr && Array.isArray(rdr.entities) ? rdr.entities.filter((e) => e && /^(PERSON|ORG|GPE|LOC|PRODUCT|EVENT|NORP|WORK_OF_ART|LAW|TICKER)$/.test(String(e.type || ''))).slice(0, 10) : [];
+      const outs = []; if (rdr && rdr.markdown) { const seen = new Set([host]); const rx = /\]\((https?:\/\/[^)\s]+)\)/g; let m; while ((m = rx.exec(String(rdr.markdown))) && outs.length < 6) { let h = ''; try { h = new URL(m[1]).host; } catch (e) { continue; } if (!h || seen.has(h)) continue; seen.add(h); outs.push([h, m[1]]); } }
       return `<div class="vc-src${c.failed ? ' bad' : ''}${open ? ' open' : ''}">`
         + `<div class="vc-src-hd">`
         + `<span class="vc-src-dom">${esc(host)}</span>`
@@ -406,10 +414,14 @@
         + (c.failed ? `<span class="vc-src-n bad">did not load</span>` : '')
         + `</div>`
         + `<a class="vc-src-t" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(url)}">${esc(title)}</a>`
+        + (meta.length ? `<div class="vc-src-m">${esc(meta.join(' \u00b7 '))}</div>` : '')
         + (c.snippet ? `<div class="vc-src-s">${esc(String(c.snippet).slice(0, 400))}</div>` : '')
+        + (ents.length ? `<div class="vc-src-ents">${ents.map((e) => `<button class="vc-chip" data-act="srcent" data-ent-t="${esc(String(e.text))}" data-ent-y="${esc(String(e.type))}" title="${esc(e.type + ' - look it up beside this')}">${esc(String(e.text))}${e.count > 1 ? `<i>${e.count}</i>` : ''}</button>`).join('')}</div>` : '')
+        + (outs.length ? `<div class="vc-src-out"><span>points to</span>${outs.map(([h, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${esc(h)}</a>`).join('')}</div>` : '')
         + `<div class="vc-src-act">`
         + `<button class="vc-src-b" data-src-act="read" data-src-key="${esc(key || '')}">${open ? 'less' : (text || rdr ? 'read' : 'reader mode')}</button>`
         + `<button class="vc-src-b" data-src-act="shot" data-src-key="${esc(key || '')}">${shot ? 'hide the picture' : 'see the page'}</button>`
+        + (rdr && rdr.markdown ? `<button class="vc-src-b" data-src-act="explode" data-src-key="${esc(key || '')}" title="A structured diagram of the page - its sections, what it names, how they connect">explode</button>` : '')
         + `</div>`
         + (open && rdr ? `<div class="vc-src-body rd">${readerHtml(rdr)}</div>` : open && text ? `<div class="vc-src-body">${md(text.slice(0, 20000))}</div>` : '')
         + (shot ? `<img class="vc-src-shot" src="${esc(shot)}" alt="${esc(title)}">` : '')
@@ -1511,6 +1523,11 @@
   .it.sized .vc-diagwrap > .code-card,.it.openin .vc-diagwrap > .code-card,.it.maxed .vc-diagwrap > .code-card{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
   .it[data-type="diagram"] .it-bd{max-height:none}
   .vc-dgsrc{margin-top:6px;max-height:160px}
+  /* a page, deeper: its reading's who and how long, what it names, where it points */
+  .vc-src-m{font-size:10px;color:var(--t3,var(--dim,#6b7480));margin:2px 0 4px}
+  .vc-src-ents{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 2px}
+  .vc-src-out{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0;font-size:10px}.vc-src-out span{color:var(--t3,var(--dim,#6b7480))}
+  .vc-src-out a{color:var(--ac,var(--acc,#5a9e8f));text-decoration:none}.vc-src-out a:hover{text-decoration:underline}
   /* what a turn names: chips in their groups, a pressed one opens under its group */
   .vc-ent{display:flex;flex-direction:column;gap:8px}
   .vc-ent-gl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7480));margin-bottom:3px}
@@ -2319,6 +2336,7 @@
       const blocks = doc.blocks || [];
       // what the host is streaming into an item outranks whatever an older revision says it holds (liveUpdate)
       if (this._liveOv) blocks.forEach((b) => { const ov = b && b.key != null && this._liveOv[String(b.key)]; if (ov) b.content = Object.assign({}, b.content || {}, ov); });
+      try { this._srcPrefetch(blocks); } catch (e) {}
       root.getElementById('title').textContent = doc.title || 'Canvas';
       root.getElementById('count').textContent =
         blocks.length + (blocks.length === 1 ? ' block' : ' blocks');
@@ -2907,6 +2925,9 @@
         this._prevOn[key] = !(this._prevSeen && this._prevSeen[key]);
         this._open.add(key); if (this._doc) this.render(this._doc); return; }
       // a named thing: open its sentences under its group (a second press closes), or look it up beside the item
+      if (act === 'srcent') { const t = String(btn.dataset.entT || ''); if (!t) return; btn.disabled = true;
+        this.callResult('turn.entity.look', { session_id: this._sid(), text: t, type: String(btn.dataset.entY || '') }).then(() => { btn.disabled = false; this.refresh && this.refresh(); });
+        return; }
       if (act === 'entopen') { this._entOpen = this._entOpen || {}; const id = String(btn.dataset.ent || ''); this._entOpen[key] = this._entOpen[key] === id ? '' : id; this._open.add(key); if (this._doc) this.render(this._doc); return; }
       if (act === 'entlook') { const c = this._contentOf(key) || {}; const [gi, ei] = String(btn.dataset.ent || '').split(':').map(Number);
         const e = ((((c.groups || [])[gi]) || {}).entities || [])[ei]; if (!e) return; btn.textContent = 'looking…'; btn.disabled = true;
@@ -3342,6 +3363,21 @@
       const text = String((c && (c.text || c.content)) || '');
       return text ? { text } : { err: (c && c.error) || (r && r.error) || '' };
     }
+    /* every source drawn asks the reader cache (never the web) whether its page has been read; a page the research or a
+       fetch already read arrives with its reading, so "read" opens at once and the item shows who, how long and what */
+    _srcPrefetch(blocks) {
+      this._srcProbed = this._srcProbed || new Set();
+      const todo = (blocks || []).filter((b) => b && b.type === 'source' && b.key != null && b.content && b.content.url && !b.content.reader
+        && !b.content.text && !b.content.failed && !this._srcProbed.has(String(b.key))).slice(0, 12);
+      todo.forEach((b) => this._srcProbed.add(String(b.key)));
+      const keep = ['title', 'byline', 'site', 'published', 'image', 'minutes', 'words', 'composite', 'parts', 'url', 'entities', 'via'];
+      todo.forEach(async (b) => {
+        let r = null; try { r = await this.callResult('reader.page', { url: String(b.content.url), max_chars: 40000, mode: 'cache' }); } catch (e) { return; }
+        if (!(r && r.ok && String(r.markdown || '').trim().length > 200)) return;
+        const reader = { markdown: String(r.markdown).slice(0, 40000) }; keep.forEach((k) => { if (r[k] != null && r[k] !== '') reader[k] = r[k]; });
+        this.call('canvas.update', { key: String(b.key), content: Object.assign({}, b.content, { reader }) });
+      });
+    }
     async _srcAct(key, act) {
       const b = this._blockOf(key); const c = (b && b.content) || null; if (!c || !c.url) return;
       this._srcOpen = this._srcOpen || {};
@@ -3354,6 +3390,11 @@
         if (!rd.reader && !rd.text) return this._readout(key, rd.err || 'nothing came back');
         this._srcOpen[key] = true;
         return this.call('canvas.update', { key, content: Object.assign({}, c, rd.reader ? { reader: rd.reader } : { text: rd.text.slice(0, 40000) }) });
+      }
+      if (act === 'explode') {
+        const md = String((c.reader && c.reader.markdown) || c.text || ''); if (!md.trim()) return this._readout(key, 'read the page first');
+        return this.call('canvas.add', { kind: 'explode', key: 'explode:' + key, at: 'now', size: 'l',
+          content: { text: md.slice(0, 20000), title: String(c.title || 'page') + ' \u2014 exploded', binds: '' } });
       }
       if (act === 'shot') {
         if (c.shot) return this.call('canvas.update', { key, content: Object.assign({}, c, { shot: '' }) });

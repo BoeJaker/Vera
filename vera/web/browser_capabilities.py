@@ -498,6 +498,8 @@ async def reader_read(url: str, *, max_chars: int = 60_000, fresh: bool = False,
             out = _rc.trimmed(hit, max_chars)
             out.update(ok=True, cached=True, ms=round((time.monotonic() - t0) * 1000))
             return out
+    if mode == "cache":                        # only what has been read already - never a fetch (the canvas asks this)
+        return _err("not read yet", url=url, markdown="", cached=False, ms=round((time.monotonic() - t0) * 1000))
     rec, via, why = None, "", ""
     if mode in ("auto", "fetch"):
         page_html, title = html, ""
@@ -545,15 +547,16 @@ async def reader_read(url: str, *, max_chars: int = 60_000, fresh: bool = False,
                 "rendered for real (browser.reader). Its named things (people, organisations, places, dates) are added "
                 "in the background. Use this rather than web.fetch when you want to READ a page: less boilerplate, the "
                 "article only. Input: url (str!), max_chars (int default 60000), fresh (bool - skip the cache), mode "
-                "(auto|fetch|browser). Output: {ok, title, byline, site, published, image, description, markdown, words, "
-                "minutes, url, via (fetch|reader-proxy|browser), cached, entities?, read_at, ms}.",
+                "(auto|fetch|browser|cache). Output: {ok, title, byline, site, published, image, description, markdown, words, "
+                "minutes, url, via (fetch|reader-proxy|browser), cached, entities?, read_at, ms}. mode=cache answers only what "
+                "has been read already (never fetches).",
 )
 async def reader_page(url: str, max_chars: int = 60_000, fresh: bool = False, mode: str = "auto", trace_id=None) -> dict:
     if not str(url or "").strip():
         return _err("url required")
     m = str(mode or "auto").lower()
     return await reader_read(url, max_chars=max(500, int(max_chars or 60_000)), fresh=bool(fresh),
-                             mode=m if m in ("auto", "fetch", "browser") else "auto")
+                             mode=m if m in ("auto", "fetch", "browser", "cache") else "auto")
 
 
 @capability(
