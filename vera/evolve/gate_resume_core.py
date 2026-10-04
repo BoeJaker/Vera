@@ -58,3 +58,18 @@ def orphaned_lease(holder: Any, ids: Iterable[str]) -> bool:
 def resume_order(recs: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Oldest first - the order they were queued in."""
     return sorted(list(recs), key=lambda r: str(r.get("created_at") or ""))
+
+
+def latest_per_branch(recs: Iterable[Dict[str, Any]]):
+    """(keep, superseded): the newest pipeline per branch, oldest first; and each older one
+    with the id of the pipeline that supersedes it. 4 Oct 2026: the first resume picked up
+    18 gates, several the same branch re-adopted two or three times."""
+    newest: Dict[str, Dict[str, Any]] = {}
+    for r in recs or []:
+        b = str(r.get("branch") or "")
+        if b not in newest or str(r.get("created_at") or "") > str(newest[b].get("created_at") or ""):
+            newest[b] = r
+    keep = resume_order(newest.values())
+    superseded = [(r, newest[str(r.get("branch") or "")].get("id"))
+                  for r in recs or [] if newest.get(str(r.get("branch") or "")) is not r]
+    return keep, superseded
