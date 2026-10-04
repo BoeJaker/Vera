@@ -33,5 +33,10 @@ t('a tab pick keeps the memory graph drawn (toggles on, never overwrites the cla
   t('the canvas editor is as tall as its text and grows with it; Tab indents code', CV.includes('if (ta) this._editWire(ta); }')
     && CV.includes("ta.style.height = Math.min(ta.scrollHeight + 4, Math.round((root.innerHeight || 900) * 0.7)) + 'px';") && CV.includes("ta.addEventListener('input', fit);")
     && CV.includes("if (ev.key !== 'Tab' || ev.ctrlKey || ev.altKey || ev.metaKey) return;")); }
+// ...and the kit's editor (the Edit on every code card - the chat's, the canvas's): its scroll box is a flex row of fixed
+// height, which stretched the code layer (and the textarea laid over it) to that height - every line drawn, only the
+// first screenful clickable. Laid out at the top, the layer is as tall as the code and the box scrolls it.
+{ const VO = R('vera/vera_output_element.js');
+  t('the kit editor\'s textarea is as tall as the code it covers', VO.includes('.vo-ed-sc{display:flex;align-items:flex-start;overflow:auto;')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

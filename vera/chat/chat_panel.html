@@ -8839,6 +8839,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     // THE CARD IS THE SHARED ONE (vera_output.js): the same card, actions and look the agent loop and the canvas
     // draw - Copy · Edit · Explode · Preview · Pop out · Pane · Run · Save · Canvas - with the chat's own explode
     // panel, artifact save, pop-out and pane plugged in as its hooks (_voHooks). Below: the fallback without it.
+    // a deck, a sheet, a page (```slides · ```sheet/```csv/```tsv · ```document): the kit's file cards - drawn as they
+    // stream, with every file type they can be downloaded as (owner, 2026-10-04)
+    if(typeof VeraOut!=='undefined' && VeraOut.fileKind && VeraOut.fileKind(L)) return VeraOut.fence(lang, info, raw, st, {title:fname});
     if(typeof VeraOut!=='undefined') return VeraOut.card(lang, raw, {filename:fname, incomplete:!!st.incomplete, pane:true});
     const id=_registerCodeBlock(lang,raw,fname);
     const langLbl=esc((lang||'plain').toLowerCase())+(fname?` · <span style="color:var(--acc,#5a9e8f)">${esc(fname)}</span>`:'');
@@ -11971,7 +11974,7 @@ Your task: decide what to do next to advance toward the goal.
           // the session canvas within its budget and tells the model what is shown. The canvas's ✦ switch turns it off;
           // 'vera:canvas:tell' = '0' keeps the placing and leaves the model untold.
           canvas_enrich:_cvEnrichOn()||undefined, canvas_text:msg, canvas_mid:_cvRelMid||'',
-          canvas_tell:_cvTellOn(),
+          canvas_tell:_cvTellOn(), chat_files:true,
         })
       });
       if(!resp.ok){bubEl.textContent='✗ HTTP '+resp.status;return;}
