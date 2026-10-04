@@ -24,6 +24,7 @@ CAP_FORMS = ("kv", "table", "list", "json", "log", "terminal", "diff", "code", "
 
 # the capability's own hint: what the dashboard already reads each of these as (kept in step with CAP_HINTS in the element)
 CAP_HINTS: Dict[str, Dict[str, Any]] = {
+    "markets.chart": {"form": "candles", "map": {"bars": "bars"}},   # a symbol's candles (canvas enrichment, slice 5)
     "sysmon.history": {"form": "trace", "map": {"series": "samples", "v": "cpu"}},
     "sysmon.status": {"form": "numbers", "map": {"pick": {"cpu": "resources.cpu", "memory": "resources.mem", "guests": "proxmox.running", "containers": "docker.running"}}},
     "obs.events": {"form": "log", "map": {"events": "$", "t": "ts", "kind": "type", "text": "name"}},

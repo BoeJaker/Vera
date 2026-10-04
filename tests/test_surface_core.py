@@ -86,3 +86,10 @@ def test_the_note_names_each_item_with_what_it_belongs_to_and_stays_short():
     assert "- [your business accounts (ledger, orders, inventory, tax)] Ledger: revenue 1200" in note
     assert "1 more item is still arriving" in note
     assert len(sc.prompt_block(placed * 40)) <= 1200 and sc.prompt_block([]) == ""
+
+
+def test_a_registry_with_odd_entries_still_builds():
+    reg = dict(REG, **{"markets.alias": "markets.overview", "markets.weird": {"schema": "not a schema"},
+                       "markets.listy": {"schema": {"properties": ["symbol"], "required": "symbol"}}})
+    idx = sc.build(reg, MEASURED, LAYOUTS + [["not", "a", "layout"], {"widgets": ["id-only"]}], PANELS + ["markets-x"])
+    assert any(s["id"] == "markets.overview" for s in idx["surfaces"]) and not any(s["id"] == "markets.alias" for s in idx["surfaces"])
