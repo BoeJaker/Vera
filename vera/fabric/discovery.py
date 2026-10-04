@@ -3241,6 +3241,17 @@ async def discover_recall(query: str = "", urls: Optional[List[str]] = None,
                           dataset_id: str = "", limit: int = 20) -> Dict:
     """Pull already-processed discovery data (pages + entities) from the fabric.
 
+    The reads are synchronous SQLite (LIKE scans, a 10 s busy_timeout), so they run
+    in a worker thread: web.search calls this beside every live search, and on the
+    event loop it stalled every other request while it ran (RF-02).
+    """
+    return await asyncio.to_thread(_discover_recall_sync, query, urls, dataset_id, limit)
+
+
+def _discover_recall_sync(query: str = "", urls: Optional[List[str]] = None,
+                          dataset_id: str = "", limit: int = 20) -> Dict:
+    """Pull already-processed discovery data (pages + entities) from the fabric.
+
     Used by the web.* caps to return what the fabric already knows about a query
     or set of URLs — in parallel with the live web search. Reads the fabric_pages
     store (populated by crawls + discover_ingest_page) and the shared entity
