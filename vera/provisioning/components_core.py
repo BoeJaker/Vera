@@ -160,7 +160,14 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
         fetch = (
             f"rm -rf {src}.new; mkdir -p {src}.new; "
             f"base64 -d | tar -xzf - -C {src}.new; "
-            f"rm -rf {src}; mv {src}.new {src}; "
+            # move the old tree aside, never rm it in place: the worker still
+            # running from it can write bytecode into it mid-delete, and `rm`
+            # then fails "Directory not empty" under set -e (cpu-246,
+            # 2026-10-04). A rename cannot fail that way; the old tree goes
+            # best-effort.
+            f"rm -rf {src}.old 2>/dev/null || true; "
+            f"[ -d {src} ] && mv {src} {src}.old; mv {src}.new {src}; "
+            f"rm -rf {src}.old 2>/dev/null || true; "
         )
     else:
         fetch = (

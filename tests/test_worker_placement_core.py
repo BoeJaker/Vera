@@ -202,8 +202,12 @@ def test_bundle_mode_unpacks_stdin_and_swaps_the_tree():
     assert "git clone" not in cmd
     assert "base64 -d | tar -xzf - -C /opt/vera/worker/src.new" in cmd
     # unpack beside, then swap: a file the new commit deleted must not linger
-    assert cmd.index("tar -xzf") < cmd.index("rm -rf /opt/vera/worker/src;") \
+    assert cmd.index("tar -xzf") < cmd.index("mv /opt/vera/worker/src /opt/vera/worker/src.old") \
         < cmd.index("mv /opt/vera/worker/src.new /opt/vera/worker/src")
+    # the old tree is moved aside, never rm'd in place under set -e: the
+    # running worker writes bytecode into it mid-delete (cpu-246, 2026-10-04)
+    assert "rm -rf /opt/vera/worker/src;" not in cmd
+    assert "rm -rf /opt/vera/worker/src.old 2>/dev/null || true" in cmd
     # the venv is outside the swapped tree, and not rebuilt when present
     assert "/opt/vera/worker/venv/bin/python" in cmd
     assert "[ -x /opt/vera/worker/venv/bin/python ] || python3 -m venv" in cmd
