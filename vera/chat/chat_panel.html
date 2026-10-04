@@ -7933,6 +7933,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       const msgsEl=document.getElementById('msgs');
       if(msgsEl&&!msgsEl._cvRelBound){ msgsEl._cvRelBound=true; msgsEl.addEventListener('scroll', _cvRelFocus, {passive:true}); msgsEl.addEventListener('click', _cvRelFocus); }
       _cvColsSync();
+      try{ _cvEnrichPaint(); _cvTellPaint(); }catch(_){}   // the banner's switches exist from here: their state, drawn
       try{ _cvApplyCfg(); }catch(_){}   // the reader's own canvas settings, onto the element that just mounted
       try{ _cvSyncBlocks(); }catch(_){}  // and the blocks tier as it stands NOW, not as it stood when this line ran
       el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); _cvStageSync(true); }); }
