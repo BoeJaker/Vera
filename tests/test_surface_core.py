@@ -115,3 +115,9 @@ def test_a_read_the_turn_named_comes_before_the_headlines_and_a_series_is_summar
     assert {x["cap"] for x in top2} == {"markets.chart", "markets.symbol.chart"} and all(x["args"] == {"symbol": "BTC"} for x in top2)
     s = sc.summarise({"t": [1, 2, 3], "equity": [100.0, 105.0, 110.0], "ok": True})
     assert s == "3 points: equity last 110 (+10.0%)"
+
+
+def test_upkeep_is_never_run_and_a_charts_figures_lead_its_summary():
+    assert not sc.is_read("markets.history.repair") and not sc.is_read("markets.history.audit") and sc.is_read("markets.chart")
+    s = sc.summarise({"symbol": "BTC-USD", "last": 84884.3, "change_pct": 4.83, "count": 3, "bars": [{"t": 1, "open": 1, "close": 2}] * 3})
+    assert s == "BTC-USD - last 8.488e+04; change_pct 4.83 (3 rows)"
