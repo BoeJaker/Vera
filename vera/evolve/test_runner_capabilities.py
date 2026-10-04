@@ -341,7 +341,10 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
         key = await put_archive()
         res = await run("pytest.shard", {
             "_blob_refs": {"archive": key}, "files": c["files"], "markers": markers,
-            "testenv_sha": want, "timeout": timeout},
+            "testenv_sha": want, "timeout": timeout,
+            # several pytest processes per node chunk (each file still once)
+            "parallel": cfg["node_parallel"],
+            "durations": {f: durations.get(f) for f in c["files"] if durations.get(f) is not None}},
             label=f"gate chunk {rid} ({len(c['files'])} files)", max_wait_s=30,
             host_fallback=False)
         out = res["out"]

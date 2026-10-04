@@ -47,7 +47,8 @@ DURATIONS_KEY = "vera:evolve:test_durations"
 DEFAULT_FILE_S = 1.0
 #: Pool config (json): {"enabled": bool, "max_nodes": int, "min_files": int}.
 POOL_KEY = "vera:evolve:test_pool"
-POOL_DEFAULTS = {"enabled": False, "max_nodes": 3, "min_files": 40, "chunks": 12}
+POOL_DEFAULTS = {"enabled": False, "max_nodes": 3, "min_files": 40, "chunks": 12,
+                 "node_parallel": 4}
 #: Per-runner lease for the host's container runner (replaces the one-gate lease).
 HOST_RUNNER_LEASE = "vera:evolve:runner:host"
 
@@ -64,6 +65,8 @@ def merge_pool_config(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
                 cfg[k] = max(1, int(v))
             elif k == "chunks":
                 cfg[k] = max(1, min(64, int(v)))
+            elif k == "node_parallel":
+                cfg[k] = max(1, min(8, int(v)))
         except (TypeError, ValueError):
             pass
     return cfg
@@ -283,6 +286,42 @@ def merge(parsed: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     return out
 
 
+def combine_rc(rcs: Sequence[int]) -> int:
+    """One exit code for several pytest processes over one chunk: the first
+    real failure; 5 (no tests collected) only when every process had none."""
+    real = [rc for rc in rcs if rc not in (0, 5)]
+    if real:
+        return real[0]
+    return 5 if rcs and all(rc == 5 for rc in rcs) else 0
+
+
+def merge_junit(xmls: Sequence[str]) -> str:
+    """Several JUnit XML files as ONE testsuite whose counts are the sums (the
+    gate's parser reads a single suite's totals)."""
+    cases, totals, secs = [], {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}, 0.0
+    for x in xmls:
+        if not x:
+            continue
+        try:
+            root = ET.fromstring(x)
+        except ET.ParseError:
+            continue
+        for suite in root.iter("testsuite"):
+            for k in totals:
+                try:
+                    totals[k] += int(suite.get(k) or 0)
+                except ValueError:
+                    pass
+            try:
+                secs += float(suite.get("time") or 0)
+            except ValueError:
+                pass
+            cases.extend(ET.tostring(c, encoding="unicode") for c in suite.findall("testcase"))
+    attrs = " ".join(f'{k}="{v}"' for k, v in totals.items())
+    return (f'<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" {attrs} '
+            f'time="{secs:.3f}">' + "".join(cases) + "</testsuite></testsuites>")
+
+
 # ── the node's side ───────────────────────────────────────────────────────────
 #: Directories of the worktree a shard never needs (and that can be huge).
 ARCHIVE_EXCLUDE = (".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache")
@@ -316,39 +355,70 @@ def node_run_shard(inputs: Dict[str, Any], progress, should_stop) -> Dict[str, A
                 if m.name.startswith("/") or ".." in m.name.split("/") or m.issym() or m.islnk():
                     continue
                 tf.extract(m, app)
-        junit = os.path.join(run, "junit.xml")
-        cmd = [os.path.join(TESTENV_DIR, "bin", "python"), "-m", "pytest", *files,
-               "--junitxml", junit, "-p", "no:cacheprovider", "-q"]
-        if markers:
-            cmd += ["-m", markers]
-        env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": run, "LANG": "C.UTF-8",
-               "PYTHONPATH": f"{run}:{app}", "PYTHONDONTWRITEBYTECODE": "1",
-               "TLS_ENABLED": "0", "VERA_IS_DEV_SANDBOX": "1",
-               "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
-        progress({"stage": "running", "files": len(files)})
+        # Split the chunk over `parallel` pytest processes (balanced by the
+        # recorded durations): a node has ~10 free cores, one process used one
+        # of them (2026-10-05). Each file still runs exactly once, in its own
+        # process group, as with chunks.
+        k = max(1, min(int(inputs.get("parallel") or 1), len(files)))
+        groups = shard(files, {f: float(v) for f, v in (inputs.get("durations") or {}).items()}, k)
+        base_env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8",
+                    "PYTHONPATH": f"{run}:{app}", "PYTHONDONTWRITEBYTECODE": "1",
+                    "TLS_ENABLED": "0", "VERA_IS_DEV_SANDBOX": "1",
+                    "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+        procs = []
+        progress({"stage": "running", "files": len(files), "processes": len(groups)})
         t0 = time.time()
-        proc = subprocess.Popen(cmd, cwd=app, env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, start_new_session=True)
-        out = b""
-        while True:
-            try:
-                out, _ = proc.communicate(timeout=2)
+        for i, g in enumerate(groups):
+            home = os.path.join(run, f"home{i}")
+            os.makedirs(home)
+            junit = os.path.join(run, f"junit{i}.xml")
+            cmd = [os.path.join(TESTENV_DIR, "bin", "python"), "-m", "pytest", *g,
+                   "--junitxml", junit, "-p", "no:cacheprovider", "-q"]
+            if markers:
+                cmd += ["-m", markers]
+            procs.append((subprocess.Popen(cmd, cwd=app, env=dict(base_env, HOME=home),
+                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                           start_new_session=True), junit))
+        outs = [b""] * len(procs)
+        import threading
+
+        def drain(i, proc):
+            outs[i] = proc.stdout.read() or b""
+        readers = [threading.Thread(target=drain, args=(i, pr), daemon=True)
+                   for i, (pr, _j) in enumerate(procs)]
+        for t in readers:
+            t.start()
+        while any(pr.poll() is None for pr, _j in procs):
+            if should_stop() or time.time() - t0 > timeout:
+                import signal
+                for pr, _j in procs:
+                    if pr.poll() is None:
+                        try:
+                            os.killpg(pr.pid, signal.SIGKILL)
+                        except OSError:
+                            pass
                 break
+            time.sleep(1)
+        for pr, _j in procs:
+            try:
+                pr.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                if should_stop() or time.time() - t0 > timeout:
-                    import signal
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    out, _ = proc.communicate()
-                    break
-        rc = proc.returncode if proc.returncode is not None else -9
-        try:
-            with open(junit, encoding="utf-8") as f:
-                xml = f.read()
-        except OSError:
-            xml = ""
-        text = out.decode("utf-8", "replace")
+                pass
+        for t in readers:
+            t.join(timeout=5)
+        rcs = [pr.returncode if pr.returncode is not None else -9 for pr, _j in procs]
+        xmls = []
+        for _pr, junit in procs:
+            try:
+                with open(junit, encoding="utf-8") as f:
+                    xmls.append(f.read())
+            except OSError:
+                xmls.append("")
+        rc = combine_rc(rcs)
+        xml = merge_junit(xmls)
+        text = "\n".join(o.decode("utf-8", "replace")[-6000:] for o in outs)
         combined = (text[-20000:] + "\n__VERA_JUNIT__\n" + xml + "\n__VERA_RC=" + str(rc) + "__")
         return {"out": combined, "seconds": round(time.time() - t0, 1), "files": len(files),
-                "python": st.get("python", "")}
+                "processes": len(groups), "python": st.get("python", "")}
     finally:
         shutil.rmtree(run, ignore_errors=True)
