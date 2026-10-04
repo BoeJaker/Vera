@@ -77,8 +77,13 @@ def test_the_callers_attribution_session_is_not_injected_into_a_kwargs_engine():
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == "_make_mcp_call_handler")
     body = "\n".join(src.splitlines()[fn.lineno - 1:fn.end_lineno])
-    assert 'if "session_id" in _own:' in body
+    # The rule lives in _inject_attribution_session(name, _own): the cap's OWN schema,
+    # minus the caps whose session_id is a search filter (test_mcp_session_filter.py).
+    assert "if _inject_attribution_session(name, _own):" in body
     assert 'if "session_id" in accepted:' not in body
+    helper = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == "_inject_attribution_session")
+    assert '"session_id" in (own_props or {})' in ast.get_source_segment(src, helper)
 
 
 def test_the_real_v7_accepts_plan_style():
