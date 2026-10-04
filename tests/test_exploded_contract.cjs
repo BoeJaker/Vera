@@ -51,4 +51,10 @@ t('the pipes are drawn as svg and light end to end under the pointer', /<svg cla
   const o = X.layout(X.contractScene(big), 'iso', 1400, 900, {}), fn = o.widgets.filter((w) => w.card && /^g\d+$/.test(w.card.n));
   t('iso: a structure\'s plate holds forty functions, not twenty-four and "+N more"', fn.length === 40 && !o.labels.some((l) => /more/.test(l.cls) && /function/.test(l.k)), fn.length + ' drawn'); }
 t('a new scene opens fitted: the last scene\'s zoom, pan, plate focus and open card do not carry over', /if \(sk !== this\._sceneKey\)/.test(SRC) && /this\._S\.isoFocus = null; this\._S\.focus = null;/.test(SRC));
+{ const sc = X.contractScene(CODE), cards = [], links = []; sc.layers.forEach((L) => sc.turns.forEach((u) => (u[L.key] || []).forEach((c) => cards.push(c)))); sc.turns.forEach((u) => (u.links || []).forEach((l) => links.push(l)));
+  const chat = { sel: 'm1', turns: [{ mid: 'm1', who: 'you', text: 'write a store', read: [], say: [], made: [{ n: 'python', d: 'code block', kind: 'code', body: 'class Store: ...' }], land: [], struct: cards, structLinks: links, structFrom: 'made:0' }] };
+  const i = X.layout(chat, 'iso', 1400, 900, {}), c = X.layout(chat, 'cards', 1400, 900, {}), f = X.layout(chat, 'front', 1400, 900, {});
+  t('a card exploded IN PLACE: the chat scene grows a structure plate in iso, cards and front - its cards, its relations, a run from the card',
+    i.bands.some((b) => b.layer === 'struct') && i.widgets.filter((w) => w.layer === 'struct').length === cards.length && i.paths.some((q) => q.title === 'what this card holds') && i.paths.filter((q) => /link/.test(q.cls)).length >= links.length
+    && c.plates.some((p) => p.layer === 'struct') && f.panels.some((p) => p.layer === 'struct') && i.bands.filter((b) => b.layer !== 'struct').length === 5, JSON.stringify({ bands: i.bands.map((b) => b.layer), w: i.widgets.length })); }
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);

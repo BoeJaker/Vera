@@ -37,6 +37,8 @@
    laned afterwards (cardsRouter · isoRouter), so no two legs share a length and a bundle stays parallel. The ACTIVITY layer
    hangs the turn's capability calls off the card that triggered each; the ESTATE layer draws where they ran. Both are
    optional and remembered; so is the mini galaxy on the graph band (off: the board's lanes alone).
+   A CARD EXPLODED IN PLACE (turn.struct / structLinks / structFrom): the turn grows a "structure" plate holding what the
+   card holds, its relations as runs and a run from the card into it - in cards, front and iso.
    A STRUCTURE as a scene (scene.layers + turn.links): the code and prose explodes (code.explode, nlp.explode.prose) drawn
    in the same three styles — contractScene(doc) makes the scene: a station per top-level group (a file, a paragraph), a
    plate per kind of card (module · class · method, person · place · date) or per layer when the kinds do not split it, the
@@ -139,6 +141,9 @@
   function layout(scene, mode, W, H, o) {
     o = o || {}; let turns = (scene && scene.turns) || []; mode = mode === 'front' || mode === 'iso' ? mode : 'cards';
     const LAYS = scene && Array.isArray(scene.layers) && scene.layers.length ? scene.layers : LAYERS, XC = LAYS !== LAYERS;   // a structure names its own plates
+    // a card exploded IN PLACE: the turn carries what the card holds (turn.struct, its relations turn.structLinks, the card
+    // it came from turn.structFrom = 'layer:index') and grows a plate of its own for it
+    const hasStruct = !XC && turns.some((t) => Array.isArray(t.struct) && t.struct.length), STRL = { key: 'struct', name: 'structure', sub: 'inside the card', col: '#c678dd' };
     // a link between two of a turn's cards, by id: the card's place in its plate (layer key : index), or nothing
     const linkAt = (t, id) => { for (let i = 0; i < LAYS.length; i++) { const k = LAYS[i].key, j = ((t && t[k]) || []).findIndex((c) => c && String(c.id) === String(id)); if (j >= 0) return [i, j, k + ':' + j]; } return null; };
     const selIdx = Math.max(0, turns.findIndex((t) => t.mid === (scene && scene.sel))); let sel = turns.length ? Math.max(0, selIdx) : 0;
@@ -179,7 +184,7 @@
       // calls off the card that triggered each of them under the produced cards; the ESTATE layer is a sixth plate.
       const ACT = !!(o.layers && o.layers.activity), EST = !!(o.layers && o.layers.estate), GAL = o.galaxy !== false;   // the board draws the galaxy sheet beside the lanes; the chip hides it
       const ESTL = { key: 'estate', name: 'estate', sub: 'where it ran', col: 'var(--xp-dv3)', kind: 'nodes' };
-      const COLSL = EST ? LAYS.concat([ESTL]) : LAYS, NP = COLSL.length;
+      const COLSL = (EST ? LAYS.concat([ESTL]) : LAYS).concat(hasStruct ? [STRL] : []), NP = COLSL.length;
       const kW = Math.max(0.5, Math.min(1, (W - 96) / (NP * 430 + (NP - 1) * 54)));   // the margins, and room for the rounding
       const SWD = Math.round(430 * kW), SGP = Math.round(54 * kW), CW = SWD - 32, NX = Math.round(120 * kW), VP = 64, CH = 54, PADX = 40, PADY = 92, ROWGAP = 60, NR = 44, HEAD = 60, FOOT = 24, MINH = 150;
       const HM = o.heights || {};
@@ -253,6 +258,9 @@
         g.rels.forEach((r) => { const a = boxes['node:' + r.from], b = boxes['node:' + r.to], Rc = RELC[r.kind] || RELC.cite; if (a && b) R.add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)]); });
         // a structure's own relations, card to card
         if (XC) (t.links || []).forEach((r) => { const a = linkAt(t, r.from), b = linkAt(t, r.to); if (a && b && a[2] !== b[2] && bx(a[2]) && bx(b[2])) R.add(bx(a[2]), bx(b[2]), linkCol(r.kind), 'link', r.title); });
+        if (t.struct && t.struct.length) { const sb = (k) => { const j = t.struct.findIndex((c) => String(c.id) === String(k)); return j >= 0 ? bx('struct:' + j) : null; };
+          if (t.structFrom && bx(t.structFrom) && bx('struct:0')) R.add(bx(t.structFrom), bx('struct:0'), 'var(--xp-ac)', 'link', 'what this card holds');
+          (t.structLinks || []).forEach((r) => { const a = sb(r.from), b = sb(r.to); if (a && b && a !== b) R.add(a, b, linkCol(r.kind), 'link', r.title); }); }
         R.flush();
         out.rows.push({ mid: t.mid, si, y: px(rowTop), h: px(rowH + 22) });
         rowTop += 22 + rowH + ROWGAP;
@@ -271,17 +279,18 @@
       const t = turns[sel], g = gData(t);
       const PW = Math.round(Math.max(400, Math.min(568, (W - 40) / 2.6))), PH = Math.round(Math.max(420, Math.min(640, H - 200)));   // the runs' floor lies below the panels and the host's composer floats over the foot
       const PDX = Math.max(300, Math.min(520, (W - 80) / 3.2)), PDZ = 126, li0 = Math.max(0, Math.min(LAYS.length - 1, o.layer == null ? (XC ? 0 : 2) : o.layer)), foc = o.focus == null ? null : o.focus;
-      const CAX = LAYS.map((_, i) => XC ? i : i + (i >= 1 ? 0.3 : 0) + (i >= 4 ? 0.3 : 0));   // the chat's own wider gaps where its layers meet the graph and the canvas
+      const FL = LAYS.concat(hasStruct ? [STRL] : []);
+      const CAX = FL.map((_, i) => XC ? i : i + (i >= 1 ? 0.3 : 0) + (i >= 4 ? 0.3 : 0));   // the chat's own wider gaps where its layers meet the graph and the canvas
       const idOf = (c) => String((c && (c.id != null ? c.id : c.n)) || '');
       // the context graph's layer is a card per family: the lane, its count and top relevance, its members as rows
       const lanes = LANES.filter((l) => g.laneList.indexOf(l) >= 0);
       const laneCards = lanes.map((l) => { const ms = g.nodes.filter((n) => n.lane === l).sort((a, b) => b.score - a.score); return { n: l, d: ms.length + ' · top ' + ms[0].score.toFixed(2), col: ms[0].col || LAYERS[0].col, kind: 'panel', lane: l, rows: ms.slice(0, 6).map((m) => ({ k: m.label, v: m.score.toFixed(2) })) }; });
-      LAYS.forEach((L, li) => { const off = CAX[li] - CAX[li0], a = Math.abs(li - li0); const list = L.kind === 'graph' ? laneCards : cardsOf(t, L.key);
+      FL.forEach((L, li) => { const off = CAX[li] - CAX[li0], a = Math.abs(li - li0); const list = L.kind === 'graph' ? laneCards : cardsOf(t, L.key);
         out.panels.push({ layer: L.key, name: L.name, sub: L.sub, col: L.col, li, n: list.length, w: PW, h: PH, px: off * PDX, pz: -Math.abs(off) * PDZ, gen: L.key === 'say' && !!pendOf(t),
           tf: foc === li ? 'translateX(0px) translateZ(24px) rotateY(0deg)' : 'translateX(' + (off * PDX).toFixed(0) + 'px) translateZ(' + (-Math.abs(off) * PDZ).toFixed(0) + 'px) rotateY(26deg)',
           cls: (foc === li ? 'focus ' : foc != null ? 'hushed ' : '') + (a === 0 ? 'on' : a === 1 ? 'near' : a >= 3 ? 'gone' : 'far') + (list.length > 5 ? ' many' : ''), d: (a * 0.07).toFixed(2) + 's', el: 1 + li, focL: foc === li ? 'back' : 'focus',
           cards: (a > 2 ? [] : list).map((c, ci) => ({ id: t.mid + ':' + L.key + ':' + (L.kind === 'graph' ? c.lane : ci), mid: t.mid, layer: L.key, ci, card: c, col: c.col || L.col })), graph: L.kind === 'graph' ? g : null }); });
-      for (let i = 0; i + 1 < LAYS.length; i++) { const oa = CAX[i] - CAX[li0], ob = CAX[i + 1] - CAX[li0]; const ax = oa * PDX, az = -Math.abs(oa) * PDZ, bx = ob * PDX, bz = -Math.abs(ob) * PDZ; out.leaders.push({ tf: 'translateX(' + ax.toFixed(0) + 'px) translateZ(' + az.toFixed(0) + 'px) rotateY(' + (Math.atan2(-(bz - az), bx - ax) * 180 / Math.PI).toFixed(1) + 'deg)', w: Math.sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az)).toFixed(0) + 'px', cls: (i === 0 || i === 3) ? 'across' : 'same' }); }
+      for (let i = 0; i + 1 < FL.length; i++) { const oa = CAX[i] - CAX[li0], ob = CAX[i + 1] - CAX[li0]; const ax = oa * PDX, az = -Math.abs(oa) * PDZ, bx = ob * PDX, bz = -Math.abs(ob) * PDZ; out.leaders.push({ tf: 'translateX(' + ax.toFixed(0) + 'px) translateZ(' + az.toFixed(0) + 'px) rotateY(' + (Math.atan2(-(bz - az), bx - ax) * 180 / Math.PI).toFixed(1) + 'deg)', w: Math.sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az)).toFixed(0) + 'px', cls: (i === 0 || i === 3) ? 'across' : 'same' }); }
       // the relations, the same ones the iso scene draws, as panel:card pairs — laid out for the carousel by frontRuns
       // once the element has measured where the cards sit: the context entry into the record it became (a memory's
       // dashed), every read into the exchange, the exchange into what it made, what it made into where it landed, and
@@ -326,12 +335,13 @@
     const GU = UXS * KI, GV = KI;   // a station unit and an entity unit, in ground px
     const proj0 = (U, V, z) => { const p = P(U, V, z || 0); return { x: p[0], y: p[1] }; }; const proj = proj0;
     const ESTL = { key: 'estate', name: 'estate', sub: 'where it ran', col: 'var(--xp-dv3)', kind: 'nodes' }, ACTL = { key: 'activity', name: 'activity', sub: 'what ran', col: 'var(--xp-ac2)', kind: 'acts' };
-    const STA = LAYS.concat(ACT ? [ACTL] : [], EST ? [ESTL] : []);
+    const STA = LAYS.concat(ACT ? [ACTL] : [], EST ? [ESTL] : [], hasStruct ? [STRL] : []);
+    const capOf = (k) => k === 'land' ? CAPL : k === 'struct' ? RPC * 10 : CAP, mxOf = (k) => k === 'land' ? MAXCL : k === 'struct' ? 10 : MAXC;   // a structure plate holds sixty
     const graphs = turns.map(gData), actsL = turns.map((t) => ACT ? actsOf(t) : []), estsL = turns.map((t) => EST ? estOf(t) : []);
     const colsOf = (n, mx) => Math.max(1, Math.min(mx || MAXC, Math.ceil(n / RPC)));
     // every station is as wide as its fullest turn needs (a column per six items past the first), so the stations line up
     // across the floors; the context plate is the wide one (relevance spreads across it)
-    const colsAt = STA.map((L) => Math.max.apply(null, turns.map((t, si) => L.kind === 'graph' ? 1 : L.kind === 'acts' ? colsOf(actsL[si].length) : L.kind === 'nodes' ? colsOf(estsL[si].length) : L.key === 'land' ? Math.max(LANDC, colsOf(Math.min(CAPL, cardsOf(t, L.key).length), MAXCL)) : colsOf(Math.min(CAP, cardsOf(t, L.key).length))).concat([1])));
+    const colsAt = STA.map((L) => Math.max.apply(null, turns.map((t, si) => L.kind === 'graph' ? 1 : L.kind === 'acts' ? colsOf(actsL[si].length) : L.kind === 'nodes' ? colsOf(estsL[si].length) : L.key === 'land' ? Math.max(LANDC, colsOf(Math.min(CAPL, cardsOf(t, L.key).length), MAXCL)) : colsOf(Math.min(capOf(L.key), cardsOf(t, L.key).length), mxOf(L.key))).concat([1])));
     const halfW = (i) => i === 0 && !XC ? 0.64 : 0.44, GAP = 0.12;   // the context plate is the wide one
     const uOrg = []; { let u = 0; STA.forEach((L, i) => { uOrg[i] = u; u += 2 * halfW(i) + (colsAt[i] - 1) * DU + GAP; }); }
     const uC = (i, cj) => uOrg[i] + halfW(i) + (cj || 0) * DU;                       // a column's centre line
@@ -358,7 +368,7 @@
         const ll = proj((uA(i) + 0.04) * GU, (vA - 0.3) * GV, z);
         const count = L.kind === 'graph' ? g.nodes.length : L.kind === 'acts' ? acts.length : L.kind === 'nodes' ? ests.length : list.length;
         out.labels.push({ si, x: ll.x, y: ll.y, n: L.name, k: L.kind === 'acts' ? count + ' call' + (count === 1 ? '' : 's') : String(count), cls: 'layer sm ' + L.key, col: L.col, st: i });
-        if (empty) { const e = proj((U0 + U1) / 2, (V0 + V1) / 2, z); out.labels.push({ si, x: e.x, y: e.y, n: XC ? 'none here' : L.key === 'say' ? 'no reply yet' : L.key === 'read' ? 'nothing read' : L.key === 'made' ? 'nothing produced' : L.key === 'land' ? 'nothing landed' : L.key === 'graph' ? 'nothing read' : L.key === 'activity' ? 'no calls' : 'nowhere yet', k: '', cls: 'layer sm empty', col: 'var(--xp-t3)' }); return; }
+        if (empty) { const e = proj((U0 + U1) / 2, (V0 + V1) / 2, z); out.labels.push({ si, x: e.x, y: e.y, n: XC ? 'none here' : L.key === 'struct' ? '⌘ a card to see inside' : L.key === 'say' ? 'no reply yet' : L.key === 'read' ? 'nothing read' : L.key === 'made' ? 'nothing produced' : L.key === 'land' ? 'nothing landed' : L.key === 'graph' ? 'nothing read' : L.key === 'activity' ? 'no calls' : 'nowhere yet', k: '', cls: 'layer sm empty', col: 'var(--xp-t3)' }); return; }
         if (L.kind === 'graph') {
           // the PROMPT LINE down the plate's middle: a record sits nearer it the more relevant it is (alternate sides), a
           // lane per family along the plate; the twelve most relevant on the plate, the rest a count
@@ -392,7 +402,7 @@
           return; }
         // the items: down the rows first (centred in the span), then a column to the right; a canvas item dropped
         // somewhere on the plate (card.at.iso, ground px relative to the plate) stands there
-        const shown = list.slice(0, L.key === 'land' ? CAPL : CAP), more = list.length - shown.length, cols = colsOf(shown.length, L.key === 'land' ? MAXCL : MAXC), RPB = Math.ceil(shown.length / cols); let flow = 0;
+        const shown = list.slice(0, capOf(L.key)), more = list.length - shown.length, cols = colsOf(shown.length, mxOf(L.key)), RPB = Math.ceil(shown.length / cols); let flow = 0;
         if (more > 0) { const mp = proj(U1 - 20, V1 - 30, z); out.labels.push({ si, x: mp.x, y: mp.y, n: '+' + more + ' more', k: 'in the ' + L.name, cls: 'layer sm more', col: L.col, mid: t.mid }); }
         shown.forEach((c, ci) => { const at = L.key === 'land' && c.at && c.at.iso; let U, V;
           if (at && isFinite(+at.u)) { U = U0 + Math.max(40, Math.min(U1 - U0 - 40, +at.u)); V = V0 + Math.max(60, Math.min(V1 - V0 - 40, +at.v)); }
@@ -447,6 +457,9 @@
       estsL[si].forEach((e, ei) => { estRuns(e, (ai) => gp('act:' + ai)).forEach(([ai, title]) => add(gp('act:' + ai), gp('est:' + ei), 'var(--xp-dv3)', 'est', title)); if (e.via != null && gp('est:' + e.via)) add(gp('est:' + e.via), gp('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it', null, { direct: true }); });
       g.rels.forEach((r) => { const a = gp('node:' + r.from), b = gp('node:' + r.to), Rc = RELC[r.kind] || RELC.cite; if (a && b) add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true }); });
       if (XC) (t.links || []).forEach((r) => { const a = linkAt(t, r.from), b = linkAt(t, r.to); if (a && b && a[2] !== b[2]) add(gp(a[2]), gp(b[2]), linkCol(r.kind), 'link', r.title); });
+      if (t.struct && t.struct.length) { const sj = (k) => { const j = t.struct.findIndex((c) => String(c.id) === String(k)); return j >= 0 ? gp('struct:' + j) : null; };
+        if (t.structFrom && gp(t.structFrom) && gp('struct:0')) add(gp(t.structFrom), gp('struct:0'), 'var(--xp-ac)', 'link', 'what this card holds');
+        (t.structLinks || []).forEach((r) => { const a = sj(r.from), b = sj(r.to); if (a && b && a !== b) add(a, b, linkCol(r.kind), 'link', r.title); }); }
       /* CHANNEL ROUTING, as Estate > Live ops routes its pipes: a run never crosses the items. It rises off its pin to a
          height of its own (the runs at one pin fan by height), steps to the GUTTER left of its column, runs along the gutter
          to the GAP between two rows on the side of its target, along the gap to the target's gutter, rises or drops to the

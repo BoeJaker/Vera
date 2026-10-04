@@ -3921,7 +3921,7 @@ const CH = (() => {
       const a = tg.args || {};
       if(tg.cap === 'code.explode'){ url = '/code/explode'; body = a; }
       else body = a;
-    } else if(d.code && txt.trim()){ url = '/code/explode'; body = { text: txt, lang: d.lang || '' }; }
+    } else if(d.code && txt.trim()){ url = '/code/explode'; body = { text: txt, lang: d.lang || _xpGuessLang(txt) }; }
     else if(txt.trim().length >= 40){ body = { text: txt }; }
     else return { error: 'this card holds no record, no code and no passage' };
     try{
@@ -3932,8 +3932,30 @@ const CH = (() => {
   }
   /* A card's own structure (its \u2318): the card explodes INTO the scene - what it holds as cards, in cards, front and iso,
      the chip's way back to the chat - rather than a small face on the card. */
+  /* A code block with no language: the explode reads nothing but the module without one - guess it from the code. */
+  function _xpGuessLang(s){ s=String(s||'');
+    if(/^\s*(def \w+\s*\(|class \w+\s*[(:]|import \w|from [\w.]+ import )/m.test(s)) return 'python';
+    if(/\binterface \w+\s*\{|:\s*(string|number|boolean)\b/.test(s)) return 'typescript';
+    if(/\b(function\s*\w*\s*\(|const \w+\s*=|let \w+\s*=|=>|require\(|export )/.test(s)) return 'javascript';
+    if(/^\s*(package \w+|func \w+\s*\()/m.test(s)) return 'go';
+    return ''; }
+  /* A card's own structure (its \u2318) IN PLACE: the turn grows a "structure" plate in the chat's own exploded layout - the
+     card's classes, functions, methods and what it uses, the relations as runs, a run from the card into it. Pressed
+     again it folds away. (In a structure scene the card's structure becomes the scene, as before.) */
+  const _XPL_STRUCT={};
   async function _xplCardGraph(d){
     if(!_xplEl || !d.id) return;
+    if(!_xpl.doc){ const parts=String(d.id).split(':'), mid=parts[0], from=parts.slice(1).join(':');
+      if(_XPL_STRUCT[mid] && _XPL_STRUCT[mid].from===from){ delete _XPL_STRUCT[mid]; try{ _xplEl.graphClear(d.id); }catch(_){} _xplRefresh(); return; }
+      const doc0 = await _xpContractFor(d);
+      try{ _xplEl.graphClear(d.id); }catch(_){}
+      if(!doc0 || doc0.error){ appendSys('Nothing to explode in that card \u2014 ' + esc((doc0 && doc0.error) || 'no structure')); return; }
+      const sc = window.VeraExploded && VeraExploded.contractScene ? VeraExploded.contractScene(doc0, {}) : { layers:[], turns:[] };
+      const cards = []; sc.layers.forEach(L=>{ sc.turns.forEach(t=>{ (t[L.key]||[]).forEach(c=>cards.push(c)); }); });
+      const links = []; sc.turns.forEach(t=>{ (t.links||[]).forEach(l=>links.push(l)); });
+      if(!cards.length){ appendSys('Nothing to explode in that card \u2014 the '+(doc0.kind||'source')+' has no structure to draw.'); return; }
+      _XPL_STRUCT[mid]={ from, cards:cards.slice(0,60), links, doc:doc0, label:d.title||'' };
+      _xplRefresh(); return; }
     const doc = await _xpContractFor(d);
     try{ if(typeof _xplEl.graphClear==='function') _xplEl.graphClear(d.id); else _xplEl.setCardGraph(d.id, doc); }catch(_){}
     if(!doc || doc.error){ appendSys('Nothing to explode in that card \u2014 ' + esc((doc && doc.error) || 'no structure')); return; }
@@ -4000,7 +4022,7 @@ const CH = (() => {
     if(btn){ btn.classList.add('ok'); setTimeout(()=>btn.classList.remove('ok'), 900); }
     if(fences.length && fences[0].lines>=3){
       const f=fences[0];
-      return _xplShowDoc('msg:'+mid, '/code/explode', {text:f.code, lang:f.lang}, (f.lang||'code')+' · '+f.lines+' lines', {code:f.code, lang:f.lang},
+      return _xplShowDoc('msg:'+mid, '/code/explode', {text:f.code, lang:f.lang||_xpGuessLang(f.code)}, (f.lang||'code')+' · '+f.lines+' lines', {code:f.code, lang:f.lang},
                          fences.length>1 ? 'the largest of '+fences.length+' code blocks in this message' : 'the code in this message');
     }
     const prose=txt.replace(/```[\s\S]*?```/g,' ').trim();
@@ -4010,7 +4032,7 @@ const CH = (() => {
   async function _codeExplode(id, btn){
     const blk=_CODE_BLOCKS[id]; if(!blk) return;
     if(btn){ btn.classList.add('ok'); setTimeout(()=>btn.classList.remove('ok'), 900); }
-    return _xplShowDoc('code:'+id, '/code/explode', {text:blk.code, lang:blk.lang||''},
+    return _xplShowDoc('code:'+id, '/code/explode', {text:blk.code, lang:blk.lang||_xpGuessLang(blk.code)},
                    (blk.filename||blk.lang||'code')+' · '+blk.code.split('\n').length+' lines',
                    {code:blk.code, lang:blk.lang, path:blk.filename||''}, 'this code block');
   }
@@ -19223,7 +19245,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     if(last&&!last.read.length&&typeof CTX_NODES!=='undefined'){ const live=CTX_NODES.filter(n=>n.included!==false).map(_xplCtxCard); last.read=live.slice(0,12); last.readAll=live.slice(0,40); last.rel=_xplRels(); }
     // every turn: its moment, its canvas items as the session canvas holds them (a reload keeps what was placed; a move
     // lands where it was dropped), and — when the layers are on — the calls it made and where they ran
-    turns.forEach(t=>{ t.ts=tsOf[t.mid]||0; t.land=_xplLandOf(t.mid, t.land); });
+    turns.forEach(t=>{ t.ts=tsOf[t.mid]||0; t.land=_xplLandOf(t.mid, t.land); const s=_XPL_STRUCT[t.mid]; if(s){ t.struct=s.cards; t.structLinks=s.links; t.structFrom=s.from; } });   // a card exploded in place
     if(_xplLayers.activity||_xplLayers.estate){ const by=_xplBucket(turns), llm=_xplLLMFor(turns, by); turns.forEach(t=>{ const a=by[t.mid]||[]; if(_xplLayers.activity) t.activity=a; if(_xplLayers.estate) t.estate=_xplEstateOf(a, llm[t.mid]||[]); }); }
     return {turns, sel:(_grFocusMid&&turns.some(t=>t.mid===_grFocusMid))?_grFocusMid:(last?last.mid:'')};
   }

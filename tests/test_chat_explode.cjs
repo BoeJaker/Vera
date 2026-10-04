@@ -52,4 +52,7 @@ t('the embed can be asked for several records, as lanes', /body\.record_ids = th
 
 t('a card\'s own structure explodes the card into the scene (cards, front, iso), its whole code read', /_xplShowContract\('card:' \+ d\.id, doc,/.test(HTML) && /text:s\.slice\(0,200000\), lang\}/.test(HTML));
 t('the chip opens the structure as a vera-graph opening on Structure 3D', /data-xd="graph"/.test(HTML) && /g\.load\(veraUI\.Graph\.fromContract\(doc\)\)/.test(HTML) && /g\.setMode\('struct-iso'\)/.test(HTML));
+t('a card\'s structure explodes IN PLACE in the chat scene (a structure plate on its turn); pressed again it folds away', /_XPL_STRUCT\[mid\]=\{ from, cards:cards\.slice\(0,60\), links/.test(HTML) && /t\.struct=s\.cards; t\.structLinks=s\.links; t\.structFrom=s\.from;/.test(HTML) && /delete _XPL_STRUCT\[mid\]/.test(HTML));
+{ const g = HTML.match(/function _xpGuessLang\(s\)\{[\s\S]*?return ''; \}/); const guess = g ? eval('(' + g[0] + ')') : () => '';
+  t('a code block with no language is guessed (the explode reads only the module without one)', guess('import os\ndef f():\n  pass') === 'python' && guess('const a = (x) => x + 1;') === 'javascript' && guess('interface A { b: string }') === 'typescript' && guess('package main\nfunc main() {}') === 'go'); }
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);
