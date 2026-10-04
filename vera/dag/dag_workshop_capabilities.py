@@ -14508,12 +14508,13 @@ class _V6StepCritic:
             except Exception as e:
                 err = f"{type(e).__name__}: {e}"[:160]
             rec = {"step": step.get("id"), "title": step.get("title") or "", "note": note,
+                   "flag": PSx.critic_is_flag(note),
                    "elapsed_s": round(time.monotonic() - t1, 1), "route": self.route}
             self.notes.append(rec)
             self._landed.set()
             try:
                 await emit_event({"type": "agent_loop_v6.step_critique", "session_id": self.sid,
-                                  "stream_id": self.stream_id, **rec, "ok": not note,
+                                  "stream_id": self.stream_id, **rec, "ok": not rec["flag"],
                                   "error": err})
             except Exception:
                 pass
@@ -14525,7 +14526,10 @@ class _V6StepCritic:
         return _plan_styles.critic_block(fresh) if fresh else ""
 
     def recent_block(self) -> str:
-        return _plan_styles.critic_block(self.notes[-self.GATE_NOTES:]) if self.notes else ""
+        # The completion gate sees FLAGS only - a NEXT-only note is advice for the
+        # controller (critic_is_flag), not a reason to hold the run open.
+        flags = [n for n in self.notes if n.get("flag", bool(n.get("note")))]
+        return _plan_styles.critic_block(flags[-self.GATE_NOTES:]) if flags else ""
 
     def cancel(self) -> None:
         if self._runner is not None and not self._runner.done():
