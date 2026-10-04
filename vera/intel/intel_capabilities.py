@@ -64,12 +64,14 @@ try:
     from Vera.vera.intel import intel_ops_core as ops
     from Vera.vera.intel import intel_ledger_core as ledger
     from Vera.vera.intel import intel_change_core as chg
+    from Vera.vera.intel import intel_pm_core as pm
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
     from vera.intel import intel_ops_core as ops
     from vera.intel import intel_ledger_core as ledger
     from vera.intel import intel_change_core as chg
+    from vera.intel import intel_pm_core as pm
     from vera.intel.intel_store import IntelStore
 
 log = logging.getLogger("vera.intel")
@@ -1029,15 +1031,14 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
                             "score": s.get("score")})
     new: List[Dict[str, Any]] = []
     for ind in inds:
-        r = await _call("markets.bars", dataset_id=ind["dataset_id"], limit=400)
-        pts = [(a, b) for a, b in zip(r.get("t") or [], r.get("c") or []) if a is not None and b is not None]
-        if r.get("error") or len(pts) < 25:
-            ind["status"] = r.get("error") or f"waiting for data ({len(pts)} bars)"
+        ts, vals, err = await _series(ind)
+        if err or len(ts) < 25:
+            ind["status"] = err or f"waiting for data ({len(ts)} bars)"
             continue
-        ts, vals = [p[0] for p in pts], [float(p[1]) for p in pts]
-        ind.update(status="ok", last=vals[-1], last_t=ts[-1], bars=len(pts), checked=core.now_iso())
+        ind.update(status="ok", last=vals[-1], last_t=ts[-1], bars=len(ts), checked=core.now_iso())
         for c in chg.detect(ts, vals, kind=ind.get("kind", "price")):
-            if float(c["t"]) < ts[-1] - lookback_days * 86400 or (ind["id"], c["t"]) in known:
+            if float(c["t"]) < ts[-1] - lookback_days * 86400 or (ind["id"], c["t"]) in known \
+                    or (ind.get("market") and c["kind"] == "spike" and abs((c.get("detail") or {}).get("move") or 0) < 0.05):
                 continue
             c.update(indicator=ind["id"], topic_id=t["id"], label=ind.get("label"), ind_kind=ind.get("kind"),
                      text=chg.describe(c, ind.get("label") or ind["dataset_id"], ind.get("kind", "price")),
@@ -1062,16 +1063,31 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
                         "(spikes, level shifts, regime changes) join the topic's timeline, its assessments and its "
                         "alerts, each with the stories that landed around it. Input: topic_id (str!), kind "
                         "(price|macro|probability|count), query (what to look up, or the macro series id), "
-                        "dataset_id (an existing bar dataset instead), label. Output: {ok, indicator}.")
+                        "dataset_id (an existing bar dataset instead), label; for a prediction market, kind "
+                        "probability with market_source (polymarket|manifold) and market_id (from intel.pm.search "
+                        "or intel.pm.suggest). Output: {ok, indicator}.")
 async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str = "", dataset_id: str = "",
-                            label: str = "", trace_id=None):
+                            label: str = "", market_source: str = "", market_id: str = "", trace_id=None):
     t = store().get_topic(topic_id)
     if not t:
         return {"error": f"unknown topic: {topic_id}"}
     kind = (kind or "price").lower()
     if kind not in chg.KINDS:
         return {"error": f"kind must be one of {', '.join(chg.KINDS)}"}
-    ds, name = (dataset_id or "").strip(), ""
+    ds, name, market = (dataset_id or "").strip(), "", None
+    if kind == "probability" and not ds:
+        if not (market_source and market_id):
+            rows, _ = await pm_search(query, 5) if query else ([], [])
+            return {"error": "a probability needs a market: pass market_source and market_id"
+                             + (" - candidates below" if rows else ""), "candidates": rows}
+        try:
+            c = await _pm_market(market_source.strip().lower(), market_id.strip())
+        except Exception as ex:  # noqa: BLE001
+            return {"error": f"could not read that market: {type(ex).__name__}: {ex}"[:200]}
+        if not c:
+            return {"error": "that market is closed, resolved or not a yes/no market"}
+        market = {k: c.get(k) for k in ("source", "id", "token", "question", "url", "end")}
+        ds, name = pm.ref(c), pm.label(c)
     if not ds:
         if not query:
             return {"error": "query or dataset_id required"}
@@ -1096,11 +1112,111 @@ async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str 
     ind_id = hashlib.sha1(f"{topic_id}|{ds}".encode()).hexdigest()[:10]
     ind = {"id": ind_id, "topic_id": topic_id, "kind": kind, "dataset_id": ds, "query": query,
            "label": (label or name or query or ds)[:60], "added": core.now_iso(), "status": "new"}
+    if market:
+        ind["market"] = market
     inds = [i for i in inds if i["id"] != ind_id] + [ind]
     _save_indicators(topic_id, inds[:12])
     await _event("indicator.added", topic=topic_id, indicator=ind_id, label=ind["label"])
     return {"ok": True, "indicator": ind,
             "message": f"{t['name']} now watches {ind['label']} ({ds}); a new price fills in over the next minutes"}
+
+
+# ── prediction markets: an open question with a price on it ──────────────────
+
+async def _http_json(url: str, params: Optional[Dict[str, Any]] = None, timeout: float = 20.0) -> Any:
+    """A public, keyless JSON read (prediction-market APIs)."""
+    import httpx
+    async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "vera-intel/1"},
+                                 follow_redirects=True) as c:
+        r = await c.get(url, params=params)
+        r.raise_for_status()
+        return r.json()
+
+
+async def pm_search(query: str, limit: int = 8) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Open markets on Polymarket and Manifold for a question, best match first
+    (the NLP tier's reranker over the market questions; by volume without it)."""
+    cands: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    try:
+        cands += pm.polymarket_search(await _http_json(f"{pm.GAMMA}/public-search", {
+            "q": query, "limit_per_type": 6, "events_status": "active"}), 20)
+    except Exception as ex:  # noqa: BLE001
+        errors.append(f"polymarket: {type(ex).__name__}: {ex}"[:200])
+    try:
+        cands += pm.manifold_search(await _http_json(f"{pm.MANIFOLD}/search-markets", {"term": query, "limit": 10}), 10)
+    except Exception as ex:  # noqa: BLE001
+        errors.append(f"manifold: {type(ex).__name__}: {ex}"[:200])
+    if cands:
+        rr = await _nlp("nlp.rerank", query=query, documents=[
+            c["question"] + (f" ({c['event']})" if c.get("event") and c["event"] != c["question"] else "")
+            for c in cands], top_k=len(cands))
+        scores = {int(x.get("index", -1)): x.get("score") for x in rr.get("ranked") or []}
+        for i, c in enumerate(cands):
+            c["match"] = round(float(scores[i]), 2) if scores.get(i) is not None else None
+        cands.sort(key=lambda c: (-(c["match"] if c.get("match") is not None else -99.0), -(c.get("volume") or 0)))
+    return cands[:max(1, int(limit))], errors
+
+
+async def _pm_market(source: str, market_id: str) -> Optional[Dict[str, Any]]:
+    if source == "polymarket":
+        return pm.polymarket_market(await _http_json(f"{pm.GAMMA}/markets/{market_id}"))
+    if source == "manifold":
+        return pm.manifold_market(await _http_json(f"{pm.MANIFOLD}/market/{market_id}"))
+    return None
+
+
+async def _series(ind: Dict[str, Any]) -> Tuple[List[float], List[float], str]:
+    """An indicator's (times, values) oldest first, or an error: a market's price
+    history straight from its source (hourly), or stored bars from the markets
+    subsystem (daily)."""
+    m = ind.get("market")
+    if m:
+        try:
+            if m.get("source") == "polymarket":
+                pts = pm.polymarket_series(await _http_json(f"{pm.CLOB}/prices-history", {
+                    "market": m.get("token"), "interval": "1m", "fidelity": 60}))
+            else:
+                pts = pm.manifold_series(await _http_json(f"{pm.MANIFOLD}/bets", {"contractId": m.get("id"), "limit": 1000}))
+        except Exception as ex:  # noqa: BLE001
+            return [], [], f"{type(ex).__name__}: {ex}"[:200]
+        ts, vals = pm.resample(pts, 3600.0, until=time.time())
+        return ts, vals, ""
+    r = await _call("markets.bars", dataset_id=ind["dataset_id"], limit=400)
+    pts = [(a, b) for a, b in zip(r.get("t") or [], r.get("c") or []) if a is not None and b is not None]
+    return [p[0] for p in pts], [float(p[1]) for p in pts], str(r.get("error") or "")
+
+
+@capability("intel.pm.search", http_method="GET", http_path="/intel/pm/search", http_tags=["intel"],
+            memory="off", silent=True,
+            description="Find open prediction markets (Polymarket, Manifold) on a question - the price is the "
+                        "crowd's probability. Input: query (str!), limit (default 8). Output: {rows:[{source, id, "
+                        "question, event, prob, volume, end, url, match}], errors}.")
+async def cap_pm_search(query: str = "", limit: int = 8, trace_id=None):
+    if not (query or "").strip():
+        return {"error": "query required"}
+    rows, errors = await pm_search(query.strip(), limit)
+    return {"rows": rows, "errors": errors}
+
+
+@capability("intel.pm.suggest", http_method="GET", http_path="/intel/pm/suggest", http_tags=["intel"],
+            memory="off", silent=True,
+            description="Prediction markets that would measure a topic's open questions (no model call: search "
+                        "plus the NLP reranker). Watch one with intel.indicator.add kind=probability. Input: "
+                        "topic_id (str!), per_question (default 2). Output: {suggestions:[{question, markets}]}.")
+async def cap_pm_suggest(topic_id: str = "", per_question: int = 2, trace_id=None):
+    t = store().get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    watched = {i.get("dataset_id") for i in _indicators(topic_id)}
+    out, errors = [], []
+    for q in (t.get("questions") or [])[:6] or [t["name"]]:
+        rows, errs = await pm_search(q, 6)
+        errors += errs
+        keep = [r for r in rows if pm.ref(r) not in watched and (r.get("match") is None or r["match"] > 0)]
+        if keep:
+            out.append({"question": q, "markets": keep[:max(1, int(per_question))]})
+    return {"suggestions": out, "errors": sorted(set(errors))}
 
 
 @capability("intel.indicator.list", http_method="GET", http_path="/intel/indicator/list", http_tags=["intel"],
