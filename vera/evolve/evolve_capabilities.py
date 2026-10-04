@@ -5775,9 +5775,33 @@ async def _resume_interrupted_gates() -> None:
             await r.delete(_CRITICAL_TIER_LEASE_KEY)
     except Exception as e:
         log.debug("evolve: gate lease check: %s", e)
-    log.warning("evolve: resuming %d gate(s) a restart cut off: %s", len(recs),
-                ", ".join("%s (%s)" % (x.get("id"), x.get("branch")) for x in recs))
-    for rec in _gate_resume_core.resume_order(recs):
+    keep, superseded = _gate_resume_core.latest_per_branch(recs)
+    for old, newer in superseded:
+        try:
+            _pstep(old, "gate-resume-skipped", True, f"not resumed: superseded by pipeline {newer}")
+            old["current"] = f"gate not resumed - superseded by {newer}"
+            await _save_pipeline(old)
+        except Exception as e:
+            log.debug("evolve: gate resume skip %s: %s", old.get("id"), e)
+    runnable: List[Dict[str, Any]] = []
+    for rec in keep:
+        try:
+            root = await _resolve_repo_root(rec.get("repo") or DEFAULT_REPO_ID)
+            lg = await _git("log", "--oneline", f"{rec.get('to') or BLEEDING_EDGE_BRANCH}..{rec.get('branch')}",
+                            repo_root=root)
+            if lg.get("ok") and not (lg.get("out") or "").strip():
+                _pstep(rec, "gate-resume-skipped", True,
+                       "not resumed: the branch has nothing ahead of its target (already merged)")
+                rec["current"] = "gate not resumed - branch already merged"
+                await _save_pipeline(rec)
+                continue
+        except Exception as e:
+            log.debug("evolve: gate resume ahead-check %s: %s", rec.get("id"), e)
+        runnable.append(rec)
+    log.warning("evolve: resuming %d gate(s) a restart cut off (%d superseded, %d already merged): %s",
+                len(runnable), len(superseded), len(keep) - len(runnable),
+                ", ".join("%s (%s)" % (x.get("id"), x.get("branch")) for x in runnable))
+    for rec in runnable:
         try:
             _pstep(rec, "gate-resume", True, "the gate was cut off by a restart - running it again")
             rec["current"] = "gate resumed after restart"
