@@ -173,7 +173,11 @@ def _load(tmp_path, *, nlp=True):
         cs = [100 + 0.6 * math.sin(i * 1.7) + 0.3 * math.cos(i * 0.9) for i in range(118)]
         cs += [cs[-1] * 1.14, cs[-1] * 1.15]                 # a 14% jump yesterday, and it holds
         orch.CALLS.append(("markets.bars", {"dataset_id": dataset_id}))
-        return {"dataset_id": dataset_id, "count": 120, "t": ts, "c": cs}
+        if "stale" in dataset_id:                             # a dataset whose newest bar is years old
+            return {"dataset_id": dataset_id, "count": 120, "t": [t - 3000 * 86400 for t in ts], "c": cs}
+        order = list(range(60, 120)) + list(range(60))        # insert order is not bar order (RF-82)
+        return {"dataset_id": dataset_id, "count": 121, "t": [583743600000] + [ts[i] for i in order],
+                "c": [1.0] + [cs[i] for i in order]}
 
     async def macro_fetch(id="", ids=None, track=True, trace_id=None):
         return {"ok": True, "datasets": [f"mkt.macro.{id.lower()}.1d"]}
@@ -553,10 +557,16 @@ def test_indicators_find_moves_corroborate_and_reach_the_assessment(tmp_path):
     assert "What moved" in html and "Bitcoin USD up" in html
     assert "**What moved**" in mod.core.render_markdown(doc)
     assert "Bitcoin USD up" in mod.core.render_telegram(doc)["text"]
-    # removing stops it
+    # stale data is never news
+    st_ind = _R(orch, "intel.indicator.add", topic_id=t["id"], kind="price", dataset_id="mkt.x.stale.1d", label="Old")
+    assert not [c for c in _R(orch, "intel.indicator.check", topic_id=t["id"])["changes"] if c["label"] == "Old"]
+    old = next(i for i in _R(orch, "intel.indicator.list", topic_id=t["id"])["indicators"] if i["label"] == "Old")
+    assert old["status"].startswith("stale") and st_ind["ok"]
+    # removing stops it, and forgets its moves
     ind = lst["indicators"][0]["id"]
     assert _R(orch, "intel.indicator.remove", topic_id=t["id"], indicator_id=ind)["ok"]
     assert all(i["id"] != ind for i in _R(orch, "intel.indicator.list", topic_id=t["id"])["indicators"])
+    assert not [c for c in mod.store().get_kv("ind_changes", []) if c.get("indicator") == ind]
 
 
 def test_prediction_markets_search_suggest_watch_and_move(tmp_path):

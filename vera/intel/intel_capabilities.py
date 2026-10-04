@@ -1010,7 +1010,8 @@ def _changes(topic_id: str = "", since: str = "", unassessed: bool = False) -> L
         lo = _epoch(since) or 0
         out = [c for c in out if float(c.get("t") or 0) >= lo]
     if unassessed:
-        out = [c for c in out if not c.get("assessed")]
+        lo = time.time() - 30 * 86400
+        out = [c for c in out if not c.get("assessed") and float(c.get("t") or 0) >= lo]
     return sorted(out, key=lambda c: float(c.get("t") or 0))
 
 
@@ -1035,9 +1036,15 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
         if err or len(ts) < 25:
             ind["status"] = err or f"waiting for data ({len(ts)} bars)"
             continue
+        now = time.time()
+        stale_days = 60 if ind.get("kind") == "macro" else 10
+        if ts[-1] < now - stale_days * 86400:
+            ind.update(status="stale: newest bar " + time.strftime("%Y-%m-%d", time.gmtime(ts[-1])),
+                       last=vals[-1], last_t=ts[-1], bars=len(ts), checked=core.now_iso())
+            continue
         ind.update(status="ok", last=vals[-1], last_t=ts[-1], bars=len(ts), checked=core.now_iso())
         for c in chg.detect(ts, vals, kind=ind.get("kind", "price")):
-            if float(c["t"]) < ts[-1] - lookback_days * 86400 or (ind["id"], c["t"]) in known \
+            if float(c["t"]) < now - lookback_days * 86400 or (ind["id"], c["t"]) in known \
                     or (ind.get("market") and c["kind"] == "spike" and abs((c.get("detail") or {}).get("move") or 0) < 0.05):
                 continue
             c.update(indicator=ind["id"], topic_id=t["id"], label=ind.get("label"), ind_kind=ind.get("kind"),
@@ -1182,9 +1189,16 @@ async def _series(ind: Dict[str, Any]) -> Tuple[List[float], List[float], str]:
             return [], [], f"{type(ex).__name__}: {ex}"[:200]
         ts, vals = pm.resample(pts, 3600.0, until=time.time())
         return ts, vals, ""
-    r = await _call("markets.bars", dataset_id=ind["dataset_id"], limit=400)
-    pts = [(a, b) for a, b in zip(r.get("t") or [], r.get("c") or []) if a is not None and b is not None]
-    return [p[0] for p in pts], [float(p[1]) for p in pts], str(r.get("error") or "")
+    r = await _call("markets.bars", dataset_id=ind["dataset_id"], limit=50000)
+    by_t: Dict[float, float] = {}
+    for a, b in zip(r.get("t") or [], r.get("c") or []):   # markets.bars orders by insert time and leaves
+        try:                                                # pre-2001 times in ms (RF-82): normalise, sort
+            a, b = float(a), float(b)
+        except (TypeError, ValueError):
+            continue
+        by_t[a / 1000.0 if a > 1e11 else a] = b
+    pts = sorted(by_t.items())[-400:]
+    return [p[0] for p in pts], [p[1] for p in pts], str(r.get("error") or "")
 
 
 @capability("intel.pm.search", http_method="GET", http_path="/intel/pm/search", http_tags=["intel"],
@@ -1236,6 +1250,8 @@ async def cap_indicator_remove(topic_id: str = "", indicator_id: str = "", trace
     if len(keep) == len(inds):
         return {"error": f"no indicator {indicator_id} on {topic_id}"}
     _save_indicators(topic_id, keep)
+    st = store()
+    st.set_kv("ind_changes", [c for c in st.get_kv("ind_changes", []) or [] if c.get("indicator") != indicator_id])
     return {"ok": True}
 
 
