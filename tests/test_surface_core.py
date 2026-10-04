@@ -133,7 +133,7 @@ def test_upkeep_is_never_run_and_a_charts_figures_lead_its_summary():
     bars = [{"t": i, "open": 60000 + i, "high": 61000 + 200 * i, "low": 59000 + 100 * i, "close": c}
             for i, c in enumerate([60000.0, 70000.0, 83474.6, 84884.3])]
     s = sc.summarise({"symbol": "BTC-USD", "timeframe": "1d", "last": 84884.3, "change_pct": 39.46, "count": 4, "bars": bars})
-    assert s == "BTC-USD - last 84,884; latest day +1.69%; over the 4 days shown +41.5%; range 59,000 to 61,600", s
+    assert s == "BTC-USD - price 84,884 (the latest close); latest day +1.69%; over the 4 days shown +41.5%; range 59,000 to 61,600", s
     # bars with no closes: the record's own figures, written as a person writes them
     assert sc.summarise({"symbol": "BTC-USD", "last": 84884.3, "change_pct": 4.83, "bars": [{"t": 1}] * 3}) == "BTC-USD - last 84,884; change_pct 4.83 (3 rows)"
     assert [sc._fmt(x) for x in (84884.3, 1.6912, 0.000421, 2.8e10, 7, True)] == ["84,884", "1.691", "0.00042", "28 bn", "7", "True"]

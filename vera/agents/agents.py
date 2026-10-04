@@ -109,8 +109,8 @@ _CHAT_FILES_NOTE = (
     "The chat draws these fences as they stream, and each downloads as a file:\n"
     "- ```slides - a presentation: '# Title' per slide, slides split by a line of ---, bullets for points, "
     "'Note:' for speaker notes (PowerPoint, PDF, a web slideshow).\n"
-    "- ```sheet (or ```csv) - a spreadsheet: comma-separated rows, header first; cells may hold formulas like "
-    "=SUM(B2:B5) (Excel, OpenDocument, CSV, JSON).\n"
+    "- ```sheet (or ```csv) - a spreadsheet: comma-separated rows, header first, rows only - no title, notes or "
+    "markdown inside the block; cells may hold formulas like =SUM(B2:B5) (Excel, OpenDocument, CSV, JSON).\n"
     "- ```document - a document in markdown (Word, PDF, OpenDocument, e-book).\n"
     "Use one when the user asks for slides, a spreadsheet, a table to work with, or a document - not otherwise."
 )

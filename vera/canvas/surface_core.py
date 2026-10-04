@@ -300,7 +300,7 @@ def _candles(res: Dict[str, Any], rows: List[Any]) -> str:
     span = "%d %ss" % (n, unit) if unit != "bar" else "%d bars" % n
     head = next((str(res[k]) for k in ("symbol", "name", "title") if res.get(k) not in (None, "")), "")
     last, prev, first = closes[-1], closes[-2], closes[0]
-    bits = ["last %s" % _fmt(last)]
+    bits = ["price %s (the latest close)" % _fmt(last)]   # "last" beside a range was read as its top (a real turn, 2026-10-04)
     if prev:
         bits.append("latest %s %+.2f%%" % (unit, (last - prev) / prev * 100))
     if first:
