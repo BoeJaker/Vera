@@ -356,9 +356,16 @@ outage isolation, and teardown separate. Missing measurements remain explicit;
 the report has no composite score, winner, activation authority, backend import,
 or network path.
 
-Real isolated Langfuse and Phoenix deployments are still required before a
-backend decision. Their live ingestion, query, recovery, resource, retention,
-access, deletion, export, and teardown measurements remain queued.
+The same frozen, content-redacted OTLP fixture has now been exercised against
+isolated disposable Phoenix and Langfuse deployments. Both reconstructed the
+two-span trace and its parent link, supported trace deletion, isolated exporter
+failure from Vera's local Run, recovered after an outage, and left no resources
+after teardown. Phoenix exposed enough data to prove event and attribute
+fidelity directly and was lighter and faster in the bounded trial. Langfuse
+provided project-scoped access and useful trace views, but its tested public
+observations API did not expose raw OTLP events and attributes, so those fields
+remain unproven rather than inferred. The evidence deliberately selects no
+winner and does not activate or configure either backend.
 
 ### Guardrails and Ragas
 
