@@ -64,6 +64,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "explicit 'search for', a market figure) and search then - announced in the throbber, waited on at most 3 s, "
        "never instead of a search the user turned on. 'off' (default) = only the user's Web live toggle searches; "
        "'rules' = the rules decide (turn_needs_core).", owner="context-and-ui"),
+    _f("context.needs_memory", ("off", "rules"), "chat", "CU-T.5",
+       "Decide from the words of a chat turn whether it refers back ('last time', 'what did we decide', 'you said') "
+       "and then search memory deeply before the model answers - every session and agent, the vector leg when it "
+       "answers in time - announced in the throbber, waited on at most 1.5 s. 'off' (default) = the agent's own "
+       "memory only; 'rules' = the rules decide (turn_needs_core).", owner="context-and-ui"),
 )}
 
 

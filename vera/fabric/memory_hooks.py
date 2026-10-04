@@ -1004,6 +1004,31 @@ async def get_agent_memory_context_fast(
     return _chatmem_format(ranked[:limit])
 
 
+_DEEP_HEADING = "=== Earlier conversations (deep memory search, all sessions) ==="
+
+
+async def get_memory_context_deep(query: str, limit: int = 8, budget_s: float = 1.5) -> Dict[str, Any]:
+    """Deep memory for a turn that refers back ("last time", "what did we decide"): every session and agent, the
+    vector leg included when it answers inside the budget (the owner's 1.5 s, 2026-10-04).
+
+    The fast tier (Postgres + Neo4j) is always used; the vector leg replaces it with the merged result only if it
+    lands in what is left of the budget. A vector result that misses the budget is cancelled, not stashed - the
+    session's pending slot belongs to the agent's own two-tier memory. Never raises.
+    Returns {text, hits, vector (bool: the vector leg made it), ms}."""
+    out: Dict[str, Any] = {"text": "", "hits": 0, "vector": False, "ms": 0.0}
+    MEMORY, _ = _memory()
+    if not MEMORY or not hasattr(MEMORY, "search_fast_and_slow") or not str(query or "").strip():
+        return out
+    t0 = time.monotonic()
+    hits, out["vector"] = await _recall_core.fast_then_vector(
+        lambda fast_timeout: MEMORY.search_fast_and_slow(query=query, limit=limit, fast_timeout=fast_timeout),
+        budget_s)
+    items = [f for f in (_extract_record_fields(it) for it in (hits or [])) if f][:limit]
+    out.update(text=_recall_core.retitle_block(_chatmem_format(items), _DEEP_HEADING), hits=len(items),
+               ms=round((time.monotonic() - t0) * 1000, 1))
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────

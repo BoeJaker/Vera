@@ -145,3 +145,66 @@ def test_collapse_accepts_flat_items_and_does_not_mutate_input():
     out = rc.collapse_repeats(items)
     assert len(out) == 1 and out[0]["repeats"] == 2
     assert "repeats" not in items[0]
+
+
+# ── fast_then_vector: one budget for a deep memory search (owner: 1.5 s, 2026-10-04) ──────────────────────────
+import asyncio  # noqa: E402
+
+
+def _two_tier(slow_after, slow_result=("fast", "vec"), fast=("fast",)):
+    """A fake search_fast_and_slow: fast hits at once, the slow task resolves after `slow_after` seconds."""
+    made = {}
+
+    async def search(fast_timeout):
+        async def slow():
+            await asyncio.sleep(slow_after)
+            return list(slow_result)
+        made["task"] = asyncio.get_running_loop().create_task(slow())
+        made["fast_timeout"] = fast_timeout
+        return list(fast), made["task"]
+    return search, made
+
+
+def test_the_vector_tier_is_used_when_it_lands_inside_the_budget():
+    search, made = _two_tier(0.01)
+    hits, vector = asyncio.run(rc.fast_then_vector(search, 0.5))
+    assert hits == ["fast", "vec"] and vector is True
+    assert made["fast_timeout"] == 0.5
+
+
+def test_past_the_budget_the_text_hits_stand_and_the_vector_task_is_cancelled():
+    async def go():
+        search, made = _two_tier(5.0)
+        out = await rc.fast_then_vector(search, 0.2)
+        await asyncio.sleep(0)
+        return out, made["task"]
+    (hits, vector), task = asyncio.run(go())
+    assert hits == ["fast"] and vector is False
+    assert task.cancelled()
+
+
+def test_a_failing_search_is_an_empty_answer_never_an_error():
+    async def boom(fast_timeout):
+        raise RuntimeError("postgres down")
+    assert asyncio.run(rc.fast_then_vector(boom, 0.5)) == ([], False)
+
+
+def test_a_failing_vector_tier_keeps_the_text_hits():
+    async def search(fast_timeout):
+        async def slow():
+            raise RuntimeError("embed node gone")
+        return ["fast"], asyncio.get_running_loop().create_task(slow())
+    assert asyncio.run(rc.fast_then_vector(search, 0.5)) == (["fast"], False)
+
+
+def test_no_slow_tier_means_the_fast_hits():
+    async def search(fast_timeout):
+        return ["a", "b"], None
+    assert asyncio.run(rc.fast_then_vector(search, 0.5)) == (["a", "b"], False)
+
+
+def test_retitle_block_keeps_the_lines_and_swaps_the_heading():
+    block = "=== Relevant memories from past conversations ===\n[2026-10-01 10:00] User: the plan"
+    out = rc.retitle_block(block, "=== Earlier conversations ===")
+    assert out == "=== Earlier conversations ===\n[2026-10-01 10:00] User: the plan"
+    assert rc.retitle_block("", "X") == "" and rc.retitle_block("only a heading", "X") == ""

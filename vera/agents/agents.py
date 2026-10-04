@@ -1993,21 +1993,31 @@ async def agent_chat_stream_endpoint(request: Request):
     # it and the sources still show. Every decision is an event, so it can be measured and later learned.
     _needs = None
     _web_auto = False
+    _mem_deep = False
+    _web_rules = _mem_rules = False
     _bare_q = str(body.get("canvas_text") or message or "")[:2000]
-    if not _web_enabled and _bare_q.strip():
-        if await _switch_mode("context.needs_web", body.get("minds")) == "rules":
+    if _bare_q.strip():
+        # the same rules decide memory (CU-T.5, behind context.needs_memory): a turn that refers back gets a deep,
+        # all-sessions memory search before the model, waited on at most 1.5 s (owner, 2026-10-04)
+        _web_rules = (not _web_enabled
+                      and await _switch_mode("context.needs_web", body.get("minds")) == "rules")
+        _mem_rules = await _switch_mode("context.needs_memory", body.get("minds")) == "rules"
+        if _web_rules or _mem_rules:
             try:
                 _needs = _turn_needs.needs(_bare_q)
             except Exception as _e:
                 log.debug("turn needs: %s", _e)
                 _needs = None
-            if _needs and _needs["web"]["on"]:
+            if _needs and _web_rules and _needs["web"]["on"]:
                 _web_enabled, _web_auto = True, True
                 _web_query = (_needs["web"].get("query") or _bare_q).strip()[:200]
+            if _needs and _mem_rules and _needs["memory_deep"]["on"]:
+                _mem_deep = True
             if _needs:
                 try:
                     await emit_event({"type": "context.needs", "session_id": session_id, "decider": "rules",
-                                      "web": _needs["web"], "memory_deep": _needs["memory_deep"]})
+                                      "web": _needs["web"], "memory_deep": _needs["memory_deep"],
+                                      "switches": {"web": _web_rules, "memory": _mem_rules}})
                 except Exception:
                     pass
     _web_limit   = max(1, min(10, int(body.get("web_search_limit", 5) or 5)))
@@ -2035,6 +2045,22 @@ async def agent_chat_stream_endpoint(request: Request):
                 log.debug("chat web.search failed: %s", _e)
                 return {"error": str(_e)}
         _web_task = asyncio.create_task(_run_web_search())
+    _mem_task = None
+    _mem_t0 = 0.0
+    _mem_query = ((_needs or {}).get("memory_deep", {}).get("query") or _bare_q).strip()[:400]
+    if _mem_deep and _mem_query:
+        _mem_t0 = _time.monotonic()
+        async def _run_mem_deep():
+            # the 1.5 s is the search's own budget; never raises (a failure is an empty block)
+            _mh = sys.modules.get("memory_hooks")
+            if _mh is None or not hasattr(_mh, "get_memory_context_deep"):
+                return {"text": "", "hits": 0, "vector": False, "ms": 0.0, "error": "memory not loaded"}
+            try:
+                return await _mh.get_memory_context_deep(_mem_query, limit=8, budget_s=1.5)
+            except Exception as _e:
+                log.debug("chat deep memory failed: %s", _e)
+                return {"text": "", "hits": 0, "vector": False, "ms": 0.0, "error": str(_e)}
+        _mem_task = asyncio.create_task(_run_mem_deep())
 
     def _format_web_context(res) -> str:
         """Render web.search results into a system-prompt fragment."""
@@ -2075,16 +2101,18 @@ async def agent_chat_stream_endpoint(request: Request):
                 ("data: " + json.dumps({"type": "web_searching",
                                         "query": _web_query[:200]}) + "\n\n").encode())
         _web_phase = None
+        _mem_phase = None
+        _MEM_LABEL = "searching earlier conversations (all sessions)"
         _model_t0 = _time.monotonic()
-        # tier 1 of a two-tier reply starts at once; a single-pass answer waits for the search
-        _model_waits_for_web = (_web_task is not None
-                                and not (_two_tier is not None and _tt_plan.get("split")))
+        # tier 1 of a two-tier reply starts at once; a single-pass answer waits for the searches
+        _model_waits_for_context = ((_web_task is not None or _mem_task is not None)
+                                    and not (_two_tier is not None and _tt_plan.get("split")))
         if _ph is not None:
             try:
                 # what happened before the stream could open, with the time each step really took
                 for _f in _phases.from_marks(_ph, _ep_marks):
                     await _q.put(("data: " + json.dumps(_f) + "\n\n").encode())
-                if _needs is not None:
+                if _needs is not None and _web_rules:
                     _wn = _needs["web"]
                     await _q.put(_ph.sse("needs", "web", "deciding whether to search the web",
                                          "done" if _wn["on"] else "skip", ms=0,
@@ -2111,21 +2139,53 @@ async def agent_chat_stream_endpoint(request: Request):
                             sources=[{"title": r.get("title") or r.get("url"), "url": r.get("url")}
                                      for r in _rs[:_web_limit] if isinstance(r, dict)]))
                     _web_phase = asyncio.create_task(_web_phase_done())
-                if not _model_waits_for_web:
+                if _needs is not None and _mem_rules:
+                    _mn = _needs["memory_deep"]
+                    await _q.put(_ph.sse("needs", "memory", "deciding whether to search earlier conversations",
+                                         "done" if _mn["on"] else "skip", ms=0, detail=_mn.get("reason", "")))
+                if _mem_task is not None:
+                    await _q.put(_ph.sse("acquire", "memory", _MEM_LABEL, "start", t=_mem_t0))
+
+                    async def _mem_phase_done():
+                        try:
+                            _mr = await _mem_task
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            _mr = {"error": "failed"}
+                        _mr = _mr if isinstance(_mr, dict) else {}
+                        await _q.put(_ph.sse(
+                            "acquire", "memory", _MEM_LABEL, "fail" if _mr.get("error") else "done",
+                            ms=(_time.monotonic() - _mem_t0) * 1000, count=int(_mr.get("hits") or 0),
+                            detail=("with the vector search" if _mr.get("vector")
+                                    else "text search only (the vector search missed the 1.5 s budget)")))
+                    _mem_phase = asyncio.create_task(_mem_phase_done())
+                if not _model_waits_for_context:
                     _model_t0 = _time.monotonic()
                     await _q.put(_ph.sse("model", "answer", "writing the answer", "start", t=_model_t0))
             except Exception as _e:
                 log.debug("phase frames (pre-stream) skipped: %s", _e)
 
-        async def _model_start_after_web(late: bool):
-            # the single-pass answer starts only once the search has answered (or the cap let it go ahead): say so
-            # then, after the search's own frame, so the throbber never shows "writing the answer" mid-search
+        async def _await_mem_deep() -> str:
+            # the deep memory block for the prompt; the search holds itself to 1.5 s, this only guards a hang
+            if _mem_task is None:
+                return ""
+            try:
+                _mr = await asyncio.wait_for(asyncio.shield(_mem_task), 2.5)
+            except Exception:
+                return ""
+            return str((_mr or {}).get("text") or "") if isinstance(_mr, dict) else ""
+
+        async def _model_start_after_context(late: bool):
+            # the single-pass answer starts only once the searches have answered (or their caps let it go ahead):
+            # say so then, after the searches' own frames, so the throbber never shows "writing the answer" mid-search
             nonlocal _model_t0
-            if _ph is None or not _model_waits_for_web:
+            if _ph is None or not _model_waits_for_context:
                 return
             try:
-                if _web_phase is not None and not late:
-                    await asyncio.wait({_web_phase}, timeout=0.25)
+                _watch = {p for p in ((None if late else _web_phase), _mem_phase) if p is not None}
+                if _watch:
+                    await asyncio.wait(_watch, timeout=0.25)
                 _model_t0 = _time.monotonic()
                 await _q.put(_ph.sse("model", "answer", "writing the answer", "start", t=_model_t0))
             except Exception as _e:
@@ -2182,7 +2242,12 @@ async def agent_chat_stream_endpoint(request: Request):
                     _frag = _format_web_context(_wres)
                     if _frag:
                         _prefix = (_prefix + "\n\n" + _frag).strip()
-                    await _model_start_after_web(_late)
+                else:
+                    _late = False
+                _mfrag = await _await_mem_deep()        # started with the web search, so the waits overlap
+                if _mfrag:
+                    _prefix = (_prefix + "\n\n" + _mfrag).strip()
+                await _model_start_after_context(_late)
                 async for chunk in AGENT_RUNNER.run_stream(
                         agent, message, history, session_id, use_tts=use_tts,
                         system_prefix=_prefix):
@@ -2228,6 +2293,9 @@ async def agent_chat_stream_endpoint(request: Request):
                     _frag2 = _format_web_context(_wres2)
                     if _frag2:
                         _prefix2 = (_prefix2 + "\n\n" + _frag2).strip()
+                _mfrag2 = await _await_mem_deep()
+                if _mfrag2:
+                    _prefix2 = (_prefix2 + "\n\n" + _mfrag2).strip()
                 gate = (_tt_stream.NoAdditionGate()
                         if _tt_plan.get("always_run_tier2") else None)
                 async for chunk in AGENT_RUNNER.run_stream(
@@ -2323,7 +2391,7 @@ async def agent_chat_stream_endpoint(request: Request):
         finally:
             # Tear down the merge plumbing — an opener still in flight after
             # the main stream finished (or the client vanished) is pointless.
-            for _t in (_op_pump, _opener_task, _main_pump, _web_task, _web_phase):
+            for _t in (_op_pump, _opener_task, _main_pump, _web_task, _web_phase, _mem_task, _mem_phase):
                 if _t is not None and not _t.done():
                     _t.cancel()
             elapsed_ms = round((_time.monotonic() - _stream_t0) * 1000)

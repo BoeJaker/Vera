@@ -16,9 +16,11 @@ Two defects this answers, both measured on prod on 2026-10-04:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
-from typing import Any, Dict, List
+import time
+from typing import Any, Callable, Dict, List, Tuple
 
 # What a non-message record is called when it is shown to a model. A record whose type is not here is named by
 # its type ("skill_output" -> "Skill output"), never "User".
@@ -169,3 +171,45 @@ def collapse_repeats(hits: List[Dict[str, Any]], limit: int = 0) -> List[Dict[st
     if limit and limit > 0:
         return out[:int(limit)]
     return out
+
+
+async def fast_then_vector(search: Callable[[float], Any], budget_s: float = 1.5,
+                           clock: Callable[[], float] = time.monotonic) -> Tuple[List[Any], bool]:
+    """A search held to one budget: the text tier always, the vector tier only if it lands inside the budget.
+
+    `search(fast_timeout)` is a two-tier search (HybridMemoryStore.search_fast_and_slow) returning
+    (fast_hits, slow_task); the slow task resolves to the merged result with vectors. Returns (hits, vector):
+    the slow result when it arrived in what is left of the budget, else the fast hits. A slow task that missed
+    is cancelled, so nothing is left running for a result no one will read. Never raises."""
+    budget_s = max(0.2, float(budget_s or 1.5))
+    t0 = clock()
+    hits: List[Any] = []
+    slow = None
+    try:
+        hits, slow = await search(budget_s)
+    except Exception:
+        return [], False
+    if slow is None:
+        return list(hits or []), False
+    vector = False
+    left = budget_s - (clock() - t0)
+    if left > 0.05:
+        try:
+            full = await asyncio.wait_for(asyncio.shield(slow), timeout=left)
+            if full:
+                hits, vector = full, True
+        except asyncio.TimeoutError:
+            pass
+        except Exception:
+            pass
+    if not slow.done():
+        slow.cancel()
+    return list(hits or []), vector
+
+
+def retitle_block(block: str, heading: str) -> str:
+    """A formatted memory block under another heading (its first line replaced); empty stays empty."""
+    block = str(block or "")
+    if not block.strip() or "\n" not in block:
+        return ""
+    return heading + block[block.index("\n"):]
