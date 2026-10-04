@@ -1525,6 +1525,8 @@
   .vc-dgsrc{margin-top:6px;max-height:160px}
   /* a page, deeper: its reading's who and how long, what it names, where it points */
   .vc-src-m{font-size:10px;color:var(--t3,var(--dim,#6b7480));margin:2px 0 4px}
+  /* a page's pictures inside its reading are figures, not the page: a logo drawn at its natural size filled the item */
+  .vc-src-body img{max-width:100%;max-height:260px;width:auto;height:auto;object-fit:contain;display:block;margin:6px auto}
   .vc-src-ents{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 2px}
   .vc-src-out{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0;font-size:10px}.vc-src-out span{color:var(--t3,var(--dim,#6b7480))}
   .vc-src-out a{color:var(--ac,var(--acc,#5a9e8f));text-decoration:none}.vc-src-out a:hover{text-decoration:underline}
