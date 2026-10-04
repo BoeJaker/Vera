@@ -35,6 +35,11 @@ _URL = re.compile(r"https?://[^\s)\]>\"']+")
 _TICKER = re.compile(r"(?<![\w$])\$?([A-Z]{2,6})(?:[/-](USD[TC]?|EUR|GBP|BTC|ETH))?(?![\w])")
 _KNOWN_TICKERS = set("""BTC ETH SOL XRP ADA DOGE DOT AVAX MATIC LINK LTC BCH XLM ATOM UNI TRX ETC FIL APT ARB OP NEAR
 SHIB PEPE BNB TON SUI USDT USDC DAI AAPL MSFT NVDA TSLA AMZN GOOG GOOGL META NFLX AMD INTC SPY QQQ""".split())
+# typed in lower case ("how is btc/usd doing"): a ticker no English word spells stands alone; any known one in a pair
+# ("dot/usd") - "dot", "link", "near", "etc", "meta" alone stay words
+_TICKER_LC = re.compile(r"(?<![\w$])\$?([a-z]{2,6})(?:[/-](usd[tc]?|eur|gbp|btc|eth))?(?![\w])")
+_LOWER_ALONE = set("""BTC ETH SOL XRP DOGE AVAX MATIC LTC BCH XLM TRX SHIB PEPE BNB USDT USDC AAPL MSFT NVDA TSLA AMZN
+GOOGL NFLX QQQ""".split())
 
 
 _COINS = {"bitcoin": "BTC", "ethereum": "ETH", "ether": "ETH", "solana": "SOL", "dogecoin": "DOGE", "cardano": "ADA",
@@ -146,6 +151,10 @@ def merge(text: str, tagged: Iterable[Tuple[int, Dict[str, Any]]], min_score: fl
         sym = m.group(1)
         if sym in _KNOWN_TICKERS or m.group(0).startswith("$") or m.group(2):
             add("TICKER", m.group(0).lstrip("$"), m.start(), 1.0)
+    for m in _TICKER_LC.finditer(t):
+        sym = m.group(1).upper()
+        if sym in _LOWER_ALONE or (m.group(2) and sym in _KNOWN_TICKERS) or (m.group(0).startswith("$") and sym in _KNOWN_TICKERS):
+            add("TICKER", m.group(0).lstrip("$").upper(), m.start(), 1.0)
     # a coin said by name is its ticker ("how is bitcoin doing" asks about BTC)
     for m in _COIN.finditer(t):
         add("TICKER", _COINS[m.group(1).lower()], m.start(), 1.0)

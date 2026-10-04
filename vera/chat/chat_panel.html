@@ -14961,7 +14961,9 @@ Your task: decide what to do next to advance toward the goal.
       if(rpEl) rpEl.style.display='none';
       if(amEl) amEl.style.display='none';
     }
-    document.getElementById('paneMemGraph').style.display=name==='memgraph'?'flex':'none';document.getElementById('paneMemGraph').className='ctx-pane'+(name==='memgraph'?' on':'');
+    /* only 'on' is the tab's to set: the pane also carries 'vg' (its Vera graph drawn) - overwriting the whole class
+       dropped it, and the memory graph docked in the LHM went blank until something drew it again */
+    { const mp=document.getElementById('paneMemGraph'); mp.style.display=name==='memgraph'?'flex':'none'; mp.classList.add('ctx-pane'); mp.classList.toggle('on', name==='memgraph'); }
     {const lp=document.getElementById('paneLoopGraph');if(lp){lp.style.display=name==='loop'?'flex':'none';lp.className='ctx-pane'+(name==='loop'?' on':'');}}
     // Combined DAG tab: graph on top, execution log below (both scroll/flex).
     document.getElementById('paneDagGraph').style.display=name==='dag'?'flex':'none';document.getElementById('paneDagGraph').className='ctx-pane'+(name==='dag'?' on':'');

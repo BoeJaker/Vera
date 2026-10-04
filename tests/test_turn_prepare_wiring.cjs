@@ -17,5 +17,12 @@ t('the chat sends its switch, the bare question and the turn', H.includes("canva
 t('telling the model is a switch beside enrich on the canvas column, sent with each turn', H.includes('id="cvTellBtn" onclick="CH._cvTellToggle(this)"')
   && H.includes('canvas_tell:_cvTellOn(),') && H.includes('_cvEnrichToggle,_cvTellToggle,')
   && H.includes('try{ _cvEnrichPaint(); _cvTellPaint(); }catch(_){}'));
+// owner, 2026-10-04: "im not seeing any of the markets info ... perhaps it did but i cant see it" - every enrich item
+// started folded to its header line; what was placed for the question (and told to the model) shows open
+{ const CV = R('vera/canvas/canvas_element.js');
+  t('items placed for the question are from=prepare and show open; the unasked after-reply ones still start folded',
+    E.includes('anchor = {"turn": mid, "mid": mid, "from": "prepare"} if mid else {"from": "prepare"}')
+    && CV.includes("x.from === 'prepare'") && CV.includes('if (prepared) return false;') && CV.includes("return from === 'enrich' || key.indexOf('enrich:') === 0;"));
+  t('the note leads with what the turn named', E.includes('summary=sc.summarise(res, focus=tickers)')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
