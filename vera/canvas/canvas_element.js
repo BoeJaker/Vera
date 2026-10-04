@@ -1459,6 +1459,9 @@
   .fu-p:hover .fu-t button,.fu-t button:focus{opacity:1}
   .fu-t button:hover{color:var(--acc,#5a9e8f)}
   .fu-b{flex:1 1 auto;min-height:0;overflow:auto}
+  /* a pane's drawing takes the pane's height (owner, 2026-10-04: an exploded code item "you can barely see it"): the
+     body was a block, so the explode diagram beside its code fell to its 140 px minimum whatever the code's height */
+  .it-bd.fu-beside > .fu-p > .fu-b,.it-bd.fu-over > .fu-p > .fu-b{display:flex;flex-direction:column}
   /* the strip's panes are as wide as their content, not a share of a column */
   .it-bd.fu-strip>.fu-p{max-width:100%}
   .it-bd.fu-strip .fu-b{overflow:visible}
@@ -3043,7 +3046,11 @@
         const content = what === 'code'
           ? { binds: key, title: String(c.filename || c.title || 'code') + ' — exploded' }
           : { binds: key, text: String(c.md || c.text || '').slice(0, 20000), title: String(c.title || 'passage') + ' — exploded' };
-        return this.call('canvas.add', { kind: 'explode', key: 'explode:' + key, content, at: 'now', size: 'l' });
+        /* in the source's band and at the source's turn (owner, 2026-10-04: the explode "opens very far away from the
+           other elements"): fusing is per band, so a diagram of a PINNED item - added to 'now', with no turn - was a card
+           of its own placed where nothing anchors it, far from its code; fusing switched off did the same */
+        return this.call('canvas.add', Object.assign({ kind: 'explode', key: 'explode:' + key, content, at: b.state === 'pinned' ? 'pinned' : 'now', size: 'l' },
+          b.anchor && typeof b.anchor === 'object' ? { anchor: b.anchor } : {}));
       }
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
@@ -3637,8 +3644,10 @@
       }
       if (act === 'explode') {
         const md = String((c.reader && c.reader.markdown) || c.text || ''); if (!md.trim()) return this._readout(key, 'read the page first');
-        return this.call('canvas.add', { kind: 'explode', key: 'explode:' + key, at: 'now', size: 'l',
-          content: { text: md.slice(0, 20000), title: String(c.title || 'page') + ' \u2014 exploded', binds: '' } });
+        const sb = this._blockOf(key) || {};   // the page's band and turn, as for a code item's diagram
+        return this.call('canvas.add', Object.assign({ kind: 'explode', key: 'explode:' + key, at: sb.state === 'pinned' ? 'pinned' : 'now', size: 'l',
+          content: { text: md.slice(0, 20000), title: String(c.title || 'page') + ' \u2014 exploded', binds: '' } },
+          sb.anchor && typeof sb.anchor === 'object' ? { anchor: sb.anchor } : {}));
       }
       if (act === 'shot') {
         if (c.shot) return this.call('canvas.update', { key, content: Object.assign({}, c, { shot: '' }) });

@@ -87,5 +87,11 @@ t('a finished reply re-reads the memory graph, here and in the menu instance', H
   t('a records graph takes its slot\'s height and fits its nodes to it', CV.includes("if (g && typeof g._setHeight === 'function' && Math.abs((g._h || 0) - (ht - 16)) > 3) g._setHeight(Math.max(160, ht - 16));")
     && CV.includes("const gg = g && g._graph; if (gg && typeof gg.fit === 'function') gg.fit();") && VG.includes('fit:            function(){ try { fitView(); } catch(e){} },'));
   t('a drop writes the dragged width onto the card the placer reads', CV.includes('r.el.dataset.pw = String(Math.round(r.w));')); }
+// owner, 2026-10-04: the canvas explode "opens very far away from the other elements and you can barely see it"
+{ const CV = R('vera/canvas/canvas_element.js');
+  t('an explode joins its source\'s band and turn (so it fuses beside it, wherever the source is)',
+    CV.includes("at: b.state === 'pinned' ? 'pinned' : 'now', size: 'l' },\n          b.anchor && typeof b.anchor === 'object' ? { anchor: b.anchor } : {}));")
+    && CV.includes("at: sb.state === 'pinned' ? 'pinned' : 'now', size: 'l',"));
+  t('...and its diagram takes the pane\'s height beside the code', CV.includes('.it-bd.fu-beside > .fu-p > .fu-b,.it-bd.fu-over > .fu-p > .fu-b{display:flex;flex-direction:column}')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
