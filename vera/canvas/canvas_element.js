@@ -1091,6 +1091,13 @@
   :host([data-tier="hover"]) .it:not(.compact) > .it-hd,:host([data-tier="zen"]) .it:not(.compact) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
   :host([data-tier="hover"]) .it:not(.compact) > .it-ft,:host([data-tier="zen"]) .it:not(.compact) > .it-ft{position:absolute;left:0;right:0;bottom:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:0 0 var(--r,8px) var(--r,8px)}
   :host([data-tier="hover"]) .it:not(.compact):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft),:host([data-tier="zen"]) .it:not(.compact):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft){opacity:1;pointer-events:auto}
+  /* ...in bands of their own (owner, 2026-10-04: "the top and bottom bar appear over the top of the element instead of
+     above and below - sometimes it can block entire parts of the elements"): an overlay at the item's edge covered its
+     first and last lines - a short note's header and rail met in the middle and hid it whole. The item keeps their room
+     all the time, so they fade in above and below its content, over nothing - and its height still never changes
+     because you pointed at it (the reason they are overlays). */
+  :host([data-tier="hover"]) .it:not(.compact):has(> .it-hd),:host([data-tier="zen"]) .it:not(.compact):has(> .it-hd){padding-top:var(--vc-hd-band,29px)}
+  :host([data-tier="hover"]) .it:not(.compact):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}
   :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-codehead,
   :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-th{opacity:.35}
   /* the solo expand of an item whose drawer draws its own head: a corner mark, not a row of its own */

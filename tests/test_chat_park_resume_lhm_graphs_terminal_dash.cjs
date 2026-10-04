@@ -41,5 +41,11 @@ t('a tab pick keeps the memory graph drawn (toggles on, never overwrites the cla
 { const CV = R('vera/canvas/canvas_element.js');
   t('one Edit per canvas item: the header\'s only where the kit draws none (code: the card\'s; markdown: the row\'s)',
     CV.includes("const kitEdits = !!(root.VeraOut && key && (b.type === 'code' || b.type === 'markdown'));") && CV.includes('const editable = EDITABLE.includes(b.type) && !kitEdits;')); }
+// owner, 2026-10-04: "if you mouseover some elements on the canvas the top and bottom bar appear over the top of the
+// element instead of above and below" - in Hover/Zen the bars are overlays (so an item never resizes under the pointer);
+// the item now keeps their bands, so they fade in over nothing
+{ const CV = R('vera/canvas/canvas_element.js');
+  t('hover/zen: an item keeps bands for its header and rail, so they never cover its content', CV.includes(':host([data-tier="hover"]) .it:not(.compact):has(> .it-hd),:host([data-tier="zen"]) .it:not(.compact):has(> .it-hd){padding-top:var(--vc-hd-band,29px)}')
+    && CV.includes(':host([data-tier="hover"]) .it:not(.compact):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
