@@ -136,6 +136,14 @@ async def census_summary() -> Dict[str, Any]:
                 s["due"] = await sc.census_due_now()
         except Exception as e:
             log.debug("census due-now unavailable: %s", e)
+    # Agent loops alive in this process: a restart kills them (release_core.may_release).
+    try:
+        import sys as _sys
+        dm = (_sys.modules.get("dag_workshop_capabilities")
+              or _sys.modules.get("Vera.vera.dag.dag_workshop_capabilities"))
+        s["loops"] = core.live_loop_ids(getattr(dm, "_AGENT_LOOP_TASKS", None) or {})
+    except Exception as e:
+        log.debug("live loops unavailable: %s", e)
     return s
 
 
@@ -271,6 +279,15 @@ async def _run_node_sync(rec: Dict[str, Any]) -> Dict[str, Any]:
                           "error": str((wres or {}).get("error") or "")[:300] if isinstance(wres, dict) else str(wres)[:300]}
     if results["workers"]["blocked"] and "census" in results["workers"]["blocked"]:
         results["workers"].update(ok=False, error=results["workers"]["blocked"])
+    if "nodes.testenv.sync" in CAPABILITY_REGISTRY:
+        # the nodes' pytest venvs follow the gate image (a no-op where current)
+        tv = await _call("nodes.testenv.sync", dry_run=False)
+        results["testenv"] = {"ok": bool(isinstance(tv, dict) and tv.get("ok")),
+                              "error": (str((tv or {}).get("error") or "") or "; ".join(
+                                  f"{h}: {v.get('error') or ', '.join(v.get('failed') or [])}"
+                                  for h, v in ((tv or {}).get("nodes") or {}).items()
+                                  if not v.get("ok") or v.get("failed")))[:300]
+                              if isinstance(tv, dict) else str(tv)[:300]}
     if "ollama.warm.apply" in CAPABILITY_REGISTRY:
         ares = await _call("ollama.warm.apply", dry_run=False)
         results["warm"] = {"ok": bool(isinstance(ares, dict) and not ares.get("error")),

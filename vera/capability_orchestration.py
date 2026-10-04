@@ -255,6 +255,33 @@ SUPPRESS_MEMORY_INJECT: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
 CURRENT_HTTP_CAP: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "vera_current_http_cap", default="")
 
+# The capabilities running in this task, outermost first: what the footprint
+# tracer (workers/cap_footprint_capabilities.py) attributes a file, database,
+# process or socket touch to. A cap called in-process by another runs inside
+# its caller, so the caller inherits what the callee touches.
+RUNNING_CAPS: "contextvars.ContextVar[tuple]" = contextvars.ContextVar(
+    "vera_running_caps", default=())
+#: Runs per capability since the tracer last flushed them (it resets this).
+CAP_RUN_COUNTS: Dict[str, int] = {}
+
+
+def _traced_cap(name: str, fn):
+    """`fn` running with `name` pushed on RUNNING_CAPS. A coroutine function
+    only (every capability is one); anything else is returned as is."""
+    import inspect as _insp
+    if not _insp.iscoroutinefunction(fn):
+        return fn
+
+    @functools.wraps(fn)
+    async def _traced(*a, **k):
+        tok = RUNNING_CAPS.set(RUNNING_CAPS.get() + (name,))
+        CAP_RUN_COUNTS[name] = CAP_RUN_COUNTS.get(name, 0) + 1
+        try:
+            return await fn(*a, **k)
+        finally:
+            RUNNING_CAPS.reset(tok)
+    return _traced
+
 # Last time a human was interactive (chat generation, or an explicit UI ping).
 LAST_INTERACTIVE_TS: float = 0.0
 
@@ -323,6 +350,12 @@ EMBED_PROVIDER     = getattr(cfg, "EMBED_PROVIDER", "ollama")
 # ("stale_timeout" storms in the Jobs panel). Default 900s; override via env.
 # keep_alive keeps the model resident so the next call skips cold-load latency.
 OLLAMA_GEN_TIMEOUT = float(os.environ.get("OLLAMA_GEN_TIMEOUT", "900"))
+# A GPU node that has not produced a first byte in this long is stuck, not busy (ollama_wait_core).
+OLLAMA_GPU_FIRST_BYTE_S = float(os.environ.get("OLLAMA_GPU_FIRST_BYTE_S", "300"))
+try:
+    from Vera.vera import ollama_wait_core as _ollama_wait_core
+except Exception:                                    # pragma: no cover
+    from . import ollama_wait_core as _ollama_wait_core
 
 # 2026-08-16: the httpx read-timeout above is a STALL detector only in theory —
 # httpx measures it since the last byte received, so any trickle of bytes
@@ -3912,7 +3945,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         #    Waiting behind a large job or a busy node is progress, not
         #    failure; a liveness heartbeat below refreshes the job's records
         #    while it waits so nothing mistakes it for dead.
-        _gto = httpx.Timeout(gen_timeout, connect=15.0)
+        #  • ...except on a GPU node: no first byte in OLLAMA_GPU_FIRST_BYTE_S means stuck,
+        #    and the CPU fallback below takes over (ollama_wait_core, 4 Oct 2026).
+        _gto = httpx.Timeout(_ollama_wait_core.read_timeout(
+            gen_timeout, bool((OLLAMA_INSTANCES.get(chosen) or {}).get("has_gpu")),
+            OLLAMA_GPU_FIRST_BYTE_S), connect=15.0)
         _hb_stop = asyncio.Event()
         _hb_task = asyncio.create_task(_ollama_liveness_heartbeat(
             req_id, chosen, mdl, caller, prompt_preview, _hb_stop))
@@ -5473,9 +5510,31 @@ _OFFLOAD_SENT: Dict[str, int] = {}          # class -> calls this process offloa
 _OFFLOAD_CACHE: Dict[str, Any] = {"cfg_at": 0.0, "cfg": {}, "w_at": 0.0, "workers": []}
 
 
+#: Redis hash of capabilities vetted for nodes (cap_footprint_core.VETTED_KEY).
+_VETTED_KEY = "vera:node_workers:vetted"
+
+
+async def _refresh_vetted() -> bool:
+    """Load the vetted set into worker_placement_core; True when it changed."""
+    if REDIS is None:
+        return False
+    try:
+        raw = await REDIS.hgetall(_VETTED_KEY)
+    except Exception:
+        return False
+    vetted = {}
+    for k, v in (raw or {}).items():
+        try:
+            vetted[k.decode() if isinstance(k, bytes) else str(k)] = json.loads(v)
+        except Exception:
+            continue
+    return _placement.set_vetted(vetted)
+
+
 async def _offload_config() -> Dict[str, Any]:
     now = time.monotonic()
     if now - _OFFLOAD_CACHE["cfg_at"] > 10 and REDIS is not None:
+        await _refresh_vetted()
         try:
             raw = await REDIS.get(_placement.DISPATCH_KEY)
             _OFFLOAD_CACHE["cfg"] = json.loads(raw) if raw else {}
@@ -5769,8 +5828,11 @@ async def worker_loop(worker_id: str):
     # A node worker advertises only the caps it will actually run: the
     # "another worker has it" hand-off below reads this list, and a host-bound
     # cap advertised by a node would send tasks looking for it here.
+    await _refresh_vetted()
     _classes = (await _worker_classes()) if _IS_WORKER else None
-    _streams = _placement.streams_to_read(is_worker=_IS_WORKER, classes=_classes)
+    _host_id = os.environ.get("VERA_WORKER_HOST_ID", "") if _IS_WORKER else ""
+    _streams = _placement.streams_to_read(is_worker=_IS_WORKER, classes=_classes,
+                                          host_id=_host_id)
     _advertised = [c for c in CAPABILITY_REGISTRY
                    if _placement.may_run_here(c, is_worker=_IS_WORKER, classes=_classes)[0]]
     reg = {
@@ -5784,6 +5846,9 @@ async def worker_loop(worker_id: str):
         # the training libraries this process can import: the host routes a
         # compute job to the nodes only when every compute worker has them
         "libs":         json.dumps(_compute_core.available_libs()),
+        # the node's provisioning id: node scheduling sends a job to this
+        # node's own queue (node_compute_core.node_stream)
+        "host_id":      _host_id,
         "capabilities": json.dumps(_advertised),
         "cap_count":    len(_advertised),
         "tasks_done":   0,
@@ -5810,7 +5875,8 @@ async def worker_loop(worker_id: str):
     async def _apply_classes(new_classes):
         """Roles changed in the UI: read the new classes' streams from now on,
         advertise only their caps. Live - no restart, no re-provision."""
-        streams = _placement.streams_to_read(is_worker=True, classes=new_classes)
+        streams = _placement.streams_to_read(is_worker=True, classes=new_classes,
+                                             host_id=_host_id)
         await _ensure_task_groups(streams)
         adv = [c for c in CAPABILITY_REGISTRY
                if _placement.may_run_here(c, is_worker=True, classes=new_classes)[0]]
@@ -5834,6 +5900,9 @@ async def worker_loop(worker_id: str):
         if _IS_WORKER and time.monotonic() - _classes_checked > 30:
             _classes_checked = time.monotonic()
             _new = await _worker_classes()
+            # a newly vetted capability is advertised (and run) without a restart
+            if await _refresh_vetted() and _new == _classes:
+                _streams, _advertised = await _apply_classes(_classes)
             if _new != _classes:
                 _classes = _new
                 _streams, _advertised = await _apply_classes(_classes)
@@ -6814,6 +6883,7 @@ def capability(
         if _alias_for and (_alias_for == name or not re.fullmatch(
                 r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", _alias_for)):
             raise ValueError("compatibility alias replacement must be a different capability")
+        func = _traced_cap(name, func)
 
         @functools.wraps(func)
         async def wrap(**kw):
@@ -7416,8 +7486,14 @@ def _flatten_dag(dag):
     return flat
 
 async def route_llm(prompt: str, prefer: Optional[str] = None) -> Any:
-    candidates=sorted([k for k in CAPABILITY_REGISTRY if "llm" in k.lower()],
-                      key=lambda k:(0 if k==prefer else 1))
+    # Only plain text generators: a name containing "llm" used to be enough, which
+    # swept in vllm.server.stop, provisioning caps, summarize/classify and llm.route
+    # itself. See llm_route_core.
+    try:
+        from Vera.vera.llm_route_core import route_candidates
+    except ImportError:                                   # pragma: no cover
+        from vera.llm_route_core import route_candidates
+    candidates = route_candidates(CAPABILITY_REGISTRY.keys(), prefer)
     for cap_name in candidates:
         try: return await CAPABILITY_REGISTRY[cap_name]["func"](prompt=prompt)
         except Exception as e: log.warning("route_llm %s: %s",cap_name,e)
@@ -11534,6 +11610,10 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "workers/warm_models_capabilities.py"),
         # compute.* - model training on the node workers (node_compute_core)
         os.path.join(_here, "workers/node_compute_capabilities.py"),
+        # nodes.testenv.* + evolve.test_pool.* - gate pytest sharded over the nodes
+        os.path.join(_here, "evolve/test_runner_capabilities.py"),
+        # nodes.parity.* + caps.footprint - node parity by evidence (footprint tracer)
+        os.path.join(_here, "workers/cap_footprint_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),
         os.path.join(_here, "remote/operator_capabilities.py"),
@@ -11623,6 +11703,7 @@ async def lifespan(app: FastAPI):
         # inventory and after skills/loop_profiles/agents, for the same reason -
         # it projects onto the live registries and must see all of them.
         os.path.join(_here, "registry/registry_capabilities.py"),
+        os.path.join(_here, "minds/switchboard_capabilities.py"),
         # The widget registry (UI redesign): every part of the UI as a record -
         # templates, instances, the registry panel. Beside the agent registry
         # because it projects the panel registry (UI_PANELS) as built-ins.
@@ -11783,8 +11864,16 @@ async def lifespan(app: FastAPI):
     try:
         from concurrent.futures import ThreadPoolExecutor as _TPE
         import threading as _thr
+
+        class _CtxTPE(_TPE):
+            """Carries the submitting task's context into the thread, as
+            asyncio.to_thread does: RUNNING_CAPS (the footprint tracer) and
+            the other context vars then hold for run_in_executor work too."""
+            def submit(self, fn, /, *args, **kwargs):
+                return super().submit(contextvars.copy_context().run, fn, *args, **kwargs)
+
         _n_exec = min(32, (os.cpu_count() or 8) + 4)
-        _default_exec = _TPE(max_workers=_n_exec, thread_name_prefix="vera-exec")
+        _default_exec = _CtxTPE(max_workers=_n_exec, thread_name_prefix="vera-exec")
         _release = _thr.Event()
         # Each submit sees every worker busy (all parked on the event), so the
         # pool is forced to spawn all _n_exec threads right here.

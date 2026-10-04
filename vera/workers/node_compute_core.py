@@ -51,7 +51,32 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # torch / scikit-learn threads for one job on a node. The worker's own
     # BLAS pools stay at its unit's size; this is the training loop's share.
     "threads": 4,
+    # What a node always keeps for its own services (Ollama runners, the NLP
+    # and media servers): a job is admitted only on top of this.
+    "reserve_cpu": 2.0,
+    "reserve_mem_gb": 8.0,
+    # How long a job waits for a node with room before it gives up (or falls
+    # back to the host, when that is on).
+    "max_wait_s": 900,
 }
+
+#: What one job of each function takes from its node, in cores and GB. A job
+#: is admitted on a node only when the node's measured free CPU and memory,
+#: less its reserve and the jobs this host already sent it, cover this.
+NEEDS: Dict[str, Dict[str, float]] = {
+    "worldview.train":  {"cpu": 4.0, "mem_gb": 6.0},
+    "ml.train":         {"cpu": 1.0, "mem_gb": 1.0},
+    "markets.ml.train": {"cpu": 4.0, "mem_gb": 2.0},
+    "pytest.shard":     {"cpu": 1.5, "mem_gb": 3.0},
+}
+#: Node metrics older than this are not trusted for admission.
+METRICS_STALE_S = 60
+
+#: Each node's pinned test venv (hash: host_id -> {"sha", "ok", "at", "error"})
+#: and the freeze sha the gate image needs now. A node runs a pytest shard only
+#: when its venv matches (test_runner_core, nodes.testenv.sync).
+TESTENV_KEY = "vera:nodes:testenv"
+TESTENV_WANT_KEY = "vera:nodes:testenv:want"
 
 #: Seconds a key lives. Inputs can be tens of MB, so they never outlive a job
 #: by much; the done record stays a little longer for a late reader.
@@ -87,7 +112,14 @@ FUNCTIONS: Dict[str, Tuple[str, str, Tuple[str, ...]]] = {
     "ml.train":        ("ml_training", "node_train_epochs", ("numpy",)),
     "markets.ml.train": ("markets_lab_capabilities", "node_train_model",
                          ("numpy", "sklearn")),
+    # a shard of a pipeline gate's pytest run, in the node's pinned test venv
+    # (`testenv`: the node's venv matches the gate image's packages)
+    "pytest.shard":    ("test_runner_core", "node_run_shard", ("testenv",)),
 }
+
+#: Modules that are not capability modules (so not loaded by a worker at
+#: start): imported on first use, by these fixed names only.
+IMPORTS: Dict[str, str] = {"test_runner_core": "Vera.vera.evolve.test_runner_core"}
 
 #: What a worker reports it can run (registration field `libs`).
 PROBED_LIBS = ("numpy", "torch", "sklearn", "scipy")
@@ -111,13 +143,17 @@ def requirements(fn: str) -> Tuple[str, ...]:
 def merge_config(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     cfg = dict(DEFAULT_CONFIG)
     for k, v in (raw or {}).items():
-        if k == "host_fallback":
-            cfg[k] = bool(v)
-        elif k == "threads":
-            try:
+        try:
+            if k == "host_fallback":
+                cfg[k] = bool(v)
+            elif k == "threads":
                 cfg[k] = max(1, min(32, int(v)))
-            except (TypeError, ValueError):
-                pass
+            elif k in ("reserve_cpu", "reserve_mem_gb"):
+                cfg[k] = max(0.0, min(64.0, float(v)))
+            elif k == "max_wait_s":
+                cfg[k] = max(0, min(6 * 3600, int(v)))
+        except (TypeError, ValueError):
+            pass
     return cfg
 
 
@@ -151,14 +187,19 @@ def compute_workers(workers: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
             and "cpu_compute" in _classes_of(w) and _libs_of(w)]
 
 
+def capable(fn: str, workers: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Compute workers that have everything `fn` needs."""
+    need = requirements(fn)
+    return [w for w in compute_workers(workers) if all(_libs_of(w).get(m) for m in need)]
+
+
 def decide(fn: str, workers: Iterable[Dict[str, Any]], *, host_fallback: bool,
            is_sandbox: bool = False) -> Tuple[str, str]:
     """('node' | 'host' | 'refuse', why) for one job.
 
-    A node is chosen when every live compute worker can run the function: the
-    stream hands a job to whichever worker reads first, so one worker without
-    torch would fail a worldview job it happened to take. Busy workers count -
-    the job waits in the stream, which is the point of a queue."""
+    A job is sent to ONE node chosen by plan(), so it needs one worker that can
+    run it - not all of them. Whether that node has room right now is plan()'s
+    question; this one is whether any node could ever take it."""
     if fn not in FUNCTIONS:
         return "refuse", f"unknown compute function {fn!r}"
     if is_sandbox:
@@ -166,17 +207,102 @@ def decide(fn: str, workers: Iterable[Dict[str, Any]], *, host_fallback: bool,
         return "host", "dev sandbox - no node workers on its Redis"
     ws = compute_workers(workers)
     need = requirements(fn)
+    ok = capable(fn, ws)
+    if ok:
+        return "node", f"{len(ok)} of {len(ws)} compute worker(s) can run it"
     if ws:
-        lacking = sorted({str(w.get("host") or w.get("id") or "?") for w in ws
-                          if not all(_libs_of(w).get(m) for m in need)})
-        if not lacking:
-            return "node", f"{len(ws)} compute worker(s)"
-        why = f"compute worker(s) without {'/'.join(need)}: {', '.join(lacking)}"
+        why = f"no compute worker has {'/'.join(need)}"
     else:
         why = "no node worker has the CPU compute class"
     if host_fallback:
         return "host", why + " - host fallback is on"
     return "refuse", why + " (turn on host fallback to run it on the Vera host)"
+
+
+# ── scheduling: which node, and is there room ─────────────────────────────────
+#: A node worker's own queue: the host sends a job to the node it chose.
+NODE_STREAM = "vera:tasks:node:host:{host_id}"
+
+
+def node_stream(host_id: str) -> str:
+    return NODE_STREAM.format(host_id=host_id)
+
+
+def _f(w: Dict[str, Any], k: str, default: float = 0.0) -> float:
+    try:
+        v = w.get(k)
+        return float(v) if v not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def capacity(w: Dict[str, Any]) -> Dict[str, float]:
+    """A worker's node, as its last metrics tick saw it: cores, free cores
+    (from the CPU % across all cores) and free memory (available, not just
+    unused - page cache counts as free)."""
+    cores = _f(w, "ncpu") or 1.0
+    busy = max(0.0, min(100.0, _f(w, "cpu_pct"))) / 100.0
+    mem_total = _f(w, "ram_total_gb")
+    mem_free = _f(w, "mem_avail_gb") or max(0.0, mem_total - _f(w, "ram_used_gb"))
+    return {"cores": cores, "cpu_free": round(cores * (1.0 - busy), 2),
+            "mem_free_gb": round(mem_free, 2), "mem_total_gb": round(mem_total, 2),
+            "load1": _f(w, "load1")}
+
+
+def admit(fn: str, w: Dict[str, Any], cfg: Dict[str, Any],
+          reserved: Optional[Dict[str, float]] = None, *,
+          now: Optional[float] = None) -> Tuple[bool, str, float]:
+    """(room for this job on this worker's node?, why, score). The score ranks
+    admitted nodes: the smaller of the CPU and memory headroom left after the
+    job, in units of what the job needs."""
+    need = NEEDS.get(fn, {"cpu": 1.0, "mem_gb": 1.0})
+    status = str(w.get("status") or "")
+    if status != "idle":
+        return False, f"worker busy ({status or 'unknown'})", 0.0
+    if now is not None and _f(w, "metrics_at") and now - _f(w, "metrics_at") > METRICS_STALE_S:
+        return False, "no fresh metrics", 0.0
+    cap = capacity(w)
+    res = reserved or {}
+    r_cpu = float(cfg.get("reserve_cpu", 2.0))
+    r_mem = float(cfg.get("reserve_mem_gb", 8.0))
+    cpu_left = cap["cpu_free"] - r_cpu - res.get("cpu", 0.0)
+    mem_left = cap["mem_free_gb"] - r_mem - res.get("mem_gb", 0.0)
+    if cpu_left < need["cpu"]:
+        return False, (f"CPU: {cap['cpu_free']:.1f} of {cap['cores']:.0f} cores free, "
+                       f"needs {need['cpu']:.1f} + {r_cpu:.0f} reserved"), 0.0
+    if mem_left < need["mem_gb"]:
+        return False, (f"memory: {cap['mem_free_gb']:.0f} GB free, needs "
+                       f"{need['mem_gb']:.0f} + {r_mem:.0f} GB reserved"), 0.0
+    score = min(cpu_left / need["cpu"], mem_left / need["mem_gb"])
+    return True, f"{cap['cpu_free']:.1f} cores, {cap['mem_free_gb']:.0f} GB free", score
+
+
+def plan(fn: str, workers: Iterable[Dict[str, Any]], cfg: Dict[str, Any], *,
+         reserved: Optional[Dict[str, Dict[str, float]]] = None,
+         now: Optional[float] = None, exclude: Iterable[str] = ()) -> Dict[str, Any]:
+    """Where one job goes now: {pick (worker | None), why, nodes: [{host, ok,
+    why}]}. `reserved` is per host_id: what this host already sent there that
+    the node's metrics may not show yet. `exclude`: host_ids to skip (a node
+    that just lost this job)."""
+    ex = set(exclude or ())
+    rows, best, best_score = [], None, -1.0
+    for w in capable(fn, workers):
+        hid = str(w.get("host_id") or "")
+        if not hid:
+            rows.append({"host": w.get("host"), "ok": False,
+                         "why": "worker reports no host id (older code)"})
+            continue
+        if hid in ex:
+            rows.append({"host": w.get("host"), "host_id": hid, "ok": False, "why": "excluded"})
+            continue
+        ok, why, score = admit(fn, w, cfg, (reserved or {}).get(hid), now=now)
+        rows.append({"host": w.get("host"), "host_id": hid, "ok": ok, "why": why})
+        if ok and score > best_score:
+            best, best_score = w, score
+    if best is not None:
+        return {"pick": best, "why": f"{best.get('host')}: room now", "nodes": rows}
+    why = "; ".join(f"{r['host']}: {r['why']}" for r in rows) or "no capable node"
+    return {"pick": None, "why": why, "nodes": rows}
 
 
 def liveness(*, now: float, dispatched_at: float, hb_seen_at: float,

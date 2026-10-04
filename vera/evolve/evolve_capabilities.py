@@ -5615,11 +5615,28 @@ except Exception:                                      # pragma: no cover
 
 async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, Any]:
     """Run the critical tier for `branch` once no other gate is running one; the gate is
-    listed in _GATES_ACTIVE (queued, then running) for as long as it is in flight."""
+    listed in _GATES_ACTIVE (queued, then running) for as long as it is in flight.
+
+    With the test pool on (evolve.test_pool.config.set), the run is sharded over
+    the host's container and the node workers with room instead
+    (test_runner_capabilities.run_pooled); it takes per-runner leases, so gates
+    run side by side when runners are free."""
     global _critical_tier_lock
     pid = str(rec.get("id") or "")
     _GATES_ACTIVE[pid] = {"id": pid, "branch": branch, "state": "queued", "since": now_iso()}
     try:
+        pool = getattr(_orch, "TEST_POOL", None)
+        if pool is not None:
+            _GATES_ACTIVE[pid]["state"] = "running"
+            try:
+                res = await pool(rec, branch, markers="critical",
+                                 timeout=_CRITICAL_TIER_TIMEOUT_S)
+            except Exception as e:
+                log.warning("test pool failed, running the tier on the host: %s", e)
+                _pstep(rec, "test-pool", False, f"pool failed ({e}) - host run instead")
+                res = None
+            if res is not None:
+                return res
         if _critical_tier_lock is None:
             _critical_tier_lock = asyncio.Lock()
         token = f"{rec.get('id', '')}:{branch}"
@@ -8675,6 +8692,13 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
                 "detail": combined[-1500:], "code": res.get("code", -1)}
     parsed = _ut_parse(combined)
     label = branch or "primary"
+    # per-file times, for balancing the test pool's shards
+    _td = getattr(_orch, "TEST_DURATIONS", None)
+    if _td is not None:
+        try:
+            await _td(combined)
+        except Exception:
+            pass
     await _audit("unittest.run", f"[{label}] {parsed['summary']}", ok=parsed["ok"])
     await _record_unittest_run(parsed, branch=branch, markers=markers,
                                paths=paths, label=label, pipeline_id=pipeline_id)
