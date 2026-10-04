@@ -62,5 +62,6 @@ def test_the_pending_release_waits_through_decide():
 def test_census_summary_reports_live_loops():
     body = REL[REL.index("async def census_summary()"):]
     body = body[:body.index("\n\n\nasync def ")]
-    assert 's["loops"] = core.live_loop_ids(getattr(dm, "_AGENT_LOOP_TASKS", None) or {})' in body
+    assert 'core.live_loop_ids(getattr(dm, "_AGENT_LOOP_TASKS", None) or {})' in body
+    assert 's["loops"] = ids' in body          # + mcp-started runs (test_release_sees_mcp_loops)
     assert '"dag_workshop_capabilities"' in body and '"Vera.vera.dag.dag_workshop_capabilities"' in body

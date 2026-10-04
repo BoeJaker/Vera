@@ -3338,6 +3338,31 @@ async def workshop_loop_history_config_set(request: Request):
     return {"ok": True, **cfg}
 
 
+async def _live_loop_session_ids(limit: int = 60) -> List[str]:
+    """Loop sessions genuinely running now - status 'running' and not stale, the rule
+    /workshop/agent_loop/sessions?status=running uses. Unlike _AGENT_LOOP_TASKS it sees runs
+    started through /mcp/call (census goals, probes, delegates), which never register a
+    runner task (4 Oct 2026: a probe's cancel said 'no live runner task in this process'
+    while it ran, so the release hold could not see it). [] when Redis is unavailable."""
+    r = _redis()
+    if not r:
+        return []
+    out: List[str] = []
+    try:
+        ids = await r.zrevrange("vera:loop:history:index", 0, limit)
+        if not ids:
+            ids = await r.zrevrange("vera:loop:sessions", 0, limit)
+        for iid in ids or []:
+            sid = _rd(iid)
+            run_raw = await r.hgetall(f"vera:loop:run:{sid}")
+            run = {_rd(k): _rd(v) for k, v in (run_raw or {}).items()}
+            if run.get("status") == "running" and not await _loop_run_is_stale(r, sid, run):
+                out.append(sid)
+    except Exception as e:
+        log.debug("live loop sessions: %s", e)
+    return out
+
+
 @APP.get("/workshop/agent_loop/sessions")
 async def workshop_loop_sessions(request: Request):
     """Recent loop sessions (newest first) with their run-state — lets a client
