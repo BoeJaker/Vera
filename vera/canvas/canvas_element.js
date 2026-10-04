@@ -142,7 +142,10 @@
      the datasets that hold the records, the records sized by how close they are, and the tags two or more of them
      share - a tag every record carries links everything and says nothing, so it is left out. Built from the item's own
      records: no second read. */
-  function recGraph(c, bodies) {
+  /* a page's names as graph node types (the Vera graph colours by type) */
+  const ENT_NODE = { PERSON: 'Person', ORG: 'Organisation', GPE: 'Place', LOC: 'Place', FAC: 'Place', NORP: 'Group', PRODUCT: 'Product',
+                     EVENT: 'Event', WORK_OF_ART: 'Work', LAW: 'Law', TICKER: 'Ticker' };
+  function recGraph(c, bodies, ents) {
     const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object').slice(0, 80);
     const nodes = [], edges = [], seen = {};
     const node = (n) => { if (seen[n.id]) return; seen[n.id] = 1; nodes.push(n); };
@@ -168,7 +171,18 @@
           props: { title: String(m.snippet || '').slice(0, 120), text: String(m.snippet || ''), dataset_id: ds, record_id: String(m.id), neighbour: true } });
           if (ds) { node({ id: 'd:' + ds, label: ds, type: 'Dataset', r: 11, props: { name: ds } }); edges.push({ from: 'd:' + ds, to: nid, rel: 'holds' }); } }
         edges.push({ from: 'r:' + r.id, to: nid, rel: 'similar', dashed: true }); }); });
-    return { nodes, edges, caption: items.length + ' record' + (items.length === 1 ? '' : 's') + (nbN ? ' \u00b7 ' + nbN + ' neighbour' + (nbN === 1 ? '' : 's') : '') };
+    /* WHAT THE PAGES NAME (a research answer's pages, from the reader cache): a name two or more pages share is a node
+       linked to each page that names it - the people and organisations the run keeps meeting, and which pages meet them */
+    let entN = 0;
+    if (ents) {
+      const n = {}; items.forEach((r) => (ents[String(r.id)] || []).forEach((e) => { n[e[0]] = (n[e[0]] || 0) + 1; }));
+      const keep = Object.keys(n).filter((k) => n[k] >= 2).sort((a, b) => n[b] - n[a]).slice(0, 24); const on = new Set(keep);
+      items.forEach((r) => (ents[String(r.id)] || []).forEach((e) => { if (!on.has(e[0])) return;
+        if (!seen['e:' + e[0]]) entN++;
+        node({ id: 'e:' + e[0], label: e[0].slice(0, 32), type: ENT_NODE[e[1]] || 'Entity', r: Math.min(16, 7 + 2 * n[e[0]]), props: { name: e[0], kind: e[1], pages: n[e[0]] } });
+        edges.push({ from: 'r:' + r.id, to: 'e:' + e[0], rel: 'names' }); }));
+    }
+    return { nodes, edges, caption: items.length + ' record' + (items.length === 1 ? '' : 's') + (nbN ? ' \u00b7 ' + nbN + ' neighbour' + (nbN === 1 ? '' : 's') : '') + (entN ? ' \u00b7 ' + entN + ' name' + (entN === 1 ? '' : 's') + ' they share' : '') };
   }
 
 
@@ -537,16 +551,17 @@
       const st = recState(el, key);
       // the view the item asks for (the fabric's: graph) is where it starts; the reader's own choice wins after that
       if (!st._v0) { st._v0 = true; if (c.view) st.view = String(c.view); }
-      const canGraph = c.kind === 'memory' || c.view === 'graph';
-      if (st.view === 'graph' && !canGraph) st.view = 'list';
-      const q = String(st.q || '').toLowerCase().trim();
       /* WHAT THE PAGES NAME: each row's page's entities, from the reader cache (_srcPrefetch fills them, in memory - never
          the web), as facets beside the sites - the people, organisations and places two or more of the pages name.
-         Choosing one shows the pages that name it; each row carries its own top three. */
+         Choosing one shows the pages that name it; each row carries its own top three; and the shared names make a
+         graph of the pages and what links them. */
       const ents = (el && el._recEnts && el._recEnts[String(key)]) || {};
       const entsOf = (r) => ents[String(r.id)] || [];
       const entN = {}; all.forEach((r) => entsOf(r).forEach((e) => { entN[e[0]] = (entN[e[0]] || 0) + 1; }));
       const entList = Object.keys(entN).filter((n) => entN[n] >= 2).sort((a, b) => entN[b] - entN[a]).slice(0, size === 'xl' ? 12 : 6);
+      const canGraph = c.kind === 'memory' || c.view === 'graph' || entList.length > 0;
+      if (st.view === 'graph' && !canGraph) st.view = 'list';
+      const q = String(st.q || '').toLowerCase().trim();
       let rows = all.filter((r) => (!st.ent || entsOf(r).some((e) => e[0] === st.ent)) && (!st.dom || r.domain === st.dom) && (!q || (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.domain || '') + ' ' + JSON.stringify(r.meta || {})).toLowerCase().includes(q)));
       if (st.sort === 'newest') rows = rows.slice().sort((a, b) => (Date.parse(b.when) || 0) - (Date.parse(a.when) || 0));
       else if (st.sort === 'title') rows = rows.slice().sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
@@ -609,7 +624,7 @@
       let body = '';
       if (!all.length) body = `<div class="vc-rbx-empty">nothing in it</div>`;
       else if (!rows.length) body = `<div class="vc-rbx-empty">nothing matches “${esc(st.q || st.dom)}”</div>`;
-      else if (st.view === 'graph') body = `<div class="vc-rbx-graph"><div class="vc-live" data-live="rgraph" data-key="${K}"><span class="vc-dim">drawing the graph…</span></div><div class="vc-rbx-gnote">a record's node opens it in the list</div></div>`;
+      else if (st.view === 'graph') body = `<div class="vc-rbx-graph"><div class="vc-live" data-live="rgraph" data-key="${K}"><span class="vc-dim">drawing the graph…</span></div><div class="vc-rbx-gnote">a record's node opens it in the list; a name, the pages that name it</div></div>`;
       else if (st.view === 'table') {
         body = `<div class="vc-tablewrap"><table class="vc-table vc-rbx-tbl"><thead><tr><th>title</th><th>source</th><th>when</th>${all.some((r) => r.score != null) ? '<th>score</th>' : ''}</tr></thead><tbody>`
           + shown.map((r) => `<tr class="${(st.open || {})[r.id] ? 'on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}"><td>${title(r)}</td><td class="mono">${esc(r.domain || (r.meta && (r.meta.dataset_id || r.meta.engine)) || '')}</td><td class="mono">${esc(r.when ? ago(r.when) : '')}</td>${all.some((x) => x.score != null) ? `<td>${score(r)}</td>` : ''}</tr>` + ((st.open || {})[r.id] ? `<tr class="vc-rbx-tr-open"><td colspan="4">${opened(r)}</td></tr>` : '')).join('')
@@ -623,12 +638,28 @@
             + (on ? opened(r) : '') + `</div>`;
         }).join('') + `</div>`;
       }
+      /* A RESEARCH RUN AT A GLANCE (a web or research answer): where its pages came from - one bar, each site its share,
+         a site's part choosing it - and, when the pages carry dates, when they were written, each a dot that opens its page */
+      let glance = '';
+      if ((c.kind === 'research' || c.kind === 'web') && all.length > 2) {
+        const sites = Object.keys(doms).sort((a, b) => doms[b] - doms[a]); const top = sites.slice(0, 10); const rest = all.length - top.reduce((s, d) => s + doms[d], 0);
+        const map = sites.length > 1 ? `<div class="vc-rbx-map" title="where the pages came from">${top.map((d) => `<button class="${st.dom === d ? 'on' : ''}" style="flex:${doms[d]};--h:${hue(d)}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}" title="${esc(d)} · ${doms[d]}"><span>${esc(d.replace(/^www\./, ''))}</span></button>`).join('')}${rest > 0 ? `<i style="flex:${rest}" title="${rest} more"></i>` : ''}</div>` : '';
+        const dated = all.map((r) => [r, Date.parse(r.when)]).filter((x) => isFinite(x[1]));
+        let tl = '';
+        if (dated.length >= 2) {
+          const t0 = Math.min(...dated.map((x) => x[1])), t1 = Math.max(...dated.map((x) => x[1])), span = Math.max(1, t1 - t0);
+          const day = (t) => new Date(t).toISOString().slice(0, 10);
+          tl = `<div class="vc-rbx-tl" title="when the pages were written"><span>${day(t0)}</span><div class="vc-rbx-tlb">${dated.map(([r, t]) => `<button style="left:${(100 * (t - t0) / span).toFixed(1)}%;--h:${hue(r.domain || '')}" data-rec-act="goto" data-rec-key="${K}" data-rec-arg="${esc(r.id)}" title="${esc(day(t) + ' · ' + (r.title || r.url || ''))}"></button>`).join('')}</div><span>${day(t1)}</span></div>`;
+        }
+        if (map || tl) glance = `<div class="vc-rbx-glance">${map}${tl}</div>`;
+      }
       const seg = (name, opts) => `<span class="vc-rbx-seg">${opts.map((o) => `<button class="${(st[name] || opts[0][0]) === o[0] ? 'on' : ''}" data-rec-act="${name}" data-rec-key="${K}" data-rec-arg="${o[0]}" title="${esc(o[2] || '')}">${o[1]}</button>`).join('')}</span>`;
       const from = rows.length ? page * per + 1 : 0, to = Math.min(rows.length, page * per + per);
       const dots = pages > 1 ? Array.from({ length: Math.min(pages, 9) }, (_, i) => { const n = pages <= 9 ? i : Math.round(i * (pages - 1) / 8); return `<button class="vc-rbx-dot${n === page ? ' on' : ''}" data-rec-act="page" data-rec-key="${K}" data-rec-arg="${n}" title="page ${n + 1}"></button>`; }).join('') : '';
       return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
         + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
-        + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
+        + glance
+        + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags and names they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
         + (entList.length ? `<div class="vc-rbx-facets vc-rbx-efacets"><span class="vc-rbx-fl">names</span>${entList.map((n) => `<button class="${st.ent === n ? 'on' : ''}" data-rec-act="ent" data-rec-key="${K}" data-rec-arg="${esc(n)}">${esc(n)}<i>${entN[n]}</i></button>`).join('')}</div>` : '')
         + (domList.length > 1 ? `<div class="vc-rbx-facets">${domList.map((d) => `<button class="${st.dom === d ? 'on' : ''}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}">${esc(d)}<i>${doms[d]}</i></button>`).join('')}</div>` : '')
         + body
@@ -1535,9 +1566,19 @@
   .vc-src-m{font-size:10px;color:var(--t3,var(--dim,#6b7480));margin:2px 0 4px}
   /* a records item: the names its pages share, and each row's own */
   .vc-rbx-efacets .vc-rbx-fl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7480));margin-right:4px;align-self:center}
+  /* a research run at a glance: its sites as one bar, its pages' dates as a line */
+  .vc-rbx-glance{display:flex;flex-direction:column;gap:6px;margin:6px 0 4px}
+  .vc-rbx-map{display:flex;height:18px;border-radius:5px;overflow:hidden;gap:1px}
+  .vc-rbx-map button{min-width:6px;border:0;padding:0 5px;cursor:pointer;background:hsl(var(--h) 45% 42% / .55);color:var(--t1,var(--fg,#e6e9ee));font-size:9.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left}
+  .vc-rbx-map button span{pointer-events:none}.vc-rbx-map button.on,.vc-rbx-map button:hover{background:hsl(var(--h) 55% 50% / .85)}
+  .vc-rbx-map i{background:var(--s2,var(--bg2,#1c2026))}
+  .vc-rbx-tl{display:flex;align-items:center;gap:8px;font-size:9.5px;color:var(--t3,var(--dim,#6b7480));font-variant-numeric:tabular-nums}
+  .vc-rbx-tlb{position:relative;flex:1;height:12px;border-bottom:1px solid var(--bd,var(--border,#2a2f37))}
+  .vc-rbx-tlb button{position:absolute;bottom:-4px;width:8px;height:8px;margin-left:-4px;border-radius:50%;border:0;padding:0;cursor:pointer;background:hsl(var(--h) 55% 55%)}
+  .vc-rbx-tlb button:hover{transform:scale(1.5)}
   .vc-rbx-ents{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0}.vc-rbx-ents span{font-size:9.5px;padding:0 6px;border-radius:99px;background:var(--s2,var(--bg2,#1c2026));color:var(--t2,var(--fg2,#c3cad4))}
   /* a page's pictures inside its reading are figures, not the page: a logo drawn at its natural size filled the item */
-  .vc-src-body img{max-width:100%;max-height:260px;width:auto;height:auto;object-fit:contain;display:block;margin:6px auto}
+  .vc-src-body img,.vc-rbx-body img{max-width:100%;max-height:260px;width:auto;height:auto;object-fit:contain;display:block;margin:6px auto}
   .vc-src-ents{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 2px}
   .vc-src-out{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0;font-size:10px}.vc-src-out span{color:var(--t3,var(--dim,#6b7480))}
   .vc-src-out a{color:var(--ac,var(--acc,#5a9e8f));text-decoration:none}.vc-src-out a:hover{text-decoration:underline}
@@ -3085,8 +3126,10 @@
        embed once it is defined */
     _rgFeed(embed, key) {
       if (!embed) return;
-      const c = this._contentOf(key) || {}; const bodies = recState(this, key).body || {}; const g = recGraph(c, bodies);
-      const sig = (c.query || '') + '|' + (Array.isArray(c.items) ? c.items.map((r) => r && r.id).join(',') : '') + '|' + Object.keys(bodies).map((k) => k + ':' + ((bodies[k] && bodies[k].nb) || []).length).join(',');
+      const c = this._contentOf(key) || {}; const bodies = recState(this, key).body || {};
+      const ents = (this._recEnts && this._recEnts[String(key)]) || null; const g = recGraph(c, bodies, ents);
+      const sig = (c.query || '') + '|' + (Array.isArray(c.items) ? c.items.map((r) => r && r.id).join(',') : '') + '|' + Object.keys(bodies).map((k) => k + ':' + ((bodies[k] && bodies[k].nb) || []).length).join(',')
+        + '|' + (ents ? Object.keys(ents).map((k) => k + ':' + ents[k].length).join(',') : '');
       if (embed._rgSig === sig) return; embed._rgSig = sig;
       const go = () => { try { embed.setGraph(g); } catch (e) {} this._adoptGraphCss(); };
       if (typeof embed.setGraph === 'function') go();
@@ -3106,10 +3149,13 @@
     }
     // a record's node, clicked: the list, on the page that holds it, with that record open
     _rgNode(key, node) {
-      const id = node && String(node.id || ''); if (!id || id.indexOf('r:') !== 0) return;
+      const id = node && String(node.id || '');
+      // a name opens the list at the pages that name it
+      if (id.indexOf('e:') === 0) { const st = recState(this, key); st.view = 'list'; st.ent = id.slice(2); st.page = 0; if (this._doc) this.render(this._doc); return; }
+      if (!id || id.indexOf('r:') !== 0) return;
       const rid = id.slice(2); const b = this._blockOf(key); const c = (b && b.content) || {};
       const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object');
-      const st = recState(this, key); st.view = 'list'; st.q = ''; st.dom = ''; st.sort = 'rank'; st.open = st.open || {}; st.open[rid] = true;
+      const st = recState(this, key); st.view = 'list'; st.q = ''; st.dom = ''; st.ent = ''; st.sort = 'rank'; st.open = st.open || {}; st.open[rid] = true;
       const per = ({ s: 4, m: 6, l: 10, xl: 20 }[b && b.size] || 8); const i = items.findIndex((r) => String(r.id) === rid);
       st.page = i >= 0 ? Math.floor(i / per) : 0;
       if (this._doc) this.render(this._doc);
@@ -3298,6 +3344,7 @@
       if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0; return redraw(); }
       if (act === 'dom') { st.dom = st.dom === arg ? '' : arg; st.page = 0; return redraw(); }
       if (act === 'ent') { st.ent = st.ent === arg ? '' : arg; st.page = 0; return redraw(); }
+      if (act === 'goto') return this._rgNode(key, { id: 'r:' + arg });   // a timeline dot: its page, opened, wherever it sits
       if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key);
           // a fabric record opened is READ at once: its facts, its source, its text - the depth is the point of opening it
           const cur = st.body[it.id] || {};
