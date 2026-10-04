@@ -62,6 +62,12 @@ from Vera.vera.capability_orchestration import (
     capability,
 )
 
+
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.fabric import fusion_core as _fc
+except ImportError:                      # pragma: no cover
+    from vera.fabric import fusion_core as _fc   # type: ignore
+
 log = logging.getLogger("vera.memory_retrieval")
 
 
@@ -337,8 +343,15 @@ async def _gather_ranked_lists(df, query: str, scope: str, pool: int):
     return ranked, vec_sims, text_ids
 
 
-async def _memory_candidates(query: str, limit: int) -> List[Dict]:
-    """Optional session-memory merge so seek is genuinely canonical."""
+async def _memory_candidates(query: str, limit: int, weight: float = 1.0) -> List[Dict]:
+    """Optional session-memory merge so seek is genuinely canonical.
+
+    Memory hits are one ranked list, fused with the fabric's lists by RRF at
+    ``weight`` (the number of fabric lists, so a top memory hit scores like a record
+    every fabric backend ranked first), and must pass the relevance floor too: they
+    carry no comparable cosine, so they need a content-term match with the query -
+    the same rule fabric keyword hits get (RF-04).
+    """
     mem = _mem()
     if mem is None or not hasattr(mem, "MEMORY"):
         return []
@@ -359,9 +372,10 @@ async def _memory_candidates(query: str, limit: int) -> List[Dict]:
                     "created_at": rec.get("created_at", ""),
                     "tags": rec.get("tags", []) or [],
                     "source": "memory",
-                    "score": 1.0 / (_RRF_K + rank),
+                    "score": float(weight) / (_RRF_K + rank),
                     "origin": "memory"})
-    return out
+    terms = _fc.query_terms(query)
+    return [c for c in out if _fc.lexical_pass(terms, c["text"])]
 
 
 def _render_seek(query: str, selected: List[Dict], candidates: int,
@@ -442,10 +456,7 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
     ranked, vec_sims, text_ids = await _gather_ranked_lists(df, query, scope, pool)
 
     # RRF fusion — rank-based, so backend score scales never mix.
-    fused: Dict[str, float] = {}
-    for lst in ranked:
-        for rank, rid in enumerate(lst):
-            fused[rid] = fused.get(rid, 0.0) + 1.0 / (_RRF_K + rank)
+    fused: Dict[str, float] = _fc.rrf(ranked, k=_RRF_K)
 
     # Relevance floor: a record survives only if it is a decent SEMANTIC match
     # (cosine ≥ floor) or a genuine keyword hit. Without this, seek returned the
@@ -500,7 +511,8 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
             log.debug("seek legacy fallback: %s", e)
 
     if include_memory and not scope:
-        cands.extend(await _memory_candidates(query, limit=max(4, k // 2)))
+        cands.extend(await _memory_candidates(query, limit=max(4, k // 2),
+                                              weight=_fc.list_weight(len(ranked))))
 
     # Scope prefix / since filters
     if scope_prefix:
