@@ -5607,6 +5607,22 @@ _critical_tier_lock: Optional[asyncio.Lock] = None
 
 # Gates in THIS process, for /health's `activity` (pipeline id -> {id, branch, state, since}).
 _GATES_ACTIVE: Dict[str, Dict[str, Any]] = {}
+
+
+def _moot_gate(pid: str) -> None:
+    """The pipeline merged while its gate was still in flight (a forced promote): the
+    gate's verdict no longer matters, so it stops holding restarting releases (they count
+    "running" gates only). It runs on and clears itself; a restart may kill it - the
+    resume skips merged branches (4 Oct 2026: a release waited on such a gate)."""
+    g = _GATES_ACTIVE.get(str(pid or ""))
+    if g is not None:
+        g["state"] = "moot"
+
+
+def _gate_running(pid: str) -> None:
+    g = _GATES_ACTIVE.get(str(pid or ""))
+    if g is not None and g.get("state") != "moot":
+        g["state"] = "running"
 try:
     from Vera.vera.evolve import gate_resume_core as _gate_resume_core
 except Exception:                                      # pragma: no cover
@@ -5731,7 +5747,7 @@ async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, A
         pool = getattr(_orch, "TEST_POOL", None)
         if pool is not None:
             await _line_leave(token)
-            _GATES_ACTIVE[pid]["state"] = "running"
+            _gate_running(pid)
             try:
                 res = await pool(rec, branch, markers="critical",
                                  timeout=_CRITICAL_TIER_TIMEOUT_S)
@@ -5793,8 +5809,7 @@ async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, A
             # gate_resume_core can find and run again.
             rec["current"] = "running critical tier"
             await _save_pipeline(rec)
-            if str(rec.get("id") or "") in _GATES_ACTIVE:
-                _GATES_ACTIVE[str(rec.get("id") or "")]["state"] = "running"
+            _gate_running(str(rec.get("id") or ""))
             try:
                 return await evolve_unittest_run(branch=branch, paths="tests",
                                                  markers="critical",
@@ -6718,6 +6733,8 @@ async def evolve_pipeline_promote(id: str = "", to: str = "bleeding-edge", force
         res = await _merge_isolated(str(root), branch, to, msg)                 # isolated — no live tree
     ok = res["ok"]
     rec["decision"] = "promoted" if ok else rec.get("decision", "held")
+    if ok:
+        _moot_gate(rec.get("id"))
     _pstep(rec, "merge", ok, res.get("error") or f"merged {branch} → {to} @ {(res.get('commit') or '')[:10]}")
     await _save_pipeline(rec)
     await _audit("pipeline.promote",
