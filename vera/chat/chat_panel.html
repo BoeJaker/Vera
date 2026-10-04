@@ -16679,7 +16679,13 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
         const colId='col-'+Date.now()+'-'+Math.random().toString(36).slice(2,6);
         let bodyHtml;
         if(long){
-          const preview=renderMd(txt.slice(0,300))+'…';
+          /* the preview never ends inside a fence (owner, 2026-10-04: a finished deck came back from history as a card
+             saying "streaming… writing" - the 300 characters cut its ```slides open): it stops before the fence it would
+             cut, and the fence is named instead; Show full draws everything */
+          let cut=txt.slice(0,300); const fences=[...cut.matchAll(/^\s*(```|~~~)([\w+-]*)/gm)];
+          let more='';
+          if(fences.length%2===1){ const f=fences[fences.length-1]; cut=cut.slice(0,f.index); more=' <span style="color:var(--dim2)">['+esc(f[2]||'code')+' block]</span>'; }
+          const preview=(cut.trim()?renderMd(cut):'')+more+'…';
           bodyHtml=`<div>${preview}<br><button class="btn xs" style="margin-top:4px" onclick="(function(b,id){b.closest('.msg-body').innerHTML=document.getElementById(id).innerHTML;b.closest('.msg-body').removeChild=function(){};document.getElementById(id).remove();})(this,'${colId}')">Show full</button></div><template id="${colId}">${renderMd(txt)}</template>`;
         }else{
           bodyHtml=renderMd(txt);

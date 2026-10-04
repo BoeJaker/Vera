@@ -58,5 +58,11 @@ t('the chat tells the model it draws them; the model is told the three fences', 
 t('render.export makes every family, off the event loop', RC.includes('res = (_export(content, fmt, title=title, filename=filename) if fmt == "latex"')
   && RC.includes('else await _export_file(content, fmt, title=title, filename=filename))') && RC.includes('r = await run_argv(argv, timeout=150') && RC.includes('"families":    list(_xc.FAMILIES),'));
 t('slides are offered only where LibreOffice can make them (pandoc is not the slides path)', RC.includes('elif f["via"] == "lo" and f["family"] == "presentation":\n            live = lo'));
+// a real turn (2026-10-04): the chat streamed a long ```slides fence onto the canvas as a code item, drawn as source;
+// and history's 300-character preview cut the fence open, so a finished deck said "streaming"
+const CV = R('vera/canvas/canvas_element.js');
+t('a canvas code item whose language is a file type is drawn as its file card', CV.includes("const fk = VO && vid && typeof VO.fileKind === 'function' ? VO.fileKind(c.lang) : '';")
+  && CV.includes("VO.fileCard(fk, String(c.lang || ''), String(c.code || ''), { id: vid, canvas: false, cls: 'vc-kit', incomplete: streaming"));
+t('a history preview stops before a fence it would cut open', CHAT.includes("if(fences.length%2===1){ const f=fences[fences.length-1]; cut=cut.slice(0,f.index);"));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

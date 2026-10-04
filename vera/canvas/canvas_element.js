@@ -466,6 +466,14 @@
          explode item binds to, the reader's helpers - with only what the canvas does its own way plugged in: Preview
          draws in the column's live layer (it survives a redraw), Explode makes the bound explode item, an edit is kept
          with the item. While the chat is still streaming into it, it is the kit's streaming card. */
+      /* A DECK, A SHEET, A PAGE (```slides / ```sheet ```csv ```tsv / ```document) is drawn as what it is - the kit's file
+         card - not as its source: a long one streams out of the chat onto the canvas as a code item (owner, 2026-10-04:
+         a 4-slide deck landed here as 55 lines of markdown). Drawn as it streams in; its Edit is kept with the item. */
+      const fk = VO && vid && typeof VO.fileKind === 'function' ? VO.fileKind(c.lang) : '';
+      if (fk && typeof VO.fileCard === 'function') {
+        const streaming = !!(el && el._liveOv && el._liveOv[key]);
+        return `<div class="vc-codewrap vc-filewrap">${VO.fileCard(fk, String(c.lang || ''), String(c.code || ''), { id: vid, canvas: false, cls: 'vc-kit', incomplete: streaming, title: String(c.title || c.filename || '') })}</div>`;
+      }
       if (VO && vid && typeof VO.card === 'function') {
         const streaming = !!(el && el._liveOv && el._liveOv[key]);
         const live = prev ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>` : null;
