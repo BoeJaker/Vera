@@ -3733,6 +3733,18 @@ async def gather_worldview(query: str, top_k: int = 15) -> list[Citation]:
         if not reg or "func" not in reg:
             log.debug("gather_worldview: worldview.query not registered")
             return []
+        # Only cite the worldview when its health verdict is "ok" (doc 49 §4.1, RF-07):
+        # an overfit or untrained model otherwise feeds research citations.
+        # VERA_RESEARCH_WORLDVIEW_UNGATED=1 restores the old behaviour.
+        if os.environ.get("VERA_RESEARCH_WORLDVIEW_UNGATED", "") != "1":
+            hreg = CAPABILITY_REGISTRY.get("worldview.health")
+            hfn = (hreg.get("raw") or hreg.get("func")) if hreg else None
+            health = await hfn(trace_id=None) if hfn else {"status": "unknown"}
+            if not isinstance(health, dict) or health.get("status") != "ok":
+                log.info("gather_worldview: skipped - worldview health %s (%s)",
+                         (health or {}).get("status") if isinstance(health, dict) else health,
+                         "; ".join((health or {}).get("reasons", [])[:2]) if isinstance(health, dict) else "")
+                return []
         res = await reg["func"](text=query, top_k=top_k, trace_id=None)
         if not isinstance(res, dict) or res.get("error"):
             log.debug("gather_worldview: %s", (res or {}).get("error") if isinstance(res, dict) else res)
