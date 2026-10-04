@@ -450,7 +450,7 @@ async def cap_release_prod(confirm: bool = False, edge: str = "", census: str = 
                              now=_now(), release_id=uuid.uuid4().hex[:8])
         p["sync_nodes"] = bool(sync_nodes)
         summary = await census_summary()
-        ok, why = core.may_release(mode, summary)
+        ok, why = core.may_release(mode, summary, restart=bool(restart))
         await emit_event({"type": "evolve.release.requested", "release_id": p["id"], "edge": edge,
                           "mode": mode, "census": summary.get("state"), "go_now": ok})
         if ok:
@@ -505,6 +505,7 @@ async def cap_release_cancel(reason: str = "", trace_id=None) -> Dict[str, Any]:
         p["status"] = "cancelled"
         p["last_why"] = reason or "cancelled"
         await _save(None)
+        await _drain(False)                 # gates held for this release may start now
         await _archive(p)
         resumed = await _resume_if_ours() if p.get("yield_written") else False
         await emit_event({"type": "evolve.release.cancelled", "release_id": p["id"], "census_resumed": resumed})
