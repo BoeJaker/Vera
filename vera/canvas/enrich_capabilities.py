@@ -440,9 +440,16 @@ async def cap_turn_prepare(text: str = "", session_id: str = "", mid: str = "", 
         block, size, kind = "widget", "m", "widget"
         if not content:
             rec = ec.records_item(cap, args, res, kind="rows", why=s.get("why") or "", title=title)
-            if not rec:
+            if rec:
+                content, block, size, kind = rec, "records", "l", "rows"
+            elif s.get("lead") and isinstance(res, dict):
+                # a headline that answers a RECORD (a dashboard's figures) is its fields, name beside value
+                fields = [[k, v] for k, v in res.items() if isinstance(v, (str, int, float, bool)) and k not in ("ok",)][:16]
+                if not fields:
+                    return dict(dl, key="", cap=cap, title=title, summary="nothing recorded", empty=True)
+                content, block, size, kind = {"title": title, "fields": fields, "why": s.get("why") or ""}, "kv", "m", "kv"
+            else:
                 return None
-            content, block, size, kind = rec, "records", "l", "rows"
         else:
             content["why"] = s.get("why") or ""
         key = ec.item_key(cap, args, kind)
