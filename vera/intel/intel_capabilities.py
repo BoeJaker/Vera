@@ -320,14 +320,14 @@ async def cap_topic_save(name: str = "", id: str = "", brief: str = None, why: s
                          questions: Any = None, queries: Any = None, entities: Any = None,
                          exclude: Any = None, sites: Any = None, depth: str = "", cadence: str = "",
                          status: str = "", deliver: Any = None, min_score: float = None,
-                         dream_loop: bool = None, discovery: bool = None, parent: str = "",
+                         dream_loop: bool = None, discovery: bool = None, vendors: bool = None, parent: str = "",
                          color: str = "", origin: str = "", trace_id=None):
     st = store()
     existing = st.get_topic(id) if id else (st.get_topic(core.slug(name)) if name else None)
     raw: Dict[str, Any] = {"name": name, "id": id, "depth": depth, "cadence": cadence, "status": status,
                            "parent": parent, "color": color, "origin": origin}
     for k, v in (("brief", brief), ("why", why), ("min_score", min_score), ("dream_loop", dream_loop),
-                 ("discovery", discovery)):
+                 ("discovery", discovery), ("vendors", vendors)):
         if v is not None:
             raw[k] = v
     for k, v in (("questions", questions), ("queries", queries), ("entities", entities),
@@ -531,6 +531,7 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
             continue
     out: List[Dict[str, Any]] = []
     batch: Dict[str, Dict[str, Any]] = {}
+    genre_budget = 40
     for i, c in enumerate(cands):
         vec = vecs[i] if i < len(vecs) and isinstance(vecs[i], list) else None
         if vec:
@@ -557,6 +558,16 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
         heur = core.heuristic_score(c, t, novelty_v=nv)
         c["relevance_nlp"] = rel.get(i)
         c["score"] = ops.blend_score(relevance=rel.get(i), heuristic=heur, novelty=nv)
+        if genre_budget > 0 and (rel.get(i) is None or rel.get(i, 0) >= 0.2):
+            genre_budget -= 1         # only plausible hits are classified: a few dozen ~100 ms node calls per sweep
+            g, gp = ops.genre_of(await _nlp("nlp.zeroshot", text=texts[i][:600],
+                                            labels=list(ops.GENRE_LABELS.values()), multi_label=False))
+            if g:
+                c["genre"], c["genre_p"] = g, gp
+                f = ops.genre_factor(g, bool(t.get("vendors")))
+                if f < 1.0:
+                    c["score"] = round(c["score"] * f, 1)
+                    stats["demoted"] = stats.get("demoted", 0) + 1
         recent_titles.append(c["title"])
         batch[c["id"]] = c
         out.append(c)
@@ -597,7 +608,7 @@ async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
     for s in new[:20]:
         await _event("signal.new", topic=t["id"], id=s["id"], title=s["title"], score=s.get("score"))
     return {"topic": t["id"], "queries": queries, "new": len(new), "joined": stats.get("joined", 0),
-            "nlp": stats.get("nlp", False), "errors": errors}
+            "demoted": stats.get("demoted", 0), "nlp": stats.get("nlp", False), "errors": errors}
 
 
 async def _dream_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -746,7 +757,8 @@ async def enrich_topic(t: Dict[str, Any], *, limit: int = 0, should_continue=Non
         if await _stop_reason(should_continue):
             break
         s2, page = await _read_and_tag(t, s)
-        if (s2.get("score") or 0) < gate or llm_done >= n:
+        low_genre = s2.get("genre") in ops.LOW_GENRES and not (s2.get("genre") == "marketing" and t.get("vendors"))
+        if (s2.get("score") or 0) < gate or llm_done >= n or low_genre:
             text = str(page.get("markdown") or s.get("snippet") or "")
             s2.update(summary=_extractive_summary(text) or s.get("snippet", ""), enriched=True, nlp_only=True,
                       enriched_at=core.now_iso())

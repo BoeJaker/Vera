@@ -119,6 +119,7 @@ def normalise_topic(raw: Dict[str, Any], existing: Optional[Dict[str, Any]] = No
         "min_score": _num(raw.get("min_score", base.get("min_score", 5)), 5),
         "dream_loop": bool(raw.get("dream_loop", base.get("dream_loop", False))),
         "discovery": bool(raw.get("discovery", base.get("discovery", True))),
+        "vendors": bool(raw.get("vendors", base.get("vendors", False))),   # vendor pages are wanted here
         "color": str(raw.get("color", base.get("color", "")) or "").strip(),
         "created": base.get("created") or now_iso(),
         "updated": now_iso(),
