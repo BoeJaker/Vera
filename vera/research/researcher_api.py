@@ -4110,6 +4110,79 @@ async def _detect_ctx(inst: OllamaInstance) -> int:
     return ctx
 
 
+def _vera_orch():
+    """The orchestrator module when running inside Vera (None standalone)."""
+    return (sys.modules.get("Vera.vera.capability_orchestration")
+            or sys.modules.get("capability_orchestration"))
+
+
+def _research_origin_headers(job_id: str) -> dict:
+    """X-Vera-Origin for research's node calls, so the node activity tap attributes them."""
+    orch = _vera_orch()
+    fn = getattr(orch, "vera_origin_header", None) if orch else None
+    try:
+        return fn(job_type="research", req_id=str(job_id or ""), cap="research") if fn else {}
+    except Exception:
+        return {}
+
+
+@asynccontextmanager
+async def _research_gate(inst: "OllamaInstance", job_id: str, prompt_chars: int):
+    """Hold the shared generation slot for the node research is about to call.
+
+    Research streamed straight to /api/generate, outside the per-node semaphore and
+    the cross-process GPU gate every other Vera generation goes through, and outside
+    the request log - so it competed for the GPU unseen (RF-50). This takes the same
+    slot (_ollama_slot) for Vera-routed nodes and records one request-log entry.
+    Standalone (no orchestrator) or for a hand-configured node it does nothing.
+    If the slot cannot be had within the timeout the call proceeds, as the gate
+    itself fails open, and the log entry says so.
+    """
+    orch = _vera_orch()
+    iid = getattr(inst, "vera_iid", "") or ""
+    slot_fn = getattr(orch, "_ollama_slot", None) if orch else None
+    log_fn = getattr(orch, "_ollama_log_append", None) if orch else None
+    entry = {
+        "req_id": f"research-{uuid.uuid4().hex[:10]}", "model": getattr(inst, "model", ""),
+        "instance": iid or getattr(inst, "name", ""), "caller_file": "researcher_api.py",
+        "caller_func": "stream_ollama", "prompt_preview": "",
+        "ts": datetime.now(timezone.utc).isoformat(), "status": "running",
+        "session_id": str(job_id or ""), "job_type": "research", "profile": "research",
+        "role": str(getattr(inst, "tier", "") or ""), "request_stage": "research",
+        "prompt_chars": int(prompt_chars or 0),
+    }
+    t0 = time.time()
+    status = "done"
+    try:
+        if slot_fn and iid:
+            try:
+                cm = slot_fn(iid, timeout=_effective_timeout(inst, 300.0))
+                await cm.__aenter__()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # queue timeout: proceed, as the gate fails open
+                log.warning("research: no generation slot on %s (%s) - proceeding", iid, e)
+                entry["gate"] = "timeout_proceeded"
+                cm = None
+            try:
+                yield
+            finally:
+                if cm is not None:
+                    await cm.__aexit__(None, None, None)
+        else:
+            yield
+    except BaseException:
+        status = "error"
+        raise
+    finally:
+        entry.update({"status": status, "elapsed_s": round(time.time() - t0, 2)})
+        if log_fn:
+            try:
+                log_fn(entry)
+            except Exception:
+                pass
+
+
 async def stream_ollama(
     inst: OllamaInstance,
     prompt: str,
@@ -4181,7 +4254,8 @@ async def stream_ollama(
     if _node is not None:
         _node["in_use"] = _node.get("in_use", 0) + 1
 
-    async with httpx.AsyncClient(timeout=to) as client:
+    async with _research_gate(inst, job_id, len(prompt or "") + len(system or "")), \
+               httpx.AsyncClient(timeout=to, headers=_research_origin_headers(job_id)) as client:
         try:
             async with client.stream("POST", inst.generate_url, json=payload) as resp:
                 resp.raise_for_status()
