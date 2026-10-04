@@ -949,7 +949,7 @@ function lblRow(input,text){return el('label',{style:'display:flex;gap:8px;align
 function subHdr(t){return el('div',{class:'muted',style:'font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;margin:13px 0 6px'},t);}
 function openCfg(){const p=$('#paneR');const old=$('#cfgCard');if(old)old.remove();
   const wrap=el('div',{class:'card',id:'cfgCard'});
-  wrap.append(el('h3',{},'Settings',el('button',{class:'btn sm',style:'margin-left:auto',onclick:()=>wrap.remove()},'close')));
+  wrap.append(el('h3',{},'Settings',el('button',{class:'btn sm',style:'margin-left:auto',onclick:()=>{shutCfg();wrap.remove();}},'close')));
   // capture flow
   const n=el('input',{type:'number',min:1,max:8,value:CFG.autoAdvanceN,style:'width:70px'});
   const aA=chk(CFG.autoAssess),aP=chk(CFG.autoPrice),tt=chk(CFG.tts);
@@ -1055,9 +1055,12 @@ function openCfg(){const p=$('#paneR');const old=$('#cfgCard');if(old)old.remove
     CFG.bgRemove=bg.checked;CFG.watermark=wm.checked;CFG.watermarkText=wmText.value;CFG.wmPos=wmPos.value;CFG.wmOpacity=parseFloat(wmOp.value)||0.5;
     CFG.visionModel=vmSel.value;CFG.autoEnrich=enr.checked;CFG.region=regSel.value;
     CFG.autoPrint=ap.checked;CFG.printMode=pm.value;CFG.labelStore=lblStore.value;
-    saveCfg();wrap.remove();buildCmdbar();buildLeft();buildRight();$('#ttsBtn').classList.toggle('on',CFG.tts);toast('Saved','ok');}},'Save settings')));
+    saveCfg();shutCfg();wrap.remove();buildCmdbar();buildLeft();buildRight();$('#ttsBtn').classList.toggle('on',CFG.tts);toast('Saved','ok');}},'Save settings')));
   p.prepend(wrap);
+  /* the shared Settings page, as every panel's settings open (the LHM audit, point 5): the card is made for it and goes with it */
+  if(window.VeraSettings&&VeraSettings.openSection) VeraSettings.openSection(wrap,{label:'Settings',onClose:()=>wrap.remove()});
 }
+function shutCfg(){try{if(window.VeraSettings&&VeraSettings.isOpen())VeraSettings.close();}catch(e){}}
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 $('#voiceBtn').onclick=toggleVoice;
@@ -1077,5 +1080,6 @@ document.addEventListener('keydown',e=>{
 buildCmdbar();buildLeft();buildRight();updateCoachUI();$('#bc')&&$('#bc').focus();
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>

@@ -24,7 +24,7 @@ t('the item opens it before the panel\'s own handler (capture on the document)',
 t('the panel\'s own handler still runs first (a replayed click), so whatever fills the section loads', /if\(!_cur\)\{ _pass = true; try\{ trigger\.click\(\); \}catch\(e\)\{\} finally\{ _pass = false; \} \}/.test(VS));
 t('openSection: a panel that builds its settings when asked hands its element over', /function openSection\(sec, opts\)\{/.test(VS) && /window\.VeraSettings = \{[^}]*openSection/.test(VS));
 t('a block whose place the panel re-drew goes back into the section, never lost', /else if\(sec\)\{ sec\.appendChild\(m\.el\); \}/.test(VS));
-t('blocks are MOVED in and back where they were', /var mark = document\.createComment\('vera-settings'\); k\.parentNode\.insertBefore\(mark, k\);/.test(VS) && /m\.mark\.parentNode\.insertBefore\(m\.el, m\.mark\)/.test(VS) && !/cloneNode/.test(VS));
+t('blocks are MOVED in and back where they were', /var mark = document\.createComment\('vera-settings'\); k\.parentNode\.insertBefore\(mark, k\);/.test(VS) && /m\.mark\.parentNode\.insertBefore\(m\.el, m\.mark\)/.test(VS) && (VS.match(/cloneNode/g) || []).length === 1 && /function _htxt\(e\)\{[^\n]*cloneNode/.test(VS));   /* the one copy only reads a heading's words */
 t('Esc closes, Ctrl/Cmd + , opens', /if\(ev\.key === 'Escape' && _cur\)\{ ev\.preventDefault\(\); close\(\); return; \}/.test(VS) && /\(ev\.ctrlKey \|\| ev\.metaKey\) && ev\.key === ','/.test(VS));
 t('an explanation is the line under the title, not a card; only cards with fields or a heading are listed', /lead = _txt\(k\); k\.setAttribute\('data-vs-lead', ''\); return;/.test(VS) && /var nm = cardTitle\(k\); if\(!nm\)\{ rows\.push\(\{ row: null, card: card \}\); return; \}/.test(VS));
 t('a section wrapped in one block is read from inside it; a header block is the title and its line', /if\(inner\.cards\.length > 1\) return \{ title: title \|\| inner\.title, lead: lead \|\| inner\.lead, cards: inner\.cards \};/.test(VS) && /if\(!title && !cards\.length && !_fields\(k\) && !_hasButton\(k\)\)\{ var hh = /.test(VS));
@@ -34,7 +34,7 @@ t('served at /ui/vera-settings.js', /@APP\.get\("\/ui\/vera-settings\.js", inclu
 // the panels on it: their settings item points at a section that exists, and the page loads the script
 const PANELS = [['Telegram', ['vera', 'telegram', 'telegram_panel.html']], ['Email', ['vera', 'email', 'email_panel.html']], ['Storage', ['vera', 'proxmox', 'pxstore_panel.html']],
   ['Dream', ['vera', 'dream', 'dream_panel.html']], ['Research', ['vera', 'research', 'research_panel.html']], ['Calendar', ['vera', 'calendar', 'calendar_panel.html']], ['Loop Lab', ['vera', 'evolve', 'evolve_panel.html']],
-  ['Home Assistant', ['vera', 'homeassistant', 'ha_panel.html']], ['Capabilities', ['vera', 'capabilities', 'cap_hub.html']]];
+  ['Home Assistant', ['vera', 'homeassistant', 'ha_panel.html']], ['Capabilities', ['vera', 'capabilities', 'cap_hub.html']], ['Intelligence', ['vera', 'intel', 'intel_panel.html']]];
 for (const [name, file] of PANELS) {
   const H = R(...file);
   const sel = (H.match(/data-vera-settings="([^"]+)"/) || [])[1] || '';
@@ -47,6 +47,19 @@ for (const [name, file] of PANELS) {
 { const NB = R('vera', 'research', 'notebook_panel.html');
   t('Notebook: the gear opens its popup in the shared page', /if\(window\.VeraSettings && VeraSettings\.openSection\)\{ VeraSettings\.openSection\(pop, \{ label: 'Notebook settings' \}\); return; \}/.test(NB));
   t('Notebook: loads /ui/vera-settings.js', /<script src="\/ui\/vera-settings\.js"><\/script>/.test(NB)); }
+
+// a card made for the page goes with it (onClose); the panels whose settings are built when asked hand them over
+t('openSection takes onClose, called after the blocks are back', /onClose: typeof opts\.onClose === 'function' \? opts\.onClose : null/.test(VS) && /var done = _cur\.onClose; _page = null; _cur = null;/.test(VS) && /if\(done\)\{ try\{ done\(sec\); \}catch\(e\)\{\} \}/.test(VS));
+for (const [name, file, re] of [
+  ['OpenClaw', ['vera', 'openclaw', 'openclaw_panel.html'], /VeraSettings\.openSection\(ge\('panel-config'\), \{ label: 'Connection' \}\)/],
+  ['Commerce intake', ['vera', 'commerce', 'commerce_intake_panel.html'], /VeraSettings\.openSection\(wrap,\{label:'Settings',onClose:\(\)=>wrap\.remove\(\)\}\)/],
+  ['Memory map', ['vera', 'fabric', 'memory_map.html'], /VeraSettings\.openSection\(document\.getElementById\('modal-body'\),\{label:'Data sources'\}\)/],
+  ['NLP', ['vera', 'research', 'nlp_panel.html'], /VeraSettings\.openSection\(box, \{ label: 'Endpoints', onClose: \(\) => box\.remove\(\) \}\)/]]) {
+  const H = R(...file);
+  t(name + ': its settings open in the shared page', re.test(H));
+  t(name + ': loads /ui/vera-settings.js', /<script src="\/ui\/vera-settings\.js"><\/script>/.test(H));
+}
+t('Research: both of its Settings tabs open the shared page', (R('vera', 'research', 'research_panel.html').match(/data-vera-settings="#tab-cfg"/g) || []).length === 2);
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

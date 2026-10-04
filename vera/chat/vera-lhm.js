@@ -975,7 +975,9 @@ function _ebar(title, onAdd, onDone){
     var editing = !!(key && _absEditOn[key]);
     var skey = _absMenuKey(spec, cur), legacy = String(cur.id);
     _absLoad(key, skey, legacy, redraw, host);
-    var mine = function(){ return _absHasSaved(key, skey, legacy) ? _absAddedOf(key, skey, legacy) : _absDefaults(spec); };
+    /* the menu's own widgets (the panel named them for this item or group), else the panel's */
+    var dflt = (cur.widgets && cur.widgets.length) ? { widgets: cur.widgets } : spec;
+    var mine = function(){ return _absHasSaved(key, skey, legacy) ? _absAddedOf(key, skey, legacy) : _absDefaults(dflt); };
     var ttl = tabs.querySelector('.lhm-ttl');
     if(ttl && key){ var ed = _el('button', 'lhm-a-edit' + (editing ? ' on' : ''), '\u270e'); ed.type = 'button'; ed.title = 'Edit this menu - add widgets to it, as the chat\'s menus take them';
       ed.addEventListener('click', function(ev){ ev.stopPropagation(); _absEditOn[key] = !_absEditOn[key]; redraw(); }); ttl.appendChild(ed); }
@@ -1093,6 +1095,10 @@ function _ebar(title, onAdd, onDone){
       }
     }
     try{ _absWidgets(host, tabs, spec, cur, opts, function(){ absorb(host, spec, pickFn, opts); }); }catch(e){}
+    /* the menu's primary action, last, as the chat's menus end (the panel's data-lhm-cta; pressing it presses the panel's own) */
+    if(cur && cur.cta && cur.cta.id){ var cta = _el('button', 'lhm-cta lhm-a-cta', cur.cta.label || 'Go'); cta.type = 'button'; cta.setAttribute('data-w', 'cta · button');
+      if(cur.cta.desc){ cta.title = cur.cta.desc; cta.setAttribute('data-desc', cur.cta.desc); }
+      cta.addEventListener('click', function(ev){ ev.stopPropagation(); pickFn(cur.cta.id); }); tabs.appendChild(cta); }
     wrap.appendChild(tabs);
     _alignRail(host, rail, tabs, pairs);
     /* the host redraws this menu on every state the panel publishes, often into a new element: what was last shown is kept

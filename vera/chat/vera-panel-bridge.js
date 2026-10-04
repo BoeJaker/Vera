@@ -174,6 +174,9 @@
      draws an unmarked item with the glyph its name maps to (VeraLHM.glyphFor) - one table, in the library that draws it. */
   function _navIcon(it){ var t = String((it && it.icon) || '').trim(); return (!t || /^[A-Za-z0-9]{1,2}$/.test(t)) ? '' : t; }
   function _navTab(it){ return { id: it.id, label: it.label, icon: _navIcon(it), icon_svg: it.icon_svg || '', desc: it.desc || '', desc_long: it.desc_long || '' }; }
+  function _navCtaEls(){ try{ return Array.prototype.slice.call(document.querySelectorAll('[data-lhm-cta]'), 0, 12); }catch(e){ return []; } }
+  function _navCtas(){ return _navCtaEls().map(function(el, i){ var cl = function(v, n){ return String(v || '').replace(/\s+/g, ' ').trim().slice(0, n); };
+    return { i: i, for: cl(el.getAttribute('data-lhm-cta'), 80), label: cl(el.getAttribute('data-label') || el.textContent || el.title, 40), desc: cl(el.getAttribute('data-desc') || el.title, 140) }; }); }
   function _navLhm(){
     if(!_navItems || !_navItems.length || (_navLhmOpts && _navLhmOpts.lhm === false)) return null;
     // the panel's name: its page title carries the product's name first ("Vera — Estate"), which the menu's head does not need
@@ -200,6 +203,16 @@
         m.tabs = m.tabs.slice(0, at + 1).concat(sub, m.tabs.slice(at + 1)); });
       if(kid && kid.nav.active) act.tab = 'c:' + kid.nav.active; else if(ps && ps.active) act.tab = 's:' + ps.active;
     }
+    /* THE CHAT'S MENU ANATOMY (owner, 2026-10-03, the LHM audit points 3/4: "chat UI is the template"): under its items a chat
+       menu carries its quick widgets and one primary action. A panel names them: data-lhm-widgets on an item (that item's
+       menu's widgets) and data-lhm-cta on its primary action (="<item id>" for one item's menu, empty for every menu). */
+    var ctas = _navCtas();
+    menus.forEach(function(m){ var ids = (m.tabs || []).map(function(t){ return String(t.id); });
+      var own = []; _navItems.forEach(function(it){ if(ids.indexOf(String(it.id)) >= 0 && it.widgets) it.widgets.forEach(function(w){ if(own.indexOf(w) < 0) own.push(w); }); });
+      if(m.id.charAt(1) === 'i'){ var one = _navItems[+m.id.slice(2)]; own = (one && one.widgets) ? one.widgets.slice() : []; }
+      if(own.length) m.widgets = own.slice(0, 8);
+      var c = ctas.filter(function(x){ return x.for && (m.id.charAt(1) === 'i' ? (_navItems[+m.id.slice(2)] || {}).id === x.for : ids.indexOf(x.for) >= 0); })[0] || ctas.filter(function(x){ return !x.for; })[0];
+      if(c) m.cta = { id: 'cta:' + c.i, label: c.label, desc: c.desc }; });
     var wd = _navWidgets(); if(kid && kid.nav.widgets) kid.nav.widgets.forEach(function(w){ if(wd.indexOf(w) < 0) wd.push(w); });
     return { title: title, active: act, menus: menus, open: [], widgets: wd };
   }
@@ -520,6 +533,8 @@
     var id = (p || {}).id;
     if(id == null) return {ok: false, error: 'nav_select requires {id}'};
     id = _navResolve(String(id));
+    /* a menu's primary action: pressed, the menu stays where it is */
+    if(id.indexOf('cta:') === 0){ var ce = _navCtaEls()[+id.slice(4)]; if(!ce) return {ok: false, error: 'no primary action ' + id}; ce.click(); return {ok: true}; }
     if(id.indexOf('c:') === 0){ var kid = _activeKid(); if(!kid) return {ok: false, error: 'no nested panel is shown'};
       if(kid.nav && kid.nav.items && !kid.nav.items.some(function(it){ return it.id === id.slice(2); })) return {ok: false, error: 'the shown nested panel has no ' + id.slice(2)};
       try{ kid.win.postMessage({type: 'vera:panel:action', action: 'nav_select', action_id: 'nest-' + Date.now(), payload: {id: id.slice(2)}}, '*'); }catch(e){}
@@ -987,7 +1002,11 @@
         var cl = function(v, n){ return String(v || '').replace(/\s+/g, ' ').trim().slice(0, n); };
         o.desc = cl(it.desc, 140); o.desc_long = cl(it.desc_long, 600);
         if(it.group_icon) o.group_icon = cl(it.group_icon, 4);
-        if(it.icon_svg && String(it.icon_svg).length <= 3000) o.icon_svg = String(it.icon_svg);   // drawn by the host only through its SVG cleaner if(it.group_desc) o.group_desc = cl(it.group_desc, 140); if(it.group_desc_long) o.group_desc_long = cl(it.group_desc_long, 600);
+        if(it.icon_svg && String(it.icon_svg).length <= 3000) o.icon_svg = String(it.icon_svg);   /* drawn by the host only through its SVG cleaner */
+        /* the group's descriptions sat after a // on the line above and never ran - a group's rail icon had no description */
+        if(it.group_desc) o.group_desc = cl(it.group_desc, 140); if(it.group_desc_long) o.group_desc_long = cl(it.group_desc_long, 600);
+        /* the widgets the panel names for this item's menu ('template@size'), as the chat's menus carry theirs */
+        if(it.widgets && it.widgets.length) o.widgets = (Array.isArray(it.widgets) ? it.widgets : String(it.widgets).split(/[\s,]+/)).filter(function(s){ return /^[\w.:-]+(@(xs|s|m|l|xl))?$/.test(s); }).slice(0, 8);
         return o;
       });
       if(typeof selectFn === 'function') _navSelectFn = selectFn;

@@ -227,6 +227,8 @@
     }
     var items = Array.prototype.map.call(btns, function (b) {
       var it = { id: idOf(b), label: labelOf(b), group: groupOf(b), icon: iconOf(b), desc: descOf(b), desc_long: descLongOf(b) };
+      /* the widgets the panel names for this item's menu (data-lhm-widgets="template@size ..."), as the chat's menus carry theirs */
+      var wl = (b.getAttribute('data-lhm-widgets') || '').trim(); if (wl) it.widgets = wl.split(/[\s,]+/);
       // an item drawn with an SVG icon (Dream, the DAG workshop, Telegram) hands it on; the host draws only what its cleaner keeps
       if (!it.icon) { var sv = b.querySelector && b.querySelector('svg'); if (sv && sv.outerHTML && sv.outerHTML.length <= 3000) it.icon_svg = sv.outerHTML; }
       var ge = it.group ? groupEl(b) : null;
@@ -326,7 +328,60 @@
         after.parentNode.insertBefore(b, after.nextSibling); after = b; });
     }
     syncSubs(); setInterval(syncSubs, 700);
-    initMenuWidgets(host, btns, idOf, groupOf, items);
+    /* a menu measured while its page is hidden (a harness tab not shown yet) has no size to say which way it runs: decide once it has one */
+    function placeMenus() { var strip = initStripMenu(host, btns, items); initMenuWidgets(strip || host, btns, idOf, groupOf, items); }
+    var hr0 = null; try { hr0 = host.getBoundingClientRect(); } catch (e) {}
+    if (hr0 && (hr0.width || hr0.height)) placeMenus();
+    else if (typeof ResizeObserver === 'function') { var ro0 = new ResizeObserver(function () { var r = host.getBoundingClientRect(); if (!r.width && !r.height) return; ro0.disconnect(); placeMenus(); }); ro0.observe(host); }
+    else placeMenus();
+  }
+
+  /* ── 3c. A MENU THAT IS A STRIP ACROSS THE PAGE, DRAWN AS THE MENU (owner, 2026-10-03, the LHM audit point 1: "each panel
+     use a common lhm styling that matches the lhm of the harness"). Nine panels mark a tab strip as their menu (ML Lab,
+     Home Assistant, Perf, the vector browser, the widget registry and gallery, Cap ontology, the system monitor, Research):
+     docked, the harness draws it as its LHM; opened on their own they showed a strip. On their own they now get the
+     menu column - the same items, words, descriptions and icons - each item pressing the panel's own tab, the lit one
+     following the panel. The strip's tabs step aside; anything else in the strip (a search, a button) stays. Docked, the
+     column steps aside and the strip is back, as before. A panel can keep its strip: data-vp-strip-keep on the menu. */
+  function initStripMenu(host, btns, items) {
+    if (!host || host._vpStrip || host.hasAttribute('data-vp-strip-keep')) return null;
+    var column = host.id === 'sidebar' || host.tagName === 'ASIDE' || host.classList.contains('vp-menu');
+    if (!column) { try { var hr = host.getBoundingClientRect(); column = hr.height > hr.width * 1.5 && hr.width < 420; } catch (e) {} }
+    if (column || btns.length < 2) return null;
+    host._vpStrip = true;
+    if (!document.getElementById('vp-strip-css')) { var st = document.createElement('style'); st.id = 'vp-strip-css';
+      st.textContent = 'body.vp-has-strip-menu{padding-left:var(--lhm-width,184px)!important;box-sizing:border-box}'
+        + '.vp-menu.vp-strip-menu{position:fixed;left:0;top:0;bottom:0;z-index:40;box-sizing:border-box}'
+        + '.vp-strip-menu .vp-sm-hd{font-size:9px;letter-spacing:.09em;text-transform:uppercase;font-weight:600;color:var(--dim2,var(--t3,#6b7280));padding:6px 10px 8px}'
+        + 'body.vp-has-strip-menu .vp-strip-tab{display:none!important}'
+        + 'html.vpb-nav-hosted body.vp-has-strip-menu{padding-left:0!important}html.vpb-nav-hosted .vp-strip-menu{display:none!important}'
+        + 'html.vpb-nav-hosted body.vp-has-strip-menu .vp-strip-tab{display:revert!important}';
+      (document.head || document.documentElement).appendChild(st); }
+    var col = document.createElement('nav'); col.className = 'vp-menu vp-strip-menu'; col.setAttribute('aria-label', 'Menu'); col.setAttribute('data-w', 'menu · column');
+    var hd = document.createElement('div'); hd.className = 'vp-sm-hd'; hd.textContent = String(document.title || '').replace(/^\s*Vera\s*[—–\-·|:]\s*/i, '').trim() || 'Menu'; col.appendChild(hd);
+    var mine = [];
+    items.forEach(function (it, i) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'nav-btn';
+      var gl = document.createElement('span'); gl.className = 'gl';
+      if (it.icon_svg) gl.innerHTML = it.icon_svg; else gl.textContent = it.icon || '';
+      b.appendChild(gl); b.appendChild(document.createTextNode(it.label));
+      b.title = it.desc ? it.label + ' — ' + it.desc : it.label;
+      if (it.desc) b.setAttribute('data-desc', it.desc); if (it.desc_long) b.setAttribute('data-desc-long', it.desc_long);
+      b.addEventListener('click', function () { try { btns[i].click(); } catch (e) {} setTimeout(lit, 30); });
+      col.appendChild(b); mine.push({ b: b, gl: gl, it: it });
+      try { btns[i].classList.add('vp-strip-tab'); } catch (e) {}
+    });
+    function lit() { mine.forEach(function (m, i) { var on = btns[i].classList.contains('active') || btns[i].classList.contains('on') || btns[i].getAttribute('aria-selected') === 'true';
+      m.b.classList.toggle('active', !!on); }); }
+    /* an item with no mark of its own takes the glyph its name maps to - the one table the harness's menu uses (no letters) */
+    function glyphs() { if (!window.VeraLHM || !VeraLHM.glyphFor) return; mine.forEach(function (m) { if (!m.gl.textContent && !m.gl.firstElementChild) { try { m.gl.textContent = VeraLHM.glyphFor(m.it.label) || ''; } catch (e) {} } }); }
+    if (window.VeraLHM) glyphs(); else { var s = document.createElement('script'); s.src = '/ui/vera-lhm.js'; s.onload = glyphs; (document.head || document.documentElement).appendChild(s); }
+    document.body.insertBefore(col, document.body.firstChild);
+    document.body.classList.add('vp-has-strip-menu');
+    lit(); var mo = new MutationObserver(lit);
+    Array.prototype.forEach.call(btns, function (b) { mo.observe(b, { attributes: true, attributeFilter: ['class', 'aria-selected'] }); });
+    initMenuLook();
+    return col;
   }
 
   /* ── 3b. THE MENU'S WIDGETS ON THE PANEL'S OWN MENU (owner, 2026-10-03, the LHM audit: "sub/internal LHMs editable, with
@@ -351,13 +406,23 @@
         + '.vp-mw.empty:not(.editing) .vp-mw-h span{visibility:hidden}.vp-mw.empty:not(.editing){border-top-color:transparent;opacity:.55}'
         + '.vp-mw-w{position:relative}.vp-mw-w vera-widget{display:block}'
         + '.vp-mw-rm{position:absolute;top:4px;right:4px;z-index:2;background:var(--bg2,var(--s2,#1a1f26));border:1px solid var(--border2,var(--bd2,#444));border-radius:4px;color:var(--text,var(--t1,#ddd));font-size:10px;line-height:1;padding:3px 5px;cursor:pointer}'
-        + 'html.vpb-nav-hosted .vp-mw,body.lhm-collapsed .vp-mw{display:none!important}';
+        + '.vp-cta{margin:6px 6px 8px;padding:7px 10px;border:1px solid var(--border,var(--bd,rgba(255,255,255,.12)));border-radius:var(--r-sm,6px);background:var(--bg2,var(--s2,#1a1f26));color:var(--text,var(--t1,#ddd));font:inherit;font-size:11px;text-align:left;cursor:pointer}'
+        + '.vp-cta:hover{border-color:var(--acc,var(--ac,#5a9e8f));color:var(--acc,var(--ac,#5a9e8f))}.vp-cta[hidden]{display:none}'
+        + 'html.vpb-nav-hosted .vp-mw,body.lhm-collapsed .vp-mw,html.vpb-nav-hosted .vp-cta,body.lhm-collapsed .vp-cta{display:none!important}';
       (document.head || document.documentElement).appendChild(st); }
     var box = document.createElement('div'); box.className = 'vp-mw'; box.setAttribute('data-w', 'menu widgets · host');
     host.appendChild(box);
+    /* the menu's primary action under its widgets, as the chat's menus end: the panel's [data-lhm-cta] for the open item
+       (="<item id>"), else its one for every menu (=""); pressing it presses the panel's own */
+    var cta = document.createElement('button'); cta.type = 'button'; cta.className = 'vp-cta'; cta.setAttribute('data-w', 'cta · button'); host.appendChild(cta);
+    function ctaFor() { var b = active(), id = b ? String(idOf(b)) : '', els = Array.prototype.slice.call(document.querySelectorAll('[data-lhm-cta]'));
+      return els.filter(function (e) { return e.getAttribute('data-lhm-cta') === id && id; })[0] || els.filter(function (e) { return !e.getAttribute('data-lhm-cta'); })[0] || null; }
+    function drawCta() { var e = ctaFor(); cta.hidden = !e; if (!e) return; cta.textContent = (e.getAttribute('data-label') || e.textContent || e.title || 'Go').replace(/\s+/g, ' ').trim().slice(0, 40);
+      cta.title = e.getAttribute('data-desc') || e.title || ''; cta.onclick = function () { e.click(); }; }
+    drawCta(); var ctaMo = new MutationObserver(drawCta); Array.prototype.forEach.call(btns, function (b) { ctaMo.observe(b, { attributes: true, attributeFilter: ['class'] }); });
     function active() { for (var i = 0; i < btns.length; i++) if (btns[i].classList.contains('active') || btns[i].classList.contains('on')) return btns[i]; return btns[0] || null; }
     function menuKey() { var b = active(); if (!b) return ''; return grouped ? 'g:' + (groupOf(b) || 'More').slice(0, 80) : 'i:' + String(idOf(b)).slice(0, 80); }
-    function defaults() { var el = document.querySelector('[data-lhm-widgets]'); if (!el) return [];
+    function defaults() { var b0 = active(), el = (b0 && b0.hasAttribute('data-lhm-widgets')) ? b0 : document.querySelector('[data-lhm-widgets]:not(.nav-btn)'); if (!el) return [];
       return String(el.getAttribute('data-lhm-widgets') || '').split(/[\s,]+/).filter(function (x) { return /^[\w.:-]+(@(xs|s|m|l|xl))?$/.test(x); }).slice(0, 8)
         .map(function (x) { var p = x.split('@'); return { template_id: p[0], size: p[1] || 's' }; }); }
     function list() { var k = menuKey(); return (store && Object.prototype.hasOwnProperty.call(store, k)) ? store[k].slice() : defaults(); }

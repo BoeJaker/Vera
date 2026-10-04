@@ -68,7 +68,7 @@ vera-widget{display:block}
     <button data-label="Timeline" data-desc="Look back through time" data-desc-long="Every topic's history on one rail: stand on any day and see what turned up." class="nav-btn" data-go="timeline" onclick="go('timeline')"><span class="gl">⟷</span>Timeline</button>
     <button data-label="Reports" data-desc="Briefs and their delivery" data-desc-long="Reports: build a brief, read it, send it to Telegram, chat, email, the canvas and more." class="nav-btn" data-go="reports" onclick="go('reports')"><span class="gl">▤</span>Reports</button>
     <button data-label="Actions" data-desc="What Vera can do next" data-desc-long="Actions reports offered - fetch a repo, research a question further, track an entity - and what became of them." class="nav-btn" data-go="actions" onclick="go('actions')"><span class="gl">➜</span>Actions</button>
-    <button data-label="Settings" data-desc="Schedule, delivery, n8n" data-desc-long="When the nightly refresh and the morning brief run, where the brief goes, and moving off the n8n flows." class="nav-btn" data-go="settings" onclick="go('settings')"><span class="gl">⚙</span>Settings</button>
+    <button data-label="Settings" data-desc="Schedule, delivery, n8n" data-desc-long="When the nightly refresh and the morning brief run, where the brief goes, and moving off the n8n flows." class="nav-btn" data-go="settings" data-vera-settings="#pane-settings" onclick="go('settings')"><span class="gl">⚙</span>Settings</button>
   </nav>
   <div id="status-tile">
     <div class="lbl">Intelligence</div>
@@ -86,7 +86,7 @@ vera-widget{display:block}
     <div class="split">
       <div>
         <div class="row" style="margin-bottom:8px"><h2 class="grow" style="margin:0">Topics</h2>
-          <button class="btn pri" onclick="editTopic(null)">＋ New topic</button></div>
+          <button class="btn pri" onclick="editTopic(null)" data-lhm-cta="topics" data-label="New topic" data-desc="Start following a new topic">＋ New topic</button></div>
         <div class="row" style="margin-bottom:8px">
           <select id="tStatus" onchange="loadTopics()"><option value="">all</option><option value="active" selected>active</option><option value="paused">paused</option><option value="archived">archived</option></select>
         </div>
@@ -111,7 +111,7 @@ vera-widget{display:block}
           <div class="row"><div class="grow"><label class="f">Covering the last (hours)</label><input type="number" id="rHours" value="24" min="1"></div>
             <div class="grow"><label class="f">Title</label><input type="text" id="rTitle" placeholder="auto"></div></div>
           <label class="small"><input type="checkbox" id="rAgain"> include signals already reported</label>
-          <div class="row" style="margin-top:8px"><button class="btn pri" onclick="buildReport()">Build</button><span id="rMsg" class="msg"></span></div>
+          <div class="row" style="margin-top:8px"><button class="btn pri" onclick="buildReport()" data-lhm-cta="reports" data-label="Build a brief" data-desc="Build a brief from the topics followed">Build</button><span id="rMsg" class="msg"></span></div>
         </div>
         <div id="rlist"></div>
       </div>
@@ -441,6 +441,7 @@ async function n8nRetire(dry) {
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-settings.js"></script>
 <script src="/ui/widgets/widget_element.js"></script>
 <script src="/ui/vera-dashboard.js"></script>
 <script src="/ui/elements/intel_timeline.js"></script>

@@ -12,6 +12,7 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
 t('server: ui.lhm.widgets reads a panel\'s menus (by panel id or page path)', /"ui\.lhm\.widgets",\s*http_method="GET", http_path="\/ui\/lhm\/widgets"/.test(PY) && /async def cap_lhm_widgets\(panel: str = "", path: str = "", menu: str = ""/.test(PY));
 t('server: ui.lhm.widgets.set replaces one menu\'s list, reset goes back to the panel\'s own', /"ui\.lhm\.widgets\.set",\s*http_method="POST", http_path="\/ui\/lhm\/widgets\/set"/.test(PY) && /await r\.hdel\(key, m\)/.test(PY) && /await r\.hset\(key, m, json\.dumps\(clean, default=str\)\)/.test(PY));
 t('server: one hash per panel, a split view\'s copy is the same panel', /_LHM_W_KEY = "vera:ui:lhm:widgets:\{panel\}"/.test(PY) && /re\.sub\(r"--\\d\+\$", "", str\(panel or ""\)\.strip\(\)\)/.test(PY));
+t('server: the harness\'s tab name for a docked panel (auto-<id>) is the same panel as the page on its own', /if p\.startswith\("auto-"\) and p not in UI_PANELS and p\[5:\] in UI_PANELS:/.test(PY));
 t('server: a page path finds its panel from the registered frames', /for pid, spec in list\(UI_PANELS\.items\(\)\):/.test(PY) && /<iframe\[\^>\]\+src="\(\[\^"\?#\]\+\)/.test(PY));
 t('server: bounded - 24 widgets a menu, 8 KB a record', /_LHM_W_MAX = 24/.test(PY) && /_LHM_W_REC_MAX = 8000/.test(PY));
 
@@ -22,11 +23,11 @@ t('docked: a list only this browser kept moves up to the server', /if\(l !== nul
 t('docked: a change is saved to the server (and cached here)', /function _absAddedSave\(key, skey, list\)\{[^\n]*_absPost\(key, skey, list\); \}/.test(LHM) && !/_absAddedSave\(key, cur\.id,/.test(LHM));
 
 // the panel's own menu (standalone)
-t('standalone: the panel\'s own menu shows the same widgets, under the open item\'s menu', /function initMenuWidgets\(host, btns, idOf, groupOf, items\) \{/.test(VP) && /initMenuWidgets\(host, btns, idOf, groupOf, items\);/.test(VP)
+t('standalone: the panel\'s own menu shows the same widgets, under the open item\'s menu', /function initMenuWidgets\(host, btns, idOf, groupOf, items\) \{/.test(VP) && /initMenuWidgets\(strip \|\| host, btns, idOf, groupOf, items\);/.test(VP)
   && /return grouped \? 'g:' \+ \(groupOf\(b\) \|\| 'More'\)\.slice\(0, 80\) : 'i:' \+ String\(idOf\(b\)\)\.slice\(0, 80\);/.test(VP));
 t('standalone: read by page path, saved with it', /fetch\('\/ui\/lhm\/widgets\?path=' \+ encodeURIComponent\(path\)\)/.test(VP) && /fetch\('\/ui\/lhm\/widgets\/set', \{ method: 'POST'/.test(VP));
 t('standalone: ✎ - + Add widget from the chat\'s widget sheet, ✕ to take one out', /S\.open\(\{ mode: 'add', into: 'side', title: 'Add to this menu', templates: true, sizes: \['xs', 's', 'm'\] \}\)/.test(VP) && /rm\.title = 'Take it out of this menu';/.test(VP));
-t('standalone: only in a menu that is a column, and out of the way when docked or folded', /var column = host\.id === 'sidebar' \|\| host\.tagName === 'ASIDE'/.test(VP) && /html\.vpb-nav-hosted \.vp-mw,body\.lhm-collapsed \.vp-mw\{display:none!important\}/.test(VP));
+t('standalone: only in a menu that is a column, and out of the way when docked or folded', /var column = host\.id === 'sidebar' \|\| host\.tagName === 'ASIDE'/.test(VP) && /html\.vpb-nav-hosted \.vp-mw,body\.lhm-collapsed \.vp-mw,/.test(VP));
 t('standalone: the widget element is loaded only when a widget is drawn or added', /sc\.src = '\/ui\/widgets\/widget_element\.js';/.test(VP));
 
 console.log(fails ? fails + ' FAILED' : 'all passed');

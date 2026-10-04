@@ -290,6 +290,9 @@ def _lhm_panel_id(panel: str = "", path: str = "") -> str:
     """The panel a menu belongs to: its id (a split view's '--2' copy is the same panel), or the page path it is served
     at - the panel opened on its own knows only that - matched against the registered panels' frames."""
     p = re.sub(r"--\d+$", "", str(panel or "").strip())[:80]
+    # the harness names a docked panel by its tab ('auto-dream-panel'); the panel opened on its own by its id - one panel
+    if p.startswith("auto-") and p not in UI_PANELS and p[5:] in UI_PANELS:
+        p = p[5:]
     if p:
         return p
     want = str(path or "").split("?")[0].split("#")[0].rstrip("/")
