@@ -863,10 +863,10 @@ A pipeline gate's critical-tier pytest run can be split into shards over the hos
 
 - **Code shipped:** each node shard gets the branch worktree's tracked and untracked files as one archive.
 - **What a shard runs:** `pytest <its files> -m critical` in the node's pinned test venv (`/opt/vera/testenv`), with the gate container's layout and environment.
-- **Shard sizes:** shards are balanced by per-file durations recorded from every run (`vera:evolve:test_durations`).
+- **Chunks, pulled as runners free up:** the tier is split into chunks (`chunks`, default 12) balanced by per-file durations recorded from every run (`vera:evolve:test_durations`). Every free runner - the host's container, each node with room - takes the next chunk until none are left, so a gate that starts while others hold the runners picks up more as they free up instead of running the whole tier on one. The branch's code archive is stored in Redis once per gate and fetched by each node chunk.
 - **Merging:** results merge into the same summary, history row and failure details as a single run.
 - **Collection errors:** every test file is collected by some shard, so a file that fails to import still fails the gate.
-- **Failed shards:** a shard a node could not run (no room, lost, stale venv, pytest never started) reruns on the host, so a missing shard is never a pass.
+- **Failed chunks:** a chunk a node could not run goes back on the queue; one a node failed twice runs on the host, so a missing chunk is never a pass.
 - **Leases:** each runner is leased separately (the host's container is one runner, each node another). Gates run side by side when runners are free, instead of one at a time.
 
 The test venv is the gate image's `pip freeze` (the GPU stack dropped), installed with `--no-deps`; a package that will not build is reported, not fatal. `nodes.testenv.sync` builds or refreshes it, and each release's node sync runs it (a no-op where the venv is current). A node runs shards only while its venv matches the image the host runs now (`nodes.testenv.status`). `evolve.test_pool.parity` runs a branch's tier on the host alone and through the pool and compares the exact pass and fail sets.
