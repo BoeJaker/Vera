@@ -161,3 +161,53 @@ def test_recall_without_a_budget_waits_for_every_source(monkeypatch):
     fn = getattr(C.cap_context_recall, "__wrapped__", C.cap_context_recall)
     out = asyncio.run(fn(query="no budget probe"))
     assert [r["id"] for r in out["results"]] == ["q1"] and out["late"] == []
+
+
+def test_the_entity_crawl_starts_from_fabric_seeds_when_the_given_ones_are_not_fabric_records(monkeypatch):
+    # the chat sends MEMORY record ids as seeds; they match no FabricRecord (E21: 0 results with them, 8 without)
+    C = _ctx_module()
+    calls = []
+
+    class _Neo:
+        available = True
+
+        async def query(self, cypher, params):
+            calls.append(list(params["seeds"]))
+            if params["seeds"] == ["fab-1"]:
+                return [{"entity": "e1", "entity_name": "GPU", "seed_id": "fab-1", "rid": "fab-2"}]
+            return []
+
+    class _Fab:
+        FABRIC_NEO = _Neo()
+        FABRIC_PG = None
+
+        async def execute_query(self, q):
+            return {"results": [{"id": "fab-1"}]}
+
+    monkeypatch.setattr(C, "_fabric", lambda: _Fab())
+    results, _edges = asyncio.run(C._recall_entity_crawl(["mem-1", "mem-2"], "census gpu", 8, ""))
+    assert calls == [["mem-1", "mem-2"], ["fab-1"]]
+    assert [r["id"] for r in results] == ["fab-2"]
+
+
+def test_fabric_seeds_that_reach_an_entity_are_used_as_given(monkeypatch):
+    C = _ctx_module()
+    calls = []
+
+    class _Neo:
+        available = True
+
+        async def query(self, cypher, params):
+            calls.append(list(params["seeds"]))
+            return [{"entity": "e1", "entity_name": "GPU", "seed_id": "fab-9", "rid": "fab-3"}]
+
+    class _Fab:
+        FABRIC_NEO = _Neo()
+        FABRIC_PG = None
+
+        async def execute_query(self, q):
+            raise AssertionError("no fabric query when the given seeds work")
+
+    monkeypatch.setattr(C, "_fabric", lambda: _Fab())
+    results, _edges = asyncio.run(C._recall_entity_crawl(["fab-9"], "census gpu", 8, ""))
+    assert calls == [["fab-9"]] and [r["id"] for r in results] == ["fab-3"]
