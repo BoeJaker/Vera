@@ -5862,6 +5862,7 @@ async def _resume_interrupted_gates() -> None:
     from datetime import datetime as _dt, timezone as _tz
     now = _dt.now(_tz.utc)
     recs: List[Dict[str, Any]] = []
+    all_rows: List[Dict[str, Any]] = []        # every pipeline, for "a newer one exists"
     try:
         rows = await r.lrange(KEY_PIPELINES, 0, 80)
     except Exception as e:
@@ -5872,6 +5873,7 @@ async def _resume_interrupted_gates() -> None:
             c = json.loads(row)
         except Exception:
             continue
+        all_rows.append(c)
         if not c.get("adopted") or c.get("gate_passed") is not None:
             continue
         try:
@@ -5899,6 +5901,18 @@ async def _resume_interrupted_gates() -> None:
             log.debug("evolve: gate resume skip %s: %s", old.get("id"), e)
     runnable: List[Dict[str, Any]] = []
     for rec in keep:
+        _newer = _gate_resume_core.newer_pipeline(rec, all_rows)
+        if _newer is not None:
+            _state = ("passed" if _newer.get("gate_passed") is True else
+                      "failed" if _newer.get("gate_passed") is False else "still gating")
+            try:
+                _pstep(rec, "gate-resume-skipped", True,
+                       f"not resumed: superseded by newer pipeline {_newer.get('id')} ({_state})")
+                rec["current"] = f"gate not resumed - superseded by {_newer.get('id')}"
+                await _save_pipeline(rec)
+            except Exception as e:
+                log.debug("evolve: gate resume skip %s: %s", rec.get("id"), e)
+            continue
         try:
             root = await _resolve_repo_root(rec.get("repo") or DEFAULT_REPO_ID)
             lg = await _git("log", "--oneline", f"{rec.get('to') or BLEEDING_EDGE_BRANCH}..{rec.get('branch')}",

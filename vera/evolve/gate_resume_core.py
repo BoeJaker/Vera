@@ -73,3 +73,19 @@ def latest_per_branch(recs: Iterable[Dict[str, Any]]):
     superseded = [(r, newest[str(r.get("branch") or "")].get("id"))
                   for r in recs or [] if newest.get(str(r.get("branch") or "")) is not r]
     return keep, superseded
+
+
+def newer_pipeline(rec: Dict[str, Any], rows: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The newest OTHER pipeline for the same branch, created after `rec`, in any state - or
+    None. An orphan with one is not worth re-running: the branch was re-adopted (and has
+    passed, failed or is gating) after the restart cut this one off. 4 Oct 2026: orphans of
+    branches already re-gated and live were re-run by the resume."""
+    b, made, rid = str(rec.get("branch") or ""), str(rec.get("created_at") or ""), rec.get("id")
+    best: Optional[Dict[str, Any]] = None
+    for r in rows or []:
+        if not isinstance(r, dict) or r.get("id") == rid or str(r.get("branch") or "") != b:
+            continue
+        if str(r.get("created_at") or "") > made and (
+                best is None or str(r.get("created_at") or "") > str(best.get("created_at") or "")):
+            best = r
+    return best
