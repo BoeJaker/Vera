@@ -1,0 +1,18 @@
+{
+  "_comment": "THE VERA WIDGET TEMPLATE (served /ui/templates/widget.json). A widget is a registry template: save it with POST /ui/widgets/templates/save {template: <this>} (widget.template.save), then place it anywhere with <vera-widget template-id=\"...\" size=\"s\">, widget.template.instantiate {id, where: dashboard|canvas|LHM|...}, or a panel menu item's data-lhm-widgets. Drop this _comment key; every other key is read. See documentation/51-ui-design-system.md.",
+  "id": "example-items-ranked",
+  "name": "EXAMPLE items, ranked",
+  "form": "ranked",
+  "reads": {
+    "cap": "EXAMPLE.list",
+    "args": { "limit": 10 },
+    "every": "30s",
+    "note": "what the capability returns and which part the form draws"
+  },
+  "frame": "EXAMPLE",
+  "draw": { "form": "ranked", "size": "M", "motion": "" },
+  "can": ["open an item in the drawer", "place it on the canvas"],
+  "placed": ["dashboard", "canvas", "LHM"],
+  "source": { "origin": "you", "from": "the EXAMPLE panel", "panel": "example-panel" },
+  "tags": ["example"]
+}

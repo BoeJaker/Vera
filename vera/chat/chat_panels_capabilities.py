@@ -382,6 +382,44 @@ async def cap_lhm_widgets_set(panel: str = "", menu: str = "", widgets: Optional
         return {"ok": False, "error": "store failed: %s" % e}
     return {"ok": True, "panel": pid, "menu": m, "count": len(clean)}
 
+# ── THE UI BOOTSTRAP, FOR AN AGENT (owner, 2026-10-04: "a set of base template for ui elements - a bootstrap for widgets
+# and ui panels, graphs maybe too"). The files live in vera/ui/templates and are served at /ui/templates/<name>; this
+# says what each is for and hands one over, so an agent building a panel starts from the real thing.
+_UI_TEMPLATES = {
+    "panel.html": "A panel: the canonical menu (data-vera-lhm), top bar (status + settings only), sections, cards, a "
+                  "settings section on the shared Settings page, the menu's primary action (data-lhm-cta), the shared "
+                  "scripts in order. Built on /ui/bootstrap.css; colour only from the theme's names.",
+    "widget.json": "A widget record for the registry (widget.template.save): id, name, form, reads {cap,args,every}, "
+                   "draw {form,size}, can, placed, source. Validate it with widget.validate {record}.",
+    "widget.html": "Placing a widget: <vera-widget> by template id, by inline record, or a panel as a widget; and a "
+                   "panel menu item naming its widgets (data-lhm-widgets).",
+    "graph.html": "A graph: the full one (veraUI.Graph.create + load({nodes, edges:{from,to,rel}})) and the bare one "
+                  "(<vera-graph-embed layer limit height>). One renderer - never a third.",
+}
+
+
+@capability(
+    "ui.templates",
+    http_method="GET", http_path="/ui/templates", http_tags=["ui"],
+    memory="off", silent=True,
+    description="The UI bootstrap: the starting files for a Vera panel, a widget and a graph (served at "
+                "/ui/templates/<name>) and the page stylesheet /ui/bootstrap.css they are built on. Input: name (str - "
+                "one template, e.g. 'panel.html', to get its content; omit for the list). Output: {ok, templates:[{name, "
+                "url, purpose}], stylesheet, docs} or, with name, {ok, name, url, purpose, content}. The rules: "
+                "documentation/51-ui-design-system.md and the vera-design skill.",
+)
+async def cap_ui_templates(name: str = "", trace_id=None):
+    from pathlib import Path
+    root = Path(__file__).parent.parent / "ui" / "templates"
+    if name:
+        n = str(name).strip()
+        if n not in _UI_TEMPLATES or not (root / n).exists():
+            return {"ok": False, "error": "no template %r - one of: %s" % (n, ", ".join(sorted(_UI_TEMPLATES)))}
+        return {"ok": True, "name": n, "url": "/ui/templates/" + n, "purpose": _UI_TEMPLATES[n],
+                "content": (root / n).read_text(encoding="utf-8")}
+    return {"ok": True, "templates": [{"name": k, "url": "/ui/templates/" + k, "purpose": v} for k, v in _UI_TEMPLATES.items()],
+            "stylesheet": "/ui/bootstrap.css", "docs": "documentation/51-ui-design-system.md"}
+
 # Serve vera-lhm.js — the one left-hand menu (UI redesign): a rail of quick menus
 # beside a detail column, the ☰ top-level list, every part a widget; the same
 # code draws a page's own menu and, in the harness, another page's absorbed one.

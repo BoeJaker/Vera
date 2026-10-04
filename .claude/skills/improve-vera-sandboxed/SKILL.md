@@ -10,6 +10,11 @@ behaviour — see `improve-vera` §1–§3a, still valid), but land the FIX thro
 this sandboxed pipeline, not a direct edit to prod's working tree. Direct-to-prod
 editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
 
+**Any UI change - a panel, widget, graph, menu, settings page or the appearance - also follows the `vera-design`
+skill** (`.claude/skills/vera-design/SKILL.md`; reference: `documentation/51-ui-design-system.md`): start from
+the UI bootstrap (`ui.templates`, `/ui/bootstrap.css`), colour only from the theme's names, the canonical menu
+with descriptions and a primary action, settings on the shared Settings page, and prove it live with Playwright.
+
 ## 0. Still true, unchanged
 - **⛔ NEVER assume how long an LLM/generation takes — it is UNBOUNDED.** A call
   can run seconds or tens of minutes (model size, cold-load, context, queue depth).
