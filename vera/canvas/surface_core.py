@@ -96,9 +96,15 @@ def domain_of(cap: str) -> str:
     return ""
 
 
+#: words the shared list does not have but a turn must never run unasked: upkeep, not a view (seen on the mirror: a
+#: ticker filled markets.history.repair)
+_UPKEEP = {"repair", "audit", "fix", "migrate", "backfill", "reindex", "validate", "diagnose", "debug", "test", "probe",
+           "heal", "rebuild", "compact", "vacuum", "gc"}
+
+
 def is_read(cap: str) -> bool:
-    """A capability safe to run unasked: no word of its name changes anything."""
-    return not any(part in _WRITES for part in re.split(r"[._]", str(cap or "").lower()))
+    """A capability safe to run unasked: no word of its name changes anything, or is upkeep."""
+    return not any(part in _WRITES or part in _UPKEEP for part in re.split(r"[._]", str(cap or "").lower()))
 
 
 def takes(schema: Optional[Dict[str, Any]]) -> Dict[str, str]:
@@ -282,6 +288,12 @@ def summarise(res: Any, max_chars: int = 220) -> str:
                 bits.append("%s last %s%s" % (k, _fmt(v[-1]), (" (" + chg + ")") if chg else ""))
             return ("%d points: %s" % (len(res["t"]), "; ".join(bits)))[:max_chars]
     rows = _rows_of(res)
+    # rows with nothing to name them by (a chart's candles): the record's own headline figures say more
+    if rows and isinstance(res, dict) and all(isinstance(r, dict) and not any(r.get(k) not in (None, "") for k in _NAMEY) for r in rows[:5]):
+        head = [str(res[k]) for k in ("symbol", "name", "title") if res.get(k) not in (None, "")][:1]
+        figs = ["%s %s" % (k, _fmt(v)) for k, v in res.items() if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "count"][:4]
+        if head or figs:
+            return (" ".join(head + ["-"] if head and figs else head) + " " + "; ".join(figs) + " (%d rows)" % len(rows)).strip()[:max_chars]
     if rows:
         bits = []
         for r in rows[:5]:
