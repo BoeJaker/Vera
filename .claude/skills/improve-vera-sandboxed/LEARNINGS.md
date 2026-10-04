@@ -79,3 +79,32 @@ rules; new ones start here. Newest at the bottom.
 - evidence: pipelines a1d0c70e (promoted by the still-running script after it was marked superseded) and eb6a77b3
   (re-adopted, gated both commits, 7dc90221)
 - status: open (belongs in §7)
+
+## 2026-10-04 — Patch scripts and background jobs from a Windows Git Bash session
+- task: node test pool + node parity (vera-d2; shared-planning/test-runners; board 01733d71)
+- what happened: Python patch scripts passed through a bash heredoc failed or were garbled again and again
+  ("unexpected EOF while looking for matching `''", backslashes eaten, raw-string UNC paths turned into
+  `\192...` and FileNotFoundError). Separately, a parity check launched with a plain `&` looked dead (no
+  process visible) but was alive, so re-launching it ran two parity checks at once.
+- cause: Git Bash on Windows re-processes heredoc bodies in ways that break quotes and backslashes even with a
+  quoted delimiter; and `&` jobs from the Bash tool may or may not survive the call, invisibly either way.
+- rule now: write any patch script longer than a line with the Write tool into the scratchpad and run it
+  (`python p_x.py`); never put Python with quotes or backslashes in a heredoc. Use `run_in_background` for
+  anything long, never `&`; to check on it, read its output file. Assert every replace anchor (`count == 1`)
+  so a mangled patch fails loudly instead of silently.
+- evidence: this session's scratchpad p_*.py files; duplicate parity runs (two sets of pytest.shard jobs at
+  17:28:46, one "waiting" behind the other)
+- status: open (belongs in §1)
+
+## 2026-10-04 — A client-side release waiter on "nothing running" can wait forever
+- task: releasing behind the gate queue at the owner's request (vera-d2)
+- what happened: a waiter polling "no gate running" never fired: as running gates finished, queued ones
+  started. Prod already had the right mechanism.
+- cause: `evolve.release.prod` (b70bf83c, live since 4 Oct) itself holds a non-forced release while gates run
+  and sets a drain key so NEW gates wait for the release - a client waiter has no such drain.
+- rule now: to release behind running gates, just call `evolve.release.prod` (census=finish); it returns
+  held=true with the gates it waits for, and goes out when they finish. Do not build a client-side waiter.
+  Read gate state from pipeline `steps` (a `critical-tests` step = done), not `current`, which still says
+  "running critical tier" after a gate ends.
+- evidence: release 0340fcd1 (held for 2 gates, then released); pipeline f3ebd092 record
+- status: open (belongs in §8)

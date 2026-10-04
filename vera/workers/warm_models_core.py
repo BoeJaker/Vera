@@ -15,8 +15,8 @@ every node let its models lapse after Ollama's five-minute default. So:
     else what the routing rules point at this node (a rule's pin/prefer and
     its model), then the node's class default. `@default` is the configured
     default model (cfg.OLLAMA_MODEL), `@naming` the naming route's model.
-  * a SCENARIO is a workload that takes the slots over while it runs hot -
-    "coding load is high: coders into every slot". It turns on when its job
+  * a SCENARIO is a workload that takes the slots over while it runs hot
+    (none ships; one can be added in the config). It turns on when its job
     types' recent demand crosses a threshold and stays on for `hold_s` after
     the demand falls away (hysteresis, so a burst does not thrash loads).
   * a node's planned set must fit its memory; the lowest-priority model that
@@ -86,22 +86,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # ...and never a prompt bigger than this: a CPU prompt-eval of a big
     # context is slower than waiting for the GPU
     "spill_max_ctx": 8192,
-    "scenarios": [
-        {
-            "name": "coding",
-            "label": "Coding load is high - coders into the slots",
-            "enabled": False,
-            "job_types": ["code", "loop_coder"],
-            "min_requests": 6,          # this many calls ...
-            "window_s": 600,            # ... within this window, or
-            "min_inflight": 2,          # this many in flight right now
-            "hold_s": 900,              # stays on this long after it cools
-            "fill": "all",              # "all" or a number of slots per node
-            "models": {"gpu": [], "cpu": ["qwen3-coder:30b"],
-                       "cpu_sibling": ["qwen3-coder:30b"]},
-            "spill": True,              # its job types may spill to warm CPU nodes
-        },
-    ],
+    # Workload scenarios (name, job_types, min_requests/window_s/min_inflight,
+    # hold_s, fill, models per class, spill). None ships: the built-in
+    # `coding` one was dropped (owner, 2026-10-04: "forget about it - drop it").
+    "scenarios": [],
 }
 
 
