@@ -3622,6 +3622,10 @@ span.vw-sampled{opacity:.85}
 .vw-fm-st{flex:1;font-size:9.5px;color:var(--t3,var(--dim2,#8a92a0))}
 .vw-fm-save{font:inherit;font-size:10px;padding:4px 12px;border:0;border-radius:var(--r-pill,99px);cursor:pointer;color:var(--on-ac,var(--on-acc,#fff));background:var(--ac,var(--acc,#5a9e8f))}
 .vw-fm-save[disabled]{opacity:.45;cursor:default}
+/* a form to fill in is as tall as its fields: the body's size containment (height only from its box) collapsed it to
+   nothing in a host with no fixed height - the chat menu's agent editor (2026-10-04) */
+.vw-root[data-form="form"]:has(.vw-fm){height:auto}
+.vw-root[data-form="form"] .vw-body:has(.vw-fm){display:block;flex:none;container-type:inline-size;overflow:visible}
 .vw-fit{overflow:hidden!important}
 :host([data-state="reading"]) .vw-sampled{opacity:.42;filter:saturate(.4)}
 [data-b],[data-tip]{transition:filter .14s ease,opacity .14s ease,stroke-width .14s ease}

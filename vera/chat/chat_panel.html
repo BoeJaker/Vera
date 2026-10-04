@@ -1831,6 +1831,9 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph vera-loo
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph:not(.dk-tools) #paneLoopGraph > div:first-child{display:none!important}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-list .lhm-dk-b > *{height:auto!important;max-height:380px!important;overflow:auto!important}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-log .lhm-dk-b > *{height:240px!important;padding:0!important;gap:0}
+/* the agent editor grows with its form (the Agents menu); its Save sits at the form's foot */
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-agent-edit .lhm-dk-b > *{height:auto!important;max-height:none!important;overflow:visible!important}
+#rpAgentEdit .ag-acts{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 6px}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-frame .lhm-dk-b > *{height:460px!important;padding:0!important;gap:0}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-caps .lhm-dk-b > *{height:480px!important}
 #rightRail.lhm-host .lhm-quick .lhm-dk-b > * > div[style*="border-bottom"],#rightRail.lhm-host .lhm-quick .lhm-dk-b > * > div[style*="border-top"]{background:transparent!important;border-color:var(--bd,var(--border,rgba(255,255,255,.09)))!important;padding:5px 8px!important}
@@ -2394,6 +2397,14 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
        (c) run any cap directly with form-driven params — the
        result is appended to the chat and recorded into memory so
        it's available as context on the next turn. -->
+  <!-- ── AGENTS PANE (owner, 2026-10-04: "setup agents from the chat ui lhm") ────────────
+       Both parts are widgets: <vera-widget> cards over agent.list (pick one to edit it, or use it here), and a
+       form over agent.get that saves through agent.patch - only the fields you changed. -->
+  <div class="rpane" id="rpAgents">
+    <div id="rpAgentList"></div>
+    <div id="rpAgentEdit"><div class="lhm-empty" style="padding:8px 2px">Pick an agent to edit it, or + New agent.</div></div>
+  </div>
+
   <div class="rpane" id="rpCaps">
     <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
       <input id="rpCapSearch" placeholder="Filter caps…" style="flex:1;font-size:10px;height:22px" oninput="CH._renderRailCaps()">
@@ -3246,6 +3257,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="ctab" onclick="CH.ctxTab('goals',this)" title="Long-term goals the system is executing over days (strategic dream projects)">🎯 Goals</div>
     <div class="ctab" onclick="CH.ctxTab('loops',this)" title="All agentic loops — running and recent — pick any back up where it left off">⟳ Loops</div>
     <div class="ctab rtab" onclick="CH.railTab('Caps',this)">Caps</div>
+    <div class="ctab rtab" onclick="CH.railTab('Agents',this)">Agents</div>
     <div class="ctab rtab" onclick="CH.railTab('Panels',this)">Panels</div>
   </div>
   <div id="ctxCtrl">
@@ -15718,6 +15730,10 @@ Your task: decide what to do next to advance toward the goal.
      desc_long:'A glance at the capabilities available to the agent, with their count. The action at the foot reloads them. Navigate here to check whether a capability exists.',
      tabs:[{id:'Caps',label:'Caps', desc:'Available capabilities', desc_long:'The list of capabilities the agent can call.'}],   // (owner, 2026-10-03: "should be called Capabilities not Ops Glance")
      meta:()=>_lhmTxt('capBadge'), cta:{label:'Reload capabilities', run:()=>_capsReload()}},
+    {id:'agents',   icon:'◈', label:'Agents',    desc:'Pick, edit or create an agent',
+     desc_long:'Every agent: pick one to edit its prompt, model, capabilities, skills, memory and reply style, or use it in this chat. Saving changes only the fields you edited. The action at the foot starts a new agent. Navigate here to set up or change an agent without leaving the chat.',
+     tabs:[{id:'Agents',label:'Agents', desc:'Every agent', desc_long:'The agents as cards; a pick opens its editor below.'}],
+     meta:()=>{ const n=(AGENTS||[]).length; return n?n+' agents':''; }, cta:{label:'+ New agent', run:()=>_agentNew()}},
     {id:'settings', icon:'⚙', label:'Settings',  desc:'The agent and chat configuration',
      desc_long:'Chat configuration: the agent in use and its options. The action at the foot opens the full Settings page (also Ctrl/Cmd+,). Navigate here to change the agent or its settings.',
      tabs:[{id:'Cfg',label:'Config', desc:'Agent and options', desc_long:'The quick configuration: agent and options.'}],
@@ -16314,6 +16330,13 @@ function _embedMount(){
     el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='on') _sessionSbxToggle(true); else if(a==='term') _sessionSbxTerminal(); else if(a==='vscode') _sessionSbxVscode(); else if(a==='code'){ _dkScroll('paneCode'); _artifactsRefresh(); } else if(a==='refresh'){ _sbxQ.sid=''; _sessionSbxRefresh(); } }catch(_){} }));
   }
   // Capabilities: the capability estate at a glance (loaded · in reach for this agent · queued) as the board's cards
+  // the Agents menu's head card: how many agents, which one this chat talks to (the list and the editor dock below)
+  function _quickAgents(el){
+    const n=(typeof AGENTS!=='undefined'&&Array.isArray(AGENTS))?AGENTS.length:0, cur=(document.getElementById('agentBarSel')||{}).value||'';
+    const sig=n+':'+cur; if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    try{ _dkRelease(el); }catch(_){}   // a docked pane goes home before the body is redrawn - it is never out of the document
+    el.innerHTML='<div class="wcard" data-w="agents · counter"><span class="wc-h"><span class="mono">◈</span><b>Agents</b><span class="mono">agent.list</span></span><span class="wc-v"><b class="num">'+n+'</b><span class="u">'+(cur?'this chat talks to '+esc(cur):'pick one to edit it')+'</span></span></div>';
+  }
   function _quickOps(el){
     const all=(typeof ALL_CAPS!=='undefined'&&Array.isArray(ALL_CAPS))?ALL_CAPS:[]; const badge=_lhmTxt('capBadge'); let reach=all.length; try{ const a=(typeof AGENTS!=='undefined'&&Array.isArray(AGENTS))?AGENTS.find(x=>x.name===(document.getElementById('cfgAgent')||{}).value):null; if(a) reach=(_getAgentCaps(a)||[]).length; }catch(_){}
     const groups={}; all.forEach(c=>{ const g=String(c.name||'').split('.')[0]||'?'; groups[g]=(groups[g]||0)+1; }); const top=Object.entries(groups).sort((a,b)=>b[1]-a[1]).slice(0,6);
@@ -16341,6 +16364,8 @@ function _embedMount(){
     workspace:{ panes:[{ id:'paneBrowser', n:'Browser', tab:'browser', cls:'dk-frame', load:()=>_renderBrowserCtxList() }], cards:{ titles:['Session canvas','Media & rendering'] } },
     sandbox:  { panes:[{ id:'paneCode', n:'Artifacts & preview', tab:'code', cls:'dk-frame', load:()=>_artifactsRefresh() }], cards:{ titles:['Session container'] } },
     ops:      { panes:[{ id:'rpCaps', n:'Capabilities', tab:'Caps', cls:'dk-caps', load:()=>_renderRailCaps() }], cards:{ titles:['Agent capabilities'] } },
+    agents:   { panes:[{ id:'rpAgentList', n:'Agents', tab:'Agents', cls:'dk-list', load:()=>_renderRailAgents() },
+                       { id:'rpAgentEdit', n:'Edit agent', tab:'Agents', cls:'dk-agent-edit' }] },
     settings: { all:true }
   };
   const _dkHome={};      // pane id -> { mark (a comment where it lived), el }
@@ -16432,7 +16457,7 @@ function _embedMount(){
     el.querySelectorAll('.lrow[data-sprow]').forEach(r=>r.addEventListener('click',()=>{ const id=r.dataset.sprow; if(_qSpOpen[id]) delete _qSpOpen[id]; else _qSpOpen[id]=1; try{ localStorage.setItem('vera_lhm_sprow', JSON.stringify(_qSpOpen)); }catch(_){} VeraLHM.render(); }));
     el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ const a=b.dataset.act; if(a==='aa') _appearanceSheet(ev); else if(a==='page') _settingsPage(true); else _toolsSheet(true); }catch(_){} }));
   }
-  const _QUICK={context:_quickContext, sessions:_quickSessions, activity:_quickActivity, loop:_quickLoop, workspace:_quickWorkspace, sandbox:_quickSandbox, ops:_quickOps, settings:_quickSettings};
+  const _QUICK={context:_quickContext, sessions:_quickSessions, activity:_quickActivity, loop:_quickLoop, workspace:_quickWorkspace, sandbox:_quickSandbox, ops:_quickOps, agents:_quickAgents, settings:_quickSettings};
   // every quick body docks its menu's panes and settings after it draws (and after an early return on an unchanged key)
   Object.keys(_QUICK).forEach(k=>{ const f=_QUICK[k]; _QUICK[k]=function(el, api){ f(el, api); try{ _dockSync(el, k); }catch(e){ try{ console.warn('LHM dock: '+k, e); }catch(_){} } }; });
   // the quick bodies follow the chat's state: a light tick re-draws only when a body's signature changed
@@ -16655,6 +16680,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     }
     if(name==='Hist')histLoad();
     if(name==='Caps')_renderRailCaps();
+    if(name==='Agents')_renderRailAgents();
     if(name==='Panels'){ _loadUiPanels().then(_renderRailPanels); }
 
     // Keep the top-bar Caps/Panels button highlights in sync so the user
@@ -18587,6 +18613,75 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
      on subsequent turns. */
   let _railRunCap=null; // currently-open run form's cap name
 
+  /* ═══ THE AGENTS MENU (owner, 2026-10-04: "id like to be able to setup agents from the chat ui lhm"; the editor is
+     "a reusable writable form"). Two widgets, nothing hand-drawn: cards over agent.list, and a form over agent.get that
+     saves through agent.patch - only the fields edited, every other field of the agent kept (agent.update would reset
+     them). A new agent is the same form with no source, saved through agent.create. ═══ */
+  const _AGENT_FIELDS=[
+    { key:'label', label:'Name shown', type:'text' },
+    { key:'description', label:'What it is for', type:'textarea', rows:2 },
+    { key:'model', label:'Model (blank = the default)', type:'text' },
+    { key:'system_prompt', label:'System prompt', type:'textarea', rows:8 },
+    { key:'temperature', label:'Temperature', type:'number' },
+    { key:'num_ctx', label:'Context window (0 = automatic)', type:'number' },
+    { key:'domain_caps', label:'Capabilities it may call (comma-separated, * = all)', type:'list' },
+    { key:'skill_ids', label:'Skills', type:'list' },
+    { key:'ontology_ids', label:'Ontologies', type:'list' },
+    { key:'memory_enabled', label:'Remember conversations', type:'bool' },
+    { key:'memory_inject', label:'Bring memories into its turns', type:'bool' },
+    { key:'memory_inject_limit', label:'Memories per turn', type:'number' },
+    { key:'notes_inject', label:'Session notes', type:'bool' },
+    { key:'two_tier', label:'Two-tier reply', type:'select', options:['off','fetched','message'] },
+    { key:'quick_opener', label:'Quick opener', type:'bool' },
+    { key:'think', label:'Think before answering', type:'bool' },
+    { key:'prefer_gpu', label:'Prefer the GPU', type:'bool' },
+  ];
+  let _agentListW=null;
+  function _renderRailAgents(){
+    const list=document.getElementById('rpAgentList'); if(!list) return;
+    if(_agentListW&&list.contains(_agentListW)){ try{ _agentListW.read(true); }catch(_){} return; }
+    list.innerHTML='';
+    _agentListW=document.createElement('vera-widget'); _agentListW.setAttribute('size','l'); _agentListW.setAttribute('bare','');
+    // rows shaped by the widget's own map: each card is named by the agent's name (not its id) and shows its label and model
+    _agentListW.setAttribute('record', JSON.stringify({ form:'cards', title:'Agents', source:'agent.list',
+      read:{ map:{ rows:'agents', fields:['label','model'] } }, draw:{ limit:80, columns:2 } }));
+    _agentListW.addEventListener('widget:item', ev=>{ const it=(ev.detail||{}).item; const name=it&&typeof it==='object'?(it.name||''):''; if(!name) return; ev.preventDefault(); _agentEdit(name); });
+    list.appendChild(_agentListW);
+  }
+  function _agentUse(name){
+    const sel=document.getElementById('agentBarSel'); if(!sel||!name) return;
+    if(![...sel.options].some(o=>o.value===name)){ const o=document.createElement('option'); o.value=name; o.textContent=name; sel.appendChild(o); }
+    sel.value=name; try{ agentBarChanged(); }catch(_){}
+  }
+  function _agentEditorHead(box, name){
+    const acts=document.createElement('div'); acts.className='ag-acts';
+    if(name){ const use=document.createElement('button'); use.className='btn xs pri'; use.textContent='Use in this chat'; use.title='Make '+name+' the agent this chat talks to'; use.addEventListener('click', ()=>_agentUse(name)); acts.appendChild(use); }
+    const full=document.createElement('button'); full.className='btn xs'; full.textContent='Agents panel ↗'; full.title='Every setting (voice, RAG knowledge, routing, versions) in the Agents panel';
+    full.addEventListener('click', ()=>{ try{ panelOpen('agents-skills-ontologies'); }catch(_){} }); acts.appendChild(full);   // the registered Agents panel (/ui/panels)
+    box.appendChild(acts);
+  }
+  function _agentEdit(name){
+    const box=document.getElementById('rpAgentEdit'); if(!box||!name) return;
+    box.innerHTML=''; _agentEditorHead(box, name);
+    const w=document.createElement('vera-widget'); w.setAttribute('size','l');
+    w.setAttribute('record', JSON.stringify({ form:'form', title:'Agent · '+name, source:'agent.get', read:{ args:{ name, force_refresh:true } },
+      draw:{ fields:_AGENT_FIELDS, save:{ cap:'agent.patch', from:{ agent_id:'id' }, edits_as:'fields', label:'Save changes' } } }));
+    w.addEventListener('widget:saved', ()=>{ try{ _agentListW&&_agentListW.read(true); }catch(_){} try{ loadAgents(); }catch(_){} });
+    box.appendChild(w);
+    try{ _dkScroll('rpAgentEdit'); }catch(_){}
+  }
+  function _agentNew(){
+    try{ if(window.VeraLHM) VeraLHM.pick('agents'); }catch(_){}
+    const box=document.getElementById('rpAgentEdit'); if(!box) return;
+    box.innerHTML=''; _agentEditorHead(box, '');
+    const w=document.createElement('vera-widget'); w.setAttribute('size','l');
+    w.setAttribute('record', JSON.stringify({ form:'form', title:'New agent',
+      draw:{ fields:[{ key:'name', label:'Short name (letters, digits, dashes)', type:'text' }].concat(_AGENT_FIELDS.filter(f=>['label','description','model','system_prompt','temperature'].includes(f.key))),
+             save:{ cap:'agent.create', label:'Create agent' } } }));
+    w.addEventListener('widget:saved', ev=>{ const a=((ev.detail||{}).args)||{}; try{ _agentListW&&_agentListW.read(true); }catch(_){} try{ loadAgents(); }catch(_){} if(a.name) setTimeout(()=>_agentEdit(String(a.name)), 300); });
+    box.appendChild(w);
+    try{ _dkScroll('rpAgentEdit'); }catch(_){}
+  }
   function _renderRailCaps(){
     const list=document.getElementById('rpCapList');
     const meta=document.getElementById('rpCapMeta');
