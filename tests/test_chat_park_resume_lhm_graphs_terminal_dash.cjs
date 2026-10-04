@@ -38,5 +38,8 @@ t('a tab pick keeps the memory graph drawn (toggles on, never overwrites the cla
 // first screenful clickable. Laid out at the top, the layer is as tall as the code and the box scrolls it.
 { const VO = R('vera/vera_output_element.js');
   t('the kit editor\'s textarea is as tall as the code it covers', VO.includes('.vo-ed-sc{display:flex;align-items:flex-start;overflow:auto;')); }
+{ const CV = R('vera/canvas/canvas_element.js');
+  t('one Edit per canvas item: the header\'s only where the kit draws none (code: the card\'s; markdown: the row\'s)',
+    CV.includes("const kitEdits = !!(root.VeraOut && key && (b.type === 'code' || b.type === 'markdown'));") && CV.includes('const editable = EDITABLE.includes(b.type) && !kitEdits;')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

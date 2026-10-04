@@ -2534,7 +2534,12 @@
         /* the WIDTH you dragged it to, as a data attribute rather than a style: the placer applies it (it is the one
            thing that knows the columns it has to fit into), and it must survive the markup being rewritten */
         const pw = this._pw[key];
-        const editable = EDITABLE.includes(b.type);
+        /* ONE EDIT PER ITEM (owner, 2026-10-04: two Edit buttons on a code item). A code item's card bar has the kit's
+           editor (numbered, linted, full screen; saved through the `edited` hook) and a reading item's row has its own
+           Edit - the header's would be the second. It stays where nothing else edits: a note, a page, any item drawn
+           without the kit. */
+        const kitEdits = !!(root.VeraOut && key && (b.type === 'code' || b.type === 'markdown'));
+        const editable = EDITABLE.includes(b.type) && !kitEdits;
         const bid = b._bid ? String(b.id) : '';   // a keyless block: addressed by its id (canvas.update · canvas.remove · canvas.move)
         /* ONE HEADER PER ITEM. Several kinds draw a head of their own — a code item its filename and its preview
            switch, a terminal its host and its dot, an explode item what it is bound to — and the card drew ANOTHER
