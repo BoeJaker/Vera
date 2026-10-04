@@ -63,5 +63,7 @@ t('a fixed full-height drawer floats (keeps its ground); only in-flow parts can 
 const HN = R('vera', 'capability_orchestration.html');
 t('every panel\'s menu is the chat\'s glass over the glow (LHM layout)', /body:has\(\.body-wrap\.lhm\) #veraWashH\{opacity:1\}/.test(HN) && /\.body-wrap\.lhm\{position:relative;z-index:1;background:transparent\}/.test(HN)
   && /\.body-wrap\.lhm #lhmNav\.lhm-nav\{background:color-mix\(in srgb,var\(--s1,var\(--bg1,#151719\)\) 52%,transparent\);-webkit-backdrop-filter:blur\(16px\) saturate\(1\.15\)/.test(HN) && /\.body-wrap\.lhm #lhmNav \.lhm-rail\{background:transparent\}/.test(HN));
+t('the page area under the menu is see-through too (it painted the ground the glass sat on)', /\.body-wrap\.lhm \.main,\.body-wrap\.lhm \.panels\{background:transparent\}/.test(R('vera', 'capability_orchestration.html')));
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
