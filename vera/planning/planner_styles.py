@@ -961,6 +961,91 @@ def review_fix_step(note: str, goal: str) -> Dict[str, Any]:
     }
 
 
+# ── ANSWER CHECK: the large model checks the FINAL ANSWER the GPU wrote ────
+# (4 Oct 2026, judged probes: the files were right and the final answer was not -
+# invented dates and licences, "tests passed" with no test run, verifier findings left
+# out. The deliverable review runs before that answer is written; this runs after it.)
+ANSWER_CHECK_SYSTEM = (
+    "You CHECK the final answer a smaller, faster model wrote for an agentic run, against "
+    "the files the run wrote and the verifier findings it left unresolved. Assume the answer "
+    "may invent facts, dates, numbers or results, overstate success, or leave out what is "
+    "still wrong. Use ONLY what is shown: the FILES are the record of what was made, and a "
+    "claim that nothing shown supports is wrong.\n"
+    "If the answer is accurate and complete about what was done and what was not, reply "
+    "exactly: OK\n"
+    "Otherwise reply with:\n"
+    "FIXES: one line per error you corrected (quote the wrong claim)\n"
+    "ANSWER:\n"
+    "the corrected answer in full - same purpose and about the same length as the original, "
+    "every claim supported by what is shown, and every unresolved finding stated plainly as "
+    "not done.\n"
+    "Text marked 'clipped' or 'first N of M chars' was SHORTENED by us; the cut is not an "
+    "error in the run.")
+ANSWER_CHECK_FILE_CHARS = 3000
+ANSWER_CHECK_EVIDENCE_CHARS = 10000
+ANSWER_CHECK_ANSWER_CHARS = 4000
+
+
+def unresolved_findings(results: Sequence[Dict[str, Any]], unmet: Optional[Sequence[Any]] = None,
+                        limit: int = 6) -> List[str]:
+    """What the run's checks left failing: steps whose last verdict was not met, and the
+    parts the final gate found unmet."""
+    out: List[str] = []
+    for r in results or []:
+        if r.get("met") is False:
+            why = str(r.get("met_reason") or "").strip()
+            if why:
+                out.append("step %s (%s): %s" % (r.get("id"), str(r.get("title") or "")[:60],
+                                                  why[:300]))
+    for u in unmet or []:
+        s = str(u or "").strip()
+        if s:
+            out.append("not met at the end: %s" % s[:300])
+    return out[:limit]
+
+
+def answer_check_prompt(goal: str, files: Sequence[Any], answer: str,
+                        findings: Sequence[str] = ()) -> str:
+    """The checker's prompt: the goal, the run's record (files + unresolved findings),
+    then the answer to check."""
+    parts: List[str] = []
+    for path, text in files or []:
+        s = str(text or "")
+        if not s.strip():
+            continue
+        cut = len(s) > ANSWER_CHECK_FILE_CHARS
+        parts.append("FILE %s%s:\n%s%s" % (
+            path, (" (first %d of %d chars)" % (ANSWER_CHECK_FILE_CHARS, len(s))) if cut else "",
+            s[:ANSWER_CHECK_FILE_CHARS], CLIP_MARK if cut else ""))
+    if findings:
+        parts.append("UNRESOLVED VERIFIER FINDINGS:\n" + "\n".join("- " + f for f in findings))
+    body = "\n\n".join(parts) or "(the run wrote no file and left no finding)"
+    if len(body) > ANSWER_CHECK_EVIDENCE_CHARS:
+        body = body[:ANSWER_CHECK_EVIDENCE_CHARS - len(CLIP_MARK)] + CLIP_MARK
+    a = str(answer or "")
+    return ("GOAL: %s\n\nTHE RUN'S RECORD:\n%s\n\nTHE FINAL ANSWER TO CHECK:\n%s%s"
+            % (goal, body, a[:ANSWER_CHECK_ANSWER_CHARS],
+               CLIP_MARK if len(a) > ANSWER_CHECK_ANSWER_CHARS else ""))
+
+
+def parse_answer_check(raw: str, original: str) -> Tuple[str, str]:
+    """(corrected answer, fixes). An empty answer means keep the original: OK, no ANSWER:
+    block, a reply too short to be a whole answer, or an original longer than the checker
+    saw (it would be rewritten from a clipped copy)."""
+    t = str(raw or "").strip()
+    i = t.find("ANSWER:")
+    if i < 0:
+        return "", ""
+    fixes = t[:i].strip()
+    if fixes.upper().startswith("FIXES:"):
+        fixes = fixes[len("FIXES:"):].strip()
+    new = t[i + len("ANSWER:"):].strip()
+    orig = str(original or "")
+    if len(orig) > ANSWER_CHECK_ANSWER_CHARS or len(new) < max(40, int(0.3 * len(orig))):
+        return "", fixes
+    return new, fixes
+
+
 def critic_block(notes: Sequence[Dict[str, Any]]) -> str:
     """The critiques that have landed, for the controller's and the completion
     gate's prompt; '' when there are none."""

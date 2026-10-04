@@ -163,6 +163,11 @@ def _load(tmp_path, *, nlp=True):
         return {"records": [{"data": d} for d in data], "has_more": False}
 
     async def markets_lookup(query="", exchange="binance", limit=12, trace_id=None):
+        orch.CALLS.append(("markets.lookup", {"query": query}))
+        if "savills" in query.lower():
+            return {"results": [{"provider": "yahoo", "symbol": "SVS.L", "name": "Savills plc", "asset_class": "stock"}]}
+        if "acme" in query.lower():                      # a name that only half-matches a listing
+            return {"results": [{"provider": "yahoo", "symbol": "ACMR", "name": "ACM Research Inc", "asset_class": "stock"}]}
         return {"results": [{"provider": "yahoo", "symbol": "BTC-USD", "name": "Bitcoin USD", "asset_class": "crypto"}]}
 
     async def markets_bars(dataset_id="", limit=5000, start="", end="", trace_id=None):
@@ -616,3 +621,30 @@ def test_prediction_markets_search_suggest_watch_and_move(tmp_path):
     assert any(u.endswith("/prices-history") and p.get("market") == "tokYes" for u, p in seen)
     again = _R(orch, "intel.pm.suggest", topic_id=t["id"])["suggestions"]
     assert all(m["id"] != "11" for x in again for m in x["markets"])           # a watched market is not suggested again
+
+
+def test_indicator_suggest_from_named_companies_and_markets(tmp_path):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    _run(mod.enrich_topic(mod.store().get_topic(t["id"])))
+    for i, s in enumerate(mod.store().signals(t["id"])):     # Savills named in two sources
+        mod.store().put_signal(dict(s, entities=["Savills", "Acme"],
+                                    entity_types={"Savills": "property agency or consultancy", "Acme": "company"}))
+
+    async def http_json(url, params=None, timeout=20.0):
+        if url.endswith("/public-search"):
+            return {"events": [{"title": "AI valuation", "slug": "ai-val", "markets": [
+                {"id": "77", "question": "Will an AI valuation pilot go live in the UK?", "outcomes": '["Yes", "No"]',
+                 "outcomePrices": '["0.6", "0.4"]', "clobTokenIds": '["t77", "n77"]', "volumeNum": "100"}]}]}
+        return []
+    mod._http_json = http_json
+    sug = _R(orch, "intel.indicator.suggest", topic_id=t["id"])
+    assert [p["symbol"] for p in sug["prices"]] == ["SVS.L"]           # Acme does not match "ACM Research"
+    assert sug["prices"][0]["mentions"] >= 2 and sug["markets"][0]["id"] == "77"
+    n_lookups = len([c for c in orch.CALLS if c[0] == "markets.lookup"])
+    _R(orch, "intel.indicator.suggest", topic_id=t["id"])
+    assert len([c for c in orch.CALLS if c[0] == "markets.lookup"]) == n_lookups      # remembered
+    add = _R(orch, "intel.indicator.add", topic_id=t["id"], kind="price", provider="yahoo", symbol="SVS.L", label="Savills plc")
+    assert add["indicator"]["dataset_id"] == "mkt.yahoo.svs_l.1d" and add["indicator"]["label"] == "Savills plc"
+    assert not _R(orch, "intel.indicator.suggest", topic_id=t["id"])["prices"]          # watched: not suggested again

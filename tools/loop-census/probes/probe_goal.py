@@ -5,6 +5,14 @@ P = os.path.join(os.path.dirname(os.path.abspath(__file__)), "probe.py")
 src = open(P).read()
 exec(src.split("# ── Set A goals")[0].replace('OUT = "/tmp/probe"', 'OUT = "/tmp/probe4"')
      .replace("return (n.hour, n.minute) >= (23, 15)", "return False"))
+# Score with the census's own evaluator (vera/census/quality.py, pure), loaded by path:
+# a hand copy here lacked all_of/contains/min_bytes and scored those checks None
+# (4 Oct 2026: build-multifile read 0.667 in every layout with all three functions present).
+import importlib.util as _ilu
+_qs = _ilu.spec_from_file_location("census_quality", os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "vera", "census", "quality.py"))
+_quality = _ilu.module_from_spec(_qs)
+_qs.loader.exec_module(_quality)
 tpl, gid = sys.argv[1], sys.argv[2]
 budget = int(sys.argv[3]) if len(sys.argv) > 3 else 1200
 g = next(x for x in json.load(open(os.path.expanduser("~/loop-census/templates/%s.json" % tpl)))["goals"] if x["id"] == gid)
@@ -32,22 +40,10 @@ res = {"sid": sid, "goal": gid, "wall": round(wall), "checks": [],
        "critiques": [str(e.get("note") or "")[:300] for e in ev if str(e.get("type", "")).endswith("step_critique")],
        "verify": [str(e.get("reason") or "")[:200] for e in ev if str(e.get("type", "")).endswith("v6.verify")],
        "done": any(str(e.get("type", "")).endswith("v6.done") for e in ev)}
-files = {}
-for c in g.get("checks") or []:
-    ok, why = None, c.get("why", "")
-    if "file" in c:
-        body = files.setdefault(c["file"], fetch(c["file"]))
-        if c.get("exists"):
-            ok = bool(body.strip())
-        elif "regex" in c:
-            ok = bool(re.search(c["regex"], body))
-        elif "absent" in c:
-            ok = bool(body.strip()) and c["absent"] not in body
-        elif "any_of" in c:
-            ok = any(a in body for a in c["any_of"])
-    elif "answer_regex" in c:
-        ok = bool(re.search(c["answer_regex"], final, re.I))
-    res["checks"].append((ok, why))
+files = {n: fetch(n) for n in _quality.files_wanted(g.get("checks"))}
+_q = _quality.evaluate(g.get("checks"), {k: v for k, v in files.items() if v.strip()}, final)
+res["checks"] = [(r.get("ok"), r.get("label") or r.get("detail") or "") for r in _q["results"]]
+res["score"] = _q["score"]
 res["files"] = {k: v[:1500] for k, v in files.items()}
 json.dump(res, open(OUT + "/%s.json" % gid, "w"), indent=1)
 log("done %s wall=%s" % (gid, res["wall"]))

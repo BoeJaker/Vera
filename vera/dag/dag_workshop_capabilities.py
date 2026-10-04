@@ -14637,6 +14637,41 @@ async def _v6_deliverable_review(goal: str, done_when: str, history: Sequence[Di
             "error": err}
 
 
+async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
+                           results: Sequence[Dict[str, Any]], final: str,
+                           unmet: Optional[Sequence[Any]], sid: str) -> Dict[str, Any]:
+    """The large CPU model (the enrich role) checks the FINAL answer against the files the
+    run wrote and the verifier findings it left unresolved, and corrects it
+    (planner_styles.ANSWER_CHECK_SYSTEM). {answer ('' = keep the original), fixes, files,
+    findings, elapsed_s, error}; never raises."""
+    PSx = _plan_styles
+    t1 = time.monotonic()
+    files: List[Any] = []
+    try:
+        for _p in PSx.critic_written_paths(history, limit=PSx.REVIEW_MAX_FILES):
+            try:
+                files.append((_p, await _v5_load_current(_p, session_id=sid)))
+            except Exception:
+                pass
+    except Exception as e:
+        log.debug("answer check files: %s", e)
+    findings = PSx.unresolved_findings(results, unmet)
+    answer, fixes, err = "", "", ""
+    try:
+        raw = await _safe_ollama_generate_dw(
+            PSx.answer_check_prompt(goal, files, final, findings),
+            system=PSx.ANSWER_CHECK_SYSTEM, json_mode=False, model="", instance_id="",
+            prefer_gpu=False, think=False, profile="planning_style", role=PSx.ENRICH_ROLE,
+            request_stage="answer_check", timeout=600)
+        answer, fixes = PSx.parse_answer_check(_strip_think(raw or "")[0], final)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"[:160]
+    return {"answer": answer, "fixes": fixes[:1200], "files": [p for p, _ in files],
+            "findings": findings, "elapsed_s": round(time.monotonic() - t1, 1), "error": err}
+
+
 async def _v6_entity_coverage(task: Any, output: str, *, sid: str, stream_id: str) -> None:
     """Emit agent_loop_v6.entity_coverage for the run's final output. Best effort."""
     if task is None or _entity_cov is None:
@@ -24171,6 +24206,7 @@ async def cap_dag_agent_loop_v6(
     # Opt-in: when the final gate says complete, a large CPU model reviews the
     # deliverable adversarially ONCE; real defects become one fix step (user 2026-10-04).
     deliverable_review: bool = False,
+    answer_check: bool = False,
     # BROAD only: the model the long-horizon CPU node writes stream briefs with
     # ('' = the planning_style/enrich route's model). The route keeps whichever
     # model it runs warm.
@@ -26170,6 +26206,22 @@ async def cap_dag_agent_loop_v6(
         except Exception as e:
             log.debug("v6 handover stage failed: %s", e)
 
+    # ── Answer check (opt-in): the large CPU model checks the answer just written
+    #    against the files and the unresolved findings, and corrects it. ─────────
+    if answer_check and str(final or "").strip():
+        if stream_id:
+            await emit_event({"type": "agent_loop_v6.stage_start", "stream_id": stream_id,
+                              "session_id": sid, "stage": "answer_check", "key": "final",
+                              "label": "\U0001f50e Checking the answer against the files\u2026"})
+        _ac = await _v6_answer_check(goal, flat_history, results, final, _unmet, sid)
+        await emit_event({"type": "agent_loop_v6.answer_check", "session_id": sid,
+                          "stream_id": stream_id, "changed": bool(_ac.get("answer")),
+                          "fixes": _ac.get("fixes"), "files": _ac.get("files"),
+                          "findings": _ac.get("findings"), "elapsed_s": _ac.get("elapsed_s"),
+                          "error": _ac.get("error")})
+        if _ac.get("answer"):
+            final = _ac["answer"]
+
     # ── Delivery stage: dedicated final agent → markdown deliverable ─────────
     deliverable = ""
     if enable_delivery and results:
@@ -26559,6 +26611,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_style        = (body.get("plan_style") or _style_default).strip().lower()
     v6_plan_style_defaulted = bool(_v7_default and not str(body.get("plan_style") or "").strip())
     v6_deliverable_review = bool(body.get("deliverable_review", False))
+    v6_answer_check = bool(body.get("answer_check", False))
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
     v6_intent_core       = (body.get("intent_core", "off") or "off").strip().lower()
@@ -26720,6 +26773,7 @@ async def workshop_agent_loop_stream(request: Request):
             plan_style=v6_plan_style,
             plan_style_defaulted=v6_plan_style_defaulted,
             deliverable_review=v6_deliverable_review,
+            answer_check=v6_answer_check,
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
             intent_core=v6_intent_core,
