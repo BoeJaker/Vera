@@ -291,6 +291,14 @@ async function openTopic(id) {
       ${(sn.watch||[]).length?'<h3>Watch</h3>'+sn.watch.map(w=>`<span class="chip">${esc(w)}</span>`).join(''):''}
     </div>
     <div class="card"><vera-intel-timeline topic="${esc(id)}" days="90"></vera-intel-timeline></div>
+    <div class="card"><div class="row"><h3 class="grow" style="margin:0">Numbers this topic watches</h3>
+        <button class="btn" onclick="checkInd()" title="look for moves now - no model">↻ Check</button></div>
+      <div class="small muted">A price, a macro series or any bar dataset. A spike, a level shift or a new regime joins the timeline and the next assessment, with the stories that landed around it.</div>
+      <div id="indList" class="small"></div>
+      <div class="row" style="margin-top:8px"><select id="indKind" style="width:auto"><option value="price">price</option><option value="macro">macro series</option><option value="probability">probability (dataset)</option><option value="count">count (dataset)</option></select>
+        <input type="text" id="indQ" class="grow" placeholder="bitcoin, AAPL, GBP/USD - or a macro id like CPIAUCSL - or mkt.… dataset id" style="width:auto">
+        <button class="btn" onclick="addInd()">Watch</button></div>
+    </div>
     <div class="grid2">
       <div class="card"><div class="row"><h3 class="grow" style="margin:0">Signals</h3>
         <select id="sOrder" style="width:auto" onchange="loadSignals()"><option value="seen">newest</option><option value="score">strongest</option></select>
@@ -302,7 +310,36 @@ async function openTopic(id) {
         ${widget({form:'minigraph', source:'intel.entities.get', title:'Entities', read:{refresh:'10m', args:{topic_id:id}, map:{nodes:'nodes', links:'links'}}, frame:{size:'l'}})}
       </div>
     </div>`;
-  loadSignals();
+  loadSignals(); loadInd();
+}
+async function loadInd() {
+  if (!CUR) return;
+  const r = await call('intel.indicator.list', {topic_id: CUR, days: 90});
+  const ch = r.changes || [];
+  $('indList').innerHTML = (r.indicators || []).map(i => {
+    const mine = ch.filter(c => c.indicator === i.id).slice(0, 3);
+    return `<div class="sig"><div class="sc">${i.kind === 'price' ? '¤' : i.kind === 'macro' ? '∿' : '%'}</div><div>
+      <b>${esc(i.label)}</b> <span class="muted">${esc(i.dataset_id)}</span>
+      <div class="muted">${i.last != null ? 'last ' + esc(String(+(+i.last).toPrecision(6))) + ' · ' : ''}${esc(i.status || '')}${i.bars ? ' · ' + i.bars + ' bars' : ''}</div>
+      ${mine.map(c => `<div>${c.direction === 'up' ? '▲' : '▼'} ${esc(c.text)}${(c.stories || []).length ? ' <span class="muted">· around then: ' + c.stories.map(s => esc(s.title)).join(' · ') + '</span>' : ''}</div>`).join('')}</div>
+      <div class="ops"><button class="btn" onclick="rmInd('${esc(i.id)}')">Stop</button></div></div>`;
+  }).join('') || '<div class="muted" style="padding:6px 0">Nothing yet.</div>';
+}
+async function addInd() {
+  const q = $('indQ').value.trim(), kind = $('indKind').value;
+  if (!q) return;
+  const args = {topic_id: CUR, kind};
+  if (/^mkt\./.test(q)) args.dataset_id = q; else args.query = q;
+  const r = await call('intel.indicator.add', args);
+  $('wsMsg').textContent = r.error || r.message || '';
+  if (!r.error) { $('indQ').value = ''; loadInd(); }
+}
+async function rmInd(iid) { await call('intel.indicator.remove', {topic_id: CUR, indicator_id: iid}); loadInd(); }
+async function checkInd() {
+  $('wsMsg').textContent = 'checking…';
+  const r = await call('intel.indicator.check', {topic_id: CUR});
+  $('wsMsg').textContent = r.error || r.message || '';
+  loadInd();
 }
 async function loadSignals() {
   if (!CUR) return;

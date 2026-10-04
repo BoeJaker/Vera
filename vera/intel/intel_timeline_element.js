@@ -26,6 +26,7 @@
 .d i{display:block;width:100%;border-radius:2px 2px 0 0;background:var(--it-acc);opacity:.25;min-height:1px}
 .d.sel i{opacity:1;outline:1px solid var(--fg,#fff)}
 .d .sn{position:absolute;top:-14px;left:50%;transform:translateX(-50%) rotate(45deg);width:7px;height:7px;background:var(--warn,#e0af68)}
+.d .ch{position:absolute;top:-26px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:7px solid var(--err,#f7768e)}
 .d .rp{position:absolute;bottom:-12px;left:50%;transform:translateX(-50%);width:6px;height:6px;background:var(--ok,#9ece6a)}
 .cur{position:absolute;top:0;bottom:0;width:1px;background:var(--fg,#fff);pointer-events:none;opacity:.6}
 .axis{display:flex;justify-content:space-between;color:var(--it-dim);font-size:11px;margin-top:3px}
@@ -37,7 +38,7 @@
 .ev a{color:inherit;text-decoration:none}.ev a:hover{text-decoration:underline}
 .empty{color:var(--it-dim);padding:12px 0}
 .lg{display:flex;gap:12px;color:var(--it-dim);font-size:11px}.lg span:before{content:"";display:inline-block;width:8px;height:8px;margin-right:4px;vertical-align:middle}
-.lg .a:before{background:var(--it-acc)}.lg .b:before{background:var(--warn,#e0af68);transform:rotate(45deg)}.lg .c:before{background:var(--ok,#9ece6a)}`;
+.lg .a:before{background:var(--it-acc)}.lg .b:before{background:var(--warn,#e0af68);transform:rotate(45deg)}.lg .c:before{background:var(--ok,#9ece6a)}.lg .e:before{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:7px solid var(--err,#f7768e)}`;
 
   class VeraIntelTimeline extends HTMLElement {
     static get observedAttributes() { return ['topic', 'days', 'base']; }
@@ -82,12 +83,12 @@
         const h = d.signals ? 8 + 92 * (d.signals / max) : 0;
         const op = d.top_score == null ? '' : ';opacity:' + (0.3 + 0.07 * d.top_score).toFixed(2);
         return '<div class="d' + (i === this._sel ? ' sel' : '') + '" data-i="' + i + '" title="' + esc(d.date + ' · ' + (d.signals || 0) + ' signals' + (d.top ? ' · ' + d.top : '')) + '">'
-          + (d.snapshots ? '<span class="sn"></span>' : '') + (d.reports ? '<span class="rp"></span>' : '')
+          + (d.changes ? '<span class="ch"></span>' : '') + (d.snapshots ? '<span class="sn"></span>' : '') + (d.reports ? '<span class="rp"></span>' : '')
           + '<i style="height:' + h.toFixed(1) + '%' + op + '"></i></div>';
       }).join('');
       const R = [30, 90, 365].map((n) => '<button data-r="' + n + '" class="' + (n === this.days ? 'on' : '') + '">' + (n === 365 ? '1y' : n + 'd') + '</button>').join('');
       this.shadowRoot.innerHTML = '<style>' + CSS + '</style>'
-        + '<div class="bar"><b>Timeline</b><span class="lg"><span class="a">signals</span><span class="b">assessment</span><span class="c">report</span></span><span class="sp"></span><span class="rng">' + R + '</span></div>'
+        + '<div class="bar"><b>Timeline</b><span class="lg"><span class="a">signals</span><span class="b">assessment</span><span class="c">report</span><span class="e">a number moved</span></span><span class="sp"></span><span class="rng">' + R + '</span></div>'
         + '<div class="rail" tabindex="0" aria-label="topic timeline - arrow keys move through days">' + bars + '</div>'
         + '<div class="axis"><span>' + esc(tl.from || '') + '</span><span>' + esc(tl.to || '') + '</span></div>'
         + '<div class="card"><div class="empty">' + (days.length ? 'pick a day' : 'nothing yet') + '</div></div>';
@@ -122,7 +123,8 @@
       try {
         const r = await this._get('/intel/asof/get?topic_id=' + encodeURIComponent(this.topic) + '&when=' + d.date);
         if (seq !== this._seq) return;
-        this._card(d.date, r.snapshot, (r.signals || []).map((s) => ({ kind: 'signal', title: s.title, url: s.url, score: s.score, sub: s.site })));
+        const moved = (this._tl.events || []).filter((e) => e.kind === 'change' && String(e.ts || '').slice(0, 10) === d.date);
+        this._card(d.date, r.snapshot, moved.concat((r.signals || []).map((s) => ({ kind: 'signal', title: s.title, url: s.url, score: s.score, sub: s.site }))));
       } catch (e) { this._msg('could not read that day: ' + esc(e.message || e)); }
     }
     _card(date, snap, evs) {
@@ -135,7 +137,7 @@
       } else if (this.topic) h += '<div class="empty">no assessment yet at this date</div>';
       if (evs.length) {
         h += evs.slice(0, 30).map((e) => {
-          const sc = e.score == null ? (e.kind === 'snapshot' ? '◆' : e.kind === 'report' ? '■' : '·') : Math.round(e.score);
+          const sc = e.score == null ? (e.kind === 'snapshot' ? '◆' : e.kind === 'report' ? '■' : e.kind === 'change' ? (e.direction === 'up' ? '▲' : '▼') : '·') : Math.round(e.score);
           const t = /^(https?:\/\/|\/intel\/)/i.test(String(e.url || '')) ? '<a href="' + esc(e.url) + '" target="_blank" rel="noopener">' + esc(e.title) + '</a>' : esc(e.title);
           return '<div class="ev"><div class="s' + ((e.score || 0) >= 7 ? ' hi' : '') + '">' + sc + '</div><div>' + t + (e.sub ? ' <span class="m">' + esc(e.sub) + '</span>' : '') + '</div></div>';
         }).join('');

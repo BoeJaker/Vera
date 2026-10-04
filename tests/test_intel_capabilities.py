@@ -160,6 +160,26 @@ def _load(tmp_path, *, nlp=True):
         }.get(dataset_id, [])
         return {"records": [{"data": d} for d in data], "has_more": False}
 
+    async def markets_lookup(query="", exchange="binance", limit=12, trace_id=None):
+        return {"results": [{"provider": "yahoo", "symbol": "BTC-USD", "name": "Bitcoin USD", "asset_class": "crypto"}]}
+
+    async def markets_bars(dataset_id="", limit=5000, start="", end="", trace_id=None):
+        import math
+        import time as _t
+        now = int(_t.time()) // 86400 * 86400
+        ts = [now - (119 - i) * 86400 for i in range(120)]
+        cs = [100 + 0.6 * math.sin(i * 1.7) + 0.3 * math.cos(i * 0.9) for i in range(118)]
+        cs += [cs[-1] * 1.14, cs[-1] * 1.15]                 # a 14% jump yesterday, and it holds
+        orch.CALLS.append(("markets.bars", {"dataset_id": dataset_id}))
+        return {"dataset_id": dataset_id, "count": 120, "t": ts, "c": cs}
+
+    async def macro_fetch(id="", ids=None, track=True, trace_id=None):
+        return {"ok": True, "datasets": [f"mkt.macro.{id.lower()}.1d"]}
+
+    reg["markets.lookup"] = {"func": markets_lookup, "raw": markets_lookup}
+    reg["markets.bars"] = {"func": markets_bars, "raw": markets_bars}
+    reg["markets.macro.fetch"] = {"func": macro_fetch, "raw": macro_fetch}
+    reg["markets.asset.add"] = {"func": rec("markets.asset.add"), "raw": rec("markets.asset.add")}
     for n, f in (("web.search", web_search), ("reader.page", reader_page), ("tg.send_rich", tg_send_rich),
                  ("research.run", research_run), ("research.job.status", research_status), ("fabric.browse", fabric_browse),
                  ("fs.list", fs_list), ("fs.read", fs_read), ("n8n.workflow.list", n8n_list),
@@ -496,3 +516,40 @@ def test_decisions_feedback_links_and_export(tmp_path):
     mod.store().put_topic(dict(t, mute_sites=["github.com"]))
     _R(orch, "intel.sweep", topic_id=t["id"])
     assert not any("github" in (s.get("url") or "") for s in mod.store().signals(t["id"]))
+
+
+def test_indicators_find_moves_corroborate_and_reach_the_assessment(tmp_path):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    add = _R(orch, "intel.indicator.add", topic_id=t["id"], kind="price", query="bitcoin")
+    assert add["ok"] and add["indicator"]["dataset_id"] == "mkt.yahoo.btc_usd.1d"
+    assert ("markets.asset.add", {"provider": "yahoo", "symbol": "BTC-USD", "timeframes": ["1d"]}) in orch.CALLS
+    assert _R(orch, "intel.indicator.add", topic_id=t["id"], kind="macro", query="CPIAUCSL")["indicator"]["dataset_id"]         == "mkt.macro.cpiaucsl.1d"
+    assert "error" in _R(orch, "intel.indicator.add", topic_id=t["id"], kind="probability", query="x")
+    # a first assessment, then a sweep brings a story the day the number jumps
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    _run(mod.snapshot_topic(mod.store().get_topic(t["id"])))
+    ch = _R(orch, "intel.indicator.check", topic_id=t["id"])["changes"]
+    btc = [c for c in ch if c["label"] == "Bitcoin USD"]
+    assert btc and btc[0]["direction"] == "up" and "Bitcoin USD up" in btc[0]["text"]
+    assert btc[0]["stories"] and "pilot" in btc[0]["stories"][0]["title"].lower()
+    assert not _R(orch, "intel.indicator.check", topic_id=t["id"])["changes"]      # found once, not every night
+    lst = _R(orch, "intel.indicator.list", topic_id=t["id"])
+    assert lst["indicators"][0]["status"] == "ok" and lst["changes"]
+    # the move goes into the next assessment prompt and makes it material
+    mod.store().set_kv("alerts_sent", [])
+    sn = _run(mod.snapshot_topic(mod.store().get_topic(t["id"])))
+    assert "THE NUMBERS THIS TOPIC WATCHES MOVED" in orch.PROMPTS[-1][0] and "Bitcoin USD up" in orch.PROMPTS[-1][0]
+    assert "Bitcoin USD up" in sn["alert"]
+    # the timeline and the report show it
+    tl = _R(orch, "intel.timeline.get", topic_id=t["id"], days=30)
+    assert any(e["kind"] == "change" for e in tl["events"]) and sum(d["changes"] for d in tl["days"]) >= 1
+    doc = _run(mod.build_report([t["id"]], period_hours=24 * 30, only_new=False))
+    html = mod.core.render_html(doc)
+    assert "What moved" in html and "Bitcoin USD up" in html
+    assert "**What moved**" in mod.core.render_markdown(doc)
+    assert "Bitcoin USD up" in mod.core.render_telegram(doc)["text"]
+    # removing stops it
+    ind = lst["indicators"][0]["id"]
+    assert _R(orch, "intel.indicator.remove", topic_id=t["id"], indicator_id=ind)["ok"]
+    assert all(i["id"] != ind for i in _R(orch, "intel.indicator.list", topic_id=t["id"])["indicators"])
