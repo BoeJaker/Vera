@@ -3911,31 +3911,58 @@ const CH = (() => {
     try{ _xplEl.setCardGraph(d.id, doc); }catch(_){}
     if(doc && doc.error) appendSys('No diagram for that card \u2014 ' + esc(doc.error));
   }
+  /* Explode INTO the scene: the structure of a message, a code block or an /explode target drawn as the exploded scene,
+     in whichever style it is in (cards · front · iso) — a station per file or paragraph, a plate per kind of symbol or
+     entity, the relations as the runs (VeraExploded.contractScene). A chip over the scene names it, opens the structured
+     diagram of the same thing, and goes back to the chat's own scene; Explode on the same thing again goes back too. */
+  async function _xpDoc(url, body){
+    try{ const r=await fetch(BASE+url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const d=await r.json();
+      return (d&&!d.error&&d.ok!==false)?d:{error:(d&&(d.error||d.why))||'explode failed'}; }catch(e){ return {error:String(e&&e.message||e)}; }
+  }
+  async function _xplShowDoc(key, url, body, label, attrs, why){
+    if(_xpl.doc&&_xpl.doc.key===key){ _xplDocClear(); return; }   // the action toggles
+    if(!(window.VeraExploded&&window.VeraExploded.contractScene)){ const host=document.getElementById('xplHost')||BOX(); return _xpPanel(host, attrs, label, why||''); }   // the scene's script missing: the diagram, as before
+    const doc=await _xpDoc(url, body);
+    if(doc.error){ appendSys('Nothing to explode \u2014 '+esc(doc.error)); return; }
+    const scene=window.VeraExploded.contractScene(doc,{label});
+    if(!scene.turns.length){ appendSys('Nothing to explode \u2014 the '+(doc.kind||'source')+' has no structure to draw.'); return; }
+    _xpl.doc={ key, scene, label, attrs, why:why||'' };
+    if(!_xpl.on) explode(true); else _xplRefresh();
+    _xplDocChip();
+  }
+  function _xplDocChip(){
+    const host=document.getElementById('xplHost'); if(!host) return; let c=host.querySelector(':scope > .xpl-doc');
+    if(!_xpl.doc){ if(c) c.remove(); return; }
+    if(!c){ c=document.createElement('div'); c.className='xpl-doc'; host.appendChild(c);
+      c.style.cssText='position:absolute;right:40px;top:92px;z-index:40;display:flex;align-items:center;gap:8px;max-width:calc(100% - 24px);padding:4px 6px 4px 9px;border-radius:6px;background:var(--bg1,#17140f);box-shadow:0 0 0 1px var(--border,#2a2622),0 6px 18px rgba(0,0,0,.35);font:10px var(--mono,monospace);color:var(--dim,#6a6058)';
+      c.addEventListener('click', e=>{ const b=e.target.closest&&e.target.closest('[data-xd]'); if(!b||!_xpl.doc) return; if(b.dataset.xd==='back') _xplDocClear(); else _xpPanel(host, _xpl.doc.attrs, _xpl.doc.label, _xpl.doc.why||'the same structure as a diagram'); }); }
+    const s=_xpl.doc.scene||{}, nt=(s.turns||[]).length, np=(s.layers||[]).length, bs='font:inherit;color:var(--text,#d8d0c6);background:none;border:1px solid var(--border,#2a2622);border-radius:4px;padding:1px 7px;cursor:pointer';
+    c.innerHTML='<span style="color:var(--acc,#5a9e8f)">exploded</span><span class="xd-l" style="color:var(--text,#d8d0c6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><span class="xd-n"></span>'
+      +'<button data-xd="diagram" style="'+bs+'" title="The structured diagram of the same thing, under the scene">diagram</button><button data-xd="back" style="'+bs+'" title="Back to the chat\u2019s own scene">back to the chat</button>';
+    c.querySelector('.xd-l').textContent=_xpl.doc.label||'';
+    c.querySelector('.xd-n').textContent=nt+' station'+(nt===1?'':'s')+' \u00b7 '+np+' plate'+(np===1?'':'s')+(s.across?' \u00b7 '+s.across+' across':'')+' \u00b7 by '+(s.by||'kind');
+  }
+  function _xplDocClear(){ _xpl.doc=null; _xplDocChip(); _xplRefresh(); }
   async function _msgExplode(mid, btn){
     const rec=_MSG_REGISTRY[mid]; if(!rec) return;
-    const wrap=document.querySelector('.mwrap[data-mid="'+mid+'"]'); if(!wrap) return;
-    const old=wrap.querySelector(':scope > .xp-inline'); if(old){ old.remove(); return; }   // the action toggles
     const txt=String(rec.getContent()||'');
     const fences=_xpFences(txt);
     if(btn){ btn.classList.add('ok'); setTimeout(()=>btn.classList.remove('ok'), 900); }
     if(fences.length && fences[0].lines>=3){
       const f=fences[0];
-      await _xpPanel(wrap, {code:f.code, lang:f.lang}, (f.lang||'code')+' · '+f.lines+' lines',
-                     fences.length>1 ? 'the largest of '+fences.length+' code blocks in this message' : 'the code in this message');
-      return;
+      return _xplShowDoc('msg:'+mid, '/code/explode', {text:f.code, lang:f.lang}, (f.lang||'code')+' · '+f.lines+' lines', {code:f.code, lang:f.lang},
+                         fences.length>1 ? 'the largest of '+fences.length+' code blocks in this message' : 'the code in this message');
     }
     const prose=txt.replace(/```[\s\S]*?```/g,' ').trim();
     if(prose.length<40){ appendSys('Nothing to explode in that message — it holds no passage and no code block.'); return; }
-    await _xpPanel(wrap, {text:prose}, 'passage · '+prose.length+' chars', 'the prose of this message');
+    return _xplShowDoc('msg:'+mid, '/nlp/explode/prose', {text:prose}, 'passage · '+prose.length+' chars', {text:prose}, 'the prose of this message');
   }
   async function _codeExplode(id, btn){
     const blk=_CODE_BLOCKS[id]; if(!blk) return;
-    const card=document.querySelector('.code-card[data-cb="'+id+'"]'); if(!card) return;
-    const old=card.querySelector(':scope > .xp-inline'); if(old){ old.remove(); if(btn) btn.classList.remove('ok'); return; }
-    if(btn) btn.classList.add('ok');
-    await _xpPanel(card, {code:blk.code, lang:blk.lang, path:blk.filename||''},
+    if(btn){ btn.classList.add('ok'); setTimeout(()=>btn.classList.remove('ok'), 900); }
+    return _xplShowDoc('code:'+id, '/code/explode', {text:blk.code, lang:blk.lang||''},
                    (blk.filename||blk.lang||'code')+' · '+blk.code.split('\n').length+' lines',
-                   'this code block');
+                   {code:blk.code, lang:blk.lang, path:blk.filename||''}, 'this code block');
   }
   /* /explode <what> — a path, a record id, a graph node id, or a passage. The server says what it is. */
   async function _slashExplode(arg){
@@ -3964,10 +3991,7 @@ const CH = (() => {
       else if(a.record_ids) attrs.records=a.record_ids.join(',');
       else if(a.text) attrs.text=a.text;
     }
-    const row=_mkMsg('agent','explode','');
-    BOX().appendChild(row.wrap);
-    await _xpPanel(row.body, attrs, tg.label||what, tg.why||'');
-    try{ scroll(true); }catch(_){}
+    return _xplShowDoc('slash:'+what, tg.cap==='code.explode'?'/code/explode':'/nlp/explode/prose', a, tg.label||what, attrs, tg.why||'');
   }
   /* ── Save modal helpers ── */
   function _saveModalOpen(mode, title, content){
@@ -18735,6 +18759,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   function explode(on){
     if(_EMBED.only==='menu'){ _lhmPost('explode',{ on }); return; }
     on=(on==null)?!_xpl.on:!!on; _xpl.on=on;
+    if(!on&&_xpl.doc){ _xpl.doc=null; try{ _xplDocChip(); }catch(_){} }   // a structure shown in the scene goes with it
     // the scene has the canvas and the context graph built in (the Canvas board): the columns fold away while it is
     // open and come back as they were when it closes — + Canvas / + Graph by hand still open one over the scene
     if(on){ _xplHid={ canvas:_pages.has('canvas'), graph:_ctxGrown, remote:_ctxRemote.on }; if(_xplHid.graph) _ctxGrow(false); if(_xplHid.remote) _lhmPost('grow-set',{ on:false }); if(_xplHid.canvas){ _pages.delete('canvas'); _pagesApply(); } }
@@ -18767,7 +18792,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       try{ if(_ctxMeterLast.max>0&&typeof _xplEl.setBudget==='function') _xplEl.setBudget(_ctxMeterLast.used,_ctxMeterLast.max); }catch(_){}   // the chip bar's window meter from the turn before the scene opened
     document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===_xpl.mode));
     _ctxRunsFollowScene(); _xplEl.addEventListener('vera:xpl:close', ()=>_xplClose());
-    _xplEl.addEventListener('vera:xpl:place', ev=>_xplPlaceOpen((ev.detail||{}).mid||''));
+    _xplEl.addEventListener('vera:xpl:place', ev=>{ if(!_xpl.doc) _xplPlaceOpen((ev.detail||{}).mid||''); });
     // the two optional layers and the galaxy are the element's own switches (remembered per browser); the host fetches what they need
     _xplEl.addEventListener('vera:xpl:layers', ev=>{ _xplLayers=Object.assign({}, _xplLayers, ev.detail||{}); _xplSync(true); });
     try{ const st=_xplEl.state(); _xplLayers=Object.assign({}, _xplLayers, st.layers||{}, { galaxy:!!st.galaxy }); }catch(_){}
@@ -18780,7 +18805,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _xplEl.addEventListener('vera:xpl:edit', ev=>_xplEdit(ev.detail||{}));
     // a turn selected in the exploded scene (the turn dots, the scrubber, ← →, a station caption, the exchange) is the focused turn
     // everywhere: the grown context graph at that turn's frame, the mini graph re-drawn, the canvas with that turn's items in focus
-    _xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _grFocusMid=mid;
+    _xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid||_xpl.doc) return; _grFocusMid=mid;
       try{ _ctxFollow(true); }catch(_){}   // the chat's own follow: the frame in view is this turn's — the mini re-draws when it changes, the anchor posts when the graph page is open
       try{ _ctxColSig=''; _ctxColumnSync(mid); }catch(_){}   // the grown graph for the turn, at the turn's frame (the sync activates the frame in view)
       try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
@@ -18851,7 +18876,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       _xplRefresh(); try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){}
     }catch(e){ appendSys('Place failed: '+esc(String(e&&e.message||e))); }
   }
-  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.dataset.rels=_runsOff.xpl?'off':'on'; _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } try{ _xplSync(false); }catch(_){} }
+  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.dataset.rels=_runsOff.xpl?'off':'on'; _xplEl.setScene(_xpl.doc?_xpl.doc.scene:_xplScene()); }catch(e){ console.warn('explode: scene', e); } try{ _xplSync(false); }catch(_){} }
   const _xplCtxCard=(n)=>({id:n.id, n:n.label||n.id, d:(n.source||'')+' · '+(+(n.score||0)).toFixed(2), col:srcCol(n.source), kind:n.type||n.source||'', score:+(n.score||0), body:String(n.text||'').slice(0,240)});
   function _xplRecordReads(mid){ try{ if(!mid||typeof CTX_NODES==='undefined') return; _TURN_READS[mid]=CTX_NODES.filter(n=>n.included!==false).slice(0,40).map(_xplCtxCard); _TURN_RELS[mid]=_xplRels(); }catch(_){} }
   // what a turn read, for the scene: the reads recorded when the question was sent; when none were (the first send of a
@@ -18921,7 +18946,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
           const merged=_xplMerge(_xplEvents, mine, e=>e.type+'|'+e.trace+'|'+e.ts); const sig=merged.length+'|'+(merged.length?merged[merged.length-1].ts:0); if(sig!==_xplSyncSig){ _xplSyncSig=sig; _xplEvents=merged; changed=true; } }catch(_){} }
       if(_xplLayers.estate&&(force||!_xplTopo||now-_xplTopoAt>60000)){ _xplTopoAt=now; try{ const t=await _capCall('topology.snapshot',{}); if(t&&Array.isArray(t.nodes)){ _xplTopo=t; changed=true; } }catch(_){} }
     } finally { _xplSyncing=false; }
-    if(changed&&_xpl.on&&_xplEl){ try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: sync', e); } }
+    if(changed&&_xpl.on&&_xplEl){ try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.setScene(_xpl.doc?_xpl.doc.scene:_xplScene()); }catch(e){ console.warn('explode: sync', e); } }
   }
   function _xplMerge(old, add, keyOf){ const seen=new Set(old.map(keyOf)); const out=old.slice(); add.forEach(e=>{ const k=keyOf(e); if(!seen.has(k)){ seen.add(k); out.push(e); } }); out.sort((a,b)=>a.ts-b.ts); return out.slice(-4000); }
   // a canvas block as a card of the scene's LAND layer (the same vocabulary the chat's own landings use)
@@ -20990,7 +21015,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _renderRailPanels,_loadUiPanelsForce,
     _scrollToBottom,
     _msgEdit,_msgEditCancel,_msgEditCommit,_msgResubmit,
-    _msgExplode,_codeExplode,
+    _msgExplode,_codeExplode,_xplShowDoc,_xplDocClear,
     _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_msgHtmlReport,_msgRedeliver,_redeliverDo,_maMenu,_maClose,_msgToCanvas,_dlvPersist,_dlvStyles,_deliverAfter,_gallerySave,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
     _saveModalClose,_saveModalConfirm,_saveModalNbCellTypeChange,
     getActivePanelState,dispatchPanelAction,requestPanelState,

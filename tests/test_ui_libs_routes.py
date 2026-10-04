@@ -11,7 +11,7 @@ EXPLODED = (ROOT / "vera" / "chat" / "exploded_element.js").read_text(encoding="
 
 
 def test_the_libraries_are_served_and_exist():
-    for route, name in (("/ui/routes.js", "routes.js"), ("/ui/structgraph.js", "structgraph_element.js"), ("/ui/iso.js", "iso.js")):
+    for route, name in (("/ui/routes.js", "routes.js"), ("/ui/structgraph.js", "structgraph_element.js"), ("/ui/iso.js", "iso.js"), ("/ui/iso-lattice.js", "iso_lattice.js")):
         assert '@APP.get("%s"' % route in LIBS, route
         assert '_script("%s")' % name in LIBS, name
         assert (ROOT / "vera" / "ui" / name).exists(), name
