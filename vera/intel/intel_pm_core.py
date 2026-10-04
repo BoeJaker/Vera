@@ -166,3 +166,23 @@ def ref(c: Dict[str, Any]) -> str:
 def label(c: Dict[str, Any], n: int = 60) -> str:
     q = str(c.get("question") or "")
     return (q if len(q) <= n else q[: n - 1].rstrip() + "…")
+
+
+def resolution(source: str, m: Dict[str, Any]) -> Optional[str]:
+    """'yes' / 'no' once a market has resolved (Polymarket: closed with the YES
+    price at 1 or 0; Manifold: isResolved with YES/NO), else None."""
+    if not isinstance(m, dict):
+        return None
+    if source == "manifold":
+        if not m.get("isResolved"):
+            return None
+        r = str(m.get("resolution") or "").upper()
+        return {"YES": "yes", "NO": "no"}.get(r)
+    if not m.get("closed"):
+        return None
+    outs, prices = _jl(m.get("outcomes")), _jl(m.get("outcomePrices"))
+    i = next((k for k, o in enumerate(outs) if str(o).strip().lower() == "yes"), 0)
+    p = _f(prices[i]) if i < len(prices) else None
+    if p is None:
+        return None
+    return "yes" if p >= 0.99 else "no" if p <= 0.01 else None

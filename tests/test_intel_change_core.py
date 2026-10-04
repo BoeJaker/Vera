@@ -71,3 +71,16 @@ def test_a_market_wobbling_by_a_point_or_two_is_not_a_change():
     assert len(found) == 1 and found[0]["direction"] == "up" and 84 <= found[0]["index"] <= 92
     import re
     assert re.search(r"BoE hike up [78] points on", chg.describe(found[0], "BoE hike", "probability"))
+
+
+def test_levels_and_resolution_lines():
+    ts = [i * 86400.0 for i in range(40)]
+    vals = [100.0] * 35 + [110.0] * 5
+    assert chg.change_over(ts, vals, 7) == 10.0 and chg.change_over(ts, vals, 30) == 10.0
+    assert chg.change_over(ts[:3], vals[:3], 30) is None
+    line = chg.level_line({"label": "SEGRO", "kind": "price", "last": 110.0, "chg7": 10.0, "chg30": None})
+    assert line == "SEGRO 110 (7d +10.0%, 30d ?)"
+    assert chg.level_line({"label": "BoE hike", "kind": "probability", "last": 0.91, "chg7": 0.07, "chg30": -0.02}) \
+        == "BoE hike 91% (7d +7 pts, 30d -2 pts)"
+    rc = chg.resolution_change({"label": "BoE hike"}, "yes", 1000.0)
+    assert rc["kind"] == "resolved" and rc["text"] == "BoE hike resolved YES" and chg.material([rc]) == [rc]

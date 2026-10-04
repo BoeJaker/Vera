@@ -322,10 +322,15 @@ async function loadInd() {
     const mine = ch.filter(c => c.indicator === i.id).slice(0, 3);
     return `<div class="sig"><div class="sc">${i.kind === 'price' ? '¤' : i.kind === 'macro' ? '∿' : '%'}</div><div>
       <b>${esc(i.label)}</b> <span class="muted">${esc(i.dataset_id)}</span>
-      <div class="muted">${i.last != null ? 'last ' + esc(String(+(+i.last).toPrecision(6))) + ' · ' : ''}${esc(i.status || '')}${i.bars ? ' · ' + i.bars + ' bars' : ''}</div>
+      <div class="muted">${i.last != null ? 'last ' + esc(i.kind === 'probability' ? Math.round(i.last * 100) + '%' : String(+(+i.last).toPrecision(6))) + ' · ' : ''}${esc(i.status || '')}${i.bars ? ' · ' + i.bars + ' bars' : ''}${chgTxt(i)}</div>
       ${mine.map(c => `<div>${c.direction === 'up' ? '▲' : '▼'} ${esc(c.text)}${(c.stories || []).length ? ' <span class="muted">· around then: ' + c.stories.map(s => esc(s.title)).join(' · ') + '</span>' : ''}</div>`).join('')}</div>
       <div class="ops"><button class="btn" onclick="rmInd('${esc(i.id)}')">Stop</button></div></div>`;
   }).join('') || '<div class="muted" style="padding:6px 0">Nothing yet.</div>';
+}
+function chgTxt(i) {
+  const f = (d) => d == null ? '?' : i.kind === 'probability' ? (d >= 0 ? '+' : '') + Math.round(d * 100) + ' pts'
+    : (i.kind === 'price' && i.last - d ? (d >= 0 ? '+' : '') + (d / (i.last - d) * 100).toFixed(1) + '%' : (+d).toPrecision(3));
+  return (i.chg7 != null || i.chg30 != null) ? ` · 7d ${esc(f(i.chg7))} · 30d ${esc(f(i.chg30))}` : '';
 }
 async function addInd() {
   const q = $('indQ').value.trim(), kind = $('indKind').value;

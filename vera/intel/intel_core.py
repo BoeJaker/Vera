@@ -502,7 +502,8 @@ def reader_digest(page: Dict[str, Any], max_chars: int = 2400) -> Dict[str, Any]
 
 
 def snapshot_prompt(topic: Dict[str, Any], previous: Optional[Dict[str, Any]],
-                    signals: Sequence[Dict[str, Any]], words: int = 380, *, market: str = "") -> str:
+                    signals: Sequence[Dict[str, Any]], words: int = 380, *, market: str = "",
+                    levels: str = "") -> str:
     prev = (previous or {}).get("state") or "(no earlier assessment - this is the first)"
     lines = []
     for s in signals[:14]:
@@ -514,6 +515,8 @@ def snapshot_prompt(topic: Dict[str, Any], previous: Optional[Dict[str, Any]],
         f"Topic: {topic.get('brief') or topic.get('name')}\nWhy it matters: {topic.get('why') or 'not stated'}\n"
         f"Open questions:\n{qs}\n\nPREVIOUS ASSESSMENT:\n{prev}\n\nNEW EVIDENCE SINCE THEN:\n"
         + ("\n".join(lines) or "- nothing new") +
+        (f"\n\nTHE NUMBERS THIS TOPIC WATCHES, NOW:\n{levels}\n(cite them where they bear on the picture)"
+         if levels else "") +
         (f"\n\nTHE NUMBERS THIS TOPIC WATCHES MOVED:\n{market}\n"
          "(say whether the evidence explains each move; a move nothing explains is itself worth a question)"
          if market else "") +
