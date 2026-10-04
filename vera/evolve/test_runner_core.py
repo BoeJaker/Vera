@@ -97,6 +97,9 @@ def testenv_build_cmd(lines: Sequence[str], sha: str, root: str = TESTENV_DIR) -
     new = f"{root}.new"
     return (
         "set -u; "
+        # the image's command-line tools first, on every run (not only on a
+        # rebuild): tests that drive them fail or skip without them
+        + system_tools_cmd() +
         f"[ -f {root}/{TESTENV_MARKER} ] && grep -q '\"sha\": \"{sha}\"' {root}/{TESTENV_MARKER} "
         f"&& {{ echo VERA_TESTENV_CURRENT; cat {root}/{TESTENV_MARKER}; exit 0; }}; "
         f"rm -rf {new}; python3 -m venv {new} || {{ echo VERA_TESTENV_FAILED venv; exit 1; }}; "
@@ -113,6 +116,62 @@ def testenv_build_cmd(lines: Sequence[str], sha: str, root: str = TESTENV_DIR) -
         f"rm -rf {root}.old; [ -d {root} ] && mv {root} {root}.old; mv {new} {root}; rm -rf {root}.old; "
         f"echo VERA_TESTENV_BUILT; cat {root}/{TESTENV_MARKER}"
     )
+
+
+#: Command-line tools the gate image has that the critical tier drives. A node
+#: without git failed 4 worktree-repair tests and skipped 7 more in the first
+#: parity run (2026-10-04).
+SYSTEM_TOOLS = ("git",)
+
+
+def system_tools_cmd(tools: Sequence[str] = SYSTEM_TOOLS) -> str:
+    """Shell that installs each missing tool with apt (an apt update only when
+    the install fails), never failing the venv build itself."""
+    out = ""
+    for t in tools:
+        out += (f"command -v {t} >/dev/null 2>&1 || {{ export DEBIAN_FRONTEND=noninteractive; "
+                f"apt-get install -y -q {t} >/dev/null 2>&1 || "
+                f"{{ apt-get update -q >/dev/null 2>&1; apt-get install -y -q {t} >/dev/null 2>&1; }} || "
+                f"echo VERA_TESTENV_TOOL_FAILED {t}; }}; ")
+    return out
+
+
+def junit_cases(junit_xml: str) -> Dict[str, Dict[str, str]]:
+    """node_id -> {outcome: passed|failed|error|skipped, message} from a JUnit XML."""
+    try:
+        root = ET.fromstring(junit_xml)
+    except ET.ParseError:
+        return {}
+    out: Dict[str, Dict[str, str]] = {}
+    for case in root.iter("testcase"):
+        nid = f"{case.get('classname', '')}::{case.get('name', '')}"
+        outcome, msg = "passed", ""
+        for kind in ("failure", "error", "skipped"):
+            el = case.find(kind)
+            if el is not None:
+                outcome = "failed" if kind == "failure" else kind
+                msg = " ".join((el.get("message") or el.text or "").split())[:300]
+                break
+        out[nid] = {"outcome": outcome, "message": msg}
+    return out
+
+
+def parity_diff(host_outputs: Sequence[str], pool_outputs: Sequence[str]) -> Dict[str, Any]:
+    """Where a pooled run's outcomes differ from the host's, test by test, with
+    the reason the pool gave (a skip message, a failure message)."""
+    def cases(outs):
+        merged: Dict[str, Dict[str, str]] = {}
+        for o in outs:
+            merged.update(junit_cases(junit_of(o)))
+        return merged
+    h, p = cases(host_outputs), cases(pool_outputs)
+    diff = []
+    for nid in sorted(set(h) | set(p)):
+        a, b = h.get(nid, {"outcome": "missing"}), p.get(nid, {"outcome": "missing"})
+        if a["outcome"] != b["outcome"]:
+            diff.append({"test": nid, "host": a["outcome"], "pool": b["outcome"],
+                         "why": b.get("message") or a.get("message") or ""})
+    return {"host_cases": len(h), "pool_cases": len(p), "differences": diff}
 
 
 def _sq(v: str) -> str:
