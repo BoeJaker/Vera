@@ -3852,26 +3852,28 @@ const CH = (() => {
   }
   /* The panel a diagram lands in: a titled strip under whatever was exploded, closable, with the reason the
      server gave for reading the thing that way. */
-  async function _xpPanel(host, attrs, label, why){
+  async function _xpPanel(host, attrs, label, why, full){
     const id='xp'+(++_XP_SEQ);
     const box=document.createElement('div');
     box.className='xp-inline'; box.dataset.xp=id;
-    box.style.cssText='flex:0 0 auto;margin:6px 0 2px;border:1px solid var(--border,#2a2622);border-radius:4px;overflow:hidden;background:var(--bg1,#17140f)';
+    box.style.cssText=full ? 'position:absolute;inset:0;z-index:42;display:flex;flex-direction:column;overflow:hidden;background:var(--bg1,#17140f)'   /* full screen: it replaces the scene until closed */
+      : 'flex:0 0 auto;margin:6px 0 2px;border:1px solid var(--border,#2a2622);border-radius:4px;overflow:hidden;background:var(--bg1,#17140f)';
     box.innerHTML='<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;font:9px var(--mono,monospace);color:var(--dim,#6a6058);border-bottom:1px solid var(--border,#2a2622)">'
       + '<span style="color:var(--acc,#5a9e8f)">explode</span><span class="xp-l" style="color:var(--text,#d8d0c6)"></span>'
       + '<span class="xp-w" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>'
       + '<button class="cb-act xp-x" title="Close this diagram">close</button></div>'
-      + '<div class="xp-body"></div>';   // the embed sizes itself: its diagram, the grip, the caption
+      + (full ? '<div class="xp-body" style="flex:1 1 auto;min-height:0"></div>' : '<div class="xp-body"></div>');   // the embed sizes itself: its diagram, the grip, the caption (full screen: the room it has)
     box.querySelector('.xp-l').textContent=label||'';
     box.querySelector('.xp-w').textContent=why||'';
     box.querySelector('.xp-x').onclick=()=>{ box.remove(); };
+    if(full){ const xb=box.querySelector('.xp-x'); xb.textContent='back to the scene'; xb.title='Close the diagram and go back to the exploded scene'; }
     host.appendChild(box);
     try{
       await _xpLib();
       const el=document.createElement('vera-graph-embed');
       el.setAttribute('renderer','struct');
       Object.keys(attrs||{}).forEach(k=>{ if(attrs[k]!=null && attrs[k]!=='') el.setAttribute(k, String(attrs[k])); });
-      el.setAttribute('height','330');
+      el.setAttribute('height', full ? String(Math.max(320, (box.querySelector('.xp-body').clientHeight || host.clientHeight || 600) - 6)) : '330');
       el.style.cssText='display:block;width:100%';
       box.querySelector('.xp-body').appendChild(el);
     }catch(e){
@@ -3903,11 +3905,11 @@ const CH = (() => {
       else if(a.record_id) attrs.record = a.record_id;
       else if(a.record_ids) attrs.records = a.record_ids.join(',');
       else if(a.text) attrs.text = a.text;
-      return _xpPanel(host, attrs, tg.label || name, tg.why || '');
+      return _xpPanel(host, attrs, tg.label || name, tg.why || '', true);
     }
     const txt = String(d.text || '');
-    if(d.code && txt.trim()) return _xpPanel(host, { code: txt, lang: d.lang || '' }, name + ' \u00b7 ' + txt.split('\n').length + ' lines', 'the ' + (d.kind || 'card') + ' this card holds');
-    if(txt.trim().length >= 40) return _xpPanel(host, { text: txt }, name + ' \u00b7 ' + txt.length + ' chars', 'the text this card holds');
+    if(d.code && txt.trim()) return _xpPanel(host, { code: txt, lang: d.lang || _xpGuessLang(txt) }, name, 'the ' + (d.kind || 'card') + ' this card holds', true);
+    if(txt.trim().length >= 40) return _xpPanel(host, { text: txt }, name + ' \u00b7 ' + txt.length + ' chars', 'the text this card holds', true);
     appendSys('Nothing to explode in that card \u2014 it holds no record, no code and no passage.');
   }
   /* What a card holds, as a CONTRACT rather than a panel: the same resolution the deep dive uses, handed back to
@@ -3948,7 +3950,7 @@ const CH = (() => {
     if(!_xpl.doc){ const parts=String(d.id).split(':'), mid=parts[0], from=parts.slice(1).join(':');
       if(_XPL_STRUCT[mid] && _XPL_STRUCT[mid].from===from){ delete _XPL_STRUCT[mid]; try{ _xplEl.graphClear(d.id); }catch(_){} _xplRefresh(); return; }
       const doc0 = await _xpContractFor(d);
-      try{ _xplEl.graphClear(d.id); }catch(_){}
+      try{ _xplEl.setCardGraph(d.id, doc0); }catch(_){}   // the card's own MINI structure, beside the plate
       if(!doc0 || doc0.error){ appendSys('Nothing to explode in that card \u2014 ' + esc((doc0 && doc0.error) || 'no structure')); return; }
       const sc = window.VeraExploded && VeraExploded.contractScene ? VeraExploded.contractScene(doc0, {}) : { layers:[], turns:[] };
       const cards = []; sc.layers.forEach(L=>{ sc.turns.forEach(t=>{ (t[L.key]||[]).forEach(c=>cards.push(c)); }); });
@@ -3994,8 +3996,8 @@ const CH = (() => {
   async function _xpGraphPanel(host, doc, label){
     const old=host.querySelector(':scope > .xp-inline'); if(old) old.remove();
     const box=document.createElement('div'); box.className='xp-inline';
-    box.style.cssText='position:absolute;left:12px;right:12px;bottom:12px;height:min(480px,62%);z-index:41;display:flex;flex-direction:column;border:1px solid var(--border,#2a2622);border-radius:6px;overflow:hidden;background:var(--bg1,#17140f);box-shadow:0 10px 30px rgba(0,0,0,.45)';   /* over the scene's foot: the scene host lays its children in a row */
-    box.innerHTML='<div style="flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:4px 8px;font:9px var(--mono,monospace);color:var(--dim,#6a6058);border-bottom:1px solid var(--border,#2a2622)"><span style="color:var(--acc,#5a9e8f)">graph</span><span class="xp-l" style="color:var(--text,#d8d0c6)"></span><span style="flex:1"></span><button class="cb-act xp-x" title="Close this graph">close</button></div><div class="xp-body" style="flex:1 1 auto;min-height:0;position:relative"></div>';
+    box.style.cssText='position:absolute;inset:0;z-index:42;display:flex;flex-direction:column;overflow:hidden;background:var(--bg1,#17140f)';   /* over the scene's foot: the scene host lays its children in a row */
+    box.innerHTML='<div style="flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:4px 8px;font:9px var(--mono,monospace);color:var(--dim,#6a6058);border-bottom:1px solid var(--border,#2a2622)"><span style="color:var(--acc,#5a9e8f)">graph</span><span class="xp-l" style="color:var(--text,#d8d0c6)"></span><span style="flex:1"></span><button class="cb-act xp-x" title="Close the graph and go back to the exploded scene">back to the scene</button></div><div class="xp-body" style="flex:1 1 auto;min-height:0;position:relative"></div>';
     box.querySelector('.xp-l').textContent=label||''; box.querySelector('.xp-x').onclick=()=>box.remove(); host.appendChild(box);
     if(!(await _xpGraphLib())){ box.querySelector('.xp-body').textContent='the graph (/ui/vera-graph.js) did not load'; return box; }
     const g=veraUI.Graph.create(box.querySelector('.xp-body'), { height:'fill', sidebar:false, actionsEnabled:false, showLeftPanel:false });
@@ -4007,7 +4009,7 @@ const CH = (() => {
     if(!_xpl.doc){ if(c) c.remove(); return; }
     if(!c){ c=document.createElement('div'); c.className='xpl-doc'; host.appendChild(c);
       c.style.cssText='position:absolute;right:40px;top:92px;z-index:40;display:flex;align-items:center;gap:8px;max-width:calc(100% - 24px);padding:4px 6px 4px 9px;border-radius:6px;background:var(--bg1,#17140f);box-shadow:0 0 0 1px var(--border,#2a2622),0 6px 18px rgba(0,0,0,.35);font:10px var(--mono,monospace);color:var(--dim,#6a6058)';
-      c.addEventListener('click', e=>{ const b=e.target.closest&&e.target.closest('[data-xd]'); if(!b||!_xpl.doc) return; if(b.dataset.xd==='back') _xplDocClear(); else if(b.dataset.xd==='graph'&&_xpl.doc.doc) _xpGraphPanel(host, _xpl.doc.doc, _xpl.doc.label); else _xpPanel(host, _xpl.doc.attrs, _xpl.doc.label, _xpl.doc.why||'the same structure as a diagram'); }); }
+      c.addEventListener('click', e=>{ const b=e.target.closest&&e.target.closest('[data-xd]'); if(!b||!_xpl.doc) return; if(b.dataset.xd==='back') _xplDocClear(); else if(b.dataset.xd==='graph'&&_xpl.doc.doc) _xpGraphPanel(host, _xpl.doc.doc, _xpl.doc.label); else _xpPanel(host, _xpl.doc.attrs, _xpl.doc.label, _xpl.doc.why||'the same structure as a diagram', true); }); }
     const s=_xpl.doc.scene||{}, nt=(s.turns||[]).length, np=(s.layers||[]).length, bs='font:inherit;color:var(--text,#d8d0c6);background:none;border:1px solid var(--border,#2a2622);border-radius:4px;padding:1px 7px;cursor:pointer';
     c.innerHTML='<span style="color:var(--acc,#5a9e8f)">exploded</span><span class="xd-l" style="color:var(--text,#d8d0c6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><span class="xd-n"></span>'
       +'<button data-xd="graph" style="'+bs+'" title="The same structure as a graph, under the scene: Structure 3D, Live ops, exploded and every other method">graph</button><button data-xd="diagram" style="'+bs+'" title="The structured diagram of the same thing, under the scene">diagram</button><button data-xd="back" style="'+bs+'" title="Back to the chat\u2019s own scene">back to the chat</button>';

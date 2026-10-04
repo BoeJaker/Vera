@@ -57,4 +57,5 @@ t('a new scene opens fitted: the last scene\'s zoom, pan, plate focus and open c
   t('a card exploded IN PLACE: the chat scene grows a structure plate in iso, cards and front - its cards, its relations, a run from the card',
     i.bands.some((b) => b.layer === 'struct') && i.widgets.filter((w) => w.layer === 'struct').length === cards.length && i.paths.some((q) => q.title === 'what this card holds') && i.paths.filter((q) => /link/.test(q.cls)).length >= links.length
     && c.plates.some((p) => p.layer === 'struct') && f.panels.some((p) => p.layer === 'struct') && i.bands.filter((b) => b.layer !== 'struct').length === 5, JSON.stringify({ bands: i.bands.map((b) => b.layer), w: i.widgets.length })); }
+t('the double-click reads the whole code, and a card\'s mini mounts once its renderer is defined', /const b0 = typeof c\.body === 'string' \? c\.body : '', t0 = typeof c\.text === 'string' \? c\.text : '', body = t0\.length > b0\.length \? t0 : b0;   \/\* the whole code, not the 400/.test(SRC) && /whenDefined\('vera-structgraph'\)/.test(SRC));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);

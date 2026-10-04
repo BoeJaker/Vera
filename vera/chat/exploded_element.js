@@ -665,7 +665,7 @@
     return body.trim().length >= 200;                    // a passage long enough to have a structure
   }
   function graphFaceHtml(id, state, wsz) {
-    const sz = wsz === 's' || wsz === 'l' ? wsz : 'm';
+    const sz = wsz === 's' ? 'm' : 'l';   /* a structure needs room: one size up from the cards' own */
     const H = GRAPH_H[sz] || GRAPH_H.m;
     if (state === 'want') return '<div class="xit-face graph" data-size="' + sz + '" style="--fh:' + H + 'px">'
       + '<span class="xp-gdim">drawing\u2026</span></div>';
@@ -681,9 +681,12 @@
   const diagramHtml = (c) => { const src = String((c && (c.mermaid || (String(c.kind || '').toLowerCase() === 'diagram' && c.body))) || '').trim(); return src ? '<span class="xf-diag"><vera-mermaid bare title="diagram">' + esc(src) + '</vera-mermaid></span>' : ''; };
   /* the structured renderer, fetched from the page the way the mermaid element is -- a scene that never asks for
      a card's diagram never loads it */
-  function ensureStruct(doc) {
+  function ensureStruct(doc, ready) {
     doc = doc || document;
-    if ((root.customElements && root.customElements.get('vera-structgraph')) || doc.getElementById('vera-structgraph-js')) return;
+    if (root.customElements && root.customElements.get('vera-structgraph')) return;
+    // a card's mini waits for the renderer: once it is defined the waiting card mounts it (it never did in cards)
+    if (ready && root.customElements && root.customElements.whenDefined) root.customElements.whenDefined('vera-structgraph').then(() => { try { ready(); } catch (_) {} });
+    if (doc.getElementById('vera-structgraph-js')) return;
     const sc = doc.createElement('script'); sc.id = 'vera-structgraph-js'; sc.src = '/ui/structgraph.js'; sc.async = true;
     (doc.head || doc.documentElement).appendChild(sc);
   }
@@ -1258,7 +1261,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         const it = this._itemOf(el.dataset.id) || {};
         const c = (it && it.card) || it || {};
         const kind = String(c.kind || '').toLowerCase();
-        const body = typeof c.body === 'string' ? c.body : (typeof c.text === 'string' ? c.text : '');
+        const b0 = typeof c.body === 'string' ? c.body : '', t0 = typeof c.text === 'string' ? c.text : '', body = t0.length > b0.length ? t0 : b0;   /* the whole code, not the 400-character face */
         const rec = c.record && typeof c.record === 'object' ? String(c.record.id || c.record.record_id || '')
                   : (typeof c.record === 'string' ? c.record : '');
         this.dispatchEvent(new CustomEvent('vera:xpl:explode', { bubbles: true, detail: {
@@ -1314,7 +1317,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           if (!doc) return;
           let el = this._graphEls[id];
           if (!el) {
-            if (!(root.customElements && root.customElements.get('vera-structgraph'))) { ensureStruct(this.ownerDocument); return; }
+            if (!(root.customElements && root.customElements.get('vera-structgraph'))) { if (!this._structWait) { this._structWait = true; ensureStruct(this.ownerDocument, () => { this._structWait = false; this._graphMount(); }); } return; }
             el = this.ownerDocument.createElement('vera-structgraph');
             el.setAttribute('bare', ''); el.style.cssText = 'display:flex;width:100%;height:100%';
             this._graphEls[id] = el; el.setDoc(doc);

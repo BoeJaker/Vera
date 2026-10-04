@@ -55,4 +55,6 @@ t('the chip opens the structure as a vera-graph opening on Structure 3D', /data-
 t('a card\'s structure explodes IN PLACE in the chat scene (a structure plate on its turn); pressed again it folds away', /_XPL_STRUCT\[mid\]=\{ from, cards:cards\.slice\(0,60\), links/.test(HTML) && /t\.struct=s\.cards; t\.structLinks=s\.links; t\.structFrom=s\.from;/.test(HTML) && /delete _XPL_STRUCT\[mid\]/.test(HTML));
 { const g = HTML.match(/function _xpGuessLang\(s\)\{[\s\S]*?return ''; \}/); const guess = g ? eval('(' + g[0] + ')') : () => '';
   t('a code block with no language is guessed (the explode reads only the module without one)', guess('import os\ndef f():\n  pass') === 'python' && guess('const a = (x) => x + 1;') === 'javascript' && guess('interface A { b: string }') === 'typescript' && guess('package main\nfunc main() {}') === 'go'); }
+t('the full-screen structure replaces the exploded view until closed (the double-click, the chip\'s diagram and graph)', /box\.style\.cssText=full \? 'position:absolute;inset:0;z-index:42/.test(HTML) && (HTML.match(/, true\);/g) || []).length >= 4 && /xb\.textContent='back to the scene'/.test(HTML));
+t('the in-place explode also draws the card\'s mini structure', /_xplEl\.setCardGraph\(d\.id, doc0\);/.test(HTML));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);
