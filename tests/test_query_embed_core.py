@@ -108,7 +108,8 @@ def test_memory_seek_waits_for_its_query_vector_without_cancelling_it():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     src = open(os.path.join(root, "vera", "fabric", "memory_retrieval.py"), encoding="utf-8").read()
     assert "asyncio.wait_for(df._embed(query), timeout=10)" not in src
-    assert "_bounded_embed(lambda: df._embed(query), _SEEK_EMBED_WAIT_S)" in src
+    # bounded_embed_result: the same bounded, uncancelled wait, plus whether it ran out (FM-7.0).
+    assert "_bounded_embed_result(lambda: df._embed(query), _SEEK_EMBED_WAIT_S)" in src
 
 
 def test_syscomms_panel_polls_only_while_on_screen():
