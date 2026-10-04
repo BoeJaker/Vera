@@ -114,4 +114,4 @@ def test_a_read_the_turn_named_comes_before_the_headlines_and_a_series_is_summar
     top2 = r["surfaces"][:2]
     assert {x["cap"] for x in top2} == {"markets.chart", "markets.symbol.chart"} and all(x["args"] == {"symbol": "BTC"} for x in top2)
     s = sc.summarise({"t": [1, 2, 3], "equity": [100.0, 105.0, 110.0], "ok": True})
-    assert s == "3 points: equity last 110.0 (+10.0%)"
+    assert s == "3 points: equity last 110 (+10.0%)"
