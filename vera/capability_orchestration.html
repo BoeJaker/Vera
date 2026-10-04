@@ -734,6 +734,15 @@ body.dash-open #veraWashH{opacity:1}
 body.dash-open .body-wrap{position:relative;z-index:1;background:transparent}
 body.dash-open .main,body.dash-open .panels,body.dash-open .panels .panel.active{background:transparent!important}
 body.dash-open #lhmNav.lhm-nav{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
+/* EVERY PANEL'S MENU IS THE CHAT'S (owner, 2026-10-04: "the lhm isnt transparent on all panels like the chat ui lhm - so the
+   glow background can be seen through it"). Measured: the chat's menu was glass (its ground at 52%, blurred) over the glow;
+   every other panel's - docked or the harness's own list - an opaque ground with an opaque rail, and the glow switched off.
+   In the LHM layout the glow is on, the row it sits in is see-through, the menu is the same glass and its rail has no ground
+   of its own. Blocks off still takes the glass away entirely (the rules above). */
+body:has(.body-wrap.lhm) #veraWashH{opacity:1}
+.body-wrap.lhm{position:relative;z-index:1;background:transparent}
+.body-wrap.lhm #lhmNav.lhm-nav{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
+.body-wrap.lhm #lhmNav .lhm-rail{background:transparent}
 body.dash-open #dashHealthStrip{background:color-mix(in srgb,var(--bg0,#0e0f12) 55%,transparent)!important;border-color:transparent!important}
 /* THE ☰ IS REACHABLE (owner, 2026-09-27: "the lhm top left burger option in the harness lhm it is very hard to click"):
    auto-hide's edge strip lay over the menu's left 28px - the ☰ under it - at a higher layer than the menu. In LHM mode the
