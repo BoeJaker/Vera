@@ -323,6 +323,12 @@ EMBED_PROVIDER     = getattr(cfg, "EMBED_PROVIDER", "ollama")
 # ("stale_timeout" storms in the Jobs panel). Default 900s; override via env.
 # keep_alive keeps the model resident so the next call skips cold-load latency.
 OLLAMA_GEN_TIMEOUT = float(os.environ.get("OLLAMA_GEN_TIMEOUT", "900"))
+# A GPU node that has not produced a first byte in this long is stuck, not busy (ollama_wait_core).
+OLLAMA_GPU_FIRST_BYTE_S = float(os.environ.get("OLLAMA_GPU_FIRST_BYTE_S", "300"))
+try:
+    from Vera.vera import ollama_wait_core as _ollama_wait_core
+except Exception:                                    # pragma: no cover
+    from . import ollama_wait_core as _ollama_wait_core
 
 # 2026-08-16: the httpx read-timeout above is a STALL detector only in theory —
 # httpx measures it since the last byte received, so any trickle of bytes
@@ -3912,7 +3918,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         #    Waiting behind a large job or a busy node is progress, not
         #    failure; a liveness heartbeat below refreshes the job's records
         #    while it waits so nothing mistakes it for dead.
-        _gto = httpx.Timeout(gen_timeout, connect=15.0)
+        #  • ...except on a GPU node: no first byte in OLLAMA_GPU_FIRST_BYTE_S means stuck,
+        #    and the CPU fallback below takes over (ollama_wait_core, 4 Oct 2026).
+        _gto = httpx.Timeout(_ollama_wait_core.read_timeout(
+            gen_timeout, bool((OLLAMA_INSTANCES.get(chosen) or {}).get("has_gpu")),
+            OLLAMA_GPU_FIRST_BYTE_S), connect=15.0)
         _hb_stop = asyncio.Event()
         _hb_task = asyncio.create_task(_ollama_liveness_heartbeat(
             req_id, chosen, mdl, caller, prompt_preview, _hb_stop))
