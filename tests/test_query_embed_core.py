@@ -65,7 +65,8 @@ def test_memory_and_fabric_embeds_wait_bounded_and_do_not_cancel():
     ingest traffic on 2026-09-13; both embed entry points now go through
     bounded_embed_result and neither cuts the embed with wait_for."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for rel, fn in (("vera/fabric/memory.py", "embed_text"),
+    # memory.embed_text is a wrapper; the bounded embed lives in embed_text_outcome (FM-7.0).
+    for rel, fn in (("vera/fabric/memory.py", "embed_text_outcome"),
                     ("vera/fabric/data_fabric.py", "_embed")):
         src = open(os.path.join(root, *rel.split("/")), encoding="utf-8").read()
         body = src.split(f"async def {fn}(")[1]

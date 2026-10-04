@@ -124,6 +124,12 @@ _LHM_BUILTINS: List[Dict[str, Any]] = [
      "frame": "one line", "draw": {"form": "button", "size": "XS"},
      "can": ["new session", "refresh the context", "loop settings", "open a panel", "open the terminal", "full settings"],
      "placed": ["LHM"]},
+    # how a reply was made: the chat hands the turn's own phase frames in as data (no read), one row per step
+    {"id": "chat:turn-phases", "name": "Turn phases", "form": "gantt",
+     "reads": {"cap": "", "args": {}, "inline": True,
+               "note": "the turn's phase frames, handed in by the chat when the reply ends"},
+     "frame": "step . when it started . how long . how it ended", "draw": {"form": "gantt", "size": "M"},
+     "can": ["see what the turn did before and after the model"], "placed": ["reply"]},
     # the calendar panel's parts as widgets (the widget review, round 3 - the owner: "any lhm items that can be made into
     # widgets ... like the calendar controls and even the calendar from the comms ui itself - and the different parts of
     # it like the schedule view on the right"). The calendar panel (and the comms UI, which frames it) reads

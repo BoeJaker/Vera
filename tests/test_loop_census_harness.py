@@ -140,3 +140,20 @@ def test_probes_never_cancel_a_finished_run():
     assert "capped = not _rev.finished(sid)" in lay
     assert 'if not _rev.finished(sid) and sid in (running() or [sid]):\n    http("POST", "/workshop/agent_loop/cancel"' in lay
     assert "tasks?match=agent_loop" not in lay and "/sys/debug/tasks?limit=200" in lay
+
+
+def test_probes_score_with_the_census_evaluator():
+    for name in ("probe_layout.py", "probe_goal.py"):
+        t = (D / "probes" / name).read_text(encoding="utf-8")
+        assert '"vera", "census", "quality.py"' in t and "_quality.evaluate(" in t, name
+        assert 'elif "any_of" in c:' not in t, name          # no hand copy left
+    q = (D / "probes" / ".." / ".." / ".." / "vera" / "census" / "quality.py").resolve()
+    assert q.is_file()
+    import importlib.util as ilu
+    spec = ilu.spec_from_file_location("census_quality_t", q)
+    m = ilu.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    checks = [{"file": "stats.py", "exists": True},
+              {"file": "stats.py", "all_of": ["def mean", "def median", "def mode"]}]
+    r = m.evaluate(checks, {"statkit/stats.py": "def mean(x):\ndef median(x):\ndef mode(x):\n"}, "")
+    assert r["score"] == 1.0

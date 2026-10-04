@@ -111,6 +111,10 @@ try:                                                    # one 0..1 hybrid score 
     from Vera.vera.fabric import memory_score_core as _memory_score_core
 except ImportError:                                     # pragma: no cover
     from . import memory_score_core as _memory_score_core
+try:                                                    # retrieval timing envelopes (FM-7.0)
+    from Vera.vera.fabric import retrieval_timing_core as _rtc
+except ImportError:                                     # pragma: no cover
+    from . import retrieval_timing_core as _rtc
 # What recall leaves out unless asked (owner, 2026-10-04): tool calls and imported coding-agent transcript lines -
 # kept, still in the activity graph, findable with include_activity or by naming the record type; not embedded.
 # "" restores the old behaviour (everything recalled and embedded).
@@ -208,6 +212,20 @@ def _lucene_escape(q: str) -> str:
 # Candidates each backend returns per hit asked for: the merge collapses repeated texts,
 # so `limit` distinct hits need more than `limit` raw ones (context-and-ui E11).
 _CANDIDATES_PER_HIT = 3
+
+# The last 500 timing envelopes per retrieval path in this process (FM-7.0), read by the
+# retrieval.timing capability. Timeouts, errors and very slow calls also go out as events.
+RETRIEVAL_TIMING = _rtc.Window(500)
+
+
+def _record_timing(env) -> None:
+    d = env.to_dict()
+    RETRIEVAL_TIMING.add(d)
+    if env.worth_an_event():
+        try:
+            asyncio.get_running_loop().create_task(emit_event(d))
+        except Exception:
+            pass
 _HYBRID_SEARCH_QUERY_MAX_CHARS = 600
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1430,7 +1448,7 @@ _EMBED_SLOW_UNTIL = 0.0     # monotonic deadline of the current slow-cooldown (0
 _BACKEND_OP_TIMEOUT_S = max(
     0.1, float(os.getenv("VERA_MEMORY_BACKEND_TIMEOUT_S", "10") or 10))
 
-async def embed_text(text: str) -> Optional[List[float]]:
+async def embed_text_outcome(text: str) -> Tuple[Optional[List[float]], str]:
     """Generate a text embedding via the centralized ollama_embed (logged to Jobs).
 
     Circuit-breaker with COOLDOWN: after a hard failure we stop hammering the
@@ -1441,11 +1459,11 @@ async def embed_text(text: str) -> Optional[List[float]]:
     """
     global _EMBED_FAILED_AT, _EMBED_SLOW_UNTIL
     if not MEMORY_AUTO_EMBED or not text.strip():
-        return None
+        return None, "skipped:off"
     if _EMBED_FAILED_AT and (time.monotonic() - _EMBED_FAILED_AT) < _EMBED_RETRY_SECS:
-        return None
+        return None, "skipped:breaker"
     if _EMBED_SLOW_UNTIL and time.monotonic() < _EMBED_SLOW_UNTIL:
-        return None
+        return None, "skipped:cooldown"
     try:
         from Vera.vera.capability_orchestration import ollama_embed
         from Vera.vera.dag.query_embed_core import bounded_embed_result
@@ -1461,7 +1479,7 @@ async def embed_text(text: str) -> Optional[List[float]]:
                     "carrying on without embeddings for %ds; searches use "
                     "Postgres + Neo4j, stores skip Chroma (memory.backfill_vectors "
                     "fills them in later)", _EMBED_WAIT_S, int(_EMBED_SLOW_COOLDOWN_S))
-            return None
+            return None, "timeout"
         _EMBED_SLOW_UNTIL = 0.0
         if vec is None:
             first = not _EMBED_FAILED_AT
@@ -1476,11 +1494,19 @@ async def embed_text(text: str) -> Optional[List[float]]:
                 )
         else:
             _EMBED_FAILED_AT = 0.0
-        return vec
+        return vec, ("ok" if vec is not None else "unavailable")
     except Exception as e:
         _EMBED_FAILED_AT = _EMBED_FAILED_AT or time.monotonic()
         log.debug("embed_text: %s", e)
-        return None
+        return None, "error"
+
+
+async def embed_text(text: str) -> Optional[List[float]]:
+    """The query/record vector, or None. embed_text_outcome also says why there is none
+    (skipped:off|breaker|cooldown, timeout, unavailable, error) - the timing envelopes
+    need that to tell "no vector" apart from "nothing found"."""
+    vec, _ = await embed_text_outcome(text)
+    return vec
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1674,22 +1700,34 @@ class HybridMemoryStore:
         # instance's shared embed nodes) and was being paid unconditionally
         # even for callers who explicitly restrict `backends` to exclude
         # chroma — pure waste. Skip it when nothing active needs it.
-        embedding = await embed_text(query) if "chroma" in active else None
+        env = _rtc.Envelope("hybrid.search")
+        embedding = None
+        if "chroma" in active:
+            embedding, embed_outcome = await embed_text_outcome(query)
+            env.stage("embed", env.mark(), embed_outcome)
         tasks = {
-            name: asyncio.wait_for(
+            name: _rtc.timed(asyncio.wait_for(
                 b.search(query, limit=limit * _CANDIDATES_PER_HIT, filters=filters, embedding=embedding),
                 _BACKEND_OP_TIMEOUT_S,
-            )
+            ))
             for name, b in active.items()
         }
-        all_results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-        for name, result in zip(tasks.keys(), all_results):
-            if isinstance(result, asyncio.CancelledError):
-                raise result
+        all_results = []
+        for name, (result, ms) in zip(tasks.keys(), await asyncio.gather(*tasks.values())):
             if isinstance(result, TimeoutError):
                 log.warning("Memory backend %s search timed out after %.1fs",
                             name, _BACKEND_OP_TIMEOUT_S)
-        return self._merge_and_rank(tasks.keys(), all_results, limit, query)
+            if name == "chroma" and embedding is None:
+                env.stage(name, ms, "skipped:no-vector")
+            else:
+                env.stage(name, ms, _rtc.leg_outcome(result),
+                          None if isinstance(result, BaseException) else len(result))
+            all_results.append(result)
+        env.mark()
+        out = self._merge_and_rank(tasks.keys(), all_results, limit, query)
+        env.stage("merge", env.mark(), "ok" if out else "empty", len(out))
+        _record_timing(env)
+        return out
 
     def _merge_and_rank(self, names, all_results, limit: int, query: str = "") -> List[Dict]:
         """Merge backend hits by record id and rank them.
@@ -1741,12 +1779,43 @@ class HybridMemoryStore:
         names = [n for n in ("postgres", "neo4j") if n in self._backends]
         if not names:
             return []
-        tasks = {n: self._backends[n].search(query, limit=limit * _CANDIDATES_PER_HIT, filters=filters,
-                                             embedding=None)
+        env = _rtc.Envelope("hybrid.fast_only")
+        tasks = {n: _rtc.timed(self._backends[n].search(query, limit=limit * _CANDIDATES_PER_HIT,
+                                                        filters=filters, embedding=None))
                  for n in names}
-        # what finished in time counts: one slow backend no longer throws away the other's hits
-        results = await _recall_core.gather_within(tasks, timeout)
-        return self._merge_and_rank(tasks.keys(), results, limit, query)
+        results = self._fast_legs(env, list(tasks.keys()), await self._gather_fast(tasks, timeout), timeout)
+        env.mark()
+        out = self._merge_and_rank(tasks.keys(), results, limit, query)
+        env.stage("merge", env.mark(), "ok" if out else "empty", len(out))
+        _record_timing(env)
+        return out
+
+    @staticmethod
+    async def _gather_fast(tasks, timeout: float):
+        """The timed fast-tier legs under one bound: each leg that finished as its (result, ms), a leg still running
+        at the bound cancelled and standing as a TimeoutError - one slow backend no longer throws away the other's
+        hits (recall_core.gather_within; a deep memory search on prod got 0 hits from two backends that each answer
+        in 0.3-0.5 s alone)."""
+        return await _recall_core.gather_within(tasks, timeout)
+
+    @staticmethod
+    def _fast_legs(env, names, timed_results, timeout: float):
+        """Record each fast leg on `env`; return the bare results for the merge."""
+        if timed_results is None:
+            for n in names:
+                env.stage(n, timeout * 1000.0, "timeout")
+            return [TimeoutError("fast tier timed out")] * len(names)
+        out = []
+        for n, entry in zip(names, timed_results):
+            if isinstance(entry, BaseException):            # the leg did not finish inside the bound
+                env.stage(n, timeout * 1000.0, _rtc.leg_outcome(entry))
+                out.append(entry if isinstance(entry, Exception) else TimeoutError(str(entry)))
+                continue
+            result, ms = entry
+            env.stage(n, ms, _rtc.leg_outcome(result),
+                      None if isinstance(result, BaseException) else len(result))
+            out.append(result)
+        return out
 
     async def search_fast_and_slow(
         self,
@@ -1786,36 +1855,50 @@ class HybridMemoryStore:
         # Start the embed NOW, in parallel with the fast tier below — not
         # after it finishes. It's the long pole; every second it's not
         # already running is a second added to the slow tier's total time.
-        embed_task = asyncio.create_task(embed_text(query))
+        slow_env = _rtc.Envelope("hybrid.slow")       # starts with the embed
+        embed_task = asyncio.create_task(embed_text_outcome(query))
 
+        fast_env = _rtc.Envelope("hybrid.fast")
         fast_names = [n for n in ("postgres", "neo4j") if n in self._backends]
-        fast_tasks = {n: self._backends[n].search(query, limit=limit * _CANDIDATES_PER_HIT,
-                                                   filters=filters, embedding=None)
+        fast_tasks = {n: _rtc.timed(self._backends[n].search(query, limit=limit * _CANDIDATES_PER_HIT,
+                                                             filters=filters, embedding=None))
                       for n in fast_names}
         if fast_tasks:
-            # what finished in time counts: one slow backend no longer throws away the other's hits
-            fast_all = await _recall_core.gather_within(fast_tasks, fast_timeout)
+            fast_all = self._fast_legs(fast_env, fast_names, await self._gather_fast(fast_tasks, fast_timeout),
+                                       fast_timeout)
         else:
             fast_all = []
+        fast_env.mark()
         fast_out = self._merge_and_rank(fast_tasks.keys(), fast_all, limit, query)
+        fast_env.stage("merge", fast_env.mark(), "ok" if fast_out else "empty", len(fast_out))
+        _record_timing(fast_env)
         fast_names_run = list(fast_tasks.keys())
 
         async def _slow() -> List[Dict]:
             try:
-                embedding = await embed_task
+                embedding, embed_outcome = await embed_task
             except Exception:
-                embedding = None
+                embedding, embed_outcome = None, "error"
+            slow_env.stage("embed", slow_env.mark(), embed_outcome)
             chroma = self._backends.get("chroma")
             chroma_results: List[Tuple[MemoryRecord, float]] = []
-            if chroma is not None and embedding:
-                try:
-                    chroma_results = await chroma.search(
-                        query, limit=limit * _CANDIDATES_PER_HIT, filters=filters, embedding=embedding)
-                except Exception:
-                    chroma_results = []
+            if chroma is None:
+                slow_env.stage("chroma", 0.0, "skipped:no-backend")
+            elif not embedding:
+                slow_env.stage("chroma", 0.0, "skipped:no-vector")
+            else:
+                result, ms = await _rtc.timed(chroma.search(
+                    query, limit=limit * _CANDIDATES_PER_HIT, filters=filters, embedding=embedding))
+                slow_env.stage("chroma", ms, _rtc.leg_outcome(result),
+                               None if isinstance(result, BaseException) else len(result))
+                chroma_results = [] if isinstance(result, BaseException) else result
             # The fast tier's hits are reused, not re-queried; scored on the same scale.
-            return self._merge_and_rank(fast_names_run + ["chroma"], list(fast_all) + [chroma_results],
-                                        limit, query)
+            slow_env.mark()
+            out = self._merge_and_rank(fast_names_run + ["chroma"], list(fast_all) + [chroma_results],
+                                       limit, query)
+            slow_env.stage("merge", slow_env.mark(), "ok" if out else "empty", len(out))
+            _record_timing(slow_env)
+            return out
 
         slow_task = asyncio.create_task(_slow())
         return fast_out, slow_task
@@ -2241,6 +2324,20 @@ async def memory_stats(trace_id=None):
     # handleLiveEvent → _scheduleStatsFetch → loadMemoryStats() again.
     # The dashboard now uses the returned data directly via _applyMemoryStats().
     return {"backends": s, "active_backends": MEMORY.backends}
+
+
+@capability(
+    "retrieval.timing", memory="off", silent=True,
+    http_method="GET", http_path="/retrieval/timing", http_tags=["memory"],
+    description="Retrieval timing envelopes (four-minds FM-7.0): p50/p95 ms per stage and how each stage "
+                "ended (ok, empty, timeout, error, skipped:<why>) over the last 500 calls per path in "
+                "this process. Tells 'the embed timed out, so the vector leg never ran' apart from "
+                "'the vector leg found nothing'. Paths: hybrid.search, hybrid.fast, hybrid.slow, "
+                "hybrid.fast_only. Input: path (str, optional - one path). Emptied by a restart.",
+)
+async def retrieval_timing(path: str = "", trace_id=None):
+    # No emit_event here, for the same reason as memory.stats.
+    return {"window": RETRIEVAL_TIMING.size, "paths": RETRIEVAL_TIMING.summary(path)}
 
 
 @capability(

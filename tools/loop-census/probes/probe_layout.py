@@ -10,6 +10,8 @@ Layouts are per-run loop overrides (no config change):
   L4  L3 + the warm CPU coder
   L5  the CPU MoE (qwen3.6:35b-a3b, cpu-247) drives the loop: controller + planner
   L6  the agentic MoE (Qwen-AgentWorld-35B-A3B, cpu-246) drives AND executes
+  L7  L3 + answer check - the CPU MoE also checks the FINAL answer against the files
+  L8  L7 + the warm CPU coder
 Out: /tmp/probe_layout/<layout>-<goal_id>.json (+ ev/<sid>.jsonl). Added 4 Oct 2026."""
 import collections, json, os, re, subprocess, sys, time, uuid
 
@@ -23,6 +25,14 @@ os.makedirs(OUT + "/ev", exist_ok=True)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rev as _rev
 events = _rev.events
+# Score with the census's own evaluator (vera/census/quality.py, pure), loaded by path:
+# a hand copy here lacked all_of/contains/min_bytes and scored those checks None
+# (4 Oct 2026: build-multifile read 0.667 in every layout with all three functions present).
+import importlib.util as _ilu
+_qs = _ilu.spec_from_file_location("census_quality", os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "vera", "census", "quality.py"))
+_quality = _ilu.module_from_spec(_qs)
+_qs.loader.exec_module(_quality)
 
 LAYOUTS = {
     "L0": {},
@@ -37,6 +47,10 @@ LAYOUTS = {
            "controller_node": "cpu-246",
            "executor_model": "hf.co/unsloth/Qwen-AgentWorld-35B-A3B-GGUF:MXFP4_MOE",
            "executor_node": "cpu-246"},
+    # the CPU MoE also checks the GPU's FINAL answer against the files + unresolved findings
+    "L7": {"deliverable_review": True, "answer_check": True},
+    "L8": {"deliverable_review": True, "answer_check": True,
+           "coder_model": "qwen3-coder:30b", "coder_node": "cpu-246"},
 }
 tpl, gid = sys.argv[1], sys.argv[2]
 layout = sys.argv[3] if len(sys.argv) > 3 else "L0"
@@ -142,28 +156,10 @@ res = {
     "event_types": dict(collections.Counter(T(e).split(".", 1)[-1] for e in ev).most_common(14)),
     "checks": [],
 }
-files = {}
-for c in g.get("checks") or []:
-    ok, why = None, c.get("why", "")
-    if "file" in c:
-        body = files.setdefault(c["file"], fetch(c["file"]))
-        if c.get("exists"):
-            ok = bool(body.strip())
-        elif "regex" in c:
-            ok = bool(re.search(c["regex"], body))
-        elif "absent" in c:
-            ok = bool(body.strip()) and c["absent"] not in body
-        elif "any_of" in c:
-            ok = any(a in body for a in c["any_of"])
-    elif "answer_regex" in c:
-        ok = bool(re.search(c["answer_regex"], final, re.I))
-    elif "answer_contains" in c:
-        ok = str(c["answer_contains"]).lower() in final.lower()
-    elif "answer_min_words" in c:
-        ok = len(final.split()) >= int(c["answer_min_words"])
-    res["checks"].append((ok, why))
-ok_n = sum(1 for o, _ in res["checks"] if o)
-res["score"] = round(ok_n / len(res["checks"]), 3) if res["checks"] else None
+files = {n: fetch(n) for n in _quality.files_wanted(g.get("checks"))}
+_q = _quality.evaluate(g.get("checks"), {k: v for k, v in files.items() if v.strip()}, final)
+res["checks"] = [(r.get("ok"), r.get("label") or r.get("detail") or "") for r in _q["results"]]
+res["score"] = _q["score"]
 res["files"] = {k: v[:1500] for k, v in files.items()}
 res["final"] = final[:1500]
 json.dump(res, open("%s/%s-%s.json" % (OUT, layout, gid), "w"), indent=1)

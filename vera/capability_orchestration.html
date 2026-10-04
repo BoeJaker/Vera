@@ -741,6 +741,10 @@ body.dash-open #lhmNav.lhm-nav{background:color-mix(in srgb,var(--s1,var(--bg1,#
    of its own. Blocks off still takes the glass away entirely (the rules above). */
 body:has(.body-wrap.lhm) #veraWashH{opacity:1}
 .body-wrap.lhm{position:relative;z-index:1;background:transparent}
+/* ...and the page area the menu sits over: #main painted the theme's ground right under the menu, so neither the glass nor
+   blocks-off transparency showed the glow (owner, 2026-10-04: "im not seeing the translucency and blur, the glow on, and no
+   strip behind the rail"). The chat made it see-through (chat-open); every panel does now. Panels' frames paint their own. */
+.body-wrap.lhm .main,.body-wrap.lhm .panels{background:transparent}
 .body-wrap.lhm #lhmNav.lhm-nav{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
 .body-wrap.lhm #lhmNav .lhm-rail{background:transparent}
 body.dash-open #dashHealthStrip{background:color-mix(in srgb,var(--bg0,#0e0f12) 55%,transparent)!important;border-color:transparent!important}

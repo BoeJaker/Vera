@@ -135,7 +135,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("stacks", "parts", ("iso",), glyph="stacks", motion=True, options=("columns", "coin"), name="Coin stacks", boards=("motion",)),
     # ── stages and time ──
     _F("stepper", "stages", glyph="stepper", name="Stepper", boards=("widgets",)),
-    _F("gantt", "stages", ("flat", "iso"), glyph="gantt", options=("rows",), name="Gantt", boards=("widgets",)),
+    _F("gantt", "stages", ("flat", "iso"), glyph="gantt", options=("rows", "names"), name="Gantt", boards=("widgets",)),
     _F("pipeline", "stages", ("flat", "iso"), glyph="pipeline", name="Pipeline", boards=("widgets", "iso")),
     _F("conveyor", "stages", ("iso",), glyph="conveyor", motion=True, options=("belt", "work"), name="Conveyor", boards=("motion",)),
     _F("approvals", "stages", ("iso",), glyph="approvals", name="Approvals", boards=("iso",)),
@@ -357,6 +357,9 @@ def normalise_template(t: Dict[str, Any]) -> Dict[str, Any]:
         "created_at": str(t.get("created_at") or ""),
         "updated_at": str(t.get("updated_at") or ""),
     }
+    # its host hands the data in (the chat's turn footer gives the turn's own phase frames): it reads nothing itself
+    if reads.get("inline") is True:
+        out["reads"]["inline"] = True
     # a template may carry its read.map (the answer's envelope -> the form's shape) and its form's draw options (columns,
     # sort, limit, palette ...): the element draws a template with both, so they ride along whenever they are present
     rd = t.get("read") if isinstance(t.get("read"), dict) else {}
@@ -377,8 +380,10 @@ def template_problems(t: Dict[str, Any], forms: Tuple[str, ...], wheres: Tuple[s
         out.append("a template needs a name")
     if t.get("form") not in forms and not form(t.get("form") or ""):
         out.append("unknown form %r (one of: %s)" % (t.get("form"), ", ".join(forms)))
-    if not (t.get("reads") or {}).get("cap") and t.get("form") not in NO_SOURCE_FORMS:
-        out.append("a %s widget must say what it reads (reads.cap)" % t.get("form"))
+    rd = t.get("reads") if isinstance(t.get("reads"), dict) else {}
+    if not rd.get("cap") and t.get("form") not in NO_SOURCE_FORMS and rd.get("inline") is not True:
+        out.append("a %s widget must say what it reads (reads.cap, or reads.inline when its host hands the data in)"
+                   % t.get("form"))
     for w in t.get("placed") or []:
         if w not in wheres and not w.startswith("harness") and not w.startswith("header"):
             out.append("unknown placement %r (one of: %s)" % (w, ", ".join(wheres)))

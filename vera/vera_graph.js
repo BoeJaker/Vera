@@ -5807,7 +5807,9 @@
         if (n) n._pulseUntil = Date.now() + 1500;
       },
       wake:           wake,
-      fit:            function(){ if (fitBtn) try { fitBtn.onclick(); } catch(e){} },
+      // fitView itself, not the Fit button: a graph drawn without its chrome (the canvas's embed) has no button, and
+      // fit() did nothing there - the button's handler IS fitView, so a graph with one behaves as it did
+      fit:            function(){ try { fitView(); } catch(e){} },
       // ── Latent map ───────────────────────────────────────────────────────
       // The WorldView system calls this to render its latent space statically.
       // positions: { nodeId: {x, y}, ... } in any coordinate space (we fit-to-view).
