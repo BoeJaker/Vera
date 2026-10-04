@@ -14574,6 +14574,44 @@ class _V6StepCritic:
             self._runner.cancel()
 
 
+async def _v6_deliverable_review(goal: str, done_when: str, history: Sequence[Dict[str, Any]],
+                                 results: Sequence[Dict[str, Any]], sid: str) -> Dict[str, Any]:
+    """One adversarial review of the finished deliverable by the large CPU model (the
+    enrich role): the files the run wrote and its last answer, against the goal.
+    {note, flag, files, elapsed_s, error}; never raises."""
+    PSx = _plan_styles
+    t1 = time.monotonic()
+    files: List[Any] = []
+    try:
+        for _p in PSx.critic_written_paths(history, limit=PSx.REVIEW_MAX_FILES):
+            try:
+                files.append((_p, await _v5_load_current(_p, session_id=sid)))
+            except Exception:
+                pass
+    except Exception as e:
+        log.debug("deliverable review files: %s", e)
+    answer = ""
+    for r in reversed(list(results or [])):
+        answer = str(r.get("summary") or r.get("final") or r.get("output") or "")
+        if answer.strip():
+            break
+    note, err = "", ""
+    try:
+        raw = await _safe_ollama_generate_dw(
+            PSx.review_prompt(goal, done_when, files, answer),
+            system=PSx.REVIEW_SYSTEM, json_mode=False, model="", instance_id="",
+            prefer_gpu=False, think=False, profile="planning_style", role=PSx.ENRICH_ROLE,
+            request_stage="deliverable_review", timeout=600)
+        note = PSx.critic_note(_strip_think(raw or "")[0])
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"[:160]
+    return {"note": note, "flag": PSx.critic_is_flag(note) if not err else False,
+            "files": [p for p, _ in files], "elapsed_s": round(time.monotonic() - t1, 1),
+            "error": err}
+
+
 async def _v6_entity_coverage(task: Any, output: str, *, sid: str, stream_id: str) -> None:
     """Emit agent_loop_v6.entity_coverage for the run's final output. Best effort."""
     if task is None or _entity_cov is None:
@@ -24105,6 +24143,9 @@ async def cap_dag_agent_loop_v6(
     # True when v7 filled plan_style in with its DEFAULT (nobody chose it). The
     # single-cap fast path still applies then; only a chosen style turns it off.
     plan_style_defaulted: bool = False,
+    # Opt-in: when the final gate says complete, a large CPU model reviews the
+    # deliverable adversarially ONCE; real defects become one fix step (user 2026-10-04).
+    deliverable_review: bool = False,
     # BROAD only: the model the long-horizon CPU node writes stream briefs with
     # ('' = the planning_style/enrich route's model). The route keeps whichever
     # model it runs warm.
@@ -25916,6 +25957,7 @@ async def cap_dag_agent_loop_v6(
     # the `executed < hard_cap` bound that already limits real step work.
     _gate_rounds = 0
     _MAX_GATE_ROUNDS = 3
+    _review_done = False                 # deliverable_review runs once per run
     _gate_last: Dict[str, Any] = {}      # the last verdict, carried to the end
     _gate_ran_after = 0                  # follow-up steps run since that verdict
     while enable_final_gate and executed < hard_cap and _gate_rounds < _MAX_GATE_ROUNDS:
@@ -25951,6 +25993,16 @@ async def cap_dag_agent_loop_v6(
         _gate_last = gate
         _gate_ran_after = 0
         follow_up = gate.get("follow_up") or []
+        if (not follow_up and deliverable_review and not _review_done
+                and bool(gate.get("complete")) and executed < hard_cap):
+            _review_done = True
+            _rv = await _v6_deliverable_review(goal, done_when, flat_history, results, sid)
+            await emit_event({"type": "agent_loop_v6.deliverable_review", "session_id": sid,
+                              "stream_id": stream_id, **_rv})
+            if _rv.get("flag"):
+                follow_up = _v6_coerce_control_steps(
+                    [_plan_styles.review_fix_step(_rv.get("note") or "", goal)], max_id, goal,
+                    catalog_names, valid_skill_ids)
         if not follow_up:
             # Either complete, or the judge/overrides had nothing actionable
             # to add — no follow_up means no more work THIS gate call can
@@ -26476,6 +26528,7 @@ async def workshop_agent_loop_stream(request: Request):
         if _v7_default else "auto"
     v6_plan_style        = (body.get("plan_style") or _style_default).strip().lower()
     v6_plan_style_defaulted = bool(_v7_default and not str(body.get("plan_style") or "").strip())
+    v6_deliverable_review = bool(body.get("deliverable_review", False))
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
     v6_intent_core       = (body.get("intent_core", "off") or "off").strip().lower()
@@ -26634,6 +26687,7 @@ async def workshop_agent_loop_stream(request: Request):
             plan_tier=v6_plan_tier,
             plan_style=v6_plan_style,
             plan_style_defaulted=v6_plan_style_defaulted,
+            deliverable_review=v6_deliverable_review,
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
             intent_core=v6_intent_core,

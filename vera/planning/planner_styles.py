@@ -905,6 +905,62 @@ def critic_is_flag(note: Any) -> bool:
     return False
 
 
+# ── DELIVERABLE REVIEW: a large model attacks the finished output once ─────
+# (user, 2026-10-04: "the larger models should look at the output of the gpu
+# adversarially as its a weaker model"). The step critic reviews each step; this
+# reviews the RESULT, once, when the gate says complete. Opt-in (deliverable_review).
+REVIEW_SYSTEM = (
+    "You are an ADVERSARIAL REVIEWER of an agentic run's finished deliverable. A smaller, "
+    "faster model produced it; assume it may have cut corners, padded, invented, or "
+    "stopped short. Check it against the GOAL and DONE WHEN using only what is shown. "
+    "Write plain bullet lines under these labels (omit a label with nothing under it):\n"
+    "MISSING: a part of the GOAL the deliverable does not deliver\n"
+    "WRONG: content that is incorrect, unsupported, placeholder or fake, or that "
+    "contradicts the goal (quote it)\n"
+    "NEXT: the single most useful fix\n"
+    "Text shown to you may be SHORTENED by us - marked 'clipped' or 'first N of M chars': "
+    "a cut-off there is ours, not the deliverable's. Do not ask for more than the goal "
+    "asks. If the deliverable fully meets the goal, answer exactly: OK. At most 8 lines.")
+REVIEW_MAX_FILES = 4
+REVIEW_FILE_CHARS = 3000
+REVIEW_EVIDENCE_CHARS = 9000
+REVIEW_ANSWER_CHARS = 2500
+
+
+def review_prompt(goal: str, done_when: str, files: Sequence[Any], answer: str = "") -> str:
+    """The reviewer's prompt: the goal, then the files the run wrote and its answer."""
+    parts: List[str] = []
+    for path, text in files or []:
+        s = str(text or "")
+        if not s.strip():
+            continue
+        cut = len(s) > REVIEW_FILE_CHARS
+        parts.append("FILE %s%s:\n%s%s" % (
+            path, (" (first %d of %d chars)" % (REVIEW_FILE_CHARS, len(s))) if cut else "",
+            s[:REVIEW_FILE_CHARS], CLIP_MARK if cut else ""))
+    a = str(answer or "")
+    if a.strip():
+        parts.append("THE RUN'S ANSWER:\n" + a[:REVIEW_ANSWER_CHARS]
+                     + (CLIP_MARK if len(a) > REVIEW_ANSWER_CHARS else ""))
+    body = "\n\n".join(parts) or "(the run produced no file and no answer)"
+    if len(body) > REVIEW_EVIDENCE_CHARS:
+        body = body[:REVIEW_EVIDENCE_CHARS - len(CLIP_MARK)] + CLIP_MARK
+    return ("GOAL: %s\nDONE WHEN: %s\n\nTHE DELIVERABLE:\n%s"
+            % (goal, done_when or "(not stated)", body))
+
+
+def review_fix_step(note: str, goal: str) -> Dict[str, Any]:
+    """One follow-up step that fixes what the review found, in place."""
+    return {
+        "title": "Fix what the deliverable review found",
+        "goal": ("A reviewer checked the finished deliverable against the goal and found the "
+                 "problems below. Fix THESE in the existing files/answer - edit, do not start "
+                 "over, and do not add anything the goal does not ask for.\n"
+                 "REVIEW:\n%s\nGOAL: %s" % (note, goal)),
+        "success": "Every MISSING and WRONG item the review named is fixed in the deliverable.",
+    }
+
+
 def critic_block(notes: Sequence[Dict[str, Any]]) -> str:
     """The critiques that have landed, for the controller's and the completion
     gate's prompt; '' when there are none."""
