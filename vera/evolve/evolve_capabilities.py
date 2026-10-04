@@ -5605,78 +5605,199 @@ _CRITICAL_TIER_RELEASE_LUA = (
 _critical_tier_lock: Optional[asyncio.Lock] = None
 
 
+# Gates in THIS process, for /health's `activity` (pipeline id -> {id, branch, state, since}).
+_GATES_ACTIVE: Dict[str, Dict[str, Any]] = {}
+try:
+    from Vera.vera.evolve import gate_resume_core as _gate_resume_core
+except Exception:                                      # pragma: no cover
+    from vera.evolve import gate_resume_core as _gate_resume_core  # type: ignore
+
+
 async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, Any]:
-    """Run the critical tier for `branch` once no other gate is running one.
+    """Run the critical tier for `branch` once no other gate is running one; the gate is
+    listed in _GATES_ACTIVE (queued, then running) for as long as it is in flight.
 
     With the test pool on (evolve.test_pool.config.set), the run is sharded over
     the host's container and the node workers with room instead
     (test_runner_capabilities.run_pooled); it takes per-runner leases, so gates
     run side by side when runners are free."""
-    pool = getattr(_orch, "TEST_POOL", None)
-    if pool is not None:
-        try:
-            res = await pool(rec, branch, markers="critical",
-                             timeout=_CRITICAL_TIER_TIMEOUT_S)
-        except Exception as e:
-            log.warning("test pool failed, running the tier on the host: %s", e)
-            _pstep(rec, "test-pool", False, f"pool failed ({e}) - host run instead")
-            res = None
-        if res is not None:
-            return res
     global _critical_tier_lock
-    if _critical_tier_lock is None:
-        _critical_tier_lock = asyncio.Lock()
-    token = f"{rec.get('id', '')}:{branch}"
-    queued = False
-
-    async def _note_queued(holder: str):
-        nonlocal queued
-        if queued:
-            return
-        queued = True
-        rec["current"] = f"critical tier queued behind {holder}"
-        _pstep(rec, "critical-queue", True,
-               f"waiting for the gate running now ({holder}) to finish")
-        await _save_pipeline(rec)
-
-    if _critical_tier_lock.locked():
-        await _note_queued("another gate in this process")
-    async with _critical_tier_lock:
-        r = _redis()
-        held = False
-        waited_from = time.monotonic()
-        while r is not None:
+    pid = str(rec.get("id") or "")
+    _GATES_ACTIVE[pid] = {"id": pid, "branch": branch, "state": "queued", "since": now_iso()}
+    try:
+        pool = getattr(_orch, "TEST_POOL", None)
+        if pool is not None:
+            _GATES_ACTIVE[pid]["state"] = "running"
             try:
-                if await r.set(_CRITICAL_TIER_LEASE_KEY, token, nx=True,
-                               ex=_CRITICAL_TIER_LEASE_S):
-                    held = True
-                    break
-                holder = await r.get(_CRITICAL_TIER_LEASE_KEY)
+                res = await pool(rec, branch, markers="critical",
+                                 timeout=_CRITICAL_TIER_TIMEOUT_S)
             except Exception as e:
-                log.warning("critical-tier lease unavailable, running without it: %s", e)
-                break
-            if isinstance(holder, bytes):
-                holder = holder.decode("utf-8", "replace")
-            await _note_queued(str(holder or "another gate"))
-            await asyncio.sleep(_CRITICAL_TIER_POLL_S)
-        if queued:
+                log.warning("test pool failed, running the tier on the host: %s", e)
+                _pstep(rec, "test-pool", False, f"pool failed ({e}) - host run instead")
+                res = None
+            if res is not None:
+                return res
+        if _critical_tier_lock is None:
+            _critical_tier_lock = asyncio.Lock()
+        token = f"{rec.get('id', '')}:{branch}"
+        queued = False
+
+        async def _note_queued(holder: str):
+            nonlocal queued
+            if queued:
+                return
+            queued = True
+            rec["current"] = f"critical tier queued behind {holder}"
             _pstep(rec, "critical-queue", True,
-                   f"gate slot free after {int(time.monotonic() - waited_from)} s")
+                   f"waiting for the gate running now ({holder}) to finish")
+            await _save_pipeline(rec)
+
+        if _critical_tier_lock.locked():
+            await _note_queued("another gate in this process")
+        async with _critical_tier_lock:
+            r = _redis()
+            held = False
+            waited_from = time.monotonic()
+            while r is not None:
+                try:
+                    if await r.set(_CRITICAL_TIER_LEASE_KEY, token, nx=True,
+                                   ex=_CRITICAL_TIER_LEASE_S):
+                        held = True
+                        break
+                    holder = await r.get(_CRITICAL_TIER_LEASE_KEY)
+                except Exception as e:
+                    log.warning("critical-tier lease unavailable, running without it: %s", e)
+                    break
+                if isinstance(holder, bytes):
+                    holder = holder.decode("utf-8", "replace")
+                await _note_queued(str(holder or "another gate"))
+                await asyncio.sleep(_CRITICAL_TIER_POLL_S)
+            if queued:
+                _pstep(rec, "critical-queue", True,
+                       f"gate slot free after {int(time.monotonic() - waited_from)} s")
+                rec["current"] = "running critical tier"
+                await _save_pipeline(rec)
+            # Always on the record, queued or not: a restart from here on leaves a gate
+            # gate_resume_core can find and run again.
             rec["current"] = "running critical tier"
             await _save_pipeline(rec)
+            if str(rec.get("id") or "") in _GATES_ACTIVE:
+                _GATES_ACTIVE[str(rec.get("id") or "")]["state"] = "running"
+            try:
+                return await evolve_unittest_run(branch=branch, paths="tests",
+                                                 markers="critical",
+                                                 timeout=_CRITICAL_TIER_TIMEOUT_S,
+                                                 pipeline_id=rec["id"])
+            finally:
+                if held:
+                    try:
+                        await r.eval(_CRITICAL_TIER_RELEASE_LUA, 1,
+                                     _CRITICAL_TIER_LEASE_KEY, token)
+                    except Exception as e:
+                        log.warning("critical-tier lease release failed (expires in %d s): %s",
+                                    _CRITICAL_TIER_LEASE_S, e)
+    finally:
+        _GATES_ACTIVE.pop(pid, None)
+
+async def _critical_gate(rec: Dict[str, Any], branch: str) -> Optional[bool]:
+    """The critical-tier half of the adopt gate (shared by evolve.pipeline.adopt and the
+    restart resume, _resume_interrupted_gates): True/False, or None when the branch has no
+    worktree to run it in."""
+    critical_ok: Optional[bool] = None
+    wt = await _branch_worktree(branch)   # pool sandbox OR any plain git worktree
+    if wt:
         try:
-            return await evolve_unittest_run(branch=branch, paths="tests",
-                                             markers="critical",
-                                             timeout=_CRITICAL_TIER_TIMEOUT_S,
-                                             pipeline_id=rec["id"])
-        finally:
-            if held:
-                try:
-                    await r.eval(_CRITICAL_TIER_RELEASE_LUA, 1,
-                                 _CRITICAL_TIER_LEASE_KEY, token)
-                except Exception as e:
-                    log.warning("critical-tier lease release failed (expires in %d s): %s",
-                                _CRITICAL_TIER_LEASE_S, e)
+            crit = await _critical_tier_queued(rec, branch)
+        except Exception as e:
+            crit = {"error": str(e)}
+        if crit.get("error"):
+            # A tier that was ATTEMPTED and could not execute is a failed
+            # gate, not an absent one. It used to stay None ("infra hiccup,
+            # not counted") - and on 2026-09-11 that let a branch with four
+            # red critical tests onto bleeding-edge and main with
+            # gate_passed=True, because the container failed to start
+            # pytest that once. If the box is genuinely broken, the
+            # promoter verifies by hand and uses force; the gate must not
+            # say PASS for tests that never ran.
+            critical_ok = False
+            _pstep(rec, "critical-tests", False,
+                   f"could not run critical-tier tests: {crit['error']} "
+                   "- counted as FAILED (re-adopt, or promote with force "
+                   "after verifying by hand)")
+        else:
+            critical_ok = bool(crit.get("ok"))
+            _pstep(rec, "critical-tests", critical_ok,
+                   crit.get("summary", "") or ("PASS" if critical_ok else "FAIL"))
+    else:
+        _pstep(rec, "critical-tests", True,
+               "no worktree for this branch — critical-tier gate skipped "
+               "(git worktree add it, or evolve.sandbox.up, for full gating)")
+    return critical_ok
+
+
+_GATE_RESUME_DELAY_S = 20.0     # let the new process settle before re-running gates
+
+
+async def _resume_interrupted_gates() -> None:
+    """Run again the adopt gates a restart cut off (gate_resume_core). Oldest first, one at
+    a time through the normal queue; a gate lease held by one of them is freed first."""
+    await asyncio.sleep(_GATE_RESUME_DELAY_S)
+    r = _redis()
+    if not r:
+        return
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc)
+    recs: List[Dict[str, Any]] = []
+    try:
+        rows = await r.lrange(KEY_PIPELINES, 0, 80)
+    except Exception as e:
+        log.warning("evolve: gate resume could not list pipelines: %s", e)
+        return
+    for row in rows or []:
+        try:
+            c = json.loads(row)
+        except Exception:
+            continue
+        if not c.get("adopted") or c.get("gate_passed") is not None:
+            continue
+        try:
+            raw = await r.get(KEY_PIPELINE + str(c.get("id")))
+            rec = json.loads(raw) if raw else None
+        except Exception:
+            rec = None
+        if rec and _gate_resume_core.interrupted(rec, now):
+            recs.append(rec)
+    if not recs:
+        return
+    ids = [str(x.get("id")) for x in recs]
+    try:
+        if _gate_resume_core.orphaned_lease(await r.get(_CRITICAL_TIER_LEASE_KEY), ids):
+            await r.delete(_CRITICAL_TIER_LEASE_KEY)
+    except Exception as e:
+        log.debug("evolve: gate lease check: %s", e)
+    log.warning("evolve: resuming %d gate(s) a restart cut off: %s", len(recs),
+                ", ".join("%s (%s)" % (x.get("id"), x.get("branch")) for x in recs))
+    for rec in _gate_resume_core.resume_order(recs):
+        try:
+            _pstep(rec, "gate-resume", True, "the gate was cut off by a restart - running it again")
+            rec["current"] = "gate resumed after restart"
+            await _save_pipeline(rec)
+            compile_ok = _gate_resume_core.compile_ok(rec.get("steps") or [])
+            critical_ok = await _critical_gate(rec, str(rec.get("branch")))
+            rec["gate_passed"] = compile_ok if critical_ok is None else (compile_ok and critical_ok)
+            rec["current"] = "gate finished after a restart"
+            await _save_pipeline(rec)
+            await _audit("pipeline.adopt",
+                         f"resumed gate for {rec.get('branch')} [gate_passed={rec['gate_passed']}]",
+                         id=rec.get("id"), kind="code", branch=rec.get("branch"),
+                         repo=rec.get("repo") or DEFAULT_REPO_ID)
+            await emit_event({"type": "evolve.pipeline.adopted", "id": rec.get("id"),
+                              "branch": rec.get("branch"), "into": rec.get("to"),
+                              "commits": len(rec.get("commits") or []),
+                              "gate_passed": rec["gate_passed"], "resumed": True})
+        except Exception as e:
+            log.warning("evolve: gate resume %s failed: %s", rec.get("id"), e)
+
 
 @capability("evolve.pipeline.adopt", memory="on",
             http_method="POST", http_path="/evolve/pipeline/adopt", http_tags=["evolve"],
@@ -5847,34 +5968,7 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
     # regression) — surfaced either way so it's never silently skipped unnoticed.
     critical_ok: Optional[bool] = None
     if py and repo == DEFAULT_REPO_ID:
-        wt = await _branch_worktree(branch)   # pool sandbox OR any plain git worktree
-        if wt:
-            try:
-                crit = await _critical_tier_queued(rec, branch)
-            except Exception as e:
-                crit = {"error": str(e)}
-            if crit.get("error"):
-                # A tier that was ATTEMPTED and could not execute is a failed
-                # gate, not an absent one. It used to stay None ("infra hiccup,
-                # not counted") - and on 2026-09-11 that let a branch with four
-                # red critical tests onto bleeding-edge and main with
-                # gate_passed=True, because the container failed to start
-                # pytest that once. If the box is genuinely broken, the
-                # promoter verifies by hand and uses force; the gate must not
-                # say PASS for tests that never ran.
-                critical_ok = False
-                _pstep(rec, "critical-tests", False,
-                       f"could not run critical-tier tests: {crit['error']} "
-                       "- counted as FAILED (re-adopt, or promote with force "
-                       "after verifying by hand)")
-            else:
-                critical_ok = bool(crit.get("ok"))
-                _pstep(rec, "critical-tests", critical_ok,
-                       crit.get("summary", "") or ("PASS" if critical_ok else "FAIL"))
-        else:
-            _pstep(rec, "critical-tests", True,
-                   "no worktree for this branch — critical-tier gate skipped "
-                   "(git worktree add it, or evolve.sandbox.up, for full gating)")
+        critical_ok = await _critical_gate(rec, branch)
 
     rec["gate_passed"] = compile_ok if critical_ok is None else (compile_ok and critical_ok)
 
@@ -11640,6 +11734,12 @@ async def _startup():
             log.info("evolve: seeded %d benchmark tasks", added)
     except Exception as e:
         log.debug("evolve startup: %s", e)
+
+    # Gates a restart cut off run again (gate_resume_core), in the background.
+    try:
+        _PIPELINE_TASKS["_gate_resume"] = asyncio.create_task(_resume_interrupted_gates())
+    except Exception as e:
+        log.debug("evolve startup: gate resume not started: %s", e)
 
     # Reap stale "running" sessions — a process restart orphans the asyncio
     # task but leaves the Redis record asserting "running" forever, which is
