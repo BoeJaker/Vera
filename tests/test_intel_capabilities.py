@@ -342,12 +342,13 @@ def test_advisor_command_save_and_sessions(tmp_path):
     # a session plans research and topic work with its end time attached
     mod.store().set_kv("research_wanted", [{"topic_id": "x", "query": "Who is next?"}])
     _R(orch, "intel.topic.save", name="Topic one")
-    from datetime import datetime
+    from datetime import datetime, timedelta
+    noon = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)   # today: queued work past its
     sess = mod.ops.active_session([{"name": "s", "days": list(range(7)), "start": "00:00", "end": "23:59", "budget": 3}],
-                                  datetime(2026, 10, 4, 12, 0))
-    planned = _run(mod._plan_session(sess, datetime(2026, 10, 4, 12, 0)))
+                                  noon)                                       # window's end is dropped by the clock
+    planned = _run(mod._plan_session(sess, noon))
     assert planned >= 2 and any(n == "research.run" for n, _ in orch.CALLS)
-    assert _run(mod._plan_session(sess, datetime(2026, 10, 4, 12, 5))) <= 3 - planned
+    assert _run(mod._plan_session(sess, noon + timedelta(minutes=5))) <= 3 - planned
 
 
 def test_config_import_retire(tmp_path):
@@ -675,3 +676,25 @@ def test_the_brief_offers_suggested_numbers_as_watch_buttons(tmp_path):
     # a forged target never becomes an action
     assert mod.core.make_action("watch", topic_id=t["id"], target="price:yahoo:SVS.L; rm -rf /") is None
     assert mod.core.make_action("watch", topic_id=t["id"], target="http://evil/") is None
+
+
+def test_decisions_and_outcomes_are_mirrored_to_the_shared_ledger(tmp_path):
+    mod, orch = _load(tmp_path)
+    got = []
+
+    async def decide_record(row=None, trace_id=None):
+        got.append(row)
+        return {"ok": True}
+    orch.CAPABILITY_REGISTRY["decide.record"] = {"func": decide_record, "raw": decide_record}
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+
+    async def flow():
+        await orch.CAPABILITY_REGISTRY["intel.sweep"]["func"](topic_id=t["id"])
+        sig = next(s for s in mod.store().signals(t["id"]) if "pilot" in s["title"].lower())
+        await orch.CAPABILITY_REGISTRY["intel.feedback"]["func"](signal_id=sig["id"], verdict="useful")
+        await asyncio.sleep(0)
+        await asyncio.gather(*list(mod._LEDGER_TASKS))
+    _run(flow())
+    kinds = {r.get("schema") for r in got}
+    assert {"vera.decision/v0", "vera.outcome/v0"} <= kinds
+    assert len([r for r in got if r["schema"] == "vera.decision/v0"]) == len(mod.store().decisions(limit=500))
