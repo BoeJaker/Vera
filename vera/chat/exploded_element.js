@@ -466,15 +466,25 @@
       const byPin = {}; runs.forEach((r) => { [['a', r.A, r.B], ['b', r.B, r.A]].forEach(([e, p, f]) => { const k = p.U.toFixed(1) + '/' + p.V.toFixed(1); (byPin[k] = byPin[k] || []).push([r, e, f]); }); });
       Object.keys(byPin).forEach((k, pi) => { const Q = byPin[k], n = Q.length, pe = Math.min(PORT, 0.25 * GV / Math.max(1, n)), ph = n > 1 ? ((pi * 0.37) % 1) * pe : 0;
         Q.sort((p, q) => (p[2].V - q[2].V) || (p[2].U - q[2].U)).forEach(([r, e], j) => { r[e === 'a' ? 'pa' : 'pb'] = (j - (n - 1) / 2) * pe + ph; }); });
+      // TRUNKS: three or more runs into one card share one line in its gutter rather than a track each all the way in
+      const fanIn = {}; runs.forEach((r) => { if (r.direct && Math.abs(r.A.U - r.B.U) < 0.5) return; if (Math.abs(r.A.U - r.B.U) < 1) return; const k = r.B.U.toFixed(1) + '/' + r.B.V.toFixed(1); (fanIn[k] = fanIn[k] || []).push(r); });
+      const trunks = []; Object.keys(fanIn).forEach((k) => { if (fanIn[k].length < 3) return; const T = { runs: fanIn[k], B: fanIn[k][0].B }; fanIn[k].forEach((r) => { r.trunk = T; }); trunks.push(T); });
       runs.forEach((r) => { const A = r.A, B = r.B;
         if (r.direct && Math.abs(A.U - B.U) < 0.5) { r.kind = 'd'; return; }
         if (Math.abs(A.U - B.U) < 1) { r.kind = 'g'; use(gk(A), r, 'g', A.V, B.V); return; }
         const up = B.V > A.V + 1 ? 1 : -1; let hv = A.V + up * halfAt[stationOf(A.U)], room = halfAt[stationOf(A.U)]; r.kind = 'r';   // the gap on the target's side; level with it, the gap behind
         // the stations' rows need not line up: a gap that meets a row of pins on the way moves to the nearest free one
         const u0 = Math.min(gut(A), gut(B)), u1 = Math.max(gut(A), gut(B)), vs = Object.keys(G).map((k) => G[k]).filter((p) => p.U > u0 && p.U < u1).map((p) => p.V).concat([A.V]).sort((a, b) => a - b);
-        if (vs.some((v) => Math.abs(v - hv) < 0.2 * GV)) { const lo = vs.filter((v) => v <= hv).pop(), hi = vs.find((v) => v > hv); hv = lo != null && hi != null ? (lo + hi) / 2 : hi == null ? lo + 0.5 * GV : hi - 0.5 * GV; room = lo != null && hi != null ? (hi - lo) / 2 : 0.5 * GV; }
+        if (vs.some((v) => Math.abs(v - hv) < 0.2 * GV)) {   // the free gap NEAREST the run's way - between two rows before outside them all
+          const u = vs.filter((v, j) => j === 0 || v - vs[j - 1] > 1e-6), cand = [];
+          for (let j = 1; j < u.length; j++) if (u[j] - u[j - 1] >= 0.3 * GV) cand.push({ v: (u[j] + u[j - 1]) / 2, room: (u[j] - u[j - 1]) / 2, out: 0 });
+          cand.push({ v: u[0] - 0.5 * GV, room: 0.5 * GV, out: 1 }, { v: u[u.length - 1] + 0.5 * GV, room: 0.5 * GV, out: 1 });
+          const want = Math.abs(B.V - A.V) > 1 ? (A.V + B.V) / 2 : hv, cost = (q) => Math.abs(q.v - want) + q.out * 0.8 * GV;
+          const best = cand.reduce((p, q) => (cost(q) < cost(p) ? q : p)); hv = best.v; room = best.room; }
         r.hv0 = hv; r.hroom = room;
-        use(gk(A), r, 'gA', A.V, r.hv0); use('r:' + Math.round(r.hv0 / 10), r, 'r', gut(A), gut(B)); use(gk(B), r, 'gB', r.hv0, B.V); });
+        use(gk(A), r, 'gA', A.V, r.hv0); use('r:' + Math.round(r.hv0 / 10), r, 'r', gut(A), gut(B)); if (!r.trunk) use(gk(B), r, 'gB', r.hv0, B.V); });
+      // a trunk takes ONE track in its target's gutter, over every row gap its runs arrive at
+      trunks.forEach((T) => { const vs = T.runs.map((r) => r.hv0).concat([T.B.V]); T.lo = Math.min.apply(null, vs); T.hi = Math.max.apply(null, vs); use(gk(T.B), T, 'gT', T.lo, T.hi); });
       Object.keys(ch).forEach((c) => { const ends = []; ch[c].sort((p, q) => p.lo - q.lo || q.hi - p.hi).forEach((u) => { let k = ends.findIndex((e) => e < u.lo - MINS); if (k < 0) { k = ends.length; ends.push(u.hi); } else ends[k] = u.hi; u.k = k; });
         ch[c].forEach((u) => { u.K = ends.length; u.r['t_' + u.part] = u; }); });
       const off = (u, room) => !u ? 0 : (u.k - (u.K - 1) / 2) * Math.min(LANE, 2 * room / Math.max(1, u.K));
@@ -485,6 +495,7 @@
       const legsOf = (Wp, tails) => { const Lg = []; for (let n = 0; n < Wp.length - 1; n++) { if (tails.indexOf(n) >= 0) continue; const p = Wp[n], q = Wp[n + 1]; if (Math.abs(p[0] - q[0]) < 1e-6 && Math.abs(p[1] - q[1]) < 1e-6) continue;
         if (Math.abs(p[0] - q[0]) < 1e-6) Lg.push({ k: 'v', c: p[0], a: Math.min(p[1], q[1]), b: Math.max(p[1], q[1]) }); else Lg.push({ k: 'h', c: p[1], a: Math.min(p[0], q[0]), b: Math.max(p[0], q[0]) }); } return Lg; };
       const clash = (Lg) => Lg.some((l) => occ[l.k].some((m) => Math.abs(m.c - l.c) < TOL && Math.min(m.b, l.b) - Math.max(m.a, l.a) > MIN));
+      trunks.forEach((T) => { T.g = gut(T.B) + off(T.t_gT, groom); occ.v.push({ k: 'v', c: T.g, a: T.lo - GV, b: T.hi + GV }); });
       runs.forEach((r) => { const A = r.A, B = r.B, Z = ZL;
         const build = (dh, dg, dp) => { const pa = (r.pa || 0) + dp, pb = (r.pb || 0) + dp;
           // a pin's own two legs (up off it, then aside to its port) are the join - shared by the runs at that pin, and marked so
@@ -492,16 +503,23 @@
           if (r.kind === 'd') return { Wp: [[A.U, A.V, 0], [B.U, B.V, 0]], tails: [] };
           if (r.kind === 'g') { const gu = gut(A) + off(r.t_g, groom) + dg, Wp = head.concat([[gu, A.V + pa, Z], [gu, B.V + pb, Z]], foot); return { Wp, tails: [0, 1, Wp.length - 3, Wp.length - 2] }; }
           const h = r.hroom || halfAt[stationOf(A.U)], guA = gut(A) + off(r.t_gA, groom) + dg, guB = gut(B) + off(r.t_gB, groom) + dg, hv = r.hv0 + Math.max(-0.8 * h, Math.min(0.8 * h, off(r.t_r, 0.8 * h) + dh));
+          if (r.trunk) { const Wp = head.concat([[guA, A.V + pa, Z], [guA, hv, Z], [r.trunk.g, hv, Z]]); return { Wp, tails: [0, 1], hv }; }   // it ends on its trunk
           const Wp = head.concat([[guA, A.V + pa, Z], [guA, hv, Z], [guB, hv, Z], [guB, B.V + pb, Z]], foot); return { Wp, tails: [0, 1, Wp.length - 3, Wp.length - 2] }; };
         let R_ = build(0, 0, 0), Lg = legsOf(R_.Wp, R_.tails);
         for (let k = 0; k < 12 && clash(Lg); k++) { const d = (k % 2 ? -1 : 1) * Math.ceil(((k % 4) + 1) / 2) * 0.5; R_ = k < 4 ? build(d * LANE, 0, 0) : k < 8 ? build(d * LANE, d * LANE, 0) : build(d * LANE, 0, d * PORT); Lg = legsOf(R_.Wp, R_.tails); }
-        Lg.forEach((l) => occ[l.k].push(l)); const Wp = R_.Wp, tails = R_.tails;
+        Lg.forEach((l) => occ[l.k].push(l)); const Wp = R_.Wp, tails = R_.tails; if (r.trunk) (r.trunk.hvs = r.trunk.hvs || []).push(R_.hv);
         const Pp = Wp.map((q) => at(q[0], q[1], A.z + q[2])); out.runs++;
         for (let n = 0; n < Pp.length - 1; n++) { const p = Pp[n], q = Pp[n + 1]; const dxx = q.x - p.x, dyy = q.y - p.y, LN = Math.hypot(dxx, dyy); if (LN < 0.6) continue;
           out.edges.push({ x: px(p.x), y: px(p.y), len: px(LN), deg: +(Math.atan2(dyy, dxx) * 180 / Math.PI).toFixed(2), col: r.col, cls: r.cls, title: r.title, run: r.id, joins: r.joins || undefined, tail: tails.indexOf(n) >= 0 ? true : undefined }); }
         // the pipe as one path - consecutive duplicate points dropped
         const D = []; Pp.forEach((p) => { const l = D[D.length - 1]; if (!l || Math.abs(l.x - p.x) + Math.abs(l.y - p.y) > 0.3) D.push(p); });
         if (D.length > 1) out.paths.push({ run: r.id, col: r.col, cls: r.cls, title: r.title, joins: r.joins || null, a: A.id || '', b: B.id || '', d: 'M' + D.map((p) => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join('L') }); });
+      trunks.forEach((T) => { const r0 = T.runs[0], B = T.B, Z = ZL, pb = r0.pb || 0, vs = (T.hvs || []).concat([B.V + pb]), lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs);
+        const legs = [[[T.g, lo, Z], [T.g, hi, Z]], [[T.g, B.V + pb, Z], [B.U + pb, B.V + pb, Z], [B.U + pb, B.V, Z], [B.U, B.V, Z], [B.U, B.V, 0]]], id = ++rid, cls = r0.cls + ' trunk';
+        legs.forEach((Wp, wi) => { const Pp = Wp.map((q) => at(q[0], q[1], B.z + q[2]));
+          for (let n = 0; n < Pp.length - 1; n++) { const p = Pp[n], q = Pp[n + 1], dxx = q.x - p.x, dyy = q.y - p.y, LN = Math.hypot(dxx, dyy); if (LN < 0.6) continue;
+            out.edges.push({ x: px(p.x), y: px(p.y), len: px(LN), deg: +(Math.atan2(dyy, dxx) * 180 / Math.PI).toFixed(2), col: r0.col, cls, title: T.runs.length + ' runs into one', run: id, tail: wi === 1 && n >= 1 ? true : undefined }); }
+          out.paths.push({ run: id, col: r0.col, cls, title: T.runs.length + ' runs into one', joins: null, a: B.id || '', b: B.id || '', d: 'M' + Pp.map((p) => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join('L') }); }); });
       // no leg twice
       { const seen = {}; out.edges = out.edges.filter((e) => { const k = e.x + '/' + e.y + '/' + e.len + '/' + e.deg; if (seen[k]) return false; seen[k] = 1; return true; }); } });
     out.size = { w: W, h: H };
@@ -1249,7 +1267,7 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         this._schedule();
         if (this._graph[id] === 'want') {
           const kind = String(c.kind || '').toLowerCase();
-          const body = typeof c.body === 'string' ? c.body : (typeof c.text === 'string' ? c.text : '');
+          const b0 = typeof c.body === 'string' ? c.body : '', t0 = typeof c.text === 'string' ? c.text : '', body = t0.length > b0.length ? t0 : b0;   /* a code card shows 400 characters and carries the whole */
           const rec = c.record && typeof c.record === 'object' ? String(c.record.id || c.record.record_id || '') : '';
           this.dispatchEvent(new CustomEvent('vera:xpl:graph', { bubbles: true, detail: {
             id: id, kind: kind, title: String(c.title || c.n || ''), record: rec, text: body,
@@ -1286,7 +1304,9 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
           if (el.parentNode !== slot) { slot.textContent = ''; slot.appendChild(el); }
         });
       }
-      _itemOf(id) { const o = this._last || {}; return (o.widgets || []).find((w) => w.id === id) || (o.cards || []).find((c) => c.id === id) || null; }
+      _itemOf(id) { const o = this._last || {}; return (o.widgets || []).find((w) => w.id === id) || (o.cards || []).find((c) => c.id === id) || (o.panels || []).reduce((f, p) => f || (p.cards || []).find((c) => c.id === id), null) || null; }   /* front keeps its cards in panels */
+      // the host took the card's structure elsewhere (into the scene): the card is a card again
+      graphClear(id) { id = String(id || ''); if (this._graph) delete this._graph[id]; this._schedule(); return this; }
       widgetSize(s) { const L = ['s', 'm', 'l']; this._S.wsz = L.includes(s) ? s : L[(L.indexOf(this._S.wsz || 'm') + 1) % L.length]; this._schedule(); return this._S.wsz; }
       mode(name) { if (name && /^(cards|front|iso)$/.test(name)) { this._S.mode = name; this._S.pan = { x: 0, y: 0, z: 1, auto: true }; this._S.open = null; this._S.focus = null; this._frontKey = null; this._schedule(); } return this._S.mode; }
       select(mid) { this._S.scene.sel = mid; this._schedule(); this._isoBring(); this.dispatchEvent(new CustomEvent('vera:xpl:turn', { detail: { mid }, bubbles: true })); }
