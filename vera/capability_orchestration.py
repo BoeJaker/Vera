@@ -11516,6 +11516,7 @@ async def lifespan(app: FastAPI):
         # inventory and after skills/loop_profiles/agents, for the same reason -
         # it projects onto the live registries and must see all of them.
         os.path.join(_here, "registry/registry_capabilities.py"),
+        os.path.join(_here, "minds/switchboard_capabilities.py"),
         # The widget registry (UI redesign): every part of the UI as a record -
         # templates, instances, the registry panel. Beside the agent registry
         # because it projects the panel registry (UI_PANELS) as built-ins.
