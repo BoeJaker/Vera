@@ -519,7 +519,7 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
     texts = [f"{c.get('title', '')}. {c.get('snippet', '')}"[:1000] for c in cands]
     recent = st.signals(t["id"], since=_since(24 * 30), limit=400)
     recent_titles = [s.get("title", "") for s in recent]
-    held = [(s["id"], s["vec"]) for s in recent if isinstance(s.get("vec"), list) and s.get("vec")]
+    held = [(s["id"], s["vec"]) for s in recent if isinstance(s.get("vec"), list) and s.get("vec")][:200]
     emb = await _nlp("nlp.embed", texts=texts)
     vecs = emb.get("embeddings") if isinstance(emb.get("embeddings"), list) else []
     rr = await _nlp("nlp.rerank", query=ops.profile_text(t), documents=texts, top_k=len(texts))
@@ -534,7 +534,7 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
     for i, c in enumerate(cands):
         vec = vecs[i] if i < len(vecs) and isinstance(vecs[i], list) else None
         if vec:
-            sid, cos = ops.nearest(vec, held)
+            sid, cos = await asyncio.to_thread(ops.nearest, vec, list(held))
             if cos >= 0.92:                 # the same story under another url: it joins, it is not news
                 twin = batch.get(sid)
                 if twin is not None:        # ...a story that arrived earlier in this same sweep
@@ -634,7 +634,7 @@ async def _research_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
         r = await _call("research.job.status", job_id=jid)
         status = str(r.get("status") or "")
         if status not in ("done", "completed", "complete", "finished"):
-            if status in ("failed", "error", "cancelled") or not status and r.get("error"):
+            if status in ("failed", "error", "cancelled", "not_found") or (not status and r.get("error")):
                 continue                       # gone - forget it
             keep[jid] = j
             continue
@@ -682,8 +682,16 @@ async def _stop_reason(probe) -> str:
     except Exception:  # noqa: BLE001
         return ""
     why = str(r or "")
-    if why and re.search(r"gate|held", why, re.I) and time.time() - _OWN["llm_ended"] < 200:
-        return ""
+    if why and re.search(r"gate|held", why, re.I):
+        human = False
+        try:
+            human = bool(getattr(_orch, "interactive_recent", lambda: False)())
+        except Exception:  # noqa: BLE001
+            human = False
+        if "intel" in why.lower() and not human:
+            return ""                 # held by our own call
+        if re.search(r"was held", why, re.I) and not human and time.time() - _OWN["llm_ended"] < 200:
+            return ""                 # the cooldown after our own call, with nobody at the keyboard
     return why
 
 
@@ -747,7 +755,8 @@ async def enrich_topic(t: Dict[str, Any], *, limit: int = 0, should_continue=Non
             st.put_signal(s2)
             nlp_done += 1
             continue
-        parsed = await _llm_json(core.enrich_prompt(t, s2, page.get("markdown") or "", triaged=True), role="enrich")
+        triaged = bool(s2.get("entities")) or s2.get("relevance_nlp") is not None
+        parsed = await _llm_json(core.enrich_prompt(t, s2, page.get("markdown") or "", triaged=triaged), role="enrich")
         if not parsed:
             st.put_signal(dict(s2, enrich_failed=int(s.get("enrich_failed") or 0) + 1))
             continue
@@ -1283,12 +1292,15 @@ async def _submit(mode: str, title: str, *, key: str, payload: Optional[Dict[str
         asyncio.create_task(_intel_job({"payload": body}, None))
         return {"ok": True, "queued": False, "message": "idle queue unavailable - running now"}
     r = await svc.submit(KIND_INTEL, title, dedupe_key=f"intel:{key}", payload=body, total=1, priority=priority)
+    if not r.get("queued"):
+        return {"ok": True, "queued": False, "job": r, "message": f"not queued: {r.get('reason') or 'refused'}"}
     return {"ok": True, "queued": True, "job": r, "message": "queued for the next quiet window"}
 
 
 async def _submit_topic(t: Dict[str, Any], *, reason: str, force: bool = False, until: str = "",
                         batch: str = "", priority: Optional[int] = None) -> Dict[str, Any]:
-    return await _submit("topic", f"intel: {t['name'][:50]} ({reason})", key=f"topic:{t['id']}",
+    return await _submit("topic", f"intel: {t['name'][:50]} ({reason})",
+                         key=f"topic:{t['id']}" + (f":{batch}" if batch else ""),
                          payload={"topic_id": t["id"], "force": force, "until": until, "batch": batch},
                          priority=priority)
 
@@ -1320,6 +1332,9 @@ async def _intel_job(job: Dict[str, Any], should_continue) -> Dict[str, Any]:
         return await run_advisor()
     if mode == "research":
         return await _job_research(p)
+    if mode == "brief":
+        await _finish_night(p.get("night", ""))
+        return {"ok": True}
     if mode == "night":                # an old-style job left in the queue: start a batch instead
         await _start_night(_night_of(_local_now(), int(config().get("sweep_hour", 23))))
         return {"ok": True, "converted": "night batch"}
@@ -1327,10 +1342,28 @@ async def _intel_job(job: Dict[str, Any], should_continue) -> Dict[str, Any]:
 
 
 async def _job_topic(job: Dict[str, Any], p: Dict[str, Any], should_continue) -> Dict[str, Any]:
+    """One topic unit. Whatever happens to it - done, failed, gone - the night
+    batch hears it is finished, so a batch can never wait on a unit forever; only
+    a yield (which the queue runs again) leaves it pending."""
+    res: Dict[str, Any] = {}
+    try:
+        res = await _job_topic_inner(job, p, should_continue)
+        return res
+    except Exception as ex:  # noqa: BLE001
+        log.warning("intel: topic unit failed: %s", ex)
+        res = {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+        return res
+    finally:
+        if not str(res.get("yielded") or ""):
+            await _batch_done(p.get("batch") or (store().get_kv("night", {}) or {}).get("id"),
+                              p.get("topic_id", ""), res.get("_stats") or {})
+            res.pop("_stats", None)
+
+
+async def _job_topic_inner(job: Dict[str, Any], p: Dict[str, Any], should_continue) -> Dict[str, Any]:
     st = store()
     t = st.get_topic(p.get("topic_id", ""))
     if not t or (t.get("status") != "active" and not p.get("force")):
-        await _batch_done(p.get("batch"), p.get("topic_id", ""), {})
         return {"ok": True, "skipped": "topic gone or paused"}
     why = await _stop_reason(should_continue)
     if why:
@@ -1349,9 +1382,8 @@ async def _job_topic(job: Dict[str, Any], p: Dict[str, Any], should_continue) ->
     sn = await snapshot_topic(st.get_topic(t["id"]) or t)
     out["alert"] = sn.get("alert", "")
     await _progress(job, 3, 3)
-    await _batch_done(p.get("batch"), t["id"], {"searched": len(sw.get("queries") or []), "new": sw["new"],
-                                                 "assessed": en["enriched"]})
-    return {"ok": True, **out}
+    return {"ok": True, **out, "_stats": {"searched": len(sw.get("queries") or []), "new": sw["new"],
+                                           "assessed": en["enriched"]}}
 
 
 async def _job_research(p: Dict[str, Any]) -> Dict[str, Any]:
@@ -1381,9 +1413,12 @@ async def _start_night(night: str) -> Dict[str, Any]:
     if c.get("drop_folders"):
         await _submit("files", "intel: drop folders", key=f"files:{night}")
     for t in due:
-        await _submit_topic(t, reason="night", batch=night)
-    if not due:
-        await _finish_night(night)
+        r = await _submit_topic(t, reason="night", batch=night)
+        if not r.get("queued", True):
+            await _batch_done(night, t["id"], {})           # refused (already queued): never wait on it
+    n = st.get_kv("night", {}) or {}
+    if n.get("id") == night and not n.get("pending") and not n.get("brief"):
+        await _submit("brief", "intel: write the brief", key=f"brief:{night}", payload={"night": night})
     return {"topics": len(due)}
 
 
@@ -1392,7 +1427,7 @@ async def _batch_done(batch: Optional[str], topic_id: str, stats: Dict[str, Any]
         return
     st = store()
     n = st.get_kv("night", {}) or {}
-    if n.get("id") != batch:
+    if n.get("id") != batch or topic_id not in (n.get("pending") or []):
         return
     n["pending"] = [x for x in n.get("pending") or [] if x != topic_id]
     agg = n.get("stats") or {}
@@ -1401,7 +1436,7 @@ async def _batch_done(batch: Optional[str], topic_id: str, stats: Dict[str, Any]
     n["stats"] = agg
     st.set_kv("night", n)
     if not n["pending"]:
-        await _finish_night(batch)
+        await _submit("brief", "intel: write the brief", key=f"brief:{batch}", payload={"night": batch})
 
 
 async def _finish_night(night: str) -> None:
@@ -1416,7 +1451,8 @@ async def _finish_night(night: str) -> None:
     st.set_kv("night", n)
     if _has_content(doc):
         if st.get_kv("brief_day") == _local_now().date().isoformat():
-            await deliver_report(doc["id"], list(config().get("brief_channels") or ["html"]))
+            # the morning already went out: this one is late - one quiet message, not a second fan-out
+            await deliver_report(doc["id"], ["html", "telegram"])
         else:
             st.set_kv("pending_brief", {"id": doc["id"], "ts": doc["ts"]})
     st.set_kv("last_nightly", {"ts": core.now_iso(), "topics": (n.get("stats") or {}).get("topics", 0),
@@ -1456,6 +1492,11 @@ def _night_of(now: datetime, start: int) -> str:
     return d.isoformat()
 
 
+def _budget_left(key: str, limit: int) -> bool:
+    b = store().get_kv("budget", {}) or {}
+    return b.get("day") != _local_now().date().isoformat() or int(b.get(key, 0)) < limit
+
+
 def _bump_daily(key: str, limit: int) -> bool:
     """Count one unit of today's budget; False when it is spent."""
     st = store()
@@ -1490,16 +1531,23 @@ async def _plan_session(s: Dict[str, Any], now: datetime) -> int:
                 break
             if s.get("mode") == "refresh" and not core.is_due(t):
                 continue
-            await _submit_topic(t, reason=f"session {s['name']}", force=True, until=until, priority=40)
-            planned += 1
+            r = await _submit_topic(t, reason=f"session {s['name']}", force=True, until=until, priority=40)
+            if r.get("queued", True):
+                planned += 1
     if s.get("mode") in ("deepen", "research") and config().get("auto_research"):
         wanted = st.get_kv("research_wanted", []) or []
-        while wanted and used + planned < budget:
-            w = wanted.pop(0)
-            await _submit("research", f"intel research: {w['query'][:50]}", key=f"research:{core.slug(w['query'])}",
-                          payload={"topic_id": w["topic_id"], "query": w["query"], "until": until}, priority=45)
-            planned += 1
-        st.set_kv("research_wanted", wanted)
+        left = []
+        for w in wanted:
+            if used + planned >= budget:
+                left.append(w)
+                continue
+            r = await _submit("research", f"intel research: {w['query'][:50]}", key=f"research:{core.slug(w['query'])}",
+                              payload={"topic_id": w["topic_id"], "query": w["query"], "until": until}, priority=45)
+            if r.get("queued", True):
+                planned += 1
+            else:
+                left.append(w)                 # refused: keep it for later
+        st.set_kv("research_wanted", left)
     runs[key] = used + planned
     st.set_kv("session_runs", dict(list(runs.items())[-60:]))
     return planned
@@ -1547,8 +1595,10 @@ async def _tick() -> None:
     if c.get("opportunistic") and not in_night:
         for t in st.topics("active"):
             if t.get("cadence") in ("twice-daily",) and core.is_due(t) \
-                    and _bump_daily("opportunistic", int(c.get("daily_job_budget", 24))):
-                await _submit_topic(t, reason="due")
+                    and _budget_left("opportunistic", int(c.get("daily_job_budget", 24))):
+                r = await _submit_topic(t, reason="due")
+                if r.get("queued", True):
+                    _bump_daily("opportunistic", int(c.get("daily_job_budget", 24)))
     s = ops.active_session(c.get("sessions") or [], now)
     if s:
         await _plan_session(s, now)
@@ -1591,8 +1641,9 @@ async def run_drop_folders(should_continue=None) -> Dict[str, Any]:
             if not (rd.get("ok") or rd.get("text")):
                 continue
             h = ops.content_hash(rd.get("text") or "")
-            if kind != "notes" and st.get_kv(f"seen-n8n:{fp}") and not st.get_kv(f"seen:{fp}#{h}"):
-                st.set_kv(f"seen:{fp}#{h}", core.now_iso())       # handled by files-night before the move
+            if kind != "notes" and st.get_kv(f"seen-n8n:{fp}#{ops.cyrb53(ops.norm_text(rd.get('text') or ''))}"):
+                if not st.get_kv(f"seen:{fp}#{h}"):
+                    st.set_kv(f"seen:{fp}#{h}", core.now_iso())   # files-night handled exactly this content
                 continue
             item = ops.plan_file(kind, fp, rd.get("text") or "", st.get_kv(f"note:{fp}") if kind == "notes" else None,
                                  bool(st.get_kv(f"seen:{fp}#{h}")))
@@ -1627,6 +1678,11 @@ async def run_drop_folders(should_continue=None) -> Dict[str, Any]:
                 continue
             budget -= 1
             p = await _llm_json(ops.note_prompt(item), role="notes") or {}
+            if not p.get("summary"):
+                tries = int(st.get_kv(f"tries:{item['path']}#{item['hash']}") or 0) + 1
+                st.set_kv(f"tries:{item['path']}#{item['hash']}", tries)
+                if tries < 3:
+                    continue
             fab = sys.modules.get("data_fabric")
             if fab and getattr(fab, "ingest_dataset", None):
                 try:
@@ -1841,6 +1897,9 @@ async def cap_command(text: str = "", trace_id=None):
                 n += 1
         return {"ok": True, "text": f"{n} due topics queued"}
     if cmd == "night":
+        cur = st.get_kv("night", {}) or {}
+        if cur.get("pending") or (cur.get("id") and not cur.get("brief")):
+            return {"ok": False, "text": f"a batch is still running ({len(cur.get('pending') or [])} topics left)"}
         r = await _start_night(f"cmd-{core.now_iso()[:16]}")
         return {"ok": True, "text": f"night batch queued: {r['topics']} topics"}
     if cmd == "files":
@@ -2046,8 +2105,8 @@ async def cap_import_n8n(dry_run: bool = True, trace_id=None):
                 # the n8n hash was a different function - keep its text so the next read diffs
                 # against it (a reword stays cosmetic) instead of treating every note as new
                 st.set_kv(f"note:{n['path']}", dict(n, hash=ops.content_hash(n.get("norm") or "")))
-        for r in seen:                # files-night already printed / narrated these: never again
-            st.set_kv(f"seen-n8n:{r['path']}", r.get("at") or core.now_iso())
+        for r in seen:                # files-night already printed / narrated exactly this content: never again
+            st.set_kv(f"seen-n8n:{r['path']}#{r['hash']}", r.get("at") or core.now_iso())
         if firms:
             cur = st.get_kv("config", {}) or {}
             cur["competitors"] = list(dict.fromkeys((cur.get("competitors") or []) + firms))[:60]

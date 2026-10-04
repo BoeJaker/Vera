@@ -156,7 +156,7 @@ def _load(tmp_path, *, nlp=True):
                                    "summary": "S", "relevance": 9, "enriched": True, "enriched_at": "2026-10-03T00:00:00Z",
                                    "competitor": "Savills"}],
             "intel.notes": [{"path": "/n/plan.md", "norm": "Plan: buy a GPU for the lab", "summary": "old", "updated": "1"}],
-            "files.seen": [{"path": "/p/todo.txt", "hash": "abc", "at": "1"}],
+            "files.seen": [{"path": "/p/todo.txt", "hash": "1a6f417ab11736", "at": "1"}],   # n8n cyrb53 of "print me"
         }.get(dataset_id, [])
         return {"records": [{"data": d} for d in data], "has_more": False}
 
@@ -389,3 +389,47 @@ def test_review_regressions(tmp_path):
     mod.store().claim_action(a["token"])
     mod.store().finish_action(a["token"], "failed", {"error": "x"})
     assert mod.store().claim_action(a["token"])
+
+
+def test_phase1_review_regressions(tmp_path):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    # a night unit the queue refuses (already queued) is not waited on: the brief still gets written
+    async def refuse(mode, title, *, key, payload=None, priority=None):
+        orch.CALLS.append(("submit", {"mode": mode, "key": key}))
+        if mode == "topic":
+            return {"ok": True, "queued": False, "message": "not queued: already queued"}
+        return await mod._intel_job({"payload": dict(payload or {}, mode=mode)}, None)
+    mod._submit = refuse
+    _run(mod._start_night("2026-10-05"))
+    n = mod.store().get_kv("night")
+    assert n["pending"] == [] and n["brief"]
+    assert any(c[1]["mode"] == "brief" for c in orch.CALLS if c[0] == "submit")          # the brief is a queue unit
+    # a failing unit still clears the batch
+    mod.store().set_kv("night", {"id": "N", "pending": [t["id"]], "stats": {}, "brief": ""})
+    async def boom(*a, **k):
+        raise RuntimeError("x")
+    real = mod.sweep_topic
+    mod.sweep_topic = boom
+    r = _run(mod._intel_job({"payload": {"mode": "topic", "topic_id": t["id"], "batch": "N"}}, None))
+    mod.sweep_topic = real
+    assert r["ok"] is False and mod.store().get_kv("night")["pending"] == []
+    # the night command never clobbers a running batch
+    mod.store().set_kv("night", {"id": "N2", "pending": ["x"], "brief": ""})
+    assert not _R(orch, "intel.command", text="night")["ok"]
+    # a person on the gate always stops us; our own hold does not
+    import time as _t
+    mod._OWN["llm_ended"] = _t.time()
+    async def person():
+        return "the GPU gate is held by chat:user"
+    async def ours():
+        return "the GPU gate is held by intel:enrich"
+    assert _run(mod._stop_reason(person)) and not _run(mod._stop_reason(ours))
+    # refused opportunistic submits do not burn the day's budget
+    async def refuse_all(mode, title, *, key, payload=None, priority=None):
+        return {"ok": True, "queued": False}
+    mod._submit = refuse_all
+    _R(orch, "intel.topic.save", name="Fast topic", cadence="twice-daily")
+    for _ in range(3):
+        _run(mod._tick())
+    assert int((mod.store().get_kv("budget") or {}).get("opportunistic", 0)) == 0

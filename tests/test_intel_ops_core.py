@@ -79,7 +79,7 @@ def test_apply_note_keeps_history_and_terms():
                                               "resolved_action_items": ["try it"]}, "2026-10-05T00:00:00Z")
     assert rec2["action_items"] == [] and "rent review ai" in rec2["search_terms"] and rec2["revisions"] == 2
     rec3, terms3, line3 = ops.apply_note(ch, None, "2026-10-06T00:00:00Z")
-    assert rec3["hash"] == ch["hash"] and terms3 == [] and line3 == ""      # a failed read still records the hash
+    assert rec3["hash"] == rec["hash"] and rec3["read_failures"] == 1 and terms3 == [] and line3 == ""   # a failed read is retried
 
 
 def test_advisor_drafts_are_inactive_manual_and_quote_safely():
@@ -128,3 +128,28 @@ def test_material_change():
     assert ok and "headline" in why and "confidence" in why
     assert ops.material_change(prev, same, competitor_hits_n=1)[0] is True
     assert "why now" in ops.alert_text("AI", moved, why, "https://h/intel/panel")
+
+
+def test_cyrb53_matches_n8n():
+    # values produced by the files-night JavaScript itself (node)
+    assert ops.cyrb53("print me") == "1a6f417ab11736"
+    assert ops.cyrb53("Plan: buy a GPU for the lab" + chr(10) + "line two") == "93a4bc4c83706"
+    assert ops.cyrb53(chr(0xa3) + " h" + chr(0xe9) + "llo " + chr(0x2014) + " " + chr(0x1f680)) == "1a074ded7ec76a"
+    assert ops.cyrb53("") == "bdcb81aee8d83"
+
+
+def test_a_failed_note_read_is_retried():
+    known = {"hash": "h0", "norm": "old line", "summary": "S", "path": "/n/a.md", "name": "a.md"}
+    item = ops.plan_file("notes", "/n/a.md", "old line" + chr(10) + "A real new decision about the lab", known, False)
+    rec, terms, line = ops.apply_note(item, None, "t1")
+    assert rec["hash"] == "h0" and rec["read_failures"] == 1 and not line      # kept: read again next time
+    rec2, _, _ = ops.apply_note(dict(item, prev=rec), None, "t2")
+    rec3, _, _ = ops.apply_note(dict(item, prev=rec2), None, "t3")
+    assert rec3["hash"] == item["hash"] and "read_failures" not in rec3       # third failure: accepted, not looped
+
+
+def test_draft_notes_never_become_code():
+    note = "ok" + chr(13) + chr(0x2028) + "alert(1)//"
+    d = ops.compile_draft({"title": "x", "steps": [{"cap": "a.b", "note": note}]}, "https://h", "d")
+    code = d["nodes"][1]["parameters"]["jsCode"]
+    assert "const note=" in code and chr(13) not in code and chr(0x2028) not in code

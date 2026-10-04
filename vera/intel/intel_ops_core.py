@@ -230,6 +230,26 @@ def content_hash(t: str) -> str:
     return hashlib.sha1(norm_text(t).encode("utf-8")).hexdigest()[:16]
 
 
+def cyrb53(text: str, seed: int = 0) -> str:
+    """The hash n8n's files-night stored (cyrb53 over UTF-16 code units), so its
+    'already handled' marks can be matched to exact content."""
+    M = 0xFFFFFFFF
+
+    def imul(a: int, b: int) -> int:
+        return (a * b) & M
+    h1, h2 = (0xdeadbeef ^ seed) & M, (0x41c6ce57 ^ seed) & M
+    data = (text or "").encode("utf-16-le")
+    for i in range(0, len(data), 2):
+        ch = data[i] | (data[i + 1] << 8)
+        h1 = imul(h1 ^ ch, 2654435761)
+        h2 = imul(h2 ^ ch, 1597334677)
+    h1 = imul(h1 ^ (h1 >> 16), 2246822507)
+    h1 ^= imul(h2 ^ (h2 >> 13), 3266489909)
+    h2 = imul(h2 ^ (h2 >> 16), 2246822507)
+    h2 ^= imul(h1 ^ (h1 >> 13), 3266489909)
+    return format(4294967296 * (2097151 & h2) + (h1 & M), "x")
+
+
 def wanted_file(kind: str, name: str, size: Any) -> bool:
     if not name or name.startswith((".", "_")):
         return False
@@ -334,6 +354,13 @@ def apply_note(item: Dict[str, Any], parsed: Optional[Dict[str, Any]], now: str)
                                      "delta": str(p.get("delta_summary") or "")[:400],
                                      "added": len(item.get("added") or []), "removed": len(item.get("removed") or [])}])[-20:])
         return rec, terms, f"CHANGED note: {prev.get('title') or item['name']} - {str(p.get('delta_summary') or '')[:160]}"
+    if item["kind"] != "note_trivial" and not p.get("trivial"):
+        tries = int(prev.get("read_failures") or 0) + 1
+        if tries < 3:                 # the model failed: keep what was known, so the edit is read again next time
+            keep = dict(prev, read_failures=tries) if prev else {"path": item["path"], "name": item["name"],
+                                                                  "read_failures": tries, "hash": "", "norm": ""}
+            return keep, [], ""
+    rec.pop("read_failures", None)
     kind = "trivial" if (item["kind"] == "note_trivial" or p.get("trivial")) else "unparsed"
     rec["history"] = (hist + [{"at": now, "hash": item["hash"], "kind": kind}])[-20:]
     return rec, [], ""
@@ -391,7 +418,7 @@ def compile_draft(sg: Dict[str, Any], vera_url: str, today: str) -> Dict[str, An
         prep = f"Prep {i + 1}: {str(st.get('name') or st.get('cap') or 'step')[:28]}"
         call = f"Call {i + 1}: {str(st.get('cap') or '')[:28]}"
         args = st.get("args") if isinstance(st.get("args"), dict) else {}
-        js = (pre + "// " + str(st.get("note") or "").replace("\n", " ")[:200] + "\n"
+        js = (pre + "const note=" + json.dumps(str(st.get("note") or "")[:200]) + ";\n"
               "const prior=content($json)||{};  // output of the previous step, if you want to wire it in\n"
               "return [{json:{reqBody:JSON.stringify({name:" + json.dumps(str(st.get("cap") or "")) +
               ",arguments:" + json.dumps(args) + "})}}];")
