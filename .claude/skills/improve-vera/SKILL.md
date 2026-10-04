@@ -329,3 +329,12 @@ minutes in by a release). `cancel` then only sets a flag; the job's worktree
 
 **The report is evidence, not a finding.** Open every cited `path:line` before
 relying on it (§3).
+
+
+## 9. Coordination and autopsy
+
+- **Working alongside other agents:** follow `vera-coordinate`. Plans, handovers and evidence go only in
+  `<git-common-dir>/vera-work/shared-planning/<unit>/`. Tasks and findings go on the board (search before filing;
+  comment on the related item). Status rides on the records you already write, and chat gets one line.
+- **Close with an autopsy:** if a step here failed, misled or slowed you, append an entry to this skill's
+  `LEARNINGS.md` (format: `skill-smith` §3). If it needs a code or tool change, file a `kind:skill-issue` board item.

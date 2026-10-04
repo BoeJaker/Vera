@@ -217,7 +217,9 @@
       if(own.length) m.widgets = own.slice(0, 8);
       var c = ctas.filter(function(x){ return x.for && (m.id.charAt(1) === 'i' ? (_navItems[+m.id.slice(2)] || {}).id === x.for : ids.indexOf(x.for) >= 0); })[0] || ctas.filter(function(x){ return !x.for; })[0];
       if(c) m.cta = { id: 'cta:' + c.i, label: c.label, desc: c.desc };
-      else if(m.id === act.menu){ var kc = _shownKidCta(); if(kc) m.cta = { id: 'c:cta:' + kc.cta[0].i, label: kc.cta[0].label, desc: kc.cta[0].desc }; } });
+      /* a panel shown nested under the open item is what that item is about: its action wins over the host's every-menu one
+         (IDE > Remotes & Queue ends with the remote view's Run a task, not the IDE's New worker); one the host names for this item still wins */
+      if(m.id === act.menu && !(c && c.for)){ var kc = _shownKidCta(); if(kc) m.cta = { id: 'c:cta:' + kc.cta[0].i, label: kc.cta[0].label, desc: kc.cta[0].desc }; } });
     var wd = _navWidgets(); if(kid && kid.nav.widgets) kid.nav.widgets.forEach(function(w){ if(wd.indexOf(w) < 0) wd.push(w); });
     return { title: title, active: act, menus: menus, open: [], widgets: wd };
   }
