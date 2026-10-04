@@ -2683,6 +2683,10 @@ function _panelIdOfSource(src){
 // horizontal tab bar the sections are only a hover dropdown, so the panel keeps its own rail there.
 function _navHostedFor(nav){ return _navHostingAllowed() && (!(nav && nav.lhm) || _lhmMode); }
 const _panelCtaCache = {};   // panel -> its primary actions for every menu (state.cta)
+/* Esc reaches the open panel's Settings page (owner, 2026-10-04: "you cant get out of the settings panel"): after a pick in
+   this menu the focus is here, not in the panel's frame, so its own Esc never fired */
+document.addEventListener('keydown', e => { if(e.key !== 'Escape') return;
+  document.querySelectorAll('.panels .panel.active iframe').forEach(f => { try{ f.contentWindow.postMessage({ type: 'vera:settings:close' }, '*'); }catch(_){} }); });
 window.addEventListener('message', e => {
   const d = e.data;
   if(!d || typeof d!=='object' || d.type!=='vera:panel:state') return;

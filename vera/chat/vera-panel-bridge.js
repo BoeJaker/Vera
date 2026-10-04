@@ -885,6 +885,9 @@
       var r = c[i].getBoundingClientRect();
       if(r.width < 1 || r.top > 90 || r.height < 18 || r.height > 96 || r.width < W * 0.4) continue;
       if(!c[i].querySelector('button, select, input')) continue;
+      /* a page that opens OVER the panel (the shared Settings page, a dialog) has a header of its own - never the panel's top bar:
+         taken, the harness lifted it away and the page lost its ✕ (owner, 2026-10-04: "you cant get out of the settings panel") */
+      try{ if(c[i].closest('.vs-page, [role="dialog"], [aria-modal="true"], [data-vera-float]')) continue; }catch(e){}
       return c[i];
     }
     return null;
