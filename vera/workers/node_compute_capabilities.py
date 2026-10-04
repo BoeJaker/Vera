@@ -168,9 +168,10 @@ _RESERVED: Dict[str, Dict[str, float]] = {}
 
 def _reserve(hid: str, fn: str, sign: int) -> None:
     need = core.NEEDS.get(fn, {"cpu": 1.0, "mem_gb": 1.0})
-    cur = _RESERVED.setdefault(hid, {"cpu": 0.0, "mem_gb": 0.0})
+    cur = _RESERVED.setdefault(hid, {"cpu": 0.0, "mem_gb": 0.0, "jobs": 0.0})
     for k in ("cpu", "mem_gb"):
         cur[k] = max(0.0, cur[k] + sign * need[k])
+    cur["jobs"] = max(0.0, cur.get("jobs", 0.0) + sign)
 
 
 async def node_plan(fn: str, exclude=()) -> Dict[str, Any]:
@@ -263,6 +264,10 @@ async def run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
             await asyncio.sleep(5)
         w = p["pick"]
         hid, node = str(w.get("host_id")), str(w.get("host") or "")
+        # reserve in the same step as the pick (no await between): jobs planned
+        # side by side - a gate's shards - then see it and pick other nodes
+        # (2026-10-04: two of a gate's three shards picked the same node)
+        _reserve(hid, fn, +1)
         try:
             out = await _dispatch_and_wait(r, job, fn, blob, hid, node, base, t0,
                                            on_progress, stop, trace_id, attempt)
@@ -273,6 +278,8 @@ async def run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
             await _record({**base, "state": "retrying", "node": node, "why": last_err})
             job = uuid.uuid4().hex[:12]
             base = {**base, "job": job}
+        finally:
+            _reserve(hid, fn, -1)
     await _record({**base, "state": "error", "error": last_err[:300],
                    "seconds": round(time.time() - t0, 1)})
     raise NodeComputeError(f"{fn}: {last_err} (twice)")
@@ -290,7 +297,6 @@ async def _dispatch_and_wait(r, job, fn, blob, hid, node, base, t0, on_progress,
            "trace_id": trace_id or job, "ts": _orch.now_iso()}
     stream = core.node_stream(hid)
     msg_id = await r.xadd(stream, rec, maxlen=1000, approximate=True)
-    _reserve(hid, fn, +1)
     sent_at = time.time()
     await _record({**base, "state": "queued", "node": node, "bytes_in": len(blob),
                    "attempt": attempt + 1})
@@ -363,7 +369,6 @@ async def _dispatch_and_wait(r, job, fn, blob, hid, node, base, t0, on_progress,
                            "seconds": round(time.time() - t0, 1)})
         raise
     finally:
-        _reserve(hid, fn, -1)
         try:
             await r.delete(core.prog_key(job), core.out_key(job))
         except Exception:
@@ -409,7 +414,10 @@ async def cap_compute_run(job: str = "", fn: str = "", trace_id=None) -> Dict:
         return await finish(False, "stopped before it started")
     need = core.requirements(fn)
     libs = core.available_libs()
-    missing = [m for m in need if not libs.get(m)]
+    # only importable libraries are checked here; a requirement that is not
+    # one (`testenv`, a venv on disk) is checked by the function itself - this
+    # check refused every gate shard before it ran (2026-10-04)
+    missing = core.node_missing(fn, libs)
     if missing:
         return await finish(False, f"{node} has no {', '.join(missing)}")
     blob = await r.get(core.in_key(job))
