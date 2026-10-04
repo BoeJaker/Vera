@@ -107,6 +107,7 @@
     if(!fr) return null; var k = { win: win, frame: fr, nav: null, hdr: null }; _kids.push(k); return k;
   }
   function _kidShown(k){ try{ return !!(k.frame && k.frame.isConnected && (k.frame.offsetWidth || k.frame.offsetHeight)); }catch(e){ return false; } }
+  function _shownKidCta(){ for(var i = _kids.length - 1; i >= 0; i--){ var k = _kids[i]; if(_kidShown(k) && k.cta && k.cta.length) return k; } return null; }
   function _activeKid(){ for(var i = _kids.length - 1; i >= 0; i--){ var k = _kids[i]; if(_kidShown(k) && k.nav && k.nav.items && k.nav.items.length) return k; } return null; }
   // ── A PAGE'S OWN SUB-SECTIONS (owner, 2026-09-28: "the estate ui's observe menu is missing the perf section"). A section
   // that switches between views in the page itself (Observe: Events / Perf) marks each tab data-vera-sub="<id>"; while its
@@ -131,6 +132,9 @@
     if(d.type === 'vera:panel:state'){
       var nv = d.state && d.state.nav; k.nav = (nv && Array.isArray(nv.items)) ? { items: nv.items.slice(0, 60).map(function(it){ return { id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48), desc: String(it.desc || '').slice(0, 140), desc_long: String(it.desc_long || '').slice(0, 600) }; }), active: String(nv.active || '') } : null;
       if(k.nav && nv.lhm && Array.isArray(nv.lhm.widgets)) k.nav.widgets = nv.lhm.widgets.slice(0, 8).map(String);   // the child's menu widgets ride up with its sections
+      /* the child's primary action rides up too: a nested panel with no menu of its own (an IDE view, an Estate pane) has its
+         action end the host's open menu, and a press goes back down to it */
+      k.cta = (d.state && Array.isArray(d.state.cta)) ? d.state.cta.filter(function(c){ return c && !c.for; }).slice(0, 4) : null;
       try{ ev.source.postMessage({ type: (_hostedUp || document.documentElement.classList.contains('vpb-nav-hosted')) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){}
       publishStateDebounced();
     } else { k.hdr = d; _hdrRelay(); }
@@ -212,7 +216,8 @@
       if(m.id.charAt(1) === 'i'){ var one = _navItems[+m.id.slice(2)]; own = (one && one.widgets) ? one.widgets.slice() : []; }
       if(own.length) m.widgets = own.slice(0, 8);
       var c = ctas.filter(function(x){ return x.for && (m.id.charAt(1) === 'i' ? (_navItems[+m.id.slice(2)] || {}).id === x.for : ids.indexOf(x.for) >= 0); })[0] || ctas.filter(function(x){ return !x.for; })[0];
-      if(c) m.cta = { id: 'cta:' + c.i, label: c.label, desc: c.desc }; });
+      if(c) m.cta = { id: 'cta:' + c.i, label: c.label, desc: c.desc };
+      else if(m.id === act.menu){ var kc = _shownKidCta(); if(kc) m.cta = { id: 'c:cta:' + kc.cta[0].i, label: kc.cta[0].label, desc: kc.cta[0].desc }; } });
     var wd = _navWidgets(); if(kid && kid.nav.widgets) kid.nav.widgets.forEach(function(w){ if(wd.indexOf(w) < 0) wd.push(w); });
     return { title: title, active: act, menus: menus, open: [], widgets: wd };
   }
@@ -537,6 +542,8 @@
     if(id == null) return {ok: false, error: 'nav_select requires {id}'};
     id = _navResolve(String(id));
     /* a menu's primary action: pressed, the menu stays where it is */
+    if(id.indexOf('c:cta:') === 0){ var kk = _shownKidCta(); if(!kk) return {ok: false, error: 'no shown nested panel has a primary action'};
+      try{ kk.win.postMessage({type: 'vera:panel:action', action: 'nav_select', action_id: 'nest-' + Date.now(), payload: {id: id.slice(2)}}, '*'); }catch(e){} return {ok: true}; }
     if(id.indexOf('cta:') === 0){ var ce = _navCtaEls()[+id.slice(4)]; if(!ce) return {ok: false, error: 'no primary action ' + id}; ce.click(); return {ok: true}; }
     if(id.indexOf('c:') === 0){ var kid = _activeKid(); if(!kid) return {ok: false, error: 'no nested panel is shown'};
       if(kid.nav && kid.nav.items && !kid.nav.items.some(function(it){ return it.id === id.slice(2); })) return {ok: false, error: 'the shown nested panel has no ' + id.slice(2)};

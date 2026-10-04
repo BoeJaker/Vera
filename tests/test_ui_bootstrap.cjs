@@ -68,5 +68,7 @@ const BR = R('vera', 'chat', 'vera-panel-bridge.js'), HN = R('vera', 'capability
 t('a menu-less panel\'s primary action reaches the harness (state.cta) and ends its list', /try\{ var _ct = _navCtas\(\); if\(_ct\.length\) st\.cta = _ct; \}catch\(e\)\{\}/.test(BR)
   && /const _panelCtaCache = \{\};/.test(HN) && /if\(JSON\.stringify\(nav\) === prevSig && !ctaChanged\) return;/.test(HN) && /_lhmNavSelect\(act\.pid, 'cta:' \+ c\.i\);/.test(HN));
 
+t('a NESTED menu-less panel\'s primary action ends its host\'s open menu; a press goes down to it', /k\.cta = \(d\.state && Array\.isArray\(d\.state\.cta\)\)/.test(BR) && /function _shownKidCta\(\)\{/.test(BR) && /m\.cta = \{ id: 'c:cta:' \+ kc\.cta\[0\]\.i/.test(BR) && /if\(id\.indexOf\('c:cta:'\) === 0\)\{/.test(BR));
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
