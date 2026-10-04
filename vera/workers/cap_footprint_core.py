@@ -67,17 +67,23 @@ def _is_write(mode: Any, flags: Any) -> bool:
         return False
 
 
-def classify_open(path: Any, mode: Any, flags: Any, code_roots: Iterable[str] = ()) -> Optional[Tuple[str, str]]:
+def classify_open(path: Any, mode: Any, flags: Any, code_roots: Iterable[str] = (),
+                  code_files: Optional[frozenset] = None) -> Optional[Tuple[str, str]]:
     if not isinstance(path, str) or not path:
         return None                                 # an fd, bytes path: nothing to say
     if path.endswith((".py", ".pyc", ".pyi", ".so")) or "/site-packages/" in path \
             or "/dist-packages/" in path or "/__pycache__/" in path:
         return None
     if any(path.startswith(r) for r in code_roots if r):
-        # the code tree: reading code/templates/static is fine anywhere; a
-        # WRITE there is state (a runtime file under the repo)
+        # the code tree: reading a TRACKED file (code, templates, static) is
+        # fine - every node has the same commit. An untracked file there is
+        # runtime data the host wrote (vera/ide/.vera_remote_instances.json,
+        # found 2026-10-04): a node has none, so it is host-bound. A write
+        # anywhere in the tree is state.
         if not _is_write(mode, flags):
-            return None
+            if code_files is None or path in code_files:
+                return None
+            return "file_read", path
     write = _is_write(mode, flags)
     if write:
         if path.startswith(_WRITE_OK):
@@ -125,11 +131,12 @@ def classify_socket(address: Any, shared: Set[Tuple[str, int]], shared_ports: Se
 
 
 def classify(event: str, args: Tuple, *, code_roots=(), shared=frozenset(), shared_ports=frozenset(),
-             nodes=frozenset(), host_ips=frozenset()) -> Optional[Tuple[str, str]]:
+             nodes=frozenset(), host_ips=frozenset(),
+             code_files: Optional[frozenset] = None) -> Optional[Tuple[str, str]]:
     try:
         if event == "open":
             return classify_open(args[0], args[1] if len(args) > 1 else None,
-                                 args[2] if len(args) > 2 else 0, code_roots)
+                                 args[2] if len(args) > 2 else 0, code_roots, code_files)
         if event == "sqlite3.connect":
             return "sqlite", str(args[0]) if args else "?"
         if event in ("subprocess.Popen", "os.posix_spawn", "os.exec"):
@@ -149,6 +156,9 @@ def merge(old: Optional[Dict[str, Any]], kinds: Dict[str, int], targets: Dict[st
           runs: int, now: float) -> Dict[str, Any]:
     fp = dict(old or {})
     fp["runs"] = int(fp.get("runs") or 0) + int(runs)
+    # runs seen by a tracer that tells tracked code files from runtime data in
+    # the code tree: only these settle a source that opens files (SOFT_MARKERS)
+    fp["runs_tracked"] = int(fp.get("runs_tracked") or 0) + int(runs)
     k = dict(fp.get("kinds") or {})
     for kind, n in kinds.items():
         k[kind] = int(k.get(kind) or 0) + int(n)
@@ -207,7 +217,10 @@ def verdict(fp: Optional[Dict[str, Any]], static_markers: Iterable[str],
     if bad:
         tg = fp.get("targets") or {}
         return "host", "observed: " + "; ".join(f"{k} {', '.join((tg.get(k) or [])[:2])}" for k in bad)
-    runs = int(fp.get("runs") or 0)
+    # a source that opens files is settled only by runs whose file reads were
+    # checked against the tracked files (footprints from before that check
+    # counted any read in the code tree as harmless)
+    runs = int(fp.get("runs_tracked" if sm else "runs") or 0)
     need = MIN_RUNS_SOFT if sm else MIN_RUNS
     if runs < need:
         return "unproven", (f"{runs} observed run(s), needs {need}"
