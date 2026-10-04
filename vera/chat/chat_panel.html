@@ -13899,6 +13899,9 @@ Your task: decide what to do next to advance toward the goal.
         seed_ids:seedIds, top_k:k, sources:recallSrcs.join(','),
         fabric_dataset:fabDS, min_score:minSim,
         use_rollout:!!document.getElementById('ctxRollout')?.checked,
+        // recall waited for its slowest source (7.1-7.3 s of a ~9 s fetch, 2026-10-05): an automatic fetch takes what
+        // answered in 1.5 s and the late sources come with the next fetch; one you ask for still waits for all
+        budget_ms:force?0:1500,
       });
       if(!stale()&&rr?.results){
         const _renderSrc=(r)=>{
