@@ -249,3 +249,14 @@ def test_live_run_quality_fixes():
     t = core.normalise_topic({"name": "x"})
     p = core.enrich_prompt(t, {"title": "t", "url": "u"}, "w" * 20000, triaged=True)
     assert p.count("w") <= core.TRIAGED_TEXT_CHARS + 50
+
+
+def test_place_pins_group_size_and_light():
+    from vera.intel import intel_geo_core as geo
+    sigs = [{"title": "A", "score": 3, "seen": "2026-10-04T00:00:00Z", "url": "https://a", "places": [{"name": "Leeds", "lat": 53.797, "lon": -1.544}]},
+            {"title": "B", "score": 8, "seen": "2026-09-01T00:00:00Z", "url": "https://b", "places": [{"name": "Leeds", "lat": 53.7974, "lon": -1.5438},
+                                                                                                      {"name": "Paris", "lat": 48.85, "lon": 2.35}]},
+            {"title": "C", "places": [{"name": "Nowhere", "lat": "x", "lon": 1}]}]
+    p = geo.pins(sigs, recent_after=1790000000)
+    assert [x["name"] for x in p] == ["Leeds", "Paris"] and p[0]["size"] == 2 and p[0]["detail"] == "B"
+    assert p[0]["lit"] and not p[1]["lit"] and p[0]["meta"].startswith("2 sources")

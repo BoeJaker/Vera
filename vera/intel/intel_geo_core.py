@@ -54,3 +54,36 @@ def places_in(entity_types: Dict[str, str], limit: int = 2) -> List[str]:
         if len(out) >= limit:
             break
     return out
+
+
+def pins(signals, *, recent_after: float = 0.0, limit: int = 60):
+    """A topic's places as globe pins: one per place, sized by how many signals
+    name it, the strongest story as its detail, lit when named recently."""
+    from datetime import datetime
+    agg = {}
+    for s in signals:
+        for pl in s.get("places") or []:
+            try:
+                lat, lon = float(pl["lat"]), float(pl["lon"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            k = (str(pl.get("name") or "").lower(), round(lat, 2), round(lon, 2))
+            a = agg.setdefault(k, {"name": pl.get("name") or pl.get("as") or "?", "lat": lat, "lon": lon,
+                                   "size": 0, "best": -1.0, "detail": "", "url": "", "last": ""})
+            a["size"] += 1
+            sc = float(s.get("score") or 0)
+            if sc > a["best"]:
+                a["best"], a["detail"], a["url"] = sc, str(s.get("title") or ""), str(s.get("url") or "")
+            seen = str(s.get("seen") or "")
+            if seen > a["last"]:
+                a["last"] = seen
+    out = []
+    for a in sorted(agg.values(), key=lambda a: (-a["size"], -a["best"], a["name"])):
+        try:
+            lit = datetime.fromisoformat(a["last"].replace("Z", "+00:00")).timestamp() >= recent_after if a["last"] else False
+        except ValueError:
+            lit = False
+        out.append({"name": a["name"], "lat": a["lat"], "lon": a["lon"], "size": a["size"],
+                    "meta": f"{a['size']} source{'s' if a['size'] != 1 else ''} · {a['last'][:10]}",
+                    "detail": a["detail"][:140], "url": a["url"], "lit": lit})
+    return out[:limit]

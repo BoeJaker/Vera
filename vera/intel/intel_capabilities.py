@@ -1465,6 +1465,18 @@ async def cap_geo_lookup(name: str = "", cc: str = "", trace_id=None):
     return {"ok": True, "place": p} if p else {"ok": False, "error": f"no place found for {name!r}"}
 
 
+@capability("intel.places.get", http_method="GET", http_path="/intel/places/get", http_tags=["intel", "geo"],
+            memory="off", silent=True,
+            description="Where a topic's stories happen: the places its signals name, as globe pins (one per place, "
+                        "sized by how many signals name it, the strongest story as detail, lit when named in the "
+                        "last 48 h). Input: topic_id (blank = every topic), days (default 30). Output: {points:[{name, "
+                        "lat, lon, size, meta, detail, url, lit}]}.")
+async def cap_places_get(topic_id: str = "", days: int = 30, trace_id=None):
+    sigs = store().signals(topic_id, since=_since(24 * max(1, min(365, int(days or 30)))), limit=3000)
+    pts = geo.pins([s for s in sigs if s.get("topic_id") != ops.NOTES_TOPIC], recent_after=time.time() - 48 * 3600)
+    return {"points": pts, "title": "Where it is happening"}
+
+
 @capability("intel.corpus.export", http_method="GET", http_path="/intel/corpus/export", http_tags=["intel"],
             memory="off", silent=True,
             description="intel's signals as a curated corpus for the worldview (four-minds FM-8.3/8.4): "
