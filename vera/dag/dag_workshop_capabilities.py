@@ -17461,6 +17461,19 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                               "session_id": sid, "note": _note})
+        # The writer's reasoning pass is not the executor's to switch on. prose.author
+        # defaults it OFF for a measured reason (see cap_prose_author), but `think` is in
+        # its schema and the executor set think=true on 37 of 207 loop calls: the writer
+        # then reasons until its budget runs out (4 Oct 2026: 3,121 tokens -> 977 chars;
+        # a 4,000-token cap hit -> "INCOMPLETE"). Probe the same day: think off 95 tokens,
+        # 2.8 s; on/unset 2,500 tokens of reasoning and NO answer.
+        if tool == "prose.author" and isinstance(args, dict) and "think" in args:
+            _dropped_think = args.pop("think")
+            await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                              "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                              "session_id": sid,
+                              "note": "think=%r dropped - the writer runs without its "
+                                      "reasoning pass" % (_dropped_think,)})
         # The writer takes context BY FILE; research the step fetched lives only in its
         # tool history. Live 3 Oct (4d4ef790): web.research found 5 sources, then
         # prose.author(task="...use the research data gathered...", context_files=[]) saw
