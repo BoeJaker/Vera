@@ -7,7 +7,7 @@ const D = R('vera/ui/design.css'), UI = R('vera/vera-ui.js'), LIBS = R('vera/ui/
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
 t('the pack\'s type reaches the panels\' own font names', /--font-ui: var\(--f-ui,/.test(D) && /--mono: var\(--font-mono\);/.test(D) && /html:root body \{ font-family: var\(--font-ui\); \}/.test(D));
-t('the glow behind every page', /html:root body::before \{/.test(D) && /radial-gradient\(120% 100% at 10% 0%/.test(D));
+t('the glow behind every page (on the body\'s own background - a ::before at z-index -1 sat under it)', /html:root body \{\s*background-image: radial-gradient\(120% 100% at 10% 0%/.test(D) && /background-attachment: fixed;/.test(D));
 t('blocks on: raised, rounded surfaces', /html:root:not\(\[data-blocks="off"\]\) :is\(\.card,/.test(D) && /box-shadow: var\(--elev\);/.test(D));
 t('blocks off: no surfaces of their own, the sidebar too', /html:root\[data-blocks="off"\] :is\(\.card,/.test(D) && /html:root\[data-blocks="off"\] #sidebar\[data-vera-lhm\] \{ background: transparent;/.test(D));
 t('Full / Hover / Zen', /html:root\[data-den="zen"\] body:not\(\.lhm-collapsed\) #sidebar\[data-vera-lhm\] \.nav-btn :is\(\.gl, svg\) \{ display: none; \}/.test(D) && /html:root\[data-den="hover"\]/.test(D));

@@ -1281,7 +1281,9 @@ async function del(id){if(!confirm('Remove from gallery? (the underlying file is
 $('#fKind').onchange=load;$('#ref').onclick=load;
 $('#fQ').oninput=()=>{clearTimeout(window._t);window._t=setTimeout(load,250);};
 load();
-</script></body></html>"""
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body></html>"""
 
 
 @APP.get("/gallery/view", include_in_schema=False)

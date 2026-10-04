@@ -1253,7 +1253,7 @@ html[data-blocks="off"] .mwrap.u{background:transparent}
    other message loses one. A FLAT ground also hides the wash, so with the glow behind it the question read as a
    Blocks-off failure (defect 88). It occludes through a mostly-opaque ground and a blur now: the glow carries
    through, the text scrolling underneath does not. */
-html[data-blocks="off"] .mwrap.u.pin{box-shadow:none;background:color-mix(in srgb,var(--bg0) 84%,transparent);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
+html[data-blocks="off"] .mwrap.u.pin{box-shadow:none;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}
 html[data-blocks="off"] .sys-msg{border-bottom:none}
 html[data-blocks="off"] .cap-inline{background:transparent;border-color:transparent;border-left-color:var(--acc2)}
 html[data-blocks="off"] .cap-inline.error{border-left-color:var(--err)}
@@ -1278,7 +1278,10 @@ html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u{back
    The reason behind it is real: a pinned question is position:sticky and the answer scrolls underneath, so it has
    to hide what passes behind. A flat fill hides the wash with it. It occludes through a ground at about a third
    opacity over a blur instead - the text underneath is unreadable, the gradient carries through. */
-html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background-color:color-mix(in srgb,var(--bg0) 34%,transparent);background-image:none;border-left-color:transparent;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+/* 2026-10-04 (owner: "the blocks off makes the last user message in chat have a background - this is the opposite of what
+   blocks off should do"): the pinned question no longer pins (the board sets it position:static), so nothing scrolls
+   behind it and the ground above has nothing left to hide - Blocks off leaves it with none, as every other question. */
+html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background:transparent;background-image:none;border-left-color:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}
 html[data-blocks="off"] body[data-view="minimal"].has-msgs:not(.has-panel) #inputBar,html[data-blocks="off"] body[data-view="minimal"].has-msgs.has-panel #inputBar,html[data-blocks="off"] body[data-view="minimal"]:not(.has-msgs):not(.has-panel) #inputBar{background:transparent;border-color:transparent;box-shadow:none}
 html[data-blocks="off"] body[data-view="minimal"]:not(.has-msgs) #ctxStrip{background:transparent}
 /* ═══ Style packs on the chat surface (M1a-surfaces) — the pack sets FORM: type, radius, label metrics, body size,

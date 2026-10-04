@@ -1036,7 +1036,9 @@ function mount(id){
 }
 function setKb(on){if(!S)return;if(on)S.setAttribute('controls','');else S.removeAttribute('controls');}
 init();
-</script></body></html>"""
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body></html>"""
 
 
 @APP.get("/spritegen/companion", include_in_schema=False)

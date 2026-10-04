@@ -939,16 +939,43 @@ function _ebar(title, onAdd, onDone){
 
   // ── a docked menu's widgets: kept per panel and per menu (opts.editKey), added from the widget sheet the chat's menus use ──
   var _absEditOn = {};
+  /* KEPT ON THE SERVER (owner, 2026-10-04: "go ahead on 3/4"): a menu's widgets were one browser's localStorage only - another
+     browser, the panel opened on its own, and every agent saw none of them. /ui/lhm/widgets keeps them per panel and per
+     menu; this browser's copy is the cache (and what moves up the first time the server has none). A menu is named by what
+     it holds, not its place in the rail: 'i:<item id>' for a menu of one item, 'g:<group name>' for a group. */
+  var _absSrv = {}, _absAsked = {};   // panel -> {menu: [record]} as the server keeps it; panel -> asked once
+  function _absMenuKey(spec, cur){
+    var id = String((cur && cur.id) || ''), m = /^\u00a7([ig])(\d+)$/.exec(id); if(!m) return id;
+    if(m[1] === 'g') return 'g:' + String(cur.label || cur.title || id).slice(0, 80);
+    var tops = (cur.tabs || []).filter(function(t){ return !t.depth; }), t = tops[+m[2]];
+    return t ? 'i:' + String(t.id).slice(0, 80) : id;
+  }
   function _absAddedKey(key, menu){ return 'vera.lhm.absorbed.added.' + key + '.' + menu; }
-  function _absAddedOf(key, menu){ try{ var a = JSON.parse(localStorage.getItem(_absAddedKey(key, menu)) || '[]'); return Array.isArray(a) ? a : []; }catch(e){ return []; } }
-  function _absAddedSave(key, menu, list){ try{ localStorage.setItem(_absAddedKey(key, menu), JSON.stringify(list || [])); }catch(e){} }
-  function _absHasSaved(key, menu){ try{ return !!key && localStorage.getItem(_absAddedKey(key, menu)) !== null; }catch(e){ return false; } }
+  function _absLocal(key, menu){ try{ var j = localStorage.getItem(_absAddedKey(key, menu)); if(j === null) return null; var a = JSON.parse(j); return Array.isArray(a) ? a : []; }catch(e){ return null; } }
+  function _absPost(key, menu, list){ try{ fetch(_base() + '/ui/lhm/widgets/set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ panel: key, menu: menu, widgets: list || [] }) }).catch(function(){}); }catch(e){} }
+  /* skey: the menu's stable name; legacy: its place-in-the-rail name, which this browser kept lists under before */
+  function _absAddedOf(key, skey, legacy){ var s = _absSrv[key]; if(s && Object.prototype.hasOwnProperty.call(s, skey)) return s[skey].slice();
+    var l = _absLocal(key, skey); if(l === null && legacy) l = _absLocal(key, legacy); return l || []; }
+  function _absAddedSave(key, skey, list){ (_absSrv[key] = _absSrv[key] || {})[skey] = (list || []).slice(); try{ localStorage.setItem(_absAddedKey(key, skey), JSON.stringify(list || [])); }catch(e){} _absPost(key, skey, list); }
+  function _absHasSaved(key, skey, legacy){ if(!key) return false; var s = _absSrv[key]; if(s && Object.prototype.hasOwnProperty.call(s, skey)) return true; return _absLocal(key, skey) !== null || (!!legacy && _absLocal(key, legacy) !== null); }
+  /* read the panel's lists once; a list only this browser had moves up; then the menu draws again from what came back */
+  function _absLoad(key, skey, legacy, redraw, host){
+    if(!key || _absAsked[key]) return; _absAsked[key] = 1;
+    try{ fetch(_base() + '/ui/lhm/widgets?panel=' + encodeURIComponent(key)).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || !d.ok) return; var srv = d.menus || {};
+      if(!Object.prototype.hasOwnProperty.call(srv, skey)){ var l = _absLocal(key, skey); if(l === null && legacy) l = _absLocal(key, legacy); if(l !== null){ srv[skey] = l; _absPost(key, skey, l); } }
+      var before = JSON.stringify((_absSrv[key] || {})[skey] || null); _absSrv[key] = srv;
+      if(JSON.stringify(srv[skey] || null) !== before && host && host.isConnected && redraw) redraw();
+    }).catch(function(){ _absAsked[key] = 0; }); }catch(e){}
+  }
   // the widgets the PANEL names for its menu (spec.widgets, 'template@size'): shown until the viewer keeps a list of their own
   function _absDefaults(spec){ return (spec.widgets || []).map(function(s){ var p = String(s).split('@'); return { template_id: p[0], size: p[1] || 's' }; }); }
   function _absWidgets(host, tabs, spec, cur, opts, redraw){
     var key = opts.editKey; if(!cur) return;
     var editing = !!(key && _absEditOn[key]);
-    var mine = function(){ return _absHasSaved(key, cur.id) ? _absAddedOf(key, cur.id) : _absDefaults(spec); };
+    var skey = _absMenuKey(spec, cur), legacy = String(cur.id);
+    _absLoad(key, skey, legacy, redraw, host);
+    var mine = function(){ return _absHasSaved(key, skey, legacy) ? _absAddedOf(key, skey, legacy) : _absDefaults(spec); };
     var ttl = tabs.querySelector('.lhm-ttl');
     if(ttl && key){ var ed = _el('button', 'lhm-a-edit' + (editing ? ' on' : ''), '\u270e'); ed.type = 'button'; ed.title = 'Edit this menu - add widgets to it, as the chat\'s menus take them';
       ed.addEventListener('click', function(ev){ ev.stopPropagation(); _absEditOn[key] = !_absEditOn[key]; redraw(); }); ttl.appendChild(ed); }
@@ -956,7 +983,7 @@ function _ebar(title, onAdd, onDone){
     if(editing){
       var bar = _ebar((cur.title || cur.label) + ' \u00b7 ' + (spec.title || 'this panel'), function(){
         var S = _surface(); if(!S){ bar.appendChild(_el('span', 'lbl', ' \u00b7 the widget sheet is not loaded here')); return; }
-        try{ Promise.resolve(S.open({ mode:'add', into:'side', title:'Add to ' + (cur.title || cur.label) + ' \u00b7 ' + (spec.title || 'this panel'), templates:true, sizes:['xs','s','m'] })).then(function(rec){ if(!rec) return; var l2 = mine(); l2.push(rec); _absAddedSave(key, cur.id, l2); redraw(); }).catch(function(){}); }catch(e){}
+        try{ Promise.resolve(S.open({ mode:'add', into:'side', title:'Add to ' + (cur.title || cur.label) + ' \u00b7 ' + (spec.title || 'this panel'), templates:true, sizes:['xs','s','m'] })).then(function(rec){ if(!rec) return; var l2 = mine(); l2.push(rec); _absAddedSave(key, skey, l2); redraw(); }).catch(function(){}); }catch(e){}
       }, function(){ _absEditOn[key] = false; redraw(); });
       tabs.insertBefore(bar, tabs.firstChild);
     }
@@ -972,7 +999,7 @@ function _ebar(title, onAdd, onDone){
         vw.setAttribute('item-drawer', '');   // a click on an item opens its data in the drawer, as on the dashboards
         box.appendChild(vw); }
       else { var body = _el('div'); var drawn = ''; try{ if(window.VeraWidget && rec.form) drawn = window.VeraWidget.draw(rec.form, _sample(rec.form), 's', { bare:true, title:rec.title }); }catch(e){} body.innerHTML = drawn || _escH(rec.form || 'widget'); box.appendChild(body); }
-      if(editing){ var rm = _el('button', 'lhm-a-rm', '\u2715'); rm.type = 'button'; rm.title = 'Take it out of this menu'; rm.addEventListener('click', function(ev){ ev.stopPropagation(); var l3 = mine(); l3.splice(i, 1); _absAddedSave(key, cur.id, l3); redraw(); }); box.appendChild(rm); }
+      if(editing){ var rm = _el('button', 'lhm-a-rm', '\u2715'); rm.type = 'button'; rm.title = 'Take it out of this menu'; rm.addEventListener('click', function(ev){ ev.stopPropagation(); var l3 = mine(); l3.splice(i, 1); _absAddedSave(key, skey, l3); redraw(); }); box.appendChild(rm); }
       ws.appendChild(box);
     });
     tabs.appendChild(ws);

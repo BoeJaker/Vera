@@ -49,7 +49,7 @@ def _redis():
 # chat/chat_panels_capabilities.py). This module serves /ui/themes.css from the
 # same table, so the stylesheet and the JSON theme API stay in lockstep.
 from Vera.vera.theme_defs import (
-    BUILTIN_THEMES, DEFAULT_THEME, ensure_contrast, with_dataviz,
+    BUILTIN_THEMES, DEFAULT_THEME, ensure_contrast, flat_theme_vars, with_dataviz,
     STYLE_PACKS, DENSITY_TIERS, DEFAULT_STYLE, DEFAULT_DENSITY,
     appearance_css, normalize_appearance,
 )
@@ -167,6 +167,7 @@ async def cap_theme_create(id: str, label: str = "", type: str = "dark",
                             trace_id=None):
     try:
         var_dict = json.loads(vars) if isinstance(vars, str) else vars
+        var_dict = flat_theme_vars(var_dict)
     except Exception:
         return {"error": "vars must be valid JSON object"}
     if not id or not id.isalnum():
@@ -1089,7 +1090,10 @@ async def _startup():
                 raw = await r.get(key)
                 if raw:
                     tid = (key.decode() if isinstance(key, bytes) else key).split(":")[-1]
-                    CUSTOM_THEMES[tid] = json.loads(raw)
+                    _ct = json.loads(raw)
+                    if isinstance(_ct, dict):
+                        _ct["vars"] = flat_theme_vars(_ct.get("vars"))
+                    CUSTOM_THEMES[tid] = _ct
             except Exception:
                 pass
     except Exception:

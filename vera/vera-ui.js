@@ -244,6 +244,7 @@
       d.setAttribute('data-blocks', a.blocks ? 'on' : 'off');
       d.style.removeProperty('--ui-radius');
     }catch(e){}
+    if(!a.blocks && document.getElementById('vera-design-css') && document.body){ setTimeout(function(){ try{ _markFloats(document.body); }catch(e){} }, 60); }
     return a;
   }
   // Set + persist + broadcast. Takes a partial ({style} | {den} | {blocks}).
@@ -465,6 +466,62 @@
   if(!document.getElementById('vera-design-css') && !document.documentElement.hasAttribute('data-design-own')){
     var dl = document.createElement('link'); dl.id = 'vera-design-css'; dl.rel = 'stylesheet'; dl.href = BASE + '/ui/design.css';
     document.head.appendChild(dl);
+    _floatsWatch();
+  }
+  /* WHAT FLOATS keeps its ground (owner, 2026-10-04: blocks off "should not remove backgrounds from settings menus ... or
+     menus that appear over the top of other elements"). design.css strips grounds by the ROLE a name says; a menu named
+     like a panel (#x-panel, .y-bar) lost its ground and its text sat on the page beneath. What is drawn fixed or absolute
+     over the page, above it (a z-index), and is not a page column or a page bar, is marked data-vera-float - design.css
+     leaves those alone. Checked on the parts that change (a menu shown, a sheet added), never in a loop. */
+  function _isFloat(el){
+    try{
+      var c = getComputedStyle(el); if(c.position !== 'fixed' && c.position !== 'absolute') return false;
+      var z = parseInt(c.zIndex, 10); if(!(z >= 1)) return false;
+      var r = el.getBoundingClientRect(); if(r.width < 60 || r.height < 24) return false;
+      var W = window.innerWidth, H = window.innerHeight;
+      if(r.height >= H * .9 && r.width < W * .9) return false;                 /* a page column */
+      if(r.top <= 1 && r.width >= W * .9 && r.height < 120) return false;      /* a page bar */
+      return true;
+    }catch(e){ return false; }
+  }
+  /* A PAGE GROUND, by measure (owner, 2026-10-04: "make the blocks off system work across the ui - all panels"; "everything
+     should use the same glow background like the chat UI"). A sweep of every panel with blocks off found the grounds no
+     name gives away - a side column drawn as a bare div, a list pane, a graph's wrapper - each opaque, each hiding the glow.
+     A part that is opaque, large (a twentieth of the page or more), in the page's flow, and not a field, code or a picture,
+     is marked data-vera-ground; with blocks off design.css takes its ground away. What floats over the page is never one. */
+  var _NOT_GROUND = { INPUT:1, TEXTAREA:1, SELECT:1, BUTTON:1, OPTION:1, PRE:1, CODE:1, IMG:1, VIDEO:1, SVG:1, svg:1, HTML:1, BODY:1 };
+  function _alphaOf(c){ var m = /rgba?\(([^)]+)\)/.exec(c || ''); if(!m) return /color\(/.test(c || '') ? 1 : 0; var p = m[1].split(/[\s,\/]+/).filter(Boolean); return p.length > 3 ? parseFloat(p[3]) : 1; }
+  function _isGround(el){
+    try{
+      if(_NOT_GROUND[el.tagName] || el.hasAttribute('data-vera-float') || el.closest('[data-vera-float]')) return false;
+      /* the content itself - a receipt's paper, an image's preview, a drawing surface - is never the page's ground */
+      if(el.matches('[class*="paper"], [class*="preview"], [class*="receipt"], [class*="canvas"], [data-vera-keep-ground], canvas, iframe[data-vera-keep-ground]')) return false;
+      var r = el.getBoundingClientRect(); var W = window.innerWidth, H = window.innerHeight;
+      if(r.width < 80 || r.height < 40 || r.width * r.height < W * H * .05) return false;
+      var c = getComputedStyle(el); if(c.position === 'fixed' && !(r.height >= H * .9 || (r.top <= 1 && r.width >= W * .9))) return false;
+      return _alphaOf(c.backgroundColor) >= .6;
+    }catch(e){ return false; }
+  }
+  function _markFloats(root){
+    if(!root || root.nodeType !== 1) return;
+    var list = [root].concat(Array.prototype.slice.call(root.querySelectorAll('*'), 0, 1500));
+    for(var i = 0; i < list.length; i++){ var e = list[i]; if(_isFloat(e)) e.setAttribute('data-vera-float', ''); }
+    if(document.documentElement.getAttribute('data-blocks') !== 'off') return;   /* measured while the grounds are there */
+    for(var j = 0; j < list.length; j++){ var g = list[j]; if(!g.hasAttribute('data-vera-ground') && _isGround(g)) g.setAttribute('data-vera-ground', ''); }
+  }
+  function _floatsWatch(){
+    var pend = [], t = 0;
+    function flush(){ t = 0; var p = pend; pend = []; p.forEach(_markFloats); }
+    function run(){ try{ _markFloats(document.body); }catch(e){} }
+    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(run, 300); }); else setTimeout(run, 300);
+    try{
+      new MutationObserver(function(recs){
+        for(var i = 0; i < recs.length; i++){ var r = recs[i];
+          if(r.type === 'attributes'){ if(r.target.nodeType === 1 && !r.target.hasAttribute('data-vera-float')) pend.push(r.target); }
+          else for(var j = 0; j < r.addedNodes.length; j++){ if(r.addedNodes[j].nodeType === 1) pend.push(r.addedNodes[j]); } }
+        if(pend.length && !t) t = setTimeout(flush, 120);
+      }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open'] });
+    }catch(e){}
   }
 
   // ── 1b. Load the configurable loading animation ────────────────────────────
@@ -499,6 +556,12 @@
   }
   function applyVars(vars){
     if(!vars || typeof vars !== 'object') return null;
+    /* a custom theme saved one level down ({theme:{--bg:..}}) set no colour at all - every surface drawn from --ac/--s1
+       painted nothing (2026-10-04, the active theme); read the one map inside */
+    if(!Object.keys(vars).some(function(k){ return k.indexOf('--') === 0; })){
+      var inner = Object.keys(vars).map(function(k){ return vars[k]; }).filter(function(x){ return x && typeof x === 'object' && Object.keys(x).some(function(k){ return k.indexOf('--') === 0; }); });
+      if(inner.length === 1) vars = inner[0];
+    }
     var root = document.documentElement;
     var out = {};
     function set(key, val){ root.style.setProperty(key, val); out[key] = val; _inlineThemeKeys[key] = 1; }
@@ -925,9 +988,9 @@
   function injectFloatingPicker(){
     try{ if(window.self !== window.top) return; }catch(e){ return; } // embedded
     if(window.__veraNoFloatingPicker) return;
+    /* a page with only a theme list of its own (the UI builder's) still gets it: the level of detail and blocks are not there */
     if(document.getElementById('themeBtn') ||
-       document.getElementById('themeButtons') ||
-       document.getElementById('themePicker') ||
+       document.getElementById('hdrAa') ||
        document.getElementById('veraFloatTheme')) return;
 
     var wrap = document.createElement('div');
@@ -977,10 +1040,13 @@
         });
       }).catch(function(){});
     }
+    /* the same appearance menu as the chat's and the harness's Aa - style, level of detail (Full · Hover · Zen), blocks,
+       zoom, text, the themes (owner, 2026-10-04: "the appearance options are available in the panels if opened standalone") */
+    btn.title = 'Appearance - theme, style, level of detail, blocks';
     btn.onclick = function(e){
       e.stopPropagation();
-      if(menu.style.display === 'block'){ menu.style.display='none'; return; }
-      renderMenu(); menu.style.display='block';
+      menu.style.display = 'none';
+      openAppearance({ currentTarget: btn, stopPropagation: function(){} });
     };
     document.addEventListener('click', function(){ menu.style.display='none'; });
 
@@ -1037,6 +1103,8 @@
     var r = btn ? btn.getBoundingClientRect() : { bottom: 48, right: window.innerWidth - 12 };
     menu.style.top = Math.round(r.bottom + 5) + 'px';
     menu.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
+    /* a button low on the page (the standalone one sits bottom-right) opens it upwards */
+    try{ if(r.bottom + 5 + menu.offsetHeight > window.innerHeight && r.top > window.innerHeight / 2){ menu.style.top = ''; menu.style.bottom = Math.round(window.innerHeight - r.top + 5) + 'px'; } }catch(e){}
     setTimeout(function(){
       function close(e){ if(menu.contains(e.target)) return; if(btn && btn.contains(e.target)) openAppearance._shut = Date.now(); menu.remove(); document.removeEventListener('click', close, true); document.removeEventListener('keydown', esc, true); }
       function esc(e){ if(e.key === 'Escape'){ menu.remove(); document.removeEventListener('click', close, true); document.removeEventListener('keydown', esc, true); } }
