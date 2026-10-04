@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<!-- ═══ THE VERA PANEL TEMPLATE (served /ui/templates/panel.html; ui.templates lists it) ════════════════════════════════
+     Copy this file to start a panel. Every part below is load-bearing - each comment says what reads it. The rules:
+     documentation/51-ui-design-system.md and the vera-design skill. Replace every EXAMPLE_ name; keep the structure.
+
+     What you get for free by keeping the structure:
+       • the theme, the style pack, blocks on/off, Full/Hover/Zen, the glow, text size (vera-ui.js + design.css)
+       • the menu: drawn here standalone, drawn by the harness's LHM when docked, its items' descriptions on hover and
+         for agents (panel.query), the menu's widgets (✎) and its primary action (vera-panel.js + vera-panel-bridge.js)
+       • the shared Settings page over your settings section (vera-settings.js)
+       • agents can drive it: panel.query / panel.dispatch nav_select, click, set_field (vera-panel-bridge.js)
+     ═════════════════════════════════════════════════════════════════════════════════════════════════════════════ -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- the cached theme painted before the CSS parses (no dark flash on a light theme) -->
+<script>(function(){try{var d=document.documentElement,S=localStorage;var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<!-- the page title names the panel in the harness's menu head: "Vera — <Name>" -->
+<title>Vera — EXAMPLE Panel</title>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+<link rel="stylesheet" href="/ui/bootstrap.css">
+<style>
+/* this panel's own rules: theme names only, each with a fallback - never a bare colour */
+.example-meter { height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--acc, #5a9e8f) 18%, transparent); overflow: hidden; }
+.example-meter > i { display: block; height: 100%; width: 40%; background: var(--acc, #5a9e8f); }
+</style>
+</head>
+<body class="vb">
+<div class="vb-root">
+
+  <!-- ── THE MENU: the canonical sidebar. data-vera-lhm is what vera-panel.js and the harness read. ───────────────── -->
+  <aside id="sidebar" data-vera-lhm>
+    <div id="side-head">
+      <div class="ico">◈</div>
+      <div><h1>EXAMPLE Panel</h1><div class="sub">What it is for, in four words</div></div>
+    </div>
+    <nav id="nav">
+      <!-- one button per section. data-section names it (the id agents pick); data-label its name; data-desc the
+           pointer's line; data-desc-long the agents' paragraph; .gl or an <svg> its icon (never a letter).
+           data-lhm-widgets: the widgets this item's menu shows by default ('template-id@size', space-separated). -->
+      <div class="nav-grp" data-icon="◉" data-desc="Looking at it">Monitor</div>
+      <button class="nav-btn active" data-section="overview" data-label="Overview" data-desc="The panel at a glance"
+              data-desc-long="Overview: the state of EXAMPLE - its counts, its health and what changed last." data-lhm-widgets="">
+        <span class="gl">▦</span>Overview</button>
+      <button class="nav-btn" data-section="items" data-label="Items" data-desc="Every item, searchable"
+              data-desc-long="Items: every EXAMPLE item, with its status; open one to see and change it.">
+        <span class="gl">☰</span>Items</button>
+      <div class="nav-grp" data-icon="⚙" data-desc="Setting it up">Configure</div>
+      <!-- data-vera-settings: this item opens the shared Settings page over the named section (the chat's look) -->
+      <button class="nav-btn" data-section="settings" data-vera-settings="#sec-settings" data-label="Settings"
+              data-desc="How EXAMPLE runs" data-desc-long="Settings: where EXAMPLE reads from, how often it refreshes.">
+        <span class="gl">⚙</span>Settings</button>
+    </nav>
+    <div id="status-tile">
+      <div class="lbl">Status</div>
+      <div class="row"><span class="dot off" id="st-dot"></span><span id="st-text">loading…</span></div>
+    </div>
+  </aside>
+
+  <main class="vb-main">
+    <!-- ── THE TOP BAR: name, status, refresh. Never a page switcher (that is the menu's). ────────────────────────── -->
+    <header class="vb-topbar">
+      <h2 id="page-title">Overview</h2>
+      <span class="vb-crumb" id="page-crumb">The panel at a glance</span>
+      <div class="vb-right">
+        <span class="badge" id="count-badge">—</span>
+        <button class="btn" type="button" onclick="refresh()" data-label="Refresh" data-desc="Read everything again">↻ Refresh</button>
+        <!-- data-lhm-cta: the ONE action this panel is for; the menu ends with it, as the chat's menus do.
+             ="" for every menu, ="<section>" for one item's menu only. -->
+        <button class="btn primary" type="button" onclick="createItem()" data-lhm-cta="" data-label="New item" data-desc="Add an EXAMPLE item">＋ New item</button>
+      </div>
+    </header>
+
+    <div class="vb-content">
+      <section class="vb-section active" id="sec-overview">
+        <h3>At a glance</h3>
+        <p class="vb-lead">One line saying what this section shows and what to do here.</p>
+        <div class="vb-grid">
+          <div class="card"><h4>Health</h4><div class="kv"><span class="k">state</span><span class="v" id="ov-state">—</span><span class="k">updated</span><span class="v" id="ov-updated">—</span></div></div>
+          <div class="card"><h4>Usage</h4><div class="example-meter"><i></i></div></div>
+          <!-- a live widget from the registry, drawn by <vera-widget> (widget_element.js, loaded below) -->
+          <div class="card"><h4>A widget</h4><vera-widget template-id="EXAMPLE-template" size="s"></vera-widget></div>
+        </div>
+      </section>
+
+      <section class="vb-section" id="sec-items">
+        <h3>Items</h3>
+        <p class="vb-lead">Every item. A read is loading, empty, an error or ready - veraUI.renderReadState draws each.</p>
+        <div id="items"></div>
+      </section>
+
+      <!-- the settings section: a heading, a line, then one block per group of fields - the shared Settings page
+           lists each block (by its first heading or label) and moves the real fields in, so nothing is copied -->
+      <section class="vb-section" id="sec-settings">
+        <h3>Settings</h3>
+        <p class="vb-lead">How EXAMPLE runs. Changes are saved when you press Save.</p>
+        <div class="card"><h4>Source</h4>
+          <div class="field"><label for="cfg-source">Read from</label><input id="cfg-source" type="text" placeholder="EXAMPLE.cap"></div></div>
+        <div class="card"><h4>Refresh</h4>
+          <div class="field"><label for="cfg-every">Every (seconds)</label><input id="cfg-every" type="number" min="5" value="30"></div>
+          <button class="btn primary" type="button" onclick="saveSettings()">Save</button></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script>
+/* the section switch: the menu's buttons own it - vera-panel.js watches .active, so never publish nav yourself */
+const TITLES = { overview: ['Overview', 'The panel at a glance'], items: ['Items', 'Every item, searchable'], settings: ['Settings', 'How EXAMPLE runs'] };
+document.querySelectorAll('#nav .nav-btn').forEach(b => b.addEventListener('click', () => go(b.dataset.section)));
+function go(id) {
+  document.querySelectorAll('#nav .nav-btn').forEach(b => b.classList.toggle('active', b.dataset.section === id));
+  document.querySelectorAll('.vb-section').forEach(s => s.classList.toggle('active', s.id === 'sec-' + id));
+  const t = TITLES[id] || [id, '']; document.getElementById('page-title').textContent = t[0]; document.getElementById('page-crumb').textContent = t[1];
+}
+/* a capability, called the way every panel calls one - POST /mcp/call keeps the call attributed and observable */
+async function cap(name, args) {
+  const r = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
+  const j = await r.json(); return j && j.content !== undefined ? j.content : j;
+}
+async function refresh() {
+  const host = document.getElementById('items');
+  if (window.veraUI) veraUI.renderReadState(host, veraUI.readState({ loading: true }));
+  try {
+    const res = await cap('EXAMPLE.list', {});
+    const items = (res && res.items) || [];
+    document.getElementById('count-badge').textContent = items.length + ' items';
+    if (!items.length) { veraUI.renderReadState(host, veraUI.readState({ hasData: false, label: 'No items yet - ＋ New item adds one.' })); return; }
+    host.innerHTML = '<table class="vb-table"><thead><tr><th>Name</th><th>State</th></tr></thead><tbody>' +
+      items.map(i => '<tr><td>' + esc(i.name) + '</td><td><span class="badge">' + esc(i.state) + '</span></td></tr>').join('') + '</tbody></table>';
+  } catch (e) { veraUI.renderReadState(host, veraUI.readState({ error: true, label: String(e) }), { onRetry: refresh }); }
+}
+function createItem() { /* the panel's primary action */ }
+function saveSettings() { /* read the fields, call EXAMPLE.config.set */ }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
+/* after the shared scripts below have run (veraUI, the menu bridge) */
+document.addEventListener('DOMContentLoaded', refresh);
+</script>
+<!-- the shared parts, in this order: the look, the menu, the bridge to the harness and agents, the Settings page,
+     the widget element (only if the page draws widgets) -->
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/vera-settings.js"></script>
+<script src="/ui/widgets/widget_element.js"></script>
+</body>
+</html>

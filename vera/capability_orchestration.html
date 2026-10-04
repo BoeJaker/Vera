@@ -2673,6 +2673,7 @@ function _panelIdOfSource(src){
 // hosting is allowed; a FULL LHM spec (state.nav.lhm) only while this menu is in its vertical (LHM) mode — in the
 // horizontal tab bar the sections are only a hover dropdown, so the panel keeps its own rail there.
 function _navHostedFor(nav){ return _navHostingAllowed() && (!(nav && nav.lhm) || _lhmMode); }
+const _panelCtaCache = {};   // panel -> its primary actions for every menu (state.cta)
 window.addEventListener('message', e => {
   const d = e.data;
   if(!d || typeof d!=='object' || d.type!=='vera:panel:state') return;
@@ -2696,8 +2697,12 @@ window.addEventListener('message', e => {
     // unrelated state change.
     try{ e.source.postMessage({type: _navHostedFor(nav) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted'}, '*'); }catch(err){}
   }
+  /* a panel's primary action for every menu (data-lhm-cta="") - a panel with no menu of its own shows it at the foot of this one */
+  const cta = (d.state && Array.isArray(d.state.cta)) ? d.state.cta.filter(c => c && !c.for) : [];
+  const ctaChanged = JSON.stringify(cta) !== JSON.stringify(_panelCtaCache[d.panel_id] || []);
+  if(ctaChanged) _panelCtaCache[d.panel_id] = cta;
   const prevSig = JSON.stringify(_panelNavCache[d.panel_id] || null);
-  if(JSON.stringify(nav) === prevSig) return;   // no real change → no re-render
+  if(JSON.stringify(nav) === prevSig && !ctaChanged) return;   // no real change → no re-render
   _panelNavCache[d.panel_id] = nav;
   _lhmNavSync();
 });
@@ -3172,6 +3177,12 @@ function _lhmNativeRender(host){
     onBeside: (pid, sec, tab) => { _lhmOpenBeside(pid.replace(/--\d+$/, ''), tab ? (sec.nav ? tab.id : (sec.id + '/' + tab.id)) : ''); },
     onTab: (pid, sec, tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _lhmNavSync(); },
     widgets, note: 'One menu, everywhere: this side menu, the strips under the tabs and the chat\'s rail are one component. Open a UI and its menu is this menu; ☰ at the top swaps it for this list, in place.' });
+  /* THE OPEN PANEL'S PRIMARY ACTION, when it has no menu of its own to end with it (owner, 2026-10-04: "declare primary
+     actions for every panel its appropriate"): at the foot of this list, as a menu ends; pressing it presses the panel's */
+  const act = rows.find(r => r.active); const ctas = act ? (_panelCtaCache[act.pid] || []) : [];
+  if(act && ctas.length){ const c = ctas[0]; const b = document.createElement('button'); b.type = 'button'; b.className = 'lhm-cta lhm-h-cta';
+    b.textContent = c.label || 'Go'; if(c.desc){ b.title = c.desc; b.setAttribute('data-desc', c.desc); } b.setAttribute('data-w', 'cta · button');
+    b.addEventListener('click', ev => { ev.stopPropagation(); _lhmNavSelect(act.pid, 'cta:' + c.i); }); box.appendChild(b); }
 }
 // the meters, as a widget in the menu (the Harness board's GPU · queue): the header's own readings — the Ollama load
 // meter and the stack monitor's last sample (queue, CPU)

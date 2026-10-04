@@ -305,6 +305,9 @@
       var h = document.querySelector('h1, h2, .panel-title, [data-panel-title]');
       if(h && h.textContent) st.heading = h.textContent.trim().slice(0, 120);
     }catch(e){}
+    /* the panel's primary actions (data-lhm-cta): a menu-less panel's shows at the foot of the harness's list, and an agent
+       reads what the panel is for - nav_select {id:'cta:<i>'} presses one */
+    try{ var _ct = _navCtas(); if(_ct.length) st.cta = _ct; }catch(e){}
     var cat = _uiCatalog();
     st.ui = cat;
     // Auto-derive a named-action catalog from the panel's buttons so EVERY

@@ -12,6 +12,11 @@ the agentic loop. Use `improve-vera-sandboxed` for all source, documentation and
 skill changes; this skill's live cycle supplies diagnostic evidence, not
 permission to edit the live or main checkout.
 
+**Any UI change - a panel, widget, graph, menu, settings page or the appearance - also follows the `vera-design`
+skill** (`.claude/skills/vera-design/SKILL.md`; reference: `documentation/51-ui-design-system.md`): start from
+the UI bootstrap (`ui.templates`, `/ui/bootstrap.css`), colour only from the theme's names, the canonical menu
+with descriptions and a primary action, settings on the shared Settings page, and prove it live with Playwright.
+
 ## 0. Before anything else — the rule that gets violated if you're not careful
 
 **Never have more than ONE Ollama-calling test running at a time.**
