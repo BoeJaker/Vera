@@ -467,5 +467,8 @@ load();
 </script>
 <script src="/ui/vera-entity-drawer.js"></script>
 <script src="/ui/vera-ui.js"></script>
+<!-- the bridge, in the page itself: nested in a host panel (an IDE view, an Estate pane) the harness does not inject it,
+     and without it the host never hears this page - its primary action (data-lhm-cta) or its menu -->
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>
