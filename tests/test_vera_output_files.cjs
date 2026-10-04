@@ -57,5 +57,6 @@ t('the chat tells the model it draws them; the model is told the three fences', 
   && AG.includes('- ```slides - a presentation') && AG.includes('- ```sheet (or ```csv)') && AG.includes('- ```document - a document'));
 t('render.export makes every family, off the event loop', RC.includes('res = (_export(content, fmt, title=title, filename=filename) if fmt == "latex"')
   && RC.includes('else await _export_file(content, fmt, title=title, filename=filename))') && RC.includes('r = await run_argv(argv, timeout=150') && RC.includes('"families":    list(_xc.FAMILIES),'));
+t('slides are offered only where LibreOffice can make them (pandoc is not the slides path)', RC.includes('elif f["via"] == "lo" and f["family"] == "presentation":\n            live = lo'));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

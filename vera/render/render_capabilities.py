@@ -247,8 +247,10 @@ def _file_formats() -> List[Dict[str, Any]]:
             live = xw
         elif fid == "ods":
             live = xw and lo
+        elif f["via"] == "lo" and f["family"] == "presentation":
+            live = lo                                  # the slides are made by LibreOffice alone
         elif f["via"] == "lo":
-            live = lo or (pd and fid in ("docx", "odt", "rtf", "epub", "pptx")) or (fid == "pdf" and pd and bool(_pdf_engine()))
+            live = lo or (pd and fid in ("docx", "odt", "rtf", "epub")) or (fid == "pdf" and pd and bool(_pdf_engine()))
         else:
             live = True
         out.append({"id": fid, "family": f["family"], "ext": f["ext"], "label": f["label"], "mime": f["mime"], "live": live})
