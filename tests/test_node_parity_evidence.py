@@ -118,8 +118,9 @@ def test_static_audit_follows_calls_across_modules(tmp_path):
     # a stand-in orchestrator: health the host updates at runtime vs. a
     # registry filled while modules load
     (v / "capability_orchestration.py").write_text(
-        "OLLAMA_INSTANCES = {}\nCAPABILITY_REGISTRY = {}\n\n"
+        "OLLAMA_INSTANCES = {}\nCAPABILITY_REGISTRY = {}\nREDIS = None\n\n"
         "def _health_tick():\n    OLLAMA_INSTANCES['a'] = {'ok': True}\n\n"
+        "def _connect():\n    global REDIS\n    REDIS = object()\n\n"
         "def capability(name):\n    def d(f):\n        CAPABILITY_REGISTRY[name] = f\n        return f\n    return d\n")
     (v / "orchcaps.py").write_text(
         "import Vera.vera.capability_orchestration as _orch\n"
@@ -127,13 +128,49 @@ def test_static_audit_follows_calls_across_modules(tmp_path):
         "@capability('demo.health')\nasync def health():\n    return dict(_orch.OLLAMA_INSTANCES)\n\n"
         "@capability('demo.health2')\nasync def health2():\n    return list(OLLAMA_INSTANCES)\n\n"
         "@capability('demo.health3')\nasync def health3():\n    return getattr(_orch, 'OLLAMA_INSTANCES', {})\n\n"
-        "@capability('demo.caps')\nasync def caps():\n    return sorted(_orch.CAPABILITY_REGISTRY)\n")
+        "@capability('demo.caps')\nasync def caps():\n    return sorted(_orch.CAPABILITY_REGISTRY)\n\n"
+        "@capability('demo.kv')\nasync def kv():\n    return await _orch.REDIS.get('k')\n")
+    # state the earlier rules missed (2026-10-04 review of the first vet list):
+    # a float setting rebound via `global`, an object built at load time, an
+    # event a node would emit to no UI, a measurement of the local machine
+    (v / "misc.py").write_text(
+        "import psutil\n"
+        "from Vera.vera.capability_orchestration import capability, emit_event\n"
+        "_SCALE = 1.0\n\n"
+        "class Model:\n    def stats(self):\n        return {}\n\n"
+        "MODEL = Model()\n\n"
+        "@capability('demo.scale.set')\nasync def scale_set(v=1.0):\n    global _SCALE\n    _SCALE = v\n\n"
+        "@capability('demo.scale.get')\nasync def scale_get():\n    return _SCALE\n\n"
+        "@capability('demo.model.stats')\nasync def model_stats():\n    return MODEL.stats()\n\n"
+        "@capability('demo.notify')\nasync def notify():\n    await emit_event({'type': 'ui.x'})\n\n"
+        "@capability('demo.cpu')\nasync def cpu():\n    return psutil.cpu_percent()\n\n"
+        "async def _check_cpu():\n    return psutil.cpu_percent()\n\n"
+        "@capability('demo.scan')\nasync def scan():\n"
+        "    return [await c() for c in (_check_cpu,)]\n\n"
+        "import sys\n"
+        "@capability('demo.skills')\nasync def skills():\n"
+        "    return list(getattr(sys.modules.get('skills'), 'SKILLS', {}))\n\n"
+        "if True:\n    _SWEEPS = {}\n\n"
+        "    @capability('demo.sweep.start')\n    async def sweep_start(i=''):\n        _SWEEPS[i] = {'done': 0}\n\n"
+        "    @capability('demo.sweep.status')\n    async def sweep_status(i=''):\n        return _SWEEPS.get(i)\n")
     rows = audit.audit(str(tmp_path))
+    assert "reads_state" in rows["demo.scale.get"]["markers"], rows["demo.scale.get"]
+    assert "reads_state" in rows["demo.model.stats"]["markers"], rows["demo.model.stats"]
+    assert "events" in rows["demo.notify"]["markers"]
+    assert "local_metrics" in rows["demo.cpu"]["markers"]
+    # a helper run by reference (from a tuple), not by a direct call
+    assert "local_metrics" in rows["demo.scan"]["markers"], rows["demo.scan"]
+    # another module's state through sys.modules; state defined in a top-level if
+    assert "foreign_state" in rows["demo.skills"]["markers"]
+    assert "reads_state" in rows["demo.sweep.status"]["markers"], rows["demo.sweep.status"]
     # host runtime state read through the orchestrator: a worker's copy is empty
     for c in ("demo.health", "demo.health2", "demo.health3"):
         assert "orch_state" in rows[c]["markers"], (c, rows[c])
-    # state filled at load time is the same in every process
+    # state filled at load time is the same in every process, and a shared
+    # backend's connection handle (rebound via `global` when it connects) is
+    # every process's own way to the same store
     assert rows["demo.caps"]["markers"] == []
+    assert rows["demo.kv"]["markers"] == [], rows["demo.kv"]
     assert rows["demo.save"]["markers"] == ["sqlite"] and "store.db" in rows["demo.save"]["via"]
     assert rows["demo.pure"]["markers"] == [] and not rows["demo.pure"]["state"]
     assert "env" in rows["demo.key"]["markers"]

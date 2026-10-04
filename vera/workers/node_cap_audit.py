@@ -33,7 +33,44 @@ MARKERS = {
     # a worker's environment carries only the backend URLs: anything else read
     # from the environment (API keys, host config) is missing on a node
     "env": re.compile(r"os\.getenv|os\.environ|\bgetenv\(|\bcfg\.[A-Z]"),
+    # an event emitted on a node reaches no live UI: the host fans events out
+    # to its own WebSocket clients and does not relay vera:events:live
+    "events": re.compile(r"\bemit_event\(|\bemit_stream\("),
+    # measures the machine (and process) it runs on: on a node it would
+    # describe the node, not the host it is asked about
+    "local_metrics": re.compile(r"\bpsutil\.|os\.getpid\(|resource\.getrusage|os\.getloadavg"),
+    # another module's in-process state, fetched through sys.modules (skills'
+    # SKILLS / ONTOLOGIES, filled by a host startup hook a worker never runs)
+    "foreign_state": re.compile(r"\bsys\.modules\b"),
 }
+
+
+def _module_level(body):
+    """Statements at module level, including those nested in top-level
+    if / try / with blocks (`if _CAP_AVAILABLE: _SWEEPS = {}`)."""
+    for node in body:
+        yield node
+        if isinstance(node, ast.If):
+            yield from _module_level(node.body)
+            yield from _module_level(node.orelse)
+        elif isinstance(node, ast.Try):
+            for part in (node.body, node.orelse, node.finalbody):
+                yield from _module_level(part)
+            for h in node.handlers:
+                yield from _module_level(h.body)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            yield from _module_level(node.body)
+
+#: A name rebound via `global` that is a connection handle to a shared backend
+#: (or a lazily built client) - every process has its own to the same store,
+#: so reading it is not host state. Anything host-local behind such a handle
+#: (a SQLite connection) is caught by the store markers instead.
+_HANDLE_RE = re.compile(r"(REDIS|POOL|CLIENT|CONN|DRIVER|ENGINE|SESSION_HTTP|HTTPX|_RE)$|^(NEO|CHROMA)$",
+                        re.IGNORECASE)
+
+#: Module-level objects of these types hold no host state worth tracking.
+_STATELESS_TYPES = {"Path", "ContextVar", "Lock", "RLock", "Event", "Semaphore",
+                    "BoundedSemaphore", "Condition", "TypeVar", "Enum", "compile"}
 CALL_CAP = re.compile(r"""(?:_call|_cap|_rawcap|call_capability|CAPABILITY_REGISTRY(?:\.get)?)\s*[\(\[]\s*["']([a-z_]+\.[a-z0-9_.]+)["']""")
 
 
@@ -88,15 +125,30 @@ def audit(root):
                         mk = resolve_mod(a.name, None)
                         if mk is not None:
                             aliases[a.asname or a.name.split(".")[0]] = mk
-            for node in tree.body:
+            classes = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
+            instances = set()
+            for node in _module_level(tree.body):
                 if isinstance(node, (ast.Assign, ast.AnnAssign)):
                     tgts = node.targets if isinstance(node, ast.Assign) else [node.target]
                     if isinstance(node.value, (ast.Dict, ast.List, ast.Set, ast.Call)):
                         for t in tgts:
                             if isinstance(t, ast.Name):
                                 mutable.add(t.id)
+                    # an object built from a class at load time (MODEL =
+                    # WorldView()): the host's instance carries its runtime
+                    # state in attributes, which no write rule sees
+                    v = node.value
+                    if isinstance(v, ast.Call):
+                        fname = (v.func.id if isinstance(v.func, ast.Name)
+                                 else v.func.attr if isinstance(v.func, ast.Attribute) else "")
+                        if fname and fname not in _STATELESS_TYPES and (
+                                fname in classes or fname[:1].isupper()):
+                            for t in tgts:
+                                if isinstance(t, ast.Name):
+                                    instances.add(t.id)
             MODS[modkey(path, VROOT)] = {"src": src, "funcs": funcs, "mutable": mutable, "imports": imports,
-                                  "aliases": aliases, "caps": caps, "path": os.path.relpath(path, ROOT)}
+                                  "aliases": aliases, "caps": caps, "path": os.path.relpath(path, ROOT),
+                                  "instances": instances}
 
 
     def writes_state(n, mutable):
@@ -125,7 +177,10 @@ def audit(root):
             for fn_ in m["funcs"].values():
                 for c in ast.walk(fn_):
                     if isinstance(c, ast.Global):
-                        out |= set(c.names) & m["mutable"]
+                        # any name rebound at runtime, of any type (a float
+                        # setting such as _UI_SCALE as much as a dict) - but
+                        # not a connection handle (_HANDLE_RE)
+                        out |= {n for n in c.names if not _HANDLE_RE.search(n)}
                     elif isinstance(c, (ast.Assign, ast.AugAssign)):
                         for t in (c.targets if isinstance(c, ast.Assign) else [c.target]):
                             if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id in m["mutable"]:
@@ -145,7 +200,7 @@ def audit(root):
             m = MODS[mk]
             seg = ast.get_source_segment(m["src"], node) or ""
             hits = {x for x, rx in MARKERS.items() if rx.search(seg)}
-            w = written(mk)
+            w = written(mk) | m.get("instances", set())
             if any(isinstance(c, ast.Name) and c.id in w for c in ast.walk(node)):
                 hits.add("reads_state")
             if orch_reads(m, node):
@@ -160,7 +215,9 @@ def audit(root):
     #: registry ...) is the HOST's: a worker has the structure, never the data.
     ORCH_LOAD_TIME = {"CAPABILITY_REGISTRY", "LOADED_MODULES", "UI_PANELS", "SHUTDOWN_HOOKS",
                       "STREAM_SUBS", "SCHEDULED_TASKS", "CAP_ROUTING_DECLARED",
-                      "ROLE_PROFILES_DECLARED", "_LOG_QLISTENERS"}
+                      "ROLE_PROFILES_DECLARED", "_LOG_QLISTENERS",
+                      # configuration a worker is given the same way (its env)
+                      "OLLAMA_EMBED_MODEL", "OLLAMA_EMBED_URL"}
     ORCH = "capability_orchestration"
     ORCH_RUNTIME = (written(ORCH) - ORCH_LOAD_TIME) if ORCH in MODS else set()
 
@@ -197,6 +254,13 @@ def audit(root):
         m = MODS[mk]
         out = []
         for c in ast.walk(node):
+            # a module function REFERENCED, not only called: perf.scan runs its
+            # checks from a tuple (`for check in (_check_a, ...): await
+            # check()`), so a call-only walk never reached them
+            if (isinstance(c, ast.Name) and isinstance(c.ctx, ast.Load)
+                    and c.id in m["funcs"] and m["funcs"][c.id] is not node):
+                out.append((mk, m["funcs"][c.id]))
+                continue
             if not isinstance(c, ast.Call):
                 continue
             f = c.func
