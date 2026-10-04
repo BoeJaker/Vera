@@ -137,6 +137,46 @@ def qa_answer(question: str, result: Dict[str, Any], threshold: float = 0.35) ->
     return {"question": question, "answer": ans[:400], "score": round(sc, 3), "extractive": True}
 
 
+#: what kind of page a hit is - descriptive sentences, because zero-shot NLI scores
+#: sentences far better than bare words (intent_zeroshot_core)
+GENRE_LABELS = {
+    "news": "a news report or an analysis article about developments",
+    "research": "a research paper, report or technical documentation",
+    "marketing": "a vendor's product, service or marketing page selling something",
+    "listing": "a listing, directory, rental or job advert page",
+    "repo": "a software repository or code project page",
+}
+_GENRE_OF = {v: k for k, v in GENRE_LABELS.items()}
+#: genres that are rarely intelligence: their score is scaled down, and they never
+#: reach the model unless the topic asks for vendors
+LOW_GENRES = {"marketing": 0.5, "listing": 0.35}
+
+
+def genre_of(result: Dict[str, Any], threshold: float = 0.5) -> Tuple[str, float]:
+    """(genre, p) from an nlp.zeroshot answer over GENRE_LABELS; ('', 0) when unsure."""
+    best, p = "", 0.0
+    for row in (result or {}).get("labels") or []:
+        if not isinstance(row, dict):
+            continue
+        g = _GENRE_OF.get(str(row.get("label") or ""))
+        try:
+            sc = float(row.get("score") or 0)
+        except (TypeError, ValueError):
+            sc = 0.0
+        if g and sc > p:
+            best, p = g, sc
+    if not best:
+        g = _GENRE_OF.get(str((result or {}).get("top") or ""))
+        best, p = (g, 0.5) if g else ("", 0.0)
+    return (best, round(p, 3)) if p >= threshold else ("", round(p, 3))
+
+
+def genre_factor(genre: str, vendors_ok: bool = False) -> float:
+    if vendors_ok and genre == "marketing":
+        return 1.0
+    return LOW_GENRES.get(genre, 1.0)
+
+
 def stance(result: Dict[str, Any]) -> str:
     top = str((result or {}).get("top") or "").lower()
     return {"negative": "negative", "neutral": "neutral", "positive": "positive",

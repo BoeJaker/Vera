@@ -242,7 +242,8 @@ def test_the_whole_cycle(tmp_path):
     # a second assessment that moves: one alert, once
     mod.store().put_signal(dict(mod.store().get_signal(pilot["id"]), seen="2099-01-01T00:00:00Z"))
     sn2 = _run(mod.snapshot_topic(mod.store().get_topic(t["id"])))
-    assert sn2["alert"] and sum(1 for n, _ in orch.CALLS if n == "tg.notify") == 1
+    assert sn2.get("alert"), sn2
+    assert sum(1 for n, _ in orch.CALLS if n == "tg.notify") == 1
     assert "Who is next?" in [w["query"] for w in mod.store().get_kv("research_wanted")]   # deep: queued for a session
 
     tl = _R(orch, "intel.timeline.get", topic_id=t["id"], days=7)
@@ -433,3 +434,31 @@ def test_phase1_review_regressions(tmp_path):
     for _ in range(3):
         _run(mod._tick())
     assert int((mod.store().get_kv("budget") or {}).get("opportunistic", 0)) == 0
+
+
+def test_an_empty_brief_is_never_stored(tmp_path):
+    mod, orch = _load(tmp_path)
+    r = _R(orch, "intel.report.build")
+    assert r["empty"] and _R(orch, "intel.report.list")["rows"] == []
+
+
+def test_vendor_pages_are_demoted_and_not_read_by_the_model(tmp_path):
+    mod, orch = _load(tmp_path)
+    lab = mod.ops.GENRE_LABELS
+
+    async def zeroshot(text="", labels=None, multi_label=False, trace_id=None):
+        g = "marketing" if "launches" in text.lower() else "news"     # a relevant page that is really an advert
+        return {"labels": [{"label": lab[g], "score": 0.9}]}
+    orch.CAPABILITY_REGISTRY["nlp.zeroshot"] = {"func": zeroshot, "raw": zeroshot}
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    sw = _R(orch, "intel.sweep", topic_id=t["id"])["swept"][0]
+    assert sw["demoted"] == 1
+    sigs = {s["title"]: s for s in mod.store().signals(t["id"])}
+    repo = next(s for k, s in sigs.items() if "launches" in k.lower())
+    assert repo["genre"] == "marketing"
+    mod.store().put_signal(dict(repo, score=9.5))               # even a high score does not buy a model read
+    _run(mod.enrich_topic(mod.store().get_topic(t["id"])))
+    assert mod.store().get_signal(repo["id"])["nlp_only"]
+    # a topic that wants vendors keeps them
+    _R(orch, "intel.topic.save", id=t["id"], name=t["name"], vendors=True)
+    assert mod.store().get_topic(t["id"])["vendors"] is True
