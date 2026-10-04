@@ -319,7 +319,7 @@
     const ACT = !!(o.layers && o.layers.activity), EST = !!(o.layers && o.layers.estate), GAL = o.galaxy !== false;
     out.solo = SOLO; out.tilt = TILT; out.azim = AZIM; out.anodes = []; out.enodes = []; out.bands = []; out.widgets = []; out.stack = STK; out.wsz = WSZ;
     const KI = STK ? 340 : 300, UXS = 1.5, VSPAN = STK ? 5 : den === 'full' ? 6 : 5;   // the board's ground: 300 px a unit, the stations 1.5 units apart   // px per ground unit; the u axis stretched so neighbouring cards never meet; the plates' depth
-    const CW = STK ? 172 : 206, CH = STK ? 47 : 58, RAISE = STK ? 10 : 14, RPC = 6, DU = 1.34, MAXC = 4, MAXCL = 6, CAP = RPC * MAXC, CAPL = RPC * MAXCL, CAPG = 12;
+    const CW = STK ? 172 : 206, CH = STK ? 47 : 58, RAISE = STK ? 10 : 14, RPC = 6, DU = 1.34, MAXC = XC ? 10 : 4, MAXCL = 6, CAP = RPC * MAXC, CAPL = RPC * MAXCL, CAPG = 12;
     const LANDC = Math.max(1, Math.min(MAXCL, Math.round(+o.landCols) || 1));   // the session canvas plate grows out along u — to six columns on its own, or widened by hand
     const FW = { s: 60, m: 78, l: 108 }[WSZ], FH = Math.round(FW * 0.56);
     const isWidget = isWidgetCard;
@@ -1159,7 +1159,12 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
       disconnectedCallback() { if (this._ro) { try { this._ro.disconnect(); } catch (_) {} } }
       tipIn() { this.classList.remove('closing'); this.classList.add('opening'); clearTimeout(this._tipT); this._tipT = setTimeout(() => this.classList.remove('opening'), 600); }
       flatten(done) { this.classList.remove('opening'); this.classList.add('closing'); clearTimeout(this._tipT); this._tipT = setTimeout(() => { this.classList.remove('closing'); if (done) { try { done(); } catch (_) {} } }, 260); }
-      setScene(scene) { this._S.scene = scene && scene.turns ? scene : { turns: [], sel: '' }; if (!this._S.scene.sel && this._S.scene.turns.length) this._S.scene.sel = this._S.scene.turns[this._S.scene.turns.length - 1].mid; this._schedule(); }
+      setScene(scene) {
+        // a different scene (the chat's own, or a structure exploded into it) opens fitted: the last one's zoom, pan,
+        // plate focus and open card do not carry over - they left a structure off screen with its cards hushed
+        const sk = scene && scene.turns ? (scene.kind || 'chat') + '|' + (scene.label || '') + '|' + ((scene.turns[0] || {}).mid || '') : '';
+        if (sk !== this._sceneKey) { const first = this._sceneKey == null; this._sceneKey = sk; if (!first) { this._S.pan = { x: 0, y: 0, z: 1, auto: true }; this._S.isoFocus = null; this._S.focus = null; this._S.open = null; } }
+        this._S.scene = scene && scene.turns ? scene : { turns: [], sel: '' }; if (!this._S.scene.sel && this._S.scene.turns.length) this._S.scene.sel = this._S.scene.turns[this._S.scene.turns.length - 1].mid; this._schedule(); }
       stack(on) { this._S.stack = on == null ? !this._S.stack : !!on; if (this._S.stack) this._S.solo = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); this._isoBring(); return this._S.stack; }   // stacking lands on the turn in focus, not wherever the deck happens to start
       // the board's single-turn iso: only the selected turn's plate (Stack and Turn are the board's `stacked` and `turn`)
       solo(on) { this._S.solo = on == null ? !this._S.solo : !!on; if (this._S.solo) this._S.stack = false; this._S.pan = { x: 0, y: 0, z: 1 }; this._schedule(); return this._S.solo; }

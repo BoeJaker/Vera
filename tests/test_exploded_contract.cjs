@@ -47,4 +47,8 @@ t('iso navigates as Live ops does: zoom 5%-400%, ctrl-drag turns it, a double-cl
   const o = X.layout(X.contractScene(hub), 'iso', 1400, 900, {}), tr = o.paths.filter((q) => /trunk/.test(q.cls));
   t('iso: three or more runs into one card join ONE trunk in its gutter - the trunk goes in once', new Set(tr.map((q) => q.run)).size === 1 && o.edges.filter((e) => /trunk/.test(e.cls)).length >= 2, JSON.stringify(o.paths.map((q) => q.cls))); }
 t('the pipes are drawn as svg and light end to end under the pointer', /<svg class="xp-pipes"/.test(SRC) && /this\.classList\.toggle\('xp-routing', any\)/.test(SRC) && /vera-exploded\.xp-routing \.xp-pipe\.hot\{opacity:1/.test(SRC));
+{ const big = JSON.parse(JSON.stringify(CODE)); for (let k = 0; k < 40; k++) big.cards.push({ id: 'f.py::g' + k, group: 'f.py', layer: 'code.ast', kind: 'function', title: 'g' + k });
+  const o = X.layout(X.contractScene(big), 'iso', 1400, 900, {}), fn = o.widgets.filter((w) => w.card && /^g\d+$/.test(w.card.n));
+  t('iso: a structure\'s plate holds forty functions, not twenty-four and "+N more"', fn.length === 40 && !o.labels.some((l) => /more/.test(l.cls) && /function/.test(l.k)), fn.length + ' drawn'); }
+t('a new scene opens fitted: the last scene\'s zoom, pan, plate focus and open card do not carry over', /if \(sk !== this\._sceneKey\)/.test(SRC) && /this\._S\.isoFocus = null; this\._S\.focus = null;/.test(SRC));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);
