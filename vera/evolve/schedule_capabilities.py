@@ -87,6 +87,22 @@ async def _get_config() -> Dict[str, Any]:
     return cfg
 
 
+async def census_due_now() -> List[str]:
+    """Titles of enabled census schedules due right now, judged as if the box were free.
+    A census=finish release holds for these (release_core.may_release) so the arms of a
+    pair are not split across a restart (4 Oct 2026: OFF on 1cb3c8ba, ORDER on 1d9d47de).
+    Empty when the scheduler is disabled - nothing would start, so nothing to wait for."""
+    try:
+        if not (await _get_config()).get("enabled", True):
+            return []
+        now = _now()
+        free = {"census_running": False, "loops_running": 0}
+        return [str(r.get("title") or r.get("id")) for r in await _load_all()
+                if r.get("kind") == "census" and core.is_due(r, now, free)[0]]
+    except Exception:
+        return []
+
+
 async def _load_all() -> List[Dict[str, Any]]:
     r = _redis()
     if r is None:

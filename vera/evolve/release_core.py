@@ -58,6 +58,14 @@ def may_release(mode: str, census: Dict[str, Any]) -> Tuple[bool, str]:
             return True, f"census {state}"
         return False, f"census {state}"
     # finish: a parked census is somebody's pause, not a finished census.
+    # ...and a census that is DUE right now is the next arm of a pair about to start.
+    # 4 Oct 2026 00:51: a release waited out the intent-core OFF arm, restarted prod in
+    # the 23 s before the ORDER arm began, and the pair ran on two builds (1cb3c8ba vs
+    # 1d9d47de) - no longer a comparison. `due` comes from the scheduler (census_summary).
+    due = [str(x) for x in ((census or {}).get("due") or []) if str(x).strip()]
+    if due and state in CLEAR_STATES:
+        return False, ("census due now (%s) - waiting so a pair's arms run on one build"
+                       % ", ".join(due[:2]))
     if state in CLEAR_STATES:
         return True, f"census {state}"
     return False, f"census {state} (parked; waiting for it to end, or force)"
