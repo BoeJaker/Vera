@@ -98,6 +98,10 @@ try:
     from Vera.vera.agents import turn_phases_core as _phases
 except Exception:                       # worktree / app-free import
     from vera.agents import turn_phases_core as _phases
+try:
+    from Vera.vera.fabric import fusion_core as _fusion
+except Exception:                       # worktree / app-free import
+    from vera.fabric import fusion_core as _fusion
 
 # Lazy import helper for DAG execution — avoids circular import at load time
 def _get_dag_runner():
@@ -139,6 +143,9 @@ def _text_evidence(value: object) -> dict:
 # Context is an enhancement, not a prerequisite: if it isn't ready in time we
 # skip it and start the reply.
 CTX_INJECT_TIMEOUT = float(os.getenv("AGENT_CTX_INJECT_TIMEOUT", "12") or 12)
+# Each RAG dataset query's own bound, inside the injection's: a slow source loses its own
+# hits, not every source's (RF-57).
+_RAG_DATASET_TIMEOUT_S = max(1.0, CTX_INJECT_TIMEOUT - 2.0)
 
 # Budget for the INLINE history-compaction summary (compact_messages). It runs a
 # real LLM generation on the summarize pool before the user's reply starts, so a
@@ -1270,35 +1277,57 @@ async def agent_rag_index(rec: AgentRecord, force: bool = False) -> Dict[str, An
 async def agent_rag_retrieve(rec: AgentRecord, query: str,
                              limit: int = 0) -> List[Dict[str, Any]]:
     """Fast prompt-time retrieval: one vector/text query over the agent's own
-    dataset, plus (for fabric sources) scoped queries over their datasets."""
-    out: List[Dict[str, Any]] = []
+    dataset, plus (for fabric sources) scoped queries over their datasets.
+
+    The datasets are queried at once, each under its own bound, and their rankings
+    are fused by rank (fusion_core.rrf): a raw score means something different in
+    each dataset, and querying one after another under one timeout meant more
+    sources made it likelier that the whole injection was skipped (RF-57). On a
+    tie the agent's own dataset comes first."""
     limit = int(limit or rec.rag_inject_limit or 4)
     if not query.strip():
-        return out
+        return []
     datasets = [rec.rag_dataset] if rec.knowledge_sources else []
     for src in rec.knowledge_sources or []:
         if isinstance(src, dict) and str(src.get("type")) == "fabric" and src.get("target"):
             datasets.append(str(src["target"]))
-    seen = set()
-    for ds in datasets:
-        if not ds or ds in seen:
-            continue
-        seen.add(ds)
-        r = await _call_registered_cap("fabric.query", text=query[:400],
-                                       dataset_id=ds, top_k=limit,
-                                       include_revision_authority=True)
-        for row in (r.get("results") or [])[:limit]:
+    datasets = list(dict.fromkeys(ds for ds in datasets if ds))
+
+    async def _one(ds: str) -> List[Dict[str, Any]]:
+        try:
+            r = await asyncio.wait_for(
+                _call_registered_cap("fabric.query", text=query[:400], dataset_id=ds,
+                                     top_k=limit, include_revision_authority=True),
+                timeout=_RAG_DATASET_TIMEOUT_S)
+        except Exception as e:
+            log.debug("agent rag [%s] %s: %s", rec.name, ds, e)
+            return []
+        rows: List[Dict[str, Any]] = []
+        for row in ((r or {}).get("results") or [])[:limit]:
             # Web-fetched sources ingest their content into `text`, not `summary`
             # (only some pipelines set a summary) — fall back to `text` so retrieval
             # actually surfaces them. Without this, EVERY web-source agent RAG query
             # silently returned nothing despite the records being present + indexed.
             summ = (row.get("summary") or "").strip() or (row.get("text") or "").strip()
             if summ:
-                out.append({"dataset": ds, "record_id": row.get("id"),
-                            "revision_id": row.get("revision_id"),
-                            "text": summ[:600], "score": row.get("score")})
-    out.sort(key=lambda x: -(x.get("score") or 0))
-    return out[:limit]
+                rows.append({"dataset": ds, "record_id": row.get("id"),
+                             "revision_id": row.get("revision_id"),
+                             "text": summ[:600], "score": row.get("score")})
+        return rows
+
+    per_ds = await asyncio.gather(*(_one(ds) for ds in datasets))
+    by_key: Dict[str, Dict[str, Any]] = {}
+    lists: List[List[str]] = []
+    for ds, rows in zip(datasets, per_ds):
+        keys = []
+        for i, row in enumerate(rows):
+            k = f"{ds}|{row.get('record_id') or i}"
+            by_key.setdefault(k, row)
+            keys.append(k)
+        lists.append(keys)
+    fused = _fusion.rrf(lists)
+    order = sorted(fused, key=lambda k: -fused[k])
+    return [by_key[k] for k in order[:limit]]
 
 
 def _agent_knowledge_block(rec: AgentRecord, snippets: List[Dict[str, Any]]) -> str:
