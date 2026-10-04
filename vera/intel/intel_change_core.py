@@ -147,18 +147,49 @@ def bocpd(ts: Sequence[Any], values: Sequence[float], *, hazard: float = 1 / 100
     return out
 
 
+def level_move(values: Sequence[float], i: int, window: int) -> float:
+    """How far the level settled: the median of the `window` bars from i on, less
+    the median of the `window` bars before i."""
+    before, after = list(values[max(0, i - window):i]), list(values[i:i + window])
+    if not before or not after:
+        return 0.0
+    return _median(after) - _median(before)
+
+
+# A prediction market is quoted in whole points and sits still between trades, so
+# its hourly series is all small steps: only a move that SETTLES at least this far
+# (in probability) is a change, and moves within a day of each other are one change.
+PROB_MIN_MOVE = 0.05
+PROB_WINDOW = 24
+
+
 def detect(ts: Sequence[Any], values: Sequence[float], *, kind: str = "price") -> List[Dict[str, Any]]:
     """All three detectors with defaults suited to the indicator kind, merged and
-    de-duplicated (changes within 5 bars of each other are one change; the spike, then the shift, is kept)."""
+    de-duplicated (changes within 5 bars of each other - a day for a probability -
+    are one change; the spike, then the shift, is kept). Each change carries the
+    level it settled at (`detail.level_move`); a probability keeps only changes
+    that settled at least PROB_MIN_MOVE away, in the direction they settled."""
     vals = [float(v) for v in values]
+    prob = kind == "probability"
     rk = "abs" if kind in ("probability", "rate", "count", "geo_rate", "macro") else "pct"
-    found = spikes(ts, vals, kind=rk, min_sigma=0.005 if kind == "probability" else 0.0) + cusum(ts, vals) + bocpd(ts, vals)
+    found = spikes(ts, vals, kind=rk, min_sigma=0.005 if prob else 0.0) + cusum(ts, vals) + bocpd(ts, vals)
+    gap = PROB_WINDOW if prob else 5
     by_i: Dict[int, Dict[str, Any]] = {}
     pri = {"spike": 0, "shift": 1, "regime": 2}
     for c in sorted(found, key=lambda c: (c["index"], pri[c["kind"]])):
-        if not any(abs(c["index"] - j) <= 5 for j in by_i):
+        if not any(abs(c["index"] - j) <= gap for j in by_i):
             by_i[c["index"]] = c
-    return [by_i[k] for k in sorted(by_i)]
+    out = []
+    for k in sorted(by_i):
+        c = by_i[k]
+        lm = level_move(vals, c["index"], PROB_WINDOW if prob else 5)
+        c["detail"]["level_move"] = round(lm, 4)
+        if prob:
+            if abs(lm) < PROB_MIN_MOVE:
+                continue
+            c["direction"] = "up" if lm > 0 else "down"
+        out.append(c)
+    return out
 
 
 def corroborate(change_t: float, stories: Sequence[Dict[str, Any]], *, before_h: float = 24.0,
@@ -194,6 +225,9 @@ def describe(c: Dict[str, Any], label: str, kind: str = "price") -> str:
         size = f"{abs(mv) * 100:.1f}%" if kind == "price" else (
             f"{abs(mv) * 100:.0f} points" if kind == "probability" else f"{abs(mv):.3g}")
         how = f"spike, {abs(float(d.get('z') or c.get('magnitude') or 0)):.1f} sigma"
+    elif kind == "probability" and d.get("level_move") is not None:
+        size = f"{abs(float(d['level_move'])) * 100:.0f} points"
+        how = "and held" if c.get("kind") != "regime" else "into a new regime"
     elif c.get("kind") == "shift":
         size, how = "to a new level", "sustained shift"
     else:

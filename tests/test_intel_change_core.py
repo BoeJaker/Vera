@@ -62,3 +62,12 @@ def test_a_market_that_sits_still_still_reports_its_jump():
     vals = [0.31] * 60 + [0.54] * 5
     found = chg.detect(list(range(65)), vals, kind="probability")
     assert found and found[0]["kind"] == "spike" and found[0]["index"] == 60
+
+
+def test_a_market_wobbling_by_a_point_or_two_is_not_a_change():
+    # the shape of a real Polymarket series (4 Oct): hours at a price, 1-3 point steps, one 7-point move that held
+    vals = [0.835] * 40 + [0.85] * 30 + [0.84] * 20 + [0.915] * 60 + [0.945, 0.91] * 10 + [0.90] * 40 + [0.91] * 30
+    found = chg.detect(list(range(len(vals))), vals, kind="probability")
+    assert len(found) == 1 and found[0]["direction"] == "up" and 84 <= found[0]["index"] <= 92
+    import re
+    assert re.search(r"BoE hike up [78] points on", chg.describe(found[0], "BoE hike", "probability"))
