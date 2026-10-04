@@ -205,3 +205,19 @@ def test_company_names_match_their_listings():
             {"entities": ["CBRE"]}]
     assert ops.org_mentions(sigs) == [("Savills", 2)]
     assert ops.org_mentions(sigs, follow=["JLL"])[0] == ("JLL", 999)
+
+
+def test_corpus_is_curated_private_and_stratified():
+    sigs = [{"id": f"a{i}", "topic_id": "t", "title": f"A{i}", "site": "big.example", "score": i, "seen": f"2026-10-0{1 + i % 3}T00:00:00Z"}
+            for i in range(8)]
+    sigs += [{"id": "b1", "topic_id": "t", "title": "B", "site": "other.example", "score": 5, "seen": "2026-10-02T00:00:00Z",
+              "published": "2026-09-30T00:00:00Z", "entities": ["Acme"], "vec": [0.1]},
+             {"id": "n1", "topic_id": "from-your-notes", "title": "my plan", "site": "", "seen": "2026-10-02T00:00:00Z"},
+             {"id": "f1", "topic_id": "t", "title": "file", "source": "files", "seen": "2026-10-02T00:00:00Z"}]
+    rows, st = ops.corpus_rows(sigs, max_share=0.3, private_topics=["from-your-notes"])
+    assert st["private_dropped"] == 2 and not any(r["id"] in ("n1", "f1") for r in rows)
+    big = [r for r in rows if r["site"] == "big.example"]
+    assert len(big) == 2 and {r["id"] for r in big} == {"a7", "a6"} and st["capped"] == {"big.example": 6}
+    assert rows[0]["id"] == "b1" and "vec" not in rows[0] and rows == sorted(rows, key=lambda r: r["t"])
+    seq = ops.sequences(rows, [{"id": "s2", "topic_id": "t", "ts": "2026-10-03"}, {"id": "s1", "topic_id": "t", "ts": "2026-10-01"}])
+    assert seq["stories"]["t"][0] == "b1" and [x["id"] for x in seq["assessments"]["t"]] == ["s1", "s2"]

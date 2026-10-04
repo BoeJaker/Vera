@@ -1404,6 +1404,34 @@ async def cap_indicator_suggest(topic_id: str = "", days: int = 60, trace_id=Non
     return {"prices": prices, "markets": markets[:5], "errors": sorted(set(errors))}
 
 
+@capability("intel.corpus.export", http_method="GET", http_path="/intel/corpus/export", http_tags=["intel"],
+            memory="off", silent=True,
+            description="intel's signals as a curated corpus for the worldview (four-minds FM-8.3/8.4): "
+                        "timestamped, entity-tagged, scored records about the outside world (never the owner's "
+                        "notes or files), no site above max_share of the records, plus per-topic story and "
+                        "assessment sequences in observed order. Input: since (ISO, default 90 days), topics "
+                        "(list; blank = all), max_share (0.15), min_score (0), limit (5000), vectors (false - "
+                        "include the MiniLM-384 embedding). Output: {schema, records, sequences, stats}.")
+async def cap_corpus_export(since: str = "", topics: Any = None, max_share: float = 0.15, min_score: float = 0.0,
+                            limit: int = 5000, vectors: bool = False, trace_id=None):
+    st = store()
+    since = since or _since(24 * 90)
+    tids = set(_list_arg(topics))
+    sigs = [s for s in st.signals("", since=since, limit=max(1, min(20000, int(limit or 5000))))
+            if not tids or s.get("topic_id") in tids]
+    rows, stats = ops.corpus_rows(sigs, max_share=float(max_share), min_score=float(min_score or 0),
+                                  private_topics=[ops.NOTES_TOPIC])
+    if vectors:
+        vec = {s["id"]: s.get("vec") for s in sigs if s.get("vec")}
+        for r in rows:
+            if vec.get(r["id"]):
+                r["vec"] = vec[r["id"]]
+    snaps = [sn for sn in st.snapshots("", since=since, limit=5000)
+             if (not tids or sn.get("topic_id") in tids) and sn.get("topic_id") != ops.NOTES_TOPIC]
+    return {"schema": ops.CORPUS_SCHEMA, "since": since, "records": rows,
+            "sequences": ops.sequences(rows, snaps), "stats": stats}
+
+
 @capability("intel.indicator.list", http_method="GET", http_path="/intel/indicator/list", http_tags=["intel"],
             memory="off", silent=True,
             description="The numbers a topic watches (blank topic = all) with their latest value, 7/30-day change "
