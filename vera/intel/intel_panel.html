@@ -68,6 +68,7 @@ vera-widget{display:block}
     <button data-label="Timeline" data-desc="Look back through time" data-desc-long="Every topic's history on one rail: stand on any day and see what turned up." class="nav-btn" data-go="timeline" onclick="go('timeline')"><span class="gl">⟷</span>Timeline</button>
     <button data-label="Reports" data-desc="Briefs and their delivery" data-desc-long="Reports: build a brief, read it, send it to Telegram, chat, email, the canvas and more." class="nav-btn" data-go="reports" onclick="go('reports')"><span class="gl">▤</span>Reports</button>
     <button data-label="Actions" data-desc="What Vera can do next" data-desc-long="Actions reports offered - fetch a repo, research a question further, track an entity - and what became of them." class="nav-btn" data-go="actions" onclick="go('actions')"><span class="gl">➜</span>Actions</button>
+    <button data-label="Activity" data-desc="What it is doing on its own" data-desc-long="The night batch, sessions, alerts it raised, research waiting, notes from your drop folders and automation proposals - and a command line." class="nav-btn" data-go="activity" onclick="go('activity')"><span class="gl">◷</span>Activity</button>
     <button data-label="Settings" data-desc="Schedule, delivery, n8n" data-desc-long="When the nightly refresh and the morning brief run, where the brief goes, and moving off the n8n flows." class="nav-btn" data-go="settings" data-vera-settings="#pane-settings" onclick="go('settings')"><span class="gl">⚙</span>Settings</button>
   </nav>
   <div id="status-tile">
@@ -136,6 +137,32 @@ vera-widget{display:block}
     <div id="alist" class="card"></div>
   </div>
 
+  <div class="pane" id="pane-activity">
+    <div class="grid2">
+      <div class="card">
+        <h2>Tonight and now</h2>
+        <div id="acNight" class="small"></div>
+        <h3>Session</h3><div id="acSession" class="small"></div>
+        <h3>Alerts raised</h3><div id="acAlerts" class="small"></div>
+        <h3>Research waiting for a session</h3><div id="acWanted" class="small"></div>
+        <h3>Command</h3>
+        <div class="row"><input type="text" id="acCmd" class="grow" placeholder="list | status | add &lt;topic&gt; :: &lt;search&gt; | sweep | brief | save &lt;url&gt; | help" style="width:auto"
+          onkeydown="if(event.key==='Enter')runCmd()"><button class="btn" onclick="runCmd()">Run</button></div>
+        <pre id="acOut" class="code" style="white-space:pre-wrap;min-height:20px"></pre>
+      </div>
+      <div class="card">
+        <h2>From your drop folders</h2>
+        <div class="row"><span class="grow small muted">Notes are diffed - only real edits reach a model; their searches feed the notes topic.</span>
+          <button class="btn" onclick="runFiles()">Read folders now</button></div>
+        <div id="acNotes" class="small"></div>
+        <h2 style="margin-top:14px">Automation proposals</h2>
+        <div class="row"><span class="grow small muted">Weekly: ideas from the intelligence, each compiled into an inactive n8n draft.</span>
+          <button class="btn" onclick="runAdvise()">Propose now</button></div>
+        <div id="acProps" class="small"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="pane" id="pane-settings">
     <div class="grid2">
       <div class="card">
@@ -156,9 +183,30 @@ vera-widget{display:block}
           built overnight and only delivered in the morning.</p>
       </div>
       <div class="card">
+        <h2>How it thinks</h2>
+        <label class="f">Who the analysis is for (system prompt of every model call)</label><textarea id="cPersona" style="min-height:90px"></textarea>
+        <label class="f">Competitors to watch (one per line)</label><textarea id="cComp"></textarea>
+        <div class="row"><div class="grow"><label class="f">A model reads a source from score</label><input type="number" id="cGate" min="0" max="10" step="0.5"></div>
+          <div class="grow"><label class="f">Topic jobs per day outside the night</label><input type="number" id="cDaily" min="0" max="200"></div></div>
+        <label class="small"><input type="checkbox" id="cNlp"> triage with the NLP tier (embeddings, reranker, GLiNER, QA)</label><br>
+        <label class="small"><input type="checkbox" id="cOpp"> use idle time during the day for due topics</label><br>
+        <label class="small"><input type="checkbox" id="cAlerts"> alert me when an assessment changes materially</label><br>
+        <label class="small"><input type="checkbox" id="cAutoR"> research new questions on deep topics inside sessions</label><br>
+        <label class="small"><input type="checkbox" id="cNight"> send a one-line night summary</label>
+        <label class="f">Sessions - windows it may plan work into (JSON: name, days 0=Mon, start, end, budget, mode deepen|refresh|research)</label>
+        <textarea id="cSessions" style="min-height:80px;font-family:var(--mono,monospace)"></textarea>
+        <div class="row"><div class="grow"><label class="f">Phone (HA notify target)</label><input type="text" id="cPhone"></div>
+          <div class="grow"><label class="f">Printer id</label><input type="text" id="cPrinter"></div></div>
+        <label class="f">Drop folders (JSON: kind notes|inbox|print|podcast, path) on host</label><input type="text" id="cHost">
+        <textarea id="cFolders" style="min-height:70px;font-family:var(--mono,monospace)"></textarea>
+        <div class="row" style="margin-top:8px"><button class="btn pri" onclick="saveThinking()">Save</button><span id="tMsg" class="msg"></span></div>
+      </div>
+      <div class="card">
         <h2>Moving off n8n</h2>
-        <p class="small muted">The intel-* n8n flows did collect → enrich → brief on timers. Vera now does that itself,
-          with topics, a timeline, assessments that track change, and reports that can act. Import their state, then switch the flows off.</p>
+        <p class="small muted">The n8n intelligence flows (intel-night, intel-brief, intel-automations, files-night, the vera-* interest,
+          monitor, report and podcast flows) did collect → enrich → brief on timers. Vera now does all of it - with topics, a timeline,
+          the NLP tier, assessments that track change and reports that act. Import their state, then switch the flows off
+          (only deactivated; notify and the home/estate flows stay on).</p>
         <div class="row"><button class="btn" onclick="n8nImport(true)">Preview import</button><button class="btn pri" onclick="n8nImport(false)">Import</button></div>
         <div id="nImp" class="small" style="margin:6px 0"></div>
         <div class="row"><button class="btn" onclick="n8nRetire(true)">Preview switch-off</button><button class="btn" onclick="n8nRetire(false)">Switch flows off</button></div>
@@ -190,6 +238,7 @@ function go(id) {
   if (id === 'reports') loadReports();
   if (id === 'actions') loadActions();
   if (id === 'settings' && !LOADED.settings) { LOADED.settings = 1; loadConfig(); }
+  if (id === 'activity') loadActivity();
   try { localStorage.setItem('vera.intel.pane', id); } catch (e) {}
 }
 
@@ -408,8 +457,43 @@ async function loadConfig() {
   $('cBase').value = c.public_base || ''; $('cIll').checked = !!c.illustrate;
   $('cChans').innerHTML = CHANS.filter(x => !x.needs_target).map(x => `<label><input type="checkbox" value="${esc(x.id)}" ${(c.brief_channels||[]).includes(x.id)?'checked':''}> ${esc(x.label)}</label>`).join('');
   const s = r.schedule || {};
-  $('cSched').innerHTML = `refresh queued: ${esc(s.nightly_day||'never')} · brief sent: ${esc(s.brief_day||'never')}<br>last refresh: ${esc((s.last_nightly||{}).ts||'never')} (${((s.last_nightly||{}).topics||[]).length} topics)`;
+  const ln = s.last_nightly || {}, lnT = Array.isArray(ln.topics) ? ln.topics.length : (ln.topics || 0);
+  $('cSched').innerHTML = `night queued: ${esc(s.nightly_day||'never')} · brief sent: ${esc(s.brief_day||'never')} · week in review: ${esc(s.weekly_day_done||'never')}<br>last night finished: ${esc(ln.ts||'never')} (${lnT} topics)` + (r.profile ? ' · routing profile <b>intel</b> (Model Routing page)' : '');
+  $('cPersona').value = c.persona || ''; $('cComp').value = (c.competitors || []).join('\n');
+  $('cGate').value = c.llm_gate; $('cDaily').value = c.daily_job_budget; $('cNlp').checked = !!c.nlp; $('cOpp').checked = !!c.opportunistic;
+  $('cAlerts').checked = !!c.alerts; $('cAutoR').checked = !!c.auto_research; $('cNight').checked = !!c.night_summary;
+  $('cSessions').value = JSON.stringify(c.sessions || [], null, 1); $('cPhone').value = c.phone_target || ''; $('cPrinter').value = c.printer_id || '';
+  $('cHost').value = c.files_host || ''; $('cFolders').value = JSON.stringify(c.drop_folders || [], null, 1);
 }
+async function saveThinking() {
+  let sessions, folders;
+  try { sessions = JSON.parse($('cSessions').value || '[]'); folders = JSON.parse($('cFolders').value || '[]'); }
+  catch (e) { return msg('tMsg', 'sessions / folders must be JSON: ' + e.message, 'err'); }
+  const r = await call('intel.config.set', {settings: {persona: $('cPersona').value, competitors: $('cComp').value.split('\n').map(x => x.trim()).filter(Boolean),
+    llm_gate: +$('cGate').value, daily_job_budget: +$('cDaily').value, nlp: $('cNlp').checked, opportunistic: $('cOpp').checked,
+    alerts: $('cAlerts').checked, auto_research: $('cAutoR').checked, night_summary: $('cNight').checked, sessions,
+    phone_target: $('cPhone').value, printer_id: $('cPrinter').value, files_host: $('cHost').value, drop_folders: folders}});
+  msg('tMsg', r.error || ('saved ' + (r.changed || []).join(', ')), r.error ? 'err' : 'ok');
+  if (!r.error) { LOADED.settings = 0; loadConfig(); }
+}
+
+// ── activity ──
+async function loadActivity() {
+  const [s, n, p] = await Promise.all([call('intel.session.status'), call('intel.notes.list'), call('intel.proposals.list')]);
+  const night = s.night || {}, st = night.stats || {};
+  $('acNight').innerHTML = night.id ? `night <b>${esc(night.id)}</b> started ${esc((night.started||'').slice(0,16).replace('T',' '))} · ${st.topics||0} topics, ${st.new||0} new, ${st.assessed||0} summarised${st.notes?', '+st.notes+' notes':''} · brief: ${night.brief ? (night.brief==='-'?'nothing new':esc(night.brief)) : 'pending'}` : '<span class="muted">no night batch yet</span>';
+  const a = s.active;
+  $('acSession').innerHTML = a ? `<b>${esc(a.name)}</b> open until ${esc(String(a.ends).slice(11,16))} · ${esc(a.mode)} · budget ${a.budget}` :
+    ((s.sessions||[]).length ? (s.sessions||[]).map(x => `<span class="chip">${esc(x.name)} · ${esc(x.start)}-${esc(x.end)}</span>`).join('') : '<span class="muted">none configured - add one in Settings</span>');
+  $('acAlerts').innerHTML = (s.alerts||[]).slice().reverse().map(x => `<div>⚠ <b>${esc(x.topic)}</b> ${esc(x.headline||'')} <span class="muted">(${esc(x.why)} · ${esc((x.ts||'').slice(0,16).replace('T',' '))})</span></div>`).join('') || '<span class="muted">none</span>';
+  $('acWanted').innerHTML = (s.wanted||[]).map(w => `<div>⌕ ${esc(w.query)} <span class="muted">(${esc(w.topic_id)})</span></div>`).join('') || '<span class="muted">none</span>';
+  $('acNotes').innerHTML = (n.rows||[]).slice(0, 30).map(r => `<div class="act"><div class="grow"><b>${esc(r.name)}</b><div class="muted">${esc((r.summary||'').slice(0,220))}</div>`
+    + ((r.action_items||[]).length ? '<ul>' + r.action_items.slice(0,5).map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '') + `</div><span class="muted">${esc(r.meta||'')}</span></div>`).join('') || '<span class="muted">no notes read yet</span>';
+  $('acProps').innerHTML = (p.rows||[]).slice(0, 15).map(r => `<div class="act"><div class="grow"><b>${esc(r.title)}</b> <span class="chip">${esc(r.category)}</span><div class="muted">${esc((r.rationale||'').slice(0,200))}</div></div><span class="muted">${r.draft_id ? 'draft '+esc(r.draft_id) : esc(r.error||'')}</span></div>`).join('') || '<span class="muted">none yet</span>';
+}
+async function runCmd() { const t = $('acCmd').value.trim(); if (!t) return; $('acOut').textContent = '…'; const r = await call('intel.command', {text: t}); $('acOut').textContent = r.text || r.error || JSON.stringify(r); tile(); }
+async function runFiles() { const r = await call('intel.files.run', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }
+async function runAdvise() { const r = await call('intel.advise', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }
 async function saveConfig() {
   const r = await call('intel.config.set', {enabled: $('cEnabled').checked, sweep_hour: +$('cSweep').value, brief_hour: +$('cBrief').value,
     max_topics_per_night: +$('cMax').value, report_period_hours: +$('cPeriod').value, timezone: $('cTz').value, public_base: $('cBase').value,
@@ -420,8 +504,8 @@ async function n8nImport(dry) {
   $('nImp').textContent = 'reading the n8n datasets…';
   const r = await call('intel.import.n8n', {dry_run: dry});
   if (r.error) { $('nImp').textContent = r.error; return; }
-  $('nImp').innerHTML = (dry ? 'Would import ' : 'Imported ') + `${(r.topics||[]).length} topics and ${r.signals||0} assessed signals:<br>` +
-    (r.topics||[]).map(t => `<span class="chip">${esc(t.name)} · ${t.queries} searches</span>`).join('');
+  $('nImp').innerHTML = (dry ? 'Would import ' : 'Imported ') + `${(r.topics||[]).length} topics, ${r.signals||0} assessed signals, ${r.notes||0} notes and ${(r.competitors||[]).length} competitors:<br>` +
+    (r.topics||[]).map(t => `<span class="chip">${esc(t.name)} · ${t.queries} searches${t.depth==='deep'?' · deep':''}</span>`).join('');
   if (!dry) { loadTopics(); tile(); }
 }
 async function n8nRetire(dry) {
@@ -429,7 +513,8 @@ async function n8nRetire(dry) {
   $('nRet').textContent = 'asking n8n…';
   const r = await call('intel.n8n.retire', {dry_run: dry});
   if (r.error) { $('nRet').textContent = r.error; return; }
-  $('nRet').innerHTML = (r.workflows||[]).map(w => `${esc(w.name)}: <b>${esc(w.action)}</b>`).join('<br>') || 'no matching workflows';
+  $('nRet').innerHTML = ((r.workflows||[]).map(w => `${esc(w.name)}: <b>${esc(w.action)}</b>`).join('<br>') || 'no matching workflows')
+    + ((r.missing||[]).length ? `<br><span class="muted">not found: ${esc(r.missing.join(', '))}</span>` : '');
 }
 
 (function init() {
