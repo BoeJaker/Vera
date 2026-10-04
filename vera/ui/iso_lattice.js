@@ -620,8 +620,8 @@ function mount(host, o){
     const nd = e.target.closest && e.target.closest('[data-node],[data-wnode]'); if (nd && o.onOpen){ const n = ID()[nd.dataset.node || nd.dataset.wnode]; if (n) o.onOpen(n); } });
   // a fit wants a host with a size: until it has one the fit waits, and the first size it gets fits the view
   let fitWant = false; const sized = () => host.clientWidth > 0 && host.clientHeight > 0;
-  const fit = (all) => { if (!sized()){ fitWant = true; return; } fitWant = false; E.fitView(!!all); };
-  let ro = null; if (window.ResizeObserver){ ro = new ResizeObserver(() => { if (!S.snap || !sized()) return; render(); if (fitWant) fit(); }); ro.observe(host); }
+  const fit = (all) => { if (!sized()){ fitWant = all ? 'all' : true; return; } fitWant = false; E.fitView(!!all); };
+  let ro = null; if (window.ResizeObserver){ ro = new ResizeObserver(() => { if (!S.snap || !sized()) return; render(); if (fitWant) fit(fitWant === 'all'); }); ro.observe(host); }
   if (o.planes) set(o);
   return { set, render, fit, option(k, val){ S[k] = val; render(); }, state: S, engine: E,
     destroy(){ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); if (ro) ro.disconnect(); root.innerHTML = ''; } };

@@ -33,10 +33,17 @@ t('Live ops is a method of the graph: Estate > Live ops\' own lattice, loaded on
   const d = L(N, E), cnt = {}; d.nodes.filter((n) => n.plane === 'node').forEach((n) => { cnt[n.area] = (cnt[n.area] || 0) + 1; });
   t('a cell fuller than nine splits into neighbouring areas (Nodes, Nodes · 2, Nodes · 3), none over nine', Object.keys(cnt).join(',') === 'Nodes,Nodes · 2,Nodes · 3' && Object.values(cnt).every((c) => c <= 9) && d.areas.indexOf('Nodes · 3') === d.areas.indexOf('Nodes') + 2, JSON.stringify([cnt, d.areas])); })();
 const LT = R('vera/ui/iso_lattice.js');
-t('a mounted lattice fits once its host has a size (a graph method mounts before its host is sized)', /const fit = \(all\) => \{ if \(!sized\(\)\)\{ fitWant = true; return; \}/.test(LT) && /if \(fitWant\) fit\(\);/.test(LT));
+t('a mounted lattice fits once its host has a size, remembering which fit (a graph method mounts before its host is sized)', /fitWant = all \? 'all' : true; return;/.test(LT) && /if \(fitWant\) fit\(fitWant === 'all'\);/.test(LT));
+t('in a tile the Live ops method opens on the whole stack: every plane in view', /lv\.set\(d\); lv\.fit\(true\);/.test(M));
 const ML = JSON.parse(R('vera/widgets/layouts/main.json')), ME = JSON.parse(R('vera/widgets/layouts/main-estate.json'));
 const rec = (j, id) => (j.widgets.find((w) => w.record && w.record.id === id) || {}).record || {};
 t('the stack topology tiles (Overview and Estate) and Live operations are graph tiles opening on Live ops 3D', ['topology-map', 'ops-live'].every((id) => rec(ML, id).form === 'vgraph' && rec(ML, id).draw.mode === 'ops-iso')
   && rec(ME, 'topology-map').form === 'vgraph' && rec(ME, 'topology-map').draw.mode === 'ops-iso' && rec(ME, 'topology-map').read.map.links === 'edges');
+// a page that loads vera-graph.js twice keeps every registered mode (the dashboard loaded it four times)
+(() => { const ctx = { console, setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: (f) => setTimeout(f, 0), document: { currentScript: null, createElement: () => ({ style: {}, setAttribute() {}, appendChild() {} }), head: { appendChild() {} }, documentElement: { appendChild() {} }, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] }, addEventListener() {}, removeEventListener() {} };
+  ctx.window = ctx; ctx.window.__veraGraphModesLoad = 1; const vm = require('node:vm'); vm.createContext(ctx);
+  vm.runInContext(VG, ctx); ctx.veraUI.Graph.registerMode({ id: 'ops-iso', label: 'Live ops', order: 12, mount() {} });
+  vm.runInContext(VG, ctx);   /* a second copy */
+  t('a second load of vera-graph.js keeps the modes already registered (one registry per page)', ctx.veraUI.Graph.listModes().some((m) => m.id === 'ops-iso')); })();
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

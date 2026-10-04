@@ -199,7 +199,7 @@
         var N = api.nodes().slice(0, 400), E = api.edges(), d = latticeOf(N, E);
         var s = N.length + ':' + E.length + ':' + N.slice(0, 60).map(function(n){ return n.id; }).join(','); if (lv && s === sig) return; sig = s;
         if (!lv) lv = window.VeraLattice.mount(box, { view: view, onOpen: function(n){ if (n && n._g) api.open(n._g); } });
-        lv.set(d); lv.fit();
+        lv.set(d); lv.fit(true);   // a tile shows the whole stack - every plane in view (ctrl+wheel zooms, a drag pans)
         note.textContent = 'live ops · ' + (view === '2d' ? '2D' : '3D') + ' · ' + d.nodes.length + ' nodes on ' + d.planes.length + ' planes in ' + d.areas.length + ' areas' + (api.nodes().length > N.length ? ' (first ' + N.length + ')' : '') + ' · double-click: details';
       });
     }
