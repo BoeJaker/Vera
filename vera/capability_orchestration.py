@@ -7432,8 +7432,14 @@ def _flatten_dag(dag):
     return flat
 
 async def route_llm(prompt: str, prefer: Optional[str] = None) -> Any:
-    candidates=sorted([k for k in CAPABILITY_REGISTRY if "llm" in k.lower()],
-                      key=lambda k:(0 if k==prefer else 1))
+    # Only plain text generators: a name containing "llm" used to be enough, which
+    # swept in vllm.server.stop, provisioning caps, summarize/classify and llm.route
+    # itself. See llm_route_core.
+    try:
+        from Vera.vera.llm_route_core import route_candidates
+    except ImportError:                                   # pragma: no cover
+        from vera.llm_route_core import route_candidates
+    candidates = route_candidates(CAPABILITY_REGISTRY.keys(), prefer)
     for cap_name in candidates:
         try: return await CAPABILITY_REGISTRY[cap_name]["func"](prompt=prompt)
         except Exception as e: log.warning("route_llm %s: %s",cap_name,e)
