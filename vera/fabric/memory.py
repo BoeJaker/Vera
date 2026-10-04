@@ -107,6 +107,11 @@ try:                                                    # one hit per repeated t
     from Vera.vera.fabric import recall_core as _recall_core
 except ImportError:                                     # pragma: no cover
     from . import recall_core as _recall_core
+# What recall leaves out unless asked (owner, 2026-10-04): tool calls and imported coding-agent transcript lines -
+# kept, still in the activity graph, findable with include_activity or by naming the record type; not embedded.
+# "" restores the old behaviour (everything recalled and embedded).
+_RECALL_EXCLUDE_TYPES, _RECALL_EXCLUDE_TRANSCRIPTS = _recall_core.parse_exclusions(
+    __import__("os").getenv("VERA_MEMORY_RECALL_EXCLUDE", "cap_call,dag_step,transcript"))
 
 log = logging.getLogger("vera.memory")
 
@@ -646,6 +651,12 @@ class PostgresBackend(MemoryBackend):
                     elif k == "tags":
                         conditions.append(f"tags @> ${i}::JSONB")
                         params.append(json.dumps([v] if isinstance(v, str) else v)); i += 1
+                    elif k == "exclude_record_types" and v:
+                        conditions.append(f"record_type <> ALL(${i}::text[])")
+                        params.append([str(x) for x in v]); i += 1
+                    elif k == "exclude_transcripts" and v:
+                        # imported coding-agent transcript lines (recall_core.is_transcript); LIKE treats '[' literally
+                        conditions.append("NOT (text LIKE '[Claude Code%' OR text LIKE '[Codex%')")
             where = " AND ".join(conditions)
             if query.strip():
                 params.append(query)
@@ -890,10 +901,15 @@ class ChromaBackend(MemoryBackend):
         try:
             # Build individual filter clauses
             clauses: list = [{"archived": {"$eq": False}}]
+            where_doc = None
             if filters:
                 for k, v in (filters or {}).items():
                     if k in ("session_id","record_type","source_type","category","language"):
                         clauses.append({k: {"$eq": v}})
+                    elif k == "exclude_record_types" and v:
+                        clauses.append({"record_type": {"$nin": [str(x) for x in v]}})
+                    elif k == "exclude_transcripts" and v:
+                        where_doc = {"$and": [{"$not_contains": "[Claude Code"}, {"$not_contains": "[Codex"}]}
 
             # Chroma requires $and when there are multiple conditions;
             # a single-element list must be unwrapped to avoid the
@@ -916,17 +932,30 @@ class ChromaBackend(MemoryBackend):
                 "n_results": min(int(limit),
                                  await _chroma_bound.run(self._cached_count) or 1),
                 "where":     where_arg,
+                "where_document": where_doc,
                 "include":   ["documents","metadatas","distances"],
                 "query_embeddings": [embedding],
             }
-            res = await _chroma_bound.run(
-                lambda: self._collection.query(
-                    **{k: v for k, v in kwargs.items() if v is not None}))
+            try:
+                res = await _chroma_bound.run(
+                    lambda: self._collection.query(
+                        **{k: v for k, v in kwargs.items() if v is not None}))
+            except Exception as e:
+                if where_doc is None:
+                    raise
+                # a server that rejects the document filter: query without it, leave transcripts out below
+                log.debug("Chroma where_document refused (%s) - filtering transcripts after the query", e)
+                kwargs["where_document"] = None
+                res = await _chroma_bound.run(
+                    lambda: self._collection.query(
+                        **{k: v for k, v in kwargs.items() if v is not None}))
             results = []
             for rid, doc, meta, dist in zip(
                 res["ids"][0], res["documents"][0],
                 res["metadatas"][0], res["distances"][0],
             ):
+                if where_doc is not None and _recall_core.is_transcript(doc):
+                    continue
                 score = max(0.0, 1.0 - dist)  # cosine distance → similarity
                 results.append((self._chroma_to_record(rid, doc, meta), score))
             return results
@@ -1175,6 +1204,12 @@ class Neo4jBackend(MemoryBackend):
                 if k in ("session_id","record_type","source_type","category"):
                     where_parts.append(f"m.{k} = ${k}")
                     params[k] = v
+                elif k == "exclude_record_types" and v:
+                    where_parts.append("NOT coalesce(m.record_type, '') IN $exclude_record_types")
+                    params["exclude_record_types"] = [str(x) for x in v]
+                elif k == "exclude_transcripts" and v:
+                    where_parts.append("NOT (coalesce(m.text, '') STARTS WITH '[Claude Code' "
+                                       "OR coalesce(m.text, '') STARTS WITH '[Codex')")
             where = " AND ".join(where_parts)
 
             if query.strip():
@@ -1541,8 +1576,13 @@ class HybridMemoryStore:
         if not record.text and record.full_text:
             record.text = record.full_text[:500]
 
-        # Generate embedding (shared across backends)
-        if not record.embedding and MEMORY_AUTO_EMBED:
+        # Generate embedding (shared across backends) - but not for the kinds recall leaves out (tool calls, imported
+        # transcript lines): they are never searched by meaning, and every such embed queued on the shared embed nodes
+        # ahead of chat's own query embeds, which then timed out (2026-10-04, EVIDENCE E1/E12). They go to Postgres and
+        # Neo4j as before; Chroma is not asked, so no "embedder offline" warning is raised for a skip by design.
+        worthy = _recall_core.embed_worthy(record.record_type, record.text or record.full_text,
+                                           _RECALL_EXCLUDE_TYPES, _RECALL_EXCLUDE_TRANSCRIPTS)
+        if worthy and not record.embedding and MEMORY_AUTO_EMBED:
             emb = await embed_text(record.text or record.summary)
             if emb:
                 record.embedding       = emb
@@ -1552,6 +1592,7 @@ class HybridMemoryStore:
         tasks = {
             name: asyncio.wait_for(b.store(record), _BACKEND_OP_TIMEOUT_S)
             for name, b in self._backends.items()
+            if worthy or name != "chroma"
         }
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         outcome = {}
@@ -1617,6 +1658,7 @@ class HybridMemoryStore:
         # its intent — cap it once here rather than trust every caller (and
         # every future one) to do it themselves.
         query = (query or "")[:_HYBRID_SEARCH_QUERY_MAX_CHARS]
+        filters = _recall_core.default_recall_filters(filters, _RECALL_EXCLUDE_TYPES, _RECALL_EXCLUDE_TRANSCRIPTS)
         active = {k: v for k, v in self._backends.items()
                   if backends is None or k in backends}
         # Only Chroma's vector search actually reads `embedding` — Postgres
@@ -1676,6 +1718,7 @@ class HybridMemoryStore:
         starts no embed and leaves no background task behind, so calling it on every keystroke costs nothing on
         the shared embed nodes."""
         query = (query or "")[:_HYBRID_SEARCH_QUERY_MAX_CHARS]
+        filters = _recall_core.default_recall_filters(filters, _RECALL_EXCLUDE_TYPES, _RECALL_EXCLUDE_TRANSCRIPTS)
         names = [n for n in ("postgres", "neo4j") if n in self._backends]
         if not names:
             return []
@@ -1721,6 +1764,7 @@ class HybridMemoryStore:
             than await it inline — awaiting it defeats the entire point.
         """
         query = (query or "")[:_HYBRID_SEARCH_QUERY_MAX_CHARS]
+        filters = _recall_core.default_recall_filters(filters, _RECALL_EXCLUDE_TYPES, _RECALL_EXCLUDE_TRANSCRIPTS)
 
         # Start the embed NOW, in parallel with the fast tier below — not
         # after it finishes. It's the long pole; every second it's not
@@ -2097,9 +2141,12 @@ async def memory_store(
                 "WHEN TO USE: recall past research results, stored facts, previous tool outputs for a topic. "
                 "Input: query (str!), limit (int, default 10), session_id (str — filter to one session), "
                 "category (str — filter by category label), tags (str — comma-sep filter), "
-                "backends (str — comma-sep subset: postgres,chroma,neo4j; empty = all). "
-                "Output: {results: [{record: {id, text, category, tags, created_at, ...}, score}], count, query}. "
-                "For richer context with graph expansion use memory.recall instead.",
+                "backends (str — comma-sep subset: postgres,chroma,neo4j; empty = all), "
+                "include_activity (bool, default false — capability-call records and imported coding-agent "
+                "transcript lines are left out unless this is true or record_type names one; use it to ask "
+                "what was run). "
+                "Output: {results: [{record: {id, text, category, tags, created_at, ...}, score, repeats}], count, "
+                "query}. For richer context with graph expansion use memory.recall instead.",
 )
 async def memory_search(
     query:          str,
@@ -2109,6 +2156,7 @@ async def memory_search(
     category:       str   = "",
     tags:           str   = "",
     backends:       str   = "",   # comma-separated subset e.g. "chroma,neo4j"
+    include_activity: bool = False,
     trace_id=None,
 ):
     # Defensive coerce — query params arrive as strings via HTTP
@@ -2121,6 +2169,8 @@ async def memory_search(
     if record_type: filters["record_type"] = record_type
     if category:    filters["category"]    = category
     if tags:        filters["tags"]        = [t.strip() for t in tags.split(",") if t.strip()]
+    if str(include_activity).lower() in ("1", "true", "yes", "on"):   # HTTP may send it as a string
+        filters["include_activity"] = True
     backend_list = [b.strip() for b in backends.split(",") if b.strip()] or None
     results = await MEMORY.search(query, limit=limit, filters=filters or None,
                                    backends=backend_list)
@@ -2544,6 +2594,12 @@ async def memory_backfill_vectors(confirm: bool = False, limit: int = 0,
     dim = len(probe)
 
     cond = "TRUE" if include_archived else "archived=false"
+    # the kinds recall leaves out are never embedded (VERA_MEMORY_RECALL_EXCLUDE) - so they are not "missing" a vector
+    # either; the names come from parse_exclusions, which admits only [a-z0-9_] identifiers
+    if _RECALL_EXCLUDE_TYPES:
+        cond += " AND record_type NOT IN (" + ",".join("'" + t + "'" for t in _RECALL_EXCLUDE_TYPES) + ")"
+    if _RECALL_EXCLUDE_TRANSCRIPTS:
+        cond += " AND NOT (text LIKE '[Claude Code%' OR text LIKE '[Codex%')"
     async with pool.acquire() as conn:
         pg_total = await conn.fetchval(f"SELECT COUNT(*) FROM vera_memories WHERE {cond}")
     try:
@@ -2621,6 +2677,97 @@ async def memory_backfill_vectors(confirm: bool = False, limit: int = 0,
                       "backfilled": done, "errors": errors})
     return {"ok": True, "dry_run": False, **base,
             "backfilled": done, "errors": errors}
+
+
+@capability(
+    "memory.vectors.drop_excluded",
+    http_method="POST", http_path="/memory/vectors/drop_excluded",
+    http_tags=["memory", "embed"], memory="off",
+    description=(
+        "Remove the vectors of the record kinds recall leaves out (VERA_MEMORY_RECALL_EXCLUDE: capability calls, "
+        "workflow steps, imported coding-agent transcript lines) from the memory vector collection. Only the "
+        "derived vectors go: the records stay in Postgres and Neo4j, in the activity graph, and are found with "
+        "memory.search include_activity=true. DRY-RUN by default. Inputs: confirm (bool - must be true to delete), "
+        "limit (int, 0 = all), batch (int=1000). Output: {dry_run, kinds, found, dropped, collection_before, "
+        "collection_after}."
+    ),
+)
+async def memory_vectors_drop_excluded(confirm: bool = False, limit: int = 0, batch: int = 1000,
+                                       trace_id=None):
+    cb = MEMORY._backends.get("chroma")
+    coll = getattr(cb, "_collection", None) if cb else None
+    if coll is None:
+        return {"error": "chroma backend not connected"}
+    if not (_RECALL_EXCLUDE_TYPES or _RECALL_EXCLUDE_TRANSCRIPTS):
+        return {"ok": True, "dry_run": not confirm, "kinds": [], "found": 0, "dropped": 0,
+                "note": "VERA_MEMORY_RECALL_EXCLUDE is empty - nothing is excluded"}
+    batch = max(100, min(int(batch or 1000), 5000))
+    cap = int(limit or 0)
+    kinds = list(_RECALL_EXCLUDE_TYPES) + (["transcript"] if _RECALL_EXCLUDE_TRANSCRIPTS else [])
+    # (where, where_document) pairs: by record type, then by the transcript prefix
+    selectors = []
+    if _RECALL_EXCLUDE_TYPES:
+        selectors.append(({"record_type": {"$in": list(_RECALL_EXCLUDE_TYPES)}}, None))
+    if _RECALL_EXCLUDE_TRANSCRIPTS:
+        for pfx in ("[Claude Code", "[Codex"):
+            selectors.append((None, {"$contains": pfx}))
+    try:
+        before = await _chroma_bound.run(coll.count)
+    except Exception as e:
+        return {"error": f"chroma count failed: {e}"}
+
+    async def _page(where, wdoc, offset):
+        kw = {"include": [], "limit": batch, "offset": offset}
+        if where: kw["where"] = where
+        if wdoc: kw["where_document"] = wdoc
+        res = await _chroma_bound.run(lambda: coll.get(**kw))
+        ids = (res or {}).get("ids") or []
+        if wdoc:   # a "contains" match anywhere; only the lines that START with the prefix are transcripts
+            got = await _chroma_bound.run(lambda: coll.get(ids=ids, include=["documents"])) if ids else {}
+            docs = dict(zip(got.get("ids") or [], got.get("documents") or []))
+            ids = [i for i in ids if _recall_core.is_transcript(docs.get(i, ""))]
+        return ids, len((res or {}).get("ids") or [])
+
+    found = dropped = 0
+    for where, wdoc in selectors:
+        offset = 0
+        while True:
+            if cap and found >= cap:
+                break
+            try:
+                ids, scanned = await _page(where, wdoc, offset)
+            except Exception as e:
+                return {"error": f"chroma get failed: {e}", "found": found, "dropped": dropped}
+            if not scanned:
+                break
+            if cap:
+                ids = ids[:max(0, cap - found)]
+            found += len(ids)
+            if confirm and ids:
+                try:
+                    await _chroma_bound.run(lambda: coll.delete(ids=ids))
+                    dropped += len(ids)
+                except Exception as e:
+                    return {"error": f"chroma delete failed: {e}", "found": found, "dropped": dropped}
+                # deleted rows leave the result set, so the next page starts where this one did - except the rows
+                # this page scanned and kept (non-prefix "contains" matches), which are skipped by offset
+                offset += scanned - len(ids)
+            else:
+                offset += scanned
+    after = before
+    try:
+        after = await _chroma_bound.run(coll.count)
+    except Exception:
+        pass
+    if confirm:
+        try:
+            cb._count_cache = (0.0, 0)   # the collection shrank; the next count reads it fresh (shape: (ts, n))
+        except Exception:
+            pass
+        await emit_event({"type": "memory.vectors.dropped", "kinds": kinds, "dropped": dropped})
+    return {"ok": True, "dry_run": not confirm, "kinds": kinds, "found": found, "dropped": dropped,
+            "collection_before": before, "collection_after": after,
+            "note": "" if confirm else "Re-run with confirm=true to delete these vectors (records are kept)."}
 
 
 async def _startup():
