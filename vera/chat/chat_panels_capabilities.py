@@ -26,6 +26,7 @@ Capabilities:
 from __future__ import annotations
 
 import json
+import re
 import logging
 import uuid
 from typing import Dict, List, Optional
@@ -50,7 +51,7 @@ def _redis():
 # revision adds --on-ac (text-on-accent) plus a library of themes modelled on
 # famous computing colour schemes, and a contrast guard for custom themes.
 from Vera.vera.theme_defs import (
-    BUILTIN_THEMES, DEFAULT_THEME, ensure_contrast,
+    BUILTIN_THEMES, DEFAULT_THEME, ensure_contrast, flat_theme_vars,
 )
 
 # Custom themes stored at runtime (persisted to Redis if available)
@@ -163,6 +164,7 @@ async def cap_theme_create(id: str, label: str = "", type: str = "dark",
                             trace_id=None):
     try:
         var_dict = json.loads(vars) if isinstance(vars, str) else vars
+        var_dict = flat_theme_vars(var_dict)
     except Exception:
         return {"error": "vars must be valid JSON object"}
     if not id or not id.isalnum():
@@ -272,6 +274,110 @@ async def _serve_vera_settings_js():
     return Response(content="console.warn('vera-settings.js not found');",
                     media_type="application/javascript")
 
+
+# ── A PANEL'S MENU WIDGETS (owner, 2026-10-03, the LHM audit: "sub/internal LHMs editable, with widgets like the chat UI";
+# 2026-10-04: "go ahead on 3/4"). A panel's menu takes widgets as the chat's menus do - its ✎, + Add widget, the same
+# records - and they were kept in one browser's localStorage only: another browser, the panel opened on its own, and every
+# agent saw none of them. Kept here, per panel and per menu, in one hash; the harness's docked menu and the panel's own
+# menu (standalone) both read and write it. A menu is named by what it holds - 'i:<item id>' for a menu of one item,
+# 'g:<group name>' for a group - so a menu that gains an item keeps its widgets.
+_LHM_W_KEY = "vera:ui:lhm:widgets:{panel}"
+_LHM_W_MAX = 24          # widgets in one menu
+_LHM_W_REC_MAX = 8000    # bytes of one widget record
+
+
+def _lhm_panel_id(panel: str = "", path: str = "") -> str:
+    """The panel a menu belongs to: its id (a split view's '--2' copy is the same panel), or the page path it is served
+    at - the panel opened on its own knows only that - matched against the registered panels' frames."""
+    p = re.sub(r"--\d+$", "", str(panel or "").strip())[:80]
+    if p:
+        return p
+    want = str(path or "").split("?")[0].split("#")[0].rstrip("/")
+    if not want:
+        return ""
+    for pid, spec in list(UI_PANELS.items()):
+        m = re.search(r'<iframe[^>]+src="([^"?#]+)', str((spec or {}).get("html") or ""))
+        if m and m.group(1).rstrip("/") == want:
+            return str(pid)
+    return ""
+
+
+def _lhm_clean(widgets) -> list:
+    out = []
+    for w in (widgets if isinstance(widgets, list) else [])[:_LHM_W_MAX]:
+        if isinstance(w, dict) and len(json.dumps(w, default=str)) <= _LHM_W_REC_MAX:
+            out.append(w)
+    return out
+
+
+async def _lhm_menus(pid: str) -> dict:
+    r = _redis()
+    if not r:
+        return {}
+    try:
+        raw = await r.hgetall(_LHM_W_KEY.format(panel=pid)) or {}
+    except Exception:
+        return {}
+    out = {}
+    for k, v in raw.items():
+        k = k.decode() if isinstance(k, bytes) else str(k)
+        try:
+            out[k] = _lhm_clean(json.loads(v.decode() if isinstance(v, bytes) else v))
+        except Exception:
+            continue
+    return out
+
+
+@capability(
+    "ui.lhm.widgets",
+    http_method="GET", http_path="/ui/lhm/widgets", http_tags=["ui"],
+    memory="off", silent=True,
+    description="The widgets a panel's left-hand menu shows, per menu - the ones put there with the menu's ✎ (the same "
+                "widget records the chat's menus take). A menu with nothing saved shows the widgets the panel itself "
+                "names. Inputs: panel (str - the panel id, e.g. 'telegram-panel'), path (str - or the panel's page "
+                "path, e.g. '/telegram/panel'), menu (str - one menu: 'i:<item id>' or 'g:<group name>'; omit for all). "
+                "Output: {ok, panel, menus:{<menu>:[record...]}} or, with menu, {ok, panel, menu, widgets, saved}.",
+)
+async def cap_lhm_widgets(panel: str = "", path: str = "", menu: str = "", trace_id=None):
+    pid = _lhm_panel_id(panel, path)
+    if not pid:
+        return {"ok": False, "error": "panel or path required - no registered panel at %r" % (path or panel)}
+    menus = await _lhm_menus(pid)
+    m = str(menu or "").strip()
+    if m:
+        return {"ok": True, "panel": pid, "menu": m, "widgets": menus.get(m, []), "saved": m in menus}
+    return {"ok": True, "panel": pid, "menus": menus}
+
+
+@capability(
+    "ui.lhm.widgets.set",
+    http_method="POST", http_path="/ui/lhm/widgets/set", http_tags=["ui"],
+    memory="off",
+    description="Set the widgets in one menu of a panel's left-hand menu (replaces that menu's list; an empty list "
+                "keeps the menu empty, reset=true goes back to the widgets the panel names). Inputs: panel (str) or "
+                "path (str) as for ui.lhm.widgets, menu (str! - 'i:<item id>' or 'g:<group name>'), widgets (list - "
+                "widget records: {template_id, size} for a registry template, or a record from the widget sheet; at "
+                "most 24), reset (bool). Output: {ok, panel, menu, count}.",
+)
+async def cap_lhm_widgets_set(panel: str = "", menu: str = "", widgets: Optional[list] = None, reset: bool = False,
+                              path: str = "", trace_id=None):
+    pid = _lhm_panel_id(panel, path)
+    m = str(menu or "").strip()[:120]
+    if not pid or not m:
+        return {"ok": False, "error": "panel (or path) and menu are required"}
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    key = _LHM_W_KEY.format(panel=pid)
+    try:
+        if reset:
+            await r.hdel(key, m)
+            return {"ok": True, "panel": pid, "menu": m, "count": 0, "reset": True}
+        clean = _lhm_clean(widgets)
+        await r.hset(key, m, json.dumps(clean, default=str))
+    except Exception as e:
+        return {"ok": False, "error": "store failed: %s" % e}
+    return {"ok": True, "panel": pid, "menu": m, "count": len(clean)}
 
 # Serve vera-lhm.js — the one left-hand menu (UI redesign): a rail of quick menus
 # beside a detail column, the ☰ top-level list, every part a widget; the same
@@ -1435,7 +1541,10 @@ async def _startup():
                 raw = await r.get(key)
                 if raw:
                     tid = (key.decode() if isinstance(key, bytes) else key).split(":")[-1]
-                    CUSTOM_THEMES[tid] = json.loads(raw)
+                    _ct = json.loads(raw)
+                    if isinstance(_ct, dict):
+                        _ct["vars"] = flat_theme_vars(_ct.get("vars"))
+                    CUSTOM_THEMES[tid] = _ct
             except Exception:
                 pass
     except Exception:

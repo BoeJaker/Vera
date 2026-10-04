@@ -326,6 +326,80 @@
         after.parentNode.insertBefore(b, after.nextSibling); after = b; });
     }
     syncSubs(); setInterval(syncSubs, 700);
+    initMenuWidgets(host, btns, idOf, groupOf, items);
+  }
+
+  /* ── 3b. THE MENU'S WIDGETS ON THE PANEL'S OWN MENU (owner, 2026-10-03, the LHM audit: "sub/internal LHMs editable, with
+     widgets like the chat UI"; 2026-10-04: "go ahead on 3/4"). The harness's docked menu took widgets (✎, + Add widget, the
+     chat's widget sheet); the panel opened on its own showed none and could not take any. The same lists, from the same
+     store (/ui/lhm/widgets, per panel and per menu), under the open item's menu - 'i:<item id>', or 'g:<group>' when the
+     menu has groups, the names the docked menu uses - with the same ✎. Docked, the harness draws them and this steps aside. */
+  function initMenuWidgets(host, btns, idOf, groupOf, items) {
+    if (!host || host._vpMw || !window.fetch) return;
+    /* a menu that is a column (the canonical sidebar, a .vp-menu column, an aside) - never a tab strip across the page */
+    var column = host.id === 'sidebar' || host.tagName === 'ASIDE' || (host.classList.contains('vp-menu') && !host.classList.contains('inline'));
+    if (!column) { try { var hr = host.getBoundingClientRect(); column = hr.height > hr.width * 1.5 && hr.width < 420; } catch (e) {} }
+    if (!column) return;
+    host._vpMw = true;
+    var grouped = (function () { var g = {}; items.forEach(function (it) { if (it.group) g[it.group] = 1; }); return Object.keys(g).length >= 2; })();
+    var path = location.pathname, panel = '', store = null, editing = false, elAsked = false;
+    if (!document.getElementById('vp-mw-css')) { var st = document.createElement('style'); st.id = 'vp-mw-css';
+      st.textContent = '.vp-mw{display:flex;flex-direction:column;gap:8px;margin:10px 6px 6px;padding-top:8px;border-top:1px solid var(--border,var(--bd,rgba(255,255,255,.09)))}'
+        + '.vp-mw-h{display:flex;align-items:center;gap:6px;font-size:9px;letter-spacing:.09em;text-transform:uppercase;font-weight:600;color:var(--dim2,var(--t3,#6b7280))}'
+        + '.vp-mw-h span{flex:1}.vp-mw-h button{background:transparent;border:1px solid transparent;border-radius:var(--r-sm,4px);color:inherit;font:inherit;font-size:11px;letter-spacing:0;text-transform:none;padding:1px 6px;cursor:pointer}'
+        + '.vp-mw-h button:hover,.vp-mw-h button.on{color:var(--acc,var(--ac,#5a9e8f));border-color:currentColor}'
+        + '.vp-mw.empty:not(.editing) .vp-mw-h span{visibility:hidden}.vp-mw.empty:not(.editing){border-top-color:transparent;opacity:.55}'
+        + '.vp-mw-w{position:relative}.vp-mw-w vera-widget{display:block}'
+        + '.vp-mw-rm{position:absolute;top:4px;right:4px;z-index:2;background:var(--bg2,var(--s2,#1a1f26));border:1px solid var(--border2,var(--bd2,#444));border-radius:4px;color:var(--text,var(--t1,#ddd));font-size:10px;line-height:1;padding:3px 5px;cursor:pointer}'
+        + 'html.vpb-nav-hosted .vp-mw,body.lhm-collapsed .vp-mw{display:none!important}';
+      (document.head || document.documentElement).appendChild(st); }
+    var box = document.createElement('div'); box.className = 'vp-mw'; box.setAttribute('data-w', 'menu widgets · host');
+    host.appendChild(box);
+    function active() { for (var i = 0; i < btns.length; i++) if (btns[i].classList.contains('active') || btns[i].classList.contains('on')) return btns[i]; return btns[0] || null; }
+    function menuKey() { var b = active(); if (!b) return ''; return grouped ? 'g:' + (groupOf(b) || 'More').slice(0, 80) : 'i:' + String(idOf(b)).slice(0, 80); }
+    function defaults() { var el = document.querySelector('[data-lhm-widgets]'); if (!el) return [];
+      return String(el.getAttribute('data-lhm-widgets') || '').split(/[\s,]+/).filter(function (x) { return /^[\w.:-]+(@(xs|s|m|l|xl))?$/.test(x); }).slice(0, 8)
+        .map(function (x) { var p = x.split('@'); return { template_id: p[0], size: p[1] || 's' }; }); }
+    function list() { var k = menuKey(); return (store && Object.prototype.hasOwnProperty.call(store, k)) ? store[k].slice() : defaults(); }
+    function save(l) { var k = menuKey(); if (!k) return; store = store || {}; store[k] = l;
+      fetch('/ui/lhm/widgets/set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ panel: panel, path: path, menu: k, widgets: l }) }).catch(function () {}); }
+    /* the widget element and its sheet (widget_element.js), loaded the first time a widget is drawn or added */
+    function withEl(cb) {
+      if (window.customElements && customElements.get('vera-widget') && window.VeraWidgetConfig) return cb();
+      var sc = document.querySelector('script[src*="widget_element.js"]');
+      if (!sc && !elAsked) { elAsked = true; sc = document.createElement('script'); sc.src = '/ui/widgets/widget_element.js'; (document.head || document.documentElement).appendChild(sc); }
+      var n = 0; (function wait() { if (window.customElements && customElements.get('vera-widget')) return cb(); if (++n < 50) setTimeout(wait, 100); })();
+    }
+    function draw() {
+      var l = list(); box.innerHTML = ''; box.classList.toggle('empty', !l.length); box.classList.toggle('editing', editing);
+      var h = document.createElement('div'); h.className = 'vp-mw-h'; var lab = document.createElement('span'); lab.textContent = 'Widgets'; h.appendChild(lab);
+      if (editing) { var add = document.createElement('button'); add.type = 'button'; add.textContent = '+ Add widget'; add.title = 'Any widget form, a template of yours - with a preview';
+        add.addEventListener('click', function () { withEl(function () { var S = window.VeraWidgetConfig; if (!S || !S.open) return;
+          try { Promise.resolve(S.open({ mode: 'add', into: 'side', title: 'Add to this menu', templates: true, sizes: ['xs', 's', 'm'] })).then(function (rec) { if (!rec) return; var l2 = list(); l2.push(rec); save(l2); draw(); }).catch(function () {}); } catch (e) {} }); });
+        h.appendChild(add); }
+      var ed = document.createElement('button'); ed.type = 'button'; ed.className = editing ? 'on' : ''; ed.textContent = editing ? '✓ Done' : '✎';
+      ed.title = editing ? 'Leave edit mode (what you changed stays)' : 'Edit this menu - add widgets to it, as the chat\'s menus take them';
+      ed.addEventListener('click', function () { editing = !editing; draw(); }); h.appendChild(ed); box.appendChild(h);
+      if (!l.length) return;
+      withEl(function () {
+        l.forEach(function (rec, i) {
+          var w = document.createElement('div'); w.className = 'vp-mw-w'; w.setAttribute('data-w', (rec.title || rec.template_id || rec.form || 'widget') + ' · widget');
+          var vw = document.createElement('vera-widget');
+          if (rec.template_id) { vw.setAttribute('template-id', rec.template_id); vw.setAttribute('size', rec.size || 's'); }
+          else { try { vw.setAttribute('record', JSON.stringify(rec)); } catch (e) {} vw.setAttribute('size', (rec.frame && rec.frame.size) || 's'); }
+          vw.setAttribute('item-drawer', ''); w.appendChild(vw);
+          if (editing) { var rm = document.createElement('button'); rm.type = 'button'; rm.className = 'vp-mw-rm'; rm.textContent = '✕'; rm.title = 'Take it out of this menu';
+            rm.addEventListener('click', function () { var l3 = list(); l3.splice(i, 1); save(l3); draw(); }); w.appendChild(rm); }
+          box.appendChild(w);
+        });
+      });
+    }
+    function drop() { if (box.parentNode) box.parentNode.removeChild(box); }
+    fetch('/ui/lhm/widgets?path=' + encodeURIComponent(path)).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) { drop(); return; } panel = d.panel || ''; store = d.menus || {}; draw();
+      var key = menuKey(), mo = new MutationObserver(function () { var k = menuKey(); if (k !== key) { key = k; draw(); } });
+      Array.prototype.forEach.call(btns, function (b) { mo.observe(b, { attributes: true, attributeFilter: ['class'] }); });
+    }).catch(drop);
   }
 
   /* ── 4. ONE LOOK FOR A MENU THAT IS NOT THE CANONICAL SIDEBAR (owner, 2026-10-03: "each panel use a common lhm styling
