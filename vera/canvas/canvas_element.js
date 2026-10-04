@@ -2842,6 +2842,10 @@
         if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
+        /* ...and onto the card NOW: the placer reads the card's data-pw, which only a redraw rewrites - a drag that kept
+           the size class placed the card at the width of the drag before and it snapped back (owner, 2026-10-04: "i
+           also cannot resize an element on the canvas to span more columns than it has") */
+        r.el.dataset.pw = String(Math.round(r.w));
         const size = sizeOfHeight(r.h, this._vh || 0);   // against the column you dragged it in, not a fixed number
         try { this.dispatchEvent(new CustomEvent('vera:canvas:resized', { bubbles: true, detail: { key, height: r.h, size } })); } catch (e) {}
         if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage')) this._placeNow(); });
@@ -3415,7 +3419,13 @@
         if (!h || !h.getClientRects().length) { el.style.display = 'none'; return; }
         const r = h.getBoundingClientRect(); const w = Math.max(0, Math.round(r.width)), ht = Math.max(0, Math.round(r.height));
         el.style.display = ''; el.style.left = Math.round(r.left - B.left + body.scrollLeft) + 'px'; el.style.top = Math.round(r.top - B.top + body.scrollTop) + 'px';
-        if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } if (el.dataset.kind === 'mermaid') { const m = el.firstChild; try { m && m.fit && m.fit(); } catch (e) {} } }
+        if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } if (el.dataset.kind === 'mermaid') { const m = el.firstChild; try { m && m.fit && m.fit(); } catch (e) {} }
+          /* a records item's graph takes its slot's height (owner, 2026-10-04: "elements on the canvas still dont resize on
+             the y axis ... im trying to expand the graph elements"): the embed's box was fixed at the height it was made
+             with, so the slot grew under a graph that stayed put. Its caption line sits under the box. */
+          if (el.dataset.kind === 'rgraph') { const g = el.firstChild; try { if (g && typeof g._setHeight === 'function' && Math.abs((g._h || 0) - (ht - 16)) > 3) g._setHeight(Math.max(160, ht - 16)); } catch (e) {}
+            // ...and fits its nodes to the new box once it has settled (they were laid out for the old one)
+            clearTimeout(el._fitT); el._fitT = setTimeout(() => { try { const gg = g && g._graph; if (gg && typeof gg.fit === 'function') gg.fit(); } catch (e) {} }, 350); } }
       });
     }
     /* the diagram rendered: its slot takes the diagram's height at the slot's width (the size's ceiling is the CSS's);
