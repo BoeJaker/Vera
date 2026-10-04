@@ -13555,15 +13555,14 @@ Your task: decide what to do next to advance toward the goal.
     if(CTX_SRCS.has('memory')&&!stale()){
       // Fetch ~3x the desired k so the rerank has headroom — server ignores
       // hits below its own min similarity, so this is an upper bound.
-      // fast=true (the pre-send freshness-guard call in send()) restricts to
-      // postgres+neo4j: chroma's vector leg requires a query embedding that
-      // memory.search computes unconditionally when chroma is in play —
-      // live-measured 4.65s vs 0.08s with it excluded (2026-08 chat-send-
-      // latency investigation) on this instance's shared embed nodes. The
-      // on-type live-preview call (fast=false) keeps the richer chroma-
-      // inclusive search since nothing is blocking on it.
+      // Only a fetch YOU ask for (Fetch now, the result-count selects, opening the popover: force=true) waits for
+      // chroma's vector leg. It needs a query embedding first - live-measured 4.65s vs 0.08s without it (2026-08)
+      // and again 5.31s vs 0.38s on 2026-10-04 with the IDENTICAL top 12 - and everything below this await (agent
+      // context, session edges, graph neighbours, recall, web) waits behind it, so the automatic fetches (typing,
+      // after a reply, the pre-send guard) search postgres+neo4j only. With memory injection on, the turn
+      // still gets the vector search: the server's two-tier memory delivers it to the next turn.
       const mBody={query,limit:Math.max(k*3,12)};
-      if(fast) mBody.backends='postgres,neo4j';
+      if(fast||!force) mBody.backends='postgres,neo4j';
       const hr=await fetchA('/memory/search','POST',mBody);
       if(!stale()){
         const candidates=[];
