@@ -116,15 +116,27 @@ async def _archive(p: Dict[str, Any]) -> None:
 
 
 async def census_summary() -> Dict[str, Any]:
-    """The census as /health reports it (busy, state, goal, control, by)."""
+    """The census as /health reports it (busy, state, goal, control, by), plus `due`:
+    census schedules due right now when none is in flight (release_core.may_release
+    holds a census=finish release for them, so a pair's arms share one build)."""
+    s: Dict[str, Any] = {"busy": False, "state": "none", "control": "run"}
     try:
         import sys as _sys
         cc = _sys.modules.get("census_capabilities")
         if cc is not None and hasattr(cc, "census_health"):
-            return await cc.census_health()
+            s = dict(await cc.census_health() or s)
     except Exception as e:
         log.debug("census summary unavailable: %s", e)
-    return {"busy": False, "state": "none", "control": "run"}
+    if not s.get("busy"):
+        try:
+            import sys as _sys
+            sc = (_sys.modules.get("schedule_capabilities")
+                  or _sys.modules.get("Vera.vera.evolve.schedule_capabilities"))
+            if sc is not None and hasattr(sc, "census_due_now"):
+                s["due"] = await sc.census_due_now()
+        except Exception as e:
+            log.debug("census due-now unavailable: %s", e)
+    return s
 
 
 async def _write_yield(reason: str) -> bool:
