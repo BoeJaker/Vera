@@ -26,7 +26,7 @@ def summarise(loops: Iterable[Dict[str, Any]], gates: Iterable[Dict[str, Any]],
     if loops:
         parts.append("%d agent loop%s" % (len(loops), "" if len(loops) == 1 else "s"))
     running = [g for g in gates if g.get("state") == "running"]
-    queued = [g for g in gates if g.get("state") != "running"]
+    queued = [g for g in gates if g.get("state") not in ("running", "moot")]
     if running:
         parts.append("gate running: %s" % ", ".join(str(g.get("branch") or g.get("id")) for g in running[:2]))
     if queued:
