@@ -61,10 +61,12 @@ from Vera.vera.capability_orchestration import (
 try:
     from Vera.vera.intel import intel_core as core
     from Vera.vera.intel import intel_ops_core as ops
+    from Vera.vera.intel import intel_ledger_core as ledger
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
     from vera.intel import intel_ops_core as ops
+    from vera.intel import intel_ledger_core as ledger
     from vera.intel.intel_store import IntelStore
 
 log = logging.getLogger("vera.intel")
@@ -205,6 +207,7 @@ async def _llm_json(prompt: str, *, role: str = "enrich", timeout: float = 900.0
         kw.update(profile="intel", role=role)
     bg = getattr(_orch, "BACKGROUND_LLM", None)
     tok = None
+    t0 = time.time()
     try:
         if bg is not None:
             tok = bg.set(f"intel:{role}")
@@ -224,6 +227,7 @@ async def _llm_json(prompt: str, *, role: str = "enrich", timeout: float = 900.0
             except (ValueError, LookupError):
                 pass
         _OWN["llm_ended"] = time.time()
+        _spend(f"model.{role}", time.time() - t0)
     p = core.parse_json_loose(raw or "")
     return p if isinstance(p, dict) else None
 
@@ -233,8 +237,55 @@ async def _nlp(name: str, **kw) -> Dict[str, Any]:
     so every caller has a heuristic fallback."""
     if not config().get("nlp", True) or not _has(name):
         return {}
+    t0 = time.time()
     r = await _call(name, **kw)
+    _spend(name, time.time() - t0)
     return {} if r.get("error") else r
+
+
+def _spend(key: str, seconds: float) -> None:
+    """Calls and seconds per model role / NLP task per day (the spend meter; four-minds
+    reads intel's real cpu-247 minutes from it)."""
+    try:
+        st = store()
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        rec = st.get_kv(f"spend:{day}", {}) or {}
+        e = rec.setdefault(key, {"calls": 0, "seconds": 0.0})
+        e["calls"] += 1
+        e["seconds"] = round(e["seconds"] + float(seconds), 1)
+        st.set_kv(f"spend:{day}", rec)
+    except Exception:  # noqa: BLE001 - a meter must never break the work it measures
+        pass
+
+
+def _decide(question_id: str, answer: Any, *, state: Any, ref_kind: str, ref_id: str, **kw) -> Optional[str]:
+    """Record one decision in the four-minds Decision v0 shape (local store until the
+    shared ledger exists). Never raises; returns the decision id."""
+    try:
+        d = ledger.make_decision(question_id, answer, state=state, state_ref={"kind": ref_kind, "id": ref_id}, **kw)
+        store().put_decision(d)
+        return d["decision_id"]
+    except Exception as ex:  # noqa: BLE001
+        log.debug("intel: decision not recorded: %s", ex)
+        return None
+
+
+def _outcome(ref_kind: str, ref_id: str, source: str, *, questions: Optional[List[str]] = None,
+             detail: Optional[Dict[str, Any]] = None) -> int:
+    """Give every decision taken on one item an outcome from a product event."""
+    n = 0
+    try:
+        st = store()
+        for d in st.decisions_for(ref_kind, ref_id):
+            if questions and d.get("question_id") not in questions:
+                continue
+            o = ledger.make_outcome(d, source, detail=detail)
+            if o:
+                st.put_outcome(o)
+                n += 1
+    except Exception as ex:  # noqa: BLE001
+        log.debug("intel: outcome not recorded: %s", ex)
+    return n
 
 
 async def _event(_name: str, **fields: Any) -> None:
@@ -573,6 +624,15 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
         recent_titles.append(c["title"])
         batch[c["id"]] = c
         out.append(c)
+        rel_ans = "relevant" if (c.get("score") or 0) >= float(t.get("min_score", 5)) else "not_relevant"
+        _decide("intel.signal_relevant", rel_ans, state=ledger.signal_state(c, t["id"]), ref_kind="signal",
+                ref_id=c["id"], decider="rule", mode="rule",
+                detail={"score": c.get("score"), "rerank": rel.get(i), "novelty": c.get("novelty"),
+                        "threshold": float(t.get("min_score", 5))})
+        if c.get("genre") or c.get("genre_p") is not None:
+            _decide("intel.page_genre", c.get("genre") or "unsure", state=ledger.signal_state(c, t["id"]),
+                    ref_kind="signal", ref_id=c["id"], decider="student", mode="rule",
+                    detail={"score": c.get("genre_p")})
     stats["nlp"] = bool(vecs or rel)
     return out
 
@@ -594,8 +654,11 @@ async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
         if r.get("error"):
             errors.append(f"{q}: {r['error']}")
             continue
+        muted = set(t.get("mute_sites") or [])
         for hit in r.get("results") or []:
             s = core.normalise_signal(t["id"], hit, source="web", query=q)
+            if s and s.get("site") in muted:
+                continue
             if s and s["id"] not in ids and not st.has_signal(s["id"]):
                 ids.add(s["id"])
                 cands.append(s)
@@ -760,7 +823,11 @@ async def enrich_topic(t: Dict[str, Any], *, limit: int = 0, should_continue=Non
             break
         s2, page = await _read_and_tag(t, s)
         low_genre = s2.get("genre") in ops.LOW_GENRES and not (s2.get("genre") == "marketing" and t.get("vendors"))
-        if (s2.get("score") or 0) < gate or llm_done >= n or low_genre:
+        to_model = not ((s2.get("score") or 0) < gate or llm_done >= n or low_genre)
+        _decide("intel.enrich_worth", "model" if to_model else "nlp_only", state=ledger.signal_state(s2, t["id"]),
+                ref_kind="signal", ref_id=s2["id"], decider="rule", mode="rule",
+                detail={"score": s2.get("score"), "gate": gate, "budget_left": n - llm_done, "low_genre": low_genre})
+        if not to_model:
             text = str(page.get("markdown") or s.get("snippet") or "")
             s2.update(summary=_extractive_summary(text) or s.get("snippet", ""), enriched=True, nlp_only=True,
                       enriched_at=core.now_iso())
@@ -814,6 +881,12 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
                  changed=len(snap["changed"]))
     comps = sum(1 for s in sigs if s.get("competitors") and (s.get("score") or 0) >= 6)
     alert, why = ops.material_change(prev, snap, competitor_hits_n=comps)
+    if prev:
+        _decide("intel.material_change", "alert" if alert else "no_alert",
+                state={"topic": t["id"], "prev": prev.get("headline"), "now": snap.get("headline"),
+                       "changed": snap.get("changed"), "comps": comps},
+                ref_kind="snapshot", ref_id=snap["id"], decider="rule", mode="rule",
+                detail={"changed": len(snap.get("changed") or []), "competitor_hits": comps})
     if alert:
         await _alert(fresh, snap, why)
     if fresh.get("depth") == "deep" and config().get("auto_research") and snap["new_questions"]:
@@ -833,7 +906,7 @@ async def _alert(t: Dict[str, Any], snap: Dict[str, Any], why: str) -> None:
     sent = st.get_kv("alerts_sent", []) or []
     if snap["id"] in sent:
         return
-    text = ops.alert_text(t["name"], snap, why, config().get("public_base", "").rstrip("/") + "/intel/panel")
+    text = ops.alert_text(t["name"], snap, why, config().get("public_base", "").rstrip("/") + f"/intel/go/alert/{snap['id']}")
     for ch in config().get("alert_channels") or ["telegram"]:
         if ch == "telegram":
             await _call("tg.notify", text=text, idempotency_key=f"intel-alert-{snap['id']}")
@@ -1131,6 +1204,12 @@ async def cap_action_run(token: str = "", trace_id=None):
         r = {"error": f"{type(ex).__name__}: {ex}"}
     good = not r.get("error")
     st.finish_action(token, "done" if good else "failed", {k: r.get(k) for k in list(r)[:12]})
+    if good and a.get("target") and a.get("topic_id"):
+        tgt = core.canonical_url(a["target"])
+        for sig in st.signals(a["topic_id"], limit=500):
+            if sig.get("url") == tgt:
+                _outcome("signal", sig["id"], "report.button")
+                break
     msg = {"research": "research started" + (f" (job {r.get('job_id')})" if r.get("job_id") else ""),
            "repo": f"fetched to {r.get('path')}" if r.get("path") else "repo fetched",
            "track": "now tracked", "discover": "mapping started", "read": "read", "sweep": "swept"}.get(a["kind"], "done")
@@ -1619,6 +1698,9 @@ async def _tick() -> None:
     s = ops.active_session(c.get("sessions") or [], now)
     if s:
         await _plan_session(s, now)
+    if st.get_kv("decisions_pruned") != today:
+        st.set_kv("decisions_pruned", today)
+        st.prune_decisions(_since(24 * 90))
 
 
 schedule(_tick, 300, name="intel.tick", skip_in_sandbox=True, singleton=True)
@@ -1952,6 +2034,7 @@ async def cap_session_status(trace_id=None):
             "active": dict(s, ends=s["ends"].isoformat()) if s else None,
             "runs": st.get_kv("session_runs", {}) or {}, "wanted": st.get_kv("research_wanted", []) or [],
             "budget": st.get_kv("budget", {}) or {}, "alerts": (st.get_kv("alerts", []) or [])[-10:],
+            "spend_today": st.get_kv("spend:" + datetime.now(timezone.utc).strftime("%Y-%m-%d"), {}) or {},
             "night": {k: v for k, v in (st.get_kv("night", {}) or {}).items() if k != "pending"}}
 
 
@@ -2168,6 +2251,81 @@ async def cap_n8n_retire(dry_run: bool = True, reactivate: bool = False, trace_i
         store().set_kv("n8n_retired", "" if reactivate else core.now_iso())
     return {"dry_run": dry_run, "workflows": rows,
             "missing": [n for n in N8N_RETIRE if n not in {x["name"] for x in rows}]}
+
+
+# ── outcomes from the product: link opens, feedback, alerts acted on ────────
+
+@APP.get("/intel/go/alert/{snap_id}", include_in_schema=False)
+async def _go_alert(snap_id: str):
+    """An alert's link: counts as 'acted on', then opens the panel."""
+    from fastapi.responses import RedirectResponse
+    _outcome("snapshot", re.sub(r"[^a-f0-9]", "", snap_id)[:32], "alert.acted",
+             questions=["intel.material_change"])
+    return RedirectResponse("/intel/panel", status_code=302)
+
+
+@APP.get("/intel/go/{signal_id}", include_in_schema=False)
+async def _go_signal(signal_id: str):
+    """A signal link in a report or a message: counts as 'opened', then redirects to the
+    page the signal points at - only ever a stored http(s) URL, never one from the request."""
+    from fastapi.responses import RedirectResponse
+    sid = re.sub(r"[^a-f0-9]", "", signal_id)[:32]
+    s = store().get_signal(sid)
+    if not s or not re.match(r"(?i)^https?://", str(s.get("url") or "")):
+        return HTMLResponse("<h1>No such link</h1>", status_code=404)
+    _outcome("signal", sid, "link.opened", questions=["intel.signal_relevant", "intel.enrich_worth",
+                                                      "intel.page_genre"])
+    return RedirectResponse(s["url"], status_code=302)
+
+
+@capability("intel.feedback", http_method="POST", http_path="/intel/feedback", http_tags=["intel"],
+            schema=enum_schema(verdict=["useful", "not_useful", "mute_site"]),
+            description="Tell intelligence whether a signal was worth it: useful | not_useful | mute_site (never "
+                        "show this site again for the topic). Feeds the decision outcomes its gates learn from. "
+                        "Input: signal_id (str!), verdict. Output: {ok, outcomes}.")
+async def cap_feedback(signal_id: str = "", verdict: str = "useful", trace_id=None):
+    st = store()
+    s = st.get_signal(signal_id)
+    if not s:
+        return {"error": f"unknown signal: {signal_id}"}
+    if verdict not in ("useful", "not_useful", "mute_site"):
+        return {"error": "verdict must be useful, not_useful or mute_site"}
+    n = _outcome("signal", signal_id, f"user.feedback.{verdict}")
+    st.put_signal(dict(s, feedback=verdict, feedback_at=core.now_iso()))
+    if verdict == "mute_site" and s.get("site"):
+        t = st.get_topic(s.get("topic_id", ""))
+        if t:
+            st.patch_topic(t["id"], {"mute_sites": list(dict.fromkeys((t.get("mute_sites") or []) + [s["site"]]))[-60:]})
+    await _event("feedback", topic=s.get("topic_id"), signal=signal_id, verdict=verdict)
+    return {"ok": True, "outcomes": n}
+
+
+@capability("intel.decisions.stats", http_method="GET", http_path="/intel/decisions/stats", http_tags=["intel"],
+            memory="off", silent=True,
+            description="How intelligence's gates are doing: per question (signal_relevant, page_genre, enrich_worth, "
+                        "material_change) the decisions taken, how many got an outcome from you, and how often the "
+                        "outcome says the gate was right. Input: days (default 30). Output: {questions, spend}.")
+async def cap_decisions_stats(days: int = 30, trace_id=None):
+    rows = store().decisions(since=_since(24 * max(1, int(days))), limit=20000)
+    st = store()
+    spend = {}
+    for i in range(7):
+        day = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+        rec = st.get_kv(f"spend:{day}")
+        if rec:
+            spend[day] = rec
+    return {"questions": ledger.agreement(rows), "decisions": len(rows), "spend": spend}
+
+
+@capability("intel.decisions.export", http_method="GET", http_path="/intel/decisions/export", http_tags=["intel"],
+            memory="off", silent=True,
+            description="intel's decisions and outcomes in the four-minds Decision v0 / Outcome v0 shapes, for "
+                        "decide.ledger.import. Pointers and hashes only - no page text, no notes. Input: since (ISO), "
+                        "limit. Output: {decisions, outcomes}.")
+async def cap_decisions_export(since: str = "", limit: int = 5000, trace_id=None):
+    rows = store().decisions(since=since, limit=max(1, min(50000, int(limit))), with_outcomes=False)
+    return {"decisions": rows, "outcomes": store().outcomes_since(since, limit=max(1, min(200000, int(limit) * 4))),
+            "schema": {"decision": ledger.DECISION_SCHEMA, "outcome": ledger.OUTCOME_SCHEMA}}
 
 
 # ── UI ───────────────────────────────────────────────────────────────────────

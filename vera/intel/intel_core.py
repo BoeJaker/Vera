@@ -120,6 +120,7 @@ def normalise_topic(raw: Dict[str, Any], existing: Optional[Dict[str, Any]] = No
         "dream_loop": bool(raw.get("dream_loop", base.get("dream_loop", False))),
         "discovery": bool(raw.get("discovery", base.get("discovery", True))),
         "vendors": bool(raw.get("vendors", base.get("vendors", False))),   # vendor pages are wanted here
+        "mute_sites": _clean_list(raw.get("mute_sites", base.get("mute_sites")), 60),
         "color": str(raw.get("color", base.get("color", "")) or "").strip(),
         "created": base.get("created") or now_iso(),
         "updated": now_iso(),
@@ -812,8 +813,11 @@ def build_report(topics: Sequence[Dict[str, Any]], per_topic: Dict[str, Dict[str
 
 
 def _sig_view(s: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: s.get(k) for k in ("id", "title", "url", "site", "kind", "score", "summary", "so_what",
-                                  "snippet", "published", "tags", "answers")}
+    v = {k: s.get(k) for k in ("id", "title", "url", "site", "kind", "score", "summary", "so_what",
+                               "snippet", "published", "tags", "answers")}
+    if s.get("id") and s.get("url"):
+        v["go"] = f"/intel/go/{s['id']}"          # opens are counted as outcomes, then redirected
+    return v
 
 
 _E = _html.escape
@@ -991,7 +995,7 @@ def _render_part(p: Dict[str, Any]) -> str:
             sc = s.get("score")
             rows.append(
                 f'<div class="sig"><div class="score {_score_cls(sc)}">{"" if sc is None else int(round(sc))}</div><div>'
-                f'<div class="t"><a href="{_safe_href(s.get("url"))}" target="_blank" rel="noopener">{_E(s.get("title") or "")}</a></div>'
+                f'<div class="t"><a href="{_safe_href(s.get("go") or s.get("url"))}" target="_blank" rel="noopener">{_E(s.get("title") or "")}</a></div>'
                 f'<div class="meta">{_E(s.get("site") or "")} · {_E(s.get("kind") or "")}'
                 + (f' · {_E(str(s.get("published"))[:10])}' if s.get("published") else "") + "</div>"
                 + (f'<div>{_md_inline(s.get("summary") or s.get("snippet") or "")}</div>')
@@ -1071,7 +1075,7 @@ def render_markdown(doc: Dict[str, Any], *, report_url: str = "") -> str:
 
 
 def render_telegram(doc: Dict[str, Any], *, report_url: str = "", action_url: str = "",
-                    max_chars: int = 3600) -> Dict[str, Any]:
+                    max_chars: int = 3600, go_base: str = "") -> Dict[str, Any]:
     """{text (Telegram HTML), buttons [[{text,url}]], photo} - the brief as one
     message; the buttons open the full report and run the top actions."""
     E = _E
@@ -1100,7 +1104,8 @@ def render_telegram(doc: Dict[str, Any], *, report_url: str = "", action_url: st
                 elif p["kind"] == "signals":
                     for s in p["items"][:3]:
                         sc = "" if s.get("score") is None else f"[{int(round(s['score']))}] "
-                        lines.append(f"  {sc}<a href=\"{E(s.get('url') or '')}\">{E((s.get('title') or '')[:110])}</a>")
+                        href = (go_base + s["go"]) if (go_base and s.get("go")) else (s.get("url") or "")
+                        lines.append(f"  {sc}<a href=\"{E(href)}\">{E((s.get('title') or '')[:110])}</a>")
                 elif p["kind"] == "images" and not photo:
                     photo = next((i["url"] for i in p["items"] if str(i.get("url", "")).startswith("http")), "")
                 elif p["kind"] == "actions":
@@ -1171,7 +1176,8 @@ def channel_args(channel: str, doc: Dict[str, Any], *, report_url: str, action_u
     title = doc.get("title") or "Intel brief"
     md = render_markdown(doc, report_url=report_url)
     if channel == "telegram":
-        tg = render_telegram(doc, report_url=report_url, action_url=action_url)
+        tg = render_telegram(doc, report_url=report_url, action_url=action_url,
+                             go_base=action_url.rsplit("/intel/", 1)[0] if "/intel/" in action_url else "")
         return {"text": tg["text"], "buttons": json.dumps(tg["buttons"]), "photo_url": tg["photo"], "parse_mode": "HTML"}
     if channel == "chat":
         return {"session_id": target, "report": md, "title": title}
