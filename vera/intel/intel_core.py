@@ -224,6 +224,13 @@ def _nowww(host: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+def _site(url: str) -> str:
+    try:
+        return _nowww(urlsplit(url).netloc.lower()) if url else ""
+    except ValueError:
+        return ""
+
+
 def repo_of(url: str) -> Optional[Dict[str, str]]:
     """{host, owner, repo, clone} when a url is a code repository's page."""
     try:
@@ -265,6 +272,8 @@ def normalise_signal(topic_id: str, raw: Dict[str, Any], *, source: str = "web",
                      query: str = "") -> Optional[Dict[str, Any]]:
     """A search hit / note / dream finding as a signal, or None when it is junk."""
     url = str(raw.get("url") or raw.get("link") or "").strip()
+    if url and not re.match(r"(?i)^https?://", url):
+        url = ""                      # only web links survive - never javascript:, data:, file:
     title = re.sub(r"\s+", " ", str(raw.get("title") or raw.get("name") or "")).strip()
     snippet = re.sub(r"\s+", " ", str(raw.get("snippet") or raw.get("description")
                                        or raw.get("summary") or raw.get("text") or "")).strip()
@@ -285,7 +294,7 @@ def normalise_signal(topic_id: str, raw: Dict[str, Any], *, source: str = "web",
         "seen": str(raw.get("seen") or now_iso()),
         "published": str(raw.get("published") or raw.get("date") or ""),
         "image": str(raw.get("image") or ""),
-        "site": (_nowww(urlsplit(url).netloc.lower()) if url else ""),
+        "site": _site(url),
         "score": None,
         "enriched": False,
     }
@@ -678,7 +687,7 @@ def action_args(action: Dict[str, Any]) -> Dict[str, Any]:
 def action_usable(action: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> Tuple[bool, str]:
     if not action:
         return False, "unknown action"
-    if action.get("status") in ("running", "done"):
+    if action.get("status") in ("running", "done", "expired"):
         return False, f"already {action.get('status')}"
     exp = parse_ts(action.get("expires"))
     if exp and (now or datetime.now(timezone.utc)) > exp:
@@ -836,21 +845,22 @@ vera-mermaid{display:block;margin:12px 0}.mm{background:var(--card);border:1px s
 _KW = r"\b(def|class|return|import|from|if|else|elif|for|while|in|async|await|function|const|let|var|new|try|except|catch|fn|pub|struct|impl|use|package|func|go|yield|with|as|lambda|true|false|null|None|True|False)\b"
 
 
+_TOK = re.compile(r"(?P<c>(?:#|//|--).*$)|(?P<s>\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*')|(?P<k>" + _KW + r")|(?P<n>\b\d+(?:\.\d+)?\b)")
+
+
 def highlight(code: str, lang: str = "") -> str:
-    """A small, safe highlighter (keywords, strings, comments, numbers) on
-    already-escaped text - enough to read code in a report without a library."""
+    """A small, safe highlighter (comments, strings, keywords, numbers): the raw
+    line is split into tokens first and each piece escaped on its own, so markup
+    is never re-scanned."""
     out = []
     for line in (code or "").splitlines():
-        e = _E(line)
-        cm = re.search(r"(#|//|--).*$", e)
-        tail = ""
-        if cm and not re.search(r"&quot;|&#x27;", e[:cm.start()]):
-            tail = f'<span class="c">{e[cm.start():]}</span>'
-            e = e[:cm.start()]
-        e = re.sub(r"(&quot;.*?&quot;|&#x27;.*?&#x27;)", r'<span class="s">\1</span>', e)
-        e = re.sub(_KW, r'<span class="k">\1</span>', e)
-        e = re.sub(r"(?<![\w#&;])(\d+(?:\.\d+)?)\b", r'<span class="n">\1</span>', e)
-        out.append(e + tail)
+        parts, pos = [], 0
+        for m in _TOK.finditer(line):
+            parts.append(_E(line[pos:m.start()]))
+            parts.append(f'<span class="{m.lastgroup}">{_E(m.group(0))}</span>')
+            pos = m.end()
+        parts.append(_E(line[pos:]))
+        out.append("".join(parts))
     return "\n".join(out)
 
 

@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -47,8 +48,12 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, CAPABILITY_REGISTRY, capability, emit_event, enum_schema, register_ui, schedule,
 )
-from Vera.vera.intel import intel_core as core
-from Vera.vera.intel.intel_store import IntelStore
+try:
+    from Vera.vera.intel import intel_core as core
+    from Vera.vera.intel.intel_store import IntelStore
+except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
+    from vera.intel import intel_core as core
+    from vera.intel.intel_store import IntelStore
 
 log = logging.getLogger("vera.intel")
 
@@ -132,9 +137,9 @@ async def _llm_json(prompt: str, *, job: str = "idle_intel", timeout: float = 90
     return p if isinstance(p, dict) else None
 
 
-async def _event(kind: str, **fields: Any) -> None:
+async def _event(_name: str, **fields: Any) -> None:
     try:
-        await emit_event({"type": f"intel.{kind}", **fields})
+        await emit_event({**fields, "type": f"intel.{_name}"})
     except Exception:  # noqa: BLE001
         pass
 
@@ -178,7 +183,7 @@ def _topic_stats(t: Dict[str, Any]) -> Dict[str, Any]:
 
 def _report_url(rid: str, *, public: bool = False) -> str:
     base = config().get("public_base", "").rstrip("/") if public else ""
-    return f"{base}/intel/report/{rid}"
+    return f"{base}/intel/report/view/{rid}"
 
 
 # ── topics ───────────────────────────────────────────────────────────────────
@@ -434,8 +439,7 @@ async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
             recent.append(s["title"])
             new.append(s)
     new += await _dream_signals(t)
-    t = dict(t, query_cursor=cursor, last_sweep=core.now_iso())
-    st.put_topic(t)
+    st.patch_topic(t["id"], {"query_cursor": cursor, "last_sweep": core.now_iso()})
     await _to_fabric(new)
     for s in new[:20]:
         await _event("signal.new", topic=t["id"], id=s["id"], title=s["title"], score=s.get("score"))
@@ -499,7 +503,7 @@ async def enrich_topic(t: Dict[str, Any], *, limit: int = 0, should_continue=Non
     st = store()
     n = limit or core.DEPTH_BUDGET.get(t.get("depth") or "standard", core.DEPTH_BUDGET["standard"])["enrich"]
     todo = [s for s in st.signals(t["id"], since=_since(24 * 14), limit=200, enriched=False, order="score")
-            if s.get("kind") not in ("dream",)][:n]
+            if s.get("kind") not in ("dream",) and int(s.get("enrich_failed") or 0) < 2][:n]
     done = 0
     for s in todo:
         if await _stop_reason(should_continue):
@@ -511,6 +515,7 @@ async def enrich_topic(t: Dict[str, Any], *, limit: int = 0, should_continue=Non
                 page = r
         parsed = await _llm_json(core.enrich_prompt(t, s, page.get("markdown") or ""))
         if not parsed:
+            st.put_signal(dict(s, enrich_failed=int(s.get("enrich_failed") or 0) + 1))
             continue
         s2 = core.apply_enrichment(s, parsed, page=page or None)
         st.put_signal(s2)
@@ -533,11 +538,15 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
     if not parsed:
         return {"topic": t["id"], "error": "no assessment"}
     snap = core.make_snapshot(t, parsed, sigs)
+    fresh = st.get_topic(t["id"])
+    if not fresh:                     # deleted while the model was thinking
+        return {"topic": t["id"], "skipped": "topic deleted"}
     st.put_snapshot(snap)
-    # answered questions leave the open list; new ones join it
-    qs = [q for q in t.get("questions") or [] if q not in {a["question"] for a in snap["answered"]}]
+    # answered questions leave the open list; new ones join it - from the CURRENT
+    # list, so an edit made during the call is kept
+    qs = [q for q in fresh.get("questions") or [] if q not in {a["question"] for a in snap["answered"]}]
     qs += [q for q in snap["new_questions"] if q not in qs]
-    st.put_topic(dict(t, questions=qs[:12], last_snapshot=snap["ts"]))
+    st.patch_topic(t["id"], {"questions": qs[:12], "last_snapshot": snap["ts"]})
     await _event("snapshot.new", topic=t["id"], id=snap["id"], headline=snap["headline"],
                  changed=len(snap["changed"]))
     return {"topic": t["id"], "snapshot": snap}
@@ -583,6 +592,7 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
     topics = [st.get_topic(i) for i in topic_ids] if topic_ids else st.topics("active")
     topics = [t for t in topics if t]
     since = _since(period_hours)
+    told = set(st.get_kv("reported_snapshots", []) or []) if only_new else set()
     per: Dict[str, Dict[str, Any]] = {}
     for t in topics:
         sigs = st.signals(t["id"], since=since, limit=80, order="score", unreported=only_new)
@@ -590,6 +600,8 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
         snap = st.latest_snapshot(t["id"])
         if snap and core.parse_ts(snap.get("ts")) and core.parse_ts(snap["ts"]) < core.parse_ts(since):
             snap = None                       # an old assessment is not news
+        if snap and snap.get("id") in told:
+            snap = None                       # nor is one already sent
         if not sigs and not snap:
             continue
         acts = core.actions_for(t, sigs, snap)
@@ -597,17 +609,22 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
     topics = [t for t in topics if t["id"] in per]
     doc = core.build_report(topics, per, title=title, period_hours=period_hours)
     if config().get("illustrate") and topics:
-        imgs = await _call("media.illustrate", subjects=[t["name"] for t in topics[:2]], count=2)
-        for i, im in enumerate((imgs.get("images") or [])[:2]):
-            per[topics[i % len(topics)]["id"]].setdefault("images", []).append(
-                {"url": im.get("url"), "caption": im.get("caption", "")})
+        for t in topics[:2]:
+            imgs = await _call("media.illustrate", subject=t["name"], count=1)
+            for im in (imgs.get("images") or ([imgs] if imgs.get("url") else []))[:1]:
+                if im.get("url"):
+                    per[t["id"]].setdefault("images", []).append({"url": im["url"], "caption": im.get("caption") or t["name"]})
         doc = core.build_report(topics, per, title=title, period_hours=period_hours)
     for tid, d in per.items():
         for a in d["actions"]:
             st.put_action(dict(a, report_id=doc["id"]), report_id=doc["id"])
     html = core.render_html(doc, base_url="")
     st.put_report(doc, html)
-    st.mark_reported(s["id"] for d in per.values() for s in d["signals"])
+    if only_new:                      # a look-back report must not eat the next brief
+        st.mark_reported(s["id"] for d in per.values() for s in d["signals"])
+    if only_new and doc["sections"]:
+        sent = [d["snapshot"]["id"] for d in per.values() if d.get("snapshot")]
+        st.set_kv("reported_snapshots", (list(told) + sent)[-500:])
     await _event("report.new", id=doc["id"], title=doc["title"], signals=doc["counts"]["signals"])
     return doc
 
@@ -654,7 +671,7 @@ async def cap_report_get(id: str = "", trace_id=None):
             "markdown": core.render_markdown(d, report_url=_report_url(id, public=True))}
 
 
-@APP.get("/intel/report/{rid}", include_in_schema=False)
+@APP.get("/intel/report/view/{rid}", include_in_schema=False)
 async def _serve_report(rid: str):
     d = store().get_report(re.sub(r"[^a-f0-9]", "", rid), with_html=True)
     if not d:
@@ -767,8 +784,11 @@ async def cap_action_run(token: str = "", trace_id=None):
     if not st.claim_action(token):
         return {"error": "already started"}
     args = core.action_args(a)
-    await _event("action.started", kind=a["kind"], label=a["label"], topic=a.get("topic_id"))
-    r = await _call(a["cap"], **args)
+    try:
+        await _event("action.started", kind=a["kind"], label=a["label"], topic=a.get("topic_id"))
+        r = await _call(a["cap"], **args)
+    except Exception as ex:  # noqa: BLE001 - never leave a claimed action 'running'
+        r = {"error": f"{type(ex).__name__}: {ex}"}
     good = not r.get("error")
     st.finish_action(token, "done" if good else "failed", {k: r.get(k) for k in list(r)[:12]})
     msg = {"research": "research started" + (f" (job {r.get('job_id')})" if r.get("job_id") else ""),
@@ -814,21 +834,31 @@ async def cap_repo_get(url: str = "", topic_id: str = "", trace_id=None):
     dest = root / r["host"] / r["owner"] / r["repo"]
     dest.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="true")
-    if (dest / ".git").exists():
-        cmd = ["git", "-C", str(dest), "pull", "--ff-only", "--depth", "1"]
-    else:
-        cmd = ["git", "clone", "--depth", "1", "--no-recurse-submodules", "--single-branch",
-               "-c", "core.hooksPath=/dev/null", r["clone"], str(dest)]
-    try:
-        p = await asyncio.create_subprocess_exec(*cmd, env=env, stdout=asyncio.subprocess.PIPE,
-                                                 stderr=asyncio.subprocess.PIPE)
-        out, err = await asyncio.wait_for(p.communicate(), timeout=300)
-    except asyncio.TimeoutError:
-        return {"error": "clone timed out after 300s"}
-    except FileNotFoundError:
-        return {"error": "git is not installed here"}
-    if p.returncode != 0:
-        return {"error": (err or b"").decode("utf-8", "replace")[-400:]}
+    fresh = not (dest / ".git").exists()
+    if fresh:
+        cmds = [["git", "clone", "--depth", "1", "--no-recurse-submodules", "--single-branch",
+                 "-c", "core.hooksPath=/dev/null", r["clone"], str(dest)]]
+    else:                             # a shallow clone cannot fast-forward: fetch the tip and move to it
+        cmds = [["git", "-C", str(dest), "fetch", "--depth", "1", "origin", "HEAD"],
+                ["git", "-C", str(dest), "reset", "--hard", "FETCH_HEAD"]]
+    for cmd in cmds:
+        try:
+            p = await asyncio.create_subprocess_exec(*cmd, env=env, stdout=asyncio.subprocess.PIPE,
+                                                     stderr=asyncio.subprocess.PIPE)
+        except FileNotFoundError:
+            return {"error": "git is not installed here"}
+        try:
+            _out, err = await asyncio.wait_for(p.communicate(), timeout=300)
+        except asyncio.TimeoutError:
+            try:
+                p.kill()
+            except ProcessLookupError:
+                pass
+            if fresh:                 # never leave a half clone that a later call mistakes for one
+                shutil.rmtree(dest, ignore_errors=True)
+            return {"error": "git timed out after 300s"}
+        if p.returncode != 0:
+            return {"error": (err or b"").decode("utf-8", "replace")[-400:]}
     readme = ""
     for nm in ("README.md", "readme.md", "README.rst", "README.txt", "README"):
         f = dest / nm
@@ -932,7 +962,7 @@ async def _intel_job(job: Dict[str, Any], should_continue) -> Dict[str, Any]:
     for t in topics:
         why = await _stop_reason(should_continue)
         if why:
-            return {"yielded": why, "done": done}
+            return {"yielded": "pre-empted: " + why, "done": done}
         await sweep_topic(t)
         if await _stop_reason(should_continue):
             return {"yielded": "pre-empted", "done": done}
@@ -946,8 +976,12 @@ async def _intel_job(job: Dict[str, Any], should_continue) -> Dict[str, Any]:
     if not only and done:
         doc = await build_report([], period_hours=int(config().get("report_period_hours", 24)))
         if doc["sections"]:
-            st.set_kv("pending_brief", {"id": doc["id"], "ts": doc["ts"]})
             res["report"] = doc["id"]
+            if st.get_kv("brief_day") == _local_now().date().isoformat():
+                # this morning's brief already went - send this one now, never park it to be overwritten
+                await deliver_report(doc["id"], list(config().get("brief_channels") or ["html"]))
+            else:
+                st.set_kv("pending_brief", {"id": doc["id"], "ts": doc["ts"]})
     st.set_kv("last_nightly", {"ts": core.now_iso(), "topics": done})
     return res
 
@@ -980,6 +1014,20 @@ def _local_now() -> datetime:
         return datetime.now()
 
 
+def _in_window(hour: int, start: int, end: int) -> bool:
+    """start <= hour < end on a clock that wraps at midnight (23 -> 7 works)."""
+    if start == end:
+        return False
+    return start <= hour < end if start < end else (hour >= start or hour < end)
+
+
+def _night_of(now: datetime, start: int) -> str:
+    """The night a time belongs to, named by the date it began on, so a window
+    that crosses midnight is still one night."""
+    d = now.date() if now.hour >= start else (now - timedelta(days=1)).date()
+    return d.isoformat()
+
+
 async def _tick() -> None:
     """Every few minutes: queue the nightly refresh once a night from sweep_hour;
     deliver the brief once a day from brief_hour. Delivery never generates - if
@@ -990,9 +1038,10 @@ async def _tick() -> None:
     st = store()
     now = _local_now()
     today = now.date().isoformat()
-    if now.hour >= int(c.get("sweep_hour", 1)) and now.hour < int(c.get("brief_hour", 7)) \
-            and st.get_kv("nightly_day") != today and st.topics("active"):
-        st.set_kv("nightly_day", today)
+    sh, night = int(c.get("sweep_hour", 1)), _night_of(now, int(c.get("sweep_hour", 1)))
+    if _in_window(now.hour, sh, int(c.get("brief_hour", 7))) and st.get_kv("nightly_day") != night \
+            and st.topics("active"):
+        st.set_kv("nightly_day", night)
         await _submit_nightly()
     bh = int(c.get("brief_hour", 7))
     if bh <= now.hour < bh + 4 and st.get_kv("brief_day") != today:
@@ -1113,7 +1162,12 @@ async def cap_import_n8n(dry_run: bool = True, trace_id=None):
     if not dry_run:
         for tid, p in plans.items():
             existing = st.get_topic(tid)
-            st.put_topic(core.normalise_topic({**p, "id": tid}, existing))
+            raw = {k: v for k, v in p.items() if v not in ("", None, []) and k != "n8n_group"}
+            if existing:              # a re-import adds searches; it never overwrites what was edited here
+                raw.pop("brief", None)
+                raw.pop("origin", None)
+                raw["queries"] = list(dict.fromkeys((existing.get("queries") or []) + (p.get("queries") or [])))
+            st.put_topic(core.normalise_topic({**raw, "id": tid}, existing))
         for s in sigs:
             if not st.has_signal(s["id"]):
                 st.put_signal(s)

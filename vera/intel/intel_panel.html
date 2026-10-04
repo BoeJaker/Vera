@@ -172,6 +172,7 @@ vera-widget{display:block}
 
 <script>
 const $ = (id) => document.getElementById(id);
+const safeUrl = (u) => /^https?:\/\//i.test(String(u || '')) ? u : '';
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function call(name, args) {
   const r = await fetch('/mcp/call', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -257,7 +258,7 @@ async function loadSignals() {
   $('slist').innerHTML = rows.length ? rows.map(s => {
     const sc = s.score == null ? '·' : Math.round(s.score), cls = (s.score||0) >= 7 ? 'hi' : (s.score||0) >= 4 ? 'md' : '';
     return `<div class="sig"><div class="sc ${cls}">${sc}</div><div>
-      ${s.url?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>`:`<b>${esc(s.title)}</b>`}
+      ${safeUrl(s.url)?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>`:`<b>${esc(s.title)}</b>`}
       <div class="small muted">${esc(s.site||'')} · ${esc(s.kind||'')} · ${esc((s.seen||'').slice(0,10))}</div>
       <div>${esc(s.snippet||'')}</div>${s.so_what?`<div class="why">${esc(s.so_what)}</div>`:''}</div>
       <div class="ops">${s.chars?`<button class="btn" onclick="readSignal('${esc(s.id)}')">Read</button>`:''}
@@ -267,7 +268,7 @@ async function loadSignals() {
 async function readSignal(id) {
   const r = await call('intel.signal.get', {id}); const s = r.signal || {};
   const d = s.digest || {};
-  $('dlgBody').innerHTML = `<h2>${esc(s.title)}</h2><div class="small muted">${esc(d.site||s.site||'')} ${d.byline?'· '+esc(d.byline):''} ${d.minutes?'· '+d.minutes+' min':''} · <a href="${esc(s.url)}" target="_blank" rel="noopener">original ↗</a></div>
+  $('dlgBody').innerHTML = `<h2>${esc(s.title)}</h2><div class="small muted">${esc(d.site||s.site||'')} ${d.byline?'· '+esc(d.byline):''} ${d.minutes?'· '+d.minutes+' min':''} · ${safeUrl(s.url)?`<a href="${esc(s.url)}" target="_blank" rel="noopener">original ↗</a>`:''}</div>
     ${s.summary?`<p><b>${esc(s.summary)}</b></p>`:''}${s.so_what?`<p class="muted"><i>${esc(s.so_what)}</i></p>`:''}
     <div class="digest">${esc(d.text||s.snippet||'')}</div>
     ${s.code?`<h3>Code${s.code_lang?' · '+esc(s.code_lang):''}</h3><pre class="code">${esc(s.code)}</pre>`:''}`;
@@ -357,9 +358,9 @@ async function loadReports() {
 }
 async function pickReport(id) {
   RSEL = id; loadReports();
-  $('rFrame').src = '/intel/report/' + id;
+  $('rFrame').src = '/intel/report/view/' + id;
   $('rDeliver').style.display = '';
-  $('rOpen').href = '/intel/report/' + id;
+  $('rOpen').href = '/intel/report/view/' + id;
   const r = await call('intel.report.get', {id});
   $('rSel').textContent = (r.report || {}).title || id;
   $('dLog').innerHTML = (r.deliveries || []).map(d => `${d.ok?'✓':'✗'} ${esc(d.channel)} ${esc((d.ts||'').slice(11,16))} ${d.ok?'':esc((d.detail||{}).error||'')}`).join(' · ');

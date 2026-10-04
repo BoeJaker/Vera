@@ -136,7 +136,7 @@
       if (evs.length) {
         h += evs.slice(0, 30).map((e) => {
           const sc = e.score == null ? (e.kind === 'snapshot' ? '◆' : e.kind === 'report' ? '■' : '·') : Math.round(e.score);
-          const t = e.url ? '<a href="' + esc(e.url) + '" target="_blank" rel="noopener">' + esc(e.title) + '</a>' : esc(e.title);
+          const t = /^(https?:\/\/|\/intel\/)/i.test(String(e.url || '')) ? '<a href="' + esc(e.url) + '" target="_blank" rel="noopener">' + esc(e.title) + '</a>' : esc(e.title);
           return '<div class="ev"><div class="s' + ((e.score || 0) >= 7 ? ' hi' : '') + '">' + sc + '</div><div>' + t + (e.sub ? ' <span class="m">' + esc(e.sub) + '</span>' : '') + '</div></div>';
         }).join('');
       } else h += '<div class="empty">nothing found this day</div>';

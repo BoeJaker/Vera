@@ -61,6 +61,18 @@ class IntelStore:
                       (t["id"], t.get("status", "active"), t.get("updated", ""), json.dumps(t)))
         return t
 
+    def patch_topic(self, tid: str, fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Re-read the topic and change only `fields` - so a long background step
+        never writes back a stale copy over an edit (or a delete) made meanwhile."""
+        with self._lock, self._conn() as c:
+            r = c.execute("SELECT rec FROM topics WHERE id=?", (tid,)).fetchone()
+            if not r:
+                return None
+            t = json.loads(r[0])
+            t.update(fields)
+            c.execute("UPDATE topics SET status=?, rec=? WHERE id=?", (t.get("status", "active"), json.dumps(t), tid))
+        return t
+
     def get_topic(self, tid: str) -> Optional[Dict[str, Any]]:
         with self._conn() as c:
             r = c.execute("SELECT rec FROM topics WHERE id=?", (tid,)).fetchone()
@@ -211,10 +223,11 @@ class IntelStore:
         return json.loads(r[0]) if r else None
 
     def claim_action(self, token: str) -> bool:
-        """offered -> running exactly once, so a double press (or a retried
-        Telegram link) never runs the same action twice."""
+        """offered (or failed) -> running exactly once, so a double press (or a
+        retried Telegram link) never runs the same action twice; a failure may be retried."""
         with self._lock, self._conn() as c:
-            n = c.execute("UPDATE actions SET status='running' WHERE token=? AND status='offered'", (token,)).rowcount
+            n = c.execute("UPDATE actions SET status='running' WHERE token=? AND status IN ('offered','failed')",
+                          (token,)).rowcount
         return n == 1
 
     def finish_action(self, token: str, status: str, result: Dict[str, Any]) -> None:

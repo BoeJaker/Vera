@@ -210,3 +210,16 @@ def test_store_roundtrip(tmp_path):
     st.set_kv("config", {"a": 1})
     assert st.get_kv("config") == {"a": 1}
     assert st.delete_topic(t["id"], purge=True) and st.count_signals() == 0
+
+
+def test_only_web_links_survive():
+    s = core.normalise_signal("t", {"url": "javascript:alert(1)", "title": "Click me"})
+    assert s["url"] == "" and s["site"] == ""
+    assert core.normalise_signal("t", {"url": "http://[bad", "title": "Odd url"})["site"] == ""
+
+
+def test_highlighter_never_rescans_its_own_markup():
+    h = core.highlight("class A: x = 'it''s' # note", "python")
+    assert h.count("<span") == h.count("</span>")
+    assert 'class="k">class</span>' in h and 'class="c"># note</span>' in h
+    assert "&lt;span" not in h
