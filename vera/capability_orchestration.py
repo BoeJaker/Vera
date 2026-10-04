@@ -7590,6 +7590,12 @@ async def _refresh_scheduler_leadership() -> None:
         _LEADER_STATE["checked_at"] = now
 
 
+try:
+    from Vera.vera import scheduler_due_core as _scheduler_due_core
+except Exception:                                    # pragma: no cover
+    from . import scheduler_due_core as _scheduler_due_core
+
+
 async def scheduler_loop():
     _sandbox = is_dev_sandbox()
     from Vera.vera import scheduler_leadership as _lead
@@ -7635,7 +7641,10 @@ async def scheduler_loop():
                              task["name"])
                 continue
             last=task["last"]
-            if last is None or (now-last).total_seconds()>=task["int"]:
+            # interval <= 0 = start ONCE (the job runs its own loop). It used to mean
+            # "every tick": vllm's endless _health_loop got a new copy every second -
+            # ~2,950 live 50 min after a restart (4 Oct 2026). scheduler_due_core.
+            if _scheduler_due_core.due(last, task["int"], now):
                 task["last"]=now; task["runs"]+=1
                 asyncio.create_task(task["fn"]())
                 # NOTE: do NOT emit scheduler.run events — they flood the WS/obsIngest
