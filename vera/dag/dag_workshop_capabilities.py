@@ -14323,6 +14323,11 @@ try:
     from Vera.vera.dag import criterion_bars_core as _criterion_bars_core
 except Exception:                                     # pragma: no cover
     from vera.dag import criterion_bars_core as _criterion_bars_core
+# Foreign criterion paths (/tmp/x.md -> ./x.md) and the files a verdict leans on (4 Oct).
+try:
+    from Vera.vera.dag import verify_paths_core as _verify_paths_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import verify_paths_core as _verify_paths_core
 
 # A call that can write files makes the run's file registry forget what it names.
 try:
@@ -21600,6 +21605,16 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
         " ".join(str(v) for v in list((res.get("outputs") or {}).values())[:8]))
     all_paths = list(dict.fromkeys(crit_paths + claim_paths))
     exist = await _v6_check_paths_exist(session_id, all_paths) if all_paths else {}
+    # A criterion path from ANOTHER environment (/tmp/x.md) the loop cannot write to: the
+    # same file name in the working directory is the file (verify_paths_core, 4 Oct).
+    _aliases = [a for a in dict.fromkeys(_verify_paths_core.foreign_alias(p) for p in all_paths
+                                         if exist.get(p) is False) if a and a not in exist]
+    if _aliases:
+        exist.update(await _v6_check_paths_exist(session_id, _aliases))
+        for _p in all_paths:                 # every later check sees the same answer
+            _a = _verify_paths_core.foreign_alias(_p)
+            if exist.get(_p) is False and _a and exist.get(_a) is True:
+                exist[_p] = True
     # Auto-fail ONLY when the criterion is genuinely about a file being produced/
     # present (not just mentioning a filename in passing) AND that file is provably
     # absent. Otherwise the existence facts still go to the judge below, but the
@@ -21608,7 +21623,8 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # a LIST/identification of files (whose named files are content, not deliverables).
     _crit_wants_file = ((bool(_V6_FILE_CRIT_RE.search(crit)) or ("/workspace" in crit))
                         and not _V6_FILE_LIST_CRIT_RE.search(crit))
-    missing_required = [p for p in crit_paths if exist.get(p) is False] if _crit_wants_file else []
+    missing_required = (_verify_paths_core.missing_after_alias(crit_paths, exist)
+                        if _crit_wants_file else [])
     if missing_required:
         return {"met": False,
                 "reason": ("file(s) the success criterion requires do NOT exist in the sandbox: "
@@ -21759,8 +21775,27 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
             request_stage="critic")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         if isinstance(obj, dict) and "met" in obj:
-            return {"met": bool(obj.get("met")),
-                    "reason": str(obj.get("reason") or "")[:300]}
+            _reason = str(obj.get("reason") or "")
+            if obj.get("met"):
+                # A pass that leans on a file which does not exist is no pass (4 Oct: met on
+                # a journal's "/w/scratch/qdrant_docs.txt" that was never written).
+                try:
+                    _cited = [c for c in _verify_paths_core.cited_paths(_reason) if c not in exist]
+                    if _cited:
+                        _ce = await _v6_check_paths_exist(session_id, _cited)
+                        _al = [a for a in (_verify_paths_core.foreign_alias(c) for c in _cited
+                                           if _ce.get(c) is False) if a and a not in _ce]
+                        if _al:
+                            _ce.update(await _v6_check_paths_exist(session_id, _al))
+                        _gone = _verify_paths_core.missing_after_alias(_cited, _ce)
+                        if _gone:
+                            return {"met": False,
+                                    "reason": ("the verdict relies on %s, which does NOT exist in "
+                                               "the sandbox - nothing was written there."
+                                               % ", ".join(_gone[:3]))[:300]}
+                except Exception as _ve:
+                    log.debug("verdict path check skipped: %s", _ve)
+            return {"met": bool(obj.get("met")), "reason": _reason[:300]}
     except Exception as e:
         log.debug("v6 step verify failed: %s", e)
     return {"met": bool(res.get("ok")), "reason": ""}
