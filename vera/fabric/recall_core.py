@@ -88,6 +88,52 @@ def content_key(rec: Any) -> str:
     return "t:" + hashlib.sha1(norm.encode("utf-8", "replace")).hexdigest()
 
 
+# ── What recall leaves out by default (owner, 2026-10-04: tool calls and imported transcript lines "leave default
+#    recall and lose their vectors; still stored, still in the activity graph; a deep or 'what did I run' search can
+#    still find them"). Measured that day: tool-call records were 74% of memory and 44% of what recall returned,
+#    imported transcript lines another 19%. ──
+ACTIVITY_TYPES = ("cap_call", "dag_step")
+_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
+
+
+def is_transcript(text: Any) -> bool:
+    """A line imported from a coding-agent transcript (said by an agent working on Vera, not to this assistant)."""
+    return bool(_TRANSCRIPT_RE.match(str(text or "").lstrip()))
+
+
+def parse_exclusions(spec: Any) -> "tuple":
+    """`cap_call,dag_step,transcript` -> (("cap_call", "dag_step"), True). Unknown or malformed names are dropped, so
+    a typo cannot turn into a query fragment; an empty spec excludes nothing."""
+    names = [s.strip().lower() for s in str(spec or "").split(",") if s.strip()]
+    types = tuple(n for n in names if n != "transcript" and _NAME_RE.match(n))
+    return types, ("transcript" in names)
+
+
+def default_recall_filters(filters: Any, types: "tuple" = ACTIVITY_TYPES, transcripts: bool = True) -> Dict[str, Any]:
+    """The filters a recall search runs with. The caller's own filters are kept; on top of them the excluded kinds are
+    left out - unless the caller asked for a record type by name, or passed include_activity (the "what did I run"
+    search). include_activity is consumed here and never reaches a backend."""
+    f: Dict[str, Any] = dict(filters or {})
+    wants_all = bool(f.pop("include_activity", False))
+    if wants_all or f.get("record_type"):
+        return f
+    if types:
+        f["exclude_record_types"] = list(types)
+    if transcripts:
+        f["exclude_transcripts"] = True
+    return f
+
+
+def embed_worthy(record_type: Any, text: Any, types: "tuple" = ACTIVITY_TYPES, transcripts: bool = True) -> bool:
+    """Whether a record should get a vector at all. Excluded kinds are never searched by meaning, so embedding them
+    only queues work on the shared embed nodes - work that chat's own query embeddings then wait behind."""
+    if str(record_type or "").lower() in types:
+        return False
+    if transcripts and is_transcript(text):
+        return False
+    return True
+
+
 def collapse_repeats(hits: List[Dict[str, Any]], limit: int = 0) -> List[Dict[str, Any]]:
     """One hit per distinct text, in the order given (callers pass best-first).
 

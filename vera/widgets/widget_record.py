@@ -206,7 +206,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("globe", "points", ("flat", "iso"), glyph="globe", motion=True, sizes=("s", "m", "l", "xl"), options=("layer", "page", "limit", "pins", "view", "night", "sweep", "list", "grat"), name="Globe", boards=("globes", "reply")),
     # ── the three the spec adds, the composites, and the chrome the registry already names ──
     _F("panel", "panel", glyph="panel", sizes=("l", "xl"), name="Registered panel", boards=("spec",)),
-    _F("form", "values", ("flat", "iso"), glyph="form", options=("fields",), name="Form", boards=("spec", "iso")),
+    _F("form", "values", ("flat", "iso"), glyph="form", options=("fields", "save"), name="Form", boards=("spec", "iso")),
     _F("kv", "values", glyph="kv", options=("keys", "limit"), name="Key · value", boards=("spec", "reply")),   # a record's plain values, one per line (the element's kv)
     _F("composite", "composite", ("flat", "iso"), glyph="composite", options=("layout",), name="Composite", boards=("motion",)),
     _F("iso", "items", ("iso",), glyph="iso", name="Iso", boards=("reply",)),
@@ -501,6 +501,38 @@ def to_template(record: Dict[str, Any]) -> Dict[str, Any]:
     })
 
 
+# The capabilities a form may save through (draw.save.cap). A record can be placed by a model; Save is pressed by a
+# person - so what Save can do is fixed here, not by the record. Mirrored by FORM_WRITES in widget_element.js (a test
+# keeps the two the same).
+FORM_WRITES = ("agent.patch", "agent.create")
+FORM_FIELD_TYPES = ("text", "textarea", "number", "bool", "select", "list")
+
+
+def form_problems(draw: Any) -> List[str]:
+    """What is wrong with a form's draw.fields / draw.save, in words."""
+    out: List[str] = []
+    if not isinstance(draw, dict):
+        return out
+    fields = draw.get("fields")
+    if fields is not None:
+        if not isinstance(fields, list):
+            out.append("draw.fields must be a list of {key, label, type}")
+        else:
+            for i, f in enumerate(fields):
+                if not isinstance(f, dict) or not str(f.get("key") or "").strip():
+                    out.append("draw.fields[%d] needs a key" % i)
+                elif f.get("type") and f["type"] not in FORM_FIELD_TYPES:
+                    out.append("draw.fields[%d] type %r is not one of %s" % (i, f["type"], ", ".join(FORM_FIELD_TYPES)))
+    save = draw.get("save")
+    if save is not None:
+        cap = save.get("cap") if isinstance(save, dict) else None
+        if not cap:
+            out.append("draw.save needs a cap")
+        elif cap not in FORM_WRITES:
+            out.append("a form may not save through %s (allowed: %s)" % (cap, ", ".join(FORM_WRITES)))
+    return out
+
+
 def validate(record: Any, source_shape: Optional[str] = None) -> Tuple[Dict[str, Any], List[str], List[str]]:
     """Bind-time validation (the WidgetSpec board): the source's shape must equal the form's shape; unknown draw
     options are dropped with a warning; a missing source renders "no source" and the record stays editable.
@@ -529,6 +561,8 @@ def validate(record: Any, source_shape: Optional[str] = None) -> Tuple[Dict[str,
         if dropped:
             warnings.append("draw options %s are not %s's (%s); dropped" % (", ".join(sorted(dropped)), f["id"], ", ".join(f["options"]) or "none"))
             r["draw"] = {k: v for k, v in r["draw"].items() if k in known}
+        if f["id"] == "form":
+            problems += form_problems(r["draw"])
     if not r["source"] and "data" not in r and r["form"] not in NO_SOURCE_FORMS:
         problems.append("no source")
     if source_shape and r["shape"] and source_shape != r["shape"] and r["form"] not in NO_SOURCE_FORMS:

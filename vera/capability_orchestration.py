@@ -8978,17 +8978,24 @@ async def _health_activity() -> Dict[str, Any]:
     try:
         dm = (sys.modules.get("dag_workshop_capabilities")
               or sys.modules.get("Vera.vera.dag.dag_workshop_capabilities"))
-        for sid, task in list((getattr(dm, "_AGENT_LOOP_TASKS", None) or {}).items())[:20]:
-            if task is None or task.done():
-                continue
-            goal = ""
+        async def _goal(sid: str) -> str:
             try:
                 if REDIS is not None:
-                    goal = await REDIS.hget(f"vera:loop:run:{sid}", "goal") or ""
-                    goal = goal.decode("utf-8", "replace") if isinstance(goal, bytes) else str(goal)
+                    g = await REDIS.hget(f"vera:loop:run:{sid}", "goal") or ""
+                    return (g.decode("utf-8", "replace") if isinstance(g, bytes) else str(g))[:80]
             except Exception:
                 pass
-            loops.append({"session_id": str(sid), "goal": goal[:80]})
+            return ""
+
+        ids = [str(sid) for sid, task in list((getattr(dm, "_AGENT_LOOP_TASKS", None) or {}).items())[:20]
+               if task is not None and not task.done()]
+        # ...and runs started through /mcp/call (census goals, probes): no task in that
+        # registry, so their Redis run state (dag._live_loop_session_ids).
+        _live = getattr(dm, "_live_loop_session_ids", None)
+        if _live is not None:
+            ids += [s for s in (await _live())[:20] if s not in ids]
+        for sid in ids[:20]:
+            loops.append({"session_id": sid, "goal": await _goal(sid)})
     except Exception as e:
         log.debug("health activity loops: %s", e)
     try:

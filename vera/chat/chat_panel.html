@@ -1822,6 +1822,11 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph vera-loo
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph > .grp{display:flex;align-items:center}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-burger{margin-left:auto;border:0;background:transparent;color:var(--t3,var(--dim,#6b7280));font:inherit;font-size:12px;line-height:1;padding:2px 6px;border-radius:var(--r-sm,5px);cursor:pointer}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-burger:hover,#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph.dk-tools .dk-burger{color:var(--t1,var(--text,#d8dce4));background:var(--surf2,rgba(255,255,255,.06))}
+/* the memory graph's view and expand sit in its head, always in reach (they were behind ☰, in vera-graph's hidden header) */
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-view{margin-left:auto;font:inherit;font-size:9.5px;height:20px;padding:0 4px;max-width:104px;border:0;border-radius:var(--r-sm,5px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));cursor:pointer}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-view ~ .dk-burger{margin-left:0}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-grow{border:0;background:transparent;color:var(--t3,var(--dim,#6b7280));font:inherit;font-size:12px;line-height:1;padding:2px 6px;border-radius:var(--r-sm,5px);cursor:pointer}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-grow:hover,#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-view:hover{color:var(--t1,var(--text,#d8dce4));background:var(--surf2,rgba(255,255,255,.06))}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph:not(.dk-tools) :is(#memGraphCtrl,#dagGraphCtrl,#memLegend,.vg-header,.vg-bottom-area,.vg-legend){display:none!important}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph:not(.dk-tools) #paneLoopGraph > div:first-child{display:none!important}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-list .lhm-dk-b > *{height:auto!important;max-height:380px!important;overflow:auto!important}
@@ -6090,12 +6095,44 @@ IMPORTANT:
     if(!els.length)return;
     const pool=_thinkPhrases().concat(_thinkRefs());
     els.forEach(el=>{
+      if(el.dataset.phase) return;   // saying what the turn is actually doing: no stock phrase over it
       const next=pool[Math.floor(Math.random()*pool.length)];
       if(!next||next===el.textContent)return;
       el.classList.remove('swap'); void el.offsetWidth;   // retrigger fade-in
       el.textContent=next; el.classList.add('swap');
     });
   },2600);
+  /* ═══ THE TURN SAYS WHAT IT IS DOING (owner, 2026-10-04: "any pre or post processing of messages should be
+     clearly communicated in the chat throbber i.e. 'searching the web'"). The stream sends phase frames when asked
+     ({type:'phase', turn_id, id, stage, label, state, at_ms, ms?, ...} - the shape the chat turn record is built
+     from too), and this page adds its own for the steps it takes before the request. Every frame is kept on its
+     message (wrap._phases); while a step is running its label replaces the stock phrases, and when none is the
+     stock phrases come back. 'vera:chat:phases' = '0' asks for none. ═══ */
+  const _phasesOn=()=>{ try{ return localStorage.getItem('vera:chat:phases')!=='0'; }catch(_){ return true; } };
+  // message ids repeat across sessions; the turn record needs one that does not
+  const _phaseTurnId=(wrap)=>{ const m=wrap&&wrap.dataset?wrap.dataset.mid:''; return m?((SID?SID+':':'')+m):''; };
+  function _phaseNote(wrap, f){
+    if(!wrap||!f||f.type!=='phase') return;
+    (wrap._phases||(wrap._phases=[])).push(f);
+    const live=wrap._phaseLive||(wrap._phaseLive=new Map()), key=f.stage+':'+f.id;
+    if(f.state==='start') live.set(key, f); else live.delete(key);
+    const el=wrap.querySelector('.think-throb .phrase'); if(!el) return;
+    let cur=null; live.forEach(v=>{ cur=v; });   // the step started last is the one to name
+    if(cur&&cur.label){
+      const t=cur.label+'…';
+      if(el.textContent!==t){ el.classList.remove('swap'); void el.offsetWidth; el.textContent=t; el.classList.add('swap'); }
+      el.dataset.phase=cur.stage;
+    } else delete el.dataset.phase;
+  }
+  // a step this page takes itself before the request, in the same shape
+  function _phaseLocal(wrap, stage, id, label, state){
+    if(!wrap||!_phasesOn()) return;
+    const now=performance.now(), t0=wrap._phaseT0||(wrap._phaseT0=now);
+    const f={ type:'phase', turn_id:_phaseTurnId(wrap), id, stage, label, state, at_ms:Math.round(now-t0), local:true };
+    if(state!=='start'){ const st=(wrap._phaseStarts||{})[stage+':'+id]; if(st!=null) f.ms=Math.round(now-st); }
+    else (wrap._phaseStarts||(wrap._phaseStarts={}))[stage+':'+id]=now;
+    _phaseNote(wrap, f);
+  }
   async function _genThinkPhrases(){
     const st=document.getElementById('thinkPhraseStatus');
     const theme=(document.getElementById('cfgThinkTheme')?.value||'').trim();
@@ -11751,7 +11788,9 @@ Your task: decide what to do next to advance toward the goal.
     const bubEl=aMsg.body; // alias for the body div
 
     // Always fetch fresh agent data so domain_caps changes take effect immediately
+    _phaseLocal(aMsg.wrap,'needs','agent','finding the agent','start');
     const a=await _getCurrentAgent()||AGENTS.find(x=>x.name===agentName);
+    _phaseLocal(aMsg.wrap,'needs','agent','finding the agent','done');
     try{ const g=aMsg.wrap.querySelector('.msg-gutter'); if(g && a?.label) g.textContent=a.label; }catch(_){}
     // Explicit "open the X panel" → resolve & mount it in code (the model is
     // unreliable at picking the right panel id). This is the ONLY pre-response
@@ -11780,7 +11819,9 @@ Your task: decide what to do next to advance toward the goal.
     // changes the dropdown mid-stream.
     const outFmt=document.getElementById('cfgFormat')?.value||'';
     // Fetch skills/ontologies/DAGs context block (async, may be empty)
+    _phaseLocal(aMsg.wrap,'acquire','assemble','gathering skills and context','start');
     const ctxBlock=await _fetchContextBlock(a,msg);
+    _phaseLocal(aMsg.wrap,'acquire','assemble','gathering skills and context','done');
 
     // ── Context freshness guard ───────────────────────────────────────
     // In live-context mode, if CTX_NODES were gathered for a DIFFERENT input
@@ -11806,7 +11847,9 @@ Your task: decide what to do next to advance toward the goal.
     if(document.getElementById('ctxInject')?.checked && _ctxLiveOn()
        && msg.trim().length>2 && !_ctxMatches(msg)){
       const _fetchP=ctxFetch(false,msg,true).catch(()=>{});
+      _phaseLocal(aMsg.wrap,'acquire','memory','checking memory for this question','start');
       await Promise.race([_fetchP, new Promise(res=>setTimeout(res,600))]);
+      _phaseLocal(aMsg.wrap,'acquire','memory','checking memory for this question','done');
     }
     // Recompute injection now that context is guaranteed to match this msg,
     // then reconcile the "+N ctx" pill on the already-painted user message.
@@ -11931,7 +11974,9 @@ Your task: decide what to do next to advance toward the goal.
     const myAbort = _GLOBAL_ABORT;
     _streamStart();
     // the room, as the model will see it this turn (the control plane's manifest)
+    _phaseLocal(aMsg.wrap,'needs','room','noting what is open','start');
     const roomText = await _uiRoomText();
+    _phaseLocal(aMsg.wrap,'needs','room','noting what is open','done');
 
     try{
       const resp=await fetch(BASE+'/agents/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -11976,6 +12021,8 @@ Your task: decide what to do next to advance toward the goal.
           // 'vera:canvas:tell' = '0' keeps the placing and leaves the model untold.
           canvas_enrich:_cvEnrichOn()||undefined, canvas_text:msg, canvas_mid:_cvRelMid||'',
           canvas_tell:_cvTellOn(), chat_files:true,
+          // what the turn is doing, as it happens (the throbber names it); the turn's id ties the frames to it
+          phase_frames:_phasesOn()||undefined, turn_id:_phaseTurnId(aMsg.wrap)||undefined,
         })
       });
       if(!resp.ok){bubEl.textContent='✗ HTTP '+resp.status;return;}
@@ -12003,6 +12050,7 @@ Your task: decide what to do next to advance toward the goal.
               // Coalesced to one paint per frame; see _scheduleStreamRender.
               _scheduleStreamRender();}
             else if(ev.type==='thinking'){fullThink+=ev.text||'';thkEl.style.display='block';thkEl.textContent=fullThink;}
+            else if(ev.type==='phase'){ _phaseNote(aMsg.wrap, ev); }
             /* What this turn is waiting for, refreshed until the first token.
                The server only names jobs Vera itself started; when it cannot
                see what is holding the node it says so rather than claiming the
@@ -13928,8 +13976,66 @@ Your task: decide what to do next to advance toward the goal.
       _memVG.load({ nodes:nodes.map(n=>({ id:String(n.id), name:label(n), type:String(n.type||n.node_type||n.kind||'memory'), props:n })),
                     edges:edges.map(e=>({ from:String(e.from_id||e.from), to:String(e.to_id||e.to), rel:String(e.relation||e.type||'') })) });
       pane.classList.add('vg');
+      _memVGCount=nodes.length;
+      _memViewApply();
       return true;
     }catch(e){ console.warn('memory graph: vera-graph', e); pane.classList.remove('vg'); return false; }
+  }
+  /* THE MEMORY GRAPH'S VIEW AND EXPAND, IN REACH (owner, 2026-10-04: "the memory graph in the chat lhm should let you
+     change the graph style and expand the graph just like the context graph"). Both existed and could not be found:
+     vera-graph draws its own view picker (Graph · Exploded · Estate 3D · Estate 2D · Mermaid) in a header the docked
+     section hides unless its ☰ is open. The section's head now carries a picker driving the same setMode, kept per
+     browser, and ⤢, which grows the menu in place into the full graph - the context graph, which holds this session's
+     memory beside the turn's context - with memory shown in full. Nothing here changes either graph. */
+  const _MEMVIEW_KEY='vera:chat:memview';
+  const _memViewWanted=()=>{ try{ return localStorage.getItem(_MEMVIEW_KEY)||'graph'; }catch(_){ return 'graph'; } };
+  function _memViewOptions(){
+    const ms=(window.veraUI&&veraUI.Graph&&typeof veraUI.Graph.listModes==='function')?veraUI.Graph.listModes():[];
+    return [{ id:'graph', label:'Graph' }].concat(ms.map(m=>({ id:String(m.id), label:String(m.label||m.id) })));
+  }
+  let _memViewTries=0;
+  function _memViewSync(){
+    const sel=document.querySelector('.lhm-dk[data-dock="paneMemGraph"] select.dk-view'); if(!sel) return;
+    const opts=_memViewOptions(), sig=opts.map(o=>o.id).join(',');
+    if(sel.dataset.sig!==sig){ sel.innerHTML=opts.map(o=>'<option value="'+esc(o.id)+'">'+esc(o.label)+'</option>').join(''); sel.dataset.sig=sig; }
+    let cur=_memViewWanted();   // the choice, even while an empty graph is drawn plainly
+    sel.value=opts.some(o=>o.id===cur)?cur:'graph';
+    // the display modes register after the graph library loads them: look again a few times until they have
+    if(opts.length<2&&_memViewTries<12){ _memViewTries++; setTimeout(()=>{ _memViewApply(); }, 700); }
+  }
+  // the view kept for this browser, applied once its mode exists AND there is something to draw: an empty session's
+  // graph stays the plain graph (the other views answer an empty graph with a parse error, e.g. Mermaid's "no nodes
+  // found"), and the picker keeps showing the choice
+  let _memVGCount=0;
+  function _memViewApply(){
+    const want=_memViewWanted();
+    try{ if(_memVG&&typeof _memVG.setMode==='function'){
+      if(!_memVGCount){ if(_memVG.getMode()!=='graph') _memVG.setMode('graph'); }
+      else if(want!=='graph'&&_memVG.getMode()!==want&&_memViewOptions().some(o=>o.id===want)) _memVG.setMode(want); } }catch(_){}
+    _memViewSync();
+  }
+  function _memViewSet(id){
+    try{ localStorage.setItem(_MEMVIEW_KEY, id||'graph'); }catch(_){}
+    try{ if(_memVG&&typeof _memVG.setMode==='function'&&(_memVGCount||(id||'graph')==='graph')) _memVG.setMode(id||'graph'); }catch(_){}
+    _memViewSync();
+  }
+  function _memGrow(){
+    _ctxGrow(true);
+    // memory in full in the grown graph; the element may be mounting, so try for a moment
+    let n=0; const go=()=>{ try{ if(_ctxCol&&typeof _ctxCol.mix==='function'){ _ctxCol.mix('memory','all'); return; } }catch(_){} if(++n<10) setTimeout(go, 300); };
+    setTimeout(go, 0);
+  }
+  function _memHeadControls(w){
+    const head=w&&w.querySelector('.grp'); if(!head||head.querySelector('.dk-view')) return;
+    const burger=head.querySelector('.dk-burger');
+    const sel=document.createElement('select'); sel.className='dk-view'; sel.title='How the memory graph is drawn - the same records, another view';
+    sel.addEventListener('click', ev=>ev.stopPropagation());
+    sel.addEventListener('change', ()=>_memViewSet(sel.value));
+    const gr=document.createElement('button'); gr.type='button'; gr.className='dk-grow'; gr.textContent='⤢';
+    gr.title='Expand - grow this menu into the full graph: the session\'s memory with this turn\'s context';
+    gr.addEventListener('click', ev=>{ ev.stopPropagation(); _memGrow(); });
+    head.insertBefore(sel, burger||null); head.insertBefore(gr, burger||null);
+    _memViewSync();
   }
   function _renderMemGraph(nodes,allEdges){
     { const fe=allEdges.filter(e=>!_memEdgeHideTypes.has(e.relation||e.type||''));
@@ -16255,7 +16361,8 @@ function _embedMount(){
         // a small graph's controls behind ☰ (shown again by it, for this pane, until the menu is redrawn)
         if(String(p.cls||'').indexOf('dk-graph')>=0){ const bg=document.createElement('button'); bg.type='button'; bg.className='dk-burger'; bg.textContent='\u2630'; bg.title='The graph\'s controls - load, search, layout, fit, legend';
           bg.addEventListener('click',ev=>{ ev.stopPropagation(); const on=w.classList.toggle('dk-tools'); const lg=w.querySelector('vera-loop-graph'); if(lg){ if(on) lg.removeAttribute('tools'); else lg.setAttribute('tools','hidden'); } });
-          w.querySelector('.grp').appendChild(bg); } }
+          w.querySelector('.grp').appendChild(bg);
+          if(p.id==='paneMemGraph') _memHeadControls(w); } }
       const b=w.querySelector('.lhm-dk-b');
       if(pane.parentNode!==b) b.appendChild(pane);
       { const lg=w.classList.contains('dk-graph')&&pane.querySelector('vera-loop-graph'); if(lg){ if(w.classList.contains('dk-tools')) lg.removeAttribute('tools'); else lg.setAttribute('tools','hidden'); } }

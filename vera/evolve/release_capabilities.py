@@ -141,10 +141,42 @@ async def census_summary() -> Dict[str, Any]:
         import sys as _sys
         dm = (_sys.modules.get("dag_workshop_capabilities")
               or _sys.modules.get("Vera.vera.dag.dag_workshop_capabilities"))
-        s["loops"] = core.live_loop_ids(getattr(dm, "_AGENT_LOOP_TASKS", None) or {})
+        ids = list(core.live_loop_ids(getattr(dm, "_AGENT_LOOP_TASKS", None) or {}))
+        # ...and runs started through /mcp/call (census goals, probes), which have no task
+        # in that registry: their Redis run state (dag._live_loop_session_ids).
+        _live = getattr(dm, "_live_loop_session_ids", None)
+        if _live is not None:
+            for sid in await _live():
+                if sid not in ids:
+                    ids.append(sid)
+        s["loops"] = ids
     except Exception as e:
         log.debug("live loops unavailable: %s", e)
+    # Gates RUNNING in this process (evolve._GATES_ACTIVE). Queued ones are left out: they
+    # wait for the release (DRAIN_KEY), and counting them would deadlock the two.
+    try:
+        import sys as _sys
+        em = (_sys.modules.get("evolve_capabilities")
+              or _sys.modules.get("Vera.vera.evolve.evolve_capabilities"))
+        s["gates"] = [dict(g) for g in (getattr(em, "_GATES_ACTIVE", None) or {}).values()
+                      if g.get("state") == "running"]
+    except Exception as e:
+        log.debug("running gates unavailable: %s", e)
     return s
+
+
+async def _drain(on: bool) -> None:
+    """Hold (or drop) the gate drain key - see release_core.DRAIN_KEY."""
+    r = _redis()
+    if r is None:
+        return
+    try:
+        if on:
+            await r.set(core.DRAIN_KEY, "1", ex=core.DRAIN_TTL_S)
+        else:
+            await r.delete(core.DRAIN_KEY)
+    except Exception as e:
+        log.debug("release drain key: %s", e)
 
 
 async def _write_yield(reason: str) -> bool:
@@ -336,7 +368,9 @@ async def run_tick() -> Dict[str, Any]:
         p["waits"] = int(p.get("waits") or 0) + 1
         p["last_why"] = act.get("why", "")
         await _save(p)
+        await _drain(core.waiting_on_gates(act.get("why")))
         return {"action": "wait", "why": act.get("why"), "pending": p}
+    await _drain(False)
     if a == "release":
         p["last_why"] = act.get("why", "")
         await emit_event({"type": "evolve.release.go", "release_id": p["id"], "why": act.get("why")})
@@ -427,6 +461,7 @@ async def cap_release_prod(confirm: bool = False, edge: str = "", census: str = 
                     "census": summary, "error": p.get("last_why") if p.get("status") == "failed" else ""}
         p["last_why"] = why
         await _save(p)
+        await _drain(core.waiting_on_gates(why))
         if mode == "goal":
             if await _write_yield(f"release {p['id']}: let the goal in flight finish, then park"):
                 p["yield_written"] = True

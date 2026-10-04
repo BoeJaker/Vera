@@ -5613,6 +5613,31 @@ except Exception:                                      # pragma: no cover
     from vera.evolve import gate_resume_core as _gate_resume_core  # type: ignore
 
 
+async def _wait_for_release_drain(rec: Dict[str, Any]) -> None:
+    """Hold while a pending release is draining the gate queue (release_core.DRAIN_KEY)."""
+    r = _redis()
+    if r is None:
+        return
+    try:
+        from Vera.vera.evolve import release_core as _rc
+    except Exception:                                  # pragma: no cover
+        from vera.evolve import release_core as _rc     # type: ignore
+    noted = False
+    while True:
+        try:
+            if not await r.get(_rc.DRAIN_KEY):
+                return
+        except Exception:
+            return
+        if not noted:
+            noted = True
+            rec["current"] = "critical tier queued behind a pending release"
+            _pstep(rec, "critical-queue", True,
+                   "a release is waiting for the gates already running - starting after it")
+            await _save_pipeline(rec)
+        await asyncio.sleep(_CRITICAL_TIER_POLL_S)
+
+
 async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, Any]:
     """Run the critical tier for `branch` once no other gate is running one; the gate is
     listed in _GATES_ACTIVE (queued, then running) for as long as it is in flight.
@@ -5625,6 +5650,9 @@ async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, A
     pid = str(rec.get("id") or "")
     _GATES_ACTIVE[pid] = {"id": pid, "branch": branch, "state": "queued", "since": now_iso()}
     try:
+        # A release is waiting for the gates already running: do not start now - the
+        # restart would kill this run. Start after it (or be resumed by the new process).
+        await _wait_for_release_drain(rec)
         pool = getattr(_orch, "TEST_POOL", None)
         if pool is not None:
             _GATES_ACTIVE[pid]["state"] = "running"
@@ -5736,6 +5764,7 @@ async def _critical_gate(rec: Dict[str, Any], branch: str) -> Optional[bool]:
 
 
 _GATE_RESUME_DELAY_S = 20.0     # let the new process settle before re-running gates
+_GATE_RESUME_PARALLEL = int(os.environ.get("VERA_GATE_RESUME_PARALLEL", "3") or 3)
 
 
 async def _resume_interrupted_gates() -> None:
@@ -5775,28 +5804,60 @@ async def _resume_interrupted_gates() -> None:
             await r.delete(_CRITICAL_TIER_LEASE_KEY)
     except Exception as e:
         log.debug("evolve: gate lease check: %s", e)
-    log.warning("evolve: resuming %d gate(s) a restart cut off: %s", len(recs),
-                ", ".join("%s (%s)" % (x.get("id"), x.get("branch")) for x in recs))
-    for rec in _gate_resume_core.resume_order(recs):
+    keep, superseded = _gate_resume_core.latest_per_branch(recs)
+    for old, newer in superseded:
         try:
-            _pstep(rec, "gate-resume", True, "the gate was cut off by a restart - running it again")
-            rec["current"] = "gate resumed after restart"
-            await _save_pipeline(rec)
-            compile_ok = _gate_resume_core.compile_ok(rec.get("steps") or [])
-            critical_ok = await _critical_gate(rec, str(rec.get("branch")))
-            rec["gate_passed"] = compile_ok if critical_ok is None else (compile_ok and critical_ok)
-            rec["current"] = "gate finished after a restart"
-            await _save_pipeline(rec)
-            await _audit("pipeline.adopt",
-                         f"resumed gate for {rec.get('branch')} [gate_passed={rec['gate_passed']}]",
-                         id=rec.get("id"), kind="code", branch=rec.get("branch"),
-                         repo=rec.get("repo") or DEFAULT_REPO_ID)
-            await emit_event({"type": "evolve.pipeline.adopted", "id": rec.get("id"),
-                              "branch": rec.get("branch"), "into": rec.get("to"),
-                              "commits": len(rec.get("commits") or []),
-                              "gate_passed": rec["gate_passed"], "resumed": True})
+            _pstep(old, "gate-resume-skipped", True, f"not resumed: superseded by pipeline {newer}")
+            old["current"] = f"gate not resumed - superseded by {newer}"
+            await _save_pipeline(old)
         except Exception as e:
-            log.warning("evolve: gate resume %s failed: %s", rec.get("id"), e)
+            log.debug("evolve: gate resume skip %s: %s", old.get("id"), e)
+    runnable: List[Dict[str, Any]] = []
+    for rec in keep:
+        try:
+            root = await _resolve_repo_root(rec.get("repo") or DEFAULT_REPO_ID)
+            lg = await _git("log", "--oneline", f"{rec.get('to') or BLEEDING_EDGE_BRANCH}..{rec.get('branch')}",
+                            repo_root=root)
+            if lg.get("ok") and not (lg.get("out") or "").strip():
+                _pstep(rec, "gate-resume-skipped", True,
+                       "not resumed: the branch has nothing ahead of its target (already merged)")
+                rec["current"] = "gate not resumed - branch already merged"
+                await _save_pipeline(rec)
+                continue
+        except Exception as e:
+            log.debug("evolve: gate resume ahead-check %s: %s", rec.get("id"), e)
+        runnable.append(rec)
+    log.warning("evolve: resuming %d gate(s) a restart cut off (%d superseded, %d already merged): %s",
+                len(runnable), len(superseded), len(keep) - len(runnable),
+                ", ".join("%s (%s)" % (x.get("id"), x.get("branch")) for x in runnable))
+    # In parallel, up to _GATE_RESUME_PARALLEL at once (the test pool runs gates side by side;
+    # without it the critical-tier lease still serialises them). One at a time, 20 resumed
+    # gates took hours (4 Oct 2026).
+    sem = asyncio.Semaphore(max(1, _GATE_RESUME_PARALLEL))
+
+    async def _one(rec: Dict[str, Any]) -> None:
+        async with sem:
+            try:
+                _pstep(rec, "gate-resume", True, "the gate was cut off by a restart - running it again")
+                rec["current"] = "gate resumed after restart"
+                await _save_pipeline(rec)
+                compile_ok = _gate_resume_core.compile_ok(rec.get("steps") or [])
+                critical_ok = await _critical_gate(rec, str(rec.get("branch")))
+                rec["gate_passed"] = compile_ok if critical_ok is None else (compile_ok and critical_ok)
+                rec["current"] = "gate finished after a restart"
+                await _save_pipeline(rec)
+                await _audit("pipeline.adopt",
+                             f"resumed gate for {rec.get('branch')} [gate_passed={rec['gate_passed']}]",
+                             id=rec.get("id"), kind="code", branch=rec.get("branch"),
+                             repo=rec.get("repo") or DEFAULT_REPO_ID)
+                await emit_event({"type": "evolve.pipeline.adopted", "id": rec.get("id"),
+                                  "branch": rec.get("branch"), "into": rec.get("to"),
+                                  "commits": len(rec.get("commits") or []),
+                                  "gate_passed": rec["gate_passed"], "resumed": True})
+            except Exception as e:
+                log.warning("evolve: gate resume %s failed: %s", rec.get("id"), e)
+
+    await asyncio.gather(*[_one(x) for x in runnable], return_exceptions=True)
 
 
 @capability("evolve.pipeline.adopt", memory="on",

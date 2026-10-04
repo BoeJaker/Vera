@@ -33,7 +33,7 @@ t('and what you opened, hovered or made this turn never folds',
   !V.foldOf({ tier: 'zen', open: true }) && !V.foldOf({ tier: 'zen', fresh: true }) && !V.foldOf({ tier: 'zen', hovered: true, hasFocus: true, inFocus: false }));
 
 /* ── folded items are chips, and chips share a row ───────────────────────────────────────────────────────────── */
-t('a folded item asks for a third of the width', /if \(d\.folded\) return 1 \/ 3;/.test(SRC)
+t('a folded item asks for a third of the width', /if \(d\.folded\) return colW \? \(\[1 \/ 3, 0\.5, 1\]\.find\(\(s\) => s \* colW - 10 >= 170\) \|\| 1\) : 1 \/ 3;/.test(SRC) && (() => { const U = require(require('node:path').join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js')).unitsOf; return U({ folded: true }) === 1 / 3 && U({ folded: true }, 600) === 1 / 3 && U({ folded: true }, 375) === 0.5 && U({ folded: true }, 300) === 1; })()
   && /folded: c\.classList\.contains\('compact'\) \|\| c\.classList\.contains\('overfold'\)/.test(SRC));
 {
   const turns = { m1: { top: 0, height: 300 }, m2: { top: 60, height: 300 }, m3: { top: 120, height: 300 } };

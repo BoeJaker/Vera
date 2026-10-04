@@ -164,9 +164,9 @@ async def _call(name: str, /, **kw) -> Dict[str, Any]:
 
 
 def _declare_profile() -> None:
-    """The `intel` routing profile: per-source reading on the background route,
-    the few long calls (assessments, the brief, the advisor) on the 35B-A3B MoE
-    the director already keeps warm on its CPU node. Overridable on Model Routing."""
+    """The `intel` routing profile: every intel role on the 35B-A3B MoE the director
+    already keeps warm on its CPU node (≈3B active parameters, so it is the fastest
+    capable model on CPU as well as the best). Overridable per role on Model Routing."""
     reg = getattr(_orch, "register_routing_profile", None)
     if not reg:
         return
@@ -176,8 +176,10 @@ def _declare_profile() -> None:
     long = {"job_type": "idle_intel", "deny_gpu": True, "pin": node, "model": model, "options": opts}
     try:
         reg("intel", label="Intelligence", owner="intel", roles={
-            "enrich": {"job_type": "idle_intel", "deny_gpu": True, "label": "intel · read a source"},
-            "notes": {"job_type": "idle_intel", "deny_gpu": True, "label": "intel · notes and inbox"},
+            # measured on prod 2026-10-04: the default 9B dense model on gpu-250-cpu ran a source summary at
+            # 0.8 tok/s (282 s); the MoE (≈3B active) on cpu-247 did the same prompt in 33.5 s, and better
+            "enrich": dict(long, label="intel · read a source (MoE)"),
+            "notes": dict(long, label="intel · notes and inbox (MoE)"),
             "assess": dict(long, label="intel · topic assessment (MoE)"),
             "brief": dict(long, label="intel · the brief's top line (MoE)"),
             "advise": dict(long, label="intel · automation advisor (MoE)"),

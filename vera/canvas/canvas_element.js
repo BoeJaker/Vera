@@ -1144,6 +1144,15 @@
   .it.sized .vc-xp,.it.openin .vc-xp,.it.sized .vc-term,.it.openin .vc-term{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
   .it.sized .vc-pre,.it.openin .vc-pre{flex:1 1 auto;min-height:0;max-height:none}
   .it.hovopen{z-index:5;box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
+  /* the preview of a folded item: over the column, its own scroll past a screenful, no slide (it does not move) */
+  .stage .it.peek{z-index:8;max-height:min(70vh,640px);overflow:auto;transition:none;background:var(--bg1,#16181d);scrollbar-width:thin}
+  .stage .it.peek .it-bd{max-height:none}
+  /* A FOLDED CHIP SAYS WHAT IT IS (owner, 2026-10-04: "when they are collapsed its hard to tell what each chip is"): its
+     line held the kind, the title, the turn, the item's key, a score and two buttons, so the title - the one thing that
+     says what it is - was cut to "ht…". Folded, it is the kind and the title, in full where it fits; the rest is in its
+     preview's header a moment away. */
+  .it.compact > .it-hd :is(.k,.src,.sc,.mx,.xp,.fu-w){display:none}
+  .it.compact > .it-hd .t{flex:1 1 auto;min-width:0;max-width:none;white-space:normal;line-height:1.25;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
   .it.sized .rz{opacity:.45}
   .it.resizing{transition:none!important;user-select:none}
   /* the resize handle — a corner grip that shows on hover; a drop saves the item's size */
@@ -1659,16 +1668,23 @@
      many exist) read the widths here, so the count and the widths can never disagree. A kind you read rather than
      glance at wants a reading width; a kind you glance at wants a share. ── */
   const WIDE = { code: 1, html: 1, explode: 1, markdown: 1, panel: 1, session: 1, table: 1 };
-  function unitsOf(d) {
+  /* colW, when the placer knows it: NOT GREEDY (owner, 2026-10-04: "lots of the widgets or elements in the canvas are very
+     greedy with the width - the hover previews are often big enough"). A reading width was two columns - in the chat's
+     column, the whole stage - for every markdown, table, panel and large item, the records and widgets enrichment
+     places among them. Where one column is wide enough to read (340 px) they take one; code, a page, an explode and a
+     terminal keep two, a line of code being worth its width. And a folded chip is the smallest share that still reads
+     its title (~170 px), not a fixed third. Opened, dragged or xl still asks for the stage. */
+  const CODEISH = { code: 1, html: 1, explode: 1, session: 1 };
+  function unitsOf(d, colW) {
     d = d || {};
-    if (d.folded) return 1 / 3;              // folded to its header line it is a chip, whatever kind it is
+    if (d.folded) return colW ? ([1 / 3, 0.5, 1].find((s) => s * colW - 10 >= 170) || 1) : 1 / 3;   // a chip, whatever its kind
     if (d.open) return 4;                    // opened in place or dragged: it asked for the stage
     // a FUSED group is one element holding two or more: a strip of indicators is a column wide, anything with a
     // pane beside or under it is a reading width, whatever the lead on its own would have asked for
     if (d.fuse) return d.fuse === 'strip' ? 1 : 2;
     const sz = d.size || 'm', ty = d.type || '';
     if (sz === 'xl') return 4;
-    if (WIDE[ty] || sz === 'l') return 2;
+    if (WIDE[ty] || sz === 'l') return colW >= 340 && !CODEISH[ty] ? 1 : 2;
     return sz === 'xs' ? (1 / 3) : sz === 's' ? 0.5 : 1;
   }
   /* ── HOW MANY COLUMNS: the width says how many FIT, the content says how many are WANTED, and the answer is the
@@ -2266,7 +2282,8 @@
         this._cardH = new WeakMap();
         this._cardRO = new ResizeObserver((entries) => {
           let moved = false;
-          entries.forEach((e) => { const h = Math.round(e.contentRect.height); if (this._cardH.get(e.target) !== h) { if (this._cardH.has(e.target)) moved = true; this._cardH.set(e.target, h); } });
+          entries.forEach((e) => { if (e.target.classList.contains('peek')) return;   // a preview opening is not a card growing
+            const h = Math.round(e.contentRect.height); if (this._cardH.get(e.target) !== h) { if (this._cardH.has(e.target)) moved = true; this._cardH.set(e.target, h); } });
           if (moved && !this._cardRaf) this._cardRaf = requestAnimationFrame(() => { this._cardRaf = 0; this._placeNow(); });
         });
       }
@@ -2288,7 +2305,8 @@
          canvas of folded items was a stack of identical bars — the shape the owner keeps calling a rigid grid. */
       /* over 1 = a number of COLUMNS to span, clamped to the columns there are: a kind you read takes the stage when
          there is more than one column to take; an l or xl item of any kind takes two. */
-      const wantOf = (c) => { const u = unitsOf(descOf(c)); return u > 1 ? Math.max(1, Math.min(cols, Math.round(u))) : u; };
+      // the same classifier the count was chosen by, told the column width it now has (a reading width, a chip's share)
+      const wantOf = (c) => { const u = unitsOf(descOf(c), w); return u > 1 ? Math.max(1, Math.min(cols, Math.round(u))) : u; };
       /* ⛔ A WIDTH YOU DRAGGED IS A NUMBER OF PIXELS, and it outranks every share and every span. The drag in progress
          counts as much as one already dropped, or the placer would fight the mouse: it set the card back to the share
          its kind asks for on the very next frame, which is why dragging left did nothing at all. Bounded by the
@@ -2348,14 +2366,15 @@
          changed (owner, 2026-09-24: "re-sizing the canvas items doesnt function", "open in place doesnt do
          anything"). The column scrolls for them instead, which is what the packed regime is for. */
       const capH = Math.max(120, V - pad - 10);
-      const asked = (c) => c.classList.contains('openin') || c.classList.contains('sized');
+      const asked = (c) => c.classList.contains('openin') || c.classList.contains('sized') || c.classList.contains('peek');
       if (V) { cards.forEach((c) => { if (c.style.maxHeight) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
         const hs = cards.map((c) => c.offsetHeight);
         cards.forEach((c, i) => { if (hs[i] > capH && !asked(c)) { c.style.maxHeight = capH + 'px'; c.classList.add('capped'); } }); }
       else cards.forEach((c) => { if (c.classList.contains('capped')) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
       this._fullH = this._fullH || {};
       const items = cards.map((c, ci) => { const k = c.dataset.key || ''; const hd = c.querySelector('.it-hd');
-        const isFolded = c.classList.contains('overfold'); const measured = c.offsetHeight;
+        // a folded item being previewed is still its folded line to the column: its preview lies over the items below
+        const isFolded = c.classList.contains('overfold'); const measured = c.classList.contains('peek') && c._peekH ? c._peekH : c.offsetHeight;
         if (!isFolded) this._fullH[k] = measured;                              // what it is when OPEN: the placer judges on that, so folding cannot oscillate
         return { key: k, h: isFolded ? (this._fullH[k] || measured) : measured, hFold: hd ? hd.offsetHeight + 2 : 28,
                  want: wants[ci], wpx: pws[ci] || 0, mid: c.dataset.mid || '', beside: c.dataset.beside || '',
@@ -2372,7 +2391,8 @@
       P.placements.forEach((p) => { const c = cards.find((x) => x.dataset.key === p.key); if (!c) return;
         c.style.left = p.x + 'px'; c.style.top = p.y + 'px'; c.dataset.col = String(p.col);
         if (p.w > 0) c.style.width = p.w + 'px';                 // the width it flowed at
-        c.classList.toggle('level', !!p.level); c.classList.toggle('beside', !!p.beside); });
+        c.classList.toggle('level', !!p.level); c.classList.toggle('beside', !!p.beside);
+        if (c.classList.contains('peek')) this._peekGeom(c); });
       /* THE STAGE IS THE ITEMS' OWN HEIGHT, not the transcript's. It used to be made as tall as the whole transcript
          so the column could be driven from the transcript's scrollTop — the projection this replaces. */
       st.style.height = (P.mode === 'stage' ? Math.max(P.height, (this._turnsH || 0) + 40) : P.height) + 'px';
@@ -2503,8 +2523,9 @@
             <div class="opts">${d.options.map(o => `<button data-act="answer" data-ans="${esc(o.v)}" class="${d.answer === o.v ? 'on' : ''}" title="Answer — it goes to the run">${esc(o.n)}</button>`).join('')}${d.answer ? '' : '<span class="or">or type below — it goes to the run, not into a new turn</span>'}</div>
             <span class="st">${d.answer ? 'answered' + (hhmm(d.answered) ? ' ' + hhmm(d.answered) : '') + ' · "' + esc(d.answer) + '" sent to the run' : 'waiting' + (hhmm(d.since) ? ' since ' + hhmm(d.since) : '') + ' · the composer answers this too'}</span></div>`;
       const editHtml = b => { const c = b.content || {}; const ask = c.ask && typeof c.ask === 'object' && !c[textFieldOf(b.type)]; const f = ask ? 'ask.question' : textFieldOf(b.type); const v = ask ? (c.ask.question || '') : (c[f] || '');   // a decision's editor edits its question
-        return `<div class="edit" data-w="canvas.update"><textarea class="ta${b.type === 'code' || b.type === 'html' ? ' code' : ''}" data-field="${f}" spellcheck="false">${esc(v)}</textarea>
-          <div class="edit-a"><button class="ib" data-act="save">Done</button><button class="ib" data-act="cancel">Cancel</button><span class="vc-dim">${esc(b.type)} · ${f}</span></div></div>`; };
+        // Done / Cancel above the text, where editing starts (owner, 2026-10-04: scrolling to the bottom to stop editing)
+        return `<div class="edit" data-w="canvas.update"><div class="edit-a"><button class="ib" data-act="save">Done</button><button class="ib" data-act="cancel">Cancel</button><span class="vc-dim">${esc(b.type)} · ${f}</span></div>
+          <textarea class="ta${b.type === 'code' || b.type === 'html' ? ' code' : ''}" data-field="${f}" spellcheck="false">${esc(v)}</textarea></div>`; };
       /* A PANE: a fused member, drawn inside its lead's body. Its own drawer, its own key (so its live slot, its
          runs and every capability that addresses it are unchanged) — and one control, to take it back out. */
       const paneHtml = m => {
@@ -2552,7 +2573,9 @@
         const open = this._open.has(key) || editing || this._max === key;   // a maximised item is open
         const maxed = this._max === key;
         const aged = isAged(mid, focusMid, order) && !(F && F.has(key)) && b.state !== 'pinned';
-        const hovered = this._hovKey === key && (tier === 'hover' || aged);
+        // a hovered folded item is drawn folded: its preview is laid over the column after the render (_peekOpen), never
+        // opened in the layout - that moved the column under the pointer
+        const hovered = false;
         const fresh = !!mid && mid === focusMid;                                    // the turn in view produced it: open, in every tier
         // a header line, until opened. `hasFocus`: with no focus set there is nothing to be out of, so nothing folds
         const wouldFold = foldOf({ tier, aged, open, now: isNow, fresh, hasFocus: !!F, inFocus: !!F && F.has(key) });
@@ -2709,6 +2732,8 @@
       if (root.VeraOut) { try { root.VeraOut.wire(this.shadowRoot, this._voHooks()); root.VeraOut.hydrate(layers.items); } catch (e) {} }
       else if (!this._voLoading) { this._voLoading = true; ensureLib('/ui/elements/vera_output.js', '').then((ok) => { if (ok && root.VeraOut && this._doc) { this._html = null; this.render(this._doc); } }); }
       if (this._editKey) { const ta = body.querySelector('.it[data-key="' + this._editKey.replace(/"/g, '\\"') + '"] textarea'); if (ta && !this._editFocused) { this._editFocused = true; try { ta.focus(); } catch (e) {} } if (ta) this._editWire(ta); }
+      // a preview open before the redraw is open after it (the markup was rebuilt folded)
+      if (this._peekKey) { const pk = this._peekKey; this._peekKey = null; this._peekOpen(pk); }
       if (body.querySelector('vera-mermaid')) ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid');
       if (window.mermaid && body.querySelector('.mermaid')) {
         try { window.mermaid.run({ nodes: body.querySelectorAll('.mermaid') }); }
@@ -2815,13 +2840,44 @@
       this._hoverOpen(it);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:hover', { bubbles: true, detail: { key: k } })); } catch (e) {}
     }
+    /* A FOLDED ITEM, PREVIEWED IN PLACE (owner, 2026-10-04: "hovering over lots of collapsed canvas items makes the
+       previews flicker in and out as it doesnt stay in-place under the mouse. sometime hovering them doesnt open the
+       preview"). It opened inside the layout: the column re-placed around the opened item, the item or its neighbours
+       slid, the pointer was over something else, it folded, the column re-placed - the flicker. And only items the tier
+       folded opened; one folded by you or by the enrich default (the same chip to look at) did not. Now any folded item
+       previews after a short pause, OVER the items below it: to the column it is still its folded line (the placer reads
+       its folded height, its height watcher ignores it), it opens down and to the right from where the pointer is, at
+       least a reading width wide, and folds back the moment the pointer is elsewhere. A click still opens it for good. */
     _hoverOpen(it) {
-      const hoverTier = this.tier() === 'hover'; let moved = false;
-      const prev = this._hovEl;
-      if (prev && prev !== it && prev.classList.contains('hovopen')) { prev.classList.add('compact'); prev.classList.remove('hovopen'); moved = true; }
-      this._hovEl = it || null;
-      if (it && it.classList.contains('compact') && it.classList.contains('foldable') && (hoverTier || it.classList.contains('aged'))) { it.classList.remove('compact'); it.classList.add('hovopen'); moved = true; }
-      if (moved && this.hasAttribute('stage')) this._placeNow();
+      clearTimeout(this._peekT);
+      const key = it && it.dataset ? it.dataset.key : null;
+      if (this._peekKey && this._peekKey !== key) this._peekClose();
+      if (!key || this._peekKey === key || this._rz || it.classList.contains('ghost') || !it.classList.contains('compact')) return;
+      this._peekT = setTimeout(() => { if (this._hovKey === key) this._peekOpen(key); }, 220);
+    }
+    _peekFind(key) { const body = this.shadowRoot && this.shadowRoot.getElementById('body');
+      return key && body ? body.querySelector('#items .it[data-key="' + String(key).replace(/"/g, '\\"') + '"]') : null; }
+    _peekOpen(key) {
+      const it = this._peekFind(key); if (!it || !it.classList.contains('compact')) return;
+      it._peekH = it.offsetHeight; it._peekSave = { w: it.style.width, l: it.style.left };
+      this._peekKey = key;
+      it.classList.remove('compact'); it.classList.add('peek', 'hovopen');
+      this._peekGeom(it);
+      try { this._liveLayout(); } catch (e) {}
+    }
+    // a preview is at least a reading width wide (the column's share can be a sliver), kept inside the stage
+    _peekGeom(it) {
+      const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); const W = st ? st.clientWidth : 0; if (!W) return;
+      const left = parseFloat(it.style.left) || 0, cur = it.offsetWidth, want = Math.min(W, Math.max(cur, 440));
+      it._peekSave = { w: it.style.width, l: it.style.left };
+      if (want > cur) { it.style.width = want + 'px'; if (left + want > W) it.style.left = Math.max(0, W - want) + 'px'; }
+    }
+    _peekClose() {
+      const key = this._peekKey; this._peekKey = null; clearTimeout(this._peekT);
+      const it = this._peekFind(key); if (!it || !it.classList.contains('peek')) return;
+      it.classList.remove('peek', 'hovopen'); it.classList.add('compact');
+      const s = it._peekSave; if (s) { it.style.width = s.w; it.style.left = s.l; } it._peekSave = null;
+      try { this._liveLayout(); } catch (e) {}
     }
     /* the folds you made, per canvas: {key: true|false}; an item you never folded or opened takes its default (an enrich
        item folded, the rest open) */
