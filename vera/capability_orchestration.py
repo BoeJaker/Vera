@@ -11258,6 +11258,11 @@ async def lifespan(app: FastAPI):
             # Run in a thread — some chromadb client versions do blocking I/O
             # (a heartbeat) on construction, which would stall the event loop.
             CHROMA = await asyncio.to_thread(chromadb.HttpClient, host="localhost", port=8008)
+            try:                                      # finite timeout - RF-77
+                from Vera.vera.fabric import chroma_bound_core as _chroma_bound_core
+                _chroma_bound_core.bound(CHROMA)
+            except Exception:
+                pass
             log.info("✓ ChromaDB")
             await emit_event({"type": "backend.connected", "backend": "chroma"})
         except Exception as e:

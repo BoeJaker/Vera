@@ -99,6 +99,10 @@ from Vera.vera.capability_orchestration import (
 # Dev-sandbox write guard — memory backends are prod's SHARED stores; suppress
 # writes when running as a dev sandbox (strict no-op in prod). See sandbox_guard.
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked   # noqa: E402
+try:                                                    # RF-77
+    from Vera.vera.fabric import chroma_bound_core as _chroma_bound
+except ImportError:                                     # pragma: no cover
+    from . import chroma_bound_core as _chroma_bound
 
 log = logging.getLogger("vera.memory")
 
@@ -816,13 +820,14 @@ class ChromaBackend(MemoryBackend):
         try:
             def _connect_sync():
                 client = _chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+                _chroma_bound.bound(client)      # finite timeout - RF-77
                 coll = client.get_or_create_collection(
                     name=CHROMA_COLLECTION,
                     metadata={"hnsw:space": "cosine"},
                 )
                 return client, coll, coll.count()
             self._client, self._collection, count = \
-                await asyncio.to_thread(_connect_sync)
+                await _chroma_bound.run(_connect_sync)
             log.info("✓ ChromaBackend connected — %d documents", count)
             return True
         except Exception as e:
@@ -851,8 +856,9 @@ class ChromaBackend(MemoryBackend):
         try:
             rid, doc, meta = record.to_chroma_doc()
             # chromadb HttpClient is synchronous — keep its network round-trips
-            # off the event loop (same for every call site in this class).
-            await asyncio.to_thread(
+            # off the event loop, on Chroma's OWN pool (same for every call site in
+            # this class): a slow Chroma once parked all 16 default-pool threads (RF-77).
+            await _chroma_bound.run(
                 self._collection.upsert,
                 ids=[rid], documents=[doc], metadatas=[meta],
                 embeddings=[record.embedding],
@@ -864,7 +870,7 @@ class ChromaBackend(MemoryBackend):
     async def get(self, record_id: str) -> Optional[MemoryRecord]:
         if not self._collection: return None
         try:
-            res = await asyncio.to_thread(
+            res = await _chroma_bound.run(
                 self._collection.get,
                 ids=[record_id], include=["documents","metadatas"])
             if not res["ids"]: return None
@@ -904,12 +910,12 @@ class ChromaBackend(MemoryBackend):
                 return []
             kwargs: dict = {
                 "n_results": min(int(limit),
-                                 await asyncio.to_thread(self._cached_count) or 1),
+                                 await _chroma_bound.run(self._cached_count) or 1),
                 "where":     where_arg,
                 "include":   ["documents","metadatas","distances"],
                 "query_embeddings": [embedding],
             }
-            res = await asyncio.to_thread(
+            res = await _chroma_bound.run(
                 lambda: self._collection.query(
                     **{k: v for k, v in kwargs.items() if v is not None}))
             results = []
@@ -935,7 +941,7 @@ class ChromaBackend(MemoryBackend):
             # store(), which now requires an embedding) would re-embed via the
             # collection's default 384-dim function. update() with metadatas
             # alone preserves the stored vector and document.
-            await asyncio.to_thread(
+            await _chroma_bound.run(
                 self._collection.update, ids=[rid], metadatas=[meta])
             return True
         except Exception as e:
@@ -946,7 +952,7 @@ class ChromaBackend(MemoryBackend):
             return {"connected": False}
         try:
             return {"connected": True, "collection": CHROMA_COLLECTION,
-                    "count": await asyncio.to_thread(self._collection.count)}
+                    "count": await _chroma_bound.run(self._collection.count)}
         except Exception as e:
             return {"connected": False, "error": str(e)}
 
