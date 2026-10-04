@@ -424,11 +424,11 @@
     out.enodes.forEach((n) => { const q = T(n); n.x = q.x; n.y = q.y; });
     out.graphs.forEach((g) => { const q = T(g); g.x = q.x; g.y = q.y; });
     const kept = out.edges.filter((e) => e.raw).map((e) => { const a = T({ x: e.x, y: e.y }); return Object.assign({}, e, { x: a.x, y: a.y, len: px(e.len * s), raw: undefined }); });
-    out.edges = kept; out.runs = 0;
-    // ── the runs: the board's ISO.route on the ground, projected through P and the fit ────────────────────────────
+    out.edges = kept; out.runs = 0; out.paths = [];
+    // ── the runs: Live ops' channel routing on the lattice, projected through P and the fit ───────────────────────
     const at = (U, V, z) => { const p = proj0(U, V, z); return { x: p.x * s + dx, y: p.y * s + dy }; };   // unrounded: a short leg keeps its exact direction (the pins already carry their floor's place)
     const stationOf = (U) => { let best = 0; STA.forEach((L, i) => { if (U >= uA(i) * GU - 1) best = i; }); return best; };
-    const SK = 1 / (s * 0.75), LANE = 13 * SK, PORT = 6 * SK, STEP = 21 * SK, VO = (VSPAN + 0.5) * GV;   // a lane's pitch (13 px on screen), a port's (6), a step aside (21), whatever the fit   // a lane's pitch in the gap, a port's pitch at a pin, the far end a round-about run travels past
+    const SK = 1 / (s * 0.75), LANE = 13 * SK;   // a track's pitch: 13 px on screen, whatever the fit
     let rid = 0;
     turns.forEach((t, si) => { const G = pinsG[t.mid] || {}; const gp = (k) => G[k] || null; const runs = [];
       const add = (A, B, col, cls, title, joins, opt) => { if (!A || !B) return; runs.push(Object.assign({ A, B, col, cls, title, joins, id: ++rid }, opt || {})); };
@@ -447,51 +447,61 @@
       estsL[si].forEach((e, ei) => { estRuns(e, (ai) => gp('act:' + ai)).forEach(([ai, title]) => add(gp('act:' + ai), gp('est:' + ei), 'var(--xp-dv3)', 'est', title)); if (e.via != null && gp('est:' + e.via)) add(gp('est:' + e.via), gp('est:' + ei), 'var(--xp-dv3)', 'rel est dash', (e.label || e.id) + ' serves it', null, { direct: true }); });
       g.rels.forEach((r) => { const a = gp('node:' + r.from), b = gp('node:' + r.to), Rc = RELC[r.kind] || RELC.cite; if (a && b) add(a, b, Rc[0], Rc[1], Rc[2], [String(r.from), String(r.to)], { rel: true }); });
       if (XC) (t.links || []).forEach((r) => { const a = linkAt(t, r.from), b = linkAt(t, r.to); if (a && b && a[2] !== b[2]) add(gp(a[2]), gp(b[2]), linkCol(r.kind), 'link', r.title); });
-      // PORTS: the runs at one pin, in the order of their far ends, each on its own port line (a pin with one run keeps it
-      // at the pin); LANES: the runs through one gap, in the order of their targets. Runs that share a pin AND a gap are
-      // COLLECTED: one trunk leaves (or reaches) the pin along its row, a short comb fans them onto their port lines, and
-      // each crosses the gap on its own lane — many runs to one node read as one bundle. A forward run to a station further
-      // on crosses the plates between at its row and turns in the gap before its target; only a run bound backwards goes
-      // round the far end. Every run ENDS AT ITS PIN: the last stub from the port line to the pin may share its length with
-      // its neighbours' (that is the join), and is marked so.
-      const keyP = (p) => p.U + '/' + p.V, gapEdges = (g) => [uB(g) * GU, uA(g + 1) * GU];
-      runs.forEach((r) => { const sa = stationOf(r.A.U), sb = stationOf(r.B.U); r.sa = sa; r.sb = sb; r.same = sa === sb; r.around = sb < sa; r.g = r.same || r.around ? -1 : sb - 1; r.gk = r.same ? 's' + sa : r.around ? 'o' : 'g' + r.g; });
-      const byPin = {}; runs.forEach((r) => { (byPin[keyP(r.A)] = byPin[keyP(r.A)] || []).push([r, 'a']); (byPin[keyP(r.B)] = byPin[keyP(r.B)] || []).push([r, 'b']); });
-      Object.keys(byPin).forEach((k, pi) => { const Q = byPin[k]; Q.sort((p, q) => { const fa = p[1] === 'a' ? p[0].B : p[0].A, fb = q[1] === 'a' ? q[0].B : q[0].A; return (fa.V - fb.V) || (fa.U - fb.U); }); const n = Q.length, ph = n > 1 ? ((pi * 0.37) % 1) * PORT : 0;   /* a phase per pin: two pins' port lines never share the one grid */
-        Q.forEach(([r, end], j) => { r[end === 'a' ? 'pa' : 'pb'] = (j - (n - 1) / 2) * PORT + ph; r[end === 'a' ? 'fa' : 'fb'] = (n - 1) / 2 * PORT + Math.abs(ph); }); });
-      const combs = {}; runs.forEach((r) => { if (r.g < 0) return; [['a', r.A], ['b', r.B]].forEach(([end, p]) => { const k = keyP(p) + '|' + r.gk + '|' + end; (combs[k] = combs[k] || { runs: [], end, pin: p, g: r.g, done: false }).runs.push(r); r[end === 'a' ? 'ca' : 'cb'] = k; }); });
-      Object.keys(combs).forEach((k) => { if (combs[k].runs.length < 2) delete combs[k]; });
-      const byGap = {}; runs.forEach((r) => { (byGap[r.gk] = byGap[r.gk] || []).push(r); });
-      Object.keys(byGap).forEach((k) => { const Q = byGap[k]; Q.sort((p, q) => (p.B.V - q.B.V) || (p.A.V - q.A.V)); const n = Q.length; Q.forEach((r, j) => { r.off = (k === 'o' || k[0] === 's') ? j * LANE : (j - (n - 1) / 2) * LANE; }); });
-      // every leg registers the line it occupies (a level line at one v, a plumb line at one u, per floor); a run that would
-      // share a line with an earlier run takes another lane, then another port line, and routes again
-      const occ = {}; const TOL = 1.2 * SK, MIN = 3 * SK;
-      const legsOf = (Wp, tails) => { const L = []; for (let n = 0; n < Wp.length - 1; n++) { if (tails && tails.indexOf(n) >= 0) continue; const p = Wp[n], q = Wp[n + 1]; if (Math.abs(p[0] - q[0]) < 1e-6 && Math.abs(p[1] - q[1]) < 1e-6) continue;
-        if (Math.abs(p[0] - q[0]) < 1e-6) L.push({ k: 'v', c: p[0], a: Math.min(p[1], q[1]), b: Math.max(p[1], q[1]) }); else if (Math.abs(p[1] - q[1]) < 1e-6) L.push({ k: 'h', c: p[1], a: Math.min(p[0], q[0]), b: Math.max(p[0], q[0]) }); } return L; };
-      const clash = (L, z) => { const O = occ[z]; if (!O) return false; return L.some((l) => O[l.k].some((m) => Math.abs(m.c - l.c) < TOL && Math.min(m.b, l.b) - Math.max(m.a, l.a) > MIN)); };
-      const take = (L, z) => { const O = occ[z] = occ[z] || { h: [], v: [] }; L.forEach((l) => O[l.k].push(l)); };
-      const trim = (p, q, rr) => { const d = Math.hypot(q.x - p.x, q.y - p.y); if (!rr || d < 1) return p; const k = Math.min(0.9, rr * out.inv / d); return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k }; };
-      const emit = (Wp, r, id, tails, rA, rB, cls) => { const Pp = Wp.map((q) => at(q[0], q[1], r.A.z)); if (rA) Pp[0] = trim(Pp[0], Pp[1], rA); if (rB) Pp[Pp.length - 1] = trim(Pp[Pp.length - 1], Pp[Pp.length - 2], rB);
+      /* CHANNEL ROUTING, as Estate > Live ops routes its pipes: a run never crosses the items. It rises off its pin to a
+         height of its own (the runs at one pin fan by height), steps to the GUTTER left of its column, runs along the gutter
+         to the GAP between two rows on the side of its target, along the gap to the target's gutter, rises or drops to the
+         target's own height there, and goes in. Every channel - a gutter, a row gap - deals TRACKS by interval: two runs that
+         overlap along it never share a track, runs that do not may, so a bundle stays parallel and evenly spaced. A step to
+         the next call in a column stays one leg along v. The first and last legs (pin to its height) are the joins. */
+      Object.keys(G).forEach((k) => { G[k].id = t.mid + ':' + (k.indexOf('node:') === 0 ? 'graph:' + k.slice(5) : k); });
+      const ZL = 4 * SK, PORT = 6 * SK, GUT = 0.3 * GU, MINS = 3 * SK, groom = 0.26 * GU;
+      // the gap between rows: half the smallest step between two rows of a station (a quarter unit at least)
+      const rowsAt = {}; Object.keys(G).forEach((k) => { const p = G[k], st = stationOf(p.U); (rowsAt[st] = rowsAt[st] || []).push(p.V); });
+      const halfAt = {}; Object.keys(rowsAt).forEach((st) => { const vs = rowsAt[st].slice().sort((a, b) => a - b); let m = GV; for (let j = 1; j < vs.length; j++) { const d = vs[j] - vs[j - 1]; if (d > GV * 0.05) m = Math.min(m, d); } halfAt[st] = Math.max(0.25 * GV, m / 2); });
+      const gut = (p) => p.U - GUT, gk = (p) => 'g:' + Math.round(gut(p) / 10), ch = {};
+      const use = (c, r, part, lo, hi) => { (ch[c] = ch[c] || []).push({ r, part, lo: Math.min(lo, hi), hi: Math.max(lo, hi) }); };
+      // the ends: the runs at one pin, ordered by where they go, each leaving by a PORT of its own (squeezed when a pin carries
+      // many). Everything between the pins runs at ONE height over the plate: in an isometric view a step up and a step back
+      // look alike, so runs at different heights could print on one line - one height keeps every run on its own
+      const byPin = {}; runs.forEach((r) => { [['a', r.A, r.B], ['b', r.B, r.A]].forEach(([e, p, f]) => { const k = p.U.toFixed(1) + '/' + p.V.toFixed(1); (byPin[k] = byPin[k] || []).push([r, e, f]); }); });
+      Object.keys(byPin).forEach((k, pi) => { const Q = byPin[k], n = Q.length, pe = Math.min(PORT, 0.25 * GV / Math.max(1, n)), ph = n > 1 ? ((pi * 0.37) % 1) * pe : 0;
+        Q.sort((p, q) => (p[2].V - q[2].V) || (p[2].U - q[2].U)).forEach(([r, e], j) => { r[e === 'a' ? 'pa' : 'pb'] = (j - (n - 1) / 2) * pe + ph; }); });
+      runs.forEach((r) => { const A = r.A, B = r.B;
+        if (r.direct && Math.abs(A.U - B.U) < 0.5) { r.kind = 'd'; return; }
+        if (Math.abs(A.U - B.U) < 1) { r.kind = 'g'; use(gk(A), r, 'g', A.V, B.V); return; }
+        const up = B.V > A.V + 1 ? 1 : -1; let hv = A.V + up * halfAt[stationOf(A.U)], room = halfAt[stationOf(A.U)]; r.kind = 'r';   // the gap on the target's side; level with it, the gap behind
+        // the stations' rows need not line up: a gap that meets a row of pins on the way moves to the nearest free one
+        const u0 = Math.min(gut(A), gut(B)), u1 = Math.max(gut(A), gut(B)), vs = Object.keys(G).map((k) => G[k]).filter((p) => p.U > u0 && p.U < u1).map((p) => p.V).concat([A.V]).sort((a, b) => a - b);
+        if (vs.some((v) => Math.abs(v - hv) < 0.2 * GV)) { const lo = vs.filter((v) => v <= hv).pop(), hi = vs.find((v) => v > hv); hv = lo != null && hi != null ? (lo + hi) / 2 : hi == null ? lo + 0.5 * GV : hi - 0.5 * GV; room = lo != null && hi != null ? (hi - lo) / 2 : 0.5 * GV; }
+        r.hv0 = hv; r.hroom = room;
+        use(gk(A), r, 'gA', A.V, r.hv0); use('r:' + Math.round(r.hv0 / 10), r, 'r', gut(A), gut(B)); use(gk(B), r, 'gB', r.hv0, B.V); });
+      Object.keys(ch).forEach((c) => { const ends = []; ch[c].sort((p, q) => p.lo - q.lo || q.hi - p.hi).forEach((u) => { let k = ends.findIndex((e) => e < u.lo - MINS); if (k < 0) { k = ends.length; ends.push(u.hi); } else ends[k] = u.hi; u.k = k; });
+        ch[c].forEach((u) => { u.K = ends.length; u.r['t_' + u.part] = u; }); });
+      const off = (u, room) => !u ? 0 : (u.k - (u.K - 1) / 2) * Math.min(LANE, 2 * room / Math.max(1, u.K));
+      out.paths = out.paths || [];
+      // every leg registers the line it takes (a level line at one v, a plumb line at one u); a run that would share a line
+      // with one routed before nudges its gap, then its gutters, then its ports, and routes again (the joins excepted)
+      const occ = { h: [], v: [] }, TOL = 1.2 * SK, MIN = 3 * SK;
+      const legsOf = (Wp, tails) => { const Lg = []; for (let n = 0; n < Wp.length - 1; n++) { if (tails.indexOf(n) >= 0) continue; const p = Wp[n], q = Wp[n + 1]; if (Math.abs(p[0] - q[0]) < 1e-6 && Math.abs(p[1] - q[1]) < 1e-6) continue;
+        if (Math.abs(p[0] - q[0]) < 1e-6) Lg.push({ k: 'v', c: p[0], a: Math.min(p[1], q[1]), b: Math.max(p[1], q[1]) }); else Lg.push({ k: 'h', c: p[1], a: Math.min(p[0], q[0]), b: Math.max(p[0], q[0]) }); } return Lg; };
+      const clash = (Lg) => Lg.some((l) => occ[l.k].some((m) => Math.abs(m.c - l.c) < TOL && Math.min(m.b, l.b) - Math.max(m.a, l.a) > MIN));
+      runs.forEach((r) => { const A = r.A, B = r.B, Z = ZL;
+        const build = (dh, dg, dp) => { const pa = (r.pa || 0) + dp, pb = (r.pb || 0) + dp;
+          // a pin's own two legs (up off it, then aside to its port) are the join - shared by the runs at that pin, and marked so
+          const head = [[A.U, A.V, 0], [A.U, A.V, Z], [A.U + pa, A.V, Z], [A.U + pa, A.V + pa, Z]], foot = [[B.U + pb, B.V + pb, Z], [B.U + pb, B.V, Z], [B.U, B.V, Z], [B.U, B.V, 0]];
+          if (r.kind === 'd') return { Wp: [[A.U, A.V, 0], [B.U, B.V, 0]], tails: [] };
+          if (r.kind === 'g') { const gu = gut(A) + off(r.t_g, groom) + dg, Wp = head.concat([[gu, A.V + pa, Z], [gu, B.V + pb, Z]], foot); return { Wp, tails: [0, 1, Wp.length - 3, Wp.length - 2] }; }
+          const h = r.hroom || halfAt[stationOf(A.U)], guA = gut(A) + off(r.t_gA, groom) + dg, guB = gut(B) + off(r.t_gB, groom) + dg, hv = r.hv0 + Math.max(-0.8 * h, Math.min(0.8 * h, off(r.t_r, 0.8 * h) + dh));
+          const Wp = head.concat([[guA, A.V + pa, Z], [guA, hv, Z], [guB, hv, Z], [guB, B.V + pb, Z]], foot); return { Wp, tails: [0, 1, Wp.length - 3, Wp.length - 2] }; };
+        let R_ = build(0, 0, 0), Lg = legsOf(R_.Wp, R_.tails);
+        for (let k = 0; k < 12 && clash(Lg); k++) { const d = (k % 2 ? -1 : 1) * Math.ceil(((k % 4) + 1) / 2) * 0.5; R_ = k < 4 ? build(d * LANE, 0, 0) : k < 8 ? build(d * LANE, d * LANE, 0) : build(d * LANE, 0, d * PORT); Lg = legsOf(R_.Wp, R_.tails); }
+        Lg.forEach((l) => occ[l.k].push(l)); const Wp = R_.Wp, tails = R_.tails;
+        const Pp = Wp.map((q) => at(q[0], q[1], A.z + q[2])); out.runs++;
         for (let n = 0; n < Pp.length - 1; n++) { const p = Pp[n], q = Pp[n + 1]; const dxx = q.x - p.x, dyy = q.y - p.y, LN = Math.hypot(dxx, dyy); if (LN < 0.6) continue;
-          out.edges.push({ x: px(p.x), y: px(p.y), len: px(LN), deg: +(Math.atan2(dyy, dxx) * 180 / Math.PI).toFixed(2), col: r.col, cls: cls || r.cls, title: r.title, run: id, joins: r.joins || undefined, tail: tails && tails.indexOf(n) >= 0 ? true : undefined }); } };
-      // a comb: the trunk from the pin along its row to the fan line before (after) the gap, and the fan itself — drawn once
-      const emitComb = (C) => { if (!C || C.done) return; C.done = true; const p = C.pin, r = C.runs[0], fan = Math.max.apply(null, C.runs.map((x) => (C.end === 'a' ? x.fa : x.fb) || 0)) + PORT; const [gL, gR] = gapEdges(C.g); const tx = C.end === 'a' ? gL - STEP : gR + STEP; const id = ++rid;
-        const W1 = [[p.U, p.V], [tx, p.V]], W2 = [[tx, p.V - fan], [tx, p.V + fan]]; take(legsOf(W1).concat(legsOf(W2)), r.A.z); emit(W1, r, id, null, p.r, 0, r.cls + ' trunk'); emit(W2, r, id, null, 0, 0, r.cls + ' trunk'); };
-      runs.forEach((r) => { const A = r.A, B = r.B; const CA = combs[r.ca], CB = combs[r.cb];
-        const build = (pa, pb, off) => {
-          if (r.direct && Math.abs(A.U - B.U) < 0.5) return { W: [[A.U, A.V], [B.U, B.V]], tails: [] };   // a step to the next call in the column: one leg along v
-          if (r.around) { const vo = VO + off, ouA = (r.fa || 0) + STEP + off, ouB = (r.fb || 0) + STEP + off; return { W: [[A.U, A.V], [A.U + pa, A.V], [A.U + pa, A.V + pa], [A.U + pa + ouA, A.V + pa], [A.U + pa + ouA, vo], [B.U + pb + ouB, vo], [B.U + pb + ouB, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V], [B.U, B.V]], tails: [0, 8] }; }   // round the far end
-          if (r.same) { const lo = uA(r.sa) * GU + 8, hi = uB(r.sa) * GU - 8, st = Math.max(r.fa || 0, r.fb || 0) + STEP;   // within one station: between the two (the board), or beside them when they stand in one column — inside the plate
-            let um = Math.abs(A.U - B.U) >= 2 * st ? (A.U + B.U) / 2 + off - 15 : Math.max(A.U, B.U) + st + off; if (um > hi) um = Math.min(A.U, B.U) - st - off; um = Math.max(lo, Math.min(hi, um));
-            return { W: [[A.U, A.V], [A.U + pa, A.V], [A.U + pa, A.V + pa], [um, A.V + pa], [um, B.V + pb], [B.U + pb, B.V + pb], [B.U + pb, B.V], [B.U, B.V]], tails: [0, 6] }; }
-          const [gL, gR] = gapEdges(r.g), um = (gL + gR) / 2 + off, ta = gL - STEP, tb = gR + STEP;
-          const head = CA ? [[ta, A.V + pa]] : [[A.U, A.V], [A.U + pa, A.V], [A.U + pa, A.V + pa]];
-          const tail = CB ? [[tb, B.V + pb]] : [[B.U + pb, B.V + pb], [B.U + pb, B.V], [B.U, B.V]];
-          const W = head.concat([[um, A.V + pa], [um, B.V + pb]], tail); const tails = []; if (!CA) tails.push(0); if (!CB) tails.push(W.length - 2); return { W, tails }; };
-        let pa = r.pa || 0, pb = r.pb || 0, off = r.off || 0, R_ = build(pa, pb, off), L = legsOf(R_.W, R_.tails);
-        for (let k = 0; k < 8 && clash(L, A.z); k++) { const d = (k % 2 ? -1 : 1) * Math.ceil((k + 1) / 2); R_ = k < 4 ? build(pa, pb, off + d * 0.5 * LANE) : build(pa + d * 0.5 * PORT, pb + d * 0.5 * PORT, off); L = legsOf(R_.W, R_.tails); }
-        take(L, A.z); emitComb(CA); emitComb(CB); out.runs++;
-        emit(R_.W, r, r.id, R_.tails, CA ? 0 : A.r, CB ? 0 : B.r); });
+          out.edges.push({ x: px(p.x), y: px(p.y), len: px(LN), deg: +(Math.atan2(dyy, dxx) * 180 / Math.PI).toFixed(2), col: r.col, cls: r.cls, title: r.title, run: r.id, joins: r.joins || undefined, tail: tails.indexOf(n) >= 0 ? true : undefined }); }
+        // the pipe as one path - consecutive duplicate points dropped
+        const D = []; Pp.forEach((p) => { const l = D[D.length - 1]; if (!l || Math.abs(l.x - p.x) + Math.abs(l.y - p.y) > 0.3) D.push(p); });
+        if (D.length > 1) out.paths.push({ run: r.id, col: r.col, cls: r.cls, title: r.title, joins: r.joins || null, a: A.id || '', b: B.id || '', d: 'M' + D.map((p) => p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join('L') }); });
       // no leg twice
       { const seen = {}; out.edges = out.edges.filter((e) => { const k = e.x + '/' + e.y + '/' + e.len + '/' + e.deg; if (seen[k]) return false; seen[k] = 1; return true; }); } });
     out.size = { w: W, h: H };
@@ -942,7 +952,16 @@ vera-exploded .xp-band.on{background:color-mix(in srgb,var(--bc) 11%,transparent
 /* a plate in focus (double-click): it lit, the rest hushed */
 vera-exploded .xp-band.xp-focus{background:color-mix(in srgb,var(--bc) 20%,transparent)}
 vera-exploded .xp-hush{opacity:.16;transition:opacity .2s}
-vera-exploded.xp-focusing .xp-e{opacity:.45}
+vera-exploded.xp-focusing .xp-e,vera-exploded.xp-focusing .xp-pipe{opacity:.45}
+/* the iso's runs as Live ops draws its pipes: one stroke per run, round joins, lit end to end under the pointer */
+vera-exploded svg.xp-pipes{position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:6}
+vera-exploded .xp-pipe{fill:none;stroke:var(--ec);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.8;transition:opacity .15s ease,stroke-width .15s ease}
+vera-exploded .xp-pipe.mem,vera-exploded .xp-pipe.pin,vera-exploded .xp-pipe.dash{stroke-dasharray:5 4}
+vera-exploded .xp-pipe.rel{stroke-width:1.5;opacity:.55}vera-exploded .xp-pipe.rel.cite{opacity:.42}vera-exploded .xp-pipe.act,vera-exploded .xp-pipe.est{opacity:.7}
+vera-exploded[data-den="hover"] .xp-pipe.rel,vera-exploded[data-den="zen"] .xp-pipe.rel{opacity:0}
+vera-exploded[data-den="hover"] .xp-pipe.rel.hot,vera-exploded[data-den="zen"] .xp-pipe.rel.hot{opacity:.7}
+vera-exploded[data-rels="off"] .xp-pipe.rel{display:none}
+vera-exploded.xp-routing .xp-pipe{opacity:.12}vera-exploded.xp-routing .xp-pipe.hot{opacity:1;stroke-width:3.2}
 vera-exploded .xp-lb.more{font-size:8.5px;letter-spacing:.04em;text-transform:none;transform:translate(-100%,-50%);pointer-events:auto;cursor:pointer}
 vera-exploded .xp-lb.empty{font-size:8.5px;letter-spacing:.06em;text-transform:none;font-style:italic;opacity:.7;transform:translate(-50%,-50%)}
 vera-exploded .xp-lb.lane{transform:translate(-100%,-50%)}vera-exploded .xp-lb.prompt{transform:translate(-50%,-100%)}
@@ -1143,9 +1162,11 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
       _relHot(id) {
         try {
           const key = String(id || ''); if (key === this._relLit) return; this._relLit = key;
-          this.querySelectorAll('.xp-e.rel').forEach((e) => {
+          this.querySelectorAll('.xp-e.rel,.xp-pipe.rel').forEach((e) => {
             e.classList.toggle('hot', !!key && (e.getAttribute('data-a') === key || e.getAttribute('data-b') === key));
           });
+          let any = false; this.querySelectorAll('.xp-pipe[data-ra]').forEach((p) => { const on = !!key && (p.getAttribute('data-ra') === key || p.getAttribute('data-rb') === key); if (on) { p.classList.add('hot'); any = true; } else if (!p.classList.contains('rel')) p.classList.remove('hot'); });
+          this.classList.toggle('xp-routing', any);   /* a card's runs lit end to end, the rest hushed */
         } catch (_) {}
       }
       /* The plate in focus (a double-click on it): its band lit, every other band and every item standing on another plate
@@ -1447,7 +1468,8 @@ vera-exploded .xit.frameless{position:absolute}vera-exploded .xit.frameless .xit
         // the plates' edges as lines, the bands' hairlines (shown when Blocks is off): the planes stay planes without their fills
         (o.outline || []).forEach((e) => { h += '<span class="xp-pe' + (e.cls ? ' ' + e.cls : '') + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;transform:rotate(' + e.deg + 'deg)"></span>'; });
         (o.boutline || []).forEach((e) => { h += '<span class="xp-be" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;transform:rotate(' + e.deg + 'deg);--bc:' + esc(e.col) + '"></span>'; });
-        o.edges.forEach((e) => { h += '<div class="xp-e ' + e.cls + '"' + (e.joins ? ' data-a="' + esc(e.joins[0]) + '" data-b="' + esc(e.joins[1]) + '"' : '') + ' title="' + esc(e.title) + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;--ec:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>'; });
+        if (o.mode === 'iso' && o.paths && o.paths.length) h += '<svg class="xp-pipes" width="1" height="1">' + o.paths.map((q) => '<path class="xp-pipe ' + esc(q.cls) + '" data-ra="' + esc(q.a) + '" data-rb="' + esc(q.b) + '"' + (q.joins ? ' data-a="' + esc(q.joins[0]) + '" data-b="' + esc(q.joins[1]) + '"' : '') + ' style="--ec:' + esc(q.col) + '" d="' + q.d + '"><title>' + esc(q.title) + '</title></path>').join('') + '</svg>';
+        o.edges.forEach((e) => { if (o.mode === 'iso' && e.run && o.paths && o.paths.length) return; h += '<div class="xp-e ' + e.cls + '"' + (e.joins ? ' data-a="' + esc(e.joins[0]) + '" data-b="' + esc(e.joins[1]) + '"' : '') + ' title="' + esc(e.title) + '" style="' + st(e.x, e.y) + 'width:' + e.len + 'px;--ec:' + esc(e.col) + ';transform:rotate(' + e.deg + 'deg)"></div>'; });
         o.labels.forEach((l) => { h += '<div class="xp-lb ' + l.cls + '" data-mid="' + esc(l.mid || '') + '" data-st="' + (l.st == null ? '' : l.st) + '" style="' + st(l.x, l.y) + 'color:' + esc(l.col) + (o.mode === 'iso' ? ';transform:' + (/\bmore\b/.test(l.cls) ? 'translate(-100%,-50%) ' : /\bempty\b/.test(l.cls) ? 'translate(-50%,-50%) ' : /\blane\b/.test(l.cls) ? 'translate(-100%,-50%) ' : /\bprompt\b/.test(l.cls) ? 'translate(-50%,-100%) ' : '') + 'scale(var(--inv,1))' : '') + '">' + esc(l.n) + '<b>' + esc(l.k) + '</b></div>'; });
         o.cards.forEach((c) => { if (c.ct) h += ctHtml(c); else if (!c.iw) h += itHtml(c, !!c.anchored); });
         o.graphs.forEach((g) => { h += g.iso

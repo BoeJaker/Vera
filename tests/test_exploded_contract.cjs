@@ -36,4 +36,12 @@ const SRC = require('node:fs').readFileSync(path.join(__dirname, '..', 'vera', '
 t('iso navigates as Live ops does: zoom 5%-400%, ctrl-drag turns it, a double-click focuses a plate, the pan keeps 80 px in the frame',
   /const ZMIN = 0\.05, ZMAX = 4, KEEP = 80;/.test(SRC) && /rot: \(e\.ctrlKey \|\| e\.metaKey\) && this\._S\.mode === 'iso'/.test(SRC) && /this\._S\.isoFocus = hit\.layer && this\._S\.isoFocus !== hit\.layer \? hit\.layer : null;/.test(SRC)
   && /const mx = Math\.max\(0, W \* \(1 \+ p\.z\) \/ 2 - KEEP\)/.test(SRC) && !/Math\.max\(0\.4, Math\.min\(3,/.test(SRC));
+// the iso routes as Live ops does: no run passes over a pin it does not end on; each run is one pipe
+{ const big = JSON.parse(JSON.stringify(CODE)); for (let k = 0; k < 6; k++) big.cards.push({ id: 'f.py::fn' + k, group: 'f.py', layer: 'code.ast', kind: 'function', title: 'fn' + k });
+  for (let k = 0; k < 6; k++) big.edges.push({ from: 'f.py::fn' + k, to: 'f.py::Store.' + (k % 2 ? 'load' : 'save'), kind: 'CALLS' }, { from: 'f.py::main', to: 'f.py::fn' + k, kind: 'CALLS' });
+  const o = X.layout(X.contractScene(big), 'iso', 1400, 900, {}), pins = o.widgets.map((w) => ({ id: w.id, x: w.x, y: w.y }));
+  const legs = o.edges.filter((e) => e.run && !e.tail), crossed = [];
+  legs.forEach((e) => { const r = e.deg * Math.PI / 180, ux = Math.cos(r), uy = Math.sin(r); pins.forEach((p) => { const along = (p.x - e.x) * ux + (p.y - e.y) * uy, perp = Math.abs(-(p.x - e.x) * uy + (p.y - e.y) * ux); if (along > 2 && along < e.len - 2 && perp < 1.5) crossed.push([e.title, p.id]); }); });
+  t('iso: channel routing - no run passes over a pin, every run is one svg pipe from pin to pin', legs.length > 20 && crossed.length === 0 && o.paths.length === o.runs && o.paths.every((q) => /^M[\d.\- ]+(L[\d.\- ]+)+$/.test(q.d) && q.a && q.b), JSON.stringify({ legs: legs.length, crossed: crossed.slice(0, 4), paths: o.paths.length, runs: o.runs })); }
+t('the pipes are drawn as svg and light end to end under the pointer', /<svg class="xp-pipes"/.test(SRC) && /this\.classList\.toggle\('xp-routing', any\)/.test(SRC) && /vera-exploded\.xp-routing \.xp-pipe\.hot\{opacity:1/.test(SRC));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);

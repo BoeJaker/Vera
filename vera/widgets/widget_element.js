@@ -2283,7 +2283,7 @@
      The estate's own graph (window.veraUI.Graph, /ui/vera-graph.js, loaded the first time a vgraph draws) inside the
      tile: from the record's source (any answer with nodes and edges - a fabric snapshot, a memory graph read, a
      topology) or, with no source, from a layer the graph fetches itself (draw.layer: fabric · entity · memory), shown
-     in a display MODE (draw.mode: graph · exploded · estate-3d · estate-2d · mermaid - whatever veraUI.Graph.listModes()
+     in a display MODE (draw.mode: graph · exploded · ops-iso · ops-2d · estate-3d · estate-2d · mermaid - whatever veraUI.Graph.listModes()
      has registered). The graph lives in the element's light DOM (a slot), so the page's graph styles reach it, and it
      is kept across refreshes (a new answer is loaded into it only when its nodes or edges changed). Without the element
      (VeraWidget.draw alone) the slot shows the flat node graph as its fallback. */
