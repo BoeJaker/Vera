@@ -117,10 +117,13 @@ def test_fast_and_slow_tiers_each_get_an_envelope(monkeypatch):
     async def go():
         fast, slow = await st.search_fast_and_slow("q", limit=3, fast_timeout=0.2)
         return fast, await slow
-    asyncio.run(go())
-    assert _outcomes(_last("hybrid.fast")) == {"postgres": "timeout", "neo4j": "timeout", "merge": "empty"}
+    fast, _full = asyncio.run(go())
+    # the slow leg alone times out: neo4j finished inside the bound and its hit is kept (context-and-ui, 2026-10-04 -
+    # a bound on both legs used to throw away the leg that answered too)
+    assert _outcomes(_last("hybrid.fast")) == {"postgres": "timeout", "neo4j": "ok", "merge": "ok"}
+    assert [r["record"]["id"] for r in fast] == ["k"]
     assert _outcomes(_last("hybrid.slow")) == {"embed": "skipped:cooldown", "chroma": "skipped:no-vector",
-                                               "merge": "empty"}
+                                               "merge": "ok"}
 
 
 def test_search_fast_envelope():
