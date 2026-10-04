@@ -1088,16 +1088,16 @@
      oscillation at every item edge. Now each is an overlay - the header over the top, the rail over the foot - that fades
      in when you are on the item; an item's height never changes because you pointed at it. */
   /* (an item is already position:relative - absolute on the stage - so the overlays anchor to it either way) */
-  :host([data-tier="hover"]) .it:not(.compact) > .it-hd,:host([data-tier="zen"]) .it:not(.compact) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
-  :host([data-tier="hover"]) .it:not(.compact) > .it-ft,:host([data-tier="zen"]) .it:not(.compact) > .it-ft{position:absolute;left:0;right:0;bottom:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:0 0 var(--r,8px) var(--r,8px)}
-  :host([data-tier="hover"]) .it:not(.compact):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft),:host([data-tier="zen"]) .it:not(.compact):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft){opacity:1;pointer-events:auto}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-hd,:host([data-tier="zen"]) .it:not(.compact):not(.overfold) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-ft,:host([data-tier="zen"]) .it:not(.compact):not(.overfold) > .it-ft{position:absolute;left:0;right:0;bottom:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:0 0 var(--r,8px) var(--r,8px)}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft){opacity:1;pointer-events:auto}
   /* ...in bands of their own (owner, 2026-10-04: "the top and bottom bar appear over the top of the element instead of
      above and below - sometimes it can block entire parts of the elements"): an overlay at the item's edge covered its
      first and last lines - a short note's header and rail met in the middle and hid it whole. The item keeps their room
      all the time, so they fade in above and below its content, over nothing - and its height still never changes
      because you pointed at it (the reason they are overlays). */
-  :host([data-tier="hover"]) .it:not(.compact):has(> .it-hd),:host([data-tier="zen"]) .it:not(.compact):has(> .it-hd){padding-top:var(--vc-hd-band,29px)}
-  :host([data-tier="hover"]) .it:not(.compact):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-hd:not(.own-fold)),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-hd:not(.own-fold)){padding-top:var(--vc-hd-band,29px)}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}
   /* ONE BAR PER ITEM, ON HOVER (owner, 2026-10-04: "the top bar that appear on mouseover ... makes the static title at
      the top of each element pretty much redundant and those actions could be integrated so the static title is merged
      into the on-hover element and only appears on-hover. i think the canvas should better respect the full hover and zen
@@ -1143,10 +1143,32 @@
   .it.sized .vc-codewrap,.it.openin .vc-codewrap,.it.sized .vc-diag,.it.openin .vc-diag,
   .it.sized .vc-xp,.it.openin .vc-xp,.it.sized .vc-term,.it.openin .vc-term{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
   .it.sized .vc-pre,.it.openin .vc-pre{flex:1 1 auto;min-height:0;max-height:none}
+  /* ...and every other drawing takes the room you gave it (owner, 2026-10-04: "i can re-size elements in the canvas but
+     they dont fill the space of the resized container"): the body grew, but a widget's slot (in .vc-wid), a records
+     list, a table and a deck / sheet / page card kept their own height - measured on the mirror, a widget dragged
+     260 px taller filled 8% of its body. Each wrapper is a column now and its working part grows: the widget's slot
+     (the widget follows it), the list or table or graph (scrolling inside), the card's view. */
+  .it:is(.sized,.openin,.maxed) > .it-bd > :is(.vc-wid,.vc-rbx,.vc-filewrap){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-wid > .vc-live{flex:1 1 auto;height:auto;min-height:60px}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-rbx > :is(.vc-rbx-list,.vc-rbx-cards,.vc-tablewrap,.vc-rbx-graph){flex:1 1 auto;min-height:0;overflow:auto}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-rbx > .vc-rbx-graph{display:flex;flex-direction:column}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-rbx > .vc-rbx-graph > .vc-live{flex:1 1 auto;height:auto!important;min-height:160px}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-tablewrap{flex:1 1 auto;min-height:0;overflow:auto}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap > .code-card{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;margin:0}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap > .code-card > .vo-fview{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-fview > :is(.vo-sheet,.vo-doc){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-fview > .vo-deck{flex:1 1 auto}   /* block: its centred 16:9 stage keeps its width */
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-stage{max-height:none}   /* a slide keeps 16:9 - it grows with the width */
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-grid-w{flex:1 1 auto;max-height:none}
   .it.hovopen{z-index:5;box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
   /* the preview of a folded item: over the column, its own scroll past a screenful, no slide (it does not move) */
   .stage .it.peek{z-index:8;max-height:min(70vh,640px);overflow:auto;transition:none;background:var(--bg1,#16181d);scrollbar-width:thin}
   .stage .it.peek .it-bd{max-height:none}
+  /* the header line of an item that draws its own head: hidden while that head shows, the chip when the COLUMN folds it */
+  .it > .it-hd.own-fold{display:none}
+  .stage .it.overfold > .it-hd.own-fold{display:flex}
+  .stage .it.overfold > .solo{display:none}
+  .stage .it.overfold.peek .it-bd{display:block}
   /* A FOLDED CHIP SAYS WHAT IT IS (owner, 2026-10-04: "when they are collapsed its hard to tell what each chip is"): its
      line held the kind, the title, the turn, the item's key, a score and two buttons, so the title - the one thing that
      says what it is - was cut to "ht…". Folded, it is the kind and the title, in full where it fits; the rest is in its
@@ -2372,11 +2394,11 @@
         cards.forEach((c, i) => { if (hs[i] > capH && !asked(c)) { c.style.maxHeight = capH + 'px'; c.classList.add('capped'); } }); }
       else cards.forEach((c) => { if (c.classList.contains('capped')) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
       this._fullH = this._fullH || {};
-      const items = cards.map((c, ci) => { const k = c.dataset.key || ''; const hd = c.querySelector('.it-hd');
+      const items = cards.map((c, ci) => { const k = c.dataset.key || ''; const hd = c.querySelector(':scope > .it-hd:not(.own-fold)') || c.querySelector(':scope > .it-hd');
         // a folded item being previewed is still its folded line to the column: its preview lies over the items below
         const isFolded = c.classList.contains('overfold'); const measured = c.classList.contains('peek') && c._peekH ? c._peekH : c.offsetHeight;
         if (!isFolded) this._fullH[k] = measured;                              // what it is when OPEN: the placer judges on that, so folding cannot oscillate
-        return { key: k, h: isFolded ? (this._fullH[k] || measured) : measured, hFold: hd ? hd.offsetHeight + 2 : 28,
+        return { key: k, h: isFolded ? (this._fullH[k] || measured) : measured, hFold: hd && hd.offsetHeight ? hd.offsetHeight + 2 : 28,
                  want: wants[ci], wpx: pws[ci] || 0, mid: c.dataset.mid || '', beside: c.dataset.beside || '',
                  /* AN ITEM YOU OPENED IS NEVER FOLDED BY THE COLUMN, any more than a pinned one is: you asked for it
                     open, and a room that shuts what you just opened is worse than a room that scrolls. */
@@ -2617,8 +2639,11 @@
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
         const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
-          ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
-            : `<div class="it-hd">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
+          ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>` : ''}${
+            /* the header line is drawn for EVERY item. An item whose drawer has its own head shows it only when the COLUMN
+               folds it (its body, and that head inside it, hidden): it used to be nothing but three hover-only icons,
+               0 px tall (owner, 2026-10-04: "if collapsed some canvas elements are only appearing on hover") */ ''}${
+              `<div class="it-hd${ownHead && !compact ? ' own-fold' : ''}">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
             ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
@@ -2800,14 +2825,15 @@
       body.addEventListener('mouseleave', () => hovTo(null));
       // the corner grip: a drag sizes the item; the drop saves it as the item's size (s · m · l · xl)
       body.addEventListener('mousedown', (ev) => { const g = ev.target.closest && ev.target.closest('.rz'); if (!g) return; const it = g.closest('.it[data-key]'); if (!it) return;
-        ev.preventDefault(); ev.stopPropagation(); it.classList.add('sized', 'resizing');
+        ev.preventDefault(); ev.stopPropagation();
+        // its height and width as they are NOW - read before 'sized' (which lets a drawing take the room) changes them
+        const h0 = it.offsetHeight, w0 = it.offsetWidth; it.classList.add('sized', 'resizing');
         /* BOTH AXES. The grip's cursor has always said nwse-resize, but only clientY was ever read: the height
            followed the mouse and the width was whatever the placer handed out — and since a dragged item asked for
            the stage, that was every column of it. So an item you resized went full width and no amount of dragging
            left brought it back (owner, 2026-09-25: "if i resize an element in the canvas it takes the full width and
            cant be shrunk in width"). The width is now a pixel fact of the item, like its height. */
-        this._rz = { key: it.dataset.key, el: it, y0: ev.clientY, h0: it.offsetHeight, h: it.offsetHeight,
-                     x0: ev.clientX, w0: it.offsetWidth, w: it.offsetWidth }; });
+        this._rz = { key: it.dataset.key, el: it, y0: ev.clientY, h0, h: h0, x0: ev.clientX, w0, w: w0 }; });
       const doc = this.ownerDocument || document;
       doc.addEventListener('mousemove', (ev) => { const r = this._rz; if (!r) return;
         const h = Math.max(40, r.h0 + (ev.clientY - r.y0)); r.h = h; r.el.style.height = h + 'px';
@@ -2852,15 +2878,17 @@
       clearTimeout(this._peekT);
       const key = it && it.dataset ? it.dataset.key : null;
       if (this._peekKey && this._peekKey !== key) this._peekClose();
-      if (!key || this._peekKey === key || this._rz || it.classList.contains('ghost') || !it.classList.contains('compact')) return;
+      if (!key || this._peekKey === key || this._rz || it.classList.contains('ghost') || !(it.classList.contains('compact') || it.classList.contains('overfold'))) return;
       this._peekT = setTimeout(() => { if (this._hovKey === key) this._peekOpen(key); }, 220);
     }
     _peekFind(key) { const body = this.shadowRoot && this.shadowRoot.getElementById('body');
       return key && body ? body.querySelector('#items .it[data-key="' + String(key).replace(/"/g, '\\"') + '"]') : null; }
     _peekOpen(key) {
-      const it = this._peekFind(key); if (!it || !it.classList.contains('compact')) return;
+      const it = this._peekFind(key); if (!it || !(it.classList.contains('compact') || it.classList.contains('overfold'))) return;
       it._peekH = it.offsetHeight; it._peekSave = { w: it.style.width, l: it.style.left };
       this._peekKey = key;
+      // a fold the column made stays the column's (it re-folds on its own pass); the preview shows the body over it
+      it._peekWas = it.classList.contains('compact') ? 'compact' : 'overfold';
       it.classList.remove('compact'); it.classList.add('peek', 'hovopen');
       this._peekGeom(it);
       try { this._liveLayout(); } catch (e) {}
@@ -2875,7 +2903,7 @@
     _peekClose() {
       const key = this._peekKey; this._peekKey = null; clearTimeout(this._peekT);
       const it = this._peekFind(key); if (!it || !it.classList.contains('peek')) return;
-      it.classList.remove('peek', 'hovopen'); it.classList.add('compact');
+      it.classList.remove('peek', 'hovopen'); if (it._peekWas !== 'overfold') it.classList.add('compact');
       const s = it._peekSave; if (s) { it.style.width = s.w; it.style.left = s.l; } it._peekSave = null;
       try { this._liveLayout(); } catch (e) {}
     }
