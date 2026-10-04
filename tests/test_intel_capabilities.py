@@ -242,7 +242,8 @@ def test_the_whole_cycle(tmp_path):
     # a second assessment that moves: one alert, once
     mod.store().put_signal(dict(mod.store().get_signal(pilot["id"]), seen="2099-01-01T00:00:00Z"))
     sn2 = _run(mod.snapshot_topic(mod.store().get_topic(t["id"])))
-    assert sn2["alert"] and sum(1 for n, _ in orch.CALLS if n == "tg.notify") == 1
+    assert sn2.get("alert"), sn2
+    assert sum(1 for n, _ in orch.CALLS if n == "tg.notify") == 1
     assert "Who is next?" in [w["query"] for w in mod.store().get_kv("research_wanted")]   # deep: queued for a session
 
     tl = _R(orch, "intel.timeline.get", topic_id=t["id"], days=7)

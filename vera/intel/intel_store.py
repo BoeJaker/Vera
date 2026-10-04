@@ -112,7 +112,8 @@ class IntelStore:
     def put_signal(self, s: Dict[str, Any]) -> None:
         with self._lock, self._conn() as c:
             c.execute("INSERT INTO signals(id,topic_id,seen,score,enriched,reported,rec) VALUES(?,?,?,?,?,?,?) "
-                      "ON CONFLICT(id) DO UPDATE SET score=excluded.score, enriched=excluded.enriched, rec=excluded.rec",
+                      "ON CONFLICT(id) DO UPDATE SET seen=excluded.seen, score=excluded.score, enriched=excluded.enriched, "
+                      "rec=excluded.rec",   # the indexed columns always match the record
                       (s["id"], s.get("topic_id", ""), s.get("seen", ""), s.get("score"),
                        1 if s.get("enriched") else 0, 1 if s.get("reported") else 0, json.dumps(s)))
 
