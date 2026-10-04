@@ -768,8 +768,11 @@ CRITIC_SYSTEM = (
     "Judge from the result and, when shown, from FILES and TOOL RESULTS - those are the real, "
     "current content, read for you from the run's own workspace. A file shown under FILES exists: "
     "never call it missing or unwritten. If what you need is not shown, say under NEXT what to "
-    "check instead of calling it wrong. Never invent a value. If the step fully did its part, "
-    "answer exactly: OK. At most 8 lines.")
+    "check instead of calling it wrong. Text shown to you is often SHORTENED by us - marked "
+    "'clipped', 'preview' or 'first N of M chars': a cut-off there is our cut, not the step's, "
+    "so never call the step's output truncated or incomplete because what you were shown ends "
+    "early. Never invent a value. If the step fully did its part, answer exactly: OK. At most "
+    "8 lines.")
 #: A critique bigger than this is trimmed - it is advice for a prompt.
 MAX_CRITIQUE_CHARS = 900
 MAX_CRITIC_RESULT_CHARS = 3000
@@ -791,6 +794,9 @@ CRITIC_MAX_FILES = 3
 #: truncated at 1500 chars; cannot verify coverage". It runs off the main path, in parallel.
 CRITIC_FILE_CHARS = 4000
 CRITIC_EVIDENCE_CHARS = 9000
+#: Every cut the critic is shown is marked (4 Oct 2026: of 32 flags, several said "output is
+#: truncated at 'The TestDevLab O'" - at OUR clip of the result or a tool preview).
+CLIP_MARK = " ... [clipped here for this review - the real text continues]"
 
 
 def critic_written_paths(history: Sequence[Any], limit: int = CRITIC_MAX_FILES) -> List[str]:
@@ -825,16 +831,20 @@ def critic_evidence(files: Sequence[Any], tool_lines: Sequence[str] = ()) -> str
     """FILES / TOOL RESULTS for the critic's prompt; '' when there is nothing to show."""
     parts: List[str] = []
     if tool_lines:
-        parts.append("TOOL RESULTS THIS STEP (latest last):\n" + "\n".join(tool_lines))
+        parts.append("TOOL RESULTS THIS STEP (latest last; each is a short PREVIEW we cut, "
+                     "not the tool's whole output):\n" + "\n".join(tool_lines))
     for path, text in files or []:
         t = str(text or "")
         if not t.strip():
             continue                      # unread is not evidence of absence - show nothing
         cut = len(t) > CRITIC_FILE_CHARS
-        parts.append("FILE %s (current content%s):\n%s"
+        parts.append("FILE %s (current content%s):\n%s%s"
                      % (path, (", first %d of %d chars" % (CRITIC_FILE_CHARS, len(t))) if cut else "",
-                        t[:CRITIC_FILE_CHARS]))
-    return "\n\n".join(parts)[:CRITIC_EVIDENCE_CHARS]
+                        t[:CRITIC_FILE_CHARS], CLIP_MARK if cut else ""))
+    out = "\n\n".join(parts)
+    if len(out) > CRITIC_EVIDENCE_CHARS:
+        out = out[:CRITIC_EVIDENCE_CHARS - len(CLIP_MARK)] + CLIP_MARK
+    return out
 
 
 def critic_prompt(goal: str, done_when: str, step: Dict[str, Any], result: Dict[str, Any],
@@ -848,7 +858,8 @@ def critic_prompt(goal: str, done_when: str, step: Dict[str, Any], result: Dict[
             % (goal, done_when or "(not stated)", prior or "  (none)", step.get("id"),
                step.get("title") or "", step.get("success") or "(not stated)",
                "met" if result.get("met") else ("ok" if result.get("ok") else "failed"),
-               out[:MAX_CRITIC_RESULT_CHARS] or "(no output)")
+               (out[:MAX_CRITIC_RESULT_CHARS] + (CLIP_MARK if len(out) > MAX_CRITIC_RESULT_CHARS else ""))
+               or "(no output)")
             + (("\n\n" + evidence) if evidence else ""))
 
 
@@ -873,6 +884,25 @@ def critic_note(text: Any) -> str:
         if len(lines) >= 8:
             break
     return "\n".join("  - %s" % ln for ln in lines)[:MAX_CRITIQUE_CHARS]
+
+
+_FLAG_LABEL = re.compile(r"^\s*[-*]?\s*\**\s*(missing|wrong|next)\s*\**\s*:", re.IGNORECASE)
+
+
+def critic_is_flag(note: Any) -> bool:
+    """True when a critic note FINDS something: a MISSING or WRONG line, or an unlabelled
+    complaint. A note of NEXT lines only is advice ("NEXT: report the final answer") - it
+    still reaches the controller but is no flag and does not reach the completion gate.
+    4 Oct 2026: 32 of 44 notes counted as flags on runs that mostly scored 1.0; many were
+    NEXT-only notes on steps that had done their job."""
+    for line in str(note or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = _FLAG_LABEL.match(line)
+        if not m or m.group(1).lower() != "next":
+            return True
+    return False
 
 
 def critic_block(notes: Sequence[Dict[str, Any]]) -> str:

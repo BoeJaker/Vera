@@ -65,6 +65,14 @@ def test_a_surname_after_the_full_name_is_the_same_person_and_the_is_dropped():
     assert ("ORG", "European Union") in by and by[("ORG", "Apple")]["count"] == 2
 
 
+def test_a_ticker_typed_in_lower_case_is_a_ticker_but_a_word_stays_a_word():
+    names = {(e["type"], e["text"]) for e in tc.merge("how is btc/usd doing, and eth?", [])}
+    assert ("TICKER", "BTC/USD") in names and ("TICKER", "ETH") in names
+    names = {(e["type"], e["text"]) for e in tc.merge("connect the dot to the link near the meta etc", [])}
+    assert not any(t == "TICKER" for t, _ in names)
+    assert ("TICKER", "DOT/USD") in {(e["type"], e["text"]) for e in tc.merge("what about dot/usd", [])}
+
+
 def test_a_name_cut_inside_a_word_is_widened_to_the_word_but_only_where_the_offset_is_true():
     text = "Ethereum was proposed by Vitalik Buterin in 2013."
     ents = tc.merge(text, [_ner(0, [{"entity": "PERSON", "word": "italik Buterin", "score": 0.9, "start": 26, "end": 40}])])

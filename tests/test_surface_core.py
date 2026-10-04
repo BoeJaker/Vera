@@ -77,6 +77,15 @@ def test_a_read_in_one_line_rows_by_name_with_a_figure_or_a_records_figures():
     assert "revenue 1200" in sc.summarise({"revenue": 1200, "expenses": 800, "ok": True})
 
 
+def test_a_read_leads_with_the_rows_the_turn_named_with_all_their_figures():
+    quotes = {"items": [{"key": "yahoo:SPXL", "name": "SPXL", "last": 288.6}] * 3
+              + [{"key": "yahoo:BTC-USD", "name": "Bitcoin", "last": 84884.3, "change_pct": 1.69, "volume": 2.8e10}]}
+    s = sc.summarise(quotes, focus=["btc/usd".upper()])
+    assert s.startswith("4 rows; for what was asked: Bitcoin (last 8.488e+04, change_pct 1.69)"), s
+    assert "SPXL" not in s
+    assert sc.summarise(quotes, focus=["ETH"]).startswith("4 rows: SPXL")      # nothing named in it: as before
+
+
 def test_the_note_names_each_item_with_what_it_belongs_to_and_stays_short():
     placed = [{"title": "Portfolio positions", "domain_label": "your trading account (broker, portfolio, positions)", "summary": "2 rows: BTC/USD"},
               {"title": "Ledger", "domain_label": "your business accounts (ledger, orders, inventory, tax)", "summary": "revenue 1200"}]

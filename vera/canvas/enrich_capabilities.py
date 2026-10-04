@@ -414,7 +414,11 @@ async def cap_turn_prepare(text: str = "", session_id: str = "", mid: str = "", 
     if not surfaces:
         return {"ok": True, "domains": found.get("domains") or [], "placed": [], "pending": 0, "prompt": "",
                 "ms": int((time.monotonic() - t0) * 1000)}
-    anchor = {"turn": mid, "mid": mid, "from": "enrich"} if mid else {"from": "enrich"}
+    # from="prepare": picked FOR the question and told to the model - the canvas shows these open (the after-reply
+    # pass's from="enrich" items are the unasked ones, and start folded)
+    anchor = {"turn": mid, "mid": mid, "from": "prepare"} if mid else {"from": "prepare"}
+    # the tickers the turn named: each read's summary leads with their rows
+    tickers = [str(e.get("text") or "") for e in ents if isinstance(e, dict) and str(e.get("type") or "").upper() == "TICKER"]
     # a panel only for a domain that brought nothing else - a whole page is the last resort, not the first
     has_reads = {s["domain"] for s in surfaces if s["kind"] != "panel"}
     chosen = [s for s in surfaces if s["kind"] != "panel" or s["domain"] not in has_reads]
@@ -455,7 +459,7 @@ async def cap_turn_prepare(text: str = "", session_id: str = "", mid: str = "", 
         key = ec.item_key(cap, args, kind)
         await _call("canvas.add", session_id=session_id, kind=block, content=content, key=key, at="now", size=size,
                     anchor=anchor)
-        return dict(dl, key=key, cap=cap, title=title, summary=sc.summarise(res))
+        return dict(dl, key=key, cap=cap, title=title, summary=sc.summarise(res, focus=tickers))
 
     tasks = [asyncio.ensure_future(place(s)) for s in chosen]
     left = max(0.05, budget - (time.monotonic() - t0))

@@ -11619,14 +11619,28 @@ _V5_PKG_CMD_RE = re.compile(
     r"(?:install|ci|build|run|get|add)\b[^`\n]*", re.I)
 
 
-def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]]) -> List[str]:
-    """Install/build command lines in generated prose that name a package
-    manager whose manifest file isn't actually present in the sandbox — the
-    exact shape of the observed failure. `real_files=None` (listing could not
-    be determined) never flags anything: silence, not a false accusation,
-    when there is nothing real to check against."""
+try:                                                  # 4 Oct: project docs only
+    from Vera.vera.dag import prose_grounding_core as _prose_grounding_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import prose_grounding_core as _prose_grounding_core
+
+
+def _v5_prose_ungrounded_refs(text: str, real_files: Optional[List[str]],
+                              path: str = "", task: str = "") -> List[str]:
+    """Install/build command lines in generated prose that install or build the run's
+    OWN project through a manifest that isn't present in the sandbox - the exact shape
+    of the observed failure. Only for a project document (README/INSTALL/... or a task
+    asking for setup/run instructions), and a named package (`pip install qdrant-client`)
+    never needs a manifest: prose_grounding_core (4 Oct 2026, a vector-DB report failed
+    for saying `pip install`). `real_files=None` (listing could not be determined)
+    never flags anything: silence, not a false accusation, when there is nothing real
+    to check against."""
     if real_files is None:
         return []
+    if path or task:
+        if not _prose_grounding_core.is_project_doc(path, task):
+            return []
+        return _prose_grounding_core.ungrounded_install_refs(text, real_files)
     names = {os.path.basename(f).lower() for f in real_files if isinstance(f, str)}
     out: List[str] = []
     for m in _V5_PKG_CMD_RE.finditer(text or ""):
@@ -11869,7 +11883,7 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
         return {"ok": False, "error": "no document content in the generation"}
 
     # ── One repair pass if it still names a manifest that isn't really there ──
-    ungrounded = _v5_prose_ungrounded_refs(content, real_files)
+    ungrounded = _v5_prose_ungrounded_refs(content, real_files, path=path or "", task=task or "")
     if ungrounded:
         await emit_event({"type": "prose.author.repair", "path": path,
                           "ungrounded_refs": ungrounded})
@@ -11897,7 +11911,8 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
                 applied = _v5_apply_edits(content, edits)
                 if applied.get("ok"):
                     content = applied["content"]
-                    ungrounded = _v5_prose_ungrounded_refs(content, real_files)
+                    ungrounded = _v5_prose_ungrounded_refs(content, real_files,
+                                                           path=path or "", task=task or "")
         except Exception as e:
             log.debug("prose.author repair failed: %s", e)
 
@@ -14323,6 +14338,11 @@ try:
     from Vera.vera.dag import criterion_bars_core as _criterion_bars_core
 except Exception:                                     # pragma: no cover
     from vera.dag import criterion_bars_core as _criterion_bars_core
+# Foreign criterion paths (/tmp/x.md -> ./x.md) and the files a verdict leans on (4 Oct).
+try:
+    from Vera.vera.dag import verify_paths_core as _verify_paths_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import verify_paths_core as _verify_paths_core
 # A tool's `url` argument, cleaned before the invented-path guard reads it (4 Oct).
 try:
     from Vera.vera.web import url_core as _url_core
@@ -14513,12 +14533,13 @@ class _V6StepCritic:
             except Exception as e:
                 err = f"{type(e).__name__}: {e}"[:160]
             rec = {"step": step.get("id"), "title": step.get("title") or "", "note": note,
+                   "flag": PSx.critic_is_flag(note),
                    "elapsed_s": round(time.monotonic() - t1, 1), "route": self.route}
             self.notes.append(rec)
             self._landed.set()
             try:
                 await emit_event({"type": "agent_loop_v6.step_critique", "session_id": self.sid,
-                                  "stream_id": self.stream_id, **rec, "ok": not note,
+                                  "stream_id": self.stream_id, **rec, "ok": not rec["flag"],
                                   "error": err})
             except Exception:
                 pass
@@ -14530,7 +14551,10 @@ class _V6StepCritic:
         return _plan_styles.critic_block(fresh) if fresh else ""
 
     def recent_block(self) -> str:
-        return _plan_styles.critic_block(self.notes[-self.GATE_NOTES:]) if self.notes else ""
+        # The completion gate sees FLAGS only - a NEXT-only note is advice for the
+        # controller (critic_is_flag), not a reason to hold the run open.
+        flags = [n for n in self.notes if n.get("flag", bool(n.get("note")))]
+        return _plan_styles.critic_block(flags[-self.GATE_NOTES:]) if flags else ""
 
     def cancel(self) -> None:
         if self._runner is not None and not self._runner.done():
@@ -21614,6 +21638,16 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
         " ".join(str(v) for v in list((res.get("outputs") or {}).values())[:8]))
     all_paths = list(dict.fromkeys(crit_paths + claim_paths))
     exist = await _v6_check_paths_exist(session_id, all_paths) if all_paths else {}
+    # A criterion path from ANOTHER environment (/tmp/x.md) the loop cannot write to: the
+    # same file name in the working directory is the file (verify_paths_core, 4 Oct).
+    _aliases = [a for a in dict.fromkeys(_verify_paths_core.foreign_alias(p) for p in all_paths
+                                         if exist.get(p) is False) if a and a not in exist]
+    if _aliases:
+        exist.update(await _v6_check_paths_exist(session_id, _aliases))
+        for _p in all_paths:                 # every later check sees the same answer
+            _a = _verify_paths_core.foreign_alias(_p)
+            if exist.get(_p) is False and _a and exist.get(_a) is True:
+                exist[_p] = True
     # Auto-fail ONLY when the criterion is genuinely about a file being produced/
     # present (not just mentioning a filename in passing) AND that file is provably
     # absent. Otherwise the existence facts still go to the judge below, but the
@@ -21622,7 +21656,8 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # a LIST/identification of files (whose named files are content, not deliverables).
     _crit_wants_file = ((bool(_V6_FILE_CRIT_RE.search(crit)) or ("/workspace" in crit))
                         and not _V6_FILE_LIST_CRIT_RE.search(crit))
-    missing_required = [p for p in crit_paths if exist.get(p) is False] if _crit_wants_file else []
+    missing_required = (_verify_paths_core.missing_after_alias(crit_paths, exist)
+                        if _crit_wants_file else [])
     if missing_required:
         return {"met": False,
                 "reason": ("file(s) the success criterion requires do NOT exist in the sandbox: "
@@ -21773,8 +21808,27 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
             request_stage="critic")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         if isinstance(obj, dict) and "met" in obj:
-            return {"met": bool(obj.get("met")),
-                    "reason": str(obj.get("reason") or "")[:300]}
+            _reason = str(obj.get("reason") or "")
+            if obj.get("met"):
+                # A pass that leans on a file which does not exist is no pass (4 Oct: met on
+                # a journal's "/w/scratch/qdrant_docs.txt" that was never written).
+                try:
+                    _cited = [c for c in _verify_paths_core.cited_paths(_reason) if c not in exist]
+                    if _cited:
+                        _ce = await _v6_check_paths_exist(session_id, _cited)
+                        _al = [a for a in (_verify_paths_core.foreign_alias(c) for c in _cited
+                                           if _ce.get(c) is False) if a and a not in _ce]
+                        if _al:
+                            _ce.update(await _v6_check_paths_exist(session_id, _al))
+                        _gone = _verify_paths_core.missing_after_alias(_cited, _ce)
+                        if _gone:
+                            return {"met": False,
+                                    "reason": ("the verdict relies on %s, which does NOT exist in "
+                                               "the sandbox - nothing was written there."
+                                               % ", ".join(_gone[:3]))[:300]}
+                except Exception as _ve:
+                    log.debug("verdict path check skipped: %s", _ve)
+            return {"met": bool(obj.get("met")), "reason": _reason[:300]}
     except Exception as e:
         log.debug("v6 step verify failed: %s", e)
     return {"met": bool(res.get("ok")), "reason": ""}

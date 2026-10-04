@@ -20,6 +20,7 @@ the output dir).
 
 from __future__ import annotations
 
+import asyncio
 import html as _html
 import json
 import logging
@@ -197,41 +198,199 @@ def _export(content: str, fmt: str, title: str = "",
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# FILES - documents, presentations, spreadsheets (owner, 2026-10-04: "add the various file output types to the menu
+# under the responses ... options for documents, presentations and spreadsheets ... as many types as you can
+# implement"). export_core reads a reply three ways (a page, its slides, its tables) and writes what Python can;
+# LibreOffice (soffice, headless, its own profile per run, off the event loop) makes the office files from that:
+# docx/odt/rtf/pdf/epub from the page, pptx/odp/pdf from the slides, ods from the workbook. pandoc, where installed,
+# is the fallback for a document LibreOffice cannot make.
+# ─────────────────────────────────────────────────────────────────────────────
+def _load_export_core():
+    """export_core beside this file, by its path: a package import (Vera.vera.render...) resolves to the main checkout's
+    copy in a sandbox, which may not have it yet - the module that is running is the one that must be used."""
+    import importlib.util as _ilu
+    import sys as _sys
+    mod = _sys.modules.get("vera_render_export_core")
+    if mod is None:
+        spec = _ilu.spec_from_file_location("vera_render_export_core", str(Path(__file__).parent / "export_core.py"))
+        mod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _sys.modules["vera_render_export_core"] = mod
+    return mod
+
+
+_xc = _load_export_core()
+
+_ALIASES = {"markdown": "md", "text": "txt", "tex": "latex", "word": "docx", "excel": "xlsx", "powerpoint": "pptx",
+            "slides": "pptx", "presentation": "pptx", "spreadsheet": "xlsx", "sheet": "xlsx", "slideshow": "deck",
+            "odf": "odt", "ebook": "epub", "web": "html", "slides_html": "deck"}
+
+
+def _soffice() -> Optional[str]:
+    return shutil.which("soffice") or shutil.which("libreoffice")
+
+
+def _xlsxwriter_ok() -> bool:
+    try:
+        import xlsxwriter  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _file_formats() -> List[Dict[str, Any]]:
+    """Every file type, its family, and whether it can be made right now (LibreOffice / xlsxwriter / pandoc present)."""
+    lo, xw, pd = bool(_soffice()), _xlsxwriter_ok(), bool(_pandoc_path())
+    out = []
+    for fid, f in _xc.FORMATS.items():
+        if fid == "xlsx":
+            live = xw
+        elif fid == "ods":
+            live = xw and lo
+        elif f["via"] == "lo":
+            live = lo or (pd and fid in ("docx", "odt", "rtf", "epub", "pptx")) or (fid == "pdf" and pd and bool(_pdf_engine()))
+        else:
+            live = True
+        out.append({"id": fid, "family": f["family"], "ext": f["ext"], "label": f["label"], "mime": f["mime"], "live": live})
+    return out
+
+
+async def _lo_convert(src: Path, fmt: str, work: Path, infilter: str = "") -> Dict[str, Any]:
+    """LibreOffice, headless, converting `src` to `fmt` (its filter) into `work` - its own user profile per run (two at
+    once would otherwise fight over one), off the event loop."""
+    try:
+        from Vera.vera.execution.spawn_core import run_argv
+    except ImportError:                               # pragma: no cover
+        from vera.execution.spawn_core import run_argv
+    exe = _soffice()
+    if not exe:
+        return {"ok": False, "error": "LibreOffice is not installed"}
+    argv = [exe, "-env:UserInstallation=" + (work / "lo-profile").as_uri(), "--headless", "--norestore"]
+    if infilter:
+        argv.append("--infilter=" + infilter)
+    argv += ["--convert-to", _xc.LO_FILTER[fmt], "--outdir", str(work), str(src)]
+    r = await run_argv(argv, timeout=150, env={"HOME": str(work)})
+    want = work / (src.stem + "." + _xc.FORMATS[fmt]["ext"])
+    if not want.exists():
+        return {"ok": False, "error": (r.get("error") or r.get("stderr") or "LibreOffice made nothing")[:400]}
+    return {"ok": True, "path": want}
+
+
+async def _export_file(content: str, fmt: str, title: str = "", filename: str = "") -> Dict[str, Any]:
+    """content (markdown, or a ```slides / ```sheet / ```document fence) -> a file of type `fmt` under _OUT_DIR."""
+    fmt = _ALIASES.get(fmt, fmt)
+    spec = _xc.FORMATS.get(fmt)
+    if not spec:
+        return {"ok": False, "error": "unsupported format: %s" % fmt, "supported": sorted(_xc.FORMATS)}
+    fam = spec["family"]
+    title = title or _xc.first_heading(content) or ""
+    stem = _safe_stem(filename or title or fam)
+    out_name = "%s-%s.%s" % (stem, uuid.uuid4().hex[:8], spec["ext"])
+    out_path = _OUT_DIR / out_name
+    work = Path(tempfile.mkdtemp(prefix="vera-export-"))
+    try:
+        if fam == "spreadsheet":
+            tables = _xc.tables_of(content)
+            if not tables:
+                return {"ok": False, "error": "there is no table in it to make a spreadsheet of", "format": fmt}
+            if fmt in ("csv", "tsv"):
+                out_path.write_text(_xc.delimited_text(tables, "," if fmt == "csv" else "\t"), encoding="utf-8")
+            elif fmt == "json":
+                out_path.write_text(_xc.tables_json(tables), encoding="utf-8")
+            else:
+                if not _xlsxwriter_ok():
+                    return {"ok": False, "error": "xlsxwriter is not installed", "format": fmt}
+                book = work / (stem + ".xlsx")
+                await asyncio.to_thread(_xc.write_xlsx, tables, str(book))
+                if fmt == "xlsx":
+                    shutil.copyfile(book, out_path)
+                else:
+                    r = await _lo_convert(book, "ods", work)
+                    if not r.get("ok"):
+                        return dict(r, format=fmt)
+                    shutil.copyfile(r["path"], out_path)
+        elif fam == "presentation":
+            slides = _xc.slides_of(content)
+            if fmt == "deck":
+                out_path.write_text(_xc.deck_html(slides, title), encoding="utf-8")
+            elif fmt == "md":
+                out_path.write_text(content, encoding="utf-8")
+            else:
+                src = work / (stem + ".fodp")
+                src.write_text(_xc.odp_flat(slides, title), encoding="utf-8")
+                r = await _lo_convert(src, fmt, work)
+                if not r.get("ok"):
+                    return dict(r, format=fmt)
+                shutil.copyfile(r["path"], out_path)
+        else:
+            body = _xc.strip_doc_fences(content)
+            if fmt == "md":
+                out_path.write_text(body, encoding="utf-8")
+            elif fmt == "txt":
+                out_path.write_text(_xc.plain_text(body), encoding="utf-8")
+            elif fmt == "html":
+                out_path.write_text(_xc.document_html(body, title), encoding="utf-8")
+            elif _soffice():
+                src = work / (stem + ".html")
+                src.write_text(_xc.document_html(body, title), encoding="utf-8")
+                r = await _lo_convert(src, fmt, work, infilter="HTML (StarWriter)")
+                if not r.get("ok"):
+                    return dict(r, format=fmt)
+                shutil.copyfile(r["path"], out_path)
+            else:
+                res = await asyncio.to_thread(_run_pandoc, body, out_path, fmt, title)
+                if not res.get("ok"):
+                    return {"ok": False, "error": res.get("error"), "format": fmt}
+        size = out_path.stat().st_size if out_path.exists() else 0
+        return {"ok": True, "format": fmt, "family": fam, "filename": out_name, "path": str(out_path),
+                "url": "/render/download?name=%s" % out_name, "bytes": size, "mime": spec["mime"]}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
 @capability(
     "render.formats", memory="off", silent=True,
     http_method="GET", http_path="/render/formats", http_tags=["render"],
-    description="List document export targets and whether each is live right now "
-                "(md/txt always; docx/html/odt/rtf/epub/pptx/latex need pandoc; pdf "
-                "also needs a PDF engine). Output: {pandoc, pdf_engine, formats:[{id,live}]}.",
+    description="Every file type a reply can be exported as, by family, and whether each can be made right now. "
+                "Families: document (docx, pdf, odt, rtf, epub, html, md, txt), presentation (pptx, odp, slides_pdf, "
+                "deck = a web slideshow), spreadsheet (xlsx, ods, csv, tsv, json). LibreOffice makes the office files, "
+                "xlsxwriter the workbook; pandoc is the fallback. Output: {formats:[{id,family,ext,label,mime,live}], "
+                "families, libreoffice, pandoc, pdf_engine}.",
 )
 async def render_formats(trace_id=None):
-    live = _live_formats()
+    files = _file_formats()
     return {
-        "pandoc":     bool(_pandoc_path()),
-        "pdf_engine": _pdf_engine() or "",
-        "formats":    [{"id": k, "live": v} for k, v in sorted(live.items())],
-        "count":      len(live),
+        "formats":     files,
+        "families":    list(_xc.FAMILIES),
+        "libreoffice": bool(_soffice()),
+        "pandoc":      bool(_pandoc_path()),
+        "pdf_engine":  _pdf_engine() or "",
+        "count":       len(files),
     }
 
 
 @capability(
     "render.export", memory="off",
     http_method="POST", http_path="/render/export", http_tags=["render"],
-    description="Export Markdown/text content to a file in a target format and return "
-                "a download URL. Inputs: content (str! — markdown source), "
-                "format (md|txt|docx|pdf|html|odt|rtf|epub|pptx|latex, default md), "
-                "title (str, optional), filename (str, optional base name). "
-                "Output: {ok, format, filename, url, bytes}. PDF/office formats need "
-                "pandoc (+ a PDF engine) — see render.formats.",
+    description="Export a reply (markdown) as a file and return a download URL. A document is the reply as a page "
+                "(docx|pdf|odt|rtf|epub|html|md|txt); a presentation is its slides - a ```slides fence, or the reply "
+                "cut at its --- rules or headings, 'Note:' lines as speaker notes (pptx|odp|slides_pdf|deck); a "
+                "spreadsheet is its tables - ```sheet/```csv/```tsv fences and markdown tables, a sheet each, formulas "
+                "kept (xlsx|ods|csv|tsv|json). Inputs: content (str!), format (str, default md; aliases word, excel, "
+                "powerpoint, slides, spreadsheet), title (str), filename (str). Output: {ok, format, family, filename, "
+                "url, bytes, mime}. See render.formats for what is live.",
 )
 async def render_export(content: str = "", format: str = "md",
                         title: str = "", filename: str = "", trace_id=None):
     if not content or not content.strip():
         return {"ok": False, "error": "content required"}
-    res = _export(content, format, title=title, filename=filename)
+    fmt = _canonical(format)
+    res = (_export(content, fmt, title=title, filename=filename) if fmt == "latex"
+           else await _export_file(content, fmt, title=title, filename=filename))
     if res.get("ok"):
         await emit_event({"type": "render.export", "format": res.get("format"),
                           "filename": res.get("filename"), "bytes": res.get("bytes")})
@@ -266,8 +425,9 @@ async def render_dream_export(cycle_id: str = "", format: str = "docx",
     if not report:
         return {"ok": False, "error": "no report found for this cycle"}
 
-    res = _export(report, format, title=title,
-                  filename=filename or _safe_stem(title) or cycle_id)
+    fmt = _canonical(format)
+    res = (_export(report, fmt, title=title, filename=filename or _safe_stem(title) or cycle_id) if fmt == "latex"
+           else await _export_file(report, fmt, title=title, filename=filename or _safe_stem(title) or cycle_id))
     if res.get("ok"):
         await emit_event({"type": "render.export", "source": "dream",
                           "cycle_id": cycle_id, "format": res.get("format"),

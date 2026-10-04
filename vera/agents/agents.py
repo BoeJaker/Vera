@@ -103,6 +103,18 @@ def _get_dag_runner():
 
 log = logging.getLogger("vera.agents")
 
+# what the chat draws besides code and diagrams (the chat sends chat_files): ~110 tokens
+_CHAT_FILES_NOTE = (
+    "## Files you can write\n"
+    "The chat draws these fences as they stream, and each downloads as a file:\n"
+    "- ```slides - a presentation: '# Title' per slide, slides split by a line of ---, bullets for points, "
+    "'Note:' for speaker notes (PowerPoint, PDF, a web slideshow).\n"
+    "- ```sheet (or ```csv) - a spreadsheet: comma-separated rows, header first; cells may hold formulas like "
+    "=SUM(B2:B5) (Excel, OpenDocument, CSV, JSON).\n"
+    "- ```document - a document in markdown (Word, PDF, OpenDocument, e-book).\n"
+    "Use one when the user asks for slides, a spreadsheet, a table to work with, or a document - not otherwise."
+)
+
 
 def _text_evidence(value: object) -> dict:
     """Return stable correlation evidence without retaining text payloads."""
@@ -1832,6 +1844,12 @@ async def agent_chat_stream_endpoint(request: Request):
             except Exception as _e:
                 log.debug("turn.prepare skipped: %s", _e)
     _ep_mark("canvas_prepare")
+
+    # ── FILES THE CHAT DRAWS (owner, 2026-10-04: documents, presentations and spreadsheets, rendered in the chat and on
+    # the canvas and streamed like code and mermaid): the chat says it draws them (chat_files) and the model is told the
+    # three fences, briefly - each is drawn as it is written and downloads as every file type it can be.
+    if body.get("chat_files") and "## Files you can write" not in _sys_prefix:
+        _sys_prefix = (_sys_prefix + "\n\n" + _CHAT_FILES_NOTE).strip()
 
     # ── Quick opener: very long prompt → light one-liner from a SECOND
     # Ollama endpoint while the main response generates on the first. The
