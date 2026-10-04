@@ -24196,6 +24196,10 @@ async def cap_dag_agent_loop_v6(
     executor_node:      str  = "auto",
     coder_model:        str  = "",
     coder_node:         str  = "auto",
+    # The loop's controller + planner on a chosen model/node (role_override_core): an MoE
+    # or a specialised agentic model driving the loop. CPU-slow - chosen, never defaulted.
+    controller_model:   str  = "",
+    controller_node:    str  = "auto",
     effort:             str  = "standard",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
@@ -24305,7 +24309,8 @@ async def cap_dag_agent_loop_v6(
         _role_overrides, _effort_adj = _role_ovr_core.build(
             executor_model=executor_model, executor_node=executor_node,
             coder_model=coder_model, coder_node=coder_node, effort=effort,
-            plan_style=plan_style)
+            plan_style=plan_style, controller_model=controller_model,
+            controller_node=controller_node)
         if _effort_adj.get("plan_style"):
             plan_style = _effort_adj["plan_style"]
         if _effort_adj.get("critic_route"):
@@ -26562,6 +26567,8 @@ async def workshop_agent_loop_stream(request: Request):
     v6_executor_node     = (body.get("executor_node", "auto") or "auto").strip().lower()
     v6_coder_model       = (body.get("coder_model", "") or "").strip()
     v6_coder_node        = (body.get("coder_node", "auto") or "auto").strip().lower()
+    v6_controller_model  = (body.get("controller_model", "") or "").strip()
+    v6_controller_node   = (body.get("controller_node", "auto") or "auto").strip().lower()
     v6_effort            = (body.get("effort", "standard") or "standard").strip().lower()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
@@ -26719,6 +26726,7 @@ async def workshop_agent_loop_stream(request: Request):
             minds=v6_minds,
             executor_model=v6_executor_model, executor_node=v6_executor_node,
             coder_model=v6_coder_model, coder_node=v6_coder_node, effort=v6_effort,
+            controller_model=v6_controller_model, controller_node=v6_controller_node,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,

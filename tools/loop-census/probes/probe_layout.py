@@ -8,6 +8,8 @@ Layouts are per-run loop overrides (no config change):
   L2  CPU MoE executor - executor_model=qwen3.6:35b-a3b on cpu-247
   L3  deliverable review - the CPU MoE attacks the finished output once (opt-in flag)
   L4  L3 + the warm CPU coder
+  L5  the CPU MoE (qwen3.6:35b-a3b, cpu-247) drives the loop: controller + planner
+  L6  the agentic MoE (Qwen-AgentWorld-35B-A3B, cpu-246) drives AND executes
 Out: /tmp/probe_layout/<layout>-<goal_id>.json (+ ev/<sid>.jsonl). Added 4 Oct 2026."""
 import collections, json, os, re, subprocess, sys, time, uuid
 
@@ -29,6 +31,12 @@ LAYOUTS = {
     # adversarial deliverable review by the CPU MoE (feat/deliverable-review)
     "L3": {"deliverable_review": True},
     "L4": {"deliverable_review": True, "coder_model": "qwen3-coder:30b", "coder_node": "cpu-246"},
+    # an MoE / specialised agentic model DRIVES the loop: controller + planner (controller_model)
+    "L5": {"controller_model": "qwen3.6:35b-a3b", "controller_node": "cpu-247"},
+    "L6": {"controller_model": "hf.co/unsloth/Qwen-AgentWorld-35B-A3B-GGUF:MXFP4_MOE",
+           "controller_node": "cpu-246",
+           "executor_model": "hf.co/unsloth/Qwen-AgentWorld-35B-A3B-GGUF:MXFP4_MOE",
+           "executor_node": "cpu-246"},
 }
 tpl, gid = sys.argv[1], sys.argv[2]
 layout = sys.argv[3] if len(sys.argv) > 3 else "L0"
