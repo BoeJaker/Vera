@@ -44,6 +44,18 @@ def parse_iso(s: str) -> Optional[datetime]:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
+#: While a release waits for running gates it holds this key (refreshed each release tick, so
+#: it lapses on its own if the release is cancelled or prod dies): a gate that has not started
+#: yet waits for the release instead of starting, so the queue cannot starve the release.
+DRAIN_KEY = "vera:evolve:release:drain"
+DRAIN_TTL_S = 120
+
+
+def waiting_on_gates(why: Any) -> bool:
+    """Is this hold reason a running-gates hold (the release is draining the gate queue)?"""
+    return "gate(s) running" in str(why or "")
+
+
 def live_loop_ids(tasks: Any) -> List[str]:
     """Session ids of agent-loop tasks still running in this process (the dag module's
     _AGENT_LOOP_TASKS: sid -> asyncio.Task) - what a restart would kill."""
@@ -76,6 +88,14 @@ def may_release(mode: str, census: Dict[str, Any]) -> Tuple[bool, str]:
     if loops:
         return False, ("%d agent loop(s) running (%s) - a restart would kill them; waiting "
                        "(force to override)" % (len(loops), ", ".join(x[:8] for x in loops[:3])))
+    # A running gate dies with the process too (4 Oct 2026: four restarts in 80 min each
+    # threw away every gate in flight). New gates hold for the release (DRAIN_KEY), so the
+    # wait is bounded by the gates already running.
+    gates = [g for g in ((census or {}).get("gates") or []) if isinstance(g, dict)]
+    if gates:
+        return False, ("%d gate(s) running (%s) - a restart would kill them; new gates wait for "
+                       "this release (force to override)"
+                       % (len(gates), ", ".join(str(g.get("branch") or g.get("id"))[:40] for g in gates[:3])))
     if mode == "goal":
         if state in PARKED_STATES or state in CLEAR_STATES:
             return True, f"census {state}"
