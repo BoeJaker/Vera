@@ -500,7 +500,7 @@ def reader_digest(page: Dict[str, Any], max_chars: int = 2400) -> Dict[str, Any]
 
 
 def snapshot_prompt(topic: Dict[str, Any], previous: Optional[Dict[str, Any]],
-                    signals: Sequence[Dict[str, Any]], words: int = 380) -> str:
+                    signals: Sequence[Dict[str, Any]], words: int = 380, *, market: str = "") -> str:
     prev = (previous or {}).get("state") or "(no earlier assessment - this is the first)"
     lines = []
     for s in signals[:14]:
@@ -512,6 +512,9 @@ def snapshot_prompt(topic: Dict[str, Any], previous: Optional[Dict[str, Any]],
         f"Topic: {topic.get('brief') or topic.get('name')}\nWhy it matters: {topic.get('why') or 'not stated'}\n"
         f"Open questions:\n{qs}\n\nPREVIOUS ASSESSMENT:\n{prev}\n\nNEW EVIDENCE SINCE THEN:\n"
         + ("\n".join(lines) or "- nothing new") +
+        (f"\n\nTHE NUMBERS THIS TOPIC WATCHES MOVED:\n{market}\n"
+         "(say whether the evidence explains each move; a move nothing explains is itself worth a question)"
+         if market else "") +
         f"\n\nWrite the updated assessment. Answer in JSON only. Your whole answer is about {words} words.\n"
         "JSON keys:\n"
         "  headline - one sentence: the single most important thing now\n"
@@ -590,7 +593,7 @@ def entity_diagram(topic: Dict[str, Any], signals: Sequence[Dict[str, Any]], lim
 
 def timeline(signals: Sequence[Dict[str, Any]], snapshots: Sequence[Dict[str, Any]],
              reports: Sequence[Dict[str, Any]] = (), *, days: int = 90,
-             now: Optional[datetime] = None) -> Dict[str, Any]:
+             now: Optional[datetime] = None, changes: Sequence[Dict[str, Any]] = ()) -> Dict[str, Any]:
     """Day buckets over a window (counts, best score, the best signal's title) plus
     the point events - signals, snapshots, reports - newest first."""
     now = now or datetime.now(timezone.utc)
@@ -598,7 +601,7 @@ def timeline(signals: Sequence[Dict[str, Any]], snapshots: Sequence[Dict[str, An
     buckets: Dict[str, Dict[str, Any]] = {}
     for i in range(max(1, days)):
         d = (start + timedelta(days=i)).isoformat()
-        buckets[d] = {"date": d, "signals": 0, "snapshots": 0, "reports": 0, "top": None, "top_score": -1}
+        buckets[d] = {"date": d, "signals": 0, "snapshots": 0, "reports": 0, "changes": 0, "top": None, "top_score": -1}
     events: List[Dict[str, Any]] = []
     for s in signals:
         t = parse_ts(s.get("seen"))
@@ -633,6 +636,18 @@ def timeline(signals: Sequence[Dict[str, Any]], snapshots: Sequence[Dict[str, An
             buckets[d]["reports"] += 1
         events.append({"kind": "report", "ts": r.get("ts"), "title": r.get("title"), "id": r.get("id"),
                        "url": r.get("url")})
+    for c in changes:
+        try:
+            t = datetime.fromtimestamp(float(c.get("t")), timezone.utc)
+        except (TypeError, ValueError, OverflowError, OSError):
+            continue
+        d = t.date().isoformat()
+        if d in buckets:
+            buckets[d]["changes"] += 1
+        events.append({"kind": "change", "ts": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "title": c.get("text"),
+                       "id": f"{c.get('indicator')}:{c.get('t')}", "topic_id": c.get("topic_id"),
+                       "sub": c.get("kind"), "direction": c.get("direction"),
+                       "stories": len(c.get("stories") or [])})
     events.sort(key=lambda e: str(e.get("ts") or ""), reverse=True)
     for b in buckets.values():
         if b["top_score"] < 0:
@@ -772,6 +787,11 @@ def build_report(topics: Sequence[Dict[str, Any]], per_topic: Dict[str, Dict[str
             block["parts"].append({"kind": "assessment", "state": sn.get("state", ""), "changed": sn.get("changed") or [],
                                    "confidence": sn.get("confidence", ""), "answered": sn.get("answered") or [],
                                    "new_questions": sn.get("new_questions") or []})
+        if d.get("moves"):
+            block["parts"].append({"kind": "moves", "items": [
+                {"text": c.get("text"), "kind": c.get("kind"), "direction": c.get("direction"),
+                 "stories": [{"title": s.get("title"), "url": s.get("url")} for s in (c.get("stories") or [])[:3]]}
+                for c in list(d["moves"])[-6:]]})
         imgs = [s for s in sigs if s.get("image")][:4] + list(d.get("images") or [])
         if imgs:
             block["parts"].append({"kind": "images", "items": [
@@ -983,6 +1003,16 @@ def _render_part(p: Dict[str, Any]) -> str:
         if p.get("new_questions"):
             h += '<h3>New questions</h3><ul>' + "".join(f"<li>{_E(q)}</li>" for q in p["new_questions"]) + "</ul>"
         return h
+    if k == "moves":
+        rows = []
+        for m in p.get("items") or []:
+            arrow = "▲" if m.get("direction") == "up" else "▼"
+            links = " · ".join(f'<a href="{_safe_href(s.get("url"))}" target="_blank" rel="noopener">{_E(s.get("title") or "")}</a>'
+                                    for s in m.get("stories") or [])
+            why = (f'<br><span class="meta">around then: {links}</span>' if links
+                   else '<br><span class="meta">no story in the window explains it</span>')
+            rows.append(f"<li>{arrow} {_E(m.get('text') or '')}{why}</li>")
+        return '<h3>What moved</h3><ul class="chg">' + "".join(rows) + "</ul>"
     if k == "images":
         return '<h3>Images</h3><div class="imgs">' + "".join(
             f'<figure>{"<a href=" + chr(34) + _safe_href(i["href"]) + chr(34) + " target=_blank rel=noopener>" if i.get("href") else ""}'
@@ -1051,6 +1081,11 @@ def render_markdown(doc: Dict[str, Any], *, report_url: str = "") -> str:
                         sc = "" if s.get("score") is None else f"[{int(round(s['score']))}/10] "
                         out.append(f"- {sc}[{s.get('title')}]({s.get('url')}) — {s.get('summary') or s.get('snippet') or ''}".strip())
                     out.append("")
+                elif p["kind"] == "moves":
+                    out.append("**What moved**")
+                    out += [f"- {m.get('text')}" + (f" (around then: {m['stories'][0].get('title')})" if m.get("stories") else "")
+                            for m in p["items"]]
+                    out.append("")
                 elif p["kind"] == "diagram":
                     out += ["```mermaid", p["mermaid"], "```", ""]
                 elif p["kind"] == "code":
@@ -1101,6 +1136,9 @@ def render_telegram(doc: Dict[str, Any], *, report_url: str = "", action_url: st
             for p in sec.get("parts") or []:
                 if p["kind"] == "assessment" and p.get("changed"):
                     lines += [f"  • {E(c)}" for c in p["changed"][:3]]
+                if p["kind"] == "moves":
+                    lines += [f"  {chr(0x25B2) if m.get('direction') == 'up' else chr(0x25BC)} {E(m.get('text') or '')}"
+                              for m in p["items"][-2:]]
                 elif p["kind"] == "signals":
                     for s in p["items"][:3]:
                         sc = "" if s.get("score") is None else f"[{int(round(s['score']))}] "

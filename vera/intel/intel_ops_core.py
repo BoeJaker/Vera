@@ -564,12 +564,16 @@ def active_session(sessions: Sequence[Dict[str, Any]], now: datetime) -> Optiona
 
 # ── proactive: when a change is worth interrupting for ──────────────────────
 
-def material_change(prev: Optional[Dict[str, Any]], snap: Dict[str, Any], *, competitor_hits_n: int = 0) -> Tuple[bool, str]:
+def material_change(prev: Optional[Dict[str, Any]], snap: Dict[str, Any], *, competitor_hits_n: int = 0,
+                    moves: Sequence[str] = ()) -> Tuple[bool, str]:
     """(alert?, why). A first assessment is not news; a moved headline, a jump in
-    confidence, several changed facts or a competitor move are."""
+    confidence, several changed facts, a competitor move or a number the topic
+    watches moving hard (with the news around it) are."""
     if not prev:
         return False, ""
     why: List[str] = []
+    for m in list(moves)[:2]:
+        why.append(m)
     if snap.get("headline") and _dice(snap.get("headline", ""), prev.get("headline", "")) < 0.55:
         why.append("the headline moved")
     order = {"low": 0, "medium": 1, "high": 2}
@@ -580,7 +584,7 @@ def material_change(prev: Optional[Dict[str, Any]], snap: Dict[str, Any], *, com
         why.append(f"{len(snap['changed'])} things changed")
     if competitor_hits_n:
         why.append(f"{competitor_hits_n} competitor mention(s)")
-    strong = len(why) >= 2 or "the headline moved" in why or competitor_hits_n > 0
+    strong = len(why) >= 2 or "the headline moved" in why or competitor_hits_n > 0 or bool(moves)
     return strong, "; ".join(why)
 
 

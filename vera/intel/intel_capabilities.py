@@ -39,6 +39,7 @@ brings their state over; `intel.n8n.retire` switches them off (dry run first).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -62,11 +63,13 @@ try:
     from Vera.vera.intel import intel_core as core
     from Vera.vera.intel import intel_ops_core as ops
     from Vera.vera.intel import intel_ledger_core as ledger
+    from Vera.vera.intel import intel_change_core as chg
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
     from vera.intel import intel_ops_core as ops
     from vera.intel import intel_ledger_core as ledger
+    from vera.intel import intel_change_core as chg
     from vera.intel.intel_store import IntelStore
 
 log = logging.getLogger("vera.intel")
@@ -484,7 +487,8 @@ async def cap_timeline_get(topic_id: str = "", days: int = 90, trace_id=None):
     since = _since(days * 24)
     st = store()
     tl = core.timeline(st.signals(topic_id, since=since, limit=5000), st.snapshots(topic_id, since=since, limit=1000),
-                       st.reports(topic_id=topic_id, since=since, limit=500), days=days)
+                       st.reports(topic_id=topic_id, since=since, limit=500), days=days,
+                       changes=_changes(topic_id, since=since))
     for e in tl["events"]:
         if e["kind"] == "report":
             e["url"] = _report_url(e["id"])
@@ -860,13 +864,15 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
     prev = st.latest_snapshot(t["id"])
     since = (prev or {}).get("ts") or _since(24 * 7)
     sigs = [s for s in st.signals(t["id"], since=since, limit=60, order="score") if (s.get("score") or 0) >= 3]
-    if not sigs and prev:
+    moves = _changes(t["id"], unassessed=True)
+    if not sigs and not moves and prev:
         return {"topic": t["id"], "skipped": "no new evidence"}
     for s in sigs:                       # extractive answers ride along as evidence
         if s.get("evidence"):
             s["summary"] = (s.get("summary") or s.get("snippet") or "") + " | " + "; ".join(
                 f"{e['question']} -> {e['answer']}" for e in s["evidence"][:3])
-    parsed = await _llm_json(core.snapshot_prompt(t, prev, sigs), role="assess", timeout=1800.0)
+    parsed = await _llm_json(core.snapshot_prompt(t, prev, sigs, market=chg.prompt_lines(moves)),
+                             role="assess", timeout=1800.0)
     if not parsed:
         return {"topic": t["id"], "error": "no assessment"}
     snap = core.make_snapshot(t, parsed, sigs)
@@ -874,19 +880,24 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
     if not fresh:                     # deleted while the model was thinking
         return {"topic": t["id"], "skipped": "topic deleted"}
     st.put_snapshot(snap)
+    if moves:
+        keys = {(c.get("indicator"), c.get("t")) for c in moves}
+        st.set_kv("ind_changes", [dict(c, assessed=snap["id"]) if (c.get("indicator"), c.get("t")) in keys else c
+                                  for c in st.get_kv("ind_changes", []) or []])
     qs = [q for q in fresh.get("questions") or [] if q not in {a["question"] for a in snap["answered"]}]
     qs += [q for q in snap["new_questions"] if q not in qs]
     st.patch_topic(t["id"], {"questions": qs[:12], "last_snapshot": snap["ts"]})
     await _event("snapshot.new", topic=t["id"], id=snap["id"], headline=snap["headline"],
                  changed=len(snap["changed"]))
     comps = sum(1 for s in sigs if s.get("competitors") and (s.get("score") or 0) >= 6)
-    alert, why = ops.material_change(prev, snap, competitor_hits_n=comps)
+    big = chg.material(moves)
+    alert, why = ops.material_change(prev, snap, competitor_hits_n=comps, moves=[c.get("text") for c in big])
     if prev:
         _decide("intel.material_change", "alert" if alert else "no_alert",
                 state={"topic": t["id"], "prev": prev.get("headline"), "now": snap.get("headline"),
                        "changed": snap.get("changed"), "comps": comps},
                 ref_kind="snapshot", ref_id=snap["id"], decider="rule", mode="rule",
-                detail={"changed": len(snap.get("changed") or []), "competitor_hits": comps})
+                detail={"changed": len(snap.get("changed") or []), "competitor_hits": comps, "moves": len(big)})
     if alert:
         await _alert(fresh, snap, why)
     if fresh.get("depth") == "deep" and config().get("auto_research") and snap["new_questions"]:
@@ -953,6 +964,175 @@ async def cap_refresh(topic_id: str = "", queue: bool = False, trace_id=None):
             "message": f"{sw['new']} new, {en['enriched']} summarised, {en['nlp_only']} tagged"}
 
 
+# ── indicators: the numbers a topic watches ──────────────────────────────────
+
+def _epoch(ts: Any) -> Optional[float]:
+    d = core.parse_ts(ts)
+    return d.timestamp() if d else None
+
+
+def _mkt_slug(symbol: str) -> str:
+    """The markets subsystem's dataset slug (markets_data_capabilities._slug)."""
+    return re.sub(r"[^a-z0-9]+", "_", (symbol or "").lower()).strip("_") or "asset"
+
+
+def _indicators(topic_id: str = "") -> List[Dict[str, Any]]:
+    allv = store().get_kv("indicators", {}) or {}
+    if topic_id:
+        return list(allv.get(topic_id) or [])
+    return [i for v in allv.values() for i in v or []]
+
+
+def _save_indicators(topic_id: str, inds: List[Dict[str, Any]]) -> None:
+    st = store()
+    allv = st.get_kv("indicators", {}) or {}
+    if inds:
+        allv[topic_id] = inds
+    else:
+        allv.pop(topic_id, None)
+    st.set_kv("indicators", allv)
+
+
+def _changes(topic_id: str = "", since: str = "", unassessed: bool = False) -> List[Dict[str, Any]]:
+    """Indicator changes found so far (oldest first), optionally for one topic, only
+    those whose bar falls at or after `since`, and with `unassessed` only those no
+    assessment has taken in yet (however old the bar)."""
+    out = store().get_kv("ind_changes", []) or []
+    if topic_id:
+        out = [c for c in out if c.get("topic_id") == topic_id]
+    if since:
+        lo = _epoch(since) or 0
+        out = [c for c in out if float(c.get("t") or 0) >= lo]
+    if unassessed:
+        out = [c for c in out if not c.get("assessed")]
+    return sorted(out, key=lambda c: float(c.get("t") or 0))
+
+
+async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> List[Dict[str, Any]]:
+    """Read each indicator's stored bars, find the changes in the last
+    `lookback_days`, and pin the topic's stories that landed around each one. No
+    model call; a few reads and some arithmetic."""
+    inds = _indicators(t["id"])
+    if not inds:
+        return []
+    st = store()
+    known = {(c.get("indicator"), c.get("t")) for c in st.get_kv("ind_changes", []) or []}
+    stories = []
+    for s in st.signals(t["id"], since=_since(24 * (lookback_days + 60)), limit=600):
+        e = _epoch(s.get("published")) or _epoch(s.get("seen"))
+        if e is not None:
+            stories.append({"t": e, "id": s.get("id"), "title": s.get("title"), "url": s.get("url"),
+                            "score": s.get("score")})
+    new: List[Dict[str, Any]] = []
+    for ind in inds:
+        r = await _call("markets.bars", dataset_id=ind["dataset_id"], limit=400)
+        pts = [(a, b) for a, b in zip(r.get("t") or [], r.get("c") or []) if a is not None and b is not None]
+        if r.get("error") or len(pts) < 25:
+            ind["status"] = r.get("error") or f"waiting for data ({len(pts)} bars)"
+            continue
+        ts, vals = [p[0] for p in pts], [float(p[1]) for p in pts]
+        ind.update(status="ok", last=vals[-1], last_t=ts[-1], bars=len(pts), checked=core.now_iso())
+        for c in chg.detect(ts, vals, kind=ind.get("kind", "price")):
+            if float(c["t"]) < ts[-1] - lookback_days * 86400 or (ind["id"], c["t"]) in known:
+                continue
+            c.update(indicator=ind["id"], topic_id=t["id"], label=ind.get("label"), ind_kind=ind.get("kind"),
+                     text=chg.describe(c, ind.get("label") or ind["dataset_id"], ind.get("kind", "price")),
+                     stories=[{k: s.get(k) for k in ("id", "title", "url", "score", "lead_h")}
+                              for s in chg.corroborate(float(c["t"]), stories)[:3]],
+                     found=core.now_iso())
+            new.append(c)
+    fresh = {i["id"]: i for i in _indicators(t["id"])}          # an add/remove while we read wins
+    _save_indicators(t["id"], [dict(fresh[i["id"]], **{k: i.get(k) for k in ("status", "last", "last_t", "bars", "checked")
+                                                        if k in i}) for i in inds if i["id"] in fresh])
+    if new:
+        st.set_kv("ind_changes", ((st.get_kv("ind_changes", []) or []) + new)[-400:])
+        for c in new:
+            await _event("indicator.change", topic=t["id"], indicator=c["indicator"], text=c["text"],
+                         corroborated=len(c["stories"]))
+    return new
+
+
+@capability("intel.indicator.add", http_method="POST", http_path="/intel/indicator/add", http_tags=["intel"],
+            description="Have a topic watch a number: a price (stock, crypto, FX, index - looked up and tracked "
+                        "daily by the markets subsystem), a macro series, or any stored bar dataset. Its changes "
+                        "(spikes, level shifts, regime changes) join the topic's timeline, its assessments and its "
+                        "alerts, each with the stories that landed around it. Input: topic_id (str!), kind "
+                        "(price|macro|probability|count), query (what to look up, or the macro series id), "
+                        "dataset_id (an existing bar dataset instead), label. Output: {ok, indicator}.")
+async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str = "", dataset_id: str = "",
+                            label: str = "", trace_id=None):
+    t = store().get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    kind = (kind or "price").lower()
+    if kind not in chg.KINDS:
+        return {"error": f"kind must be one of {', '.join(chg.KINDS)}"}
+    ds, name = (dataset_id or "").strip(), ""
+    if not ds:
+        if not query:
+            return {"error": "query or dataset_id required"}
+        if kind == "macro":
+            r = await _call("markets.macro.fetch", id=query, track=True)
+            ds = ((r.get("datasets") or [""])[0]) if not r.get("error") else ""
+            if not ds:
+                return {"error": r.get("error") or f"no macro series for {query!r}"}
+        elif kind == "price":
+            lk = await _call("markets.lookup", query=query, limit=5)
+            hits = [h for h in lk.get("results") or [] if h.get("provider") != "custom"]
+            if not hits:
+                return {"error": lk.get("error") or f"nothing found for {query!r}"}
+            h = hits[0]
+            add = await _call("markets.asset.add", provider=h["provider"], symbol=h["symbol"], timeframes=["1d"])
+            if add.get("error"):
+                return {"error": add["error"]}
+            ds, name = f"mkt.{h['provider'].lower()}.{_mkt_slug(h['symbol'])}.1d", h.get("name") or h["symbol"]
+        else:
+            return {"error": f"a {kind} indicator needs a dataset_id"}
+    inds = _indicators(topic_id)
+    ind_id = hashlib.sha1(f"{topic_id}|{ds}".encode()).hexdigest()[:10]
+    ind = {"id": ind_id, "topic_id": topic_id, "kind": kind, "dataset_id": ds, "query": query,
+           "label": (label or name or query or ds)[:60], "added": core.now_iso(), "status": "new"}
+    inds = [i for i in inds if i["id"] != ind_id] + [ind]
+    _save_indicators(topic_id, inds[:12])
+    await _event("indicator.added", topic=topic_id, indicator=ind_id, label=ind["label"])
+    return {"ok": True, "indicator": ind,
+            "message": f"{t['name']} now watches {ind['label']} ({ds}); a new price fills in over the next minutes"}
+
+
+@capability("intel.indicator.list", http_method="GET", http_path="/intel/indicator/list", http_tags=["intel"],
+            memory="off", silent=True,
+            description="The numbers a topic watches (blank topic = all) with their latest value and recent changes. "
+                        "Input: topic_id, days (changes window, default 30). Output: {indicators, changes}.")
+async def cap_indicator_list(topic_id: str = "", days: int = 30, trace_id=None):
+    return {"indicators": _indicators(topic_id),
+            "changes": list(reversed(_changes(topic_id, since=_since(24 * max(1, int(days or 30))))))[:100]}
+
+
+@capability("intel.indicator.remove", http_method="POST", http_path="/intel/indicator/remove", http_tags=["intel"],
+            description="Stop a topic watching a number. Input: topic_id (str!), indicator_id (str!). Output: {ok}.")
+async def cap_indicator_remove(topic_id: str = "", indicator_id: str = "", trace_id=None):
+    inds = _indicators(topic_id)
+    keep = [i for i in inds if i["id"] != indicator_id]
+    if len(keep) == len(inds):
+        return {"error": f"no indicator {indicator_id} on {topic_id}"}
+    _save_indicators(topic_id, keep)
+    return {"ok": True}
+
+
+@capability("intel.indicator.check", http_method="POST", http_path="/intel/indicator/check", http_tags=["intel"],
+            description="Look for changes in a topic's numbers now (no model call; the nightly unit does this "
+                        "too). Input: topic_id (blank = every topic with indicators). Output: {changes}.")
+async def cap_indicator_check(topic_id: str = "", trace_id=None):
+    st = store()
+    tids = [topic_id] if topic_id else sorted({i["topic_id"] for i in _indicators()})
+    out: List[Dict[str, Any]] = []
+    for tid in tids:
+        t = st.get_topic(tid)
+        if t:
+            out += await check_indicators(t)
+    return {"changes": out, "message": f"{len(out)} new change(s)"}
+
+
 # ── reports ──────────────────────────────────────────────────────────────────
 
 async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: str = "",
@@ -980,10 +1160,11 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
             snap = None                       # an old assessment is not news
         if snap and snap.get("id") in told:
             snap = None                       # nor is one already sent
-        if not sigs and not snap:
+        moves = _changes(t["id"], since=since)
+        if not sigs and not snap and not moves:
             continue
         acts = core.actions_for(t, sigs, snap)
-        per[t["id"]] = {"signals": sigs, "snapshot": snap, "actions": acts}
+        per[t["id"]] = {"signals": sigs, "snapshot": snap, "actions": acts, "moves": moves}
     topics = [t for t in topics if t["id"] in per]
     notes = list(st.get_kv("notes_report", []) or []) if (only_new and not topic_ids) else []
     if config().get("illustrate") and topics:
@@ -1467,6 +1648,10 @@ async def _job_topic_inner(job: Dict[str, Any], p: Dict[str, Any], should_contin
     out: Dict[str, Any] = {"topic": t["id"]}
     sw = await sweep_topic(t)
     out["new"] = sw["new"]
+    try:
+        out["moves"] = len(await check_indicators(st.get_topic(t["id"]) or t))
+    except Exception as ex:  # noqa: BLE001
+        log.warning("intel: indicator check failed for %s: %s", t["id"], ex)
     await _progress(job, 1, 3)
     if await _stop_reason(should_continue) or (p.get("until") and _past(p["until"])):
         return {"yielded": "pre-empted after sweep", **out}
