@@ -43,6 +43,20 @@ async def _call(name: str, **kw) -> Any:
         return {"error": f"{name}: {e}"}
 
 
+async def _call_raw(name: str, **kw) -> Any:
+    """Call a capability's bare function: no memory/activity record, no cap.ok event.
+    For internal work the turn pipeline does on every reply (NER per chunk), which
+    would otherwise write one activity node per chunk through the recording wrapper."""
+    cap = CAPABILITY_REGISTRY.get(name)
+    fn = (cap.get("raw") or cap.get("func")) if cap else None
+    if not fn:
+        return {"error": f"capability not available: {name}"}
+    try:
+        return await fn(**kw)
+    except Exception as e:
+        return {"error": f"{name}: {e}"}
+
+
 def _sources_mod():
     return sys.modules.get("widget_sources")
 
@@ -203,7 +217,7 @@ async def _ner(text: str) -> List[Any]:
     async def one(off, chunk):
         async with sem:
             try:
-                r = await asyncio.wait_for(_call("nlp.ner", text=chunk), NER_TIMEOUT_S)
+                r = await asyncio.wait_for(_call_raw("nlp.ner", text=chunk), NER_TIMEOUT_S)
             except asyncio.TimeoutError:
                 r = {"error": "timed out"}
             return off, (r if isinstance(r, dict) else {})
