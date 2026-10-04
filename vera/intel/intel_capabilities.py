@@ -263,12 +263,30 @@ def _spend(key: str, seconds: float) -> None:
         pass
 
 
+_LEDGER_TASKS: set = set()
+
+
+def _to_ledger(row: Dict[str, Any]) -> None:
+    """Mirror a Decision/Outcome v0 row into the shared decision ledger
+    (decide.record), in the background and best effort: the local store stays
+    the record, and intel.decisions.export -> decide.ledger.import backfills."""
+    if not _has("decide.record"):
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(_call("decide.record", row=row))
+    except RuntimeError:                     # no loop (a sync caller in a test)
+        return
+    _LEDGER_TASKS.add(task)
+    task.add_done_callback(_LEDGER_TASKS.discard)
+
+
 def _decide(question_id: str, answer: Any, *, state: Any, ref_kind: str, ref_id: str, **kw) -> Optional[str]:
-    """Record one decision in the four-minds Decision v0 shape (local store until the
-    shared ledger exists). Never raises; returns the decision id."""
+    """Record one decision in the four-minds Decision v0 shape: the local store,
+    mirrored to the shared ledger. Never raises; returns the decision id."""
     try:
         d = ledger.make_decision(question_id, answer, state=state, state_ref={"kind": ref_kind, "id": ref_id}, **kw)
         store().put_decision(d)
+        _to_ledger(d)
         return d["decision_id"]
     except Exception as ex:  # noqa: BLE001
         log.debug("intel: decision not recorded: %s", ex)
@@ -287,6 +305,7 @@ def _outcome(ref_kind: str, ref_id: str, source: str, *, questions: Optional[Lis
             o = ledger.make_outcome(d, source, detail=detail)
             if o:
                 st.put_outcome(o)
+                _to_ledger(o)
                 n += 1
     except Exception as ex:  # noqa: BLE001
         log.debug("intel: outcome not recorded: %s", ex)
