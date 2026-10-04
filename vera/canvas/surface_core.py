@@ -27,25 +27,30 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 DOMAINS: List[Dict[str, Any]] = [
     {"id": "trading_account", "label": "your trading account (broker, portfolio, positions)",
      "prefixes": ("markets.broker.", "markets.portfolio.", "markets.trader."),
+     "lead": ("markets.portfolio.positions", "markets.portfolio.history", "markets.trader.status"),
      "words": "portfolio positions position holdings holding broker brokerage pnl p&l trades exposure margin "
               "trading-account"},
     {"id": "business_accounts", "label": "your business accounts (ledger, orders, inventory, tax)",
      "prefixes": ("business.account.", "business.txn.", "business.profit.", "business.tax.", "business.dashboard",
                   "business.store.dashboard", "business.order.", "business.inventory.", "business.customer."),
+     "lead": ("business.dashboard", "business.store.dashboard", "business.profit.report", "business.txn.list"),
      "words": "business ledger transactions transaction income expenses expense revenue profit profits tax invoice "
               "invoices orders order sales inventory customers customer shop store bookkeeping"},
     {"id": "markets", "label": "the markets (prices, charts, news, sentiment)",
      "prefixes": ("markets.",),
+     "lead": ("markets.overview", "markets.quotes", "markets.news.feed", "markets.sentiment.map"),
      "words": "crypto cryptocurrency bitcoin btc eth ether ethereum sol solana coin coins token tokens market markets "
               "stock stocks share shares price prices trading trade forex fx defi altcoin altcoins ticker tickers "
               "exchange binance nasdaq sp500 index etf commodity gold oil chart charts candles volatility rally crash"},
     {"id": "estate", "label": "the estate (nodes, containers, GPUs, storage)",
      "prefixes": ("nodes.", "docker.", "proxmox.", "estate.", "sysmon.", "ollama.", "pxstore.", "obs."),
+     "lead": ("sysmon.status", "estate.health", "nodes.storage"),
      "words": "node nodes server servers docker container containers vm vms proxmox gpu gpus cpu ram memory disk "
               "disks storage cluster estate ollama host hosts uptime load"},
     {"id": "calendar", "label": "the diary",
      "prefixes": ("cal.",),
-     "words": "calendar diary schedule meeting meetings appointment appointments agenda tomorrow week"},
+     "lead": ("cal.events.list",),
+     "words": "calendar diary schedule meeting meetings appointment appointments agenda"},
     {"id": "research", "label": "research and the fabric",
      "prefixes": ("research.", "fabric.", "reader."),
      "words": "research sources source article articles paper papers study studies dataset datasets"},
@@ -71,7 +76,7 @@ except ImportError:                                   # pragma: no cover
         _WRITES, _MACHINERY, _GLANCE = set(), set(), set()
         _DRAWABLE = ("items", "values", "series", "level", "events", "graph")
 
-_PANEL_DOMAIN = [(re.compile(r"market|trad|crypto"), "markets"), (re.compile(r"business|commerce|shop|store"), "business_accounts"),
+_PANEL_DOMAIN = [(re.compile(r"market|trad|crypto"), "markets"), (re.compile(r"business|commerce|\bshop\b|\bstore\b"), "business_accounts"),
                  (re.compile(r"estate|docker|proxmox|node|system-monitor|perf-monitor|sysmon|ollama|workers"), "estate"),
                  (re.compile(r"calendar|diary"), "calendar"), (re.compile(r"research|fabric|galaxy"), "research")]
 
@@ -180,7 +185,10 @@ def find(index: Dict[str, Any], text: str, entities: Sequence[Dict[str, Any]] = 
     """The surfaces that answer a turn: the top domains, and in each the layout widgets, the measured glance reads,
     the reads the turn's named things fill, and the panels - each with its arguments and why."""
     sc = score_domains(text, entities)
-    doms = [d for d, v in sorted(sc.items(), key=lambda kv: -kv[1]) if v >= 1][:max_domains]
+    ranked = sorted(sc.items(), key=lambda kv: -kv[1])
+    top = ranked[0][1] if ranked else 0
+    # a second domain only when the turn is nearly as much about it (a "this week" is not a question for the diary)
+    doms = [d for d, v in ranked if v >= 1 and v >= top * 0.6][:max_domains]
     # both accounts travel together when the turn only said "account"
     if any(d in _ACCOUNTS for d in doms):
         if sc.get("trading_account", 0) == sc.get("business_accounts", 0):
@@ -191,10 +199,16 @@ def find(index: Dict[str, Any], text: str, entities: Sequence[Dict[str, Any]] = 
     picks: List[Dict[str, Any]] = []
     for dom in doms:
         cands: List[Dict[str, Any]] = []
+        lead = DOMAIN[dom].get("lead") or ()
         for s in index.get("surfaces") or []:
             if s["domain"] != dom:
                 continue
             tail = _tail(s.get("cap") or "")
+            # the domain's headline reads first, in their order - what a person asking about it means first
+            if s["kind"] == "read" and s.get("cap") in lead and not s.get("needs"):
+                cands.append(dict(s, args={}, score=4.0 - lead.index(s["cap"]) * 0.2, lead=True,
+                                  why="%s - the headline of %s" % (s["cap"], DOMAIN[dom]["label"])))
+                continue
             if s["kind"] == "widget":
                 cands.append(dict(s, args=dict(((s.get("record") or {}).get("read") or {}).get("args") or {}), score=3.0,
                                   why="the %s board's %s" % (dom.replace("_", " "), s["about"])))
@@ -210,6 +224,10 @@ def find(index: Dict[str, Any], text: str, entities: Sequence[Dict[str, Any]] = 
                                       why="a glance at %s (%s)" % (DOMAIN[dom]["label"], s["cap"])))
             elif s["kind"] == "panel":
                 cands.append(dict(s, args={}, score=1.0, why="the %s panel" % s["about"]))
+        # a headline that the dashboards already draw as a widget is placed AS that widget (the drawn form wins)
+        for c in cands:
+            if c["kind"] == "widget" and c.get("cap") in lead:
+                c["score"], c["lead"] = 4.05 - lead.index(c["cap"]) * 0.2, True
         seen, mine = set(), []
         for c in sorted(cands, key=lambda c: -c["score"]):
             k = (c.get("cap") or c.get("panel"), tuple(sorted((c.get("args") or {}).items())))

@@ -37,6 +37,11 @@ _KNOWN_TICKERS = set("""BTC ETH SOL XRP ADA DOGE DOT AVAX MATIC LINK LTC BCH XLM
 SHIB PEPE BNB TON SUI USDT USDC DAI AAPL MSFT NVDA TSLA AMZN GOOG GOOGL META NFLX AMD INTC SPY QQQ""".split())
 
 
+_COINS = {"bitcoin": "BTC", "ethereum": "ETH", "ether": "ETH", "solana": "SOL", "dogecoin": "DOGE", "cardano": "ADA",
+          "ripple": "XRP", "litecoin": "LTC", "polkadot": "DOT", "avalanche": "AVAX", "chainlink": "LINK", "tether": "USDT"}
+_COIN = re.compile(r"\b(" + "|".join(_COINS) + r")\b", re.I)
+
+
 def prose(text: str) -> str:
     """The prose of a reply: code fences out (a function name is not a person), whitespace kept."""
     return _FENCE.sub(" ", str(text or ""))
@@ -125,6 +130,9 @@ def merge(text: str, tagged: Iterable[Tuple[int, Dict[str, Any]]], min_score: fl
         sym = m.group(1)
         if sym in _KNOWN_TICKERS or m.group(0).startswith("$") or m.group(2):
             add("TICKER", m.group(0).lstrip("$"), m.start(), 1.0)
+    # a coin said by name is its ticker ("how is bitcoin doing" asks about BTC)
+    for m in _COIN.finditer(t):
+        add("TICKER", _COINS[m.group(1).lower()], m.start(), 1.0)
     out = _fold_short_names(list(found.values()))
     out.sort(key=lambda e: (-e["count"], -e["score"], e["text"].lower()))
     return out
