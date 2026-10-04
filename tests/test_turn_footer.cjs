@@ -54,5 +54,7 @@ t('the widget is made only when the footer is opened', H.includes("if(!det.open|
 t('the footer is drawn when the reply is finished', H.includes('try{ _phaseFooter(aMsg.wrap, bubEl); }catch(_){}'));
 t('the request time is noted right before the stream is requested',
   /aMsg\.wrap\._phaseSentAt=performance\.now\(\);[^\n]*\r?\n\s*const resp=await fetch\(BASE\+'\/agents\/chat\/stream'/.test(H));
+const E = R('vera/widgets/widget_element.js');
+t('the gantt name column gives way in a narrow widget (never past 45% of its width)', E.includes('Math.min(260, +o.draw.names, (o.width > 0 ? Math.floor(o.width * 0.45) : 260))'));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
