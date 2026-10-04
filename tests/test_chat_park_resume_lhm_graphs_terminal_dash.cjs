@@ -61,5 +61,15 @@ t('a finished reply re-reads the memory graph, here and in the menu instance', H
   t('full draws every control; the toolbar follows hover (the canvas) and zen (the toolbar itself)', CV.includes(':host([data-tier="full"]) .it > :is(.fd,.mx,.xp).solo{opacity:.8}')
     && CV.includes(':host([data-tier="hover"]:hover) .addbar,:host([data-tier="zen"]) .addbar:is(:hover,:focus-within){opacity:1}'));
   t('a head leaves room for the item\'s controls at its right end', CV.includes(':is(.vc-codehead,.vc-th):first-child{padding-right:58px}')); }
+// owner, 2026-10-04: folded items flicker when hovered and sometimes do not preview; elements greedy with width; chips
+// hard to tell apart; Apply at the foot of a long editor
+{ const CV = R('vera/canvas/canvas_element.js'), VO = R('vera/vera_output_element.js');
+  t('any folded item previews after a pause, over the column, never re-placing it', CV.includes("if (!key || this._peekKey === key || this._rz || it.classList.contains('ghost') || !it.classList.contains('compact')) return;")
+    && CV.includes("this._peekT = setTimeout(() => { if (this._hovKey === key) this._peekOpen(key); }, 220);") && !/_hoverOpen\(it\) \{[\s\S]{0,600}this\._placeNow\(\)/.test(CV));
+  t('...to the column it is still its folded line (placer and height watcher)', CV.includes("const measured = c.classList.contains('peek') && c._peekH ? c._peekH : c.offsetHeight;")
+    && CV.includes("if (e.target.classList.contains('peek')) return;   // a preview opening is not a card growing") && CV.includes('const hovered = false;'));
+  t('...at least a reading width, inside the stage; redrawn open', CV.includes('want = Math.min(W, Math.max(cur, 440))') && CV.includes('if (this._peekKey) { const pk = this._peekKey; this._peekKey = null; this._peekOpen(pk); }'));
+  t('a folded chip shows its kind and its title (two lines), not its key, turn or buttons', CV.includes('.it.compact > .it-hd :is(.k,.src,.sc,.mx,.xp,.fu-w){display:none}') && CV.includes('-webkit-line-clamp:2'));
+  t('the editor\'s Apply / Cancel sit above the code (kit and canvas editors)', VO.includes('pre.after(bar); bar.after(ed.box);') && CV.includes('<div class="edit" data-w="canvas.update"><div class="edit-a">')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

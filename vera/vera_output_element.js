@@ -753,7 +753,9 @@
       + btn('edit-full', 'full', 'Full screen', 'Edit it full screen')
       + (hookFor(c, 'vscode') ? btn('edit-vscode', 'vscode', 'VS Code', "Open it in the session's VS Code") : '')
       + '<button class="cb-act" data-vo="edit-cancel">Cancel</button><button class="cb-act run" data-vo="edit-apply">Apply</button>';
-    pre.after(ed.box); ed.box.after(bar);
+    /* the editor's bar ABOVE the code, and it stays in view (owner, 2026-10-04: "having to scroll to the bottom of code
+       edit panes to stop editing is annoying") - Apply and Cancel are where you start reading, not after the last line */
+    pre.after(bar); bar.after(ed.box);
     edKeys(ed, (apply) => editDone(id, apply));
     try { ed.ta.focus({ preventScroll: true }); } catch (_) {}
   }
@@ -1107,7 +1109,7 @@
 .code-card.prev > pre{display:none}
 .code-card.editing > pre{display:none}
 .code-card .cb-editor{display:block;width:100%;box-sizing:border-box;margin:0;padding:10px 12px;border:none;outline:none;resize:vertical;background:var(--bg0,#0e0f12);color:var(--text,#d8dce4);font-family:var(--mono,ui-monospace,monospace);font-size:11.5px;line-height:1.5;tab-size:2;box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
-.code-card .cb-editbar{display:flex;align-items:center;gap:4px;padding:3px 6px 3px 10px;border-top:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg1,#14161b)}
+.code-card .cb-editbar{display:flex;align-items:center;gap:4px;padding:3px 6px 3px 10px;border-top:1px solid var(--border,rgba(255,255,255,.09));border-bottom:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg1,#14161b)}
 .code-card .cb-edithint{font:9px var(--mono,ui-monospace,monospace);color:var(--dim2,#8a92a0)}
 .code-card[data-edited] .code-lang::after{content:' · edited';color:var(--warn,#d9a54a);text-transform:none;letter-spacing:0}
 .code-card .xp-inline{border-top:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg1,#14161b)}
