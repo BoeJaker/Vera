@@ -178,6 +178,28 @@ def test_lock_drops_the_gpu_stack_and_editable_installs():
     assert "--no-deps" in cmd and "while read -r L" in cmd and "VERA_TESTENV_BUILT" in cmd
 
 
+def test_the_venv_build_installs_the_images_tools_every_time():
+    cmd = tr.testenv_build_cmd(["pytest==9.1.1"], "abc")
+    # before the "already current" exit, so an existing venv still gets git
+    assert cmd.index("command -v git") < cmd.index("VERA_TESTENV_CURRENT")
+    assert "apt-get install -y -q git" in cmd
+
+
+def test_parity_diff_names_each_test_that_differs():
+    def run(cases):
+        xml = "<testsuites><testsuite>" + "".join(
+            f'<testcase classname="tests.test_a" name="{n}">{body}</testcase>' for n, body in cases
+        ) + "</testsuite></testsuites>"
+        return "out\n__VERA_JUNIT__\n" + xml + "\n__VERA_RC=0__"
+    host = run([("t1", ""), ("t2", ""), ("t3", '<skipped message="no docker"/>')])
+    pool = run([("t1", ""), ("t2", '<failure message="git: not found"/>'),
+                ("t3", '<skipped message="no docker"/>')])
+    d = tr.parity_diff([host], [pool])
+    assert d["differences"] == [{"test": "tests.test_a::t2", "host": "passed", "pool": "failed",
+                                 "why": "git: not found"}]
+    assert tr.parity_diff([host], [host])["differences"] == []
+
+
 def test_parse_testenv_output():
     built = 'VERA_TESTENV_BUILT\n{"sha": "abc", "failed": " playwright==1.0", "python": "3.11.2"}\n'
     st = tr.parse_testenv_output(built)

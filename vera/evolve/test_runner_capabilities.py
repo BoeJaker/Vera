@@ -283,7 +283,8 @@ async def _host_shard(wt: str, files: List[str], markers: str, timeout: int) -> 
 
 
 async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critical",
-                     timeout: int = 900, force: bool = False) -> Optional[Dict[str, Any]]:
+                     timeout: int = 900, force: bool = False,
+                     keep_outputs: bool = False) -> Optional[Dict[str, Any]]:
     """The gate's run, sharded over the host's container and the nodes with
     room. Returns evolve.unittest.run's result shape, or None when the pool is
     off or does not apply (the caller then runs the tier as before)."""
@@ -396,9 +397,12 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
                       "passed": merged["passed"], "failed": merged["failed"],
                       "errors": merged["errors"], "pool": True})
     text = "\n".join(f"[{x['runner']}] {x.get('summary') or x.get('error')}" for x in report)
-    return {**merged, "code": merged["rc"], "image": ev.DEV_IMAGE, "branch": label,
-            "out": text, "repo": "vera", "pool": {"shards": report,
-                                                  "seconds": round(time.time() - t0, 1)}}
+    res = {**merged, "code": merged["rc"], "image": ev.DEV_IMAGE, "branch": label,
+           "out": text, "repo": "vera", "pool": {"shards": report,
+                                                 "seconds": round(time.time() - t0, 1)}}
+    if keep_outputs:
+        res["_outputs"] = outputs
+    return res
 
 
 _orch.TEST_POOL = run_pooled
@@ -456,26 +460,34 @@ async def cap_test_pool_config_set(enabled: Optional[bool] = None, max_nodes: Op
     http_method="POST", http_path="/evolve/test_pool/parity", http_tags=["evolve"],
     memory="off",
     description="Run a branch's critical tier twice - once on the host alone, once through "
-                "the pool - and compare: totals and the exact sets of failed and errored "
-                "tests must match. Takes the host runner for the whole check. Inputs: branch "
-                "(str - default bleeding-edge), markers (str='critical'). Output: {ok, "
-                "identical, host, pool, only_host, only_pool}.",
+                "the pool - and compare test by test: every test's outcome (passed, failed, "
+                "error, skipped) must be the same in both. Inputs: branch (str - a branch "
+                "with a worktree), markers (str='critical'). Output: {ok, identical, host, "
+                "pool, pool_shards, differences: [{test, host, pool, why}]}.",
 )
 async def cap_test_pool_parity(branch: str = "bleeding-edge", markers: str = "critical",
                                trace_id=None) -> Dict:
     ev = _ev()
-    host = await ev.evolve_unittest_run(branch=branch, paths="tests", markers=markers,
-                                        timeout=ev._CRITICAL_TIER_TIMEOUT_S)
-    pool = await run_pooled({"id": ""}, branch, markers=markers, force=True)
+    wt = await ev._branch_worktree(branch)
+    if not wt or not os.path.isdir(os.path.join(wt, "tests")):
+        return {"ok": False, "error": f"no worktree with tests/ for {branch!r}"}
+    files = core.test_files(os.listdir(os.path.join(wt, "tests")))
+    t0 = time.time()
+    host = await _host_shard(wt, files, markers, ev._CRITICAL_TIER_TIMEOUT_S)
+    if host.get("error"):
+        return {"ok": False, "error": "host run: " + host["error"]}
+    host_s = round(time.time() - t0, 1)
+    pool = await run_pooled({"id": ""}, branch, markers=markers, force=True, keep_outputs=True)
     if pool is None:
-        return {"ok": False, "error": "the pool did not apply (no worktree or too few files)",
-                "host": host.get("summary")}
-
-    def bad(res):
-        return {d.get("node_id") for d in (res.get("failure_details") or [])}
-    only_host, only_pool = sorted(bad(host) - bad(pool)), sorted(bad(pool) - bad(host))
-    same_counts = all(host.get(k) == pool.get(k) for k in ("passed", "failed", "errors", "skipped"))
-    return {"ok": True, "identical": same_counts and not only_host and not only_pool,
-            "host": {k: host.get(k) for k in ("summary", "passed", "failed", "errors", "skipped")},
+        return {"ok": False, "error": "the pool did not apply (too few test files)"}
+    d = core.parity_diff([host["out"]], pool.pop("_outputs", []))
+    hp = host["parsed"]
+    same = (not d["differences"]) and all(hp.get(k) == pool.get(k)
+                                          for k in ("passed", "failed", "errors", "skipped"))
+    return {"ok": True, "identical": same,
+            "host": {k: hp.get(k) for k in ("summary", "passed", "failed", "errors", "skipped")},
+            "host_seconds": host_s,
             "pool": {k: pool.get(k) for k in ("summary", "passed", "failed", "errors", "skipped")},
-            "pool_shards": pool.get("pool"), "only_host": only_host[:30], "only_pool": only_pool[:30]}
+            "pool_shards": pool.get("pool"),
+            "cases": {"host": d["host_cases"], "pool": d["pool_cases"]},
+            "differences": d["differences"][:60]}
