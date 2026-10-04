@@ -215,6 +215,90 @@ def entity_types(result: Dict[str, Any], keep: Iterable[str]) -> Dict[str, str]:
     return {w: lab for w, (_, lab) in best.items()}
 
 
+# ── which named organisations have a price ───────────────────────────────────
+
+# Entity types (from the topic label sets) that can be a listed company or fund.
+ORG_LABELS = {"company", "organization", "property developer", "real estate investment trust",
+              "property agency or consultancy", "investor", "investment fund", "research lab",
+              "hardware or chip", "property firm", "cryptocurrency"}
+_ORG_SUFFIX = re.compile(r"\b(plc|p\.l\.c|inc|incorporated|corp|corporation|ltd|limited|group|holdings?|"
+                         r"co|company|sa|ag|nv|se|llc|the|class [a-c])\b\.?")
+LISTED = {"stock", "etf", "equity", "crypto", "fund", None, ""}
+
+
+def org_key(name: str) -> str:
+    """A company name without legal suffixes and punctuation: 'Savills plc' -> 'savills'."""
+    s = re.sub(r"[^a-z0-9 ]+", " ", str(name or "").lower().replace("&", " and "))
+    s = _ORG_SUFFIX.sub(" ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+# The few brands whose listing goes by another name.
+ALIASES = {"google": "alphabet", "meta": "meta platforms", "facebook": "meta platforms", "amazon": "amazon com",
+           "jll": "jones lang lasalle", "ibm": "international business machines", "tsmc": "taiwan semiconductor manufacturing",
+           "landsec": "land securities", "british land": "british land company"}
+
+
+def name_match(entity: str, listed_name: str, symbol: str = "") -> float:
+    """How surely a listing IS the named organisation: 1 for the same name (after
+    legal suffixes), a known alias, or a name that IS the ticker; otherwise the
+    bigram overlap (a prefix is not enough: "Modus" is not "Modus Therapeutics")."""
+    a, b = org_key(entity), org_key(listed_name)
+    if not a or not b:
+        return 0.0
+    if a == b or ALIASES.get(a) == b:
+        return 1.0
+    root = str(symbol or "").split(".")[0].split("-")[0].lower()
+    if root and a.replace(" ", "") == root and "/" not in symbol:
+        return 1.0
+    return round(min(_dice(a, b), 0.79), 3)
+
+
+def org_mentions(signals: Sequence[Dict[str, Any]], *, follow: Sequence[str] = (), min_mentions: int = 2,
+                 limit: int = 8) -> List[Tuple[str, int]]:
+    """The organisations a topic's sources name most (each signal counts once).
+    Typed entities count only when their type can be listed; untyped ones (older
+    signals) count, and the listing match filters them later. Followed entities
+    always come first."""
+    counts: Dict[str, int] = {}
+    names: Dict[str, str] = {}
+    for s in signals:
+        types = s.get("entity_types") or {}
+        seen = set()
+        for e in s.get("entities") or []:
+            if types and types.get(e) not in ORG_LABELS:
+                continue
+            k = org_key(e)
+            if not k or k in seen or not entity_ok(e):
+                continue
+            seen.add(k)
+            counts[k] = counts.get(k, 0) + 1
+            names.setdefault(k, e)
+    out = [(f, 999) for f in follow if org_key(f)]
+    have = {org_key(f) for f, _ in out}
+    out += [(names[k], n) for k, n in sorted(counts.items(), key=lambda kv: -kv[1])
+            if n >= min_mentions and k not in have]
+    return out[:limit]
+
+
+def pick_listing(entity: str, results: Sequence[Dict[str, Any]], *, crypto: bool = False,
+                 threshold: float = 0.95) -> Optional[Dict[str, Any]]:
+    """The listing for a named organisation: the lookup's first stock (or, when the
+    entity is a cryptocurrency, coin) whose name or ticker IS the organisation's.
+    Exchange perps named after a company and ETFs named after a theme never count."""
+    for r in results or []:
+        sym, cls = str(r.get("symbol") or ""), r.get("asset_class")
+        if r.get("provider") == "custom" or cls not in LISTED:
+            continue
+        if ("/" in sym or cls == "crypto") != crypto:
+            continue
+        if cls == "etf" and org_key(entity) != org_key(r.get("name") or ""):
+            continue
+        if name_match(entity, r.get("name") or sym, sym) >= threshold:
+            return r
+    return None
+
+
 def qa_answer(question: str, result: Dict[str, Any], threshold: float = 0.35) -> Optional[Dict[str, Any]]:
     """An extractive answer worth showing (a span with a score), or None."""
     r = result or {}

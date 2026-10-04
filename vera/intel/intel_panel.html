@@ -292,7 +292,7 @@ async function openTopic(id) {
     </div>
     <div class="card"><vera-intel-timeline topic="${esc(id)}" days="90"></vera-intel-timeline></div>
     <div class="card"><div class="row"><h3 class="grow" style="margin:0">Numbers this topic watches</h3>
-        <button class="btn" onclick="pmSuggest()" title="prediction markets that would measure its open questions">% Markets for its questions</button>
+        <button class="btn" onclick="indSuggest()" title="listed companies its sources name, and prediction markets on it - no model call">✦ Suggest</button>
         <button class="btn" onclick="checkInd()" title="look for moves now - no model">↻ Check</button></div>
       <div class="small muted">A price, a macro series or any bar dataset. A spike, a level shift or a new regime joins the timeline and the next assessment, with the stories that landed around it.</div>
       <div id="indList" class="small"></div>
@@ -347,6 +347,22 @@ async function pmFind(q) {
   $('pmRows').innerHTML = '<div class="muted">searching…</div>';
   const r = await call('intel.pm.search', {query: q, limit: 8});
   $('pmRows').innerHTML = (r.rows || []).map(pmRow).join('') || `<div class="muted">${esc((r.errors || []).join('; ') || r.error || 'no open market found')}</div>`;
+}
+async function indSuggest() {
+  $('pmRows').innerHTML = '<div class="muted">reading what its sources name…</div>';
+  const r = await call('intel.indicator.suggest', {topic_id: CUR});
+  const pr = (r.prices || []).map(p => `<div class="sig"><div class="sc">¤</div><div><b>${esc(p.name)}</b> <span class="muted">${esc(p.symbol)}</span>
+      <div class="muted">${p.followed ? 'you follow ' + esc(p.entity) : 'named in ' + esc(String(p.mentions)) + ' of its sources as ' + esc(p.entity)}</div></div>
+      <div class="ops"><button class="btn" onclick="priceWatch('${esc(p.provider)}','${esc(p.symbol)}','${esc(p.name)}',this)">Watch</button></div></div>`).join('');
+  const mk = (r.markets || []).map(pmRow).join('');
+  $('pmRows').innerHTML = (pr ? '<div style="margin-top:6px"><b>Companies its sources name</b></div>' + pr : '')
+    + (mk ? '<div style="margin-top:6px"><b>Prediction markets</b></div>' + mk : '')
+    || `<div class="muted">${esc((r.errors || []).join('; ') || r.error || 'nothing to suggest yet - it needs a few nights of sources')}</div>`;
+}
+async function priceWatch(provider, symbol, name, btn) {
+  const r = await call('intel.indicator.add', {topic_id: CUR, kind: 'price', provider, symbol, label: name});
+  if (btn) { btn.textContent = r.error ? '✗' : '✓'; btn.disabled = true; btn.title = r.error || ''; }
+  if (!r.error) loadInd();
 }
 async function pmSuggest() {
   $('pmRows').innerHTML = '<div class="muted">matching its questions to markets…</div>';

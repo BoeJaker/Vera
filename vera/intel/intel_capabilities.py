@@ -1072,9 +1072,11 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
                         "(price|macro|probability|count), query (what to look up, or the macro series id), "
                         "dataset_id (an existing bar dataset instead), label; for a prediction market, kind "
                         "probability with market_source (polymarket|manifold) and market_id (from intel.pm.search "
-                        "or intel.pm.suggest). Output: {ok, indicator}.")
+                        "or intel.pm.suggest); for an exact listing, provider and symbol (from "
+                        "intel.indicator.suggest). Output: {ok, indicator}.")
 async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str = "", dataset_id: str = "",
-                            label: str = "", market_source: str = "", market_id: str = "", trace_id=None):
+                            label: str = "", market_source: str = "", market_id: str = "", provider: str = "",
+                            symbol: str = "", trace_id=None):
     t = store().get_topic(topic_id)
     if not t:
         return {"error": f"unknown topic: {topic_id}"}
@@ -1095,6 +1097,11 @@ async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str 
             return {"error": "that market is closed, resolved or not a yes/no market"}
         market = {k: c.get(k) for k in ("source", "id", "token", "question", "url", "end")}
         ds, name = pm.ref(c), pm.label(c)
+    if not ds and kind == "price" and provider and symbol:
+        add = await _call("markets.asset.add", provider=provider, symbol=symbol, timeframes=["1d"])
+        if add.get("error"):
+            return {"error": add["error"]}
+        ds, name = f"mkt.{provider.lower()}.{_mkt_slug(symbol)}.1d", label or symbol
     if not ds:
         if not query:
             return {"error": "query or dataset_id required"}
@@ -1231,6 +1238,65 @@ async def cap_pm_suggest(topic_id: str = "", per_question: int = 2, trace_id=Non
         if keep:
             out.append({"question": q, "markets": keep[:max(1, int(per_question))]})
     return {"suggestions": out, "errors": sorted(set(errors))}
+
+
+async def _lookup(name: str) -> List[Dict[str, Any]]:
+    """markets.lookup, remembered for a week (names repeat night after night)."""
+    st = store()
+    cache = st.get_kv("lookup_cache", {}) or {}
+    k = ops.org_key(name)
+    hit = cache.get(k)
+    if hit and (core.parse_ts(hit.get("at")) or datetime.min.replace(tzinfo=timezone.utc)) > \
+            datetime.now(timezone.utc) - timedelta(days=7):
+        return hit.get("results") or []
+    r = await _call("markets.lookup", query=name, limit=5)
+    res = [{k2: x.get(k2) for k2 in ("provider", "symbol", "name", "asset_class")} for x in r.get("results") or []][:5]
+    if not r.get("error"):
+        cache[k] = {"at": core.now_iso(), "results": res}
+        if len(cache) > 500:
+            cache = dict(sorted(cache.items(), key=lambda kv: kv[1].get("at") or "")[-400:])
+        st.set_kv("lookup_cache", cache)
+    return res
+
+
+@capability("intel.indicator.suggest", http_method="GET", http_path="/intel/indicator/suggest", http_tags=["intel"],
+            memory="off", silent=True,
+            description="Numbers a topic could watch, proposed from what its sources say (no model call): the "
+                        "listed companies its sources name most (matched by name through markets.lookup) and open "
+                        "prediction markets on the topic and its questions. Watch one with intel.indicator.add. "
+                        "Input: topic_id (str!), days (signals window, default 60). Output: {prices:[{entity, "
+                        "mentions, provider, symbol, name}], markets:[...], errors}.")
+async def cap_indicator_suggest(topic_id: str = "", days: int = 60, trace_id=None):
+    st = store()
+    t = st.get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    watched = {i.get("dataset_id") for i in _indicators(topic_id)}
+    sigs = st.signals(topic_id, since=_since(24 * max(1, int(days or 60))), limit=500)
+    prices: List[Dict[str, Any]] = []
+    coins = {e for sg in sigs for e, lab in (sg.get("entity_types") or {}).items() if lab == "cryptocurrency"}
+    for ent, n in ops.org_mentions(sigs, follow=t.get("entities") or []):
+        hit = ops.pick_listing(ent, await _lookup(ent), crypto=ent in coins)
+        if not hit:
+            continue
+        ds = f"mkt.{hit['provider'].lower()}.{_mkt_slug(hit['symbol'])}.1d"
+        if ds in watched or any(p["symbol"] == hit["symbol"] for p in prices):
+            continue
+        prices.append({"entity": ent, "mentions": None if n >= 999 else n, "followed": n >= 999,
+                       "provider": hit["provider"], "symbol": hit["symbol"], "name": hit.get("name") or hit["symbol"]})
+        if len(prices) >= 6:
+            break
+    markets: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    for q in [t["name"]] + list(t.get("questions") or [])[:3]:
+        rows, errs = await pm_search(q, 4)
+        errors += errs
+        for r in rows:
+            if (r.get("match") is None or r["match"] > 0) and pm.ref(r) not in watched \
+                    and all(m["id"] != r["id"] for m in markets):
+                markets.append(dict(r, for_question=q))
+    markets.sort(key=lambda m: -(m.get("match") if m.get("match") is not None else -99.0))
+    return {"prices": prices, "markets": markets[:5], "errors": sorted(set(errors))}
 
 
 @capability("intel.indicator.list", http_method="GET", http_path="/intel/indicator/list", http_tags=["intel"],
