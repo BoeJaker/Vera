@@ -176,10 +176,15 @@
   // the item opens the page, before the panel's own handler can show its in-page section (capture, on the document)
   document.addEventListener('click', function(ev){
     var t = ev.target && ev.target.closest ? ev.target.closest('[data-vera-settings]') : null;
+    /* a pick anywhere else in the panel's menu - from the panel or from the harness's LHM, which presses the same item - leaves
+       the page: it covered the panel while the menu moved on beneath it, and nothing got you out (owner, 2026-10-04) */
+    if(!t && _cur && !_pass){ var nav = ev.target && ev.target.closest ? ev.target.closest('[data-vera-lhm] button, [data-vera-lhm] [data-section], .nav-btn, [data-vera-sub], .vp-sub, .vp-cta') : null; if(nav && !(_page && _page.contains(nav))) close(); return; }
     if(!t || _pass) return;   /* _pass: our own replay of the item's click, for the panel's handler */
     ev.preventDefault(); ev.stopPropagation();
     open(t);
   }, true);
+  /* the harness forwards Esc (its focus is not in this frame after a pick from its menu) */
+  window.addEventListener('message', function(ev){ var d = ev.data; if(d && d.type === 'vera:settings:close' && _cur) close(); });
   document.addEventListener('keydown', function(ev){
     if(ev.key === 'Escape' && _cur){ ev.preventDefault(); close(); return; }
     if((ev.ctrlKey || ev.metaKey) && ev.key === ','){ var t = document.querySelector('[data-vera-settings]'); if(t){ ev.preventDefault(); if(_cur) close(); else open(t); } }

@@ -20,7 +20,11 @@ const pairs = [
 for (const [name, chat, shared] of pairs) t(name + ' - as the chat\'s page', chat.test(CHAT) && shared.test(VS), 'chat ' + chat.test(CHAT) + ' shared ' + shared.test(VS));
 
 // behaviour
-t('the item opens it before the panel\'s own handler (capture on the document)', /document\.addEventListener\('click', function\(ev\)\{\n    var t = ev\.target && ev\.target\.closest \? ev\.target\.closest\('\[data-vera-settings\]'\) : null;\n    if\(!t \|\| _pass\) return;[^\n]*\n    ev\.preventDefault\(\); ev\.stopPropagation\(\);\n    open\(t\);\n  \}, true\);/.test(VS));
+t('the item opens it before the panel\'s own handler (capture on the document)', /document\.addEventListener\('click', function\(ev\)\{\n    var t = ev\.target && ev\.target\.closest \? ev\.target\.closest\('\[data-vera-settings\]'\) : null;/.test(VS) && /if\(!t \|\| _pass\) return;[^\n]*\n    ev\.preventDefault\(\); ev\.stopPropagation\(\);\n    open\(t\);\n  \}, true\);/.test(VS));
+// 2026-10-04 (owner): "opening a settings menu like the one in the intelligence panel oft locks the ui and you cant get out"
+t('a pick elsewhere in the panel\'s menu (from the panel or the harness LHM) leaves the page', /if\(!t && _cur && !_pass\)\{ var nav = ev\.target && ev\.target\.closest \? ev\.target\.closest\('\[data-vera-lhm\] button/.test(VS) && /if\(nav && !\(_page && _page\.contains\(nav\)\)\) close\(\); return; \}/.test(VS));
+t('the harness forwards Esc to the open panel; the page closes on it', /if\(d && d\.type === 'vera:settings:close' && _cur\) close\(\);/.test(VS) && /f\.contentWindow\.postMessage\(\{ type: 'vera:settings:close' \}, '\*'\)/.test(R('vera', 'capability_orchestration.html')));
+t('the page\'s own header (its ✕) is never lifted into the harness\'s top bar', /if\(c\[i\]\.closest\('\.vs-page, \[role="dialog"\], \[aria-modal="true"\], \[data-vera-float\]'\)\) continue;/.test(R('vera', 'chat', 'vera-panel-bridge.js')));
 t('the panel\'s own handler still runs first (a replayed click), so whatever fills the section loads', /if\(!_cur\)\{ _pass = true; try\{ trigger\.click\(\); \}catch\(e\)\{\} finally\{ _pass = false; \} \}/.test(VS));
 t('openSection: a panel that builds its settings when asked hands its element over', /function openSection\(sec, opts\)\{/.test(VS) && /window\.VeraSettings = \{[^}]*openSection/.test(VS));
 t('a block whose place the panel re-drew goes back into the section, never lost', /else if\(sec\)\{ sec\.appendChild\(m\.el\); \}/.test(VS));
