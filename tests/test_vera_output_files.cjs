@@ -64,5 +64,12 @@ const CV = R('vera/canvas/canvas_element.js');
 t('a canvas code item whose language is a file type is drawn as its file card', CV.includes("const fk = VO && vid && typeof VO.fileKind === 'function' ? VO.fileKind(c.lang) : '';")
   && CV.includes("VO.fileCard(fk, String(c.lang || ''), String(c.code || ''), { id: vid, canvas: false, cls: 'vc-kit', incomplete: streaming"));
 t('a history preview stops before a fence it would cut open', CHAT.includes("if(fences.length%2===1){ const f=fences[fences.length-1]; cut=cut.slice(0,f.index);"));
+// ...and the sheet the model actually wrote: a title, a pipe table with **bold** formulas, a tip under it
+const REAL = '# Monthly Home-Lab Budget\n\n| Item | Monthly Cost (€) | Yearly Cost (€) |\n|---|---|---|\n| Server Hosting | 150 | =B2*12 |\n| Electricity | 40 | =B3*12 |\n| **Total** | **=SUM(B2:B3)** | **=SUM(C2:C3)** |\n\n> [!TIP]\n> Enter your costs in B2-B3.\n';
+const rr = V.rowsOf(REAL, 'sheet'); const rv = V.sheetValues(rr);
+t('a sheet fence with markdown in it: its pipe table is the table, emphasis is not a value, formulas work out', rr.length === 4 && rr[0].length === 3
+  && rr[3][0] === 'Total' && rr[3][1] === '=SUM(B2:B3)' && rv[3][1] === 190 && rv[3][2] === 2280 && rv[1][2] === 1800);
+t('without a pipe table, a heading or a note never decides the separator', V.rowsOf('# Costs\na,b\n1,2\n> note', 'sheet').length === 2 && V.rowsOf('# Costs\na,b\n1,2', 'sheet')[0].length === 2);
+t('the model is told a sheet block holds only its rows', AG.includes('rows only - no title, notes or ') && AG.includes('"markdown inside the block; cells may hold formulas'));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
