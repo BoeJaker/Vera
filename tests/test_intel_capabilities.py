@@ -648,3 +648,30 @@ def test_indicator_suggest_from_named_companies_and_markets(tmp_path):
     add = _R(orch, "intel.indicator.add", topic_id=t["id"], kind="price", provider="yahoo", symbol="SVS.L", label="Savills plc")
     assert add["indicator"]["dataset_id"] == "mkt.yahoo.svs_l.1d" and add["indicator"]["label"] == "Savills plc"
     assert not _R(orch, "intel.indicator.suggest", topic_id=t["id"])["prices"]          # watched: not suggested again
+
+
+def test_the_brief_offers_suggested_numbers_as_watch_buttons(tmp_path):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Savills"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+
+    async def http_json(url, params=None, timeout=20.0):
+        return {"events": []} if url.endswith("/public-search") else []
+    mod._http_json = http_json
+    _run(mod._refresh_suggestions(mod.store().get_topic(t["id"])))
+    assert mod.store().get_kv(f"ind_suggest:{t['id']}")["prices"][0]["symbol"] == "SVS.L"
+    doc = _run(mod.build_report([t["id"]], period_hours=24))
+    acts = [a for sec in doc["sections"] if sec.get("kind") == "topic" for p in sec["parts"] if p["kind"] == "actions"
+            for a in p["items"] if a["kind"] == "watch"]
+    assert len(acts) == 1 and acts[0]["label"] == "Watch Savills plc"
+    stored = mod.store().get_action(acts[0]["token"])
+    assert mod.core.action_args(stored) == {"topic_id": t["id"], "kind": "price", "provider": "yahoo",
+                                            "symbol": "SVS.L", "label": "Savills plc"}
+    # pressing it watches the number; the next brief does not offer it again
+    r = _R(orch, "intel.action.run", token=acts[0]["token"])
+    assert r.get("ok") and not r.get("error"), r
+    assert [i["dataset_id"] for i in _R(orch, "intel.indicator.list", topic_id=t["id"])["indicators"]] == ["mkt.yahoo.svs_l.1d"]
+    assert not mod._watch_actions(mod.store().get_topic(t["id"]))
+    # a forged target never becomes an action
+    assert mod.core.make_action("watch", topic_id=t["id"], target="price:yahoo:SVS.L; rm -rf /") is None
+    assert mod.core.make_action("watch", topic_id=t["id"], target="http://evil/") is None

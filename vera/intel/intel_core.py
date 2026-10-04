@@ -682,7 +682,12 @@ ACTIONS: Dict[str, Dict[str, Any]] = {
     "read":      {"label": "Read in full", "cap": "reader.page", "glyph": "≡"},
     "track":     {"label": "Track as a topic", "cap": "intel.topic.save", "glyph": "✚"},
     "sweep":     {"label": "Sweep now", "cap": "intel.sweep", "glyph": "↻"},
+    "watch":     {"label": "Watch this number", "cap": "intel.indicator.add", "glyph": "∿"},
 }
+
+# What a watch action may point at: a listing (price:<provider>:<symbol>) or a
+# prediction market (pm:<source>:<id>) - nothing else reaches intel.indicator.add.
+_WATCH_TARGET = re.compile(r"^(price:[a-z0-9_]{2,20}:[A-Za-z0-9.\-=^]{1,24}|pm:(polymarket|manifold):[A-Za-z0-9_\-]{1,80})$")
 
 
 def make_action(kind: str, *, label: str = "", topic_id: str = "", target: str = "",
@@ -697,6 +702,8 @@ def make_action(kind: str, *, label: str = "", topic_id: str = "", target: str =
     if kind == "read" and not str(target).startswith(("http://", "https://")):
         return None
     if kind in ("research", "discover", "track") and not (query or target):
+        return None
+    if kind == "watch" and not (topic_id and _WATCH_TARGET.match(str(target or ""))):
         return None
     exp = (datetime.now(timezone.utc) + timedelta(days=ttl_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {"token": secrets.token_urlsafe(18), "kind": kind, "label": label or spec["label"],
@@ -721,6 +728,11 @@ def action_args(action: Dict[str, Any]) -> Dict[str, Any]:
         return {"name": q or t, "parent": action.get("topic_id", ""), "origin": "report-action"}
     if k == "sweep":
         return {"topic_id": action.get("topic_id", "")}
+    if k == "watch" and _WATCH_TARGET.match(t):
+        kind, a, b = t.split(":", 2)
+        if kind == "price":
+            return {"topic_id": action.get("topic_id", ""), "kind": "price", "provider": a, "symbol": b, "label": q[:60]}
+        return {"topic_id": action.get("topic_id", ""), "kind": "probability", "market_source": a, "market_id": b}
     return {}
 
 
