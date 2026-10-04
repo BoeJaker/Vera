@@ -5616,75 +5616,71 @@ except Exception:                                      # pragma: no cover
 async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, Any]:
     """Run the critical tier for `branch` once no other gate is running one; the gate is
     listed in _GATES_ACTIVE (queued, then running) for as long as it is in flight."""
+    global _critical_tier_lock
     pid = str(rec.get("id") or "")
     _GATES_ACTIVE[pid] = {"id": pid, "branch": branch, "state": "queued", "since": now_iso()}
     try:
-        return await _critical_tier_queued_inner(rec, branch)
-    finally:
-        _GATES_ACTIVE.pop(pid, None)
+        if _critical_tier_lock is None:
+            _critical_tier_lock = asyncio.Lock()
+        token = f"{rec.get('id', '')}:{branch}"
+        queued = False
 
-
-async def _critical_tier_queued_inner(rec: Dict[str, Any], branch: str) -> Dict[str, Any]:
-    global _critical_tier_lock
-    if _critical_tier_lock is None:
-        _critical_tier_lock = asyncio.Lock()
-    token = f"{rec.get('id', '')}:{branch}"
-    queued = False
-
-    async def _note_queued(holder: str):
-        nonlocal queued
-        if queued:
-            return
-        queued = True
-        rec["current"] = f"critical tier queued behind {holder}"
-        _pstep(rec, "critical-queue", True,
-               f"waiting for the gate running now ({holder}) to finish")
-        await _save_pipeline(rec)
-
-    if _critical_tier_lock.locked():
-        await _note_queued("another gate in this process")
-    async with _critical_tier_lock:
-        r = _redis()
-        held = False
-        waited_from = time.monotonic()
-        while r is not None:
-            try:
-                if await r.set(_CRITICAL_TIER_LEASE_KEY, token, nx=True,
-                               ex=_CRITICAL_TIER_LEASE_S):
-                    held = True
-                    break
-                holder = await r.get(_CRITICAL_TIER_LEASE_KEY)
-            except Exception as e:
-                log.warning("critical-tier lease unavailable, running without it: %s", e)
-                break
-            if isinstance(holder, bytes):
-                holder = holder.decode("utf-8", "replace")
-            await _note_queued(str(holder or "another gate"))
-            await asyncio.sleep(_CRITICAL_TIER_POLL_S)
-        if queued:
+        async def _note_queued(holder: str):
+            nonlocal queued
+            if queued:
+                return
+            queued = True
+            rec["current"] = f"critical tier queued behind {holder}"
             _pstep(rec, "critical-queue", True,
-                   f"gate slot free after {int(time.monotonic() - waited_from)} s")
+                   f"waiting for the gate running now ({holder}) to finish")
+            await _save_pipeline(rec)
+
+        if _critical_tier_lock.locked():
+            await _note_queued("another gate in this process")
+        async with _critical_tier_lock:
+            r = _redis()
+            held = False
+            waited_from = time.monotonic()
+            while r is not None:
+                try:
+                    if await r.set(_CRITICAL_TIER_LEASE_KEY, token, nx=True,
+                                   ex=_CRITICAL_TIER_LEASE_S):
+                        held = True
+                        break
+                    holder = await r.get(_CRITICAL_TIER_LEASE_KEY)
+                except Exception as e:
+                    log.warning("critical-tier lease unavailable, running without it: %s", e)
+                    break
+                if isinstance(holder, bytes):
+                    holder = holder.decode("utf-8", "replace")
+                await _note_queued(str(holder or "another gate"))
+                await asyncio.sleep(_CRITICAL_TIER_POLL_S)
+            if queued:
+                _pstep(rec, "critical-queue", True,
+                       f"gate slot free after {int(time.monotonic() - waited_from)} s")
+                rec["current"] = "running critical tier"
+                await _save_pipeline(rec)
+            # Always on the record, queued or not: a restart from here on leaves a gate
+            # gate_resume_core can find and run again.
             rec["current"] = "running critical tier"
             await _save_pipeline(rec)
-        # Always on the record, queued or not: a restart from here on leaves a gate
-        # gate_resume_core can find and run again.
-        rec["current"] = "running critical tier"
-        await _save_pipeline(rec)
-        if str(rec.get("id") or "") in _GATES_ACTIVE:
-            _GATES_ACTIVE[str(rec.get("id") or "")]["state"] = "running"
-        try:
-            return await evolve_unittest_run(branch=branch, paths="tests",
-                                             markers="critical",
-                                             timeout=_CRITICAL_TIER_TIMEOUT_S,
-                                             pipeline_id=rec["id"])
-        finally:
-            if held:
-                try:
-                    await r.eval(_CRITICAL_TIER_RELEASE_LUA, 1,
-                                 _CRITICAL_TIER_LEASE_KEY, token)
-                except Exception as e:
-                    log.warning("critical-tier lease release failed (expires in %d s): %s",
-                                _CRITICAL_TIER_LEASE_S, e)
+            if str(rec.get("id") or "") in _GATES_ACTIVE:
+                _GATES_ACTIVE[str(rec.get("id") or "")]["state"] = "running"
+            try:
+                return await evolve_unittest_run(branch=branch, paths="tests",
+                                                 markers="critical",
+                                                 timeout=_CRITICAL_TIER_TIMEOUT_S,
+                                                 pipeline_id=rec["id"])
+            finally:
+                if held:
+                    try:
+                        await r.eval(_CRITICAL_TIER_RELEASE_LUA, 1,
+                                     _CRITICAL_TIER_LEASE_KEY, token)
+                    except Exception as e:
+                        log.warning("critical-tier lease release failed (expires in %d s): %s",
+                                    _CRITICAL_TIER_LEASE_S, e)
+    finally:
+        _GATES_ACTIVE.pop(pid, None)
 
 async def _critical_gate(rec: Dict[str, Any], branch: str) -> Optional[bool]:
     """The critical-tier half of the adopt gate (shared by evolve.pipeline.adopt and the
