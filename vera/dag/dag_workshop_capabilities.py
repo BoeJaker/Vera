@@ -23989,6 +23989,9 @@ async def cap_dag_agent_loop_v6(
     # 'auto' is the behaviour from before styles existed. The style the run
     # actually used is emitted as agent_loop_v6.plan_style and returned.
     plan_style:         str  = "auto",
+    # True when v7 filled plan_style in with its DEFAULT (nobody chose it). The
+    # single-cap fast path still applies then; only a chosen style turns it off.
+    plan_style_defaulted: bool = False,
     # BROAD only: the model the long-horizon CPU node writes stream briefs with
     # ('' = the planning_style/enrich route's model). The route keeps whichever
     # model it runs warm.
@@ -24127,7 +24130,9 @@ async def cap_dag_agent_loop_v6(
                        if (_intent_zs is not None and enable_tiering) else None)
     # An explicitly chosen style is honoured over the single-cap fast path,
     # which would otherwise skip planning altogether.
-    if _plan_style_eff != "auto":
+    # v7's default style (plan_style_defaulted) is not a choice and keeps the fast
+    # path: 3-4 Oct 2026 every fast-path census goal planned instead (3-8x slower).
+    if _plan_style_eff != "auto" and not plan_style_defaulted:
         enable_fast_path = False
     failure_strategy = (failure_strategy or "").strip().lower()
     if failure_strategy not in ("extra_step", "branch", "default"):
@@ -26066,6 +26071,7 @@ async def cap_dag_agent_loop_v7(goal: str, **kwargs):
     if not str(kwargs.get("plan_style") or "").strip():
         kwargs["plan_style"] = (getattr(_plan_styles, "V7_DEFAULT_LOOP_STYLE", "")
                                 if _plan_styles is not None else "") or "stepwise-reviewed"
+        kwargs["plan_style_defaulted"] = True      # keeps the single-cap fast path
     kwargs.setdefault("enable_step_finalize", True)
     # v7 default failure recovery is 'extra_step' (continue-from-partial-output) —
     # cheaper and less prone to wandering than branching. A caller may still pass
@@ -26326,6 +26332,7 @@ async def workshop_agent_loop_stream(request: Request):
                        if _plan_styles is not None else "") or "stepwise-reviewed") \
         if _v7_default else "auto"
     v6_plan_style        = (body.get("plan_style") or _style_default).strip().lower()
+    v6_plan_style_defaulted = bool(_v7_default and not str(body.get("plan_style") or "").strip())
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
     v6_intent_core       = (body.get("intent_core", "off") or "off").strip().lower()
@@ -26482,6 +26489,7 @@ async def workshop_agent_loop_stream(request: Request):
             enable_tiering=v6_enable_tiering,
             plan_tier=v6_plan_tier,
             plan_style=v6_plan_style,
+            plan_style_defaulted=v6_plan_style_defaulted,
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
             intent_core=v6_intent_core,
