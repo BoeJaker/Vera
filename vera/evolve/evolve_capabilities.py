@@ -5613,6 +5613,79 @@ except Exception:                                      # pragma: no cover
     from vera.evolve import gate_resume_core as _gate_resume_core  # type: ignore
 
 
+try:
+    from Vera.vera.evolve import gate_queue_core as _gate_queue_core
+except Exception:                                      # pragma: no cover
+    from vera.evolve import gate_queue_core as _gate_queue_core  # type: ignore
+
+
+async def _line_join(token: str, rec: Dict[str, Any]) -> None:
+    r = _redis()
+    if r is None:
+        return
+    try:
+        now = time.time()
+        await r.zadd(_gate_queue_core.QUEUE_KEY,
+                     {token: _gate_queue_core.score(rec.get("created_at"), now)})
+        await r.hset(_gate_queue_core.HEARTBEAT_KEY, token, str(now))
+    except Exception as e:
+        log.debug("gate line join: %s", e)
+
+
+async def _line_leave(token: str) -> None:
+    r = _redis()
+    if r is None:
+        return
+    try:
+        await r.zrem(_gate_queue_core.QUEUE_KEY, token)
+        await r.hdel(_gate_queue_core.HEARTBEAT_KEY, token)
+    except Exception as e:
+        log.debug("gate line leave: %s", e)
+
+
+async def _line_ahead(token: str) -> Optional[List[str]]:
+    """Older, live gates ahead of `token` in the line (dropping dead ones); None when the
+    line cannot be read - the caller then does not wait on it."""
+    r = _redis()
+    if r is None:
+        return None
+    try:
+        now = time.time()
+        await r.hset(_gate_queue_core.HEARTBEAT_KEY, token, str(now))
+        line = await r.zrange(_gate_queue_core.QUEUE_KEY, 0, 200, withscores=True)
+        members = [m.decode() if isinstance(m, bytes) else str(m) for m, _ in line]
+        hbs = await r.hmget(_gate_queue_core.HEARTBEAT_KEY, members) if members else []
+        ahead, stale = _gate_queue_core.ahead(line, dict(zip(members, hbs)), token, now)
+        for s in stale:
+            await _line_leave(s)
+        return ahead
+    except Exception as e:
+        log.debug("gate line check: %s", e)
+        return None
+
+
+async def _wait_for_turn(rec: Dict[str, Any], token: str) -> None:
+    """Wait until no older, live gate is ahead in the line (gate_queue_core): gates start
+    oldest pipeline first, across processes. The caller leaves the line once it holds its
+    slot, so the next oldest can go (the test pool still runs several side by side)."""
+    r = _redis()
+    if r is None:
+        return
+    await _line_join(token, rec)
+    noted = False
+    while True:
+        ahead = await _line_ahead(token)
+        if not ahead:
+            return
+        if not noted:
+            noted = True
+            rec["current"] = f"critical tier queued behind {len(ahead)} older gate(s)"
+            _pstep(rec, "critical-queue", True,
+                   f"waiting for {len(ahead)} older gate(s) to start first (oldest first)")
+            await _save_pipeline(rec)
+        await asyncio.sleep(_CRITICAL_TIER_POLL_S)
+
+
 async def _wait_for_release_drain(rec: Dict[str, Any]) -> None:
     """Hold while a pending release is draining the gate queue (release_core.DRAIN_KEY)."""
     r = _redis()
@@ -5653,8 +5726,11 @@ async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, A
         # A release is waiting for the gates already running: do not start now - the
         # restart would kill this run. Start after it (or be resumed by the new process).
         await _wait_for_release_drain(rec)
+        token = f"{rec.get('id', '')}:{branch}"
+        await _wait_for_turn(rec, token)          # oldest pipeline first (gate_queue_core)
         pool = getattr(_orch, "TEST_POOL", None)
         if pool is not None:
+            await _line_leave(token)
             _GATES_ACTIVE[pid]["state"] = "running"
             try:
                 res = await pool(rec, branch, markers="critical",
@@ -5680,17 +5756,25 @@ async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, A
                    f"waiting for the gate running now ({holder}) to finish")
             await _save_pipeline(rec)
 
-        if _critical_tier_lock.locked():
+        _use_lock = _redis() is None
+        if _use_lock and _critical_tier_lock.locked():
             await _note_queued("another gate in this process")
-        async with _critical_tier_lock:
+        async with (_critical_tier_lock if _use_lock else contextlib.nullcontext()):
             r = _redis()
             held = False
             waited_from = time.monotonic()
             while r is not None:
+                # Only the oldest live gate in the line tries for the slot.
+                _older = await _line_ahead(token)
+                if _older:
+                    await _note_queued(f"{len(_older)} older gate(s)")
+                    await asyncio.sleep(_CRITICAL_TIER_POLL_S)
+                    continue
                 try:
                     if await r.set(_CRITICAL_TIER_LEASE_KEY, token, nx=True,
                                    ex=_CRITICAL_TIER_LEASE_S):
                         held = True
+                        await _line_leave(token)      # the slot is ours: the next oldest may go
                         break
                     holder = await r.get(_CRITICAL_TIER_LEASE_KEY)
                 except Exception as e:
@@ -5726,6 +5810,7 @@ async def _critical_tier_queued(rec: Dict[str, Any], branch: str) -> Dict[str, A
                                     _CRITICAL_TIER_LEASE_S, e)
     finally:
         _GATES_ACTIVE.pop(pid, None)
+        await _line_leave(f"{rec.get('id', '')}:{branch}")
 
 async def _critical_gate(rec: Dict[str, Any], branch: str) -> Optional[bool]:
     """The critical-tier half of the adopt gate (shared by evolve.pipeline.adopt and the
