@@ -95,6 +95,25 @@ try:
 except Exception:                       # worktree / app-free import
     from vera.agents import agent_patch_core as _agent_patch
 try:
+    from Vera.vera.agents import turn_needs_core as _turn_needs
+except Exception:                       # worktree / app-free import
+    from vera.agents import turn_needs_core as _turn_needs
+
+
+async def _switch_mode(feature_id: str, minds: Any = None, default: str = "off") -> str:
+    """The effective switchboard mode of one switch for this request (call > global > default). A request's minds
+    that do not validate, or a switchboard that cannot be read, leave the switch at its default - never on."""
+    try:
+        cap = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        if not cap:
+            return default
+        eff = await cap(minds=minds if isinstance(minds, dict) and minds else None)
+        modes = (eff or {}).get("modes") or {}
+        return str(modes.get(feature_id) or default)
+    except Exception as e:
+        log.debug("switch %s unreadable: %s", feature_id, e)
+        return default
+try:
     from Vera.vera.agents import turn_phases_core as _phases
 except Exception:                       # worktree / app-free import
     from vera.agents import turn_phases_core as _phases
@@ -1937,6 +1956,31 @@ async def agent_chat_stream_endpoint(request: Request):
     # the three-phase UX: opener/ack → "searching the web…" → substantive answer.
     _web_enabled = bool(body.get("web_search"))
     _web_query   = (body.get("web_search_query") or message or "").strip()
+    # ── What the turn needs, decided before the model (context-and-ui CU-T.3/T.4; owner 2026-10-04: web context
+    # "triggered deterministically (or using nlp) ... to save the llm having to call a search cap"). Behind the
+    # switch context.needs_web (off by default). The rules read the bare question (canvas_text - the chat sends it
+    # beside a message that carries its own injected blocks), never turn off a search the user asked for, and the
+    # search they start is waited on for at most 3 s (the owner's budget) - past that the answer goes ahead without
+    # it and the sources still show. Every decision is an event, so it can be measured and later learned.
+    _needs = None
+    _web_auto = False
+    _bare_q = str(body.get("canvas_text") or message or "")[:2000]
+    if not _web_enabled and _bare_q.strip():
+        if await _switch_mode("context.needs_web", body.get("minds")) == "rules":
+            try:
+                _needs = _turn_needs.needs(_bare_q)
+            except Exception as _e:
+                log.debug("turn needs: %s", _e)
+                _needs = None
+            if _needs and _needs["web"]["on"]:
+                _web_enabled, _web_auto = True, True
+                _web_query = (_needs["web"].get("query") or _bare_q).strip()[:200]
+            if _needs:
+                try:
+                    await emit_event({"type": "context.needs", "session_id": session_id, "decider": "rules",
+                                      "web": _needs["web"], "memory_deep": _needs["memory_deep"]})
+                except Exception:
+                    pass
     _web_limit   = max(1, min(10, int(body.get("web_search_limit", 5) or 5)))
     _web_engine  = (body.get("web_search_engine") or "auto").strip() or "auto"
     _web_task    = None
@@ -1980,6 +2024,9 @@ async def agent_chat_stream_endpoint(request: Request):
         lines.append(
             "\nGround your answer in these results and cite sources as [n] where "
             "relevant. If they don't cover the question, say so rather than guessing.")
+        if _web_auto:
+            lines.append("This search was run for you before you answered; do not call web.search again for the "
+                         "same thing.")
         return "\n".join(lines)
 
     async def _safe_gen():
@@ -2005,6 +2052,11 @@ async def agent_chat_stream_endpoint(request: Request):
                 # what happened before the stream could open, with the time each step really took
                 for _f in _phases.from_marks(_ph, _ep_marks):
                     await _q.put(("data: " + json.dumps(_f) + "\n\n").encode())
+                if _needs is not None:
+                    _wn = _needs["web"]
+                    await _q.put(_ph.sse("needs", "web", "deciding whether to search the web",
+                                         "done" if _wn["on"] else "skip", ms=0,
+                                         detail=_wn.get("reason", "")))
                 if _web_task is not None:
                     await _q.put(_ph.sse("acquire", "web", _phases.web_label(_web_query), "start", t=_web_t0))
 
@@ -2038,22 +2090,48 @@ async def agent_chat_stream_endpoint(request: Request):
                 # Gate on the web search so the answer is informed by the fresh
                 # results, and publish the sources to the UI before tokens flow.
                 if _web_task is not None:
+                    _late = False
                     try:
-                        _wres = await _web_task
+                        if _web_auto:
+                            # a search the rules started holds the answer for at most 3 s (the owner's budget); past
+                            # that the answer goes ahead without it and the phase says it came late
+                            _wres = await asyncio.wait_for(asyncio.shield(_web_task), 3.0)
+                        else:
+                            _wres = await _web_task
+                    except asyncio.TimeoutError:
+                        _wres, _late = None, True
+                        if _ph is not None:
+                            await _q.put(_ph.sse("acquire", "web", _phases.web_label(_web_query), "late",
+                                                 ms=(_time.monotonic() - _web_t0) * 1000,
+                                                 detail="answered without it; the sources follow"))
                     except Exception:
                         _wres = None
-                    _srcs = []
-                    if isinstance(_wres, dict):
-                        for r in (_wres.get("results") or [])[:_web_limit]:
-                            _srcs.append({
-                                "title": (r.get("title") or r.get("url") or "")[:140],
-                                "url":   r.get("url") or "",
-                            })
-                    await _q.put(
-                        ("data: " + json.dumps({"type": "web_results",
-                                                "query": _web_query[:200],
-                                                "sources": _srcs,
-                                                "count": len(_srcs)}) + "\n\n").encode())
+
+                    def _results_frame(res, late=False):
+                        srcs = []
+                        if isinstance(res, dict):
+                            for r in (res.get("results") or [])[:_web_limit]:
+                                srcs.append({
+                                    "title": (r.get("title") or r.get("url") or "")[:140],
+                                    "url":   r.get("url") or "",
+                                })
+                        fr = {"type": "web_results", "query": _web_query[:200], "sources": srcs, "count": len(srcs)}
+                        if late:
+                            fr["late"] = True
+                        return ("data: " + json.dumps(fr) + "\n\n").encode()
+
+                    if _late:
+                        # the answer went ahead without it: the sources follow when the search answers (never an
+                        # empty "no results" while it is still running)
+                        async def _late_results():
+                            try:
+                                _w2 = await _web_task
+                            except Exception:
+                                return
+                            await _q.put(_results_frame(_w2, late=True))
+                        asyncio.create_task(_late_results())
+                    else:
+                        await _q.put(_results_frame(_wres))
                     _frag = _format_web_context(_wres)
                     if _frag:
                         _prefix = (_prefix + "\n\n" + _frag).strip()

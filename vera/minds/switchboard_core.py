@@ -59,6 +59,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "Research cites the JEPA worldview only when worldview.health is 'ok'. "
        "'on' (default) = gated; 'off' = the old ungated behaviour. A safety gate, "
        "so the documented exception to off-by-default."),
+    _f("context.needs_web", ("off", "rules"), "chat", "CU-T.3",
+       "Decide from the words of a chat turn whether it needs the web before the model answers (fresh facts, an "
+       "explicit 'search for', a market figure) and search then - announced in the throbber, waited on at most 3 s, "
+       "never instead of a search the user turned on. 'off' (default) = only the user's Web live toggle searches; "
+       "'rules' = the rules decide (turn_needs_core).", owner="context-and-ui"),
 )}
 
 
