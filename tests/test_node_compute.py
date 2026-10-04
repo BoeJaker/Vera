@@ -69,8 +69,12 @@ def test_decide_goes_to_the_nodes_when_every_compute_worker_can_run_it():
 
 def test_decide_refuses_rather_than_running_on_the_host_by_default():
     ws = [_w("cpu-246", FULL), _w("cpu-247", {"numpy": True, "torch": False})]
-    where, why = core.decide("worldview.train", ws, host_fallback=False)
-    assert where == "refuse" and "cpu-247" in why and "host fallback" in why
+    # a job is planned onto ONE node, so one capable node is enough
+    assert core.decide("worldview.train", ws, host_fallback=False)[0] == "node"
+    assert [w["host"] for w in core.capable("worldview.train", ws)] == ["cpu-246"]
+    no_torch = [_w("cpu-247", {"numpy": True, "torch": False})]
+    where, why = core.decide("worldview.train", no_torch, host_fallback=False)
+    assert where == "refuse" and "torch" in why and "host fallback" in why
     # numpy alone is enough for the ML Lab trainer
     assert core.decide("ml.train", ws, host_fallback=False)[0] == "node"
     assert core.decide("worldview.train", [], host_fallback=False)[0] == "refuse"
@@ -90,7 +94,9 @@ def test_liveness():
 
 
 def test_merge_config_defaults_to_nodes_only():
-    assert core.merge_config({}) == {"host_fallback": False, "threads": 4}
+    cfg = core.merge_config({})
+    assert cfg["host_fallback"] is False and cfg["threads"] == 4
+    assert cfg["reserve_cpu"] == 2.0 and cfg["reserve_mem_gb"] == 8.0
     assert core.merge_config({"threads": 999, "host_fallback": 1})["threads"] == 32
 
 
@@ -113,7 +119,8 @@ def test_compute_run_rides_a_stream_the_host_does_not_read():
 def test_every_function_is_a_module_level_def_in_its_module():
     files = {"worldview_jepa": "vera/worldview/worldview_jepa.py",
              "ml_training": "vera/machine learning/ml_training.py",
-             "markets_lab_capabilities": "vera/markets/markets_lab_capabilities.py"}
+             "markets_lab_capabilities": "vera/markets/markets_lab_capabilities.py",
+             "test_runner_core": "vera/evolve/test_runner_core.py"}
     for name, (base, attr, _libs) in core.FUNCTIONS.items():
         tree = ast.parse(open(os.path.join(ROOT, files[base]), encoding="utf-8").read())
         top = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}

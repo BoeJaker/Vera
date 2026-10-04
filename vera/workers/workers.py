@@ -63,8 +63,17 @@ async def _push_local_metrics():
             cpu  = psutil.cpu_percent(interval=None)
             ram  = psutil.virtual_memory()
             disk = psutil.disk_usage("/")
+            try:
+                load1 = os.getloadavg()[0]
+            except (AttributeError, OSError):
+                load1 = 0.0
             metrics = {
                 "cpu_pct":      round(cpu, 1),
+                # what node scheduling admits a job against (node_compute_core):
+                # available memory counts page cache as free; used does not
+                "mem_avail_gb": round(ram.available / 1e9, 2),
+                "ncpu":         psutil.cpu_count() or 1,
+                "load1":        round(load1, 2),
                 "ram_used_gb":  round(ram.used  / 1e9, 2),
                 "ram_total_gb": round(ram.total / 1e9, 2),
                 "ram_pct":      round(ram.percent, 1),
@@ -90,6 +99,10 @@ async def _push_local_metrics():
                             continue
                         await r.hset(f"vera:workers:{wid}", mapping={
                             "cpu_pct":       str(metrics["cpu_pct"]),
+                            "mem_avail_gb":  str(metrics["mem_avail_gb"]),
+                            "ncpu":          str(metrics["ncpu"]),
+                            "load1":         str(metrics["load1"]),
+                            "metrics_at":    str(round(time.time(), 1)),
                             "ram_used_gb":   str(metrics["ram_used_gb"]),
                             "ram_total_gb":  str(metrics["ram_total_gb"]),
                             "ram_pct":       str(metrics["ram_pct"]),

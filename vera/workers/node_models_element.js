@@ -90,7 +90,8 @@
         const [n, c, l] = await Promise.all([this._get('/nlp/nodes'), this._get('/nlp/config'), this._get('/fabric/nlp/config')]);
         this._nlp = n; this._ncfg = c; this._llmnlp = l;
       } else if (sec === 'training') {
-        this._comp = await this._get('/compute/status');
+        const [c, t] = await Promise.all([this._get('/compute/status'), this._get('/evolve/test_pool/status')]);
+        this._comp = c; this._pool = t;
       } else if (sec === 'settings' && !this._settings) {
         this._setBusy = 'load'; this.render();
         this._settings = await this._get('/nodes/ollama/settings'); this._setBusy = '';
@@ -133,7 +134,7 @@
       } else if (sec === 'settings') {
         h = '<div class="hdr"><span class="t">Node settings</span>' + msg + '</div>' + this._settingsHtml();
       } else if (sec === 'training') {
-        h = '<div class="hdr"><span class="t">Training</span>' + msg + '</div>' + this._trainHtml();
+        h = '<div class="hdr"><span class="t">Node jobs</span>' + msg + '</div>' + this._trainHtml();
       } else {
         h = '<div class="hdr"><span class="t">NLP</span>' + msg + '</div>' + this._nlpHtml();
       }
@@ -293,22 +294,34 @@
       const c = this._comp;
       if (!c) return '<div class="muted">loading...</div>';
       const cfg = c.config || {}, ws = c.workers || [], fns = c.functions || {}, jobs = c.jobs || [];
+      const tp = this._pool || {}, tenv = ((tp.testenv || {}).nodes) || {}, pcfg = tp.config || {};
       const lib = (l, k) => '<span class="badge ' + (l[k] ? 'ok' : 'bad') + '">' + k + '</span>';
-      let h = '<div class="panel"><div class="sec">Workers that train</div><table><tr><th>node</th><th>libraries</th><th>now</th></tr>'
-        + ws.map((w) => { const l = w.libs || {}; return '<tr><td><b>' + esc(w.host || w.id) + '</b></td><td>'
-            + ['numpy', 'torch', 'sklearn'].map((k) => lib(l, k)).join(' ') + '</td><td class="muted">'
-            + esc((w.status || '').replace('running:', 'running ')) + '</td></tr>'; }).join('')
-        + (ws.length ? '' : '<tr><td colspan="3" class="muted">no node worker has the CPU compute class</td></tr>')
-        + '</table></div>';
-      const label = { 'worldview.train': 'Worldview', 'ml.train': 'ML Lab', 'markets.ml.train': 'Markets models' };
-      h += '<div class="panel"><div class="sec">Where each trainer runs</div><table><tr><th>trainer</th><th>needs</th><th>runs on</th><th></th></tr>'
-        + Object.keys(fns).map((k) => { const f = fns[k]; const cls = f.would_run === 'node' ? 'ok' : f.would_run === 'host' ? 'warn' : 'bad';
-            return '<tr><td><b>' + esc(label[k] || k) + '</b></td><td class="muted">' + esc((f.needs || []).join(', ')) + '</td>'
-              + '<td><span class="badge ' + cls + '">' + esc(f.would_run === 'refuse' ? 'not run' : f.would_run) + '</span></td>'
+      const n1 = (v) => (v == null || isNaN(v)) ? '-' : (Math.round(v * 10) / 10);
+      let h = '<div class="panel"><div class="sec">Nodes</div><table><tr><th>node</th><th>free CPU</th><th>free memory</th><th>sent, not yet seen</th><th>libraries</th><th>test venv</th><th>now</th></tr>'
+        + ws.map((w) => { const l = w.libs || {}, cp = w.capacity || {}, rs = w.reserved || {}, te = tenv[w.host] || {};
+            return '<tr><td><b>' + esc(w.host || w.id) + '</b></td>'
+              + '<td>' + n1(cp.cpu_free) + ' / ' + n1(cp.cores) + ' cores</td>'
+              + '<td>' + n1(cp.mem_free_gb) + ' / ' + n1(cp.mem_total_gb) + ' GB</td>'
+              + '<td class="muted">' + ((rs.cpu || rs.mem_gb) ? n1(rs.cpu) + ' cores, ' + n1(rs.mem_gb) + ' GB' : '') + '</td>'
+              + '<td>' + ['numpy', 'torch', 'sklearn'].map((k) => lib(l, k)).join(' ') + '</td>'
+              + '<td>' + (l.testenv ? '<span class="badge ok">current</span>' : te.sha ? '<span class="badge warn">stale</span>' : '<span class="badge bad">none</span>')
+              + (te.failed && te.failed.length ? ' <span class="warn" title="' + esc(te.failed.join(', ')) + '">' + te.failed.length + ' pkg failed</span>' : '') + '</td>'
+              + '<td class="muted">' + esc((w.status || '').replace('running:', 'running ')) + '</td></tr>'; }).join('')
+        + (ws.length ? '' : '<tr><td colspan="7" class="muted">no node worker has the CPU compute class</td></tr>')
+        + '</table><div class="muted" style="margin-top:4px">A job goes to the node with most room, and only where the free CPU and memory cover it beyond each node\'s reserve for its own LLM and NLP services.</div></div>';
+      const label = { 'worldview.train': 'Worldview training', 'ml.train': 'ML Lab training', 'markets.ml.train': 'Markets models', 'pytest.shard': 'Gate test shards' };
+      h += '<div class="panel"><div class="sec">Where each job runs</div><table><tr><th>job</th><th>takes</th><th>runs on</th><th>next</th><th></th></tr>'
+        + Object.keys(fns).map((k) => { const f = fns[k], rs = f.resources || {}; const cls = f.would_run === 'node' ? (f.room_now === false ? 'warn' : 'ok') : f.would_run === 'host' ? 'warn' : 'bad';
+            return '<tr><td><b>' + esc(label[k] || k) + '</b></td><td class="muted">' + esc((rs.cpu || 1) + ' cores, ' + (rs.mem_gb || 1) + ' GB') + '</td>'
+              + '<td><span class="badge ' + cls + '">' + esc(f.would_run === 'refuse' ? 'not run' : f.room_now === false ? 'waits' : f.would_run) + '</span></td>'
+              + '<td>' + esc(f.next_node || '') + '</td>'
               + '<td class="muted">' + esc(f.why || '') + '</td></tr>'; }).join('') + '</table></div>';
       h += '<div class="panel"><div class="sec">Switches</div><div class="kv">'
-        + '<span>Host fallback</span><span><label><input type="checkbox" data-a="tr-fallback"' + (cfg.host_fallback ? ' checked' : '') + '> run training on the Vera host when no node worker can take it</label></span>'
-        + '<span>Threads per job</span><span><input id="tr-threads" type="number" min="1" max="32" value="' + esc(cfg.threads || 4) + '" style="width:5em"> <button data-a="tr-threads-save">save</button></span>'
+        + '<span>Gate test pool</span><span><label><input type="checkbox" data-a="tp-enabled"' + (pcfg.enabled ? ' checked' : '') + '> split pipeline gates\' pytest runs over the host and the nodes with room</label></span>'
+        + '<span>Host fallback</span><span><label><input type="checkbox" data-a="tr-fallback"' + (cfg.host_fallback ? ' checked' : '') + '> run training on the Vera host when no node can take it</label></span>'
+        + '<span>Node reserve</span><span><input id="tr-rcpu" type="number" min="0" max="12" step="0.5" value="' + esc(cfg.reserve_cpu) + '" style="width:4.5em"> cores, <input id="tr-rmem" type="number" min="0" max="64" value="' + esc(cfg.reserve_mem_gb) + '" style="width:4.5em"> GB kept for each node\'s own services</span>'
+        + '<span>Threads per training job</span><span><input id="tr-threads" type="number" min="1" max="32" value="' + esc(cfg.threads || 4) + '" style="width:4.5em"></span>'
+        + '<span>Wait for room</span><span><input id="tr-wait" type="number" min="0" max="21600" value="' + esc(cfg.max_wait_s) + '" style="width:6em"> s <button data-a="tr-save">save</button></span>'
         + '</div></div>';
       h += '<div class="panel"><div class="sec">Recent jobs</div><div data-keep-scroll style="max-height:320px;overflow:auto"><table><tr><th>started</th><th>job</th><th>ran on</th><th>state</th><th>time</th><th></th></tr>'
         + jobs.map((j) => '<tr><td class="muted">' + esc((j.started || '').replace('T', ' ').slice(0, 19)) + '</td>'
@@ -316,7 +329,7 @@
             + '<td><span class="badge ' + (j.state === 'done' ? 'ok' : j.state === 'error' || j.state === 'refused' ? 'bad' : 'warn') + '">' + esc(j.state) + '</span></td>'
             + '<td>' + (j.seconds != null ? esc(j.seconds) + ' s' : '') + '</td>'
             + '<td class="muted">' + esc(j.error || j.why || '') + '</td></tr>').join('')
-        + (jobs.length ? '' : '<tr><td colspan="6" class="muted">no training jobs yet</td></tr>') + '</table></div></div>';
+        + (jobs.length ? '' : '<tr><td colspan="6" class="muted">no node jobs yet</td></tr>') + '</table></div></div>';
       return h;
     }
 
@@ -375,7 +388,11 @@
         const r = await this._post('/ollama/warm/set', { cpu_num_ctx: parseInt(v('r-ctx'), 10), spill_min_tps: parseFloat(v('r-tps')), spill_max_ctx: parseInt(v('r-maxctx'), 10) });
         this._say(r.ok ? 'saved' : (r.error || 'failed')); return this.load();
       }
-      if (a === 'tr-threads-save') { const r = await this._post('/compute/config', { threads: parseInt(this._root.getElementById('tr-threads').value, 10) }); this._say(r.ok ? 'saved' : (r.error || 'failed')); return this.load(); }
+      if (a === 'tr-save') {
+        const v = (id) => this._root.getElementById(id).value;
+        const r = await this._post('/compute/config', { threads: parseInt(v('tr-threads'), 10), reserve_cpu: parseFloat(v('tr-rcpu')), reserve_mem_gb: parseFloat(v('tr-rmem')), max_wait_s: parseInt(v('tr-wait'), 10) });
+        this._say(r.ok ? 'saved' : (r.error || 'failed')); return this.load();
+      }
       if (a === 'nlp-timeout-save') { const r = await this._post('/nlp/config/set', { timeout_s: parseFloat(this._root.getElementById('nlp-timeout').value) }); this._say(r.ok ? 'saved' : (r.error || 'failed')); return this.load(); }
     }
     async _change(e) {
@@ -391,6 +408,7 @@
         if (t.checked && !confirm('Let the Vera host run model training when no node worker can take it?')) { t.checked = false; return; }
         r = await this._post('/compute/config', { host_fallback: t.checked });
       }
+      if (a === 'tp-enabled') r = await this._post('/evolve/test_pool/config', { enabled: t.checked });
       if (a === 'llm-nlp') {
         if (t.checked && !confirm('Turn LLM NLP on for automatic pipelines? It sends ingestion and discovery NLP to the LLMs.')) { t.checked = false; return; }
         r = await this._post('/fabric/nlp/set', { enabled: t.checked });

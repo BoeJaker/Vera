@@ -279,6 +279,15 @@ async def _run_node_sync(rec: Dict[str, Any]) -> Dict[str, Any]:
                           "error": str((wres or {}).get("error") or "")[:300] if isinstance(wres, dict) else str(wres)[:300]}
     if results["workers"]["blocked"] and "census" in results["workers"]["blocked"]:
         results["workers"].update(ok=False, error=results["workers"]["blocked"])
+    if "nodes.testenv.sync" in CAPABILITY_REGISTRY:
+        # the nodes' pytest venvs follow the gate image (a no-op where current)
+        tv = await _call("nodes.testenv.sync", dry_run=False)
+        results["testenv"] = {"ok": bool(isinstance(tv, dict) and tv.get("ok")),
+                              "error": (str((tv or {}).get("error") or "") or "; ".join(
+                                  f"{h}: {v.get('error') or ', '.join(v.get('failed') or [])}"
+                                  for h, v in ((tv or {}).get("nodes") or {}).items()
+                                  if not v.get("ok") or v.get("failed")))[:300]
+                              if isinstance(tv, dict) else str(tv)[:300]}
     if "ollama.warm.apply" in CAPABILITY_REGISTRY:
         ares = await _call("ollama.warm.apply", dry_run=False)
         results["warm"] = {"ok": bool(isinstance(ares, dict) and not ares.get("error")),
