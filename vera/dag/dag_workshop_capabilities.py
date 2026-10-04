@@ -18235,6 +18235,19 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # invoking and hand back the directory's REAL contents. Bounded, then
         # fail open so a genuinely absolute path (a host mount the step was told
         # about) can still be used.
+        # A `url` argument is a URL however it was typed: "/valkey.io/blog/x" is
+        # https://valkey.io/blog/x, not an invented absolute FILE path (4 Oct census).
+        if isinstance(args, dict) and isinstance(args.get("url"), str):
+            try:
+                from Vera.vera.web import url_core as _url_core
+            except ImportError:                                  # pragma: no cover
+                from vera.web import url_core as _url_core
+            _nu = _url_core.normalize_url(args["url"])
+            if _nu != args["url"].strip() and _nu.startswith(("http://", "https://")):
+                await emit_event({"type": "agent_loop_v5.arg_correction", "stream_id": stream_id,
+                                  "cycle": cur_cycle, "step_id": step_id, "tool": tool,
+                                  "session_id": sid, "note": "url %r -> %s" % (args["url"][:120], _nu)})
+                args = {**args, "url": _nu}
         _foreign = _v5_foreign_abs_paths(args, artifact_dir_path) if path_redirects < _MAX_PATH_REDIRECTS else []
         if _foreign:
             # Probe before judging: a path that REALLY exists where the call will

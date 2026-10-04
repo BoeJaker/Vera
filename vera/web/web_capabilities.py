@@ -82,6 +82,10 @@ from Vera.vera.config import cfg
 # fallback and the platform-API switchover all live there now, shared with the
 # research pipeline and fabric web acquisition.
 from Vera.vera.web import web_client as _wc
+try:                                                    # 4 Oct: typed URLs, nav-only pages
+    from Vera.vera.web import url_core as _url_core
+except ImportError:                                     # pragma: no cover
+    from . import url_core as _url_core
 # Dual-spelled: Vera.vera.* resolves to the DEPLOYED checkout, which does not
 # have a module until it lands there, so a NEW sibling must fall back to the
 # plain package or this whole module fails to import.
@@ -598,6 +602,7 @@ async def cap_web_fetch(
 ) -> Dict[str, Any]:
     if not url.strip():
         return {"error": "url required", "url": url}
+    url = _url_core.normalize_url(url)
     timeout = max(1.0, min(60.0, float(timeout)))
     max_chars = max(500, min(MAX_PAGE_CHARS, int(max_chars)))
 
@@ -639,6 +644,10 @@ async def cap_web_fetch(
     fetched_at = _now_iso()
 
     out = {
+        # first, so a loop's preview of the result shows it
+        **({"warning": "this page's text is only navigation/menu items (likely rendered by "
+                       "JavaScript) - it is NOT the page's content; use another URL or web.research"}
+           if fp.get("nav_only") else {}),
         "url":          url,
         "title":        title,
         "text":         text,
@@ -652,6 +661,7 @@ async def cap_web_fetch(
         "via_reader":   via_reader,
         "via_api":      via_api,
         "reader_error": reader_error,
+        "nav_only":     bool(fp.get("nav_only")),
     }
 
     recalled = {"pages": [], "entities": []}
