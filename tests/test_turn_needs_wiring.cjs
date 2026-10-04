@@ -13,5 +13,17 @@ t('a search the rules started holds the answer at most 3 s', A.includes('_wres =
 t('past the budget: the phase says late, and the sources follow later - never an empty "no results"', A.includes('"late",') && A.includes('asyncio.create_task(_late_results())') && A.includes('fr["late"] = True'));
 t('the model is told the search was already run', A.includes('This search was run for you before you answered; do not call web.search again for the'));
 t('the decision is a phase frame (needs stage)', A.includes('await _q.put(_ph.sse("needs", "web", "deciding whether to search the web",'));
+{
+  // a single-pass answer says "writing the answer" only after the search has answered (or the cap let it go)
+  const pump = A.slice(A.indexOf('async def _pump_main():'), A.indexOf('async def _pump_two_tier():'));
+  const wait = pump.indexOf('_wres = await asyncio.wait_for(asyncio.shield(_web_task), 3.0)');
+  const start = pump.indexOf('await _model_start_after_web(_late)');
+  const run = pump.indexOf('AGENT_RUNNER.run_stream(');
+  t('single pass: the model start frame follows the web wait and precedes the model call', wait > 0 && start > wait && run > start);
+  t('the early start frame is kept only when the model does not wait (no search, or tier 1 of two-tier)',
+    A.includes('if not _model_waits_for_web:') &&
+    A.includes('_model_waits_for_web = (_web_task is not None\n                                and not (_two_tier is not None and _tt_plan.get("split")))'));
+  t('the model duration is measured from when the model really started', A.includes('nonlocal _model_t0'));
+}
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

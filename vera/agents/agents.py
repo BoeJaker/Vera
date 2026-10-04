@@ -2076,6 +2076,9 @@ async def agent_chat_stream_endpoint(request: Request):
                                         "query": _web_query[:200]}) + "\n\n").encode())
         _web_phase = None
         _model_t0 = _time.monotonic()
+        # tier 1 of a two-tier reply starts at once; a single-pass answer waits for the search
+        _model_waits_for_web = (_web_task is not None
+                                and not (_two_tier is not None and _tt_plan.get("split")))
         if _ph is not None:
             try:
                 # what happened before the stream could open, with the time each step really took
@@ -2108,10 +2111,25 @@ async def agent_chat_stream_endpoint(request: Request):
                             sources=[{"title": r.get("title") or r.get("url"), "url": r.get("url")}
                                      for r in _rs[:_web_limit] if isinstance(r, dict)]))
                     _web_phase = asyncio.create_task(_web_phase_done())
+                if not _model_waits_for_web:
+                    _model_t0 = _time.monotonic()
+                    await _q.put(_ph.sse("model", "answer", "writing the answer", "start", t=_model_t0))
+            except Exception as _e:
+                log.debug("phase frames (pre-stream) skipped: %s", _e)
+
+        async def _model_start_after_web(late: bool):
+            # the single-pass answer starts only once the search has answered (or the cap let it go ahead): say so
+            # then, after the search's own frame, so the throbber never shows "writing the answer" mid-search
+            nonlocal _model_t0
+            if _ph is None or not _model_waits_for_web:
+                return
+            try:
+                if _web_phase is not None and not late:
+                    await asyncio.wait({_web_phase}, timeout=0.25)
                 _model_t0 = _time.monotonic()
                 await _q.put(_ph.sse("model", "answer", "writing the answer", "start", t=_model_t0))
             except Exception as _e:
-                log.debug("phase frames (pre-stream) skipped: %s", _e)
+                log.debug("phase frame (model start) skipped: %s", _e)
 
         async def _pump_main():
             try:
@@ -2164,6 +2182,7 @@ async def agent_chat_stream_endpoint(request: Request):
                     _frag = _format_web_context(_wres)
                     if _frag:
                         _prefix = (_prefix + "\n\n" + _frag).strip()
+                    await _model_start_after_web(_late)
                 async for chunk in AGENT_RUNNER.run_stream(
                         agent, message, history, session_id, use_tts=use_tts,
                         system_prefix=_prefix):
