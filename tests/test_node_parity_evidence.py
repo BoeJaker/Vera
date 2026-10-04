@@ -30,6 +30,13 @@ def _sock(addr):
 def test_files():
     roots = ("/home/u/Vera/",)
     assert fc.classify_open("/home/u/Vera/vera/ui/x.html", "r", 0, roots) is None
+    # with the tracked files known: a tracked template is code, an untracked
+    # file in the tree is runtime data the host wrote (2026-10-04:
+    # vera/ide/.vera_remote_instances.json passed as "code")
+    tracked = frozenset({"/home/u/Vera/vera/ui/x.html"})
+    assert fc.classify_open("/home/u/Vera/vera/ui/x.html", "r", 0, roots, tracked) is None
+    assert fc.classify_open("/home/u/Vera/vera/ide/.vera_remote_instances.json", "r", 0, roots,
+                            tracked) == ("file_read", "/home/u/Vera/vera/ide/.vera_remote_instances.json")
     assert fc.classify_open("/home/u/Vera/vera/data/state.json", "w", 0, roots)[0] == "file_write"
     assert fc.classify_open("/usr/lib/python3/x.py", "r", 0) is None
     assert fc.classify_open("/tmp/x", "w", 0) is None
@@ -54,7 +61,7 @@ def test_merge_bounds_targets_and_counts_runs():
     fp = None
     for i in range(10):
         fp = fc.merge(fp, {"socket_external": 1}, {"socket_external": {f"h{i}:443"}}, 1, 100.0 + i)
-    assert fp["runs"] == 10 and fp["kinds"]["socket_external"] == 10
+    assert fp["runs"] == 10 and fp["runs_tracked"] == 10 and fp["kinds"]["socket_external"] == 10
     assert len(fp["targets"]["socket_external"]) == fc.MAX_TARGETS
     assert fp["first"] == 100.0 and fp["last"] == 109.0
 
@@ -72,8 +79,10 @@ def test_verdict_needs_both_halves():
 def test_a_file_reading_source_is_settled_by_its_runs():
     # static analysis cannot tell a template read from a data file; the tracer
     # can (it ignores the code tree), so `localfs` needs more runs, not a veto
-    assert fc.verdict({"runs": 3, "kinds": {}}, ["localfs"])[0] == "unproven"
-    v = fc.verdict({"runs": fc.MIN_RUNS_SOFT, "kinds": {"socket_shared": 2}}, ["localfs"])
+    assert fc.verdict({"runs": 3, "runs_tracked": 3, "kinds": {}}, ["localfs"])[0] == "unproven"
+    # runs from before the tracked-files check do not count for a file-reading source
+    assert fc.verdict({"runs": 50, "kinds": {}}, ["localfs"])[0] == "unproven"
+    v = fc.verdict({"runs": 9, "runs_tracked": fc.MIN_RUNS_SOFT, "kinds": {"socket_shared": 2}}, ["localfs"])
     assert v[0] == "vetted" and "code tree" in v[1]
     bad = fc.verdict({"runs": 9, "kinds": {"file_read": 1}, "targets": {"file_read": ["/srv/x.json"]}},
                      ["localfs"])

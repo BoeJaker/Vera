@@ -97,7 +97,21 @@ def _endpoints() -> Dict[str, Any]:
     root = os.path.dirname(os.path.dirname(os.path.abspath(_orch.__file__)))
     return {"shared": frozenset(shared), "shared_ports": frozenset(ports),
             "nodes": frozenset(nodes - {h for h, _ in shared}), "host_ips": frozenset(host_ips),
-            "code_roots": (root + os.sep,)}
+            "code_roots": (root + os.sep,), "code_files": _tracked_files(root)}
+
+
+def _tracked_files(root: str) -> Optional[frozenset]:
+    """Absolute paths of the files git tracks in the code tree: what every node
+    has. None (reads in the tree count as code, the old rule) when git cannot
+    say - better a weaker rule than a tracer that will not start."""
+    try:
+        p = subprocess.run(["git", "-c", "safe.directory=*", "-C", root, "ls-files", "-z"],
+                           capture_output=True, timeout=60)
+        if p.returncode != 0 or not p.stdout:
+            return None
+        return frozenset(os.path.join(root, f) for f in p.stdout.decode("utf-8", "replace").split("\0") if f)
+    except Exception:
+        return None
 
 
 def _hook(event: str, args: tuple) -> None:
