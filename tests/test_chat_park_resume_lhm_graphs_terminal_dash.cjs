@@ -47,5 +47,19 @@ t('a tab pick keeps the memory graph drawn (toggles on, never overwrites the cla
 { const CV = R('vera/canvas/canvas_element.js');
   t('hover/zen: an item keeps bands for its header and rail, so they never cover its content', CV.includes(':host([data-tier="hover"]) .it:not(.compact):has(> .it-hd),:host([data-tier="zen"]) .it:not(.compact):has(> .it-hd){padding-top:var(--vc-hd-band,29px)}')
     && CV.includes(':host([data-tier="hover"]) .it:not(.compact):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}')); }
+// owner, 2026-10-04: "the memory graph in the lhm of chat needs me to press reload to load in" - it was read on a session
+// load and a tab pick only; a finished reply now re-reads it (twice, as its memories land) in the chat and the menu frame
+t('a finished reply re-reads the memory graph, here and in the menu instance', H.includes('try{ _memAfterTurn(); }catch(_){}   // a reply finished')
+  && H.includes("if(_EMBED.only!=='menu') _lhmPost('memory',{});") && H.includes('_memTurnT=[4000, 15000].map(ms=>setTimeout(()=>{ try{ if(SID) memGraphLoad(); }catch(_){} }, ms));')
+  && H.includes("else if(m.act==='memory'){ try{ _memAfterTurn(); }catch(_){} }"));
+// owner, 2026-10-04: one bar per canvas item, on hover; the canvas follows Full / Hover / Zen
+{ const CV = R('vera/canvas/canvas_element.js');
+  t('hover/zen: an item\'s own head (code, page, diagram, explode, terminal, notebook, panel) is its hover bar', CV.includes(':host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > .vc-codewrap > .code-card > .code-bar,')
+    && CV.includes(':host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > .vc-codewrap > .code-card > .code-bar,'));
+  t('...a records item\'s own heading goes (the header carries its title and count)', CV.includes(':host(:is([data-tier="hover"],[data-tier="zen"])) .it:not(.compact) .vc-rbx > .vc-rbx-top{display:none}')
+    && CV.includes('${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : \'\'}'));
+  t('full draws every control; the toolbar follows hover (the canvas) and zen (the toolbar itself)', CV.includes(':host([data-tier="full"]) .it > :is(.fd,.mx,.xp).solo{opacity:.8}')
+    && CV.includes(':host([data-tier="hover"]:hover) .addbar,:host([data-tier="zen"]) .addbar:is(:hover,:focus-within){opacity:1}'));
+  t('a head leaves room for the item\'s controls at its right end', CV.includes(':is(.vc-codehead,.vc-th):first-child{padding-right:58px}')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

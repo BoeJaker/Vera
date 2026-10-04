@@ -1098,8 +1098,30 @@
      because you pointed at it (the reason they are overlays). */
   :host([data-tier="hover"]) .it:not(.compact):has(> .it-hd),:host([data-tier="zen"]) .it:not(.compact):has(> .it-hd){padding-top:var(--vc-hd-band,29px)}
   :host([data-tier="hover"]) .it:not(.compact):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}
-  :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-codehead,
-  :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-th{opacity:.35}
+  /* ONE BAR PER ITEM, ON HOVER (owner, 2026-10-04: "the top bar that appear on mouseover ... makes the static title at
+     the top of each element pretty much redundant and those actions could be integrated so the static title is merged
+     into the on-hover element and only appears on-hover. i think the canvas should better respect the full hover and zen
+     modes too"). Full: every head, rail and control drawn. Hover and Zen: an item has ONE head and it comes with the
+     pointer - the card's header for most items (their body's own title goes: a records item's heading, a widget's - the
+     widget is drawn bare, the header carries its name); for the kinds that draw their own head (code, a diagram, a page,
+     an explode, a terminal, a notebook cell, a panel) that head is the bar, holding its title and its actions, faded in
+     with the fold and maximise controls. Each keeps its room, so nothing moves under the pointer. The canvas's own
+     toolbar follows the tier too: Hover shows it while the pointer is on the canvas, Zen only while it is on the toolbar. */
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > .vc-codewrap > .code-card > .code-bar,
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > .vc-codewrap > .vc-codehead,
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel) > :is(.vc-codehead,.vc-th):first-child{opacity:0;transition:opacity .15s}
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > .vc-codewrap > .code-card > .code-bar,
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > .vc-codewrap > .vc-codehead,
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel) > :is(.vc-codehead,.vc-th):first-child{opacity:1}
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it:not(.compact) .vc-rbx > .vc-rbx-top{display:none}
+  /* the item's fold / maximise / open controls sit at the head's right end: the head leaves them room (they lay over
+     its last button, "Send to") */
+  .it.ownhead > .it-bd > .vc-codewrap > .code-card > .code-bar,.it.ownhead > .it-bd > .vc-codewrap > .vc-codehead,
+  .it.ownhead > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel) > :is(.vc-codehead,.vc-th):first-child{padding-right:58px}
+  :host([data-tier="full"]) .it:not(.ufold) > .it-hd .fdn{display:none}
+  :host([data-tier="full"]) .it > :is(.fd,.mx,.xp).solo{opacity:.8}
+  :host([data-tier="hover"]) .addbar,:host([data-tier="zen"]) .addbar{opacity:0;transition:opacity .2s}
+  :host([data-tier="hover"]:hover) .addbar,:host([data-tier="zen"]) .addbar:is(:hover,:focus-within){opacity:1}
   /* the solo expand of an item whose drawer draws its own head: a corner mark, not a row of its own */
   .xp.solo{position:absolute;right:4px;top:3px;z-index:3;font-size:10px;color:var(--dim,#6b7480);cursor:pointer;opacity:0;transition:opacity .15s}
   .it:is(:hover,.hov) > .xp.solo,.it:focus-within > .xp.solo{opacity:.8}
@@ -2573,7 +2595,7 @@
         const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
           ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
-            : `<div class="it-hd">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${ufold && Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
+            : `<div class="it-hd">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
             ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>

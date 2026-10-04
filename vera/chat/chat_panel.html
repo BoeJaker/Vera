@@ -4353,6 +4353,7 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   }
   let _dlvTurnSeq=0;
   async function _deliverAfter(text, request){
+    try{ _memAfterTurn(); }catch(_){}   // a reply finished: its memories are being written - the graph follows
     const c=_dlvCfg(); if(c.mode==='chat') return;
     text=String(text||'').trim(); if(text.length<40) return;           // a one-liner is the chat's alone
     const turn=++_dlvTurnSeq;
@@ -13856,6 +13857,16 @@ Your task: decide what to do next to advance toward the goal.
   }
 
   /* ═══ SESSION MEMORY GRAPH — with edge filter ═══ */
+  /* THE GRAPH FOLLOWS THE TURNS (owner, 2026-10-04: "the memory graph in the lhm of chat needs me to press reload to load
+     in"): it was read when a session loaded and when its tab was picked, never again - a new chat's graph stayed empty,
+     and an old one stayed a turn behind, while every reply stored more. When a reply finishes, the chat reads the
+     graph again once its memories have had time to land (twice: the stores are written after the reply), and tells the
+     menu instance - the harness's LHM, a frame of its own - to do the same. */
+  let _memTurnT=[];
+  function _memAfterTurn(){
+    if(_EMBED.only!=='menu') _lhmPost('memory',{});
+    _memTurnT.forEach(clearTimeout); _memTurnT=[4000, 15000].map(ms=>setTimeout(()=>{ try{ if(SID) memGraphLoad(); }catch(_){} }, ms));
+  }
   async function memGraphLoad(){
     if(!SID){document.getElementById('memGraphStatus').textContent='No session';return;}
     document.getElementById('memGraphStatus').textContent='Loading…';
@@ -15765,6 +15776,7 @@ function _embedMount(){
          on whatever they had, which on the board is the whole context graph the user actually looks at. */
       else if(m.act==='focus'){ _grFocusMid=a.mid||''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid); }catch(_){} } try{ _ctxFollow(true); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
+      else if(m.act==='memory'){ try{ _memAfterTurn(); }catch(_){} }   // a reply finished in the chat: the memory graph follows
       else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
       else if(m.act==='runs'){ _runsApply(a.which, a.off); }
       // updateFrameUI too: the legacy strip and Frames pane are views onto CTX_FRAMES like any other, and the
