@@ -8528,6 +8528,28 @@ async def _do_restart(delay: float, gate=None) -> None:
         log.error("DEV RESTART FAILED — Vera is still running on the OLD code: %s", e)
 
 
+@capability("sys.debug.tasks", memory="off", silent=True,
+            http_method="GET", http_path="/sys/debug/tasks", http_tags=["sys"],
+            description="READ-ONLY. Where every asyncio task in this process is waiting: each "
+                        "task's await chain (file:line in function, down to the future it is "
+                        "parked on). For a hang that leaves no log line - py-spy shows thread "
+                        "stacks only. Inputs: match (str - keep tasks whose name or chain "
+                        "contains it, e.g. 'dag_workshop' or 'prose'), limit (int=40). "
+                        "Output: {ok, total, matched, tasks:[{name, coro, done, chain}]}.")
+async def cap_sys_debug_tasks(match: str = "", limit: int = 40, trace_id=None):
+    try:
+        from Vera.vera import task_dump_core as _task_dump_core
+    except Exception:                                # pragma: no cover
+        from . import task_dump_core as _task_dump_core
+    me = asyncio.current_task()
+    tasks = [t for t in asyncio.all_tasks() if t is not me]
+    try:
+        lim = max(1, min(200, int(limit)))
+    except Exception:
+        lim = 40
+    return {"ok": True, **_task_dump_core.dump(tasks, match=str(match or ""), limit=lim)}
+
+
 @capability("sys.dev.restart", memory="off",
             http_method="POST", http_path="/sys/dev/restart", http_tags=["sys"],
             description="DEV MODE ONLY. Restart Vera in place so freshly-edited source is "
