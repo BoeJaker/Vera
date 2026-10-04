@@ -263,20 +263,40 @@ def test_a_node_shard_runs_the_files_and_reports_in_the_gate_format(tmp_path):
         "inputs = json.load(open(sys.argv[1]))\n"
         "inputs['archive'] = open(sys.argv[2], 'rb').read()\n"
         "print(json.dumps(tr.node_run_shard(inputs, lambda d: None, lambda: False)))\n")
-    (tmp_path / "in.json").write_text(json.dumps({"files": ["tests/test_one.py", "tests/test_two.py"],
-                                                   "markers": "", "testenv_sha": "s1", "timeout": 60}))
     (tmp_path / "a.tgz").write_bytes(buf.getvalue())
-    r = subprocess.run([sys.executable, "-c", script, str(tmp_path / "in.json"), str(tmp_path / "a.tgz")],
-                       cwd=ROOT, capture_output=True, text=True, timeout=120,
-                       env={**os.environ, "PYTHONPATH": ROOT, "VERA_TESTENV_DIR": str(env_dir)})
-    assert r.returncode == 0, r.stderr[-2000:]
-    res = json.loads(r.stdout.strip().splitlines()[-1])
-    p = ut.parse_pytest_output(res["out"])
-    assert (p["passed"], p["failed"], p["total"]) == (2, 1, 3), res["out"][-1500:]
-    assert any("test_bad" in d["node_id"] for d in p["failure_details"])
+    # one process, and the chunk split over two: the same report either way
+    for parallel in (1, 2):
+        (tmp_path / "in.json").write_text(json.dumps({
+            "files": ["tests/test_one.py", "tests/test_two.py"], "markers": "", "testenv_sha": "s1",
+            "timeout": 60, "parallel": parallel, "durations": {"tests/test_one.py": 2.0}}))
+        r = subprocess.run([sys.executable, "-c", script, str(tmp_path / "in.json"), str(tmp_path / "a.tgz")],
+                           cwd=ROOT, capture_output=True, text=True, timeout=120,
+                           env={**os.environ, "PYTHONPATH": ROOT, "VERA_TESTENV_DIR": str(env_dir)})
+        assert r.returncode == 0, r.stderr[-2000:]
+        res = json.loads(r.stdout.strip().splitlines()[-1])
+        assert res["processes"] == parallel
+        p = ut.parse_pytest_output(res["out"])
+        assert (p["passed"], p["failed"], p["total"]) == (2, 1, 3), res["out"][-1500:]
+        assert any("test_bad" in d["node_id"] for d in p["failure_details"])
+        assert "__VERA_RC=1__" in res["out"]
     # a stale venv refuses rather than running with the wrong packages
     (tmp_path / "in.json").write_text(json.dumps({"files": ["tests/test_one.py"], "testenv_sha": "other"}))
     r = subprocess.run([sys.executable, "-c", script, str(tmp_path / "in.json"), str(tmp_path / "a.tgz")],
                        cwd=ROOT, capture_output=True, text=True, timeout=120,
                        env={**os.environ, "PYTHONPATH": ROOT, "VERA_TESTENV_DIR": str(env_dir)})
     assert r.returncode != 0 and "test venv" in r.stderr
+
+
+def test_parallel_processes_combine_into_one_report():
+    assert tr.combine_rc([0, 5]) == 0 and tr.combine_rc([5, 5]) == 5
+    assert tr.combine_rc([0, 1, 2]) == 1 and tr.combine_rc([]) == 0
+    one = ('<testsuites><testsuite tests="2" failures="1" errors="0" skipped="0" time="1.5">'
+           '<testcase classname="a" name="x"/><testcase classname="a" name="y"><failure/></testcase>'
+           '</testsuite></testsuites>')
+    two = '<testsuite tests="1" failures="0" errors="1" skipped="0" time="0.5"><testcase classname="b" name="z"/></testsuite>'
+    root = tr.ET.fromstring(tr.merge_junit([one, "", "not xml", two]))
+    suites = list(root.iter("testsuite"))
+    assert len(suites) == 1
+    s = suites[0]
+    assert (s.get("tests"), s.get("failures"), s.get("errors"), s.get("time")) == ("3", "1", "1", "2.000")
+    assert len(s.findall("testcase")) == 3

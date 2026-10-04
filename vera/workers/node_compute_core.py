@@ -67,7 +67,8 @@ NEEDS: Dict[str, Dict[str, float]] = {
     "worldview.train":  {"cpu": 4.0, "mem_gb": 6.0},
     "ml.train":         {"cpu": 1.0, "mem_gb": 1.0},
     "markets.ml.train": {"cpu": 4.0, "mem_gb": 2.0},
-    "pytest.shard":     {"cpu": 1.5, "mem_gb": 3.0},
+    # a chunk runs as test_pool node_parallel (4) pytest processes
+    "pytest.shard":     {"cpu": 4.0, "mem_gb": 6.0},
 }
 #: Node metrics older than this are not trusted for admission.
 METRICS_STALE_S = 60
