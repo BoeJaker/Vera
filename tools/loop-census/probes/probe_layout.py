@@ -10,6 +10,8 @@ Layouts are per-run loop overrides (no config change):
   L4  L3 + the warm CPU coder
   L5  the CPU MoE (qwen3.6:35b-a3b, cpu-247) drives the loop: controller + planner
   L6  the agentic MoE (Qwen-AgentWorld-35B-A3B, cpu-246) drives AND executes
+  L7  L3 + answer check - the CPU MoE also checks the FINAL answer against the files
+  L8  L7 + the warm CPU coder
 Out: /tmp/probe_layout/<layout>-<goal_id>.json (+ ev/<sid>.jsonl). Added 4 Oct 2026."""
 import collections, json, os, re, subprocess, sys, time, uuid
 
@@ -45,6 +47,10 @@ LAYOUTS = {
            "controller_node": "cpu-246",
            "executor_model": "hf.co/unsloth/Qwen-AgentWorld-35B-A3B-GGUF:MXFP4_MOE",
            "executor_node": "cpu-246"},
+    # the CPU MoE also checks the GPU's FINAL answer against the files + unresolved findings
+    "L7": {"deliverable_review": True, "answer_check": True},
+    "L8": {"deliverable_review": True, "answer_check": True,
+           "coder_model": "qwen3-coder:30b", "coder_node": "cpu-246"},
 }
 tpl, gid = sys.argv[1], sys.argv[2]
 layout = sys.argv[3] if len(sys.argv) > 3 else "L0"
