@@ -237,3 +237,15 @@ def test_store_retries_a_transient_open_failure(tmp_path, monkeypatch):
         return real(*a, **k)
     monkeypatch.setattr(_sq, "connect", flaky)
     assert st.topics() == [] and calls["n"] == 2
+
+
+def test_live_run_quality_fixes():
+    from vera.intel import intel_ops_core as ops
+    s = core.normalise_signal("t", {"url": "https://a.io", "title": "AI in PropTech &amp; Real Estate", "snippet": "x &lt; y"})
+    assert s["title"] == "AI in PropTech & Real Estate" and s["snippet"] == "x < y"
+    ents = ops.ner_entities({"entities": [{"word": w, "score": 0.9} for w in
+                                          ["Mozilla", "AppleWebKit", "AI", "JLL", "$550 billion", "61%", "Savills"]]})
+    assert ents == ["JLL", "Savills"]
+    t = core.normalise_topic({"name": "x"})
+    p = core.enrich_prompt(t, {"title": "t", "url": "u"}, "w" * 20000, triaged=True)
+    assert p.count("w") <= core.TRIAGED_TEXT_CHARS + 50

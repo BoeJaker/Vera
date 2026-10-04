@@ -275,9 +275,9 @@ def normalise_signal(topic_id: str, raw: Dict[str, Any], *, source: str = "web",
     url = str(raw.get("url") or raw.get("link") or "").strip()
     if url and not re.match(r"(?i)^https?://", url):
         url = ""                      # only web links survive - never javascript:, data:, file:
-    title = re.sub(r"\s+", " ", str(raw.get("title") or raw.get("name") or "")).strip()
-    snippet = re.sub(r"\s+", " ", str(raw.get("snippet") or raw.get("description")
-                                       or raw.get("summary") or raw.get("text") or "")).strip()
+    title = re.sub(r"\s+", " ", _html.unescape(str(raw.get("title") or raw.get("name") or ""))).strip()
+    snippet = re.sub(r"\s+", " ", _html.unescape(str(raw.get("snippet") or raw.get("description")
+                                                     or raw.get("summary") or raw.get("text") or ""))).strip()
     if not title and snippet:
         title = snippet[:90]
     if is_junk(title, snippet):
@@ -401,6 +401,11 @@ def clean_prose(text: str) -> str:
     return t.strip()
 
 
+#: page text given to the model once the NLP tier has triaged a source. Measured on prod
+#: (2026-10-04, MoE on cpu-247): ~10k-char prompts took 100-120 s, a 1.5k one 34 s.
+TRIAGED_TEXT_CHARS = 4500
+
+
 def enrich_prompt(topic: Dict[str, Any], signal: Dict[str, Any], page_text: str, words: int = 220,
                   *, triaged: bool = False) -> str:
     qs = "\n".join(f"- {q}" for q in (topic.get("questions") or [])[:6]) or "- (none recorded)"
@@ -411,7 +416,7 @@ def enrich_prompt(topic: Dict[str, Any], signal: Dict[str, Any], page_text: str,
             f"Why it matters to the reader: {topic.get('why') or 'not stated'}\n"
             f"Read this source and answer in JSON only. Your whole answer is about {max(120, words - 80)} words.\n"
             f"SOURCE TITLE: {signal.get('title')}\nSOURCE URL: {signal.get('url')}\n"
-            f"SOURCE TEXT:\n{(page_text or signal.get('snippet') or '')[:9000]}\n\n"
+            f"SOURCE TEXT:\n{(page_text or signal.get('snippet') or '')[:TRIAGED_TEXT_CHARS]}\n\n"
             "JSON keys:\n"
             "  summary   - 2-4 plain sentences on what the source actually says (facts, numbers, names)\n"
             "  so_what   - 1-2 sentences on why it matters for this topic and reader\n"
