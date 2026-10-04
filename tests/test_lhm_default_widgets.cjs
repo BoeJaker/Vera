@@ -7,7 +7,7 @@ const BR = R('vera/chat/vera-panel-bridge.js'), L = R('vera/chat/vera-lhm.js'), 
 let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fails++; };
 t('a page names its menu widgets and they ride in the lhm spec', /document\.querySelector\('\[data-lhm-widgets\]'\)/.test(BR) && /open: \[\], widgets: wd \}/.test(BR));
 t('a nesting page passes its shown child\'s widgets up', /k\.nav\.widgets = nv\.lhm\.widgets\.slice\(0, 8\)/.test(BR) && /kid\.nav\.widgets\.forEach/.test(BR));
-t('the docked menu draws them until the viewer keeps a list of their own', /_absHasSaved\(key, skey, legacy\) \? _absAddedOf\(key, skey, legacy\) : _absDefaults\(spec\)/.test(L) && /var list = mine\(\);/.test(L) && /var l2 = mine\(\); l2\.push\(rec\);/.test(L) && /var l3 = mine\(\); l3\.splice\(i, 1\);/.test(L));
+t('the docked menu draws them until the viewer keeps a list of their own', /_absHasSaved\(key, skey, legacy\) \? _absAddedOf\(key, skey, legacy\) : _absDefaults\(dflt\)/.test(L) && /var list = mine\(\);/.test(L) && /var l2 = mine\(\); l2\.push\(rec\);/.test(L) && /var l3 = mine\(\); l3\.splice\(i, 1\);/.test(L));
 t('drawn by template, at their size, and every one opens the item drawer', /vw\.setAttribute\('template-id', rec\.template_id\)/.test(L) && /vw\.setAttribute\('item-drawer', ''\);/.test(L));
 t('the Calendar names its parts: controls, month, schedule, todos', /data-lhm-widgets="cal:controls cal:month@m cal:schedule@m cal:todos@m"/.test(CAL));
 t('a list form reads the answer\'s one list ({todos, count})', /const la = ks\.filter\(\(k\) => Array\.isArray\(x\[k\]\)\); if \(la\.length === 1\) return dataFor/.test(WE));

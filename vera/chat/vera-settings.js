@@ -67,6 +67,8 @@
   function _css(){ if(document.getElementById('vera-settings-css')) return; var st = document.createElement('style'); st.id = 'vera-settings-css'; st.textContent = CSS; (document.head || document.documentElement).appendChild(st); }
   function _el(tag, cls, text){ var e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = text; return e; }
   function _txt(e){ return String((e && e.textContent) || '').replace(/\s+/g, ' ').trim(); }
+  /* a heading's words without the buttons it carries (Commerce's card title read 'Settingsclose') */
+  function _htxt(e){ if(!e || !e.querySelector || !e.querySelector('button')) return _txt(e); var c = e.cloneNode(true); Array.prototype.forEach.call(c.querySelectorAll('button'), function(b){ b.parentNode.removeChild(b); }); return _txt(c); }
   function _panelName(){ return String(document.title || 'This panel').replace(/^\s*Vera\s*[—–\-·|:/]\s*/i, '').trim() || 'This panel'; }
 
   /* a settings section, read: {title, lead, cards:[element]} - the first heading is the title, a paragraph straight
@@ -76,11 +78,11 @@
     kids.forEach(function(k){
       var tag = String(k.tagName || '').toUpperCase();
       if(tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEMPLATE') return;
-      if(!title && /^H[1-4]$/.test(tag)){ title = _txt(k); return; }
+      if(!title && /^H[1-4]$/.test(tag)){ title = _htxt(k); return; }
       /* a short first line with nothing to set (a pop-up's title) */
       if(!title && !cards.length && !_fields(k) && !_hasButton(k) && _txt(k).length && _txt(k).length <= 60 && !(k.children && k.children.length > 3)){ title = _txt(k); k.setAttribute('data-vs-lead', ''); return; }
       /* a header block - a heading and words, nothing to set - before any card: the title and its line */
-      if(!title && !cards.length && !_fields(k) && !_hasButton(k)){ var hh = k.querySelector && k.querySelector('h1,h2,h3,h4,h5,.title,.card-title'); if(hh && _txt(hh)){ title = _txt(hh); var rest = _txt(k).replace(_txt(hh), '').trim(); if(rest && rest.length < 320) lead = rest; k.setAttribute('data-vs-lead', ''); return; } }
+      if(!title && !cards.length && !_fields(k) && !_hasButton(k)){ var hh = k.querySelector && k.querySelector('h1,h2,h3,h4,h5,.title,.card-title'); if(hh && _htxt(hh)){ title = _htxt(hh); var rest = _txt(k).replace(_txt(hh), '').trim(); if(rest && rest.length < 320) lead = rest; k.setAttribute('data-vs-lead', ''); return; } }
       // the line under the title: a paragraph, or the first block that holds text but nothing to set (an explanation)
       if(title && !lead && !cards.length && (tag === 'P' || (!_fields(k) && !_hasButton(k) && _txt(k).length && _txt(k).length < 320))){ lead = _txt(k); k.setAttribute('data-vs-lead', ''); return; }
       cards.push(k);
@@ -105,7 +107,7 @@
      aria-label or name - never a link or a bold word inside a sentence. '' = the card gets no row (an explanation, a row
      of buttons): it is still shown, just not listed */
   function cardTitle(k){
-    var h = _head(k); if(h && _txt(h)) return _txt(h).slice(0, 48);
+    var h = _head(k); if(h && _htxt(h)) return _htxt(h).slice(0, 48);
     if(!_fields(k)) return '';
     var lb = k.querySelector('label'); if(lb && _txt(lb)) return _txt(lb).slice(0, 48);
     var f = k.querySelector('input:not([type=hidden]),select,textarea') || k;
@@ -153,7 +155,7 @@
     if(!parts.cards.length) grid.appendChild(_el('div', 'vs-empty', 'This panel has no settings to show.'));
     q.addEventListener('input', function(){ var v = q.value.trim().toLowerCase(); rows.forEach(function(r){ var hit = !v || _txt(r.card).toLowerCase().indexOf(v) >= 0 || (r.row && _txt(r.row).toLowerCase().indexOf(v) >= 0); if(r.row) r.row.hidden = !hit; r.card.hidden = !hit; }); });
     document.body.appendChild(page);
-    _page = page; _cur = { trigger: opts.trigger || null, sec: sec, moved: moved };
+    _page = page; _cur = { trigger: opts.trigger || null, sec: sec, moved: moved, onClose: typeof opts.onClose === 'function' ? opts.onClose : null };
     try{ q.focus(); }catch(e){}
     return true;
   }
@@ -164,7 +166,10 @@
     _cur.moved.forEach(function(m){ if(m.mark.parentNode){ m.mark.parentNode.insertBefore(m.el, m.mark); m.mark.parentNode.removeChild(m.mark); }
       else if(sec){ sec.appendChild(m.el); } });   /* the panel re-drew the section while the page was open: back into it, never lost */
     if(_page && _page.parentNode) _page.parentNode.removeChild(_page);
-    _page = null; _cur = null; return true;
+    var done = _cur.onClose; _page = null; _cur = null;
+    /* a panel that built its settings for the page (a card made on demand) takes them away again */
+    if(done){ try{ done(sec); }catch(e){} }
+    return true;
   }
   // the item opens the page, before the panel's own handler can show its in-page section (capture, on the document)
   document.addEventListener('click', function(ev){
