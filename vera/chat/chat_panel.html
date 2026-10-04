@@ -3922,11 +3922,15 @@ const CH = (() => {
       return (doc && !doc.error) ? doc : { error: (doc && doc.error) || 'explode failed' };
     }catch(e){ return { error: String(e && e.message || e) }; }
   }
+  /* A card's own structure (its \u2318): the card explodes INTO the scene - what it holds as cards, in cards, front and iso,
+     the chip's way back to the chat - rather than a small face on the card. */
   async function _xplCardGraph(d){
     if(!_xplEl || !d.id) return;
     const doc = await _xpContractFor(d);
-    try{ _xplEl.setCardGraph(d.id, doc); }catch(_){}
-    if(doc && doc.error) appendSys('No diagram for that card \u2014 ' + esc(doc.error));
+    try{ if(typeof _xplEl.graphClear==='function') _xplEl.graphClear(d.id); else _xplEl.setCardGraph(d.id, doc); }catch(_){}
+    if(!doc || doc.error){ appendSys('Nothing to explode in that card \u2014 ' + esc((doc && doc.error) || 'no structure')); return; }
+    const txt = String(d.text || ''), attrs = d.record ? { record: d.record } : (d.code && txt ? { code: txt, lang: d.lang || '' } : { text: txt });
+    _xplShowContract('card:' + d.id, doc, d.title || d.kind || 'card', attrs, 'what this card holds');
   }
   /* Explode INTO the scene: the structure of a message, a code block or an /explode target drawn as the exploded scene,
      in whichever style it is in (cards · front · iso) — a station per file or paragraph, a plate per kind of symbol or
@@ -3941,21 +3945,42 @@ const CH = (() => {
     if(!(window.VeraExploded&&window.VeraExploded.contractScene)){ const host=document.getElementById('xplHost')||BOX(); return _xpPanel(host, attrs, label, why||''); }   // the scene's script missing: the diagram, as before
     const doc=await _xpDoc(url, body);
     if(doc.error){ appendSys('Nothing to explode \u2014 '+esc(doc.error)); return; }
+    return _xplShowContract(key, doc, label, attrs, why);
+  }
+  function _xplShowContract(key, doc, label, attrs, why){
+    if(_xpl.doc&&_xpl.doc.key===key){ _xplDocClear(); return; }
     const scene=window.VeraExploded.contractScene(doc,{label});
     if(!scene.turns.length){ appendSys('Nothing to explode \u2014 the '+(doc.kind||'source')+' has no structure to draw.'); return; }
-    _xpl.doc={ key, scene, label, attrs, why:why||'' };
+    _xpl.doc={ key, scene, doc, label, attrs, why:why||'' };
     if(!_xpl.on) explode(true); else _xplRefresh();
     _xplDocChip();
+  }
+  /* The structure as a vera-graph, under the scene: every method the graph has - Structure 3D (Live ops' lattice: a plane
+     per kind of symbol, an area per file or class), Structure (the explode renderer), Live ops, exploded, mermaid, the plain graph. */
+  let _XPG_LIB=null;
+  function _xpGraphLib(){ if(_XPG_LIB) return _XPG_LIB; _XPG_LIB=new Promise(ok=>{ const ready=()=>!!(window.veraUI&&veraUI.Graph&&veraUI.Graph.create&&veraUI.Graph.fromContract);
+      if(ready()) return ok(true); if(!(window.veraUI&&veraUI.Graph&&veraUI.Graph.create)){ const s=document.createElement('script'); s.src=BASE+'/ui/vera-graph.js'; s.async=true; document.head.appendChild(s); }
+      let n=0; const t=setInterval(()=>{ if(ready()||++n>60){ clearInterval(t); ok(ready()); } }, 150); }); return _XPG_LIB; }
+  async function _xpGraphPanel(host, doc, label){
+    const old=host.querySelector(':scope > .xp-inline'); if(old) old.remove();
+    const box=document.createElement('div'); box.className='xp-inline';
+    box.style.cssText='position:absolute;left:12px;right:12px;bottom:12px;height:min(480px,62%);z-index:41;display:flex;flex-direction:column;border:1px solid var(--border,#2a2622);border-radius:6px;overflow:hidden;background:var(--bg1,#17140f);box-shadow:0 10px 30px rgba(0,0,0,.45)';   /* over the scene's foot: the scene host lays its children in a row */
+    box.innerHTML='<div style="flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:4px 8px;font:9px var(--mono,monospace);color:var(--dim,#6a6058);border-bottom:1px solid var(--border,#2a2622)"><span style="color:var(--acc,#5a9e8f)">graph</span><span class="xp-l" style="color:var(--text,#d8d0c6)"></span><span style="flex:1"></span><button class="cb-act xp-x" title="Close this graph">close</button></div><div class="xp-body" style="flex:1 1 auto;min-height:0;position:relative"></div>';
+    box.querySelector('.xp-l').textContent=label||''; box.querySelector('.xp-x').onclick=()=>box.remove(); host.appendChild(box);
+    if(!(await _xpGraphLib())){ box.querySelector('.xp-body').textContent='the graph (/ui/vera-graph.js) did not load'; return box; }
+    const g=veraUI.Graph.create(box.querySelector('.xp-body'), { height:'fill', sidebar:false, actionsEnabled:false, showLeftPanel:false });
+    g.load(veraUI.Graph.fromContract(doc)); let n=0; const want=()=>{ try{ g.setMode('struct-iso'); }catch(_){} if((!g.getMode||g.getMode()!=='struct-iso')&&++n<20) setTimeout(want, 300); }; want();
+    return box;
   }
   function _xplDocChip(){
     const host=document.getElementById('xplHost'); if(!host) return; let c=host.querySelector(':scope > .xpl-doc');
     if(!_xpl.doc){ if(c) c.remove(); return; }
     if(!c){ c=document.createElement('div'); c.className='xpl-doc'; host.appendChild(c);
       c.style.cssText='position:absolute;right:40px;top:92px;z-index:40;display:flex;align-items:center;gap:8px;max-width:calc(100% - 24px);padding:4px 6px 4px 9px;border-radius:6px;background:var(--bg1,#17140f);box-shadow:0 0 0 1px var(--border,#2a2622),0 6px 18px rgba(0,0,0,.35);font:10px var(--mono,monospace);color:var(--dim,#6a6058)';
-      c.addEventListener('click', e=>{ const b=e.target.closest&&e.target.closest('[data-xd]'); if(!b||!_xpl.doc) return; if(b.dataset.xd==='back') _xplDocClear(); else _xpPanel(host, _xpl.doc.attrs, _xpl.doc.label, _xpl.doc.why||'the same structure as a diagram'); }); }
+      c.addEventListener('click', e=>{ const b=e.target.closest&&e.target.closest('[data-xd]'); if(!b||!_xpl.doc) return; if(b.dataset.xd==='back') _xplDocClear(); else if(b.dataset.xd==='graph'&&_xpl.doc.doc) _xpGraphPanel(host, _xpl.doc.doc, _xpl.doc.label); else _xpPanel(host, _xpl.doc.attrs, _xpl.doc.label, _xpl.doc.why||'the same structure as a diagram'); }); }
     const s=_xpl.doc.scene||{}, nt=(s.turns||[]).length, np=(s.layers||[]).length, bs='font:inherit;color:var(--text,#d8d0c6);background:none;border:1px solid var(--border,#2a2622);border-radius:4px;padding:1px 7px;cursor:pointer';
     c.innerHTML='<span style="color:var(--acc,#5a9e8f)">exploded</span><span class="xd-l" style="color:var(--text,#d8d0c6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><span class="xd-n"></span>'
-      +'<button data-xd="diagram" style="'+bs+'" title="The structured diagram of the same thing, under the scene">diagram</button><button data-xd="back" style="'+bs+'" title="Back to the chat\u2019s own scene">back to the chat</button>';
+      +'<button data-xd="graph" style="'+bs+'" title="The same structure as a graph, under the scene: Structure 3D, Live ops, exploded and every other method">graph</button><button data-xd="diagram" style="'+bs+'" title="The structured diagram of the same thing, under the scene">diagram</button><button data-xd="back" style="'+bs+'" title="Back to the chat\u2019s own scene">back to the chat</button>';
     c.querySelector('.xd-l').textContent=_xpl.doc.label||'';
     c.querySelector('.xd-n').textContent=nt+' station'+(nt===1?'':'s')+' \u00b7 '+np+' plate'+(np===1?'':'s')+(s.across?' \u00b7 '+s.across+' across':'')+' \u00b7 by '+(s.by||'kind');
   }
@@ -19126,7 +19151,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       body.querySelectorAll('.art-card').forEach(el=>{ const n=String(((el.querySelector('.art-hd .t')||{}).textContent)||'artifact').trim().slice(0,60); made.push({n, d:'artifact', col:'#c9955a', kind:'artifact', html:(function(){ const f=el.querySelector('iframe'); const h=f&&(f.srcdoc||f.getAttribute('srcdoc')||f.getAttribute('data-art-srcdoc-html')); return h?String(h).slice(0,60000):undefined; })()}); });   // the render travels with the card: an opened card shows the artifact itself, as the chat does
       body.querySelectorAll('vera-widget').forEach(el=>{ let form=el.getAttribute('form')||'', data=null; try{ const rec=el.record||JSON.parse(el.getAttribute('record')||'null'); if(rec){ form=form||rec.form||''; data=rec.data!=null?rec.data:(el._data!=null?el._data:null); } }catch(_){} made.push({n:el.getAttribute('title')||form||'widget', d:'widget · '+form, col:'#a78bfa', kind:'widget', form:form||'kv', data}); });
       body.querySelectorAll('vera-mermaid,.mermaid,pre.mermaid').forEach(el=>{ const src=String((el._code!=null?el._code:el.textContent)||'').trim(); made.push({n:'Diagram', d:'mermaid', col:'#a78bfa', kind:'diagram', mermaid:src.slice(0,24000)}); });
-      body.querySelectorAll('pre code').forEach(el=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; if(lang==='mermaid'||lang==='widget') return; const s=String(el.textContent||''); made.push({n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', col:'#fb923c', kind:'code', body:s.slice(0,400)}); });
+      body.querySelectorAll('pre code').forEach(el=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; if(lang==='mermaid'||lang==='widget') return; const s=String(el.textContent||''); made.push({n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', col:'#fb923c', kind:'code', body:s.slice(0,400), text:s.slice(0,20000), lang}); });   /* the card shows 400 characters; its structure reads the whole */
       body.querySelectorAll('vera-agent-loop-output').forEach(el=>{ let steps=[]; try{ steps=[...el.querySelectorAll('[data-step],.step,.alo-step')].slice(0,12).map(s=>({label:String(s.textContent||'').trim().slice(0,40), status:/done|ok/.test(s.className)?'ok':/run|active/.test(s.className)?'run':/err|fail/.test(s.className)?'fail':''})); }catch(_){} made.push({n:'Agentic loop', d:'loop · '+(steps.length?steps.length+' steps':'running'), col:'var(--acc)', kind:'loop', steps}); });
       // every image the reply carries — a diffusion render, an artifact's picture, a capability's screenshot — with its source, so the scene can show it per tier
       body.querySelectorAll('img').forEach(el=>{ if(el.closest('.msg-actions,.cap-inline-header,.pa-att')||/\b(ico|icon|avatar)\b/.test(String(el.className||''))) return; const src=el.currentSrc||el.getAttribute('src')||''; if(!src) return; made.push({n:el.getAttribute('alt')||'image', d:el.closest('.sd-img,.cap-imgs')?'image · diffusion':'image', col:'#e879f9', kind:'image', src}); });
@@ -21234,7 +21259,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _renderRailPanels,_loadUiPanelsForce,
     _scrollToBottom,
     _msgEdit,_msgEditCancel,_msgEditCommit,_msgResubmit,
-    _msgExplode,_codeExplode,_xplShowDoc,_xplDocClear,
+    _msgExplode,_codeExplode,_xplShowDoc,_xplShowContract,_xplDocClear,_xpGraphPanel,
     _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_msgHtmlReport,_msgRedeliver,_redeliverDo,_maMenu,_maClose,_msgToCanvas,_dlvPersist,_dlvStyles,_deliverAfter,_gallerySave,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
     _saveModalClose,_saveModalConfirm,_saveModalNbCellTypeChange,
     getActivePanelState,dispatchPanelAction,requestPanelState,

@@ -45,5 +45,14 @@ t('the stack topology tiles (Overview and Estate) and Live operations are graph 
   vm.runInContext(VG, ctx); ctx.veraUI.Graph.registerMode({ id: 'ops-iso', label: 'Live ops', order: 12, mount() {} });
   vm.runInContext(VG, ctx);   /* a second copy */
   t('a second load of vera-graph.js keeps the modes already registered (one registry per page)', ctx.veraUI.Graph.listModes().some((m) => m.id === 'ops-iso')); })();
+(() => { const Gr = window.veraUI.Graph;
+  const doc = { kind: 'code', groups: [{ id: 'f', label: 'f.py', kind: 'file', parent: null }, { id: 'f::S', label: 'class S', kind: 'class', parent: 'f' }],
+    cards: [{ id: 'm', group: 'f', kind: 'module', title: 'f.py' }, { id: 'S', group: 'f', kind: 'class', title: 'S' }, { id: 'S.a', group: 'f::S', kind: 'method', title: 'a' }, { id: 'S.b', group: 'f::S', kind: 'method', title: 'b' }, { id: 'main', group: 'f', kind: 'function', title: 'main' }],
+    edges: [{ from: 'S', to: 'S.a', kind: 'CONTAINS' }, { from: 'main', to: 'S.b', kind: 'CALLS' }, { from: 'main', to: 'nowhere', kind: 'CALLS' }] };
+  const g = Gr.fromContract(doc), d = Gr.structOf(g.nodes, g.edges), c = Gr.contractOf(g.nodes, g.edges), by = {}; d.nodes.forEach((n) => { by[n.id] = n; });
+  t('an explode loads into any graph: Structure 3D puts a plane per kind in reading order and an area per file or class',
+    g.nodes.length === 5 && g.edges.length === 2 && d.planes.map((p) => p.id).join(',') === 'module,class,function,method' && by['S.a'].area === 'class S' && by.main.area === 'f.py', JSON.stringify([d.planes, d.areas]));
+  t('and back: the graph hands the explode renderer its contract (cards, groups, edges)', c.cards.length === 5 && c.groups.length === 2 && c.edges.length === 2 && c.kind === 'code');
+  t('the Structure methods are registered beside Live ops', /id: 'struct-iso', label: 'Structure/.test(M) && /id: 'struct',    label: 'Structure', order: 15, mount: structure/.test(M)); })();
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
