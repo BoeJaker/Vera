@@ -174,21 +174,26 @@ def collapse_repeats(hits: List[Dict[str, Any]], limit: int = 0) -> List[Dict[st
 
 
 async def fast_then_vector(search: Callable[[float], Any], budget_s: float = 1.5,
-                           clock: Callable[[], float] = time.monotonic) -> Tuple[List[Any], bool]:
+                           clock: Callable[[], float] = time.monotonic,
+                           info: Any = None) -> Tuple[List[Any], bool]:
     """A search held to one budget: the text tier always, the vector tier only if it lands inside the budget.
 
     `search(fast_timeout)` is a two-tier search (HybridMemoryStore.search_fast_and_slow) returning
     (fast_hits, slow_task); the slow task resolves to the merged result with vectors. Returns (hits, vector):
     the slow result when it arrived in what is left of the budget, else the fast hits. A slow task that missed
-    is cancelled, so nothing is left running for a result no one will read. Never raises."""
+    is cancelled, so nothing is left running for a result no one will read. Never raises.
+    `info`, a dict when given, is filled with what happened: fast_ms, fast_hits, error."""
     budget_s = max(0.2, float(budget_s or 1.5))
+    note = info if isinstance(info, dict) else {}
     t0 = clock()
     hits: List[Any] = []
     slow = None
     try:
         hits, slow = await search(budget_s)
-    except Exception:
+    except Exception as e:
+        note.update(fast_ms=round((clock() - t0) * 1000, 1), fast_hits=0, error=str(e)[:120])
         return [], False
+    note.update(fast_ms=round((clock() - t0) * 1000, 1), fast_hits=len(hits or []))
     if slow is None:
         return list(hits or []), False
     vector = False
@@ -205,6 +210,33 @@ async def fast_then_vector(search: Callable[[float], Any], budget_s: float = 1.5
     if not slow.done():
         slow.cancel()
     return list(hits or []), vector
+
+
+async def gather_within(coros: Dict[str, Any], timeout: float) -> List[Any]:
+    """Run named searches together and keep what finished inside `timeout`, in the order given.
+
+    A search still running at the deadline is cancelled and stands as a TimeoutError; one that failed stands as its
+    exception. Unlike wait_for(gather(...)), one slow backend does not throw away the others' hits (the deep memory
+    search on prod got 0 hits from a text tier whose two backends each answer in 0.3-0.5 s on their own)."""
+    names = list(coros)
+    tasks = {n: asyncio.ensure_future(coros[n]) for n in names}
+    if not tasks:
+        return []
+    done, pending = await asyncio.wait(list(tasks.values()), timeout=max(0.0, float(timeout or 0)))
+    for t in pending:
+        t.cancel()
+    out: List[Any] = []
+    for n in names:
+        t = tasks[n]
+        if t in pending:
+            out.append(TimeoutError("%s did not answer in %.1fs" % (n, float(timeout or 0))))
+        elif t.cancelled():   # an Exception, not CancelledError (a BaseException), so callers' isinstance checks hold
+            out.append(TimeoutError("%s was cancelled" % n))
+        elif t.exception() is not None:
+            out.append(t.exception())
+        else:
+            out.append(t.result())
+    return out
 
 
 def retitle_block(block: str, heading: str) -> str:

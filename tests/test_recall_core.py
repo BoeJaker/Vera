@@ -208,3 +208,44 @@ def test_retitle_block_keeps_the_lines_and_swaps_the_heading():
     out = rc.retitle_block(block, "=== Earlier conversations ===")
     assert out == "=== Earlier conversations ===\n[2026-10-01 10:00] User: the plan"
     assert rc.retitle_block("", "X") == "" and rc.retitle_block("only a heading", "X") == ""
+
+# ── gather_within: one slow backend does not throw away the other's hits ─────────────────────────────────────────
+def test_what_finished_in_time_is_kept_and_the_slow_one_cancelled():
+    async def go():
+        async def fast():
+            return ["pg-hit"]
+        async def slow():
+            await asyncio.sleep(5)
+            return ["never"]
+        return await rc.gather_within({"postgres": fast(), "neo4j": slow()}, 0.2)
+    out = asyncio.run(go())
+    assert out[0] == ["pg-hit"]
+    assert isinstance(out[1], TimeoutError) and isinstance(out[1], Exception)
+
+
+def test_a_failed_backend_stands_as_its_exception_in_order():
+    async def go():
+        async def boom():
+            raise RuntimeError("neo4j down")
+        async def ok():
+            return ["n"]
+        return await rc.gather_within({"neo4j": boom(), "postgres": ok()}, 1.0)
+    out = asyncio.run(go())
+    assert isinstance(out[0], RuntimeError) and out[1] == ["n"]
+
+
+def test_gather_within_nothing_is_nothing():
+    assert asyncio.run(rc.gather_within({}, 1.0)) == []
+
+
+def test_fast_then_vector_says_how_the_text_tier_went():
+    search, _made = _two_tier(5.0)
+    info = {}
+    asyncio.run(rc.fast_then_vector(search, 0.2, info=info))
+    assert info["fast_hits"] == 1 and info["fast_ms"] >= 0 and "error" not in info
+
+    async def boom(fast_timeout):
+        raise RuntimeError("postgres down")
+    info2 = {}
+    asyncio.run(rc.fast_then_vector(boom, 0.2, info=info2))
+    assert info2["fast_hits"] == 0 and "postgres down" in info2["error"]

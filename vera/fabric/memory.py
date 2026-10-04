@@ -1792,11 +1792,11 @@ class HybridMemoryStore:
 
     @staticmethod
     async def _gather_fast(tasks, timeout: float):
-        """The timed fast-tier legs under one bound; None when the bound ran out."""
-        try:
-            return await asyncio.wait_for(asyncio.gather(*tasks.values()), timeout=timeout)
-        except asyncio.TimeoutError:
-            return None
+        """The timed fast-tier legs under one bound: each leg that finished as its (result, ms), a leg still running
+        at the bound cancelled and standing as a TimeoutError - one slow backend no longer throws away the other's
+        hits (recall_core.gather_within; a deep memory search on prod got 0 hits from two backends that each answer
+        in 0.3-0.5 s alone)."""
+        return await _recall_core.gather_within(tasks, timeout)
 
     @staticmethod
     def _fast_legs(env, names, timed_results, timeout: float):
@@ -1806,7 +1806,12 @@ class HybridMemoryStore:
                 env.stage(n, timeout * 1000.0, "timeout")
             return [TimeoutError("fast tier timed out")] * len(names)
         out = []
-        for n, (result, ms) in zip(names, timed_results):
+        for n, entry in zip(names, timed_results):
+            if isinstance(entry, BaseException):            # the leg did not finish inside the bound
+                env.stage(n, timeout * 1000.0, _rtc.leg_outcome(entry))
+                out.append(entry if isinstance(entry, Exception) else TimeoutError(str(entry)))
+                continue
+            result, ms = entry
             env.stage(n, ms, _rtc.leg_outcome(result),
                       None if isinstance(result, BaseException) else len(result))
             out.append(result)

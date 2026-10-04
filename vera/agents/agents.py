@@ -2157,8 +2157,11 @@ async def agent_chat_stream_endpoint(request: Request):
                         await _q.put(_ph.sse(
                             "acquire", "memory", _MEM_LABEL, "fail" if _mr.get("error") else "done",
                             ms=(_time.monotonic() - _mem_t0) * 1000, count=int(_mr.get("hits") or 0),
-                            detail=("with the vector search" if _mr.get("vector")
-                                    else "text search only (the vector search missed the 1.5 s budget)")))
+                            detail=(("with the vector search" if _mr.get("vector")
+                                     else "text search only (the vector search missed the 1.5 s budget)")
+                                    + (" · text tier %s ms, %s found" % (int(_mr.get("fast_ms") or 0),
+                                                                          int(_mr.get("fast_hits") or 0))
+                                       if _mr.get("fast_ms") is not None else ""))))
                     _mem_phase = asyncio.create_task(_mem_phase_done())
                 if not _model_waits_for_context:
                     _model_t0 = _time.monotonic()
