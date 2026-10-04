@@ -11,6 +11,9 @@
  *   estate-3d  the one isometric projection (/ui/iso.js, window.VeraISO) - a plate per group (the host a node runs on
  *              when it says, else its type), a block per node, height by how connected it is, colour the graph's
  *   estate-2d  the same blocks seen straight down (the projection at 90°) - the plan
+ *   ops-iso    Estate > Live ops' own lattice, 3D (ops-2d: the same lattice in 2D, its channel routing) (/ui/iso-lattice.js, window.VeraLattice) - planes (props.plane, else the type,
+ *              ordered by how far the graph reaches them from its hub), areas (props.area/domain/host, else the hub's branch),
+ *              pipes on channel tracks, iso widgets beside each node; 3D stacked or flat, or 2D
  *   mermaid    <vera-mermaid> (/ui/elements/vera_mermaid.js) - the nodes as a flowchart, a subgraph per type, the
  *              edges with their relation as the label (the diagram technique the chat and the canvas draw with)
  * Hover a block: it lights and says what it is. Click: the graph's detail drawer for that node.
@@ -141,7 +144,73 @@
     return { update: draw, destroy: function(){} };
   }
 
+  // ── live ops: the graph on Estate > Live ops' own lattice (/ui/iso-lattice.js, window.VeraLattice) ──
+  // a plane per layer (a node's props.plane, else its type, in the order the graph reaches them from its hub), an area per
+  // branch (props.area / domain / host, else the hub's child the node hangs from), the pipes on their tracks, iso widgets
+  // beside every node. Click a node: its routes light; double-click: the graph's detail drawer.
+  var BAD = /^(down|fail|failed|error|err|dead|offline|stopped|unreachable|timeout)$/, WARN = /^(warn|warning|degraded|stale|busy|slow)$/;
+  function latticeOf(N, E){
+    var P = function(n){ return (n && n.props) || n || {}; }, byId = {}, adj = {}, deg = {};
+    N.forEach(function(n){ byId[n.id] = n; adj[n.id] = []; });
+    E.forEach(function(e){ if (!byId[e.from] || !byId[e.to] || e.from === e.to) return; adj[e.from].push(e.to); adj[e.to].push(e.from); deg[e.from] = (deg[e.from] || 0) + 1; deg[e.to] = (deg[e.to] || 0) + 1; });
+    // walk from the hub - of the best-connected few, the one that reaches the rest in fewest steps: depth orders the planes,
+    // the first step names a branch
+    var reach = function(r){ var dd = {}, q = [r], far = 0; dd[r] = 0; while (q.length){ var id = q.shift(); adj[id].forEach(function(m){ if (dd[m] == null){ dd[m] = dd[id] + 1; far = Math.max(far, dd[m]); q.push(m); } }); } return far; };
+    var order = N.slice().sort(function(a, b){ return (deg[b.id] || 0) - (deg[a.id] || 0); });
+    var hub = order.slice(0, 12).map(function(n){ return { n: n, far: reach(n.id) }; }).sort(function(a, b){ return a.far - b.far || (deg[b.n.id] || 0) - (deg[a.n.id] || 0); })[0];
+    if (hub) order = [hub.n].concat(order.filter(function(n){ return n !== hub.n; }));
+    var depth = {}, branch = {}, rootOf = {}, kids = {};
+    order.forEach(function(r){ if (depth[r.id] != null) return; depth[r.id] = 0; branch[r.id] = null; rootOf[r.id] = r.id; var q = [r.id];
+      while (q.length){ var id = q.shift(); adj[id].forEach(function(m){ if (depth[m] != null) return; depth[m] = depth[id] + 1; branch[m] = depth[id] === 0 ? m : branch[id]; rootOf[m] = rootOf[id]; if (depth[id] > 0) kids[branch[m]] = 1; q.push(m); }); } });
+    var planeOf = function(n){ var p = P(n); return String(p.plane || typeOf(n)); };
+    var pd = {}, pc = {}, first = {}, pname = {}; N.forEach(function(n, i){ var k = planeOf(n), p = P(n); pd[k] = (pd[k] || 0) + (depth[n.id] || 0); pc[k] = (pc[k] || 0) + 1; if (first[k] == null) first[k] = i; if (p.plane_name) pname[k] = String(p.plane_name); });
+    // nodes that name their own plane keep the source's order (Live ops lists them plane by plane); else by reach from the hub
+    var own = N.length && N.every(function(n){ return P(n).plane != null && P(n).plane !== ''; });
+    var planes = Object.keys(pc).sort(function(a, b){ return own ? first[a] - first[b] : (pd[a] / pc[a] - pd[b] / pc[b] || pc[a] - pc[b]); });
+    var areaOf = function(n){ var p = P(n); var a = p.area || p.domain_name || (typeof p.domain === 'string' ? p.domain : '') || p.host; if (a != null && a !== '') return String(a);
+      var b = branch[n.id]; return b && kids[b] ? nameOf(byId[b]) : nameOf(byId[rootOf[n.id]]); };   // a leaf straight off the hub (or the hub) stands in the hub's area
+    var ac = {}, ai = {}; N.forEach(function(n){ var a = areaOf(n), d = P(n).domain; if (a){ ac[a] = (ac[a] || 0) + 1; if (typeof d === 'number') ai[a] = Math.min(ai[a] == null ? d : ai[a], d); } });
+    // areas a source numbers (Live ops' domains) keep its order; else the fullest first
+    var areas = Object.keys(ac).sort(function(a, b){ return (ai[a] != null && ai[b] != null) ? ai[a] - ai[b] : ac[b] - ac[a]; }), keep = areas.slice(0, 8);
+    if (areas.length > 8) keep.push('other'); if (!keep.length) keep.push('all');
+    var nodes = N.map(function(n){ var p = P(n), a = areaOf(n), st = String(p.status || p.state || p.health || '').toLowerCase();
+      return { id: n.id, label: nameOf(n).slice(0, 40), plane: planeOf(n), area: a == null ? keep[0] : (keep.indexOf(a) >= 0 ? a : 'other'),
+        kind: String(p.kind || typeOf(n)), status: BAD.test(st) ? 'down' : WARN.test(st) ? 'warn' : /^(run|running|active|busy)$/.test(st) ? 'run' : 'ok',
+        detail: String(p.detail || p.summary || ''), temp_c: p.temp_c, load: p.load, _g: n }; });
+    // a cell (a plane's nodes in one area) holds nine at most - the lattice stacks no more without overlap: a fuller area
+    // splits into neighbours, "Nodes", "Nodes · 2", ... each plane's nodes shared across them in order
+    var CELL = 9, split = [];
+    keep.forEach(function(a){ var by = {}, mx = 1; nodes.forEach(function(n){ if (n.area === a) (by[n.plane] = by[n.plane] || []).push(n); });
+      Object.keys(by).forEach(function(pl){ mx = Math.max(mx, Math.ceil(by[pl].length / CELL)); });
+      for (var k = 0; k < mx; k++) split.push(k ? a + ' · ' + (k + 1) : a);
+      if (mx > 1) Object.keys(by).forEach(function(pl){ var c = by[pl].length; by[pl].forEach(function(n, i){ var k = Math.floor(i * mx / c); if (k) n.area = a + ' · ' + (k + 1); }); }); });
+    keep = split;
+    var links = E.filter(function(e){ return byId[e.from] && byId[e.to] && e.from !== e.to; }).map(function(e){ return { a: e.from, b: e.to, kind: 'req' }; });
+    return { planes: planes.map(function(id){ return { id: id, name: pname[id] || id }; }), areas: keep, nodes: nodes, links: links };
+  }
+  function opsLattice(view){ return function(host, graph, api){
+    var box = document.createElement('div'); box.style.cssText = 'position:absolute;inset:0';
+    var note = document.createElement('div'); note.style.cssText = 'position:absolute;left:8px;bottom:6px;z-index:50;pointer-events:none;font:10px var(--mono,monospace);color:var(--dim2,#999)';
+    host.appendChild(box); host.appendChild(note);
+    var lv = null, sig = '';
+    function draw(){
+      need('/ui/iso.js', function(){ return !!window.VeraISO; }).then(function(ok){ return ok && need('/ui/iso-lattice.js', function(){ return !!window.VeraLattice; }); }).then(function(ok){
+        if (!ok) { box.textContent = 'the iso lattice (/ui/iso-lattice.js) did not load'; return; }
+        var N = api.nodes().slice(0, 400), E = api.edges(), d = latticeOf(N, E);
+        var s = N.length + ':' + E.length + ':' + N.slice(0, 60).map(function(n){ return n.id; }).join(','); if (lv && s === sig) return; sig = s;
+        if (!lv) lv = window.VeraLattice.mount(box, { view: view, onOpen: function(n){ if (n && n._g) api.open(n._g); } });
+        lv.set(d); lv.fit();
+        note.textContent = 'live ops · ' + (view === '2d' ? '2D' : '3D') + ' · ' + d.nodes.length + ' nodes on ' + d.planes.length + ' planes in ' + d.areas.length + ' areas' + (api.nodes().length > N.length ? ' (first ' + N.length + ')' : '') + ' · double-click: details';
+      });
+    }
+    draw();
+    return { update: draw, destroy: function(){ if (lv) lv.destroy(); } };
+  }; }
+  G.latticeOf = latticeOf;
+
   G.registerMode({ id: 'exploded',  label: 'Exploded',     order: 10, mount: exploded });
+  G.registerMode({ id: 'ops-iso',   label: 'Live ops · 3D', order: 12, mount: opsLattice('3d') });
+  G.registerMode({ id: 'ops-2d',    label: 'Live ops · 2D', order: 13, mount: opsLattice('2d') });
   G.registerMode({ id: 'estate-3d', label: 'Estate · 3D', order: 20, mount: estate(30) });
   G.registerMode({ id: 'estate-2d', label: 'Estate · 2D', order: 30, mount: estate(90) });
   G.registerMode({ id: 'mermaid',   label: 'Mermaid',      order: 40, mount: mermaid });

@@ -867,12 +867,17 @@
   {
    "record": {
     "id": "topology-map",
-    "form": "topology",
+    "form": "vgraph",
     "source": "topology.snapshot",
     "shape": "graph",
     "title": "Stack topology",
     "read": {
-     "refresh": "2m"
+     "refresh": "2m",
+     "map": {
+      "nodes": "nodes",
+      "links": "edges",
+      "type": "kind"
+     }
     },
     "frame": {
      "size": "xl",
@@ -882,7 +887,10 @@
      ]
     },
     "draw": {
-     "body": "page"
+     "body": "record",
+     "mode": "ops-iso",
+     "chrome": "min",
+     "colour": "status"
     },
     "actions": [
      "dive",
@@ -890,7 +898,7 @@
      "ask"
     ],
     "place": "dashboard",
-    "note": "the page draws the estate's own <vera-topology-map> (status colour per node, click a node to open it, collapse a kind); the topology form draws a diagram of the graph without those hooks"
+    "note": "the stack topology as the Vera graph, opening on Live ops 3D (planes by kind, areas by branch); its method list switches to Live ops 2D, the estate blocks, exploded, mermaid or the plain node/edge graph"
    },
    "at": [
     0,

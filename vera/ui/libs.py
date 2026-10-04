@@ -7,6 +7,8 @@ from the same copy.
   /ui/iso.js    -> vera/ui/iso.js    window.VeraISO   the ops map 3D, the canvas
                                                        exploded view, iso widgets,
                                                        the graph's isometric galaxy
+  /ui/iso-lattice.js -> vera/ui/iso_lattice.js  window.VeraLattice  the iso lattice: planes x areas,
+                                                       pipes, widgets, the view (Live ops, graph modes)
   /ui/menus.js  -> vera/ui/menus.js  window.MENUS     every context menu
   /ui/routes.js -> vera/ui/routes.js window.VeraRoutes the run routers: the exploded
                                                        scene's cards and iso runs, the
@@ -44,6 +46,11 @@ def _script(name: str):
 @APP.get("/ui/iso.js", include_in_schema=False)
 async def _serve_iso_js():
     return _script("iso.js")
+
+
+@APP.get("/ui/iso-lattice.js", include_in_schema=False)
+async def _serve_iso_lattice_js():
+    return _script("iso_lattice.js")
 
 
 @APP.get("/ui/menus.js", include_in_schema=False)

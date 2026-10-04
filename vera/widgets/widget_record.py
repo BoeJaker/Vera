@@ -230,7 +230,7 @@ FORMS: List[Dict[str, Any]] = [
     # ── the calendar and the Vera graph as forms (the widget review, round 3): the calendar panel's month, its schedule
     #    and its controls (they read cal.events.list with arguments that follow the month: '@month_start' . '@month_end'
     #    . '@today' . '@today+14d'; calnav drives every month and schedule of its draw.group on the page), and the estate's
-    #    own graph in a tile (draw.mode: graph . exploded . estate-3d . estate-2d . mermaid; draw.layer when it reads itself) ──
+    #    own graph in a tile (draw.mode: graph . exploded . ops-iso . ops-2d . estate-3d . estate-2d . mermaid; draw.layer when it reads itself) ──
     _F("month", "calendar", glyph="month", options=("controls", "group"), name="Month calendar", boards=("widgets", "spec")),
     _F("schedule", "calendar", glyph="schedule", options=("group",), name="Schedule", boards=("widgets", "spec")),
     _F("calnav", "calendar", glyph="calnav", sizes=("s", "m", "l"), options=("group", "views", "view"), name="Calendar controls", boards=("widgets", "spec")),
