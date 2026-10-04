@@ -163,3 +163,22 @@ def test_page_genre():
     assert ops.genre_of({}) == ("", 0.0)
     assert ops.genre_factor("marketing") == 0.5 and ops.genre_factor("marketing", vendors_ok=True) == 1.0
     assert ops.genre_factor("listing") == 0.35 and ops.genre_factor("news") == 1.0
+
+
+def test_topic_labels_follow_the_kind_of_topic():
+    prop = {"name": "AI in real estate", "brief": "valuation and planning in UK property"}
+    assert ops.topic_kind(prop) == "property" and "planning authority" in ops.topic_labels(prop)
+    assert ops.topic_kind({"name": "Fed rate path", "brief": "inflation and bond yields"}) == "finance"
+    assert ops.topic_kind({"name": "Red Sea shipping", "brief": "vessel attacks and sanctions"}) == "osint"
+    assert ops.topic_kind({"name": "Gardening"}) == "general"
+    mine = {"name": "Gardening", "kind": "tech", "labels": ["seed company", "company"]}
+    labs = ops.topic_labels(mine)
+    assert labs[0] == "seed company" and labs.count("company") == 1 and "AI model" in labs and len(labs) <= 16
+
+
+def test_entity_types_keep_the_best_label_per_entity():
+    r = {"entities": [{"word": "Savills", "entity": "company", "score": 0.6},
+                      {"word": "Savills", "entity": "property agency or consultancy", "score": 0.9},
+                      {"word": "Leeds", "entity": "location", "score": 0.8},
+                      {"word": "noise", "entity": "location", "score": 0.9}]}
+    assert ops.entity_types(r, ["Savills", "Leeds"]) == {"Savills": "property agency or consultancy", "Leeds": "location"}

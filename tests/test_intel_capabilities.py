@@ -107,7 +107,9 @@ def _load(tmp_path, *, nlp=True):
         return {"ranked": [{"index": i, "score": 4.0 if "pilot" in d.lower() else -6.0} for i, d in enumerate(documents)]}
 
     async def nlp_ner(text="", task="ner", labels=None, threshold=0.4, trace_id=None):
-        return {"entities": [{"word": "Acme", "score": 0.9}, {"word": "Savills", "score": 0.8}]}
+        orch.CALLS.append(("nlp.ner", {"labels": list(labels or [])}))
+        return {"entities": [{"word": "Acme", "entity": "company", "score": 0.9},
+                             {"word": "Savills", "entity": "property agency or consultancy", "score": 0.8}]}
 
     async def nlp_qa(question="", context="", trace_id=None):
         return {"answer": "2027", "score": 0.7}
@@ -247,6 +249,8 @@ def test_the_whole_cycle(tmp_path):
     assert en["enriched"] == 1 and en["nlp_only"] == 1                        # the repo is below the gate: NLP only
     p2 = mod.store().get_signal(pilot["id"])
     assert p2["entities"] == ["Acme", "Savills"] and p2["evidence"][0]["answer"] == "2027"
+    assert p2["entity_types"]["Savills"] == "property agency or consultancy"
+    assert "planning authority" in [c for c in orch.CALLS if c[0] == "nlp.ner"][-1][1]["labels"]   # a property topic
     assert p2["competitors"] == ["Savills"] and p2["stance"] == "positive" and p2["summary"].startswith("Acme runs")
     r2 = mod.store().get_signal(repo["id"])
     assert r2["nlp_only"] and r2["enriched"] and r2["summary"]
