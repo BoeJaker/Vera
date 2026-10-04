@@ -328,7 +328,8 @@
         .sort((a, b) => ((b[1].vetted || 0) + (b[1].unproven || 0)) - ((a[1].vetted || 0) + (a[1].unproven || 0))).slice(0, 12);
       h += '<div class="panel"><div class="sec">Capability parity</div>'
         + '<div class="row">' + ['safe', 'vetted', 'unproven', 'host'].map((k) => '<span class="badge ' + (k === 'host' ? 'bad' : k === 'unproven' ? 'warn' : 'ok') + '">' + k + ' ' + (tot[k] || 0) + '</span>').join(' ')
-        + '<span class="sp"></span><span class="muted">' + (pr.static_at ? 'audit ' + new Date(pr.static_at * 1000).toLocaleString() : 'no static audit yet') + ' · ' + esc(pr.footprints || 0) + ' footprints · ' + esc(pr.vetted_applied || 0) + ' vetted in use</span>'
+        + '<span class="sp"></span><span class="muted">' + (pr.static_at ? 'audit ' + new Date(pr.static_at * 1000).toLocaleString() : 'no static audit yet') + ' · ' + esc(pr.footprints || 0) + ' footprints · ' + esc(pr.vetted_applied || 0) + ' vetted in use'
+        + ((pr.nightly_preview || {}).at ? ' · nightly preview: ' + esc(pr.nightly_preview.would_vet) + ' to vet, ' + esc(pr.nightly_preview.would_drop) + ' to drop' : '') + '</span>'
         + '<button data-a="par-audit">run audit</button><button data-a="par-preview">preview vet</button><button data-a="par-vet">vet</button></div>'
         + (near.length ? '<table><tr><th>namespace</th><th>safe</th><th>vetted</th><th>unproven</th><th>host</th></tr>'
           + near.map((x) => '<tr><td><b>' + esc(x[0]) + '</b></td>' + ['safe', 'vetted', 'unproven', 'host'].map((k) => '<td>' + (x[1][k] || '') + '</td>').join('') + '</tr>').join('') + '</table>' : '')

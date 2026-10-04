@@ -69,6 +69,19 @@ def test_verdict_needs_both_halves():
     assert fc.verdict(clean, [], static_known=False)[0] == "unproven"
 
 
+def test_a_file_reading_source_is_settled_by_its_runs():
+    # static analysis cannot tell a template read from a data file; the tracer
+    # can (it ignores the code tree), so `localfs` needs more runs, not a veto
+    assert fc.verdict({"runs": 3, "kinds": {}}, ["localfs"])[0] == "unproven"
+    v = fc.verdict({"runs": fc.MIN_RUNS_SOFT, "kinds": {"socket_shared": 2}}, ["localfs"])
+    assert v[0] == "vetted" and "code tree" in v[1]
+    bad = fc.verdict({"runs": 9, "kinds": {"file_read": 1}, "targets": {"file_read": ["/srv/x.json"]}},
+                     ["localfs"])
+    assert bad[0] == "host" and "/srv/x.json" in bad[1]
+    # a hard marker beside it still decides
+    assert fc.verdict({"runs": 9, "kinds": {}}, ["localfs", "sqlite"])[0] == "host"
+
+
 def test_a_caller_of_a_host_bound_cap_is_host_bound():
     rows = {"a.pure": {"markers": [], "calls": ["b.mid"]},
             "b.mid": {"markers": [], "calls": ["c.db"]},
@@ -88,10 +101,13 @@ def test_vetted_caps_are_placed_in_the_extended_class():
         assert wp.class_of("canvas.render", env={}) == "extended"
         assert wp.may_run_here("canvas.render", is_worker=True, classes=["general"])[0] is False
         assert wp.may_run_here("canvas.render", is_worker=True, classes=["extended"])[0] is True
-        # the brakes still win
+        # evidence beats the setter-by-name guess (the audit checks the state
+        # write the name only suggests) ...
+        assert wp.placement("canvas.config.set")[0] == "host"     # not vetted: the name rule
         wp.set_vetted({"canvas.config.set": ("extended", "x")})
-        assert wp.placement("canvas.config.set")[0] == "host"
-        assert wp.placement_from_env("canvas.render",
+        assert wp.placement("canvas.config.set")[0] == "any"
+        # ... and the operator's brake still beats everything
+        assert wp.placement_from_env("canvas.config.set",
                                      {"VERA_WORKER_HOST_ONLY": "canvas"})[0] == "host"
         # no node takes it by default
         assert "extended" not in wp.DEFAULT_CLASSES_CPU

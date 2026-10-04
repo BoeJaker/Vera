@@ -162,6 +162,12 @@ def placement(cap_name: str, *, node_ok: Iterable[str] = (),
     ok = set(_names(node_ok))
     if name in ok:
         return "any", "admitted by VERA_WORKER_NODE_OK"
+    # Vetted by evidence beats the setter-by-name rule below: the rule guesses
+    # from a name that a cap changes process-local settings; the audit checks
+    # it (a write to module state, or a `global` rebind, keeps it host-bound),
+    # and most setters write a shared store (owner, 2026-10-04: go further).
+    if name in VETTED:
+        return "any", "vetted: " + VETTED[name][1]
     last = name.rsplit(".", 1)[-1] if "." in name else ""
     if last in MUTATOR_SEGMENTS or ".config." in name:
         return "host", "changes process-local settings"
@@ -169,8 +175,6 @@ def placement(cap_name: str, *, node_ok: Iterable[str] = (),
         return "any", "admitted by VERA_WORKER_NODE_OK"
     if name in NODE_SAFE_CAPS:
         return "any", NODE_SAFE_CAPS[name][1]
-    if name in VETTED:
-        return "any", "vetted: " + VETTED[name][1]
     if ns in NODE_SAFE:
         return "any", NODE_SAFE[ns]
     return "host", "not vetted as node-safe"

@@ -198,6 +198,40 @@ async def _footprint_startup():
 schedule(_footprint_startup, interval=999999, name="cap_footprint_startup")
 
 
+#: The latest nightly vet preview (json): what nodes.parity.vet would add/drop.
+PREVIEW_KEY = "vera:caps:parity:preview"
+
+
+async def _parity_nightly():
+    """Once a night (02:00-05:00 host time) on the Vera host: re-run the static
+    audit and a vet DRY RUN, and keep the preview for review. Nothing is
+    vetted here - a person approves each batch (owner, 2026-10-04)."""
+    if getattr(_orch, "_IS_WORKER", False) or _orch.is_dev_sandbox():
+        return
+    if not 2 <= time.localtime().tm_hour < 5:
+        return
+    r = _orch.REDIS
+    if r is None:
+        return
+    day = time.strftime("%Y-%m-%d")
+    if not await r.set(f"vera:caps:parity:nightly:{day}", "1", nx=True, ex=86400):
+        return
+    try:
+        a = await cap_parity_audit()
+        v = await cap_parity_vet(dry_run=True)
+    except Exception as e:
+        log.warning("parity nightly: %s", e)
+        return
+    preview = {"at": time.time(), "audit": a, "would_vet": v.get("would_vet") or [],
+               "would_drop": v.get("would_drop") or []}
+    await r.set(PREVIEW_KEY, json.dumps(preview))
+    await emit_event({"type": "nodes.parity.preview", "would_vet": len(preview["would_vet"]),
+                      "would_drop": len(preview["would_drop"])})
+
+
+schedule(_parity_nightly, interval=1800, name="nodes.parity.nightly")
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  the parity capabilities
 # ═════════════════════════════════════════════════════════════════════════════
@@ -270,7 +304,9 @@ async def _verdicts() -> Tuple[Dict[str, Tuple[str, str]], Dict[str, Any]]:
             out[c] = ("safe", _wp.placement(c)[1])
             continue
         where, why = _wp.placement(c)
-        if why in ("listed in VERA_WORKER_HOST_ONLY", "changes process-local settings"):
+        # only the operator's brake is final here; a setter-by-name is judged on
+        # the evidence like any other cap (the audit catches state writes)
+        if why == "listed in VERA_WORKER_HOST_ONLY":
             out[c] = ("host", why)
             continue
         out[c] = core.verdict(fps.get(c), eff.get(c, ()), static_known=c in rows)
@@ -302,6 +338,13 @@ async def cap_parity_status(namespace: str = "", trace_id=None) -> Dict:
            "static_at": meta["static_at"], "footprints": meta["footprints"],
            "tracer": {k: _STATE[k] for k in ("on", "events", "dropped", "flushed")},
            "vetted_applied": len(_wp.VETTED)}
+    try:
+        raw = await _orch.REDIS.get(PREVIEW_KEY) if _orch.REDIS is not None else None
+        p = json.loads(raw) if raw else {}
+        out["nightly_preview"] = {"at": p.get("at"), "would_vet": len(p.get("would_vet") or []),
+                                  "would_drop": len(p.get("would_drop") or [])}
+    except Exception:
+        pass
     if namespace:
         out["caps"] = {c: {"verdict": k, "why": w} for c, (k, w) in sorted(v.items())
                        if c.split(".", 1)[0] == namespace}
