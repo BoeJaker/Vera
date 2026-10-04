@@ -73,5 +73,10 @@ t('a NESTED menu-less panel\'s primary action ends its host\'s open menu; a pres
 for (const [d, f] of [['ide', 'vscode_panel.html'], ['ide', 'ide_remote_panel.html'], ['web', 'web_api_panel.html'], ['remote', 'workspace_panel.html'], ['mcp', 'mcp_catalog_panel.html'], ['operator', 'operator_studio_panel.html'], ['integrations', 'integrations_panel.html']])
   t(f + ': loads the bridge itself (nested, the harness does not inject it)', /<script src="\/ui\/vera-panel-bridge\.js"><\/script>/.test(R('vera', d, f)));
 
+// the loose ends: pages a light and a dark theme sweep found off the theme, and heights that run past a zoomed window
+t('Gallery: its own text and card names are the theme\'s', /--card:var\(--bg1,var\(--s1,#1b1e24\)\);--ink:var\(--text,var\(--t1,#e8e9ec\)\)/.test(R('vera', 'render', 'render_capabilities.py')) && !/prefers-color-scheme:light\)\{:root\{--bg:#fbfbfa/.test(R('vera', 'render', 'render_capabilities.py')));
+t('Thermal printer: its field ground is the theme\'s; its height is 100%', (R('vera', 'business', 'print_composer.html').match(/--panel2:var\(--bg2,#/g) || []).length === 3 && /html\{height:100%\}/.test(R('vera', 'business', 'print_composer.html')));
+t('Sprite companion: the theme\'s names, the old colours as fallbacks', /color:var\(--text,var\(--t1,#ddd5c8\)\)/.test(R('vera', 'spritegen', 'spritegen_capabilities.py')) && !/color-scheme:dark/.test(R('vera', 'spritegen', 'spritegen_capabilities.py')));
+t('Research and the bootstrap: 100%, never 100vh', /grid-template-columns:var\(--lhm-width,184px\) 1fr;height:100%\}/.test(R('vera', 'research', 'research_panel.html')) && /\.vb-root \{ display: grid; grid-template-columns: auto 1fr; height: 100%;/.test(R('vera', 'ui', 'bootstrap.css')));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
