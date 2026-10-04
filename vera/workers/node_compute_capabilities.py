@@ -494,6 +494,13 @@ async def cap_compute_run(job: str = "", fn: str = "", trace_id=None) -> Dict:
     except Exception as e:
         return await finish(False, str(e)[:300])
     del blob
+    # inputs too big to send with every job (a gate's code archive, shared by
+    # its chunks) are stored once in Redis by the caller and named here
+    for name, key in (inputs.pop("_blob_refs", None) or {}).items():
+        data = await r.get(str(key))
+        if data is None:
+            return await finish(False, f"input {name!r} expired or was withdrawn")
+        inputs[name] = data
 
     stop_ev = threading.Event()
     pending: List[str] = []

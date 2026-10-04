@@ -13,6 +13,7 @@ The runtime half of test_runner_core (read that first).
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import os
@@ -308,83 +309,124 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
             ev._pstep(rec, "test-pool", True, msg)
             await ev._save_pipeline(rec)
 
-    # runners: the host's container (one lease) and each node with room now
-    queued = False
-    while True:
-        host_ok = await _host_lease(token)
-        nodes = await _node_slots(cfg["max_nodes"])
-        if host_ok or nodes:
-            break
-        if not queued:
-            queued = True
-            await note("test runners all busy - waiting for one")
-        await asyncio.sleep(10)
+    # The tier is split into CHUNKS that every free runner pulls from, one at a
+    # time, until none are left: a gate that starts while others hold the
+    # runners takes more as they free up, instead of running everything on the
+    # one runner free at its start (2026-10-05: 7 of 25 gates ran as 1 shard).
+    durations = await _durations()
+    chunks = core.shard(files, durations, min(cfg["chunks"], len(files)))
+    pending = collections.deque({"files": c, "tries": 0, "host_only": False} for c in chunks)
+    run = getattr(_orch, "NODE_COMPUTE", None)
+    plan = getattr(_orch, "NODE_PLAN", None)
+    want = _s(await _orch.REDIS.get(_nc.TESTENV_WANT_KEY)) if _orch.REDIS is not None else ""
+    blob_key = ""
+    report: List[Dict[str, Any]] = []
+    parsed: List[Dict[str, Any]] = []
+    outputs: List[str] = []
+    running: Dict[Any, Dict[str, Any]] = {}
+    host_held = False
+    waited_note = False
+
+    async def put_archive() -> str:
+        """The worktree archive, once per gate, for every node chunk to fetch."""
+        nonlocal blob_key
+        if not blob_key:
+            data = await _archive(wt)
+            blob_key = f"vera:evolve:test_pool:archive:{rid}:{int(t0)}"
+            await _orch.REDIS.set(blob_key, data, ex=3 * 3600)
+        return blob_key
+
+    async def on_node(c):
+        t = time.time()
+        key = await put_archive()
+        res = await run("pytest.shard", {
+            "_blob_refs": {"archive": key}, "files": c["files"], "markers": markers,
+            "testenv_sha": want, "timeout": timeout},
+            label=f"gate chunk {rid} ({len(c['files'])} files)", max_wait_s=30,
+            host_fallback=False)
+        out = res["out"]
+        if "__VERA_RC=" not in out:
+            raise RuntimeError("no result from pytest")
+        p = ev._ut_parse(out)
+        # pytest could not start: the runner's failure, not the code's
+        if p.get("rc") in (3, 4) or (p.get("total", 0) == 0 and p.get("rc") not in (0, 5)):
+            raise RuntimeError(f"pytest rc={p.get('rc')} on {res.get('_node')}")
+        return {"parsed": p, "out": out, "runner": res.get("_node", "node"),
+                "seconds": round(time.time() - t, 1)}
+
+    async def on_host(c):
+        t = time.time()
+        res = await _host_shard(wt, c["files"], markers, timeout)
+        if res.get("error"):
+            raise RuntimeError(res["error"] + " " + res.get("detail", ""))
+        return {"parsed": res["parsed"], "out": res["out"], "runner": "host",
+                "seconds": round(time.time() - t, 1)}
+
+    await note(f"{len(files)} test files in {len(chunks)} chunks over the host and the nodes "
+               f"as they free up")
     try:
-        n = len(nodes) + (1 if host_ok else 0)
-        durations = await _durations()
-        shards = core.shard(files, durations, n)
-        node_shards = shards[:len(nodes)]
-        host_shards = shards[len(nodes):]
-        await note(f"{len(files)} test files in {len(shards)} shards: "
-                   f"{len(node_shards)} on nodes, {len(host_shards)} on the host"
-                   + (f" (queued {int(time.time() - t0)} s)" if queued else ""))
-        archive = await _archive(wt) if node_shards else b""
-        want = _s(await _orch.REDIS.get(_nc.TESTENV_WANT_KEY)) if _orch.REDIS is not None else ""
-        run = getattr(_orch, "NODE_COMPUTE", None)
-        report: List[Dict[str, Any]] = []
-        parsed: List[Dict[str, Any]] = []
-        outputs: List[str] = []
-        redo: List[List[str]] = []
-
-        async def on_node(s: List[str]):
-            t = time.time()
-            try:
-                res = await run("pytest.shard", {
-                    "archive": archive, "files": s, "markers": markers,
-                    "testenv_sha": want, "timeout": timeout},
-                    label=f"gate shard {rid} ({len(s)} files)", max_wait_s=120,
-                    host_fallback=False)
-                out = res["out"]
-                if "__VERA_RC=" not in out:
-                    raise RuntimeError("no result from pytest")
-                p = ev._ut_parse(out)
-                # a shard that could not even start pytest is the runner's
-                # failure, not the code's: run it again on the host
-                if p.get("rc") in (3, 4) or (p.get("total", 0) == 0 and p.get("rc") not in (0, 5)):
-                    raise RuntimeError(f"pytest rc={p.get('rc')} on {res.get('_node')}")
-                parsed.append(p)
-                outputs.append(out)
-                report.append({"runner": res.get("_node", "node"), "files": len(s),
-                               "seconds": round(time.time() - t, 1), "summary": p["summary"]})
-            except Exception as e:
-                redo.append(s)
-                report.append({"runner": "node", "files": len(s), "error": str(e)[:300],
-                               "seconds": round(time.time() - t, 1), "rerun_on_host": True})
-
-        async def on_host(s: List[str], label="host"):
-            t = time.time()
-            res = await _host_shard(wt, s, markers, timeout)
-            if res.get("error"):
-                raise RuntimeError(res["error"] + " " + res.get("detail", ""))
-            parsed.append(res["parsed"])
-            outputs.append(res["out"])
-            report.append({"runner": label, "files": len(s), "seconds": round(time.time() - t, 1),
-                           "summary": res["parsed"]["summary"]})
-
-        jobs = [on_node(s) for s in node_shards] + [on_host(s) for s in host_shards]
-        await asyncio.gather(*jobs)
-        if redo:
-            # a missing shard is never a pass: the host runs what a node could not
-            if not host_ok:
-                while not await _host_lease(token):
-                    await asyncio.sleep(10)
-                host_ok = True
-            await note(f"{len(redo)} shard(s) a node could not run - running them on the host")
-            for s in redo:
-                await on_host(s, label="host (rerun)")
+        while pending or running:
+            # the host's container, when this gate can take its lease
+            idx = next((i for i, c in enumerate(pending)), None)
+            if idx is not None and not host_held and await _host_lease(token):
+                host_held = True
+                c = pending[idx]
+                del pending[idx]
+                running[asyncio.ensure_future(on_host(c))] = {"chunk": c, "where": "host"}
+            # every node with room now: one chunk each (run_on_node reserves
+            # its node in the same step as its pick, so they spread)
+            if pending and run is not None and plan is not None:
+                ready = [c for c in pending if not c["host_only"]]
+                slots = await _node_slots(min(cfg["max_nodes"], len(ready))) if ready else []
+                for _ in slots:
+                    c = next((x for x in pending if not x["host_only"]), None)
+                    if c is None:
+                        break
+                    pending.remove(c)
+                    running[asyncio.ensure_future(on_node(c))] = {"chunk": c, "where": "node"}
+            if not running:
+                if not waited_note:
+                    waited_note = True
+                    await note("test runners all busy - waiting for one")
+                await asyncio.sleep(5)
+                continue
+            done, _ = await asyncio.wait(list(running), timeout=5,
+                                         return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                meta = running.pop(task)
+                c = meta["chunk"]
+                if meta["where"] == "host":
+                    await _host_release(token)
+                    host_held = False
+                    res = task.result()        # a host-container failure fails the gate
+                else:
+                    try:
+                        res = task.result()
+                    except Exception as e:
+                        msg = str(e)
+                        if "no node had room" not in msg:
+                            c["tries"] += 1
+                            report.append({"runner": "node", "files": len(c["files"]),
+                                           "error": msg[:300], "requeued": True})
+                        # a chunk a node failed twice runs on the host; one
+                        # that found no room just waits for the next runner
+                        c["host_only"] = c["tries"] >= 2
+                        pending.appendleft(c)
+                        continue
+                parsed.append(res["parsed"])
+                outputs.append(res["out"])
+                report.append({"runner": res["runner"], "files": len(c["files"]),
+                               "seconds": res["seconds"], "summary": res["parsed"]["summary"]})
     finally:
-        if host_ok:
+        for task in running:
+            task.cancel()
+        if host_held:
             await _host_release(token)
+        if blob_key:
+            try:
+                await _orch.REDIS.delete(blob_key)
+            except Exception:
+                pass
 
     merged = core.merge(parsed)
     for out in outputs:

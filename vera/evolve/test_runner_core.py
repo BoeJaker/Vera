@@ -47,7 +47,7 @@ DURATIONS_KEY = "vera:evolve:test_durations"
 DEFAULT_FILE_S = 1.0
 #: Pool config (json): {"enabled": bool, "max_nodes": int, "min_files": int}.
 POOL_KEY = "vera:evolve:test_pool"
-POOL_DEFAULTS = {"enabled": False, "max_nodes": 3, "min_files": 40}
+POOL_DEFAULTS = {"enabled": False, "max_nodes": 3, "min_files": 40, "chunks": 12}
 #: Per-runner lease for the host's container runner (replaces the one-gate lease).
 HOST_RUNNER_LEASE = "vera:evolve:runner:host"
 
@@ -62,6 +62,8 @@ def merge_pool_config(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
                 cfg[k] = max(0, min(16, int(v)))
             elif k == "min_files":
                 cfg[k] = max(1, int(v))
+            elif k == "chunks":
+                cfg[k] = max(1, min(64, int(v)))
         except (TypeError, ValueError):
             pass
     return cfg
