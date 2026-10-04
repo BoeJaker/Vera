@@ -74,14 +74,14 @@ def test_nothing_specific_finds_nothing():
 def test_a_read_in_one_line_rows_by_name_with_a_figure_or_a_records_figures():
     s = sc.summarise({"positions": [{"symbol": "BTC/USD", "qty": 0.5, "pnl": 120.5}, {"symbol": "ETH/USD", "qty": 2}], "ok": True})
     assert s.startswith("2 rows: BTC/USD (qty 0.5); ETH/USD (qty 2)")
-    assert "revenue 1200" in sc.summarise({"revenue": 1200, "expenses": 800, "ok": True})
+    assert "revenue 1,200" in sc.summarise({"revenue": 1200, "expenses": 800, "ok": True})
 
 
 def test_a_read_leads_with_the_rows_the_turn_named_with_all_their_figures():
     quotes = {"items": [{"key": "yahoo:SPXL", "name": "SPXL", "last": 288.6}] * 3
               + [{"key": "yahoo:BTC-USD", "name": "Bitcoin", "last": 84884.3, "change_pct": 1.69, "volume": 2.8e10}]}
     s = sc.summarise(quotes, focus=["btc/usd".upper()])
-    assert s.startswith("4 rows; for what was asked: Bitcoin (last 8.488e+04, change_pct 1.69)"), s
+    assert s.startswith("4 rows; for what was asked: Bitcoin (last 84,884, change_pct 1.69)"), s
     assert "SPXL" not in s
     assert sc.summarise(quotes, focus=["ETH"]).startswith("4 rows: SPXL")      # nothing named in it: as before
 
@@ -128,5 +128,12 @@ def test_a_read_the_turn_named_comes_before_the_headlines_and_a_series_is_summar
 
 def test_upkeep_is_never_run_and_a_charts_figures_lead_its_summary():
     assert not sc.is_read("markets.history.repair") and not sc.is_read("markets.history.audit") and sc.is_read("markets.chart")
-    s = sc.summarise({"symbol": "BTC-USD", "last": 84884.3, "change_pct": 4.83, "count": 3, "bars": [{"t": 1, "open": 1, "close": 2}] * 3})
-    assert s == "BTC-USD - last 8.488e+04; change_pct 4.83 (3 rows)"
+    # a chart says its last close, the latest bar's move and the move over the window it shows - with the window named
+    # (owner, 2026-10-04: "change_pct 39.46" over 120 days read as today's move; "8.488e+04" for a price)
+    bars = [{"t": i, "open": 60000 + i, "high": 61000 + 200 * i, "low": 59000 + 100 * i, "close": c}
+            for i, c in enumerate([60000.0, 70000.0, 83474.6, 84884.3])]
+    s = sc.summarise({"symbol": "BTC-USD", "timeframe": "1d", "last": 84884.3, "change_pct": 39.46, "count": 4, "bars": bars})
+    assert s == "BTC-USD - last 84,884; latest day +1.69%; over the 4 days shown +41.5%; range 59,000 to 61,600", s
+    # bars with no closes: the record's own figures, written as a person writes them
+    assert sc.summarise({"symbol": "BTC-USD", "last": 84884.3, "change_pct": 4.83, "bars": [{"t": 1}] * 3}) == "BTC-USD - last 84,884; change_pct 4.83 (3 rows)"
+    assert [sc._fmt(x) for x in (84884.3, 1.6912, 0.000421, 2.8e10, 7, True)] == ["84,884", "1.691", "0.00042", "28 bn", "7", "True"]

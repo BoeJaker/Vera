@@ -269,9 +269,47 @@ def _rows_of(res: Any) -> List[Any]:
 
 
 def _fmt(v: Any) -> str:
-    if isinstance(v, float):
-        return ("%.4g" % v) if abs(v) < 1e6 else ("%.3g" % v)
+    """A figure as a person writes it: 84,884 (not 8.488e+04), 1.69, 0.0042, 2.8 bn."""
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, (int, float)):
+        a = abs(v)
+        if a >= 1e9:
+            return "%.3g bn" % (v / 1e9)
+        if a >= 1000:
+            return "{:,.0f}".format(v)
+        if isinstance(v, int):
+            return str(v)
+        return ("%.4g" % v) if a >= 0.001 or a == 0 else ("%.2g" % v)
     return str(v)[:40]
+
+
+#: a bar's span, said in words
+_TF = {"1m": "minute", "5m": "5-minute", "15m": "15-minute", "30m": "30-minute", "1h": "hour", "4h": "4-hour",
+       "1d": "day", "1w": "week", "1wk": "week", "1mo": "month"}
+
+
+def _candles(res: Dict[str, Any], rows: List[Any]) -> str:
+    """A chart's bars said plainly: the last close, the latest bar's move, and the move over the whole window with the
+    window named - a percentage without its period was read by the model as today's move."""
+    closes = [r.get("close") for r in rows if isinstance(r, dict) and isinstance(r.get("close"), (int, float))]
+    if len(closes) < 2:
+        return ""
+    unit = _TF.get(str(res.get("timeframe") or ""), "bar")
+    n = len(closes)
+    span = "%d %ss" % (n, unit) if unit != "bar" else "%d bars" % n
+    head = next((str(res[k]) for k in ("symbol", "name", "title") if res.get(k) not in (None, "")), "")
+    last, prev, first = closes[-1], closes[-2], closes[0]
+    bits = ["last %s" % _fmt(last)]
+    if prev:
+        bits.append("latest %s %+.2f%%" % (unit, (last - prev) / prev * 100))
+    if first:
+        bits.append("over the %s shown %+.1f%%" % (span, (last - first) / first * 100))
+    num = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool)
+    lows = [r["low"] for r in rows if isinstance(r, dict) and num(r.get("low"))] or closes
+    highs = [r["high"] for r in rows if isinstance(r, dict) and num(r.get("high"))] or closes
+    bits.append("range %s to %s" % (_fmt(min(lows)), _fmt(max(highs))))
+    return ((head + " - ") if head else "") + "; ".join(bits)
 
 
 def _base(sym: Any) -> str:
@@ -302,6 +340,9 @@ def summarise(res: Any, max_chars: int = 220, focus: Sequence[str] = ()) -> str:
     rows = _rows_of(res)
     # rows with nothing to name them by (a chart's candles): the record's own headline figures say more
     if rows and isinstance(res, dict) and all(isinstance(r, dict) and not any(r.get(k) not in (None, "") for k in _NAMEY) for r in rows[:5]):
+        said = _candles(res, rows)
+        if said:
+            return said[:max_chars]
         head = [str(res[k]) for k in ("symbol", "name", "title") if res.get(k) not in (None, "")][:1]
         figs = ["%s %s" % (k, _fmt(v)) for k, v in res.items() if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "count"][:4]
         if head or figs:
