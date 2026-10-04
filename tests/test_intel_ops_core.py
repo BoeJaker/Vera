@@ -221,3 +221,11 @@ def test_corpus_is_curated_private_and_stratified():
     assert rows[0]["id"] == "b1" and "vec" not in rows[0] and rows == sorted(rows, key=lambda r: r["t"])
     seq = ops.sequences(rows, [{"id": "s2", "topic_id": "t", "ts": "2026-10-03"}, {"id": "s1", "topic_id": "t", "ts": "2026-10-01"}])
     assert seq["stories"]["t"][0] == "b1" and [x["id"] for x in seq["assessments"]["t"]] == ["s1", "s2"]
+
+
+def test_corpus_order_is_stable_whatever_order_the_store_returns():
+    sigs = [{"id": i, "topic_id": "t", "title": i, "site": f"{i}.example", "seen": "2026-10-02T00:00:00Z"} for i in "dcba"]
+    a, _ = ops.corpus_rows(sigs, max_share=1.0)
+    b, _ = ops.corpus_rows(list(reversed(sigs)), max_share=1.0)
+    assert [r["id"] for r in a] == [r["id"] for r in b] == ["a", "b", "c", "d"]
+    assert ops.sequences(a, [])["stories"]["t"] == ops.sequences(b, [])["stories"]["t"]

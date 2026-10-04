@@ -796,12 +796,12 @@ def corpus_rows(signals: Sequence[Dict[str, Any]], *, max_share: float = 0.15, m
     out: List[Dict[str, Any]] = []
     capped = {}
     for site, rows in by_site.items():
-        rows = sorted(rows, key=lambda r: -(r.get("score") or 0))
+        rows = sorted(rows, key=lambda r: (-(r.get("score") or 0), r["id"]))
         if len(rows) > cap and len(by_site) > 1:
             capped[site] = len(rows) - cap
             rows = rows[:cap]
         out += rows
-    out.sort(key=lambda r: r["t"])
+    out.sort(key=lambda r: (r["t"], r["id"]))          # stable across exports (FM-8.4): time, then id
     shares = {}
     for r in out:
         shares[str(r.get("site") or "?")] = shares.get(str(r.get("site") or "?"), 0) + 1
@@ -814,10 +814,10 @@ def sequences(rows: Sequence[Dict[str, Any]], snapshots: Sequence[Dict[str, Any]
     """Per topic, the observed order of stories and of assessments - real
     transitions (FM-8.4), not random walks."""
     stories: Dict[str, List[str]] = {}
-    for r in sorted(rows, key=lambda r: r["t"]):
+    for r in sorted(rows, key=lambda r: (r["t"], r["id"])):
         stories.setdefault(r["topic_id"], []).append(r["id"])
     snaps: Dict[str, List[Dict[str, Any]]] = {}
-    for sn in sorted(snapshots, key=lambda x: str(x.get("ts") or "")):
+    for sn in sorted(snapshots, key=lambda x: (str(x.get("ts") or ""), str(x.get("id") or ""))):
         snaps.setdefault(sn.get("topic_id"), []).append(
             {"id": sn.get("id"), "ts": sn.get("ts"), "headline": sn.get("headline"),
              "confidence": sn.get("confidence"), "changed": len(sn.get("changed") or [])})
