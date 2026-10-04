@@ -261,7 +261,7 @@
      result drawn inside another) keeps it here instead. */
   const _recFallback = {};
   const recState = (el, key) => { const box = el ? (el._recUi = el._recUi || {}) : _recFallback; const k = String(key || '');
-    return box[k] || (box[k] = { page: 0, q: '', sort: 'rank', view: 'list', dom: '', open: {}, body: {} }); };
+    return box[k] || (box[k] = { page: 0, q: '', sort: 'rank', view: 'list', dom: '', ent: '', open: {}, body: {} }); };
   const BLOCK = {
     /* a document item draws with the reader's renderer (mdx): a research report's tables, numbered lists, quotes and
        figures were pipes and bare lines under the note subset */
@@ -540,7 +540,14 @@
       const canGraph = c.kind === 'memory' || c.view === 'graph';
       if (st.view === 'graph' && !canGraph) st.view = 'list';
       const q = String(st.q || '').toLowerCase().trim();
-      let rows = all.filter((r) => (!st.dom || r.domain === st.dom) && (!q || (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.domain || '') + ' ' + JSON.stringify(r.meta || {})).toLowerCase().includes(q)));
+      /* WHAT THE PAGES NAME: each row's page's entities, from the reader cache (_srcPrefetch fills them, in memory - never
+         the web), as facets beside the sites - the people, organisations and places two or more of the pages name.
+         Choosing one shows the pages that name it; each row carries its own top three. */
+      const ents = (el && el._recEnts && el._recEnts[String(key)]) || {};
+      const entsOf = (r) => ents[String(r.id)] || [];
+      const entN = {}; all.forEach((r) => entsOf(r).forEach((e) => { entN[e[0]] = (entN[e[0]] || 0) + 1; }));
+      const entList = Object.keys(entN).filter((n) => entN[n] >= 2).sort((a, b) => entN[b] - entN[a]).slice(0, size === 'xl' ? 12 : 6);
+      let rows = all.filter((r) => (!st.ent || entsOf(r).some((e) => e[0] === st.ent)) && (!st.dom || r.domain === st.dom) && (!q || (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.domain || '') + ' ' + JSON.stringify(r.meta || {})).toLowerCase().includes(q)));
       if (st.sort === 'newest') rows = rows.slice().sort((a, b) => (Date.parse(b.when) || 0) - (Date.parse(a.when) || 0));
       else if (st.sort === 'title') rows = rows.slice().sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
       const per = st.view === 'cards' ? ({ s: 4, m: 6, l: 9, xl: 18 }[size] || 6) : ({ s: 4, m: 6, l: 10, xl: 20 }[size] || 8);
@@ -611,7 +618,7 @@
         body = `<div class="vc-rbx-${st.view === 'cards' ? 'cards' : 'list'}">` + shown.map((r) => {
           const on = !!(st.open || {})[r.id];
           return `<div class="vc-rbx-row${on ? ' on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}">`
-            + `<div class="vc-rbx-hd">${badge(r)}<div class="vc-rbx-tt">${title(r)}<div class="vc-rbx-sub">${r.domain ? `<span>${esc(r.domain)}</span>` : ''}${r.when ? `<span>${esc(ago(r.when))}</span>` : ''}${r.meta && r.meta.engine ? `<span>${esc(r.meta.engine)}</span>` : ''}${r.meta && r.meta.dataset_id ? `<span>${esc(r.meta.dataset_id)}</span>` : ''}${score(r)}</div></div></div>`
+            + `<div class="vc-rbx-hd">${badge(r)}<div class="vc-rbx-tt">${title(r)}${entsOf(r).length ? `<div class="vc-rbx-ents">${entsOf(r).slice(0, 3).map((e) => `<span title="${esc(e[1])}">${esc(e[0])}</span>`).join('')}</div>` : ''}<div class="vc-rbx-sub">${r.domain ? `<span>${esc(r.domain)}</span>` : ''}${r.when ? `<span>${esc(ago(r.when))}</span>` : ''}${r.meta && r.meta.engine ? `<span>${esc(r.meta.engine)}</span>` : ''}${r.meta && r.meta.dataset_id ? `<span>${esc(r.meta.dataset_id)}</span>` : ''}${score(r)}</div></div></div>`
             + (!on && r.snippet ? `<div class="vc-rbx-s">${esc(String(r.snippet).slice(0, 400))}</div>` : '')
             + (on ? opened(r) : '') + `</div>`;
         }).join('') + `</div>`;
@@ -622,6 +629,7 @@
       return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
         + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
         + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
+        + (entList.length ? `<div class="vc-rbx-facets vc-rbx-efacets"><span class="vc-rbx-fl">names</span>${entList.map((n) => `<button class="${st.ent === n ? 'on' : ''}" data-rec-act="ent" data-rec-key="${K}" data-rec-arg="${esc(n)}">${esc(n)}<i>${entN[n]}</i></button>`).join('')}</div>` : '')
         + (domList.length > 1 ? `<div class="vc-rbx-facets">${domList.map((d) => `<button class="${st.dom === d ? 'on' : ''}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}">${esc(d)}<i>${doms[d]}</i></button>`).join('')}</div>` : '')
         + body
         + `<div class="vc-rbx-foot"><span>${from}–${to} of ${rows.length}${rows.length !== all.length ? ' (of ' + all.length + ')' : ''}</span><span class="vc-rbx-pg">${pages > 1 ? `<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="prev" ${page ? '' : 'disabled'}>‹</button>${dots}<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="next" ${page < pages - 1 ? '' : 'disabled'}>›</button>` : ''}</span>${c.next && c.next.cap ? actBtn('loadmore', '', 'more from ' + esc(c.next.cap), 'fetch the next page from the source') : ''}</div>`
@@ -1525,6 +1533,9 @@
   .vc-dgsrc{margin-top:6px;max-height:160px}
   /* a page, deeper: its reading's who and how long, what it names, where it points */
   .vc-src-m{font-size:10px;color:var(--t3,var(--dim,#6b7480));margin:2px 0 4px}
+  /* a records item: the names its pages share, and each row's own */
+  .vc-rbx-efacets .vc-rbx-fl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7480));margin-right:4px;align-self:center}
+  .vc-rbx-ents{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0}.vc-rbx-ents span{font-size:9.5px;padding:0 6px;border-radius:99px;background:var(--s2,var(--bg2,#1c2026));color:var(--t2,var(--fg2,#c3cad4))}
   /* a page's pictures inside its reading are figures, not the page: a logo drawn at its natural size filled the item */
   .vc-src-body img{max-width:100%;max-height:260px;width:auto;height:auto;object-fit:contain;display:block;margin:6px auto}
   .vc-src-ents{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 2px}
@@ -3286,6 +3297,7 @@
       if (act === 'page') { st.page = arg === 'prev' ? Math.max(0, (st.page | 0) - 1) : arg === 'next' ? (st.page | 0) + 1 : (+arg || 0); return redraw(); }
       if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0; return redraw(); }
       if (act === 'dom') { st.dom = st.dom === arg ? '' : arg; st.page = 0; return redraw(); }
+      if (act === 'ent') { st.ent = st.ent === arg ? '' : arg; st.page = 0; return redraw(); }
       if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key);
           // a fabric record opened is READ at once: its facts, its source, its text - the depth is the point of opening it
           const cur = st.body[it.id] || {};
@@ -3378,6 +3390,30 @@
         if (!(r && r.ok && String(r.markdown || '').trim().length > 200)) return;
         const reader = { markdown: String(r.markdown).slice(0, 40000) }; keep.forEach((k) => { if (r[k] != null && r[k] !== '') reader[k] = r[k]; });
         this.call('canvas.update', { key: String(b.key), content: Object.assign({}, b.content, { reader }) });
+      });
+      /* a records item's pages: their entities (its "names" facets) and their reading (a row opens at once), held in
+         the element only - the canvas is not written, so twenty rows cost no twenty updates */
+      this._recEnts = this._recEnts || {};
+      const SAL = /^(PERSON|ORG|GPE|LOC|FAC|PRODUCT|EVENT|NORP|WORK_OF_ART|LAW|TICKER)$/;
+      let left = 40;
+      (blocks || []).forEach((b) => {
+        if (!b || b.type !== 'records' || b.key == null || !b.content || !Array.isArray(b.content.items)) return;
+        const k = String(b.key); const em = this._recEnts[k] = this._recEnts[k] || {};
+        b.content.items.filter((r) => r && r.url && r.id != null && !this._srcProbed.has(k + '|' + r.id)).slice(0, 20).forEach((r) => {
+          if (left-- <= 0) return; this._srcProbed.add(k + '|' + r.id);
+          this.callResult('reader.page', { url: String(r.url), max_chars: 40000, mode: 'cache' }).then((x) => {
+            if (!(x && x.ok)) return;
+            em[String(r.id)] = (Array.isArray(x.entities) ? x.entities : []).filter((e) => e && e.text && SAL.test(String(e.type || e.label || '')))
+              .slice(0, 12).map((e) => [String(e.text), String(e.type || e.label)]);
+            const st = recState(this, k); st.body = st.body || {};
+            const had = st.body[r.id] || {};
+            if (String(x.markdown || '').trim().length > 200 && !had.reader && !had.text) {
+              const reader = { markdown: String(x.markdown).slice(0, 40000) }; keep.forEach((kk) => { if (x[kk] != null && x[kk] !== '') reader[kk] = x[kk]; });
+              st.body[r.id] = Object.assign({}, had, { reader });
+            }
+            clearTimeout(this._recEntT); this._recEntT = setTimeout(() => { if (this._doc) this.render(this._doc); }, 400);
+          }).catch(() => {});
+        });
       });
     }
     async _srcAct(key, act) {

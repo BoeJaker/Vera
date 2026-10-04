@@ -91,6 +91,20 @@ def _norm(word: str) -> str:
     return re.sub(r"^(?:the|The)\s+", "", w)                 # "The European Union" is the European Union
 
 
+def _whole_words(text: str, word: str, at: int) -> Tuple[str, int]:
+    """A name the tagger cut inside a word ("italik Buterin" when "V" was tagged apart) widened to the words it sits in -
+    only where the offset really points at the name in the text; otherwise the tagger's word as it came."""
+    w = str(word or "").replace("##", "").strip()
+    if not w or at < 0 or text[at:at + len(w)].lower() != w.lower():
+        return word, at
+    a, b = at, at + len(w)
+    while a > 0 and text[a - 1].isalnum():
+        a -= 1
+    while b < len(text) and text[b].isalnum():
+        b += 1
+    return text[a:b], a
+
+
 def merge(text: str, tagged: Iterable[Tuple[int, Dict[str, Any]]], min_score: float = MIN_SCORE) -> List[Dict[str, Any]]:
     """The tagger's answers (each with the offset of the chunk it read) and the patterns, as one list: one entity
     per (type, name), counted, with up to three sentences it was named in, most named first."""
@@ -123,7 +137,9 @@ def merge(text: str, tagged: Iterable[Tuple[int, Dict[str, Any]]], min_score: fl
             if sc < min_score:
                 continue
             typ = str(x.get("entity") or x.get("entity_group") or x.get("label") or "").upper().replace("B-", "").replace("I-", "")
-            add(typ, str(x.get("word") or x.get("text") or ""), off + int(x.get("start") or 0), sc)
+            word, at = str(x.get("word") or x.get("text") or ""), off + int(x.get("start") or 0)
+            word, at = _whole_words(t, word, at)
+            add(typ, word, at, sc)
     for m in _URL.finditer(t):
         add("URL", m.group(0), m.start(), 1.0)
     for m in _TICKER.finditer(t):
