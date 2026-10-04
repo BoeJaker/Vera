@@ -313,7 +313,7 @@
        o.autoPrev  false where the host decides what is drawn (the canvas: a page it switched to source stays source) */
   // the code a card holds, as a fence: what "Send to" hands on (an IDE file gets the bare code instead)
   const fenceOf = (id) => { const b = blocks[id] || {}; return '```' + (b.lang || '') + (b.filename ? ' file=' + b.filename : '') + '\n' + String(b.code || '').replace(/\n$/, '') + '\n```'; };
-  const sendFor = (id, title, skip) => sendMenu('cb:' + id, { getMd: () => fenceOf(id), raw: () => String((blocks[id] || {}).code || ''), title, skip });
+  const sendFor = (id, title, skip) => sendMenu('cb:' + id, { getMd: () => fenceOf(id), raw: () => String((blocks[id] || {}).code || ''), title, skip: (skip || []).concat(['files']) });
   function card(lang, code, o) {
     o = o || {}; lang = String(lang || ''); code = String(code || '');
     const L = lang.toLowerCase(), fname = String(o.filename || ''), id = o.id || register(lang, code, fname);
@@ -364,10 +364,176 @@
       + sendFor(id, title || 'Diagram', ['podcast'])
       + '</div>' + (o.body || '<div class="vo-mm" data-vo-mm="' + id + '"></div>') + codeBody(code, 'mermaid') + '</div>';
   }
+  /* ── FILES: documents, presentations, spreadsheets (owner, 2026-10-04: "add options for documents, presentations and
+     spreadsheets and rendering options for these documents. in the canvas and chat and they should stream in like
+     existing renders like code and mermaid. id like as many types as you can implement") ────────────────────────────
+     A ```slides fence is a deck you page through (and present), a ```sheet / ```csv / ```tsv fence a grid that sorts and
+     works out its formulas, a ```document fence a page. Each is a card like the code card - Copy, Edit, Source, Canvas,
+     Send to - with a Download menu of every file it can be (render.export makes them: pptx, odp, pdf, a web slideshow;
+     xlsx, ods, csv, tsv, json; docx, pdf, odt, rtf, epub, html, markdown, text). While the reply streams, the card draws
+     what has arrived: the slides so far (the one being written shown), the rows so far, the page so far. */
+  const FILE_KIND = { slides: 'slides', deck: 'slides', presentation: 'slides', slide: 'slides',
+    sheet: 'sheet', spreadsheet: 'sheet', csv: 'sheet', tsv: 'sheet', xlsx: 'sheet',
+    document: 'document', doc: 'document', docx: 'document' };
+  const FILE_FORMATS = {
+    slides: [['pptx', 'PowerPoint (.pptx)'], ['odp', 'OpenDocument slides (.odp)'], ['slides_pdf', 'PDF'], ['deck', 'Web slideshow (.html)'], ['md', 'Markdown (.md)']],
+    sheet: [['xlsx', 'Excel (.xlsx)'], ['ods', 'OpenDocument spreadsheet (.ods)'], ['csv', 'CSV (.csv)'], ['tsv', 'Tab-separated (.tsv)'], ['json', 'JSON rows (.json)']],
+    document: [['docx', 'Word (.docx)'], ['pdf', 'PDF'], ['odt', 'OpenDocument text (.odt)'], ['rtf', 'Rich text (.rtf)'], ['epub', 'E-book (.epub)'], ['html', 'Web page (.html)'], ['md', 'Markdown (.md)'], ['txt', 'Plain text (.txt)']] };
+  const fileState = {};   // id -> {i: the slide shown, sort: [col, dir], cell: 'B3'}
+  // the slides: cut at --- rules (outside code), else at #/## headings; 'Note:' / '???' starts a slide's notes
+  function slidesOf(src) {
+    const lines = String(src || '').replace(/\r/g, '').split('\n'); const rule = (l) => /^\s*-{3,}\s*$/.test(l);
+    let inCode = false; const hasRule = lines.some((l) => { if (/^\s*(```|~~~)/.test(l)) inCode = !inCode; return !inCode && rule(l); }); inCode = false;
+    const parts = [[]];
+    lines.forEach((l) => { if (/^\s*(```|~~~)/.test(l)) inCode = !inCode;
+      if (!inCode && hasRule && rule(l)) { parts.push([]); return; }
+      if (!inCode && !hasRule && /^#{1,2}\s+/.test(l) && parts[parts.length - 1].some((x) => x.trim())) parts.push([]);
+      parts[parts.length - 1].push(l); });
+    const out = parts.filter((p) => p.some((x) => x.trim())).map((p) => { let title = '', inN = false; const body = [], notes = [];
+      p.forEach((l) => { if (!title && /^#{1,6}\s+/.test(l)) { title = l.replace(/^#{1,6}\s+/, '').trim(); return; }
+        if (/^\s*(Notes?:|\?\?\?)/.test(l)) { inN = true; l = l.replace(/^\s*(Notes?:|\?\?\?)\s*/, ''); } (inN ? notes : body).push(l); });
+      return { title, body: body.join('\n').trim(), notes: notes.join('\n').trim() }; });
+    return out.length ? out : [{ title: '', body: '', notes: '' }];
+  }
+  // a table's rows from CSV / TSV / pipes (quotes honoured), the header first
+  function rowsOf(src, lang) {
+    const text = String(src || '').replace(/\r/g, '').replace(/^\n+|\n+$/g, ''); if (!text.trim()) return [];
+    const first = text.split('\n')[0];
+    const d = lang === 'tsv' ? '\t' : lang === 'csv' ? ',' : (first.split('\t').length > first.split(',').length ? '\t' : first.indexOf('|') >= 0 && first.indexOf(',') < 0 ? '|' : ',');
+    if (d === '|') return text.split('\n').filter((l) => l.trim() && !/^\s*\|?\s*:?-{3,}/.test(l)).map((l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()));
+    const rows = []; let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) { const ch = text[i];
+      if (q) { if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') q = false; else cell += ch; continue; }
+      if (ch === '"' && !cell) { q = true; continue; }
+      if (ch === d) { row.push(cell.trim()); cell = ''; continue; }
+      if (ch === '\n') { row.push(cell.trim()); rows.push(row); row = []; cell = ''; continue; }
+      cell += ch; }
+    row.push(cell.trim()); rows.push(row);
+    return rows.filter((r) => r.some((c) => c !== ''));
+  }
+  const NUMRE = /^\s*[-+(]?\s*[$£€¥]?\s*\d[\d,]*(\.\d+)?\s*%?\s*\)?\s*$/;
+  const numOf = (s) => { const t = String(s == null ? '' : s).trim(); if (!NUMRE.test(t)) return null;
+    let v = parseFloat(t.replace(/[^\d.]/g, '')); if (isNaN(v)) return null; if (/^\s*[-(]/.test(t)) v = -v; if (/%\s*\)?\s*$/.test(t)) v = v / 100; return v; };
+  const colN = (L) => { let n = 0; for (const ch of L.toUpperCase()) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
+  const colL = (c) => { let s = ''; c += 1; while (c) { const r = (c - 1) % 26; s = String.fromCharCode(65 + r) + s; c = Math.floor((c - 1) / 26); } return s; };
+  // what each cell comes to: numbers read, formulas (SUM AVERAGE MIN MAX COUNT, cells, + - * /) worked out
+  function sheetValues(rows) {
+    const memo = {};
+    const cell = (ref, depth) => { const m = /^([A-Za-z]+)(\d+)$/.exec(ref); if (!m) return null; const r = +m[2] - 1, c = colN(m[1]);
+      if (!rows[r] || c < 0 || c >= rows[r].length) return null; return val(r, c, depth); };
+    const range = (a, b, depth) => { const ma = /^([A-Za-z]+)(\d+)$/.exec(a), mb = /^([A-Za-z]+)(\d+)$/.exec(b); if (!ma || !mb) return []; const xs = [];
+      for (let r = Math.min(+ma[2], +mb[2]); r <= Math.max(+ma[2], +mb[2]); r++) for (let c = Math.min(colN(ma[1]), colN(mb[1])); c <= Math.max(colN(ma[1]), colN(mb[1])); c++) {
+        const v = cell(colL(c) + r, depth); if (typeof v === 'number') xs.push(v); } return xs; };
+    const FN = { SUM: (x) => x.reduce((a, b) => a + b, 0), AVERAGE: (x) => x.length ? x.reduce((a, b) => a + b, 0) / x.length : 0,
+      AVG: (x) => x.length ? x.reduce((a, b) => a + b, 0) / x.length : 0, MIN: (x) => x.length ? Math.min(...x) : 0, MAX: (x) => x.length ? Math.max(...x) : 0, COUNT: (x) => x.length };
+    function calc(f, depth) { if (depth > 20) return f; let e = f.replace(/^=/, '');
+      try { e = e.replace(/\b(SUM|AVERAGE|AVG|MIN|MAX|COUNT)\(([^()]*)\)/gi, (_, n, args) => { let xs = [];
+          args.split(',').map((a) => a.trim()).forEach((a) => { if (a.indexOf(':') > 0) xs = xs.concat(range(a.split(':')[0], a.split(':')[1], depth + 1));
+            else { const v = /^[A-Za-z]+\d+$/.test(a) ? cell(a, depth + 1) : parseFloat(a); if (typeof v === 'number' && !isNaN(v)) xs.push(v); } });
+          return String(FN[n.toUpperCase()](xs)); });
+        e = e.replace(/\b([A-Za-z]{1,3}\d+)\b/g, (_, ref) => { const v = cell(ref, depth + 1); return typeof v === 'number' ? String(v) : '0'; });
+        if (!/^[\d\s.+\-*/()e]+$/.test(e)) return f;
+        const v = Function('"use strict";return (' + e + ')')();   // digits and + - * / ( ) only, checked above
+        return typeof v === 'number' && isFinite(v) ? v : f; } catch (_) { return f; } }
+    function val(r, c, depth) { const k = r + ',' + c; if (k in memo) return memo[k]; memo[k] = null; const raw = String(rows[r][c] == null ? '' : rows[r][c]);
+      const v = raw.trim().charAt(0) === '=' ? calc(raw.trim(), depth || 0) : (numOf(raw) != null && r > 0 ? numOf(raw) : raw); memo[k] = v; return v; }
+    return rows.map((row, r) => row.map((_, c) => val(r, c, 0)));
+  }
+  const fmtNum = (v, raw) => { if (typeof v !== 'number') return String(v); if (/%\s*\)?\s*$/.test(String(raw || ''))) return String(raw).trim();
+    if (raw && String(raw).trim().charAt(0) !== '=') return String(raw).trim(); return Math.abs(v) >= 1000 ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(Math.round(v * 10000) / 10000); };
+  const mdHtml = (md) => render(md, {});
+  function deckView(id, slides, incomplete) {
+    const st = fileState[id] || (fileState[id] = { i: 0 }); if (incomplete) st.i = slides.length - 1; st.i = Math.max(0, Math.min(slides.length - 1, st.i | 0));
+    const s = slides[st.i] || {}; const cover = st.i === 0 && !s.body;
+    return '<div class="vo-deck"><div class="vo-stage"><div class="vo-slide' + (cover ? ' cover' : '') + '">' + (s.title ? '<h1>' + esc(s.title) + '</h1>' : '')
+      + '<div class="vo-sb">' + mdHtml(s.body || '') + '</div>' + (incomplete && st.i === slides.length - 1 ? '<span class="vo-writing">writing…</span>' : '') + '</div></div>'
+      + '<div class="vo-deck-nav"><button class="cb-act" data-vo="fprev" title="The slide before (←)"' + (st.i ? '' : ' disabled') + '>‹</button><span class="vo-deck-n">' + (st.i + 1) + ' / ' + slides.length + '</span>'
+      + '<button class="cb-act" data-vo="fnext" title="The next slide (→)"' + (st.i < slides.length - 1 ? '' : ' disabled') + '>›</button>'
+      + '<div class="vo-thumbs">' + slides.map((x, k) => '<button class="vo-thumb' + (k === st.i ? ' on' : '') + '" data-vo="fgo" data-i="' + k + '" title="' + esc(x.title || 'Slide ' + (k + 1)) + '"><b>' + (k + 1) + '</b>' + esc((x.title || '').slice(0, 26)) + '</button>').join('') + '</div></div>'
+      + (s.notes ? '<div class="vo-notes"><b>notes</b> ' + esc(s.notes) + '</div>' : '') + '</div>';
+  }
+  function sheetView(id, rows) {
+    const st = fileState[id] || (fileState[id] = {}); if (!rows.length) return '<div class="vo-sheet"><div class="vo-dim">no rows yet</div></div>';
+    const vals = sheetValues(rows); const ncol = Math.max(...rows.map((r) => r.length));
+    let order = rows.slice(1).map((_, k) => k + 1);
+    if (st.sort) { const [c, dir] = st.sort; order.sort((a, b) => { const x = vals[a][c], y = vals[b][c];
+      return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true })) * dir; }); }
+    const sel = st.cell || ''; const m = /^([A-Z]+)(\d+)$/.exec(sel); const sr = m ? +m[2] - 1 : -1, sc = m ? colN(m[1]) : -1;
+    const fx = sr >= 0 && rows[sr] ? String(rows[sr][sc] == null ? '' : rows[sr][sc]) : '';
+    const cellHtml = (r, c) => { const raw = rows[r][c] == null ? '' : rows[r][c]; const v = vals[r][c]; const f = String(raw).trim().charAt(0) === '=';
+      return '<td data-vo="fcell" data-cell="' + colL(c) + (r + 1) + '" class="' + (typeof v === 'number' ? 'n' : '') + (f ? ' f' : '') + (r === sr && c === sc ? ' on' : '') + '"' + (f ? ' title="' + esc(raw) + '"' : '') + '>' + esc(fmtNum(v, raw)) + '</td>'; };
+    return '<div class="vo-sheet"><div class="vo-fx"><b>' + esc(sel || '—') + '</b><span>' + esc(fx) + (fx.charAt(0) === '=' ? ' → ' + esc(fmtNum(vals[sr][sc], fx)) : '') + '</span></div>'
+      + '<div class="vo-grid-w"><table class="vo-grid"><thead><tr><th class="rn"></th>' + Array.from({ length: ncol }, (_, c) => '<th data-vo="fsort" data-col="' + c + '" title="Sort by this column">' + colL(c)
+        + (st.sort && st.sort[0] === c ? (st.sort[1] > 0 ? ' ▴' : ' ▾') : '') + '</th>').join('') + '</tr></thead><tbody>'
+      + '<tr class="hd"><th class="rn">1</th>' + Array.from({ length: ncol }, (_, c) => '<td data-vo="fcell" data-cell="' + colL(c) + '1" class="h' + (sr === 0 && sc === c ? ' on' : '') + '">' + esc(rows[0][c] == null ? '' : rows[0][c]) + '</td>').join('') + '</tr>'
+      + order.map((r) => '<tr><th class="rn">' + (r + 1) + '</th>' + Array.from({ length: ncol }, (_, c) => cellHtml(r, c)).join('') + '</tr>').join('')
+      + '</tbody></table></div></div>';
+  }
+  function docView(md) {
+    const heads = []; String(md || '').replace(/^(#{1,3})\s+(.+)$/gm, (_, h, t) => { heads.push([h.length, t.trim()]); return _; });
+    return '<div class="vo-doc">' + (heads.length >= 3 ? '<div class="vo-toc">' + heads.slice(0, 14).map((h) => '<span class="l' + h[0] + '">' + esc(h[1]) + '</span>').join('') + '</div>' : '')
+      + '<div class="vo-paper">' + mdHtml(md) + '</div></div>';
+  }
+  function fileView(kind, id, code, lang, incomplete) {
+    if (kind === 'slides') return deckView(id, slidesOf(code), incomplete);
+    if (kind === 'sheet') return sheetView(id, rowsOf(code, lang));
+    return docView(code);
+  }
+  function fileLabel(kind, code, lang) {
+    if (kind === 'slides') { const n = slidesOf(code).length; return 'slides · ' + n + (n === 1 ? ' slide' : ' slides'); }
+    if (kind === 'sheet') { const r = rowsOf(code, lang); return 'sheet · ' + Math.max(0, r.length - 1) + ' rows × ' + (r[0] ? r[0].length : 0) + ' cols'; }
+    const w = String(code || '').split(/\s+/).filter(Boolean).length; return 'document · ' + w + ' words';
+  }
+  // the Download menu: every file this card can be, made by render.export
+  function dlMenu(id, kind) {
+    prose['dl:' + id] = { md: '', title: '', getMd: () => fenceOf(id), kind };
+    return '<div class="vo-acts vo-send vo-dl" data-vo-prose="dl:' + esc(id) + '"><div class="ma-dd">' + mact('menu', 'save', 'Download', 'Download it as a file - every type it can be', 'ma-ddb')
+      + '<div class="ma-menu" role="menu">' + FILE_FORMATS[kind].map((f) => mitem('dl:' + f[0], 'save', f[1], '')).join('') + '</div></div></div>';
+  }
+  function fileCard(kind, lang, code, o) {
+    o = o || {}; const id = o.id || register(lang, code, ''); if (o.id) blocks[id] = Object.assign(blocks[id] || {}, { lang, code, filename: '' });
+    blocks[id].fileKind = kind; blocks[id].title = String(o.title || '');
+    const lbl = esc(fileLabel(kind, code, String(lang).toLowerCase()));
+    const head = '<div class="code-card vo-file vo-' + kind + (o.cls ? ' ' + o.cls : '') + '" data-cb="' + id + '" data-kind="' + kind + '"' + (o.incomplete ? ' data-incomplete="1"' : '') + '><div class="code-bar"><span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>';
+    if (o.incomplete) return head + '<span class="cb-stream">streaming</span></div><div class="vo-fview">' + fileView(kind, id, code, String(lang).toLowerCase(), true) + '</div></div>';
+    return head + btn('copy', 'copy', 'Copy', 'Copy its source')
+      + btn('edit', 'edit', 'Edit', 'Edit the source - it is redrawn from your version')
+      + btn('dsrc', 'outline', 'Source', 'Show the source under it', 'cb-srcbtn')
+      + (kind === 'slides' ? btn('present', 'pop', 'Present', 'Full screen, one slide at a time (arrows, Esc)') : '')
+      + (kind === 'document' ? btn('fpop', 'pop', 'Pop out', 'Open the page in a window of its own') : '')
+      + dlMenu(id, kind)
+      + (o.canvas === false ? '' : btn('canvas', 'canvas', 'Canvas', 'Put this on the session canvas'))
+      + sendFor(id, kind, ['podcast'])
+      + '</div><div class="vo-fview">' + fileView(kind, id, code, String(lang).toLowerCase(), false) + '</div>' + codeBody(code, lang) + '</div>';
+  }
+  function fileRedraw(c, id) { const blk = blocks[id]; const v = c && c.querySelector(':scope > .vo-fview'); if (!blk || !v) return;
+    v.innerHTML = fileView(blk.fileKind, id, blk.code, String(blk.lang).toLowerCase(), false);
+    const l = c.querySelector(':scope > .code-bar .code-lang'); if (l) l.textContent = fileLabel(blk.fileKind, blk.code, String(blk.lang).toLowerCase()); }
+  function present(id) {
+    const blk = blocks[id]; if (!blk) return; const slides = slidesOf(blk.code); let i = (fileState[id] || {}).i | 0;
+    const m = document.createElement('div'); m.className = 'vo-present';
+    const draw = () => { const s = slides[i] || {}; m.innerHTML = '<div class="vo-slide big' + (i === 0 && !s.body ? ' cover' : '') + '">' + (s.title ? '<h1>' + esc(s.title) + '</h1>' : '') + '<div class="vo-sb">' + mdHtml(s.body || '') + '</div></div>'
+      + '<div class="vo-present-n">' + (i + 1) + ' / ' + slides.length + ' · ← → · Esc</div>'; };
+    const close = () => { m.remove(); document.removeEventListener('keydown', key, true); try { if (document.fullscreenElement) document.exitFullscreen(); } catch (_) {} };
+    const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].indexOf(e.key) >= 0) { e.preventDefault(); i = Math.min(slides.length - 1, i + 1); draw(); }
+      else if (['ArrowLeft', 'ArrowUp', 'PageUp'].indexOf(e.key) >= 0) { e.preventDefault(); i = Math.max(0, i - 1); draw(); } };
+    m.addEventListener('click', (e) => { i = e.clientX < window.innerWidth / 3 ? Math.max(0, i - 1) : Math.min(slides.length - 1, i + 1); draw(); });
+    document.addEventListener('keydown', key, true); adopt(document); document.body.appendChild(m); draw();
+    try { m.requestFullscreen && m.requestFullscreen().catch(() => {}); } catch (_) {}
+  }
+  // a file: render.export makes it, the browser downloads it
+  async function download(md, fmt, title, b) {
+    const r = await cap('render.export', { content: md, format: fmt, title: title || '' });
+    if (!(r && r.ok && r.url)) { flash(b, false, 'Failed'); return r; }
+    const a = document.createElement('a'); a.href = BASE() + r.url; a.download = r.filename || ''; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+    flash(b, true, 'Downloaded'); return r;
+  }
   // a whole fence: diagrams and widgets draw as themselves, everything else is a code card
   function fence(lang, info, code, st, opts) {
     st = st || {}; opts = opts || {}; const L = String(lang || '').toLowerCase();
     if (L === 'mermaid' && !st.incomplete) return diagram(code, { canvas: opts.canvas });
+    if (FILE_KIND[L]) return fileCard(FILE_KIND[L], L, code, { incomplete: !!st.incomplete, canvas: opts.canvas, title: opts.title });
     return card(lang, code, { filename: fenceFilename(info) || String(opts.title || ''), incomplete: !!st.incomplete, canvas: opts.canvas });
   }
   function render(md, opts) {
@@ -466,6 +632,9 @@
     async canvas(blk, id, b) {
       const sid = session(); if (!sid) { flash(b, false, 'No session'); return; }
       const dg = String(blk.lang).toLowerCase() === 'mermaid';
+      if (blk.fileKind) { try { const r = await cap('canvas.add', { session_id: sid, kind: 'markdown', key: blk.fileKind + ':' + hash(blk.code), size: 'l',
+          content: { md: fenceOf(id), title: blk.title || (blk.fileKind === 'sheet' ? 'Sheet' : blk.fileKind === 'slides' ? 'Slides' : 'Document') }, at: 'now' });
+        flash(b, !!(r && r.ok), r && r.ok ? 'On canvas' : 'Failed'); } catch (e) { flash(b, false, 'Failed'); } return; }
       try { const r = await cap('canvas.add', dg
           ? { session_id: sid, kind: 'diagram', key: 'diagram:' + hash(blk.code), content: { mermaid: blk.code, title: blk.title || 'Diagram' }, at: 'now' }
           : { session_id: sid, kind: 'code', key: 'code:' + hash(blk.lang + '\u0000' + blk.code),
@@ -498,6 +667,17 @@
       if (hk) { try { if (hk(blk, id, b, c, fmt)) return; } catch (_) {} }
       const vm = c.querySelector('vera-mermaid'); if (vm && typeof vm._download === 'function') { try { vm._download(fmt); return; } catch (_) {} }
       flash(b, false, 'Not drawn yet'); return; }
+    if (blk.fileKind) {   // a file card's own: page the slides, present them, sort and read the sheet, pop the page out
+      const st = fileState[id] || (fileState[id] = { i: 0 });
+      const redraw = () => fileRedraw(c, id);
+      if (name === 'fprev' || name === 'fnext') { st.i = (st.i | 0) + (name === 'fnext' ? 1 : -1); return redraw(); }
+      if (name === 'fgo') { st.i = +(b.getAttribute('data-i') || 0); return redraw(); }
+      if (name === 'fsort') { const col = +(b.getAttribute('data-col') || 0); st.sort = st.sort && st.sort[0] === col ? (st.sort[1] > 0 ? [col, -1] : null) : [col, 1]; return redraw(); }
+      if (name === 'fcell') { st.cell = b.getAttribute('data-cell') || ''; return redraw(); }
+      if (name === 'present') return present(id);
+      if (name === 'fpop') { try { const doc = '<!doctype html><html><head><meta charset="utf-8"><title>' + esc(blk.title || 'Document') + '</title><style>body{font:16px/1.6 Georgia,serif;max-width:46em;margin:2em auto;padding:0 1em;color:#1d1f23}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.3em .6em}pre{background:#f4f5f7;padding:.8em;overflow:auto}</style></head><body>' + mdHtml(blk.code) + '</body></html>';
+        const u = URL.createObjectURL(new Blob([doc], { type: 'text/html' })); window.open(u, '_blank', 'noopener'); } catch (_) {} return; }
+    }
     const h = hookFor(c, name);
     if (h) { try { if (await h(blk, id, b, c)) return; } catch (e) { console.warn('VeraOut hook ' + name, e); } }
     if (name === 'preview') return preview(id);
@@ -576,6 +756,7 @@
     const pre = c.querySelector(':scope > pre');
     if (pre) { const t = document.createElement('div'); t.innerHTML = codeBody(next, blk.lang, !pre.classList.contains('vo-lines') ? false : undefined); pre.replaceWith(t.firstChild); }
     c.dataset.edited = '1'; lintCard(c);
+    if (blk.fileKind) fileRedraw(c, id);   // a file card is redrawn from the edited source
     // a diagram is redrawn from the new source where its drawing is in the card (the canvas redraws its own on update)
     if (c.classList.contains('vo-diagram')) { const vm = c.querySelector('vera-mermaid'); if (vm && typeof vm.render === 'function') { try { vm.render(next); } catch (_) {} } }
     const out = c.querySelector(':scope > .code-exec-out'); if (out) { out.style.display = 'none'; out.innerHTML = ''; }
@@ -747,6 +928,11 @@
       +     (has('project') ? mitem('project', 'project', 'A project', 'added to a dream-system project') : '')
       +     (has('think') ? mitem('think', 'think', 'Think about it later', 'Vera revisits it when idle') : '')
       +     '<hr>' + mitem('channel', 'channel', 'Another channel…', 'email, telegram, memory - with a style')
+      +     (no('files') ? '' : '<hr>' + mitem('dl:docx', 'save', 'Word document', 'download it as .docx')
+        + mitem('dl:pdf', 'save', 'PDF', 'download it as a PDF document')
+        + mitem('dl:pptx', 'save', 'PowerPoint', 'its sections as slides (.pptx)')
+        + mitem('dl:xlsx', 'save', 'Excel', 'its tables as sheets (.xlsx)')
+        + mitem('dlpick', 'save', 'Other file types…', 'odt · rtf · epub · html · markdown · odp · slideshow · ods · csv · tsv · json'))
       +   '</div></div>';
   }
   /* SEND TO, ON EVERY CARD (owner, 2026-10-03: "id also like the 'send to' menu to be integrated into the code and
@@ -795,6 +981,12 @@
         else notify(row, '<span style="color:var(--err,#e06c6c)">Could not save to the estate storage' + (r && r.error ? ': ' + esc(r.error) : '') + '</span>');
         return done(!!(r && r.ok), 'Saved'); }
       if (a === 'channel') return channelPick(row, ctx);
+      if (a === 'dlpick') return filePick(row, ctx);
+      if (a.indexOf('dl:') === 0) { const box = row.querySelector('.vo-fps'); if (box) box.remove();
+        const r = await download(md, a.slice(3), title, row.querySelector('.ma-ddb') || b);
+        if (r && r.ok) notify(row, 'Downloaded <a href="' + esc(BASE() + r.url) + '" download>' + esc(r.filename || 'the file') + '</a>');
+        else notify(row, '<span style="color:var(--err,#e06c6c)">Could not make the file' + (r && r.error ? ': ' + esc(r.error) : '') + '</span>');
+        return; }
       if (a === 'explode') return done(false);
       if (a.indexOf('ch:') === 0) { const sel = row.querySelector('.vo-chs select'); const r = await cap('output.redeliver', { channel: a.slice(3), content: md, title, format: sel ? sel.value : '', session_id: session() });
         const box = row.querySelector('.vo-chs'); if (box) box.remove();
@@ -811,6 +1003,16 @@
     let styles = ''; try { const r = await cap('output.delivery_menu', {}); styles = ((r && r.styles) || []).map((s) => '<option value="' + esc(s.id) + '">' + esc(s.label || s.id) + '</option>').join(''); } catch (_) {}
     box.innerHTML = '<span class="vo-chs-l">send as</span>' + chans.map((c) => '<button class="mact" data-vp="ch:' + esc(c.id) + '">' + esc(c.label || c.id) + '</button>').join('')
       + '<span class="vo-chs-l">in</span><select title="The style it is shaped into"><option value="">the channel\'s own style</option>' + styles + '</select>';
+    row.appendChild(box);
+  }
+  let fileFormats = null;
+  async function filePick(row, ctx) {
+    const old = row.querySelector('.vo-fps'); if (old) { old.remove(); return; }
+    if (!fileFormats) { try { const r = await cap('render.formats', {}); fileFormats = ((r && r.formats) || []).filter((f) => f && f.family); } catch (_) { fileFormats = []; } }
+    const box = document.createElement('div'); box.className = 'vo-chs vo-fps';
+    const fam = { document: 'document', presentation: 'slides', spreadsheet: 'tables' };
+    box.innerHTML = Object.keys(fam).map((k) => '<span class="vo-chs-l">' + fam[k] + '</span>' + fileFormats.filter((f) => f.family === k)
+      .map((f) => '<button class="mact" data-vp="dl:' + esc(f.id) + '"' + (f.live ? '' : ' disabled title="not available on this server"') + '>' + esc(f.label) + ' <small>.' + esc(f.ext) + '</small></button>').join('')).join('');
     row.appendChild(box);
   }
   const libs = {};
@@ -839,6 +1041,33 @@
 
   // ── the look (one copy: the document gets it on load, a shadow root through wire/adopt) ────────────────
   const CSS = `
+.vo-file .vo-fview{background:var(--bg0,#0e0f12)}.vo-file:not(.src) > pre{display:none}
+.vo-deck{padding:10px}.vo-stage{aspect-ratio:16/9;max-height:440px;margin:0 auto;border-radius:6px;overflow:hidden;background:linear-gradient(160deg,var(--bg2,#1c2029),var(--bg0,#12141a));border:1px solid var(--border,rgba(255,255,255,.09));container-type:inline-size}
+.vo-slide{position:relative;height:100%;box-sizing:border-box;padding:5cqw 6cqw;overflow:hidden;color:var(--text,#e9ebef);display:flex;flex-direction:column}
+.vo-slide.cover{justify-content:center}.vo-slide h1{font-size:max(15px,4.2cqw);margin:0 0 2.4cqw;line-height:1.15;font-weight:650}.vo-slide.cover h1{font-size:max(19px,5.6cqw)}
+.vo-slide .vo-sb{font-size:max(11px,2.3cqw);line-height:1.5;overflow:hidden}.vo-slide .vo-sb li{margin:.5cqw 0}.vo-slide .vo-sb .code-card{font-size:11px}
+.vo-slide table{border-collapse:collapse;margin:.4em 0;font-size:.9em}.vo-slide th,.vo-slide td{border:1px solid rgba(255,255,255,.2)!important;padding:.3em .9em!important;text-align:left;white-space:nowrap}
+.vo-slide th{font-size:1em!important;text-transform:none!important;letter-spacing:0!important;font-weight:600;color:inherit!important;background:rgba(255,255,255,.07)!important}
+.vo-writing{position:absolute;right:2cqw;bottom:1.6cqw;font:9px var(--mono,monospace);color:var(--acc,#5a9e8f)}
+.vo-deck-nav{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}.vo-deck-n{font:10px var(--mono,monospace);color:var(--dim,#6b7280);min-width:44px;text-align:center}
+.vo-thumbs{display:flex;gap:4px;overflow-x:auto;flex:1;min-width:0;scrollbar-width:thin}.vo-thumb{flex:0 0 auto;max-width:150px;border:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg1,#14161b);color:var(--dim,#9aa1ad);border-radius:4px;padding:2px 7px;font:9.5px var(--ui,inherit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.vo-thumb b{margin-right:4px;color:var(--text,#d8dce4)}.vo-thumb.on{border-color:var(--acc,#5a9e8f);color:var(--text,#d8dce4)}
+.vo-notes{margin-top:6px;font-size:10.5px;color:var(--dim,#9aa1ad)}.vo-notes b{font:9px var(--mono,monospace);text-transform:uppercase;letter-spacing:.06em;margin-right:4px}
+.vo-present{position:fixed;inset:0;z-index:10080;background:#0b0c10;display:flex;align-items:center;justify-content:center;container-type:inline-size;cursor:pointer}
+.vo-present .vo-slide.big{width:min(100vw,177.8vh);height:min(56.25vw,100vh);padding:6% 7%;background:linear-gradient(160deg,#1c2029,#12141a);color:#e9ebef}
+.vo-present .vo-slide.big h1{font-size:min(4.6vw,8vh)}.vo-present .vo-slide.big .vo-sb{font-size:min(2.6vw,4.6vh)}.vo-present-n{position:fixed;right:18px;bottom:12px;font:12px var(--mono,monospace);color:#8b93a1}
+.vo-sheet{padding:0}.vo-fx{display:flex;gap:10px;align-items:center;padding:4px 10px;border-bottom:1px solid var(--border,rgba(255,255,255,.09));font:10.5px var(--mono,monospace);color:var(--dim,#9aa1ad);min-height:18px}
+.vo-fx b{color:var(--acc,#5a9e8f);min-width:30px}.vo-grid-w{overflow:auto;max-height:420px;scrollbar-width:thin}
+.vo-grid{border-collapse:collapse;font-size:11.5px;min-width:100%}.vo-grid th,.vo-grid td{border:1px solid var(--border,rgba(255,255,255,.09));padding:3px 8px;white-space:nowrap}
+.vo-grid thead th{position:sticky;top:0;z-index:1;background:var(--bg1,#14161b);color:var(--dim,#9aa1ad);font:600 9.5px var(--mono,monospace);cursor:pointer;user-select:none}
+.vo-grid th.rn{background:var(--bg1,#14161b);color:var(--dim,#6b7280);font:9.5px var(--mono,monospace);text-align:right;position:sticky;left:0}
+.vo-grid td{color:var(--text,#d8dce4);cursor:cell}.vo-grid td.n{text-align:right;font-variant-numeric:tabular-nums}.vo-grid td.f{color:var(--acc,#5a9e8f)}
+.vo-grid tr.hd td{font-weight:600;background:var(--bg2,#1a1d24)}.vo-grid td.on{outline:2px solid var(--acc,#5a9e8f);outline-offset:-2px}
+.vo-doc{padding:14px;background:var(--bg0,#0e0f12)}.vo-toc{display:flex;flex-wrap:wrap;gap:4px 10px;margin:0 auto 10px;max-width:760px;font-size:10px;color:var(--dim,#9aa1ad)}.vo-toc .l2{padding-left:6px}.vo-toc .l3{padding-left:12px;opacity:.8}
+.vo-paper{max-width:760px;margin:0 auto;padding:36px 44px;background:var(--paper,#fbfaf7);color:#1d1f23;border-radius:3px;box-shadow:0 1px 3px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.22);font:13.5px/1.65 Georgia,'Times New Roman',serif}
+.vo-paper h1,.vo-paper h2,.vo-paper h3{font-family:var(--ui,'Helvetica Neue',Arial,sans-serif);color:#111;line-height:1.25}.vo-paper a{color:#2a5db0}
+.vo-paper table{border-collapse:collapse}.vo-paper td,.vo-paper th{border:1px solid #cfd2d8;padding:.3em .6em}.vo-paper code{background:#eef0f3;color:#1d1f23;padding:0 3px;border-radius:3px}
+.vo-dl{display:inline-flex}.vo-fps small{opacity:.6;margin-left:2px}
 .code-card{margin:6px 0;border:1px solid var(--border,rgba(255,255,255,.09));border-radius:var(--ui-radius,6px);overflow:hidden;background:var(--bg2,#1a1d24)}
 .code-card pre{margin:0;padding:10px 12px;overflow:auto;background:var(--bg0,#0e0f12);font-family:var(--mono,ui-monospace,monospace);font-size:11.5px;line-height:1.5;color:var(--text,#d8dce4);max-height:420px}
 .code-card pre code{font-family:inherit;background:transparent;padding:0;color:inherit;white-space:pre}
@@ -962,7 +1191,7 @@
     if (root === document) host.insertBefore(st, host.firstChild); else host.appendChild(st);   // the document's own sheets still win there
   }
 
-  window.VeraOut = { version: 2, render, card, diagram, sendMenu, bar, hostBtn, icons: I, fence, highlight, lintCode, lintCard, hydrate, wire, adopt, preview, run, edit, editFull, applyCode, symbols, codeBody, proseMenu, prose,
+  window.VeraOut = { version: 2, fileKind: (l) => FILE_KIND[String(l || '').toLowerCase()] || '', slidesOf, rowsOf, sheetValues, fileCard, render, card, diagram, sendMenu, bar, hostBtn, icons: I, fence, highlight, lintCode, lintCard, hydrate, wire, adopt, preview, run, edit, editFull, applyCode, symbols, codeBody, proseMenu, prose,
     register, blocks, hooks, previewable, runnable, wholePage, previewDoc, fenceFilename, langClass, ensureLib, css: CSS };
   const boot = () => { adopt(document); wire(document); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
