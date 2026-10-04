@@ -317,32 +317,38 @@ async def cap_parity_status(namespace: str = "", trace_id=None) -> Dict:
                 "They join the `extended` class, which no node takes until it is enabled "
                 "there (Workers roles). A vetted capability whose footprint later shows a "
                 "host touch is dropped on the next vet. Inputs: dry_run (bool, default "
-                "true), namespace (str - limit to one). Output: {ok, vetted, dropped, "
-                "would_vet}.",
+                "true), namespace (str - limit to one), only (list - vet just these, a "
+                "list a person reviewed; each must still clear the evidence, or it is "
+                "listed in not_cleared). Output: {ok, vetted, dropped, would_vet, not_cleared}.",
 )
-async def cap_parity_vet(dry_run: bool = True, namespace: str = "", trace_id=None) -> Dict:
+async def cap_parity_vet(dry_run: bool = True, namespace: str = "",
+                         only: Optional[List[str]] = None, trace_id=None) -> Dict:
     r = _orch.REDIS
     if r is None:
         return {"ok": False, "error": "no Redis"}
     v, meta = await _verdicts()
     if not meta["static_at"]:
         return {"ok": False, "error": "no static audit yet - run nodes.parity.audit"}
+    # `only`: a list a person reviewed - the evidence still has to clear each one
+    keep = set(only or ())
     want = {c: w for c, (k, w) in v.items() if k == "vetted"
-            and (not namespace or c.split(".", 1)[0] == namespace)}
+            and (not namespace or c.split(".", 1)[0] == namespace)
+            and (not keep or c in keep)}
+    not_cleared = sorted(c for c in keep if v.get(c, ("?",))[0] != "vetted")
     cur = {_s(k): json.loads(x) for k, x in (await r.hgetall(core.VETTED_KEY)).items()}
     drop = sorted(c for c in cur if (not namespace or c.split(".", 1)[0] == namespace)
                   and v.get(c, ("host",))[0] not in ("vetted",))
     add = sorted(c for c in want if c not in cur)
     if dry_run:
         return {"ok": True, "dry_run": True, "would_vet": add, "would_drop": drop,
-                "count": len(add)}
+                "count": len(add), "not_cleared": not_cleared}
     if add:
         await r.hset(core.VETTED_KEY, mapping={c: json.dumps({"cls": core.VETTED_CLASS, "why": want[c],
                                                               "at": time.time()}) for c in add})
     if drop:
         await r.hdel(core.VETTED_KEY, *drop)
     await emit_event({"type": "nodes.parity.vet", "added": len(add), "dropped": len(drop)})
-    return {"ok": True, "vetted": add, "dropped": drop}
+    return {"ok": True, "vetted": add, "dropped": drop, "not_cleared": not_cleared}
 
 
 @capability(
