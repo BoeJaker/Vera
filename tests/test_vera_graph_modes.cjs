@@ -54,5 +54,6 @@ t('the stack topology tiles (Overview and Estate) and Live operations are graph 
     g.nodes.length === 5 && g.edges.length === 2 && d.planes.map((p) => p.id).join(',') === 'module,class,function,method' && by['S.a'].area === 'class S' && by.main.area === 'f.py', JSON.stringify([d.planes, d.areas]));
   t('and back: the graph hands the explode renderer its contract (cards, groups, edges)', c.cards.length === 5 && c.groups.length === 2 && c.edges.length === 2 && c.kind === 'code');
   t('the Structure methods are registered beside Live ops', /id: 'struct-iso', label: 'Structure/.test(M) && /id: 'struct',    label: 'Structure', order: 15, mount: structure/.test(M)); })();
+t('a mounted lattice fills every palette token the page lacks with Live ops\' own (the dashboard has no --dv1..--dv7: planes painted black)', /if \(!cs\.getPropertyValue\(k\)\.trim\(\)\) host\.style\.setProperty\(k, TOKENS\[k\]\)/.test(LT) && /'--dv1': '#866ec5'/.test(LT));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
