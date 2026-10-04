@@ -62,7 +62,7 @@ t('an item that can be exploded carries the switch, and knows which way round it
   /const xplodable = !bid && !!canExplode\(b, this\.explodeOffer\(\)\);/.test(SRC) && /const xploded = xplodable && xplodedKeys\.has\(String\(b\.key\)\);/.test(SRC));
 t('the switch says what it does, both ways', /\$\{xploded \? 'source' : 'graph'\}/.test(SRC));
 t('taking it builds the bound item; taking it back removes it',
-  /this\.call\('canvas\.add', \{ kind: 'explode', key: 'explode:' \+ key, content, at: 'now', size: 'l' \}\)/.test(SRC) &&
+  /this\.call\('canvas\.add', Object\.assign\(\{ kind: 'explode', key: 'explode:' \+ key, content, at: b\.state === 'pinned' \? 'pinned' : 'now', size: 'l' \}/.test(SRC) &&
   /if \(bound\) return this\.call\('canvas\.remove'/.test(SRC));
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
