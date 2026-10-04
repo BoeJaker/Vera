@@ -3617,6 +3617,11 @@ async def gather_memory(query: str, top_k: int = 20) -> list[Citation]:
         # Results are MemoryRecord objects or dicts
         cits: list[Citation] = []
         for r in results:
+            # HybridMemoryStore.search returns {"record": {...}, "score": s}; the
+            # record fields live one level down (reading them off the wrapper found
+            # no text, so research never cited memory - RF-80).
+            if isinstance(r, dict) and isinstance(r.get("record"), dict):
+                r = r["record"]
             if hasattr(r, "text"):
                 text = r.text or ""
                 full_text = getattr(r, "full_text", "") or text
