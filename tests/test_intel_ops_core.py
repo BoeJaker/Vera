@@ -182,3 +182,26 @@ def test_entity_types_keep_the_best_label_per_entity():
                       {"word": "Leeds", "entity": "location", "score": 0.8},
                       {"word": "noise", "entity": "location", "score": 0.9}]}
     assert ops.entity_types(r, ["Savills", "Leeds"]) == {"Savills": "property agency or consultancy", "Leeds": "location"}
+
+
+def test_company_names_match_their_listings():
+    assert ops.org_key("Land Securities Group Plc") == "land securities"
+    assert ops.name_match("Savills", "Savills plc") == 1.0
+    assert ops.name_match("Land Securities", "Land Securities Group Plc") == 1.0
+    assert ops.name_match("Acme", "ACM Research Inc") < 0.8 and ops.name_match("Modus", "Modus Therapeutics") < 0.95
+    hits = [{"provider": "yahoo", "symbol": "XNVDA=F", "name": "Micro NVIDIA Corp Stock Futures", "asset_class": "future"},
+            {"provider": "yahoo", "symbol": "NVDA", "name": "NVIDIA Corporation", "asset_class": "stock"}]
+    assert ops.pick_listing("Nvidia", hits)["symbol"] == "NVDA"
+    # what markets.lookup really returned on 4 Oct
+    assert ops.pick_listing("Meta", [{"provider": "binance", "symbol": "META/USDT:USDT", "name": "META/USDT", "asset_class": "crypto"},
+                                     {"provider": "yahoo", "symbol": "META", "name": "Meta Platforms, Inc.", "asset_class": "stock"}])["symbol"] == "META"
+    assert ops.pick_listing("JLL", [{"provider": "yahoo", "symbol": "JLL", "name": "Jones Lang LaSalle Incorporated", "asset_class": "stock"}])
+    assert ops.pick_listing("Google", [{"provider": "yahoo", "symbol": "DEPW", "name": "Google DeepMind AI Lab Ecosyste", "asset_class": "etf"},
+                                       {"provider": "yahoo", "symbol": "GOOG", "name": "Alphabet Inc.", "asset_class": "stock"}])["symbol"] == "GOOG"
+    assert ops.pick_listing("Modus", [{"provider": "yahoo", "symbol": "MODTX.ST", "name": "Modus Therapeutics Holding AB (publ)", "asset_class": "stock"}]) is None
+    assert ops.pick_listing("Cushman & Wakefield", [{"provider": "yahoo", "symbol": "CWK", "name": "Cushman & Wakefield Limited", "asset_class": "stock"}])
+    sigs = [{"entities": ["Savills", "UK"], "entity_types": {"Savills": "company", "UK": "location"}},
+            {"entities": ["Savills plc"], "entity_types": {"Savills plc": "company"}},
+            {"entities": ["CBRE"]}]
+    assert ops.org_mentions(sigs) == [("Savills", 2)]
+    assert ops.org_mentions(sigs, follow=["JLL"])[0] == ("JLL", 999)
