@@ -106,8 +106,26 @@ def profile_text(topic: Dict[str, Any]) -> str:
     return ". ".join(p for p in parts if p)[:1200]
 
 
+#: tokens that come from page chrome or are too generic to be an entity: browser
+#: user-agent strings left in a page, and words every source in a topic repeats
+ENTITY_STOP = {"ai", "a.i.", "artificial intelligence", "machine learning", "ml", "llm", "llms", "genai",
+               "mozilla", "chrome", "safari", "applewebkit", "khtml", "gecko", "firefox", "edge", "windows nt",
+               "javascript", "cookies", "cookie", "privacy policy", "newsletter", "linkedin", "twitter", "facebook",
+               "x", "youtube", "instagram", "email", "home", "menu", "login", "sign in", "subscribe"}
+
+
+def entity_ok(word: str) -> bool:
+    w = word.strip().lower()
+    if not w or w in ENTITY_STOP or len(w) < 2:
+        return False
+    if re.fullmatch(r"[$£€]?[\d.,]+\s*(%|bn|m|k|billion|million|thousand)?", w):
+        return False                  # a bare amount is not an entity
+    return True
+
+
 def ner_entities(result: Dict[str, Any], min_score: float = 0.45, limit: int = 20) -> List[str]:
-    """Distinct entity strings from an nlp.ner answer, best first."""
+    """Distinct entity strings from an nlp.ner answer, best first, without page
+    chrome or generic words."""
     seen: Dict[str, float] = {}
     for e in (result or {}).get("entities") or []:
         if not isinstance(e, dict):
@@ -117,7 +135,7 @@ def ner_entities(result: Dict[str, Any], min_score: float = 0.45, limit: int = 2
             sc = float(e.get("score") or 0)
         except (TypeError, ValueError):
             sc = 0.0
-        if len(w) < 2 or sc < min_score or w.lower() in ("the", "a", "an"):
+        if len(w) < 2 or sc < min_score or w.lower() in ("the", "a", "an") or not entity_ok(w):
             continue
         if w not in seen or sc > seen[w]:
             seen[w] = sc
