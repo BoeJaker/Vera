@@ -11956,6 +11956,11 @@ Your task: decide what to do next to advance toward the goal.
           // Session memory notes: unchecking the ctx toggle disables the
           // server-side (agent-level) injection too; checked defers to it.
           session_notes:(document.getElementById('ctxNotes')&&!document.getElementById('ctxNotes').checked)?false:undefined,
+          // the canvas before the answer (canvas-enrichment slice 4): the server places what answers the question on
+          // the session canvas within its budget and tells the model what is shown. The canvas's ✦ switch turns it off;
+          // 'vera:canvas:tell' = '0' keeps the placing and leaves the model untold.
+          canvas_enrich:_cvEnrichOn()||undefined, canvas_text:msg, canvas_mid:_cvRelMid||'',
+          canvas_tell:(()=>{ try{ return localStorage.getItem('vera:canvas:tell')!=='0'; }catch(_){ return true; } })(),
         })
       });
       if(!resp.ok){bubEl.textContent='✗ HTTP '+resp.status;return;}

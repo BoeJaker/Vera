@@ -19,7 +19,7 @@ import asyncio
 import logging
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability
 
@@ -284,3 +284,184 @@ async def cap_turn_entity_look(session_id: str = "", text: str = "", type: str =
                             size="l", anchor=anchor)
         items.append({"key": key, "cap": cap, "resolved": (added or {}).get("resolved") if isinstance(added, dict) else None})
     return {"ok": True, "items": items, "skipped": skipped}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE SURFACE INDEX (canvas-enrichment slice 3): what each part of the estate's UI can show, by domain - the reads that
+# fit a turn, the dashboard widgets already drawn over them, the panels - and what the turn names that fills their
+# arguments. surface.find is what the before-the-model step (slice 4) asks; it calls nothing but the NLP tier.
+# ─────────────────────────────────────────────────────────────────────────────
+
+try:
+    from Vera.vera.canvas import surface_core as sc
+except ImportError:                                   # pragma: no cover
+    from vera.canvas import surface_core as sc
+
+import json as _json
+import os as _os
+
+_SURF: Dict[str, Any] = {"at": 0.0, "index": None}
+SURFACE_TTL_S = 600.0
+
+
+def _layouts() -> List[Dict[str, Any]]:
+    d = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "widgets", "layouts")
+    out = []
+    try:
+        for n in sorted(_os.listdir(d)):
+            if n.endswith(".json"):
+                try:
+                    with open(_os.path.join(d, n), encoding="utf-8") as fh:
+                        out.append(_json.load(fh))
+                except (OSError, ValueError):
+                    continue
+    except OSError:
+        pass
+    return out
+
+
+async def _surface_index(refresh: bool = False) -> Dict[str, Any]:
+    if not refresh and _SURF["index"] is not None and time.monotonic() - _SURF["at"] < SURFACE_TTL_S:
+        return _SURF["index"]
+    ws = _sources_mod()
+    pl = await _call("ui.panel.list")
+    panels = (pl or {}).get("panels") or [] if isinstance(pl, dict) else []
+    idx = sc.build(CAPABILITY_REGISTRY, getattr(ws, "MEASURED", {}) if ws else {}, _layouts(), panels)
+    _SURF.update(at=time.monotonic(), index=idx)
+    return idx
+
+
+@capability(
+    "surface.index", memory="off", silent=True,
+    http_method="GET", http_path="/surface/index", http_tags=["canvas"],
+    description="The surface index: what each part of the estate's UI can show, by domain (markets, your trading "
+                "account, your business accounts, the estate, the diary, research) - every read that only reads, with "
+                "the kinds of thing its parameters take (a symbol, a url, a node, a path, a dataset); every dashboard "
+                "widget over such a read; every panel. Built from the registry, the measured widget sources, the "
+                "layouts and the panel list; kept 10 minutes. Inputs: refresh (bool), domain (str - list that domain's "
+                "surfaces). Output: {counts:{domain:{read, widget, panel}}, domains:[{id, label}], surfaces?:[...]}.")
+async def cap_surface_index(refresh: bool = False, domain: str = "", trace_id=None) -> Dict[str, Any]:
+    idx = await _surface_index(bool(refresh))
+    out: Dict[str, Any] = {"counts": idx["counts"], "domains": [{"id": d["id"], "label": d["label"]} for d in sc.DOMAINS]}
+    if domain:
+        out["surfaces"] = [{k: v for k, v in s.items() if k != "record"} for s in idx["surfaces"] if s["domain"] == domain][:300]
+    return out
+
+
+@capability(
+    "surface.find", memory="off",
+    http_method="POST", http_path="/surface/find", http_tags=["canvas"],
+    description="Which surfaces answer a turn: reads the turn's words and the things it names (turn_core patterns, and "
+                "the NLP tier's entities when ner=true), scores the domains, and answers - for the top ones - the "
+                "dashboard widgets, the glance reads, the reads the named things fill (a ticker into a symbol "
+                "parameter...) and the panels, each with its arguments and why. The two accounts are kept apart: a "
+                "turn that only says 'my account' gets both, named apart. No model is called. Inputs: text (str!), "
+                "entities (list - from turn.understand, else found here), ner (bool=false), max_items (int=6). Output: "
+                "{domains:[{id, label, score}], surfaces:[{kind, cap?, panel?, args, domain, domain_label, why, record?}], ms}.")
+async def cap_surface_find(text: str = "", entities: Any = None, ner: bool = False, max_items: int = 6,
+                           trace_id=None) -> Dict[str, Any]:
+    t0 = time.monotonic()
+    if not str(text or "").strip():
+        return {"ok": False, "error": "text required"}
+    ents = list(entities) if isinstance(entities, list) else None
+    if ents is None:
+        body = tc.prose(text)
+        ents = tc.merge(body, await _ner(body)) if ner else tc.merge(body, [])
+    idx = await _surface_index()
+    out = sc.find(idx, text, ents, max_items=max(1, int(max_items or 6)))
+    out.update(ok=True, ms=int((time.monotonic() - t0) * 1000))
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE CANVAS BEFORE THE ANSWER (canvas-enrichment slice 4 - owner, 2026-10-03: PRE budget "1.5s but remember it could
+# still do the richer canvas after the chat request is sent to the llm while waiting for it to return a response";
+# the model told what is shown, ~300 tokens; the two accounts distinct to the model). turn.prepare reads the turn,
+# asks the surface index, and starts every read at once. What lands within the budget is on the canvas AND in the
+# note the model gets; what is slower keeps running while the model writes (DURING) and lands when it arrives. Items
+# are keyed as canvas.enrich keys them, so the after-the-reply pass brings the same item back instead of doubling it.
+# No model is called; the NLP tier and plain reads only.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DURING: set = set()
+
+
+@capability(
+    "turn.prepare", memory="off",
+    http_method="POST", http_path="/turn/prepare", http_tags=["canvas"],
+    description="Before the model answers a turn: find the surfaces that answer it (surface.find - its domains, the "
+                "dashboard widgets, the glance reads, the reads its named things fill, the panels), start every read at "
+                "once, place on the session canvas what lands within budget_s, and return the note that tells the model "
+                "what is shown (by domain; your trading account and your business accounts named apart). Reads slower "
+                "than the budget keep running and land while the model writes. No model is called. Inputs: text (str! - "
+                "the question), session_id (str!), mid (str), budget_s (float=1.5), tell (bool=true - build the note), "
+                "max_items (int=5). Output: {ok, domains, placed:[{key, cap?, panel?, title, domain, summary}], pending, "
+                "prompt, ms}.")
+async def cap_turn_prepare(text: str = "", session_id: str = "", mid: str = "", budget_s: float = 1.5,
+                           tell: bool = True, max_items: int = 5, trace_id=None) -> Dict[str, Any]:
+    t0 = time.monotonic()
+    if not str(text or "").strip() or not session_id:
+        return {"ok": False, "error": "text and session_id required"}
+    budget = max(0.0, min(5.0, float(budget_s if budget_s is not None else 1.5)))
+    body = tc.prose(text)[:2000]
+    ents = tc.merge(body, [])
+    try:
+        ents = tc.merge(body, await asyncio.wait_for(_ner(body), max(0.2, budget * 0.45)))
+    except asyncio.TimeoutError:
+        pass
+    found = sc.find(await _surface_index(), text, ents, max_items=max(1, int(max_items or 5)))
+    surfaces = found.get("surfaces") or []
+    if not surfaces:
+        return {"ok": True, "domains": found.get("domains") or [], "placed": [], "pending": 0, "prompt": "",
+                "ms": int((time.monotonic() - t0) * 1000)}
+    anchor = {"turn": mid, "mid": mid, "from": "enrich"} if mid else {"from": "enrich"}
+    # a panel only for a domain that brought nothing else - a whole page is the last resort, not the first
+    has_reads = {s["domain"] for s in surfaces if s["kind"] != "panel"}
+    chosen = [s for s in surfaces if s["kind"] != "panel" or s["domain"] not in has_reads]
+
+    async def place(s: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        dl = {"domain": s["domain"], "domain_label": s.get("domain_label") or s["domain"]}
+        if s["kind"] == "panel":
+            key = "pre:panel:" + s["panel"]
+            await _call("canvas.add", session_id=session_id, kind="panel", key=key, at="now", size="l",
+                        content={"panel": s["panel"], "title": s.get("panel")}, anchor=anchor)
+            return dict(dl, key=key, panel=s["panel"], title="the %s panel" % s["panel"], summary="open beside the reply")
+        cap, args = s["cap"], dict(s.get("args") or {})
+        try:
+            res = await asyncio.wait_for(_call(cap, **args), STEP_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            return None
+        if _is_empty(res):
+            return None
+        title = str(((s.get("record") or {}).get("title")) or cap.replace(".", " \u00b7 "))
+        content = await _widget_content(cap, args, res, title)
+        block, size, kind = "widget", "m", "widget"
+        if not content:
+            rec = ec.records_item(cap, args, res, kind="rows", why=s.get("why") or "", title=title)
+            if not rec:
+                return None
+            content, block, size, kind = rec, "records", "l", "rows"
+        else:
+            content["why"] = s.get("why") or ""
+        key = ec.item_key(cap, args, kind)
+        await _call("canvas.add", session_id=session_id, kind=block, content=content, key=key, at="now", size=size,
+                    anchor=anchor)
+        return dict(dl, key=key, cap=cap, title=title, summary=sc.summarise(res))
+
+    tasks = [asyncio.ensure_future(place(s)) for s in chosen]
+    left = max(0.05, budget - (time.monotonic() - t0))
+    done, pending = await asyncio.wait(tasks, timeout=left)
+    placed = []
+    for t in done:
+        try:
+            r = t.result()
+        except Exception:
+            r = None
+        if r:
+            placed.append(r)
+    for t in pending:                          # DURING: they land while the model writes
+        _DURING.add(t)
+        t.add_done_callback(_DURING.discard)
+    return {"ok": True, "domains": found.get("domains") or [], "placed": placed, "pending": len(pending),
+            "prompt": sc.prompt_block(placed, pending=len(pending)) if tell else "",
+            "ms": int((time.monotonic() - t0) * 1000)}

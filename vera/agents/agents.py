@@ -1813,6 +1813,26 @@ async def agent_chat_stream_endpoint(request: Request):
             log.debug("cap_ontology inject failed: %s", _e)
     _ep_mark("context_inject")
 
+    # ── THE CANVAS BEFORE THE ANSWER (canvas-enrichment slice 4): the chat's own sends ask for it (canvas_enrich);
+    # turn.prepare places what answers the question within its budget (1.5 s - the owner's) and returns the note that
+    # tells the model what is on the canvas; slower reads keep landing while the model writes. Never fatal, never
+    # longer than budget + a margin: a slow canvas does not hold the answer.
+    if body.get("canvas_enrich") and session_id and "## On the canvas" not in _sys_prefix:
+        _prep = (CAPABILITY_REGISTRY.get("turn.prepare") or {}).get("func")
+        if _prep:
+            _cv_budget = 1.5
+            try:
+                _cvr = await asyncio.wait_for(
+                    _prep(text=str(body.get("canvas_text") or message)[:2000], session_id=session_id,
+                          mid=str(body.get("canvas_mid") or ""), budget_s=_cv_budget,
+                          tell=body.get("canvas_tell", True) is not False),
+                    _cv_budget + 1.0)
+                if isinstance(_cvr, dict) and _cvr.get("prompt"):
+                    _sys_prefix = (_sys_prefix + "\n\n" + _cvr["prompt"]).strip()
+            except Exception as _e:
+                log.debug("turn.prepare skipped: %s", _e)
+    _ep_mark("canvas_prepare")
+
     # ── Quick opener: very long prompt → light one-liner from a SECOND
     # Ollama endpoint while the main response generates on the first. The
     # main response sees the opener's instruction so it can avoid repeating
