@@ -14,5 +14,7 @@ t('...and the note for the model', E.includes('"prompt": sc.prompt_block(placed,
 t('the chat stream runs it for the chat\'s own sends, within 1.5 s + margin, and adds the note', A.includes('if body.get("canvas_enrich") and session_id and "## On the canvas" not in _sys_prefix:')
   && A.includes('_cv_budget = 1.5') && A.includes('_cv_budget + 1.0)') && A.includes('_sys_prefix = (_sys_prefix + "\\n\\n" + _cvr["prompt"]).strip()'));
 t('the chat sends its switch, the bare question and the turn', H.includes("canvas_enrich:_cvEnrichOn()||undefined, canvas_text:msg, canvas_mid:_cvRelMid||'',") && H.includes("localStorage.getItem('vera:canvas:tell')!=='0'"));
+t('telling the model is a switch beside enrich on the canvas column, sent with each turn', H.includes('id="cvTellBtn" onclick="CH._cvTellToggle(this)"')
+  && H.includes('canvas_tell:_cvTellOn(),') && H.includes('_cvEnrichToggle,_cvTellToggle,'));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
