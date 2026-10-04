@@ -2542,7 +2542,7 @@ async def _plan_expansions(
             collect_ollama(thinker, prompt,
                 "You identify research gaps and expansion opportunities in drafts. "
                 "Return only a JSON array.",
-                job_id, timeout_secs=300),
+                job_id, timeout_secs=90),
             timeout=100
         )
         parsed = json.loads(raw[raw.index("["):raw.rindex("]")+1])
@@ -4072,6 +4072,10 @@ def _today_preamble() -> str:
 # model's real window via /api/show → model_info.<arch>.context_length, so we
 # don't have to hand-tune ctx_size per instance.
 _DETECTED_CTX_CACHE: dict[str, int] = {}
+# Last failed detection per key (monotonic time); retried after the cooldown rather
+# than cached as 0 for the life of the process (RF-53).
+_DETECTED_CTX_FAIL: dict[str, float] = {}
+_DETECT_CTX_RETRY_S = 300.0
 # Global ceiling on the auto-detected window (0 = no cap → full model max).
 _MAX_AUTO_CTX = int(os.environ.get("OLLAMA_MAX_AUTO_CTX", "0"))
 
@@ -4085,7 +4089,10 @@ async def _detect_ctx(inst: OllamaInstance) -> int:
     """
     key = f"{inst.base_url}::{inst.model}"
     detected = _DETECTED_CTX_CACHE.get(key)
-    if detected is None:
+    failed_at = _DETECTED_CTX_FAIL.get(key)
+    if detected is None and failed_at is not None and time.monotonic() - failed_at < _DETECT_CTX_RETRY_S:
+        detected = 0
+    elif detected is None:
         detected = 0
         try:
             async with httpx.AsyncClient(timeout=8) as c:
@@ -4101,7 +4108,11 @@ async def _detect_ctx(inst: OllamaInstance) -> int:
                     detected = int(val or 0)
         except Exception as e:
             log.debug("_detect_ctx [%s/%s]: %s", inst.name, inst.model, e)
-        _DETECTED_CTX_CACHE[key] = detected
+        if detected > 0:
+            _DETECTED_CTX_CACHE[key] = detected
+            _DETECTED_CTX_FAIL.pop(key, None)
+        else:
+            _DETECTED_CTX_FAIL[key] = time.monotonic()
     ctx = detected or inst.ctx_size or 8192
     if inst.ctx_size and inst.ctx_size > 0:
         ctx = min(ctx, inst.ctx_size)
@@ -4785,6 +4796,16 @@ class ResearchDirective:
         return "\n".join(lines) + "\n"
 
 
+_OUTPUT_STYLES = ("report", "newspaper", "guide", "tables", "briefing", "deep_analysis", "comparison")
+_DIRECTIVE_DEPTHS = ("shallow", "standard", "deep")
+
+
+def _directive_enum(value, allowed, default):
+    """The thinker's value if it is one of `allowed` (case/space/hyphen tolerant), else `default`."""
+    v = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return v if v in allowed else default
+
+
 async def build_research_directive(
     query: str,
     thinker: "Optional[OllamaInstance]",
@@ -4835,13 +4856,13 @@ async def build_research_directive(
             raise ValueError("no JSON object in response")
         parsed = json.loads(raw[start:end])
 
-        d.output_style        = parsed.get("output_style", "report")
+        d.output_style        = _directive_enum(parsed.get("output_style"), _OUTPUT_STYLES, "report")
         d.scope_focus         = str(parsed.get("scope_focus", ""))[:300]
         d.scope_exclude       = [str(x)[:80] for x in parsed.get("scope_exclude", [])[:4]]
         d.key_questions       = [str(x)[:150] for x in parsed.get("key_questions", [])[:5]]
         d.table_topics        = [str(x)[:80] for x in parsed.get("table_topics", [])[:4]]
         d.needs_recency       = bool(parsed.get("needs_recency", False))
-        d.depth               = parsed.get("depth", "standard")
+        d.depth               = _directive_enum(parsed.get("depth"), _DIRECTIVE_DEPTHS, "standard")
         d.sub_questions       = [str(x)[:200] for x in parsed.get("sub_questions", [])[:5]]
         d.writer_instructions = str(parsed.get("writer_instructions", ""))[:400]
         d.source_priority     = [str(x)[:60] for x in parsed.get("source_priority", [])[:4]]
@@ -9170,7 +9191,7 @@ async def _iter_update_traversal(
         new_summary = await asyncio.wait_for(
             collect_ollama(fast, summ_prompt,
                 "You maintain rolling research summaries. Be concise and dense with facts.",
-                job_id, timeout_secs=300),
+                job_id, timeout_secs=90),
             timeout=100
         )
         if new_summary and new_summary.strip():
