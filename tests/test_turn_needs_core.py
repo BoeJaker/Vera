@@ -70,3 +70,22 @@ def test_the_query_drops_the_asking():
 def test_empty_text_needs_nothing():
     n = tn.needs("")
     assert not n["web"]["on"] and not n["memory_deep"]["on"]
+
+
+# ── the deep memory query is the topic, not the question (prod 2026-10-04: the whole question took 10.3 s on the
+#    text tier and found nothing inside the 1.5 s budget; its topic took 0.2 s and found five) ──────────────────────
+@pytest.mark.parametrize("q, topic", [
+    ("What did we decide last time about the memory half-life?", "memory half-life"),
+    ("remember the plan for the census calendar?", "census calendar"),
+    ("you said something earlier about GLiNER labels", "something GLiNER labels"),
+    ("what was the decision on the vector store", "vector store"),
+])
+def test_the_memory_query_is_the_topic(q, topic):
+    n = tn.needs(q)
+    assert n["memory_deep"]["on"], (q, n)
+    assert n["memory_deep"]["query"] == topic
+
+
+def test_a_memory_query_with_nothing_left_falls_back_to_the_words():
+    assert tn.memory_query("what did we say last time?") == "what did we say last time?"
+    assert tn.memory_query("") == ""
