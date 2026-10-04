@@ -94,7 +94,8 @@ def is_read(cap: str) -> bool:
 def takes(schema: Optional[Dict[str, Any]]) -> Dict[str, str]:
     """{param: entity type} for the parameters whose name says what they take."""
     out: Dict[str, str] = {}
-    for p in ((schema or {}).get("properties") or {}):
+    props = (schema or {}).get("properties") if isinstance(schema, dict) else None
+    for p in (props if isinstance(props, dict) else {}):
         for rx, typ in _TAKES:
             if rx.match(str(p).lower()):
                 out[p] = typ
@@ -108,19 +109,24 @@ def build(registry: Dict[str, Dict[str, Any]], measured: Optional[Dict[str, Dict
     measured = measured or {}
     surfaces: List[Dict[str, Any]] = []
     for name, entry in (registry or {}).items():
+        if not isinstance(entry, dict):          # an alias or a placeholder is not a surface
+            continue
         dom = domain_of(name)
         if not dom or not is_read(name):
             continue
-        schema = (entry or {}).get("schema") or {}
+        schema = entry.get("schema") if isinstance(entry.get("schema"), dict) else {}
         tk = takes(schema)
-        req = [r for r in (schema.get("required") or []) if r in (schema.get("properties") or {})]
-        m = measured.get(name) or {}
+        props = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        req = [r for r in (schema.get("required") or []) if isinstance(r, str) and r in props]
+        m = measured.get(name) if isinstance(measured.get(name), dict) else {}
         surfaces.append({"kind": "read", "id": name, "cap": name, "domain": dom, "takes": tk, "needs": req,
                          "shape": m.get("shape") or "", "ms": m.get("ms"),
                          "about": str((entry or {}).get("description") or "")[:200]})
     for lay in layouts or ():
+        if not isinstance(lay, dict):
+            continue
         for w in (lay.get("widgets") or []):
-            rec = (w or {}).get("record") or {}
+            rec = w.get("record") if isinstance(w, dict) and isinstance(w.get("record"), dict) else {}
             src = str(rec.get("source") or "")
             dom = domain_of(src)
             if not src or not dom or not is_read(src) or rec.get("form") == "section":
@@ -129,7 +135,9 @@ def build(registry: Dict[str, Dict[str, Any]], measured: Optional[Dict[str, Dict
                              "cap": src, "domain": dom, "takes": {}, "needs": [], "record": rec,
                              "about": str(rec.get("title") or src)})
     for p in panels or ():
-        pid = str((p or {}).get("id") or "")
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("id") or "")
         dom = next((d for rx, d in _PANEL_DOMAIN if rx.search(pid)), "")
         if dom:
             surfaces.append({"kind": "panel", "id": pid, "panel": pid, "domain": dom, "takes": {}, "needs": [],

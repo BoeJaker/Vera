@@ -2167,6 +2167,7 @@
       19 string     a short text                                                  → string
      The python catalogue mirrors it (widget_cap_output.py, widget.from_result) so an agent can ask for the same answer. */
   const CAP_HINTS = {
+    'markets.chart': { form: 'candles', map: { bars: 'bars' } },   /* a symbol's candles (canvas enrichment, slice 5) */
     'sysmon.history': { form: 'trace', map: { series: 'samples', v: 'cpu' } }, 'sysmon.status': { form: 'numbers', map: { pick: { cpu: 'resources.cpu', memory: 'resources.mem', guests: 'proxmox.running', containers: 'docker.running' } } },
     'obs.events': { form: 'log', map: { events: '$', t: 'ts', kind: 'type', text: 'name' } }, 'ollama.request_log': { form: 'log', map: { events: 'entries', t: 'ts', kind: 'instance', text: 'model' } },
     'ollama.route_stats': { form: 'ranked', map: { values: 'stats', count: 'model', sum: 'n' } }, 'obs.node_temps': { form: 'temps', map: { values: 'hosts', name: 'label', value: 'max_c' } },
