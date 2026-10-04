@@ -255,6 +255,33 @@ SUPPRESS_MEMORY_INJECT: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
 CURRENT_HTTP_CAP: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "vera_current_http_cap", default="")
 
+# The capabilities running in this task, outermost first: what the footprint
+# tracer (workers/cap_footprint_capabilities.py) attributes a file, database,
+# process or socket touch to. A cap called in-process by another runs inside
+# its caller, so the caller inherits what the callee touches.
+RUNNING_CAPS: "contextvars.ContextVar[tuple]" = contextvars.ContextVar(
+    "vera_running_caps", default=())
+#: Runs per capability since the tracer last flushed them (it resets this).
+CAP_RUN_COUNTS: Dict[str, int] = {}
+
+
+def _traced_cap(name: str, fn):
+    """`fn` running with `name` pushed on RUNNING_CAPS. A coroutine function
+    only (every capability is one); anything else is returned as is."""
+    import inspect as _insp
+    if not _insp.iscoroutinefunction(fn):
+        return fn
+
+    @functools.wraps(fn)
+    async def _traced(*a, **k):
+        tok = RUNNING_CAPS.set(RUNNING_CAPS.get() + (name,))
+        CAP_RUN_COUNTS[name] = CAP_RUN_COUNTS.get(name, 0) + 1
+        try:
+            return await fn(*a, **k)
+        finally:
+            RUNNING_CAPS.reset(tok)
+    return _traced
+
 # Last time a human was interactive (chat generation, or an explicit UI ping).
 LAST_INTERACTIVE_TS: float = 0.0
 
@@ -5483,9 +5510,31 @@ _OFFLOAD_SENT: Dict[str, int] = {}          # class -> calls this process offloa
 _OFFLOAD_CACHE: Dict[str, Any] = {"cfg_at": 0.0, "cfg": {}, "w_at": 0.0, "workers": []}
 
 
+#: Redis hash of capabilities vetted for nodes (cap_footprint_core.VETTED_KEY).
+_VETTED_KEY = "vera:node_workers:vetted"
+
+
+async def _refresh_vetted() -> bool:
+    """Load the vetted set into worker_placement_core; True when it changed."""
+    if REDIS is None:
+        return False
+    try:
+        raw = await REDIS.hgetall(_VETTED_KEY)
+    except Exception:
+        return False
+    vetted = {}
+    for k, v in (raw or {}).items():
+        try:
+            vetted[k.decode() if isinstance(k, bytes) else str(k)] = json.loads(v)
+        except Exception:
+            continue
+    return _placement.set_vetted(vetted)
+
+
 async def _offload_config() -> Dict[str, Any]:
     now = time.monotonic()
     if now - _OFFLOAD_CACHE["cfg_at"] > 10 and REDIS is not None:
+        await _refresh_vetted()
         try:
             raw = await REDIS.get(_placement.DISPATCH_KEY)
             _OFFLOAD_CACHE["cfg"] = json.loads(raw) if raw else {}
@@ -5779,6 +5828,7 @@ async def worker_loop(worker_id: str):
     # A node worker advertises only the caps it will actually run: the
     # "another worker has it" hand-off below reads this list, and a host-bound
     # cap advertised by a node would send tasks looking for it here.
+    await _refresh_vetted()
     _classes = (await _worker_classes()) if _IS_WORKER else None
     _host_id = os.environ.get("VERA_WORKER_HOST_ID", "") if _IS_WORKER else ""
     _streams = _placement.streams_to_read(is_worker=_IS_WORKER, classes=_classes,
@@ -5850,6 +5900,9 @@ async def worker_loop(worker_id: str):
         if _IS_WORKER and time.monotonic() - _classes_checked > 30:
             _classes_checked = time.monotonic()
             _new = await _worker_classes()
+            # a newly vetted capability is advertised (and run) without a restart
+            if await _refresh_vetted() and _new == _classes:
+                _streams, _advertised = await _apply_classes(_classes)
             if _new != _classes:
                 _classes = _new
                 _streams, _advertised = await _apply_classes(_classes)
@@ -6830,6 +6883,7 @@ def capability(
         if _alias_for and (_alias_for == name or not re.fullmatch(
                 r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", _alias_for)):
             raise ValueError("compatibility alias replacement must be a different capability")
+        func = _traced_cap(name, func)
 
         @functools.wraps(func)
         async def wrap(**kw):
@@ -11451,6 +11505,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "workers/node_compute_capabilities.py"),
         # nodes.testenv.* + evolve.test_pool.* - gate pytest sharded over the nodes
         os.path.join(_here, "evolve/test_runner_capabilities.py"),
+        # nodes.parity.* + caps.footprint - node parity by evidence (footprint tracer)
+        os.path.join(_here, "workers/cap_footprint_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),
         os.path.join(_here, "remote/operator_capabilities.py"),
@@ -11701,8 +11757,16 @@ async def lifespan(app: FastAPI):
     try:
         from concurrent.futures import ThreadPoolExecutor as _TPE
         import threading as _thr
+
+        class _CtxTPE(_TPE):
+            """Carries the submitting task's context into the thread, as
+            asyncio.to_thread does: RUNNING_CAPS (the footprint tracer) and
+            the other context vars then hold for run_in_executor work too."""
+            def submit(self, fn, /, *args, **kwargs):
+                return super().submit(contextvars.copy_context().run, fn, *args, **kwargs)
+
         _n_exec = min(32, (os.cpu_count() or 8) + 4)
-        _default_exec = _TPE(max_workers=_n_exec, thread_name_prefix="vera-exec")
+        _default_exec = _CtxTPE(max_workers=_n_exec, thread_name_prefix="vera-exec")
         _release = _thr.Event()
         # Each submit sees every worker busy (all parked on the event), so the
         # pool is forced to spawn all _n_exec threads right here.

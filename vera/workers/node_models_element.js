@@ -90,8 +90,8 @@
         const [n, c, l] = await Promise.all([this._get('/nlp/nodes'), this._get('/nlp/config'), this._get('/fabric/nlp/config')]);
         this._nlp = n; this._ncfg = c; this._llmnlp = l;
       } else if (sec === 'training') {
-        const [c, t] = await Promise.all([this._get('/compute/status'), this._get('/evolve/test_pool/status')]);
-        this._comp = c; this._pool = t;
+        const [c, t, pp] = await Promise.all([this._get('/compute/status'), this._get('/evolve/test_pool/status'), this._get('/nodes/parity/status')]);
+        this._comp = c; this._pool = t; this._parity = pp;
       } else if (sec === 'settings' && !this._settings) {
         this._setBusy = 'load'; this.render();
         this._settings = await this._get('/nodes/ollama/settings'); this._setBusy = '';
@@ -323,6 +323,16 @@
         + '<span>Threads per training job</span><span><input id="tr-threads" type="number" min="1" max="32" value="' + esc(cfg.threads || 4) + '" style="width:4.5em"></span>'
         + '<span>Wait for room</span><span><input id="tr-wait" type="number" min="0" max="21600" value="' + esc(cfg.max_wait_s) + '" style="width:6em"> s <button data-a="tr-save">save</button></span>'
         + '</div></div>';
+      const pr = this._parity || {}, tot = pr.totals || {}, nss = pr.namespaces || {};
+      const near = Object.keys(nss).map((k) => [k, nss[k]]).filter((x) => (x[1].vetted || 0) + (x[1].unproven || 0) > 0)
+        .sort((a, b) => ((b[1].vetted || 0) + (b[1].unproven || 0)) - ((a[1].vetted || 0) + (a[1].unproven || 0))).slice(0, 12);
+      h += '<div class="panel"><div class="sec">Capability parity</div>'
+        + '<div class="row">' + ['safe', 'vetted', 'unproven', 'host'].map((k) => '<span class="badge ' + (k === 'host' ? 'bad' : k === 'unproven' ? 'warn' : 'ok') + '">' + k + ' ' + (tot[k] || 0) + '</span>').join(' ')
+        + '<span class="sp"></span><span class="muted">' + (pr.static_at ? 'audit ' + new Date(pr.static_at * 1000).toLocaleString() : 'no static audit yet') + ' · ' + esc(pr.footprints || 0) + ' footprints · ' + esc(pr.vetted_applied || 0) + ' vetted in use</span>'
+        + '<button data-a="par-audit">run audit</button><button data-a="par-preview">preview vet</button><button data-a="par-vet">vet</button></div>'
+        + (near.length ? '<table><tr><th>namespace</th><th>safe</th><th>vetted</th><th>unproven</th><th>host</th></tr>'
+          + near.map((x) => '<tr><td><b>' + esc(x[0]) + '</b></td>' + ['safe', 'vetted', 'unproven', 'host'].map((k) => '<td>' + (x[1][k] || '') + '</td>').join('') + '</tr>').join('') + '</table>' : '')
+        + '<div class="muted" style="margin-top:4px">A capability is vetted only when its code path shows no host-only resource AND it has run at least 3 times touching nothing host-bound. Vetted capabilities run in the Extended class, which a node takes only once enabled in its roles.</div></div>';
       h += '<div class="panel"><div class="sec">Recent jobs</div><div data-keep-scroll style="max-height:320px;overflow:auto"><table><tr><th>started</th><th>job</th><th>ran on</th><th>state</th><th>time</th><th></th></tr>'
         + jobs.map((j) => '<tr><td class="muted">' + esc((j.started || '').replace('T', ' ').slice(0, 19)) + '</td>'
             + '<td>' + esc(j.label || j.fn) + '</td><td>' + esc(j.node || j.where || '') + '</td>'
@@ -387,6 +397,13 @@
         const v = (id) => this._root.getElementById(id).value;
         const r = await this._post('/ollama/warm/set', { cpu_num_ctx: parseInt(v('r-ctx'), 10), spill_min_tps: parseFloat(v('r-tps')), spill_max_ctx: parseInt(v('r-maxctx'), 10) });
         this._say(r.ok ? 'saved' : (r.error || 'failed')); return this.load();
+      }
+      if (a === 'par-audit') { this._say('auditing (about 2 min)...'); const r = await this._post('/nodes/parity/audit', {}); this._say(r.ok ? ('audited ' + r.caps + ' caps in ' + r.seconds + ' s') : (r.error || 'failed')); return this.load(); }
+      if (a === 'par-preview' || a === 'par-vet') {
+        if (a === 'par-vet' && !confirm('Vet every capability the evidence clears? They run on a node only where the Extended class is enabled.')) return;
+        const r = await this._post('/nodes/parity/vet', { dry_run: a === 'par-preview' });
+        this._say(r.ok ? (a === 'par-preview' ? ('would vet ' + (r.would_vet || []).length + ', drop ' + (r.would_drop || []).length) : ('vetted ' + (r.vetted || []).length + ', dropped ' + (r.dropped || []).length)) : (r.error || 'failed'));
+        return this.load();
       }
       if (a === 'tr-save') {
         const v = (id) => this._root.getElementById(id).value;
