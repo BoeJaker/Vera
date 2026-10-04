@@ -896,7 +896,8 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
         if s.get("evidence"):
             s["summary"] = (s.get("summary") or s.get("snippet") or "") + " | " + "; ".join(
                 f"{e['question']} -> {e['answer']}" for e in s["evidence"][:3])
-    parsed = await _llm_json(core.snapshot_prompt(t, prev, sigs, market=chg.prompt_lines(moves)),
+    levels = "\n".join(x for x in (chg.level_line(i) for i in _indicators(t["id"])) if x)
+    parsed = await _llm_json(core.snapshot_prompt(t, prev, sigs, market=chg.prompt_lines(moves), levels=levels),
                              role="assess", timeout=1800.0)
     if not parsed:
         return {"topic": t["id"], "error": "no assessment"}
@@ -1061,7 +1062,20 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
             ind.update(status="stale: newest bar " + time.strftime("%Y-%m-%d", time.gmtime(ts[-1])),
                        last=vals[-1], last_t=ts[-1], bars=len(ts), checked=core.now_iso())
             continue
-        ind.update(status="ok", last=vals[-1], last_t=ts[-1], bars=len(ts), checked=core.now_iso())
+        ind.update(status="ok", last=vals[-1], last_t=ts[-1], bars=len(ts), checked=core.now_iso(),
+                   chg7=chg.change_over(ts, vals, 7), chg30=chg.change_over(ts, vals, 30))
+        m = ind.get("market")
+        if m and not ind.get("resolved"):
+            ans = await _market_resolution(m)
+            if ans:
+                ind.update(resolved={"answer": ans, "at": core.now_iso()}, status=f"resolved {ans}")
+                rc = dict(chg.resolution_change(ind, ans, now), indicator=ind["id"], topic_id=t["id"],
+                          label=ind.get("label"), ind_kind=ind.get("kind"), stories=[], found=core.now_iso())
+                new.append(rc)
+                _record_resolution(t, ind, ans, chg.change_over(ts, vals, 7), vals[-1])
+                continue
+        if ind.get("resolved"):
+            continue
         for c in chg.detect(ts, vals, kind=ind.get("kind", "price")):
             if float(c["t"]) < now - lookback_days * 86400 or (ind["id"], c["t"]) in known \
                     or (ind.get("market") and c["kind"] == "spike" and abs((c.get("detail") or {}).get("move") or 0) < 0.05):
@@ -1073,7 +1087,8 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
                      found=core.now_iso())
             new.append(c)
     fresh = {i["id"]: i for i in _indicators(t["id"])}          # an add/remove while we read wins
-    _save_indicators(t["id"], [dict(fresh[i["id"]], **{k: i.get(k) for k in ("status", "last", "last_t", "bars", "checked")
+    _save_indicators(t["id"], [dict(fresh[i["id"]], **{k: i.get(k) for k in ("status", "last", "last_t", "bars", "checked",
+                                                                              "chg7", "chg30", "resolved")
                                                         if k in i}) for i in inds if i["id"] in fresh])
     if new:
         st.set_kv("ind_changes", ((st.get_kv("ind_changes", []) or []) + new)[-400:])
@@ -1189,6 +1204,33 @@ async def pm_search(query: str, limit: int = 8) -> Tuple[List[Dict[str, Any]], L
             c["match"] = round(float(scores[i]), 2) if scores.get(i) is not None else None
         cands.sort(key=lambda c: (-(c["match"] if c.get("match") is not None else -99.0), -(c.get("volume") or 0)))
     return cands[:max(1, int(limit))], errors
+
+
+async def _market_resolution(m: Dict[str, Any]) -> Optional[str]:
+    """'yes'/'no' when a watched market has resolved (one small read per check)."""
+    try:
+        if m.get("source") == "polymarket":
+            return pm.resolution("polymarket", await _http_json(f"{pm.GAMMA}/markets/{m.get('id')}"))
+        if m.get("source") == "manifold":
+            return pm.resolution("manifold", await _http_json(f"{pm.MANIFOLD}/market/{m.get('id')}"))
+    except Exception as ex:  # noqa: BLE001
+        log.debug("intel: market state unavailable: %s", ex)
+    return None
+
+
+def _record_resolution(t: Dict[str, Any], ind: Dict[str, Any], answer: str, chg7: Optional[float],
+                       last: float) -> None:
+    """A row for the calibration exhibit: how the market and intel's own assessment
+    stood when the question was settled (not advice - a record of being right)."""
+    st = store()
+    snap = st.latest_snapshot(t["id"]) or {}
+    week_before = None if chg7 is None else round(float(last) - float(chg7), 3)
+    rows = st.get_kv("resolutions", []) or []
+    rows.append({"topic_id": t["id"], "indicator": ind["id"], "question": (ind.get("market") or {}).get("question"),
+                 "answer": answer, "at": core.now_iso(), "market_week_before": week_before,
+                 "assessment": {"id": snap.get("id"), "confidence": snap.get("confidence"),
+                                "headline": snap.get("headline")}})
+    st.set_kv("resolutions", rows[-200:])
 
 
 async def _pm_market(source: str, market_id: str) -> Optional[Dict[str, Any]]:
@@ -1364,11 +1406,15 @@ async def cap_indicator_suggest(topic_id: str = "", days: int = 60, trace_id=Non
 
 @capability("intel.indicator.list", http_method="GET", http_path="/intel/indicator/list", http_tags=["intel"],
             memory="off", silent=True,
-            description="The numbers a topic watches (blank topic = all) with their latest value and recent changes. "
-                        "Input: topic_id, days (changes window, default 30). Output: {indicators, changes}.")
+            description="The numbers a topic watches (blank topic = all) with their latest value, 7/30-day change "
+                        "and recent changes, plus resolved prediction markets with how the market and intel's "
+                        "assessment stood. Input: topic_id, days (changes window, default 30). Output: {indicators, "
+                        "changes, resolutions}.")
 async def cap_indicator_list(topic_id: str = "", days: int = 30, trace_id=None):
+    res = [r for r in store().get_kv("resolutions", []) or [] if not topic_id or r.get("topic_id") == topic_id]
     return {"indicators": _indicators(topic_id),
-            "changes": list(reversed(_changes(topic_id, since=_since(24 * max(1, int(days or 30))))))[:100]}
+            "changes": list(reversed(_changes(topic_id, since=_since(24 * max(1, int(days or 30))))))[:100],
+            "resolutions": list(reversed(res))[:50]}
 
 
 @capability("intel.indicator.remove", http_method="POST", http_path="/intel/indicator/remove", http_tags=["intel"],

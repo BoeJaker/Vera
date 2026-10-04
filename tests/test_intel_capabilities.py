@@ -622,6 +622,18 @@ def test_prediction_markets_search_suggest_watch_and_move(tmp_path):
     assert any(u.endswith("/prices-history") and p.get("market") == "tokYes" for u, p in seen)
     again = _R(orch, "intel.pm.suggest", topic_id=t["id"])["suggestions"]
     assert all(m["id"] != "11" for x in again for m in x["markets"])           # a watched market is not suggested again
+    # its level reaches the next assessment; then the market resolves
+    ind_now = _R(orch, "intel.indicator.list", topic_id=t["id"])["indicators"][0]
+    assert ind_now["chg7"] is not None and ind_now["last"] == 0.54
+    _run(mod.snapshot_topic(mod.store().get_topic(t["id"])))
+    assert "THE NUMBERS THIS TOPIC WATCHES, NOW" in orch.PROMPTS[-1][0] and "54%" in orch.PROMPTS[-1][0]
+    gamma["events"][0]["markets"][0].update(closed=True, outcomePrices='["1", "0"]')
+    res = _R(orch, "intel.indicator.check", topic_id=t["id"])["changes"]
+    assert [c["text"] for c in res] == ["Will the BoE cut rates in December? resolved YES"]
+    lst = _R(orch, "intel.indicator.list", topic_id=t["id"])
+    assert lst["indicators"][0]["status"] == "resolved yes" and lst["resolutions"][0]["answer"] == "yes"
+    assert lst["resolutions"][0]["assessment"]["confidence"]
+    assert not _R(orch, "intel.indicator.check", topic_id=t["id"])["changes"]          # settled once
 
 
 def test_indicator_suggest_from_named_companies_and_markets(tmp_path):

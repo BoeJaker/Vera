@@ -242,7 +242,7 @@ def material(changes: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for c in changes:
         if c.get("kind") == "regime":
             continue
-        if c.get("stories") or (c.get("kind") == "spike" and float(c.get("magnitude") or 0) >= 8.0):
+        if c.get("kind") == "resolved" or c.get("stories") or (c.get("kind") == "spike" and float(c.get("magnitude") or 0) >= 8.0):
             out.append(c)
     return out
 
@@ -257,3 +257,41 @@ def prompt_lines(changes: Sequence[Dict[str, Any]], n: int = 6) -> str:
             line += " | around then: " + "; ".join(st)
         lines.append(line[:400])
     return "\n".join(lines)
+
+
+def change_over(ts: Sequence[float], values: Sequence[float], days: float) -> Optional[float]:
+    """The change from the last value at least `days` before the newest bar to the
+    newest (None without that much history)."""
+    if not ts:
+        return None
+    edge = float(ts[-1]) - days * 86400
+    before = [v for t, v in zip(ts, values) if float(t) <= edge]
+    return None if not before else float(values[-1]) - float(before[-1])
+
+
+def level_line(ind: Dict[str, Any]) -> str:
+    """One indicator's level for an assessment: 'SEGRO Plc 915.2 (7d -2.9%, 30d -3.4%)'."""
+    last = ind.get("last")
+    if last is None:
+        return ""
+    kind = ind.get("kind", "price")
+    if ind.get("resolved"):
+        return f"{ind.get('label')}: resolved {str(ind['resolved'].get('answer', '')).upper()}"
+
+    def fmt(d: Optional[float]) -> str:
+        if d is None:
+            return "?"
+        if kind == "probability":
+            return f"{d * 100:+.0f} pts"
+        base = float(last) - d
+        return f"{d / base * 100:+.1f}%" if kind == "price" and base else f"{d:+.3g}"
+    val = f"{float(last) * 100:.0f}%" if kind == "probability" else f"{float(last):.4g}"
+    return f"{ind.get('label')} {val} (7d {fmt(ind.get('chg7'))}, 30d {fmt(ind.get('chg30'))})"
+
+
+def resolution_change(ind: Dict[str, Any], answer: str, when: float) -> Dict[str, Any]:
+    """A market that resolved, as a change on its indicator (always material)."""
+    yes = str(answer).lower() == "yes"
+    c = change("resolved", -1, when, 1.0, "up" if yes else "down", {"answer": str(answer).lower()})
+    c["text"] = f"{ind.get('label')} resolved {str(answer).upper()}"
+    return c

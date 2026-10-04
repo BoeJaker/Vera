@@ -33,3 +33,13 @@ def test_series_and_resample_carry_forward():
     ts, vals = pm.resample([(0.0, 0.1), (100 * 3600.0, 0.2)], 3600.0, max_points=10)
     assert len(ts) == 10 and vals[0] == 0.1 and vals[-1] == 0.2
     assert pm.polymarket_series({"history": [{"t": 5, "p": 0.4}, {"t": 1, "p": "0.3"}, {"t": None}]}) == [(1.0, 0.3), (5.0, 0.4)]
+
+
+def test_resolution():
+    m = {"outcomes": '["Yes", "No"]', "outcomePrices": '["1", "0"]', "closed": True}
+    assert pm.resolution("polymarket", m) == "yes"
+    assert pm.resolution("polymarket", dict(m, outcomePrices='["0", "1"]')) == "no"
+    assert pm.resolution("polymarket", dict(m, closed=False)) is None
+    assert pm.resolution("polymarket", dict(m, outcomePrices='["0.5", "0.5"]')) is None     # closed, not settled
+    assert pm.resolution("manifold", {"isResolved": True, "resolution": "NO"}) == "no"
+    assert pm.resolution("manifold", {"isResolved": True, "resolution": "MKT"}) is None
