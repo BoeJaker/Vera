@@ -269,9 +269,21 @@ def _fmt(v: Any) -> str:
     return str(v)[:40]
 
 
-def summarise(res: Any, max_chars: int = 220) -> str:
+def _base(sym: Any) -> str:
+    """BTC from "BTC/USD", "BTC-USD", "yahoo:BTC-USD" - the thing a row is about."""
+    return re.split(r"[/\-_ ]", str(sym or "").upper().split(":")[-1].strip() or "?")[0]
+
+
+def _row_hits(r: Any, bases: Sequence[str]) -> bool:
+    return isinstance(r, dict) and any(_base(r.get(k)) in bases for k in ("symbol", "key", "ticker", "pair", "asset", "id", "name")
+                                       if r.get(k) not in (None, ""))
+
+
+def summarise(res: Any, max_chars: int = 220, focus: Sequence[str] = ()) -> str:
     """A read's answer in one line a model can talk about: how many rows and the first few by name (with a figure when
-    a row has one), or the headline figures of a single record."""
+    a row has one), or the headline figures of a single record. `focus` - the tickers the turn named: their rows come
+    first, with all their figures (a question about BTC is answered by BTC's row, not the first five of thirty-six)."""
+    bases = [b for b in (_base(x) for x in focus or ()) if b and b != "?"]
     # a columnar series ({t:[...], equity:[...]}): how many points, and each measure's last value and change
     if isinstance(res, dict) and isinstance(res.get("t"), list) and len(res["t"]) > 1:
         cols = [(k, v) for k, v in res.items() if k != "t" and isinstance(v, list) and len(v) == len(res["t"])
@@ -289,6 +301,15 @@ def summarise(res: Any, max_chars: int = 220) -> str:
         figs = ["%s %s" % (k, _fmt(v)) for k, v in res.items() if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "count"][:4]
         if head or figs:
             return (" ".join(head + ["-"] if head and figs else head) + " " + "; ".join(figs) + " (%d rows)" % len(rows)).strip()[:max_chars]
+    if rows and bases and any(_row_hits(r, bases) for r in rows):
+        hits = [r for r in rows if _row_hits(r, bases)][:3]
+        bits = []
+        for r in hits:
+            nm = next((str(r[k]) for k in _NAMEY if r.get(k) not in (None, "")), "")
+            figs = ["%s %s" % (k, _fmt(v)) for k, v in r.items() if isinstance(v, (int, float)) and not isinstance(v, bool)
+                    and _FIGURE.search(str(k))][:5]
+            bits.append(nm + (" (" + ", ".join(figs) + ")" if figs else ""))
+        return ("%d row%s; for what was asked: %s" % (len(rows), "" if len(rows) == 1 else "s", "; ".join(bits)))[:max_chars]
     if rows:
         bits = []
         for r in rows[:5]:
@@ -312,8 +333,9 @@ def prompt_block(placed: Sequence[Dict[str, Any]], *, max_chars: int = 1200, pen
     if not placed and not pending:
         return ""
     lines = ["## On the canvas beside this reply",
-             "Placed for this question; the user can see these. Refer to them when useful (\"the chart beside this\"); "
-             "do not restate their figures in full. Each is named with what it belongs to - keep those apart."]
+             "Placed for this question; the user can see these, and the figures below are current. Use them in the answer "
+             "where they answer the question, and refer to the items (\"the chart beside this\") rather than reciting whole "
+             "tables. Each is named with what it belongs to - keep those apart."]
     for p in placed:
         what = p.get("title") or p.get("cap") or p.get("panel") or "item"
         line = "- [%s] %s" % (p.get("domain_label") or p.get("domain") or "the estate", what)

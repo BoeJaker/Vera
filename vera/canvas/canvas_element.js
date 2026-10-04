@@ -1427,7 +1427,7 @@
   .edit{display:flex;flex-direction:column;gap:4px}
   .edit textarea{font:inherit;font-size:11px;line-height:1.5;min-height:72px;width:100%;box-sizing:border-box;
     background:var(--bg1,#15181d);color:var(--fg,#dce1e8);border:1px solid var(--acc,#5a9e8f);border-radius:6px;padding:6px;resize:vertical}
-  .edit textarea.code{font-family:ui-monospace,Consolas,monospace}
+  .edit textarea.code{font-family:ui-monospace,Consolas,monospace;white-space:pre;overflow-x:auto;tab-size:4}
   .edit-a{display:flex;gap:4px;align-items:center}
   .ib{font:inherit;height:19px;padding:0 8px;border-radius:5px;font-size:9.5px;color:var(--fg2,#c3cad4);background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);cursor:pointer;line-height:1}
   .ib:hover{color:var(--fg,#dce1e8);border-color:var(--acc,#5a9e8f)}
@@ -2524,7 +2524,11 @@
            on the header opens it. What the canvas brings forth unasked (from='enrich') starts folded: its header says
            what it is and how much it holds, and it opens when it is wanted. Opening it in place, maximising or editing
            it overrides the fold. */
-        const ufold = !b._bid && !open && this._isUFolded(key, from);
+        /* PLACED FOR THE QUESTION (turn.prepare, from='prepare'; owner, 2026-10-04: "im not seeing any of the markets info
+           ... perhaps it did but i cant see it"): what was picked for the question and told to the model shows open - the
+           reply talks about it. Any of its anchors counts: the after-reply pass may bring the same item back as 'enrich'. */
+        const prepared = (b.anchors || []).concat(a ? [a] : []).some((x) => x && typeof x === 'object' && x.from === 'prepare');
+        const ufold = !b._bid && !open && this._isUFolded(key, from, prepared);
         const compact = (wouldFold && !hovered) || ufold;
         const px = this._px[key];
         /* the WIDTH you dragged it to, as a data attribute rather than a style: the placer applies it (it is the one
@@ -2662,7 +2666,7 @@
          whole pages, diagrams) - loaded once when a page that shows the canvas did not load it, then drawn again */
       if (root.VeraOut) { try { root.VeraOut.wire(this.shadowRoot, this._voHooks()); root.VeraOut.hydrate(layers.items); } catch (e) {} }
       else if (!this._voLoading) { this._voLoading = true; ensureLib('/ui/elements/vera_output.js', '').then((ok) => { if (ok && root.VeraOut && this._doc) { this._html = null; this.render(this._doc); } }); }
-      if (this._editKey) { const ta = body.querySelector('.it[data-key="' + this._editKey.replace(/"/g, '\\"') + '"] textarea'); if (ta && !this._editFocused) { this._editFocused = true; try { ta.focus(); } catch (e) {} } }
+      if (this._editKey) { const ta = body.querySelector('.it[data-key="' + this._editKey.replace(/"/g, '\\"') + '"] textarea'); if (ta && !this._editFocused) { this._editFocused = true; try { ta.focus(); } catch (e) {} } if (ta) this._editWire(ta); }
       if (body.querySelector('vera-mermaid')) ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid');
       if (window.mermaid && body.querySelector('.mermaid')) {
         try { window.mermaid.run({ nodes: body.querySelectorAll('.mermaid') }); }
@@ -2784,9 +2788,10 @@
       if (this._foldsFor !== id) { this._foldsFor = id; this._foldMap = {}; try { this._foldMap = JSON.parse(localStorage.getItem('vera:canvas:fold:' + id) || '{}') || {}; } catch (e) { this._foldMap = {}; } }
       return this._foldMap;
     }
-    _isUFolded(key, from) {
+    _isUFolded(key, from, prepared) {
       const f = this._folds(); key = String(key);
       if (Object.prototype.hasOwnProperty.call(f, key)) return !!f[key];
+      if (prepared) return false;
       return from === 'enrich' || key.indexOf('enrich:') === 0;
     }
     _setFold(key, on) {
@@ -3124,6 +3129,24 @@
        covers them. Nothing is persisted; this is a reader's pointer, not a document change. */
     /* the graph of a records item: rebuilt only when its records change (a render is not a new answer), handed to the
        embed once it is defined */
+    /* THE EDITOR IS AS TALL AS ITS TEXT (owner, 2026-10-04: "pressing edit on code in the canvas only lets you edit the
+       first few lines"): the textarea opened at its 72 px minimum - four lines of a sixty-line file, the rest behind a
+       scroll inside a scroll. It takes its text's height (to 70% of the window), grows as it is typed into, and in code
+       Tab indents rather than leaving the field. */
+    _editWire(ta) {
+      const fit = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 4, Math.round((root.innerHeight || 900) * 0.7)) + 'px'; };
+      fit(); if (ta._vcEdit) return; ta._vcEdit = true;
+      ta.addEventListener('input', fit);
+      if (ta.classList.contains('code')) ta.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Tab' || ev.ctrlKey || ev.altKey || ev.metaKey) return; ev.preventDefault();
+        const s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
+        if (s === e && !ev.shiftKey) { ta.value = v.slice(0, s) + '    ' + v.slice(e); ta.selectionStart = ta.selectionEnd = s + 4; return; }
+        // a selection (or shift): indent / outdent each line it touches
+        const ls = v.lastIndexOf('\n', s - 1) + 1; const block = v.slice(ls, e);
+        const out = ev.shiftKey ? block.replace(/^( {1,4}|\t)/gm, '') : block.replace(/^/gm, '    ');
+        ta.value = v.slice(0, ls) + out + v.slice(e); ta.selectionStart = ls; ta.selectionEnd = ls + out.length; fit();
+      });
+    }
     _rgFeed(embed, key) {
       if (!embed) return;
       const c = this._contentOf(key) || {}; const bodies = recState(this, key).body || {};
