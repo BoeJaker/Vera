@@ -136,6 +136,14 @@ async def census_summary() -> Dict[str, Any]:
                 s["due"] = await sc.census_due_now()
         except Exception as e:
             log.debug("census due-now unavailable: %s", e)
+    # Agent loops alive in this process: a restart kills them (release_core.may_release).
+    try:
+        import sys as _sys
+        dm = (_sys.modules.get("dag_workshop_capabilities")
+              or _sys.modules.get("Vera.vera.dag.dag_workshop_capabilities"))
+        s["loops"] = core.live_loop_ids(getattr(dm, "_AGENT_LOOP_TASKS", None) or {})
+    except Exception as e:
+        log.debug("live loops unavailable: %s", e)
     return s
 
 

@@ -22,7 +22,7 @@ aware ISO strings, and `decide` returns the one thing to do next.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import List, Any, Dict, Optional, Tuple
 
 MODES = ("finish", "goal", "force")
 STATUSES = ("waiting", "releasing", "restarting", "done", "failed", "cancelled")
@@ -44,6 +44,22 @@ def parse_iso(s: str) -> Optional[datetime]:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
+def live_loop_ids(tasks: Any) -> List[str]:
+    """Session ids of agent-loop tasks still running in this process (the dag module's
+    _AGENT_LOOP_TASKS: sid -> asyncio.Task) - what a restart would kill."""
+    out: List[str] = []
+    try:
+        for sid, task in list((tasks or {}).items()):
+            try:
+                if task is not None and not task.done():
+                    out.append(str(sid))
+            except Exception:
+                continue
+    except Exception:
+        return []
+    return out
+
+
 def may_release(mode: str, census: Dict[str, Any]) -> Tuple[bool, str]:
     """(ok, why) - may the merge+restart go out now under `mode`?"""
     if mode == "force":
@@ -53,6 +69,13 @@ def may_release(mode: str, census: Dict[str, Any]) -> Tuple[bool, str]:
     if busy or state in BUSY_STATES:
         goal = (census or {}).get("goal") or ""
         return False, f"census goal in flight ({goal or state})"
+    # A live agent loop dies with the process. 4 Oct 2026 15:16: a release restarted prod
+    # 24 min into a probe loop (strategic-vector-db-report); the run was lost and left
+    # marked 'running', which then blocked every later probe. Census-only holds missed it.
+    loops = [str(x) for x in ((census or {}).get("loops") or []) if str(x).strip()]
+    if loops:
+        return False, ("%d agent loop(s) running (%s) - a restart would kill them; waiting "
+                       "(force to override)" % (len(loops), ", ".join(x[:8] for x in loops[:3])))
     if mode == "goal":
         if state in PARKED_STATES or state in CLEAR_STATES:
             return True, f"census {state}"
