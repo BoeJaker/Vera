@@ -70,8 +70,12 @@
   // `mount` receives: the panel body element to populate, the live graph
   // instance (so it can call graph.load(), graph.fetchSnapshot(), etc.), and a
   // small panelApi ({ activate, isActive, graphContainer, apiBase }).
-  var _PANEL_REGISTRY = [];          // [{id,title,icon,order,mount,unmount}]
-  var _LIVE_GRAPHS    = [];          // graph instances currently on the page
+  // ONE registry per page, shared by every copy of this file that runs (a page can load it more than once - the dashboard
+  // did, four times; each copy used to start empty and replace window.veraUI.Graph, so every mode registered before it
+  // vanished from the graphs made after it)
+  var _SHARED = (typeof window !== 'undefined') ? (window.__veraGraphShared = window.__veraGraphShared || { panels: [], live: [], modes: [] }) : { panels: [], live: [], modes: [] };
+  var _PANEL_REGISTRY = _SHARED.panels;   // [{id,title,icon,order,mount,unmount}]
+  var _LIVE_GRAPHS    = _SHARED.live;     // graph instances currently on the page
 
   function registerPanel(def){
     if (!def || !def.id || typeof def.mount !== 'function') {
@@ -104,7 +108,7 @@
   //   { id:'estate-3d', label:'Estate · 3D', order:20,
   //     mount: function(hostEl, graph, api){ ... return { update(), destroy() }; } }
   // api = { nodes(), edges(), open(node) (the detail drawer), color(node) (the graph's colour for it) }
-  var _MODE_REGISTRY  = [];
+  var _MODE_REGISTRY  = _SHARED.modes;
 
   function registerMode(def){
     if (!def || !def.id || typeof def.mount !== 'function') {
