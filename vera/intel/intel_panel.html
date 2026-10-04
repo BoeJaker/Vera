@@ -311,6 +311,9 @@ async function openTopic(id) {
       <div class="card"><h3 style="margin-top:0">Who the sources name</h3>
         ${widget({form:'minigraph', source:'intel.entities.get', title:'Entities', read:{refresh:'10m', args:{topic_id:id}, map:{nodes:'nodes', links:'links'}}, frame:{size:'l'}})}
       </div>
+      <div class="card"><h3 style="margin-top:0">Where it is happening</h3>
+        ${widget({form:'globe', source:'intel.places.get', title:'Places', read:{refresh:'30m', args:{topic_id:id, days:90}, map:{points:'points'}}, frame:{size:'l'}})}
+      </div>
     </div>`;
   loadSignals(); loadInd();
 }

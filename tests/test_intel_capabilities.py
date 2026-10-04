@@ -759,3 +759,5 @@ def test_geocoder_caches_rate_limits_and_tags_signals(tmp_path):
     tagged = [s for s in mod.store().signals(t["id"]) if s.get("places")]
     assert tagged and tagged[0]["places"][0]["name"] == "Leeds" and tagged[0]["places"][0]["cc"] == "gb"
     assert len(calls) == 2                                                      # Leeds came from the cache
+    pts = _R(orch, "intel.places.get", topic_id=t["id"])["points"]
+    assert pts[0]["name"] == "Leeds" and pts[0]["size"] == len(tagged) and pts[0]["lit"] and pts[0]["detail"]
