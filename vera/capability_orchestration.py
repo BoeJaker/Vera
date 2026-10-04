@@ -5770,7 +5770,9 @@ async def worker_loop(worker_id: str):
     # "another worker has it" hand-off below reads this list, and a host-bound
     # cap advertised by a node would send tasks looking for it here.
     _classes = (await _worker_classes()) if _IS_WORKER else None
-    _streams = _placement.streams_to_read(is_worker=_IS_WORKER, classes=_classes)
+    _host_id = os.environ.get("VERA_WORKER_HOST_ID", "") if _IS_WORKER else ""
+    _streams = _placement.streams_to_read(is_worker=_IS_WORKER, classes=_classes,
+                                          host_id=_host_id)
     _advertised = [c for c in CAPABILITY_REGISTRY
                    if _placement.may_run_here(c, is_worker=_IS_WORKER, classes=_classes)[0]]
     reg = {
@@ -5784,6 +5786,9 @@ async def worker_loop(worker_id: str):
         # the training libraries this process can import: the host routes a
         # compute job to the nodes only when every compute worker has them
         "libs":         json.dumps(_compute_core.available_libs()),
+        # the node's provisioning id: node scheduling sends a job to this
+        # node's own queue (node_compute_core.node_stream)
+        "host_id":      _host_id,
         "capabilities": json.dumps(_advertised),
         "cap_count":    len(_advertised),
         "tasks_done":   0,
@@ -5810,7 +5815,8 @@ async def worker_loop(worker_id: str):
     async def _apply_classes(new_classes):
         """Roles changed in the UI: read the new classes' streams from now on,
         advertise only their caps. Live - no restart, no re-provision."""
-        streams = _placement.streams_to_read(is_worker=True, classes=new_classes)
+        streams = _placement.streams_to_read(is_worker=True, classes=new_classes,
+                                             host_id=_host_id)
         await _ensure_task_groups(streams)
         adv = [c for c in CAPABILITY_REGISTRY
                if _placement.may_run_here(c, is_worker=True, classes=new_classes)[0]]
@@ -11427,6 +11433,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "workers/warm_models_capabilities.py"),
         # compute.* - model training on the node workers (node_compute_core)
         os.path.join(_here, "workers/node_compute_capabilities.py"),
+        # nodes.testenv.* + evolve.test_pool.* - gate pytest sharded over the nodes
+        os.path.join(_here, "evolve/test_runner_capabilities.py"),
         os.path.join(_here, "remote/remote_capabilities.py"),
         os.path.join(_here, "remote/workspace_capabilities.py"),
         os.path.join(_here, "remote/operator_capabilities.py"),

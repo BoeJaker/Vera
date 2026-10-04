@@ -566,7 +566,7 @@ up to three parts:
 |---|---|
 | Compile | `ast.parse` of every changed `.py` on the branch (a docs/UI-only branch has no Python gate) |
 | Panel check | Syntax of changed panel HTML and JavaScript (`panel_check.py`) |
-| Critical tier | `pytest -m critical` (`tests/conftest.py`) in a fresh **ephemeral** `vera:latest` container with the branch worktree mounted read-only — never the container serving HTTP. Gates run their critical tier one at a time (a Redis lease, `vera:evolve:critical_tier:lease`) with a 900 s budget that excludes queueing |
+| Critical tier | `pytest -m critical` (`tests/conftest.py`) in a fresh **ephemeral** `vera:latest` container with the branch worktree mounted read-only — never the container serving HTTP. Gates run their critical tier one at a time (a Redis lease, `vera:evolve:critical_tier:lease`) with a 900 s budget that excludes queueing. With the **test pool** on (`evolve.test_pool.config.set enabled=true`) the run is instead sharded over the host's container and the node workers with room, with per-runner leases (`vera:evolve:runner:host`), so gates run side by side; see [Ollama cluster § 9](./04-ollama-cluster.md) |
 
 `gate_passed` is true only when every part that applies passes; with no live
 worktree the gate falls back to the compile check. `force=true` on promote is
