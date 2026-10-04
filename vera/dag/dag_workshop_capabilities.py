@@ -14293,6 +14293,15 @@ except Exception:                                     # pragma: no cover
     except Exception:
         _intent_zs = None
 
+# Switchboard (vera/minds, four-minds FM-0.1): the run's feature modes.
+try:
+    from Vera.vera.minds import switchboard_core as _minds_core
+except ImportError:                                   # pragma: no cover
+    try:
+        from vera.minds import switchboard_core as _minds_core
+    except ImportError:
+        _minds_core = None
+
 # Intent core (roadmap G): once the goal's intent is known, the caps that
 # intent uses move to the front of the catalogue. Ordering only, opt-in.
 try:
@@ -24084,6 +24093,11 @@ async def cap_dag_agent_loop_v6(
     # intent uses to the front once the intent is known - the fast path reads
     # the first 16, the master planner and tier brief 24. 'off' = as built.
     intent_core:        str  = "off",
+    # Switchboard (vera/minds, four-minds FM-0.1): this run's requested feature
+    # modes {feature_id: mode}. Validated before anything runs (fail closed);
+    # resolved with the global layer; published on switchboard_core.RUN_MINDS;
+    # emitted as agent_loop_v6.minds and returned as result["minds"].
+    minds:              Optional[Dict[str, str]] = None,
     # Per-run role models + effort (dag/role_override_core.py): an MoE executor
     # or a bigger coder on a chosen node ('auto' = the GPU if it fits, else a CPU
     # node); effort 'bigger-coder' (qwen3-coder:30b) or 'max' (the bigger coder
@@ -24146,6 +24160,30 @@ async def cap_dag_agent_loop_v6(
         _LOOP_SESSION_CV.set(sid)
     except Exception:
         pass
+    _minds_rec: Dict[str, Any] = {"requested": {}, "modes": {}, "source": {}, "digest": "default"}
+    if _minds_core is not None:
+        _mv = _minds_core.validate(minds or {})
+        if not _mv["ok"]:
+            return {"error": "minds: " + _minds_core.explain(_mv), "minds": _mv,
+                    "session_id": sid, "done": False}
+        _minds_glob: Dict[str, Any] = {}
+        try:
+            _raw = await _redis().get("vera:minds:switchboard") if _redis() is not None else None
+            if _raw:
+                _minds_glob = json.loads(_raw if isinstance(_raw, str) else _raw.decode("utf-8")) or {}
+        except Exception as _mge:                   # a broken global layer never stops a run
+            log.debug("minds global layer unreadable: %s", _mge)
+        _minds_eff = _minds_core.resolve(call=minds or {}, global_=_minds_glob)
+        _minds_core.RUN_MINDS.set(_minds_eff)    # set every run: nothing leaks between runs
+        _minds_rec = {"requested": dict(minds or {}), "modes": _minds_eff["modes"],
+                      "source": _minds_eff["source"], "digest": _mv["digest"]}
+        try:
+            await emit_event({"type": "agent_loop_v6.minds", "session_id": sid,
+                              "digest": _mv["digest"], "requested": _minds_rec["requested"],
+                              "modes": _minds_eff["modes"], "ignored": _minds_eff["ignored"],
+                              "killed": _minds_eff["killed"]})
+        except Exception:
+            pass
     # Same gap, same reason: make this run's liveness DEFINITIVE from every launch
     # path, so a quiet run is not called dead and cancel has a task to cancel.
     _register_loop_task(sid)
@@ -26105,6 +26143,7 @@ async def cap_dag_agent_loop_v6(
         "deliverable": deliverable,
         "done_when": done_when, "tier": tier, "phase_policy": phase_policy,
         "plan_style": _plan_style_rec,
+        "minds": _minds_rec,
         "journal": journal,
         "stream_id": stream_id, "session_id": sid, "done": True,
     }
@@ -26417,6 +26456,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
     v6_intent_core       = (body.get("intent_core", "off") or "off").strip().lower()
+    v6_minds             = body.get("minds") if isinstance(body.get("minds"), dict) else None
     v6_executor_model    = (body.get("executor_model", "") or "").strip()
     v6_executor_node     = (body.get("executor_node", "auto") or "auto").strip().lower()
     v6_coder_model       = (body.get("coder_model", "") or "").strip()
@@ -26574,6 +26614,7 @@ async def workshop_agent_loop_stream(request: Request):
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
             intent_core=v6_intent_core,
+            minds=v6_minds,
             executor_model=v6_executor_model, executor_node=v6_executor_node,
             coder_model=v6_coder_model, coder_node=v6_coder_node, effort=v6_effort,
             auto_escalate=v6_auto_escalate,
