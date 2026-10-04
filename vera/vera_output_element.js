@@ -912,7 +912,7 @@
 /* the editor: the highlighted code under a transparent textarea, the same metrics to the pixel (a page's own pre and
    textarea rules must not move one off the other), the line numbers in a gutter that stays when the code scrolls across */
 .vo-ed{border-top:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg0,#0e0f12)}
-.vo-ed-sc{display:flex;overflow:auto;box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
+.vo-ed-sc{display:flex;align-items:flex-start;overflow:auto;box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
 .vo-ed .vo-ed-g{position:sticky;left:0;z-index:1;flex:0 0 auto;margin:0!important;padding:10px 8px 10px 6px!important;min-width:2.6em;max-height:none!important;overflow:visible!important;text-align:right;color:var(--dim,#6b7280);background:var(--bg1,#14161b)!important;border:0!important;user-select:none;-webkit-user-select:none;font:11.5px/1.5 var(--mono,ui-monospace,monospace)!important}
 .vo-ed-c{position:relative;display:grid;flex:1 0 auto}
 .vo-ed .vo-ed-h,.vo-ed .vo-ed-ta{grid-area:1/1;margin:0!important;padding:10px 12px!important;border:0!important;border-radius:0!important;box-shadow:none!important;font:11.5px/1.5 var(--mono,ui-monospace,monospace)!important;letter-spacing:normal!important;word-spacing:normal!important;tab-size:2;-moz-tab-size:2;white-space:pre!important;overflow-wrap:normal!important;word-break:normal!important;overflow:hidden!important;box-sizing:border-box!important;text-align:left}
