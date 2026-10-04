@@ -400,8 +400,24 @@ def clean_prose(text: str) -> str:
     return t.strip()
 
 
-def enrich_prompt(topic: Dict[str, Any], signal: Dict[str, Any], page_text: str, words: int = 220) -> str:
+def enrich_prompt(topic: Dict[str, Any], signal: Dict[str, Any], page_text: str, words: int = 220,
+                  *, triaged: bool = False) -> str:
     qs = "\n".join(f"- {q}" for q in (topic.get("questions") or [])[:6]) or "- (none recorded)"
+    if triaged:
+        # relevance, entities and answers already came from the NLP tier - the model only writes
+        return (
+            f"You are following the topic \"{topic.get('name')}\" ({topic.get('brief') or topic.get('name')}).\n"
+            f"Why it matters to the reader: {topic.get('why') or 'not stated'}\n"
+            f"Read this source and answer in JSON only. Your whole answer is about {max(120, words - 80)} words.\n"
+            f"SOURCE TITLE: {signal.get('title')}\nSOURCE URL: {signal.get('url')}\n"
+            f"SOURCE TEXT:\n{(page_text or signal.get('snippet') or '')[:9000]}\n\n"
+            "JSON keys:\n"
+            "  summary   - 2-4 plain sentences on what the source actually says (facts, numbers, names)\n"
+            "  so_what   - 1-2 sentences on why it matters for this topic and reader\n"
+            "  relevance - integer 0-10 (10 = changes the picture; 0 = off-topic or old news)\n"
+            "  code      - a short code/config snippet from the source if it carries one, else \"\"\n"
+            "  code_lang - its language, else \"\"\n"
+            "  follow_up - list of 0-2 research questions worth chasing next\n")
     return (
         f"You are an intelligence analyst following the topic \"{topic.get('name')}\".\n"
         f"What the topic is: {topic.get('brief') or topic.get('name')}\n"
@@ -434,9 +450,9 @@ def apply_enrichment(signal: Dict[str, Any], parsed: Dict[str, Any], *, page: Op
     s.update({
         "summary": clean_prose(str(p.get("summary") or ""))[:1500],
         "so_what": clean_prose(str(p.get("so_what") or ""))[:800],
-        "answers": _clean_list(p.get("answers"), 8),
-        "entities": _clean_list(p.get("entities"), 16),
-        "tags": [t.lower() for t in _clean_list(p.get("tags"), 6)],
+        "answers": _clean_list(p.get("answers"), 8) or list(signal.get("answers") or []),
+        "entities": _clean_list(p.get("entities"), 16) or list(signal.get("entities") or []),
+        "tags": [t.lower() for t in _clean_list(p.get("tags"), 6)] or list(signal.get("tags") or []),
         "code": str(p.get("code") or "")[:4000],
         "code_lang": str(p.get("code_lang") or "")[:20],
         "follow_up": _clean_list(p.get("follow_up"), 3),
@@ -896,6 +912,9 @@ def render_html(doc: Dict[str, Any], *, base_url: str = "") -> str:
     parts.append(f'<header><h1>{_E(title)}</h1><div class="meta">{_E(doc.get("ts", ""))} · '
                  f'{doc.get("counts", {}).get("topics", 0)} topics · {doc.get("counts", {}).get("signals", 0)} signals'
                  f' · last {int(doc.get("period_hours") or 24)}h</div></header>')
+    if doc.get("top_line"):
+        parts.append('<section class="head"><h3 style="margin-top:0">Top line</h3><ul>'
+                     + "".join(f"<li>{_md_inline(x)}</li>" for x in doc["top_line"]) + "</ul></section>")
     if len(topics) > 1:
         parts.append('<nav class="toc">' + "".join(
             f'<a href="#t-{_E(s["topic"]["id"])}">{_E(s["topic"]["name"])}</a>' for s in topics) + "</nav>")
@@ -913,7 +932,25 @@ def render_html(doc: Dict[str, Any], *, base_url: str = "") -> str:
             for p in sec.get("parts") or []:
                 parts.append(_render_part(p))
             parts.append("</section>")
-    parts.append(f'<div class="foot">Vera intelligence · report {_E(doc.get("id", ""))}'
+    if doc.get("competitors") or doc.get("competitor_note"):
+        parts.append('<section id="competitors"><h2>Competitor watch</h2>'
+                     + (f'<div class="state">{_md_inline(doc["competitor_note"])}</div>' if doc.get("competitor_note") else "")
+                     + "".join(f'<div class="sig"><div class="score s-md">\u25c6</div><div><div class="t">'
+                               f'<a href="{_safe_href(c.get("url"))}" target="_blank" rel="noopener">{_E(c.get("title") or "")}</a></div>'
+                               f'<div class="meta">{_E(c.get("firm") or "")} \u00b7 {_E(c.get("topic") or "")}</div></div></div>'
+                               for c in doc.get("competitors") or []) + "</section>")
+    if doc.get("notes"):
+        parts.append('<section id="notes"><h2>From your notes</h2><ul>'
+                     + "".join(f"<li>{_md_inline(n)}</li>" for n in doc["notes"]) + "</ul></section>")
+    if doc.get("follow_up_actions") or doc.get("follow_ups"):
+        acts = doc.get("follow_up_actions") or []
+        parts.append('<section id="followups"><h2>Suggested follow-ups</h2>'
+                     + ('<div class="acts">' + "".join(
+                         f'<button class="act" data-token="{_E(a["token"])}">{_E(a.get("glyph") or "")} {_E(a.get("label") or "")}'
+                         f'<span class="r"></span></button>' for a in acts if a.get("token")) + "</div>" if acts else
+                        "<ul>" + "".join(f"<li>{_E(q)}</li>" for q in doc.get("follow_ups") or []) + "</ul>")
+                     + "</section>")
+    parts.append(f'<div class="foot">Vera intelligence \u00b7 report {_E(doc.get("id", ""))}'
                  + (f' · <a href="{_safe_href(base_url + "/intel/panel")}">open in Vera</a>' if base_url is not None else "")
                  + "</div>")
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -981,7 +1018,9 @@ def _render_part(p: Dict[str, Any]) -> str:
 
 
 def render_markdown(doc: Dict[str, Any], *, report_url: str = "") -> str:
-    out = [f"# {doc.get('title')}", f"_{doc.get('ts', '')} · {doc.get('counts', {}).get('signals', 0)} signals_", ""]
+    out = [f"# {doc.get('title')}", f"_{doc.get('ts', '')} \u00b7 {doc.get('counts', {}).get('signals', 0)} signals_", ""]
+    if doc.get("top_line"):
+        out += ["## Top line"] + [f"- {x}" for x in doc["top_line"]] + [""]
     for sec in doc.get("sections") or []:
         if sec["kind"] == "headline":
             out.append("## Top line")
@@ -1010,6 +1049,16 @@ def render_markdown(doc: Dict[str, Any], *, report_url: str = "") -> str:
                 elif p["kind"] == "actions":
                     out.append("**Vera can:** " + " · ".join(a["label"] for a in p["items"]))
                     out.append("")
+    if doc.get("competitors") or doc.get("competitor_note"):
+        out.append("## Competitor watch")
+        if doc.get("competitor_note"):
+            out += [doc["competitor_note"], ""]
+        out += [f"- **{c.get('firm')}**: [{c.get('title')}]({c.get('url')})" for c in doc.get("competitors") or []]
+        out.append("")
+    if doc.get("notes"):
+        out += ["## From your notes"] + [f"- {n}" for n in doc["notes"]] + [""]
+    if doc.get("follow_ups"):
+        out += ["## Suggested follow-ups"] + [f"- {q}" for q in doc["follow_ups"]] + [""]
     if report_url:
         out.append(f"[Full report]({report_url})")
     return "\n".join(out).strip() + "\n"
@@ -1023,8 +1072,16 @@ def render_telegram(doc: Dict[str, Any], *, report_url: str = "", action_url: st
     lines = [f"<b>{E(doc.get('title') or 'Intel brief')}</b>",
              f"<i>{E(str(doc.get('ts', ''))[:16].replace('T', ' '))} · {doc.get('counts', {}).get('signals', 0)} signals</i>", ""]
     photo = ""
-    acts: List[Dict[str, Any]] = []
+    acts: List[Dict[str, Any]] = list(doc.get("follow_up_actions") or [])
+    if doc.get("top_line"):
+        lines += [f"\u25b8 {E(x)}" for x in doc["top_line"]] + [""]
+    for c in (doc.get("competitors") or [])[:3]:
+        lines.append(f"\u25c6 <b>{E(c.get('firm') or '')}</b>: <a href=\"{E(c.get('url') or '')}\">{E((c.get('title') or '')[:100])}</a>")
+    if doc.get("competitors"):
+        lines.append("")
     for sec in doc.get("sections") or []:
+        if sec["kind"] == "headline" and doc.get("top_line"):
+            continue
         if sec["kind"] == "headline":
             for h in sec["items"]:
                 lines.append(f"▸ <b>{E(h['topic'])}</b> — {E(h['text'])}")
@@ -1074,9 +1131,26 @@ CHANNELS: Dict[str, Dict[str, Any]] = {
     "notebook": {"label": "Notebook", "render": "markdown", "cap": "research.notebook.create"},
     "memory":   {"label": "Memory", "render": "markdown", "cap": "memory.store"},
     "fabric":   {"label": "Fabric", "render": "markdown", "cap": "", "always": True},
-    "podcast":  {"label": "Podcast", "render": "markdown", "cap": "podcast.generate"},
-    "print":    {"label": "Printer", "render": "markdown", "cap": "print.text"},
+    "phone":    {"label": "Phone", "render": "short", "cap": "ha.notify"},
+    "podcast":  {"label": "Podcast", "render": "markdown", "cap": "background.cap.enqueue"},
+    "print":    {"label": "Printer", "render": "short", "cap": "print.text"},
 }
+
+
+def short_text(doc: Dict[str, Any], limit: int = 600) -> str:
+    """The brief as a few lines for a phone notification or a till roll."""
+    lines = [f"{doc.get('counts', {}).get('signals', 0)} new items"]
+    if doc.get("top_line"):
+        lines += [f"- {re.sub(r'[(]https?://[^)]*[)]', '', x).strip()}" for x in doc["top_line"]]
+    else:
+        for sec in doc.get("sections") or []:
+            if sec.get("kind") == "headline":
+                lines += [f"- {h['topic']}: {h['text']}" for h in sec["items"]]
+            elif sec.get("kind") == "topic":
+                for p in sec.get("parts") or []:
+                    if p.get("kind") == "signals":
+                        lines += [f"- {s.get('title')}" for s in p["items"][:2]]
+    return "\n".join(lines)[:limit]
 
 
 def channel_args(channel: str, doc: Dict[str, Any], *, report_url: str, action_url: str = "",
@@ -1101,15 +1175,25 @@ def channel_args(channel: str, doc: Dict[str, Any], *, report_url: str, action_u
         where = {"id": target} if target.startswith("cv_") else {"session_id": target}
         return dict(where, kind="panel", key=f"panel:intel-report-{doc.get('id')}", size="l", at="now",
                     content={"panel": "intel-report", "title": title, "src": report_url})
+    if channel == "phone":
+        return {"target": target or "mobile_app_smasnug", "title": title[:80], "message": short_text(doc, 240),
+                "data": {"url": report_url, "clickAction": report_url}}
     if channel == "notebook":
         return {"title": title, "description": md}
     if channel == "memory":
         return {"text": md[:4000], "category": "intel", "tags": "intel,report",
                 "record_type": "intel_report", "importance": 0.5}
     if channel == "podcast":
-        return {"topic": title[:200], "sources": [{"type": "text", "text": md, "label": title}],
-                "instructions": "Turn this intelligence brief into a natural spoken episode; do not invent facts beyond it.",
-                "wait": False}
+        # TTS is GPU work: it goes through the idle queue, never straight onto the box
+        return {"name": "podcast.generate", "title": f"intel podcast: {title[:60]}", "timeout_s": 3600,
+                "submitted_by": "intel", "id": f"intel-podcast-{doc.get('id')}",
+                "arguments": {"topic": title[:200], "style": "news", "show_name": "Vera Signal",
+                              "sources": [{"type": "text", "text": md[:20000], "label": title}],
+                              "instructions": ("Present this as a concise morning news briefing for the reader. Lead with "
+                                               "what actually changed and why it matters. Group by theme, do not read URLs "
+                                               "aloud, skip anything with no substance, and never invent facts."),
+                              "wait": True}}
     if channel == "print":
-        return {"text": md[:6000], "title": title[:60]}
+        return {"text": short_text(doc, 600) + ("\nPage on Vera" if report_url else ""), "title": title[:24],
+                "printer_id": target or "", "cut": True}
     return {}
