@@ -65,6 +65,7 @@ try:
     from Vera.vera.intel import intel_ledger_core as ledger
     from Vera.vera.intel import intel_change_core as chg
     from Vera.vera.intel import intel_pm_core as pm
+    from Vera.vera.intel import intel_geo_core as geo
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -72,6 +73,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_ledger_core as ledger
     from vera.intel import intel_change_core as chg
     from vera.intel import intel_pm_core as pm
+    from vera.intel import intel_geo_core as geo
     from vera.intel.intel_store import IntelStore
 
 log = logging.getLogger("vera.intel")
@@ -820,6 +822,14 @@ async def _read_and_tag(t: Dict[str, Any], s: Dict[str, Any]) -> Tuple[Dict[str,
         if ents:
             s2["entities"] = ents
             s2["entity_types"] = ops.entity_types(ner, ents)
+            if config().get("geocode", True):
+                places = []
+                for pn in geo.places_in(s2["entity_types"]):
+                    pl = await geo_lookup(pn)
+                    if pl:
+                        places.append({k: pl[k] for k in ("name", "lat", "lon", "country", "cc")} | {"as": pn})
+                if places:
+                    s2["places"] = places
         ev = []
         for q in (t.get("questions") or [])[:4]:
             a = ops.qa_answer(q, await _nlp("nlp.qa", question=q, context=text[:6000]))
@@ -1171,10 +1181,11 @@ async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str 
 
 # ── prediction markets: an open question with a price on it ──────────────────
 
-async def _http_json(url: str, params: Optional[Dict[str, Any]] = None, timeout: float = 20.0) -> Any:
-    """A public, keyless JSON read (prediction-market APIs)."""
+async def _http_json(url: str, params: Optional[Dict[str, Any]] = None, timeout: float = 20.0,
+                     headers: Optional[Dict[str, str]] = None) -> Any:
+    """A public, keyless JSON read (prediction markets, the geocoder)."""
     import httpx
-    async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "vera-intel/1"},
+    async with httpx.AsyncClient(timeout=timeout, headers=headers or {"User-Agent": "vera-intel/1"},
                                  follow_redirects=True) as c:
         r = await c.get(url, params=params)
         r.raise_for_status()
@@ -1402,6 +1413,56 @@ async def cap_indicator_suggest(topic_id: str = "", days: int = 60, trace_id=Non
                 markets.append(dict(r, for_question=q))
     markets.sort(key=lambda m: -(m.get("match") if m.get("match") is not None else -99.0))
     return {"prices": prices, "markets": markets[:5], "errors": sorted(set(errors))}
+
+
+_GEO_LOCK = asyncio.Lock()
+_GEO_LAST = [0.0]
+
+
+async def geo_lookup(name: str, cc: str = "") -> Optional[Dict[str, Any]]:
+    """A place's coordinates: cached forever (a miss for 30 days), otherwise one
+    Nominatim request, never more than one a second across the process."""
+    key = geo.geo_key(name, cc)
+    if not key:
+        return None
+    st = store()
+    hit = st.get_kv(f"geo:{key}")
+    if hit is not None:
+        if hit.get("miss"):
+            at = core.parse_ts(hit.get("at"))
+            if at and at > datetime.now(timezone.utc) - timedelta(days=geo.MISS_TTL_DAYS):
+                return None
+        else:
+            return hit
+    async with _GEO_LOCK:
+        wait = geo.MIN_INTERVAL_S - (time.time() - _GEO_LAST[0])
+        if wait > 0:
+            await asyncio.sleep(wait)
+        try:
+            params = {"q": name, "format": "jsonv2", "limit": 1, "addressdetails": 1, "accept-language": "en"}
+            if cc:
+                params["countrycodes"] = cc
+            res = geo.parse(await _http_json(geo.NOMINATIM, params, headers={"User-Agent": geo.USER_AGENT}), name)
+        except Exception as ex:  # noqa: BLE001
+            log.debug("intel: geocode failed for %s: %s", name, ex)
+            return None
+        finally:
+            _GEO_LAST[0] = time.time()
+    st.set_kv(f"geo:{key}", res or {"miss": True, "at": core.now_iso()})
+    return res
+
+
+@capability("geo.lookup", http_method="GET", http_path="/geo/lookup", http_tags=["intel", "geo"],
+            memory="off", silent=True,
+            description="A place name to coordinates (OpenStreetMap Nominatim, cached; at most one request a "
+                        "second). Input: name (str!), cc (ISO country code to restrict to, optional). Output: "
+                        "{ok, place:{name, lat, lon, bbox:[south,north,west,east], country, cc, admin, type}} or "
+                        "{ok:false, error}.")
+async def cap_geo_lookup(name: str = "", cc: str = "", trace_id=None):
+    if not (name or "").strip():
+        return {"error": "name required"}
+    p = await geo_lookup(name.strip(), (cc or "").strip()[:2])
+    return {"ok": True, "place": p} if p else {"ok": False, "error": f"no place found for {name!r}"}
 
 
 @capability("intel.corpus.export", http_method="GET", http_path="/intel/corpus/export", http_tags=["intel"],
