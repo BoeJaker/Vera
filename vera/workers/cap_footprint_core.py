@@ -39,6 +39,12 @@ NODE_FINE = frozenset({"socket_shared", "socket_node", "socket_external"})
 
 #: Runs a capability needs before a clean footprint counts as evidence.
 MIN_RUNS = 3
+#: Static markers the footprint can settle: the source opens files, but static
+#: analysis cannot tell a code/template read (every node has the code) from a
+#: data file. The tracer can - it ignores reads in the code tree - so these
+#: need more observed runs instead of disqualifying.
+SOFT_MARKERS = frozenset({"localfs"})
+MIN_RUNS_SOFT = 5
 #: Targets kept per kind (the footprint stays small).
 MAX_TARGETS = 6
 
@@ -193,7 +199,8 @@ def verdict(fp: Optional[Dict[str, Any]], static_markers: Iterable[str],
     sm = sorted(set(static_markers or ()))
     if not static_known:
         return "unproven", "no static audit for it"
-    if sm:
+    hard = [m for m in sm if m not in SOFT_MARKERS]
+    if hard:
         return "host", "source: " + ", ".join(sm)
     fp = fp or {}
     bad = sorted(k for k, n in (fp.get("kinds") or {}).items() if n and k in HOST_BOUND)
@@ -201,8 +208,13 @@ def verdict(fp: Optional[Dict[str, Any]], static_markers: Iterable[str],
         tg = fp.get("targets") or {}
         return "host", "observed: " + "; ".join(f"{k} {', '.join((tg.get(k) or [])[:2])}" for k in bad)
     runs = int(fp.get("runs") or 0)
-    if runs < MIN_RUNS:
-        return "unproven", f"{runs} observed run(s), needs {MIN_RUNS}"
+    need = MIN_RUNS_SOFT if sm else MIN_RUNS
+    if runs < need:
+        return "unproven", (f"{runs} observed run(s), needs {need}"
+                            + (" (source reads files: runs decide whether only code files)" if sm else ""))
     seen = sorted(k for k, n in (fp.get("kinds") or {}).items() if n)
-    return "vetted", (f"source clean; {runs} runs touched only "
-                      + (", ".join(s.replace('socket_', '') for s in seen) or "nothing on the host"))
+    touched = ", ".join(s.replace('socket_', '') for s in seen) or "nothing on the host"
+    if sm:
+        return "vetted", (f"source reads files, but {runs} runs read only the code tree "
+                          f"(which a node has) and touched {touched}")
+    return "vetted", f"source clean; {runs} runs touched only {touched}"
