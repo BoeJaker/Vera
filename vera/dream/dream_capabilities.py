@@ -11015,6 +11015,7 @@ async def _director_briefing() -> Dict[str, str]:
     out["loop_programs"] = v8_txt
     # Business snapshot.
     out["business"] = await _director_cap_json("business.brief", 900)
+    out["intel"] = await _director_cap_json("intel.brief", 900)
     return out
 
 
@@ -11228,6 +11229,7 @@ async def _director_think_once(cfg: Optional[Dict[str, Any]] = None,
         + _sect("DREAM SCHEDULE / YOUR QUEUE", briefing.get("dream_schedule", ""))
         + _sect("LOOP PROGRAMS IN FLIGHT (V8)", briefing.get("loop_programs", ""))
         + _sect("BUSINESS SNAPSHOT", briefing.get("business", ""))
+        + _sect("TOPICS INTELLIGENCE FOLLOWS", briefing.get("intel", ""))
         # What the user is doing RIGHT NOW — recent capability activity and the
         # live agentic-loop run — so the director's thought interleaves with the
         # foreground work instead of running on a separate track.

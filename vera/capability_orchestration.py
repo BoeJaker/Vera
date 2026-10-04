@@ -11471,6 +11471,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "agent_loop_output_capabilities.py"),
         os.path.join(_here, "activity/activity_capabilities.py"),
         os.path.join(_here, "worldview/worldview_jepa.py"),
+        os.path.join(_here, "intel/intel_capabilities.py"),
         os.path.join(_here, "research/researcher_api.py"),
         # nlp_dispatch BEFORE nlp_capabilities: the caps import the placement
         # switch from it, and its own caps (nlp.config.*, nlp.nodes) are how an

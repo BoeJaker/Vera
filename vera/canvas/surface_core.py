@@ -51,6 +51,11 @@ DOMAINS: List[Dict[str, Any]] = [
      "prefixes": ("cal.",),
      "lead": ("cal.events.list",),
      "words": "calendar diary schedule meeting meetings appointment appointments agenda"},
+    {"id": "intel", "label": "intelligence (tracked topics, their signals, timeline and reports)",
+     "prefixes": ("intel.",),
+     "lead": ("intel.summary", "intel.signal.list", "intel.topic.list", "intel.report.list"),
+     "words": "intel intelligence brief briefing topic topics tracked tracking signal signals developments "
+              "competitor competitors watch watching monitor monitoring trend trends assessment"},
     {"id": "research", "label": "research and the fabric",
      "prefixes": ("research.", "fabric.", "reader."),
      "words": "research sources source article articles paper papers study studies dataset datasets"},

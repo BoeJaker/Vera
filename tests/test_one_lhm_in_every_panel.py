@@ -59,6 +59,7 @@ PANELS = {
     "Image Studio": ("vera", "images", "image_studio_panel.html"),
     "Pxstore": ("vera", "proxmox", "pxstore_panel.html"),
     "Netops": ("vera", "proxmox", "netops_panel.html"),
+    "Intelligence": ("vera", "intel", "intel_panel.html"),
 }
 
 # The Calendar's menu is not a list of sections: below the shared header it is
