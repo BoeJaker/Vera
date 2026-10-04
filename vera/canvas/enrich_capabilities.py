@@ -431,9 +431,11 @@ async def cap_turn_prepare(text: str = "", session_id: str = "", mid: str = "", 
             res = await asyncio.wait_for(_call(cap, **args), STEP_TIMEOUT_S)
         except asyncio.TimeoutError:
             return None
-        if _is_empty(res):
-            return None
         title = str(((s.get("record") or {}).get("title")) or cap.replace(".", " \u00b7 "))
+        # a headline read with nothing in it is news too ("your business accounts: nothing recorded") - told to the
+        # model, not drawn on the canvas
+        if _is_empty(res):
+            return dict(dl, key="", cap=cap, title=title, summary="nothing recorded", empty=True) if s.get("lead") else None
         content = await _widget_content(cap, args, res, title)
         block, size, kind = "widget", "m", "widget"
         if not content:

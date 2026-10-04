@@ -93,3 +93,15 @@ def test_a_registry_with_odd_entries_still_builds():
                        "markets.listy": {"schema": {"properties": ["symbol"], "required": "symbol"}}})
     idx = sc.build(reg, MEASURED, LAYOUTS + [["not", "a", "layout"], {"widgets": ["id-only"]}], PANELS + ["markets-x"])
     assert any(s["id"] == "markets.overview" for s in idx["surfaces"]) and not any(s["id"] == "markets.alias" for s in idx["surfaces"])
+
+
+def test_headline_reads_lead_and_a_passing_time_word_does_not_bring_the_diary():
+    reg = dict(REG, **{"cal.events.list": S()})
+    idx = sc.build(reg, dict(MEASURED, **{"cal.events.list": {"shape": "events"}}), LAYOUTS, PANELS)
+    r = sc.find(idx, "what's going on with my account?", [])
+    tr = [s.get("cap") for s in r["surfaces"] if s["domain"] == "trading_account"]
+    assert tr and tr[0] == "markets.portfolio.positions" and r["surfaces"][0].get("lead")
+    biz = [s.get("cap") for s in r["surfaces"] if s["domain"] == "business_accounts"]
+    assert biz and biz[0] == "business.dashboard"
+    r2 = sc.find(idx, "how is the btc price doing this week?", [{"text": "BTC", "type": "TICKER"}])
+    assert [d["id"] for d in r2["domains"]] == ["markets"]

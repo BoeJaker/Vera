@@ -75,3 +75,8 @@ def test_salient_and_the_canvas_item():
     groups = [g["group"] for g in it["groups"]]
     assert groups.index("people") < groups.index("organisations") < groups.index("dates")
     assert it["count"] == sum(len(g["entities"]) for g in it["groups"])
+
+
+def test_a_coin_said_by_name_is_its_ticker():
+    names = {(e["type"], e["text"]) for e in tc.merge("How is bitcoin doing, and Ethereum?", [])}
+    assert ("TICKER", "BTC") in names and ("TICKER", "ETH") in names
