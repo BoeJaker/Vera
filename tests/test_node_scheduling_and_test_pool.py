@@ -64,6 +64,10 @@ def test_plan_picks_the_node_with_most_room_and_skips_the_excluded():
     assert p["pick"]["host"] == "roomy"
     p = nc.plan("worldview.train", ws, CFG, exclude=["id-roomy"])
     assert p["pick"]["host"] == "mid"
+    # a node a job was just sent to is taken, even with room left: shards
+    # planned side by side spread over the nodes (2026-10-04)
+    p = nc.plan("pytest.shard", ws, CFG, reserved={"id-roomy": {"cpu": 1.5, "mem_gb": 3, "jobs": 1}})
+    assert p["pick"]["host"] == "mid"
     p = nc.plan("worldview.train", [_w("busy", cpu_pct=95)], CFG)
     assert p["pick"] is None and "busy" in p["why"]
     # a worker on older code reports no host id: never targeted
@@ -77,6 +81,13 @@ def test_a_node_reads_its_own_queue_only_with_cpu_compute():
     assert nc.node_stream("h1") not in wp.streams_to_read(is_worker=True, classes=["nlp"],
                                                           host_id="h1")
     assert nc.node_stream("h1") not in wp.streams_to_read(is_worker=False)
+
+
+def test_a_node_checks_only_the_libraries_it_can_import():
+    # `testenv` is a venv on disk, checked by the shard itself: judging it as a
+    # library refused every gate shard on every node (2026-10-04)
+    assert nc.node_missing("pytest.shard", {"numpy": True}) == []
+    assert nc.node_missing("worldview.train", {"numpy": True, "torch": False}) == ["torch"]
 
 
 def test_every_function_has_a_resource_need():

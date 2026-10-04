@@ -140,6 +140,13 @@ def requirements(fn: str) -> Tuple[str, ...]:
     return spec[2] if spec else ()
 
 
+def node_missing(fn: str, libs: Dict[str, bool]) -> List[str]:
+    """What a node worker lacks to run `fn`, judged on the node itself. Only
+    importable libraries: a requirement that is not one (`testenv`, a venv on
+    disk) is the function's own check."""
+    return [m for m in requirements(fn) if m in PROBED_LIBS and not (libs or {}).get(m)]
+
+
 def merge_config(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     cfg = dict(DEFAULT_CONFIG)
     for k, v in (raw or {}).items():
@@ -261,8 +268,12 @@ def admit(fn: str, w: Dict[str, Any], cfg: Dict[str, Any],
         return False, f"worker busy ({status or 'unknown'})", 0.0
     if now is not None and _f(w, "metrics_at") and now - _f(w, "metrics_at") > METRICS_STALE_S:
         return False, "no fresh metrics", 0.0
-    cap = capacity(w)
     res = reserved or {}
+    if res.get("jobs", 0) >= 1:
+        # a worker runs one task at a time: a second job sent now would only
+        # queue behind the first
+        return False, "a job was just sent to it", 0.0
+    cap = capacity(w)
     r_cpu = float(cfg.get("reserve_cpu", 2.0))
     r_mem = float(cfg.get("reserve_mem_gb", 8.0))
     cpu_left = cap["cpu_free"] - r_cpu - res.get("cpu", 0.0)
