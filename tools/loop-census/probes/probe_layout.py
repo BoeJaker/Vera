@@ -76,21 +76,24 @@ while time.time() - t0 < budget:
             pass
     elif time.time() - done_seen_at > 60:
         try:
-            post_done_dump = http("GET", "/sys/debug/tasks?match=agent_loop&limit=20", timeout=60)
+            # Unfiltered: the tail is in the /mcp/call wrapper, whose tasks are not named
+            # agent_loop (4 Oct: match=agent_loop matched 0 of 159).
+            post_done_dump = http("GET", "/sys/debug/tasks?limit=200", timeout=60)
             with open("%s/postdone-%s.json" % (OUT, sid[:8]), "w") as fh:
                 json.dump(post_done_dump, fh, indent=1)
             log("%s done but still running 60 s later - await chains saved" % sid)
         except Exception:
             pass
         break
-capped = sid in (running() or [sid])
+# Redis says done -> not capped, whatever the (slow) HTTP list says.
+capped = not _rev.finished(sid) and sid in (running() or [sid])
 if capped:
     log("%s over budget - cancelling" % sid)
 stop(sid, proc)
 wall = time.time() - t0
 # A loop still listed as running after stop() is an orphan that blocks every later
 # probe AND the census scheduler (4 Oct, 67d0975e): set its cancel flag.
-if sid in (running() or [sid]):
+if not _rev.finished(sid) and sid in (running() or [sid]):
     http("POST", "/workshop/agent_loop/cancel", {"session_id": sid}, timeout=30)
     log("%s still running after stop - cancel flag set" % sid)
 ev = events(sid)

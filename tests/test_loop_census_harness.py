@@ -101,3 +101,42 @@ def test_probe_running_state_unknown_is_busy():
     t = (D / "probes" / "probe.py").read_text(encoding="utf-8")
     assert "return None" in t[t.index("def running():"):t.index("def box_free():")]
     assert "running() == []" in t[t.index("def box_free():"):]
+
+
+class _FakeR:
+    def __init__(self, h):
+        self.h = h
+
+    def hget(self, key, field):
+        v = self.h.get(key, {}).get(field)
+        return v.encode() if isinstance(v, str) else v
+
+
+def test_rev_status_terminal_history_wins_and_unknown_is_not_finished():
+    sys.path.insert(0, str(D / "probes"))
+    import rev
+    sid = "s1"
+    done_then_cancel = _FakeR({"vera:loop:history:run:s1": {"status": "done"},
+                               "vera:loop:run:s1": {"status": "cancelled"}})
+    assert rev.status(sid, done_then_cancel) == "done" and rev.finished(sid, done_then_cancel)
+    live = _FakeR({"vera:loop:history:run:s1": {"status": "running"},
+                   "vera:loop:run:s1": {"status": "running"}})
+    assert rev.status(sid, live) == "running" and not rev.finished(sid, live)
+    killed = _FakeR({"vera:loop:history:run:s1": {"status": "running"},
+                     "vera:loop:run:s1": {"status": "cancelled"}})
+    assert rev.finished(sid, killed)
+
+    class Broken:
+        def hget(self, *a):
+            raise ConnectionError("down")
+    assert rev.status(sid, Broken()) is None and not rev.finished(sid, Broken())
+
+
+def test_probes_never_cancel_a_finished_run():
+    p = (D / "probes" / "probe.py").read_text(encoding="utf-8")
+    stop = p[p.index("def stop(sid, proc):"):p.index("def start(")]
+    assert stop.index("_rev.finished(sid)") < stop.index("/workshop/agent_loop/cancel")
+    lay = (D / "probes" / "probe_layout.py").read_text(encoding="utf-8")
+    assert "capped = not _rev.finished(sid)" in lay
+    assert 'if not _rev.finished(sid) and sid in (running() or [sid]):\n    http("POST", "/workshop/agent_loop/cancel"' in lay
+    assert "tasks?match=agent_loop" not in lay and "/sys/debug/tasks?limit=200" in lay

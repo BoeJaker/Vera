@@ -31,6 +31,26 @@ def _redis_url():
     return "redis://localhost:6379/0"
 def rconn():
     return redis.Redis.from_url(_redis_url())
+TERMINAL = ("done", "error", "cancelled", "stopped", "interrupted")
+def status(sid, r=None):
+    """The run's status from Redis, or None when Redis cannot be read. The durable history
+    record keeps the status the loop's own events set (a cancel writes only the resume
+    hash), so a terminal one there wins; else the resume hash (4 Oct 2026: the probe read
+    'running' from a slow HTTP list and cancelled loops that had already finished)."""
+    try:
+        r = r or rconn()
+        def _get(key):
+            v = r.hget(key % sid, "status")
+            return v.decode() if isinstance(v, bytes) else str(v or "")
+        hist = _get("vera:loop:history:run:%s")
+        if hist in TERMINAL:
+            return hist
+        return _get("vera:loop:run:%s") or hist
+    except Exception:
+        return None
+def finished(sid, r=None):
+    """True only when Redis SAYS the run is over; unknown is not finished."""
+    return status(sid, r) in TERMINAL
 def events(sid):
     out=[]
     for raw in rconn().lrange("vera:loop:events:%s"%sid,0,-1):
