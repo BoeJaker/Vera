@@ -72,8 +72,11 @@ def live_loop_ids(tasks: Any) -> List[str]:
     return out
 
 
-def may_release(mode: str, census: Dict[str, Any]) -> Tuple[bool, str]:
-    """(ok, why) - may the merge+restart go out now under `mode`?"""
+def may_release(mode: str, census: Dict[str, Any], restart: bool = True) -> Tuple[bool, str]:
+    """(ok, why) - may the merge (+ restart, unless restart=False) go out now under `mode`?
+    A merge WITHOUT a restart kills nothing, so running loops and gates do not hold it
+    (4 Oct 2026: a no-restart merge sat waiting on two gates and held the drain key, which
+    made every new gate wait too)."""
     if mode == "force":
         return True, "forced"
     state = str((census or {}).get("state") or "none")
@@ -84,14 +87,14 @@ def may_release(mode: str, census: Dict[str, Any]) -> Tuple[bool, str]:
     # A live agent loop dies with the process. 4 Oct 2026 15:16: a release restarted prod
     # 24 min into a probe loop (strategic-vector-db-report); the run was lost and left
     # marked 'running', which then blocked every later probe. Census-only holds missed it.
-    loops = [str(x) for x in ((census or {}).get("loops") or []) if str(x).strip()]
+    loops = [str(x) for x in ((census or {}).get("loops") or []) if str(x).strip()] if restart else []
     if loops:
         return False, ("%d agent loop(s) running (%s) - a restart would kill them; waiting "
                        "(force to override)" % (len(loops), ", ".join(x[:8] for x in loops[:3])))
     # A running gate dies with the process too (4 Oct 2026: four restarts in 80 min each
     # threw away every gate in flight). New gates hold for the release (DRAIN_KEY), so the
     # wait is bounded by the gates already running.
-    gates = [g for g in ((census or {}).get("gates") or []) if isinstance(g, dict)]
+    gates = [g for g in ((census or {}).get("gates") or []) if isinstance(g, dict)] if restart else []
     if gates:
         return False, ("%d gate(s) running (%s) - a restart would kill them; new gates wait for "
                        "this release (force to override)"
@@ -144,7 +147,8 @@ def decide(pending: Optional[Dict[str, Any]], census: Dict[str, Any], *, now: da
             state = str(census.get("state") or "none")
             if state in BUSY_STATES:
                 return {"action": "yield"}
-        ok, why = may_release(pending.get("mode", "finish"), census)
+        ok, why = may_release(pending.get("mode", "finish"), census,
+                              restart=pending.get("restart", True) is not False)
         return {"action": "release" if ok else "wait", "why": why}
     if status == "releasing":
         return {"action": "wait", "why": "release in progress"}
@@ -165,7 +169,8 @@ def describe(pending: Optional[Dict[str, Any]], census: Dict[str, Any]) -> str:
         return "no release pending"
     st = pending.get("status")
     if st == "waiting":
-        _, why = may_release(pending.get("mode", "finish"), census)
+        _, why = may_release(pending.get("mode", "finish"), census,
+                             restart=pending.get("restart", True) is not False)
         return f"release of {pending.get('edge')} waiting ({pending.get('mode')}): {why}"
     return f"release of {pending.get('edge')}: {st}"
 
