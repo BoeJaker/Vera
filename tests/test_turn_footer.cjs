@@ -52,9 +52,15 @@ t('no frames: no footer', _phaseRows({}) === null && _phaseRows(null) === null);
 
 t('the footer draws through the registered template, never by hand', H.includes("w.record={ id:'chat:turn-phases', form:'gantt'") && W.includes('"id": "chat:turn-phases", "name": "Turn phases", "form": "gantt"'));
 t('nothing is put beside a reply: the transcript holds no step list', !H.includes('_phaseFooter') && !H.includes("className='turn-phases'") && !H.includes("insertAdjacentElement('afterend', det)"));
-t('the steps are a pane of the Context menu', H.includes("{ id:'paneTurnPhases', n:'Last turn', tab:'ctx', cls:'dk-list', load:()=>_turnPhasesRender() }") && H.includes('<div id="paneTurnPhases" class="ctx-pane"></div>'));
-t('the split menu instance is told the last turn', H.includes("_lhmPost('turn', _lastTurnPhases)") && H.includes("else if(m.act==='turn'){ _lastTurnPhases=a&&a.ph?a:null; try{ _turnPhasesRender(); }catch(_){} }"));
-t('the steps are kept when the reply is finished', H.includes('try{ _phaseTurnDone(aMsg.wrap); }catch(_){}'));
+t('the steps are a pane of the Context menu', H.includes("{ id:'paneTurnPhases', n:'Turn steps', tab:'ctx', cls:'dk-list', load:()=>_turnPhasesRender() }") && H.includes('<div id="paneTurnPhases" class="ctx-pane"></div>'));
+t('the split menu instance is told each turn', H.includes("_lhmPost('turn', t)") && H.includes("else if(m.act==='turn'){ try{ _turnPhasesKeep(a); _turnPhasesRender(); }catch(_){} }"));
+t('every turn is kept by its question and its answer, and the pane shows the turn in view', H.includes('[t.mid,t.qmid].forEach(k=>{ if(k) _turnPhasesByMid.set(String(k),t); });') && H.includes('const t=fm?(_turnPhasesByMid.get(String(fm))||null):_lastTurnPhases;'));
+t('the pane follows the same turn as the mini context graph', H.includes('try{ _turnPhasesRender(); }catch(_){}   // the turn steps follow the same turn as the mini context graph') && H.includes("if(_EMBED.only==='menu') return _grFocusMid||'';"));
+t('the steps are kept when the reply is finished, with the question\'s mid', H.includes('try{ _phaseTurnDone(aMsg.wrap, uMsg&&uMsg.mid); }catch(_){}'));
+t('the send uses the page\'s agent at once and refreshes it in the background', H.includes('const a=_cachedAgent||await _getCurrentAgent()||AGENTS.find(x=>x.name===agentName);') && H.includes('if(_cachedAgent){ try{ _getCurrentAgent().catch(()=>{}); }catch(_){} }'));
+t('the composer refreshes the agent while a message is written', H.includes("inp.addEventListener('focus', _agentWarm);") && H.includes('function _agentWarm(){ if(Date.now()-_agentWarmT<20000) return;'));
+{ const s0 = H.indexOf('const _ctxBlockP=_fetchContextBlock(a,msg)'), m0 = H.indexOf("_phaseLocal(aMsg.wrap,'acquire','memory','checking memory for this question','start');", s0), w0 = H.indexOf('const ctxBlock=await _ctxBlockP;', s0);
+  t('skills are gathered side by side with the memory check, not before it', s0 > 0 && m0 > s0 && w0 > m0); }
 t('the request time is noted right before the stream is requested',
   /aMsg\.wrap\._phaseSentAt=performance\.now\(\);[^\n]*\r?\n\s*const resp=await fetch\(BASE\+'\/agents\/chat\/stream'/.test(H));
 const E = R('vera/widgets/widget_element.js');

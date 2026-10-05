@@ -6232,7 +6232,20 @@ IMPORTANT:
      in the transcript (owner, 2026-10-05: it sat in a column of its own beside the reply and squeezed the messages).
      The page's own steps are timed from the turn's start; the server's from when the request went, so they are shifted
      by that. Page-local like the frames themselves; the split menu instance is told over the LHM channel. ═══ */
-  let _lastTurnPhases=null;   // { ph, mid, at }
+  let _lastTurnPhases=null;   // { ph, mid, qmid, at } - the newest turn
+  // every turn's steps, by its question's mid AND its answer's mid: the pane shows the turn in view, the same turn the
+  // mini context graph follows (owner, 2026-10-05: "mirror the context ... for the Q&A in focus")
+  const _turnPhasesByMid=new Map();
+  function _turnPhasesKeep(t){
+    if(!t||!t.ph) return; _lastTurnPhases=t;
+    [t.mid,t.qmid].forEach(k=>{ if(k) _turnPhasesByMid.set(String(k),t); });
+    while(_turnPhasesByMid.size>400) _turnPhasesByMid.delete(_turnPhasesByMid.keys().next().value);
+  }
+  // the turn in view: the chat instance asks its transcript; the split menu instance has only the mid it was told
+  function _turnPhasesFocusMid(){
+    try{ if(_EMBED.only==='menu') return _grFocusMid||'';
+      const w=_focusedTurn(); return _ctxComposerLive()?'':(w?(w.dataset.mid||''):''); }catch(_){ return ''; }
+  }
   function _phaseRows(wrap){
     const frames=(wrap&&wrap._phases)||[]; if(!frames.some(f=>f&&!f.local)) return null;
     const shift=(wrap._phaseSentAt!=null&&wrap._phaseT0!=null)?Math.max(0,wrap._phaseSentAt-wrap._phaseT0):0;
@@ -6261,25 +6274,28 @@ IMPORTANT:
     return rows.length?{ rows, total:end, first, skipped }:null;
   }
   // a reply ended: keep its steps for the Context menu (and tell the menu instance when the chat is split)
-  function _phaseTurnDone(wrap){
+  function _phaseTurnDone(wrap, qmid){
     if(!wrap||!_phasesOn()) return;
     const ph=_phaseRows(wrap); if(!ph) return;
-    _lastTurnPhases={ ph, mid:(wrap.dataset&&wrap.dataset.mid)||'', at:Date.now() };
+    const t={ ph, mid:(wrap.dataset&&wrap.dataset.mid)||'', qmid:qmid||'', at:Date.now() };
+    _turnPhasesKeep(t);
     _turnPhasesRender();
-    if(_EMBED.only==='chat'){ try{ _lhmPost('turn', _lastTurnPhases); }catch(_){} }
+    if(_EMBED.only==='chat'){ try{ _lhmPost('turn', t); }catch(_){} }
   }
   function _turnPhasesRender(){
     const el=document.getElementById('paneTurnPhases'); if(!el) return;
-    const t=_lastTurnPhases;
+    const fm=_turnPhasesFocusMid();
+    const t=fm?(_turnPhasesByMid.get(String(fm))||null):_lastTurnPhases;
+    const sig=fm+'#'+(t?String(t.at)+':'+t.mid:'none'); if(el.dataset.sig===sig) return; el.dataset.sig=sig;
     if(!t||!t.ph||!Array.isArray(t.ph.rows)||!t.ph.rows.length){
-      el.innerHTML='<div class="tp-sum">No turn yet in this chat - send a message and its steps show here.</div>'; return; }
-    const sig=String(t.at)+':'+t.mid; if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+      el.innerHTML='<div class="tp-sum">'+(fm?'No steps recorded for the turn in view - steps are kept for turns sent in this page.'
+        :'No turn yet in this chat - send a message and its steps show here.')+'</div>'; return; }
     const ph=t.ph, secs=(ms)=>ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(1)+' s';
-    el.innerHTML='<div class="tp-sum"><b>'+ph.rows.length+' step'+(ph.rows.length===1?'':'s')+' · '+esc(secs(ph.total))+'</b>'
+    el.innerHTML='<div class="tp-sum">'+(t===_lastTurnPhases?'Newest turn':'Turn in view')+' · <b>'+ph.rows.length+' step'+(ph.rows.length===1?'':'s')+' · '+esc(secs(ph.total))+'</b>'
       +(ph.first!=null?' · first word at '+esc(secs(ph.first)):'')
       +(ph.skipped&&ph.skipped.length?'<br>skipped: '+esc(ph.skipped.join(', ')):'')+'</div>';
     const w=document.createElement('vera-widget'); w.setAttribute('bare',''); w.setAttribute('size','m');
-    w.record={ id:'chat:turn-phases', form:'gantt', title:'How the last turn was made', data:{ stages:ph.rows },
+    w.record={ id:'chat:turn-phases', form:'gantt', title:'How this turn was made', data:{ stages:ph.rows },
                draw:{ rows:Math.min(16, ph.rows.length), names:150 } };
     el.appendChild(w);
   }
@@ -11954,9 +11970,15 @@ Your task: decide what to do next to advance toward the goal.
     BOX().appendChild(aMsg.wrap);scroll();
     const bubEl=aMsg.body; // alias for the body div
 
-    // Always fetch fresh agent data so domain_caps changes take effect immediately
+    /* The agent: the copy this page already holds, at once, and a fresh read in the background for the next turn.
+       Only an agent the page has never loaded is waited for. Owner, 2026-10-05: "finding the agent" took long even
+       after the first turn - the read itself answers in ~20 ms, so the wait was the browser queueing the request
+       behind the harness's other panels (HTTP/1.1, six connections per host). An edit made in another panel is
+       usually picked up before the send anyway: the composer refreshes the agent when it is focused or typed in. */
     _phaseLocal(aMsg.wrap,'needs','agent','finding the agent','start');
-    const a=await _getCurrentAgent()||AGENTS.find(x=>x.name===agentName);
+    const _cachedAgent=AGENTS.find(x=>x.name===(document.getElementById('agentBarSel')?.value||agentName));
+    const a=_cachedAgent||await _getCurrentAgent()||AGENTS.find(x=>x.name===agentName);
+    if(_cachedAgent){ try{ _getCurrentAgent().catch(()=>{}); }catch(_){} }
     _phaseLocal(aMsg.wrap,'needs','agent','finding the agent','done');
     try{ const g=aMsg.wrap.querySelector('.msg-gutter'); if(g && a?.label) g.textContent=a.label; }catch(_){}
     // Explicit "open the X panel" → resolve & mount it in code (the model is
@@ -11985,10 +12007,11 @@ Your task: decide what to do next to advance toward the goal.
     // uses the value in effect when the turn started, even if the user
     // changes the dropdown mid-stream.
     const outFmt=document.getElementById('cfgFormat')?.value||'';
-    // Fetch skills/ontologies/DAGs context block (async, may be empty)
+    // Fetch skills/ontologies/DAGs context block (async, may be empty) - started now and awaited after the memory
+    // freshness check below, so the two run side by side instead of one after the other
     _phaseLocal(aMsg.wrap,'acquire','assemble','gathering skills and context','start');
-    const ctxBlock=await _fetchContextBlock(a,msg);
-    _phaseLocal(aMsg.wrap,'acquire','assemble','gathering skills and context','done');
+    const _ctxBlockP=_fetchContextBlock(a,msg).then(v=>{ _phaseLocal(aMsg.wrap,'acquire','assemble','gathering skills and context','done'); return v; },
+                                                   ()=>{ _phaseLocal(aMsg.wrap,'acquire','assemble','gathering skills and context','done'); return ''; });
 
     // ── Context freshness guard ───────────────────────────────────────
     // In live-context mode, if CTX_NODES were gathered for a DIFFERENT input
@@ -12018,6 +12041,7 @@ Your task: decide what to do next to advance toward the goal.
       await Promise.race([_fetchP, new Promise(res=>setTimeout(res,600))]);
       _phaseLocal(aMsg.wrap,'acquire','memory','checking memory for this question','done');
     }
+    const ctxBlock=await _ctxBlockP;
     // Recompute injection now that context is guaranteed to match this msg,
     // then reconcile the "+N ctx" pill on the already-painted user message.
     ctxInj=buildCtxInj(msg);
@@ -12389,7 +12413,7 @@ Your task: decide what to do next to advance toward the goal.
     // Auto-persist labeled code blocks into the artifact system (no manual Save).
     try{ _maybeAutoSaveArtifacts(bubEl); }catch(_){}
     // how the turn was made: its steps, in the Context menu's "Last turn" pane (never beside the reply)
-    try{ _phaseTurnDone(aMsg.wrap); }catch(_){}
+    try{ _phaseTurnDone(aMsg.wrap, uMsg&&uMsg.mid); }catch(_){}
     // NOTE: audio is played in-stream via _enqueueAudio above.
     // Show a playback indicator row if audio was received (for replaying)
     if(_hadAudio&&useTts){
@@ -15125,6 +15149,7 @@ Your task: decide what to do next to advance toward the goal.
     ev.preventDefault(); try{ _ctxScrollTo(b.dataset.mid); }catch(_){}
   });
   function _ctxFollow(now){ const run=()=>{ _ctxFollowT=Date.now(); try{ _turnRailSync(); }catch(_){} const active=_ctxActiveCompute(); if(active!==_ctxActiveFrame){ _ctxActiveFrame=active; _ctxViewRepaint(); }
+      try{ _turnPhasesRender(); }catch(_){}   // the turn steps follow the same turn as the mini context graph
       /* Tell the other instance which turn is in view. This went out only from _ctxColumnSync, which runs only
          when the graph COLUMN is mounted — so on the board, where the graph lives in the rail's menu and the
          column is not open, scrolling the chat broadcast nothing and the menu's graph never moved.
@@ -15145,7 +15170,11 @@ Your task: decide what to do next to advance toward the goal.
       let t=0; const mo=new MutationObserver(()=>{ if(t) return; t=setTimeout(()=>{ t=0; try{ _turnRailSync(); }catch(_){} }, 120); });
       try{ mo.observe(msgs,{ childList:true, subtree:true }); }catch(_){}
       try{ _turnRailSync(); }catch(_){} }
-    const inp=document.getElementById('chatInput'); if(inp&&!inp._ctxFollowBound){ inp._ctxFollowBound=true; inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxFollow(); }); } }
+    const inp=document.getElementById('chatInput'); if(inp&&!inp._ctxFollowBound){ inp._ctxFollowBound=true; inp.addEventListener('input', ()=>{ _ctxTypingT=Date.now(); _ctxFollow(); _agentWarm(); }); inp.addEventListener('focus', _agentWarm); } }
+  // the agent read again in the background while a message is being written, at most every 20 s - the send then uses
+  // the page's copy at once and an edit made in another panel is already in it (see "finding the agent" in send)
+  let _agentWarmT=0;
+  function _agentWarm(){ if(Date.now()-_agentWarmT<20000) return; _agentWarmT=Date.now(); try{ _getCurrentAgent().catch(()=>{}); }catch(_){} }
   function saveFrame(){const l=prompt('Frame name:','Frame '+(CTX_FRAMES.length+1));if(l===null)return;_saveFrame(l);updateFrameUI();appendSys('Frame saved: <b>'+esc(l)+'</b>');}
 
   function updateFrameUI(){
@@ -16061,7 +16090,7 @@ function _embedMount(){
       else if(m.act==='focus'){ _grFocusMid=a.mid||''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid); }catch(_){} } try{ _ctxFollow(true); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
       else if(m.act==='memory'){ try{ _memAfterTurn(); }catch(_){} }   // a reply finished in the chat: the memory graph follows
-      else if(m.act==='turn'){ _lastTurnPhases=a&&a.ph?a:null; try{ _turnPhasesRender(); }catch(_){} }   // its steps, for the Last turn pane
+      else if(m.act==='turn'){ try{ _turnPhasesKeep(a); _turnPhasesRender(); }catch(_){} }   // its steps, for the Turn steps pane
       else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
       else if(m.act==='runs'){ _runsApply(a.which, a.off); }
       // updateFrameUI too: the legacy strip and Frames pane are views onto CTX_FRAMES like any other, and the
@@ -16494,7 +16523,7 @@ function _embedMount(){
      from (the chat reads its cfg and ctx fields by id on every send). ═══ */
   const _LHM_DOCK={
     sessions: { cards:{ titles:['Session'] } },
-    context:  { panes:[{ id:'paneTurnPhases', n:'Last turn', tab:'ctx', cls:'dk-list', load:()=>_turnPhasesRender() },
+    context:  { panes:[{ id:'paneTurnPhases', n:'Turn steps', tab:'ctx', cls:'dk-list', load:()=>_turnPhasesRender() },
                        { id:'paneMemGraph', n:'Memory graph', tab:'memgraph', cls:'dk-graph', h:440, load:()=>memGraphLoad() }], cards:{ grp:'Context' } },
     activity: { panes:[{ id:'paneDagGraph', n:'DAG graph', tab:'dag', cls:'dk-graph', h:300, load:()=>_renderDagGraph() },
                        { id:'paneDagHistory', n:'DAG log', tab:'dag', cls:'dk-list', load:()=>renderDagHistory() },
