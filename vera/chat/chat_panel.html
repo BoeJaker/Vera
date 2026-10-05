@@ -599,6 +599,7 @@ body.has-msgs #noticeDock,body.has-panel #noticeDock{display:none}
 .fade-tbl input[type=number]{width:72px}
 .fade-acts{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 .fade-msg{color:var(--dim, #7d8590);font-size:10px}
+.fade-auto{display:flex;gap:5px;align-items:center;color:var(--text, #e6edf3)}
 /* the last turn's steps: a pane of the LHM's Context menu (never in the transcript - owner, 2026-10-05) */
 #paneTurnPhases .tp-sum{font-size:10px;color:var(--dim, #7d8590);line-height:1.4}
 #paneTurnPhases .tp-sum b{color:var(--text, #e6edf3);font-weight:600}
@@ -6339,12 +6340,24 @@ IMPORTANT:
         +'<td class="rt">'+(r?esc(String(r.fading))+' of '+esc(String(r.total)):'-')+'</td></tr>'; }).join('');
     el.innerHTML='<div class="fade-note">What memory may forget, and how quickly. Faded memories are set aside, not deleted: a strong match brings one back, and using it revives it.</div>'
       +'<table class="fade-tbl"><thead><tr><th>Kind</th><th>May fade</th><th>Half-life (days)</th><th>Floor</th><th>Would fade today</th></tr></thead><tbody>'+rows+'</tbody></table>'
+      +'<label class="fade-auto"><input type="checkbox" class="f-auto"'+(_fadeState.pol.auto?' checked':'')+'> Fade every night (about 04:00, after the backup)</label>'
       +'<div class="fade-acts"><button class="btn xs" data-a="save">Save</button><button class="btn xs" data-a="reset">Defaults</button>'
-      +'<button class="btn xs" data-a="dry">Run dry run</button><span class="fade-msg">'
+      +'<button class="btn xs" data-a="dry">Run dry run</button><button class="btn xs" data-a="fade">Fade now…</button><span class="fade-msg">'
       +(_fadeState.computing?'a dry run is running…':(R?'last dry run: '+esc(String(R.fading))+' of '+esc(String(R.total))+(R.at?' · '+esc(String(R.at).slice(0,16).replace('T',' ')):''):'no dry run yet'))+'</span></div>';
     el.querySelector('[data-a="save"]').addEventListener('click', _fadeSave);
     el.querySelector('[data-a="reset"]').addEventListener('click', async()=>{ await api('/memory/fade/policy','POST',{reset:true, by:'chat settings'}); _fadeLoad(); });
     el.querySelector('[data-a="dry"]').addEventListener('click', async()=>{ await api('/memory/fade/report','POST',{refresh:true}); _fadeLoad(); });
+    el.querySelector('.f-auto').addEventListener('change', async(ev)=>{ const res=await api('/memory/fade/policy','POST',{auto:!!ev.target.checked, by:'chat settings'}); if(res&&_fadeState) _fadeState.pol=res; });
+    // two presses: the first says how many it would set aside, the second does it (no prompt dialogs - vera-design)
+    const fb=el.querySelector('[data-a="fade"]');
+    fb.addEventListener('click', async()=>{ const m=el.querySelector('.fade-msg');
+      if(fb.dataset.armed!=='1'){ const n=R?R.fading:null; fb.dataset.armed='1'; fb.textContent='Press again to fade';
+        if(m) m.textContent=(n!=null?n+' memories would be set aside (not deleted)':'run a dry run first to see how many')+' - press again to go ahead';
+        setTimeout(()=>{ if(fb.isConnected){ fb.dataset.armed=''; fb.textContent='Fade now…'; } }, 8000); return; }
+      fb.dataset.armed=''; fb.disabled=true;
+      const res=await api('/memory/fade/run','POST',{confirm:true, by:'chat settings'});
+      if(m) m.textContent=res&&res.started?'fading started in the background':(res&&res.refused?res.refused:(res&&res.running?'a fading run is already going':'could not start'));
+      fb.disabled=false; fb.textContent='Fade now…'; });
   }
   // filled once the page has settled (two small reads), so the Context pane's section never sits on "Loading…"
   setTimeout(()=>{ try{ if(_EMBED.only!=='chat') _fadeLoad(); }catch(_){} }, 6000);

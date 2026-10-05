@@ -62,11 +62,11 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
-    CAPABILITY_REGISTRY, capability, emit_event, now_iso,
+    CAPABILITY_REGISTRY, capability, emit_event, now_iso, schedule,
 )
 try:                                    # who a recalled record came from; one hit per repeated text
     from Vera.vera.fabric import recall_core as _recall_core
@@ -76,6 +76,10 @@ try:                                    # was a recalled memory used in the repl
     from Vera.vera.fabric import memory_usage_core as _usage_core
 except ImportError:                     # pragma: no cover
     from . import memory_usage_core as _usage_core
+try:                                    # Chroma calls on their own small pool, with a finite timeout (RF-77)
+    from Vera.vera.fabric import chroma_bound_core as _chroma_bound
+except ImportError:                     # pragma: no cover
+    from . import chroma_bound_core as _chroma_bound
 try:                                    # how strong a memory still is: half-life per class, renewed by use (CU-M.3)
     from Vera.vera.fabric import memory_strength_core as _strength_core
 except ImportError:                     # pragma: no cover
@@ -1279,6 +1283,19 @@ _FADE_REPORT_KEY = "vera:memory:fade:report"
 _FADE_POLICY_KEY = "vera:memory:fade:policy"
 
 
+async def _fade_auto_on() -> bool:
+    """Is nightly fading switched on? Off unless the user turns it on."""
+    r = _redis()
+    if r is None:
+        return False
+    try:
+        raw = await r.get(_FADE_POLICY_KEY)
+        d = json.loads(raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else raw) if raw else {}
+        return bool(isinstance(d, dict) and d.get("auto"))
+    except Exception:
+        return False
+
+
 async def _fade_overrides() -> Dict[str, Any]:
     """The user's fading settings (owner, 2026-10-05: choose what gets forgotten and how quickly)."""
     r = _redis()
@@ -1303,22 +1320,25 @@ async def _fade_overrides() -> Dict[str, Any]:
                 "tool, estate, fact, preference): enabled (may it be forgotten at all), half_life_days (how quickly; "
                 "null = never decays) and floor (the strength below which it fades). Without 'set' it reads. Inputs: "
                 "set (dict {class: {enabled?, half_life_days?, floor?}} - merged over the current settings), reset "
-                "(bool - back to the defaults), by (str). Output: {policy (in force), overrides, defaults, ranges, "
-                "version, updated_at, by}.",
+                "(bool - back to the defaults), auto (bool - fade every night at about 04:00; off by default), by "
+                "(str). Output: {policy (in force), overrides, defaults, ranges, version, updated_at, by, auto}.",
 )
 async def memory_fade_policy(set: Optional[Dict[str, Any]] = None, reset: bool = False, by: str = "",
-                             trace_id=None):
+                             auto: Optional[bool] = None, trace_id=None):
     r = _redis()
     current = await _fade_overrides()
     stored: Dict[str, Any] = {}
-    if reset or set:
+    auto_now = await _fade_auto_on()
+    if auto is not None:
+        auto_now = str(auto).strip().lower() in ("1", "true", "yes", "on")
+    if reset or set or auto is not None:
         overrides = {} if reset else dict(current)
         for cls, o in (set or {}).items() if isinstance(set, dict) else []:
             if cls in _strength_core.HALF_LIFE and isinstance(o, dict):
                 merged = dict(overrides.get(cls) or {})
                 merged.update({k: v for k, v in o.items() if k in ("enabled", "half_life_days", "floor")})
                 overrides[cls] = merged
-        stored = {"overrides": overrides, "updated_at": now_iso(), "by": str(by or "")[:80]}
+        stored = {"overrides": overrides, "auto": auto_now, "updated_at": now_iso(), "by": str(by or "")[:80]}
         if r is None:
             return {"error": "redis not connected - the settings cannot be kept"}
         await r.set(_FADE_POLICY_KEY, json.dumps(stored))
@@ -1337,7 +1357,7 @@ async def memory_fade_policy(set: Optional[Dict[str, Any]] = None, reset: bool =
             "defaults": _strength_core.policy_from({}),
             "ranges": {"half_life_days": list(_strength_core.HALF_LIFE_RANGE), "floor": list(_strength_core.FLOOR_RANGE)},
             "version": _strength_core.POLICY_VERSION, "updated_at": stored.get("updated_at", ""),
-            "by": stored.get("by", "")}
+            "by": stored.get("by", ""), "auto": auto_now}
 
 
 @capability(
@@ -1443,6 +1463,208 @@ async def _fade_compute(samples: int = 5, batch: int = 5000) -> Dict[str, Any]:
         except Exception:
             pass
     return out
+
+
+# ── the fading job itself (owner, 2026-10-05: "apply the policy as is", with controls and resurfacing in place) ──
+_FADE_RUN_KEY = "vera:memory:fade:last_run"
+_FADE_RUN_TASK = None
+_FADE_BATCH = 1000                 # Postgres / Neo4j rows per statement
+_FADE_CHROMA_BATCH = 40            # a Chroma write holds its database ~60 ms per id (E13): small, paced
+_FADE_CHROMA_PAUSE_S = 1.0
+
+
+def _in_backup_window(t: Optional[time.struct_time] = None) -> bool:
+    """01:00-03:30 local: the nightly pg_dump holds every table (E24) - no bulk writes then."""
+    t = t or time.localtime()
+    m = t.tm_hour * 60 + t.tm_min
+    return 60 <= m < 210
+
+
+async def _fade_candidates(pool, policy: Dict[str, Any], limit: int, classes: Optional[List[str]] = None
+                           ) -> List[Tuple[str, str, float, float]]:
+    """(id, class, strength, floor) of live records that fade under `policy`, up to `limit`."""
+    now = time.time()
+    usage: Dict[str, Dict[str, Any]] = {}
+    out: List[Tuple[str, str, float, float]] = []
+    want = set(classes or [])
+    async with pool.acquire() as conn:
+        if await conn.fetchval("SELECT to_regclass('vera_memory_usage') IS NOT NULL"):
+            for r in await conn.fetch("SELECT record_id, injected_n, used_n, last_used FROM vera_memory_usage"):
+                usage[r["record_id"]] = {"injected_n": r["injected_n"], "used_n": r["used_n"], "last_used": r["last_used"]}
+        last = ""
+        while len(out) < limit:
+            rows = await conn.fetch(
+                "SELECT id, record_type, source_type, category, importance, created_at, "
+                "left(coalesce(text, ''), 24) AS head FROM vera_memories "
+                "WHERE NOT archived AND id > $1 ORDER BY id LIMIT 5000", last)
+            if not rows:
+                break
+            for r in rows:
+                rec = dict(r)
+                rec["text"] = rec.pop("head") or ""
+                cls = _strength_core.class_of(rec)
+                if want and cls not in want:
+                    continue
+                if _strength_core.fades(rec, usage.get(rec["id"]), now, policy):
+                    out.append((rec["id"], cls, _strength_core.strength(rec, usage.get(rec["id"]), now, policy),
+                                float(policy.get(cls, {}).get("floor") or 0.0)))
+                    if len(out) >= limit:
+                        break
+            last = rows[-1]["id"]
+            await asyncio.sleep(0)
+    return out
+
+
+async def _fade_apply(limit: int = 20000, classes: Optional[List[str]] = None, by: str = "") -> Dict[str, Any]:
+    """Soft-archive what fades: archived in Postgres (with faded_at and the reason), Neo4j and - where a vector is
+    left - Chroma. Revived on use; a strong match still finds it (resurfacing). Never raises; the run is recorded."""
+    t0 = time.monotonic()
+    out: Dict[str, Any] = {"by": by, "started_at": now_iso(), "policy": _strength_core.POLICY_VERSION,
+                           "faded": 0, "neo4j": 0, "chroma": 0, "by_class": {}}
+    try:
+        pool = await _usage_pool()
+        if pool is None:
+            out["error"] = "memory postgres not connected"
+            return out
+        policy = _strength_core.policy_from(await _fade_overrides())
+        picked = await _fade_candidates(pool, policy, limit, classes)
+        for _id, cls, _s, _f in picked:
+            out["by_class"][cls] = out["by_class"].get(cls, 0) + 1
+        for i in range(0, len(picked), _FADE_BATCH):
+            chunk = picked[i:i + _FADE_BATCH]
+            ids = [c[0] for c in chunk]
+            reasons = ["%s: strength %.4f below floor %.3f (policy %s)" % (c[1], c[2], c[3], _strength_core.POLICY_VERSION)
+                       for c in chunk]
+            async with pool.acquire() as conn:
+                done = await conn.fetch(
+                    """UPDATE vera_memories m SET archived = TRUE,
+                           metadata = COALESCE(m.metadata, '{}'::jsonb)
+                                      || jsonb_build_object('faded_at', NOW()::text, 'fade_reason', r.reason)
+                       FROM unnest($1::text[], $2::text[]) AS r(id, reason)
+                       WHERE m.id = r.id AND NOT m.archived
+                       RETURNING m.id""", ids, reasons)
+            out["faded"] += len(done)
+            await asyncio.sleep(0)
+        MEMORY, _ = _memory()
+        backs = (getattr(MEMORY, "_backends", {}) or {}) if MEMORY else {}
+        neo = backs.get("neo4j")
+        if neo is not None and getattr(neo, "_driver", None):
+            for i in range(0, len(picked), _FADE_BATCH):
+                ids = [c[0] for c in picked[i:i + _FADE_BATCH]]
+                try:
+                    async with neo._driver.session() as ses:
+                        res = await ses.run("UNWIND $ids AS id MATCH (m:Memory {id: id}) SET m.archived = true "
+                                            "RETURN count(m) AS n", {"ids": ids})
+                        row = await res.single()
+                        out["neo4j"] += int((row or {}).get("n", 0) or 0)
+                except Exception as e:
+                    out.setdefault("errors", []).append("neo4j: %s" % str(e)[:120])
+                await asyncio.sleep(0)
+        cb = backs.get("chroma")
+        coll = getattr(cb, "_collection", None) if cb else None
+        if coll is not None:
+            for i in range(0, len(picked), _FADE_CHROMA_BATCH):
+                ids = [c[0] for c in picked[i:i + _FADE_CHROMA_BATCH]]
+                try:
+                    got = await _chroma_bound.run(lambda: coll.get(ids=ids, include=["metadatas"]))
+                    have = got.get("ids") or []
+                    if have:
+                        metas = [dict(m or {}, archived=True) for m in (got.get("metadatas") or [{}] * len(have))]
+                        await _chroma_bound.run(lambda: coll.update(ids=have, metadatas=metas))
+                        out["chroma"] += len(have)
+                        await asyncio.sleep(_FADE_CHROMA_PAUSE_S)
+                except Exception as e:
+                    out.setdefault("errors", []).append("chroma: %s" % str(e)[:120])
+                    await asyncio.sleep(_FADE_CHROMA_PAUSE_S * 5)
+        try:   # recall asks for faded matches from now on, not in ten minutes
+            type(MEMORY)._FADED_SEEN["t"] = 0.0
+        except Exception:
+            pass
+    except Exception as e:
+        out["error"] = str(e)[:200]
+    out["ms"] = round((time.monotonic() - t0) * 1000)
+    out["finished_at"] = now_iso()
+    r = _redis()
+    if r is not None:
+        try:
+            await r.set(_FADE_RUN_KEY, json.dumps(out))
+        except Exception:
+            pass
+    try:
+        await emit_event({"type": "memory.faded", **{k: out[k] for k in ("faded", "neo4j", "chroma", "by_class", "by")}})
+    except Exception:
+        pass
+    return out
+
+
+@capability(
+    "memory.fade.run",
+    http_method="POST", http_path="/memory/fade/run", http_tags=["memory"],
+    memory="off",
+    description="Apply the fading policy: soft-archive the memories that have faded under the policy in force "
+                "(memory.fade.policy) - archived and marked with when and why, never deleted; a strong match still "
+                "brings one back and using it revives it. Without confirm=true it only says how many would fade. "
+                "Runs in the background, one at a time, never 01:00-03:30 (the nightly backup). Inputs: confirm "
+                "(bool), limit (int=20000 per run), classes (csv - only these), by (str). Output: {started | dry, "
+                "would_fade, last_run}.",
+)
+async def memory_fade_run(confirm: bool = False, limit: int = 20000, classes: str = "", by: str = "", trace_id=None):
+    global _FADE_RUN_TASK
+    r = _redis()
+    last = None
+    if r is not None:
+        try:
+            raw = await r.get(_FADE_RUN_KEY)
+            last = json.loads(raw) if raw else None
+        except Exception:
+            last = None
+    try:
+        lim = max(1, min(int(limit or 20000), 200000))
+    except (TypeError, ValueError):
+        lim = 20000
+    cls = [c.strip() for c in str(classes or "").split(",") if c.strip() in _strength_core.HALF_LIFE]
+    running = _FADE_RUN_TASK is not None and not _FADE_RUN_TASK.done()
+    if running:
+        return {"running": True, "last_run": last}
+    if str(confirm).strip().lower() not in ("1", "true", "yes", "on"):
+        rep = None
+        if r is not None:
+            try:
+                raw = await r.get(_FADE_REPORT_KEY)
+                rep = json.loads(raw) if raw else None
+            except Exception:
+                rep = None
+        return {"dry": True, "would_fade": (rep or {}).get("fading"), "report_at": (rep or {}).get("at", ""),
+                "last_run": last, "note": "nothing changed - pass confirm=true to fade (memory.fade.report refresh=true "
+                                          "recounts first)"}
+    if _in_backup_window():
+        return {"refused": "the nightly backup runs 01:00-03:30 - fading waits", "last_run": last}
+    _FADE_RUN_TASK = asyncio.create_task(_fade_apply(lim, cls or None, str(by or "")[:80]))
+    return {"started": True, "limit": lim, "classes": cls, "last_run": last}
+
+
+_FADE_NIGHT = {"day": ""}
+
+
+async def _fade_nightly_tick() -> None:
+    """Once a day at about 04:00 local - after the nightly backup - when the user has switched nightly fading on."""
+    global _FADE_RUN_TASK
+    try:
+        t = time.localtime()
+        if t.tm_hour != 4:
+            return
+        day = time.strftime("%Y-%m-%d", t)
+        if _FADE_NIGHT["day"] == day or not await _fade_auto_on():
+            return
+        if _FADE_RUN_TASK is not None and not _FADE_RUN_TASK.done():
+            return
+        _FADE_NIGHT["day"] = day
+        _FADE_RUN_TASK = asyncio.create_task(_fade_apply(50000, None, "nightly"))
+    except Exception as e:
+        log.debug("fade nightly tick: %s", e)
+
+
+schedule(_fade_nightly_tick, 1200, name="memory_fade_nightly", skip_in_sandbox=True, singleton=True)
 
 
 @capability(

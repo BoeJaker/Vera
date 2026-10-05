@@ -10,5 +10,7 @@ t('save sends every class\'s settings; defaults and a fresh dry run are one pres
 t('it says faded memories are set aside, not deleted, and come back', H.includes('Faded memories are set aside, not deleted: a strong match brings one back, and using it revives it.'));
 t('opening the row loads it', H.includes("if(id==='fading'){ try{ _fadeLoad(); }catch(_){} }"));
 t('colours from the theme only', /\.fade-tbl th\{[^}]*var\(--dim, #7d8590\)/.test(H) && !/\.fade-[a-z-]+\{[^}]*color:#/.test(H));
+t('nightly fading is a switch, off unless ticked', H.includes('class="f-auto"') && H.includes("api('/memory/fade/policy','POST',{auto:!!ev.target.checked, by:'chat settings'})"));
+t('fading now takes two presses, says how many, and never uses a prompt dialog', H.includes("fb.textContent='Press again to fade';") && H.includes("api('/memory/fade/run','POST',{confirm:true, by:'chat settings'})") && !/_fade[A-Za-z]*[^\n]{0,400}prompt\(/.test(H));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
