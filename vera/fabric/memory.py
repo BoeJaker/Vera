@@ -217,6 +217,18 @@ _CANDIDATES_PER_HIT = 3
 # retrieval.timing capability. Timeouts, errors and very slow calls also go out as events.
 RETRIEVAL_TIMING = _rtc.Window(500)
 
+# Chroma vector search without server-side filters. Any `where` makes Chroma build an
+# allowed-id set over the whole collection first: live 2026-10-05 on 212k vectors, 10-12 ms
+# unfiltered vs 2.4-3.7 s with only archived=false - a cost that grows with the collection
+# whatever it holds. The default exclusions (archived, the kinds recall leaves out,
+# transcript lines) are applied here, after an over-fetch; only when too few survive does the
+# search fall back to the filtered query. A caller's own filters (session_id, record_type, ...)
+# still go to the server.
+_CHROMA_OVERFETCH = int(os.getenv("VERA_CHROMA_OVERFETCH", "3") or 3)
+CHROMA_PATHS: Dict[str, int] = {"unfiltered": 0, "fallback": 0, "filtered": 0}
+# What the nightly vector guard found and dropped last time (see _vector_guard_job).
+VECTOR_GUARD: Dict[str, Any] = {}
+
 
 def _record_timing(env) -> None:
     d = env.to_dict()
@@ -945,12 +957,16 @@ class ChromaBackend(MemoryBackend):
             # Build individual filter clauses
             clauses: list = [{"archived": {"$eq": False}}]
             where_doc = None
+            explicit = False            # a caller's own filter: only the server can apply it
+            drop_types: set = set()
             if filters:
                 for k, v in (filters or {}).items():
                     if k in ("session_id","record_type","source_type","category","language"):
                         clauses.append({k: {"$eq": v}})
+                        explicit = True
                     elif k == "exclude_record_types" and v:
                         clauses.append({"record_type": {"$nin": [str(x) for x in v]}})
+                        drop_types = {str(x) for x in v}
                     elif k == "exclude_transcripts" and v:
                         where_doc = {"$and": [{"$not_contains": "[Claude Code"}, {"$not_contains": "[Codex"}]}
 
@@ -971,9 +987,18 @@ class ChromaBackend(MemoryBackend):
                 # vector search; Postgres full-text + Neo4j still serve the query.
                 log.debug("Chroma search skipped — no query embedding available")
                 return []
+            total = await _chroma_bound.run(self._cached_count) or 1
+            want = min(int(limit), total)
+            if not explicit:
+                fast = await self._search_unfiltered(embedding, want, total, drop_types, where_doc is not None)
+                if fast is not None:
+                    CHROMA_PATHS["unfiltered"] += 1
+                    return fast
+                CHROMA_PATHS["fallback"] += 1
+            else:
+                CHROMA_PATHS["filtered"] += 1
             kwargs: dict = {
-                "n_results": min(int(limit),
-                                 await _chroma_bound.run(self._cached_count) or 1),
+                "n_results": want,
                 "where":     where_arg,
                 "where_document": where_doc,
                 "include":   ["documents","metadatas","distances"],
@@ -1004,6 +1029,31 @@ class ChromaBackend(MemoryBackend):
             return results
         except Exception as e:
             log.error("Chroma search: %s", e); return []
+
+    async def _search_unfiltered(self, embedding, want: int, total: int, drop_types: set,
+                                 drop_transcripts: bool) -> Optional[List[Tuple[MemoryRecord, float]]]:
+        """Nearest `want` hits with the default exclusions applied here, not by the server.
+        None when fewer than `want` survive an over-fetch that did not reach the whole
+        collection - the caller then runs the filtered query."""
+        n = min(total, max(want * max(1, _CHROMA_OVERFETCH), want + 10))
+        res = await _chroma_bound.run(
+            lambda: self._collection.query(query_embeddings=[embedding], n_results=n,
+                                           include=["documents", "metadatas", "distances"]))
+        ids = res["ids"][0]
+        out: List[Tuple[MemoryRecord, float]] = []
+        for rid, doc, meta, dist in zip(ids, res["documents"][0], res["metadatas"][0], res["distances"][0]):
+            meta = meta or {}
+            if meta.get("archived") in (True, 1, "true", "True"):
+                continue
+            if drop_types and str(meta.get("record_type", "")) in drop_types:
+                continue
+            if drop_transcripts and _recall_core.is_transcript(doc):
+                continue
+            out.append((self._chroma_to_record(rid, doc, meta), max(0.0, 1.0 - dist)))
+            if len(out) >= want:
+                return out
+        # every vector was read (a small collection, or fewer came back): nothing more to find
+        return out if (n >= total or len(ids) < n) else None
 
     async def update(self, record_id: str, updates: Dict) -> bool:
         if not self._collection: return False
@@ -2344,6 +2394,30 @@ async def memory_stats(trace_id=None):
     return {"backends": s, "active_backends": MEMORY.backends}
 
 
+async def _vector_guard_job():
+    """Once a night (03:00-03:59 local, at most every 20 h): drop vectors of the kinds recall
+    leaves out that reached the collection anyway (an exclusion list changed, a writer that
+    skipped embed_worthy), capped at 20k per night, and keep what was found for
+    retrieval.timing. No model work - Chroma reads and deletes only."""
+    import time as _t
+    now = _t.time()
+    if _t.localtime(now).tm_hour != 3 or now - VECTOR_GUARD.get("at", 0) < 20 * 3600:
+        return
+    VECTOR_GUARD["at"] = now
+    try:
+        r = await memory_vectors_drop_excluded(confirm=True, limit=20000)
+    except Exception as e:
+        r = {"error": str(e)[:200]}
+    VECTOR_GUARD.update({"ts": now_iso(), "found": r.get("found"), "dropped": r.get("dropped"),
+                         "collection_after": r.get("collection_after"), "error": r.get("error")})
+    if r.get("found"):
+        log.warning("vector guard: %s excluded-kind vectors had reached the collection; dropped %s",
+                    r.get("found"), r.get("dropped"))
+
+
+schedule(_vector_guard_job, interval=3600, name="memory_vector_guard", singleton=True, skip_in_sandbox=True)
+
+
 @capability(
     "retrieval.timing", memory="off", silent=True,
     http_method="GET", http_path="/retrieval/timing", http_tags=["memory"],
@@ -2355,7 +2429,8 @@ async def memory_stats(trace_id=None):
 )
 async def retrieval_timing(path: str = "", trace_id=None):
     # No emit_event here, for the same reason as memory.stats.
-    return {"window": RETRIEVAL_TIMING.size, "paths": RETRIEVAL_TIMING.summary(path)}
+    return {"window": RETRIEVAL_TIMING.size, "paths": RETRIEVAL_TIMING.summary(path),
+            "chroma_paths": dict(CHROMA_PATHS), "vector_guard": dict(VECTOR_GUARD)}
 
 
 @capability(
