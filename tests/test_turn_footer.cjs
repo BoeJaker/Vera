@@ -1,12 +1,13 @@
-// The turn footer: a reply's phase frames become one row per step for the chat:turn-phases widget (gantt form).
+// The last turn's steps: a reply's phase frames become one row per step for the chat:turn-phases widget (gantt
+// form), shown in the Context menu's "Last turn" pane - never in the transcript (owner, 2026-10-05).
 //   node tests/test_turn_footer.cjs      (CommonJS: the gate parses js as scripts)
 const path = require('node:path'), fs = require('node:fs');
 const R = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const H = R('vera/chat/chat_panel.html'), W = R('vera/widgets/widget_registry.py');
 let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fails++; };
 
-const a = H.indexOf('function _phaseRows(wrap){'), b = H.indexOf('function _phaseFooter(wrap, bubEl){');
-t('the row builder and the footer are on the page', a > 0 && b > a);
+const a = H.indexOf('function _phaseRows(wrap){'), b = H.indexOf('// a reply ended: keep its steps');
+t('the row builder and the turn hand-off are on the page', a > 0 && b > a);
 const _phaseRows = new Function(H.slice(a, b) + '; return _phaseRows;')();
 
 // the bitcoin turn on prod (EVIDENCE E14), with the page's own steps before the request
@@ -50,8 +51,10 @@ t('only the page\'s own frames: no footer (the server said nothing)', _phaseRows
 t('no frames: no footer', _phaseRows({}) === null && _phaseRows(null) === null);
 
 t('the footer draws through the registered template, never by hand', H.includes("w.record={ id:'chat:turn-phases', form:'gantt'") && W.includes('"id": "chat:turn-phases", "name": "Turn phases", "form": "gantt"'));
-t('the widget is made only when the footer is opened', H.includes("if(!det.open||det.querySelector('vera-widget')) return;"));
-t('the footer is drawn when the reply is finished', H.includes('try{ _phaseFooter(aMsg.wrap, bubEl); }catch(_){}'));
+t('nothing is put beside a reply: the transcript holds no step list', !H.includes('_phaseFooter') && !H.includes("className='turn-phases'") && !H.includes("insertAdjacentElement('afterend', det)"));
+t('the steps are a pane of the Context menu', H.includes("{ id:'paneTurnPhases', n:'Last turn', tab:'ctx', cls:'dk-list', load:()=>_turnPhasesRender() }") && H.includes('<div id="paneTurnPhases" class="ctx-pane"></div>'));
+t('the split menu instance is told the last turn', H.includes("_lhmPost('turn', _lastTurnPhases)") && H.includes("else if(m.act==='turn'){ _lastTurnPhases=a&&a.ph?a:null; try{ _turnPhasesRender(); }catch(_){} }"));
+t('the steps are kept when the reply is finished', H.includes('try{ _phaseTurnDone(aMsg.wrap); }catch(_){}'));
 t('the request time is noted right before the stream is requested',
   /aMsg\.wrap\._phaseSentAt=performance\.now\(\);[^\n]*\r?\n\s*const resp=await fetch\(BASE\+'\/agents\/chat\/stream'/.test(H));
 const E = R('vera/widgets/widget_element.js');
