@@ -92,3 +92,12 @@ def test_cpu_recipe_prefers_the_store_wheel():
     s = ic.install_script("/opt/vera-vllm/venv", mode="cpu", wheel_dir="/opt/vera-store/models/vllm")
     assert "WHEEL_DIR=/opt/vera-store/models/vllm" in s
     assert s.index("WHEEL_DIR=") < s.index("needs glibc")
+
+
+def test_the_cpu_slot_component_is_the_cpu_build_in_its_own_place():
+    src = _src("vera/provisioning/components_capabilities.py")
+    i = src.index('"vllm_server_cpu": {')
+    body = src[i:i + 1600]
+    assert 'mode="cpu"' in body and "VLLM_CPU_NODE_DIR" in body
+    assert '"autostart": False' in body and "VLLM_CPU_NODE_ENV" in body
+    assert 'VLLM_CPU_NODE_PORT = 8001' in src

@@ -1022,11 +1022,14 @@ async function launchNode(){
     say('Checking ' + n.inst + '…');
     let pre = await _lnchApi('/nodes/backend/switch', _lnchSwitchBody(body, true));
     const missing = pre && pre.plan && pre.plan.action === 'refuse' && /install/i.test(pre.plan.why || '');
+    /* the slot's component: vllm_server, or vllm_server_cpu for a CPU instance
+       sharing a GPU node's container */
+    const comp = (pre && pre.plan && pre.plan.component) || 'vllm_server';
     const inst = document.getElementById('lnch-install').value;
     if(inst === 'yes' || (inst === 'auto' && missing)){
-      say('Installing vLLM on ' + n.label + ' (vllm_server - several minutes)…');
-      const pr = await _lnchApi('/nodes/provision', {node_id: n.node, components: ['vllm_server'], backend: 'auto', options: {}});
-      const res = ((pr && pr.results) || []).find(x => x.component === 'vllm_server') || {};
+      say('Installing vLLM on ' + n.label + ' (' + comp + ' - several minutes)…');
+      const pr = await _lnchApi('/nodes/provision', {node_id: n.node, components: [comp], backend: 'auto', options: {}});
+      const res = ((pr && pr.results) || []).find(x => x.component === comp) || {};
       if(!(pr && !pr.error && res.ok)){ say('✗ install failed: ' + ((pr && pr.error) || res.error || 'see Health'), 'var(--err)'); return; }
       say('✓ vLLM installed');
       pre = await _lnchApi('/nodes/backend/switch', _lnchSwitchBody(body, true));
