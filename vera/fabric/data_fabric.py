@@ -1542,6 +1542,10 @@ class FabricPostgres:
         try:
             self._pool = await _asyncpg.create_pool(POSTGRES_URL, min_size=1, max_size=8)
             async with self._pool.acquire() as conn:
+                # start-up schema work never waits on a lock (a restart during the nightly pg_dump queued every read
+                # of fabric_datasets behind a no-op ALTER TABLE, 2026-10-05); a migration that cannot get its lock in
+                # time is skipped and runs at the next start-up
+                await conn.execute("SET lock_timeout = '" + os.environ.get("VERA_PG_STARTUP_LOCK_TIMEOUT", "3s") + "'")
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS fabric_datasets (
                         dataset_id   TEXT PRIMARY KEY,
@@ -1561,8 +1565,11 @@ class FabricPostgres:
                         created_at   TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
-                await conn.execute(
-                    "CREATE INDEX IF NOT EXISTS fd_ds ON fabric_records(dataset_id)")
+                try:
+                    await conn.execute(
+                        "CREATE INDEX IF NOT EXISTS fd_ds ON fabric_records(dataset_id)")
+                except Exception as _ie:
+                    log.debug("PG index skip: %s", _ie)
                 # Migration: add columns to existing tables that predate this schema
                 for _migration in [
                     "ALTER TABLE fabric_datasets ADD COLUMN IF NOT EXISTS record_count INT DEFAULT 0",
