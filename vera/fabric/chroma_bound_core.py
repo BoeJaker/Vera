@@ -14,6 +14,13 @@ Two guards:
                    every client for the same host/port shares the bound.
   run(fn, ...)   - run a Chroma call on a small pool of its own ("vera-chroma"), so a slow
                    Chroma can fill only that pool, never the default one.
+
+And one for connecting (RF-82):
+  discard_on_failure() - a connect that fails closes the HTTP sessions of every chromadb
+                   system it created. A failed chromadb.HttpClient(...) keeps its system in
+                   chromadb's registry with an open connection; the memory store's reconnect
+                   loop retried every 5 min for ever, and each attempt left one more (a mirror
+                   with an incompatible client reached 518 connections and starved prod).
 """
 
 from __future__ import annotations
@@ -24,7 +31,8 @@ import functools
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Any, Dict, Optional
 
 
 def _env_float(name: str, default: float) -> float:
@@ -55,6 +63,56 @@ def bound(client: Any, read_s: Optional[float] = None, connect_s: Optional[float
         return True
     except Exception:
         return False
+
+
+def _registry() -> Optional[Dict[Any, Any]]:
+    """chromadb's process-wide {identifier: System} map, or None if this version has none."""
+    try:
+        from chromadb.api.shared_system_client import SharedSystemClient
+    except Exception:
+        try:
+            from chromadb.api.client import SharedSystemClient  # older layout
+        except Exception:
+            return None
+    reg = getattr(SharedSystemClient, "_identifier_to_system", None)
+    return reg if isinstance(reg, dict) else None
+
+
+def close_system(system: Any) -> int:
+    """Close every httpx session a chromadb System's components hold. Never raises.
+    Returns how many sessions were closed."""
+    closed = 0
+    for comp in list((getattr(system, "_instances", None) or {}).values()):
+        sess = getattr(comp, "_session", None)
+        if sess is not None and hasattr(sess, "close"):
+            try:
+                sess.close()
+                closed += 1
+            except Exception:
+                pass
+    try:
+        system.stop()
+    except Exception:
+        pass
+    return closed
+
+
+@contextmanager
+def discard_on_failure():
+    """Wrap a chromadb connect: if it raises, close and unregister every System it added
+    (new identifiers, and identifiers whose System object was replaced), then re-raise."""
+    reg = _registry()
+    before = {k: id(v) for k, v in (reg or {}).items()}
+    try:
+        yield
+    except BaseException:
+        if reg is not None:
+            for k in list(reg.keys()):
+                v = reg.get(k)
+                if v is not None and before.get(k) != id(v):
+                    close_system(v)
+                    reg.pop(k, None)
+        raise
 
 
 def pool() -> ThreadPoolExecutor:

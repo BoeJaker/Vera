@@ -1423,13 +1423,16 @@ class FabricChromaStore:
     def connect(self) -> bool:
         if not HAS_CHROMA: return False
         try:
-            self._client = _chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
-            _chroma_bound.bound(self._client)      # finite timeout - RF-77
-            self._col    = self._client.get_or_create_collection(
-                self.COLLECTION, metadata={"hnsw:space": "cosine"})
-            log.info("✓ FabricChromaStore — %d docs", self._col.count())
+            # a failed attempt must not leave its client's connection open (RF-82)
+            with _chroma_bound.discard_on_failure():
+                self._client = _chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+                _chroma_bound.bound(self._client)      # finite timeout - RF-77
+                self._col    = self._client.get_or_create_collection(
+                    self.COLLECTION, metadata={"hnsw:space": "cosine"})
+                log.info("✓ FabricChromaStore — %d docs", self._col.count())
             return True
         except Exception as e:
+            self._client = self._col = None
             log.warning("FabricChromaStore: %s", e); return False
 
     def upsert(self, record: DataRecord) -> bool:
