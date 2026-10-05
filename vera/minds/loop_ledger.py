@@ -37,7 +37,8 @@ class RunLedger:
     """Collects a run's decisions; send() fires each to the ledger in the background."""
 
     def __init__(self, sid: str, *, origin: str = "user", digest: Callable[[], str] = lambda: "default",
-                 sink: Optional[Callable[[Dict[str, Any]], Any]] = None):
+                 sink: Optional[Callable[[Dict[str, Any]], Any]] = None,
+                 marker: Optional[Callable[[str, bool], Any]] = None):
         self.sid = str(sid or "")
         self.origin = origin
         self._digest = digest
@@ -45,10 +46,44 @@ class RunLedger:
         self.decisions: List[Dict[str, Any]] = []
         self.sent = 0
         self.on = enabled()
+        self._opened = False
+        self._marker = marker                  # tests pass one; the loop uses ledger_capabilities
+
+    def _bg(self, coro) -> None:
+        try:
+            task = asyncio.get_running_loop().create_task(coro)
+            _PENDING.add(task)
+            task.add_done_callback(_PENDING.discard)
+        except Exception as e:
+            log.debug("loop ledger task: %s", e)
+            coro.close()
+
+    def _mark(self, open_: bool) -> None:
+        """Open/close this run for the orphan sweeper. Best effort: never raises."""
+        if not self.sid:
+            return
+        try:
+            if self._marker is not None:
+                self._bg(self._marker(self.sid, open_))
+                return
+            if self._sink is not None:
+                return
+            try:
+                from Vera.vera.minds import ledger_capabilities as L
+            except Exception:
+                from vera.minds import ledger_capabilities as L  # type: ignore
+            mark = getattr(L, "mark_run", None)
+            if mark is not None:
+                self._bg(mark(self.sid, open_))
+        except Exception as e:
+            log.debug("loop ledger mark: %s", e)
 
     def _send(self, row: Dict[str, Any]) -> None:
         if not self.on or row is None:
             return
+        if not self._opened:
+            self._opened = True
+            self._mark(True)
         try:
             if self._sink is not None:
                 self._sink(row)
@@ -106,4 +141,6 @@ class RunLedger:
             return 0
         for o in outs:
             self._send(o)
+        if self._opened:
+            self._mark(False)
         return len(outs)
