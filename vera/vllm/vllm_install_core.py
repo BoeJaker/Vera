@@ -23,7 +23,9 @@ one file on the box.
 """
 from __future__ import annotations
 
+import json
 import shlex
+from typing import List, Optional
 
 MODES = ("auto", "gpu", "cpu")
 WHEEL_TAG = {"gpu": "cu129", "cpu": "cpu"}
@@ -225,6 +227,56 @@ def install_script(venv: str, *, mode: str = "auto", version: str = "",
     for k, v in subs.items():
         out = out.replace(k, v)
     return out
+
+
+def local_serve_argv(model: str, *, vllm_bin: str, port: int, host: str = "0.0.0.0",
+                     tensor_parallel_size: int = 1, gpu_memory_utilization: float = 0.9,
+                     dtype: str = "auto", cpu_offload_gb: float = 0, quantization: str = "",
+                     max_model_len: int = 0, spec_model: str = "", spec_tokens: int = 5,
+                     enable_lora: bool = False, max_loras: int = 4,
+                     enable_prefix_caching: bool = True, enable_chunked_prefill: bool = True,
+                     max_num_batched_tokens: int = 0, api_key: str = "",
+                     served_model_name: str = "", extra_args: Optional[List[str]] = None) -> List[str]:
+    """`vllm serve` as current vLLM takes it: the model is positional, and a
+    draft model goes in --speculative-config (--speculative-model and
+    --num-speculative-tokens are gone)."""
+    argv = [vllm_bin, "serve", model, "--host", host, "--port", str(int(port)),
+            "--tensor-parallel-size", str(int(tensor_parallel_size or 1)),
+            "--gpu-memory-utilization", str(gpu_memory_utilization or 0.9),
+            "--dtype", dtype or "auto"]
+    if cpu_offload_gb and float(cpu_offload_gb) > 0:
+        argv += ["--cpu-offload-gb", str(cpu_offload_gb)]
+    if quantization:
+        argv += ["--quantization", quantization]
+    if max_model_len:
+        argv += ["--max-model-len", str(int(max_model_len))]
+    if spec_model:
+        argv += ["--speculative-config", json.dumps(
+            {"model": spec_model, "num_speculative_tokens": int(spec_tokens or 5)})]
+    if enable_lora:
+        argv += ["--enable-lora", "--max-loras", str(int(max_loras or 4))]
+    if enable_prefix_caching:
+        argv += ["--enable-prefix-caching"]
+    if enable_chunked_prefill:
+        argv += ["--enable-chunked-prefill"]
+    if max_num_batched_tokens:
+        argv += ["--max-num-batched-tokens", str(int(max_num_batched_tokens))]
+    if api_key:
+        argv += ["--api-key", api_key]
+    if served_model_name:
+        argv += ["--served-model-name", served_model_name]
+    for a in extra_args or []:
+        argv += shlex.split(str(a))
+    return argv
+
+
+def redact_argv(argv: List[str]) -> str:
+    """The argv as one line for a log or an event, the API key masked."""
+    out, hide = [], False
+    for a in argv:
+        out.append("***" if hide else a)
+        hide = a == "--api-key"
+    return " ".join(shlex.quote(a) for a in out)
 
 
 def serve_command(venv: str, model: str, port: int, extra: str = "") -> str:

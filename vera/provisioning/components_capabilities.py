@@ -549,8 +549,10 @@ async def cap_components(trace_id=None) -> Dict:
     redact_result=True,
     description="Push a bundled component's file(s) to a stored host (into "
                 "~/.vera/edge) and optionally install deps + launch it. Inputs: "
-                "host_id (str!), component (gpu_inference|node_agent|onnx_runtime|nlp_server|"
-                "mesh_gateway), port (int — override), install_deps (bool=false), "
+                "host_id (str!), component (provision.components lists them: gpu_inference|"
+                "node_agent|onnx_runtime|nlp_server|model_builder|vllm_server|mesh_gateway), "
+                "port (int — override), install_deps (bool=false — vllm_server installs vLLM "
+                "with it), "
                 "launch (bool=true), systemd (bool=false — install as a service, "
                 "needs sudo), sudo (bool=true), vera_url (str — required for "
                 "mesh_gateway), timeout (int=900). Output: {ok, pushed, installed, "

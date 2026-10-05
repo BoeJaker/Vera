@@ -230,15 +230,15 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
         <div class="form-grid">
           <div class="fg-field">
             <label>Instance ID</label>
-            <input type="text" id="add-id" placeholder="gpu-0">
+            <input type="text" id="add-id" placeholder="vllm-lab-1">
           </div>
           <div class="fg-field">
             <label>URL</label>
-            <input type="text" id="add-url" placeholder="http://192.168.0.250:8001">
+            <input type="text" id="add-url" placeholder="http://192.168.0.247:8000">
           </div>
           <div class="fg-field">
             <label>Label</label>
-            <input type="text" id="add-label" placeholder="RTX 4090 Node">
+            <input type="text" id="add-label" placeholder="Lab box (CPU)">
           </div>
           <div class="fg-field">
             <label>API Key (optional)</label>
@@ -260,7 +260,7 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
             <input type="text" id="add-gateas" placeholder="Ollama node id, e.g. gpu-250 - blank: its own">
           </div>
         </div>
-        <div class="sec" style="font-size:9.5px;text-transform:none;letter-spacing:0;color:var(--dim, #6a7080)">A node switched to vLLM in Estate → Machines (Switch backend) registers itself here as vllm-&lt;node&gt;, gated as the node - no manual entry needed.</div>
+        <div style="padding:4px 14px 8px;font-size:9.5px;line-height:1.5;color:var(--dim, #6a7080)">For a vLLM server Vera did not start - another machine, a container you run yourself. A node launched from <a href="#" onclick="showTab('launch');return false">Launch</a> (or switched in Estate → Machines) registers itself as vllm-&lt;node&gt;, gated as the node - no entry needed here. A node's vLLM listens on port 8000; registering checks /v1/models at once.</div>
         <div class="form-actions">
           <button class="btn pri" onclick="addInstance()">Register Instance</button>
         </div>
@@ -274,83 +274,122 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
     <!-- LAUNCH SERVER -->
     <div class="panel" id="panel-launch" data-panel="launch">
       <div class="launch-section">
-        <div class="sec">Launch vLLM OpenAI Server</div>
+        <div class="sec">Launch vLLM</div>
+        <div style="padding:0 14px 8px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:10.5px;color:var(--dim2, #8a90a0)">
+          <label><input type="radio" name="lnch-where" value="node" checked onchange="lnchWhere()"> On a node (provisioned)</label>
+          <label><input type="radio" name="lnch-where" value="host" onchange="lnchWhere()"> On this host (local process)</label>
+        </div>
+
+        <!-- on a node: installed by the vllm_server component, moved over by nodes.backend.switch -->
+        <div id="lnch-node-opts">
+          <div class="form-grid">
+            <div class="fg-field">
+              <label>Node</label>
+              <select id="lnch-node" onchange="lnchNodeChanged()"><option value="">Loading nodes&hellip;</option></select>
+              <div class="hint" id="lnch-node-hint">A node serves Ollama or vLLM, one at a time; it keeps its id, workers and routing.</div>
+            </div>
+            <div class="fg-field">
+              <label>Install vLLM</label>
+              <select id="lnch-install">
+                <option value="auto">If missing</option>
+                <option value="yes">Always (re-install)</option>
+                <option value="no">No - it is installed</option>
+              </select>
+              <div class="hint">The vllm_server component: the CUDA build on a GPU node (keeps the V100), the shared store's CPU wheel (AVX2 int4) otherwise.</div>
+            </div>
+            <div class="fg-field">
+              <label>Names it answers to</label>
+              <input type="text" id="lnch-aliases" placeholder="e.g. qwen3.5:9b">
+              <div class="hint">Comma-separated. Callers and routing rules keep the Ollama names they use.</div>
+            </div>
+            <div class="fg-field">
+              <label>Text only</label>
+              <select id="lnch-textonly">
+                <option value="true">Yes - skip the vision encoder</option>
+                <option value="false">No</option>
+              </select>
+              <div class="hint">A multimodal model (Qwen3.5) otherwise profiles its vision tower at start-up - minutes on a CPU node.</div>
+            </div>
+          </div>
+        </div>
+
         <div class="form-grid">
           <div class="fg-field" style="grid-column:1/-1">
-            <label>Model (HuggingFace ID or local path)</label>
-            <input type="text" id="lnch-model" placeholder="mistralai/Mistral-7B-Instruct-v0.3">
-            <div class="hint">e.g. meta-llama/Meta-Llama-3.1-8B-Instruct, /mnt/models/mistral-7b</div>
-          </div>
-          <div class="fg-field">
-            <label>Instance ID</label>
-            <input type="text" id="lnch-id" placeholder="gpu-local">
-          </div>
-          <div class="fg-field">
-            <label>Port</label>
-            <input type="number" id="lnch-port" value="8001">
-          </div>
-          <div class="fg-field">
-            <label>Tensor Parallel Size</label>
-            <input type="number" id="lnch-tp" value="1" min="1" max="8">
-            <div class="hint">Number of GPUs to shard across</div>
-          </div>
-          <div class="fg-field">
-            <label>GPU Memory Utilization</label>
-            <input type="number" id="lnch-gmem" value="0.90" min="0.1" max="1.0" step="0.01">
-            <div class="hint">Fraction of VRAM for KV cache (PagedAttention pool)</div>
-          </div>
-          <div class="fg-field">
-            <label>CPU Offload (GB RAM)</label>
-            <input type="number" id="lnch-cpuoff" value="0" min="0">
-            <div class="hint">Spill KV cache to host RAM. 0 = disabled. Up to 200 on 256 GB host.</div>
-          </div>
-          <div class="fg-field">
-            <label>Quantization</label>
-            <select id="lnch-quant">
-              <option value="">None (full precision)</option>
-              <option value="fp8">FP8 (best perf on Ampere+)</option>
-              <option value="awq">AWQ (4-bit, fast inference)</option>
-              <option value="gptq">GPTQ (4-bit, wide model support)</option>
-              <option value="gguf">GGUF</option>
-              <option value="turbomind">TurboMind / TurboQuant</option>
-              <option value="bitsandbytes">BitsAndBytes (NF4)</option>
-            </select>
+            <label>Model (a path in the shared store, or a HuggingFace ID)</label>
+            <input type="text" id="lnch-model" placeholder="/opt/vera-store/models/hf/QuantTrio--Qwen3.5-9B-AWQ">
+            <div class="hint">Nodes read the shared store at /opt/vera-store/models (hf/ holds downloaded repos). A HuggingFace ID downloads on first start.</div>
           </div>
           <div class="fg-field">
             <label>dtype</label>
             <select id="lnch-dtype">
               <option value="auto">auto</option>
-              <option value="bfloat16">bfloat16 (recommended A100/H100)</option>
-              <option value="float16">float16 (RTX / older GPU)</option>
+              <option value="bfloat16">bfloat16 (CPU nodes; Qwen3.5 on CPU needs it)</option>
+              <option value="float16">float16 (V100 / Volta - no bf16)</option>
               <option value="float32">float32</option>
             </select>
           </div>
           <div class="fg-field">
             <label>Max Model Length (tokens)</label>
-            <input type="number" id="lnch-mml" placeholder="(model default)" min="512">
-            <div class="hint">Override context window. Reduce to fit VRAM on 12 GB GPUs.</div>
+            <input type="number" id="lnch-mml" placeholder="(8192 on a node)" min="512">
+            <div class="hint">The context window. Smaller fits a 12 GB GPU or a CPU node's KV space.</div>
           </div>
           <div class="fg-field">
+            <label>Quantization</label>
+            <select id="lnch-quant">
+              <option value="">From the model's config</option>
+              <option value="awq">AWQ (4-bit; GPU sm_75+, CPU via the store wheel)</option>
+              <option value="gptq">GPTQ (4-bit; GPU sm_60+)</option>
+              <option value="compressed-tensors">compressed-tensors (W4A16 / W8A8)</option>
+              <option value="fp8">FP8 (GPU sm_89+)</option>
+              <option value="bitsandbytes">BitsAndBytes (NF4)</option>
+              <option value="gguf">GGUF (needs vllm-gguf-plugin; GPU only)</option>
+            </select>
+            <div class="hint">Leave it on the model's config unless you know better - vLLM reads the method from the repo.</div>
+          </div>
+          <div class="fg-field" data-host-only>
+            <label>Instance ID</label>
+            <input type="text" id="lnch-id" placeholder="vllm-local">
+          </div>
+          <div class="fg-field" data-host-only>
+            <label>Port</label>
+            <input type="number" id="lnch-port" value="8001">
+          </div>
+          <div class="fg-field" data-host-only>
+            <label>Tensor Parallel Size</label>
+            <input type="number" id="lnch-tp" value="1" min="1" max="8">
+            <div class="hint">Number of GPUs to shard across</div>
+          </div>
+          <div class="fg-field" data-host-only>
+            <label>GPU Memory Utilization</label>
+            <input type="number" id="lnch-gmem" value="0.90" min="0.1" max="1.0" step="0.01">
+            <div class="hint">Fraction of VRAM for weights + KV cache</div>
+          </div>
+          <div class="fg-field" data-host-only>
+            <label>CPU Offload (GB RAM)</label>
+            <input type="number" id="lnch-cpuoff" value="0" min="0">
+            <div class="hint">Spill weights to host RAM. 0 = disabled.</div>
+          </div>
+          <div class="fg-field" data-host-only>
             <label>Speculative Decoding Draft Model</label>
             <input type="text" id="lnch-spec" placeholder="(none)">
-            <div class="hint">Smaller model that drafts tokens; target model verifies. Cuts latency.</div>
+            <div class="hint">A smaller model drafts tokens; the target verifies them (--speculative-config).</div>
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Speculative Tokens per Step</label>
             <input type="number" id="lnch-spec-n" value="5" min="1" max="20">
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Enable LoRA</label>
             <select id="lnch-lora">
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Max Concurrent LoRAs</label>
             <input type="number" id="lnch-maxlora" value="4" min="1" max="64">
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Prefix Caching (APC)</label>
             <select id="lnch-apc">
               <option value="true">Enabled (recommended)</option>
@@ -358,7 +397,7 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
             </select>
             <div class="hint">Reuses KV blocks for repeated system prompts / few-shot prefixes</div>
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Chunked Prefill</label>
             <select id="lnch-chunked">
               <option value="true">Enabled (recommended)</option>
@@ -366,30 +405,33 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
             </select>
             <div class="hint">Interleaves prefill and decode to reduce latency on long prompts</div>
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>API Key (optional)</label>
             <input type="password" id="lnch-apikey" placeholder="">
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Served Model Name Override</label>
             <input type="text" id="lnch-served-name" placeholder="(same as model)">
           </div>
           <div class="fg-field" style="grid-column:1/-1">
             <label>Extra CLI Flags (one per line)</label>
-            <textarea id="lnch-extra" rows="3" placeholder="--max-num-seqs 256&#10;--disable-log-requests"></textarea>
+            <textarea id="lnch-extra" rows="3" placeholder="--max-num-seqs 64&#10;--enforce-eager"></textarea>
           </div>
         </div>
         <div class="form-actions">
-          <button class="btn pri" onclick="launchServer()">Launch Server</button>
-          <button class="btn" onclick="generateCmd()">Preview Command</button>
+          <button class="btn pri" id="lnch-go" onclick="launchServer()">Launch</button>
+          <button class="btn" onclick="generateCmd()">Preview</button>
         </div>
         <div id="launch-cmd-preview" style="display:none;padding:0 14px 12px">
-          <div class="sec">Generated Command</div>
+          <div class="sec" id="launch-cmd-title">Generated Command</div>
           <pre id="launch-cmd-text" style="font-family:var(--mono);font-size:9.5px;color:var(--acc2);background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:8px 10px;white-space:pre-wrap;word-break:break-all"></pre>
         </div>
-        <div id="launch-status" style="padding:0 14px;font-size:10px"></div>
+        <div id="launch-status" style="padding:0 14px;font-size:10px;white-space:pre-wrap;font-family:var(--mono)"></div>
 
-        <div class="sec">Running Managed Servers</div>
+        <div class="sec">Nodes serving vLLM</div>
+        <div id="lnch-node-list" style="padding:0 14px 12px;font-size:10.5px;color:var(--dim)">None</div>
+
+        <div class="sec">Running Managed Servers (this host)</div>
         <div id="managed-servers" style="padding:0 14px 12px;font-size:10.5px;color:var(--dim)">None</div>
       </div>
     </div>
@@ -468,6 +510,8 @@ async function api(path, method='GET', body=null){
 // ── Boot ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   refreshStatus();
+  lnchWhere();
+  lnchLoadNodes();
   // Baseline poll only while the tab is actually visible — a backgrounded panel
   // doesn't need live status, and SSE vllm.* events refresh us on real changes.
   // With zero instances configured there is nothing to watch: back off to
@@ -507,7 +551,7 @@ async function refreshStatus(){
 function renderSidebar(){
   const el = document.getElementById('inst-list');
   if(!Object.keys(S.instances).length){
-    el.innerHTML = '<div style="color:var(--dim);font-size:9.5px;text-align:center;padding:24px 0">No instances configured.<br>Use "Launch" or "Add Instance".</div>';
+    el.innerHTML = '<div style="color:var(--dim);font-size:9.5px;text-align:center;padding:24px 0">No instances configured.<br>Launch vLLM on a node, or add a server you run.</div>';
     return;
   }
   el.innerHTML = Object.values(S.instances).map(inst => {
@@ -755,8 +799,60 @@ async function removeInstance(id){
 }
 
 // ── Launch server ─────────────────────────────────────────────────────────────
+/* Two places to launch: a NODE (the usual one) - the vllm_server component
+   installs vLLM beside the node's Ollama and nodes.backend.switch moves the node
+   over, keeping its id, workers and routing - or THIS host, as a managed local
+   process (only where a vllm CLI is installed). */
+function _lnchWhere(){
+  const r = document.querySelector('input[name="lnch-where"]:checked');
+  return r ? r.value : 'node';
+}
+function lnchWhere(){
+  const node = _lnchWhere() === 'node';
+  document.getElementById('lnch-node-opts').style.display = node ? '' : 'none';
+  document.querySelectorAll('[data-host-only]').forEach(e => { e.style.display = node ? 'none' : ''; });
+  document.getElementById('lnch-go').textContent = node ? 'Install + switch node' : 'Launch on this host';
+}
+
+let _lnchNodes = [];
+async function lnchLoadNodes(){
+  let r = null;
+  try { r = await api('/nodes'); } catch(e) { r = null; }      /* nodes.list (GET /nodes) */
+  _lnchNodes = [];
+  ((r && r.nodes) || []).forEach(n => (n.ollama || []).forEach(o => {
+    if(o && o.id) _lnchNodes.push({node: n.id, label: n.label || n.id, inst: o.id,
+                                    gpu: !!o.has_gpu, switched: !!o.switched});
+  }));
+  const sel = document.getElementById('lnch-node');
+  const keep = sel.value;
+  sel.innerHTML = _lnchNodes.length
+    ? _lnchNodes.map(x => `<option value="${esc(x.inst)}" data-node="${esc(x.node)}">${esc(x.inst)} · ${esc(x.label)}${x.gpu ? ' · GPU' : ' · CPU'}${x.switched ? ' · on vLLM' : ''}</option>`).join('')
+    : '<option value="">No Ollama nodes found</option>';
+  if(keep && _lnchNodes.some(x => x.inst === keep)) sel.value = keep;
+  const on = _lnchNodes.filter(x => x.switched);
+  document.getElementById('lnch-node-list').innerHTML = on.length
+    ? on.map(x => `<div>${esc(x.inst)} → vllm-${esc(x.inst)} <span style="color:var(--dim, #6a7080)">(${esc(x.label)}${x.gpu ? ', GPU' : ', CPU'}) - switch back from Estate → Machines</span></div>`).join('')
+    : 'None';
+  lnchNodeChanged();
+}
+function _lnchNode(){
+  const inst = document.getElementById('lnch-node').value;
+  return _lnchNodes.find(x => x.inst === inst) || null;
+}
+function lnchNodeChanged(){
+  const n = _lnchNode();
+  const hint = document.getElementById('lnch-node-hint');
+  if(!n){ hint.textContent = 'A node serves Ollama or vLLM, one at a time; it keeps its id, workers and routing.'; return; }
+  /* the dtype the hardware wants: Volta has no bf16; CPU Qwen3.5 (GDN) needs it */
+  const dt = document.getElementById('lnch-dtype');
+  if(dt.value === 'auto') dt.value = n.gpu ? 'float16' : 'bfloat16';
+  hint.textContent = (n.switched ? 'Already on vLLM - switch it back to Ollama (Estate → Machines) to change its model. ' : 'Its Ollama stops while vLLM serves. ')
+    + (n.gpu ? 'GPU node: the V100 (sm_70) runs fp16 and GPTQ/compressed-tensors, not AWQ or bf16.'
+             : 'CPU node: AWQ/GPTQ int4 run on the store wheel; expect about a token a second on a 9B.');
+}
+
 function buildLaunchBody(){
-  const extraLines = document.getElementById('lnch-extra').value.trim().split('\n').filter(Boolean);
+  const extraLines = document.getElementById('lnch-extra').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
   const body = {
     model:                    document.getElementById('lnch-model').value.trim(),
     port:                     parseInt(document.getElementById('lnch-port').value)||8001,
@@ -787,42 +883,121 @@ function buildLaunchBody(){
   return body;
 }
 
-async function launchServer(){
-  const body = buildLaunchBody();
-  if(!body.model){ alert('Model is required'); return; }
+/* nodes.backend.switch's extra_args: the flags the node's serve.sh adds to its
+   own (later flags win, so dtype / context here override the recipe's). */
+function _lnchNodeArgs(body){
+  const a = [];
+  if(body.dtype && body.dtype !== 'auto') a.push('--dtype', body.dtype);
+  if(body.max_model_len) a.push('--max-model-len', String(body.max_model_len));
+  if(body.quantization) a.push('--quantization', body.quantization);
+  if(document.getElementById('lnch-textonly').value === 'true')
+    a.push('--limit-mm-per-prompt.image', '0', '--limit-mm-per-prompt.video', '0');
+  return a.concat(body.extra_args || []).join(' ');
+}
+function _lnchSwitchBody(body, dry){
+  const n = _lnchNode();
+  return {instance_id: n ? n.inst : '', backend: 'vllm', model: body.model,
+          aliases: (document.getElementById('lnch-aliases').value || '').split(',').map(s => s.trim()).filter(Boolean),
+          extra_args: _lnchNodeArgs(body), dry_run: !!dry, wait_s: 1500};
+}
+function _lnchSay(text, color){
   const st = document.getElementById('launch-status');
-  st.style.color='var(--dim2)'; st.textContent='Launching…';
+  st.style.color = color || 'var(--dim2)';
+  st.textContent = text;
+}
+async function _lnchApi(path, body){
+  try { return await api(path, 'POST', body); }
+  catch(e) { return {ok: false, error: 'no response (' + (e && e.message || e) + ') - it may still be running; check Health'}; }
+}
+function _lnchPlanLine(r){
+  const p = (r && r.plan) || {};
+  if(p.action === 'switch') return '→ switch ' + (r.instance || '') + ' to vLLM (as ' + (p.vllm_instance || '') + ')';
+  if(p.action === 'noop') return '= ' + (p.why || 'already on vLLM');
+  return '✗ ' + (p.why || (r && r.error) || 'refused');
+}
 
-  const r = await api('/vllm/server/start', 'POST', body);
-  if(r.ok){
-    st.style.color='var(--ok)';
-    st.textContent=`Launched: PID ${r.pid} — ${r.url}. Health check in ~15s.`;
-    await refreshStatus();
-  } else {
-    st.style.color='var(--err)';
-    st.textContent='Error: ' + (r.error||'unknown');
+async function launchNode(){
+  const body = buildLaunchBody();
+  const n = _lnchNode();
+  if(!n){ _lnchSay('Pick a node.', 'var(--err)'); return; }
+  if(!body.model){ _lnchSay('Pick the model vLLM should serve.', 'var(--err)'); return; }
+  const btn = document.getElementById('lnch-go'); btn.disabled = true;
+  const lines = [];
+  const say = (l, c) => { lines.push(l); _lnchSay(lines.join('\n'), c); };
+  try {
+    say('Checking ' + n.inst + '…');
+    let pre = await _lnchApi('/nodes/backend/switch', _lnchSwitchBody(body, true));
+    const missing = pre && pre.plan && pre.plan.action === 'refuse' && /install/i.test(pre.plan.why || '');
+    const inst = document.getElementById('lnch-install').value;
+    if(inst === 'yes' || (inst === 'auto' && missing)){
+      say('Installing vLLM on ' + n.label + ' (vllm_server - several minutes)…');
+      const pr = await _lnchApi('/nodes/provision', {node_id: n.node, components: ['vllm_server'], backend: 'auto', options: {}});
+      const res = ((pr && pr.results) || []).find(x => x.component === 'vllm_server') || {};
+      if(!(pr && !pr.error && res.ok)){ say('✗ install failed: ' + ((pr && pr.error) || res.error || 'see Health'), 'var(--err)'); return; }
+      say('✓ vLLM installed');
+      pre = await _lnchApi('/nodes/backend/switch', _lnchSwitchBody(body, true));
+    }
+    say(_lnchPlanLine(pre));
+    if(!pre || !pre.plan || pre.plan.action !== 'switch'){ if(pre && pre.plan && pre.plan.action === 'noop') return; _lnchSay(lines.join('\n'), 'var(--err)'); return; }
+    say('Switching… the node answers once the model is loaded (minutes on a CPU node).');
+    const r = await _lnchApi('/nodes/backend/switch', _lnchSwitchBody(body, false));
+    if(r && r.ok){
+      say('✓ ' + n.inst + ' serves vLLM' + (r.registry && r.registry.vllm_added && r.registry.vllm_added.id ? ' as ' + r.registry.vllm_added.id : ''), 'var(--ok)');
+    } else {
+      say('✗ ' + ((r && r.error) || 'switch failed'), 'var(--err)');
+      if(r && r.log) say(String(r.log).trim().split('\n').slice(-10).join('\n'), 'var(--err)');
+    }
+  } finally {
+    btn.disabled = false;
+    lnchLoadNodes();
+    refreshStatus();
   }
 }
 
-function generateCmd(){
+async function launchServer(){
+  if(_lnchWhere() === 'node') return launchNode();
   const body = buildLaunchBody();
   if(!body.model){ alert('Model is required'); return; }
+  _lnchSay('Launching…');
+  const r = await _lnchApi('/vllm/server/start', body);
+  if(r.ok){
+    _lnchSay(`Launched: PID ${r.pid} — ${r.url}. Health check in ~15s.`, 'var(--ok)');
+    await refreshStatus();
+  } else {
+    _lnchSay('Error: ' + (r.error||'unknown'), 'var(--err)');
+  }
+}
 
-  let cmd = `python -m vllm.entrypoints.openai.api_server \\\n  --model ${body.model} \\\n  --port ${body.port} \\\n  --tensor-parallel-size ${body.tensor_parallel_size} \\\n  --gpu-memory-utilization ${body.gpu_memory_utilization} \\\n  --dtype ${body.dtype}`;
-
+async function generateCmd(){
+  const body = buildLaunchBody();
+  if(!body.model){ alert('Model is required'); return; }
+  const title = document.getElementById('launch-cmd-title');
+  const pre = document.getElementById('launch-cmd-text');
+  document.getElementById('launch-cmd-preview').style.display='block';
+  if(_lnchWhere() === 'node'){
+    const sw = _lnchSwitchBody(body, true);
+    title.textContent = 'Plan (dry run - nothing changes)';
+    pre.textContent = 'Checking…';
+    const r = await _lnchApi('/nodes/backend/switch', sw);
+    pre.textContent = [_lnchPlanLine(r),
+      'model:   ' + sw.model,
+      'aliases: ' + (sw.aliases.join(', ') || '(none)'),
+      'flags:   ' + (sw.extra_args || '(the node recipe\'s defaults)')].join('\n');
+    return;
+  }
+  title.textContent = 'Generated Command';
+  let cmd = `vllm serve ${body.model} \\\n  --port ${body.port} \\\n  --tensor-parallel-size ${body.tensor_parallel_size} \\\n  --gpu-memory-utilization ${body.gpu_memory_utilization} \\\n  --dtype ${body.dtype}`;
   if(body.cpu_offload_gb>0) cmd+=` \\\n  --cpu-offload-gb ${body.cpu_offload_gb}`;
   if(body.quantization) cmd+=` \\\n  --quantization ${body.quantization}`;
   if(body.max_model_len) cmd+=` \\\n  --max-model-len ${body.max_model_len}`;
-  if(body.spec_model) cmd+=` \\\n  --speculative-model ${body.spec_model} \\\n  --num-speculative-tokens ${body.spec_num_speculative_tokens}`;
+  if(body.spec_model) cmd+=` \\\n  --speculative-config '${JSON.stringify({model: body.spec_model, num_speculative_tokens: body.spec_num_speculative_tokens})}'`;
   if(body.enable_lora) cmd+=` \\\n  --enable-lora --max-loras ${body.max_loras}`;
   if(body.enable_prefix_caching) cmd+=` \\\n  --enable-prefix-caching`;
   if(body.enable_chunked_prefill) cmd+=` \\\n  --enable-chunked-prefill`;
   if(body.api_key) cmd+=` \\\n  --api-key ***`;
   if(body.served_model_name) cmd+=` \\\n  --served-model-name ${body.served_model_name}`;
   if(body.extra_args) cmd+=` \\\n  ` + body.extra_args.join(' \\\n  ');
-
-  document.getElementById('launch-cmd-preview').style.display='block';
-  document.getElementById('launch-cmd-text').textContent=cmd;
+  pre.textContent=cmd;
 }
 
 async function stopServer(id){

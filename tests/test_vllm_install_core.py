@@ -1,4 +1,5 @@
 """One vLLM install recipe for every provisioner: V100-capable on GPU, a working CPU build."""
+import json
 import os
 import shutil
 import subprocess
@@ -83,3 +84,21 @@ def test_script_is_valid_bash(mode):
     s = ic.install_script("/opt/vera-vllm", mode=mode, version="0.31.0")
     r = subprocess.run(["bash", "-n"], input=s, text=True, capture_output=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_local_serve_argv_is_current_vllm_serve():
+    a = ic.local_serve_argv("org/m", vllm_bin="/v/bin/vllm", port=8001, dtype="half",
+                            spec_model="org/draft", spec_tokens=4, api_key="k",
+                            extra_args=["--max-num-seqs 8", "--enforce-eager"])
+    assert a[:3] == ["/v/bin/vllm", "serve", "org/m"]
+    assert "--model" not in a and "--speculative-model" not in a
+    i = a.index("--speculative-config")
+    assert json.loads(a[i + 1]) == {"model": "org/draft", "num_speculative_tokens": 4}
+    assert a[-3:] == ["--max-num-seqs", "8", "--enforce-eager"]
+    assert a[a.index("--dtype") + 1] == "half"
+
+
+def test_the_shown_command_masks_the_key():
+    a = ic.local_serve_argv("m", vllm_bin="vllm", port=1, api_key="sekrit")
+    shown = ic.redact_argv(a)
+    assert "sekrit" not in shown and "--api-key '***'" in shown
