@@ -572,6 +572,9 @@ async def routed_call(kind: str, rule: Optional[dict], *, model: Optional[str] =
                        error=f"{iid} does not serve embedding model {model!r}")
             return out
         vecs = await vllm_embed(kw.get("inputs") or [], model=mdl or None, instance_id=iid)
+        # unit length, as Ollama's /api/embed returns them: the stored vectors
+        # are, and vLLM's are not (norm ~20 for nomic) - the direction matches
+        vecs = [_route_core.unit(v) for v in (vecs or [])]
         out.update(ok=bool(vecs), result=vecs, error="" if vecs else "empty embedding")
         return out
     gid = _route_core.gate_id(inst, iid)

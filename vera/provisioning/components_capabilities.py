@@ -130,6 +130,13 @@ VLLM_CPU_NODE_DIR = "/opt/vera-vllm-cpu"
 VLLM_CPU_NODE_PORT = 8001
 VLLM_CPU_NODE_ENV = "/etc/default/vera-vllm-cpu"
 VLLM_CPU_NODE_SERVICE = "vera-vllm_server_cpu"
+# The embedding server: nomic-embed-text v1.5 (the model Ollama serves as
+# nomic-embed-text - same vectors, cosine 1.0 measured 5 Oct 2026) on the CPU
+# build, beside whatever else the node runs.
+VLLM_EMBED_NODE_DIR = "/opt/vera-vllm-embed"
+VLLM_EMBED_NODE_PORT = 8002
+VLLM_EMBED_MODEL = "/opt/vera-store/models/hf/nomic-ai--nomic-embed-text-v1.5"
+VLLM_EMBED_NAMES = ("nomic-embed-text", "nomic-embed-text:latest")
 
 
 def vllm_slot(slot: str) -> Dict[str, Any]:
@@ -418,6 +425,28 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                 "nodes use the CUDA build that keeps sm_70; CPU nodes a wheel from "
                 "the shared store built for them (INT8 W8A8 and AWQ/GPTQ int4 on "
                 "AVX2), with the same CPU thread count as the node's Ollama.",
+    },
+    # Embeddings on vLLM: started on deploy (it replaces nothing - the node's
+    # Ollama/vLLM chat service is untouched) and registered as a vLLM server by
+    # nodes.provision; the "embedding" routing rule then reaches it.
+    "vllm_embed": {
+        "label": "vLLM embedding server",
+        "port": VLLM_EMBED_NODE_PORT,
+        "python": False,
+        "install_dir": VLLM_EMBED_NODE_DIR, "venv": "venv",
+        "files": [],
+        "install_script": lambda has_gpu, venv, sudo: (
+            _vllm_core.system_deps_cmd(sudo) + "\n" +
+            _vllm_core.install_script(venv, mode="cpu", wheel_dir=VLLM_STORE_WHEELS,
+                                      cpu_threads=4, cpu_kv_gb=1)),
+        "run": (VLLM_EMBED_NODE_DIR + "/venv/serve.sh " + VLLM_EMBED_MODEL + " {port}"
+                " --served-model-name " + VLLM_EMBED_MODEL + " " + " ".join(VLLM_EMBED_NAMES)
+                + " --trust-remote-code"),
+        "env": {"HF_HOME": VLLM_EMBED_NODE_DIR + "/hf", "HOME": "/"},
+        "heavy": True, "sync": True, "systemd": True,
+        "desc": "nomic-embed-text v1.5 on vLLM's CPU build (port 8002), the same vectors "
+                "as Ollama's nomic-embed-text. Registered as a vLLM server; with the "
+                "embedding rule pinned to vLLM, Vera's embeddings need no Ollama.",
     },
     # The CPU slot: the same recipe forced to the CPU build, in its own dir,
     # unit, env file and port - for a CPU Ollama sharing a GPU node's container

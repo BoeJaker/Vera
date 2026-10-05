@@ -136,6 +136,18 @@ def standins(ollama: Dict[str, Dict[str, Any]], vllm: Dict[str, Any],
     return out
 
 
+def liveness(vinst: Any, vid: str) -> Dict[str, Any]:
+    """What a switched node's own record should say about it: the state of the
+    vLLM server that serves it. The node's Ollama is stopped on purpose, so
+    pinging it reported every switched node "offline" in /health, the monitor,
+    the cluster view and node activity (5 Oct 2026)."""
+    st = str(_f(vinst, "status", "") or "")
+    return {"status": "online" if st in ("online", "degraded") else "offline",
+            "latency_ms": _f(vinst, "latency_ms", None),
+            "models": list(_f(vinst, "models", []) or []),
+            "backend": "vllm", "served_by": vid, "errors": 0}
+
+
 def resolve_pin(pin: str, ollama: Dict[str, Dict[str, Any]], vllm: Dict[str, Any]) -> str:
     """A pin naming a switched Ollama node -> "vllm:<its vLLM instance>"; any
     other pin unchanged. Rules keep saying "cpu-246" while the node serves vLLM."""

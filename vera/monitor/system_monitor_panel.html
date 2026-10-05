@@ -280,7 +280,9 @@ function renderOllama(o){ o=o||{};
   if(!o.total){ rows.innerHTML='<div class="empty">No Ollama nodes configured.</div>'; return; }
   rows.innerHTML=(o.nodes||[]).map(n=>{
     const on=n.status==='online';
-    const tag=!n.enabled?'<span class="tag t-dim">disabled</span>':on?'<span class="tag t-ok">online</span>':'<span class="tag t-err">offline</span>';
+    /* a node switched to vLLM: its Ollama is off on purpose; the tag is its vLLM server */
+    const tag=n.backend==='vllm'?(on?'<span class="tag t-ok">vLLM</span>':'<span class="tag t-err">vLLM down</span>')
+      :!n.enabled?'<span class="tag t-dim">disabled</span>':on?'<span class="tag t-ok">online</span>':'<span class="tag t-err">offline</span>';
     const gpu=n.has_gpu?'<span class="tag t-gpu">gpu</span>':'';
     const lat=(on&&n.latency_ms!=null)?Math.round(n.latency_ms)+'ms · ':'';
     const meta=on?`${lat}${n.models} model${n.models===1?'':'s'}${n.in_use?' · '+n.in_use+' busy':''}`:'';

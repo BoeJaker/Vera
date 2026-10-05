@@ -42,7 +42,7 @@ def test_estate_catalogue_offers_vllm_server_and_runs_it_as_a_component():
     cat = cat[:cat.index("\n}\n")]
     assert '"vllm_server": {' in cat and '"vllm_server_cpu": {' in cat
     body = _func(NODES, "_prov_step")
-    assert '"mesh_gateway", "vllm_server",\n               "vllm_server_cpu")' in body
+    assert '"mesh_gateway", "vllm_server",\n               "vllm_server_cpu", "vllm_embed")' in body
 
 
 def test_vllm_build_options_reach_the_installers():

@@ -2559,7 +2559,9 @@ async def ollama_instances_status(trace_id=None):
                  "enabled":i.get("enabled", True),
                  "latency_ms":i["latency_ms"],"models":i["models"],"in_use":i["in_use"],
                  "errors":i["errors"],"last_check":i["last_check"],"num_thread":_nt(i),
-                 "num_ctx":i.get("num_ctx", 4096)}
+                 "num_ctx":i.get("num_ctx", 4096),
+                 # a node switched to vLLM: served by that server (status is its)
+                 "backend":i.get("backend","ollama"),"served_by":i.get("served_by","")}
             for iid,i in OLLAMA_INSTANCES.items()}
 
 
