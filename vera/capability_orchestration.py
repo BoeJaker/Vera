@@ -2527,6 +2527,20 @@ def _inflight_sweep() -> None:
 # wins. A contextvar: it follows the request into the tasks it starts and never reaches another request.
 NO_GPU: "contextvars.ContextVar[bool]" = contextvars.ContextVar("vera_no_gpu", default=False)
 
+
+def _standin_candidates(model: Optional[str] = None) -> Dict[str, dict]:
+    """Switched nodes as pick candidates (vllm_capabilities.standins); {} when
+    the vLLM module is not loaded."""
+    _vm = (sys.modules.get("vllm_capabilities")
+           or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+    if _vm is None or not hasattr(_vm, "standins"):
+        return {}
+    try:
+        return _vm.standins(model)
+    except Exception as e:
+        log.debug("vllm standins: %s", e)
+        return {}
+
 def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
                   model: Optional[str] = None, job_type: Optional[str] = None,
                   rule_override: Optional[dict] = None,
@@ -2546,6 +2560,10 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
     # removes it from all routing while leaving it pingable in the panel.
     online = {iid:i for iid,i in OLLAMA_INSTANCES.items()
               if i.get("status")=="online" and i.get("enabled", True)}
+    # A node switched to vLLM stays a candidate, served there (see ollama_generate).
+    if not _kw.get("no_standins"):
+        for _sid, _sv in _standin_candidates(model).items():
+            online.setdefault(_sid, _sv)
     if not online:
         # No CONFIRMED-online node. Rather than strand every caller (which forces
         # subsystems onto hardcoded fallbacks / dead IPs), route optimistically to
@@ -3653,9 +3671,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         # background_always_cpu pins ALL background work to CPU deterministically.
         _always = bool(INTERACTIVE_PRIORITY.get("background_always_cpu"))
         if _always or interactive_recent():
-            _cpu_up = any(i.get("status") == "online" and i.get("enabled", True)
-                          and not i.get("has_gpu")
-                          for i in OLLAMA_INSTANCES.values())
+            _cpu_up = (any(i.get("status") == "online" and i.get("enabled", True)
+                           and not i.get("has_gpu")
+                           for i in OLLAMA_INSTANCES.values())
+                       or any(not v.get("has_gpu")
+                              for v in _standin_candidates(eff_model).values()))
             if _cpu_up and not instance_id:
                 # Route background work exactly like the dream orchestrator's own
                 # LLM (dream_director rule): CPU-only AND off the embedding node,
@@ -3678,6 +3698,44 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                            rule_override=(eff_rule if (cap_rule or bg_demoted) else None),
                            explain=route_explain, ctx_need=_ctx_need,
                            prompt_need=_prompt_need) or "cpu-246"
+    # A switched node won the pick: serve it on its vLLM server, as a pin naming
+    # the node would. Its load is reserved on the node record first (the picker
+    # reads it), so concurrent picks spread out exactly as for an Ollama node.
+    _sv_id = (_vm_r.standin_for(chosen)
+              if (_vm_r is not None and hasattr(_vm_r, "standin_for")) else "")
+    if _sv_id:
+        _sv_node = OLLAMA_INSTANCES.get(chosen) or {}
+        _sv_node["in_use"] = _sv_node.get("in_use", 0) + 1
+        try:
+            _opts = options or {}
+            _np = int(_opts.get("num_predict") or 0)
+            _vr = await _vm_r.routed_call(
+                "generate", {"pin": f"vllm:{_sv_id}"}, model=eff_model or None,
+                prefer_gpu=prefer_gpu, job_type=str(eff_job_type or ""),
+                slot_timeout=timeout, stream_cb=stream_cb,
+                prompt=(f"{system}\n\n{prompt}" if system else prompt),
+                max_tokens=(_np if _np > 0 else 1024),
+                temperature=float(_opts.get("temperature", 0.7)),
+                top_p=float(_opts.get("top_p", 0.9)),
+                extra=({"response_format": {"type": "json_object"}} if json_mode else None),
+                caller_override=caller,
+            )
+            if _vr and _vr.get("ok"):
+                if meta_out is not None:
+                    meta_out.update({"model": _vr.get("model"), "instance": _vr.get("instance"),
+                                     "backend": "vllm", "gate": _vr.get("gate"), "node": chosen})
+                return _vr.get("result") or ""
+            raise RuntimeError((_vr or {}).get("error") or "vllm route failed")
+        except Exception as _ve:
+            log.warning("switched node '%s' (vLLM %s) failed (%s) - Ollama nodes",
+                        chosen, _sv_id, _ve)
+        finally:
+            _sv_node["in_use"] = max(0, _sv_node.get("in_use", 1) - 1)
+        chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id,
+                               model=eff_model, job_type=eff_job_type,
+                               rule_override=(eff_rule if (cap_rule or bg_demoted) else None),
+                               explain=route_explain, ctx_need=_ctx_need,
+                               prompt_need=_prompt_need, no_standins=True) or "cpu-246"
     if bg_demoted:
         route_explain.setdefault("reason", []).append(
             f"background '{bg_label}' demoted off GPU (human active)")
@@ -4527,6 +4585,27 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
                 log.warning("embed vllm pin failed (%s) - Ollama routing", _ve)
     chosen = pick_instance(prefer_gpu=eff_prefer_gpu, instance_id=eff_instance,
                            model=mdl, job_type="embedding") or "cpu-246"
+    _vm_e = (sys.modules.get("vllm_capabilities")
+             or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+    _sv_e = (_vm_e.standin_for(chosen)
+             if (_vm_e is not None and hasattr(_vm_e, "standin_for")) else "")
+    if _sv_e:
+        try:
+            _vr = await _vm_e.routed_call("embed", {"pin": f"vllm:{_sv_e}"}, model=mdl,
+                                          prefer_gpu=eff_prefer_gpu, job_type="embedding",
+                                          inputs=[text[:4096]])
+            if _vr and _vr.get("ok") and _vr.get("result"):
+                vec = list(_vr["result"][0])
+                if normalize:
+                    _n = (sum(v * v for v in vec)) ** 0.5 or 1.0
+                    vec = [v / _n for v in vec]
+                return vec
+            log.info("embed on switched node %s: %s - Ollama nodes", chosen,
+                     (_vr or {}).get("error"))
+        except Exception as _ve:
+            log.warning("embed on switched node %s failed (%s) - Ollama nodes", chosen, _ve)
+        chosen = pick_instance(prefer_gpu=eff_prefer_gpu, instance_id=eff_instance,
+                               model=mdl, job_type="embedding", no_standins=True) or "cpu-246"
     inst = OLLAMA_INSTANCES.get(chosen)
     if not inst:
         return None

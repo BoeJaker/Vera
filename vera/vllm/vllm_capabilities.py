@@ -496,6 +496,22 @@ def pick_vllm_instance(
     return min(candidates.values(), key=_score)
 
 
+def standins(model: Optional[str] = None) -> Dict[str, dict]:
+    """Switched nodes the Ollama picker may choose, as Ollama-shaped records
+    (node_backend_core.standins): a node moved to vLLM keeps taking its share
+    of load-balanced work instead of dropping out of routing."""
+    return _backend_core.standins(getattr(_orch, "OLLAMA_INSTANCES", {}) or {},
+                                  VLLM_INSTANCES, model=model, serves=_route_core.serves)
+
+
+def standin_for(node_id: str) -> str:
+    """The vLLM instance a picked node id is served by ('' for an Ollama node)."""
+    if not node_id or node_id not in _backend_core.switched_ids(
+            getattr(_orch, "OLLAMA_INSTANCES", {}) or {}, VLLM_INSTANCES):
+        return ""
+    return _backend_core.vllm_of(node_id, VLLM_INSTANCES)
+
+
 def effective_rule(rule: Optional[dict]) -> Optional[dict]:
     """The rule as routing applies it: a pin naming a node that is switched to
     vLLM (nodes.backend.switch) becomes "vllm:<its vLLM instance>", so rules keep

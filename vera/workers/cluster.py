@@ -336,9 +336,16 @@ def _pick_instance_load_aware(
             explain["chosen"] = chosen
         return chosen
 
-    # Only online AND enabled nodes are routable.
+    # Only online AND enabled nodes are routable - plus a node switched to vLLM,
+    # which stays a candidate served by its vLLM server (when that serves the
+    # model); the caller sends a pick of it there (ollama_generate / agents).
     online = {iid: i for iid, i in OLLAMA_INSTANCES.items()
               if i.get("status") == "online" and i.get("enabled", True)}
+    if not _kw.get("no_standins"):
+        _sc = getattr(_orch, "_standin_candidates", None)
+        for _sid, _sv in ((_sc(model) if _sc else {}) or {}).items():
+            online.setdefault(_sid, _sv)
+            _note(f"'{_sid}' stands in through its vLLM server")
     if not online:
         _note("no online nodes")
         return _out(None)
