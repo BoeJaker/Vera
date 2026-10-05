@@ -72,6 +72,11 @@ with descriptions and a primary action, settings on the shared Settings page, an
   gate: pause → ack → cancel owned loops → re-exec → restore), and a paused/yielded
   census that is not yours is someone else's — do not resume it for them (`by`
   says whose it is).
+- **Never write census control from `/health` alone.** Read `census.control`,
+  `census.live`, and the referenced loop session first, because scheduled-harness
+  health and the live census registry can disagree. If the owner says a census
+  is already stopped or yielded, revalidate those authoritative records before
+  issuing any control action.
 - **Multi-agent estate is live.** Other agents may be working in their own
   containers (`evolve.sandbox.list` shows them), all sharing one GPU. Never touch
   another agent's branch/container. Before a **prod restart**, check
@@ -415,6 +420,11 @@ commit, same as code, then land via §7 like any other change.
   does not cover this failure mode.
 - **Loop Lab task** (`evolve.task.upsert`) for behavioural/loop changes, with
   `checks` that would actually fail if the bug returned.
+- **Disposable live-service harnesses must be shell-safe and bounded.** Quote
+  generated env values containing spaces, or parse only the exact required keys;
+  never source an env file whose values have not been validated as shell syntax.
+  Set explicit connect and total timeouts on every readiness probe so a warming
+  service cannot hold the sandbox exec channel indefinitely.
 - Verify the module **boots** — restart your exact spawned branch with
   `evolve.sandbox.restart` (dry-run first), or recreate only your container with
   `evolve.sandbox.spawn`; a reachable
