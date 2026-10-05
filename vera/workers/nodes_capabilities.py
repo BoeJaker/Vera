@@ -3098,11 +3098,14 @@ async def cap_nodes_backend_switch(instance_id: str = "", backend: str = "vllm",
     serve_path = f"{VLLM_NODE_DIR}/venv/serve.sh"
     probe = await run(command=f"test -x {shlex.quote(serve_path)} && echo VERA_HAS_VLLM",
                       host_id=hid, timeout=30) or {}
-    switched = instance_id in _switched_now()
+    _sw_now = _switched_now()
+    switched = instance_id in _sw_now
     plan = _backend_core.plan(backend, ollama_id=instance_id, inst=inst,
                               vllm_present="VERA_HAS_VLLM" in (probe.get("stdout") or ""),
                               switched=switched, in_flight=int(inst.get("in_use") or 0),
-                              force=bool(force))
+                              force=bool(force),
+                              sharing=_backend_core.same_container_switched(
+                                  instance_id, insts, _sw_now))
     out: Dict[str, Any] = {"instance": instance_id, "host": addr, "plan": plan,
                            "dry_run": bool(dry_run)}
     if plan["action"] != "switch" or dry_run:

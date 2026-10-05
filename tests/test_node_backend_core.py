@@ -101,3 +101,36 @@ def test_plan(kw, action):
 def test_switch_script_is_valid_bash(backend):
     r = subprocess.run(["bash", "-n"], input=_script(backend), text=True, capture_output=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_the_switch_stops_the_unit_behind_this_instances_port():
+    s = bc.switch_script("vllm", vllm_service="vera-vllm_server", env_path="/etc/default/vera-vllm",
+                         env_text="X=1\n", public_port=11436, vllm_port=8000,
+                         serve_path="/opt/vera-vllm/venv/serve.sh")
+    assert "OLLAMA_UNIT_EXPR" not in s and "/etc/vera-tap/11436.env" in s
+    assert "/var/lib/vera/backend-ollama-unit.11436" in s       # recorded for the way back
+    back = bc.switch_script("ollama", vllm_service="vera-vllm_server", env_path="/e",
+                            env_text="", public_port=11436, vllm_port=8000, serve_path="/s")
+    assert "cat /var/lib/vera/backend-ollama-unit.11436" in back
+    assert "rm -f /var/lib/vera/backend-ollama-unit.11436" in back
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+def test_the_unit_expression_is_valid_shell_and_falls_back_to_the_fleet_unit(tmp_path):
+    # on a box with no tap env, no recorded unit and nothing listening it must
+    # still print a unit name, not fail
+    r = subprocess.run(["bash", "-c", "echo " + bc.ollama_unit_expr(65531)],
+                       capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0 and r.stdout.strip() in ("ollama-vera", "ollama")
+
+
+def test_one_vllm_per_container():
+    ollama = {"gpu-250": {"url": "http://192.168.0.250:11435"},
+              "gpu-250-cpu": {"url": "http://192.168.0.250:11436"},
+              "cpu-246": {"url": "http://192.168.0.246:11435"}}
+    assert bc.same_container_switched("gpu-250-cpu", ollama, ["gpu-250", "cpu-246"]) == ["gpu-250"]
+    p = bc.plan("vllm", ollama_id="gpu-250-cpu", inst={}, vllm_present=True, switched=False,
+                in_flight=0, force=False, sharing=["gpu-250"])
+    assert p["action"] == "refuse" and "one vLLM per container" in p["why"]
+    assert bc.plan("vllm", ollama_id="gpu-250", inst={}, vllm_present=True, switched=False,
+                   in_flight=0, force=False, sharing=[])["action"] == "switch"
