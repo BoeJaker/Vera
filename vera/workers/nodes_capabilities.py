@@ -3084,6 +3084,249 @@ log.info("nodes: unified node estate capabilities loaded "
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  nodes.backend.config - what the Switch backend drawer needs for one instance
+# ═════════════════════════════════════════════════════════════════════════════
+KEY_SWITCH_CONFIG = "vera:nodes:backend_switch_config"     # hash: instance -> json
+
+
+async def _switch_config_save(instance_id: str, cfg: Dict[str, Any]) -> None:
+    r = getattr(_orch, "REDIS", None)
+    if r is None:
+        return
+    try:
+        await r.hset(KEY_SWITCH_CONFIG, instance_id, json.dumps(cfg))
+    except Exception as e:
+        log.debug("switch config save: %s", e)
+
+
+async def _switch_config_load(instance_id: str) -> Dict[str, Any]:
+    r = getattr(_orch, "REDIS", None)
+    if r is None:
+        return {}
+    try:
+        raw = await r.hget(KEY_SWITCH_CONFIG, instance_id)
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+@capability(
+    "nodes.backend.config", memory="off",
+    http_method="GET", http_path="/nodes/backend/config", http_tags=["nodes"],
+    description="What switching one Ollama instance to vLLM needs, for the Switch backend "
+                "drawer: whether it serves vLLM now, its vLLM slot and whether that slot's "
+                "component is installed, the settings it was last switched with, and the "
+                "chat models in the node's shared store with suggested flags and Ollama-style "
+                "names. Input: instance_id (str!). Output: {ok, instance, has_gpu, switched, "
+                "component, installed, last, models:[{path, name, alias, extra}], suggested}.",
+)
+async def cap_nodes_backend_config(instance_id: str = "", trace_id=None) -> Dict[str, Any]:
+    from Vera.vera.provisioning.components_capabilities import vllm_slot
+    insts = getattr(_orch, "OLLAMA_INSTANCES", {}) or {}
+    inst = insts.get(instance_id)
+    if not inst:
+        return {"ok": False, "error": f"unknown node {instance_id!r}", "nodes": sorted(insts)}
+    has_gpu = bool(inst.get("has_gpu"))
+    slot = vllm_slot(_backend_core.slot_for(instance_id, insts))
+    out: Dict[str, Any] = {"ok": True, "instance": instance_id, "has_gpu": has_gpu,
+                           "switched": instance_id in _switched_now(),
+                           "component": slot["component"], "port": slot["port"],
+                           "installed": None, "last": await _switch_config_load(instance_id),
+                           "models": []}
+    run, lst = _rawcap("exec.ssh.run"), _rawcap("exec.ssh.hosts.list")
+    addr = urlparse(str(inst.get("url") or "")).hostname or ""
+    hid = None
+    if run and lst:
+        hid = {h.get("host"): h.get("id") for h in ((await lst()) or {}).get("hosts", [])
+               if h.get("host") and h.get("id")}.get(addr)
+    if hid:
+        store = "/opt/vera-store/models/hf"
+        res = await run(command=(f"test -x {shlex.quote(slot['dir'] + '/venv/serve.sh')} "
+                                 f"&& echo VERA_HAS_VLLM; ls -1 {store} 2>/dev/null"),
+                        host_id=hid, timeout=30) or {}
+        lines = [ln.strip() for ln in (res.get("stdout") or "").splitlines() if ln.strip()]
+        out["installed"] = "VERA_HAS_VLLM" in lines
+        for d in lines:
+            if d == "VERA_HAS_VLLM" or "/" in d:
+                continue
+            path = f"{store}/{d}"
+            if _backend_core.is_embedding_model(path):
+                continue
+            out["models"].append({"path": path, "name": d.replace("--", "/"),
+                                  "alias": _backend_core.suggest_alias(path),
+                                  "extra": _backend_core.suggest_extra(path, has_gpu)})
+    last = out["last"] or {}
+    first = out["models"][0] if out["models"] else {}
+    model = last.get("model") or first.get("path", "")
+    out["suggested"] = {
+        "model": model,
+        "aliases": last.get("aliases") or ([_backend_core.suggest_alias(model)]
+                                           if _backend_core.suggest_alias(model) else []),
+        "extra_args": last.get("extra_args") if last.get("model") else
+        _backend_core.suggest_extra(model, has_gpu),
+        "stands_in_for": last.get("stands_in_for") or []}
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  nodes.backend.switch_many - switch all / selected nodes, one after another
+# ═════════════════════════════════════════════════════════════════════════════
+KEY_SWITCH_JOB = "vera:nodes:backend_switch_job"
+_SWITCH_JOB: Dict[str, Any] = {}
+
+
+async def _switch_job_save() -> None:
+    r = getattr(_orch, "REDIS", None)
+    if r is not None:
+        try:
+            await r.set(KEY_SWITCH_JOB, json.dumps(_SWITCH_JOB), ex=7 * 86400)
+        except Exception:
+            pass
+
+
+async def _switch_one_planned(iid: str, backend: str, *, force: bool, wait_s: int,
+                              install: bool, dry_run: bool) -> Dict[str, Any]:
+    """One instance of a bulk switch: its remembered (or suggested) vLLM settings,
+    the slot's component installed first when it is missing."""
+    cfg = await cap_nodes_backend_config(instance_id=iid)
+    if not cfg.get("ok"):
+        return {"instance": iid, "ok": False, "error": cfg.get("error")}
+    sug = cfg.get("suggested") or {}
+    args = dict(instance_id=iid, backend=backend, force=force, wait_s=wait_s,
+                model=sug.get("model", ""), aliases=sug.get("aliases") or [],
+                extra_args=sug.get("extra_args", "") or "",
+                stands_in_for=sug.get("stands_in_for") or [])
+    if backend == "vllm" and not args["model"]:
+        return {"instance": iid, "ok": False, "error": "no model: none remembered and none in the store"}
+    pre = await cap_nodes_backend_switch(**dict(args, dry_run=True))
+    plan = pre.get("plan") or {}
+    row: Dict[str, Any] = {"instance": iid, "plan": plan, "model": args["model"] if backend == "vllm" else "",
+                           "extra_args": args["extra_args"] if backend == "vllm" else ""}
+    if (plan.get("action") == "refuse" and "not installed" in str(plan.get("why", ""))
+            and install and backend == "vllm"):
+        row["install"] = plan.get("component")
+        if dry_run:
+            row["ok"] = True
+            return row
+        dep = _rawcap("provision.deploy")
+        hid = _ssh_host_id_for(iid)
+        if not (dep and hid):
+            return dict(row, ok=False, error="cannot install: no provision.deploy or SSH host")
+        ires = await dep(host_id=hid, component=plan.get("component"), install_deps=True,
+                         launch=True, systemd=True)
+        if not ires.get("ok"):
+            return dict(row, ok=False, error="install failed: " + str(ires.get("error") or "")[:200])
+        pre = await cap_nodes_backend_switch(**dict(args, dry_run=True))
+        plan = row["plan"] = pre.get("plan") or {}
+    if plan.get("action") == "noop":
+        return dict(row, ok=True, skipped=plan.get("why"))
+    if plan.get("action") != "switch":
+        return dict(row, ok=False, error=plan.get("why") or pre.get("error"))
+    if dry_run:
+        return dict(row, ok=True)
+    res = await cap_nodes_backend_switch(**dict(args, dry_run=False))
+    return dict(row, ok=bool(res.get("ok")), error=res.get("error", ""),
+                log=str(res.get("log", ""))[-600:])
+
+
+def _ssh_host_id_for(iid: str) -> str:
+    inst = (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).get(iid) or {}
+    addr = urlparse(str(inst.get("url") or "")).hostname or ""
+    for n in _SSH_HOSTS_CACHE:
+        if n.get("host") == addr:
+            return n.get("id", "")
+    return ""
+
+
+_SSH_HOSTS_CACHE: List[Dict[str, Any]] = []
+
+
+@capability(
+    "nodes.backend.switch_many", memory="off",
+    http_method="POST", http_path="/nodes/backend/switch_many", http_tags=["nodes"],
+    description="Switch several nodes - all, or the instance ids given - to vLLM or back to "
+                "Ollama, one after another, each with its remembered settings (else the "
+                "suggested store model and flags, nodes.backend.config), installing the vLLM "
+                "slot's component where it is missing. Dry-run returns the per-node plan at "
+                "once; a real run starts a background job - follow it with "
+                "nodes.backend.switch_status. Inputs: backend ('vllm'|'ollama'), "
+                "instance_ids (list; empty = every Ollama instance), dry_run (bool=true), "
+                "install (bool=true), force (bool), wait_s (int=1500).",
+    schema={"properties": {"backend": {"enum": ["vllm", "ollama"]},
+                           "instance_ids": {"type": "array", "items": {"type": "string"}}}},
+)
+async def cap_nodes_backend_switch_many(backend: str = "vllm",
+                                        instance_ids: Optional[List[str]] = None,
+                                        dry_run: bool = True, install: bool = True,
+                                        force: bool = False, wait_s: int = 1500,
+                                        trace_id=None) -> Dict[str, Any]:
+    if backend not in ("vllm", "ollama"):
+        return {"ok": False, "error": "backend must be vllm or ollama"}
+    insts = getattr(_orch, "OLLAMA_INSTANCES", {}) or {}
+    ids = [i for i in (instance_ids or sorted(insts)) if i in insts]
+    if not ids:
+        return {"ok": False, "error": "no such instances", "nodes": sorted(insts)}
+    lst = _rawcap("exec.ssh.hosts.list")
+    if lst:
+        _SSH_HOSTS_CACHE[:] = ((await lst()) or {}).get("hosts", [])
+    if dry_run:
+        rows = [await _switch_one_planned(i, backend, force=force, wait_s=wait_s,
+                                          install=install, dry_run=True) for i in ids]
+        return {"ok": True, "dry_run": True, "backend": backend, "nodes": rows}
+    if _SWITCH_JOB.get("state") == "running":
+        return {"ok": False, "error": "a bulk switch is already running", "job": _SWITCH_JOB}
+    if _orch.is_dev_sandbox():
+        return {"ok": False, "error": "refused in a dev sandbox - nodes belong to prod"}
+    _SWITCH_JOB.clear()
+    _SWITCH_JOB.update({"id": _orch.new_id()[:8], "backend": backend, "state": "running",
+                        "started_at": _orch.now_iso(), "queue": list(ids), "done": [],
+                        "current": "", "finished_at": ""})
+    await _switch_job_save()
+
+    async def _run():
+        try:
+            for iid in ids:
+                _SWITCH_JOB["current"] = iid
+                await _switch_job_save()
+                await emit_event({"type": "nodes.backend.switch_many", "job": _SWITCH_JOB["id"],
+                                  "instance": iid, "stage": "start"})
+                try:
+                    row = await _switch_one_planned(iid, backend, force=force, wait_s=wait_s,
+                                                    install=install, dry_run=False)
+                except Exception as e:
+                    row = {"instance": iid, "ok": False, "error": f"{type(e).__name__}: {e}"}
+                _SWITCH_JOB["done"].append(row)
+                await _switch_job_save()
+                await emit_event({"type": "nodes.backend.switch_many", "job": _SWITCH_JOB["id"],
+                                  "instance": iid, "stage": "done", "ok": row.get("ok")})
+        finally:
+            _SWITCH_JOB.update(state="done", current="", finished_at=_orch.now_iso())
+            await _switch_job_save()
+
+    asyncio.create_task(_run())
+    return {"ok": True, "started": True, "job": dict(_SWITCH_JOB)}
+
+
+@capability(
+    "nodes.backend.switch_status", memory="off",
+    http_method="GET", http_path="/nodes/backend/switch_status", http_tags=["nodes"],
+    description="The bulk backend switch job (nodes.backend.switch_many): state, the node "
+                "being switched, and each finished node's result.",
+)
+async def cap_nodes_backend_switch_status(trace_id=None) -> Dict[str, Any]:
+    if not _SWITCH_JOB:
+        r = getattr(_orch, "REDIS", None)
+        try:
+            raw = await r.get(KEY_SWITCH_JOB) if r is not None else None
+            if raw:
+                return {"ok": True, "job": json.loads(raw)}
+        except Exception:
+            pass
+        return {"ok": True, "job": None}
+    return {"ok": True, "job": dict(_SWITCH_JOB)}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  nodes.backend.switch - a node serves Ollama OR vLLM, switched in place
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
@@ -3110,6 +3353,7 @@ async def cap_nodes_backend_switch(instance_id: str = "", backend: str = "vllm",
                                    model: str = "", aliases: Optional[List[str]] = None,
                                    extra_args: str = "", dry_run: bool = True,
                                    force: bool = False, wait_s: int = 900,
+                                   stands_in_for: Optional[List[str]] = None,
                                    trace_id=None) -> Dict[str, Any]:
     from Vera.vera.provisioning.components_capabilities import vllm_slot
     insts = getattr(_orch, "OLLAMA_INSTANCES", {}) or {}
@@ -3191,6 +3435,14 @@ async def cap_nodes_backend_switch(instance_id: str = "", backend: str = "vllm",
     if save:
         await save()
         reg["ollama_enabled"] = bool(inst["enabled"])
+    if backend == "vllm":
+        # remembered, so switching back later is one click with the same settings
+        await _switch_config_save(instance_id, {
+            "model": model.strip(), "aliases": list(aliases or []), "extra_args": extra_args,
+            "stands_in_for": list(stands_in_for or [])})
+        si = _rawcap("vllm.instances.stand_in")
+        if si and stands_in_for:
+            reg["stands_in_for"] = await si(instance_id=vid, names=list(stands_in_for))
     out["registry"] = reg
     out["ok"] = True
     await emit_event({"type": "nodes.backend.switched", "instance": instance_id,
