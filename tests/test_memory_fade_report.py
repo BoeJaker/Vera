@@ -82,8 +82,7 @@ def test_the_dry_run_counts_what_would_fade_and_changes_nothing(monkeypatch):
         return _Pool(conn)
     monkeypatch.setattr(H, "_usage_pool", pool)
     monkeypatch.setattr(H, "_redis", lambda: None)
-    fn = getattr(H.memory_fade_report, "__wrapped__", H.memory_fade_report)
-    out = _arun(fn(samples=5, batch=500))
+    out = _arun(H._fade_compute(5, 500))
     assert out["dry_run"] is True and out["total"] == 4
     conv, tool = out["by_class"]["conversation"], out["by_class"]["tool"]
     assert conv["total"] == 3 and conv["fading"] == 1                  # only the old, unused chat line
@@ -100,5 +99,28 @@ def test_the_report_names_the_policy_in_force(monkeypatch):
         return _Pool(_Conn())
     monkeypatch.setattr(H, "_usage_pool", pool)
     monkeypatch.setattr(H, "_redis", lambda: None)
+    assert _arun(H._fade_compute())["policy"] == H._strength_core.POLICY_VERSION
+
+
+def test_the_capability_answers_at_once_and_runs_one_scan_in_the_background(monkeypatch):
+    # the whole-store scan took past the 60 s a request is given on prod (2026-10-05): it runs as a task instead
+    H = _hooks()
+    started = []
+
+    async def slow_compute(samples=5, batch=5000):
+        started.append(1)
+        await asyncio.sleep(0.3)
+        return {}
+    monkeypatch.setattr(H, "_fade_compute", slow_compute)
+    monkeypatch.setattr(H, "_redis", lambda: None)
+    monkeypatch.setattr(H, "_FADE_TASK", None)
     fn = getattr(H.memory_fade_report, "__wrapped__", H.memory_fade_report)
-    assert _arun(fn())["policy"] == H._strength_core.POLICY_VERSION
+
+    async def go():
+        a = await fn()
+        b = await fn(refresh=True)          # one already running: no second scan
+        await asyncio.sleep(0.4)
+        return a, b
+    a, b = _arun(go())
+    assert a == {"report": None, "computing": True} and b["computing"] is True
+    assert started == [1]
