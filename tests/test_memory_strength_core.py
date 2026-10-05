@@ -63,3 +63,10 @@ def test_timestamps_in_every_form_the_stores_give():
 
 def test_the_policy_says_which_table_is_in_force():
     assert s.POLICY_VERSION and set(s.HALF_LIFE) >= {"conversation", "session", "fact", "dream", "tool", "estate"}
+
+
+def test_a_transcript_line_stored_as_a_message_is_a_transcript():
+    # prod: 76,130 of 82,137 record_type "message" rows are imported coding-agent transcript lines
+    assert s.class_of({"record_type": "message", "text": "[Claude Code · repo] [tool_use: Edit]"}) == "transcript"
+    assert s.class_of({"record_type": "message", "text": "  [Codex] ran tests"}) == "transcript"
+    assert s.class_of({"record_type": "message", "text": "what did we decide about the census"}) == "conversation"

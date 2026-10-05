@@ -15,7 +15,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-POLICY_VERSION = "2026-10-05.2"   # .2: dream_report, extraction_result, cap_result and dag classed (prod's types)
+POLICY_VERSION = "2026-10-05.3"   # .2 classed prod's dream_report/extraction_result/cap_result/dag; .3 a transcript line is a transcript
 
 # class -> (half-life in days, floor). None = no decay (importance alone decides). From the roadmap's CU-M.3 table.
 HALF_LIFE: Dict[str, tuple] = {
@@ -50,13 +50,15 @@ _DAY = 86400.0
 
 def class_of(record: Dict[str, Any]) -> str:
     """A record's half-life class, from what it is (record_type, then source_type, then category)."""
+    # an imported coding-agent transcript line first: they are stored as record_type "message", and on prod they are
+    # 76,130 of the 82,137 "message" records - read as conversation they hid the real chat in the fade report
+    text = str((record or {}).get("text") or "").lstrip()
+    if text.startswith(("[Claude Code", "[Codex")):
+        return "transcript"
     for key in ("record_type", "source_type", "category"):
         c = _TYPE_CLASS.get(str((record or {}).get(key) or "").strip().lower())
         if c:
             return c
-    text = str((record or {}).get("text") or "").lstrip()
-    if text.startswith(("[Claude Code", "[Codex")):
-        return "transcript"
     return DEFAULT_CLASS
 
 
