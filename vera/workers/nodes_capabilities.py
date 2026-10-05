@@ -734,8 +734,7 @@ async def cap_nodes_provision_plan(node_id: str = "",
             will_have_docker = True
 
         gpu_req = comp.get("gpu")
-        has_gpu = bool((node.get("hw") or {}).get("vram_gb")) or \
-            bool((node.get("facts") or {}).get("gpu_name"))
+        has_gpu = _node_has_gpu(node)
         if gpu_req == "required" and not has_gpu:
             warnings.append(f"{key}: needs a GPU — none detected on this node")
         if comp.get("needs_model") and not (opt.get("model") or "").strip():
@@ -879,15 +878,23 @@ async def _ollama_layout(reg: Dict, opt: Dict) -> Dict:
     return out
 
 
-async def _register_vllm(node: Dict, port: int, api_key: str = "") -> Dict:
+def _node_has_gpu(node: Dict) -> bool:
+    """A node has a GPU when its catalogue hardware or facts say so."""
+    return bool((node.get("hw") or {}).get("vram_gb")) or \
+        bool((node.get("facts") or {}).get("gpu_name"))
+
+
+async def _register_vllm(node: Dict, port: int, api_key: str = "",
+                         has_gpu: bool = False) -> Dict:
     add = _rawcap("vllm.instances.add")
     if not add:
         return {"error": "vllm.instances.add unavailable"}
     addr = node.get("addr") or "localhost"
     iid = f"vllm-{re.sub(r'[^a-zA-Z0-9]+', '-', addr)}-{port}"
     url = f"http://{addr}:{port}"
+    # has_gpu was hard-coded True, so a CPU server counted as a GPU target.
     res = await add(id=iid, url=url, label=f"{node.get('label', addr)} (vLLM)",
-                    has_gpu=True, api_key=api_key)
+                    has_gpu=bool(has_gpu), api_key=api_key)
     return {"ok": bool(res.get("ok", True)), "instance_id": iid, "url": url,
             "result": res}
 
@@ -949,7 +956,8 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
                             command=cmdline, pull=True)
             out = {"ok": bool(res.get("ok")), "run": res, "hf_home": hf_home}
             if res.get("ok"):
-                out["register"] = await _register_vllm(node, port)
+                out["register"] = await _register_vllm(node, port,
+                                                       has_gpu=bool(gpus))
             return out
         if b == "proxmox":
             pmx = node.get("proxmox") or {}
@@ -965,7 +973,8 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
                              node=pve_node, vmid=int(pmx.get("vmid") or 0),
                              model=model, port=port,
                              hf_home=hf_home or "/models/hf",
-                             pip_spec=opt.get("pip_spec", "vllm"),
+                             pip_spec=opt.get("pip_spec", ""),
+                             mode=opt.get("vllm_mode", "auto"),
                              extra_args=str(opt.get("extra_args", "")))
             out = {"ok": bool(res.get("ok")), "provision": res}
             if res.get("ok") and sw and opt.get("start", True):
@@ -980,7 +989,8 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         serve = _rawcap("provision.serve")
         if not (inst and serve):
             return {"error": "provision.install/serve unavailable"}
-        ires = await inst(host_id=hid, target="vllm", sudo=True, timeout=1800)
+        ires = await inst(host_id=hid, target="vllm", sudo=True, timeout=1800,
+                          mode=opt.get("vllm_mode", "auto"))
         if not ires.get("ok"):
             return {"error": "vllm install failed: "
                              + str(ires.get("error", ""))[:300], "install": ires}
@@ -989,7 +999,9 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         out = {"ok": bool(sres.get("ok")), "install": ires, "serve": sres,
                "hf_home": hf_home}
         if sres.get("ok"):
-            out["register"] = await _register_vllm(node, port)
+            out["register"] = await _register_vllm(
+                node, port, has_gpu=bool(ires.get("mode") == "gpu"
+                                         or _node_has_gpu(node)))
         return out
 
     # ── Ollama via ssh / proxmox ─────────────────────────────────────────────

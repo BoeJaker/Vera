@@ -55,10 +55,9 @@ Architecture
 
 Capabilities registered
 ────────────────────────
-  vllm.status           — cluster health summary
-  vllm.instances.list   — list all configured instances
-  vllm.instances.add    — add a new instance at runtime
-  vllm.instances.remove — remove an instance
+  vllm.status           — cluster health summary (every configured instance)
+  vllm.instances.add    — add a new instance at runtime (persisted in Redis)
+  vllm.instances.remove — remove an instance (persisted in Redis)
   vllm.models           — list models served by all instances
   vllm.generate         — raw /v1/completions call
   vllm.chat             — /v1/chat/completions
@@ -73,6 +72,8 @@ Configuration (env vars)
 ─────────────────────────
   VLLM_INSTANCES        JSON list: [{"id":"gpu0","url":"http://host:8001","has_gpu":true}]
                         OR single URL: "http://192.168.0.250:8001"
+                        Runtime add/remove is stored in Redis (vera:vllm:instances)
+                        and merged over this list at boot (vllm_registry_core).
   VLLM_MODEL            default model name
   VLLM_API_KEY          optional API key (vLLM supports --api-key)
   VLLM_QUANTIZATION     gptq | awq | fp8 | gguf | turbomind (passed at launch)
@@ -111,6 +112,11 @@ from Vera.vera.capability_orchestration import (
     schedule,
 )
 from Vera.vera.config import cfg
+
+try:
+    from Vera.vera.vllm import vllm_registry_core as _reg_core
+except Exception:                                    # worktree / app-free import
+    from vera.vllm import vllm_registry_core as _reg_core
 
 log = logging.getLogger("vera.vllm")
 
@@ -203,6 +209,80 @@ def _init_instances():
 
 _init_instances()
 
+KEY_VLLM_INSTANCES = "vera:vllm:instances"
+_REG_DOC: Dict[str, Any] = _reg_core.empty_doc()
+_REG_LOADED = False
+_REG_LOCK: Optional[asyncio.Lock] = None
+
+
+async def _ensure_registry_loaded() -> None:
+    """Load the stored registry once. add/remove call this first, so an add made
+    while the boot load is still waiting for Redis cannot overwrite the stored
+    document with a one-entry copy."""
+    global _REG_LOCK
+    if _REG_LOADED:
+        return
+    if _REG_LOCK is None:
+        _REG_LOCK = asyncio.Lock()
+    async with _REG_LOCK:
+        if not _REG_LOADED:
+            await _load_registry()
+
+
+def _env_ids() -> List[str]:
+    return [str(s.get("id") or f"vllm-{i}") for i, s in enumerate(_parse_instances_env())]
+
+
+async def _save_registry() -> None:
+    r = getattr(_orch, "REDIS", None)
+    if not r or not _REG_LOADED:
+        return
+    try:
+        await r.set(KEY_VLLM_INSTANCES, json.dumps(_REG_DOC))
+    except Exception as e:
+        log.warning("vllm: save registry: %s", e)
+
+
+async def _load_registry() -> None:
+    """Restore runtime add/remove from Redis once it is connected (boot only)."""
+    global _REG_DOC, _REG_LOADED
+    for _ in range(60):
+        if getattr(_orch, "REDIS", None):
+            break
+        await asyncio.sleep(1)
+    r = getattr(_orch, "REDIS", None)
+    if not r:
+        log.info("vllm: registry persistence unavailable (no Redis)")
+        _REG_LOADED = True       # nothing to restore; saves are no-ops too
+        return
+    try:
+        raw = await r.get(KEY_VLLM_INSTANCES)
+        _REG_DOC = _reg_core.normalise_doc(json.loads(raw) if raw else None)
+    except Exception as e:
+        # Leave _REG_LOADED False: a later add/remove retries the read
+        # rather than saving over a document it could not read.
+        log.warning("vllm: load registry: %s", e)
+        return
+    _REG_LOADED = True
+    wanted = {s["id"]: s for s in _reg_core.merge(_parse_instances_env(), _REG_DOC)}
+    for iid in [i for i in VLLM_INSTANCES if i not in wanted]:
+        del VLLM_INSTANCES[iid]
+    for iid, spec in wanted.items():
+        cur = VLLM_INSTANCES.get(iid)
+        if cur is None:
+            VLLM_INSTANCES[iid] = VLLMInstance(
+                id=iid, url=str(spec.get("url", "")).rstrip("/"),
+                label=spec.get("label") or iid, has_gpu=bool(spec.get("has_gpu", True)),
+                priority=int(spec.get("priority") or 0),
+                api_key=spec.get("api_key", VLLM_API_KEY))
+        else:
+            cur.url = str(spec.get("url", cur.url)).rstrip("/")
+            cur.label = spec.get("label") or cur.label
+            cur.has_gpu = bool(spec.get("has_gpu", cur.has_gpu))
+            cur.priority = int(spec.get("priority", cur.priority) or 0)
+    if _REG_DOC["instances"] or _REG_DOC["removed"]:
+        log.info("vllm: registry restored - %d instance(s)", len(VLLM_INSTANCES))
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Health monitoring
@@ -261,6 +341,7 @@ async def _scrape_metrics(inst: VLLMInstance) -> None:
 
 
 async def _health_loop(interval: float = 20.0) -> None:
+    await _ensure_registry_loaded()
     while True:
         # Nothing to probe until at least one instance is configured. Idle
         # quietly (long sleep, no event) rather than pinging hosts and emitting
@@ -707,7 +788,10 @@ async def vllm_status() -> dict:
 
 @capability(
     name="vllm.instances.add",
-    description="Register a new vLLM server instance at runtime",
+    description="Register a vLLM server instance at runtime (persisted across "
+                "restarts). Inputs: id (str!), url (str!), label, has_gpu (bool="
+                "true — false for a CPU server), priority (int), api_key (str — "
+                "not persisted; env VLLM_API_KEY applies after a restart).",
     http_method="POST",
     http_path="/vllm/instances",
     schema={
@@ -726,6 +810,7 @@ async def vllm_instances_add(
     id: str, url: str, label: str = "", has_gpu: bool = True,
     priority: int = None, api_key: str = "",
 ) -> dict:
+    await _ensure_registry_loaded()
     if id in VLLM_INSTANCES:
         return {"ok": False, "error": f"Instance '{id}' already exists. Remove it first."}
     inst = VLLMInstance(
@@ -735,8 +820,14 @@ async def vllm_instances_add(
         api_key=api_key or VLLM_API_KEY,
     )
     VLLM_INSTANCES[id] = inst
+    global _REG_DOC
+    _REG_DOC = _reg_core.note_added(_REG_DOC, id, {
+        "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
+        "priority": inst.priority})
+    await _save_registry()
     await _ping_vllm(inst)
-    await emit_event({"type": "vllm.instance.added", "id": id, "url": url})
+    await emit_event({"type": "vllm.instance.added", "id": id, "url": url,
+                      "has_gpu": inst.has_gpu})
     return {"ok": True, "id": id, "status": inst.status, "models": inst.models}
 
 
@@ -748,9 +839,13 @@ async def vllm_instances_add(
     schema={"properties": {"instance_id": {"type": "string"}}, "required": ["instance_id"]},
 )
 async def vllm_instances_remove(instance_id: str) -> dict:
+    await _ensure_registry_loaded()
     if instance_id not in VLLM_INSTANCES:
         return {"ok": False, "error": f"Instance '{instance_id}' not found"}
     del VLLM_INSTANCES[instance_id]
+    global _REG_DOC
+    _REG_DOC = _reg_core.note_removed(_REG_DOC, instance_id, _env_ids())
+    await _save_registry()
     await emit_event({"type": "vllm.instance.removed", "id": instance_id})
     return {"ok": True, "id": instance_id}
 
