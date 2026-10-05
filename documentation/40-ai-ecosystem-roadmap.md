@@ -700,9 +700,20 @@ Source: [Accelerate documentation](https://huggingface.co/docs/accelerate/index)
 A TrainingRuntime selected by a TrainingRun, not a new training schema. Its
 resolved configuration, launcher command, environment, topology, precision,
 checkpoints, profiler output, and failures belong in Run/Artifact records, and a
-container or isolated environment owns the dependency stack. A distributed
-TrainingRuntime contract (launcher/topology/precision/checkpoint/progress
-semantics) comes first, without running a distributed job. **Status:** planned.
+container or isolated environment owns the dependency stack.
+
+**Current status.** The SDK-neutral boundary in
+[`vera/models/distributed_training_runtime.py`](../vera/models/distributed_training_runtime.py)
+defines content-addressed runtime profiles, fail-closed topology/precision
+validation, verified entrypoint and resume-artifact evidence, bounded
+checkpoint/progress/cancellation semantics, and an immutable Accelerate-shaped
+command template. Only explicitly allowlisted environment names are accepted;
+their values are represented by digests, not retained. User input cannot
+override launcher topology, and secret-like environment names or arguments are
+rejected. The module does not import Accelerate or a training framework, launch
+a process, allocate hardware, read ambient environment, or activate a model.
+A live isolated Accelerate installation, distributed run, failure/cancellation
+exercise, resource measurement and teardown receipt remain queued.
 
 ### DVC
 
