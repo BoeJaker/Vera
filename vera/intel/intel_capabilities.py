@@ -641,6 +641,9 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
         heur = core.heuristic_score(c, t, novelty_v=nv)
         c["relevance_nlp"] = rel.get(i)
         c["score"] = ops.blend_score(relevance=rel.get(i), heuristic=heur, novelty=nv)
+        sf = ops.staleness_factor(c, datetime.now(timezone.utc).year)
+        if sf < 1.0:
+            c["score"], c["stale"] = round(c["score"] * sf, 1), True
         if genre_budget > 0 and (rel.get(i) is None or rel.get(i, 0) >= 0.2):
             genre_budget -= 1         # only plausible hits are classified: a few dozen ~100 ms node calls per sweep
             if ops.index_hint(c.get("url", ""), c.get("title", "")):

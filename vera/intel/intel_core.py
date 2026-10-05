@@ -409,6 +409,15 @@ def clean_prose(text: str) -> str:
 TRIAGED_TEXT_CHARS = 4500
 
 
+FRESHNESS_RULE = ("Facts older than about six months are background, not news: when the source's facts are "
+                   "old, say when they date from (\"In May 2024, ...\") and score relevance down.")
+
+
+def _dates(signal: Dict[str, Any]) -> str:
+    pub = str(signal.get("published") or "")[:10] or "unknown"
+    return f"TODAY: {datetime.now(timezone.utc).date().isoformat()}\nSOURCE PUBLISHED: {pub}\n"
+
+
 def enrich_prompt(topic: Dict[str, Any], signal: Dict[str, Any], page_text: str, words: int = 220,
                   *, triaged: bool = False) -> str:
     qs = "\n".join(f"- {q}" for q in (topic.get("questions") or [])[:6]) or "- (none recorded)"
@@ -418,6 +427,7 @@ def enrich_prompt(topic: Dict[str, Any], signal: Dict[str, Any], page_text: str,
             f"You are following the topic \"{topic.get('name')}\" ({topic.get('brief') or topic.get('name')}).\n"
             f"Why it matters to the reader: {topic.get('why') or 'not stated'}\n"
             f"Read this source and answer in JSON only. Your whole answer is about {max(120, words - 80)} words.\n"
+            f"{FRESHNESS_RULE}\n{_dates(signal)}"
             f"SOURCE TITLE: {signal.get('title')}\nSOURCE URL: {signal.get('url')}\n"
             f"SOURCE TEXT:\n{(page_text or signal.get('snippet') or '')[:TRIAGED_TEXT_CHARS]}\n\n"
             "JSON keys:\n"
@@ -433,6 +443,7 @@ def enrich_prompt(topic: Dict[str, Any], signal: Dict[str, Any], page_text: str,
         f"Why it matters to the reader: {topic.get('why') or 'not stated'}\n"
         f"Open questions:\n{qs}\n\n"
         f"Read this source and answer in JSON only. Your whole answer is about {words} words.\n"
+        f"{FRESHNESS_RULE}\n{_dates(signal)}"
         f"SOURCE TITLE: {signal.get('title')}\nSOURCE URL: {signal.get('url')}\n"
         f"SOURCE TEXT:\n{(page_text or signal.get('snippet') or '')[:9000]}\n\n"
         "JSON keys:\n"
@@ -507,8 +518,9 @@ def snapshot_prompt(topic: Dict[str, Any], previous: Optional[Dict[str, Any]],
     prev = (previous or {}).get("state") or "(no earlier assessment - this is the first)"
     lines = []
     for s in signals[:14]:
+        when = f", published {str(s['published'])[:10]}" if s.get("published") else ""
         lines.append(f"- [{s.get('score') if s.get('score') is not None else '?'}/10] {s.get('title')}"
-                     f" ({s.get('site') or s.get('source')}): {s.get('summary') or s.get('snippet') or ''}"[:600])
+                     f" ({s.get('site') or s.get('source')}{when}): {s.get('summary') or s.get('snippet') or ''}"[:600])
     qs = "\n".join(f"- {q}" for q in (topic.get("questions") or [])[:8]) or "- (none)"
     return (
         f"You keep a running assessment of the topic \"{topic.get('name')}\" for one reader.\n"
@@ -520,7 +532,9 @@ def snapshot_prompt(topic: Dict[str, Any], previous: Optional[Dict[str, Any]],
         (f"\n\nTHE NUMBERS THIS TOPIC WATCHES MOVED:\n{market}\n"
          "(say whether the evidence explains each move; a move nothing explains is itself worth a question)"
          if market else "") +
-        f"\n\nWrite the updated assessment. Answer in JSON only. Your whole answer is about {words} words.\n"
+        f"\n\nToday is {datetime.now(timezone.utc).date().isoformat()}. Give the date of any figure you cite; "
+        "evidence older than about six months is background, never the current picture.\n"
+        f"Write the updated assessment. Answer in JSON only. Your whole answer is about {words} words.\n"
         "JSON keys:\n"
         "  headline - one sentence: the single most important thing now\n"
         "  state    - the current picture in 3-6 sentences (what is true now, with numbers and names)\n"
