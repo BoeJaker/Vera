@@ -201,3 +201,25 @@ def test_comparison_requires_both_frameworks_once() -> None:
         installed_bytes=1, teardown_ms=1)
     with pytest.raises(ValueError, match="exactly one"):
         compare_rag_frameworks(snapshot=snapshot, cases=(case,), evidence=(item, item))
+
+
+def test_evidence_rejects_cross_labelled_retrieval_and_detaches_projection() -> None:
+    snapshot = _snapshot()
+    case = RetrievalCase(
+        case_key="known-fact", query_digest="sha256:" + "4" * 64,
+        relevant_citations=(RetrievalCitation("record-1", "revision-1"),), k=1)
+    projection = import_framework_manifest(_manifest("llamaindex"))
+    item = RAGFrameworkEvidence(
+        framework="llamaindex", projection=projection,
+        retrieval=_retrieval(snapshot, "llamaindex", case),
+        import_ms=1, export_ms=1, dependency_count=1,
+        installed_bytes=1, teardown_ms=1)
+    projection["gaps"].append({"blocking": True})
+    assert item.projection["gaps"] == []
+
+    with pytest.raises(ValueError, match="profile kind"):
+        RAGFrameworkEvidence(
+            framework="llamaindex", projection=item.projection,
+            retrieval=_retrieval(snapshot, "haystack", case),
+            import_ms=1, export_ms=1, dependency_count=1,
+            installed_bytes=1, teardown_ms=1)

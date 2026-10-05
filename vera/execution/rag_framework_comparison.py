@@ -279,10 +279,14 @@ class RAGFrameworkEvidence:
         object.__setattr__(self, "framework", _framework(self.framework))
         if not isinstance(self.projection, Mapping):
             raise TypeError("projection must be an import/export result")
-        if self.projection.get("framework") != self.framework:
+        projection = copy.deepcopy(dict(self.projection))
+        if projection.get("framework") != self.framework:
             raise ValueError("projection framework does not match evidence framework")
+        object.__setattr__(self, "projection", projection)
         if not isinstance(self.retrieval, RetrievalProviderEvidence):
             raise TypeError("retrieval must be RetrievalProviderEvidence")
+        if self.retrieval.profile.kind != self.framework:
+            raise ValueError("retrieval profile kind does not match evidence framework")
         for field in ("import_ms", "export_ms", "dependency_count",
                       "installed_bytes", "teardown_ms"):
             value = getattr(self, field)
