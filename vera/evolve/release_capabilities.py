@@ -11,10 +11,12 @@
 
 With `sync_nodes` (default on) a finished release also brings the nodes onto
 it: the node-side components (provision.component.sync for every syncable
-one), the node workers (nodes.workers.sync) and the warm model slots
+one), every node worker (nodes.workers.sync) and the warm model slots
 (ollama.warm.apply). It is queued when the release is done and carried out by
 the same 30 s job - in the NEW process after a restart, never while a census
-goal is in flight. The decisions are release_core.node_sync_*.
+goal is in flight. A census the release parked stays parked until that sync
+has run, then is resumed (release_core.hold_census_for_sync). The decisions
+are release_core.node_sync_*.
 
 The decisions are in `release_core` (pure). This module owns Redis, the
 census reads (the same summary /health carries), the merge
@@ -217,7 +219,7 @@ async def _do_release(p: Dict[str, Any]) -> Dict[str, Any]:
         await _save(None)
         await _archive(p)
         await _queue_node_sync(p)
-        if p.get("yield_written"):
+        if p.get("yield_written") and not core.hold_census_for_sync(p):
             await _resume_if_ours()
         await emit_event({"type": "evolve.release.done", "release_id": p["id"], "commit": p["merge"].get("commit"),
                           "restarted": False})
@@ -262,7 +264,7 @@ async def _queue_node_sync(p: Dict[str, Any]) -> None:
     if not p.get("sync_nodes", True):
         return
     rec = core.new_node_sync(release_id=p["id"], commit=str((p.get("merge") or {}).get("commit") or ""),
-                             now=_now())
+                             now=_now(), resume_census=core.hold_census_for_sync(p))
     await _node_sync_save(rec)
     await emit_event({"type": "evolve.release.node_sync", "release_id": p["id"], "status": "pending"})
 
@@ -343,7 +345,18 @@ async def _maybe_node_sync() -> Dict[str, Any]:
     ok, why = core.node_sync_due(rec, await census_summary(), now=_now(), running_here=running_here)
     if ok and rec is not None:
         _SYNC_TASK["task"] = asyncio.create_task(_run_node_sync(rec))
+    elif core.node_sync_releases_census(rec, why):
+        await _release_held_census(rec)
     return {"due": ok, "why": why}
+
+
+async def _release_held_census(rec: Dict[str, Any]) -> None:
+    """Resume the census the release held parked for the node sync (once)."""
+    rec["resume_census"] = False
+    rec["census_resumed"] = await _resume_if_ours()
+    await _node_sync_save(rec)
+    await emit_event({"type": "evolve.release.node_sync", "release_id": rec.get("release_id"),
+                      "status": rec.get("status"), "census_resumed": rec["census_resumed"]})
 
 
 async def run_tick() -> Dict[str, Any]:
@@ -376,7 +389,8 @@ async def run_tick() -> Dict[str, Any]:
         await emit_event({"type": "evolve.release.go", "release_id": p["id"], "why": act.get("why")})
         return {"action": "release", "pending": await _do_release(p)}
     if a == "finish":
-        resumed = await _resume_if_ours() if act.get("resume_census") else False
+        hold = core.hold_census_for_sync(p)
+        resumed = await _resume_if_ours() if act.get("resume_census") and not hold else False
         p["status"] = "done"
         p["finished_at"] = _now().isoformat(timespec="seconds")
         p["census_resumed"] = resumed
@@ -385,7 +399,7 @@ async def run_tick() -> Dict[str, Any]:
         await _queue_node_sync(p)
         await emit_event({"type": "evolve.release.done", "release_id": p["id"],
                           "commit": (p.get("merge") or {}).get("commit"), "restarted": True,
-                          "census_resumed": resumed})
+                          "census_resumed": resumed, "census_held_for_sync": hold})
         return {"action": "finish", "pending": p}
     if a == "fail":
         p["status"] = "failed"

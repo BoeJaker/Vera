@@ -1273,15 +1273,15 @@ async def _census_busy() -> bool:
     memory="off",
     description="Bring node workers onto the commit this host is RUNNING (not git HEAD: "
                 "a promotion moves HEAD before the restart that activates it). Refreshes "
-                "at most `limit` stale or missing node per call through provision.worker, "
+                "every stale or missing node (or at most `limit`) through provision.worker, "
                 "never while a census goal is in flight or on a node whose worker is "
                 "mid-task, with backoff after failures. Runs on its own every 10 min on "
                 "the host (off with VERA_NODE_SYNC=off or enabled=false). Inputs: "
-                "dry_run (bool=false), limit (int=1), host_ids (list — adopt these "
+                "dry_run (bool=false), limit (int=0 — 0 = every stale node), host_ids (list — adopt these "
                 "already-provisioned nodes into the registry first), enabled (bool — "
                 "persist the on/off switch). Output: {ok, host_commit, plan, results}.",
 )
-async def cap_nodes_workers_sync(dry_run: bool = False, limit: int = 1,
+async def cap_nodes_workers_sync(dry_run: bool = False, limit: int = 0,
                                  host_ids: Optional[List[str]] = None,
                                  enabled: Optional[bool] = None, trace_id=None) -> Dict:
     r = _orch.REDIS

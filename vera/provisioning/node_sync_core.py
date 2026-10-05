@@ -15,8 +15,11 @@ The answer is deliberately conservative:
   * never while a census goal is in flight (the install puts pip on the CPU
     nodes the census uses), and never a node whose worker is mid-task (the
     restart would kill it and orphan recovery would run it again).
-  * one node per tick, and a node that failed waits out a backoff before it
-    is tried again - no retry loop against a node that is down.
+  * every stale node per tick, one after another (`limit` caps it; 0 = all -
+    a release must bring EVERY worker onto its commit, 2026-10-05: one per tick
+    left two of three nodes on the old code for hours), and a node that failed
+    waits out a backoff before it is tried again - no retry loop against a
+    node that is down.
 
 Pure: dicts in, a plan out. Tested without nodes.
 """
@@ -79,7 +82,7 @@ def backoff_for(failures: int) -> int:
 
 def plan(host_commit: str, entries: Iterable[Dict[str, Any]],
          workers: Iterable[Dict[str, Any]], *, census_busy: bool,
-         now: Optional[float] = None, limit: int = 1) -> Dict[str, Any]:
+         now: Optional[float] = None, limit: int = 0) -> Dict[str, Any]:
     """What to refresh this tick.
 
     entries  - registry records: {host_id, nodename, commit, failures,
@@ -118,10 +121,10 @@ def plan(host_commit: str, entries: Iterable[Dict[str, Any]],
             out["skipped"].append({"host_id": hid, "why": "worker is running %s"
                                    % str(w.get("status"))[len("running:"):]})
             continue
-        if len(out["run"]) < max(1, int(limit)):
+        if int(limit or 0) <= 0 or len(out["run"]) < int(limit):
             out["run"].append(hid)
         else:
-            out["skipped"].append({"host_id": hid, "why": "one node per tick"})
+            out["skipped"].append({"host_id": hid, "why": "limit %d per tick" % int(limit)})
     return out
 
 

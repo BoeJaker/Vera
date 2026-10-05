@@ -188,10 +188,28 @@ SYNC_STALE_S = 45 * 60            # a sync "running" this long without an update
 SYNC_MAX_ATTEMPTS = 3
 
 
-def new_node_sync(*, release_id: str, commit: str, now: datetime) -> Dict[str, Any]:
+def new_node_sync(*, release_id: str, commit: str, now: datetime,
+                  resume_census: bool = False) -> Dict[str, Any]:
     return {"release_id": release_id, "commit": commit, "status": "pending", "attempts": 0,
             "requested_at": now.isoformat(timespec="seconds"),
-            "updated_at": now.isoformat(timespec="seconds"), "last_why": "", "results": {}}
+            "updated_at": now.isoformat(timespec="seconds"), "last_why": "", "results": {},
+            "resume_census": bool(resume_census)}
+
+
+def hold_census_for_sync(pending: Dict[str, Any]) -> bool:
+    """Whether the release keeps the census it parked parked until the node
+    sync has run (2026-10-05). Resuming it first meant the sync then found a
+    goal in flight and waited for the whole census - hours with the nodes on
+    the old commit. Only a yield the release wrote itself is held."""
+    return bool(pending.get("sync_nodes", True)) and bool(pending.get("yield_written"))
+
+
+def node_sync_releases_census(rec: Optional[Dict[str, Any]], why: str) -> bool:
+    """A held census is let go once the sync can no longer run: it finished,
+    failed or gave up. Never left parked behind a sync that will not come."""
+    if not rec or not rec.get("resume_census"):
+        return False
+    return str(rec.get("status") or "") in ("done", "failed") or str(why).startswith("gave up")
 
 
 def node_sync_due(rec: Optional[Dict[str, Any]], census: Dict[str, Any], *, now: datetime,
