@@ -236,7 +236,10 @@ async def cap_detect(host_id: str = "", trace_id=None) -> Dict:
                 "true — prefix privileged steps with sudo unless the login is "
                 "root), port (int — override the listen port), timeout (int=900), "
                 "mode (vllm only: 'auto'|'gpu'|'cpu' — auto picks gpu when an "
-                "NVIDIA device answers; cpu needs glibc >= 2.39). "
+                "NVIDIA device answers; cpu needs glibc >= 2.39 or a fleet wheel), "
+                "vllm_version (vllm only: a release, blank = latest), "
+                "pip_spec (vllm only: an explicit wheel path/URL, e.g. the store's "
+                "/opt/vera-store/models/vllm/<wheel> built for AVX2 int4). "
                 "Output: {ok, rc, target, done(reached end marker), log(tail), "
                 "mode (vllm), effect_shadow}. Optional idempotency, approval, and retry "
                 "inputs are observe-only and never sent to SSH. "
@@ -246,7 +249,8 @@ async def cap_install(host_id: str = "", target: str = "", sudo: bool = True,
                       port: int = 0, timeout: int = 900,
                       idempotency_key: str = "",
                       approval_receipt_ref: str = "", retry: bool = False,
-                      mode: str = "auto", trace_id=None) -> Dict:
+                      mode: str = "auto", vllm_version: str = "", pip_spec: str = "",
+                      trace_id=None) -> Dict:
     if not host_id or target not in _TARGETS:
         return {"ok": False, "error": "host_id and a valid target are required",
                 "targets": list(_TARGETS)}
@@ -260,7 +264,9 @@ async def cap_install(host_id: str = "", target: str = "", sudo: bool = True,
     if target == "vllm":
         try:
             vllm_recipe = (_vllm_core.system_deps_cmd(_sudo) + "\n"
-                           + _vllm_core.install_script(_VLLM_VENV, mode=mode))
+                           + _vllm_core.install_script(_VLLM_VENV, mode=mode,
+                                                        version=vllm_version,
+                                                        pip_spec=pip_spec))
         except ValueError as e:
             return {"ok": False, "error": str(e)}
     cmd = t["install"].format(
@@ -408,7 +414,8 @@ async def cap_connect(host_id: str = "", target: str = "", port: int = 0,
                 "register it into the cluster. Inputs: host_id (str!), target, "
                 "sudo (bool=true), port (int), has_gpu (bool), connect (bool=true "
                 "— register after install), serve_model (str — vLLM: start this "
-                "model before connecting), timeout (int=900). Output: {ok, install, "
+                "model before connecting), timeout (int=900), mode / vllm_version "
+                "/ pip_spec (vllm: as provision.install). Output: {ok, install, "
                 "serve, connect, effect_shadow}. Optional idempotency, approval, "
                 "and retry inputs are observe-only and never sent to SSH or "
                 "downstream registries.",
@@ -418,6 +425,7 @@ async def cap_run(host_id: str = "", target: str = "", sudo: bool = True,
                   serve_model: str = "", timeout: int = 900,
                   idempotency_key: str = "",
                   approval_receipt_ref: str = "", retry: bool = False,
+                  mode: str = "auto", vllm_version: str = "", pip_spec: str = "",
                   trace_id=None) -> Dict:
     if not host_id or target not in _TARGETS:
         return {"ok": False, "error": "host_id and a valid target are required",
@@ -437,7 +445,8 @@ async def cap_run(host_id: str = "", target: str = "", sudo: bool = True,
     token = _NESTED_EFFECT.set(True)
     try:
         inst = await cap_install(host_id=host_id, target=target, sudo=sudo,
-                                 port=port, timeout=timeout)
+                                 port=port, timeout=timeout, mode=mode,
+                                 vllm_version=vllm_version, pip_spec=pip_spec)
     finally:
         _NESTED_EFFECT.reset(token)
     out: Dict[str, Any] = {"install": inst, "effect_shadow": shadow}

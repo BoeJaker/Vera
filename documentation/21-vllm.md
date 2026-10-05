@@ -2,9 +2,11 @@
 
 [`vera/vllm/vllm_capabilities.py`](../vera/vllm/vllm_capabilities.py) integrates **vLLM** as an LLM backend. It mirrors the Ollama layer's pattern — an instance registry, health checks, a picker, a generate function — but targets vLLM's OpenAI-compatible server (`/v1/completions`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, Prometheus `/metrics`). The [LLM cluster router](./04-ollama-cluster.md) can delegate any job type, capability or role to it with a `vllm:` pin, so a caller does not need to know whether vLLM or Ollama served it.
 
-The module loads with the normal orchestrator module set. Loading it makes `vllm.status` and the administrative surface available; it does not create a server or route traffic. Instances come from `VLLM_INSTANCES` or are added at runtime, and they are held **in memory only** — runtime additions are lost on restart.
+The module loads with the normal orchestrator module set. Loading it makes `vllm.status` and the administrative surface available; it does not create a server or route traffic. Instances come from `VLLM_INSTANCES` or are added at runtime; runtime additions and removals are saved in Redis and survive a restart (§3).
 
-**Status:** integration code is stable but optional; the reference deployment runs no vLLM server, so `vllm.status` normally reports zero instances. The portable OpenAI-compatible adapter (§14) is an offline, injected-transport seam.
+A compute node can also serve vLLM **in place of its Ollama**: vLLM is installed beside the node's Ollama and the node is switched between the two, keeping its id, its workers and its routing (§15a).
+
+**Status:** integration code is stable but optional. The portable OpenAI-compatible adapter (§14) is an offline, injected-transport seam.
 
 ## Contents
 
@@ -93,7 +95,9 @@ VLLM_INSTANCES='[{"id":"gpu0","url":"http://10.0.0.30:8001","has_gpu":true,"prio
                  {"id":"gpu1","url":"http://10.0.0.31:8001","has_gpu":true,"priority":1}]'
 ```
 
-Missing fields default to `has_gpu: true`, `priority` = registration order, `api_key` = `VLLM_API_KEY`. A parse error is logged and no instances are registered.
+Missing fields default to `has_gpu: true`, `priority` = registration order, `api_key` = `VLLM_API_KEY`, `gate_as` = none. A parse error is logged and no instances are registered.
+
+`gate_as` names the Ollama node a server shares hardware with (for example `gpu-250` for vLLM on that node's V100). Its routed calls then take that node's per-node semaphore and cross-process GPU gate, so a vLLM and an Ollama generation never run on one device at once, and the gate status shows the vLLM work.
 
 At runtime:
 
@@ -105,7 +109,9 @@ curl -X POST http://localhost:8999/vllm/instances \
 curl -X DELETE http://localhost:8999/vllm/instances/gpu0
 ```
 
-`vllm.instances.add` refuses an id that already exists, pings the new instance once, and emits `vllm.instance.added`. Because the registry is not persisted, put permanent instances in `VLLM_INSTANCES`.
+`vllm.instances.add` (inputs `id`, `url`, `label`, `has_gpu` — false for a CPU server —, `priority`, `api_key`, `gate_as`) refuses an id that already exists, pings the new instance once, and emits `vllm.instance.added`.
+
+Runtime additions and removals are saved in Redis (`vera:vllm:instances`) and merged over the `VLLM_INSTANCES` list at boot: a runtime entry overrides an env entry of the same id, and removing an env-defined instance is remembered. API keys are not saved; they come from the env entry or `VLLM_API_KEY`.
 
 ---
 
@@ -149,15 +155,15 @@ Each narrowing step is skipped when it would leave no candidates, so a model or 
 
 | Path | Behaviour |
 |---|---|
-| **Routing pin** (recommended) | A job-type rule, per-capability rule or role-profile role whose `pin` is `vllm:<id>` (or `vllm:*` for the best instance) makes `ollama_generate` call `vllm_generate` with `system + "\n\n" + prompt`, the rule's model, `max_tokens` = the caller's `num_predict` (default 1024), `temperature`/`top_p` from options (0.7 / 0.9), `guided_json: {"type":"object"}` for JSON-mode calls, and the caller identity. If no vLLM instance is online, or the call raises, the request continues on normal Ollama routing. A caller that pins an Ollama `instance_id` bypasses the delegation. See [04 · LLM Cluster §11](./04-ollama-cluster.md#11-delegation-to-vllm-and-api-providers). |
+| **Routing pin** (recommended) | A job-type rule, per-capability rule or role-profile role whose `pin` is `vllm:<id>` (or `vllm:*`) reaches vLLM like a node, on **generate, chat and embeddings**. The target is chosen under the rule: an offline pinned server falls back as an offline Ollama pin does; for `vllm:*`, `deny_gpu` drops GPU servers, `prefer_gpu` narrows to GPU ones, a server that serves the requested model wins, then lower load and priority. Generate and chat take the hardware's semaphore and GPU gate (`gate_as`) with token liveness, route demand is recorded, and the routed model, instance and gate are reported back. The model sent is the requested name when the server answers to it (an alias such as the Ollama tag it stands in for), otherwise the server's own model. Chat sends the conversation through `/v1/chat/completions` and the chat loop reads it as it reads Ollama (thinking, stall detection, done accounting). An embedding rule only uses a server that serves exactly the requested embedding model, so vectors never change dimension. A failure, an empty completion or no server up continues on normal Ollama routing. A caller that pins an Ollama `instance_id` keeps it. A pin that names a **node switched to vLLM** (§15a) reaches that node's vLLM instance. See [04 · LLM Cluster §11](./04-ollama-cluster.md#11-delegation-to-vllm-and-api-providers). |
 | **Direct capabilities** | `vllm.generate`, `vllm.chat`, `vllm.embed` call the helpers directly. |
 | **Passthrough proxy** | `/vllm/proxy/{id}/{path}` forwards any OpenAI-compatible request (§9). |
-| **`llm.generate` `backend` argument** | `backend="vllm"`, or `backend="auto"` with `prefer_gpu`, routes through `vllm.generate` when an instance is online (system prompt prepended); on failure it falls back to Ollama. |
+| **`llm.generate` `backend` argument** | `backend="vllm"` routes through `vllm.generate` when an instance is online (system prompt prepended); on failure it falls back to Ollama. `backend="auto"` (the default) follows the routing table, so vLLM is reached through its pins like any node. |
 
 The Model Routing page lists vLLM servers beside Ollama nodes (it reads `vllm.status`), so `vllm:` pins can be chosen from the node pickers.
 
 > [!NOTE]
-> `vllm_generate` returns an empty string, not an exception, when no instance is available or both the primary and the failover attempt fail. The `vllm:` delegation in `ollama_generate` only falls back to Ollama when `pick_vllm_instance` finds nothing or the call raises; an empty completion is returned as-is.
+> `vllm_generate` returns an empty string, not an exception, when no instance is available or both the primary and the failover attempt fail. Routed calls treat an empty completion as a failure and continue on Ollama routing; direct `vllm.generate` calls return it as-is.
 
 ---
 
@@ -317,19 +323,32 @@ Capacity is dominated by model weights, KV cache, maximum model length, batching
 
 Managed launch settings such as quantisation, dtype, speculative model, prefix caching and chunked prefill are workload decisions, not universal optimisations. Record them with benchmarks; see [Performance and sizing](./00-performance-and-sizing.md) for a repeatable measurement procedure.
 
+### 15a. Nodes that switch between Ollama and vLLM
+
+A compute node runs Ollama **or** vLLM, never both, and moves between them in place:
+
+1. **Install vLLM beside Ollama** — the `vllm_server` node component (`provision.deploy component=vllm_server install_deps=true`, Estate → Machines → Provision → "vLLM beside Ollama", or Provision → Deploy a Vera component). It installs into `/opt/vera-vllm` with the build that fits the node and writes the `vera-vllm_server` unit, but a deploy or a release sync **never starts it**; a sync only restarts it on a node that already serves vLLM.
+   - GPU nodes: the vLLM release's CUDA 12.9 wheel with torch from the CUDA 12.6 index. The default PyPI build is CUDA 13, which has no kernels for compute capability 7.0 (Tesla V100). Volta has no bf16, so it serves fp16.
+   - CPU nodes: the newest wheel in the shared model store's `vllm/` family (built for the nodes' Debian 12, with the AVX2 int4 kernel); without one, the released CPU wheel, which needs glibc 2.39. The CPU thread count is the same as the node's Ollama runners.
+2. **Switch** — `nodes.backend.switch` (Estate → Machines → Switch backend; dry-run by default, refuses with requests in flight unless `force`). To vLLM it writes the model and the names it also answers to (`aliases`, e.g. the Ollama tags it stands in for), stops and disables the node's Ollama and its activity tap, starts `vera-vllm_server`, and waits until it answers. It then disables the node's Ollama instance and registers `vllm-<node>` with `gate_as=<node>`. Back to Ollama: the reverse.
+3. **Routing** — rules keep naming the node (`cpu-246`): a pin naming a switched node reaches its vLLM instance on generate, chat and embeddings. Load-balanced Ollama routing skips the node while it serves vLLM. Release syncs leave its Ollama alone (tune, tap and warm-slot steps skip a switched node).
+
+**What runs on a CPU node.** vLLM's CPU build runs unquantised models (fp32 on AVX2 — bf16 is emulated without AVX-512 and adds a long compile to the first request) and **INT8 W8A8** checkpoints (compressed-tensors, oneDNN). **AWQ/GPTQ int4** needs the AVX2 int4 build: the released wheel compiles that kernel only for AVX-512. **GGUF** is not supported on CPU — vLLM's GGUF support (now the out-of-tree `vllm-gguf-plugin`) runs on CUDA/ROCm only. vLLM's own OpenMP binding left the model worker on one thread on these hosts; the node install sets `VLLM_CPU_OMP_THREADS_BIND=nobind` with an explicit thread count instead. The KV cache is allocated up front and must be free on the CT's NUMA node.
+
 ---
 
 ## 16. Limitations and troubleshooting
 
 | Symptom / limitation | Explanation |
 |---|---|
-| `llm.generate` with `backend="vllm"` (or `auto` + `prefer_gpu`) answers from Ollama | No vLLM instance is `online`, or the `vllm` module is not loaded. Both `llm.generate` and the `vllm:` routing pin use the module copy the loader registered (so they see the health-polled instances); check `vllm.status`. |
-| Instances disappear after restart | The registry is in memory; use `VLLM_INSTANCES`. |
+| `llm.generate` with `backend="vllm"` answers from Ollama | No vLLM instance is `online`, or the `vllm` module is not loaded. Both `llm.generate` and the `vllm:` routing pin use the module copy the loader registered (so they see the health-polled instances); check `vllm.status`. |
+| Instances disappear after restart | Check Redis is reachable at boot — runtime registrations are restored from `vera:vllm:instances` once it connects. |
 | Empty text from `vllm.generate` | No instance online, no model resolvable, or both attempts failed; check the log line `vllm_generate [...] FAILED` and `vllm.status`. |
 | Instance shows `degraded` | More than 32 queued requests or GPU KV cache above 97 %; reduce load or `max_model_len`. |
 | A pinned `instance_id` is used even though it is offline | Explicit ids bypass the status filter by design. |
 | LoRA request ignored | The adapter is not registered on the chosen instance, or the server was started without `--enable-lora`. |
-| vLLM and Ollama contend for the GPU | vLLM calls do not take the cluster's gate lease; give vLLM its own GPU or route all GPU work to one backend. |
+| vLLM and Ollama contend for the GPU | Routed vLLM calls take the gate of the node named in `gate_as`; set it for a server that shares an Ollama node's hardware. Direct `vllm.*` calls do not take the gate. |
+| A switched node's vLLM never comes up | `nodes.backend.switch` waits for `/v1/models` and returns the unit's last log lines. On CPU check the KV cache fits the NUMA node's *free* memory and that the checkpoint's format runs on CPU (INT8 W8A8, int4 with the AVX2 build; not GGUF). |
 
 ---
 

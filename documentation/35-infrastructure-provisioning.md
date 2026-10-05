@@ -263,7 +263,7 @@ at `/pxstore/panel`).
 | Datasets | `pxstore.zfs.create`, `pxstore.zfs.set`, `pxstore.disk.resize` | Create datasets, set quota properties, grow a guest disk |
 | CPU | `pxstore.cpu.topology`, `.map`, `.pin`, `.suggest` | NUMA topology, per-guest pinning with conflict analysis, a safe cpuset suggestion on one NUMA node |
 | Model store | `pxstore.store.provision`, `.attach`, `.attach_remote`, `.export`, `.consolidate`, `.status`, `.writer.provision`, `pxstore.models.pull`, `.pull.status` | A shared, compressed ZFS dataset of model blobs, mounted **read-only** into model-serving containers, with a single writer so no consumer can prune another node's blobs |
-| LLM backends | `pxstore.backend.status`, `.provision_vllm`, `.switch` | Which backend (Ollama or vLLM) a container runs, and switching between them |
+| LLM backends | `pxstore.backend.status`, `.provision_vllm`, `.switch` | Which backend (Ollama or vLLM) a container runs, and switching between them inside the CT (`provision_vllm` takes `mode` gpu/cpu/auto, `vllm_version`, `pip_spec`). For fleet nodes use `nodes.backend.switch` (below), which keeps the node's identity, workers and routing |
 | Vera data | `pxstore.veradata.plan`, `.provision` | Plan and create a dataset for Vera's databases exported over NFS |
 | Backups | `pxstore.backup.status`, `pxstore.backup.target` | Backup jobs on a node; point estate backups at the file fabric's backup dataset |
 | Network monitor | `pxstore.nwm.flows`, `.accounting`, `.capture` | Live connections, per-flow byte accounting and timed header captures on the network-monitor container |
@@ -539,11 +539,11 @@ described in [Security](29-security.md).
 |---|---|
 | `provision.targets` | Installable runtimes: `ollama`, `vllm`, `docker`, `nvidia` |
 | `provision.detect` | SSH-probe a host for OS, package manager, GPU and installed runtimes |
-| `provision.install` | Install a runtime over SSH |
+| `provision.install` | Install a runtime over SSH. vLLM takes `mode` (`auto` — the CUDA build when an NVIDIA GPU answers, else CPU —, `gpu`, `cpu`), `vllm_version` and `pip_spec` (an explicit wheel, e.g. the shared store's CPU wheel built for the nodes) |
 | `provision.serve` | Launch a vLLM OpenAI-compatible server on a host |
 | `provision.connect` | Register a provisioned endpoint into Vera's cluster |
-| `provision.run` | Install and register in one step |
-| `provision.components` | Vera's bundled edge components: `gpu_inference`, `onnx_runtime`, `nlp_server`, `mesh_gateway`, `model_builder` |
+| `provision.run` | Install and register in one step (passes vLLM `mode` / `vllm_version` / `pip_spec` to `provision.install`) |
+| `provision.components` | Vera's bundled edge components: `gpu_inference`, `onnx_runtime`, `nlp_server`, `mesh_gateway`, `model_builder`, `vllm_server` (vLLM installed beside the node's Ollama; a deploy or sync never starts it — `nodes.backend.switch` does) |
 | `provision.deploy` / `.component.status` / `.component.version` / `.component.stop` / `.component.sync` | Push a component to `~/.vera/edge` on a host, check it, and keep every node on the version this host would deploy |
 | `provision.worker` | Provision a Vera worker that joins the cluster task stream |
 | `nodes.workers.list` / `.provision` / `.roles.set` / `.dispatch` / `.sync` | Node workers: task classes (`general`, `nlp`, `cpu_compute`, `media`), one-click install, rollout stage, and syncing every worker onto the commit the host is running |
@@ -571,7 +571,8 @@ SSH as the fallback. Every step delegates to existing capabilities
 | `nodes.list` | `GET /nodes` | One row per machine linking its SSH, Docker and Proxmox identities, detected facts, and the Ollama/vLLM instances it runs |
 | `nodes.detect` / `nodes.detect_all` | `POST /nodes/detect`, `/nodes/detect_all` | One SSH probe per node: GPU/VRAM/RAM/cores/disk and Docker/Ollama/vLLM/ZFS/PVE presence |
 | `nodes.components` | `GET /nodes/components` | The unified provisionable catalogue |
-| `nodes.provision.plan` / `nodes.provision` | `POST /nodes/provision/plan`, `/nodes/provision` | Resolve components to a backend and steps (dry run), then execute and register endpoints |
+| `nodes.provision.plan` / `nodes.provision` | `POST /nodes/provision/plan`, `/nodes/provision` | Resolve components to a backend and steps (dry run), then execute and register endpoints. vLLM options: `vllm_mode`, `vllm_version`, `pip_spec` |
+| `nodes.backend.switch` | `POST /nodes/backend/switch` | Move a node between its Ollama and its vLLM service in place (Estate → Machines → **Switch backend**). Dry-run by default; refuses with requests in flight unless `force`. To vLLM: the model, the names it also answers to (`aliases`), `extra_args`; Ollama and its tap are stopped and disabled, the node's Ollama instance is disabled and `vllm-<node>` is registered gated as the node, so rules naming the node reach vLLM. See [21 · vLLM §15a](./21-vllm.md#15a-nodes-that-switch-between-ollama-and-vllm) |
 | `provision.overview` | `GET /provision/overview` | Every target and payload for uniform provisioning in one call |
 | `provision.apply` | `POST /provision/apply` | Deploy payloads (component keys, `stack:<service>`, …) onto `node:<id>`, `docker:<host_id>` or `new-ct:<cluster_id>:<pve_node>` |
 | `provision.node.new` | `POST /provision/node/new` | Create a Proxmox CT and enrol it as a node in one step |

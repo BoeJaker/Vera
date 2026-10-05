@@ -255,7 +255,12 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
             <label>Priority (lower = preferred)</label>
             <input type="number" id="add-priority" value="0" min="0">
           </div>
+          <div class="fg-field">
+            <label title="The Ollama node this server shares hardware with (e.g. gpu-250 for vLLM on that V100). Its calls then queue on that node's GPU gate, so the two never run at once.">Shares hardware with (gate as)</label>
+            <input type="text" id="add-gateas" placeholder="Ollama node id, e.g. gpu-250 - blank: its own">
+          </div>
         </div>
+        <div class="sec" style="font-size:9.5px;text-transform:none;letter-spacing:0;color:var(--dim, #6a7080)">A node switched to vLLM in Estate → Machines (Switch backend) registers itself here as vllm-&lt;node&gt;, gated as the node - no manual entry needed.</div>
         <div class="form-actions">
           <button class="btn pri" onclick="addInstance()">Register Instance</button>
         </div>
@@ -520,6 +525,7 @@ function renderSidebar(){
       <div class="inst-models">${(inst.models||[]).slice(0,2).join(', ') || '—'}</div>
       <div class="inst-badges">
         ${inst.has_gpu?'<span class="badge gpu">GPU</span>':'<span class="badge cpu">CPU</span>'}
+        ${inst.gate_as?`<span class="badge" title="Shares hardware with Ollama node ${inst.gate_as}: queues on its GPU gate" style="color:var(--dim2, #8a90a0)">⇄ ${inst.gate_as}</span>`:''}
         ${(inst.loaded_loras||[]).length?`<span class="badge lora">${inst.loaded_loras.length} LoRA</span>`:''}
         ${inst.status==='degraded'?'<span class="badge" style="background:rgba(201,163,90,.15);border:1px solid var(--warn);color:var(--warn)">degraded</span>':''}
       </div>
@@ -727,6 +733,7 @@ async function addInstance(){
     has_gpu:  document.getElementById('add-hasgpu').value==='true',
     priority: parseInt(document.getElementById('add-priority').value)||0,
     api_key:  document.getElementById('add-apikey').value,
+    gate_as:  document.getElementById('add-gateas').value.trim(),
   });
 
   const st = document.getElementById('add-status');

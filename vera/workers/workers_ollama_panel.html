@@ -1396,12 +1396,65 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
                   Weights cache (hf_home) <input id="nd-hf-home" placeholder="auto (central model store when available)" style="flex:1;min-width:150px;font-size:10px;padding:3px 6px;font-family:var(--mono)" title="Point at the central model store mount so nodes share weights">
                 </div>
               </div>
+              <!-- vLLM install options (vllm / vllm_server) -->
+              <div id="nd-vllm-opts" style="display:none;border:1px solid var(--border, #2a2f3a);border-radius:4px;padding:8px">
+                <div style="font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--warn, #c9a35a);margin-bottom:5px">vLLM install</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;color:var(--dim2, #8a90a0)">
+                  <label>Build <select id="nd-vllm-mode" style="font-size:10px;margin-left:4px" title="auto: the CUDA build when an NVIDIA GPU answers on the node, else the CPU build">
+                    <option value="auto">auto (detect GPU)</option>
+                    <option value="gpu">gpu (CUDA, keeps the V100)</option>
+                    <option value="cpu">cpu</option></select></label>
+                  <label>Version <input id="nd-vllm-version" placeholder="latest" style="width:70px;font-size:10px;padding:2px 5px;font-family:var(--mono)" title="A vLLM release, e.g. 0.31.0 - blank takes the latest"></label>
+                </div>
+                <div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:var(--dim2, #8a90a0)">
+                  Wheel <input id="nd-vllm-wheel" placeholder="auto (CPU: newest in the shared store's vllm/ family)" style="flex:1;min-width:150px;font-size:10px;padding:3px 6px;font-family:var(--mono)" title="An explicit wheel path or URL. CPU nodes run Debian 12, which the released CPU wheel does not support; the store holds one built for them, with the AVX2 int4 (AWQ/GPTQ) kernel.">
+                </div>
+                <div style="margin-top:5px;font-size:9px;color:var(--dim, #6a7080)">"vLLM beside Ollama" installs it next to the node's Ollama without starting it - use <b>Switch backend</b> on the machine to move the node over.</div>
+              </div>
               <div style="display:flex;gap:8px">
                 <button class="btn" onclick="P.ndPlan()">Plan (dry-run)</button>
                 <span style="flex:1"></span>
                 <button class="btn" id="nd-run-btn" style="border-color:#6fd68b;color:#6fd68b" onclick="P.ndRun()">Provision</button>
               </div>
               <div id="nd-prov-out" style="font-size:10px;font-family:var(--mono);white-space:pre-wrap;color:var(--dim2)"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Backend switch drawer: a node serves Ollama OR vLLM, switched in place -->
+        <div id="nd-sw" style="display:none;position:fixed;inset:0;z-index:60;background:color-mix(in srgb, var(--bg0, #0b0d10) 55%, transparent)">
+          <div style="position:absolute;top:0;right:0;height:100%;width:520px;max-width:96%;background:var(--bg1, #16181d);border-left:1px solid var(--border2, #343a46);display:flex;flex-direction:column">
+            <div style="display:flex;align-items:center;gap:8px;padding:13px;border-bottom:1px solid var(--border, #2a2f3a)">
+              <span style="font-weight:700;color:var(--acc2, #7aa2f7)">Switch backend</span>
+              <span id="nd-sw-node" style="font-family:var(--mono);font-size:10px;color:var(--dim2, #8a90a0)"></span>
+              <span style="flex:1"></span>
+              <button class="btn sm" onclick="P.ndSwitchClose()">✕</button>
+            </div>
+            <div style="flex:1;overflow-y:auto;padding:13px;display:flex;flex-direction:column;gap:10px;font-size:10.5px">
+              <div id="nd-sw-state" style="color:var(--dim2, #8a90a0)"></div>
+              <div style="font-size:9.5px;color:var(--dim, #6a7080)">The node keeps its id, its workers (NLP, media, tests, compute) and its routing: rules that name it reach whichever backend it serves. Its Ollama and vLLM never run together.</div>
+              <label style="color:var(--dim2, #8a90a0)">Serve with
+                <select id="nd-sw-backend" style="font-size:10px;margin-left:4px" onchange="P.ndSwitchBackendChanged()">
+                  <option value="vllm">vLLM</option><option value="ollama">Ollama</option></select></label>
+              <div id="nd-sw-vllm" style="display:flex;flex-direction:column;gap:7px">
+                <label style="display:flex;gap:6px;align-items:center;color:var(--dim2, #8a90a0)">Model
+                  <input id="nd-sw-model" placeholder="HF id or store path, e.g. RedHatAI/Qwen3.5-9B-quantized.w8a8" style="flex:1;font-size:10px;padding:3px 6px;font-family:var(--mono)"></label>
+                <label style="display:flex;gap:6px;align-items:center;color:var(--dim2, #8a90a0)" title="Names the server also answers to - the Ollama tags it stands in for, so routed calls asking for them resolve">Also answers to
+                  <input id="nd-sw-aliases" placeholder="the Ollama tags this model replaces, e.g. qwen3.5:9b" style="flex:1;font-size:10px;padding:3px 6px;font-family:var(--mono)"></label>
+                <label style="display:flex;gap:6px;align-items:center;color:var(--dim2, #8a90a0)">Extra vllm serve flags
+                  <input id="nd-sw-extra" placeholder="e.g. --max-model-len 16384" style="flex:1;font-size:10px;padding:3px 6px;font-family:var(--mono)"></label>
+                <div style="font-size:9px;color:var(--dim, #6a7080)">CPU nodes run with the same thread count as the node's Ollama runners. Quantised checkpoints on CPU: INT8 W8A8 works with any build; AWQ/GPTQ int4 needs the store's AVX2 int4 build; GGUF is GPU-only.</div>
+              </div>
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:var(--dim2, #8a90a0)">
+                <label title="Switch even with requests in flight on the node (they fail)"><input type="checkbox" id="nd-sw-force"> force</label>
+                <label>wait up to <input id="nd-sw-wait" value="900" style="width:52px;font-size:10px;padding:2px 5px"> s</label>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="btn" onclick="P.ndSwitchGo(true)">Preview (dry-run)</button>
+                <span style="flex:1"></span>
+                <button class="btn" id="nd-sw-btn" style="border-color:var(--acc2, #7aa2f7);color:var(--acc2, #7aa2f7)" onclick="P.ndSwitchGo(false)">Switch</button>
+              </div>
+              <div id="nd-sw-out" style="font-size:10px;font-family:var(--mono);white-space:pre-wrap;color:var(--dim2, #8a90a0)"></div>
             </div>
           </div>
         </div>
@@ -6321,6 +6374,7 @@ async function mcAct(idx, action){
     if(!_ndNodes.length) await ndLoad();
     const n=_ndNodes.find(x=>x.id===r.id||x.ssh_host_id===r.ssh_host_id);
     if(!n) return txt('mc-status','Switching the backend needs this machine in nodes.list; it is not there yet.');
+    _mcFloat('nd-sw');
     return ndSwitch(n.id);
   }
   if(action==='cpu'){ estateOpen('proxmox',''); return pmxSub('cpu'); }
@@ -7471,8 +7525,10 @@ function _ndHw(n){
 }
 function _ndRuns(n){
   const chips=[];
-  (n.ollama||[]).forEach(o=>chips.push(`<span class="chip" title="${esc(o.url)}" style="cursor:default;border-color:var(--gpu)">ollama ${o.status==='online'?'●':'○'} ${esc(o.label||o.id)}</span>`));
-  (n.vllm||[]).forEach(v=>chips.push(`<span class="chip" title="${esc(v.url)}" style="cursor:default;border-color:var(--acc2)">vLLM ${esc(v.label||v.id)}</span>`));
+  (n.ollama||[]).forEach(o=>chips.push(o.switched
+    ?`<span class="chip" title="${esc(o.url)} - switched: the node serves vLLM; its Ollama is stopped" style="cursor:default;border-color:var(--acc2)">${esc(o.label||o.id)} → vLLM</span>`
+    :`<span class="chip" title="${esc(o.url)}" style="cursor:default;border-color:var(--gpu)">ollama ${o.status==='online'?'●':'○'} ${esc(o.label||o.id)}</span>`));
+  (n.vllm||[]).forEach(v=>chips.push(`<span class="chip" title="${esc(v.url)}${v.gate_as?' - serving for '+esc(v.gate_as):''}" style="cursor:default;border-color:var(--acc2)">vLLM ${v.status==='online'?'●':'○'} ${esc(v.label||v.id)}</span>`));
   const f=n.facts||{};
   if(f.ollama_api&&!(n.ollama||[]).length) chips.push('<span class="chip" style="cursor:default">ollama (unregistered)</span>');
   if(f.pve) chips.push('<span class="chip" style="cursor:default;border-color:#e36b2d">PVE host</span>');
@@ -7500,9 +7556,8 @@ function ndRender(){
       <td style="white-space:nowrap">
         ${n.ssh_host_id?`<button class="btn sm" onclick="P.ndDetect(${sq(n.ssh_host_id)})">Detect</button>`:''}
         <button class="btn sm" style="border-color:#6fd68b;color:#6fd68b" onclick="P.ndProv(${sq(n.id)})">Provision</button>
-        ${(n.proxmox&&n.proxmox.kind==='guest')?`
-          <button class="btn sm" title="Switch this CT to serve via vLLM (needs vLLM provisioned in the CT)" onclick="P.ndSwitch(${sq(n.id)},'vllm')">→vLLM</button>
-          <button class="btn sm" title="Switch this CT back to Ollama" onclick="P.ndSwitch(${sq(n.id)},'ollama')">→Ollama</button>`:''}
+        ${(n.ollama||[]).length?`
+          <button class="btn sm" title="Move this node between its Ollama and its vLLM service (vLLM installed beside Ollama: Provision → vLLM beside Ollama)" onclick="P.ndSwitch(${sq(n.id)})">Switch backend</button>`:''}
       </td></tr>`;
   }).join('');
   $('nd-empty').style.display=_ndNodes.length?'none':'block';
@@ -7522,7 +7577,9 @@ async function ndDetectAll(){
 async function ndProv(nodeId){
   _ndProvNode=_ndNodes.find(n=>n.id===nodeId)||null;
   if(!_ndProvNode) return;
-  $('nd-prov').style.display='block';
+  /* same as the switch drawer: never under the folded (hidden) Nodes pane */
+  const d=$('nd-prov'); if(d.parentElement!==document.body) document.body.appendChild(d);
+  d.style.display='block';
   txt('nd-prov-node', (_ndProvNode.label||nodeId)+' · '+(_ndProvNode.addr||''));
   $('nd-prov-out').textContent='';
   if(!_ndComps){
@@ -7546,7 +7603,9 @@ function _ndSelComps(){
   return [...document.querySelectorAll('[data-ndcomp]:checked')].map(x=>x.getAttribute('data-ndcomp'));
 }
 function ndCompToggle(){
-  $('nd-model-wrap').style.display=_ndSelComps().includes('vllm')?'block':'none';
+  const sel=_ndSelComps();
+  $('nd-model-wrap').style.display=sel.includes('vllm')?'block':'none';
+  $('nd-vllm-opts').style.display=(sel.includes('vllm')||sel.includes('vllm_server'))?'block':'none';
 }
 async function ndModelSearch(){
   const q=($('nd-model-q').value||'').trim();
@@ -7572,6 +7631,9 @@ function _ndProvArgs(){
   const gpus=$('nd-prov-gpus').value; if(gpus) opt.gpus=gpus;
   const model=($('nd-model-sel').value||'').trim(); if(model) opt.model=model;
   const hf=($('nd-hf-home').value||'').trim(); if(hf) opt.hf_home=hf;
+  const vm=$('nd-vllm-mode').value; if(vm&&vm!=='auto') opt.vllm_mode=vm;
+  const vv=($('nd-vllm-version').value||'').trim(); if(vv) opt.vllm_version=vv;
+  const vw=($('nd-vllm-wheel').value||'').trim(); if(vw) opt.pip_spec=vw;
   return {node_id:_ndProvNode.id, components:_ndSelComps(),
           backend:$('nd-prov-backend').value||'auto', options:opt};
 }
@@ -7604,18 +7666,65 @@ async function ndRun(){
   ndLoad();
 }
 
-// Backend switch (ollama ⇄ vLLM) for enrolled Proxmox CT nodes.
+// Backend switch: a node serves Ollama OR vLLM, moved in place by
+// nodes.backend.switch (any node with an Ollama instance; vLLM installed beside
+// it by the vllm_server component). The node keeps its id, workers and routing.
 // (Estate storage / sync / backup UI lives in Storage → Estate & Backup.)
+let _ndSwNode=null, _ndSwInst='';
+function _ndSwInstOf(n){ return (n&&n.ollama&&n.ollama[0]&&n.ollama[0].id)||''; }
 async function ndSwitch(nodeId,backend){
-  const n=_ndNodes.find(x=>x.id===nodeId); if(!n||!n.proxmox) return;
-  let pve=n.proxmox.node||'';
-  if(!pve){ pve=prompt('PVE node hosting CT '+n.proxmox.vmid+' (e.g. pve):',''); if(!pve) return; }
-  const inst=(n.ollama&&n.ollama[0]&&n.ollama[0].id)||'';
-  if(!confirm('Switch '+(n.label||nodeId)+' (CT '+n.proxmox.vmid+') to '+backend+'?'+(inst?' Registry: '+inst:''))) return;
-  const r=await api('/pxstore/backend/switch','POST',{cluster_id:n.proxmox.cluster_id||'',
-    node:pve,vmid:n.proxmox.vmid,backend,ollama_instance_id:inst});
-  if(r&&r.error){ alert('Switch failed: '+r.error); return; }
-  ndLoad();
+  const n=_ndNodes.find(x=>x.id===nodeId); if(!n) return;
+  _ndSwNode=n; _ndSwInst=_ndSwInstOf(n);
+  /* the drawer's markup sits in the (folded) Nodes pane; a fixed drawer under a
+     hidden ancestor never shows, so it always lives on <body> */
+  const d=$('nd-sw'); if(d.parentElement!==document.body) document.body.appendChild(d);
+  d.style.display='block';
+  txt('nd-sw-node',(n.label||nodeId)+' · '+(n.addr||'')+(_ndSwInst?' · '+_ndSwInst:''));
+  $('nd-sw-out').textContent='';
+  if(!_ndSwInst){ $('nd-sw-state').textContent='This machine has no Ollama node registered - nothing to switch.'; return; }
+  const sw=!!(n.ollama[0]||{}).switched;
+  const vl=(n.vllm||[]).find(v=>v.gate_as===_ndSwInst);
+  const serving=sw?'vLLM'+(vl?' ('+(vl.label||vl.id)+', '+(vl.status||'?')+')':''):'Ollama';
+  $('nd-sw-state').innerHTML='Serving now: <b>'+esc(serving)+'</b>';
+  $('nd-sw-backend').value=backend||(sw?'ollama':'vllm');
+  /* no alias prefill: an alias makes vLLM answer for that Ollama tag, so only the
+     tags this checkpoint really stands in for belong there (e.g. qwen3.5:9b for
+     a Qwen3.5-9B INT8 build), never the node's other models */
+  ndSwitchBackendChanged();
+  ndSwitchGo(true);                      /* the preview says what a switch would do */
+}
+function ndSwitchClose(){ $('nd-sw').style.display='none'; }
+function ndSwitchBackendChanged(){
+  $('nd-sw-vllm').style.display=$('nd-sw-backend').value==='vllm'?'flex':'none';
+}
+function _ndSwArgs(dry){
+  const backend=$('nd-sw-backend').value;
+  const body={instance_id:_ndSwInst, backend, dry_run:!!dry,
+              force:$('nd-sw-force').checked, wait_s:parseInt($('nd-sw-wait').value||'900',10)||900};
+  if(backend==='vllm'){
+    body.model=($('nd-sw-model').value||'').trim();
+    body.aliases=($('nd-sw-aliases').value||'').split(',').map(x=>x.trim()).filter(Boolean);
+    const ex=($('nd-sw-extra').value||'').trim(); if(ex) body.extra_args=ex;
+  }
+  return body;
+}
+async function ndSwitchGo(dry){
+  if(!_ndSwNode||!_ndSwInst) return;
+  const body=_ndSwArgs(dry);
+  if(!dry&&body.backend==='vllm'&&!body.model){ $('nd-sw-out').textContent='Pick the model vLLM should serve.'; return; }
+  const btn=$('nd-sw-btn'); if(!dry) btn.disabled=true;
+  $('nd-sw-out').textContent=dry?'Checking…':'Switching… (a model load can take minutes; the node answers only once it is up)';
+  const r=await api('/nodes/backend/switch','POST',body);
+  if(!dry) btn.disabled=false;
+  if(!r){ $('nd-sw-out').textContent='No response (it may still be running server-side - check Health).'; return; }
+  const p=r.plan||{};
+  const lines=[];
+  if(p.action) lines.push((p.action==='switch'?'→ ':p.action==='noop'?'= ':'✗ ')+(p.action==='switch'?('switch to '+p.to+' (as '+(p.vllm_instance||'')+')'):(p.why||p.action)));
+  if(r.error) lines.push('✗ '+r.error);
+  if(!dry&&r.ok) lines.push('✓ '+(body.backend==='vllm'?'serving vLLM':'serving Ollama'));
+  if(r.log) lines.push('', String(r.log).trim().split('\n').slice(-12).join('\n'));
+  $('nd-sw-out').textContent=lines.join('\n')||JSON.stringify(r);
+  if(!dry&&r.ok){ ndLoad(); if(typeof mcLoad==='function') setTimeout(mcLoad,1500); }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -8274,6 +8383,7 @@ return {
   benchMatrixCancel, benchMatrixApply,
   ndLoad, ndDetect, ndDetectAll, ndProv, ndProvClose, ndCompToggle,
   ndModelSearch, ndModelPick, ndPlan, ndRun, ndSwitch,
+  ndSwitchClose, ndSwitchBackendChanged, ndSwitchGo,
 };
 })();
 </script>

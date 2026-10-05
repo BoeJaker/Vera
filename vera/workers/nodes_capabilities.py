@@ -251,6 +251,10 @@ async def _build_nodes() -> List[Dict]:
     cat = _mod("catalog_capabilities")
     node_ssh = dict(getattr(cat, "NODE_SSH", {}) or {}) if cat else {}
     node_hw = dict(getattr(cat, "NODE_HW", {}) or {}) if cat else {}
+    try:
+        _sw_ids = _switched_now()
+    except Exception:
+        _sw_ids = set()
     for iid, i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).items():
         addr = _addr_of_url(i.get("url", ""))
         target = None
@@ -261,6 +265,8 @@ async def _build_nodes() -> List[Dict]:
             "id": iid, "label": i.get("label", iid), "url": i.get("url", ""),
             "status": i.get("status", ""), "enabled": i.get("enabled", True),
             "has_gpu": i.get("has_gpu", False),
+            # serving vLLM instead (nodes.backend.switch) - its Ollama is stopped
+            "switched": iid in _sw_ids,
             "models": (i.get("models") or [])[:20]})
         if node_hw.get(iid) and not target["hw"]:
             target["hw"] = {k: node_hw[iid].get(k) for k in
@@ -280,6 +286,9 @@ async def _build_nodes() -> List[Dict]:
         target["vllm"].append({
             "id": iid, "label": getattr(inst, "label", iid), "url": url,
             "status": getattr(inst, "status", ""),
+            "has_gpu": bool(getattr(inst, "has_gpu", False)),
+            # the Ollama node it serves for, on the same machine (switched node)
+            "gate_as": getattr(inst, "gate_as", "") or "",
             "models": (getattr(inst, "models", []) or [])[:10]})
         if node_hw.get(iid) and not target["hw"]:
             target["hw"] = {k: node_hw[iid].get(k) for k in
@@ -528,6 +537,15 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                 "one from the HF catalog). Weights cache under hf_home — point "
                 "it at the central model store mount to share weights.",
     },
+    "vllm_server": {
+        "group": "workers", "label": "vLLM beside Ollama (switchable)",
+        "backends": ["ssh"], "gpu": "optional", "heavy": True,
+        "desc": "vLLM installed next to the node's Ollama and NOT started: the node "
+                "keeps serving Ollama until Switch backend moves it (nodes.backend."
+                "switch), keeping its id, workers and routing. GPU nodes get the "
+                "CUDA build that keeps the V100; CPU nodes the AVX2 wheel from the "
+                "shared store's vllm/ family.",
+    },
     "gpu_inference": {
         "group": "workers", "label": "SD · TTS · STT (GPU inference)",
         "backends": ["ssh"], "gpu": "required", "heavy": True,
@@ -763,6 +781,9 @@ async def cap_nodes_provision_plan(node_id: str = "",
             ("onnx_runtime", "ssh"): "provision.deploy component=onnx_runtime",
             ("nlp_server", "ssh"): "provision.deploy component=nlp_server "
                                    "(install deps + systemd service)",
+            ("vllm_server", "ssh"): "provision.deploy component=vllm_server "
+                                    "(install deps + unit, not started - then Switch "
+                                    "backend)",
             ("mesh_gateway", "ssh"): "provision.deploy component=mesh_gateway",
             ("docker", "ssh"): "provision.install target=docker + register "
                                "docker host",
@@ -993,6 +1014,7 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
                              hf_home=hf_home or "/models/hf",
                              pip_spec=opt.get("pip_spec", ""),
                              mode=opt.get("vllm_mode", "auto"),
+                             vllm_version=opt.get("vllm_version", ""),
                              extra_args=str(opt.get("extra_args", "")))
             out = {"ok": bool(res.get("ok")), "provision": res}
             if res.get("ok") and sw and opt.get("start", True):
@@ -1008,7 +1030,9 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         if not (inst and serve):
             return {"error": "provision.install/serve unavailable"}
         ires = await inst(host_id=hid, target="vllm", sudo=True, timeout=1800,
-                          mode=opt.get("vllm_mode", "auto"))
+                          mode=opt.get("vllm_mode", "auto"),
+                          vllm_version=opt.get("vllm_version", ""),
+                          pip_spec=opt.get("pip_spec", ""))
         if not ires.get("ok"):
             return {"error": "vllm install failed: "
                              + str(ires.get("error", ""))[:300], "install": ires}
@@ -1080,7 +1104,7 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         return {"ok": bool(res.get("ok")), "worker": res}
 
     # ── bundled edge components over ssh ────────────────────────────────────
-    if key in ("gpu_inference", "onnx_runtime", "nlp_server", "mesh_gateway"):
+    if key in ("gpu_inference", "onnx_runtime", "nlp_server", "mesh_gateway", "vllm_server"):
         dep = _rawcap("provision.deploy")
         if not dep:
             return {"error": "provision.deploy unavailable"}
@@ -1089,7 +1113,8 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         kwargs: Dict[str, Any] = {
             "host_id": hid, "component": key,
             "install_deps": bool(opt.get("install_deps", True)),
-            "launch": True, "systemd": bool(opt.get("systemd", key == "nlp_server"))}
+            "launch": True,
+            "systemd": bool(opt.get("systemd", key in ("nlp_server", "vllm_server")))}
         if (opt.get("ports") or {}).get(key):
             kwargs["port"] = int(opt["ports"][key])
         if key == "mesh_gateway":
