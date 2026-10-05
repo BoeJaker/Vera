@@ -959,6 +959,8 @@ def render_html(doc: Dict[str, Any], *, base_url: str = "") -> str:
     parts.append(f'<header><h1>{_E(title)}</h1><div class="meta">{_E(doc.get("ts", ""))} · '
                  f'{doc.get("counts", {}).get("topics", 0)} topics · {doc.get("counts", {}).get("signals", 0)} signals'
                  f' · last {int(doc.get("period_hours") or 24)}h</div></header>')
+    if doc.get("note"):
+        parts.append(f'<div class="meta" style="margin:6px 0 10px">{_E(doc["note"])}</div>')
     if doc.get("top_line"):
         parts.append('<section class="head"><h3 style="margin-top:0">Top line</h3><ul>'
                      + "".join(f"<li>{_md_inline(x)}</li>" for x in doc["top_line"]) + "</ul></section>")
@@ -1076,6 +1078,8 @@ def _render_part(p: Dict[str, Any]) -> str:
 
 def render_markdown(doc: Dict[str, Any], *, report_url: str = "") -> str:
     out = [f"# {doc.get('title')}", f"_{doc.get('ts', '')} \u00b7 {doc.get('counts', {}).get('signals', 0)} signals_", ""]
+    if doc.get("note"):
+        out += [f"_{doc['note']}_", ""]
     if doc.get("top_line"):
         out += ["## Top line"] + [f"- {x}" for x in doc["top_line"]] + [""]
     for sec in doc.get("sections") or []:
@@ -1135,6 +1139,8 @@ def render_telegram(doc: Dict[str, Any], *, report_url: str = "", action_url: st
              f"<i>{E(str(doc.get('ts', ''))[:16].replace('T', ' '))} · {doc.get('counts', {}).get('signals', 0)} signals</i>", ""]
     photo = ""
     acts: List[Dict[str, Any]] = list(doc.get("follow_up_actions") or [])
+    if doc.get("note"):
+        lines += [f"<i>{E(doc['note'])}</i>", ""]
     if doc.get("top_line"):
         lines += [f"\u25b8 {E(x)}" for x in doc["top_line"]] + [""]
     for c in (doc.get("competitors") or [])[:3]:

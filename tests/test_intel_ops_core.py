@@ -229,3 +229,9 @@ def test_corpus_order_is_stable_whatever_order_the_store_returns():
     b, _ = ops.corpus_rows(list(reversed(sigs)), max_share=1.0)
     assert [r["id"] for r in a] == [r["id"] for r in b] == ["a", "b", "c", "d"]
     assert ops.sequences(a, [])["stories"]["t"] == ops.sequences(b, [])["stories"]["t"]
+
+
+def test_night_note_only_when_the_night_did_not_finish():
+    assert ops.night_note({"stats": {"topics": 12}, "pending": ["a"] * 10}).startswith("Overnight: 2 of 12 topics refreshed. The other 10")
+    assert ops.night_note({"stats": {"topics": 12}, "pending": []}) == ""
+    assert ops.night_note({}) == ""

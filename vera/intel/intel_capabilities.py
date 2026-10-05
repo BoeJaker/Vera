@@ -1548,7 +1548,7 @@ async def cap_indicator_check(topic_id: str = "", trace_id=None):
 # ── reports ──────────────────────────────────────────────────────────────────
 
 async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: str = "",
-                       only_new: bool = True, synthesize: bool = False) -> Dict[str, Any]:
+                       only_new: bool = True, synthesize: bool = False, note: str = "") -> Dict[str, Any]:
     """Build (and store) a report from what is gathered. `synthesize` lets the MoE
     write the cross-topic top line and follow-ups - only ever from background work
     (the nightly batch), never at delivery time."""
@@ -1586,6 +1586,8 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
                 if im.get("url"):
                     per[t["id"]].setdefault("images", []).append({"url": im["url"], "caption": im.get("caption") or t["name"]})
     doc = core.build_report(topics, per, title=title, period_hours=period_hours)
+    if note:
+        doc["note"] = note
     seen_c = set()
     doc["competitors"] = [c for c in sorted(competitors, key=lambda c: -(c.get("score") or 0))
                           if (c["firm"], c["url"]) not in seen_c and not seen_c.add((c["firm"], c["url"]))][:12]
@@ -2271,8 +2273,9 @@ async def _tick() -> None:
         st.set_kv("brief_day", today)
         pend = st.get_kv("pending_brief") or {}
         rid = pend.get("id")
-        if not rid:
-            doc = await build_report([], period_hours=int(c.get("report_period_hours", 24)))
+        if not rid:              # the night did not finish: brief what is in, and say so
+            doc = await build_report([], period_hours=int(c.get("report_period_hours", 24)),
+                                     note=ops.night_note(st.get_kv("night", {}) or {}))
             rid = doc["id"] if _has_content(doc) else ""
         if rid:
             await deliver_report(rid, list(c.get("brief_channels") or ["html"]))
