@@ -1,0 +1,146 @@
+"""
+node_backend_core.py - moving a compute node between its Ollama and its vLLM
+service in place (nodes.backend.switch). Pure: shell text and decisions only.
+
+A node keeps its identity. Its Ollama instance id (e.g. "cpu-246") stays in
+routing; while it is switched:
+  * the Ollama instance is disabled, and a vLLM instance "vllm-<id>" with
+    gate_as=<id> is registered, so its calls take the node's own semaphore and
+    GPU gate;
+  * a routing pin naming the node resolves to that vLLM instance;
+  * the tune / tap / warm steps of a release sync leave the node alone - they
+    would otherwise restart or load the Ollama that was deliberately stopped.
+
+Both services are disabled/enabled, not only stopped/started, so a CT reboot
+comes back in the backend it was switched to.
+"""
+from __future__ import annotations
+
+import shlex
+from typing import Any, Dict, Iterable, List, Optional
+
+BACKENDS = ("vllm", "ollama")
+
+#: the fleet's Ollama unit; a fresh stock install has `ollama`
+OLLAMA_UNIT_EXPR = ("$(systemctl cat ollama-vera >/dev/null 2>&1 && echo ollama-vera "
+                    "|| echo ollama)")
+DONE = "VERA_SWITCHED"
+
+
+def vllm_instance_id(ollama_id: str) -> str:
+    """The id of the node's vLLM instance: the registry entry for the vLLM service
+    on the SAME container as its Ollama (port 8000), used while it is switched."""
+    return f"vllm-{ollama_id}"
+
+
+def _f(obj: Any, key: str, default: Any = None) -> Any:
+    return obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
+
+
+def switched_ids(ollama: Dict[str, Dict[str, Any]], vllm: Dict[str, Any]) -> List[str]:
+    """Ollama node ids currently switched to vLLM: the Ollama instance is
+    disabled and a vLLM instance gates as it."""
+    gated = {str(_f(v, "gate_as", "") or "") for v in (vllm or {}).values()}
+    return sorted(i for i, inst in (ollama or {}).items()
+                  if i in gated and not (inst or {}).get("enabled", True))
+
+
+def resolve_pin(pin: str, ollama: Dict[str, Dict[str, Any]], vllm: Dict[str, Any]) -> str:
+    """A pin naming a switched Ollama node -> "vllm:<its vLLM instance>"; any
+    other pin unchanged. Rules keep saying "cpu-246" while the node serves vLLM."""
+    p = str(pin or "")
+    if not p or p.startswith(("vllm:", "provider:")) or p not in (ollama or {}):
+        return p
+    if p not in switched_ids(ollama, vllm):
+        return p
+    for vid, v in (vllm or {}).items():
+        if str(_f(v, "gate_as", "") or "") == p:
+            return f"vllm:{vid}"
+    return p
+
+
+def serve_args(model: str, aliases: Iterable[str] = (), extra: str = "") -> str:
+    """vllm serve arguments after the model: the served names (the model and
+    the Ollama tags it stands in for, so routed calls asking for those resolve)
+    and anything extra."""
+    names = [model] + [a for a in (aliases or []) if a and a != model]
+    out = "--served-model-name " + " ".join(shlex.quote(n) for n in names)
+    return out + (f" {extra}" if extra else "")
+
+
+def env_file(model: str, *, aliases: Iterable[str] = (), extra: str = "",
+             threads: int = 0, has_gpu: bool = False) -> str:
+    """The unit environment for the vLLM service on a switched node. On a CPU
+    node OMP_NUM_THREADS is the node's Ollama runner thread count (parity)."""
+    lines = [f"VLLM_MODEL={model}",
+             f"VLLM_EXTRA_ARGS={serve_args(model, aliases, extra)}"]
+    if not has_gpu and int(threads or 0) > 0:
+        lines.append(f"OMP_NUM_THREADS={int(threads)}")
+    return "\n".join(lines) + "\n"
+
+
+def switch_script(backend: str, *, vllm_service: str, env_path: str, env_text: str,
+                  public_port: int, vllm_port: int, serve_path: str,
+                  wait_s: int = 900) -> str:
+    """Shell run on the node (as root) that moves it to `backend` and proves the
+    new service answers. Prints DONE on success."""
+    if backend not in BACKENDS:
+        raise ValueError(f"backend must be one of {BACKENDS}")
+    tap = f"vera-ollama-tap@{int(public_port)}"
+    has_tap = f"systemctl cat {tap} >/dev/null 2>&1"
+    tries = max(1, int(wait_s) // 5)
+    if backend == "vllm":
+        return "\n".join([
+            "set -e",
+            f"test -x {shlex.quote(serve_path)} || {{ echo 'vllm_server is not installed on this node'; exit 3; }}",
+            f"printf '%s' {shlex.quote(env_text)} > {shlex.quote(env_path)}.new",
+            f"mv {shlex.quote(env_path)}.new {shlex.quote(env_path)}",
+            f"U={OLLAMA_UNIT_EXPR}",
+            f"if {has_tap}; then systemctl disable --now {tap} || true; fi",
+            "systemctl disable --now $U || true",
+            "systemctl daemon-reload",
+            f"systemctl enable {vllm_service}",
+            f"systemctl restart {vllm_service}",
+            f"for i in $(seq 1 {tries}); do",
+            f"  systemctl is-active --quiet {vllm_service} || {{ echo 'vllm exited'; "
+            f"journalctl -u {vllm_service} -n 30 --no-pager; exit 4; }}",
+            f"  curl -sf -m 5 http://127.0.0.1:{int(vllm_port)}/v1/models >/dev/null && "
+            f"{{ echo \"{DONE} backend=vllm after $((i*5))s\"; exit 0; }}",
+            "  sleep 5",
+            "done",
+            f"echo 'vllm did not answer within {int(wait_s)}s'; exit 5",
+        ])
+    return "\n".join([
+        "set -e",
+        f"systemctl disable --now {vllm_service} 2>/dev/null || true",
+        f"U={OLLAMA_UNIT_EXPR}",
+        "systemctl enable $U",
+        "systemctl restart $U",
+        f"if {has_tap}; then systemctl enable {tap}; systemctl restart {tap}; fi",
+        f"for i in $(seq 1 {tries}); do",
+        f"  curl -sf -m 5 http://127.0.0.1:{int(public_port)}/api/tags >/dev/null && "
+        f"{{ echo \"{DONE} backend=ollama after $((i*5))s\"; exit 0; }}",
+        "  sleep 5",
+        "done",
+        f"echo 'ollama did not answer on :{int(public_port)} within {int(wait_s)}s'; exit 5",
+    ])
+
+
+def plan(backend: str, *, ollama_id: str, inst: Dict[str, Any], vllm_present: bool,
+         switched: bool, in_flight: int, force: bool) -> Dict[str, Any]:
+    """What a switch would do, or why it refuses."""
+    if backend not in BACKENDS:
+        return {"action": "refuse", "why": f"backend must be one of {BACKENDS}"}
+    if backend == "vllm" and switched:
+        return {"action": "noop", "why": f"{ollama_id} already serves vLLM"}
+    if backend == "ollama" and not switched:
+        return {"action": "noop", "why": f"{ollama_id} already serves Ollama"}
+    if backend == "vllm" and not vllm_present:
+        return {"action": "refuse",
+                "why": "vllm_server is not installed on the node - provision.deploy "
+                       "component=vllm_server install_deps=true first"}
+    if in_flight > 0 and not force:
+        return {"action": "refuse", "why": f"{in_flight} request(s) in flight on {ollama_id}; "
+                                            "wait, or force=true"}
+    return {"action": "switch", "to": backend, "vllm_instance": vllm_instance_id(ollama_id),
+            "has_gpu": bool((inst or {}).get("has_gpu"))}
