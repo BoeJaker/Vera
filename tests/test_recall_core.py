@@ -151,6 +151,16 @@ def test_collapse_accepts_flat_items_and_does_not_mutate_input():
 import asyncio  # noqa: E402
 
 
+def _arun(coro):
+    """Run a coroutine on a private loop. asyncio.run() would clear the thread's current loop when it ends, and a
+    later test calling asyncio.get_event_loop() then fails (Python 3.11) - order-dependent failures elsewhere."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 def _two_tier(slow_after, slow_result=("fast", "vec"), fast=("fast",)):
     """A fake search_fast_and_slow: fast hits at once, the slow task resolves after `slow_after` seconds."""
     made = {}
@@ -167,7 +177,7 @@ def _two_tier(slow_after, slow_result=("fast", "vec"), fast=("fast",)):
 
 def test_the_vector_tier_is_used_when_it_lands_inside_the_budget():
     search, made = _two_tier(0.01)
-    hits, vector = asyncio.run(rc.fast_then_vector(search, 0.5))
+    hits, vector = _arun(rc.fast_then_vector(search, 0.5))
     assert hits == ["fast", "vec"] and vector is True
     assert made["fast_timeout"] == 0.5
 
@@ -178,7 +188,7 @@ def test_past_the_budget_the_text_hits_stand_and_the_vector_task_is_cancelled():
         out = await rc.fast_then_vector(search, 0.2)
         await asyncio.sleep(0)
         return out, made["task"]
-    (hits, vector), task = asyncio.run(go())
+    (hits, vector), task = _arun(go())
     assert hits == ["fast"] and vector is False
     assert task.cancelled()
 
@@ -186,7 +196,7 @@ def test_past_the_budget_the_text_hits_stand_and_the_vector_task_is_cancelled():
 def test_a_failing_search_is_an_empty_answer_never_an_error():
     async def boom(fast_timeout):
         raise RuntimeError("postgres down")
-    assert asyncio.run(rc.fast_then_vector(boom, 0.5)) == ([], False)
+    assert _arun(rc.fast_then_vector(boom, 0.5)) == ([], False)
 
 
 def test_a_failing_vector_tier_keeps_the_text_hits():
@@ -194,13 +204,13 @@ def test_a_failing_vector_tier_keeps_the_text_hits():
         async def slow():
             raise RuntimeError("embed node gone")
         return ["fast"], asyncio.get_running_loop().create_task(slow())
-    assert asyncio.run(rc.fast_then_vector(search, 0.5)) == (["fast"], False)
+    assert _arun(rc.fast_then_vector(search, 0.5)) == (["fast"], False)
 
 
 def test_no_slow_tier_means_the_fast_hits():
     async def search(fast_timeout):
         return ["a", "b"], None
-    assert asyncio.run(rc.fast_then_vector(search, 0.5)) == (["a", "b"], False)
+    assert _arun(rc.fast_then_vector(search, 0.5)) == (["a", "b"], False)
 
 
 def test_retitle_block_keeps_the_lines_and_swaps_the_heading():
@@ -218,7 +228,7 @@ def test_what_finished_in_time_is_kept_and_the_slow_one_cancelled():
             await asyncio.sleep(5)
             return ["never"]
         return await rc.gather_within({"postgres": fast(), "neo4j": slow()}, 0.2)
-    out = asyncio.run(go())
+    out = _arun(go())
     assert out[0] == ["pg-hit"]
     assert isinstance(out[1], TimeoutError) and isinstance(out[1], Exception)
 
@@ -230,22 +240,22 @@ def test_a_failed_backend_stands_as_its_exception_in_order():
         async def ok():
             return ["n"]
         return await rc.gather_within({"neo4j": boom(), "postgres": ok()}, 1.0)
-    out = asyncio.run(go())
+    out = _arun(go())
     assert isinstance(out[0], RuntimeError) and out[1] == ["n"]
 
 
 def test_gather_within_nothing_is_nothing():
-    assert asyncio.run(rc.gather_within({}, 1.0)) == []
+    assert _arun(rc.gather_within({}, 1.0)) == []
 
 
 def test_fast_then_vector_says_how_the_text_tier_went():
     search, _made = _two_tier(5.0)
     info = {}
-    asyncio.run(rc.fast_then_vector(search, 0.2, info=info))
+    _arun(rc.fast_then_vector(search, 0.2, info=info))
     assert info["fast_hits"] == 1 and info["fast_ms"] >= 0 and "error" not in info
 
     async def boom(fast_timeout):
         raise RuntimeError("postgres down")
     info2 = {}
-    asyncio.run(rc.fast_then_vector(boom, 0.2, info=info2))
+    _arun(rc.fast_then_vector(boom, 0.2, info=info2))
     assert info2["fast_hits"] == 0 and "postgres down" in info2["error"]

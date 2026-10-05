@@ -4,6 +4,16 @@ Measured on prod 2026-10-05: one chat context fetch spent 7.1-7.3 s of ~9 s in c
 slowest source with no limit (cold related_qa 5.6 s, entity crawl 3.7 s; warm 0.03-0.25 s).
 """
 import asyncio
+
+
+def _arun(coro):
+    """Run a coroutine on a private loop. asyncio.run() would clear the thread's current loop when it ends, and a
+    later test calling asyncio.get_event_loop() then fails (Python 3.11) - order-dependent failures elsewhere."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 import os
 import sys
 
@@ -30,7 +40,7 @@ async def _boom():
 def test_no_budget_waits_for_every_source():
     async def go():
         return await rb.gather_until({"a": _after(0.01, 1), "b": _after(0.05, 2)}, 0)
-    done, ms, pending = asyncio.run(go())
+    done, ms, pending = _arun(go())
     assert done == {"a": 1, "b": 2} and pending == {} and set(ms) == {"a", "b"}
 
 
@@ -40,7 +50,7 @@ def test_a_budget_answers_with_what_finished_and_leaves_the_rest_running():
         assert not pending["slow"].done() and not pending["slow"].cancelled()   # left running, not cancelled
         late = await pending["slow"]
         return done, ms, list(pending), late
-    done, ms, pend, late = asyncio.run(go())
+    done, ms, pend, late = _arun(go())
     assert done == {"fast": "f"} and "fast" in ms and ms["fast"] >= 0
     assert pend == ["slow"] and late[0] == "s"
 
@@ -48,7 +58,7 @@ def test_a_budget_answers_with_what_finished_and_leaves_the_rest_running():
 def test_a_failed_source_is_its_exception_not_an_error():
     async def go():
         return await rb.gather_until({"wv": _boom(), "qa": _after(0.01, "q")}, 0.5)
-    done, ms, pending = asyncio.run(go())
+    done, ms, pending = _arun(go())
     assert isinstance(done["wv"], RuntimeError) and done["qa"] == "q" and not pending
 
 
@@ -59,7 +69,7 @@ def test_a_late_answer_is_kept_for_the_next_call():
         _d, _m, pending = await rb.gather_until({"qa": _after(0.1, ("rows", "edges"))}, 0.01)
         rb.keep_when_done(pending["qa"], got.append)
         await asyncio.sleep(0.2)
-    asyncio.run(go())
+    _arun(go())
     assert got == [("rows", "edges")]
 
 
@@ -73,12 +83,12 @@ def test_a_late_failure_is_not_kept():
         _d, _m, pending = await rb.gather_until({"qa": slow_boom()}, 0.01)
         rb.keep_when_done(pending["qa"], got.append)
         await asyncio.sleep(0.1)
-    asyncio.run(go())
+    _arun(go())
     assert got == []
 
 
 def test_nothing_to_run_is_nothing():
-    assert asyncio.run(rb.gather_until({}, 1.0)) == ({}, {}, {})
+    assert _arun(rb.gather_until({}, 1.0)) == ({}, {}, {})
 
 
 # -- wiring --------------------------------------------------------------------------------------------------------
@@ -132,7 +142,7 @@ def test_recall_answers_within_its_budget_and_the_late_source_comes_next_call(mo
         second = await fn(query="budget probe", budget_ms=100)
         third = await fn(query="budget probe", budget_ms=100)
         return first, second, third
-    first, second, third = asyncio.run(go())
+    first, second, third = _arun(go())
     assert [r["id"] for r in first["results"]] == ["e1"]
     assert first["late"] == ["related_qa"] and first["timings"]["related_qa"] == "late"
     assert isinstance(first["timings"]["entities"], float)
@@ -159,7 +169,7 @@ def test_recall_without_a_budget_waits_for_every_source(monkeypatch):
     monkeypatch.setattr(C, "_recall_worldview", wv)
     monkeypatch.setattr(C, "_recall_related_qa", qa)
     fn = getattr(C.cap_context_recall, "__wrapped__", C.cap_context_recall)
-    out = asyncio.run(fn(query="no budget probe"))
+    out = _arun(fn(query="no budget probe"))
     assert [r["id"] for r in out["results"]] == ["q1"] and out["late"] == []
 
 
@@ -185,7 +195,7 @@ def test_the_entity_crawl_starts_from_fabric_seeds_when_the_given_ones_are_not_f
             return {"results": [{"id": "fab-1"}]}
 
     monkeypatch.setattr(C, "_fabric", lambda: _Fab())
-    results, _edges = asyncio.run(C._recall_entity_crawl(["mem-1", "mem-2"], "census gpu", 8, ""))
+    results, _edges = _arun(C._recall_entity_crawl(["mem-1", "mem-2"], "census gpu", 8, ""))
     assert calls == [["mem-1", "mem-2"], ["fab-1"]]
     assert [r["id"] for r in results] == ["fab-2"]
 
@@ -209,5 +219,5 @@ def test_fabric_seeds_that_reach_an_entity_are_used_as_given(monkeypatch):
             raise AssertionError("no fabric query when the given seeds work")
 
     monkeypatch.setattr(C, "_fabric", lambda: _Fab())
-    results, _edges = asyncio.run(C._recall_entity_crawl(["fab-9"], "census gpu", 8, ""))
+    results, _edges = _arun(C._recall_entity_crawl(["fab-9"], "census gpu", 8, ""))
     assert calls == [["fab-9"]] and [r["id"] for r in results] == ["fab-3"]
