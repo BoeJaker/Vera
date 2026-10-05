@@ -26,6 +26,33 @@ OLLAMA_UNIT_EXPR = ("$(systemctl cat ollama-vera >/dev/null 2>&1 && echo ollama-
                     "|| echo ollama)")
 DONE = "VERA_SWITCHED"
 
+#: where a switch to vLLM records which Ollama unit it stopped, per public port
+UNIT_STATE = "/var/lib/vera/backend-ollama-unit.{port}"
+
+
+def ollama_unit_expr(public_port: int) -> str:
+    """Shell: the systemd unit of the Ollama behind THIS instance's public port.
+
+    A container can hold more than one Ollama (CT126: gpu-250 on 11435 and its
+    CPU sibling gpu-250-cpu on 11436). The switch used to stop `ollama-vera`
+    whichever instance it was asked to move - switching the CPU sibling would
+    have stopped the GPU's Ollama (5 Oct 2026). The unit is the one that owns
+    the process listening on the instance's upstream port: the tap's upstream
+    (/etc/vera-tap/<port>.env) when it is tapped, else the port itself. A unit
+    recorded by an earlier switch wins (nothing listens once it is stopped);
+    the fleet default is the last resort."""
+    p = int(public_port)
+    state = UNIT_STATE.format(port=p)
+    return (
+        "$( if [ -s " + state + " ]; then cat " + state + "; else "
+        "UP=$(sed -n 's#^VERA_TAP_UPSTREAM=.*:\\([0-9][0-9]*\\).*#\\1#p' /etc/vera-tap/" + str(p) + ".env 2>/dev/null | head -1); "
+        "UP=${UP:-" + str(p) + "}; "
+        "PID=$(ss -ltnpH \"sport = :$UP\" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2); "
+        "UN=$( [ -n \"$PID\" ] && ps -o unit= -p \"$PID\" 2>/dev/null | tr -d ' ' ); "
+        "case \"$UN\" in *.service) echo \"$UN\";; "
+        "*) systemctl cat ollama-vera >/dev/null 2>&1 && echo ollama-vera || echo ollama;; esac; fi )"
+    )
+
 
 def vllm_instance_id(ollama_id: str) -> str:
     """The id of the node's vLLM instance: the registry entry for the vLLM service
@@ -95,7 +122,10 @@ def switch_script(backend: str, *, vllm_service: str, env_path: str, env_text: s
             f"test -x {shlex.quote(serve_path)} || {{ echo 'vllm_server is not installed on this node'; exit 3; }}",
             f"printf '%s' {shlex.quote(env_text)} > {shlex.quote(env_path)}.new",
             f"mv {shlex.quote(env_path)}.new {shlex.quote(env_path)}",
-            f"U={OLLAMA_UNIT_EXPR}",
+            f"U={ollama_unit_expr(public_port)}",
+            "mkdir -p /var/lib/vera",
+            f"echo \"$U\" > {UNIT_STATE.format(port=int(public_port))}",
+            "echo \"stopping $U\"",
             f"if {has_tap}; then systemctl disable --now {tap} || true; fi",
             "systemctl disable --now $U || true",
             "systemctl daemon-reload",
@@ -113,9 +143,11 @@ def switch_script(backend: str, *, vllm_service: str, env_path: str, env_text: s
     return "\n".join([
         "set -e",
         f"systemctl disable --now {vllm_service} 2>/dev/null || true",
-        f"U={OLLAMA_UNIT_EXPR}",
+        f"U={ollama_unit_expr(public_port)}",
+        "echo \"starting $U\"",
         "systemctl enable $U",
         "systemctl restart $U",
+        f"rm -f {UNIT_STATE.format(port=int(public_port))}",
         f"if {has_tap}; then systemctl enable {tap}; systemctl restart {tap}; fi",
         f"for i in $(seq 1 {tries}); do",
         f"  curl -sf -m 5 http://127.0.0.1:{int(public_port)}/api/tags >/dev/null && "
@@ -126,11 +158,29 @@ def switch_script(backend: str, *, vllm_service: str, env_path: str, env_text: s
     ])
 
 
+def same_container_switched(ollama_id: str, ollama: Dict[str, Dict[str, Any]],
+                            switched: Iterable[str]) -> List[str]:
+    """Other instances on the same host as `ollama_id` that already serve vLLM."""
+    from urllib.parse import urlparse
+    host = urlparse(str(((ollama or {}).get(ollama_id) or {}).get("url") or "")).hostname
+    return sorted(i for i in switched
+                  if i != ollama_id and host and
+                  urlparse(str(((ollama or {}).get(i) or {}).get("url") or "")).hostname == host)
+
+
 def plan(backend: str, *, ollama_id: str, inst: Dict[str, Any], vllm_present: bool,
-         switched: bool, in_flight: int, force: bool) -> Dict[str, Any]:
-    """What a switch would do, or why it refuses."""
+         switched: bool, in_flight: int, force: bool,
+         sharing: Iterable[str] = ()) -> Dict[str, Any]:
+    """What a switch would do, or why it refuses. `sharing`: other instances on
+    the same container already on vLLM (same_container_switched) - a container
+    has one vLLM service (port 8000), so a second instance cannot move over
+    until the first moves back."""
     if backend not in BACKENDS:
         return {"action": "refuse", "why": f"backend must be one of {BACKENDS}"}
+    if backend == "vllm" and not switched and list(sharing):
+        return {"action": "refuse",
+                "why": f"this container's vLLM service already serves {', '.join(sharing)} - "
+                       "one vLLM per container; switch that back first"}
     if backend == "vllm" and switched:
         return {"action": "noop", "why": f"{ollama_id} already serves vLLM"}
     if backend == "ollama" and not switched:
