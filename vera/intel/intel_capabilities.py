@@ -1631,6 +1631,9 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
         if notes:
             st.set_kv("notes_report", [])
     await _event("report.new", id=doc["id"], title=doc["title"], signals=doc["counts"]["signals"])
+    if config().get("speak", True):
+        await _submit("speak", f"intel: read aloud - {doc['title'][:50]}", key=f"speak:{doc['id']}",
+                      payload={"report_id": doc["id"]}, priority=60)
     return doc
 
 
@@ -1678,6 +1681,113 @@ async def cap_report_get(id: str = "", trace_id=None):
         return {"error": f"unknown report: {id}"}
     return {"report": d, "deliveries": store().deliveries(report_id=id), "url": _report_url(id),
             "markdown": core.render_markdown(d, report_url=_report_url(id, public=True))}
+
+
+def _audio_dir() -> Path:
+    from Vera.vera.state_paths import state_dir
+    return state_dir("intel", "audio")
+
+
+async def _tts(text: str, voice: str = "", speed: float = 1.0) -> bytes:
+    """One piece of narration from the media node's speech server -> WAV bytes."""
+    import base64
+    import httpx
+    base = _orch.media_base("tts")
+    hdr = _orch.vera_origin_header(job_type="tts", cap="intel.speak") if hasattr(_orch, "vera_origin_header") else {}
+    body: Dict[str, Any] = {"text": text, "speed": speed}
+    if voice:
+        body["voice"] = voice
+    async with httpx.AsyncClient(timeout=180) as c:
+        r = await c.post(f"{base}/tts", headers=hdr, json=body)
+        r.raise_for_status()
+        b64 = (r.json() or {}).get("audio_b64") or ""
+    if not b64:
+        raise RuntimeError("the speech server returned no audio")
+    return base64.b64decode(b64)
+
+
+async def speak_report(rid: str, *, should_continue=None) -> Dict[str, Any]:
+    """Read a report aloud: each chapter of its spoken script through the speech
+    server, stitched into one file with chapter start times, attached to the report
+    (the page then shows a player). Background work: the idle queue runs it."""
+    import io
+    import wave
+    st = store()
+    doc = st.get_report(re.sub(r"[^a-f0-9]", "", rid or ""))
+    if not doc:
+        return {"ok": False, "error": f"unknown report: {rid}"}
+    script = core.spoken_script(doc)
+    if not script:
+        return {"ok": True, "skipped": "nothing to read"}
+    c = config()
+    params, frames, chapters, pos = None, [], [], 0
+    for ch in script:
+        why = await _stop_reason(should_continue)
+        if why:
+            return {"yielded": "pre-empted: " + why}
+        chapters.append({"id": ch["id"], "title": ch["title"], "start": round(pos / params[2], 1) if params else 0.0})
+        for chunk in ch["chunks"]:
+            try:
+                wav = await _tts(chunk, c.get("speak_voice", ""), float(c.get("speak_speed", 1.0) or 1.0))
+                with wave.open(io.BytesIO(wav), "rb") as w:
+                    p = (w.getnchannels(), w.getsampwidth(), w.getframerate())
+                    data = w.readframes(w.getnframes())
+            except Exception as ex:  # noqa: BLE001
+                return {"ok": False, "error": f"speech failed: {type(ex).__name__}: {ex}"[:200]}
+            if params is None:
+                params = p
+            if p != params:                     # one voice, one format; a stray piece is skipped, not mangled
+                continue
+            frames.append(data)
+            pos += len(data) // (p[0] * p[1])
+            frames.append(b"\x00" * (int(p[2] * 0.35) * p[0] * p[1]))     # a breath between pieces
+            pos += int(p[2] * 0.35)
+    if not params or not frames:
+        return {"ok": False, "error": "no audio"}
+    d = _audio_dir()
+    wav_path = d / f"{doc['id']}.wav"
+    with wave.open(str(wav_path), "wb") as w:
+        w.setnchannels(params[0]); w.setsampwidth(params[1]); w.setframerate(params[2])
+        w.writeframes(b"".join(frames))
+    path = wav_path
+    if shutil.which("ffmpeg"):
+        mp3 = d / f"{doc['id']}.mp3"
+        proc = await asyncio.create_subprocess_exec("ffmpeg", "-y", "-loglevel", "error", "-i", str(wav_path),
+                                                    "-codec:a", "libmp3lame", "-qscale:a", "5", str(mp3),
+                                                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        if await proc.wait() == 0 and mp3.exists():
+            wav_path.unlink(missing_ok=True)
+            path = mp3
+    doc = st.get_report(doc["id"]) or doc               # the record may have moved on while we spoke
+    doc["audio"] = {"url": f"/intel/report/audio/{doc['id']}", "seconds": round(pos / params[2], 1),
+                    "chapters": chapters, "format": path.suffix.lstrip("."), "made": core.now_iso()}
+    st.put_report(doc, core.render_html(doc))
+    await _event("report.audio", id=doc["id"], seconds=doc["audio"]["seconds"])
+    return {"ok": True, "seconds": doc["audio"]["seconds"], "chapters": len(chapters)}
+
+
+@APP.get("/intel/report/audio/{rid}", include_in_schema=False)
+async def _serve_audio(rid: str):
+    from fastapi.responses import FileResponse
+    rid = re.sub(r"[^a-f0-9]", "", rid)
+    for ext, mt in (("mp3", "audio/mpeg"), ("wav", "audio/wav")):
+        p = _audio_dir() / f"{rid}.{ext}"
+        if rid and p.exists():
+            return FileResponse(str(p), media_type=mt, filename=f"intel-{rid}.{ext}")
+    return Response(status_code=404)
+
+
+@capability("intel.report.speak", http_method="POST", http_path="/intel/report/speak", http_tags=["intel"],
+            description="Read a report aloud: queue (default) or make now the narration of its updates - top line, "
+                        "each topic's headline, what changed and what moved - with chapter marks; the report page "
+                        "then has play/pause, seek and speed, and a Listen button per topic. Input: id (str!), now "
+                        "(bool, default false - true speaks immediately). Output: {ok, queued|seconds}.")
+async def cap_report_speak(id: str = "", now: bool = False, trace_id=None):
+    if not store().get_report(re.sub(r"[^a-f0-9]", "", id or "")):
+        return {"error": f"unknown report: {id}"}
+    if now:
+        return await speak_report(id)
+    return await _submit("speak", "intel: read aloud", key=f"speak:{id}", payload={"report_id": id}, priority=60)
 
 
 @APP.get("/intel/report/view/{rid}", include_in_schema=False)
@@ -2033,6 +2143,8 @@ async def _intel_job(job: Dict[str, Any], should_continue) -> Dict[str, Any]:
         return await _job_research(p)
     if mode == "sweeps":
         return await _job_sweeps(job, p, should_continue)
+    if mode == "speak":
+        return await speak_report(p.get("report_id", ""), should_continue=should_continue)
     if mode == "brief":
         await _finish_night(p.get("night", ""))
         return {"ok": True}

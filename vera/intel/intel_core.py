@@ -921,6 +921,7 @@ vera-mermaid{display:block;margin:12px 0}.mm{background:var(--card);border:1px s
 .foot{margin-top:46px;padding-top:12px;border-top:1px solid var(--bd);color:var(--dim);font-size:.8rem}
 @media print{.acts,.toc{display:none}details.dg{display:block}details.dg .rd{display:block}}
 .fbr{display:flex;gap:4px;margin-top:4px}.fbr button{border:1px solid rgba(127,127,127,.35);background:none;border-radius:6px;cursor:pointer;font-size:12px;padding:1px 6px}.fbr button:disabled{opacity:.6;cursor:default}
+.player{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;margin:10px 0;padding:8px 10px;background:var(--card);border:1px solid var(--bd);border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.12)}.player .pp{width:40px;height:40px;border-radius:50%;border:0;background:var(--acc);color:#fff;font-size:15px;cursor:pointer;flex:0 0 auto}.player input[type=range]{flex:1;min-width:60px;accent-color:var(--acc)}.player .tm{font-size:.8rem;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}.player select{background:none;color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:2px}h2 .listen{margin-left:8px;font-size:.75rem;vertical-align:middle;border:1px solid var(--bd);background:none;color:var(--acc);border-radius:999px;padding:2px 10px;cursor:pointer}
 """
 
 _KW = r"\b(def|class|return|import|from|if|else|elif|for|while|in|async|await|function|const|let|var|new|try|except|catch|fn|pub|struct|impl|use|package|func|go|yield|with|as|lambda|true|false|null|None|True|False)\b"
@@ -1008,6 +1009,10 @@ def render_html(doc: Dict[str, Any], *, base_url: str = "") -> str:
                  f' · last {int(doc.get("period_hours") or 24)}h</div></header>')
     if doc.get("note"):
         parts.append(f'<div class="meta" style="margin:6px 0 10px">{_E(doc["note"])}</div>')
+    audio = doc.get("audio") or {}
+    if audio.get("url"):
+        parts.append(audio_player(audio))
+    starts = {c.get("id"): c.get("start") for c in audio.get("chapters") or []}
     if doc.get("top_line"):
         parts.append('<section class="head"><h3 style="margin-top:0">Top line</h3><ul>'
                      + "".join(f"<li>{_md_inline(x)}</li>" for x in doc["top_line"]) + "</ul></section>")
@@ -1022,7 +1027,9 @@ def render_html(doc: Dict[str, Any], *, base_url: str = "") -> str:
                 + "</li>" for h in sec["items"]) + "</ul></section>")
         elif sec.get("kind") == "topic":
             t = sec["topic"]
-            parts.append(f'<section id="t-{_E(t["id"])}"><h2>{_E(t["name"])}</h2>')
+            lb = (f' <button class="listen" data-start="{float(starts[t["id"]]):.1f}" title="listen to this topic">'
+                  f'\u25b6 Listen</button>') if starts.get(t["id"]) is not None else ""
+            parts.append(f'<section id="t-{_E(t["id"])}"><h2>{_E(t["name"])}{lb}</h2>')
             if t.get("brief"):
                 parts.append(f'<div class="meta">{_E(t["brief"])}</div>')
             for p in sec.get("parts") or []:
@@ -1053,12 +1060,112 @@ def render_html(doc: Dict[str, Any], *, base_url: str = "") -> str:
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<title>{_E(title)}</title><style>{REPORT_CSS}</style></head><body><main>"
             + "".join(parts) + "</main>" + (_mermaid_script() if _has_diagram(doc) else "") + _ACTION_JS
+            + (_PLAYER_JS if audio.get("url") else "")
             + "</body></html>")
 
 
 FEEDBACK_BUTTONS = (("useful", "\U0001F44D", "useful - more like this"),
                     ("not_useful", "\U0001F44E", "not useful"),
                     ("mute_site", "\U0001F507", "never show this site again for this topic"))
+
+
+def _speakable(text: str) -> str:
+    """Text a voice can read: no links, markup or brackets left over."""
+    t = re.sub(r"\[([^\]]+)\]\((?:https?://|/)[^)]*\)", r"\1", str(text or ""))
+    t = re.sub(r"\(?https?://\S+\)?", "", t)
+    t = re.sub(r"[*_`#>|]+", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _chunks(text: str, limit: int = 600) -> List[str]:
+    """Sentence-sized pieces for the speech server, none longer than `limit`."""
+    out: List[str] = []
+    cur = ""
+    for sent in re.split(r"(?<=[.!?])\s+", text):
+        while len(sent) > limit:                       # a run-on sentence: cut at a comma or a space
+            cut = max(sent.rfind(", ", 0, limit), sent.rfind(" ", 0, limit))
+            cut = cut if cut > limit // 3 else limit
+            out.append((cur + " " + sent[:cut]).strip()) if cur else out.append(sent[:cut].strip())
+            cur, sent = "", sent[cut:].lstrip(", ")
+        if len(cur) + len(sent) + 1 > limit and cur:
+            out.append(cur.strip())
+            cur = sent
+        else:
+            cur = (cur + " " + sent).strip()
+    if cur.strip():
+        out.append(cur.strip())
+    return [c for c in out if c]
+
+
+def spoken_script(doc: Dict[str, Any], *, per_topic_chars: int = 1100) -> List[Dict[str, Any]]:
+    """The report as narration, in chapters: an intro (date, the night's note, the
+    top line) and one chapter per topic (its headline, what changed, what moved).
+    Each chapter is {id, title, chunks}."""
+    when = parse_ts(doc.get("ts"))
+    day = when.strftime("%A %d %B") if when else ""
+    intro = [f"{doc.get('title') or 'Intel brief'}{', ' + day if day else ''}."]
+    if doc.get("note"):
+        intro.append(_speakable(doc["note"]))
+    heads: Dict[str, str] = {}
+    for sec in doc.get("sections") or []:
+        if sec.get("kind") == "headline":
+            for h in sec.get("items") or []:
+                heads[h.get("topic_id") or ""] = _speakable(h.get("text") or "")
+    if doc.get("top_line"):
+        intro.append("The top line. " + " ".join(_speakable(x).rstrip(".") + "." for x in doc["top_line"]))
+    elif heads:
+        intro.append(f"{len(heads)} topics have news.")
+    chapters = [{"id": "intro", "title": "Top line", "chunks": _chunks(" ".join(intro))}]
+    for sec in doc.get("sections") or []:
+        if sec.get("kind") != "topic":
+            continue
+        t = sec.get("topic") or {}
+        words = [f"{t.get('name')}."]
+        if heads.get(t.get("id") or ""):
+            words.append(heads[t["id"]])
+        for p in sec.get("parts") or []:
+            if p.get("kind") == "assessment" and p.get("changed"):
+                words.append("What changed: " + "; ".join(_speakable(c) for c in p["changed"][:4]) + ".")
+            if p.get("kind") == "moves" and p.get("items"):
+                words.append("What moved: " + "; ".join(_speakable(m.get("text")) for m in p["items"][:3]) + ".")
+        text = " ".join(w for w in words if w)[:per_topic_chars]
+        if len(words) > 1:
+            chapters.append({"id": t.get("id") or "", "title": t.get("name") or "", "chunks": _chunks(text)})
+    return [c for c in chapters if c["chunks"]]
+
+
+def _fmt_secs(s: Any) -> str:
+    s = int(float(s or 0))
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def audio_player(audio: Dict[str, Any]) -> str:
+    """A sticky player for a report's narration: play/pause, seek, time, speed;
+    chapters are played from the 'Listen' buttons on each topic."""
+    src = _safe_href(audio.get("url") or "")
+    if not src or src == "#":
+        return ""
+    total = _fmt_secs(audio.get("seconds"))
+    return (f'<div class="player" id="player"><audio id="au" preload="none" src="{src}"></audio>'
+            f'<button class="pp" id="pp" aria-label="play">▶</button>'
+            f'<input type="range" id="seek" min="0" max="{int(float(audio.get("seconds") or 0))}" value="0" step="1" aria-label="position">'
+            f'<span class="tm" id="tm">0:00 / {total}</span>'
+            f'<select id="rate" aria-label="speed"><option value="1">1×</option><option value="1.25">1.25×</option>'
+            f'<option value="1.5">1.5×</option><option value="1.75">1.75×</option></select></div>')
+
+
+_PLAYER_JS = r"""<script>(function(){var a=document.getElementById('au');if(!a)return;var pp=document.getElementById('pp'),sk=document.getElementById('seek'),tm=document.getElementById('tm'),rt=document.getElementById('rate');
+function f(s){s=Math.floor(s||0);return Math.floor(s/60)+':'+('0'+s%60).slice(-2);}
+function sync(){pp.textContent=a.paused?'▶':'❚❚';pp.setAttribute('aria-label',a.paused?'play':'pause');}
+pp.onclick=function(){if(a.paused)a.play();else a.pause();};a.onplay=sync;a.onpause=sync;a.onended=sync;
+a.ontimeupdate=function(){sk.value=a.currentTime;tm.textContent=f(a.currentTime)+' / '+f(a.duration||sk.max);};
+sk.oninput=function(){a.currentTime=+sk.value;};rt.onchange=function(){a.playbackRate=+rt.value;};
+document.addEventListener('click',function(e){var b=e.target.closest('button.listen[data-start]');if(!b)return;a.currentTime=+b.dataset.start;a.play();});
+if('mediaSession' in navigator){try{navigator.mediaSession.metadata=new MediaMetadata({title:document.title,artist:'Vera intelligence'});
+navigator.mediaSession.setActionHandler('play',function(){a.play();});navigator.mediaSession.setActionHandler('pause',function(){a.pause();});
+navigator.mediaSession.setActionHandler('seekbackward',function(){a.currentTime=Math.max(0,a.currentTime-15);});
+navigator.mediaSession.setActionHandler('seekforward',function(){a.currentTime=a.currentTime+15;});}catch(e){}}})();</script>"""
 
 
 def _render_part(p: Dict[str, Any]) -> str:
