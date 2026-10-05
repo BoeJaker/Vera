@@ -2821,7 +2821,11 @@ function renderOllamaNodes(nodes){
 
   el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px">'+nodes.map(([id,n])=>{
     const online = n.status==='online';
-    const disabled = n.enabled===false;
+    /* switched to vLLM: the Ollama instance is disabled on purpose and the
+       status is its vLLM server's - not "OFF", and no Enable (that would route
+       to a stopped Ollama); Switch backend moves it back */
+    const vllm = n.backend==='vllm';
+    const disabled = n.enabled===false && !vllm;
     const statusCol = online?'var(--ok)':'var(--err)';
     const latCol = online?(n.latency_ms<100?'var(--ok)':n.latency_ms<500?'var(--warn)':'var(--err)'):'var(--dim)';
     const pinned = _routing.pinned===id;
@@ -2877,6 +2881,7 @@ function renderOllamaNodes(nodes){
         ${n.has_gpu?'<span class="ol-badge gpu">GPU</span>':'<span class="ol-badge cpu">CPU</span>'}
         ${pinned?'<span class="ol-badge pin">PINNED</span>':''}
         ${disabled?'<span class="ol-badge" style="background:rgba(201,107,107,.15);color:var(--err);border:1px solid rgba(201,107,107,.3)">OFF</span>':''}
+        ${vllm?`<span class="ol-badge" title="Served by ${esc(n.served_by||'its vLLM server')} - Switch backend moves it back" style="background:color-mix(in srgb, var(--acc, #8a7cf0) 15%, transparent);color:var(--acc, #8a7cf0);border:1px solid color-mix(in srgb, var(--acc, #8a7cf0) 35%, transparent)">vLLM</span>`:''}
         <span style="font-size:7.5px;color:var(--dim2);margin-left:auto;font-family:var(--mono)">${(n.last_check||'').slice(11,19)||''}</span>
       </div>
       <div class="ol-meta">
@@ -2893,9 +2898,10 @@ function renderOllamaNodes(nodes){
       ${models?'<div style="margin-top:5px"><span style="font-size:8px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px">Models:</span><div class="ol-models" style="margin-top:3px">'+models+'</div></div>':''}
       <div class="ol-actions" onclick="event.stopPropagation()">
         <button class="btn sm" onclick="P.olPing(${sq(id)})">Ping</button>
-        <button class="btn sm ${disabled?'primary':'err-btn'}" onclick="P.nodeToggle(${sq(id)},${disabled?'true':'false'})">${disabled?'Enable':'Disable'}</button>
+        ${vllm?'<span style="font-size:8.5px;color:var(--dim2, #8a90a0)">on vLLM - Switch backend (Machines) moves it back</span>'
+              :`<button class="btn sm ${disabled?'primary':'err-btn'}" onclick="P.nodeToggle(${sq(id)},${disabled?'true':'false'})">${disabled?'Enable':'Disable'}</button>`}
         <button class="btn sm ${pinned?'primary':''}" onclick="P.olTogglePin(${sq(id)})">${pinned?'Unpin':'Pin'}</button>
-        <button class="btn sm gpu-btn" onclick="P.openPullModal(${sq(id)})">Pull</button>
+        ${vllm?'':`<button class="btn sm gpu-btn" onclick="P.openPullModal(${sq(id)})">Pull</button>`}
         <span style="flex:1"></span>
         <span style="font-size:8px;color:var(--err);font-family:var(--mono)">${n.errors?'err:'+n.errors:''}</span>
       </div>

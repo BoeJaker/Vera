@@ -240,6 +240,9 @@ async def _ollama_summary() -> Dict:
                 "latency_ms": i.get("latency_ms"),
                 "models":     len(i.get("models") or []),
                 "url":        i.get("url", ""),
+                # switched to vLLM: status/models are its vLLM server's
+                "backend":    i.get("backend", "ollama"),
+                "served_by":  i.get("served_by", ""),
             })
     nodes.sort(key=lambda n: n["id"])
     online = sum(1 for n in nodes if n["status"] == "online")

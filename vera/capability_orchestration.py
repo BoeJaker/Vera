@@ -2165,7 +2165,31 @@ def add_ollama_instance(iid: str, url: str, has_gpu: bool = False, label: str = 
     if int(num_thread or 0) > 0:
         OLLAMA_INSTANCES[iid]["num_thread"] = int(num_thread)
 
+def _switched_liveness(iid: str) -> Optional[dict]:
+    """The liveness a switched node reports (its vLLM server), else None."""
+    _vm = (sys.modules.get("vllm_capabilities")
+           or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+    if _vm is None or not hasattr(_vm, "standin_for"):
+        return None
+    try:
+        vid = _vm.standin_for(iid)
+        if not vid:
+            return None
+        return _vm._backend_core.liveness(_vm.VLLM_INSTANCES.get(vid), vid)
+    except Exception:
+        return None
+
+
 async def _ping_instance(iid: str, inst: dict):
+    # A node switched to vLLM: its Ollama is stopped on purpose - report the
+    # vLLM server that serves it (backend/served_by say so), never "offline".
+    _sw = _switched_liveness(iid)
+    if _sw is not None:
+        inst.update(_sw, last_check=now_iso())
+        return
+    if inst.get("backend") == "vllm":
+        inst.pop("backend", None)
+        inst.pop("served_by", None)
     t0 = time.monotonic()
     try:
         async with httpx.AsyncClient(verify=_SSL_CTX, timeout=5) as c:
@@ -2180,7 +2204,8 @@ async def _ping_instance(iid: str, inst: dict):
 async def instance_health_loop(interval: float = 20.0):
     while True:
         await asyncio.gather(*[_ping_instance(iid,inst) for iid,inst in OLLAMA_INSTANCES.items()],return_exceptions=True)
-        await emit_event({"type":"ollama.health","instances":{iid:{"status":i["status"],"latency_ms":i["latency_ms"]} for iid,i in OLLAMA_INSTANCES.items()}})
+        await emit_event({"type":"ollama.health","instances":{iid:{"status":i["status"],"latency_ms":i["latency_ms"],
+                                                                   "backend":i.get("backend","ollama")} for iid,i in OLLAMA_INSTANCES.items()}})
         # Media nodes (GPU inference servers) ride the same heartbeat.
         try:
             await asyncio.gather(*[_ping_media_instance(iid, inst)
@@ -4298,7 +4323,9 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             OLLAMA_INSTANCES.items(),
             key=lambda kv: (kv[1].get("in_use", 0), kv[1].get("priority", 99)))
         for fb_id, fb_inst in _fb_order:
-            if fb_id==chosen or fb_inst["status"]!="online": continue
+            # enabled too: a switched node reports "online" (its vLLM) but its
+            # Ollama URL is stopped
+            if fb_id==chosen or fb_inst["status"]!="online" or not fb_inst.get("enabled", True): continue
             # ── Don't let a BACKGROUND job displace foreground work ─────────
             # Observed live: the dream director's 12.7k-char think timed out on a
             # CPU node and failed over onto the GPU that was mid-generation for an
@@ -4799,7 +4826,8 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
 
         # Fallback: try other online instances
         for fb_id, fb_inst in OLLAMA_INSTANCES.items():
-            if fb_id == chosen or fb_inst.get("status") != "online":
+            if (fb_id == chosen or fb_inst.get("status") != "online"
+                    or not fb_inst.get("enabled", True)):
                 continue
             try:
                 log.info("ollama_embed_fallback [%s] trying %s", req_id, fb_id)
@@ -9280,7 +9308,9 @@ async def obs_health(trace_id=None):
             "neo4j":await _backend_answers("neo4j"),
             "workers":len(WORKER_REGISTRY),"caps":len(CAPABILITY_REGISTRY),
             "mcp_servers":len(MCP_SERVERS),
-            "ollama":{iid:{"status":i["status"],"latency_ms":i["latency_ms"],"has_gpu":i["has_gpu"]}
+            # a node switched to vLLM reports its vLLM server (backend/served_by)
+            "ollama":{iid:{"status":i["status"],"latency_ms":i["latency_ms"],"has_gpu":i["has_gpu"],
+                           "backend":i.get("backend","ollama"),"served_by":i.get("served_by","")}
                       for iid,i in OLLAMA_INSTANCES.items()},
             "gpu_gate":await _health_gpu_gate(),
             "census":await _health_census(),

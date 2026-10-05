@@ -248,6 +248,8 @@ async def cluster_poll_loop():
                         "version":      inst.get("version", ""),
                         "last_check":   inst.get("last_check", ""),
                         "proxy_queued": _proxy_queue_depth(iid),
+                        "backend":      inst.get("backend", "ollama"),
+                        "served_by":    inst.get("served_by", ""),
                     }
                 await r.set("vera:cluster:ollama",
                              json.dumps(snapshot), ex=60)

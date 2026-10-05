@@ -97,6 +97,12 @@ def gate_id(inst: Any, own_id: str) -> str:
 _THINK_BLOCK = re.compile(r"^\s*<think>.*?</think>\s*", re.S)
 
 
+def unit(vec: List[float]) -> List[float]:
+    """The vector scaled to unit length (zero vector unchanged)."""
+    n = sum(x * x for x in vec or []) ** 0.5
+    return [x / n for x in vec] if n else list(vec or [])
+
+
 def apply_think_default(body: Dict[str, Any], default: str) -> Dict[str, Any]:
     """A server's thinking default ("on" / "off") for a request that did not
     choose (no chat_template_kwargs.enable_thinking): the per-server switch on

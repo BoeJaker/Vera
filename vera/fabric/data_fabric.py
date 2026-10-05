@@ -988,6 +988,33 @@ async def _embed(text: str) -> Optional[List[float]]:
         return None
 
 
+async def _embed_many_vllm(batch: List[str]) -> Optional[List[List[float]]]:
+    """One vLLM /v1/embeddings call for the batch when embeddings are served by
+    vLLM: the "embedding" rule pins it, or the node the picker chooses is
+    switched to vLLM. None when neither (the Ollama batch path then runs)."""
+    import sys as _sys
+    _vm = (_sys.modules.get("vllm_capabilities")
+           or _sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+    if _vm is None or not hasattr(_vm, "routed_call"):
+        return None
+    try:
+        vr = await _vm.routed_call("embed", _orch._resolve_rule("embedding"),
+                                   model=OLLAMA_EMBED_MODEL, job_type="embedding",
+                                   inputs=batch)
+        if vr is None and hasattr(_vm, "standin_for"):
+            chosen = _orch.pick_instance(model=OLLAMA_EMBED_MODEL, job_type="embedding")
+            sv = _vm.standin_for(chosen or "")
+            if sv:
+                vr = await _vm.routed_call("embed", {"pin": f"vllm:{sv}"},
+                                           model=OLLAMA_EMBED_MODEL, job_type="embedding",
+                                           inputs=batch)
+        res = (vr or {}).get("result") if (vr or {}).get("ok") else None
+        return res if res and len(res) == len(batch) else None
+    except Exception as e:
+        log.debug("fabric batch embed via vLLM: %s", e)
+        return None
+
+
 async def _embed_many(texts: List[str]) -> List[Optional[List[float]]]:
     """Batch-embed via a single Ollama /api/embed call (list input) — one HTTP
     roundtrip per ~64 texts instead of one per record, which is the dominant
@@ -1007,9 +1034,21 @@ async def _embed_many(texts: List[str]) -> List[Optional[List[float]]]:
 
     url = ""
     if getattr(_orch, "EMBED_PROVIDER", "ollama") != "fastembed":
+        embs = await _embed_many_vllm([texts[i][:4096] for i in idx])
+        if embs:
+            for j, e in zip(idx, embs):
+                if HAS_NUMPY:
+                    v = np.asarray(e, dtype="float32")
+                    n = float(np.linalg.norm(v)) or 1.0
+                    out[j] = (v / n).tolist()
+                else:
+                    out[j] = e
+            _embed_failed = False
+            return out
         try:
+            # an Ollama node: a switched one's Ollama URL is stopped
             chosen = _orch.pick_instance(model=OLLAMA_EMBED_MODEL,
-                                         job_type="embedding")
+                                         job_type="embedding", no_standins=True)
             inst = _orch.OLLAMA_INSTANCES.get(chosen or "", {}) or {}
             url = (inst.get("url") or "").rstrip("/")
         except Exception:

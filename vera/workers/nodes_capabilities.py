@@ -546,6 +546,13 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                 "CUDA build that keeps the V100; CPU nodes the AVX2 wheel from the "
                 "shared store's vllm/ family.",
     },
+    "vllm_embed": {
+        "group": "workers", "label": "vLLM embeddings (nomic-embed-text)",
+        "backends": ["ssh"], "gpu": "optional", "heavy": True,
+        "desc": "nomic-embed-text v1.5 served by vLLM (CPU build, port 8002), the same "
+                "vectors as Ollama's. Started and registered as a vLLM server; pin the "
+                "embedding rule to vllm:* to move Vera's embeddings onto it.",
+    },
     "vllm_server_cpu": {
         "group": "workers", "label": "vLLM CPU slot (beside a GPU node's CPU Ollama)",
         "backends": ["ssh"], "gpu": "optional", "heavy": True,
@@ -793,6 +800,8 @@ async def cap_nodes_provision_plan(node_id: str = "",
                                     "backend)",
             ("vllm_server_cpu", "ssh"): "provision.deploy component=vllm_server_cpu "
                                         "(CPU build in the second slot, not started)",
+            ("vllm_embed", "ssh"): "provision.deploy component=vllm_embed "
+                                   "(started) + vllm.instances.add vllm-embed-<host>",
             ("mesh_gateway", "ssh"): "provision.deploy component=mesh_gateway",
             ("docker", "ssh"): "provision.install target=docker + register "
                                "docker host",
@@ -1114,7 +1123,7 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
 
     # ── bundled edge components over ssh ────────────────────────────────────
     if key in ("gpu_inference", "onnx_runtime", "nlp_server", "mesh_gateway", "vllm_server",
-               "vllm_server_cpu"):
+               "vllm_server_cpu", "vllm_embed"):
         dep = _rawcap("provision.deploy")
         if not dep:
             return {"error": "provision.deploy unavailable"}
@@ -1125,13 +1134,29 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
             "install_deps": bool(opt.get("install_deps", True)),
             "launch": True,
             "systemd": bool(opt.get("systemd", key in ("nlp_server", "vllm_server",
-                                                       "vllm_server_cpu")))}
+                                                       "vllm_server_cpu", "vllm_embed")))}
         if (opt.get("ports") or {}).get(key):
             kwargs["port"] = int(opt["ports"][key])
         if key == "mesh_gateway":
             kwargs["vera_url"] = str(opt.get("vera_url", ""))
         res = await dep(**kwargs)
-        return {"ok": bool(res.get("ok")), "deploy": res}
+        out = {"ok": bool(res.get("ok")), "deploy": res}
+        if key == "vllm_embed" and res.get("ok"):
+            # registered as a vLLM server with its own gate (embeddings must not
+            # queue behind the node's chat generations)
+            from Vera.vera.provisioning.components_capabilities import VLLM_EMBED_NODE_PORT
+            addr = str(node.get("addr") or node.get("host") or "")
+            vid = "vllm-embed-" + (addr.rsplit(".", 1)[-1] if addr else str(node.get("id", ""))[:8])
+            vadd, vdel = _rawcap("vllm.instances.add"), _rawcap("vllm.instances.remove")
+            if vdel and vid in _vllm_registry():
+                await vdel(instance_id=vid)
+            if vadd and addr:
+                out["register"] = await vadd(
+                    id=vid, url=f"http://{addr}:{VLLM_EMBED_NODE_PORT}",
+                    label=f"{node.get('label') or addr} embeddings (vLLM)", has_gpu=False,
+                    priority=0, gate_as="")
+                out["register"]["instance_id"] = vid
+        return out
 
     return {"error": f"no executor for {key} via {b}"}
 

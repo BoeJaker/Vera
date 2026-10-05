@@ -3084,12 +3084,28 @@ async def _embed_direct(text: str, ollama_model: str,
         instances_to_try = [("explicit", instance_url)]
     else:
         try:
+            # enabled too: a node switched to vLLM reports "online" (its vLLM
+            # server) but its Ollama URL is stopped
             online = [(iid, i) for iid, i in _orch.OLLAMA_INSTANCES.items()
-                      if i.get("status") == "online"]
+                      if i.get("status") == "online" and i.get("enabled", True)]
         except Exception:
             online = []
         if not online:
-            return None, "no_online_instances", ""
+            # No Ollama node: the routed embed path (vLLM) per chunk, pooled
+            # the same way, so the worldview keeps embedding on a vLLM estate.
+            vecs = []
+            for ch in chunks:
+                try:
+                    v = await _orch.ollama_embed(ch, model=ollama_model)
+                except Exception:
+                    v = None
+                if v:
+                    vecs.append(v)
+            if not vecs:
+                return None, "no_online_instances", ""
+            dim = len(vecs[0])
+            pooled = [sum(v[k] for v in vecs) / len(vecs) for k in range(dim)]
+            return pooled, "", "routed"
 
         # Prefer instances that have the model loaded, then by load + priority
         with_model = [(iid, i) for iid, i in online
