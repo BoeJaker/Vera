@@ -1685,7 +1685,8 @@ async def _serve_report(rid: str):
     d = store().get_report(re.sub(r"[^a-f0-9]", "", rid), with_html=True)
     if not d:
         return HTMLResponse("<h1>No such report</h1>", status_code=404)
-    return HTMLResponse(d.get("_html") or core.render_html(d), headers={"Cache-Control": "no-cache"})
+    d.pop("_html", None)
+    return HTMLResponse(core.render_html(d), headers={"Cache-Control": "no-cache"})
 
 
 # ── delivery ─────────────────────────────────────────────────────────────────
@@ -1695,7 +1696,8 @@ async def deliver_report(rid: str, channels: List[str], *, target: str = "") -> 
     doc = st.get_report(rid, with_html=True)
     if not doc:
         return {"error": f"unknown report: {rid}", "results": []}
-    html_doc = doc.pop("_html", "")
+    doc.pop("_html", None)
+    html_doc = core.render_html(doc)              # current rendering, not the one stored at build time
     public = _report_url(rid, public=True)
     action_url = config().get("public_base", "").rstrip("/") + "/intel/act"
     results = []

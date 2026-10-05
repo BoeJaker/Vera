@@ -284,3 +284,15 @@ def test_report_signals_carry_feedback_buttons():
     for v in ("useful", "not_useful", "mute_site"):
         assert f'data-sid="s1" data-v="{v}"' in html
     assert "/intel/feedback" in html and ".fbr" in html
+
+
+def test_diagrams_are_left_to_the_element_and_the_renderer_is_inlined():
+    doc = {"title": "t", "sections": [{"kind": "topic", "topic": {"id": "x", "name": "X"}, "parts": [
+        {"kind": "diagram", "mermaid": "flowchart LR\n A-->B", "caption": "c"}]}]}
+    html = core.render_html(doc)
+    assert "<vera-mermaid bare>flowchart LR" in html
+    assert 'querySelectorAll("vera-mermaid")' not in html   # no boot script re-rendering with empty text
+    assert "attachShadow" in html                              # the renderer itself is inlined
+    assert html.count("</script>") == html.count("<script")    # the inlined source cannot close its own tag early
+    plain = core.render_html({"title": "t", "sections": []})
+    assert "VeraMermaid" not in plain and len(plain) < 20000  # no diagram, no 50 KB renderer

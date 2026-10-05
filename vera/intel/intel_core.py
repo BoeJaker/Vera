@@ -892,6 +892,7 @@ def _safe_href(u: str) -> str:
 REPORT_CSS = """
 :root{--bg:#0f1115;--card:#171a21;--bd:#2a2f3a;--fg:#e6e8ee;--dim:#9aa3b2;--acc:#7aa2f7;--ok:#9ece6a;--warn:#e0af68;--bad:#f7768e;--code:#11141a}
 @media (prefers-color-scheme:light){:root{--bg:#f7f7f9;--card:#fff;--bd:#dde1e8;--fg:#1d2330;--dim:#5b6475;--acc:#3b63c9;--code:#f0f2f6}}
+:root{--s1:var(--bg);--s2:var(--card);--t1:var(--fg);--t2:var(--dim);--t3:var(--dim);--ac:var(--acc);--ac2:var(--ok);--ac3:var(--warn);--bd2:var(--bd);--err:var(--bad)}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:920px;margin:0 auto;padding:28px 18px 60px}
 h1{font-size:1.7rem;margin:0 0 4px}h2{font-size:1.25rem;margin:2.2em 0 .6em;padding-bottom:6px;border-bottom:1px solid var(--bd)}
@@ -952,10 +953,34 @@ def _score_cls(v: Any) -> str:
     return "s-hi" if v >= 7 else "s-md" if v >= 4 else "s-lo"
 
 
-_MERMAID_BOOT = ('<script src="/ui/elements/vera_mermaid.js"></script>'
-                 '<script>(function(){function go(){document.querySelectorAll("vera-mermaid").forEach(function(el){'
-                 'try{if(el.querySelector("svg"))return;el.render((el.getAttribute("code")||el.textContent||"").trim());}catch(e){}});}'
-                 'if(document.readyState!=="loading")setTimeout(go,0);else document.addEventListener("DOMContentLoaded",go);})();</script>')
+# The <vera-mermaid> element renders itself when it connects: it takes its text,
+# clears it and draws into its shadow root. (A boot script that "helped" by
+# calling render() on elements without a light-DOM <svg> re-rendered every one of
+# them with the now-empty text - every diagram in every report came out blank.)
+# The renderer is inlined, so a report opened as a file, from an email or offline
+# still draws its diagrams; the served copy is the fallback.
+_MERMAID_JS: List[str] = []
+
+
+def _mermaid_script() -> str:
+    if not _MERMAID_JS:
+        try:
+            from pathlib import Path
+            js = (Path(__file__).resolve().parents[1] / "render" / "vera_mermaid.js").read_text(encoding="utf-8")
+            # only a literal "</script" could end the inline block early; nothing else is touched
+            # (escaping every "</" broke a regex literal in the renderer)
+            _MERMAID_JS.append("<script>" + re.sub(r"</(script)", r"<\\/\1", js, flags=re.I) + "</script>")
+        except OSError:
+            _MERMAID_JS.append('<script src="/ui/elements/vera_mermaid.js"></script>')
+    # a phone has no room for a left-to-right chart: turn it top-down before the element reads its text
+    narrow = ('<script>if(window.matchMedia&&matchMedia("(max-width: 640px)").matches)'
+              'document.querySelectorAll("vera-mermaid").forEach(function(e){'
+              r'e.textContent=e.textContent.replace(/^(\s*(?:flowchart|graph))\s+(LR|RL)\b/,"$1 TD");});</script>')
+    return narrow + _MERMAID_JS[0]
+
+
+def _has_diagram(doc: Dict[str, Any]) -> bool:
+    return any(p.get("kind") == "diagram" for sec in doc.get("sections") or [] for p in sec.get("parts") or [])
 
 # The page's own buttons post the one-time token back; the server looks the
 # action up and builds the call itself, so the page can never choose a capability.
@@ -1027,7 +1052,8 @@ def render_html(doc: Dict[str, Any], *, base_url: str = "") -> str:
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<title>{_E(title)}</title><style>{REPORT_CSS}</style></head><body><main>"
-            + "".join(parts) + "</main>" + _MERMAID_BOOT + _ACTION_JS + "</body></html>")
+            + "".join(parts) + "</main>" + (_mermaid_script() if _has_diagram(doc) else "") + _ACTION_JS
+            + "</body></html>")
 
 
 FEEDBACK_BUTTONS = (("useful", "\U0001F44D", "useful - more like this"),
