@@ -470,6 +470,19 @@ class MemoryBackend(ABC):
 # POSTGRES BACKEND  —  immutable append-only archive
 # ─────────────────────────────────────────────────────────────────────────────
 
+_PG_STARTUP_LOCK_TIMEOUT = os.environ.get("VERA_PG_STARTUP_LOCK_TIMEOUT", "3s")
+
+
+async def _pg_try(conn, sql: str) -> bool:
+    """One best-effort start-up statement: a lock timeout or any other failure skips it (it runs next start-up)."""
+    try:
+        await conn.execute(sql)
+        return True
+    except Exception as e:
+        log.debug("PG start-up statement skipped (%s): %s", sql[:60], e)
+        return False
+
+
 class PostgresBackend(MemoryBackend):
     """
     PostgreSQL as the source-of-truth immutable archive.
@@ -489,6 +502,11 @@ class PostgresBackend(MemoryBackend):
         try:
             self._pool = await _asyncpg.create_pool(POSTGRES_URL, min_size=2, max_size=10)
             async with self._pool.acquire() as conn:
+                # Start-up schema work never waits on a lock. 2026-10-05: prod restarted during the nightly pg_dump,
+                # whose share locks made this connect's no-op ALTER TABLE wait, and every read of vera_memory_edges
+                # queued behind that ALTER - memory came up 8 min late with nothing in recall until then. A migration
+                # that cannot get its lock in time is skipped (each is best-effort) and runs at the next start-up.
+                await conn.execute(f"SET lock_timeout = '{_PG_STARTUP_LOCK_TIMEOUT}'")
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS vera_memories (
                         id              TEXT PRIMARY KEY,
@@ -586,16 +604,16 @@ class PostgresBackend(MemoryBackend):
                     )
                 except Exception as e:
                     log.warning("vme_unique index creation failed (duplicates?): %s", e)
-                await conn.execute("CREATE INDEX IF NOT EXISTS vm_session ON vera_memories(session_id)")
-                await conn.execute("CREATE INDEX IF NOT EXISTS vm_type ON vera_memories(record_type)")
-                await conn.execute("CREATE INDEX IF NOT EXISTS vm_category ON vera_memories(category)")
-                await conn.execute("CREATE INDEX IF NOT EXISTS vm_created ON vera_memories(created_at DESC)")
-                await conn.execute("CREATE INDEX IF NOT EXISTS vm_fts ON vera_memories USING gin(search_vector)")
-                await conn.execute("CREATE INDEX IF NOT EXISTS vm_tags ON vera_memories USING gin(tags)")
-                await conn.execute("CREATE INDEX IF NOT EXISTS vm_hash ON vera_memories(content_hash)")
-                await conn.execute("CREATE INDEX IF NOT EXISTS vme_from ON vera_memory_edges(from_id)")
-                await conn.execute("CREATE INDEX IF NOT EXISTS vme_to   ON vera_memory_edges(to_id)")
-                await conn.execute("CREATE INDEX IF NOT EXISTS vme_sess ON vera_memory_edges(session_id)")
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_session ON vera_memories(session_id)")
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_type ON vera_memories(record_type)")
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_category ON vera_memories(category)")
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_created ON vera_memories(created_at DESC)")
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_fts ON vera_memories USING gin(search_vector)")
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_tags ON vera_memories USING gin(tags)")
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_hash ON vera_memories(content_hash)")
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vme_from ON vera_memory_edges(from_id)")
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vme_to   ON vera_memory_edges(to_id)")
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vme_sess ON vera_memory_edges(session_id)")
             log.info("✓ PostgresBackend connected")
             return True
         except Exception as e:
