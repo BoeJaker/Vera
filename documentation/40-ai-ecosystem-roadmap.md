@@ -159,8 +159,8 @@ of these now have offline Vera contracts; see
 | MLflow | Lifecycle/observability | P1 | Run/evaluation/prompt/model export and import | Offline interchange boundary shipped; SDK/service execution queued |
 | Qdrant | Retrieval | P1 | VectorIndexProvider | Injected-driver exact-snapshot adapter shipped; no package imported |
 | Hugging Face PEFT | Training | P1/P2 | TrainingAdapter producing derived ModelPackages | Provider-neutral training contracts shipped |
-| LlamaIndex | Data/RAG/agents | P2 | Data/Workflow adapters and selected readers | Planned |
-| Haystack | RAG/pipelines | P2 | Component and pipeline import/export adapter | Planned |
+| LlamaIndex | Data/RAG/agents | P2 | Loss-aware manifest/Workflow IR boundary and evidence comparison | Offline boundary shipped; live pilot queued |
+| Haystack | RAG/pipelines | P2 | Loss-aware manifest/Workflow IR boundary and evidence comparison | Offline boundary shipped; live pilot queued |
 | GraphRAG | Graph retrieval | P2 experimental | Offline Index/Evidence adapter over snapshots | Injected-runtime exact-snapshot boundary shipped |
 | Ray Serve | Distributed serving | P2 | DeploymentProvider | Planned |
 | BentoML | Model serving | P2 | DeploymentProvider | Planned |
@@ -463,11 +463,23 @@ Sources: [LlamaIndex](https://llamaindex.openml.io/),
 [Haystack](https://docs.haystack.deepset.ai/), and
 [Haystack pipelines](https://docs.haystack.deepset.ai/docs/pipelines).
 
-Both overlap substantially with Fabric, Context, agents, and Workflow IR. Only
-two experiments are defined: import/export a supported workflow while emitting
-Run, and expose selected reader/retriever/store components as providers. Useful
-connectors are retained without adopting an entire second workflow and storage
-model.
+Both overlap substantially with Fabric, Context, agents, and Workflow IR. Vera's
+offline comparison boundary accepts bounded, non-executable framework manifests
+and maps their supported reader/converter, chunking, embedding, indexing,
+retrieval, reranking, and synthesis roles to Workflow IR. The reverse projection
+is fail-closed: unsupported structures, bindings, extensions, and component
+roles are reported as explicit semantic gaps instead of being silently dropped.
+The boundary imports neither framework and grants neither one execution,
+workflow, record, citation, or storage authority.
+
+Comparison evidence must use the identical immutable `DatasetSnapshot`, query
+cases, and exact Fabric record/revision citations for both frameworks. It records
+retrieval quality and citation-revision accuracy alongside latency, import and
+export overhead, dependency count, installed bytes, teardown time, residual
+resources, and duplicate-authority findings. The comparator selects no winner
+and invokes no provider; live execution remains a separately authorized pilot.
+Useful connectors may therefore be retained without adopting a second workflow
+or storage model.
 
 ### Microsoft Agent Framework
 
