@@ -162,3 +162,15 @@ def test_marking_the_stored_noise_counts_first_then_marks_and_clears(monkeypatch
     assert json.loads(conn.marked["a"]) == ["status"]          # newly noise: marked with why
     assert conn.unmarked == ["b"]                              # a mark the rules no longer give is cleared
     assert out["marked"] == 1 and out["unmarked"] == 1 and json.loads(kv[H._NOISE_RUN_KEY])["scanned"] == 4
+
+@pytest.mark.parametrize("sent,said", [
+    ("can you run some backtests on bitcoin\n\n[Retrieved Context]\n[memory] tell me about x",
+     "can you run some backtests on bitcoin"),
+    ("can you recall my name [INTEGRATED CAPABILITY MODE — 3 caps available] You can invoke", "can you recall my name"),
+    ("thanks [STUDIO — visual & execution tools enabled by the user] - Pictures", "thanks"),
+    ("so tell me about mempalace [Capability execution: ENABLED. tool_mode=plan]", "so tell me about mempalace"),
+    ("plain question with no block", "plain question with no block"),
+    ("[Retrieved Context]\n[memory] only a block", "[Retrieved Context]\n[memory] only a block"),
+])
+def test_only_what_the_user_typed_is_kept(sent, said):
+    assert N.user_said(sent) == said

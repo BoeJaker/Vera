@@ -387,6 +387,9 @@ async def record_agent_turn(
     if not MEMORY or not MemoryRecord:
         return
 
+    # Only what the user typed: the page appends recalled context and capability instructions to the message it
+    # sends, and storing those made every later search match them (1,191 such records by 2026-10-06, E29).
+    human_text = _noise_core.user_said(human_text)
     base_tags = (tags or []) + ["agent_turn", agent_name]
     keywords  = _extract_keywords(human_text + " " + ai_text, f"agent.{agent_name}")
 
@@ -583,6 +586,7 @@ async def record_dag_execution(
         MEMORY, MemoryRecord = _memory()
         if MEMORY and MemoryRecord:
             try:
+                trigger_text = _noise_core.user_said(trigger_text)
                 trigger_id  = str(uuid.uuid4())
                 trigger_rec = MemoryRecord(
                     id          = trigger_id,

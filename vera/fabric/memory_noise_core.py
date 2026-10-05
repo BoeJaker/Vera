@@ -99,3 +99,20 @@ def noise_reasons(rec: Any) -> List[str]:
 
 def is_noise(rec: Any) -> bool:
     return bool(noise_reasons(rec))
+
+
+# Blocks the chat page appends to what the user typed before sending it: recalled context and the capability or
+# studio instructions. The user said only what comes before the first of them.
+_APPENDED = re.compile(r"\s*\[(Retrieved Context|Parent Context|INTEGRATED CAPABILITY MODE\b|STUDIO \S+ visual & "
+                       r"execution tools|Capability execution: ENABLED)")
+
+
+def user_said(text: Any) -> str:
+    """What the user typed, without the blocks the page appended for the model; the whole text when nothing but a
+    block is there (never an empty memory)."""
+    text = str(text or "")
+    m = _APPENDED.search(text)
+    if not m:
+        return text
+    head = text[:m.start()].rstrip()
+    return head if head.strip() else text
