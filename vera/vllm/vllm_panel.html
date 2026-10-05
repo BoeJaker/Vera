@@ -62,6 +62,7 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
 .inst-card{border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:6px;cursor:pointer;transition:border-color .14s;background:var(--bg2)}
 .inst-card:hover{border-color:var(--border2)}
 .inst-card.selected{border-color:var(--acc);background:rgba(90,158,143,.07)}
+.inst-think{display:flex;align-items:center;gap:6px;margin-top:5px}
 .inst-row{display:flex;align-items:center;gap:6px;margin-bottom:4px}
 .inst-name{font-size:11px;font-weight:600;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inst-url{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:2px;word-break:break-all}
@@ -587,6 +588,14 @@ function renderSidebar(){
         ${(inst.loaded_loras||[]).length?`<span class="badge lora">${inst.loaded_loras.length} LoRA</span>`:''}
         ${inst.status==='degraded'?'<span class="badge" style="background:rgba(201,163,90,.15);border:1px solid var(--warn);color:var(--warn)">degraded</span>':''}
       </div>
+      <div class="inst-think" onclick="event.stopPropagation()" title="Thinking for requests that do not choose. An agent's Think switch, or llm.generate think=, always wins.">
+        <span style="font-size:9px;color:var(--dim2, #8a90a0)">Thinking</span>
+        <select data-think-inst="${esc(inst.id)}" onchange="setThink(this.dataset.thinkInst, this.value)" style="font-size:9.5px;padding:1px 4px">
+          <option value="default"${!inst.think_default?' selected':''}>model default</option>
+          <option value="on"${inst.think_default==='on'?' selected':''}>on</option>
+          <option value="off"${inst.think_default==='off'?' selected':''}>off</option>
+        </select>
+      </div>
       <div class="stat-row">
         <div class="stat"><span class="stat-val">${inst.running_requests||0}</span><span class="stat-lbl">running</span></div>
         <div class="stat"><span class="stat-val">${inst.waiting_requests||0}</span><span class="stat-lbl">waiting</span></div>
@@ -881,6 +890,12 @@ async function addInstance(){
     st.style.color='var(--err)';
     st.textContent='Error: ' + (r.error||'unknown');
   }
+}
+
+async function setThink(id, value){
+  const r = await api('/vllm/instances/think', 'POST', {instance_id: id, think: value});
+  if(!r || !r.ok){ alert('Could not set thinking: ' + ((r && r.error) || 'no response')); }
+  await refreshStatus();
 }
 
 async function removeInstance(id){

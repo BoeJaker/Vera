@@ -19,7 +19,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
-PERSISTED_FIELDS = ("url", "label", "has_gpu", "priority", "gate_as")
+PERSISTED_FIELDS = ("url", "label", "has_gpu", "priority", "gate_as", "think_default")
+
+#: a server's thinking default for requests that do not choose: "" (the model's
+#: own), "on", "off"
+THINK_DEFAULTS = ("", "on", "off")
+
+
+def think_default(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    return s if s in THINK_DEFAULTS else ""
 
 
 def record(spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -31,6 +40,7 @@ def record(spec: Dict[str, Any]) -> Dict[str, Any]:
         "priority": int(spec.get("priority") or 0),
         # the Ollama node id whose gate this server takes (shared hardware)
         "gate_as": str(spec.get("gate_as") or ""),
+        "think_default": think_default(spec.get("think_default")),
     }
 
 

@@ -97,6 +97,20 @@ def gate_id(inst: Any, own_id: str) -> str:
 _THINK_BLOCK = re.compile(r"^\s*<think>.*?</think>\s*", re.S)
 
 
+def apply_think_default(body: Dict[str, Any], default: str) -> Dict[str, Any]:
+    """A server's thinking default ("on" / "off") for a request that did not
+    choose (no chat_template_kwargs.enable_thinking): the per-server switch on
+    the vLLM page. A request that chose - an agent's Think, llm.generate's
+    think - always wins, as on Ollama."""
+    if default not in ("on", "off"):
+        return body
+    kw = dict(body.get("chat_template_kwargs") or {})
+    if "enable_thinking" in kw:
+        return body
+    kw["enable_thinking"] = default == "on"
+    return dict(body, chat_template_kwargs=kw)
+
+
 def strip_think(text: str) -> str:
     """The answer without a reasoning model's thinking: a leading
     <think>...</think> block, or everything up to a lone </think> (the chat
