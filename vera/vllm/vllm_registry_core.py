@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
-PERSISTED_FIELDS = ("url", "label", "has_gpu", "priority")
+PERSISTED_FIELDS = ("url", "label", "has_gpu", "priority", "gate_as")
 
 
 def record(spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -29,6 +29,8 @@ def record(spec: Dict[str, Any]) -> Dict[str, Any]:
         "label": str(spec.get("label") or ""),
         "has_gpu": bool(spec.get("has_gpu", True)),
         "priority": int(spec.get("priority") or 0),
+        # the Ollama node id whose gate this server takes (shared hardware)
+        "gate_as": str(spec.get("gate_as") or ""),
     }
 
 
