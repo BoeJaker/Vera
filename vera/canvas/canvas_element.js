@@ -1466,6 +1466,10 @@
      it), which stacked the explode under its code at 60 px */
   .it:is(.openin,.sized,.maxed) > .it-bd.fu-beside{flex-direction:row}
   .it:is(.openin,.sized,.maxed) > .it-bd.fu-beside > *{flex:1 1 0;min-width:0}   /* halves, not the code taking it all */
+  /* ...and an OPENED fused item still has a ceiling (a dragged size or the maximised view sets its own): without one the
+     diagram, which fits itself to its box, and the box, which takes the diagram's height, grew each other - a 20-line
+     file's item went 2,142 px tall */
+  .it.openin:not(.sized):not(.maxed)[data-fuse] > .it-bd{max-height:clamp(260px,calc(.8 * var(--vc-vh,460px)),900px)!important}
   /* the strip's panes are as wide as their content, not a share of a column */
   .it-bd.fu-strip>.fu-p{max-width:100%}
   .it-bd.fu-strip .fu-b{overflow:visible}

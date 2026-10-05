@@ -97,6 +97,7 @@ t('a finished reply re-reads the memory graph, here and in the menu instance', H
 { const CV = R('vera/canvas/canvas_element.js');
   t('an exploded item is one you opened (never folded by the column) and is brought into view', CV.includes('this._open.add(key); this._revealSoon(key);') && CV.includes('_revealSoon(key, tries) {'));
   t('...its panes stay side by side, in halves, when it is opened or resized', CV.includes('.it:is(.openin,.sized,.maxed) > .it-bd.fu-beside{flex-direction:row}')
-    && CV.includes('.it:is(.openin,.sized,.maxed) > .it-bd.fu-beside > *{flex:1 1 0;min-width:0}')); }
+    && CV.includes('.it:is(.openin,.sized,.maxed) > .it-bd.fu-beside > *{flex:1 1 0;min-width:0}'));
+  t('...with a ceiling, so the diagram and its box cannot grow each other', CV.includes('.it.openin:not(.sized):not(.maxed)[data-fuse] > .it-bd{max-height:clamp(260px,calc(.8 * var(--vc-vh,460px)),900px)!important}')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
