@@ -203,11 +203,13 @@ curl -X POST http://localhost:8999/vllm/chat -H 'Content-Type: application/json'
 
 ## 8. Managed server lifecycle
 
-`vllm.server.start` launches `python -m vllm.entrypoints.openai.api_server` as a subprocess of the Vera process and registers it as `vllm-managed-<port>` (or the given `instance_id`) at `http://127.0.0.1:<port>`:
+The usual place for vLLM is a node: the vLLM page's **Launch** tab ("On a node") installs the `vllm_server` component when it is missing (`nodes.provision`) and moves the node over with `nodes.backend.switch` (§15a) - the same two steps as Estate → Machines. "On this host" is the managed subprocess below.
+
+`vllm.server.start` runs `vllm serve <model>` - the `vllm` CLI from `VLLM_BIN`, the PATH, or beside the Vera interpreter; without one it refuses and points at a node launch - as a subprocess of the Vera process and registers it as `vllm-managed-<port>` (or the given `instance_id`) at `http://127.0.0.1:<port>`:
 
 | Argument | Flag | Default |
 |---|---|---|
-| `model` (required) | `--model` | — |
+| `model` (required) | positional | — |
 | `host`, `port` | `--host`, `--port` | `0.0.0.0`, `8001` |
 | `tensor_parallel_size` | `--tensor-parallel-size` | `VLLM_TENSOR_PARALLEL` (1) |
 | `gpu_memory_utilization` | `--gpu-memory-utilization` | `VLLM_GPU_MEM_UTIL` (0.90) |
@@ -215,16 +217,16 @@ curl -X POST http://localhost:8999/vllm/chat -H 'Content-Type: application/json'
 | `cpu_offload_gb` | `--cpu-offload-gb` (when > 0) | `VLLM_CPU_OFFLOAD_GB` (0) |
 | `quantization` | `--quantization` | `VLLM_QUANTIZATION` |
 | `max_model_len` | `--max-model-len` | `VLLM_MAX_MODEL_LEN` |
-| `spec_model`, `spec_num_speculative_tokens` | `--speculative-model`, `--num-speculative-tokens` | `VLLM_SPEC_MODEL`, 5 |
+| `spec_model`, `spec_num_speculative_tokens` | `--speculative-config '{"model": …, "num_speculative_tokens": …}'` | `VLLM_SPEC_MODEL`, 5 |
 | `enable_lora`, `max_loras` | `--enable-lora --max-loras` | `VLLM_ENABLE_LORA`, `VLLM_MAX_LORAS` (4) |
 | `enable_prefix_caching` | `--enable-prefix-caching` | on |
 | `enable_chunked_prefill` | `--enable-chunked-prefill` | on |
 | `max_num_batched_tokens` | `--max-num-batched-tokens` | — |
 | `api_key` | `--api-key` | `VLLM_API_KEY` |
 | `served_model_name` | `--served-model-name` | — |
-| `extra_args` | appended verbatim | — |
+| `extra_args` | each entry split shell-style and appended | — |
 
-The call returns immediately with `{instance_id, pid, url, cmd}`; health checks pick the server up once it binds. If the `vllm` package is not installed the result says so. `vllm.server.stop` terminates the process (kill after 10 s), removes the instance, and emits `vllm.server.stopped`.
+The call returns immediately with `{instance_id, pid, url, cmd}` (`cmd` with the API key masked, as in the log and the `vllm.server.started` event); health checks pick the server up once it binds. If the `vllm` package is not installed the result says so. `vllm.server.stop` terminates the process (kill after 10 s), removes the instance, and emits `vllm.server.stopped`.
 
 > [!WARNING]
 > A managed server is a child of the Vera process: it shares Vera's host, is not supervised or restarted, and its exact flag set depends on the installed vLLM version. It is an administrative convenience, not a production deployment. It also does not take the [cross-process Ollama gate](./04-ollama-cluster.md#6-concurrency-slots-semaphores-and-the-cross-process-gate), so it can contend with Ollama for the same GPU.

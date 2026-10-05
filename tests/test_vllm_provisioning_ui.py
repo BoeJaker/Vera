@@ -86,3 +86,24 @@ def test_provision_page_sends_vllm_options():
 def test_vllm_page_sets_gate_as():
     ui = _src(VLLM_UI)
     assert "gate_as:  document.getElementById('add-gateas').value.trim()" in ui
+
+
+def test_vllm_launch_page_launches_on_a_node_through_provisioning():
+    ui = _src(VLLM_UI)
+    assert 'name="lnch-where" value="node" checked' in ui           # a node is the default
+    assert "'/nodes/provision', {node_id: n.node, components: ['vllm_server']" in ui
+    assert "api(path, 'POST', body)" in ui and "'/nodes/backend/switch'" in ui
+    assert "--limit-mm-per-prompt.image" in ui                       # text-only
+    assert "data-host-only" in ui
+    # the stale command shape is gone from the preview and the backend
+    assert "vllm.entrypoints.openai.api_server" not in ui
+    assert "--speculative-model" not in ui and "turbomind" not in ui.lower()
+    start = _func("vera/vllm/vllm_capabilities.py", "vllm_server_start")
+    assert "local_serve_argv" in start and "redact_argv" in start
+    assert '" ".join(cmd)' not in start                                # never the raw key
+
+
+def test_vllm_add_instance_points_at_a_node_port():
+    ui = _src(VLLM_UI)
+    assert 'id="add-url" placeholder="http://192.168.0.247:8000"' in ui
+    assert "RTX 4090" not in ui

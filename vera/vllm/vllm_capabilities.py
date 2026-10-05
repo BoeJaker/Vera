@@ -94,7 +94,9 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -118,10 +120,12 @@ try:
     from Vera.vera.vllm import vllm_registry_core as _reg_core
     from Vera.vera.vllm import vllm_route_core as _route_core
     from Vera.vera.vllm import node_backend_core as _backend_core
+    from Vera.vera.vllm import vllm_install_core as _install_core
 except Exception:                                    # worktree / app-free import
     from vera.vllm import vllm_registry_core as _reg_core
     from vera.vllm import vllm_route_core as _route_core
     from vera.vllm import node_backend_core as _backend_core
+    from vera.vllm import vllm_install_core as _install_core
 
 log = logging.getLogger("vera.vllm")
 
@@ -1339,7 +1343,7 @@ _MANAGED_PROCS: Dict[str, subprocess.Popen] = {}
             "tensor_parallel_size": {"type": "integer", "default": 1},
             "gpu_memory_utilization":{"type": "number", "default": 0.90},
             "cpu_offload_gb":       {"type": "number", "default": 0},
-            "quantization":         {"type": "string", "description": "gptq | awq | fp8 | gguf | turbomind"},
+            "quantization":         {"type": "string", "description": "blank = from the model's config | awq | gptq | compressed-tensors | fp8 | bitsandbytes | gguf"},
             "dtype":                {"type": "string", "default": "auto"},
             "max_model_len":        {"type": "integer"},
             "spec_model":           {"type": "string", "description": "Draft model for speculative decoding"},
@@ -1379,60 +1383,34 @@ async def vllm_server_start(
     extra_args: list = None,
 ) -> dict:
     iid = instance_id or f"vllm-managed-{port}"
-
-    cmd = [
-        "python", "-m", "vllm.entrypoints.openai.api_server",
-        "--model", model,
-        "--host", host,
-        "--port", str(port),
-        "--tensor-parallel-size", str(tensor_parallel_size or VLLM_TENSOR_PAR),
-        "--gpu-memory-utilization", str(gpu_memory_utilization or VLLM_GPU_MEM_UTIL),
-        "--dtype", dtype or VLLM_DTYPE,
-    ]
-
-    _cpu_off = cpu_offload_gb if cpu_offload_gb is not None else VLLM_CPU_OFFLOAD_GB
-    if _cpu_off > 0:
-        cmd += ["--cpu-offload-gb", str(_cpu_off)]
-
-    _quant = quantization or VLLM_QUANTIZATION
-    if _quant:
-        cmd += ["--quantization", _quant]
-
-    _mml = max_model_len or VLLM_MAX_MODEL_LEN
-    if _mml:
-        cmd += ["--max-model-len", str(_mml)]
-
-    _spec = spec_model or VLLM_SPEC_MODEL
-    if _spec:
-        cmd += [
-            "--speculative-model", _spec,
-            "--num-speculative-tokens", str(spec_num_speculative_tokens),
-        ]
-
-    _lora = enable_lora if enable_lora is not None else VLLM_ENABLE_LORA
-    if _lora:
-        cmd += ["--enable-lora", "--max-loras", str(max_loras or VLLM_MAX_LORAS)]
-
-    if enable_prefix_caching:
-        cmd += ["--enable-prefix-caching"]
-
-    if enable_chunked_prefill:
-        cmd += ["--enable-chunked-prefill"]
-
-    if max_num_batched_tokens:
-        cmd += ["--max-num-batched-tokens", str(max_num_batched_tokens)]
-
+    # The vllm CLI of this process's environment (VLLM_BIN overrides): the bare
+    # "python" this used to run had no vllm on most hosts. Nodes are launched
+    # through provisioning instead (nodes.backend.switch).
+    _bin = (os.environ.get("VLLM_BIN") or shutil.which("vllm")
+            or os.path.join(os.path.dirname(sys.executable), "vllm"))
+    if not os.path.exists(_bin):
+        return {"ok": False, "error": "no vllm CLI on this host (set VLLM_BIN) - to run vLLM "
+                                      "on a node use Launch on a node (nodes.backend.switch)"}
     _key = api_key or VLLM_API_KEY
-    if _key:
-        cmd += ["--api-key", _key]
+    _cpu_off = cpu_offload_gb if cpu_offload_gb is not None else VLLM_CPU_OFFLOAD_GB
+    _lora = enable_lora if enable_lora is not None else VLLM_ENABLE_LORA
+    cmd = _install_core.local_serve_argv(
+        model, vllm_bin=_bin, port=port, host=host,
+        tensor_parallel_size=tensor_parallel_size or VLLM_TENSOR_PAR,
+        gpu_memory_utilization=gpu_memory_utilization or VLLM_GPU_MEM_UTIL,
+        dtype=dtype or VLLM_DTYPE, cpu_offload_gb=_cpu_off or 0,
+        quantization=quantization or VLLM_QUANTIZATION,
+        max_model_len=max_model_len or VLLM_MAX_MODEL_LEN or 0,
+        spec_model=spec_model or VLLM_SPEC_MODEL, spec_tokens=spec_num_speculative_tokens,
+        enable_lora=bool(_lora), max_loras=max_loras or VLLM_MAX_LORAS,
+        enable_prefix_caching=enable_prefix_caching,
+        enable_chunked_prefill=enable_chunked_prefill,
+        max_num_batched_tokens=max_num_batched_tokens or 0,
+        api_key=_key or "", served_model_name=served_model_name or "",
+        extra_args=extra_args)
+    _shown = _install_core.redact_argv(cmd)
 
-    if served_model_name:
-        cmd += ["--served-model-name", served_model_name]
-
-    if extra_args:
-        cmd.extend(str(a) for a in extra_args)
-
-    log.info("vllm: launching server: %s", " ".join(cmd))
+    log.info("vllm: launching server: %s", _shown)
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         _MANAGED_PROCS[iid] = proc
@@ -1444,13 +1422,13 @@ async def vllm_server_start(
         inst.pid = proc.pid
         VLLM_INSTANCES[iid] = inst
 
-        await emit_event({"type": "vllm.server.started", "id": iid, "pid": proc.pid, "cmd": " ".join(cmd)})
+        await emit_event({"type": "vllm.server.started", "id": iid, "pid": proc.pid, "cmd": _shown})
         return {
             "ok": True,
             "instance_id": iid,
             "pid": proc.pid,
             "url": url,
-            "cmd": " ".join(cmd),
+            "cmd": _shown,
             "note": "Server starting. Health checks will begin in ~15s.",
         }
     except FileNotFoundError:
