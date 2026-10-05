@@ -43,10 +43,19 @@ def _f(inst: Any, key: str, default: Any = None) -> Any:
     return getattr(inst, key, default)
 
 
+def stands_in_for(inst: Any) -> List[str]:
+    """Model names this server answers for in Vera's routing though it serves
+    a different model (owner, 5 Oct 2026: with no Ollama left, requests for
+    models vLLM cannot run here go to a chosen stand-in). Set per server on the
+    vLLM page; the request is sent with the server's own model."""
+    return [str(n) for n in (_f(inst, "stands_in_for", []) or []) if n]
+
+
 def serves(inst: Any, model: Optional[str]) -> bool:
     if not model:
         return False
-    names = list(_f(inst, "models", []) or []) + list(_f(inst, "aliases", []) or [])
+    names = (list(_f(inst, "models", []) or []) + list(_f(inst, "aliases", []) or [])
+             + stands_in_for(inst))
     return model in names
 
 
@@ -83,9 +92,10 @@ def choose(instances: Dict[str, Any], pin: str, *, model: Optional[str] = None,
 def served_model(inst: Any, wanted: Optional[str]) -> Optional[str]:
     """The model name to send: the wanted one if the server answers to it, else
     the server's first model (None when the server reports none yet)."""
-    if serves(inst, wanted):
-        return wanted
     models = list(_f(inst, "models", []) or [])
+    if wanted and wanted in models:
+        return wanted
+    # a stand-in name (or none): the server's own model
     return models[0] if models else (wanted or None)
 
 
