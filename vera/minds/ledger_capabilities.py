@@ -31,13 +31,16 @@ except Exception:                        # worktree / app-free import
 log = logging.getLogger("vera.minds.ledger")
 
 STREAM = "vera:decide:ledger"
+OPEN_RUNS = "vera:decide:open_runs"        # run_id -> epoch s of its first decision
+ORPHAN_AFTER_S = float(__import__("os").environ.get("VERA_DECIDE_ORPHAN_AFTER_S", "21600") or 21600)
 GROUP = "drain"
 CONSUMER = "orchestrator"
 STREAM_MAXLEN = 200_000
 DRAIN_BATCH = 500
 
 _STATS: Dict[str, int] = {"appended": 0, "refused": 0, "dropped_no_redis": 0,
-                          "drained_decisions": 0, "drained_outcomes": 0, "drain_errors": 0}
+                          "drained_decisions": 0, "drained_outcomes": 0, "drain_errors": 0,
+                          "orphaned_runs": 0, "interrupted_outcomes": 0}
 _DDL_DONE = False
 _PARTITIONS: set = set()
 
@@ -192,6 +195,58 @@ async def _drain_job() -> None:
 schedule(_drain_job, interval=10, name="decide_ledger_drain", singleton=True, skip_in_sandbox=True)
 
 
+async def mark_run(run_id: str, open_: bool) -> None:
+    """A run with decisions is open until its end hook closes it (the sweeper's input)."""
+    r = _orch.REDIS
+    if r is None or not run_id:
+        return
+    import time as _t
+    if open_:
+        await r.hsetnx(OPEN_RUNS, run_id, str(int(_t.time())))
+    else:
+        await r.hdel(OPEN_RUNS, run_id)
+
+
+async def sweep_orphans(now: Optional[float] = None, older_than_s: float = ORPHAN_AFTER_S) -> Dict[str, Any]:
+    """Runs still open after `older_than_s` never reached their end (a restart, a release, a
+    cancel). Each of their decisions without an outcome gets one: label "interrupted",
+    source sweeper.interrupted, strength weak - so calibration can count them instead of
+    silently dropping the long and failing runs that get killed most."""
+    import time as _t
+    r, pool = _orch.REDIS, _orch.PG_POOL
+    if r is None or pool is None:
+        return {"ok": False, "skipped": "redis or postgres unavailable"}
+    now = float(now if now is not None else _t.time())
+    opened = {(_s(k)): float(_s(v) or 0) for k, v in ((await r.hgetall(OPEN_RUNS)) or {}).items()}
+    stale = [rid for rid, ts in opened.items() if now - ts >= older_than_s]
+    marked = 0
+    for rid in stale:
+        async with pool.acquire() as conn:
+            await _ensure_tables(conn)
+            rows = await conn.fetch(
+                """SELECT l.decision_id FROM decision_ledger l
+                   WHERE l.run_id = $1 AND NOT EXISTS
+                     (SELECT 1 FROM decision_outcomes o WHERE o.decision_id = l.decision_id)""", rid)
+        for row in rows:
+            res = await append(LC.make_outcome(row["decision_id"], "interrupted", "sweeper.interrupted",
+                                               "weak", detail={"open_s": int(now - opened[rid])}))
+            marked += 1 if res.get("ok") else 0
+        await r.hdel(OPEN_RUNS, rid)
+        _STATS["orphaned_runs"] += 1
+    _STATS["interrupted_outcomes"] += marked
+    return {"ok": True, "open": len(opened), "orphaned": len(stale), "interrupted_outcomes": marked}
+
+
+async def _sweep_job() -> None:
+    try:
+        await sweep_orphans()
+    except Exception as e:
+        log.warning("decision ledger sweep: %s", e)
+
+
+schedule(_sweep_job, interval=900, name="decide_ledger_sweep", singleton=True, skip_in_sandbox=True)
+
+
 def _rows_arg(rows: Any) -> List[Dict[str, Any]]:
     if isinstance(rows, list):
         return rows
@@ -311,6 +366,10 @@ async def cap_decide_ledger_stats(trace_id=None) -> Dict[str, Any]:
     out: Dict[str, Any] = {"process": dict(_STATS), "stream": {}, "questions": []}
     r = _orch.REDIS
     if r is not None:
+        try:
+            out["open_runs"] = await r.hlen(OPEN_RUNS)
+        except Exception:
+            pass
         try:
             out["stream"]["length"] = await r.xlen(STREAM)
             pend = await r.xpending(STREAM, GROUP)
