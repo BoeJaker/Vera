@@ -291,7 +291,7 @@ def test_diagrams_are_left_to_the_element_and_the_renderer_is_inlined():
         {"kind": "diagram", "mermaid": "flowchart LR\n A-->B", "caption": "c"}]}]}
     html = core.render_html(doc)
     assert "<vera-mermaid bare>flowchart LR" in html
-    assert 'querySelectorAll("vera-mermaid")' not in html   # no boot script re-rendering with empty text
+    assert 'el.render((el.getAttribute("code")' not in html   # no boot script re-rendering with empty text
     assert "attachShadow" in html                              # the renderer itself is inlined
     assert html.count("</script>") == html.count("<script")    # the inlined source cannot close its own tag early
     plain = core.render_html({"title": "t", "sections": []})
