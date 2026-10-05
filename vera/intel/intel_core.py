@@ -534,7 +534,9 @@ def snapshot_prompt(topic: Dict[str, Any], previous: Optional[Dict[str, Any]],
 
 
 def make_snapshot(topic: Dict[str, Any], parsed: Dict[str, Any], signals: Sequence[Dict[str, Any]],
-                  *, ts: str = "") -> Dict[str, Any]:
+                  *, ts: str = "", first: bool = False) -> Dict[str, Any]:
+    """An assessment record. A first assessment has nothing to differ from, so its
+    'what changed' is empty whatever the model wrote ('previous was null...')."""
     p = parsed or {}
     conf = str(p.get("confidence") or "medium").lower()
     answered = []
@@ -549,7 +551,7 @@ def make_snapshot(topic: Dict[str, Any], parsed: Dict[str, Any], signals: Sequen
         "ts": ts,
         "headline": clean_prose(str(p.get("headline") or ""))[:400],
         "state": clean_prose(str(p.get("state") or ""))[:3000],
-        "changed": _clean_list(p.get("changed"), 10),
+        "changed": [] if first else _clean_list(p.get("changed"), 10),
         "confidence": conf if conf in ("low", "medium", "high") else "medium",
         "answered": answered[:8],
         "new_questions": _clean_list(p.get("new_questions"), 4),

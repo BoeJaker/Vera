@@ -320,11 +320,30 @@ GENRE_LABELS = {
     "marketing": "a vendor's product, service or marketing page selling something",
     "listing": "a listing, directory, rental or job advert page",
     "repo": "a software repository or code project page",
+    "index": "a news index, section front or aggregator page listing many headlines or links",
 }
 _GENRE_OF = {v: k for k, v in GENRE_LABELS.items()}
 #: genres that are rarely intelligence: their score is scaled down, and they never
 #: reach the model unless the topic asks for vendors
-LOW_GENRES = {"marketing": 0.5, "listing": 0.35}
+LOW_GENRES = {"marketing": 0.5, "listing": 0.35, "index": 0.4}
+
+_INDEX_PATH = re.compile(r"^/?(news|latest|updates|topics?|blog|insights|articles|h)(/[^/]*)?/?$", re.I)
+_INDEX_TITLE = re.compile(r"\b(latest\s+)?news\s*(and|&|,)\s*(updates|analysis|house prices|views)\b|"
+                          r"\bnews,|\bnews\s*[|-]|\bnewsnow\b|\bheadlines\b|\b(property|housing|market)\s+news\b", re.I)
+
+
+def index_hint(url: str, title: str) -> bool:
+    """A page that is a list of stories rather than a story: a section front or
+    aggregator by its address (/news, /latest, /h/...) together with a title that
+    names news in general ('News & Updates', 'Property News', '- NewsNow')."""
+    from urllib.parse import urlsplit
+    try:
+        path = urlsplit(str(url or "")).path or "/"
+    except ValueError:
+        return False
+    t = str(title or "")
+    by_path = bool(_INDEX_PATH.match(path)) or path in ("", "/")
+    return bool(_INDEX_TITLE.search(t)) and (by_path or "newsnow" in str(url).lower())
 
 
 def genre_of(result: Dict[str, Any], threshold: float = 0.5) -> Tuple[str, float]:

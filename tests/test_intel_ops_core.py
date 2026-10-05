@@ -235,3 +235,13 @@ def test_night_note_only_when_the_night_did_not_finish():
     assert ops.night_note({"stats": {"topics": 12}, "pending": ["a"] * 10}).startswith("Overnight: 2 of 12 topics refreshed. The other 10")
     assert ops.night_note({"stats": {"topics": 12}, "pending": []}) == ""
     assert ops.night_note({}) == ""
+
+
+def test_headline_hubs_are_indexes_not_stories():
+    # the two "signals" at the top of the 5 Oct brief, and two real stories
+    assert ops.index_hint("https://newsnow.co.uk/h/Business+&+Finance/UK+Housing+Market", "UK Housing Market News & House Price News - NewsNow")
+    assert ops.index_hint("https://propertyprice.uk/news", "UK Property News, House Prices & Landlord Updates | PropertyPrice")
+    assert ops.index_hint("https://www.rightmove.co.uk/news/", "Property News & Housing Market Updates | Rightmove")
+    assert not ops.index_hint("https://www.bbc.co.uk/news/articles/c1234", "House prices rise 0.2% in August, Nationwide says")
+    assert not ops.index_hint("https://www.ft.com/content/abc", "Property news: Landsec sells its stake")
+    assert ops.genre_factor("index") == 0.4

@@ -260,3 +260,9 @@ def test_place_pins_group_size_and_light():
     p = geo.pins(sigs, recent_after=1790000000)
     assert [x["name"] for x in p] == ["Leeds", "Paris"] and p[0]["size"] == 2 and p[0]["detail"] == "B"
     assert p[0]["lit"] and not p[1]["lit"] and p[0]["meta"].startswith("2 sources")
+
+
+def test_a_first_assessment_has_nothing_changed():
+    p = {"headline": "h", "state": "s", "changed": ["Previous assessment was null; this is the baseline"]}
+    assert core.make_snapshot({"id": "t"}, p, [], first=True)["changed"] == []
+    assert core.make_snapshot({"id": "t"}, p, [])["changed"]

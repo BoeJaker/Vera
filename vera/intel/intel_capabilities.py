@@ -643,8 +643,11 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
         c["score"] = ops.blend_score(relevance=rel.get(i), heuristic=heur, novelty=nv)
         if genre_budget > 0 and (rel.get(i) is None or rel.get(i, 0) >= 0.2):
             genre_budget -= 1         # only plausible hits are classified: a few dozen ~100 ms node calls per sweep
-            g, gp = ops.genre_of(await _nlp("nlp.zeroshot", text=texts[i][:600],
-                                            labels=list(ops.GENRE_LABELS.values()), multi_label=False))
+            if ops.index_hint(c.get("url", ""), c.get("title", "")):
+                g, gp = "index", 0.9         # a headline hub or section front: no node call needed
+            else:
+                g, gp = ops.genre_of(await _nlp("nlp.zeroshot", text=texts[i][:600],
+                                                labels=list(ops.GENRE_LABELS.values()), multi_label=False))
             if g:
                 c["genre"], c["genre_p"] = g, gp
                 f = ops.genre_factor(g, bool(t.get("vendors")))
@@ -911,7 +914,7 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
                              role="assess", timeout=1800.0)
     if not parsed:
         return {"topic": t["id"], "error": "no assessment"}
-    snap = core.make_snapshot(t, parsed, sigs)
+    snap = core.make_snapshot(t, parsed, sigs, first=not prev)
     fresh = st.get_topic(t["id"])
     if not fresh:                     # deleted while the model was thinking
         return {"topic": t["id"], "skipped": "topic deleted"}
