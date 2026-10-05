@@ -2418,6 +2418,68 @@ async def _vector_guard_job():
 schedule(_vector_guard_job, interval=3600, name="memory_vector_guard", singleton=True, skip_in_sandbox=True)
 
 
+def _pool_of(client) -> Dict[str, Any]:
+    """Connection counts of one chromadb HttpClient's httpx pool."""
+    pool = client._server._session._transport._pool
+    conns = list(pool.connections)
+    return {"connections": len(conns), "idle": sum(1 for c in conns if c.is_idle()),
+            "closed": sum(1 for c in conns if c.is_closed()),
+            "max_connections": pool._max_connections, "max_keepalive": pool._max_keepalive_connections}
+
+
+def chroma_pool_stats(deep: bool = False) -> Dict[str, Any]:
+    """Where this process's connections to Chroma live (RF-82). The two known clients' pools,
+    and with deep=True every httpx client in the heap holding a connection to Chroma's port,
+    so a client built somewhere unexpected shows up."""
+    import sys
+    out: Dict[str, Any] = {"clients": {}}
+    known = {"memory": getattr(MEMORY._backends.get("chroma"), "_client", None)}
+    df = sys.modules.get("Vera.vera.fabric.data_fabric") or sys.modules.get("data_fabric")
+    known["fabric"] = getattr(getattr(df, "FABRIC_CHROMA", None), "_client", None)
+    for name, cl in known.items():
+        if cl is None:
+            out["clients"][name] = None
+            continue
+        try:
+            out["clients"][name] = dict(_pool_of(cl), id=id(cl))
+        except Exception as e:
+            out["clients"][name] = {"error": str(e)[:160]}
+    if deep:
+        import gc
+        import httpx
+        port = int(CHROMA_PORT)
+        found = []
+        for o in gc.get_objects():
+            if not isinstance(o, httpx.Client):
+                continue
+            try:
+                conns = list(o._transport._pool.connections)
+            except Exception:
+                continue
+            to_chroma = [c for c in conns if getattr(getattr(c, "_origin", None), "port", None) == port]
+            if to_chroma:
+                found.append({"id": id(o), "connections": len(to_chroma),
+                              "idle": sum(1 for c in to_chroma if c.is_idle())})
+        out["httpx_clients_to_chroma"] = sorted(found, key=lambda x: -x["connections"])[:50]
+        out["httpx_client_count"] = len(found)
+        out["connections_total"] = sum(f["connections"] for f in found)
+    return out
+
+
+@capability(
+    "memory.chroma.pool", memory="off", silent=True,
+    http_method="GET", http_path="/memory/chroma/pool", http_tags=["memory"],
+    description="Where this process's connections to Chroma live (RF-82 diagnosis): connections, idle and "
+                "closed counts and the pool limits of the memory and data-fabric Chroma clients. "
+                "deep=true also walks the heap for every httpx client holding a connection to Chroma's "
+                "port (slower, one-off). Read-only.",
+)
+async def memory_chroma_pool(deep: bool = False, trace_id=None):
+    if isinstance(deep, str):
+        deep = deep.strip().lower() in ("1", "true", "yes")
+    return await asyncio.to_thread(chroma_pool_stats, bool(deep))
+
+
 @capability(
     "retrieval.timing", memory="off", silent=True,
     http_method="GET", http_path="/retrieval/timing", http_tags=["memory"],
