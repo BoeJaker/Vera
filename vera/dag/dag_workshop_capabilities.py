@@ -24362,8 +24362,8 @@ async def cap_dag_agent_loop_v6(
     _dl = None
     if _loop_ledger is not None:
         try:
-            from Vera.vera.capability_orchestration import CALLER_KIND as _CK
-            _dl_origin = _loop_ledger.LD.origin_for(_CK.get(""))
+            _orch_mod = sys.modules.get("Vera.vera.capability_orchestration")
+            _dl_origin = _loop_ledger.LD.origin_for(_orch_mod.CALLER_KIND.get("") if _orch_mod else "")
         except Exception:
             _dl_origin = "user"
         try:
