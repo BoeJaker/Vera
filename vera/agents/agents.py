@@ -2027,8 +2027,10 @@ async def agent_chat_stream_endpoint(request: Request):
     # Phase frames (turn_phases_core): what the turn is doing, said as it happens, for a client that asks. Timed
     # from the endpoint's entry, so the steps already done before the stream opened are reported with their real
     # durations, and the chat turn record (four-minds FM-0.3) is built from the same frames.
-    _ph = (_phases.PhaseClock(str(body.get("turn_id") or uuid.uuid4().hex[:12]), _ep_t0, _time.monotonic)
-           if body.get("phase_frames") else None)
+    # Always a clock: the turn record (FM-0.3) is built from its frames for every turn; a client that did not
+    # ask for frames (phase_frames) gets none - the clock is silent and only logs.
+    _ph = _phases.PhaseClock(str(body.get("turn_id") or uuid.uuid4().hex[:12]), _ep_t0, _time.monotonic,
+                             silent=not body.get("phase_frames"))
     if _web_enabled and _web_query:
         _web_t0 = _time.monotonic()
         async def _run_web_search():
@@ -2111,7 +2113,8 @@ async def agent_chat_stream_endpoint(request: Request):
             try:
                 # what happened before the stream could open, with the time each step really took
                 for _f in _phases.from_marks(_ph, _ep_marks):
-                    await _q.put(("data: " + json.dumps(_f) + "\n\n").encode())
+                    if not _ph.silent:
+                        await _q.put(_ph.raw(_f))
                 if _needs is not None and _web_rules:
                     _wn = _needs["web"]
                     await _q.put(_ph.sse("needs", "web", "deciding whether to search the web",
@@ -2184,6 +2187,10 @@ async def agent_chat_stream_endpoint(request: Request):
             # say so then, after the searches' own frames, so the throbber never shows "writing the answer" mid-search
             nonlocal _model_t0
             if _ph is None or not _model_waits_for_context:
+                return
+            if _ph.silent:                      # no frames to order for this client: never wait for them
+                _model_t0 = _time.monotonic()
+                _ph.frame("model", "answer", "writing the answer", "start", t=_model_t0)
                 return
             try:
                 _watch = {p for p in ((None if late else _web_phase), _mem_phase) if p is not None}
@@ -2398,6 +2405,7 @@ async def agent_chat_stream_endpoint(request: Request):
                 if _t is not None and not _t.done():
                     _t.cancel()
             elapsed_ms = round((_time.monotonic() - _stream_t0) * 1000)
+            _record_chat_turn(_ph, agent.name, elapsed_ms, _resp_chars, session_id)
             try:
                 if _act_handle is not None:
                     await end_stream_activity(
@@ -6616,3 +6624,44 @@ register_ui(
 # ["session","name"] and metadata.session_name = <name>.
 # The history list reads this on load and displays the name.
 # Users can also manually rename via the session name bar (click to rename).
+
+
+# ── Chat turn records (four-minds FM-0.3) ────────────────────────────────────
+# Every /agents/chat/stream turn, built from its phase frames: TTFT, kind (triggered = web or
+# deep-memory context fetched before the model, reported apart), each step's time. Kept in a
+# process window for chat.turns.stats and sent as a "chat.turn" event for later ingest.
+try:
+    from Vera.vera.fabric import retrieval_timing_core as _rtc_chat
+except Exception:                       # worktree / app-free import
+    from vera.fabric import retrieval_timing_core as _rtc_chat
+CHAT_TURNS = _rtc_chat.Window(500)
+
+
+def _record_chat_turn(ph, agent_name: str, elapsed_ms: int, chars: int, session_id: str = "") -> None:
+    """Never raises; never awaits (the event goes out as a background task)."""
+    try:
+        rec = _phases.turn_record(getattr(ph, "log", []) or [], agent=agent_name, elapsed_ms=elapsed_ms,
+                                  chars=chars, ok=bool(chars))
+        rec["session_id"] = str(session_id or "")[:80]
+        CHAT_TURNS.add(_phases.as_envelope(rec))
+        try:
+            asyncio.get_running_loop().create_task(emit_event(rec))
+        except Exception:
+            pass
+    except Exception as e:
+        log.debug("chat turn record: %s", e)
+
+
+@capability(
+    "chat.turns.stats", memory="off", silent=True,
+    http_method="GET", http_path="/agents/chat/turns", http_tags=["agents", "chat"],
+    description="Chat turn timing (four-minds FM-0.3): per agent and turn kind (plain | triggered - "
+                "web or deep-memory context fetched before the model), TTFT p50/p95 and each step's "
+                "p50/p95 over the last 500 turns in this process. Built from the turns' phase frames. "
+                "Input: agent (str, optional). Emptied by a restart.",
+)
+async def cap_chat_turns_stats(agent: str = "", trace_id=None) -> dict:
+    out = CHAT_TURNS.summary()
+    if agent:
+        out = {k: v for k, v in out.items() if k.split("|", 1)[0] == agent}
+    return {"window": CHAT_TURNS.size, "turns": out}
