@@ -275,3 +275,12 @@ def test_prompts_carry_today_and_the_source_date():
         assert "TODAY: " in p and "SOURCE PUBLISHED: 2024-05-02" in p and "background, not news" in p
     sp = core.snapshot_prompt({"name": "n"}, None, [sig])
     assert "published 2024-05-02" in sp and "Today is " in sp and "never the current picture" in sp
+
+
+def test_report_signals_carry_feedback_buttons():
+    doc = {"title": "t", "sections": [{"kind": "topic", "topic": {"id": "x", "name": "X"}, "parts": [
+        {"kind": "signals", "items": [{"id": "s1", "title": "A story", "url": "https://a", "score": 7}]}]}]}
+    html = core.render_html(doc)
+    for v in ("useful", "not_useful", "mute_site"):
+        assert f'data-sid="s1" data-v="{v}"' in html
+    assert "/intel/feedback" in html and ".fbr" in html

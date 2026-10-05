@@ -919,6 +919,7 @@ vera-mermaid{display:block;margin:12px 0}.mm{background:var(--card);border:1px s
 .act:hover{background:var(--acc);color:var(--bg)}.act[disabled]{opacity:.55;cursor:default}.act .r{display:block;font-size:.75rem;color:var(--dim)}
 .foot{margin-top:46px;padding-top:12px;border-top:1px solid var(--bd);color:var(--dim);font-size:.8rem}
 @media print{.acts,.toc{display:none}details.dg{display:block}details.dg .rd{display:block}}
+.fbr{display:flex;gap:4px;margin-top:4px}.fbr button{border:1px solid rgba(127,127,127,.35);background:none;border-radius:6px;cursor:pointer;font-size:12px;padding:1px 6px}.fbr button:disabled{opacity:.6;cursor:default}
 """
 
 _KW = r"\b(def|class|return|import|from|if|else|elif|for|while|in|async|await|function|const|let|var|new|try|except|catch|fn|pub|struct|impl|use|package|func|go|yield|with|as|lambda|true|false|null|None|True|False)\b"
@@ -959,7 +960,12 @@ _MERMAID_BOOT = ('<script src="/ui/elements/vera_mermaid.js"></script>'
 # The page's own buttons post the one-time token back; the server looks the
 # action up and builds the call itself, so the page can never choose a capability.
 _ACTION_JS = """<script>(function(){
-document.addEventListener('click',function(ev){var b=ev.target.closest('button.act[data-token]');if(!b)return;
+document.addEventListener('click',function(ev){var f=ev.target.closest('button.fbk[data-sid]');if(f){
+var row=f.parentNode;row.querySelectorAll('button').forEach(function(x){x.disabled=true;});
+fetch('/intel/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({signal_id:f.dataset.sid,verdict:f.dataset.v})})
+.then(function(x){return x.json();}).then(function(j){var c=j&&(j.content||j);f.textContent=c&&c.error?'\\u2717':'\\u2713';f.title=(c&&c.error)||'thanks - this teaches the gates';})
+.catch(function(){f.textContent='\\u2717';row.querySelectorAll('button').forEach(function(x){x.disabled=false;});});return;}
+var b=ev.target.closest('button.act[data-token]');if(!b)return;
 b.disabled=true;var r=b.querySelector('.r');if(r)r.textContent='starting\\u2026';
 fetch('/intel/action/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:b.dataset.token})})
 .then(function(x){return x.json();}).then(function(j){var c=j&&(j.content||j);if(r)r.textContent=c.error?('\\u2717 '+c.error):('\\u2713 '+(c.message||'started'));if(c.error)b.disabled=false;})
@@ -1024,6 +1030,11 @@ def render_html(doc: Dict[str, Any], *, base_url: str = "") -> str:
             + "".join(parts) + "</main>" + _MERMAID_BOOT + _ACTION_JS + "</body></html>")
 
 
+FEEDBACK_BUTTONS = (("useful", "\U0001F44D", "useful - more like this"),
+                    ("not_useful", "\U0001F44E", "not useful"),
+                    ("mute_site", "\U0001F507", "never show this site again for this topic"))
+
+
 def _render_part(p: Dict[str, Any]) -> str:
     k = p.get("kind")
     if k == "assessment":
@@ -1066,6 +1077,9 @@ def _render_part(p: Dict[str, Any]) -> str:
                 + (f'<div>{_md_inline(s.get("summary") or s.get("snippet") or "")}</div>')
                 + (f'<div class="why">{_md_inline(s["so_what"])}</div>' if s.get("so_what") else "")
                 + ('<div class="tags">' + "".join(f"<span>#{_E(t)}</span>" for t in s.get("tags") or []) + "</div>" if s.get("tags") else "")
+                + (f'<div class="fbr">' + "".join(
+                    f'<button class="fbk" data-sid="{_E(s["id"])}" data-v="{v}" title="{tip}">{g}</button>'
+                    for v, g, tip in FEEDBACK_BUTTONS) + "</div>" if s.get("id") else "")
                 + "</div></div>")
         return "<h3>Signals</h3>" + "".join(rows)
     if k == "digests":
