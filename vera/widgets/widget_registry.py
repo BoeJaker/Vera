@@ -124,6 +124,22 @@ _LHM_BUILTINS: List[Dict[str, Any]] = [
      "frame": "one line", "draw": {"form": "button", "size": "XS"},
      "can": ["new session", "refresh the context", "loop settings", "open a panel", "open the terminal", "full settings"],
      "placed": ["LHM"]},
+    # memory that learns from use (context-and-ui CU-M.2): after every chat turn, each memory put in front of the
+    # model is judged used or not against the reply; these read the counts
+    {"id": "memory:usage-used", "name": "Most used memories", "form": "table",
+     "reads": {"cap": "memory.usage.top", "args": {"order": "used", "limit": 12}, "every": "5m",
+               "note": "the memories replies draw on most"},
+     "read": {"map": {"rows": "rows"}},
+     "frame": "memory . kind . given . used . rate", "draw": {"form": "table", "size": "L",
+                                                            "columns": ["text", "record_type", "injected_n", "used_n", "use_rate"]},
+     "can": ["open a memory in the drawer"], "placed": ["dashboard", "canvas", "LHM"]},
+    {"id": "memory:usage-ignored", "name": "Memories given but ignored", "form": "table",
+     "reads": {"cap": "memory.usage.top", "args": {"order": "ignored", "limit": 12}, "every": "5m",
+               "note": "put in front of the model again and again, never drawn on - the first to fade"},
+     "read": {"map": {"rows": "rows"}},
+     "frame": "memory . kind . given . used . rate", "draw": {"form": "table", "size": "L",
+                                                            "columns": ["text", "record_type", "injected_n", "used_n", "use_rate"]},
+     "can": ["open a memory in the drawer"], "placed": ["dashboard", "canvas", "LHM"]},
     # how a reply was made: the chat hands the turn's own phase frames in as data (no read), one row per step
     {"id": "chat:turn-phases", "name": "Turn phases", "form": "gantt",
      "reads": {"cap": "", "args": {}, "inline": True,

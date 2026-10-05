@@ -2406,6 +2406,19 @@ async def agent_chat_stream_endpoint(request: Request):
                     _t.cancel()
             elapsed_ms = round((_time.monotonic() - _stream_t0) * 1000)
             _record_chat_turn(_ph, agent.name, elapsed_ms, _resp_chars, session_id)
+            # which memories this turn was given, and whether the reply drew on them (CU-M.2): in the background, so
+            # the stream's end never waits on it
+            try:
+                _mh_u = sys.modules.get("memory_hooks")
+                if _mh_u is not None and hasattr(_mh_u, "record_turn_usage"):
+                    _deep_items = []
+                    if _mem_task is not None and _mem_task.done() and not _mem_task.cancelled():
+                        _mr_u = _mem_task.result()
+                        _deep_items = (_mr_u or {}).get("items") or [] if isinstance(_mr_u, dict) else []
+                    _page_ids = [str(i) for i in (body.get("ctx_ids") or []) if i][:40]
+                    asyncio.create_task(_mh_u.record_turn_usage(session_id, "".join(_resp_head), _page_ids, _deep_items))
+            except Exception as _ue:
+                log.debug("turn usage: %s", _ue)
             try:
                 if _act_handle is not None:
                     await end_stream_activity(

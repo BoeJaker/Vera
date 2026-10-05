@@ -11635,6 +11635,23 @@ Your task: decide what to do next to advance toward the goal.
     if(!items.length)return'';
     return'\n\n[Retrieved Context]\n'+items.join('\n');
   }
+  // the memory records buildCtxInj put in this turn's prompt (the same filters), so the server can count whether the
+  // reply drew on them (context-and-ui CU-M.2 usage signals); only real memory ids - not web, fabric or synthetic rows
+  function _ctxInjIds(forMsg){
+    try{
+      if(!document.getElementById('ctxInject')?.checked) return [];
+      if(forMsg!==undefined && _ctxLiveOn() && !_ctxMatches(forMsg)) return [];
+      const minSim=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
+      const k=parseInt(document.getElementById('ctxK')?.value||'8');
+      const _webLive=_webLiveOn();
+      return CTX_NODES
+        .filter(n=>(n.score||0)>=minSim&&n.included!==false)
+        .filter(n=>!(_webLive&&(n.source==='web'||n.source==='news')))
+        .slice(0,k)
+        .filter(n=>['memory','vector','both','graph'].includes(n.source) && n.id && !/^(sess-|url-|f\d)/.test(String(n.id)))
+        .map(n=>String(n.id)).slice(0,40);
+    }catch(_){ return []; }
+  }
 
   /* ═══════════════════════════════════════════════════════
      SEND — normal mode
@@ -12174,6 +12191,8 @@ Your task: decide what to do next to advance toward the goal.
           canvas_tell:_cvTellOn(), chat_files:true,
           // what the turn is doing, as it happens (the throbber names it); the turn's id ties the frames to it
           phase_frames:_phasesOn()||undefined, turn_id:_phaseTurnId(aMsg.wrap)||undefined,
+          // the memory records this prompt carries, for usage signals (whether the reply drew on them)
+          ctx_ids:(ctxInj?_ctxInjIds(msg):[]),
         })
       });
       if(!resp.ok){bubEl.textContent='✗ HTTP '+resp.status;return;}

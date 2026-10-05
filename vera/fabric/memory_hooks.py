@@ -72,6 +72,10 @@ try:                                    # who a recalled record came from; one h
     from Vera.vera.fabric import recall_core as _recall_core
 except ImportError:                     # pragma: no cover
     from . import recall_core as _recall_core
+try:                                    # was a recalled memory used in the reply (CU-M.2)
+    from Vera.vera.fabric import memory_usage_core as _usage_core
+except ImportError:                     # pragma: no cover
+    from . import memory_usage_core as _usage_core
 
 log = logging.getLogger("vera.memory_hooks")
 
@@ -961,6 +965,7 @@ async def get_agent_memory_context_v2(
         asyncio.create_task(_chatmem_deliver_slow(session_id, slow_task))
 
     ranked = sorted(active.values(), key=lambda it: it.get("score", 0.0), reverse=True)
+    _note_injected(session_id, ranked[:limit])
     return _chatmem_format(ranked[:limit])
 
 
@@ -1004,6 +1009,90 @@ async def get_agent_memory_context_fast(
     return _chatmem_format(ranked[:limit])
 
 
+# ── Usage signals (context-and-ui CU-M.2; owner 2026-10-04: useless memories fade, useful ones stay) ──────────────
+# What each chat turn put in front of the model, and whether the reply drew on it. The half-life (CU-M.3) reads the
+# counts. Kept per session until the turn ends; one upsert per record into vera_memory_usage.
+_INJECTED: Dict[str, Dict[str, str]] = {}      # session_id -> {record_id: text}
+_USAGE_TABLE_READY = False
+_USAGE_DDL = """
+    CREATE TABLE IF NOT EXISTS vera_memory_usage (
+        record_id      TEXT PRIMARY KEY,
+        injected_n     INT NOT NULL DEFAULT 0,
+        used_n         INT NOT NULL DEFAULT 0,
+        last_injected  TIMESTAMPTZ,
+        last_used      TIMESTAMPTZ
+    )"""
+
+
+def _note_injected(session_id: str, items: List[Dict[str, Any]]) -> None:
+    """Remember what this session's turn was given (the agent's own memory block, the deep search, the page's)."""
+    if not session_id:
+        return
+    slot = _INJECTED.setdefault(session_id, {})
+    for it in items or []:
+        rid = str((it or {}).get("id") or "")
+        if rid and rid not in slot:
+            slot[rid] = str((it or {}).get("text") or "")
+    if len(_INJECTED) > 500:                     # a session whose turn never ended does not hold memory forever
+        for k in list(_INJECTED)[:100]:
+            _INJECTED.pop(k, None)
+
+
+async def _usage_pool():
+    MEMORY, _ = _memory()
+    pg = (getattr(MEMORY, "_backends", {}) or {}).get("postgres") if MEMORY else None
+    return getattr(pg, "_pool", None)
+
+
+async def record_turn_usage(session_id: str, reply: str, page_ids: Optional[List[str]] = None,
+                            extra: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """After a turn: judge every memory it was given against the reply and count it in vera_memory_usage. Never raises;
+    a census, probe or empty turn is not counted (memory_usage_core.counts_toward_use)."""
+    global _USAGE_TABLE_READY
+    given = _INJECTED.pop(session_id or "", {})
+    out: Dict[str, Any] = {"injected": 0, "used": 0}
+    try:
+        if not _usage_core.counts_toward_use(session_id, reply):
+            return out
+        for it in extra or []:
+            rid = str((it or {}).get("id") or "")
+            if rid and rid not in given:
+                given[rid] = str((it or {}).get("text") or "")
+        pool = await _usage_pool()
+        if pool is None:
+            return out
+        ids = [str(i) for i in (page_ids or []) if i and str(i) not in given][:40]
+        async with pool.acquire() as conn:
+            if ids:
+                for row in await conn.fetch("SELECT id, text FROM vera_memories WHERE id = ANY($1::text[])", ids):
+                    given[row["id"]] = row["text"] or ""
+            if not given:
+                return out
+            verdicts = _usage_core.judge_all(reply, [{"id": k, "text": v} for k, v in given.items()])
+            if not _USAGE_TABLE_READY:
+                await conn.execute("SET lock_timeout = '3s'")
+                await conn.execute(_USAGE_DDL)
+                _USAGE_TABLE_READY = True
+            await conn.executemany(
+                """INSERT INTO vera_memory_usage (record_id, injected_n, used_n, last_injected, last_used)
+                   VALUES ($1, 1, $2, NOW(), CASE WHEN $2 = 1 THEN NOW() ELSE NULL END)
+                   ON CONFLICT (record_id) DO UPDATE SET
+                       injected_n = vera_memory_usage.injected_n + 1,
+                       used_n = vera_memory_usage.used_n + EXCLUDED.used_n,
+                       last_injected = NOW(),
+                       last_used = COALESCE(EXCLUDED.last_used, vera_memory_usage.last_used)""",
+                [(v["id"], 1 if v["used"] else 0) for v in verdicts])
+        out = {"injected": len(verdicts), "used": sum(1 for v in verdicts if v["used"])}
+        try:
+            await emit_event({"type": "memory.feedback", "session_id": session_id, **out,
+                              "used_ids": [v["id"] for v in verdicts if v["used"]][:20]})
+        except Exception:
+            pass
+    except Exception as e:
+        log.debug("record_turn_usage: %s", e)
+    return out
+
+
 _DEEP_HEADING = "=== Earlier conversations (deep memory search, all sessions) ==="
 
 
@@ -1026,6 +1115,7 @@ async def get_memory_context_deep(query: str, limit: int = 8, budget_s: float = 
         lambda fast_timeout: MEMORY.search_fast_and_slow(query=query, limit=limit, fast_timeout=fast_timeout),
         budget_s, info=info)
     items = [f for f in (_extract_record_fields(it) for it in (hits or [])) if f][:limit]
+    out["items"] = [{"id": it.get("id"), "text": it.get("text", "")} for it in items if it.get("id")]   # for usage (CU-M.2)
     out.update(text=_recall_core.retitle_block(_chatmem_format(items), _DEEP_HEADING), hits=len(items),
                ms=round((time.monotonic() - t0) * 1000, 1), found=len(hits or []),
                fast_ms=info.get("fast_ms"), fast_hits=info.get("fast_hits"))
@@ -1120,14 +1210,54 @@ async def memory_agent_context(
 
 
 @capability(
+    "memory.usage.top",
+    http_method="GET", http_path="/memory/usage/top", http_tags=["memory"],
+    memory="off", silent=True,
+    description="Which memories chat turns draw on, and which they are given but ignore (counted after every chat "
+                "turn: each memory put in front of the model is judged used or not against the reply). Read-only. "
+                "Inputs: order ('used' | 'ignored', default used), limit (int=20). Output: {rows:[{record_id, text, "
+                "record_type, injected_n, used_n, use_rate, last_injected, last_used}], count}.",
+)
+async def memory_usage_top(order: str = "used", limit: int = 20, trace_id=None):
+    try:
+        lim = max(1, min(int(limit or 20), 200))
+    except (TypeError, ValueError):
+        lim = 20
+    by = ("u.used_n DESC, u.injected_n DESC" if str(order or "used").lower() != "ignored"
+          else "(u.injected_n - u.used_n) DESC, u.injected_n DESC")
+    pool = await _usage_pool()
+    if pool is None:
+        return {"rows": [], "count": 0, "error": "memory postgres not connected"}
+    try:
+        async with pool.acquire() as conn:
+            exists = await conn.fetchval("SELECT to_regclass('vera_memory_usage') IS NOT NULL")
+            if not exists:
+                return {"rows": [], "count": 0, "note": "no turn has been counted yet"}
+            rows = await conn.fetch(
+                "SELECT u.record_id, left(coalesce(m.text, ''), 200) AS text, m.record_type, u.injected_n, u.used_n, "
+                "u.last_injected, u.last_used FROM vera_memory_usage u LEFT JOIN vera_memories m ON m.id = u.record_id "
+                "ORDER BY " + by + " LIMIT $1", lim)
+    except Exception as e:
+        return {"rows": [], "count": 0, "error": str(e)[:200]}
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["use_rate"] = round(d["used_n"] / d["injected_n"], 2) if d.get("injected_n") else 0.0
+        for k in ("last_injected", "last_used"):
+            d[k] = d[k].isoformat() if d.get(k) else ""
+        out.append(d)
+    return {"rows": out, "count": len(out)}
+
+
+@capability(
     "memory.context.deep",
     http_method="POST", http_path="/memory/context/deep", http_tags=["memory"],
     memory="off",
     description="The deep memory search a chat turn gets when it refers back ('last time', 'what did we decide'): "
                 "every session and agent, the keyword and graph tier always and the vector tier only if it answers "
                 "inside the budget. Read-only. Inputs: query, limit (int=8), budget_s (float=1.5). Output: {text, "
-                "hits, vector, ms, fast_ms, fast_hits, found} - the block a turn would be given, and how long each "
-                "tier took.",
+                "hits, vector, ms, fast_ms, fast_hits, found, items} - the block a turn would be given, how long each "
+                "tier took, and the records in it.",
 )
 async def memory_context_deep(query: str, limit: int = 8, budget_s: float = 1.5, trace_id=None):
     try:
