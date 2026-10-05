@@ -2459,11 +2459,55 @@ def chroma_pool_stats(deep: bool = False) -> Dict[str, Any]:
             to_chroma = [c for c in conns if getattr(getattr(c, "_origin", None), "port", None) == port]
             if to_chroma:
                 found.append({"id": id(o), "connections": len(to_chroma),
-                              "idle": sum(1 for c in to_chroma if c.is_idle())})
+                              "idle": sum(1 for c in to_chroma if c.is_idle()),
+                              "user_agent": str(o.headers.get("user-agent", ""))[:60],
+                              "held_by": _holders(o)})
         out["httpx_clients_to_chroma"] = sorted(found, key=lambda x: -x["connections"])[:50]
         out["httpx_client_count"] = len(found)
         out["connections_total"] = sum(f["connections"] for f in found)
+        # who holds them, summed: the leaking creator is the holder whose count grows
+        by: Dict[str, int] = {}
+        for f in found:
+            k = " <- ".join(f["held_by"]) or "?"
+            by[k] = by.get(k, 0) + 1
+        out["by_holder"] = dict(sorted(by.items(), key=lambda kv: -kv[1]))
+        try:
+            from chromadb.api.shared_system_client import SharedSystemClient
+            out["chromadb_systems"] = len(getattr(SharedSystemClient, "_identifier_to_system", {}) or {})
+        except Exception as e:
+            out["chromadb_systems"] = f"? {e}"[:80]
     return out
+
+
+def _holders(obj, depth: int = 3) -> List[str]:
+    """Type (and module) of what holds `obj`, `depth` levels up - skipping frames, lists and
+    the gc scan's own containers - so the creator of a leaked client can be read off."""
+    import gc
+    import types as _types
+    chain: List[str] = []
+    cur = obj
+    for _ in range(depth):
+        nxt = None
+        for r in gc.get_referrers(cur):
+            if isinstance(r, (_types.FrameType, list)) or r is chain:
+                continue
+            if isinstance(r, dict):
+                owners = [x for x in gc.get_referrers(r)
+                          if not isinstance(x, (_types.FrameType, list, dict)) and getattr(x, "__dict__", None) is r]
+                if owners:
+                    nxt = owners[0]
+                    break
+                if r.get("__name__"):                  # a module's globals
+                    chain.append("module " + str(r.get("__name__")))
+                    return chain
+                continue
+            nxt = r
+            break
+        if nxt is None:
+            break
+        chain.append(f"{type(nxt).__module__}.{type(nxt).__name__}")
+        cur = nxt
+    return chain
 
 
 @capability(

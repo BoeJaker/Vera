@@ -52,3 +52,16 @@ def test_deep_finds_httpx_clients_talking_to_chroma():
     out = memory.chroma_pool_stats(deep=True)
     assert "httpx_client_count" in out and "connections_total" in out
     c.close()
+
+
+def test_deep_names_the_holder_of_a_leaked_client():
+    import httpx
+
+    class Leaker:
+        def __init__(self):
+            self.session = httpx.Client(headers={"user-agent": "probe"})
+
+    keep = Leaker()
+    holders = memory._holders(keep.session)
+    assert holders and holders[0].endswith("Leaker")
+    keep.session.close()
