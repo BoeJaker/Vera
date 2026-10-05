@@ -4716,12 +4716,33 @@ async def _idle_archive_tick() -> None:
             return
         now = time.time()
         threshold_s = idle_days * 86400
+        # Only a container that EXISTS is archived. A row that already holds a committed image is kept by cap_sbx_stop
+        # (it is the restore handle) and still names its long-gone container, so without this check every tick - and the
+        # first tick after every restart - "archived" the same rows again: 1,857 snapshot-cp + rm attempts against
+        # missing containers per pass on prod (2026-10-05, ~7 min of serial docker/SSH calls at each start-up). One
+        # bulk listing per host, as the sleep tick does; a host that cannot be listed is skipped, never archived blind.
+        dk = _dk()
+        listed: Dict[str, Any] = {}
         for rec in await _all_recs():
             if not rec.get("container"):
                 continue
             last = float(rec.get("last_used") or 0)
             if not last or now - last < threshold_s:
                 continue
+            host_id = rec.get("docker_host_id", "local")
+            if host_id not in listed:
+                listed[host_id] = None
+                try:
+                    host = await _docker_host(dk, host_id) if dk is not None else None
+                    if host:
+                        states, ok = await _state_map_checked(dk, host, host_id, "vera-sbx-")
+                        if ok:
+                            listed[host_id] = states
+                except Exception as e:
+                    log.debug("idle archive: listing host %s failed: %s", host_id, e)
+            states = listed.get(host_id)
+            if states is None or rec["container"] not in states:
+                continue      # the host could not be listed, or there is no container left to archive
             try:
                 res = await cap_sbx_stop(session_id=rec["session_id"], remove=True)
                 if res.get("ok"):
