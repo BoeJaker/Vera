@@ -11,20 +11,101 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import re
 import time
+from collections.abc import AsyncIterator, Mapping
 from typing import Any, Awaitable, Callable
 
 import httpx
 
-from .inference_contracts import InferenceRequest, InferenceValue, consume_inference
+from .inference_contracts import (
+    InferenceCancellation,
+    InferenceRequest,
+    InferenceValue,
+    consume_inference,
+)
 from .model_package import ModelArtifact, ModelCompatibility, ModelPackage
 from .ollama_inference_adapter import LegacyOllamaInferenceProvider
+from .openai_inference_adapter import (
+    OpenAICompatibleInferenceProvider,
+    OpenAICompatibleTransport,
+)
 
 
 LIVE_INFERENCE_REPORT_SCHEMA = "vera.live-inference-validation/v2"
 _IDENT = re.compile(r"[^A-Za-z0-9._:+/-]+")
 Runner = Callable[..., Awaitable[str]]
+
+
+class HTTPXOpenAICompatibleTransport:
+    """Bounded HTTP/SSE transport used only by the opt-in live validator."""
+
+    _MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+
+    def __init__(self, base_url: str, *, api_key: str = "",
+                 timeout_seconds: float = 120,
+                 http_transport: httpx.AsyncBaseTransport | None = None):
+        base = str(base_url or "").strip().rstrip("/")
+        if not re.fullmatch(r"https?://[^\s]+", base):
+            raise ValueError("OpenAI-compatible base URL must be HTTP(S)")
+        if isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 120:
+            raise ValueError("transport timeout must be within 120 seconds")
+        self._base_url = base
+        self._timeout = float(timeout_seconds)
+        self._headers = ({"Authorization": f"Bearer {api_key}"}
+                         if api_key else {})
+        self._http_transport = http_transport
+
+    def request(self, path: str, payload: Mapping[str, Any], *, stream: bool,
+                cancellation: InferenceCancellation | None = None
+                ) -> AsyncIterator[Mapping[str, Any]]:
+        async def events() -> AsyncIterator[Mapping[str, Any]]:
+            if path not in {"/v1/completions", "/v1/chat/completions",
+                            "/v1/embeddings"}:
+                raise ValueError("unsupported OpenAI-compatible validation path")
+            if cancellation is not None:
+                cancellation.checkpoint()
+            timeout = httpx.Timeout(self._timeout)
+            async with httpx.AsyncClient(
+                    timeout=timeout, headers=self._headers,
+                    transport=self._http_transport) as client:
+                if not stream:
+                    response = await client.post(
+                        f"{self._base_url}{path}", json=dict(payload))
+                    response.raise_for_status()
+                    if len(response.content) > self._MAX_RESPONSE_BYTES:
+                        raise ValueError("OpenAI-compatible response exceeded limit")
+                    body = response.json()
+                    if not isinstance(body, Mapping):
+                        raise ValueError("OpenAI-compatible response was not an object")
+                    yield body
+                    return
+                async with client.stream(
+                        "POST", f"{self._base_url}{path}",
+                        json=dict(payload)) as response:
+                    response.raise_for_status()
+                    seen_bytes = 0
+                    async for line in response.aiter_lines():
+                        if cancellation is not None:
+                            cancellation.checkpoint()
+                        line = line.strip()
+                        seen_bytes += len(line.encode("utf-8"))
+                        if seen_bytes > self._MAX_RESPONSE_BYTES:
+                            raise ValueError(
+                                "OpenAI-compatible response exceeded limit")
+                        if not line or line.startswith(":"):
+                            continue
+                        if not line.startswith("data:"):
+                            raise ValueError("invalid OpenAI-compatible SSE frame")
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        body = json.loads(data)
+                        if not isinstance(body, Mapping):
+                            raise ValueError("OpenAI-compatible SSE data was not an object")
+                        yield body
+        return events()
 
 
 def _identifier(value: str, fallback: str) -> str:
@@ -229,6 +310,157 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
     return report
 
 
+async def validate_openai_provider(*, model: str, instance_id: str,
+                                   artifact_sha256: str, artifact_size: int,
+                                   transport: OpenAICompatibleTransport,
+                                   prompt: str = "Reply with VERA_OK only.",
+                                   expected_output: str = "VERA_OK",
+                                   case_timeout_seconds: float = 120,
+                                   validate_cancellation: bool = True,
+                                   cancellation_delay_seconds: float = 0.1,
+                                   ) -> dict[str, Any]:
+    """Exercise completion streaming through the portable OpenAI adapter.
+
+    The report has the same privacy boundary as the Ollama validator: prompts
+    and generated content never appear, while hashes distinguish transport
+    success from exact-content conformance.
+    """
+    if isinstance(case_timeout_seconds, bool) or not 0 < case_timeout_seconds <= 120:
+        raise ValueError("case timeout must be within 120 seconds")
+    if not isinstance(expected_output, str) or not expected_output \
+            or len(expected_output.encode("utf-8")) > 16_384:
+        raise ValueError("expected output must be non-empty and at most 16384 bytes")
+    if (isinstance(cancellation_delay_seconds, bool) or
+            not 0 < cancellation_delay_seconds <= 5):
+        raise ValueError("cancellation delay must be within 5 seconds")
+    expected_sha256 = hashlib.sha256(expected_output.encode("utf-8")).hexdigest()
+    package = ModelPackage(
+        _identifier(model, "openai-model"), artifact_sha256[:12], "transformer",
+        "safetensors",
+        (ModelArtifact("registry_manifest", f"vllm://{instance_id}/{model}",
+                       artifact_sha256, artifact_size),),
+        ModelCompatibility(("generate",), "prompt/v1", "text/v1"),
+        framework="vllm", source_revision=artifact_sha256,
+    )
+    provider = OpenAICompatibleInferenceProvider(
+        package, provider_id=f"vllm:{_identifier(instance_id, 'node')}",
+        model=model, transport=transport)
+    cases: list[dict[str, Any]] = []
+    for stream in (False, True):
+        request = InferenceRequest(
+            package.package_id, "generate", "prompt/v1", "text/v1",
+            (InferenceValue.from_json("prompt", prompt),),
+            parameters=(("max_tokens", 8), ("temperature", 0)),
+            stream=stream, max_output_bytes=16_384)
+        started = time.monotonic()
+        try:
+            result = await asyncio.wait_for(
+                consume_inference(provider, request), timeout=case_timeout_seconds)
+        except asyncio.TimeoutError:
+            cases.append({"case": "stream" if stream else "non_stream",
+                          "status": "failed", "error_code": "case_timeout",
+                          "transport_passed": False, "content_conformant": False,
+                          "passed": False, "expected_output_sha256": expected_sha256,
+                          "elapsed_ms": round((time.monotonic() - started) * 1000)})
+            break
+        evidence = _output_evidence(
+            result, expected_output, expected_sha256, "exact_text")
+        evidence.update({"case": "stream" if stream else "non_stream",
+                         "elapsed_ms": round((time.monotonic() - started) * 1000)})
+        evidence["passed"] = bool(evidence["transport_passed"]
+                                  and evidence["content_conformant"])
+        cases.append(evidence)
+
+    cancellation = None
+    if validate_cancellation:
+        request = InferenceRequest(
+            package.package_id, "generate", "prompt/v1", "text/v1",
+            (InferenceValue.from_json("prompt", prompt),),
+            parameters=(("max_tokens", 8), ("temperature", 0)),
+            stream=True, max_output_bytes=16_384)
+        started = time.monotonic()
+        task = asyncio.create_task(consume_inference(provider, request))
+        await asyncio.sleep(cancellation_delay_seconds)
+        completed_before_cancel = task.done()
+        if not completed_before_cancel:
+            task.cancel()
+        cancellation_observed = False
+        try:
+            await asyncio.wait_for(task, timeout=case_timeout_seconds)
+        except asyncio.CancelledError:
+            cancellation_observed = True
+        except asyncio.TimeoutError:
+            task.cancel()
+            try:
+                await task
+            except BaseException:
+                pass
+        cancellation = {
+            "case": "cancellation",
+            "status": ("completed_before_cancel" if completed_before_cancel else
+                       "cancelled" if cancellation_observed else "failed"),
+            "cancellation_observed": cancellation_observed,
+            "task_reaped": task.done(),
+            "passed": bool(not completed_before_cancel and
+                           cancellation_observed and task.done()),
+            "elapsed_ms": round((time.monotonic() - started) * 1000),
+        }
+
+    transport_passed = bool(cases) and all(
+        case["transport_passed"] for case in cases)
+    content_conformant = bool(cases) and all(
+        case["content_conformant"] for case in cases)
+    report = {
+        "schema": LIVE_INFERENCE_REPORT_SCHEMA,
+        "provider": provider.profile().provider_id,
+        "model_package_id": package.package_id,
+        "model": model,
+        "instance_id": instance_id,
+        "artifact_sha256": artifact_sha256,
+        "artifact_size": artifact_size,
+        "cases": cases,
+        "transport_passed": transport_passed,
+        "content_conformant": content_conformant,
+        "content_contract": "exact_text",
+        "passed": bool(cases) and all(case["passed"] for case in cases),
+        "privacy": "prompt_and_output_omitted",
+    }
+    if cancellation is not None:
+        report["cancellation"] = cancellation
+        report["passed"] = bool(report["passed"] and cancellation["passed"])
+    return report
+
+
+async def discover_openai_artifact(base_url: str, model: str, *,
+                                   api_key: str = "",
+                                   http_transport: httpx.AsyncBaseTransport | None = None,
+                                   ) -> dict[str, Any]:
+    """Hash one bounded `/v1/models` declaration; this performs no inference."""
+    base = str(base_url or "").strip().rstrip("/")
+    if not re.fullmatch(r"https?://[^\s]+", base):
+        raise ValueError("OpenAI-compatible base URL must be HTTP(S)")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    async with httpx.AsyncClient(timeout=10, headers=headers,
+                                 transport=http_transport) as client:
+        response = await client.get(f"{base}/v1/models")
+        response.raise_for_status()
+        payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list) or len(data) > 4096:
+        raise ValueError("malformed OpenAI-compatible model inventory")
+    match = next((item for item in data if isinstance(item, dict)
+                  and item.get("id") == model), None)
+    if match is None:
+        raise ValueError("model is not present on the selected instance")
+    declaration = {
+        key: match[key] for key in ("id", "object", "owned_by")
+        if key in match and isinstance(match[key], str)
+    }
+    encoded = json.dumps(declaration, sort_keys=True, separators=(",", ":")).encode()
+    return {"sha256": hashlib.sha256(encoded).hexdigest(),
+            "size_bytes": len(encoded), "declaration": declaration}
+
+
 async def discover_ollama_artifact(instance_id: str, model: str) -> dict[str, Any]:
     """Read one configured Ollama tag identity; this performs no inference."""
     from ..capability_orchestration import OLLAMA_INSTANCES
@@ -269,13 +501,47 @@ async def _run(model: str, instance_id: str) -> dict[str, Any]:
         runner=ollama_generate, validate_cancellation=True)
 
 
+async def _run_vllm(model: str, instance_id: str, base_url: str,
+                    gate_as: str) -> dict[str, Any]:
+    from ..capability_orchestration import (
+        _ollama_slot,
+        ollama_gate_status,
+    )
+
+    gate = await ollama_gate_status()
+    require_shared_gate(gate, gate_as)
+    api_key = os.getenv("VLLM_API_KEY", "")
+    artifact = await discover_openai_artifact(
+        base_url, model, api_key=api_key)
+    transport = HTTPXOpenAICompatibleTransport(
+        base_url, api_key=api_key, timeout_seconds=120)
+    # Hold the exact node's shared lease for the bounded validation sequence.
+    # This is opt-in live evidence, never a routing or activation operation.
+    async with _ollama_slot(gate_as, timeout=30):
+        return await validate_openai_provider(
+            model=model, instance_id=instance_id,
+            artifact_sha256=artifact["sha256"],
+            artifact_size=artifact["size_bytes"], transport=transport,
+            validate_cancellation=True)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run bounded portable Ollama validation")
+    parser = argparse.ArgumentParser(
+        description="Run bounded portable Ollama or vLLM validation")
+    parser.add_argument("--backend", choices=("ollama", "vllm"), default="ollama")
     parser.add_argument("--model", required=True)
     parser.add_argument("--instance", required=True)
+    parser.add_argument("--url", default="")
+    parser.add_argument("--gate-as", default="")
     args = parser.parse_args()
     try:
-        report = asyncio.run(_run(args.model, args.instance))
+        if args.backend == "vllm":
+            if not args.url or not args.gate_as:
+                raise ValueError("vLLM validation requires --url and --gate-as")
+            report = asyncio.run(_run_vllm(
+                args.model, args.instance, args.url, args.gate_as))
+        else:
+            report = asyncio.run(_run(args.model, args.instance))
     except RuntimeError as exc:
         code = ("coordination_unavailable" if "coordination gate unavailable" in str(exc)
                 else "runtime_error")
