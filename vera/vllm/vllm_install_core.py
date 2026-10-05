@@ -130,6 +130,10 @@ if [ -z "$SPEC" ] && [ "$MODE" = cpu ]; then
 fi
 UVD="${VENV%/}-uv"
 UV="$UVD/uv"
+# uv's receipt, cache and Pythons live beside the venv, not in $HOME: a node
+# whose /root the container cannot write (an unprivileged CT restored with a
+# host-owned /root) failed the install on the receipt (5 Oct 2026).
+export XDG_CONFIG_HOME="$UVD/config" UV_CACHE_DIR="$UVD/cache" UV_PYTHON_INSTALL_DIR="$UVD/python"
 if [ ! -x "$UV" ]; then
   mkdir -p "$UVD"
   curl -fsSL https://astral.sh/uv/install.sh -o "$UVD/install.sh"
