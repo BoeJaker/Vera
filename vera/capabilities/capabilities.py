@@ -1852,7 +1852,7 @@ def _normalize_generation_think(value):
                 "read (sandbox-aware) and prepended as context, so you don't paste large text inline. "
                 "Params: prompt (str!), files (str|list — file paths/portions to include as context), "
                 "system (str — optional persona/instructions), model (str — leave blank for default), "
-                "prefer_gpu (bool default True — route to GPU instance), backend (ollama|vllm|auto), "
+                "prefer_gpu (bool default True — route to GPU instance), backend (ollama|vllm|auto — auto follows the routing table; vllm forces a vLLM server), "
                 "output_format (str — optional shared format profile, e.g. markdown|report|audio|json|"
                 "docs|quick|short|long; see llm.formats — appends a format directive to the system prompt), "
                 "job_type (str — optional cluster routing hint: embedding|chat|dream|summarize|vision|code; "
@@ -1951,9 +1951,13 @@ async def llm_generate(
                 pass
 
     # ── Backend routing ────────────────────────────────────────────────────────
-    # Prefer vLLM when: backend="vllm" OR (backend="auto" AND vLLM has online instances)
+    # vLLM directly only when the caller asks for it (backend="vllm"). "auto"
+    # goes through the routing table, whose rules/profiles reach vLLM with a
+    # "vllm:<id>" pin like any other node. "auto" used to send every
+    # prefer_gpu call to ANY online vLLM instance - CPU ones included, with an
+    # Ollama model name the server does not serve - bypassing every rule.
     _use_vllm = False
-    if backend in ("vllm", "auto"):
+    if backend == "vllm":
         # The loader registers vllm/vllm_capabilities.py under its bare name; a
         # package import would build a second copy whose instances are never
         # health-polled (so never "online") and would re-register its caps.
@@ -1962,7 +1966,7 @@ async def llm_generate(
         if _vllm_mod is not None:
             _online_vllm = [i for i in getattr(_vllm_mod, "VLLM_INSTANCES", {}).values()
                             if i.status == "online"]
-            if _online_vllm and (backend == "vllm" or prefer_gpu):
+            if _online_vllm:
                 _use_vllm = True
 
     if _use_vllm:
@@ -1983,8 +1987,10 @@ async def llm_generate(
                 used_model = result.get("model", model or "") if isinstance(result, dict) else (model or "")
                 used_inst  = result.get("instance_id", "") if isinstance(result, dict) else ""
                 _fr = str(result.get("finish_reason", "")) if isinstance(result, dict) else ""
+                _vi = getattr(_vllm_mod, "VLLM_INSTANCES", {}).get(used_inst)
                 return {"text": text, "model": used_model, "instance": used_inst,
-                        "backend": "vllm", "has_gpu": True, "tokens": len(tokens_collected),
+                        "backend": "vllm", "has_gpu": bool(getattr(_vi, "has_gpu", False)),
+                        "tokens": len(tokens_collected),
                         "truncated": _fr == "length",
                         **(await _llm_save_output(save_as, text, session_id))}
             except Exception as _e:

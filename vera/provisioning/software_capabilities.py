@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import shlex
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -66,6 +68,10 @@ try:
     from Vera.vera.provisioning import ollama_node_core as _ollama_core
 except Exception:                                    # worktree / app-free import
     from vera.provisioning import ollama_node_core as _ollama_core
+try:
+    from Vera.vera.vllm import vllm_install_core as _vllm_core
+except Exception:                                    # worktree / app-free import
+    from vera.vllm import vllm_install_core as _vllm_core
 
 # Rendered per install so the requested port reaches the bind address.
 # One recipe is shared with the Proxmox path so the two cannot drift
@@ -77,14 +83,11 @@ _DOCKER_INSTALL = (
     "{sudo}systemctl enable --now docker && "
     "echo VERA_PROVISION_DONE"
 )
-# vLLM in a self-contained user venv — no sudo, no system Python pollution.
-_VLLM_INSTALL = (
-    'python3 -m venv "$HOME/.vera/vllm" && '
-    '"$HOME/.vera/vllm/bin/pip" install -U pip wheel setuptools && '
-    '"$HOME/.vera/vllm/bin/pip" install vllm && '
-    '"$HOME/.vera/vllm/bin/vllm" --version && '
-    'echo VERA_PROVISION_DONE'
-)
+# vLLM in a self-contained user venv (~/.vera/vllm). The recipe is shared with
+# the Proxmox path (vllm_install_core): the stock PyPI wheel has no V100 (sm_70)
+# kernels and no CPU build, so it installs the matching release wheel per mode.
+_VLLM_VENV = "$HOME/.vera/vllm"
+_VLLM_INSTALL = "{vllm_recipe}"
 # NVIDIA container toolkit (Debian/Ubuntu) — lets Docker use the GPU.
 _NVIDIA_INSTALL = (
     "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey "
@@ -231,9 +234,11 @@ async def cap_detect(host_id: str = "", trace_id=None) -> Dict:
     description="Install a runtime on a stored host over SSH. Inputs: host_id "
                 "(str!), target ('ollama'|'vllm'|'docker'|'nvidia'), sudo (bool="
                 "true — prefix privileged steps with sudo unless the login is "
-                "root), port (int — override the listen port), timeout (int=900). "
+                "root), port (int — override the listen port), timeout (int=900), "
+                "mode (vllm only: 'auto'|'gpu'|'cpu' — auto picks gpu when an "
+                "NVIDIA device answers; cpu needs glibc >= 2.39). "
                 "Output: {ok, rc, target, done(reached end marker), log(tail), "
-                "effect_shadow}. Optional idempotency, approval, and retry "
+                "mode (vllm), effect_shadow}. Optional idempotency, approval, and retry "
                 "inputs are observe-only and never sent to SSH. "
                 "Long downloads may exceed the timeout — re-run is idempotent.",
 )
@@ -241,7 +246,7 @@ async def cap_install(host_id: str = "", target: str = "", sudo: bool = True,
                       port: int = 0, timeout: int = 900,
                       idempotency_key: str = "",
                       approval_receipt_ref: str = "", retry: bool = False,
-                      trace_id=None) -> Dict:
+                      mode: str = "auto", trace_id=None) -> Dict:
     if not host_id or target not in _TARGETS:
         return {"ok": False, "error": "host_id and a valid target are required",
                 "targets": list(_TARGETS)}
@@ -251,9 +256,17 @@ async def cap_install(host_id: str = "", target: str = "", sudo: bool = True,
     t = _TARGETS[target]
     _port = int(port or t["default_port"])
     _sudo = _sudo_for(rec, sudo)
+    vllm_recipe = ""
+    if target == "vllm":
+        try:
+            vllm_recipe = (_vllm_core.system_deps_cmd(_sudo) + "\n"
+                           + _vllm_core.install_script(_VLLM_VENV, mode=mode))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
     cmd = t["install"].format(
         sudo=_sudo, port=_port,
-        ollama_recipe=_ollama_core.ct_install_script(_port, sudo=_sudo))
+        ollama_recipe=_ollama_core.ct_install_script(_port, sudo=_sudo),
+        vllm_recipe=vllm_recipe)
     shadow = None
     if not _NESTED_EFFECT.get():
         shadow = observe_infrastructure_effect(
@@ -273,6 +286,9 @@ async def cap_install(host_id: str = "", target: str = "", sudo: bool = True,
     result = {"ok": ok, "rc": res.get("rc"), "target": target, "done": done,
             "log": (out + "\n" + (res.get("stderr", "") or ""))[-4000:],
             "error": res.get("error", "") if not ok else ""}
+    if target == "vllm":
+        _m = re.search(r"vllm install mode=(\w+)", out)
+        result["mode"] = _m.group(1) if _m else ""
     if shadow is not None:
         result["effect_shadow"] = shadow
     return result
@@ -296,14 +312,17 @@ async def cap_serve(host_id: str = "", model: str = "", port: int = 8001,
     if not rec:
         return {"ok": False, "error": f"host_id not found: {host_id}"}
     port = int(port or 8001)
+    # serve.sh (written by provision.install) sources the mode's env - CPU
+    # threading, Volta's fp16 - before `vllm serve`; a GPU utilisation given
+    # here is passed after it, so it wins over the env default.
+    _gpu = f"--gpu-memory-utilization {float(gpu_mem_util)}"
     cmd = (
-        'mkdir -p "$HOME/.vera/vllm" && '
-        'nohup "$HOME/.vera/vllm/bin/vllm" serve ' + model +
-        ' --host 0.0.0.0 --port ' + str(port) +
-        ' --gpu-memory-utilization ' + str(gpu_mem_util) +
-        (' ' + extra if extra else '') +
-        ' > "$HOME/.vera/vllm/serve.log" 2>&1 & '
-        'sleep 1 && echo "VERA_SERVE_STARTED pid=$!"'
+        'if [ -x "$HOME/.vera/vllm/serve.sh" ]; then '
+        'if [ -e /dev/nvidia0 ]; then X=' + shlex.quote(_gpu) + '; else X=""; fi; '
+        'nohup ' + _vllm_core.serve_command(_VLLM_VENV, model, port, extra)
+        + ' $X > "$HOME/.vera/vllm/serve.log" 2>&1 & '
+        'sleep 1 && echo "VERA_SERVE_STARTED pid=$!"; '
+        'else echo "vllm not installed (run provision.install target=vllm)" >&2; exit 2; fi'
     )
     res = await _ssh(host_id, cmd, timeout=30)
     out = res.get("stdout", "") or ""
