@@ -436,8 +436,20 @@ deployments of registered derived packages rather than independent state.
 
 **Current status.** Provider-neutral, non-executing `TrainingRequest` /
 `TrainingRun` / `PromptPackage` contracts are in
-[`vera/models/training_contracts.py`](../vera/models/training_contracts.py). No
-PEFT execution.
+[`vera/models/training_contracts.py`](../vera/models/training_contracts.py).
+The offline derivation boundary in
+[`vera/models/peft_package.py`](../vera/models/peft_package.py) adds bounded
+LoRA, AdaLoRA and IA3 configuration; produces a deterministic adapter
+`ModelPackage` proposal tied to the exact base package and revision, dataset,
+runtime profile, pinned PEFT/Transformers releases, precision, training run,
+license and verified adapter artifact hashes; and separately
+verifies the proposal against a succeeded portable `TrainingRun` and passing
+evaluation reports. Proposal and verification receipts cannot download,
+register, alias, deploy, load or activate the package. The module imports no
+PEFT or Transformers runtime. Live training, quality/resource comparison,
+failure/cancellation/rollback, and deployment of a registered derived package
+through vLLM remain queued. This language-model package boundary is separate
+from Stable Diffusion LoRA storage and image-generation controls.
 
 ## Comparison pilots
 
