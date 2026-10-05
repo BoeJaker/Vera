@@ -4,7 +4,8 @@ import pytest
 
 from vera.models.evaluation_evidence import EvaluationCaseIdentity, JudgeProvenance
 from vera.models.external_evaluation_import import (
-    import_deepeval_projection, import_promptfoo_projection)
+    import_deepeval_projection, import_promptfoo_projection,
+    import_ragas_projection)
 from vera.models.training_contracts import EvaluationRequest
 
 
@@ -19,7 +20,7 @@ def projection(kind="deepeval", count=2):
     cases = [EvaluationCaseIdentity(
         "dataset_rev_1", f"case-{index}", DIGEST_A,
         "sha256:" + format(index + 1, "064x")) for index in range(count)]
-    return {
+    value = {
         "schema": f"vera.{kind}-frozen-projection/v1",
         "source_version": "1.2.3",
         "request": request.to_dict(),
@@ -34,11 +35,19 @@ def projection(kind="deepeval", count=2):
             "error_code": "",
         } for item in cases],
     }
+    if kind == "ragas":
+        value["citation_bindings"] = [{
+            "case_id": item.case_id,
+            "citations": [{"record_id": f"record-{index}",
+                           "revision_id": f"revision-{index}"}],
+        } for index, item in enumerate(cases)]
+    return value
 
 
 @pytest.mark.parametrize("kind,loader", [
     ("deepeval", import_deepeval_projection),
     ("promptfoo", import_promptfoo_projection),
+    ("ragas", import_ragas_projection),
 ])
 def test_imports_complete_frozen_projection_without_payloads(kind, loader):
     value = projection(kind)
@@ -47,6 +56,24 @@ def test_imports_complete_frozen_projection_without_payloads(kind, loader):
     assert receipt.source_kind == kind and receipt.export_digest.startswith("sha256:")
     assert receipt.to_dict()["provider_invoked"] is False
     assert receipt.to_dict()["payloads_retained"] is False
+    if kind == "ragas":
+        assert len(receipt.citation_bindings) == 2
+        assert receipt.citation_bindings[0].citations[0].revision_id.startswith("revision-")
+
+
+def test_ragas_requires_exact_revision_citations_for_every_case():
+    missing = projection("ragas")
+    missing["citation_bindings"].pop()
+    with pytest.raises(ValueError, match="cover every expected case"):
+        import_ragas_projection(missing)
+    duplicate = projection("ragas")
+    duplicate["citation_bindings"][1] = copy.deepcopy(duplicate["citation_bindings"][0])
+    with pytest.raises(ValueError, match="case IDs must be unique"):
+        import_ragas_projection(duplicate)
+    forged_revision = projection("ragas")
+    forged_revision["citation_bindings"][0]["citations"][0]["revision_id"] = ""
+    with pytest.raises(ValueError, match="revision ID"):
+        import_ragas_projection(forged_revision)
 
 
 def test_subset_becomes_honest_partial_report():
@@ -93,6 +120,19 @@ def test_rejects_unknown_fields_schema_case_and_metric_drift():
     nonfinite["results"][0]["metrics"][0]["value"] = float("nan")
     with pytest.raises(ValueError):
         import_deepeval_projection(nonfinite)
+
+    case_unknown = projection()
+    case_unknown["expected_cases"][0]["source"] = "not admitted"
+    with pytest.raises(ValueError, match="expected case"):
+        import_deepeval_projection(case_unknown)
+    judge_unknown = projection()
+    judge_unknown["results"][0]["judge"]["backend"] = "not admitted"
+    with pytest.raises(ValueError, match="judge"):
+        import_deepeval_projection(judge_unknown)
+    usage_unknown = projection()
+    usage_unknown["results"][0]["usage"]["provider_cost"] = 1
+    with pytest.raises(ValueError, match="usage"):
+        import_deepeval_projection(usage_unknown)
 
 
 def test_rejects_duplicate_results_and_forged_case_identity():
