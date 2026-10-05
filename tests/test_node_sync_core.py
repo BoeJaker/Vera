@@ -67,10 +67,17 @@ def test_unknown_host_commit_blocks_everything():
     assert ns.plan("", [_entry("1")], [], census_busy=False)["blocked"]
 
 
-def test_one_stale_node_per_tick_in_a_stable_order():
+def test_every_stale_node_per_tick_in_a_stable_order():
     ents = [_entry("2"), _entry("1"), _entry("3")]
     wks = [_worker("1"), _worker("2"), _worker("3")]
     p = ns.plan(A, ents, wks, census_busy=False, now=1e6)
+    assert p["run"] == ["1", "2", "3"] and p["skipped"] == []
+
+
+def test_a_limit_caps_the_tick():
+    ents = [_entry("2"), _entry("1"), _entry("3")]
+    wks = [_worker("1"), _worker("2"), _worker("3")]
+    p = ns.plan(A, ents, wks, census_busy=False, now=1e6, limit=1)
     assert p["run"] == ["1"]
     assert {s["host_id"] for s in p["skipped"]} == {"2", "3"}
 
