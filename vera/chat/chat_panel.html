@@ -588,13 +588,10 @@ body.has-msgs #noticeDock,body.has-panel #noticeDock{display:none}
 .audio-row{display:flex;align-items:center;gap:5px;margin-top:4px;padding:3px 7px;background:var(--bg0);border-radius:3px;border:1px solid var(--border)}
 .audio-row audio{height:20px;flex:1}
 /* the turn footer: how the reply was made, collapsed (its rows are the chat:turn-phases widget) */
-.turn-phases{margin-top:4px;font-size:9px;color:var(--dim, #7d8590)}
-.turn-phases>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:5px;padding:1px 6px;border-radius:9px;border:1px solid var(--border, #2a2f37);user-select:none}
-.turn-phases>summary::-webkit-details-marker{display:none}
-.turn-phases>summary::before{content:'\25B8';font-size:8px;color:var(--acc2, #8fb3c9)}
-.turn-phases[open]>summary::before{content:'\25BE'}
-.turn-phases>summary:hover{color:var(--text, #e6edf3);border-color:color-mix(in srgb, var(--acc2, #8fb3c9) 45%, transparent)}
-.turn-phases>vera-widget{display:block;margin-top:5px;max-width:560px}
+/* the last turn's steps: a pane of the LHM's Context menu (never in the transcript - owner, 2026-10-05) */
+#paneTurnPhases .tp-sum{font-size:10px;color:var(--dim, #7d8590);line-height:1.4}
+#paneTurnPhases .tp-sum b{color:var(--text, #e6edf3);font-weight:600}
+#paneTurnPhases vera-widget{display:block}
 .sd-img{max-width:100%;border-radius:5px;margin-top:6px;display:block;border:1px solid var(--border)}
 .sd-card{border:1px solid rgba(201,149,90,.3);background:rgba(201,149,90,.04);border-radius:7px;padding:9px 11px;width:100%}
 .council-resp{border:1px solid var(--border);border-radius:5px;padding:6px 9px;margin-bottom:5px;font-size:11px}
@@ -3364,6 +3361,9 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     </div>
     <div id="chatLoopsList" style="flex:1;min-height:0;overflow:auto"><div style="color:var(--dim2);padding:10px">Loading…</div></div>
   </div>
+
+  <!-- The last turn's steps (docked in the Context menu; filled by _turnPhasesRender) -->
+  <div id="paneTurnPhases" class="ctx-pane"></div>
 
   <!-- Memory graph -->
   <div id="paneMemGraph">
@@ -6226,11 +6226,13 @@ IMPORTANT:
     else (wrap._phaseStarts||(wrap._phaseStarts={}))[stage+':'+id]=now;
     _phaseNote(wrap, f);
   }
-  /* ═══ THE TURN FOOTER (context-and-ui; owner 2026-10-04: pre/post processing "clearly communicated"). When a reply
-     ends, its own phase frames become one row per step - when it started, how long it took, how it ended - drawn by
-     the registered widget template chat:turn-phases (the gantt form) inside a collapsed line under the reply. The
-     page's own steps are timed from the turn's start; the server's from when the request went, so they are shifted
-     by that. Page-local like the frames themselves: a reloaded transcript has no footer. ═══ */
+  /* ═══ THE LAST TURN'S STEPS (context-and-ui; owner 2026-10-04: pre/post processing "clearly communicated"). When a
+     reply ends, its own phase frames become one row per step - when it started, how long it took, how it ended - drawn
+     by the registered widget template chat:turn-phases (the gantt form) in the Context menu's "Last turn" pane. NEVER
+     in the transcript (owner, 2026-10-05: it sat in a column of its own beside the reply and squeezed the messages).
+     The page's own steps are timed from the turn's start; the server's from when the request went, so they are shifted
+     by that. Page-local like the frames themselves; the split menu instance is told over the LHM channel. ═══ */
+  let _lastTurnPhases=null;   // { ph, mid, at }
   function _phaseRows(wrap){
     const frames=(wrap&&wrap._phases)||[]; if(!frames.some(f=>f&&!f.local)) return null;
     const shift=(wrap._phaseSentAt!=null&&wrap._phaseT0!=null)?Math.max(0,wrap._phaseSentAt-wrap._phaseT0):0;
@@ -6258,24 +6260,28 @@ IMPORTANT:
     }).sort((a,b)=>a.start-b.start);
     return rows.length?{ rows, total:end, first, skipped }:null;
   }
-  function _phaseFooter(wrap, bubEl){
-    if(!wrap||!bubEl||!_phasesOn()) return;
+  // a reply ended: keep its steps for the Context menu (and tell the menu instance when the chat is split)
+  function _phaseTurnDone(wrap){
+    if(!wrap||!_phasesOn()) return;
     const ph=_phaseRows(wrap); if(!ph) return;
-    const old=wrap.querySelector(':scope .turn-phases'); if(old) old.remove();
-    const secs=(ms)=>ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(1)+' s';
-    const det=document.createElement('details'); det.className='turn-phases';
-    const sum=document.createElement('summary');
-    sum.textContent=ph.rows.length+' step'+(ph.rows.length===1?'':'s')+' · '+secs(ph.total)
-      +(ph.first!=null?' · first word at '+secs(ph.first):'')+(ph.skipped.length?' · skipped: '+ph.skipped.join(', '):'');
-    det.appendChild(sum);
-    det.addEventListener('toggle',()=>{
-      if(!det.open||det.querySelector('vera-widget')) return;
-      const w=document.createElement('vera-widget'); w.setAttribute('bare',''); w.setAttribute('size','m');
-      w.record={ id:'chat:turn-phases', form:'gantt', title:'How this turn was made', data:{ stages:ph.rows },
-                 draw:{ rows:Math.min(16, ph.rows.length), names:230 } };
-      det.appendChild(w);
-    });
-    bubEl.insertAdjacentElement('afterend', det);
+    _lastTurnPhases={ ph, mid:(wrap.dataset&&wrap.dataset.mid)||'', at:Date.now() };
+    _turnPhasesRender();
+    if(_EMBED.only==='chat'){ try{ _lhmPost('turn', _lastTurnPhases); }catch(_){} }
+  }
+  function _turnPhasesRender(){
+    const el=document.getElementById('paneTurnPhases'); if(!el) return;
+    const t=_lastTurnPhases;
+    if(!t||!t.ph||!Array.isArray(t.ph.rows)||!t.ph.rows.length){
+      el.innerHTML='<div class="tp-sum">No turn yet in this chat - send a message and its steps show here.</div>'; return; }
+    const sig=String(t.at)+':'+t.mid; if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    const ph=t.ph, secs=(ms)=>ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(1)+' s';
+    el.innerHTML='<div class="tp-sum"><b>'+ph.rows.length+' step'+(ph.rows.length===1?'':'s')+' · '+esc(secs(ph.total))+'</b>'
+      +(ph.first!=null?' · first word at '+esc(secs(ph.first)):'')
+      +(ph.skipped&&ph.skipped.length?'<br>skipped: '+esc(ph.skipped.join(', ')):'')+'</div>';
+    const w=document.createElement('vera-widget'); w.setAttribute('bare',''); w.setAttribute('size','m');
+    w.record={ id:'chat:turn-phases', form:'gantt', title:'How the last turn was made', data:{ stages:ph.rows },
+               draw:{ rows:Math.min(16, ph.rows.length), names:150 } };
+    el.appendChild(w);
   }
   async function _genThinkPhrases(){
     const st=document.getElementById('thinkPhraseStatus');
@@ -12363,8 +12369,8 @@ Your task: decide what to do next to advance toward the goal.
     _maybeAutoPreview(bubEl);
     // Auto-persist labeled code blocks into the artifact system (no manual Save).
     try{ _maybeAutoSaveArtifacts(bubEl); }catch(_){}
-    // how the turn was made: its steps, collapsed under the reply
-    try{ _phaseFooter(aMsg.wrap, bubEl); }catch(_){}
+    // how the turn was made: its steps, in the Context menu's "Last turn" pane (never beside the reply)
+    try{ _phaseTurnDone(aMsg.wrap); }catch(_){}
     // NOTE: audio is played in-stream via _enqueueAudio above.
     // Show a playback indicator row if audio was received (for replaying)
     if(_hadAudio&&useTts){
@@ -16036,6 +16042,7 @@ function _embedMount(){
       else if(m.act==='focus'){ _grFocusMid=a.mid||''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid); }catch(_){} } try{ _ctxFollow(true); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
       else if(m.act==='memory'){ try{ _memAfterTurn(); }catch(_){} }   // a reply finished in the chat: the memory graph follows
+      else if(m.act==='turn'){ _lastTurnPhases=a&&a.ph?a:null; try{ _turnPhasesRender(); }catch(_){} }   // its steps, for the Last turn pane
       else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
       else if(m.act==='runs'){ _runsApply(a.which, a.off); }
       // updateFrameUI too: the legacy strip and Frames pane are views onto CTX_FRAMES like any other, and the
@@ -16468,7 +16475,8 @@ function _embedMount(){
      from (the chat reads its cfg and ctx fields by id on every send). ═══ */
   const _LHM_DOCK={
     sessions: { cards:{ titles:['Session'] } },
-    context:  { panes:[{ id:'paneMemGraph', n:'Memory graph', tab:'memgraph', cls:'dk-graph', h:440, load:()=>memGraphLoad() }], cards:{ grp:'Context' } },
+    context:  { panes:[{ id:'paneTurnPhases', n:'Last turn', tab:'ctx', cls:'dk-list', load:()=>_turnPhasesRender() },
+                       { id:'paneMemGraph', n:'Memory graph', tab:'memgraph', cls:'dk-graph', h:440, load:()=>memGraphLoad() }], cards:{ grp:'Context' } },
     activity: { panes:[{ id:'paneDagGraph', n:'DAG graph', tab:'dag', cls:'dk-graph', h:300, load:()=>_renderDagGraph() },
                        { id:'paneDagHistory', n:'DAG log', tab:'dag', cls:'dk-list', load:()=>renderDagHistory() },
                        { id:'paneMonitor', n:'Monitor', tab:'monitor', cls:'dk-log' }], cards:{ titles:['Execution modes','DAG'] } },
