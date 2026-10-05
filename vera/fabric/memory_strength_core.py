@@ -77,10 +77,52 @@ def _ts(v: Any) -> Optional[float]:
         return None
 
 
-def effective_half_life(cls: str, used_n: int = 0, injected_n: int = 0) -> Optional[float]:
+# ── the user's controls (owner, 2026-10-05: "add controls for the user to select what gets forgotten and how quickly") ──
+HALF_LIFE_RANGE = (0.5, 3650.0)      # days
+FLOOR_RANGE = (0.0, 0.5)
+
+
+def policy_from(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, Any]]:
+    """The policy in force: every class's {enabled (may it be forgotten at all), half_life_days (None = no decay),
+    floor}, the defaults above with the user's overrides laid on. Unknown classes and malformed values are ignored;
+    numbers are clamped, so no setting can make every memory fade in a day."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for cls, (hl, floor) in HALF_LIFE.items():
+        out[cls] = {"enabled": hl is not None and floor > 0, "half_life_days": hl, "floor": floor}
+    for cls, o in (overrides or {}).items() if isinstance(overrides, dict) else []:
+        if cls not in out or not isinstance(o, dict):
+            continue
+        cur = out[cls]
+        if isinstance(o.get("enabled"), bool):
+            cur["enabled"] = o["enabled"]
+        if "half_life_days" in o:
+            v = o["half_life_days"]
+            if v is None:
+                cur["half_life_days"] = None
+            else:
+                try:
+                    cur["half_life_days"] = max(HALF_LIFE_RANGE[0], min(HALF_LIFE_RANGE[1], float(v)))
+                except (TypeError, ValueError):
+                    pass
+        if "floor" in o:
+            try:
+                cur["floor"] = max(FLOOR_RANGE[0], min(FLOOR_RANGE[1], float(o["floor"])))
+            except (TypeError, ValueError):
+                pass
+        if cur["half_life_days"] is None or cur["floor"] <= 0:
+            cur["enabled"] = False          # nothing to fade by
+    return out
+
+
+_UNSET = object()
+
+
+def effective_half_life(cls: str, used_n: int = 0, injected_n: int = 0, base: Any = _UNSET) -> Optional[float]:
     """Days. Each use (up to 10 counted) adds half the base; each injection that was ignored (up to 20) takes a tenth
-    off - so a memory the model keeps drawing on lasts, and one it keeps being given and ignoring goes sooner."""
-    base = HALF_LIFE.get(cls, HALF_LIFE[DEFAULT_CLASS])[0]
+    off - so a memory the model keeps drawing on lasts, and one it keeps being given and ignoring goes sooner.
+    `base` is the class's half-life in force (the user's setting); unset reads the default table."""
+    if base is _UNSET:
+        base = HALF_LIFE.get(cls, HALF_LIFE[DEFAULT_CLASS])[0]
     if base is None:
         return None
     used = max(0, min(int(used_n or 0), 10))
@@ -88,7 +130,8 @@ def effective_half_life(cls: str, used_n: int = 0, injected_n: int = 0) -> Optio
     return base * (1.0 + 0.5 * used) / (1.0 + 0.1 * ignored)
 
 
-def strength(record: Dict[str, Any], usage: Optional[Dict[str, Any]] = None, now: Optional[float] = None) -> float:
+def strength(record: Dict[str, Any], usage: Optional[Dict[str, Any]] = None, now: Optional[float] = None,
+             policy: Optional[Dict[str, Dict[str, Any]]] = None) -> float:
     """0..1: the record's importance, halved every effective half-life since it was last used (or made)."""
     rec = record or {}
     use = usage or {}
@@ -99,7 +142,10 @@ def strength(record: Dict[str, Any], usage: Optional[Dict[str, Any]] = None, now
         importance = 0.5
     importance = max(0.0, min(1.0, importance))
     cls = class_of(rec)
-    hl = effective_half_life(cls, use.get("used_n", 0), use.get("injected_n", 0))
+    if policy and cls in policy:
+        hl = effective_half_life(cls, use.get("used_n", 0), use.get("injected_n", 0), policy[cls].get("half_life_days"))
+    else:
+        hl = effective_half_life(cls, use.get("used_n", 0), use.get("injected_n", 0))
     if hl is None:
         return importance
     since = _ts(use.get("last_used")) or _ts(rec.get("created_at")) or now
@@ -107,8 +153,15 @@ def strength(record: Dict[str, Any], usage: Optional[Dict[str, Any]] = None, now
     return round(importance * math.pow(0.5, age_days / max(hl, 1e-6)), 6)
 
 
-def fades(record: Dict[str, Any], usage: Optional[Dict[str, Any]] = None, now: Optional[float] = None) -> bool:
-    """Below its class's floor: the fading job (CU-M.4) would archive it - softly, revived on use."""
+def fades(record: Dict[str, Any], usage: Optional[Dict[str, Any]] = None, now: Optional[float] = None,
+          policy: Optional[Dict[str, Dict[str, Any]]] = None) -> bool:
+    """Below its class's floor, in a class the user lets be forgotten: the fading job would archive it - softly, and a
+    strong match can still bring it back (owner, 2026-10-05)."""
     cls = class_of(record or {})
-    floor = HALF_LIFE.get(cls, HALF_LIFE[DEFAULT_CLASS])[1]
-    return floor > 0 and strength(record, usage, now) < floor
+    if policy and cls in policy:
+        if not policy[cls].get("enabled"):
+            return False
+        floor = float(policy[cls].get("floor") or 0.0)
+    else:
+        floor = HALF_LIFE.get(cls, HALF_LIFE[DEFAULT_CLASS])[1]
+    return floor > 0 and strength(record, usage, now, policy) < floor
