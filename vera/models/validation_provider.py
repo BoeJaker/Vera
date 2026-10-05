@@ -80,7 +80,12 @@ class ValidatorSpec:
             object.__setattr__(self, name, _identifier(getattr(self, name), name))
         if self.stage not in _STAGES:
             raise ValueError("unsupported validator stage")
-        effects = tuple(sorted({_identifier(item, "effect") for item in self.effects}))
+        raw_effects = tuple(self.effects)
+        if any(not isinstance(item, str) for item in raw_effects):
+            raise ValueError("validator effects must be strings")
+        effects = tuple(sorted(_identifier(item, "effect") for item in raw_effects))
+        if len(set(effects)) != len(effects):
+            raise ValueError("validator effects must be unique")
         if set(effects) - _EFFECTS:
             raise ValueError("unsupported validator effect")
         object.__setattr__(self, "effects", effects)
@@ -164,8 +169,13 @@ class ValidationObservation:
             self.validator_id, "validator ID"))
         if self.status not in {"passed", "violated", "failed", "skipped"}:
             raise ValueError("unsupported validation status")
-        violations = tuple(sorted({_identifier(item, "violation code")
-                                   for item in self.violation_codes}))
+        raw_violations = tuple(self.violation_codes)
+        if any(not isinstance(item, str) for item in raw_violations):
+            raise ValueError("violation codes must be strings")
+        violations = tuple(sorted(_identifier(item, "violation code")
+                                  for item in raw_violations))
+        if len(set(violations)) != len(violations):
+            raise ValueError("violation codes must be unique")
         object.__setattr__(self, "violation_codes", violations)
         citations = tuple(sorted(self.citations))
         if not all(isinstance(item, RetrievalCitation) for item in citations):

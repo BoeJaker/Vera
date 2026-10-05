@@ -123,12 +123,33 @@ def test_effect_declarations_fail_closed() -> None:
     with pytest.raises(ValueError, match="must be boolean"):
         import_guardrails_projection(invalid_secret_flag)
 
+    duplicate_effect = _projection()
+    duplicate_effect["manifest"]["validators"][1]["effects"] = ["model", "network", "model"]
+    with pytest.raises(ValueError, match="effects must be unique"):
+        import_guardrails_projection(duplicate_effect)
+
+    non_string_effect = _projection()
+    non_string_effect["manifest"]["validators"][0]["effects"] = [1]
+    with pytest.raises(ValueError, match="effects must be strings"):
+        import_guardrails_projection(non_string_effect)
+
 
 def test_external_provider_cannot_claim_policy_authority() -> None:
     projection = _projection()
     projection["manifest"]["policy_authority"] = True
     with pytest.raises(ValueError, match="policy authority"):
         import_guardrails_projection(projection)
+
+
+def test_duplicate_and_non_string_violation_codes_fail_closed() -> None:
+    duplicate = _projection()
+    duplicate["observations"][3]["violation_codes"] *= 2
+    with pytest.raises(ValueError, match="violation codes must be unique"):
+        import_guardrails_projection(duplicate)
+    non_string = _projection()
+    non_string["observations"][3]["violation_codes"] = [1]
+    with pytest.raises(ValueError, match="violation codes must be strings"):
+        import_guardrails_projection(non_string)
 
 
 def test_rejects_unknown_fields_and_forged_or_duplicate_identity() -> None:
