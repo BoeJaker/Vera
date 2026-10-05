@@ -84,6 +84,10 @@ try:                                    # how strong a memory still is: half-lif
     from Vera.vera.fabric import memory_strength_core as _strength_core
 except ImportError:                     # pragma: no cover
     from . import memory_strength_core as _strength_core
+try:                                    # which memories are noise: kept, ranked last (CU-M.8)
+    from Vera.vera.fabric import memory_noise_core as _noise_core
+except ImportError:                     # pragma: no cover
+    from . import memory_noise_core as _noise_core
 
 log = logging.getLogger("vera.memory_hooks")
 
@@ -1719,6 +1723,132 @@ async def memory_fade_run(confirm: bool = False, limit: int = 20000, classes: st
         return {"refused": "the nightly backup runs 01:00-03:30 - fading waits", "last_run": last}
     _FADE_RUN_TASK = asyncio.create_task(_fade_apply(lim, cls or None, str(by or "")[:80]))
     return {"started": True, "limit": lim, "classes": cls, "last_run": last}
+
+
+# ── noise marks for the records already stored (new ones are marked as they are written) ──
+_NOISE_RUN_KEY = "vera:memory:noise:last_run"
+_NOISE_RUN_TASK = None
+
+
+async def _noise_scan(pool) -> Tuple[Dict[str, List[str]], List[str], Dict[str, int], int]:
+    """Over the live records recall can return (not archived, not a tool call, not an imported transcript line):
+    ({id: reasons} to mark, [ids] whose mark no longer holds, {reason: count}, records scanned)."""
+    mark: Dict[str, List[str]] = {}
+    unmark: List[str] = []
+    by: Dict[str, int] = {}
+    seen = 0
+    last = ""
+    async with pool.acquire() as conn:
+        while True:
+            rows = await conn.fetch(
+                "SELECT id, record_type, left(coalesce(text, ''), 2000) AS text, metadata ? 'noise' AS marked "
+                "FROM vera_memories WHERE NOT archived AND id > $1 "
+                "AND record_type <> ALL($2::text[]) AND NOT (text LIKE '[Claude Code%' OR text LIKE '[Codex%') "
+                "ORDER BY id LIMIT 5000", last, list(_recall_core.ACTIVITY_TYPES))
+            if not rows:
+                break
+            for r in rows:
+                seen += 1
+                why = _noise_core.noise_reasons({"record_type": r["record_type"], "text": r["text"]})
+                for w in why:
+                    by[w] = by.get(w, 0) + 1
+                if why and not r["marked"]:
+                    mark[r["id"]] = why
+                elif r["marked"] and not why:
+                    unmark.append(r["id"])
+            last = rows[-1]["id"]
+            await asyncio.sleep(0)
+    return mark, unmark, by, seen
+
+
+async def _noise_apply() -> Dict[str, Any]:
+    """Mark noise in Postgres (metadata.noise = reasons) and Neo4j (m.noise), clear marks the rules no longer give.
+    Never raises; the run is recorded."""
+    t0 = time.monotonic()
+    out: Dict[str, Any] = {"started_at": now_iso(), "marked": 0, "unmarked": 0, "neo4j": 0}
+    try:
+        pool = await _usage_pool()
+        if pool is None:
+            out["error"] = "memory postgres not connected"
+            return out
+        mark, unmark, out["by_reason"], out["scanned"] = await _noise_scan(pool)
+        items = list(mark.items())
+        for i in range(0, len(items), _FADE_BATCH):
+            chunk = items[i:i + _FADE_BATCH]
+            async with pool.acquire() as conn:
+                done = await conn.fetch(
+                    """UPDATE vera_memories m SET metadata = COALESCE(m.metadata, '{}'::jsonb)
+                                                         || jsonb_build_object('noise', r.why::jsonb)
+                       FROM unnest($1::text[], $2::text[]) AS r(id, why)
+                       WHERE m.id = r.id RETURNING m.id""",
+                    [c[0] for c in chunk], [json.dumps(c[1]) for c in chunk])
+            out["marked"] += len(done)
+            await asyncio.sleep(0)
+        for i in range(0, len(unmark), _FADE_BATCH):
+            async with pool.acquire() as conn:
+                done = await conn.fetch("UPDATE vera_memories SET metadata = metadata - 'noise' "
+                                        "WHERE id = ANY($1::text[]) RETURNING id", unmark[i:i + _FADE_BATCH])
+            out["unmarked"] += len(done)
+            await asyncio.sleep(0)
+        neo, _coll, _cls = _fade_stores()
+        if neo is not None:
+            for flag, ids in ((True, [c[0] for c in items]), (False, unmark)):
+                for i in range(0, len(ids), _FADE_BATCH):
+                    try:
+                        async with neo._driver.session() as ses:
+                            res = await ses.run("UNWIND $ids AS id MATCH (m:Memory {id: id}) SET m.noise = $flag "
+                                                "RETURN count(m) AS n", {"ids": ids[i:i + _FADE_BATCH], "flag": flag})
+                            row = await res.single()
+                            out["neo4j"] += int((row or {}).get("n", 0) or 0)
+                    except Exception as e:
+                        out.setdefault("errors", []).append("neo4j: %s" % str(e)[:120])
+                    await asyncio.sleep(0)
+    except Exception as e:
+        out["error"] = str(e)[:200]
+    out["ms"] = round((time.monotonic() - t0) * 1000)
+    out["finished_at"] = now_iso()
+    r = _redis()
+    if r is not None:
+        try:
+            await r.set(_NOISE_RUN_KEY, json.dumps(out))
+        except Exception:
+            pass
+    return out
+
+
+@capability(
+    "memory.noise.mark",
+    http_method="POST", http_path="/memory/noise/mark", http_tags=["memory"],
+    memory="off",
+    description="Mark the stored memories that are noise - status lines, prompt text stored as a message, context "
+                "injected into a message, raw tool JSON, empty reports, one-word lines - so recall ranks them after "
+                "every real memory. Nothing is deleted or archived; new memories are marked as they are written. "
+                "Without confirm=true it only counts. Runs in the background, never 01:00-03:30. Inputs: confirm "
+                "(bool). Output: {dry, would_mark, would_unmark, by_reason | started | running, last_run}.",
+)
+async def memory_noise_mark(confirm: Any = False) -> Dict[str, Any]:
+    global _NOISE_RUN_TASK
+    r = _redis()
+    last = None
+    if r is not None:
+        try:
+            raw = await r.get(_NOISE_RUN_KEY)
+            last = json.loads(raw) if raw else None
+        except Exception:
+            last = None
+    if _NOISE_RUN_TASK is not None and not _NOISE_RUN_TASK.done():
+        return {"running": True, "last_run": last}
+    if str(confirm).strip().lower() not in ("1", "true", "yes", "on"):
+        pool = await _usage_pool()
+        if pool is None:
+            return {"error": "memory postgres not connected", "last_run": last}
+        mark, unmark, by, seen = await _noise_scan(pool)
+        return {"dry": True, "scanned": seen, "would_mark": len(mark), "would_unmark": len(unmark), "by_reason": by,
+                "last_run": last}
+    if _in_backup_window():
+        return {"refused": "the nightly backup runs 01:00-03:30 - marking waits", "last_run": last}
+    _NOISE_RUN_TASK = asyncio.create_task(_noise_apply())
+    return {"started": True, "last_run": last}
 
 
 _FADE_NIGHT = {"day": ""}

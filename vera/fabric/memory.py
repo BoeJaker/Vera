@@ -111,6 +111,12 @@ try:                                                    # one 0..1 hybrid score 
     from Vera.vera.fabric import memory_score_core as _memory_score_core
 except ImportError:                                     # pragma: no cover
     from . import memory_score_core as _memory_score_core
+try:                                                    # noisy records rank after the rest (memory_noise_core)
+    from Vera.vera.fabric import memory_noise_core as _noise_core
+except ImportError:                                     # pragma: no cover
+    from . import memory_noise_core as _noise_core
+# "0" ranks noisy records with the rest again.
+_RECALL_NOISE_LAST = __import__("os").getenv("VERA_MEMORY_NOISE_LAST", "1") != "0"
 try:                                                    # retrieval timing envelopes (FM-7.0)
     from Vera.vera.fabric import retrieval_timing_core as _rtc
 except ImportError:                                     # pragma: no cover
@@ -726,7 +732,7 @@ class PostgresBackend(MemoryBackend):
                     FROM vera_memories
                     WHERE {where}
                       AND search_vector @@ plainto_tsquery('english', ${i})
-                    ORDER BY score DESC, importance DESC
+                    ORDER BY (metadata ? 'noise'), score DESC, importance DESC
                     LIMIT {limit}
                 """
             else:
@@ -1226,6 +1232,7 @@ class Neo4jBackend(MemoryBackend):
                 "capability":   record.capability,
                 "content_hash": record.content_hash,
                 "graph_id":     record.id,  # use record id as graph node identity
+                "noise":        bool((record.metadata or {}).get("noise")),   # ranks last (memory_noise_core)
             }
             async with self._driver.session() as s:
                 await s.run(
@@ -1324,7 +1331,7 @@ class Neo4jBackend(MemoryBackend):
                     CALL db.index.fulltext.queryNodes('vera_mem_text', $query, {{limit: $cand}})
                     YIELD node AS m, score
                     WHERE {where}
-                    RETURN m, score ORDER BY score DESC LIMIT $limit
+                    RETURN m, score ORDER BY coalesce(m.noise, false), score DESC LIMIT $limit
                 """
             else:
                 cypher = f"""
@@ -1696,6 +1703,12 @@ class HybridMemoryStore:
         # Neo4j as before; Chroma is not asked, so no "embedder offline" warning is raised for a skip by design.
         worthy = _recall_core.embed_worthy(record.record_type, record.text or record.full_text,
                                            _RECALL_EXCLUDE_TYPES, _RECALL_EXCLUDE_TRANSCRIPTS)
+        # Noise (status lines, prompt scaffolding, injected context, raw tool JSON) is kept and marked, so every
+        # backend ranks it after real memories; it is not embedded - nothing should find it by meaning.
+        why = _noise_core.noise_reasons(record)
+        if why:
+            record.metadata = dict(record.metadata or {}, noise=why)
+            worthy = False
         if worthy and not record.embedding and MEMORY_AUTO_EMBED:
             emb = await embed_text(record.text or record.summary)
             if emb:
@@ -1833,15 +1846,22 @@ class HybridMemoryStore:
 
     @staticmethod
     def _rank_pairs(pairs, limit: int) -> List[Dict]:
-        """Best first, then one hit per repeated text (recall_core.collapse_repeats), then the limit - so `limit`
-        hits are `limit` different texts, each saying how many copies it stood for."""
-        ranked = sorted(
-            pairs,
-            key=lambda x: x[1] * (0.5 + 0.5 * x[0].importance),
-            reverse=True,
-        )
-        return _recall_core.collapse_repeats(
-            [{"record": r.to_dict(), "score": round(s, 4)} for r, s in ranked], limit=int(limit))
+        """Best first, noise after everything else (memory_noise_core: status lines, prompt scaffolding, injected
+        context, raw tool JSON - kept, findable, never ahead of a real memory), then one hit per repeated text
+        (recall_core.collapse_repeats), then the limit - so `limit` hits are `limit` different texts, each saying how
+        many copies it stood for, and a noisy hit says why it ranked last."""
+        rows = []
+        for r, s in pairs:
+            why = _noise_core.noise_reasons(r) if _RECALL_NOISE_LAST else []
+            rows.append((bool(why), -(s * (0.5 + 0.5 * r.importance)), r, s, why))
+        rows.sort(key=lambda x: (x[0], x[1]))
+        hits = []
+        for _n, _k, r, s, why in rows:
+            hit = {"record": r.to_dict(), "score": round(s, 4)}
+            if why:
+                hit["noise"] = why
+            hits.append(hit)
+        return _recall_core.collapse_repeats(hits, limit=int(limit))
 
     _FADED_SEEN: Dict[str, float] = {"any": 0.0, "t": 0.0}
 
