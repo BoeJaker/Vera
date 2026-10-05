@@ -77,7 +77,8 @@ def _positive_int(value: Any, label: str, maximum: int) -> int:
 def _artifact_projection(value: ArtifactRef, label: str) -> dict[str, Any]:
     if not isinstance(value, ArtifactRef):
         raise TypeError(f"{label} must be an ArtifactRef")
-    if value.size_bytes is None or value.size_bytes <= 0:
+    if (isinstance(value.size_bytes, bool) or
+            not isinstance(value.size_bytes, int) or value.size_bytes <= 0):
         raise ValueError(f"{label} must have a positive verified size")
     return {
         "id": _identifier(value.id, f"{label} ID"),
@@ -291,7 +292,11 @@ def _application_arguments(values: Sequence[str]) -> tuple[str, ...]:
         raise ValueError("too many application arguments")
     result = []
     for value in values:
+        if not isinstance(value, str):
+            raise TypeError("application arguments must contain strings")
         token = _string(value, "application argument", required=True, limit=512)
+        if token != value:
+            raise ValueError("application arguments cannot contain edge whitespace")
         if any(ord(character) < 32 for character in token):
             raise ValueError("application arguments cannot contain control characters")
         if _secret_like(token):

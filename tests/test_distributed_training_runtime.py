@@ -134,9 +134,10 @@ def test_secret_like_environment_cannot_even_enter_profile_allowlist():
             ("single",), ("fp32",), ("API_KEY",))
 
 
-@pytest.mark.parametrize("argument", ["--api-key", "TOKEN=value", "line\nbreak"])
+@pytest.mark.parametrize("argument", [
+    "--api-key", "TOKEN=value", "line\nbreak", " padded", 7])
 def test_unsafe_application_arguments_are_rejected(argument):
-    with pytest.raises(ValueError):
+    with pytest.raises((TypeError, ValueError)):
         plan_accelerate_training(
             request=request(), profile=profile(),
             topology=DistributedTopology("cpu", "single", "fp32"),
@@ -158,6 +159,8 @@ def test_entrypoint_and_resume_artifacts_require_digest_and_size():
     for artifact in (
         ArtifactRef("entry", "training.entrypoint", "x", "bad", "text/x-python", 1),
         ArtifactRef("entry", "training.entrypoint", "x", "a" * 64, "text/x-python"),
+        ArtifactRef("entry", "training.entrypoint", "x", "a" * 64,
+                    "text/x-python", True),
     ):
         with pytest.raises(ValueError):
             plan_accelerate_training(
