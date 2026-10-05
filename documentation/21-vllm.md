@@ -309,6 +309,30 @@ The **vLLM** pane inside the **Workers & Ollama** tab iframes `/vllm/panel` (`vl
 
 The transport is injected. It owns HTTP, authentication, endpoint discovery and server-sent-event decoding, while the adapter owns deterministic request mapping, response validation, output limits, usage accounting and stable failure codes. Routing, retries and fallback remain above this layer, so wrapping a vLLM server does not introduce a second hidden policy loop. The adapter supports `/v1/completions`, `/v1/chat/completions` and `/v1/embeddings`. Package compatibility fixes the accepted task and input/output contracts; a request cannot replace the bound model, endpoint, credentials or transport. The same inference call is therefore portable to vLLM and other OpenAI-compatible serving products.
 
+The opt-in live validator can exercise this boundary against one explicitly
+selected endpoint:
+
+```bash
+python -m vera.models.live_inference_validation \
+  --backend vllm --model <served-model> --instance <vllm-id> \
+  --url http://<node>:<port> --gate-as <shared-node-id>
+```
+
+It refuses a node that is not visible through the shared inference gate, holds
+that node's lease for the bounded run, discovers the selected model through
+`/v1/models`, and exercises non-streaming completion, SSE streaming and task
+cancellation. Reports omit prompts and generated text. They retain only bounded
+counts, elapsed times and digests, and distinguish HTTP/adapter transport success
+from exact-output conformance. The model declaration digest deliberately excludes
+the server's volatile `created` value; it identifies the observed serving
+declaration, not the checkpoint weights. An API key, when required, comes only
+from `VLLM_API_KEY`, never a command-line argument.
+
+OpenAI-compatible usage objects may include bounded `*_details` maps. Vera keeps
+their non-negative integer counters under flattened names such as
+`prompt_tokens_details.cached_tokens`; null detail maps are omitted. Other nested
+or malformed usage values still fail closed as `invalid_response`.
+
 ### Readiness is more than module availability
 
 `vllm.status` can be healthy as a Vera capability while reporting zero instances: the integration code loaded, but no serving endpoint is configured. A usable deployment additionally needs a reachable endpoint with known GPU admission, a compatible content-verified `ModelPackage`, an `InferenceDeployment`, and fresh health evidence for that package and placement (see [30 · ONNX §10](./30-onnx.md#10-portable-model-layer)). Do not infer inference readiness from capability registration alone.

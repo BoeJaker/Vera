@@ -298,10 +298,29 @@ class OpenAICompatibleInferenceProvider:
             raise ValueError("invalid usage")
         usage: dict[str, int] = {}
         for key, count in value.items():
-            if not isinstance(key, str) or not key or len(key) > 256 \
-                    or isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            if not isinstance(key, str) or not key or len(key) > 128:
                 raise ValueError("invalid usage")
-            usage[key] = count
+            if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+                usage[key] = count
+                continue
+            # Current OpenAI-compatible servers include optional one-level
+            # token detail objects. Preserve their integer counters without
+            # weakening the provider-neutral flat usage contract. A null
+            # detail object means the server had no breakdown to report.
+            if count is None and key.endswith("_details"):
+                continue
+            if isinstance(count, Mapping) and key.endswith("_details") \
+                    and len(count) <= 32:
+                for detail_key, detail_count in count.items():
+                    if (not isinstance(detail_key, str) or not detail_key
+                            or len(detail_key) > 96
+                            or isinstance(detail_count, bool)
+                            or not isinstance(detail_count, int)
+                            or detail_count < 0):
+                        raise ValueError("invalid usage")
+                    usage[f"{key}.{detail_key}"] = detail_count
+                continue
+            raise ValueError("invalid usage")
         return usage
 
     def _failed(self, request: InferenceRequest, sequence: int,
