@@ -60,6 +60,10 @@ import httpx
 
 # ── Config (single source of truth) ──────────────────────────────────────────
 from Vera.vera.config import cfg
+try:                                                    # RF-77
+    from Vera.vera.fabric import chroma_bound_core as _chroma_bound
+except ImportError:                                     # pragma: no cover
+    from . import chroma_bound_core as _chroma_bound
 
 # ── Orchestrator integration ──────────────────────────────────────────────────
 # Pure embedding policy (no app import, so tests reach it as
@@ -1420,6 +1424,7 @@ class FabricChromaStore:
         if not HAS_CHROMA: return False
         try:
             self._client = _chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+            _chroma_bound.bound(self._client)      # finite timeout - RF-77
             self._col    = self._client.get_or_create_collection(
                 self.COLLECTION, metadata={"hnsw:space": "cosine"})
             log.info("✓ FabricChromaStore — %d docs", self._col.count())
@@ -2546,7 +2551,7 @@ class VectorIndexStage(PipelineStage):
             # chroma's HTTP client is synchronous — keep it off the event loop
             # (inline it blocked every other coroutine for the roundtrip).
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, FABRIC_CHROMA.upsert, record)
+            await loop.run_in_executor(_chroma_bound.pool(), FABRIC_CHROMA.upsert, record)
         return record
 
 class Neo4jStoreStage(PipelineStage):
@@ -6071,7 +6076,7 @@ async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "
                            else str(row["created_at"] or ""),
                 embedding=vec, embedding_model=OLLAMA_EMBED_MODEL,
             )
-            if await loop.run_in_executor(None, FABRIC_CHROMA.upsert, rec):
+            if await loop.run_in_executor(_chroma_bound.pool(), FABRIC_CHROMA.upsert, rec):
                 done += 1
                 try:
                     FAISS_STORE.add(rec.id, rec.dataset_id, vec)

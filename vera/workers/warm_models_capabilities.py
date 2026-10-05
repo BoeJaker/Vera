@@ -38,6 +38,10 @@ try:
     from Vera.vera.workers import warm_models_core as core
 except ImportError:                                        # pragma: no cover
     from vera.workers import warm_models_core as core      # type: ignore
+try:
+    from Vera.vera.http_tls_core import shared_ssl_context as _tls   # one TLS context for every client (not one per call)
+except ImportError:                                                 # pragma: no cover
+    from vera.http_tls_core import shared_ssl_context as _tls         # type: ignore
 
 log = logging.getLogger("vera.ollama.warm")
 
@@ -129,7 +133,7 @@ def _instances() -> Dict[str, Dict[str, Any]]:
 
 async def _get(url: str, timeout: float = 6.0) -> Optional[Dict[str, Any]]:
     try:
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout, verify=_tls()) as c:
             r = await c.get(url)
             return r.json() if r.status_code == 200 else None
     except Exception:
@@ -321,7 +325,7 @@ async def _post(url: str, body: Dict[str, Any], timeout: float = _TIMEOUT) -> Di
     hdr = _orch.vera_origin_header(job_type="warm", cap="ollama.warm")
     t0 = time.time()
     try:
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout, verify=_tls()) as c:
             r = await c.post(url, json=body, headers=hdr)
             ok = r.status_code == 200
             return {"ok": ok, "status": r.status_code, "s": round(time.time() - t0, 1),
@@ -564,18 +568,19 @@ async def _node_models_js():
 
 
 @APP.get("/nodes/models/panel", include_in_schema=False)
-async def _node_models_panel():
-    return HTMLResponse("""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+async def _node_models_panel(section: str = "warm"):
+    sec = section if section in ("warm", "settings", "nlp", "training") else "warm"
+    return HTMLResponse(("""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <script>(function(){try{var d=document.documentElement,S=window.localStorage;
 var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
 var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
 if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
-<title>Vera - Models &amp; NLP</title>
+<title>Vera - Models</title>
 <style>:root{--bg:#0d0f12;--bg1:#14181d;--bg2:#1a1f26;--border:#232a33;--border2:#2e3742;--fg:#d8dde3;
 --dim:#5f6975;--acc:#4a9eff;--acc2:#28c28a;--warn:#f5b341;--err:#ef5b5b}
 html,body{margin:0;background:var(--bg0,var(--bg));color:var(--fg);min-height:100%}</style></head>
-<body><vera-node-models></vera-node-models>
-<script src="/ui/vera-ui.js"></script><script src="/ui/elements/node_models.js"></script></body></html>""")
+<body><vera-node-models section="__SECTION__"></vera-node-models>
+<script src="/ui/vera-ui.js"></script><script src="/ui/elements/node_models.js"></script></body></html>""").replace("__SECTION__", sec))
 
 
 register_ui(

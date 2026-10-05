@@ -299,12 +299,10 @@ html.nb-embed #sidebar{display:none}
   <div class="tb-sep"></div>
   <input id="nb-title-input" placeholder="Notebook title…" value="" onchange="saveNotebookMeta()" onblur="saveNotebookMeta()">
   <div class="tb-sep"></div>
-  <button class="tbtn" onclick="openGraphView()" title="View this notebook as an entity graph">✦ Graph</button>
   <button class="tbtn" onclick="syncToGraph()" title="Extract entities from cells into the knowledge graph">⟳ Sync</button>
   <button class="tbtn" id="autobackup-btn" onclick="toggleAutoBackup()" title="Auto-backup to Gitea on save">☁</button>
   <button class="tbtn" onclick="backupGitea()" title="Backup this notebook to Gitea">Backup</button>
   <button class="tbtn" id="drawer-btn" onclick="toggleDrawer()" title="Sources — pull data from fabric / memory / graph">⊞ Sources</button>
-  <button class="tbtn" onclick="enterViewMode()" title="Read as a document">📄 View</button>
   <div class="tb-sep"></div>
   <button class="tbtn" onclick="exportNotebook('md')" title="Export Markdown">MD</button>
   <button class="tbtn" onclick="exportNotebook('ipynb')" title="Export .ipynb">ipynb</button>
@@ -318,9 +316,16 @@ html.nb-embed #sidebar{display:none}
 <div id="body">
   <!-- Sidebar -->
   <div id="sidebar">
+    <!-- THE NOTEBOOK'S VIEWS ARE ITS MENU (owner, 2026-10-03: "sub uis ... available from the lhm instead" - top bars are
+         for settings and status). Docked in the harness this nav becomes the panel's LHM menu; standalone it heads this column. -->
+    <nav id="nb-views" class="vp-menu inline" data-vera-lhm aria-label="Notebook views">
+      <button class="nav-btn active" data-view="notes" data-icon="✎" data-label="Notes" data-desc="Write and run the open notebook's cells" data-desc-long="The notebook editor: the open notebook's pages and cells - write, run and reorder cells. The default view; Document and Graph return here." onclick="nbView('notes')"><span class="gl">✎</span>Notes</button>
+      <button class="nav-btn" data-view="document" data-icon="▤" data-label="Document" data-desc="Read the notebook as one document" data-desc-long="Read-only document view of the open notebook: every cell's text and output laid out as one page, printable. Needs a notebook open." onclick="nbView('document')"><span class="gl">▤</span>Document</button>
+      <button class="nav-btn" data-view="graph" data-icon="✦" data-label="Graph" data-desc="The notebook as an entity graph" data-desc-long="The open notebook's entities and their links as a graph (run Sync in the top bar to extract entities into the knowledge graph first). Needs a notebook open." onclick="nbView('graph')"><span class="gl">✦</span>Graph</button>
+    </nav>
     <div id="sidebar-head">
       <span>Notebooks</span>
-      <button class="tbtn" style="padding:2px 8px;font-size:10px" onclick="createNotebook()">+ New</button>
+      <button data-lhm-cta="" data-label="New notebook" data-desc="Create a research notebook" class="tbtn" style="padding:2px 8px;font-size:10px" onclick="createNotebook()">+ New</button>
     </div>
     <div id="nb-search"><input placeholder="Filter…" oninput="filterNotebooks(this.value)"></div>
     <div class="nb-list" id="nb-list"></div>
@@ -538,6 +543,8 @@ function openSettings(ev){
       <button class="tbtn" onclick="resetSettings()">Reset</button>
     </div>
     <div style="font-size:9.5px;color:var(--t3);padding:0 8px 6px">Origin: ${esc(_ORIGIN)}</div>`;
+  /* the canonical Settings page (the chat's), when it is loaded; the pop-up otherwise */
+  if(window.VeraSettings && VeraSettings.openSection){ VeraSettings.openSection(pop, { label: 'Notebook settings' }); return; }
   showPopAt(pop, ev);
 }
 function saveSettings(){
@@ -1270,6 +1277,17 @@ async function backupGitea(silent){
 /* ── Notebook graph view — the notebook's own entity graph (dataset-scoped),
       rendered by the shared vera-graph engine so notes connect via entities ── */
 let _nbGraph=null;
+/* the views menu: Notes (the editor), Document (read mode), Graph (the entity graph over the page) */
+function nbView(v){
+  if(v==='graph'){ if(document.body.classList.contains('view-mode')) exitViewMode(); openGraphView(); }
+  else if(v==='document'){ closeGraphView(); enterViewMode(); }
+  else { closeGraphView(); if(document.body.classList.contains('view-mode')) exitViewMode(); }
+  _nbViewMark();
+}
+function _nbViewMark(){
+  const g=document.getElementById('graph-modal'); const v=(g&&g.classList.contains('show'))?'graph':(document.body.classList.contains('view-mode')?'document':'notes');
+  document.querySelectorAll('#nb-views .nav-btn').forEach(b=>b.classList.toggle('active', b.getAttribute('data-view')===v));
+}
 function openGraphView(){
   if(!currentNb){ toast('Open a notebook'); return; }
   document.getElementById('graph-box-title').textContent='Graph · '+(currentNb.title||'');
@@ -1289,7 +1307,7 @@ function mountNbGraph(tries){
     _nbGraph.fetchSnapshot('entity', {dataset_id:'notebook:'+currentNb.id, include_records:true, limit:400});
   } catch(e){ c.innerHTML='<div class="src-empty" style="padding:40px">Graph error: '+esc(e.message)+'<br>Try ⟳ Sync first so the notebook has entities.</div>'; }
 }
-function closeGraphView(){ document.getElementById('graph-modal').classList.remove('show'); const c=document.getElementById('graph-frame'); if(c)c.innerHTML=''; _nbGraph=null; }
+function closeGraphView(){ document.getElementById('graph-modal').classList.remove('show'); const c=document.getElementById('graph-frame'); if(c)c.innerHTML=''; _nbGraph=null; _nbViewMark(); }
 
 /* ══════════════════════════════════════════════════════════════════════════
    Block menu / slash / palette
@@ -1560,6 +1578,7 @@ function exitViewMode(){
   document.getElementById('cell-scroll').style.display='';
   document.getElementById('bottom-bar').style.display='';
   renderVisibleCells();
+  _nbViewMark();
 }
 function printDoc(){ window.print(); }
 
@@ -1614,5 +1633,7 @@ function toast(msg){ const t=document.createElement('div'); t.className='toast';
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>

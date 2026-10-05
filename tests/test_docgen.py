@@ -31,7 +31,8 @@ def test_resolve_slugs():
 
 
 def test_panel_matching():
-    assert DM.domain_for_panel({"id": "markets-studio", "label": "Quant Studio"}) == "markets"
+    # Explicit table only (PANEL_DOCS); the live Markets panel id is "markets".
+    assert DM.domain_for_panel({"id": "markets", "label": "Markets"}) == "markets"
     assert DM.domain_for_panel({"id": "evolve", "label": "Loop Lab"}) == "evolve"
     assert DM.domain_for_panel({"id": "operator-studio", "label": "Operator"}) == "operator"
     assert DM.domain_for_panel({"id": "zzz-unknown", "label": "?"}) is None

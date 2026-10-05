@@ -87,11 +87,51 @@ def claims_completion(thought: str) -> bool:
     return not _PENDING_RE.search(text)
 
 
+#: The page looked the same after this many consecutive actions...
+UNCHANGED_RUN = 3
+#: ...at least one of which was meant to change it. Typing and selecting are left
+#: out on purpose: filling form fields legitimately leaves the visible text alone.
+CHANGE_ACTIONS = frozenset({"click", "press"})
+
+NUDGE_UNCHANGED = (
+    "NOTE: the page has shown exactly the same thing ({seen!r}) after each of your last "
+    "{n} actions, including a {act}. If the GOAL asks you to confirm that something "
+    "changes, you already have the answer: it did NOT change. Reply with action \"done\" "
+    "and report the value you saw and that it stayed the same. Continue only if a "
+    "genuinely DIFFERENT action is still untried.")
+
+
+def unchanged_nudge(history) -> str:
+    """A check whose answer is "nothing happened", made explicit.
+
+    A broken countdown (Start does nothing), prod 2026-10-03, operator A/B: the model
+    noted the handler was commented out, then clicked Start six times until the repeat
+    guard stopped it at 370 s with no answer - while the page read "00:30 Start" after
+    every single action. A frozen page after a click IS the observation the goal asked
+    for. Like NUDGE this only asks; the model still decides.
+    """
+    tail = [h for h in list(history or [])[-UNCHANGED_RUN:] if isinstance(h, dict)]
+    if len(tail) < UNCHANGED_RUN:
+        return ""
+    seen = [" ".join(str(h.get("seen") or "").split()) for h in tail]
+    if not seen[0] or len(set(seen)) != 1:
+        return ""
+    acts = [str(h.get("action") or "") for h in tail]
+    if "done" in acts:
+        return ""
+    act = next((a for a in acts if a in CHANGE_ACTIONS), "")
+    if not act:
+        return ""
+    return NUDGE_UNCHANGED.format(seen=seen[0][:80], n=UNCHANGED_RUN, act=act)
+
+
 def nudge_for(history) -> str:
     """The nudge line to append, or "" when none is warranted.
 
     Looks only at the MOST RECENT step: a claim two steps ago has already been
     nudged once, and repeating it every turn would train the model to ignore it.
+    Failing that, a page that has not moved across the last few actions (see
+    unchanged_nudge).
     """
     items = list(history or [])
     if not items:
@@ -101,4 +141,32 @@ def nudge_for(history) -> str:
         return ""
     if str(last.get("action") or "") == "done":
         return ""
-    return NUDGE if claims_completion(last.get("thought") or "") else ""
+    if claims_completion(last.get("thought") or ""):
+        return NUDGE
+    return unchanged_nudge(items)
+
+
+_GENERIC_DONE = re.compile(r"^\W*(goal\s+(is\s+)?(complete|completed|achieved|met|done)|done|complete|"
+                           r"completed|success(ful)?|verified|task\s+complete)\W*$", re.IGNORECASE)
+
+
+def evidence_summary(summary: str, history, current_seen: str = "", limit: int = 4) -> str:
+    """A `done` whose summary says nothing ("goal complete") gets what the page showed.
+
+    Prod 2026-10-03 operator A/B: three of six runs on a working countdown ended `done`
+    with the summary "goal complete" - the loop that asked "report the values you saw"
+    got no values. The page text after each action is already in the history (`seen`);
+    the distinct values in order ARE the report. A summary with any substance is kept as
+    it is."""
+    s = str(summary or "").strip()
+    if s and not _GENERIC_DONE.match(s):
+        return s
+    trail = []
+    for h in list(history or []) + [{"seen": current_seen}]:
+        v = " ".join(str((h or {}).get("seen") or "").split())[:80] if isinstance(h, dict) else ""
+        if v and (not trail or trail[-1] != v):
+            trail.append(v)
+    if not trail:
+        return s or "goal complete"
+    return "%s. Observed on the page, in order: %s" % (
+        s or "goal complete", " -> ".join(repr(v) for v in trail[-limit:]))

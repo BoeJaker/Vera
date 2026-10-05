@@ -17,150 +17,420 @@
    12
   ]
  },
- "note": "Observe, errors first: the last hour's warnings and errors (syslog.error_summary) lead, then the jobs band, the work and routing lists, the job stream, and the live event stream and system log as their own elements. Every tile is a record the element draws.",
+ "note": "Health: only what says whether Vera is healthy and, if not, why. Is Vera healthy - what needs attention (perf.scan), the stores, Vera's own checks, event-loop stalls, Redis, the control plane, errors and warnings in the last hour, jobs pending, stuck runners; why - the warnings and errors log, by capability and over the hour; Vera's host - CPU, memory and the process's RAM. Everything else (job stream, scheduler, workers, runners, model traffic, census, GPU gate) lives on its own pane; the live event stream and the system log are hidden here (the page draws them; the hidden-tile picker brings them back).",
  "widgets": [
   {
-   "record": {
-    "id": "obs-errors",
-    "form": "counter",
-    "source": "syslog.error_summary",
-    "title": "Errors · last hour",
-    "read": {
-     "refresh": "15s",
-     "map": {
-      "value": "errors"
-     }
-    },
-    "draw": {
-     "body": "record",
-     "what": "errors and criticals"
-    },
-    "open": "estate/observe",
-    "place": "dashboard",
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "note": "ERROR + CRITICAL entries in the system log over the last hour, from its errors stream",
-    "frame": {
-     "span": [
-      3,
-      3
-     ]
-    }
-   },
    "at": [
     0,
     0
    ],
    "span": [
-    3,
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "sec-h-vera",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "section",
+    "source": "",
+    "title": "Is Vera healthy · what needs attention · stores · vital signs",
+    "read": {
+     "refresh": ""
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv3,#3585c9)"
+    },
+    "frame": {
+     "span": [
+      12,
+      1
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    0,
+    1
+   ],
+   "span": [
+    8,
     3
    ],
    "hidden": false,
-   "refresh": "15s",
-   "floated": false
-  },
-  {
+   "refresh": "",
+   "floated": false,
    "record": {
-    "id": "obs-warnings",
-    "form": "counter",
-    "source": "syslog.error_summary",
-    "title": "Warnings · last hour",
+    "id": "h-findings",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "rows",
+    "source": "perf.scan",
+    "title": "What needs attention · perf.scan",
     "read": {
-     "refresh": "15s",
+     "refresh": "30s",
      "map": {
-      "value": "warnings"
+      "rows": "findings",
+      "name": "title",
+      "value": "severity"
      }
     },
     "draw": {
      "body": "record",
-     "what": "warnings"
+     "limit": 6
     },
-    "open": "estate/observe",
+    "open": "estate/perf",
+    "frame": {
+     "span": [
+      8,
+      3
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    8,
+    1
+   ],
+   "span": [
+    4,
+    3
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "h-stores",
     "place": "dashboard",
     "actions": [
      "dive",
      "pin",
      "ask"
     ],
-    "frame": {
-     "span": [
-      3,
-      3
-     ]
-    }
-   },
-   "at": [
-    3,
-    0
-   ],
-   "span": [
-    3,
-    3
-   ],
-   "hidden": false,
-   "refresh": "15s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "obs-recent-errors",
-    "form": "rows",
-    "source": "syslog.error_summary",
-    "title": "Recent errors · last hour",
+    "form": "status",
+    "source": "obs.health",
+    "title": "Stores · reachable",
     "read": {
-     "refresh": "15s",
+     "refresh": "10s",
      "map": {
-      "rows": "recent_errors",
-      "name": "message",
-      "status": "level",
-      "detail": "cap_name"
+      "pick": {
+       "redis": "redis",
+       "postgres": "postgres",
+       "chroma": "chroma",
+       "neo4j": "neo4j"
+      }
      }
     },
+    "open": "estate/ops",
     "draw": {
      "body": "record"
     },
-    "open": "estate/observe",
+    "frame": {
+     "span": [
+      4,
+      3
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    0,
+    4
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "h-stalls",
     "place": "dashboard",
     "actions": [
      "dive",
      "pin",
      "ask"
     ],
-    "note": "ERROR and CRITICAL entries only, newest first; empty when the hour had none",
-    "frame": {
-     "span": [
-      3,
-      3
-     ]
-    }
-   },
-   "at": [
-    6,
-    0
-   ],
-   "span": [
-    3,
-    3
-   ],
-   "hidden": false,
-   "refresh": "15s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "obs-error-trend",
-    "form": "trace",
-    "source": "syslog.error_summary",
-    "title": "Errors · per 5 minutes · last hour",
+    "form": "column",
+    "source": "perf.stalls",
+    "title": "Event-loop stalls · ms each",
     "read": {
      "refresh": "30s",
      "map": {
-      "series": "series",
-      "t": "t",
-      "v": "errors"
+      "values": "events",
+      "value": "stalled_ms",
+      "reverse": true
+     }
+    },
+    "open": "estate/perf",
+    "draw": {
+     "body": "record"
+    },
+    "frame": {
+     "span": [
+      6,
+      3
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    6,
+    4
+   ],
+   "span": [
+    6,
+    3
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "h-redis",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "kv",
+    "source": "obs.redis",
+    "title": "Redis",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "clients": "connected_clients",
+       "memory": "used_memory_human",
+       "up days": "uptime_days"
+      }
+     },
+     "args": {
+      "keys": false
+     }
+    },
+    "open": "estate/ops",
+    "draw": {
+     "body": "record"
+    },
+    "frame": {
+     "span": [
+      6,
+      3
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    0,
+    7
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "h-pending",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "counter",
+    "source": "obs.pending",
+    "title": "Jobs pending",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "value": "count"
+     }
+    },
+    "draw": {
+     "body": "record",
+     "what": "waiting for a worker"
+    },
+    "open": "estate/workers",
+    "frame": {
+     "span": [
+      6,
+      2
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    6,
+    7
+   ],
+   "span": [
+    6,
+    2
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "h-stuck",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "numbers",
+    "source": "nodes.runner.list",
+    "title": "Stuck runners",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "stuck runners": "stuck_count",
+       "stuck after (s)": "stuck_after_s"
+      }
+     }
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/workers",
+    "frame": {
+     "span": [
+      6,
+      2
+     ]
+    },
+    "note": "a runner still computing past 2x the generation timeout, with nobody waiting (nodes.runner.list)"
+   }
+  },
+  {
+   "at": [
+    0,
+    9
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "h-checks",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "numbers",
+    "source": "perf.scan",
+    "title": "Vera's own checks",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "pick": {
+       "critical": "summary.crit",
+       "warnings": "summary.warn",
+       "info": "summary.info",
+       "passing": "summary.ok"
+      }
+     }
+    },
+    "open": "estate/perf",
+    "note": "perf.scan: event-loop stalls, stream consumers, stuck jobs and the other self-checks, by severity",
+    "draw": {
+     "body": "record"
+    },
+    "frame": {
+     "span": [
+      4,
+      2
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    4,
+    9
+   ],
+   "span": [
+    4,
+    2
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "h-control",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "numbers",
+    "source": "obs.health",
+    "title": "Control plane",
+    "read": {
+     "refresh": "5s",
+     "map": {
+      "pick": {
+       "workers": "workers",
+       "capabilities": "caps",
+       "mode": "mode"
+      }
+     }
+    },
+    "open": "estate/ops",
+    "draw": {
+     "body": "record"
+    },
+    "frame": {
+     "span": [
+      4,
+      2
+     ]
+    }
+   }
+  },
+  {
+   "record": {
+    "id": "obs-errors",
+    "form": "numbers",
+    "source": "syslog.error_summary",
+    "title": "Errors and warnings · last hour",
+    "read": {
+     "refresh": "15s",
+     "map": {
+      "pick": {
+       "errors": "errors",
+       "warnings": "warnings",
+       "critical": "critical"
+      }
      }
     },
     "draw": {
@@ -173,24 +443,63 @@
      "pin",
      "ask"
     ],
+    "note": "errors, warnings and criticals in the system log over the last hour (syslog.error_summary)",
     "frame": {
      "span": [
-      3,
-      3
+      4,
+      2
      ]
     }
    },
    "at": [
-    9,
-    0
+    8,
+    9
    ],
    "span": [
-    3,
-    3
+    4,
+    2
    ],
    "hidden": false,
-   "refresh": "30s",
+   "refresh": "15s",
    "floated": false
+  },
+  {
+   "at": [
+    0,
+    11
+   ],
+   "span": [
+    12,
+    1
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "sec-h-errors",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "section",
+    "source": "",
+    "title": "Why · warnings and errors in the last hour",
+    "read": {
+     "refresh": ""
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv5,#d0503c)"
+    },
+    "frame": {
+     "span": [
+      12,
+      1
+     ]
+    }
+   }
   },
   {
    "record": {
@@ -223,18 +532,18 @@
     "note": "every warning and error of the last hour; the full log (with tracebacks and Ask) is the System Log below",
     "frame": {
      "span": [
-      8,
-      6
+      12,
+      7
      ]
     }
    },
    "at": [
     0,
-    3
+    12
    ],
    "span": [
-    8,
-    6
+    12,
+    7
    ],
    "hidden": false,
    "refresh": "15s",
@@ -266,18 +575,18 @@
     ],
     "frame": {
      "span": [
-      4,
-      6
+      6,
+      4
      ]
     }
    },
    "at": [
-    8,
-    3
+    0,
+    19
    ],
    "span": [
-    4,
-    6
+    6,
+    4
    ],
    "hidden": false,
    "refresh": "30s",
@@ -285,343 +594,178 @@
   },
   {
    "record": {
+    "id": "obs-error-trend",
+    "form": "trace",
+    "source": "syslog.error_summary",
+    "title": "Errors · per 5 minutes · last hour",
+    "read": {
+     "refresh": "30s",
+     "map": {
+      "series": "series",
+      "t": "t",
+      "v": "errors"
+     }
+    },
+    "draw": {
+     "body": "record"
+    },
+    "open": "estate/observe",
     "place": "dashboard",
     "actions": [
      "dive",
      "pin",
      "ask"
     ],
-    "read": {
-     "refresh": "15s",
-     "map": {
-      "value": "inflight_total"
-     }
-    },
-    "id": "obs-inflight",
-    "form": "counter",
-    "source": "ops.snapshot",
-    "title": "Vera jobs · in flight",
-    "open": "estate/ops",
     "frame": {
-     "size": "m",
-     "span": [
-      3,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    }
-   },
-   "at": [
-    0,
-    9
-   ],
-   "span": [
-    3,
-    2
-   ],
-   "hidden": false,
-   "refresh": "15s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "obs-gpu-gate",
-    "form": "level",
-    "source": "obs.health",
-    "title": "GPU gate",
-    "read": {
-     "refresh": "5s",
-     "map": {
-      "value": "gpu_gate.held",
-      "max": "gpu_gate.capacity"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      2,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record",
-     "unit": "held",
-     "cells": 4
-    },
-    "open": "models"
-   },
-   "at": [
-    3,
-    9
-   ],
-   "span": [
-    2,
-    2
-   ],
-   "hidden": false,
-   "refresh": "5s",
-   "floated": false
-  },
-  {
-   "record": {
-    "place": "dashboard",
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "read": {
-     "refresh": "15s",
-     "args": {
-      "limit": 200
-     },
-     "map": {
-      "values": "entries",
-      "count": "instance"
-     }
-    },
-    "id": "obs-llm-by-worker",
-    "form": "ranked",
-    "source": "ollama.request_log",
-    "title": "LLM jobs · by worker · last 200",
-    "open": "models",
-    "frame": {
-     "size": "m",
-     "span": [
-      4,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    }
-   },
-   "at": [
-    5,
-    9
-   ],
-   "span": [
-    4,
-    2
-   ],
-   "hidden": false,
-   "refresh": "15s",
-   "floated": false
-  },
-  {
-   "record": {
-    "id": "obs-llm-rate",
-    "form": "pulse",
-    "source": "ollama.request_log",
-    "title": "LLM jobs · rate",
-    "read": {
-     "refresh": "10s",
-     "map": {
-      "events": "entries",
-      "t": "ts",
-      "kind": "instance",
-      "text": "model"
-     }
-    },
-    "frame": {
-     "size": "m",
-     "span": [
-      3,
-      2
-     ]
-    },
-    "draw": {
-     "body": "record"
-    },
-    "open": "models"
-   },
-   "at": [
-    9,
-    9
-   ],
-   "span": [
-    3,
-    2
-   ],
-   "hidden": false,
-   "refresh": "10s",
-   "floated": false
-  },
-  {
-   "record": {
-    "place": "dashboard",
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "read": {
-     "refresh": "15s",
-     "map": {
-      "rows": "nodes",
-      "where": {
-       "plane": "work"
-      },
-      "name": "label",
-      "status": "status",
-      "value": "inflight"
-     }
-    },
-    "id": "obs-vera-work",
-    "form": "rows",
-    "source": "ops.snapshot",
-    "title": "Vera jobs · the work in flight",
-    "open": "estate/ops",
-    "frame": {
-     "size": "l",
      "span": [
       6,
-      6
+      4
      ]
-    },
-    "draw": {
-     "body": "record"
     }
    },
    "at": [
-    0,
-    11
+    6,
+    19
    ],
    "span": [
     6,
-    6
+    4
    ],
    "hidden": false,
-   "refresh": "15s",
+   "refresh": "30s",
    "floated": false
   },
   {
-   "record": {
-    "place": "dashboard",
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "read": {
-     "refresh": "15s",
-     "args": {
-      "limit": 200
-     },
-     "map": {
-      "rows": "entries",
-      "name": "model",
-      "status": "status",
-      "value": "elapsed_s"
-     }
-    },
-    "id": "obs-llm-routing",
-    "form": "rows",
-    "source": "ollama.request_log",
-    "title": "LLM jobs · each request and the worker that served it",
-    "open": "models",
-    "draw": {
-     "body": "record",
-     "unit": "s",
-     "detail": "instance"
-    },
-    "frame": {
-     "size": "l",
-     "span": [
-      6,
-      6
-     ]
-    }
-   },
-   "at": [
-    6,
-    11
-   ],
-   "span": [
-    6,
-    6
-   ],
-   "hidden": false,
-   "refresh": "15s",
-   "floated": false
-  },
-  {
-   "record": {
-    "place": "dashboard",
-    "actions": [
-     "dive",
-     "pin",
-     "ask"
-    ],
-    "read": {
-     "refresh": "15s"
-    },
-    "id": "obs-job-stream",
-    "form": "composite",
-    "source": "jobs.stats",
-    "title": "Job stream · the queue and its consumers",
-    "open": "estate/workers",
-    "layout": "grid",
-    "draw": {
-     "body": "record",
-     "cols": 2
-    },
-    "children": [
-     {
-      "slot": "a",
-      "record": {
-       "form": "numbers",
-       "source": "$subject",
-       "title": "the stream",
-       "read": {
-        "map": {
-         "pick": {
-          "length": "stream.length",
-          "pending": "stream.pending_total",
-          "running": "running_tracked",
-          "consumers": "stream.consumer_count"
-         }
-        }
-       }
-      }
-     },
-     {
-      "slot": "b",
-      "record": {
-       "form": "ranked",
-       "source": "$subject",
-       "title": "consumers · pending",
-       "read": {
-        "map": {
-         "values": "stream.consumers",
-         "name": "name",
-         "value": "pending"
-        }
-       }
-      }
-     }
-    ],
-    "frame": {
-     "size": "xl",
-     "span": [
-      12,
-      6
-     ]
-    }
-   },
    "at": [
     0,
-    17
+    23
    ],
    "span": [
     12,
-    6
+    1
    ],
    "hidden": false,
-   "refresh": "15s",
-   "floated": false
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "sec-h-host",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "section",
+    "source": "",
+    "title": "Vera's host · CPU · memory · process RAM",
+    "read": {
+     "refresh": ""
+    },
+    "draw": {
+     "body": "record",
+     "accent": "var(--b-dv2,#54a863)"
+    },
+    "frame": {
+     "span": [
+      12,
+      1
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    0,
+    24
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "h-host",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "lines",
+    "source": "sysmon.history",
+    "title": "Vera host · CPU and memory",
+    "read": {
+     "refresh": "10s",
+     "map": {
+      "series": "samples",
+      "split": [
+       "cpu",
+       "mem"
+      ],
+      "t": "t"
+     }
+    },
+    "draw": {
+     "body": "record",
+     "unit": "%"
+    },
+    "open": "estate/ops",
+    "frame": {
+     "span": [
+      6,
+      4
+     ]
+    }
+   }
+  },
+  {
+   "at": [
+    6,
+    24
+   ],
+   "span": [
+    6,
+    4
+   ],
+   "hidden": false,
+   "refresh": "",
+   "floated": false,
+   "record": {
+    "id": "h-proc-ram",
+    "place": "dashboard",
+    "actions": [
+     "dive",
+     "pin",
+     "ask"
+    ],
+    "form": "trace",
+    "source": "sysmon.history",
+    "title": "Vera process · RAM (MB)",
+    "read": {
+     "refresh": "10s",
+     "args": {
+      "limit": 240
+     },
+     "map": {
+      "series": "samples",
+      "t": "t",
+      "v": "proc_mb"
+     }
+    },
+    "draw": {
+     "body": "record",
+     "unit": "MB"
+    },
+    "open": "estate/ops",
+    "frame": {
+     "span": [
+      6,
+      4
+     ]
+    }
+   }
   },
   {
    "record": {
@@ -656,13 +800,13 @@
    },
    "at": [
     0,
-    23
+    28
    ],
    "span": [
     6,
     10
    ],
-   "hidden": false,
+   "hidden": true,
    "refresh": "",
    "floated": false
   },
@@ -698,14 +842,14 @@
     "note": "the system log as its element (<vera-system-log>: level/category/keyword filters, tracebacks, the LLM monitor, Ask) - no longer the page's hand-drawn log"
    },
    "at": [
-    6,
-    23
+    0,
+    28
    ],
    "span": [
     6,
     10
    ],
-   "hidden": false,
+   "hidden": true,
    "refresh": "",
    "floated": false
   }

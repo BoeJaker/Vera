@@ -2542,7 +2542,7 @@ async def _plan_expansions(
             collect_ollama(thinker, prompt,
                 "You identify research gaps and expansion opportunities in drafts. "
                 "Return only a JSON array.",
-                job_id, timeout_secs=300),
+                job_id, timeout_secs=90),
             timeout=100
         )
         parsed = json.loads(raw[raw.index("["):raw.rindex("]")+1])
@@ -3617,6 +3617,11 @@ async def gather_memory(query: str, top_k: int = 20) -> list[Citation]:
         # Results are MemoryRecord objects or dicts
         cits: list[Citation] = []
         for r in results:
+            # HybridMemoryStore.search returns {"record": {...}, "score": s}; the
+            # record fields live one level down (reading them off the wrapper found
+            # no text, so research never cited memory - RF-80).
+            if isinstance(r, dict) and isinstance(r.get("record"), dict):
+                r = r["record"]
             if hasattr(r, "text"):
                 text = r.text or ""
                 full_text = getattr(r, "full_text", "") or text
@@ -3733,6 +3738,18 @@ async def gather_worldview(query: str, top_k: int = 15) -> list[Citation]:
         if not reg or "func" not in reg:
             log.debug("gather_worldview: worldview.query not registered")
             return []
+        # Only cite the worldview when its health verdict is "ok" (doc 49 §4.1, RF-07):
+        # an overfit or untrained model otherwise feeds research citations.
+        # VERA_RESEARCH_WORLDVIEW_UNGATED=1 restores the old behaviour.
+        if os.environ.get("VERA_RESEARCH_WORLDVIEW_UNGATED", "") != "1":
+            hreg = CAPABILITY_REGISTRY.get("worldview.health")
+            hfn = (hreg.get("raw") or hreg.get("func")) if hreg else None
+            health = await hfn(trace_id=None) if hfn else {"status": "unknown"}
+            if not isinstance(health, dict) or health.get("status") != "ok":
+                log.info("gather_worldview: skipped - worldview health %s (%s)",
+                         (health or {}).get("status") if isinstance(health, dict) else health,
+                         "; ".join((health or {}).get("reasons", [])[:2]) if isinstance(health, dict) else "")
+                return []
         res = await reg["func"](text=query, top_k=top_k, trace_id=None)
         if not isinstance(res, dict) or res.get("error"):
             log.debug("gather_worldview: %s", (res or {}).get("error") if isinstance(res, dict) else res)
@@ -4060,6 +4077,10 @@ def _today_preamble() -> str:
 # model's real window via /api/show → model_info.<arch>.context_length, so we
 # don't have to hand-tune ctx_size per instance.
 _DETECTED_CTX_CACHE: dict[str, int] = {}
+# Last failed detection per key (monotonic time); retried after the cooldown rather
+# than cached as 0 for the life of the process (RF-53).
+_DETECTED_CTX_FAIL: dict[str, float] = {}
+_DETECT_CTX_RETRY_S = 300.0
 # Global ceiling on the auto-detected window (0 = no cap → full model max).
 _MAX_AUTO_CTX = int(os.environ.get("OLLAMA_MAX_AUTO_CTX", "0"))
 
@@ -4073,7 +4094,10 @@ async def _detect_ctx(inst: OllamaInstance) -> int:
     """
     key = f"{inst.base_url}::{inst.model}"
     detected = _DETECTED_CTX_CACHE.get(key)
-    if detected is None:
+    failed_at = _DETECTED_CTX_FAIL.get(key)
+    if detected is None and failed_at is not None and time.monotonic() - failed_at < _DETECT_CTX_RETRY_S:
+        detected = 0
+    elif detected is None:
         detected = 0
         try:
             async with httpx.AsyncClient(timeout=8) as c:
@@ -4089,13 +4113,90 @@ async def _detect_ctx(inst: OllamaInstance) -> int:
                     detected = int(val or 0)
         except Exception as e:
             log.debug("_detect_ctx [%s/%s]: %s", inst.name, inst.model, e)
-        _DETECTED_CTX_CACHE[key] = detected
+        if detected > 0:
+            _DETECTED_CTX_CACHE[key] = detected
+            _DETECTED_CTX_FAIL.pop(key, None)
+        else:
+            _DETECTED_CTX_FAIL[key] = time.monotonic()
     ctx = detected or inst.ctx_size or 8192
     if inst.ctx_size and inst.ctx_size > 0:
         ctx = min(ctx, inst.ctx_size)
     if _MAX_AUTO_CTX > 0:
         ctx = min(ctx, _MAX_AUTO_CTX)
     return ctx
+
+
+def _vera_orch():
+    """The orchestrator module when running inside Vera (None standalone)."""
+    return (sys.modules.get("Vera.vera.capability_orchestration")
+            or sys.modules.get("capability_orchestration"))
+
+
+def _research_origin_headers(job_id: str) -> dict:
+    """X-Vera-Origin for research's node calls, so the node activity tap attributes them."""
+    orch = _vera_orch()
+    fn = getattr(orch, "vera_origin_header", None) if orch else None
+    try:
+        return fn(job_type="research", req_id=str(job_id or ""), cap="research") if fn else {}
+    except Exception:
+        return {}
+
+
+@asynccontextmanager
+async def _research_gate(inst: "OllamaInstance", job_id: str, prompt_chars: int):
+    """Hold the shared generation slot for the node research is about to call.
+
+    Research streamed straight to /api/generate, outside the per-node semaphore and
+    the cross-process GPU gate every other Vera generation goes through, and outside
+    the request log - so it competed for the GPU unseen (RF-50). This takes the same
+    slot (_ollama_slot) for Vera-routed nodes and records one request-log entry.
+    Standalone (no orchestrator) or for a hand-configured node it does nothing.
+    If the slot cannot be had within the timeout the call proceeds, as the gate
+    itself fails open, and the log entry says so.
+    """
+    orch = _vera_orch()
+    iid = getattr(inst, "vera_iid", "") or ""
+    slot_fn = getattr(orch, "_ollama_slot", None) if orch else None
+    log_fn = getattr(orch, "_ollama_log_append", None) if orch else None
+    entry = {
+        "req_id": f"research-{uuid.uuid4().hex[:10]}", "model": getattr(inst, "model", ""),
+        "instance": iid or getattr(inst, "name", ""), "caller_file": "researcher_api.py",
+        "caller_func": "stream_ollama", "prompt_preview": "",
+        "ts": datetime.now(timezone.utc).isoformat(), "status": "running",
+        "session_id": str(job_id or ""), "job_type": "research", "profile": "research",
+        "role": str(getattr(inst, "tier", "") or ""), "request_stage": "research",
+        "prompt_chars": int(prompt_chars or 0),
+    }
+    t0 = time.time()
+    status = "done"
+    try:
+        if slot_fn and iid:
+            try:
+                cm = slot_fn(iid, timeout=_effective_timeout(inst, 300.0))
+                await cm.__aenter__()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # queue timeout: proceed, as the gate fails open
+                log.warning("research: no generation slot on %s (%s) - proceeding", iid, e)
+                entry["gate"] = "timeout_proceeded"
+                cm = None
+            try:
+                yield
+            finally:
+                if cm is not None:
+                    await cm.__aexit__(None, None, None)
+        else:
+            yield
+    except BaseException:
+        status = "error"
+        raise
+    finally:
+        entry.update({"status": status, "elapsed_s": round(time.time() - t0, 2)})
+        if log_fn:
+            try:
+                log_fn(entry)
+            except Exception:
+                pass
 
 
 async def stream_ollama(
@@ -4169,7 +4270,8 @@ async def stream_ollama(
     if _node is not None:
         _node["in_use"] = _node.get("in_use", 0) + 1
 
-    async with httpx.AsyncClient(timeout=to) as client:
+    async with _research_gate(inst, job_id, len(prompt or "") + len(system or "")), \
+               httpx.AsyncClient(timeout=to, headers=_research_origin_headers(job_id)) as client:
         try:
             async with client.stream("POST", inst.generate_url, json=payload) as resp:
                 resp.raise_for_status()
@@ -4699,6 +4801,16 @@ class ResearchDirective:
         return "\n".join(lines) + "\n"
 
 
+_OUTPUT_STYLES = ("report", "newspaper", "guide", "tables", "briefing", "deep_analysis", "comparison")
+_DIRECTIVE_DEPTHS = ("shallow", "standard", "deep")
+
+
+def _directive_enum(value, allowed, default):
+    """The thinker's value if it is one of `allowed` (case/space/hyphen tolerant), else `default`."""
+    v = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return v if v in allowed else default
+
+
 async def build_research_directive(
     query: str,
     thinker: "Optional[OllamaInstance]",
@@ -4749,13 +4861,13 @@ async def build_research_directive(
             raise ValueError("no JSON object in response")
         parsed = json.loads(raw[start:end])
 
-        d.output_style        = parsed.get("output_style", "report")
+        d.output_style        = _directive_enum(parsed.get("output_style"), _OUTPUT_STYLES, "report")
         d.scope_focus         = str(parsed.get("scope_focus", ""))[:300]
         d.scope_exclude       = [str(x)[:80] for x in parsed.get("scope_exclude", [])[:4]]
         d.key_questions       = [str(x)[:150] for x in parsed.get("key_questions", [])[:5]]
         d.table_topics        = [str(x)[:80] for x in parsed.get("table_topics", [])[:4]]
         d.needs_recency       = bool(parsed.get("needs_recency", False))
-        d.depth               = parsed.get("depth", "standard")
+        d.depth               = _directive_enum(parsed.get("depth"), _DIRECTIVE_DEPTHS, "standard")
         d.sub_questions       = [str(x)[:200] for x in parsed.get("sub_questions", [])[:5]]
         d.writer_instructions = str(parsed.get("writer_instructions", ""))[:400]
         d.source_priority     = [str(x)[:60] for x in parsed.get("source_priority", [])[:4]]
@@ -9084,7 +9196,7 @@ async def _iter_update_traversal(
         new_summary = await asyncio.wait_for(
             collect_ollama(fast, summ_prompt,
                 "You maintain rolling research summaries. Be concise and dense with facts.",
-                job_id, timeout_secs=300),
+                job_id, timeout_secs=90),
             timeout=100
         )
         if new_summary and new_summary.strip():

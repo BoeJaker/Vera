@@ -15,7 +15,7 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
 
 /* ── 1 + 2. AN ITEM YOU ASKED TO BE BIG IS NEVER CAPPED ──────────────────────────────────────────────────────── */
 t('the cap knows what you asked for: opened in place, or dragged to a size',
-  /const asked = \(c\) => c\.classList\.contains\('openin'\) \|\| c\.classList\.contains\('sized'\);/.test(SRC));
+  /const asked = \(c\) => c\.classList\.contains\('openin'\) \|\| c\.classList\.contains\('sized'\) \|\| c\.classList\.contains\('peek'\);/.test(SRC));
 t('...and it skips those cards, so the gesture is not clamped back inside the same frame',
   /if \(hs\[i\] > capH && !asked\(c\)\) \{ c\.style\.maxHeight = capH \+ 'px'; c\.classList\.add\('capped'\); \}/.test(SRC));
 t('an item that was NOT asked for is still capped — the cap is why a tall item can be reached at all',

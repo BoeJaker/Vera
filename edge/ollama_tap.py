@@ -60,6 +60,21 @@ CAPTURE = {
 }
 #: Largest request body captured in memory; a bigger one passes through untapped.
 MAX_CAPTURE_BODY = 8 * 1024 * 1024
+#: While Ollama has not answered yet (queued, loading a model), check this often whether
+#: the client is still there. Before: nothing was written to a client that had gone, so the
+#: tap never noticed it and the request stayed queued in Ollama - 4 Oct 2026 Ollama was
+#: still cancelling /api/chat calls abandoned 18-21 min earlier, and a GPU request Vera had
+#: given up on was later served to nobody.
+CLIENT_CHECK_S = 1.0
+
+
+def client_gone(request) -> bool:
+    """True when the client's connection is closed or closing."""
+    try:
+        tr = request.transport
+        return tr is None or tr.is_closing()
+    except Exception:
+        return False
 #: Text kept per field in the shared stream (the node file keeps it all).
 TEXT_CAP = 16 * 1024
 
@@ -317,10 +332,25 @@ class Tap:
         status = 502
         resp = None
         try:
-            async with self.session.request(
-                    request.method, self.upstream + request.path_qs, headers=headers,
-                    data=body if body is not None else request.content,
-                    allow_redirects=False) as up:
+            up_cm = self.session.request(
+                request.method, self.upstream + request.path_qs, headers=headers,
+                data=body if body is not None else request.content,
+                allow_redirects=False)
+            up_fut = asyncio.ensure_future(up_cm.__aenter__())
+            try:
+                while True:
+                    done, _ = await asyncio.wait({up_fut}, timeout=CLIENT_CHECK_S)
+                    if done:
+                        break
+                    if client_gone(request):
+                        up_fut.cancel()   # closes the upstream connection: Ollama drops it
+                        raise ConnectionResetError("client went away before Ollama answered")
+            except BaseException:
+                if not up_fut.done():
+                    up_fut.cancel()
+                raise
+            up = up_fut.result()
+            try:
                 status = up.status
                 out_headers = {k: v for k, v in up.headers.items() if k.lower() not in HOP}
                 resp = web.StreamResponse(status=up.status, headers=out_headers)
@@ -331,6 +361,8 @@ class Tap:
                         tee.feed(chunk)
                 await resp.write_eof()
                 return resp
+            finally:
+                up.release()
         except (ConnectionResetError, asyncio.CancelledError) as e:
             if rec is not None:
                 rec["error"] = "client went away" if isinstance(e, ConnectionResetError) else "cancelled"

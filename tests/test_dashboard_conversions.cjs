@@ -33,7 +33,16 @@ const FIX = {
   'sysmon.history': { samples: [{ t: 1, cpu: 20, mem: 80, pmx_mem_pct: 60, pmx_running: 22, dkr_running: 65, oll_online: 3, pmx_temp_max: 81 }, { t: 2, cpu: 30, mem: 81, pmx_mem_pct: 61, pmx_running: 22, dkr_running: 66, oll_online: 3, pmx_temp_max: 82 }] },
   'background.status': { running: 'ide.claude_sessions.ingest', busy_reason: 'the GPU gate was held 58s ago', quiet_for_s: 0, min_quiet_s: 600, queue: { depth: 0, waiting: [], note: 'nothing queued' }, jobs: [{ name: 'ingest', runs: 3, last_ok: true }], timeline: [{ title: 'digest', starts_in_s: 300 }], eta_total_s: 0 },
   'backup.status': { guests: [{ name: 'LLM', status: 'running', state: 'ok' }, { name: 'Kali', status: 'stopped', state: 'excluded' }] },
-  'obs.node_temps': { hosts: [{ label: 'ollama126.vera.int', max_c: 76 }, { label: 'VFS-02', max_c: 70 }] } };
+  'obs.node_temps': { hosts: [{ label: 'ollama126.vera.int', max_c: 76 }, { label: 'VFS-02', max_c: 70 }] },
+  // the Health pane's own sources, as prod answered them on 2026-10-02 (trimmed)
+  'perf.scan': { findings: [{ id: 'loop-stalls', severity: 'crit', area: 'event loop', title: '7 event-loop stall(s) - WS flapping risk', detail: 'worst 5061ms' }, { id: 'zombies', severity: 'ok', area: 'jobs', title: "No zombie 'running' ollama jobs" }], summary: { crit: 1, warn: 0, info: 0, ok: 4 }, ts: '2026-10-02T20:40:00Z' },
+  'perf.stalls': { events: [{ ts: '2026-10-02T20:31:00Z', stalled_ms: 5061 }, { ts: '2026-10-02T20:35:00Z', stalled_ms: 812 }], count: 2, hangs: 0, stalls: 2, worst_ms: 5061 },
+  'nodes.runner.list': { runners: [{ pid: 101, model: 'sha256-f5ee', port: 40001, state: 'S', cpu_seconds: 558, age_s: 7885, rss_mb: 23884, node: 'cpu-247', stuck: false }], stuck_count: 0, stuck: [], unreachable: [], stuck_after_s: 1800 },
+  'obs.pending': { count: 1, ids: ['job-1'] },
+  'obs.redis': { connected_clients: 74, used_memory_human: '468.46M', uptime_days: 3, keys: {} },
+  'obs.scheduler': [{ name: '_health_loop', interval: 0, runs: 1772, last: 1790970000 }, { name: 'ui.scripts.tick', interval: 2, runs: 812, last: 1790970000 }],
+  'obs.workers': { 'worker-f4ad6d4a': { name: 'worker-f4ad6d4a', role: 'node-worker', commit: '73388660', task_started: '', ram_pct: 41 } },
+  'estate.compute.load': { nodes: [{ id: 'gpu-250', label: 'GPU Node', ip: '192.168.0.250', machine: { label: 'Ollama', vmid: 126 }, host: { label: 'PVE01' }, cores: [{ cpu: 12, load: 31.7 }, { cpu: 13, load: 95 }], gpus: [{ index: 0, total_mb: 12288, used_mb: 8200, util_pct: 40 }] }], hosts: [{ label: 'PVE01', pve_node: 'corp', cores: [{ cpu: 0, load: 20 }] }] } };
 
 // ── every grid: records, notes, the conversions ──
 const GRIDS = { dream: 9, 'wol-workers': 9, 'wol-ollama': 9, 'wol-jobs': 10, 'wol-wkjobs': 8, 'wol-observe': 2, 'estate-overview': 11 };
@@ -42,6 +51,8 @@ Object.keys(GRIDS).forEach((k) => {
   const L = lay(k); const bad = [];
   L.widgets.forEach((w) => { const r = w.record;
     if (!r || typeof r !== 'object') { bad.push('no record'); return; }
+    // a section banner reads nothing - it is the band's title (the packer keeps the bands' order between banners)
+    if (r.form === 'section') { if (!(Array.isArray(w.span) && w.span[0] === 12 && w.span[1] === 1 && r.title)) bad.push(r.id + ' banner not 12x1 or untitled'); return; }
     if (!FORMS.has(r.form)) bad.push(r.id + ' form ' + r.form);
     if (!(Array.isArray(w.span) && r.frame && JSON.stringify(r.frame.span) === JSON.stringify(w.span))) bad.push(r.id + ' span');
     // an element tile draws a custom element that reads its own data (like the Loop

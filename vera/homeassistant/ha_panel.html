@@ -98,10 +98,10 @@ tr:hover td{ background:var(--bg2); }
   <div id="content"><div class="wrap">
 
     <div class="tabs" data-vera-lhm>
-      <div class="tab on" data-t="control" data-icon="⏻" onclick="tab('control')">Control</div>
-      <div class="tab" data-t="entities" data-icon="▤" onclick="tab('entities')">Entities</div>
-      <div class="tab" data-t="notify" data-icon="✉" onclick="tab('notify')">Notify</div>
-      <div class="tab" data-t="config" data-icon="⚙" onclick="tab('config')">Connection</div>
+      <div data-label="Control" data-desc="Say what to switch" data-desc-long="Control: say what you want (names matched the way you'd say them), switch lights and switches on, off or toggle, run scenes." class="tab on" data-t="control" data-icon="⏻" onclick="tab('control')">Control</div>
+      <div data-label="Entities" data-desc="Everything Home Assistant knows" data-desc-long="Every entity Home Assistant knows about, optionally reachable ones only." class="tab" data-t="entities" data-icon="▤" onclick="tab('entities')">Entities</div>
+      <div data-label="Notify" data-desc="Push a notification to a phone" data-desc-long="Push a notification to a paired phone: target, title, message." class="tab" data-t="notify" data-icon="✉" onclick="tab('notify')">Notify</div>
+      <div data-vera-settings="#pane-config" data-label="Connection" data-desc="The Home Assistant connection" data-desc-long="The connection: base URL, long-lived token, TLS verification, a test - and what is configured but unreachable." class="tab" data-t="config" data-icon="⚙" onclick="tab('config')">Connection</div>
     </div>
 
     <!-- ── CONTROL ─────────────────────────────────────────────────────── -->
@@ -416,5 +416,6 @@ async function refresh(){
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>

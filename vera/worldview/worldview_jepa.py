@@ -999,18 +999,30 @@ class WorldView:
     @torch.no_grad()
     def rollout(self, start_concept: int, steps: int = 8,
                 temperature: float = 0.8, top_k: int = 20,
-                pinned: Optional[List[Tuple[int, int]]] = None) -> List[int]:
+                prefix_concepts: Optional[List[int]] = None,
+                seed: Optional[int] = None) -> List[int]:
+        """Sample `steps` concepts after a prefix.
+
+        The prefix is `prefix_concepts` when given (it then replaces
+        `start_concept`), else `[start_concept]`. The returned list starts
+        with the prefix. `seed` makes the sampling reproducible without
+        disturbing the global torch RNG.
+        """
         if not self.ready:
             return []
-        prefix = [TOKEN_BOS, start_concept + NUM_SPECIAL_TOKENS]
-        if pinned:
-            for pos, c in pinned:
-                while len(prefix) <= pos + 2:
-                    prefix.append(c + NUM_SPECIAL_TOKENS)
-                prefix[pos + 2] = c + NUM_SPECIAL_TOKENS
+        concepts = list(prefix_concepts) if prefix_concepts else [start_concept]
+        prefix = [TOKEN_BOS] + [int(c) + NUM_SPECIAL_TOKENS for c in concepts]
         t = torch.tensor(prefix, dtype=torch.long, device=self.device)
-        seq = self.dynamics.rollout(t, steps,
-                                     temperature=temperature, top_k=top_k)
+        if seed is None:
+            seq = self.dynamics.rollout(t, steps,
+                                         temperature=temperature, top_k=top_k)
+        else:
+            cuda_devs = (list(range(torch.cuda.device_count()))
+                         if str(self.device).startswith("cuda") else [])
+            with torch.random.fork_rng(devices=cuda_devs):
+                torch.manual_seed(int(seed))
+                seq = self.dynamics.rollout(t, steps,
+                                             temperature=temperature, top_k=top_k)
         out = []
         for tok in seq.tolist():
             if tok < NUM_SPECIAL_TOKENS:
@@ -1139,11 +1151,14 @@ class WorldView:
                 log.debug("worldview: cached latent restore failed: %s", e)
         return True
 
-    def load_bytes(self, blob: bytes) -> bool:
+    def load_bytes(self, blob: bytes, pickle_module=None) -> bool:
+        """`pickle_module` reads a checkpoint written by another numpy major
+        (a node worker's - node_compute_core.compat_pickle_module)."""
         if not HAS_TORCH or not blob:
             return False
         try:
-            ckpt = torch.load(io.BytesIO(blob), map_location=self.device, weights_only=False)
+            kw = {"pickle_module": pickle_module} if pickle_module is not None else {}
+            ckpt = torch.load(io.BytesIO(blob), map_location=self.device, weights_only=False, **kw)
             return self._restore_from_ckpt(ckpt)
         except Exception as e:
             log.error("WorldView load_bytes failed: %s", e)
@@ -2414,8 +2429,312 @@ def generate_walks(graph: Dict, model: WorldView,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# THE TRAINING STAGES  —  pure compute, run on a node worker (node_compute_core)
+# ─────────────────────────────────────────────────────────────────────────────
+# The host builds the graph (its stores), a node runs the three stages, the host
+# loads the trained checkpoint and rebuilds its index. The stages read only the
+# model, the graph and _WV_CONFIG, so one function serves a node and, with host
+# fallback on, the host.
+
+#: Module constants WorldView() builds its layers from: shipped with a job so a
+#: node whose environment differs still builds the host's architecture.
+_ARCH_CONSTANTS = ("NUM_GNN_LAYERS", "VQ_DECAY", "VQ_COMMITMENT", "DYN_DIM",
+                   "DYN_HEADS", "DYN_LAYERS", "DYN_CTX", "LR")
+
+
+def _train_stages_sync(model: "WorldView", graph: Dict, gnn_epochs: int,
+                       codebook_epochs: int, dynamics_epochs: int,
+                       progress, should_stop) -> Dict:
+    """The three training stages over a built graph. Blocking. `progress(d)`
+    gets one dict per event: `stage` (the event name the UI knows), its fields,
+    and `_hist` [stage, epoch, loss, extra] for the loss history."""
+    import gc
+    t0 = time.time()
+    N = len(graph["rids"])
+    E = len(graph["edges"])
+    g_x = graph.get("X_t", graph.get("X"))
+    g_s = graph.get("s_t", graph.get("src"))
+    g_d = graph.get("d_t", graph.get("dst"))
+    g_et = graph.get("e_t", graph.get("edge_type"))
+    stopped = False
+    cb_steps_done = 0
+
+    def say(stage, **kw):
+        kw.setdefault("elapsed_s", round(time.time() - t0, 1))
+        progress({"stage": stage, **kw})
+
+    if gnn_epochs > 0 and not stopped:
+        say("stage_gnn", message=f"Training graph encoder ({gnn_epochs} epochs, {N} nodes, {E} edges)...")
+        gc.collect()
+        t_stage = time.time()
+        for epoch in range(gnn_epochs):
+            if should_stop():
+                stopped = True
+                break
+            try:
+                pos, neg = sample_pairs(graph, n_pairs=min(1024, len(graph["edges"])))
+                if not pos:
+                    say("gnn_epoch", epoch=epoch + 1, total=gnn_epochs, loss=0,
+                        message="No positive pairs — skipping")
+                    break
+                loss = model.train_gnn_step(g_x, g_s, g_d, g_et, pos, neg)
+                ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
+                say("gnn_epoch", epoch=epoch + 1, total=gnn_epochs, loss=round(loss, 6),
+                    epoch_rate=round(ep_rate, 2),
+                    message=f"GNN epoch {epoch+1}/{gnn_epochs} loss={loss:.4f} ({ep_rate:.1f} ep/s)",
+                    _hist=["gnn", epoch + 1, loss, {}])
+            except Exception as e:
+                log.error("GNN epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
+                say("gnn_error", epoch=epoch + 1, error=str(e)[:200],
+                    message=f"GNN epoch {epoch+1} failed: {e}")
+                break
+        gc.collect()
+
+    if codebook_epochs > 0 and not stopped:
+        say("stage_codebook", message=f"Fitting concept codebook ({codebook_epochs} epochs)...")
+        gc.collect()
+        t_stage = time.time()
+        for epoch in range(codebook_epochs):
+            if should_stop():
+                stopped = True
+                break
+            try:
+                loss = model.train_codebook_step(g_x, g_s, g_d, g_et)
+                cb_steps_done += 1
+                cb = model.codebook.usage_stats()
+                ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
+                say("codebook_epoch", epoch=epoch + 1, total=codebook_epochs,
+                    loss=round(loss, 6), active=cb["active_concepts"], entropy=cb["entropy"],
+                    perplexity=cb.get("perplexity", 0),
+                    revived=getattr(model, "_last_revived", 0), epoch_rate=round(ep_rate, 2),
+                    message=f"Codebook epoch {epoch+1}/{codebook_epochs} "
+                            f"loss={loss:.4f} active={cb['active_concepts']} "
+                            f"perplexity={cb.get('perplexity', 0):.0f} ({ep_rate:.1f} ep/s)",
+                    _hist=["codebook", epoch + 1, loss,
+                           {"active": cb["active_concepts"],
+                            "perplexity": round(cb.get("perplexity", 0), 1),
+                            "entropy": round(float(cb["entropy"]), 4)}])
+            except Exception as e:
+                log.error("Codebook epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
+                say("codebook_error", epoch=epoch + 1, error=str(e)[:200],
+                    message=f"Codebook epoch {epoch+1} failed: {e}")
+                break
+        gc.collect()
+
+    walks_n = 0
+    if dynamics_epochs > 0 and not stopped:
+        say("stage_dynamics", message="Generating concept walks...")
+        gc.collect()
+        try:
+            walks = generate_walks(graph, model,
+                                   min(_WV_CONFIG.get("max_walks", MAX_WALKS), N * 4),
+                                   _WV_CONFIG.get("walk_len", WALK_LEN))
+        except Exception as e:
+            log.error("Walk generation FAILED: %s", e, exc_info=True)
+            say("dynamics_error", error=str(e)[:200], message=f"Walk generation failed: {e}")
+            walks = []
+        walks_n = len(walks)
+        if walks:
+            say("dynamics_walks", walks=len(walks),
+                message=f"{len(walks)} walks generated — training dynamics...")
+            t_stage = time.time()
+            dyn_batch = _WV_CONFIG.get("batch_size", BATCH_SIZE)
+            for epoch in range(dynamics_epochs):
+                if should_stop():
+                    stopped = True
+                    break
+                try:
+                    random.shuffle(walks)
+                    losses = []
+                    for i in range(0, len(walks), dyn_batch):
+                        batch = walks[i:i + dyn_batch]
+                        if len(batch) >= 2:
+                            losses.append(model.train_dynamics_step(batch))
+                    avg_loss = sum(losses) / len(losses) if losses else 0.0
+                    ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
+                    say("dynamics_epoch", epoch=epoch + 1, total=dynamics_epochs,
+                        loss=round(avg_loss, 6), epoch_rate=round(ep_rate, 2),
+                        batches=len(walks) // dyn_batch,
+                        message=f"Dynamics epoch {epoch+1}/{dynamics_epochs} "
+                                f"loss={avg_loss:.4f} ({ep_rate:.1f} ep/s)",
+                        _hist=["dynamics", epoch + 1, avg_loss, {}])
+                except Exception as e:
+                    log.error("Dynamics epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
+                    say("dynamics_error", epoch=epoch + 1, error=str(e)[:200],
+                        message=f"Dynamics epoch {epoch+1} failed: {e}")
+                    break
+        gc.collect()
+    if stopped:
+        say("stopped", message="Training stopped — keeping the epochs already run")
+    return {"walks": walks_n, "stopped": stopped, "cb_steps": cb_steps_done}
+
+
+def _graph_for_job(graph: Dict) -> Dict:
+    """The parts of a built graph the stages read, as arrays + JSON."""
+    def arr(t_key, n_key, dtype):
+        v = graph.get(t_key)
+        if v is not None and HAS_TORCH and isinstance(v, torch.Tensor):
+            return v.detach().cpu().numpy().astype(dtype, copy=False)
+        return np.asarray(graph[n_key], dtype=dtype)
+    rels = sorted({e[2] for e in graph["edges"]})
+    rel_ix = {r: i for i, r in enumerate(rels)}
+    idx_of = graph["idx_of"]
+    recs = graph.get("records") or {}
+    return {
+        "X": arr("X_t", "X", "float32"),
+        "src": arr("s_t", "src", "int64"),
+        "dst": arr("d_t", "dst", "int64"),
+        "edge_type": arr("e_t", "edge_type", "int64"),
+        "rids": list(graph["rids"]),
+        "edge_src": np.asarray([idx_of[e[0]] for e in graph["edges"]], dtype="int64"),
+        "edge_dst": np.asarray([idx_of[e[1]] for e in graph["edges"]], dtype="int64"),
+        "edge_rel": np.asarray([rel_ix[e[2]] for e in graph["edges"]], dtype="int32"),
+        "rels": rels,
+        # generate_walks keeps display metadata per record: only what it reads
+        "records": {rid: {"dataset_id": (recs.get(rid) or {}).get("dataset_id", ""),
+                          "text": ((recs.get(rid) or {}).get("text") or "")[:200],
+                          "created_at": (recs.get(rid) or {}).get("created_at", "")}
+                    for rid in graph["rids"]},
+    }
+
+
+def _graph_from_job(g: Dict) -> Dict:
+    rids = list(g["rids"])
+    rels = list(g["rels"])
+    edges = [(rids[int(s)], rids[int(d)], rels[int(r)])
+             for s, d, r in zip(g["edge_src"], g["edge_dst"], g["edge_rel"])]
+    out = {"rids": rids, "idx_of": {rid: i for i, rid in enumerate(rids)},
+           "edges": edges, "records": g.get("records") or {}}
+    out["X_t"] = torch.tensor(g["X"], dtype=torch.float32)
+    out["s_t"] = torch.tensor(g["src"], dtype=torch.long)
+    out["d_t"] = torch.tensor(g["dst"], dtype=torch.long)
+    out["e_t"] = torch.tensor(g["edge_type"], dtype=torch.long)
+    return out
+
+
+def node_train_stages(inputs: Dict, progress, should_stop) -> Dict:
+    """compute.run entry (node_compute_core.FUNCTIONS["worldview.train"]).
+
+    Builds a WorldView with the host's architecture on CPU, loads the host's
+    checkpoint, runs the stages and returns the trained checkpoint. Never
+    touches this process's own MODEL or any store."""
+    if not HAS_TORCH:
+        raise RuntimeError("torch is not installed here")
+    for k, v in (inputs.get("arch") or {}).items():
+        if k in _ARCH_CONSTANTS:
+            globals()[k] = type(globals()[k])(v)
+    _WV_CONFIG.update(inputs.get("config") or {})
+    dims = inputs.get("dims") or {}
+    model = WorldView(embed_dim=int(dims["embed_dim"]), latent_dim=int(dims["latent_dim"]),
+                      hidden_dim=int(dims["hidden_dim"]),
+                      num_concepts=int(dims["num_concepts"]), device="cpu")
+    model._target_ema_decay = float(_WV_CONFIG.get("target_ema_decay", 0.996))
+    if not model.load_bytes(inputs["state"]):
+        raise RuntimeError("the host's checkpoint did not load (architecture differs?)")
+    graph = _graph_from_job(inputs["graph"])
+    ep = inputs.get("epochs") or {}
+    res = _train_stages_sync(model, graph, int(ep.get("gnn", 0)), int(ep.get("codebook", 0)),
+                             int(ep.get("dynamics", 0)), progress, should_stop)
+    blob = model.serialize_bytes()
+    if not blob:
+        raise RuntimeError("the trained checkpoint could not be serialised")
+    return {"state": blob, "walks": res["walks"], "stopped": res["stopped"],
+            "cb_steps": res.get("cb_steps", 0),
+            "revived": int(getattr(model, "_last_revived", 0) or 0)}
+
+
+def _train_job_inputs(graph: Dict, gnn_epochs: int, codebook_epochs: int,
+                      dynamics_epochs: int) -> Dict:
+    blob = MODEL.serialize_bytes()
+    if not blob:
+        raise RuntimeError("the model could not be serialised for training")
+    return {
+        "state": blob,
+        "graph": _graph_for_job(graph),
+        "dims": {"embed_dim": MODEL.embed_dim, "latent_dim": MODEL.latent_dim,
+                 "hidden_dim": MODEL.hidden_dim, "num_concepts": MODEL.num_concepts},
+        "arch": {k: globals()[k] for k in _ARCH_CONSTANTS},
+        "config": dict(_WV_CONFIG),
+        "epochs": {"gnn": int(gnn_epochs), "codebook": int(codebook_epochs),
+                   "dynamics": int(dynamics_epochs)},
+    }
+
+
+#: The training job in flight in this process ({"stop": bool}); worldview.train.stop sets it.
+_TRAIN_JOB: Dict[str, Any] = {}
+
+
+async def _train_stages(graph: Dict, gnn_epochs: int, codebook_epochs: int,
+                        dynamics_epochs: int, t0: float) -> Dict:
+    """Run the stages where training runs (a node worker; the host only with
+    compute host fallback on) and load the result into MODEL."""
+    def on_hist(d):
+        h = d.pop("_hist", None)
+        if h:
+            _loss_history_append(h[0], h[1], h[2], **(h[3] if len(h) > 3 else {}))
+
+    async def on_progress(d):
+        on_hist(d)
+        stage = d.pop("stage", "progress")
+        d["elapsed_s"] = round(time.time() - t0, 1)
+        await _emit(stage, **d)
+
+    _TRAIN_JOB.clear()
+    _TRAIN_JOB["stop"] = False
+    run = getattr(_orch, "NODE_COMPUTE", None)
+    if run is None:
+        # compute module not loaded: the stages run here, as they always did
+        loop = asyncio.get_running_loop()
+
+        def progress(d):
+            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(on_progress(dict(d))))
+        res = await loop.run_in_executor(
+            None, _train_stages_sync, MODEL, graph, gnn_epochs, codebook_epochs,
+            dynamics_epochs, progress, lambda: bool(_TRAIN_JOB.get("stop")))
+        return {**res, "where": "host", "node": ""}
+    inputs = _train_job_inputs(graph, gnn_epochs, codebook_epochs, dynamics_epochs)
+    await _emit("offload", message="Training on a node worker...",
+                elapsed_s=round(time.time() - t0, 1))
+    try:
+        out = await run("worldview.train", inputs, label="worldview.train",
+                        on_progress=on_progress, stop=lambda: bool(_TRAIN_JOB.get("stop")))
+    except Exception as e:
+        return {"error": str(e)}
+    pm = None
+    if out.get("_where") == "node":
+        try:
+            from Vera.vera.workers import node_compute_core as _nc
+        except Exception:                              # pragma: no cover
+            from vera.workers import node_compute_core as _nc
+        pm = _nc.compat_pickle_module()
+    if not MODEL.load_bytes(out["state"], pickle_module=pm):
+        return {"error": "the trained checkpoint from the node did not load"}
+    MODEL._last_revived = out.get("revived", 0)
+    await _emit("offload_done", node=out.get("_node", ""), where=out.get("_where", ""),
+                message=f"Trained on {out.get('_node') or out.get('_where')} "
+                        f"in {out.get('_seconds', 0)} s",
+                elapsed_s=round(time.time() - t0, 1))
+    # A node worker on an older commit sends no cb_steps: assume the
+    # codebook stage ran if one was asked for.
+    return {"walks": out.get("walks", 0), "stopped": out.get("stopped", False),
+            "cb_steps": out.get("cb_steps", codebook_epochs),
+            "where": out.get("_where", ""), "node": out.get("_node", "")}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _clear_stale_concept_labels(model) -> int:
+    """Drop every concept label after the codebook has been retrained.
+
+    Returns the number of labels removed. Labels are keyed by code index, and
+    a codebook step can move or re-initialise any code, so none can be trusted.
+    """
+    n = len(getattr(model, "concept_labels", {}) or {})
+    model.concept_labels = {}
+    return n
+
 
 async def _emit(stage, **kw):
     try:
@@ -3473,141 +3792,25 @@ async def cap_worldview_train(
                 gnn_epochs=gnn_epochs, codebook_epochs=codebook_epochs,
                 dynamics_epochs=dynamics_epochs, nodes=N, edges=E)
 
-    # Resolve tensor references (pre-built in build_graph, or fallback to numpy)
-    g_x  = graph.get("X_t",  graph.get("X"))
-    g_s  = graph.get("s_t",  graph.get("src"))
-    g_d  = graph.get("d_t",  graph.get("dst"))
-    g_et = graph.get("e_t",  graph.get("edge_type"))
-
-    import gc
-
-    # Stage 1 — GNN contrastive training
-    if gnn_epochs > 0:
-        await _emit("stage_gnn", message=f"Training graph encoder ({gnn_epochs} epochs, {N} nodes, {E} edges)...",
-                     elapsed_s=round(time.time() - t0, 1))
-        gc.collect()
-        t_stage = time.time()
-        margin = _WV_CONFIG.get("contrastive_margin", 0.2)
-        uniformity_w = _WV_CONFIG.get("uniformity_weight", 0.1)
-        loop = asyncio.get_running_loop()
-        for epoch in range(gnn_epochs):
-            try:
-                pos, neg = sample_pairs(graph, n_pairs=min(1024, len(graph["edges"])))
-                if not pos:
-                    await _emit("gnn_epoch", epoch=epoch + 1, total=gnn_epochs,
-                                 loss=0, message="No positive pairs — skipping")
-                    break
-                # Run CPU-bound training step in executor to avoid blocking the event loop
-                loss = await loop.run_in_executor(
-                    None, MODEL.train_gnn_step, g_x, g_s, g_d, g_et, pos, neg)
-                ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
-                # Emit every epoch for UI progress
-                await _emit("gnn_epoch", epoch=epoch + 1, total=gnn_epochs,
-                             loss=round(loss, 6),
-                             elapsed_s=round(time.time() - t0, 1),
-                             epoch_rate=round(ep_rate, 2),
-                             message=f"GNN epoch {epoch+1}/{gnn_epochs} loss={loss:.4f} ({ep_rate:.1f} ep/s)")
-                _loss_history_append("gnn", epoch + 1, loss)
-                # Yield to event loop so SSE events actually flush
-                await asyncio.sleep(0)
-            except Exception as e:
-                log.error("GNN epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
-                await _emit("gnn_error", epoch=epoch + 1, error=str(e)[:200],
-                             message=f"GNN epoch {epoch+1} failed: {e}")
-                break
-        gc.collect()
-
-    # Stage 2 — Codebook fitting
-    if codebook_epochs > 0:
-        await _emit("stage_codebook", message=f"Fitting concept codebook ({codebook_epochs} epochs)...",
-                     elapsed_s=round(time.time() - t0, 1))
-        gc.collect()
-        t_stage = time.time()
-        loop = asyncio.get_running_loop()
-        for epoch in range(codebook_epochs):
-            try:
-                loss = await loop.run_in_executor(
-                    None, MODEL.train_codebook_step, g_x, g_s, g_d, g_et)
-                cb_stats = MODEL.codebook.usage_stats()
-                ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
-                await _emit("codebook_epoch", epoch=epoch + 1, total=codebook_epochs,
-                             loss=round(loss, 6),
-                             active=cb_stats["active_concepts"],
-                             entropy=cb_stats["entropy"],
-                             perplexity=cb_stats.get("perplexity", 0),
-                             revived=getattr(MODEL, "_last_revived", 0),
-                             elapsed_s=round(time.time() - t0, 1),
-                             epoch_rate=round(ep_rate, 2),
-                             message=f"Codebook epoch {epoch+1}/{codebook_epochs} "
-                                     f"loss={loss:.4f} active={cb_stats['active_concepts']} "
-                                     f"perplexity={cb_stats.get('perplexity',0):.0f} ({ep_rate:.1f} ep/s)")
-                _loss_history_append("codebook", epoch + 1, loss,
-                                     active=cb_stats["active_concepts"],
-                                     perplexity=round(cb_stats.get("perplexity", 0), 1),
-                                     entropy=round(float(cb_stats["entropy"]), 4))
-                await asyncio.sleep(0)
-            except Exception as e:
-                log.error("Codebook epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
-                await _emit("codebook_error", epoch=epoch + 1, error=str(e)[:200],
-                             message=f"Codebook epoch {epoch+1} failed: {e}")
-                break
-        gc.collect()
-
-    # Stage 3 — Dynamics (walks + transformer)
-    if dynamics_epochs > 0:
-        await _emit("stage_dynamics", message="Generating concept walks...",
-                     elapsed_s=round(time.time() - t0, 1))
-        gc.collect()
-        loop = asyncio.get_running_loop()
-        try:
-            walks = await loop.run_in_executor(
-                None, generate_walks, graph, MODEL,
-                min(_WV_CONFIG.get("max_walks", MAX_WALKS), N * 4),
-                _WV_CONFIG.get("walk_len", WALK_LEN))
-        except Exception as e:
-            log.error("Walk generation FAILED: %s", e, exc_info=True)
-            await _emit("dynamics_error", error=str(e)[:200],
-                         message=f"Walk generation failed: {e}")
-            walks = []
-        if walks:
-            await _emit("dynamics_walks", walks=len(walks),
-                         elapsed_s=round(time.time() - t0, 1),
-                         message=f"{len(walks)} walks generated — training dynamics...")
-            t_stage = time.time()
-            dyn_batch = _WV_CONFIG.get("batch_size", BATCH_SIZE)
-
-            def _run_dynamics_epoch(walk_data, batch_sz):
-                """Run one full dynamics epoch in a thread — CPU-bound."""
-                random.shuffle(walk_data)
-                losses = []
-                for i in range(0, len(walk_data), batch_sz):
-                    batch = walk_data[i:i + batch_sz]
-                    if len(batch) < 2:
-                        continue
-                    l = MODEL.train_dynamics_step(batch)
-                    losses.append(l)
-                return sum(losses) / len(losses) if losses else 0.0
-
-            for epoch in range(dynamics_epochs):
-                try:
-                    avg_loss = await loop.run_in_executor(
-                        None, _run_dynamics_epoch, walks, dyn_batch)
-                    ep_rate = (epoch + 1) / max(time.time() - t_stage, 0.01)
-                    await _emit("dynamics_epoch", epoch=epoch + 1,
-                                 total=dynamics_epochs,
-                                 loss=round(avg_loss, 6),
-                                 elapsed_s=round(time.time() - t0, 1),
-                                 epoch_rate=round(ep_rate, 2),
-                                 batches=len(walks) // dyn_batch,
-                                 message=f"Dynamics epoch {epoch+1}/{dynamics_epochs} loss={avg_loss:.4f} ({ep_rate:.1f} ep/s)")
-                    _loss_history_append("dynamics", epoch + 1, avg_loss)
-                    await asyncio.sleep(0)
-                except Exception as e:
-                    log.error("Dynamics epoch %d FAILED: %s", epoch + 1, e, exc_info=True)
-                    await _emit("dynamics_error", epoch=epoch + 1, error=str(e)[:200],
-                                 message=f"Dynamics epoch {epoch+1} failed: {e}")
-                    break
-        gc.collect()
+    # The three stages run on a node worker (node_compute_core): the host
+    # built the graph from its stores; it loads the trained checkpoint back.
+    try:
+        trained = await _train_stages(graph, gnn_epochs, codebook_epochs, dynamics_epochs, t0)
+    finally:
+        _TRAIN_JOB.clear()
+    if trained.get("error"):
+        await _emit("train_error", message=f"Training did not run: {trained['error']}",
+                    error=trained["error"][:300])
+        return {"error": trained["error"],
+                "hint": "compute.status shows which node workers take training jobs; "
+                        "compute.config.set host_fallback=true runs it on the Vera host"}
+    if trained.get("cb_steps", 0):
+        # A codebook step moves centroids and revives dead codes, so a
+        # label written for code k no longer describes code k's members.
+        # Drop them all; auto-label after training repopulates up to
+        # auto_label_k (default 50).
+        _clear_stale_concept_labels(MODEL)
+    gc.collect()
 
     await _emit("indexing", message="Rebuilding FAISS index...")
     log.info("worldview: starting index rebuild (graph has %d records)", N)
@@ -3647,18 +3850,9 @@ async def cap_worldview_train(
             await _emit("indexing_error",
                          message=f"Diagnostic encode raised: {de}")
 
-    # Also build transition counts for dynamics if codebook was trained
-    if indexed > 0 and MODEL.train_steps.get("codebook", 0) > 0:
-        try:
-            concepts = [MODEL.record_concepts.get(rid, -1) for rid in graph["rids"]]
-            concepts = [c for c in concepts if c >= 0]
-            for i in range(len(concepts) - 1):
-                k = (concepts[i], concepts[i + 1])
-                MODEL.transition_counts[k] = MODEL.transition_counts.get(k, 0) + 1
-            log.info("worldview: built %d transition pairs from %d assigned concepts",
-                      len(MODEL.transition_counts), len(concepts))
-        except Exception as e:
-            log.warning("worldview: transition count build failed: %s", e)
+    # No transitions are added here from consecutive graph["rids"]: that order
+    # is Chroma's return order, not a real sequence, so adjacent pairs would be
+    # spurious. transition_counts come from generate_walks over graph edges.
 
     MODEL.save()
     await _persist_to_fabric()
@@ -3708,7 +3902,24 @@ async def cap_worldview_train(
         "edges":     E,
         "indexed":   indexed,
         "duration_s": duration,
+        "trained_on": trained.get("node") or trained.get("where", ""),
+        "stopped":   bool(trained.get("stopped")),
     }
+
+
+@capability(
+    "worldview.train_stop",
+    http_method="POST", http_path="/worldview/train_stop",
+    http_tags=["worldview"], memory="off",
+    description="Stop the worldview training in flight at its next epoch; the "
+                "epochs already run are kept, indexed and persisted. "
+                "Output: {ok, stopping}.",
+)
+async def cap_worldview_train_stop(trace_id=None) -> Dict:
+    if not _TRAIN_JOB or _TRAIN_JOB.get("stop"):
+        return {"ok": True, "stopping": False, "message": "no training in flight"}
+    _TRAIN_JOB["stop"] = True
+    return {"ok": True, "stopping": True}
 
 
 @capability(
@@ -3940,8 +4151,13 @@ async def cap_worldview_rollout(
     http_method="POST", http_path="/worldview/counterfactual",
     http_tags=["worldview"], memory="off",
     description="Counterfactual: rollout with a concept swap mid-trajectory. "
-                "Input: start_concept (int!), swap_at (int), swap_to (int!), steps. "
-                "Output: {baseline, counterfactual, divergence_step}.",
+                "Input: start_concept (int!), swap_at (int, 0-based index of the "
+                "generated step to replace; trajectory position swap_at+1), "
+                "swap_to (int!), steps, temperature, seed (int, optional). "
+                "Both timelines share the baseline's steps before the swap, and "
+                "their continuations after it use the same seed, so divergence "
+                "reflects the swap rather than sampling noise. "
+                "Output: {baseline, counterfactual, divergence_step, seed}.",
 )
 async def cap_worldview_counterfactual(
     start_concept: int = -1,
@@ -3949,18 +4165,41 @@ async def cap_worldview_counterfactual(
     swap_to:       int = -1,
     steps:         int = 8,
     temperature:   float = 0.6,
+    seed:          Optional[int] = None,
     trace_id=None,
 ) -> Dict:
     if not MODEL.ready:
         return {"error": "WorldView not ready"}
     if start_concept < 0 or swap_to < 0:
         return {"error": "start_concept and swap_to required"}
+    if swap_at < 0 or swap_at >= steps:
+        return {"error": f"swap_at must be in [0, steps) — got {swap_at} with steps={steps}"}
+    if seed is None:
+        seed = random.randrange(2 ** 31)
+    seed = int(seed)
 
-    baseline = MODEL.rollout(start_concept, steps=steps, temperature=temperature)
-    counterfactual = MODEL.rollout(
-        start_concept, steps=steps, temperature=temperature,
-        pinned=[(swap_at, swap_to)],
-    )
+    # Shared history: start + the first `swap_at` generated steps.
+    head = MODEL.rollout(start_concept, steps=swap_at,
+                         temperature=temperature, seed=seed)
+    if len(head) < swap_at + 1:
+        return {"error": "baseline rollout ended (EOS) before the swap point",
+                "baseline_prefix": head, "seed": seed}
+    # Baseline's own concept at the swap point (one sampled step).
+    at_swap = MODEL.rollout(start_concept, steps=1, temperature=temperature,
+                            prefix_concepts=head, seed=seed + 1)
+    rest = steps - swap_at - 1
+    if len(at_swap) > len(head):
+        # Both continuations after the swap point use the same seed, so they
+        # see the same random draws and differ only through the swapped concept.
+        baseline = MODEL.rollout(start_concept, steps=rest,
+                                 temperature=temperature,
+                                 prefix_concepts=at_swap, seed=seed + 2)
+    else:
+        baseline = at_swap          # baseline hit EOS at the swap point
+    counterfactual = MODEL.rollout(start_concept, steps=rest,
+                                   temperature=temperature,
+                                   prefix_concepts=head + [int(swap_to)],
+                                   seed=seed + 2)
 
     members_by_concept = defaultdict(list)
     for rid, c in MODEL.record_concepts.items():
@@ -3987,6 +4226,7 @@ async def cap_worldview_counterfactual(
         "baseline":       _fmt(baseline),
         "counterfactual": _fmt(counterfactual),
         "divergence_step": divergence_step,
+        "seed":           seed,
     }
 
 
@@ -4917,8 +5157,10 @@ async def cap_worldview_detect_drift(
     http_method="POST", http_path="/worldview/summarise",
     http_tags=["worldview", "agent"], memory="off",
     description="Structured summary of worldview state for agents/DAGs. "
-                "Returns model health, top concepts, recent anomalies, "
-                "and streaming worker status in a single call. "
+                "Returns model health, training steps/losses, record and "
+                "concept totals, top concepts, dataset breakdown and "
+                "streaming worker status in a single call. It does not "
+                "score anomalies; use worldview.anomalies for that. "
                 "Input: dataset_id (str, optional). "
                 "Output: comprehensive dict.",
 )
@@ -4998,6 +5240,67 @@ async def cap_worldview_stats(trace_id=None) -> Dict:
     }
 
 
+@capability(
+    "worldview.health",
+    http_method="GET", http_path="/worldview/health",
+    http_tags=["worldview"], memory="off", silent=True,
+    description="Health verdict for the JEPA worldview: status ok|degraded|stale|untrained, "
+                "reasons, and the metrics behind them (records per concept, codebook "
+                "perplexity vs K, dynamics steps per observed transition, index coverage, "
+                "checkpoint age). Without a held-out evaluation the best verdict is "
+                "'degraded'. Consumers use the worldview's output as evidence only when "
+                "status is 'ok'. Output: {status, reasons[], metrics{}}.",
+)
+async def cap_worldview_health(trace_id=None) -> Dict:
+    try:
+        from Vera.vera.worldview import worldview_health_core as _whc
+    except ImportError:                                   # pragma: no cover
+        from vera.worldview import worldview_health_core as _whc
+    try:
+        return _whc.verdict(MODEL.stats(), WV_INDEX.stats())
+    except Exception as e:                                # a broken model is not healthy
+        log.warning("worldview.health: %s", e)
+        return {"status": "untrained", "reasons": [f"health check failed: {e}"], "metrics": {}}
+
+
+@capability(
+    "worldview.diagnose",
+    http_method="POST", http_path="/worldview/diagnose",
+    http_tags=["worldview"], memory="off",
+    description="Read-only diagnostic of what WorldView training would see: "
+                "Chroma/SQLite record counts, datasets present, a sample "
+                "embedding's dim, and a hint. With probe=true (default) it "
+                "also embeds one short probe string with the CURRENTLY "
+                "configured embed model and reports its dim. Writes nothing. "
+                "Input: dataset_id (str, optional), probe (bool, default true). "
+                "Output: {probe_dim, probe_model, probe_error?, "
+                "model_embed_dim, chroma_*, sqlite_*, hint, ...}.",
+)
+async def cap_worldview_diagnose(
+    dataset_id: str = "",
+    probe:      bool = True,
+    trace_id=None,
+) -> Dict:
+    diag = await _diagnose_no_records(dataset_id)
+    diag["model_embed_dim"] = MODEL.embed_dim
+    diag["probe_dim"] = None
+    diag["probe_model"] = (getattr(_orch, "OLLAMA_EMBED_MODEL", None)
+                           or os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"))
+    if probe:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                emb, reason, _ = await _embed_direct(
+                    "worldview diagnose probe", diag["probe_model"], client)
+            if emb:
+                diag["probe_dim"] = len(emb)
+            else:
+                diag["probe_error"] = reason or "no embedding returned"
+        except Exception as e:
+            diag["probe_error"] = str(e)[:200]
+    return diag
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # UI PANEL  —  iframe-mounted via the standard register_ui() pattern
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5042,6 +5345,50 @@ _WV_CONFIG: Dict[str, Any] = {
 }
 
 
+# Keys in _WV_CONFIG that describe the model ARCHITECTURE. MODEL is built
+# once at import from the env constants above, and nothing reads these keys
+# from _WV_CONFIG, so config_set refuses them instead of silently storing
+# values that would never apply. Value = env var that does set it (None =
+# hard-coded in WorldView.__init__).
+_WV_ARCH_KEYS: Dict[str, Optional[str]] = {
+    "latent_dim":       "WORLDVIEW_LATENT_DIM",
+    "hidden_dim":       "WORLDVIEW_HIDDEN_DIM",
+    "num_gnn_layers":   "WORLDVIEW_GNN_LAYERS",
+    "num_concepts":     "WORLDVIEW_NUM_CONCEPTS",
+    "vq_decay":         "WORLDVIEW_VQ_DECAY",
+    "vq_commitment":    "WORLDVIEW_VQ_COMMIT",
+    "dyn_dim":          "WORLDVIEW_DYN_DIM",
+    "dyn_heads":        "WORLDVIEW_DYN_HEADS",
+    "dyn_layers":       "WORLDVIEW_DYN_LAYERS",
+    "dyn_ctx":          "WORLDVIEW_DYN_CTX",
+    "target_ema_decay": None,
+}
+
+
+def _split_config_updates(params: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Split supplied (non-None) config params into (applicable, rejected).
+
+    Rejected entries are architecture keys: they need an env change, a
+    restart and a retrain, so they are never written to _WV_CONFIG.
+    """
+    applicable: Dict[str, Any] = {}
+    rejected: List[Dict[str, Any]] = []
+    for key, val in params.items():
+        if val is None:
+            continue
+        if key in _WV_ARCH_KEYS:
+            env = _WV_ARCH_KEYS[key]
+            rejected.append({
+                "key": key, "requested": val,
+                "env": env,
+                "how": (f"set {env}, restart, then retrain" if env else
+                        "hard-coded in WorldView.__init__; not configurable"),
+            })
+        else:
+            applicable[key] = val
+    return applicable, rejected
+
+
 @capability(
     "worldview.config",
     http_method="GET", http_path="/worldview/config",
@@ -5057,12 +5404,16 @@ async def cap_worldview_config(trace_id=None) -> Dict:
     "worldview.config_set",
     http_method="POST", http_path="/worldview/config",
     http_tags=["worldview"], memory="off",
-    description="Update WorldView hyperparameters for the next training run. "
-                "Input: any subset of config keys. Changes that affect model "
-                "architecture (latent_dim, num_concepts, etc.) require a fresh "
-                "training run; optimizer params (lr, batch_size) take effect "
-                "immediately on the next epoch. "
-                "Output: {updated, config}.",
+    description="Update WorldView training hyperparameters. "
+                "Input: any subset of config keys. lr applies to the optimisers "
+                "immediately; the other training keys apply on the next "
+                "training run / stream pass. Architecture keys (latent_dim, "
+                "hidden_dim, num_gnn_layers, num_concepts, vq_decay, "
+                "vq_commitment, dyn_*, target_ema_decay) are NOT applied: the "
+                "model is built from WORLDVIEW_* env vars at import, so they "
+                "are returned under `rejected` with a `warning` (env change + "
+                "restart + retrain needed). "
+                "Output: {updated, config, rejected?, warning?}.",
 )
 async def cap_worldview_config_set(
     latent_dim:         int   = None,
@@ -5119,8 +5470,9 @@ async def cap_worldview_config_set(
         "vicreg_weight": vicreg_weight, "target_ema_decay": target_ema_decay,
         "auto_label": auto_label, "auto_label_k": auto_label_k,
     }
-    for key, val in params.items():
-        if val is not None and key in _WV_CONFIG:
+    applicable, rejected = _split_config_updates(params)
+    for key, val in applicable.items():
+        if key in _WV_CONFIG:
             old = _WV_CONFIG[key]
             _WV_CONFIG[key] = type(old)(val)
             updated.append({"key": key, "old": old, "new": _WV_CONFIG[key]})
@@ -5134,7 +5486,14 @@ async def cap_worldview_config_set(
 
     await _emit("config_updated", updated=updated,
                 message=f"Updated {len(updated)} config params")
-    return {"updated": updated, "config": {**_WV_CONFIG}}
+    out: Dict[str, Any] = {"updated": updated, "config": {**_WV_CONFIG}}
+    if rejected:
+        out["rejected"] = rejected
+        out["warning"] = ("Not applied (architecture keys, never read at "
+                          "runtime): " + ", ".join(r["key"] for r in rejected)
+                          + ". These need an env var change, a restart and "
+                          "a retrain.")
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5166,10 +5525,60 @@ _STREAM_STATS: Dict[str, Any] = {
     "last_error":        "",
     "pending_concepts":  [],      # concepts touched since last dynamics update
     "dynamics_interval": 60,      # seconds between dynamics fine-tune passes
+    # Only fabric.ingested carries record_ids. fabric.upserted and
+    # fabric.pipeline.stage fall back to a latest-by-dataset over-fetch.
+    # fabric.dataset.created is not emitted anywhere today (harmless to keep).
+    # fabric.backfill is deliberately absent: its start/progress/done payloads
+    # carry counts only, no record ids or dataset_id.
     "event_filters":     ["fabric.ingested", "fabric.upserted",
                           "fabric.pipeline.stage", "fabric.dataset.created"],
     "batch_size":        64,      # max records to process per ingestion event
 }
+
+
+def _chunk_ids(ids: List[str], size: int) -> List[List[str]]:
+    """Split ids into consecutive batches of at most `size` (size >= 1)."""
+    size = max(1, int(size or 1))
+    return [list(ids[i:i + size]) for i in range(0, len(ids), size)]
+
+
+def _stream_sample_walks(pending: List[int], all_concepts: List[int],
+                         transition_counts: Dict[Tuple[int, int], int],
+                         walk_len: int, n_walks: int = 0,
+                         rng: Optional[random.Random] = None) -> List[List[int]]:
+    """Sample token walks for the stream dynamics fine-tune.
+
+    Walks start at recently-touched concepts and follow `transition_counts`
+    (weighted), falling back to a random known concept when a concept has no
+    outgoing transitions. Read-only: `transition_counts` is never modified.
+    """
+    rng = rng or random
+    if not pending or not all_concepts:
+        return []
+    out_edges: Dict[int, List[Tuple[int, int]]] = {}
+    for (a, b), n in transition_counts.items():
+        if n > 0:
+            out_edges.setdefault(a, []).append((b, n))
+    walks = []
+    for _ in range(n_walks or min(500, len(pending) * 10)):
+        cur = rng.choice(pending)
+        seq = [cur]
+        for _ in range(walk_len - 1):
+            candidates = out_edges.get(cur)
+            if not candidates:
+                cur = rng.choice(all_concepts)
+            else:
+                r = rng.random() * sum(n for _, n in candidates)
+                cumulative = 0
+                for b, n in candidates:
+                    cumulative += n
+                    if r <= cumulative:
+                        cur = b
+                        break
+            seq.append(cur)
+        if len(seq) >= 2:
+            walks.append([TOKEN_BOS] + [c + NUM_SPECIAL_TOKENS for c in seq])
+    return walks
 
 
 async def _stream_encode_new_records(dataset_id: str, limit: int = 64,
@@ -5315,32 +5724,9 @@ async def _stream_dynamics_update() -> float:
     # this serially and is the only writer of MODEL.transition_counts, so there's
     # no concurrent-mutation risk.
     def _train() -> float:
-        # Build short walks biased towards recently-touched concepts
-        walks = []
-        for _ in range(min(500, len(pending) * 10)):
-            start = random.choice(pending)
-            seq = [start]
-            cur = start
-            for _ in range(_WV_CONFIG["walk_len"] - 1):
-                # Find transitions from cur
-                candidates = [(b, n) for (a, b), n in MODEL.transition_counts.items()
-                              if a == cur and n > 0]
-                if not candidates:
-                    cur = random.choice(all_concepts)     # fall back to random
-                else:
-                    # Weighted sample
-                    total_w = sum(n for _, n in candidates)
-                    r = random.random() * total_w
-                    cumulative = 0
-                    for b, n in candidates:
-                        cumulative += n
-                        if r <= cumulative:
-                            cur = b
-                            break
-                seq.append(cur)
-            if len(seq) >= 2:
-                walks.append([TOKEN_BOS] + [c + NUM_SPECIAL_TOKENS for c in seq])
-
+        walks = _stream_sample_walks(pending, all_concepts,
+                                     MODEL.transition_counts,
+                                     _WV_CONFIG["walk_len"])
         if not walks:
             return 0.0
 
@@ -5355,13 +5741,9 @@ async def _stream_dynamics_update() -> float:
             l = MODEL.train_dynamics_step(batch)
             losses.append(l)
 
-        # Update transition counts with new walks
-        for w in walks:
-            body = [t - NUM_SPECIAL_TOKENS for t in w if t >= NUM_SPECIAL_TOKENS]
-            for i in range(len(body) - 1):
-                k = (body[i], body[i + 1])
-                MODEL.transition_counts[k] = MODEL.transition_counts.get(k, 0) + 1
-
+        # The walks were sampled FROM transition_counts, so they are not new
+        # evidence: adding them back would make the counts reinforce
+        # themselves on every pass. transition_counts is left unchanged.
         return sum(losses) / len(losses) if losses else 0.0
 
     loop = asyncio.get_running_loop()
@@ -5455,9 +5837,17 @@ async def _wv_stream_worker():
                                 # many fabric events don't carry one
                                 record_ids = ev.get("record_ids") or ev.get("ids") or []
                                 batch_limit = _STREAM_STATS.get("batch_size", 64)
-                                n = await _stream_encode_new_records(
-                                    dataset_id, limit=batch_limit,
-                                    record_ids=record_ids)
+                                # Encode EVERY id the event carries, in batches
+                                # of batch_size, before the event is ACKed.
+                                n = 0
+                                if record_ids:
+                                    for chunk in _chunk_ids(list(record_ids), batch_limit):
+                                        n += await _stream_encode_new_records(
+                                            dataset_id, limit=len(chunk),
+                                            record_ids=chunk)
+                                else:
+                                    n = await _stream_encode_new_records(
+                                        dataset_id, limit=batch_limit)
                                 _STREAM_STATS["records_encoded"] += n
                                 _STREAM_STATS["records_indexed"] += n
                                 if n > 0:
@@ -5512,7 +5902,8 @@ async def _wv_stream_worker():
                 "them to concepts, and fine-tunes the dynamics model. "
                 "Input: event_filters (list[str], default ['fabric.ingested']), "
                 "dynamics_interval (int, seconds between dynamics updates, default 60), "
-                "batch_size (int, max records per event, default 64). "
+                "batch_size (int, records encoded per batch; all record_ids in an "
+                "event are processed in batches of this size before ACK, default 64). "
                 "Output: {running, stats}.",
 )
 async def cap_worldview_stream_start(

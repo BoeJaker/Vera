@@ -1159,6 +1159,76 @@ async def tg_notify(text: str, idempotency_key: str = "",
     return {"ok": bool(res.get("ok")), "result": res, "effect_shadow": shadow}
 
 
+def _parse_buttons(buttons: Any) -> List[List[Dict[str, str]]]:
+    """Rows of URL buttons from a list or its JSON; anything but http(s) is dropped."""
+    if isinstance(buttons, str):
+        try:
+            buttons = json.loads(buttons) if buttons.strip() else []
+        except ValueError:
+            buttons = []
+    rows: List[List[Dict[str, str]]] = []
+    for row in buttons or []:
+        row = row if isinstance(row, list) else [row]
+        keep = [{"text": str(b.get("text") or "")[:64], "url": str(b.get("url") or "")}
+                for b in row if isinstance(b, dict)
+                and str(b.get("url") or "").startswith(("http://", "https://")) and b.get("text")]
+        if keep:
+            rows.append(keep[:3])
+    return rows[:8]
+
+
+@capability(
+    "tg.send_rich", memory="off", redact_args=["text"], redact_result=True,
+    http_method="POST", http_path="/tg/send_rich", http_tags=["telegram"],
+    description="Send a rich message to the admin chat (or chat_id): an optional photo, then the text with rows "
+                "of link buttons under it. If Telegram refuses the buttons (e.g. a link it will not accept), the "
+                "links are appended to the text instead. Input: text (str!), buttons ([[{text,url}]] or its JSON), "
+                "photo_url, parse_mode (HTML|Markdown|''), chat_id. Output: {ok, buttons, photo}.",
+)
+async def tg_send_rich(text: str = "", buttons: Any = None, photo_url: str = "", parse_mode: str = "HTML",
+                       chat_id: str = "", trace_id=None):
+    cfg_data = await _get_config()
+    target = str(chat_id or cfg_data.get("admin_chat_id", "") or "")
+    if not target:
+        return {"ok": False, "error": "no chat_id and no admin_chat_id configured"}
+    bots = _bots.normalise_bots(cfg_data)
+    token = (_bots.default_bot(bots) or {}).get("token", "")
+    if not token:
+        return {"ok": False, "error": "no token"}
+    _observe_send_effect(target, mode="notification")
+    rows = _parse_buttons(buttons)
+    photo_ok = False
+    if str(photo_url or "").startswith(("http://", "https://")):
+        r = await _tg_api(token, "sendPhoto", {"chat_id": target, "photo": photo_url})
+        photo_ok = bool(r.get("ok"))
+    limit = int(cfg_data.get("max_reply_chars", 3800))
+    chunks = _split_long(text or "", limit)
+    last: Dict[str, Any] = {"ok": True}
+    buttons_ok = False
+    for i, chunk in enumerate(chunks):
+        params: Dict[str, Any] = {"chat_id": target, "text": chunk, "disable_web_page_preview": True}
+        if parse_mode:
+            params["parse_mode"] = parse_mode
+        if rows and i == len(chunks) - 1:
+            params["reply_markup"] = {"inline_keyboard": rows}
+        last = await _tg_api(token, "sendMessage", params)
+        if not last.get("ok") and "reply_markup" in params:
+            # the buttons were refused - keep the links, as text
+            params.pop("reply_markup")
+            links = "\n".join(f"{b['text']}: {b['url']}" for row in rows for b in row)
+            params["text"] = chunk + "\n\n" + links
+            last = await _tg_api(token, "sendMessage", params)
+        elif "reply_markup" in params:
+            buttons_ok = bool(last.get("ok"))
+        if not last.get("ok") and parse_mode:
+            params.pop("parse_mode", None)
+            last = await _tg_api(token, "sendMessage", params)
+        if not last.get("ok"):
+            break
+    return {"ok": bool(last.get("ok")), "buttons": buttons_ok, "photo": photo_ok,
+            "error": "" if last.get("ok") else str(last.get("description") or last.get("error") or "")}
+
+
 @capability(
     "tg.broadcast", memory="off", redact_args=["text", "idempotency_key",
                                                  "approval_receipt_ref"], redact_result=True,

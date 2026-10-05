@@ -58,6 +58,8 @@
     constructor() {
       super();
       this._root = this.attachShadow({ mode: 'open' });
+      this._root.innerHTML = '<style>' + CSS + '</style><div id="host"></div>';
+      this._last = ''; this._auto = false;
       this._d = null; this._f = { node: '', service: '', caller: '', kind: '', text: '', since_s: '3600' };
       this._paused = false; this._msg = ''; this._rec = null; this._timer = null;
     }
@@ -78,7 +80,7 @@
       const q = Object.entries(this._f).filter(([, v]) => v).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
       try { this._d = await this._get('/nodes/activity?limit=300&' + q); this._msg = ''; }
       catch (e) { this._msg = 'could not read node activity: ' + e.message; }
-      this._render();
+      this._auto = true; try { this._render(); } finally { this._auto = false; }
     }
     async _open(r) {
       this._rec = { loading: true, row: r }; this._render();
@@ -125,10 +127,30 @@
         + '</div></div>';
     }
 
+    /* Repaint without the flicker (2026-10-01): the stylesheet is set ONCE (a
+       new <style> on every refresh re-styled the whole pane), identical output
+       is not repainted, the page and inner scroll positions are kept (a 5 s
+       refresh used to throw the reader back to the top), and an automatic
+       refresh waits while a field has focus - a deliberate action repaints. */
+    _paint(h) {
+      const host = this._root.getElementById('host');
+      if (!host || h === this._last) return false;
+      const a = this._root.activeElement;
+      if (this._auto && a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return false;
+      const se = document.scrollingElement, py = se ? se.scrollTop : 0;
+      const sel = '.tbl, pre, textarea, [data-keep-scroll]';
+      const keep = Array.prototype.map.call(host.querySelectorAll(sel), (e) => e.scrollTop);
+      host.innerHTML = h;
+      this._last = h;
+      Array.prototype.forEach.call(host.querySelectorAll(sel), (e, i) => { if (keep[i]) e.scrollTop = keep[i]; });
+      if (se && se.scrollTop !== py) se.scrollTop = py;
+      return true;
+    }
+
     _render() {
       const d = this._d || {}, f = this._f;
       const nodes = Object.keys(d.nodes || {}).sort();
-      let h = '<style>' + CSS + '</style><div class="wrap"><div class="hdr"><span class="t">Node activity</span>'
+      let h = '<div class="wrap"><div class="hdr"><span class="t">Node activity</span>'
         + '<span class="muted">' + (d.taps ? d.taps.length + ' tapped · ' : '') + (d.records_seen || 0) + ' calls recorded</span><span class="sp"></span>'
         + '<select data-f="node"><option value="">all nodes</option>' + nodes.map((n) => '<option' + (f.node === n ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>'
         + '<select data-f="service">' + [['', 'all services'], ['ollama', 'LLM (ollama)'], ['nlp', 'NLP'], ['media', 'media (STT/TTS/image)'], ['worker', 'worker tasks']].map(([v, l]) => '<option value="' + v + '"' + (f.service === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
@@ -147,7 +169,7 @@
           + '<td>' + esc(r.tps ?? '') + '</td><td class="' + (r.error || (r.status || 200) >= 400 ? 'bad' : 'ok') + '">' + esc(r.error ? 'err' : r.status) + '</td><td class="pv muted">' + esc(r.prompt_preview) + '</td></tr>').join('')
         + (rows.length ? '' : '<tr><td colspan="11" class="muted">No calls recorded' + (d.taps && d.taps.length ? ' for these filters.' : ' - no node has its tap yet (nodes.ollama.tap).') + '</td></tr>') + '</table></div>';
       h += this._renderModal() + '</div>';
-      this._root.innerHTML = h;
+      if (!this._paint(h)) return;
       this._root.querySelectorAll('[data-f]').forEach((el) => {
         const ev = el.tagName === 'INPUT' ? 'change' : 'change';
         el.addEventListener(ev, () => { this._f[el.dataset.f] = el.value; this.refresh(); });

@@ -119,8 +119,16 @@ def test_model_not_on_node_is_not_planned():
 
 
 # ── scenarios ────────────────────────────────────────────────────────────────
-CODING = dict(W.DEFAULT_CONFIG["scenarios"][0], enabled=True,
-              models={"gpu": ["qwen2.5-coder:14b"], "cpu": [CODER], "cpu_sibling": [CODER]})
+# A scenario defined here: none ships in DEFAULT_CONFIG any more (the built-in
+# `coding` one was dropped, owner 2026-10-04), but the mechanism stays.
+CODING = {"name": "coding", "label": "test scenario", "enabled": True,
+          "job_types": ["code", "loop_coder"], "min_requests": 6, "window_s": 600,
+          "min_inflight": 2, "hold_s": 900, "fill": "all", "spill": True,
+          "models": {"gpu": ["qwen2.5-coder:14b"], "cpu": [CODER], "cpu_sibling": [CODER]}}
+
+
+def test_no_scenario_ships_by_default():
+    assert W.DEFAULT_CONFIG["scenarios"] == []
 
 
 def test_scenario_turns_on_from_demand_and_holds():

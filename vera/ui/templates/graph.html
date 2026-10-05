@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<!-- ═══ THE VERA GRAPH TEMPLATE (served /ui/templates/graph.html) ════════════════════════════════════════════════════
+     Two ways to draw a graph - never a third renderer (one implementation, so every graph looks and behaves alike):
+       1. the full graph: veraUI.Graph.create(host, opts) from /ui/vera-graph.js - search, legend, layers, node actions,
+          the detail drawer; load({nodes, edges}) or fetchSnapshot for a stored layer
+       2. the bare graph: <vera-graph-embed layer="entity" limit="60" height="240"> from /ui/vera-graph-embed.js - no
+          chrome, for a card, a chat turn or a canvas block; renderer="struct" draws one record as a structured diagram
+     Both follow the theme and blocks on/off (no ground of their own with blocks off). Canvas colours you add yourself:
+     veraUI.color('--acc', .4) - never a hex. See documentation/51-ui-design-system.md.
+     ═════════════════════════════════════════════════════════════════════════════════════════════════════════════ -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>(function(){try{var d=document.documentElement,S=localStorage;var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<title>Vera — EXAMPLE Graph</title>
+<link rel="stylesheet" href="/ui/bootstrap.css">
+</head>
+<body class="vb">
+<main class="vb-main" style="height:100%">
+  <header class="vb-topbar"><h2>EXAMPLE graph</h2><span class="vb-crumb">nodes and how they connect</span></header>
+  <div class="vb-content" style="display:flex;flex-direction:column;gap:14px">
+    <!-- 1. the full graph, filling its card -->
+    <div class="card" style="flex:1;min-height:360px;display:flex;flex-direction:column"><h4>Full graph</h4>
+      <div id="graph" style="flex:1;min-height:0"></div></div>
+    <!-- 2. the bare graph of a stored layer, inline -->
+    <div class="card"><h4>Inline</h4><vera-graph-embed layer="entity" limit="40" height="200"></vera-graph-embed></div>
+  </div>
+</main>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-graph.js"></script>
+<script src="/ui/vera-graph-embed.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  /* height:'fill' sizes the canvas to its host; actionsEnabled:false for a graph whose nodes are not fabric records */
+  var g = veraUI.Graph.create(document.getElementById('graph'), { height: 'fill', actionsEnabled: false, showLeftPanel: false });
+  g.load({
+    nodes: [ { id: 'a', label: 'EXAMPLE A', type: 'Entity' }, { id: 'b', label: 'EXAMPLE B', type: 'Entity' }, { id: 'c', label: 'EXAMPLE C', type: 'Dataset' } ],
+    /* an edge is {from, to, rel} */
+    edges: [ { from: 'a', to: 'b', rel: 'RELATES_TO' }, { from: 'b', to: 'c', rel: 'IN' } ]
+  });
+  /* a node clicked in the bare graph */
+  document.addEventListener('vera-graph-node', function (ev) { console.log('node', ev.detail && ev.detail.node); });
+});
+</script>
+</body>
+</html>

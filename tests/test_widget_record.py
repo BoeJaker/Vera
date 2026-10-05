@@ -184,3 +184,15 @@ def test_validate_checks_shape_source_and_drops_unknown_draw_options():
     # a refresh it cannot parse is ignored, with a warning
     r6, _, w6 = R.validate({"form": "trace", "source": "sysmon.history", "refresh": "soonish"})
     assert r6["read"]["refresh"] == "" and any("refresh" in w for w in w6)
+
+
+def test_a_template_whose_host_hands_the_data_in_reads_nothing_itself():
+    # the chat's turn footer (chat:turn-phases) is given the turn's phase frames; no capability serves them
+    FORMS, WHERES = ("meter", "gantt"), ("reply", "dashboard")
+    t = R.normalise_template({"name": "Turn phases", "form": "gantt", "reads": {"cap": "", "inline": True}})
+    assert t["reads"]["inline"] is True
+    assert R.template_problems(t, FORMS, WHERES) == []
+    # only a real true counts, and a template that never said so is unchanged
+    assert any("must say what it reads" in p for p in R.template_problems(
+        R.normalise_template({"name": "x", "form": "gantt", "reads": {"inline": "yes"}}), FORMS, WHERES))
+    assert "inline" not in R.normalise_template({"name": "x", "form": "meter", "reads": {"cap": "obs.health"}})["reads"]

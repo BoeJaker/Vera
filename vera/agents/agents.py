@@ -90,6 +90,37 @@ try:
     from Vera.vera.agents import queue_status_core as _queue_status
 except Exception:                       # worktree / app-free import
     from vera.agents import queue_status_core as _queue_status
+try:
+    from Vera.vera.agents import agent_patch_core as _agent_patch
+except Exception:                       # worktree / app-free import
+    from vera.agents import agent_patch_core as _agent_patch
+try:
+    from Vera.vera.agents import turn_needs_core as _turn_needs
+except Exception:                       # worktree / app-free import
+    from vera.agents import turn_needs_core as _turn_needs
+
+
+async def _switch_mode(feature_id: str, minds: Any = None, default: str = "off") -> str:
+    """The effective switchboard mode of one switch for this request (call > global > default). A request's minds
+    that do not validate, or a switchboard that cannot be read, leave the switch at its default - never on."""
+    try:
+        cap = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        if not cap:
+            return default
+        eff = await cap(minds=minds if isinstance(minds, dict) and minds else None)
+        modes = (eff or {}).get("modes") or {}
+        return str(modes.get(feature_id) or default)
+    except Exception as e:
+        log.debug("switch %s unreadable: %s", feature_id, e)
+        return default
+try:
+    from Vera.vera.agents import turn_phases_core as _phases
+except Exception:                       # worktree / app-free import
+    from vera.agents import turn_phases_core as _phases
+try:
+    from Vera.vera.fabric import fusion_core as _fusion
+except Exception:                       # worktree / app-free import
+    from vera.fabric import fusion_core as _fusion
 
 # Lazy import helper for DAG execution — avoids circular import at load time
 def _get_dag_runner():
@@ -102,6 +133,18 @@ def _get_dag_runner():
     )
 
 log = logging.getLogger("vera.agents")
+
+# what the chat draws besides code and diagrams (the chat sends chat_files): ~110 tokens
+_CHAT_FILES_NOTE = (
+    "## Files you can write\n"
+    "The chat draws these fences as they stream, and each downloads as a file:\n"
+    "- ```slides - a presentation: '# Title' per slide, slides split by a line of ---, bullets for points, "
+    "'Note:' for speaker notes (PowerPoint, PDF, a web slideshow).\n"
+    "- ```sheet (or ```csv) - a spreadsheet: comma-separated rows, header first, rows only - no title, notes or "
+    "markdown inside the block; cells may hold formulas like =SUM(B2:B5) (Excel, OpenDocument, CSV, JSON).\n"
+    "- ```document - a document in markdown (Word, PDF, OpenDocument, e-book).\n"
+    "Use one when the user asks for slides, a spreadsheet, a table to work with, or a document - not otherwise."
+)
 
 
 def _text_evidence(value: object) -> dict:
@@ -119,6 +162,9 @@ def _text_evidence(value: object) -> dict:
 # Context is an enhancement, not a prerequisite: if it isn't ready in time we
 # skip it and start the reply.
 CTX_INJECT_TIMEOUT = float(os.getenv("AGENT_CTX_INJECT_TIMEOUT", "12") or 12)
+# Each RAG dataset query's own bound, inside the injection's: a slow source loses its own
+# hits, not every source's (RF-57).
+_RAG_DATASET_TIMEOUT_S = max(1.0, CTX_INJECT_TIMEOUT - 2.0)
 
 # Budget for the INLINE history-compaction summary (compact_messages). It runs a
 # real LLM generation on the summarize pool before the user's reply starts, so a
@@ -1250,35 +1296,57 @@ async def agent_rag_index(rec: AgentRecord, force: bool = False) -> Dict[str, An
 async def agent_rag_retrieve(rec: AgentRecord, query: str,
                              limit: int = 0) -> List[Dict[str, Any]]:
     """Fast prompt-time retrieval: one vector/text query over the agent's own
-    dataset, plus (for fabric sources) scoped queries over their datasets."""
-    out: List[Dict[str, Any]] = []
+    dataset, plus (for fabric sources) scoped queries over their datasets.
+
+    The datasets are queried at once, each under its own bound, and their rankings
+    are fused by rank (fusion_core.rrf): a raw score means something different in
+    each dataset, and querying one after another under one timeout meant more
+    sources made it likelier that the whole injection was skipped (RF-57). On a
+    tie the agent's own dataset comes first."""
     limit = int(limit or rec.rag_inject_limit or 4)
     if not query.strip():
-        return out
+        return []
     datasets = [rec.rag_dataset] if rec.knowledge_sources else []
     for src in rec.knowledge_sources or []:
         if isinstance(src, dict) and str(src.get("type")) == "fabric" and src.get("target"):
             datasets.append(str(src["target"]))
-    seen = set()
-    for ds in datasets:
-        if not ds or ds in seen:
-            continue
-        seen.add(ds)
-        r = await _call_registered_cap("fabric.query", text=query[:400],
-                                       dataset_id=ds, top_k=limit,
-                                       include_revision_authority=True)
-        for row in (r.get("results") or [])[:limit]:
+    datasets = list(dict.fromkeys(ds for ds in datasets if ds))
+
+    async def _one(ds: str) -> List[Dict[str, Any]]:
+        try:
+            r = await asyncio.wait_for(
+                _call_registered_cap("fabric.query", text=query[:400], dataset_id=ds,
+                                     top_k=limit, include_revision_authority=True),
+                timeout=_RAG_DATASET_TIMEOUT_S)
+        except Exception as e:
+            log.debug("agent rag [%s] %s: %s", rec.name, ds, e)
+            return []
+        rows: List[Dict[str, Any]] = []
+        for row in ((r or {}).get("results") or [])[:limit]:
             # Web-fetched sources ingest their content into `text`, not `summary`
             # (only some pipelines set a summary) — fall back to `text` so retrieval
             # actually surfaces them. Without this, EVERY web-source agent RAG query
             # silently returned nothing despite the records being present + indexed.
             summ = (row.get("summary") or "").strip() or (row.get("text") or "").strip()
             if summ:
-                out.append({"dataset": ds, "record_id": row.get("id"),
-                            "revision_id": row.get("revision_id"),
-                            "text": summ[:600], "score": row.get("score")})
-    out.sort(key=lambda x: -(x.get("score") or 0))
-    return out[:limit]
+                rows.append({"dataset": ds, "record_id": row.get("id"),
+                             "revision_id": row.get("revision_id"),
+                             "text": summ[:600], "score": row.get("score")})
+        return rows
+
+    per_ds = await asyncio.gather(*(_one(ds) for ds in datasets))
+    by_key: Dict[str, Dict[str, Any]] = {}
+    lists: List[List[str]] = []
+    for ds, rows in zip(datasets, per_ds):
+        keys = []
+        for i, row in enumerate(rows):
+            k = f"{ds}|{row.get('record_id') or i}"
+            by_key.setdefault(k, row)
+            keys.append(k)
+        lists.append(keys)
+    fused = _fusion.rrf(lists)
+    order = sorted(fused, key=lambda k: -fused[k])
+    return [by_key[k] for k in order[:limit]]
 
 
 def _agent_knowledge_block(rec: AgentRecord, snippets: List[Dict[str, Any]]) -> str:
@@ -1708,8 +1776,12 @@ async def agent_chat_stream_endpoint(request: Request):
     agent = copy.copy(agent)
     if body.get("model_override"): agent.model       = body["model_override"]
     if body.get("instance_id"):    agent.instance_id = body["instance_id"]
-    if body.get("prefer_gpu"):     agent.prefer_gpu  = True
+    # the chat's GPU toggle both ways: unticked used to be ignored ("if prefer_gpu: True" never turned it off)
+    if "prefer_gpu" in body:       agent.prefer_gpu  = bool(body.get("prefer_gpu"))
     if body.get("think"):          agent.think       = True
+    # GPU off for this turn: nothing it starts may land on a GPU node (see capability_orchestration.NO_GPU)
+    if body.get("no_gpu"):
+        _orch.NO_GPU.set(True)
 
     # Ensure the session node exists in the memory graph — FIRE-AND-FORGET.
     # This is a Neo4j MERGE; a slow/degraded graph backend must never delay the
@@ -1809,6 +1881,32 @@ async def agent_chat_stream_endpoint(request: Request):
             log.debug("cap_ontology inject failed: %s", _e)
     _ep_mark("context_inject")
 
+    # ── THE CANVAS BEFORE THE ANSWER (canvas-enrichment slice 4): the chat's own sends ask for it (canvas_enrich);
+    # turn.prepare places what answers the question within its budget (1.5 s - the owner's) and returns the note that
+    # tells the model what is on the canvas; slower reads keep landing while the model writes. Never fatal, never
+    # longer than budget + a margin: a slow canvas does not hold the answer.
+    if body.get("canvas_enrich") and session_id and "## On the canvas" not in _sys_prefix:
+        _prep = (CAPABILITY_REGISTRY.get("turn.prepare") or {}).get("func")
+        if _prep:
+            _cv_budget = 1.5
+            try:
+                _cvr = await asyncio.wait_for(
+                    _prep(text=str(body.get("canvas_text") or message)[:2000], session_id=session_id,
+                          mid=str(body.get("canvas_mid") or ""), budget_s=_cv_budget,
+                          tell=body.get("canvas_tell", True) is not False),
+                    _cv_budget + 1.0)
+                if isinstance(_cvr, dict) and _cvr.get("prompt"):
+                    _sys_prefix = (_sys_prefix + "\n\n" + _cvr["prompt"]).strip()
+            except Exception as _e:
+                log.debug("turn.prepare skipped: %s", _e)
+    _ep_mark("canvas_prepare")
+
+    # ── FILES THE CHAT DRAWS (owner, 2026-10-04: documents, presentations and spreadsheets, rendered in the chat and on
+    # the canvas and streamed like code and mermaid): the chat says it draws them (chat_files) and the model is told the
+    # three fences, briefly - each is drawn as it is written and downloads as every file type it can be.
+    if body.get("chat_files") and "## Files you can write" not in _sys_prefix:
+        _sys_prefix = (_sys_prefix + "\n\n" + _CHAT_FILES_NOTE).strip()
+
     # ── Quick opener: very long prompt → light one-liner from a SECOND
     # Ollama endpoint while the main response generates on the first. The
     # main response sees the opener's instruction so it can avoid repeating
@@ -1887,10 +1985,52 @@ async def agent_chat_stream_endpoint(request: Request):
     # the three-phase UX: opener/ack → "searching the web…" → substantive answer.
     _web_enabled = bool(body.get("web_search"))
     _web_query   = (body.get("web_search_query") or message or "").strip()
+    # ── What the turn needs, decided before the model (context-and-ui CU-T.3/T.4; owner 2026-10-04: web context
+    # "triggered deterministically (or using nlp) ... to save the llm having to call a search cap"). Behind the
+    # switch context.needs_web (off by default). The rules read the bare question (canvas_text - the chat sends it
+    # beside a message that carries its own injected blocks), never turn off a search the user asked for, and the
+    # search they start is waited on for at most 3 s (the owner's budget) - past that the answer goes ahead without
+    # it and the sources still show. Every decision is an event, so it can be measured and later learned.
+    _needs = None
+    _web_auto = False
+    _mem_deep = False
+    _web_rules = _mem_rules = False
+    _bare_q = str(body.get("canvas_text") or message or "")[:2000]
+    if _bare_q.strip():
+        # the same rules decide memory (CU-T.5, behind context.needs_memory): a turn that refers back gets a deep,
+        # all-sessions memory search before the model, waited on at most 1.5 s (owner, 2026-10-04)
+        _web_rules = (not _web_enabled
+                      and await _switch_mode("context.needs_web", body.get("minds")) == "rules")
+        _mem_rules = await _switch_mode("context.needs_memory", body.get("minds")) == "rules"
+        if _web_rules or _mem_rules:
+            try:
+                _needs = _turn_needs.needs(_bare_q)
+            except Exception as _e:
+                log.debug("turn needs: %s", _e)
+                _needs = None
+            if _needs and _web_rules and _needs["web"]["on"]:
+                _web_enabled, _web_auto = True, True
+                _web_query = (_needs["web"].get("query") or _bare_q).strip()[:200]
+            if _needs and _mem_rules and _needs["memory_deep"]["on"]:
+                _mem_deep = True
+            if _needs:
+                try:
+                    await emit_event({"type": "context.needs", "session_id": session_id, "decider": "rules",
+                                      "web": _needs["web"], "memory_deep": _needs["memory_deep"],
+                                      "switches": {"web": _web_rules, "memory": _mem_rules}})
+                except Exception:
+                    pass
     _web_limit   = max(1, min(10, int(body.get("web_search_limit", 5) or 5)))
     _web_engine  = (body.get("web_search_engine") or "auto").strip() or "auto"
     _web_task    = None
+    _web_t0      = 0.0
+    # Phase frames (turn_phases_core): what the turn is doing, said as it happens, for a client that asks. Timed
+    # from the endpoint's entry, so the steps already done before the stream opened are reported with their real
+    # durations, and the chat turn record (four-minds FM-0.3) is built from the same frames.
+    _ph = (_phases.PhaseClock(str(body.get("turn_id") or uuid.uuid4().hex[:12]), _ep_t0, _time.monotonic)
+           if body.get("phase_frames") else None)
     if _web_enabled and _web_query:
+        _web_t0 = _time.monotonic()
         async def _run_web_search():
             try:
                 return await asyncio.wait_for(
@@ -1905,6 +2045,22 @@ async def agent_chat_stream_endpoint(request: Request):
                 log.debug("chat web.search failed: %s", _e)
                 return {"error": str(_e)}
         _web_task = asyncio.create_task(_run_web_search())
+    _mem_task = None
+    _mem_t0 = 0.0
+    _mem_query = ((_needs or {}).get("memory_deep", {}).get("query") or _bare_q).strip()[:400]
+    if _mem_deep and _mem_query:
+        _mem_t0 = _time.monotonic()
+        async def _run_mem_deep():
+            # the 1.5 s is the search's own budget; never raises (a failure is an empty block)
+            _mh = sys.modules.get("memory_hooks")
+            if _mh is None or not hasattr(_mh, "get_memory_context_deep"):
+                return {"text": "", "hits": 0, "vector": False, "ms": 0.0, "error": "memory not loaded"}
+            try:
+                return await _mh.get_memory_context_deep(_mem_query, limit=8, budget_s=1.5)
+            except Exception as _e:
+                log.debug("chat deep memory failed: %s", _e)
+                return {"text": "", "hits": 0, "vector": False, "ms": 0.0, "error": str(_e)}
+        _mem_task = asyncio.create_task(_run_mem_deep())
 
     def _format_web_context(res) -> str:
         """Render web.search results into a system-prompt fragment."""
@@ -1923,6 +2079,9 @@ async def agent_chat_stream_endpoint(request: Request):
         lines.append(
             "\nGround your answer in these results and cite sources as [n] where "
             "relevant. If they don't cover the question, say so rather than guessing.")
+        if _web_auto:
+            lines.append("This search was run for you before you answered; do not call web.search again for the "
+                         "same thing.")
         return "\n".join(lines)
 
     async def _safe_gen():
@@ -1941,6 +2100,99 @@ async def agent_chat_stream_endpoint(request: Request):
             await _q.put(
                 ("data: " + json.dumps({"type": "web_searching",
                                         "query": _web_query[:200]}) + "\n\n").encode())
+        _web_phase = None
+        _mem_phase = None
+        _MEM_LABEL = "searching earlier conversations (all sessions)"
+        _model_t0 = _time.monotonic()
+        # tier 1 of a two-tier reply starts at once; a single-pass answer waits for the searches
+        _model_waits_for_context = ((_web_task is not None or _mem_task is not None)
+                                    and not (_two_tier is not None and _tt_plan.get("split")))
+        if _ph is not None:
+            try:
+                # what happened before the stream could open, with the time each step really took
+                for _f in _phases.from_marks(_ph, _ep_marks):
+                    await _q.put(("data: " + json.dumps(_f) + "\n\n").encode())
+                if _needs is not None and _web_rules:
+                    _wn = _needs["web"]
+                    await _q.put(_ph.sse("needs", "web", "deciding whether to search the web",
+                                         "done" if _wn["on"] else "skip", ms=0,
+                                         detail=_wn.get("reason", "")))
+                if _web_task is not None:
+                    await _q.put(_ph.sse("acquire", "web", _phases.web_label(_web_query), "start", t=_web_t0))
+
+                    async def _web_phase_done():
+                        # its own watcher: tier 1 of a two-tier reply never waits for the search, but the person
+                        # should still see when it finished and what it found
+                        try:
+                            _wr = await _web_task
+                        except asyncio.CancelledError:
+                            raise                   # torn down with the stream: say nothing more
+                        except Exception:
+                            await _q.put(_ph.sse("acquire", "web", _phases.web_label(_web_query), "fail",
+                                                 ms=(_time.monotonic() - _web_t0) * 1000))
+                            return
+                        _rs = (_wr.get("results") or []) if isinstance(_wr, dict) else []
+                        _st = "done" if _rs else ("fail" if isinstance(_wr, dict) and _wr.get("error") else "done")
+                        await _q.put(_ph.sse(
+                            "acquire", "web", _phases.web_label(_web_query), _st,
+                            ms=(_time.monotonic() - _web_t0) * 1000, count=len(_rs),
+                            sources=[{"title": r.get("title") or r.get("url"), "url": r.get("url")}
+                                     for r in _rs[:_web_limit] if isinstance(r, dict)]))
+                    _web_phase = asyncio.create_task(_web_phase_done())
+                if _needs is not None and _mem_rules:
+                    _mn = _needs["memory_deep"]
+                    await _q.put(_ph.sse("needs", "memory", "deciding whether to search earlier conversations",
+                                         "done" if _mn["on"] else "skip", ms=0, detail=_mn.get("reason", "")))
+                if _mem_task is not None:
+                    await _q.put(_ph.sse("acquire", "memory", _MEM_LABEL, "start", t=_mem_t0))
+
+                    async def _mem_phase_done():
+                        try:
+                            _mr = await _mem_task
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            _mr = {"error": "failed"}
+                        _mr = _mr if isinstance(_mr, dict) else {}
+                        await _q.put(_ph.sse(
+                            "acquire", "memory", _MEM_LABEL, "fail" if _mr.get("error") else "done",
+                            ms=(_time.monotonic() - _mem_t0) * 1000, count=int(_mr.get("hits") or 0),
+                            detail=(("with the vector search" if _mr.get("vector")
+                                     else "text search only (the vector search missed the 1.5 s budget)")
+                                    + (" · text tier %s ms, %s found" % (int(_mr.get("fast_ms") or 0),
+                                                                          int(_mr.get("fast_hits") or 0))
+                                       if _mr.get("fast_ms") is not None else ""))))
+                    _mem_phase = asyncio.create_task(_mem_phase_done())
+                if not _model_waits_for_context:
+                    _model_t0 = _time.monotonic()
+                    await _q.put(_ph.sse("model", "answer", "writing the answer", "start", t=_model_t0))
+            except Exception as _e:
+                log.debug("phase frames (pre-stream) skipped: %s", _e)
+
+        async def _await_mem_deep() -> str:
+            # the deep memory block for the prompt; the search holds itself to 1.5 s, this only guards a hang
+            if _mem_task is None:
+                return ""
+            try:
+                _mr = await asyncio.wait_for(asyncio.shield(_mem_task), 2.5)
+            except Exception:
+                return ""
+            return str((_mr or {}).get("text") or "") if isinstance(_mr, dict) else ""
+
+        async def _model_start_after_context(late: bool):
+            # the single-pass answer starts only once the searches have answered (or their caps let it go ahead):
+            # say so then, after the searches' own frames, so the throbber never shows "writing the answer" mid-search
+            nonlocal _model_t0
+            if _ph is None or not _model_waits_for_context:
+                return
+            try:
+                _watch = {p for p in ((None if late else _web_phase), _mem_phase) if p is not None}
+                if _watch:
+                    await asyncio.wait(_watch, timeout=0.25)
+                _model_t0 = _time.monotonic()
+                await _q.put(_ph.sse("model", "answer", "writing the answer", "start", t=_model_t0))
+            except Exception as _e:
+                log.debug("phase frame (model start) skipped: %s", _e)
 
         async def _pump_main():
             try:
@@ -1948,25 +2200,57 @@ async def agent_chat_stream_endpoint(request: Request):
                 # Gate on the web search so the answer is informed by the fresh
                 # results, and publish the sources to the UI before tokens flow.
                 if _web_task is not None:
+                    _late = False
                     try:
-                        _wres = await _web_task
+                        if _web_auto:
+                            # a search the rules started holds the answer for at most 3 s (the owner's budget); past
+                            # that the answer goes ahead without it and the phase says it came late
+                            _wres = await asyncio.wait_for(asyncio.shield(_web_task), 3.0)
+                        else:
+                            _wres = await _web_task
+                    except asyncio.TimeoutError:
+                        _wres, _late = None, True
+                        if _ph is not None:
+                            await _q.put(_ph.sse("acquire", "web", _phases.web_label(_web_query), "late",
+                                                 ms=(_time.monotonic() - _web_t0) * 1000,
+                                                 detail="answered without it; the sources follow"))
                     except Exception:
                         _wres = None
-                    _srcs = []
-                    if isinstance(_wres, dict):
-                        for r in (_wres.get("results") or [])[:_web_limit]:
-                            _srcs.append({
-                                "title": (r.get("title") or r.get("url") or "")[:140],
-                                "url":   r.get("url") or "",
-                            })
-                    await _q.put(
-                        ("data: " + json.dumps({"type": "web_results",
-                                                "query": _web_query[:200],
-                                                "sources": _srcs,
-                                                "count": len(_srcs)}) + "\n\n").encode())
+
+                    def _results_frame(res, late=False):
+                        srcs = []
+                        if isinstance(res, dict):
+                            for r in (res.get("results") or [])[:_web_limit]:
+                                srcs.append({
+                                    "title": (r.get("title") or r.get("url") or "")[:140],
+                                    "url":   r.get("url") or "",
+                                })
+                        fr = {"type": "web_results", "query": _web_query[:200], "sources": srcs, "count": len(srcs)}
+                        if late:
+                            fr["late"] = True
+                        return ("data: " + json.dumps(fr) + "\n\n").encode()
+
+                    if _late:
+                        # the answer went ahead without it: the sources follow when the search answers (never an
+                        # empty "no results" while it is still running)
+                        async def _late_results():
+                            try:
+                                _w2 = await _web_task
+                            except Exception:
+                                return
+                            await _q.put(_results_frame(_w2, late=True))
+                        asyncio.create_task(_late_results())
+                    else:
+                        await _q.put(_results_frame(_wres))
                     _frag = _format_web_context(_wres)
                     if _frag:
                         _prefix = (_prefix + "\n\n" + _frag).strip()
+                else:
+                    _late = False
+                _mfrag = await _await_mem_deep()        # started with the web search, so the waits overlap
+                if _mfrag:
+                    _prefix = (_prefix + "\n\n" + _mfrag).strip()
+                await _model_start_after_context(_late)
                 async for chunk in AGENT_RUNNER.run_stream(
                         agent, message, history, session_id, use_tts=use_tts,
                         system_prefix=_prefix):
@@ -2012,6 +2296,9 @@ async def agent_chat_stream_endpoint(request: Request):
                     _frag2 = _format_web_context(_wres2)
                     if _frag2:
                         _prefix2 = (_prefix2 + "\n\n" + _frag2).strip()
+                _mfrag2 = await _await_mem_deep()
+                if _mfrag2:
+                    _prefix2 = (_prefix2 + "\n\n" + _mfrag2).strip()
                 gate = (_tt_stream.NoAdditionGate()
                         if _tt_plan.get("always_run_tier2") else None)
                 async for chunk in AGENT_RUNNER.run_stream(
@@ -2060,6 +2347,7 @@ async def agent_chat_stream_endpoint(request: Request):
                     raise item
                 yield item
 
+        _first_sent = False
         try:
             async for chunk in _merged():
                 # Light-touch content sniff. Stream frames come as
@@ -2082,9 +2370,22 @@ async def agent_chat_stream_endpoint(request: Request):
                         _resp_chars += len(_text)
                         if sum(len(s) for s in _resp_head) < _CAPTURE_MAX:
                             _resp_head.append(_text)
+                        if _ph is not None and not _first_sent and _text:
+                            _first_sent = True          # the first token: the time to it is the turn's TTFT
+                            try:
+                                yield _ph.sse("model", "answer", "writing the answer", "first")
+                            except Exception:
+                                pass
                     elif _kind == "audio":
                         _audio_chunks += 1
                 yield chunk
+            if _ph is not None:
+                try:
+                    yield _ph.sse("model", "answer", "writing the answer", "done",
+                                  ms=(_time.monotonic() - _model_t0) * 1000,
+                                  count=_resp_chars or None)
+                except Exception:
+                    pass
         except (RuntimeError, ConnectionResetError, BrokenPipeError) as e:
             if "transport" in str(e).lower() or "closed" in str(e).lower():
                 log.debug("Client disconnected during stream: %s", e)
@@ -2093,7 +2394,7 @@ async def agent_chat_stream_endpoint(request: Request):
         finally:
             # Tear down the merge plumbing — an opener still in flight after
             # the main stream finished (or the client vanished) is pointless.
-            for _t in (_op_pump, _opener_task, _main_pump, _web_task):
+            for _t in (_op_pump, _opener_task, _main_pump, _web_task, _web_phase, _mem_task, _mem_phase):
                 if _t is not None and not _t.done():
                     _t.cancel()
             elapsed_ms = round((_time.monotonic() - _stream_t0) * 1000)
@@ -5252,6 +5553,43 @@ async def agent_update(
     saved = await AGENT_REGISTRY.save(rec)
     await emit_event({"type": "agent.updated", "id": saved.id, "name": saved.name})
     return {"id": saved.id, "name": saved.name, "label": saved.label}
+
+
+@capability(
+    "agent.patch", memory="off",
+    http_method="POST", http_path="/agents/patch", http_tags=["agents"],
+    description="Change some fields of an existing agent and keep every other field as it is (agent.update "
+                "rebuilds the whole agent from its parameters, so anything not sent is reset). Inputs: agent_id or "
+                "name (str) - which agent; fields (object) - {field: new value}, e.g. {\"system_prompt\": \"...\", "
+                "\"temperature\": 0.3, \"domain_caps\": \"web.search, memory.search\"}. Values are converted to each "
+                "field's type (yes/no, numbers, lists from comma-separated text); id, created_at and author never "
+                "change. Output: {ok, id, name, changed: [fields], rejected: [{field, why}]}.",
+)
+async def agent_patch(agent_id: str = "", name: str = "", fields: Optional[Dict[str, Any]] = None, trace_id=None):
+    existing = None
+    if agent_id:
+        existing = await AGENT_REGISTRY.get(agent_id)
+    if not existing and name:
+        existing = await AGENT_REGISTRY.get_by_name(name)
+    if not existing:
+        return {"ok": False, "error": f"Agent not found: {agent_id or name}"}
+    if isinstance(fields, str):
+        try:
+            fields = json.loads(fields or "{}")
+        except Exception:
+            return {"ok": False, "error": "fields must be an object"}
+    if not isinstance(fields, dict) or not fields:
+        return {"ok": False, "error": "fields must be a non-empty object of {field: value}"}
+    import dataclasses as _dc
+    types = _agent_patch.field_types(AgentRecord)
+    current = {f.name: getattr(existing, f.name) for f in _dc.fields(AgentRecord)}
+    new, changed, rejected = _agent_patch.apply_patch(current, fields, types)
+    if not changed:
+        return {"ok": True, "id": existing.id, "name": existing.name, "changed": [], "rejected": rejected}
+    rec = AgentRecord(**new)
+    saved = await AGENT_REGISTRY.save(rec)
+    await emit_event({"type": "agent.updated", "id": saved.id, "name": saved.name, "fields": changed})
+    return {"ok": True, "id": saved.id, "name": saved.name, "changed": changed, "rejected": rejected}
 
 @capability(
     "agent.list", memory="off",

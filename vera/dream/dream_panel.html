@@ -438,59 +438,59 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
     <div><h1>Dream</h1><div class="sub">Pipelines &amp; cycles</div></div>
   </div>
   <nav id="nav">
-  <button class="nav-btn active" data-sec="overview" title="Overview">
+  <button class="nav-btn active" data-sec="overview" data-label="Overview" data-desc="The dream dashboard" data-desc-long="The Dream dashboard: the state of the dream engine, with Refresh, Run and Configure. Start here to see what dreams last did." title="Overview">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
     <span>Overview</span>
   </button>
-  <button class="nav-btn" data-sec="live" title="Live dream output" style="position:relative">
+  <button class="nav-btn" data-sec="live" data-label="Live" data-desc="The dream running now" data-desc-long="Live output of the dream cycle running now; empty when none is running (Run a dream starts one; past runs are under Timeline)." title="Live dream output" style="position:relative">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2"/><path d="M4.5 4.5a5 5 0 000 7M11.5 4.5a5 5 0 010 7M2.5 2.5a8 8 0 000 11M13.5 2.5a8 8 0 010 11"/></svg>
     <span>Live</span>
     <span class="sb-badge" id="badge-live"></span>
   </button>
-  <button class="nav-btn" data-sec="triggers" title="Pipelines">
+  <button class="nav-btn" data-sec="triggers" data-label="Pipelines" data-desc="Dream triggers and their modes" data-desc-long="The dream pipelines (triggers): list, generate and create them; each has a mode such as synthesize_only (gather sensors, write a report, take no action)." title="Pipelines">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 2L5 9h4l-2 5 6-7H9l2-5z"/></svg>
     <span>Pipelines</span>
   </button>
-  <button class="nav-btn" data-sec="pipeline" title="Pipeline config">
+  <button class="nav-btn" data-sec="pipeline" data-label="Pipeline config" data-desc="Edit one pipeline's steps" data-desc-long="The pipeline editor: pick a trigger, then edit its pipeline from a template and save it." title="Pipeline config">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="3" cy="8" r="2"/><circle cx="13" cy="8" r="2"/><circle cx="8" cy="4" r="2"/><circle cx="8" cy="12" r="2"/><path d="M5 8h3M11 8h-2M8 6v2M8 10v-2"/></svg>
     <span>Pipeline config</span>
   </button>
-  <button class="nav-btn" data-sec="projects" title="Projects" style="position:relative">
+  <button class="nav-btn" data-sec="projects" data-label="Projects" data-desc="Projects and goals dreams work on" data-desc-long="Projects &amp; goals: the projects dreams work towards, with their log; create, merge similar, archive or delete projects." title="Projects" style="position:relative">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12v9a1 1 0 01-1 1H3a1 1 0 01-1-1V4z"/><path d="M2 4l2-2h8l2 2"/><path d="M5 8h6M5 11h4"/></svg>
     <span>Projects</span>
     <span class="sb-badge" id="badge-proj"></span>
   </button>
-  <button class="nav-btn" data-sec="review" title="Dream Review">
+  <button class="nav-btn" data-sec="review" data-label="Dream Review" data-desc="Review what dreams produced" data-desc-long="Dream Review (/dream/review/panel): review the output dream cycles produced." title="Dream Review">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/><path d="M5 7h4M7 5v4"/></svg>
     <span>Dream Review</span>
   </button>
-  <button class="nav-btn" data-sec="thoughts" title="Thinking loops">
+  <button class="nav-btn" data-sec="thoughts" data-label="Thoughts" data-desc="Thinking loops on a subject" data-desc-long="Thinking loops: point Vera at a subject, goal and source (e.g. a subreddit RSS feed); on idle it reads what is new and keeps a linked thought stream in the memory graph's dream layer." title="Thinking loops">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.5a4 4 0 00-2.5 7.1V12h5V9.6A4 4 0 008 2.5z"/><path d="M6.5 13.5h3M7 12v1.5M9 12v1.5"/></svg>
     <span>Thoughts</span>
   </button>
   <div class="sb-sep"></div>
-  <button class="nav-btn" data-sec="history" title="Timeline &amp; History — what ran, how long it took, what fires next">
+  <button class="nav-btn" data-sec="history" data-label="Timeline" data-desc="What ran, how long, what fires next" data-desc-long="Timeline &amp; History: one lane per dream feature, bar width = real duration, over a chosen range; click a bar for the full cycle record, and see what fires next." title="Timeline &amp; History — what ran, how long it took, what fires next">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13h12M4 9v4M7 5v8M10 7v6M13 3v10"/></svg>
     <span>Timeline</span>
   </button>
-  <button class="nav-btn" data-sec="activity" title="Activity — unified timeline of every dream, loop, program &amp; tool, live">
+  <button class="nav-btn" data-sec="activity" data-label="Activity" data-desc="Everything Vera is doing, live" data-desc-long="Activity: a unified, live timeline of every dream, loop, program and tool Vera runs, including background work; pick a pipeline to scope it." title="Activity — unified timeline of every dream, loop, program &amp; tool, live">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8h3l2-5 2 10 2-5h3"/></svg>
     <span>Activity</span>
   </button>
-  <button class="nav-btn" data-sec="hitl" title="Approvals" style="position:relative">
+  <button class="nav-btn" data-sec="hitl" data-label="Approvals" data-desc="Actions waiting for your approval" data-desc-long="Pending approvals: dream actions waiting for a human yes/no before they run (human in the loop)." title="Approvals" style="position:relative">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12a5 5 0 0110 0"/><circle cx="8" cy="5" r="2.5"/></svg>
     <span>Approvals</span>
     <span class="sb-badge" id="badge-hitl"></span>
   </button>
-  <button class="nav-btn" data-sec="whitelist" title="Whitelist">
+  <button class="nav-btn" data-sec="whitelist" data-label="Whitelist" data-desc="Capabilities dreams may call" data-desc-long="The capability whitelist: only capabilities on this list can be called by the dream planner; per-trigger overrides are in the trigger editor." title="Whitelist">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M5 7l2 2 4-4"/></svg>
     <span>Whitelist</span>
   </button>
-  <button class="nav-btn" data-sec="director" title="Director">
+  <button class="nav-btn" data-sec="director" data-label="Director" data-desc="Vera's ambient mind" data-desc-long="The Director - Vera's ambient mind: its current thinking; reply to it or make it think now." title="Director">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M8 8c-3 0-5 1.5-5 4h10c0-2.5-2-4-5-4z"/><path d="M12 2l2 2-2 2M14 4h-3"/></svg>
     <span>Director</span>
   </button>
-  <button class="nav-btn" data-sec="settings" title="Settings">
+  <button class="nav-btn" data-sec="settings" data-vera-settings="#sec-settings" data-label="Settings" data-desc="Dream memory and scheduler" data-desc-long="Dream settings: the agent-maintained dream memory (a note that steers future cycles - goals, mistakes to avoid, next steps) and the scheduler." title="Settings">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14M3.5 3.5l1 1M11.5 11.5l1 1M11.5 3.5l1-1M3.5 11.5l1-1"/></svg>
     <span>Settings</span>
   </button>
@@ -504,7 +504,7 @@ hr{border:none;border-top:1px solid var(--border);margin:10px 0}
   <span class="pill" id="pill-cycle"><span class="dot"></span><span id="pill-cycle-txt">idle</span></span>
   <span class="pill" id="pill-hitl" style="display:none"><span class="dot"></span><span id="pill-hitl-txt">0 pending</span></span>
   <button class="btn sm" onclick="refreshAll()" title="Refresh">&#8635;</button>
-  <button class="btn sm grn" onclick="runQuickCycle()" id="btn-run" title="Run next due trigger">&#9654; Run</button>
+  <button class="btn sm grn" onclick="runQuickCycle()" id="btn-run" data-lhm-cta="" data-label="Run a dream" data-desc="Run the next due dream trigger now" title="Run next due trigger">&#9654; Run</button>
   <button class="btn sm red" onclick="stopDreaming()" id="btn-stop" title="Stop now — cancel the running cycle and stop the scheduler">&#9632; Stop</button>
   <button class="btn sm red" onclick="toggleDreamEnabled()" id="btn-enable" title="Disable dreaming — turns off the scheduler so no new cycles can fire">Disable</button>
 </div>
@@ -5173,5 +5173,6 @@ handleEv=function(ev){
 <script src="/ui/vera-graph.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 <script src="/ui/vera-notes.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>

@@ -58,10 +58,40 @@ def worker_backend_env(env: Dict[str, str], cfg: Dict[str, object], backend_host
     return out
 
 
+#: What a node worker needs to train models for the host (node_compute_core):
+#: torch for the worldview JEPA, scikit-learn for the markets models (numpy,
+#: for the ML Lab trainer, comes with requirements.txt). torch from the CPU
+#: index: the default wheel pulls ~2 GB of CUDA libraries a worker never uses.
+WORKER_ML_PIP = (
+    # psutil: the worker's own CPU/RAM metrics (workers.py) - without it the
+    # metrics loop never starts and node scheduling sees no free CPU or memory
+    # on any node (found 2026-10-04: no node had ever published metrics)
+    ("psutil",),
+    ("--index-url", "https://download.pytorch.org/whl/cpu", "torch"),
+    ("scikit-learn", "scipy"),
+)
+#: Printed when a training library did not install (the provision log shows it).
+ML_PIP_FAILED = "VERA_ML_PIP_FAILED"
+
+
+def worker_ml_pip_cmd(venv: str, pins: Optional[Dict[str, str]] = None) -> str:
+    """One pip call per group, each allowed to fail without stopping setup.
+    `pins` ({"torch": "2.7.1", "scikit-learn": "1.7.1"}) pin a package to the
+    host's release, so what a node pickles loads on the host."""
+    pins = pins or {}
+    out = ""
+    for grp in WORKER_ML_PIP:
+        args = [f"{a}=={pins[a]}" if a in pins else a for a in grp]
+        out += (f'"{venv}/bin/pip" install -q ' + " ".join(shlex.quote(a) for a in args)
+                + f' || echo "{ML_PIP_FAILED}: {grp[-1]}"; ')
+    return out
+
+
 def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str, str],
                       port: int = 8990, use_systemd: bool = True, *,
                       bundle: bool = False, extra_env: Optional[Dict[str, str]] = None,
-                      nice: int = 0, cpu_weight: int = 0) -> str:
+                      nice: int = 0, cpu_weight: int = 0, ml_pip: bool = True,
+                      ml_pins: Optional[Dict[str, str]] = None) -> str:
     """Build the shell command that clones Vera, builds a venv, and launches a native
     worker joined to the shared stack. Fixes what the naive launch got wrong:
 
@@ -80,6 +110,10 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
     new commit deleted does not linger; the venv lives outside the tree and
     survives the swap. A re-run restarts the unit, which is how a node picks up
     a new commit.
+
+    ``ml_pip`` adds the training libraries (see :data:`WORKER_ML_PIP`),
+    pinned by ``ml_pins``; a failure there is reported, never fatal - the
+    worker still serves every other class.
 
     ``extra_env`` lands in the unit verbatim (the worker role, thread caps,
     HOME). ``nice``/``cpu_weight`` (when non-zero) lower the worker's claim on
@@ -126,7 +160,14 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
         fetch = (
             f"rm -rf {src}.new; mkdir -p {src}.new; "
             f"base64 -d | tar -xzf - -C {src}.new; "
-            f"rm -rf {src}; mv {src}.new {src}; "
+            # move the old tree aside, never rm it in place: the worker still
+            # running from it can write bytecode into it mid-delete, and `rm`
+            # then fails "Directory not empty" under set -e (cpu-246,
+            # 2026-10-04). A rename cannot fail that way; the old tree goes
+            # best-effort.
+            f"rm -rf {src}.old 2>/dev/null || true; "
+            f"[ -d {src} ] && mv {src} {src}.old; mv {src}.new {src}; "
+            f"rm -rf {src}.old 2>/dev/null || true; "
         )
     else:
         fetch = (
@@ -148,6 +189,7 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
         f"[ -x {venv}/bin/python ] || python3 -m venv {venv} --system-site-packages; "
         f'"{venv}/bin/pip" install -q -U pip wheel; '
         f'"{venv}/bin/pip" install -q -r {src}/requirements.txt; '
+        + (worker_ml_pip_cmd(venv, ml_pins) if ml_pip else "")
     )
     launch_systemd = (
         f"printf %s {shlex.quote(unit_b64)} | base64 -d > /etc/systemd/system/vera-worker.service; "

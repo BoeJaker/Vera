@@ -87,6 +87,22 @@ async def _get_config() -> Dict[str, Any]:
     return cfg
 
 
+async def census_due_now() -> List[str]:
+    """Titles of enabled census schedules due right now, judged as if the box were free.
+    A census=finish release holds for these (release_core.may_release) so the arms of a
+    pair are not split across a restart (4 Oct 2026: OFF on 1cb3c8ba, ORDER on 1d9d47de).
+    Empty when the scheduler is disabled - nothing would start, so nothing to wait for."""
+    try:
+        if not (await _get_config()).get("enabled", True):
+            return []
+        now = _now()
+        free = {"census_running": False, "loops_running": 0}
+        return [str(r.get("title") or r.get("id")) for r in await _load_all()
+                if r.get("kind") == "census" and core.is_due(r, now, free)[0]]
+    except Exception:
+        return []
+
+
 async def _load_all() -> List[Dict[str, Any]]:
     r = _redis()
     if r is None:
@@ -286,7 +302,8 @@ def _clear_own_control_sync() -> None:
                         _ctl.make_control("resume", reason="scheduler: clearing its own control before a new run", by=_BY))
 
 
-def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = "") -> Dict[str, Any]:
+def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = "",
+                        minds: Optional[Dict[str, str]] = None, minds_label: str = "") -> Dict[str, Any]:
     d = Path(_CENSUS_DIR)
     _clear_own_control_sync()
     env = dict(os.environ)
@@ -302,6 +319,14 @@ def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = 
     env.pop("CENSUS_INTENT_CORE", None)
     if intent_core and intent_core != "off":
         env["CENSUS_INTENT_CORE"] = intent_core
+    # The switchboard set (CENSUS_MINDS contract v1, four-minds ROADMAP §4.1): compact
+    # JSON plus its label; never inherited. The harness validates it against the build
+    # under test before goal 1 and archives the run as <template>[-style-][-core-]-<label>.
+    env.pop("CENSUS_MINDS", None)
+    env.pop("CENSUS_MINDS_LABEL", None)
+    if minds:
+        env["CENSUS_MINDS"] = json.dumps(minds, separators=(",", ":"), sort_keys=True)
+        env["CENSUS_MINDS_LABEL"] = minds_label
     try:
         p = subprocess.Popen(["sh", "census_all.sh"], cwd=str(d), env=env,
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -391,12 +416,15 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
                     "error": (res or {}).get("error", "")}
         res = await asyncio.to_thread(_launch_census_sync, t.get("template", "default"),
                                       str(t.get("plan_style") or ""),
-                                      str(t.get("intent_core") or ""))
+                                      str(t.get("intent_core") or ""),
+                                      dict(t.get("minds") or {}),
+                                      str(t.get("minds_label") or ""))
         if res.get("ok"):
             await _set_owner({"schedule_id": rec["id"], "started_at": core.iso(_now()),
                               "pid": res.get("pid"), "template": t.get("template", "default"),
                               "plan_style": str(t.get("plan_style") or ""),
-                              "intent_core": str(t.get("intent_core") or "")})
+                              "intent_core": str(t.get("intent_core") or ""),
+                              "minds_label": str(t.get("minds_label") or "")})
         return res
     if kind == "suite":
         return await _call("evolve.suite.start", tag=t.get("tag", ""), profile=t.get("profile", ""),
@@ -527,6 +555,17 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
         rec = by_id.get(action["schedule_id"])
         if not rec:
             continue
+        if action.get("reason") == core.DISPLACE:
+            # Drop the census parked on another schedule's window-end yield. Not a
+            # start: the harness archives the parked run (-partial-dropped) and
+            # exits within seconds, and THIS schedule launches on the next tick
+            # (its once-per-window record is untouched, so it is still due).
+            res = await _call("census.control.set", action="drop", by=_BY,
+                              reason="scheduler: %s is due - dropping the census parked on "
+                                     "another schedule's window-end yield" % rec.get("title", rec["id"]))
+            controls.append({"schedule_id": rec["id"], "action": "drop-parked",
+                             "ok": bool((res or {}).get("ok"))})
+            break                        # one census at a time: launch next tick
         run_id = uuid.uuid4().hex[:10]
         res = await _start(action, rec, run_id)
         word = _result_word(res)

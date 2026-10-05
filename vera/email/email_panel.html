@@ -92,10 +92,10 @@ label.fl{ display:block;font-size:10px;color:var(--fg2);text-transform:uppercase
       <div><h1>Email</h1><div class="sub">IMAP / SMTP</div></div>
     </div>
     <nav id="nav">
-      <button class="nav-btn active" data-sec="inbox"><span class="gl">▤</span> Inbox</button>
-      <button class="nav-btn" data-sec="compose"><span class="gl">✎</span> Compose</button>
-      <button class="nav-btn" data-sec="notify"><span class="gl">🔔</span> Notifications</button>
-      <button class="nav-btn" data-sec="settings"><span class="gl">⚙</span> Settings</button>
+      <button data-label="Inbox" data-desc="The accounts' incoming mail" data-desc-long="The inbox: incoming mail from the accounts configured under Comms &gt; Accounts." class="nav-btn active" data-sec="inbox"><span class="gl">▤</span> Inbox</button>
+      <button data-label="Compose" data-desc="Write and send an email" data-desc-long="Compose: a new message from the account selected top-right - write it yourself or let Vera's local model draft it (AI draft), then send." class="nav-btn" data-sec="compose"><span class="gl">✎</span> Compose</button>
+      <button data-label="Notifications" data-desc="Email yourself when Vera events fire" data-desc-long="Event notifications: email yourself (via your default account) when the Vera event types you select fire." class="nav-btn" data-sec="notify"><span class="gl">🔔</span> Notifications</button>
+      <button data-vera-settings="section.section[data-sec='settings']" data-label="Settings" data-desc="Global email options" data-desc-long="Global email options such as the default sending account; the mail credentials themselves live in Comms &gt; Accounts, shared with Calendar." class="nav-btn" data-sec="settings"><span class="gl">⚙</span> Settings</button>
     </nav>
     <div id="status-tile">
       <div class="lbl">Connection</div>
@@ -365,5 +365,6 @@ boot();
 <script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>

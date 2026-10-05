@@ -98,19 +98,21 @@ _Overview of the {title} domain. (Draft — author me.)_
 
 
 def build_doc(existing: Optional[str], *, number: str, title: str,
-              screenshots_content: str, caps_content: str) -> str:
+              screenshots_content: str, caps_content: Optional[str]) -> str:
     """Return the updated markdown for a domain doc.
 
-    • If ``existing`` is provided, only the two auto-blocks are refreshed.
+    • If ``existing`` is provided, only the auto-blocks are refreshed; a
+      ``caps_content`` of None leaves the capabilities block untouched.
     • Otherwise a fresh scaffold is created with placeholder prose.
     """
     if existing and existing.strip():
         out = upsert_block(existing, "screenshots", screenshots_content,
                            heading="## Screenshots")
-        out = upsert_block(out, "capabilities", caps_content,
-                           heading="## Capabilities")
+        if caps_content is not None:
+            out = upsert_block(out, "capabilities", caps_content,
+                               heading="## Capabilities")
         return out
     shots = f"{_start('screenshots')}\n{screenshots_content.rstrip()}\n{_end('screenshots')}"
-    caps = f"{_start('capabilities')}\n{caps_content.rstrip()}\n{_end('capabilities')}"
+    caps = f"{_start('capabilities')}\n{(caps_content or render_caps_block([])).rstrip()}\n{_end('capabilities')}"
     return _SCAFFOLD.format(number=number, title=title,
                             screenshots=shots, capabilities=caps)

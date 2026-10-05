@@ -47,8 +47,16 @@ _HERE = Path(__file__).parent
 LOG_DIR       = Path(os.getenv("VERA_LOG_DIR",
                                str(Path(__file__).resolve().parents[2] / "logs")))
 LOG_FILE      = LOG_DIR / "vera.log"
-LOG_MAX_BYTES = int(os.getenv("VERA_LOG_MAX_BYTES", str(10 * 1024 * 1024)))
-LOG_BACKUPS   = int(os.getenv("VERA_LOG_BACKUPS", "5"))
+# Same variables, defaults and bounds as the orchestrator's own file log
+# (log_setup): one setting must not mean 32 MB there and 10 MB here, and a
+# malformed value falls back to the default instead of failing the import.
+from Vera.vera import log_setup as _log_setup
+LOG_MAX_BYTES = _log_setup._bounded_int(
+    os.getenv("VERA_LOG_MAX_BYTES"), _log_setup.DEFAULT_MAX_BYTES,
+    _log_setup.MIN_MAX_BYTES, _log_setup.MAX_MAX_BYTES)
+LOG_BACKUPS   = _log_setup._bounded_int(
+    os.getenv("VERA_LOG_BACKUPS"), _log_setup.DEFAULT_BACKUPS,
+    _log_setup.MIN_BACKUPS, _log_setup.MAX_BACKUPS)
 _RING: "deque[str]" = deque(maxlen=int(os.getenv("VERA_LOG_RING", "3000")))
 _listener: Optional[logging.handlers.QueueListener] = None
 

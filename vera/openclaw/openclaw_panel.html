@@ -458,7 +458,8 @@ document.addEventListener('DOMContentLoaded', function() {
 function wireEvents() {
   on('btn-connect',          'click', doConnect);
   on('btn-disconnect',       'click', doDisconnect);
-  on('btn-settings',         'click', function() { openPanel('config'); });
+  /* the shared Settings page, as every panel's settings open (the LHM audit, point 5); the drawer when it is not loaded */
+  on('btn-settings',         'click', function() { if (window.VeraSettings && VeraSettings.openSection) { VeraSettings.openSection(ge('panel-config'), { label: 'Connection' }); return; } openPanel('config'); });
   on('btn-custom',           'click', function() { openPanel('config'); });
   on('btn-refresh-sessions', 'click', refreshSessions);
   on('btn-reset-session',    'click', resetSession);
@@ -939,6 +940,7 @@ function showToast(msg) {
 })(); // end IIFE
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-settings.js"></script>
 <script src="/ui/vera-select.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>

@@ -19,8 +19,8 @@ t('the element carries the tier, because a rule on <html> cannot cross a shadow 
 t('in Hover and Zen the header and the rail are held back until you are on the item',
   // held back as OVERLAYS that fade in, never display:none - an item grew by them when pointed at near an edge, and
   // the edge flickered (2026-10-01)
-  /:host\(\[data-tier="hover"\]\) \.it:not\(\.compact\) > \.it-hd,:host\(\[data-tier="zen"\]\) \.it:not\(\.compact\) > \.it-hd\{position:absolute;[^}]*opacity:0;pointer-events:none/.test(SRC) &&
-  /:host\(\[data-tier="hover"\]\) \.it:not\(\.compact\) > \.it-ft,:host\(\[data-tier="zen"\]\) \.it:not\(\.compact\) > \.it-ft\{position:absolute;[^}]*opacity:0/.test(SRC) &&
+  /:host\(\[data-tier="hover"\]\) \.it:not\(\.compact\):not\(\.overfold\) > \.it-hd,:host\(\[data-tier="zen"\]\) \.it:not\(\.compact\):not\(\.overfold\) > \.it-hd\{position:absolute;[^}]*opacity:0;pointer-events:none/.test(SRC) &&
+  /:host\(\[data-tier="hover"\]\) \.it:not\(\.compact\):not\(\.overfold\) > \.it-ft,:host\(\[data-tier="zen"\]\) \.it:not\(\.compact\):not\(\.overfold\) > \.it-ft\{position:absolute;[^}]*opacity:0/.test(SRC) &&
   /:is\(:hover,\.hov,:focus-within\) > :is\(\.it-hd,\.it-ft\)[^{]*\{opacity:1;pointer-events:auto\}/.test(SRC) &&
   !/:not\(:hover\):not\(:focus-within\) > \.it-(hd|ft)/.test(SRC));
 
@@ -45,8 +45,8 @@ t('a structured graph\'s slot is a diagram\'s height, not a strip', /\.it\[data-
   t('nothing sits beside a spanning item', V.place([{ key: 'code', h: 300, mid: 'm1', want: 2 }, { key: 'a', h: 24, mid: 'm1', want: 1 / 3 }],
     turns, { columns: 3, gap: 10, colWidth: 200, pad: 0 }).placements[1].beside === false);
   t('the kinds you READ ask for the span, and an opened item asks for the stage',
-    /if \(d\.open\) return 4;/.test(SRC) && /if \(WIDE\[ty\] \|\| sz === 'l'\) return 2;/.test(SRC) &&
-    /const u = unitsOf\(descOf\(c\)\); return u > 1 \? Math\.max\(1, Math\.min\(cols, Math\.round\(u\)\)\) : u;/.test(SRC));
+    /if \(d\.open\) return 4;/.test(SRC) && /if \(WIDE\[ty\] \|\| sz === 'l'\) return colW >= 340 && !CODEISH\[ty\] \? 1 : 2;/.test(SRC) &&
+    /const u = unitsOf\(descOf\(c\), w\); return u > 1 \? Math\.max\(1, Math\.min\(cols, Math\.round\(u\)\)\) : u;/.test(SRC));
 }
 
 /* ── the NOW line, and the banner's ground ───────────────────────────────────────────────────────────────────── */
@@ -62,7 +62,7 @@ t('an item that can be exploded carries the switch, and knows which way round it
   /const xplodable = !bid && !!canExplode\(b, this\.explodeOffer\(\)\);/.test(SRC) && /const xploded = xplodable && xplodedKeys\.has\(String\(b\.key\)\);/.test(SRC));
 t('the switch says what it does, both ways', /\$\{xploded \? 'source' : 'graph'\}/.test(SRC));
 t('taking it builds the bound item; taking it back removes it',
-  /this\.call\('canvas\.add', \{ kind: 'explode', key: 'explode:' \+ key, content, at: 'now', size: 'l' \}\)/.test(SRC) &&
+  /this\.call\('canvas\.add', Object\.assign\(\{ kind: 'explode', key: 'explode:' \+ key, content, at: b\.state === 'pinned' \? 'pinned' : 'now', size: 'l' \}/.test(SRC) &&
   /if \(bound\) return this\.call\('canvas\.remove'/.test(SRC));
 
 console.log(fails ? fails + ' FAILED' : 'all passed');

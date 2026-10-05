@@ -85,14 +85,14 @@ tr:last-child td{border-bottom:none}
       <div><h1>Automations</h1><div class="sub">Flows &amp; Runners</div></div>
     </div>
     <nav id="nav">
-      <button type="button" class="nav-btn" data-k="overview" title="Overview"><span class="gl">▦</span>Overview</button>
-      <button type="button" class="nav-btn" data-k="flows"    title="DAG flows"><span class="gl">◈</span>DAG flows</button>
-      <button type="button" class="nav-btn" data-k="n8n"      title="n8n"><span class="gl">⬡</span>n8n</button>
-      <button type="button" class="nav-btn" data-k="editor"   title="n8n editor"><span class="gl">✎</span>n8n editor</button>
-      <button type="button" class="nav-btn" data-k="openclaw" title="OpenClaw"><span class="gl">◎</span>OpenClaw</button>
-      <button type="button" class="nav-btn" data-k="operator" title="Operator"><span class="gl">▷</span>Operator</button>
-      <button type="button" class="nav-btn" data-k="home"     title="Home"><span class="gl">⌂</span>Home</button>
-      <button type="button" class="nav-btn" data-k="actions"  title="Actions"><span class="gl">☑</span>Actions<span class="ct" id="actBadge"></span></button>
+      <button data-label="Overview" data-desc="What is running across automations" data-desc-long="What is running: one figure per automation subsystem, each read from that subsystem's own capability; an unavailable source is named, never counted as zero." type="button" class="nav-btn" data-k="overview" title="Overview"><span class="gl">▦</span>Overview</button>
+      <button data-label="DAG flows" data-desc="The DAG workshop" data-desc-long="The DAG workshop (/workshop/panel): build, run and save DAG workflows, agent loops and specialist loops." type="button" class="nav-btn" data-k="flows"    title="DAG flows"><span class="gl">◈</span>DAG flows</button>
+      <button data-label="n8n" data-desc="n8n workflows" data-desc-long="n8n (/n8n/panel): the n8n workflows Vera knows and their runs." type="button" class="nav-btn" data-k="n8n"      title="n8n"><span class="gl">⬡</span>n8n</button>
+      <button data-label="n8n editor" data-desc="The n8n editor" data-desc-long="The embedded n8n workflow editor, with a way out to open it directly when n8n refuses to be framed." type="button" class="nav-btn" data-k="editor"   title="n8n editor"><span class="gl">✎</span>n8n editor</button>
+      <button data-label="OpenClaw" data-desc="The OpenClaw agentic-loop bridge" data-desc-long="OpenClaw bridge (/openclaw/panel): connect to the OpenClaw gateway, route its LLM calls through Vera's Ollama proxy, and manage its sessions." type="button" class="nav-btn" data-k="openclaw" title="OpenClaw"><span class="gl">◎</span>OpenClaw</button>
+      <button data-label="Operator" data-desc="Operator Studio: drive a UI" data-desc-long="Operator Studio (/operator/panel): observe, think, act - point the operator at a registered web UI, URL, sandbox, panel or VM and let it drive the browser." type="button" class="nav-btn" data-k="operator" title="Operator"><span class="gl">▷</span>Operator</button>
+      <button data-label="Home" data-desc="Home Assistant" data-desc-long="Home Assistant (/ha/panel): the home's entities and automations through Vera." type="button" class="nav-btn" data-k="home"     title="Home"><span class="gl">⌂</span>Home</button>
+      <button data-label="Actions" data-desc="Open actions" data-desc-long="Open actions: actions waiting across the automation subsystems." type="button" class="nav-btn" data-k="actions"  title="Actions"><span class="gl">☑</span>Actions<span class="ct" id="actBadge"></span></button>
     </nav>
   </aside>
 

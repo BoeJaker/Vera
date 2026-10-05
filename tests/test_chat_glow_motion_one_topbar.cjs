@@ -22,7 +22,7 @@ t('and its menu slot is translucent over it', /body\.chat-open #lhmNav\.chatmenu
 t('the menu folds by width, not a display switch', /#rightRail\.lhm-host\.slim > \.lhm-det\{display:flex!important;width:0!important;/.test(CHAT) && /#rightRail\.lhm-host > \.lhm-det\{transition:width \.36s/.test(CHAT));
 t('never while its edge is being dragged', /body\.dragging-split #rightRail\.lhm-host > \.lhm-det\{transition:none\}/.test(CHAT));
 t('"is it open" is its width now, so the active icon still folds and opens it', /_det\.getBoundingClientRect\(\)\.width > 4/.test(LHM) && !/_det\.getClientRects\(\)\.length/.test(LHM));
-t('the harness slot grows and shrinks on the same easing', /\.lhm-nav\{transition:width \.36s cubic-bezier/.test(HAR));
+t('the harness slot grows and shrinks on the same easing', /\.lhm-nav\{transition:width var\(--lhm-dur,\.34s\) var\(--lhm-ease,cubic-bezier\(\.2,\.8,\.2,1\)\)/.test(HAR));
 t('reduced motion is respected', /@media \(prefers-reduced-motion:reduce\)\{ #rightRail\.lhm-host > \.lhm-det\{transition:none\}/.test(CHAT));
 
 // ── the columns arrive ──────────────────────────────────────────────────────────────────────────────────────────
@@ -70,7 +70,7 @@ t('and leaves before it is taken out', /a\.onfinish=\(\)=>\{ col\._leaving=false
 }
 {
   t('the harness takes the offer from the open tab and tells the panel it holds it', /d\.type !== 'vera:hdr:offer'/.test(HAR) && /o\.src\.postMessage\(\{ type: 'vera:hdr:absorbed', on \}/.test(HAR));
-  t('its stats, activity, style and theme step into a drawer', /const _HDR_DRAWER_IDS = \['hdrPills', 'hdrMetrics', 'hdrMetricCfgWrap', 'vao-pill', 'hdrStyleSeg', 'hdrSwatches'\];/.test(HAR));
+  t('its stats, style and theme step into a drawer; the activity dropdown stays in the bar', /const _HDR_DRAWER_IDS = \['hdrPills', 'hdrMetrics', 'hdrMetricCfgWrap', 'hdrStyleSeg', 'hdrSwatches'\];/.test(HAR));
   t('and come back when no panel holds the bar', /else if\(el\.parentNode === dr && el\._hdrMark && el\._hdrMark\.parentNode\)/.test(HAR));
   t('what does not fit goes, lowest priority first', /function _hdrFit\(host\)/.test(HAR) && /\+g\.dataset\.prio > 1/.test(HAR));
   t('the bar follows every change of tab', /_tabRender = function\(\)\{ const r = __tabRender\.apply\(this, arguments\); try\{ _hdrSync\(\); \}catch\(_\)\{\} return r; \};/.test(HAR));

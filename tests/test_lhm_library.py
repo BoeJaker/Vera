@@ -66,7 +66,7 @@ def test_the_rail_has_the_designs_eight_menus():
     menus = re.findall(r"\{id:'([a-z]+)',\s*icon:'([^']+)',\s*label:'([^']+)'", block)
     assert [m[0] for m in menus] == ["sessions", "context", "activity", "loop", "workspace", "sandbox", "ops", "settings"]
     assert all(m[1] for m in menus), "every rail menu carries an icon"
-    assert [m[2] for m in menus] == ["Sessions", "Context", "Activity", "Loop", "Workspace", "Sandbox", "Ops glance", "Settings"]
+    assert [m[2] for m in menus] == ["Sessions", "Context", "Activity", "Loop", "Workspace", "Sandbox", "Capabilities", "Settings"]
 
 
 def test_every_menu_has_a_meta_line_and_one_cta():
@@ -150,5 +150,6 @@ def test_the_owner_answers_the_hosts_messages():
 
 def test_absorb_draws_the_rail_and_the_current_menus_tabs_from_a_spec():
     body = LIB[LIB.index("function absorb(host, spec, pickFn, opts){"):]
-    assert "pickFn(m.id)" in body and "pickFn(cur.id + '/' + t.id)" in body
+    # an item picks '<its menu>/<item>' - its menu is the open one, or (grouped, 2026-10-03) the group it sits under
+    assert "pickFn(m.id)" in body and "pickFn(owner.id + '/' + t.id)" in body
     assert "'rail · absorbed · '" in body and "'tabs · absorbed'" in body

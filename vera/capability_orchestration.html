@@ -298,6 +298,12 @@ header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;ba
 .lhm-nav #lhmMenuHost > iframe{flex:1;width:100%;height:100%;border:0;background:transparent}
 #lhmNav.chatmenu #lhmNavTabs{flex:0 0 auto!important;min-height:0}
 #lhmNav.chatmenu #lhmMenuHost.on{flex:1 1 auto}
+/* THE SETTINGS PAGE COVERS THE WHOLE MENU (owner, 2026-10-03: "the settings menu in the chat ui ... should use the full
+   height available to the lhm (not leaving the top portion of the lhm with the burger button visible - it must be
+   covered)"). While the chat's menu shows a page, the slot is that page: the ☰ bar and tab list above it, the events
+   feed and the foot below it step aside - the page carries its own title and ✕ (and Esc). */
+#lhmNav.lhm-nav.chatmenu.page > :not(#lhmMenuHost){display:none!important}
+#lhmNav.lhm-nav.chatmenu.page > #lhmMenuHost.on{flex:1 1 auto;height:100%}
 
 /* ── Panels area: multi-tab split ── */
 .panels{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:row}
@@ -661,7 +667,7 @@ body.chat-open .body-wrap{position:relative;z-index:1;background:transparent}
 body.chat-open .main{background:transparent}
 body.chat-open #lhmNav.chatmenu{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
 /* the menu's slot opens, grows (the graph) and shrinks on one easing, and the tab beside it follows */
-.lhm-nav{transition:width .36s cubic-bezier(.2,.8,.2,1),background .3s ease}
+.lhm-nav{transition:width var(--lhm-dur,.34s) var(--lhm-ease,cubic-bezier(.2,.8,.2,1)),background .3s ease}   /* one motion for every LHM: vera-lhm.js's tokens */
 .main{transition:padding .36s cubic-bezier(.2,.8,.2,1)}
 @media (prefers-reduced-motion:reduce){ .lhm-nav,.main{transition:none} }
 /* ── ONE TOP BAR: the open panel's controls, drawn here (the panel offers them; a press goes back to the panel) ── */
@@ -678,6 +684,10 @@ header .hp-grp .hp-btn.hp-sess{max-width:220px;overflow:hidden;text-overflow:ell
 header .hp-grp .hp-btn.hp-more{font-size:15px;line-height:1;padding:0 9px;background:transparent}
 header .hp-in{height:28px;width:170px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t1,var(--text,#d8dce4));font:inherit;font-size:11px;padding:0 9px}
 header .hp-in:focus{outline:none;box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f))}
+header .hp-grp.hp-agent{gap:8px;height:30px;padding:0 6px 0 11px;border-radius:var(--r-sm,7px);background:var(--s2,var(--surf2,var(--bg2,#1a1c20)));box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
+header .hp-grp.hp-agent .hp-sel{height:28px;padding:0;background:transparent;font-size:11.5px;font-weight:600;max-width:150px;appearance:none;-webkit-appearance:none}
+header .hp-agent-meta{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t2,var(--dim2,#8a92a0));max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header .hp-agent-caps{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8.5px;padding:1px 5px;border-radius:4px;border:1px solid var(--bd2,var(--border2,rgba(128,128,128,.35)));color:var(--ac,var(--acc,#5a9e8f))}
 header .hp-sel{height:28px;max-width:170px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t1,var(--text,#d8dce4));font:inherit;font-size:11px;padding:0 8px;cursor:pointer}
 header .hp-meter{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border:0;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));font:inherit;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9.5px;cursor:pointer;white-space:nowrap}
 header .hp-meter i{display:block;width:56px;height:4px;border-radius:2px;background:var(--s3,var(--bg3,#22262e));overflow:hidden}
@@ -705,7 +715,7 @@ html[data-blocks="off"] #lhmNav.lhm-nav:not(.show),html[data-blocks="off"] body.
 .body-wrap.lhm .main.ah-rail:not(.autohide-reserve-v){padding-left:54px}
 .body-wrap.lhm .main.ah-rail.chatmenu:not(.autohide-reserve-v){padding-left:47px}
 /* THE MENU FOLDS SMOOTHLY: auto-hide's reveal eases its width like the fold does (and pushes the page - below) */
-.body-wrap.lhm #lhmNav.lhm-nav.autohide{transition:width .34s cubic-bezier(.2,.8,.2,1),box-shadow .3s ease,background .3s ease}
+.body-wrap.lhm #lhmNav.lhm-nav.autohide{transition:width var(--lhm-dur,.34s) var(--lhm-ease,cubic-bezier(.2,.8,.2,1)),box-shadow .3s ease,background .3s ease}
 /* BLOCKS OFF, AT ANY WIDTH (owner, 2026-09-27: "if the chat menu expands it still has an opaque background - only the rail
    is transparent. i want the entire lhm - when opened any amount, to be transparent with blocks off"): folded, open, or
    revealed from auto-hide over the page - no ground, no glass, no shadow */
@@ -715,7 +725,7 @@ html[data-blocks="off"] #lhmNav.lhm-nav,html[data-blocks="off"] body.chat-open #
    keeps the menu IN the row, as its rail; revealed, its width eases open and the page beside it narrows in the same
    motion - the chat's menu, a panel's absorbed menu and the harness's own list alike, since they are all this one slot.
    Every other change of its width (the fold, the chat's graph and Settings growing it) eases the same way. */
-.body-wrap.lhm #lhmNav.lhm-nav{transition:width .34s cubic-bezier(.2,.8,.2,1),min-width .34s cubic-bezier(.2,.8,.2,1),background .3s ease}
+.body-wrap.lhm #lhmNav.lhm-nav{transition:width var(--lhm-dur,.34s) var(--lhm-ease,cubic-bezier(.2,.8,.2,1)),min-width var(--lhm-dur,.34s) var(--lhm-ease,cubic-bezier(.2,.8,.2,1)),background .3s ease}
 .body-wrap.lhm #lhmNav.lhm-nav.autohide{position:relative;top:auto;left:auto;bottom:auto;transform:none;opacity:1;pointer-events:auto;flex-shrink:0;z-index:2}
 .body-wrap.lhm .main.ah-rail,.body-wrap.lhm .main.ah-rail.chatmenu,.body-wrap.lhm .main.autohide-reserve-v,.body-wrap.lhm .main.autohide-reserve-v.absorbed,.body-wrap.lhm .main.autohide-reserve-v.absorbed.chatmenu,.body-wrap.lhm .main.autohide-reserve-v.railed,.body-wrap.lhm .main.autohide-reserve-v.chatmenu.railed{padding-left:0!important}
 /* THE DASHBOARD ON THE CHAT'S GROUND (owner: "can the harness dashboard have the same background and menu setup as the chat
@@ -724,6 +734,19 @@ body.dash-open #veraWashH{opacity:1}
 body.dash-open .body-wrap{position:relative;z-index:1;background:transparent}
 body.dash-open .main,body.dash-open .panels,body.dash-open .panels .panel.active{background:transparent!important}
 body.dash-open #lhmNav.lhm-nav{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
+/* EVERY PANEL'S MENU IS THE CHAT'S (owner, 2026-10-04: "the lhm isnt transparent on all panels like the chat ui lhm - so the
+   glow background can be seen through it"). Measured: the chat's menu was glass (its ground at 52%, blurred) over the glow;
+   every other panel's - docked or the harness's own list - an opaque ground with an opaque rail, and the glow switched off.
+   In the LHM layout the glow is on, the row it sits in is see-through, the menu is the same glass and its rail has no ground
+   of its own. Blocks off still takes the glass away entirely (the rules above). */
+body:has(.body-wrap.lhm) #veraWashH{opacity:1}
+.body-wrap.lhm{position:relative;z-index:1;background:transparent}
+/* ...and the page area the menu sits over: #main painted the theme's ground right under the menu, so neither the glass nor
+   blocks-off transparency showed the glow (owner, 2026-10-04: "im not seeing the translucency and blur, the glow on, and no
+   strip behind the rail"). The chat made it see-through (chat-open); every panel does now. Panels' frames paint their own. */
+.body-wrap.lhm .main,.body-wrap.lhm .panels{background:transparent}
+.body-wrap.lhm #lhmNav.lhm-nav{background:color-mix(in srgb,var(--s1,var(--bg1,#151719)) 52%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.15);backdrop-filter:blur(16px) saturate(1.15);border-right-color:transparent}
+.body-wrap.lhm #lhmNav .lhm-rail{background:transparent}
 body.dash-open #dashHealthStrip{background:color-mix(in srgb,var(--bg0,#0e0f12) 55%,transparent)!important;border-color:transparent!important}
 /* THE ☰ IS REACHABLE (owner, 2026-09-27: "the lhm top left burger option in the harness lhm it is very hard to click"):
    auto-hide's edge strip lay over the menu's left 28px - the ☰ under it - at a higher layer than the menu. In LHM mode the
@@ -879,6 +902,13 @@ header .hdr-right{margin-left:0;gap:6px}
 .w-title{font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:var(--label-size,9px);font-weight:var(--label-weight,600);letter-spacing:var(--label-track,.09em);text-transform:var(--label-case,uppercase);color:var(--t2,var(--dim2,#8a92a0));flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .w-head{padding:8px var(--pad,11px) 0;height:auto;min-height:26px}
 .w-head .w-dot{width:6px;height:6px}
+/* THE DASHBOARD'S TILES (owner, 2026-10-03: "in the dashboard each widget has a green dot in the top left - can you remove
+   it, also can the title text for a widget be slightly larger ... lots of widgets have unstyled scroll bars - need to be
+   minimalist in style"). The dot says only "fine" almost always: it goes, and stays for a tile that is warning or
+   failing, where it says something. Titles a step larger. Scrollbars thin and quiet on the board. */
+.dash-grid .w-head .w-dot:not(.warn):not(.err){display:none}
+.dash-grid .w-head .w-title{font-size:calc(var(--label-size,9px) + 1.5px)}
+.dash-grid,.dash-grid *{scrollbar-width:thin;scrollbar-color:var(--bd2,var(--border2,rgba(255,255,255,.16))) transparent}
 /* the counters as the board's hero numbers */
 .w-body .kpi{gap:4px;justify-content:flex-start;padding-top:2px}
 .w-body .kpi-val{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:34px!important;font-weight:700;letter-spacing:-.035em!important;line-height:1;color:var(--t1,var(--text,#d8dce4))}
@@ -2656,6 +2686,11 @@ function _panelIdOfSource(src){
 // hosting is allowed; a FULL LHM spec (state.nav.lhm) only while this menu is in its vertical (LHM) mode — in the
 // horizontal tab bar the sections are only a hover dropdown, so the panel keeps its own rail there.
 function _navHostedFor(nav){ return _navHostingAllowed() && (!(nav && nav.lhm) || _lhmMode); }
+const _panelCtaCache = {};   // panel -> its primary actions for every menu (state.cta)
+/* Esc reaches the open panel's Settings page (owner, 2026-10-04: "you cant get out of the settings panel"): after a pick in
+   this menu the focus is here, not in the panel's frame, so its own Esc never fired */
+document.addEventListener('keydown', e => { if(e.key !== 'Escape') return;
+  document.querySelectorAll('.panels .panel.active iframe').forEach(f => { try{ f.contentWindow.postMessage({ type: 'vera:settings:close' }, '*'); }catch(_){} }); });
 window.addEventListener('message', e => {
   const d = e.data;
   if(!d || typeof d!=='object' || d.type!=='vera:panel:state') return;
@@ -2679,8 +2714,12 @@ window.addEventListener('message', e => {
     // unrelated state change.
     try{ e.source.postMessage({type: _navHostedFor(nav) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted'}, '*'); }catch(err){}
   }
+  /* a panel's primary action for every menu (data-lhm-cta="") - a panel with no menu of its own shows it at the foot of this one */
+  const cta = (d.state && Array.isArray(d.state.cta)) ? d.state.cta.filter(c => c && !c.for) : [];
+  const ctaChanged = JSON.stringify(cta) !== JSON.stringify(_panelCtaCache[d.panel_id] || []);
+  if(ctaChanged) _panelCtaCache[d.panel_id] = cta;
   const prevSig = JSON.stringify(_panelNavCache[d.panel_id] || null);
-  if(JSON.stringify(nav) === prevSig) return;   // no real change → no re-render
+  if(JSON.stringify(nav) === prevSig && !ctaChanged) return;   // no real change → no re-render
   _panelNavCache[d.panel_id] = nav;
   _lhmNavSync();
 });
@@ -2788,7 +2827,10 @@ function _hdrPanelHost(hdr){
   if(!h){ h = document.createElement('div'); h.id = 'hdrPanel'; h.hidden = true; h.setAttribute('data-w', "the open panel's controls · header"); hdr.insertBefore(h, hdr.querySelector('.hsp') || null); }
   return h;
 }
-const _HDR_DRAWER_IDS = ['hdrPills', 'hdrMetrics', 'hdrMetricCfgWrap', 'vao-pill', 'hdrStyleSeg', 'hdrSwatches'];
+/* (owner, 2026-10-03: "when the top bar of chat is absorbed into the top bar of the harness we loose lots of the harness
+   options completely (like the activity dropdown)") - the activity dropdown is an option, not a reading: it stays in
+   the bar. The readings go to the drawer; style and theme are in Aa, which stays too. */
+const _HDR_DRAWER_IDS = ['hdrPills', 'hdrMetrics', 'hdrMetricCfgWrap', 'hdrStyleSeg', 'hdrSwatches'];
 function _hdrDrawerPlace(on){
   const hdr = document.querySelector('body > header'); if(!hdr) return;
   let btn = document.getElementById('hdrDrawerBtn'), dr = document.getElementById('hdrDrawer');
@@ -2882,6 +2924,13 @@ function _hdrSync(){
         el = document.createElement('select'); el.className = 'hp-sel';
         (it.options || []).forEach(o => { const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; el.appendChild(op); });
         el.value = it.value || ''; el.addEventListener('change', () => _hdrAct(pid, it.hid, el.value));
+        /* THE AGENT KEEPS ITS CHIP (owner, 2026-10-03: "the agent selector looses its nice styling it has in the standalone
+           chat ui"): the select, its model beneath-the-name in mono, caps when it has them - one surface, as the chat has it */
+        if(g.grp === 'agent'){ G.classList.add('hp-agent'); if(it.title) G.title = it.title;
+          G.appendChild(el); el.title = it.title || '';
+          if(it.meta){ const m = document.createElement('span'); m.className = 'hp-agent-meta'; m.textContent = it.meta; G.appendChild(m); }
+          if(it.caps){ const c = document.createElement('span'); c.className = 'hp-agent-caps'; c.textContent = 'caps'; G.appendChild(c); }
+          el.dataset.hid = String(it.hid || ''); return; }
       } else if(it.kind === 'input'){
         el = document.createElement('input'); el.className = 'hp-in'; el.type = /^(number|date|time|datetime-local|month|week|color|range)$/.test(it.type || '') ? it.type : 'search';
         if(it.min) el.min = it.min; if(it.max) el.max = it.max; if(it.step) el.step = it.step; if(/^(color|range)$/.test(el.type)){ el.style.width = el.type === 'color' ? '34px' : '110px'; el.style.padding = '0 4px'; }
@@ -3145,6 +3194,12 @@ function _lhmNativeRender(host){
     onBeside: (pid, sec, tab) => { _lhmOpenBeside(pid.replace(/--\d+$/, ''), tab ? (sec.nav ? tab.id : (sec.id + '/' + tab.id)) : ''); },
     onTab: (pid, sec, tab) => { _lhmNavSelect(pid, sec.nav ? tab.id : (sec.id + '/' + tab.id)); if(sec.nav){ const nav = _panelNavCache[pid]; if(nav) _panelNavCache[pid] = Object.assign({}, nav, { active: tab.id }); } _lhmNavSync(); },
     widgets, note: 'One menu, everywhere: this side menu, the strips under the tabs and the chat\'s rail are one component. Open a UI and its menu is this menu; ☰ at the top swaps it for this list, in place.' });
+  /* THE OPEN PANEL'S PRIMARY ACTION, when it has no menu of its own to end with it (owner, 2026-10-04: "declare primary
+     actions for every panel its appropriate"): at the foot of this list, as a menu ends; pressing it presses the panel's */
+  const act = rows.find(r => r.active); const ctas = act ? (_panelCtaCache[act.pid] || []) : [];
+  if(act && ctas.length){ const c = ctas[0]; const b = document.createElement('button'); b.type = 'button'; b.className = 'lhm-cta lhm-h-cta';
+    b.textContent = c.label || 'Go'; if(c.desc){ b.title = c.desc; b.setAttribute('data-desc', c.desc); } b.setAttribute('data-w', 'cta · button');
+    b.addEventListener('click', ev => { ev.stopPropagation(); _lhmNavSelect(act.pid, 'cta:' + c.i); }); box.appendChild(b); }
 }
 // the meters, as a widget in the menu (the Harness board's GPU · queue): the header's own readings — the Ollama load
 // meter and the stack monitor's last sample (queue, CPU)
@@ -3354,7 +3409,11 @@ function _tabScheduleHide(){
 // the side list draws as the rail whenever the menu is folded - by « or by auto-hide while it is not pointed at
 function _lhmRailSync(){ const nav = document.getElementById('lhmNav'); if(!nav) return; const hidden = nav.classList.contains('autohide') && !nav.classList.contains('show');
   const side = nav.querySelector('.lhm-side'); if(side) side.classList.toggle('railed', !!_lhmRailed || hidden);
-  nav.classList.toggle('folded', hidden || nav.classList.contains('railed')); }
+  nav.classList.toggle('folded', hidden || nav.classList.contains('railed'));
+  // (owner, 2026-10-03: a folded menu left the chat's open Settings page showing its first letters) - the chat's menu
+  // frame hears it is folded and shows its rail alone
+  if(nav.classList.contains('chatmenu')){ const f = hidden || nav.classList.contains('railed'); if(nav._foldSent !== f){ nav._foldSent = f;
+    document.querySelectorAll('iframe').forEach(fr => { try{ if(/only=menu/.test(fr.src || '')) fr.contentWindow.postMessage({ type: 'vera:lhm:folded', on: f }, '*'); }catch(_){} }); } } }
 { const nav = document.getElementById('lhmNav'), tabs = document.getElementById('lhmNavTabs');
   if(window.MutationObserver){ if(nav) new MutationObserver(_lhmRailSync).observe(nav, { attributes:true, attributeFilter:['class'] }); if(tabs) new MutationObserver(_lhmRailSync).observe(tabs, { childList:true }); } }
 // the fold, applied to the menu that is there: nothing is redrawn, so the width eases and the labels fade

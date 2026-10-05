@@ -10,6 +10,11 @@ behaviour — see `improve-vera` §1–§3a, still valid), but land the FIX thro
 this sandboxed pipeline, not a direct edit to prod's working tree. Direct-to-prod
 editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
 
+**Any UI change - a panel, widget, graph, menu, settings page or the appearance - also follows the `vera-design`
+skill** (`.claude/skills/vera-design/SKILL.md`; reference: `documentation/51-ui-design-system.md`): start from
+the UI bootstrap (`ui.templates`, `/ui/bootstrap.css`), colour only from the theme's names, the canonical menu
+with descriptions and a primary action, settings on the shared Settings page, and prove it live with Playwright.
+
 ## 0. Still true, unchanged
 - **⛔ NEVER assume how long an LLM/generation takes — it is UNBOUNDED.** A call
   can run seconds or tens of minutes (model size, cold-load, context, queue depth).
@@ -499,6 +504,10 @@ is a separate, higher-stakes step — always confirm first unless already
 authorized for the session. It all shows in the Loop Lab CI/CD + Review tabs.
 
 ## 10. Keep the plan and the board current — the board is the primary planning surface
+**The full coordination procedure is now the `vera-coordinate` skill** (homes for plans/handovers, board
+item standard and comment kinds, findings-by-comment, status cadence, degraded mode, handovers) with the
+conventions file `<git-common-dir>/vera-work/shared-planning/README.md`. The rules below stay as the summary.
+
 Work isn't done when the code lands; it's done when the **shared planning state
 reflects reality**. Two standing obligations, every unit:
 
@@ -750,3 +759,12 @@ operator-family 05:00-07:00.
 one test at a time (§0), or a code report delegated to Vera
 (`evolve.delegate.*`, see the improve-vera skill §8 — prod only, report mode,
 not restart-safe yet).
+
+
+## 12. Coordination and autopsy
+
+- **Working alongside other agents:** follow `vera-coordinate`. Plans, handovers and evidence go only in
+  `<git-common-dir>/vera-work/shared-planning/<unit>/`. Tasks and findings go on the board (search before filing;
+  comment on the related item). Status rides on the records you already write, and chat gets one line.
+- **Close with an autopsy:** if a step here failed, misled or slowed you, append an entry to this skill's
+  `LEARNINGS.md` (format: `skill-smith` §3). If it needs a code or tool change, file a `kind:skill-issue` board item.

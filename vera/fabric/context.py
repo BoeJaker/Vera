@@ -112,6 +112,10 @@ def _split_ids(spec: str) -> List[str]:
 
 
 import re as _re
+try:
+    from Vera.vera.fabric import recall_budget_core as _rbc
+except ImportError:  # pragma: no cover - worktree tests import the package as vera.fabric
+    from . import recall_budget_core as _rbc
 
 
 def _canonical_tool_name(name: Any, valid_tools: list) -> str:
@@ -1112,41 +1116,55 @@ async def _recall_entity_crawl(seed_ids: List[str], query: str,
     if not neo or not getattr(neo, "available", False):
         return [], []
 
-    # If the caller didn't supply seeds, do a quick fabric query to find some.
-    seeds = [s for s in (seed_ids or []) if s]
-    if not seeds and hasattr(fab, "execute_query"):
+    async def _fabric_seeds() -> List[str]:
+        """A quick fabric query for seed records of its own."""
+        if not hasattr(fab, "execute_query"):
+            return []
         try:
             q = {"text": query, "vector": query, "top_k": max(6, top_k),
                  "include_data": False}
             if fabric_dataset:
                 q["dataset_id"] = fabric_dataset
             fq = await fab.execute_query(q)
-            seeds = [r["id"] for r in (fq.get("results") or []) if r.get("id")][:8]
+            return [r["id"] for r in (fq.get("results") or []) if r.get("id")][:8]
         except Exception as e:
             log.debug("recall entity seed query: %s", e)
-    if not seeds:
-        return [], []
+            return []
 
     # LIMIT is concatenated (not parameterised) to match the rest of the
     # codebase and stay compatible across Neo4j versions.
     lim = max(1, int(top_k) * 4)
-    try:
-        rows = await neo.query(
-            "MATCH (e:Entity)-[:MENTIONED_IN]->(r:FabricRecord) "
-            "WHERE r.id IN $seeds "
-            "WITH e, collect(DISTINCT r.id) AS seed_recs "
-            "MATCH (e)-[:MENTIONED_IN]->(r2:FabricRecord) "
-            "WHERE NOT r2.id IN $seeds "
-            "RETURN e.id AS entity, e.name AS entity_name, "
-            "       seed_recs[0] AS seed_id, r2.id AS rid "
-            "LIMIT " + str(lim),
-            {"seeds": seeds},
-        )
-    except Exception as e:
-        log.debug("recall entity crawl query: %s", e)
-        return [], []
-    if rows and isinstance(rows[0], dict) and rows[0].get("error"):
-        log.debug("recall entity crawl: %s", rows[0]["error"])
+
+    async def _crawl(seeds: List[str]) -> List[Dict]:
+        try:
+            got = await neo.query(
+                "MATCH (e:Entity)-[:MENTIONED_IN]->(r:FabricRecord) "
+                "WHERE r.id IN $seeds "
+                "WITH e, collect(DISTINCT r.id) AS seed_recs "
+                "MATCH (e)-[:MENTIONED_IN]->(r2:FabricRecord) "
+                "WHERE NOT r2.id IN $seeds "
+                "RETURN e.id AS entity, e.name AS entity_name, "
+                "       seed_recs[0] AS seed_id, r2.id AS rid "
+                "LIMIT " + str(lim),
+                {"seeds": seeds},
+            )
+        except Exception as e:
+            log.debug("recall entity crawl query: %s", e)
+            return []
+        if got and isinstance(got[0], dict) and got[0].get("error"):
+            log.debug("recall entity crawl: %s", got[0]["error"])
+            return []
+        return got or []
+
+    # The caller's seeds first. The chat hands in the ids its memory search found - MEMORY records, which are never
+    # FabricRecords - so they match nothing (context-and-ui E21, 2026-10-05: 0 results with them, 8 without). When
+    # the given seeds reach no entity, the crawl starts from a fabric query of its own, as it does with no seeds.
+    seeds = [s for s in (seed_ids or []) if s]
+    rows = await _crawl(seeds) if seeds else []
+    if not rows:
+        seeds = await _fabric_seeds()
+        rows = await _crawl(seeds) if seeds else []
+    if not rows:
         return [], []
 
     # Bound per-entity fanout so a hub entity can't flood the result set.
@@ -1342,9 +1360,13 @@ def _merge_recall_results(buckets: List[List[Dict]], top_k: int) -> List[Dict]:
         "Inputs: query (str!), session_id, agent_name, seed_ids (list[str] — ids "
         "the caller already found, used as crawl seeds), top_k (int 12), sources "
         "(csv of entities,worldview,related_qa — default all), fabric_dataset "
-        "(str), min_score (float 0.4), use_rollout (bool), rollout_steps (int 4). "
+        "(str), min_score (float 0.4), use_rollout (bool), rollout_steps (int 4), "
+        "budget_ms (int 0 = wait for every source; >0 = answer with the sources that "
+        "finished in time - the others finish in the background and are given to the "
+        "next call for the same question). "
         "Output: {results:[{id,text,source,sources,score,dataset_id,concept_label,"
-        "entities,via}], edges, pairs, count, sources_used, cached}."
+        "entities,via}], edges, pairs, count, sources_used, cached, timings "
+        "({source: ms | 'cached' | 'late'}), late (sources still running)}."
     ),
 )
 async def cap_context_recall(
@@ -1358,6 +1380,7 @@ async def cap_context_recall(
     min_score:      float = 0.4,
     use_rollout:    bool = False,
     rollout_steps:  int  = 4,
+    budget_ms:      int  = 0,
     trace_id=None,
 ):
     if not query or not query.strip():
@@ -1379,27 +1402,52 @@ async def cap_context_recall(
     if cached is not None:
         return {**cached, "cached": True}
 
-    tasks: List[Any] = []
-    labels: List[str] = []
-    if "entities" in want:
-        tasks.append(_recall_entity_crawl(seed_ids, query, top_k, fabric_dataset))
-        labels.append("entities")
-    if "worldview" in want:
-        tasks.append(_recall_worldview(query, top_k, fabric_dataset,
-                                        use_rollout, rollout_steps))
-        labels.append("worldview")
-    if "related_qa" in want:
-        tasks.append(_recall_related_qa(query, session_id, agent_name))
-        labels.append("related_qa")
+    # Each source is also cached on its own, so one that outlives a caller's budget is given to the next call for the
+    # same question (context-and-ui CU-T.2a, 2026-10-05: recall was 7.1-7.3 s of a ~9 s chat context fetch; cold,
+    # related_qa took 5.6 s and the entity crawl 3.7 s, warm every source took 0.03-0.25 s).
+    def _src_key(name: str) -> str:
+        return json.dumps({"src1": name, "q": query, "s": session_id, "a": agent_name, "ds": fabric_dataset,
+                           "ro": bool(use_rollout), "k": top_k, "seeds": sorted(seed_ids)[:20]}, sort_keys=True)
 
-    gathered = await asyncio.gather(*tasks, return_exceptions=True)
+    coros: Dict[str, Any] = {}
+    by_source: Dict[str, Any] = {}
+    timings: Dict[str, Any] = {}
+    for name in ("entities", "worldview", "related_qa"):
+        if name not in want:
+            continue
+        hit = _recall_cache_get(_src_key(name))
+        if hit is not None:
+            by_source[name] = hit["v"]
+            timings[name] = "cached"
+        elif name == "entities":
+            coros[name] = _recall_entity_crawl(seed_ids, query, top_k, fabric_dataset)
+        elif name == "worldview":
+            coros[name] = _recall_worldview(query, top_k, fabric_dataset, use_rollout, rollout_steps)
+        else:
+            coros[name] = _recall_related_qa(query, session_id, agent_name)
+    try:
+        budget_s = max(0.0, float(budget_ms or 0) / 1000.0)
+    except (TypeError, ValueError):
+        budget_s = 0.0
+    done, took, pending = await _rbc.gather_until(coros, budget_s)
+    for name, res in done.items():
+        by_source[name] = res
+        timings[name] = took.get(name)
+        if not isinstance(res, BaseException):
+            _recall_cache_put(_src_key(name), {"v": res})
+    for name, task in pending.items():
+        timings[name] = "late"
+        _rbc.keep_when_done(task, lambda res, _k=_src_key(name): _recall_cache_put(_k, {"v": res}))
+
+    labels = [n for n in ("entities", "worldview", "related_qa") if n in by_source]
+    gathered = [by_source[n] for n in labels]
 
     buckets: List[List[Dict]] = []
     all_edges: List[Dict] = []
     pairs: List[Dict] = []
     sources_used: List[str] = []
     for label, res in zip(labels, gathered):
-        if isinstance(res, Exception):
+        if isinstance(res, BaseException):
             log.debug("recall %s failed: %s", label, res)
             continue
         if label == "related_qa":
@@ -1424,8 +1472,10 @@ async def cap_context_recall(
              if e.get("from") in keep_ids and e.get("to") in keep_ids]
 
     out = {"results": merged, "edges": edges, "pairs": pairs,
-           "count": len(merged), "sources_used": sources_used, "cached": False}
-    _recall_cache_put(cache_key, out)
+           "count": len(merged), "sources_used": sources_used, "cached": False,
+           "timings": timings, "late": sorted(pending)}
+    if not pending:            # an answer missing a late source is never the cached whole answer
+        _recall_cache_put(cache_key, out)
     return out
 
 

@@ -49,10 +49,12 @@ const st = () => el._recUi['enrich:web.search:x'];
   st().dom = '';
 }
 {
-  st().sort = 'newest'; const h = draw('m');
+  // read the LIST: a research answer's date line above it names every page (in date order) in its dots' titles
+  const listOf = (h) => h.slice(Math.max(0, h.indexOf('vc-rbx-list')));
+  st().sort = 'newest'; const h = listOf(draw('m'));
   const first = (h.match(/Story \d+|Halving \d+/) || [''])[0];
   t('newest first puts the latest date on top', first === 'Story 26' || first === 'Story 53', first);
-  st().sort = 'title'; t('A-Z sorts by title', (draw('m').match(/(Halving|Story) \d+/) || [''])[0] === 'Halving 7');
+  st().sort = 'title'; t('A-Z sorts by title', (listOf(draw('m')).match(/(Halving|Story) \d+/) || [''])[0] === 'Halving 7');
   st().sort = 'rank';
 }
 {

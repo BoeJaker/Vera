@@ -116,15 +116,67 @@ async def _archive(p: Dict[str, Any]) -> None:
 
 
 async def census_summary() -> Dict[str, Any]:
-    """The census as /health reports it (busy, state, goal, control, by)."""
+    """The census as /health reports it (busy, state, goal, control, by), plus `due`:
+    census schedules due right now when none is in flight (release_core.may_release
+    holds a census=finish release for them, so a pair's arms share one build)."""
+    s: Dict[str, Any] = {"busy": False, "state": "none", "control": "run"}
     try:
         import sys as _sys
         cc = _sys.modules.get("census_capabilities")
         if cc is not None and hasattr(cc, "census_health"):
-            return await cc.census_health()
+            s = dict(await cc.census_health() or s)
     except Exception as e:
         log.debug("census summary unavailable: %s", e)
-    return {"busy": False, "state": "none", "control": "run"}
+    if not s.get("busy"):
+        try:
+            import sys as _sys
+            sc = (_sys.modules.get("schedule_capabilities")
+                  or _sys.modules.get("Vera.vera.evolve.schedule_capabilities"))
+            if sc is not None and hasattr(sc, "census_due_now"):
+                s["due"] = await sc.census_due_now()
+        except Exception as e:
+            log.debug("census due-now unavailable: %s", e)
+    # Agent loops alive in this process: a restart kills them (release_core.may_release).
+    try:
+        import sys as _sys
+        dm = (_sys.modules.get("dag_workshop_capabilities")
+              or _sys.modules.get("Vera.vera.dag.dag_workshop_capabilities"))
+        ids = list(core.live_loop_ids(getattr(dm, "_AGENT_LOOP_TASKS", None) or {}))
+        # ...and runs started through /mcp/call (census goals, probes), which have no task
+        # in that registry: their Redis run state (dag._live_loop_session_ids).
+        _live = getattr(dm, "_live_loop_session_ids", None)
+        if _live is not None:
+            for sid in await _live():
+                if sid not in ids:
+                    ids.append(sid)
+        s["loops"] = ids
+    except Exception as e:
+        log.debug("live loops unavailable: %s", e)
+    # Gates RUNNING in this process (evolve._GATES_ACTIVE). Queued ones are left out: they
+    # wait for the release (DRAIN_KEY), and counting them would deadlock the two.
+    try:
+        import sys as _sys
+        em = (_sys.modules.get("evolve_capabilities")
+              or _sys.modules.get("Vera.vera.evolve.evolve_capabilities"))
+        s["gates"] = [dict(g) for g in (getattr(em, "_GATES_ACTIVE", None) or {}).values()
+                      if g.get("state") == "running"]
+    except Exception as e:
+        log.debug("running gates unavailable: %s", e)
+    return s
+
+
+async def _drain(on: bool) -> None:
+    """Hold (or drop) the gate drain key - see release_core.DRAIN_KEY."""
+    r = _redis()
+    if r is None:
+        return
+    try:
+        if on:
+            await r.set(core.DRAIN_KEY, "1", ex=core.DRAIN_TTL_S)
+        else:
+            await r.delete(core.DRAIN_KEY)
+    except Exception as e:
+        log.debug("release drain key: %s", e)
 
 
 async def _write_yield(reason: str) -> bool:
@@ -259,6 +311,15 @@ async def _run_node_sync(rec: Dict[str, Any]) -> Dict[str, Any]:
                           "error": str((wres or {}).get("error") or "")[:300] if isinstance(wres, dict) else str(wres)[:300]}
     if results["workers"]["blocked"] and "census" in results["workers"]["blocked"]:
         results["workers"].update(ok=False, error=results["workers"]["blocked"])
+    if "nodes.testenv.sync" in CAPABILITY_REGISTRY:
+        # the nodes' pytest venvs follow the gate image (a no-op where current)
+        tv = await _call("nodes.testenv.sync", dry_run=False)
+        results["testenv"] = {"ok": bool(isinstance(tv, dict) and tv.get("ok")),
+                              "error": (str((tv or {}).get("error") or "") or "; ".join(
+                                  f"{h}: {v.get('error') or ', '.join(v.get('failed') or [])}"
+                                  for h, v in ((tv or {}).get("nodes") or {}).items()
+                                  if not v.get("ok") or v.get("failed")))[:300]
+                              if isinstance(tv, dict) else str(tv)[:300]}
     if "ollama.warm.apply" in CAPABILITY_REGISTRY:
         ares = await _call("ollama.warm.apply", dry_run=False)
         results["warm"] = {"ok": bool(isinstance(ares, dict) and not ares.get("error")),
@@ -307,7 +368,9 @@ async def run_tick() -> Dict[str, Any]:
         p["waits"] = int(p.get("waits") or 0) + 1
         p["last_why"] = act.get("why", "")
         await _save(p)
+        await _drain(core.waiting_on_gates(act.get("why")))
         return {"action": "wait", "why": act.get("why"), "pending": p}
+    await _drain(False)
     if a == "release":
         p["last_why"] = act.get("why", "")
         await emit_event({"type": "evolve.release.go", "release_id": p["id"], "why": act.get("why")})
@@ -387,7 +450,7 @@ async def cap_release_prod(confirm: bool = False, edge: str = "", census: str = 
                              now=_now(), release_id=uuid.uuid4().hex[:8])
         p["sync_nodes"] = bool(sync_nodes)
         summary = await census_summary()
-        ok, why = core.may_release(mode, summary)
+        ok, why = core.may_release(mode, summary, restart=bool(restart))
         await emit_event({"type": "evolve.release.requested", "release_id": p["id"], "edge": edge,
                           "mode": mode, "census": summary.get("state"), "go_now": ok})
         if ok:
@@ -398,6 +461,7 @@ async def cap_release_prod(confirm: bool = False, edge: str = "", census: str = 
                     "census": summary, "error": p.get("last_why") if p.get("status") == "failed" else ""}
         p["last_why"] = why
         await _save(p)
+        await _drain(core.waiting_on_gates(why))
         if mode == "goal":
             if await _write_yield(f"release {p['id']}: let the goal in flight finish, then park"):
                 p["yield_written"] = True
@@ -441,6 +505,7 @@ async def cap_release_cancel(reason: str = "", trace_id=None) -> Dict[str, Any]:
         p["status"] = "cancelled"
         p["last_why"] = reason or "cancelled"
         await _save(None)
+        await _drain(False)                 # gates held for this release may start now
         await _archive(p)
         resumed = await _resume_if_ours() if p.get("yield_written") else False
         await emit_event({"type": "evolve.release.cancelled", "release_id": p["id"], "census_resumed": resumed})

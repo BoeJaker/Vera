@@ -31,7 +31,7 @@ SRC = (ROOT / "vera" / "dag" / "dag_workshop_capabilities.py").read_text(encodin
 # ── the table ────────────────────────────────────────────────────────────────
 
 def test_the_four_styles_exist_and_auto_is_the_default():
-    assert PS.loop_style_ids() == ["auto", "flat", "stepwise", "detailed", "broad", "broad-stepwise", "stepwise-reviewed"]
+    assert PS.loop_style_ids() == ["auto", "flat", "stepwise", "detailed", "broad", "broad-stepwise", "stepwise-reviewed", "broad-stepwise-reviewed"]
     assert PS.resolve_loop_style("")[0] == "auto"
     assert PS.resolve_loop_style(None)[0] == "auto"
     assert PS.resolve_loop_style("auto")[2] == "default"
@@ -119,7 +119,8 @@ def test_v6_takes_plan_style_defaulting_to_auto():
 
 
 def test_the_stream_endpoint_forwards_plan_style():
-    assert 'v6_plan_style        = (body.get("plan_style", "auto")' in SRC
+    # v7 defaults to stepwise-reviewed, v6 to auto (2026-10-02); an explicit style wins.
+    assert 'v6_plan_style        = (body.get("plan_style") or _style_default)' in SRC
     assert "plan_style=v6_plan_style," in SRC
 
 
@@ -156,7 +157,8 @@ def test_the_controller_is_told_about_stepwise_only_in_stepwise():
 
 def test_an_explicit_style_skips_the_single_cap_fast_path():
     b = _body("cap_dag_agent_loop_v6")
-    assert 'if _plan_style_eff != "auto":\n        enable_fast_path = False' in b
+    # ...unless v7 only defaulted it (test_fast_path_default_style.py).
+    assert 'if _plan_style_eff != "auto" and not plan_style_defaulted:\n        enable_fast_path = False' in b
 
 
 # ── the controller's prompt, for real ───────────────────────────────────────

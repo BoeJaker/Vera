@@ -1597,11 +1597,20 @@ try:
     from Vera.vera.workers import probe_backoff as _probe_backoff
 except ImportError:                                   # pragma: no cover
     from vera.workers import probe_backoff as _probe_backoff
+try:
+    from Vera.vera.workers import node_temps_core as _temps_core
+except ImportError:                                   # pragma: no cover
+    from vera.workers import node_temps_core as _temps_core
 
 #: host_id -> backoff state (see probe_backoff). Empty means "probe normally".
 _TEMP_BACKOFF: Dict[str, dict] = {}
 
 _TEMP_SCRIPT = r"""
+v=$(systemd-detect-virt --container 2>/dev/null); [ -z "$v" ] && [ -r /run/systemd/container ] && v=$(cat /run/systemd/container 2>/dev/null)
+echo "VIRT|${v:-none}"
+for d in /sys/devices/system/cpu/cpu[0-9]*; do
+  [ -r "$d/topology/core_id" ] && echo "CPUTOPO|$(basename $d)|$(cat $d/topology/physical_package_id 2>/dev/null)|$(cat $d/topology/core_id 2>/dev/null)"
+done
 if command -v sensors >/dev/null 2>&1; then
   echo "SENSORS_BEGIN"
   sensors -A -u 2>/dev/null
@@ -1893,13 +1902,17 @@ async def _probe_host_temp(host: Dict) -> None:
         temps: Dict[str, float] = {}
         missing_tools = []
 
+        core_temps: Dict[str, float] = {}
         if "SENSORS_BEGIN" in out:
             body = out.split("SENSORS_BEGIN", 1)[1].split("SENSORS_END", 1)[0]
             temps.update(_parse_sensors_u(body))
+            # per package and core (the flat `temps` keeps one "Core N" per label)
+            core_temps = _temps_core.parse_core_temps(body)
         elif "THERMAL_ZONE|" in out:
             temps.update(_parse_thermal_zones(out))
         elif "NO_SENSORS" in out:
             missing_tools.append("lm-sensors")
+        cpu_t = _temps_core.cpu_temps(core_temps, _temps_core.parse_cpu_topo(out))
 
         health: Dict[str, Dict[str, float]] = {"fan": {}, "voltage": {}, "power": {}}
         if "IPMI_BEGIN" in out:
@@ -1930,7 +1943,10 @@ async def _probe_host_temp(host: Dict) -> None:
             body = out.split("DISK_BEGIN", 1)[1].split("DISK_END", 1)[0]
             disk_usage = _parse_disk_usage(body)
 
-        if missing_tools:
+        # a container's sensors are its host's (see node_temps_core): no tool
+        # installed inside one could ever read anything of its own
+        virt = _temps_core.parse_virt(out)
+        if missing_tools and not virt:
             # Try installing everything missing at once, with a long backoff
             # on repeat failure — never blocks this tick; the next tick picks
             # up real values once the tools (and, for lm-sensors, the kernel
@@ -1945,12 +1961,13 @@ async def _probe_host_temp(host: Dict) -> None:
             f"no sensors available ({', '.join(missing_tools)} not installed)" if missing_tools
             else "no temperature readings returned"))
         facts = FACTS.get(host_id, {})
-        _TEMP_CACHE[host_id] = {
+        _TEMP_CACHE[host_id] = _temps_core.attribute({
             "host_id": host_id, "label": label, "pve": bool(facts.get("pve")),
             "temps": temps, "max_c": max(temps.values()) if temps else None,
             "percpu": percpu, "health": health, "drives": drives, "disk_usage": disk_usage,
+            "core_temps": core_temps, "cpu_temps": cpu_t,
             "updated_at": now_iso(), "error": error,
-        }
+        }, virt)
     except Exception as e:
         _TEMP_BACKOFF[host_id] = _probe_backoff.record_failure(_bo, _now, e)
         _TEMP_CACHE[host_id] = {
@@ -1998,11 +2015,21 @@ except Exception as e:
                 "since this module owns the SSH probe. Also carries drives "
                 "(per-device SMART health/power-on-hours, from the SAME "
                 "smartctl dump the temps come from — no extra SSH round trip) "
-                "and disk_usage (df -P per real filesystem). Output: {hosts:["
+                "and disk_usage (df -P per real filesystem). A container (LXC, "
+                "docker) shares its host's kernel, BMC and disks, so its sensor "
+                "readings are the HOST's: they are reported under host_temps / "
+                "host_drives / host_health with temps_from='host' and virt set, "
+                "and its own temps/drives/max_c stay empty - percpu and "
+                "disk_usage remain its own. Output: {hosts:["
                 "{host_id,label,pve,temps:{sensor:celsius},percpu:{cpuN:pct},"
                 "health:{fan:{name:rpm},voltage:{name:volts},power:{name:w}},"
                 "drives:{dev:{temp_c,health,power_on_hours}},"
                 "disk_usage:[{mount,total_gb,used_gb,used_pct}],max_c,"
+                "core_temps:{'<package>:<core_id>':celsius} (every package's "
+                "cores - the flat temps keeps one 'Core N'), cpu_temps:{cpuN:"
+                "celsius} (each logical cpu with its physical core's reading), "
+                "virt,temps_from,host_temps?,host_drives?,host_health?,"
+                "host_core_temps?,host_cpu_temps?,"
                 "updated_at,error}], count}.",
 )
 async def cap_node_temps(trace_id=None) -> Dict:

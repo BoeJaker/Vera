@@ -40,7 +40,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
    is what opens instead of the OS's — the select itself is untouched, and stays the value every reader reads. */
 select{cursor:pointer;appearance:none;-webkit-appearance:none;padding-right:20px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'><path d='M1 2.5L4 5.5L7 2.5' stroke='%238a92a0' fill='none' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/></svg>");background-repeat:no-repeat;background-position:right 7px center}
 select[multiple],select[size]:not([size="1"]){background-image:none;padding-right:7px}
-.vsel-m{position:fixed;z-index:3000;min-width:120px;max-height:min(52vh,420px);overflow:auto;scrollbar-width:thin;padding:4px;border-radius:var(--ui-radius,8px);background:var(--surf,var(--bg2,#1a1d24));box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.20),0 12px 34px -16px rgba(0,0,0,.70));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px}
+.vsel-m{position:fixed;z-index:10000;min-width:120px;max-height:min(52vh,420px);overflow:auto;scrollbar-width:thin;padding:4px;border-radius:var(--ui-radius,8px);background:var(--surf,var(--bg2,#1a1d24));box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.20),0 12px 34px -16px rgba(0,0,0,.70));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:11px}
 .vsel-o{display:flex;align-items:center;gap:8px;padding:5px 9px;border-radius:calc(var(--r-sm,6px) - 1px);color:var(--t2,var(--dim2,#8a92a0));white-space:nowrap;cursor:pointer}
 .vsel-o:hover,.vsel-o.cur{color:var(--t1,var(--text,#d8dce4));background:var(--bg3,#232732)}
 .vsel-o.on{color:var(--ac,var(--acc,#5a9e8f))}
@@ -368,6 +368,8 @@ html[data-blocks="off"] .wblk{background:transparent}
 /* a piece of the reply that is being drawn on the canvas instead: hidden, never removed, and a line in its place
    that takes you to it. Closing the canvas brings every one of them straight back (_cvRestoreInline). */
 .cv-elsewhere{display:none!important}
+/* a page being written, drawn beside its reply (the streaming frame is never moved, so it never reloads on a paint) */
+.cb-live-out iframe{display:block;width:100%;height:100%;border:0;background:#fff}
 .cv-moved{display:inline-flex;align-items:center;gap:6px;margin:4px 0;padding:2px 9px;font:inherit;font-size:9.5px;
   color:var(--dim2);background:none;border:1px dashed var(--border);border-radius:11px;cursor:pointer;max-width:100%;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -585,6 +587,14 @@ body.has-msgs #noticeDock,body.has-panel #noticeDock{display:none}
 .ctx-pill{font-size:8px;padding:1px 5px;border-radius:9px;border:1px solid rgba(90,158,143,.3);color:var(--acc);background:rgba(90,158,143,.08);margin-top:3px;display:inline-block}
 .audio-row{display:flex;align-items:center;gap:5px;margin-top:4px;padding:3px 7px;background:var(--bg0);border-radius:3px;border:1px solid var(--border)}
 .audio-row audio{height:20px;flex:1}
+/* the turn footer: how the reply was made, collapsed (its rows are the chat:turn-phases widget) */
+.turn-phases{margin-top:4px;font-size:9px;color:var(--dim, #7d8590)}
+.turn-phases>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:5px;padding:1px 6px;border-radius:9px;border:1px solid var(--border, #2a2f37);user-select:none}
+.turn-phases>summary::-webkit-details-marker{display:none}
+.turn-phases>summary::before{content:'\25B8';font-size:8px;color:var(--acc2, #8fb3c9)}
+.turn-phases[open]>summary::before{content:'\25BE'}
+.turn-phases>summary:hover{color:var(--text, #e6edf3);border-color:color-mix(in srgb, var(--acc2, #8fb3c9) 45%, transparent)}
+.turn-phases>vera-widget{display:block;margin-top:5px;max-width:560px}
 .sd-img{max-width:100%;border-radius:5px;margin-top:6px;display:block;border:1px solid var(--border)}
 .sd-card{border:1px solid rgba(201,149,90,.3);background:rgba(201,149,90,.04);border-radius:7px;padding:9px 11px;width:100%}
 .council-resp{border:1px solid var(--border);border-radius:5px;padding:6px 9px;margin-bottom:5px;font-size:11px}
@@ -863,6 +873,12 @@ body.has-cols #chatStack{flex:1 1 0;min-width:360px}
 /* the measure is the column's: never wider than the space the chat has (the columns, the grown graph, the harness frame) */
 #chatColumn{--measure:min(736px, calc(100% - 32px))}
 body.ctx-grown #chatColumn,body.ctx-remote #chatColumn{--measure:min(736px, calc(100% - var(--ctx-gutter,16px) - 32px))}
+/* Full: the conversation uses the room there is (setViewMode) */
+body[data-width="full"] #chatColumn{--measure:min(1240px, calc(100% - 32px))}
+body[data-width="full"].ctx-grown #chatColumn,body[data-width="full"].ctx-remote #chatColumn{--measure:min(1240px, calc(100% - var(--ctx-gutter,16px) - 32px))}
+/* ...and the minimal layout's own 760px caps (the turn, its strips) give way to the measure */
+body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #msgs > .mwrap,body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{max-width:100%}
+body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #ctxStrip,body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #docChips,body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #docEditor,body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #podcastBar{max-width:var(--measure)}
 /* the canvas column's handle: dragged, the canvas keeps its width; the chat flows into the rest */
 #cvResize{display:none;width:5px;flex:0 0 5px;cursor:col-resize;background:transparent;transition:background .15s;z-index:10;align-self:stretch}
 #cvResize:hover,#cvResize.drag{background:var(--acc)!important}
@@ -1007,48 +1023,8 @@ body.has-panel #chatStack.resized{ flex:0 0 auto; }
    Replaces the plain <pre><code> rendering. Wraps fenced code
    blocks with a header strip (language pill + Copy / Preview /
    Run buttons) so the user can interact with code inline. */
-.code-card{margin:6px 0;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--bg2)}
-.code-card pre{margin:0;padding:10px 12px;overflow:auto;background:var(--bg0);font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--text);max-height:420px}
-.code-card pre code{font-family:inherit;background:transparent;padding:0;color:inherit;white-space:pre}
-.code-card .code-bar{display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg1);border-bottom:1px solid var(--border);font-family:var(--mono);font-size:9px}
-.code-card .code-lang{color:var(--acc);text-transform:uppercase;letter-spacing:.7px;font-weight:600}
-.code-card .cb-act{padding:1px 6px;font-size:9px;border:1px solid var(--border);background:var(--bg2);color:var(--dim2);border-radius:3px;cursor:pointer;transition:all .14s}
-.code-card .cb-act:hover{border-color:var(--acc);color:var(--acc)}
-.code-card .cb-act.run{color:var(--acc2);border-color:var(--acc2)}
-.code-card .cb-act.run:hover{background:var(--acc2);color:var(--bg0)}
-.code-card .cb-act:disabled{opacity:.5;cursor:default}
-.code-card .code-exec-out{border-top:1px solid var(--border);background:var(--bg0);font-family:var(--mono);font-size:11px;line-height:1.5;max-height:340px;overflow:auto}
-.code-card .code-exec-out pre{margin:0;padding:6px 12px;white-space:pre-wrap;word-break:break-word;background:transparent}
-.code-card .code-exec-out .ce-stdout{color:var(--text)}
-.code-card .code-exec-out .ce-stderr{color:#e0a060}
-.code-card .code-exec-out .ce-err{padding:6px 12px;color:#e06060}
-.code-card .code-exec-out .ce-meta{padding:6px 12px;color:var(--dim2);font-size:9.5px}
-.code-card .code-exec-out .ce-foot{padding:5px 12px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center}
-.code-card .code-exec-out .ce-foot .ce-meta{padding:0}
-.code-card .code-exec-out .ce-ok{color:var(--acc2);font-weight:600}
-.code-card .code-exec-out .ce-bad{color:#e06060;font-weight:600}
-/* Syntax highlight tokens (self-contained highlighter — see highlightCode).
-   Colours are theme vars so they track the light/dark palette. */
-.hl-kw{color:var(--acc);font-weight:600}
-.hl-str{color:var(--acc2)}
-.hl-com{color:var(--dim);font-style:italic}
-.hl-add{background:rgba(95,207,154,.14);color:var(--acc2);display:inline-block;width:100%}
-.hl-del{background:rgba(232,112,107,.14);color:var(--err);display:inline-block;width:100%}
-.hl-hunk{color:var(--acc);display:inline-block;width:100%}
-.hl-num{color:var(--acc3)}
-.hl-fn{color:var(--acc4)}
-.hl-type{color:var(--acc4)}
-.hl-tag{color:var(--acc)}
-.hl-attr{color:var(--acc2)}
-/* "streaming…" marker on an in-progress (unclosed) code fence */
-.code-card .cb-stream{color:var(--dim2);font-size:9px;font-style:italic;letter-spacing:0}
-.code-card .cb-stream::after{content:'';display:inline-block;width:5px;height:5px;margin-left:5px;border-radius:50%;background:var(--acc);animation:cbpulse 1s ease-in-out infinite;vertical-align:middle}
-@keyframes cbpulse{0%,100%{opacity:.25}50%{opacity:1}}
-/* Per-completed-block lint diagnostics strip */
-.code-card .code-lint{border-top:1px solid var(--border);background:var(--bg0);font-family:var(--mono);font-size:10px;line-height:1.55;padding:4px 10px}
-.code-card .code-lint .cl-err{color:var(--err)}
-.code-card .code-lint .cl-warn{color:var(--warn)}
-.code-card .code-lint .cl-ico{margin-right:5px}
+/* the code card, its highlight tokens, run output, lint strip and streaming marker: ONE stylesheet, the shared output
+   kit's (vera_output.js adds it to the page) - the agent loop and the canvas draw the same card from the same rules. */
 
 /* ── DOC CHIPS ─────────────────────────────────────────────────
    Pinned-paste UX: large pastes become chips above the input bar
@@ -1256,10 +1232,10 @@ body[data-view="minimal"].has-msgs:not(.has-panel) #msgs > .sys-msg{
 /* FULL — the chrome is always there, not only on hover */
 html[data-den="full"] .msg-actions{opacity:1}
 /* HOVER */
-html[data-den="hover"] .mwrap{position:relative;transition:padding-bottom .17s ease}
-html[data-den="hover"] .mwrap:hover{padding-bottom:34px}
-html[data-den="hover"] .msg-actions{position:absolute;left:62px;right:16px;bottom:6px;margin:0;opacity:0;pointer-events:none;transition:opacity .15s}
-html[data-den="hover"] .mwrap:hover .msg-actions{opacity:1;pointer-events:auto}
+html[data-den="hover"] .mwrap{position:relative}
+/* (the action row used to be laid OVER the reply's last lines here, with the message growing 34px on hover to make
+   room - owner, 2026-10-03: "in hover mode they appear over the text of the response instead of below the text".
+   It keeps its own place under the text now: see the action-row rules under #msgs.) */
 html[data-den="hover"] .msg-gutter,html[data-den="hover"] .mtime{opacity:0;transition:opacity .15s}
 html[data-den="hover"] .mwrap:hover .msg-gutter,html[data-den="hover"] .mwrap:hover .mtime{opacity:1}
 html[data-den="hover"] .cap-inline:not(.open) .cap-result{display:none!important}
@@ -1285,7 +1261,7 @@ html[data-blocks="off"] .mwrap.u{background:transparent}
    other message loses one. A FLAT ground also hides the wash, so with the glow behind it the question read as a
    Blocks-off failure (defect 88). It occludes through a mostly-opaque ground and a blur now: the glow carries
    through, the text scrolling underneath does not. */
-html[data-blocks="off"] .mwrap.u.pin{box-shadow:none;background:color-mix(in srgb,var(--bg0) 84%,transparent);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
+html[data-blocks="off"] .mwrap.u.pin{box-shadow:none;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}
 html[data-blocks="off"] .sys-msg{border-bottom:none}
 html[data-blocks="off"] .cap-inline{background:transparent;border-color:transparent;border-left-color:var(--acc2)}
 html[data-blocks="off"] .cap-inline.error{border-left-color:var(--err)}
@@ -1310,7 +1286,10 @@ html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u{back
    The reason behind it is real: a pinned question is position:sticky and the answer scrolls underneath, so it has
    to hide what passes behind. A flat fill hides the wash with it. It occludes through a ground at about a third
    opacity over a blur instead - the text underneath is unreadable, the gradient carries through. */
-html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background-color:color-mix(in srgb,var(--bg0) 34%,transparent);background-image:none;border-left-color:transparent;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+/* 2026-10-04 (owner: "the blocks off makes the last user message in chat have a background - this is the opposite of what
+   blocks off should do"): the pinned question no longer pins (the board sets it position:static), so nothing scrolls
+   behind it and the ground above has nothing left to hide - Blocks off leaves it with none, as every other question. */
+html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background:transparent;background-image:none;border-left-color:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}
 html[data-blocks="off"] body[data-view="minimal"].has-msgs:not(.has-panel) #inputBar,html[data-blocks="off"] body[data-view="minimal"].has-msgs.has-panel #inputBar,html[data-blocks="off"] body[data-view="minimal"]:not(.has-msgs):not(.has-panel) #inputBar{background:transparent;border-color:transparent;box-shadow:none}
 html[data-blocks="off"] body[data-view="minimal"]:not(.has-msgs) #ctxStrip{background:transparent}
 /* ═══ Style packs on the chat surface (M1a-surfaces) — the pack sets FORM: type, radius, label metrics, body size,
@@ -1338,6 +1317,11 @@ html.vpb-nav-hosted #rightRail.lhm-host.slim{width:0 !important;min-width:0 !imp
 /* ...except in the harness's menu frame, which IS the menu: folded, it keeps its rail (owner: "its not leaving a rail when
    the lhm hides/collapses") - this outranks the rule above, which took the whole frame to nothing */
 html[data-only="menu"] body #rightRail.lhm-host.slim{width:100% !important;min-width:0 !important}
+/* FOLDED BY THE HARNESS, THE MENU IS ITS RAIL (owner, 2026-10-03: "if you open the settings menu in chat and then it
+   collapses because it looses focus it leaves text visibly cut off ... should probably just collapse to a settings cog
+   icon at the top and blank the rest out"): the harness narrows this frame to the rail when the pointer leaves, and
+   says so (vera:lhm:folded) - the open menu and the Settings page are blanked, the rail's icons stay */
+html[data-only="menu"].lhm-folded #settingsPage,html[data-only="menu"].lhm-folded #rightRail.lhm-host > .lhm-det{visibility:hidden!important}
 #rightRail.lhm-host > .lhm-det > .ctx-tab-bar .ctab{padding:6px 9px}
 /* ═══ The composer's modes (chat-modes; the Canvas and Paste boards) — chips in the composer's foot, strips above
    it for voice · council · diffuse, attachments as cards in the question. The top-bar buttons stay; these mirror. ═══ */
@@ -1546,13 +1530,10 @@ body.hdr-folded #hdrMore::after{content:'';position:absolute;right:5px;top:5px;w
 #msgs .mwrap{width:var(--measure);max-width:100%;margin:0 auto;box-sizing:border-box;padding:calc(var(--mgap) * .55) 0;border-bottom:none;gap:0;background:transparent}
 #msgs .mwrap + .mwrap{box-shadow:inset 0 1px 0 var(--bd,var(--border,rgba(255,255,255,.09)))}
 #msgs .mwrap.u{background:transparent;border-left:none}
+/* a message's explode panel sits on the reply's own column - past the gutter, inside the padding - not the turn's full width */
+#msgs .mwrap > .xp-inline{margin-left:72px!important;margin-right:14px!important}
 #msgs .mwrap.u.pin{border-left:none;box-shadow:none}
 #msgs .mwrap + .mwrap.u{box-shadow:inset 0 1px 0 var(--bd,var(--border,rgba(255,255,255,.09)))}
-/* the chrome row keeps the board's five actions in view; the rest are the same buttons behind ⋯ */
-#msgs .msg-actions .mact:nth-child(n+6){display:none}
-#msgs .msg-actions.all .mact{display:inline-flex}
-#msgs .msg-actions .mact-more{border:none;border-radius:var(--r-sm,7px);font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;padding:3px 7px;color:var(--t3,var(--dim,#6b7280));background:var(--surf2);cursor:pointer}
-#msgs .msg-actions.all .mact-more{color:var(--ac,var(--acc,#5a9e8f))}
 #msgs .mwrap .msg-user-line{display:flex;gap:14px;margin:0}
 #msgs .mwrap.u .msg-user-line{background:var(--surf);border-radius:var(--ui-radius,10px);padding:12px 14px}
 #msgs .mwrap.a .msg-user-line{padding:12px 14px 4px}
@@ -1563,9 +1544,31 @@ body.hdr-folded #hdrMore::after{content:'';position:absolute;right:5px;top:5px;w
 #msgs .msg-body p{margin:0 0 9px}
 #msgs .mtime{display:none}
 #msgs .mwrap.u.pin{position:static}
-#msgs .msg-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 0 58px;padding:0 14px 4px 0;border:none;background:transparent}
-#msgs .msg-actions .mact{border:none;border-radius:var(--r-sm,7px);font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;padding:3px 9px;color:var(--t3,var(--dim,#6b7280));background:var(--surf2);height:auto}
-#msgs .msg-actions .mact:hover{color:var(--ac,var(--acc,#5a9e8f));background:var(--surf2)}
+/* THE REPLY'S ACTION ROW (owner, 2026-10-03): ghost buttons, icon + word, under the text - never over it. Quiet until
+   the message is pointed at; "Send to" opens the one menu of everything that delivers the message elsewhere. */
+#msgs .msg-actions{display:flex;align-items:center;gap:2px;flex-wrap:wrap;margin:6px 0 0 58px;padding:0 14px 6px 0;border:none;background:transparent;position:relative;opacity:.5;transition:opacity .15s}
+#msgs .mwrap:hover .msg-actions,#msgs .msg-actions:focus-within,#msgs .msg-actions:has(.ma-dd.open){opacity:1}
+#msgs .msg-actions .mact{display:inline-flex;align-items:center;gap:5px;border:none;border-radius:var(--r-sm,6px);background:transparent;color:var(--t3,var(--dim,#6b7280));font:500 10.5px/1 var(--f-ui,var(--sans,system-ui,sans-serif));padding:5px 8px;height:auto;cursor:pointer;transition:background .12s,color .12s}
+#msgs .msg-actions .mact:hover,#msgs .msg-actions .mact:focus-visible,#msgs .msg-actions .ma-dd.open .ma-ddb{background:var(--surf2,rgba(255,255,255,.06));color:var(--t1,var(--text,#d8dce4));outline:none}
+#msgs .msg-actions .mact svg,#msgs .msg-actions .ma-it svg{width:13px;height:13px;flex:0 0 auto}
+#msgs .msg-actions .mact.ok{color:var(--ok,#7bc47f)}#msgs .msg-actions .mact.err{color:var(--err,#e06c6c)}
+#msgs .msg-actions .ma-sep{width:1px;height:14px;background:var(--bd,var(--border,rgba(255,255,255,.09)));margin:0 4px}
+#msgs .msg-actions .ma-dd{position:relative}
+#msgs .msg-actions .ma-menu{display:none;position:absolute;left:0;top:calc(100% + 4px);z-index:60;min-width:250px;padding:5px;border-radius:var(--ui-radius,10px);background:var(--surf,var(--bg1,#1a1d24));box-shadow:var(--elev,0 12px 34px -16px rgba(0,0,0,.7)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)))}
+#msgs .msg-actions .ma-menu.up{top:auto;bottom:calc(100% + 4px)}
+#msgs .msg-actions .ma-dd.open .ma-menu{display:block}
+/* the message whose menu is open rises above its neighbours - the pinned question at the top drew over a menu that
+   had opened upward */
+#msgs .mwrap:has(.ma-dd.open){position:relative;z-index:80}
+#msgs .msg-actions .ma-it{display:flex;align-items:flex-start;gap:10px;width:100%;border:none;background:none;text-align:left;padding:7px 9px;border-radius:var(--r-sm,6px);color:var(--t1,var(--text,#d8dce4));font:12px/1.3 var(--f-ui,var(--sans,system-ui,sans-serif));cursor:pointer}
+#msgs .msg-actions .ma-it svg{margin-top:1px;color:var(--t3,var(--dim,#6b7280))}
+#msgs .msg-actions .ma-it:hover,#msgs .msg-actions .ma-it:focus{background:var(--surf2,rgba(255,255,255,.06));outline:none}
+#msgs .msg-actions .ma-it:hover svg,#msgs .msg-actions .ma-it:focus svg{color:var(--ac,var(--acc,#5a9e8f))}
+#msgs .msg-actions .ma-it small{display:block;margin-top:2px;color:var(--t3,var(--dim,#6b7280));font-size:10.5px}
+#msgs .msg-actions .ma-menu hr{border:none;height:1px;background:var(--bd,var(--border,rgba(255,255,255,.09)));margin:4px 2px}
+/* hover tier: the row keeps its place UNDER the text (it was laid over the last lines of the reply) and shows on hover */
+html[data-den="hover"] #msgs .msg-actions{position:relative;left:auto;right:auto;bottom:auto;margin:6px 0 0 58px;opacity:0;visibility:hidden;pointer-events:none}
+html[data-den="hover"] #msgs .mwrap:hover .msg-actions,html[data-den="hover"] #msgs .msg-actions:focus-within,html[data-den="hover"] #msgs .msg-actions:has(.ma-dd.open){opacity:1;visibility:visible;pointer-events:auto}
 #msgs .cap-inline{border:none;border-radius:var(--ui-radius,10px);background:var(--surf);box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14)),inset 2px 0 0 var(--ac2,var(--acc2,#8fb87a));margin:3px 0 10px;padding:0;overflow:hidden;font-size:10.5px;white-space:normal}
 #msgs .cap-inline:hover{box-shadow:var(--elev,0 1px 2px rgba(0,0,0,.20),0 10px 30px -16px rgba(0,0,0,.60)),inset 2px 0 0 var(--ac2,var(--acc2,#8fb87a))}
 #msgs .cap-inline-header{display:flex;align-items:center;gap:9px;padding:8px 13px;margin:0;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;color:var(--ac2,var(--acc2,#8fb87a))}
@@ -1773,10 +1776,7 @@ body[data-cols~="canvas"] #cvResize{animation:triFade .44s ease}
 html.hdr-absorbed #topBar{height:0!important;min-height:0!important;padding-top:0!important;padding-bottom:0!important;border:0!important;overflow:visible!important;visibility:hidden}
 html.hdr-absorbed #topBar #toolsSheet{visibility:visible}
 /* the drawing, in the block that wrote it (defect 90) */
-.code-card .cb-prev{display:none}
-.code-card.prev .cb-prev{display:block;border-top:1px solid var(--border,rgba(255,255,255,.09))}
-.code-card.prev .cb-prev iframe{display:block;width:100%;height:320px;border:0;background:#fff}
-.code-card.prev > pre{display:none}
+/* (the in-place preview's rules are the shared output kit's) */
 #rightRail.lhm-host .lhm-quick .gal-host{margin-bottom:8px}
 #rightRail.lhm-host .lhm-quick .gal-style{margin-left:auto}
 #rightRail.lhm-host .lhm-quick .gal-style button{font-size:9px;white-space:nowrap}
@@ -1819,8 +1819,29 @@ html.hdr-absorbed #topBar #toolsSheet{visibility:visible}
 #rightRail.lhm-host .lhm-quick .lhm-dk-b > *{display:flex!important;flex-direction:column;position:relative!important;inset:auto!important;width:auto!important;max-width:100%;flex:none!important;min-height:0;margin:0!important;border:0!important;background:transparent!important;padding:6px 8px!important;gap:5px;overflow:hidden}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .lhm-dk-b > *{height:var(--dk-h,280px)!important;padding:0!important;gap:0}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph svg{background:transparent!important}
+/* A SMALL GRAPH IS ITS DRAWING (owner, 2026-10-03: "make the memory graph in the chat ui lhm respect the blocks off styling
+   giving it no background if blocks are off. same for dag graphs and loop graphs also all the buttons at the top of such
+   a small render of those graph elements need to be hidden under a burger button"). Blocks off: no ground behind it.
+   Its controls - the load row, the search and layout row, the legend, the loop graph's own buttons - wait behind the ☰
+   in its heading. */
+html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .lhm-dk-b{background:transparent!important;box-shadow:none!important}
+html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .vg-canvas-area,html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .vera-graph-host{background:transparent!important}
+html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph vera-loop-graph{--lg-bg:transparent}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph > .grp{display:flex;align-items:center}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-burger{margin-left:auto;border:0;background:transparent;color:var(--t3,var(--dim,#6b7280));font:inherit;font-size:12px;line-height:1;padding:2px 6px;border-radius:var(--r-sm,5px);cursor:pointer}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-burger:hover,#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph.dk-tools .dk-burger{color:var(--t1,var(--text,#d8dce4));background:var(--surf2,rgba(255,255,255,.06))}
+/* the memory graph's view and expand sit in its head, always in reach (they were behind ☰, in vera-graph's hidden header) */
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-view{margin-left:auto;font:inherit;font-size:9.5px;height:20px;padding:0 4px;max-width:104px;border:0;border-radius:var(--r-sm,5px);background:var(--s2,var(--bg2,#1a1c20));color:var(--t2,var(--dim2,#8a92a0));cursor:pointer}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-view ~ .dk-burger{margin-left:0}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-grow{border:0;background:transparent;color:var(--t3,var(--dim,#6b7280));font:inherit;font-size:12px;line-height:1;padding:2px 6px;border-radius:var(--r-sm,5px);cursor:pointer}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-grow:hover,#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph .dk-view:hover{color:var(--t1,var(--text,#d8dce4));background:var(--surf2,rgba(255,255,255,.06))}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph:not(.dk-tools) :is(#memGraphCtrl,#dagGraphCtrl,#memLegend,.vg-header,.vg-bottom-area,.vg-legend){display:none!important}
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph:not(.dk-tools) #paneLoopGraph > div:first-child{display:none!important}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-list .lhm-dk-b > *{height:auto!important;max-height:380px!important;overflow:auto!important}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-log .lhm-dk-b > *{height:240px!important;padding:0!important;gap:0}
+/* the agent editor grows with its form (the Agents menu); its Save sits at the form's foot */
+#rightRail.lhm-host .lhm-quick .lhm-dk.dk-agent-edit .lhm-dk-b > *{height:auto!important;max-height:none!important;overflow:visible!important}
+#rpAgentEdit .ag-acts{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 6px}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-frame .lhm-dk-b > *{height:460px!important;padding:0!important;gap:0}
 #rightRail.lhm-host .lhm-quick .lhm-dk.dk-caps .lhm-dk-b > *{height:480px!important}
 #rightRail.lhm-host .lhm-quick .lhm-dk-b > * > div[style*="border-bottom"],#rightRail.lhm-host .lhm-quick .lhm-dk-b > * > div[style*="border-top"]{background:transparent!important;border-color:var(--bd,var(--border,rgba(255,255,255,.09)))!important;padding:5px 8px!important}
@@ -1931,7 +1952,7 @@ body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri
 #rightRail.lhm-host .lhm-quick .wid.lhm-added{background:var(--surf2,var(--bg2,#1a1c20));box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 @keyframes xbl{50%{opacity:.35}}
 /* ── the Settings page (the Settings board) ── */
-#settingsPage{position:fixed;top:52px;right:0;bottom:0;left:0;z-index:5200;display:flex;flex-direction:column;background:var(--bg,var(--bg0,#0e0f12));color:var(--t1,var(--text,#d8dce4));font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
+#settingsPage{position:fixed;top:0;right:0;bottom:0;left:0;z-index:5200;display:flex;flex-direction:column;background:var(--bg,var(--bg0,#0e0f12));color:var(--t1,var(--text,#d8dce4));font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
 #settingsPage[hidden]{display:none}
 #settingsPage .sp-hd{display:flex;align-items:center;gap:14px;height:52px;padding:0 22px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));flex-shrink:0}
 #settingsPage .sp-hd h1{margin:0;font-size:19px;font-weight:600;letter-spacing:-.01em}
@@ -1985,7 +2006,6 @@ body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri
 #settingsPage .sp-card .btn:hover{color:var(--t1,var(--text,#d8dce4));background:var(--fill,color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent))}
 #settingsPage .sp-card .btn.danger,#settingsPage .sp-card .btn.red,#settingsPage .sp-card .btn.err-btn,#settingsPage .sp-card .btn.no{color:var(--dv6,#c96b6b)}
 #settingsPage .sp-card .opt .opt-main{display:flex;flex-direction:column;gap:1px;min-width:0}#settingsPage .sp-card .opt .opt-name{font-size:11.5px;color:var(--t1,var(--text,#d8dce4))}#settingsPage .sp-card .opt .opt-desc{font-size:10px;color:var(--t3,var(--dim,#6b7280))}
-#settingsPage .sp-hd .sp-hd-pack{display:inline-flex;align-items:center}#settingsPage .sp-hd .sp-hd-pack .seg,#settingsPage .sp-hd .sp-hd-pack [class*="style"]{font-size:10.5px}
 #settingsPage .sp-look-pack,#settingsPage .sp-look-theme{display:flex;align-items:center;gap:8px;min-height:30px;flex-wrap:wrap}
 #settingsPage .sp-block{display:flex;flex-direction:column;gap:5px;font-size:11.5px;min-width:0}
 #settingsPage .sp-block > .sec{font-size:var(--label-size,9.5px);text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t2,var(--dim2,#8a92a0));padding:6px 0 2px;border-bottom:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));margin-bottom:2px}
@@ -1996,6 +2016,9 @@ body .lhm-prow .padd{background:var(--pri-bg,var(--acc,#5a9e8f));color:var(--pri
 .rpane .sp-gone b{color:var(--t1,var(--text,#d8dce4))}
 /* ── embedded in parts: only=menu · only=chat · harness=yes ── */
 html[data-only="menu"] body > :not(:has(#rightRail)){display:none!important}
+/* the drop menu every select opens is drawn on <body>: in the menu page it must survive the rule above (whose :has(#id)
+   weighs as an id, so this one carries an id's weight too) - else every select in the menu's settings opened nothing */
+html[data-only="menu"] body > .vsel-m:not(#_){display:block!important}
 html[data-only="menu"] :has(> #rightRail) > :not(#rightRail){display:none!important}
 html[data-only="menu"] body > #ctxRunsOverlay{display:none!important}
 /* THE SETTINGS PAGE IS OPENED FROM THE MENU - the context graph's gear and the configuration rows both call it -
@@ -2085,18 +2108,15 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
   <div class="tb-sep"></div>
 
   <!-- Level of detail and Blocks — the appearance the whole UI shares (data-den / data-blocks on <html>) -->
-  <div class="tb-group" id="denGroup" title="Level of detail — Full shows everything; Hover shows a turn's chrome when you point at it; Zen keeps the words, the output and the time">
-    <button class="tb-btn" data-den="full"  onclick="CH.setDensity('full')">Full</button>
-    <button class="tb-btn" data-den="hover" onclick="CH.setDensity('hover')">Hover</button>
-    <button class="tb-btn" data-den="zen"   onclick="CH.setDensity('zen')">Zen</button>
-  </div>
+  <!-- Full · Hover · Zen are in the appearance menu (Aa) - not a second time here (owner, 2026-10-03) -->
+
   <button class="tb-btn" id="blocksBtn" onclick="CH.toggleBlocks()" title="Blocks — the per-turn backgrounds and rules; off is a flatter, quieter transcript">Blocks</button>
   <button class="tb-btn" id="xplBtn" onclick="CH._xplToggle()" title="Pull the transcript apart into layers: what each turn read on the left, what it produced on the right">Explode</button>
   <span class="tb-xm" id="xplSeg"><button class="tb-btn" data-xm="cards" onclick="CH.explodeMode('cards')" title="Every pane as layer cards">Cards</button><button class="tb-btn" data-xm="front" onclick="CH.explodeMode('front')" title="The layers pulled apart in depth">Front</button><button class="tb-btn" data-xm="iso" onclick="CH.explodeMode('iso')" title="The layers across an isometric plane">Iso</button></span>
 
   <!-- Layout toggles -->
   <div class="tb-group" title="Panel layout">
-    <button class="tb-btn" id="viewToggleBtn" onclick="CH.toggleViewMode()" title="Toggle minimal / full layout — minimal centres the input box for empty sessions">Min</button>
+    <button class="tb-btn" id="viewToggleBtn" onclick="CH.toggleViewMode()" title="The width of the conversation: Min is the usual width, Full uses the room there is">Min</button>
     <button class="tb-btn" onclick="CH.toggleRight()" title="Toggle the side menu (history, config, context, graphs…)">Menu</button>
   </div>
   <span class="xmseg pseg" title="Open a section beside the chat — the tri-page, with the columns you pick">
@@ -2208,6 +2228,10 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="row"><label style="min-width:56px">STT</label><input type="checkbox" id="cfgStt" checked></div>
     <div class="row"><label style="min-width:56px">Auto-play</label><input type="checkbox" id="cfgAutoPlay" checked></div>
     <div class="row"><label style="min-width:56px" title="Silence that ends your turn and submits">Mic pause</label><input type="number" id="cfgVadPause" value="2.0" min="0.8" max="10" step="0.1" style="width:58px" title="Seconds of silence before the mic stops and submits"></div>
+    <div class="sec" style="margin-top:5px">Delivery</div>
+    <label class="row numrow" title="Where a finished answer ALSO goes - the chat always shows it. 'Let the model choose' asks a small model (off the GPU) whether the canvas, a report, a podcast, a note... would serve you better, and most answers stay in the chat alone"><select id="cfgDelivery" style="flex:1;min-width:0" onchange="CH._dlvPersist()"><option value="chat">The chat only</option><option value="auto">Let the model choose</option><option value="canvas">Canvas - the answer beside the chat</option><option value="canvas_html">HTML report on the canvas</option><option value="html">HTML report</option><option value="podcast">Podcast</option><option value="notebook">Notebook</option><option value="memory">Memory</option><option value="telegram">Telegram</option><option value="email">Email</option></select><span class="nlbl" style="flex:0 0 auto">Also deliver</span></label>
+    <label class="row numrow" title="The style a delivered answer is shaped into - the same profiles as Output format; the channel's own style when blank"><select id="cfgDeliveryStyle" style="flex:1;min-width:0" onchange="CH._dlvPersist()" onfocus="CH._dlvStyles()"><option value="">The channel's own style</option></select><span class="nlbl" style="flex:0 0 auto">Style</span></label>
+    <label class="row numrow" title="Where an HTML report shows - every HTML report: the button under a reply, a re-delivery, one the model chose"><select id="cfgHtmlOpen" style="flex:1;min-width:0" onchange="CH._dlvPersist()"><option value="canvas">On the canvas</option><option value="tab">A new tab</option><option value="link">A link only</option></select><span class="nlbl" style="flex:0 0 auto">HTML opens</span></label>
     <div class="sec" style="margin-top:5px">Motion</div>
     <label class="row numrow" title="The cursor at the end of a reply while it is being written"><select id="cfgMotionCursor" style="flex:1;min-width:0"><option value="bar">Bar - a thin line that breathes</option><option value="block">Block</option><option value="underscore">Underscore</option><option value="dot">Dot</option><option value="glow">Glow</option><option value="none">None</option></select><span class="nlbl" style="flex:0 0 auto">Cursor</span></label>
     <label class="row numrow" title="How a new message arrives in the transcript"><select id="cfgMotionReply" style="flex:1;min-width:0"><option value="rise">Rise - slides up as it fades in</option><option value="fade">Fade in</option><option value="none">None</option></select><span class="nlbl" style="flex:0 0 auto">Messages</span></label>
@@ -2337,6 +2361,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="sec" style="margin-top:5px">Session Memory</div>
     <script src="/ui/vera-notes.js"></script>
 <script src="/ui/elements/vera_markdown.js"></script>
+<script src="/ui/elements/vera_output.js"></script>
 <script src="/ui/widgets/widget_element.js"></script>
     <vera-session-notes id="ctxNotesEl" scope="chat" title="Chat session memory"></vera-session-notes>
     <div class="sec" style="margin-top:5px">Sources</div>
@@ -2380,6 +2405,14 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
        (c) run any cap directly with form-driven params — the
        result is appended to the chat and recorded into memory so
        it's available as context on the next turn. -->
+  <!-- ── AGENTS PANE (owner, 2026-10-04: "setup agents from the chat ui lhm") ────────────
+       Both parts are widgets: <vera-widget> cards over agent.list (pick one to edit it, or use it here), and a
+       form over agent.get that saves through agent.patch - only the fields you changed. -->
+  <div class="rpane" id="rpAgents">
+    <div id="rpAgentList"></div>
+    <div id="rpAgentEdit"><div class="lhm-empty" style="padding:8px 2px">Pick an agent to edit it, or + New agent.</div></div>
+  </div>
+
   <div class="rpane" id="rpCaps">
     <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
       <input id="rpCapSearch" placeholder="Filter caps…" style="flex:1;font-size:10px;height:22px" oninput="CH._renderRailCaps()">
@@ -3060,7 +3093,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       <template id="cvBannerTpl">
         <span slot="banner-start" class="cv-bn"><b>Session canvas</b><span class="lbl" id="cvColSub"></span><span id="cvDrvRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · canvas"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._cvDrvUndo()" title="Undo the directive that placed this">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button><button class="btn xs" onclick="CH._cvDrvRibbon(null)" title="Dismiss">&#215;</button></span></span>
         <!-- no NOW counter here: the items it counted are in the column under it, countable by eye (owner, 2026-09-23) -->
-        <span slot="banner-end" class="cv-bn"><span class="xmseg" id="cvColCols" title="Columns on the stage — auto reads the stage's width and what is on it; 1-4 pin the count"><b class="cols-k">COLS</b><button class="btn xs" data-cols="auto" onclick="CH._cvColumns('auto')" title="Let the canvas choose, from its width and its content">auto</button><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span><button class="btn xs" id="cvEnrichBtn" onclick="CH._cvEnrichToggle(this)" title="Enrich: after each reply, bring forth what else is relevant - the dashboard reads, news, web results, the fabric's records - as widgets and browsers beside it (no model is called). Click to turn it off or on.">&#10022; enrich</button><button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button><button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></span>
+        <span slot="banner-end" class="cv-bn"><span class="xmseg" id="cvColCols" title="Columns on the stage — auto reads the stage's width and what is on it; 1-4 pin the count"><b class="cols-k">COLS</b><button class="btn xs" data-cols="auto" onclick="CH._cvColumns('auto')" title="Let the canvas choose, from its width and its content">auto</button><button class="btn xs" data-cols="1" onclick="CH._cvColumns(1)">1</button><button class="btn xs" data-cols="2" onclick="CH._cvColumns(2)">2</button><button class="btn xs" data-cols="3" onclick="CH._cvColumns(3)">3</button><button class="btn xs" data-cols="4" onclick="CH._cvColumns(4)">4</button></span><button class="btn xs" id="cvEnrichBtn" onclick="CH._cvEnrichToggle(this)" title="Enrich: after each reply, bring forth what else is relevant - the dashboard reads, news, web results, the fabric's records - as widgets and browsers beside it (no model is called). Click to turn it off or on.">&#10022; enrich</button><button class="btn xs" id="cvTellBtn" onclick="CH._cvTellToggle(this)" title="Tell the model: before each answer, a short note (about 300 tokens) of what the canvas is showing for the turn - so the reply can talk about it. Click to turn it off or on; the canvas still fills either way.">&#9673; tell</button><button class="btn xs" data-runs="cv" onclick="CH._runsToggle('cv')" title="The runs between the turns and the items they made or read — the same switch as the ⋯ sheet's">Runs</button><button class="btn xs" onclick="CH.togglePage('canvas')" title="Close the canvas column">&#215;</button></span>
       </template>
       <div class="tri-bd" id="canvasColumnBody"></div>
     </div>
@@ -3232,6 +3265,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="ctab" onclick="CH.ctxTab('goals',this)" title="Long-term goals the system is executing over days (strategic dream projects)">🎯 Goals</div>
     <div class="ctab" onclick="CH.ctxTab('loops',this)" title="All agentic loops — running and recent — pick any back up where it left off">⟳ Loops</div>
     <div class="ctab rtab" onclick="CH.railTab('Caps',this)">Caps</div>
+    <div class="ctab rtab" onclick="CH.railTab('Agents',this)">Agents</div>
     <div class="ctab rtab" onclick="CH.railTab('Panels',this)">Panels</div>
   </div>
   <div id="ctxCtrl">
@@ -3668,17 +3702,22 @@ const CH = (() => {
     const btn = document.getElementById('jumpToBottomBtn');
     if(btn) btn.style.display = near ? 'none' : 'flex';
   }
+  /* Following the tail is INSTANT (owner, 2026-10-01: "when chat is streaming in to the chat ui it sometimes jerks back
+     and forth"). #msgs scrolls smoothly for the reader, so every per-frame scrollTop write while a reply streamed started
+     a fresh smooth glide from wherever the last one had got to - and mid-glide the scroll listener saw "80 px from the
+     bottom" and dropped the follow, so the view chased the reply in lurches. */
+  function _toBottom(b){ try{ b.scrollTo({ top:b.scrollHeight, behavior:'instant' }); }catch(_){ b.scrollTop = b.scrollHeight; } }
   function scroll(force){
     const b = BOX(); if(!b) return;
     if(force){
       _stickToBottom = true;
-      b.scrollTop = b.scrollHeight;
+      _toBottom(b);
       const btn = document.getElementById('jumpToBottomBtn');
       if(btn) btn.style.display = 'none';
       return;
     }
     if(_stickToBottom){
-      b.scrollTop = b.scrollHeight;
+      _toBottom(b);
     }
   }
   /* Wire the user-intent listeners once the DOM is ready. We do this here
@@ -3813,26 +3852,28 @@ const CH = (() => {
   }
   /* The panel a diagram lands in: a titled strip under whatever was exploded, closable, with the reason the
      server gave for reading the thing that way. */
-  async function _xpPanel(host, attrs, label, why){
+  async function _xpPanel(host, attrs, label, why, full){
     const id='xp'+(++_XP_SEQ);
     const box=document.createElement('div');
     box.className='xp-inline'; box.dataset.xp=id;
-    box.style.cssText='flex:0 0 auto;margin:6px 0 2px;border:1px solid var(--border,#2a2622);border-radius:4px;overflow:hidden;background:var(--bg1,#17140f)';
+    box.style.cssText=full ? 'position:absolute;inset:0;z-index:42;display:flex;flex-direction:column;overflow:hidden;background:var(--bg1,#17140f)'   /* full screen: it replaces the scene until closed */
+      : 'flex:0 0 auto;margin:6px 0 2px;border:1px solid var(--border,#2a2622);border-radius:4px;overflow:hidden;background:var(--bg1,#17140f)';
     box.innerHTML='<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;font:9px var(--mono,monospace);color:var(--dim,#6a6058);border-bottom:1px solid var(--border,#2a2622)">'
       + '<span style="color:var(--acc,#5a9e8f)">explode</span><span class="xp-l" style="color:var(--text,#d8d0c6)"></span>'
       + '<span class="xp-w" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>'
       + '<button class="cb-act xp-x" title="Close this diagram">close</button></div>'
-      + '<div class="xp-body" style="height:340px"></div>';
+      + (full ? '<div class="xp-body" style="flex:1 1 auto;min-height:0"></div>' : '<div class="xp-body"></div>');   // the embed sizes itself: its diagram, the grip, the caption (full screen: the room it has)
     box.querySelector('.xp-l').textContent=label||'';
     box.querySelector('.xp-w').textContent=why||'';
     box.querySelector('.xp-x').onclick=()=>{ box.remove(); };
+    if(full){ const xb=box.querySelector('.xp-x'); xb.textContent='back to the scene'; xb.title='Close the diagram and go back to the exploded scene'; }
     host.appendChild(box);
     try{
       await _xpLib();
       const el=document.createElement('vera-graph-embed');
       el.setAttribute('renderer','struct');
       Object.keys(attrs||{}).forEach(k=>{ if(attrs[k]!=null && attrs[k]!=='') el.setAttribute(k, String(attrs[k])); });
-      el.setAttribute('height','330');
+      el.setAttribute('height', full ? String(Math.max(320, (box.querySelector('.xp-body').clientHeight || host.clientHeight || 600) - 6)) : '330');
       el.style.cssText='display:block;width:100%';
       box.querySelector('.xp-body').appendChild(el);
     }catch(e){
@@ -3864,11 +3905,11 @@ const CH = (() => {
       else if(a.record_id) attrs.record = a.record_id;
       else if(a.record_ids) attrs.records = a.record_ids.join(',');
       else if(a.text) attrs.text = a.text;
-      return _xpPanel(host, attrs, tg.label || name, tg.why || '');
+      return _xpPanel(host, attrs, tg.label || name, tg.why || '', true);
     }
     const txt = String(d.text || '');
-    if(d.code && txt.trim()) return _xpPanel(host, { code: txt, lang: d.lang || '' }, name + ' \u00b7 ' + txt.split('\n').length + ' lines', 'the ' + (d.kind || 'card') + ' this card holds');
-    if(txt.trim().length >= 40) return _xpPanel(host, { text: txt }, name + ' \u00b7 ' + txt.length + ' chars', 'the text this card holds');
+    if(d.code && txt.trim()) return _xpPanel(host, { code: txt, lang: d.lang || _xpGuessLang(txt) }, name, 'the ' + (d.kind || 'card') + ' this card holds', true);
+    if(txt.trim().length >= 40) return _xpPanel(host, { text: txt }, name + ' \u00b7 ' + txt.length + ' chars', 'the text this card holds', true);
     appendSys('Nothing to explode in that card \u2014 it holds no record, no code and no passage.');
   }
   /* What a card holds, as a CONTRACT rather than a panel: the same resolution the deep dive uses, handed back to
@@ -3882,7 +3923,7 @@ const CH = (() => {
       const a = tg.args || {};
       if(tg.cap === 'code.explode'){ url = '/code/explode'; body = a; }
       else body = a;
-    } else if(d.code && txt.trim()){ url = '/code/explode'; body = { text: txt, lang: d.lang || '' }; }
+    } else if(d.code && txt.trim()){ url = '/code/explode'; body = { text: txt, lang: d.lang || _xpGuessLang(txt) }; }
     else if(txt.trim().length >= 40){ body = { text: txt }; }
     else return { error: 'this card holds no record, no code and no passage' };
     try{
@@ -3891,37 +3932,111 @@ const CH = (() => {
       return (doc && !doc.error) ? doc : { error: (doc && doc.error) || 'explode failed' };
     }catch(e){ return { error: String(e && e.message || e) }; }
   }
+  /* A card's own structure (its \u2318): the card explodes INTO the scene - what it holds as cards, in cards, front and iso,
+     the chip's way back to the chat - rather than a small face on the card. */
+  /* A code block with no language: the explode reads nothing but the module without one - guess it from the code. */
+  function _xpGuessLang(s){ s=String(s||'');
+    if(/^\s*(def \w+\s*\(|class \w+\s*[(:]|import \w|from [\w.]+ import )/m.test(s)) return 'python';
+    if(/\binterface \w+\s*\{|:\s*(string|number|boolean)\b/.test(s)) return 'typescript';
+    if(/\b(function\s*\w*\s*\(|const \w+\s*=|let \w+\s*=|=>|require\(|export )/.test(s)) return 'javascript';
+    if(/^\s*(package \w+|func \w+\s*\()/m.test(s)) return 'go';
+    return ''; }
+  /* A card's own structure (its \u2318) IN PLACE: the turn grows a "structure" plate in the chat's own exploded layout - the
+     card's classes, functions, methods and what it uses, the relations as runs, a run from the card into it. Pressed
+     again it folds away. (In a structure scene the card's structure becomes the scene, as before.) */
+  const _XPL_STRUCT={};
   async function _xplCardGraph(d){
     if(!_xplEl || !d.id) return;
+    if(!_xpl.doc){ const parts=String(d.id).split(':'), mid=parts[0], from=parts.slice(1).join(':');
+      if(_XPL_STRUCT[mid] && _XPL_STRUCT[mid].from===from){ delete _XPL_STRUCT[mid]; try{ _xplEl.graphClear(d.id); }catch(_){} _xplRefresh(); return; }
+      const doc0 = await _xpContractFor(d);
+      try{ _xplEl.setCardGraph(d.id, doc0); }catch(_){}   // the card's own MINI structure, beside the plate
+      if(!doc0 || doc0.error){ appendSys('Nothing to explode in that card \u2014 ' + esc((doc0 && doc0.error) || 'no structure')); return; }
+      const sc = window.VeraExploded && VeraExploded.contractScene ? VeraExploded.contractScene(doc0, {}) : { layers:[], turns:[] };
+      const cards = []; sc.layers.forEach(L=>{ sc.turns.forEach(t=>{ (t[L.key]||[]).forEach(c=>cards.push(c)); }); });
+      const links = []; sc.turns.forEach(t=>{ (t.links||[]).forEach(l=>links.push(l)); });
+      if(!cards.length){ appendSys('Nothing to explode in that card \u2014 the '+(doc0.kind||'source')+' has no structure to draw.'); return; }
+      _XPL_STRUCT[mid]={ from, cards:cards.slice(0,60), links, doc:doc0, label:d.title||'' };
+      _xplRefresh(); return; }
     const doc = await _xpContractFor(d);
-    try{ _xplEl.setCardGraph(d.id, doc); }catch(_){}
-    if(doc && doc.error) appendSys('No diagram for that card \u2014 ' + esc(doc.error));
+    try{ if(typeof _xplEl.graphClear==='function') _xplEl.graphClear(d.id); else _xplEl.setCardGraph(d.id, doc); }catch(_){}
+    if(!doc || doc.error){ appendSys('Nothing to explode in that card \u2014 ' + esc((doc && doc.error) || 'no structure')); return; }
+    const txt = String(d.text || ''), attrs = d.record ? { record: d.record } : (d.code && txt ? { code: txt, lang: d.lang || '' } : { text: txt });
+    _xplShowContract('card:' + d.id, doc, d.title || d.kind || 'card', attrs, 'what this card holds');
   }
+  /* Explode INTO the scene: the structure of a message, a code block or an /explode target drawn as the exploded scene,
+     in whichever style it is in (cards · front · iso) — a station per file or paragraph, a plate per kind of symbol or
+     entity, the relations as the runs (VeraExploded.contractScene). A chip over the scene names it, opens the structured
+     diagram of the same thing, and goes back to the chat's own scene; Explode on the same thing again goes back too. */
+  async function _xpDoc(url, body){
+    try{ const r=await fetch(BASE+url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const d=await r.json();
+      return (d&&!d.error&&d.ok!==false)?d:{error:(d&&(d.error||d.why))||'explode failed'}; }catch(e){ return {error:String(e&&e.message||e)}; }
+  }
+  async function _xplShowDoc(key, url, body, label, attrs, why){
+    if(_xpl.doc&&_xpl.doc.key===key){ _xplDocClear(); return; }   // the action toggles
+    if(!(window.VeraExploded&&window.VeraExploded.contractScene)){ const host=document.getElementById('xplHost')||BOX(); return _xpPanel(host, attrs, label, why||''); }   // the scene's script missing: the diagram, as before
+    const doc=await _xpDoc(url, body);
+    if(doc.error){ appendSys('Nothing to explode \u2014 '+esc(doc.error)); return; }
+    return _xplShowContract(key, doc, label, attrs, why);
+  }
+  function _xplShowContract(key, doc, label, attrs, why){
+    if(_xpl.doc&&_xpl.doc.key===key){ _xplDocClear(); return; }
+    const scene=window.VeraExploded.contractScene(doc,{label});
+    if(!scene.turns.length){ appendSys('Nothing to explode \u2014 the '+(doc.kind||'source')+' has no structure to draw.'); return; }
+    _xpl.doc={ key, scene, doc, label, attrs, why:why||'' };
+    if(!_xpl.on) explode(true); else _xplRefresh();
+    _xplDocChip();
+  }
+  /* The structure as a vera-graph, under the scene: every method the graph has - Structure 3D (Live ops' lattice: a plane
+     per kind of symbol, an area per file or class), Structure (the explode renderer), Live ops, exploded, mermaid, the plain graph. */
+  let _XPG_LIB=null;
+  function _xpGraphLib(){ if(_XPG_LIB) return _XPG_LIB; _XPG_LIB=new Promise(ok=>{ const ready=()=>!!(window.veraUI&&veraUI.Graph&&veraUI.Graph.create&&veraUI.Graph.fromContract);
+      if(ready()) return ok(true); if(!(window.veraUI&&veraUI.Graph&&veraUI.Graph.create)){ const s=document.createElement('script'); s.src=BASE+'/ui/vera-graph.js'; s.async=true; document.head.appendChild(s); }
+      let n=0; const t=setInterval(()=>{ if(ready()||++n>60){ clearInterval(t); ok(ready()); } }, 150); }); return _XPG_LIB; }
+  async function _xpGraphPanel(host, doc, label){
+    const old=host.querySelector(':scope > .xp-inline'); if(old) old.remove();
+    const box=document.createElement('div'); box.className='xp-inline';
+    box.style.cssText='position:absolute;inset:0;z-index:42;display:flex;flex-direction:column;overflow:hidden;background:var(--bg1,#17140f)';   /* over the scene's foot: the scene host lays its children in a row */
+    box.innerHTML='<div style="flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:4px 8px;font:9px var(--mono,monospace);color:var(--dim,#6a6058);border-bottom:1px solid var(--border,#2a2622)"><span style="color:var(--acc,#5a9e8f)">graph</span><span class="xp-l" style="color:var(--text,#d8d0c6)"></span><span style="flex:1"></span><button class="cb-act xp-x" title="Close the graph and go back to the exploded scene">back to the scene</button></div><div class="xp-body" style="flex:1 1 auto;min-height:0;position:relative"></div>';
+    box.querySelector('.xp-l').textContent=label||''; box.querySelector('.xp-x').onclick=()=>box.remove(); host.appendChild(box);
+    if(!(await _xpGraphLib())){ box.querySelector('.xp-body').textContent='the graph (/ui/vera-graph.js) did not load'; return box; }
+    const g=veraUI.Graph.create(box.querySelector('.xp-body'), { height:'fill', sidebar:false, actionsEnabled:false, showLeftPanel:false });
+    g.load(veraUI.Graph.fromContract(doc)); let n=0; const want=()=>{ try{ g.setMode('struct-iso'); }catch(_){} if((!g.getMode||g.getMode()!=='struct-iso')&&++n<20) setTimeout(want, 300); }; want();
+    return box;
+  }
+  function _xplDocChip(){
+    const host=document.getElementById('xplHost'); if(!host) return; let c=host.querySelector(':scope > .xpl-doc');
+    if(!_xpl.doc){ if(c) c.remove(); return; }
+    if(!c){ c=document.createElement('div'); c.className='xpl-doc'; host.appendChild(c);
+      c.style.cssText='position:absolute;right:40px;top:92px;z-index:40;display:flex;align-items:center;gap:8px;max-width:calc(100% - 24px);padding:4px 6px 4px 9px;border-radius:6px;background:var(--bg1,#17140f);box-shadow:0 0 0 1px var(--border,#2a2622),0 6px 18px rgba(0,0,0,.35);font:10px var(--mono,monospace);color:var(--dim,#6a6058)';
+      c.addEventListener('click', e=>{ const b=e.target.closest&&e.target.closest('[data-xd]'); if(!b||!_xpl.doc) return; if(b.dataset.xd==='back') _xplDocClear(); else if(b.dataset.xd==='graph'&&_xpl.doc.doc) _xpGraphPanel(host, _xpl.doc.doc, _xpl.doc.label); else _xpPanel(host, _xpl.doc.attrs, _xpl.doc.label, _xpl.doc.why||'the same structure as a diagram', true); }); }
+    const s=_xpl.doc.scene||{}, nt=(s.turns||[]).length, np=(s.layers||[]).length, bs='font:inherit;color:var(--text,#d8d0c6);background:none;border:1px solid var(--border,#2a2622);border-radius:4px;padding:1px 7px;cursor:pointer';
+    c.innerHTML='<span style="color:var(--acc,#5a9e8f)">exploded</span><span class="xd-l" style="color:var(--text,#d8d0c6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><span class="xd-n"></span>'
+      +'<button data-xd="graph" style="'+bs+'" title="The same structure as a graph, under the scene: Structure 3D, Live ops, exploded and every other method">graph</button><button data-xd="diagram" style="'+bs+'" title="The structured diagram of the same thing, under the scene">diagram</button><button data-xd="back" style="'+bs+'" title="Back to the chat\u2019s own scene">back to the chat</button>';
+    c.querySelector('.xd-l').textContent=_xpl.doc.label||'';
+    c.querySelector('.xd-n').textContent=nt+' station'+(nt===1?'':'s')+' \u00b7 '+np+' plate'+(np===1?'':'s')+(s.across?' \u00b7 '+s.across+' across':'')+' \u00b7 by '+(s.by||'kind');
+  }
+  function _xplDocClear(){ _xpl.doc=null; _xplDocChip(); _xplRefresh(); }
   async function _msgExplode(mid, btn){
     const rec=_MSG_REGISTRY[mid]; if(!rec) return;
-    const wrap=document.querySelector('.mwrap[data-mid="'+mid+'"]'); if(!wrap) return;
-    const old=wrap.querySelector(':scope > .xp-inline'); if(old){ old.remove(); return; }   // the action toggles
     const txt=String(rec.getContent()||'');
     const fences=_xpFences(txt);
     if(btn){ btn.classList.add('ok'); setTimeout(()=>btn.classList.remove('ok'), 900); }
     if(fences.length && fences[0].lines>=3){
       const f=fences[0];
-      await _xpPanel(wrap, {code:f.code, lang:f.lang}, (f.lang||'code')+' · '+f.lines+' lines',
-                     fences.length>1 ? 'the largest of '+fences.length+' code blocks in this message' : 'the code in this message');
-      return;
+      return _xplShowDoc('msg:'+mid, '/code/explode', {text:f.code, lang:f.lang||_xpGuessLang(f.code)}, (f.lang||'code')+' · '+f.lines+' lines', {code:f.code, lang:f.lang},
+                         fences.length>1 ? 'the largest of '+fences.length+' code blocks in this message' : 'the code in this message');
     }
     const prose=txt.replace(/```[\s\S]*?```/g,' ').trim();
     if(prose.length<40){ appendSys('Nothing to explode in that message — it holds no passage and no code block.'); return; }
-    await _xpPanel(wrap, {text:prose}, 'passage · '+prose.length+' chars', 'the prose of this message');
+    return _xplShowDoc('msg:'+mid, '/nlp/explode/prose', {text:prose}, 'passage · '+prose.length+' chars', {text:prose}, 'the prose of this message');
   }
   async function _codeExplode(id, btn){
     const blk=_CODE_BLOCKS[id]; if(!blk) return;
-    const card=document.querySelector('.code-card[data-cb="'+id+'"]'); if(!card) return;
-    const old=card.querySelector(':scope > .xp-inline'); if(old){ old.remove(); if(btn) btn.classList.remove('ok'); return; }
-    if(btn) btn.classList.add('ok');
-    await _xpPanel(card, {code:blk.code, lang:blk.lang, path:blk.filename||''},
+    if(btn){ btn.classList.add('ok'); setTimeout(()=>btn.classList.remove('ok'), 900); }
+    return _xplShowDoc('code:'+id, '/code/explode', {text:blk.code, lang:blk.lang||_xpGuessLang(blk.code)},
                    (blk.filename||blk.lang||'code')+' · '+blk.code.split('\n').length+' lines',
-                   'this code block');
+                   {code:blk.code, lang:blk.lang, path:blk.filename||''}, 'this code block');
   }
   /* /explode <what> — a path, a record id, a graph node id, or a passage. The server says what it is. */
   async function _slashExplode(arg){
@@ -3950,10 +4065,7 @@ const CH = (() => {
       else if(a.record_ids) attrs.records=a.record_ids.join(',');
       else if(a.text) attrs.text=a.text;
     }
-    const row=_mkMsg('agent','explode','');
-    BOX().appendChild(row.wrap);
-    await _xpPanel(row.body, attrs, tg.label||what, tg.why||'');
-    try{ scroll(true); }catch(_){}
+    return _xplShowDoc('slash:'+what, tg.cap==='code.explode'?'/code/explode':'/nlp/explode/prose', a, tg.label||what, attrs, tg.why||'');
   }
   /* ── Save modal helpers ── */
   function _saveModalOpen(mode, title, content){
@@ -4217,9 +4329,10 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   /* Turn this message into a spoken podcast episode (podcast.generate with the
      message as the source). Non-blocking — the episode renders in the Podcast
      library / surfaces via podcast.progress events. */
-  async function _msgPodcast(mid){
-    const rec = _MSG_REGISTRY[mid]; if(!rec) return;
-    const content = rec.getContent();
+  async function _msgPodcast(mid, given){
+    // a message by id, or any text given (the shared prose row on a canvas item or a loop's answer)
+    const rec = _MSG_REGISTRY[mid]; if(!rec && given==null) return;
+    const content = given!=null ? String(given) : rec.getContent();
     if(!content.trim()){ appendSys('<span style="color:var(--dim2)">Message is empty — nothing to voice.</span>'); return; }
     const topic=(content.trim().split('\n').find(l=>l.trim())||'Vera episode').slice(0,120);
     appendSys('<span style="color:var(--dim2)">🎙 Generating podcast episode…</span>');
@@ -4237,24 +4350,26 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   /* Re-deliver this message as a rich, self-contained HTML report (report.html)
      — themed doc + Mermaid + inline-SVG infographics. The original message is
      untouched; the report opens inline and can be pinned to the gallery. */
-  async function _msgHtmlReport(mid){
-    const rec = _MSG_REGISTRY[mid]; if(!rec) return;
-    const content = rec.getContent();
+  async function _msgHtmlReport(mid, given){
+    const rec = _MSG_REGISTRY[mid]; if(!rec && given==null) return;
+    const content = given!=null ? String(given) : rec.getContent();
     if(!content.trim()){ appendSys('<span style="color:var(--dim2)">Message is empty — nothing to render.</span>'); return; }
     const title=(content.trim().split('\n').find(l=>l.trim())||'Report').replace(/^#+\s*/,'').slice(0,120);
-    appendSys('<span style="color:var(--dim2)">🖼 Building HTML report…</span>');
+    const where=_dlvCfg().html;
+    appendSys('<span style="color:var(--dim2)">🖼 Building HTML report'+(where==='canvas'?' for the canvas':'')+'…</span>');
     try{
+      // "HTML opens on the canvas": the same report, drawn on the session canvas instead of a tab (report.canvas)
       const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({name:'report.html',session_id:SID||'',arguments:{
-          content, title, mode:'auto'
+        body:JSON.stringify({name:(where==='canvas'?'report.canvas':'report.html'),session_id:SID||'',arguments:{
+          content, title, mode:'auto', session_id:SID||''
         }})});
       const j=await r.json();
       const c=j&&j.content;
       if(c&&c.ok&&c.url){
         const href=BASE+c.url;
         const gal=_galButton({title:title,url:c.url,kind:'html_report',download_url:c.download_url||'',artifact_id:c.artifact_id||'',source_id:SID||''});
-        appendSys('<span style="color:var(--ok)">🖼 HTML report ready — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open report</a> ('+esc(c.mode_used||'')+')</span>'+gal);
-        try{ window.open(href,'_blank','noopener'); }catch(_){}
+        appendSys('<span style="color:var(--ok)">🖼 HTML report '+(where==='canvas'?'on the canvas':'ready')+' — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open in a tab</a>'+(c.mode_used?' ('+esc(c.mode_used)+')':'')+'</span>'+gal);
+        _dlvReveal(where==='canvas'?'canvas_html':'html', href);
       } else appendSys('<span style="color:var(--err)">HTML report failed: '+esc((c&&c.error)||'unknown')+'</span>');
     }catch(e){ appendSys('<span style="color:var(--err)">HTML report failed: '+esc(String(e&&e.message||e))+'</span>'); }
   }
@@ -4276,26 +4391,136 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     const avail=(_redeliverChans||[]).filter(c=>c&&c.available!==false&&c.id!=='fabric');
     if(!avail.length){ appendSys('<span style="color:var(--err)">No delivery channels available.</span>'); return; }
     const btns=avail.map(c=>`<button class="mact" onclick="CH._redeliverDo('${mid}','${esc(c.id)}',this)" title="Re-deliver as ${esc(c.label||c.id)}">${esc(c.label||c.id)}</button>`).join(' ');
-    appendSys('<span style="color:var(--dim2)">⇄ Re-deliver this message as: </span>'+btns);
+    // a STYLE for whichever vector is pressed - the same profiles as Output format (the channel's own when blank)
+    const styles='<select class="rd-style" id="rdStyle_'+esc(mid)+'" title="The style it is shaped into" style="font-size:10px;max-width:150px">'+_dlvStyleOptions(_dlvCfg().style)+'</select>';
+    appendSys('<span style="color:var(--dim2)">⇄ Re-deliver this message as: </span>'+btns+' <span style="color:var(--dim2)">in</span> '+styles);
   }
   async function _redeliverDo(mid, channel, btn){
     const rec = _MSG_REGISTRY[mid]; if(!rec) return;
     const content = rec.getContent(); if(!content.trim()) return;
     const title=(content.trim().split('\n').find(l=>l.trim())||'Output').replace(/^#+\s*/,'').slice(0,120);
+    // "HTML opens on the canvas": the HTML vector lands there too
+    if(channel==='html'&&_dlvCfg().html==='canvas') channel='canvas_html';
+    const format=(document.getElementById('rdStyle_'+mid)||{}).value||'';
     if(btn){ btn.disabled=true; btn.textContent='…'; }
     try{
       const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({name:'output.redeliver',session_id:SID||'',arguments:{channel,content,title}})});
+        body:JSON.stringify({name:'output.redeliver',session_id:SID||'',arguments:{channel,content,title,format,session_id:SID||''}})});
       const j=await r.json(); const c=j&&j.content;
       if(c&&c.ok){
         let extra='',gal='';
-        if(c.url){ const href=BASE+c.url; extra=' — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open</a>'; try{window.open(href,'_blank','noopener');}catch(_){}
-          gal=_galButton({title:title,url:c.url,kind:(channel==='html'?'html_report':'other'),download_url:c.download_url||'',artifact_id:c.artifact_id||'',source_id:SID||''}); }
+        if(c.url){ const href=BASE+c.url; extra=' — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open</a>';
+          gal=_galButton({title:title,url:c.url,kind:(/html/.test(channel)?'html_report':'other'),download_url:c.download_url||'',artifact_id:c.artifact_id||'',source_id:SID||''}); }
         else if(c.job_id||c.episode_id) extra=' — started (renders async)';
+        _dlvReveal(channel, c.url?BASE+c.url:'');
         appendSys('<span style="color:var(--ok)">⇄ Re-delivered as '+esc(channel)+extra+'</span>'+gal);
       } else appendSys('<span style="color:var(--err)">Re-deliver failed: '+esc((c&&c.error)||'unknown')+'</span>');
     }catch(e){ appendSys('<span style="color:var(--err)">Re-deliver failed: '+esc(String(e&&e.message||e))+'</span>'); }
   }
+  /* ═══ DELIVERY — where a finished answer ALSO goes (owner, 2026-10-02: "could the output options be turned into a
+     proper system that can deliver a selection of styles via any of the available delivery methods and expose this
+     to the chat/agentic loops - add a configuration option to the ui that lets the llm pick a delivery method - also
+     id like for html delivery to be able to go to the canvas instead of automatically opening a new tab").
+     The vectors are the server's one channel registry (output.channels - the canvas among them now), the styles its
+     one format registry (the Output format list). Settings › Delivery chooses: the chat only, one vector always, or
+     a model's pick per answer (output.deliver_auto - a small model off the GPU, most answers stay in the chat). The
+     chat's replies and the agent loop's final answers both go through _deliverAfter. ═══ */
+  const _DLV_KEY='vera_chat_delivery';
+  function _dlvCfg(){ return { mode:(document.getElementById('cfgDelivery')||{}).value||'chat',
+    // the style list fills once Output format has loaded its profiles: until then the saved choice stands
+    style:(document.getElementById('cfgDeliveryStyle')||{}).value||_dlvSaved().style||'', html:(document.getElementById('cfgHtmlOpen')||{}).value||'canvas' }; }
+  function _dlvPersist(){ try{ localStorage.setItem(_DLV_KEY, JSON.stringify(_dlvCfg())); }catch(_){} }
+  // the styles are the Output format list's own options (one registry): copied, never a second list
+  function _dlvStyleOptions(sel){
+    const src=document.getElementById('cfgFormat'); const seen={};
+    let h='<option value="">The channel\'s own style</option>';
+    if(src) [...src.options].forEach(o=>{ const v=o.value; if(!v||seen[v]) return; seen[v]=1; h+='<option value="'+esc(v)+'"'+(v===sel?' selected':'')+'>'+esc(o.textContent||v)+'</option>'; });
+    return h;
+  }
+  function _dlvStyles(){ const el=document.getElementById('cfgDeliveryStyle'); if(!el) return; const cur=el.value||_dlvSaved().style||''; el.innerHTML=_dlvStyleOptions(cur); if(cur) el.value=cur; }
+  function _dlvSaved(){ try{ return JSON.parse(localStorage.getItem(_DLV_KEY)||'null')||{}; }catch(_){ return {}; } }
+  function _dlvRestore(){
+    const o=_dlvSaved();
+    [['cfgDelivery','mode'],['cfgHtmlOpen','html']].forEach(([id,k])=>{ const el=document.getElementById(id); if(el&&o[k]&&[...el.options].some(op=>op.value===o[k])) el.value=o[k]; });
+    _dlvStyles();
+  }
+  // show what was delivered where: the canvas column opens for a canvas vector; an HTML report follows "HTML opens"
+  function _dlvReveal(channel, href){
+    if(channel==='canvas'||channel==='canvas_html'){ try{ if(typeof _pages!=='undefined'&&!_pages.has('canvas')) togglePage('canvas'); else _canvasColumnMount(); }catch(_){} return; }
+    if(href&&channel==='html'&&_dlvCfg().html==='tab'){ try{ window.open(href,'_blank','noopener'); }catch(_){} }
+  }
+  let _dlvTurnSeq=0;
+  async function _deliverAfter(text, request){
+    try{ _memAfterTurn(); }catch(_){}   // a reply finished: its memories are being written - the graph follows
+    const c=_dlvCfg(); if(c.mode==='chat') return;
+    text=String(text||'').trim(); if(text.length<40) return;           // a one-liner is the chat's alone
+    const turn=++_dlvTurnSeq;
+    const args={content:text, question:String(request||'').slice(0,1500), session_id:SID||'', style:c.style||'',
+                html_to_canvas:c.html==='canvas'};
+    if(c.mode!=='auto') args.channel=(c.mode==='html'&&c.html==='canvas')?'canvas_html':c.mode;
+    try{
+      const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:'output.deliver_auto',session_id:SID||'',arguments:args})});
+      const j=await r.json(); const d=(j&&j.content)||{};
+      if(turn!==_dlvTurnSeq) return;                                     // a newer answer has its own delivery
+      if(!d.ok){ appendSys('<span style="color:var(--err)">⇄ Delivery failed: '+esc(d.error||'unknown')+'</span>'); return; }
+      if(!d.delivered) return;                                            // the model kept it to the chat: nothing to say
+      const href=d.url?BASE+d.url:'';
+      appendSys('<span style="color:var(--ok)">⇄ Also delivered — '+esc(d.channel)+(d.style?' · '+esc(d.style):'')+'</span>'
+        +(href?' — <a href="'+esc(href)+'" target="_blank" rel="noopener" style="color:var(--acc)">open</a>':'')
+        +(c.mode==='auto'&&d.why?' <span style="color:var(--dim2)">('+esc(d.why)+')</span>':''));
+      _dlvReveal(d.channel, href);
+    }catch(e){ appendSys('<span style="color:var(--err)">⇄ Delivery failed: '+esc(String(e&&e.message||e))+'</span>'); }
+  }
+  try{ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', _dlvRestore); else setTimeout(_dlvRestore, 0); }catch(_){}
+
+  /* the reply's action row: its glyphs (one stroke weight, currentColor - they follow the theme) */
+  const _svg=(d)=>'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>';
+  const _MA_ICO={
+    copy:_svg('<rect x="5.5" y="5.5" width="8" height="8" rx="1.6"/><path d="M10.5 5.5V3.6A1.1 1.1 0 0 0 9.4 2.5H3.6A1.1 1.1 0 0 0 2.5 3.6v5.8a1.1 1.1 0 0 0 1.1 1.1h1.9"/>'),
+    explode:_svg('<circle cx="8" cy="8" r="1.8"/><circle cx="3" cy="3.5" r="1.2"/><circle cx="13" cy="3.5" r="1.2"/><circle cx="3.5" cy="12.8" r="1.2"/><circle cx="12.8" cy="12.5" r="1.2"/><path d="M6.6 6.7 4 4.4M9.4 6.7 12 4.4M6.7 9.4l-2.3 2.5M9.4 9.3l2.4 2.3"/>'),
+    canvas:_svg('<rect x="2" y="2.5" width="12" height="11" rx="1.6"/><path d="M8.5 2.5v11M8.5 7h5.5"/>'),
+    send:_svg('<path d="M2.5 8h10M9 4.5 12.5 8 9 11.5"/>'),
+    edit:_svg('<path d="M10.8 2.7 13.3 5.2 6 12.5l-3.2.7.7-3.2z"/>'),
+    resend:_svg('<path d="M13 8a5 5 0 1 1-1.6-3.7"/><path d="M13.2 2.8v2.7h-2.7"/>'),
+    html:_svg('<path d="M4 2.5h5.5L12.5 5.5v8H4z"/><path d="M9.5 2.5v3h3M6 9.5h4.5M6 11.5h3"/>'),
+    podcast:_svg('<rect x="6" y="2" width="4" height="7.5" rx="2"/><path d="M3.8 7.8a4.2 4.2 0 0 0 8.4 0M8 12v2"/>'),
+    notebook:_svg('<path d="M4 2.5h8.5v11H4a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 4 2.5z"/><path d="M5.5 2.5v11M7.5 6h3.5"/>'),
+    ide:_svg('<path d="m5.5 5-3 3 3 3M10.5 5l3 3-3 3"/>'),
+    project:_svg('<path d="M2.5 4.5h4l1.5 1.5h5.5v7h-11z"/>'),
+    think:_svg('<path d="M5.2 11.5h5.6M6 13.5h4M8 2.5a4 4 0 0 0-2.4 7.2c.4.3.6.8.6 1.3h3.6c0-.5.2-1 .6-1.3A4 4 0 0 0 8 2.5z"/>'),
+    channel:_svg('<path d="M2.5 5.5h9M9 3l2.5 2.5L9 8M13.5 10.5h-9M7 8l-2.5 2.5L7 13"/>')};
+  // "Send to": one menu, opened under its button (above it when the page has no room below), keyboard-walkable
+  function _maClose(){ document.querySelectorAll('.ma-dd.open').forEach(x=>x.classList.remove('open')); }
+  function _maMenu(btn){
+    const dd=btn&&btn.closest('.ma-dd'); if(!dd) return;
+    const open=!dd.classList.contains('open'); _maClose(); if(!open) return;
+    dd.classList.add('open'); const m=dd.querySelector('.ma-menu'); if(!m) return;
+    m.classList.remove('up'); const r=m.getBoundingClientRect(); if(r.bottom>window.innerHeight-8&&r.height<r.top) m.classList.add('up');
+    try{ m.querySelector('.ma-it').focus(); }catch(_){}
+  }
+  document.addEventListener('mousedown',e=>{ if(!(e.target&&e.target.closest&&e.target.closest('.ma-dd'))) _maClose(); },true);
+  document.addEventListener('keydown',e=>{
+    const m=document.querySelector('.ma-dd.open .ma-menu'); if(!m) return;
+    if(m.closest('.vo-acts')) return;   // the shared kit's row walks its own menu
+    if(e.key==='Escape'){ e.preventDefault(); const b=m.parentElement.querySelector('.ma-ddb'); _maClose(); try{ b.focus(); }catch(_){} return; }
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); const its=[...m.querySelectorAll('.ma-it')]; const i=its.indexOf(document.activeElement);
+      const n=its[(i+(e.key==='ArrowDown'?1:-1)+its.length)%its.length]; if(n) n.focus(); }
+  });
+  // the reply onto the session canvas, as a reading item (the canvas delivery vector)
+  async function _msgToCanvas(mid, btn){
+    const rec=_MSG_REGISTRY[mid]; if(!rec) return; const content=rec.getContent(); if(!String(content||'').trim()) return;
+    const title=(content.trim().split('\n').find(l=>l.trim())||'From the chat').replace(/^#+\s*/,'').slice(0,120);
+    if(btn) btn.classList.remove('ok','err');
+    try{
+      const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:'output.redeliver',session_id:SID||'',arguments:{channel:'canvas',content,title,session_id:SID||''}})});
+      const j=await r.json(); const c=(j&&j.content)||{};
+      if(btn) btn.classList.add(c.ok?'ok':'err');
+      if(c.ok) _dlvReveal('canvas'); else appendSys('<span style="color:var(--err)">Canvas: '+esc(c.error||'failed')+'</span>');
+    }catch(e){ if(btn) btn.classList.add('err'); }
+  }
+
   /* ★ Save to gallery — pins a produced artifact (HTML report, etc.) to the
      global artifacts gallery via gallery.add. The artifact payload is stashed by
      key so titles/urls with quotes survive the inline onclick. */
@@ -4362,21 +4587,41 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     // Hidden by default; revealed on .mwrap:hover via CSS.
     const actions=document.createElement('div');
     actions.className='msg-actions';
-    const editBtns = role==='user'
-      ? `<button class="mact" onclick="CH._msgEdit('${mid}')" title="Edit & resubmit (rewinds chat from here)">✎ Edit</button>`
-      + `<button class="mact" onclick="CH._msgResubmit('${mid}')" title="Resubmit unchanged (rewinds chat from here)">↻ Resend</button>`
-      : '';
-    actions.innerHTML= editBtns
-        + `<button class="mact" onclick="CH._msgCopy('${mid}',this)" title="Copy message text to clipboard">Copy</button>`
-      + `<button class="mact" onclick="CH._msgExplode('${mid}',this)" title="Explode this message into a structured diagram — its code, or its prose">Explode</button>`
-      + `<button class="mact" onclick="CH._msgSaveToNotebook('${mid}')" title="Save this message as a cell in a notebook">+ Notebook</button>`
-      + `<button class="mact" onclick="CH._msgSaveToIde('${mid}')" title="Save this message to a file via the IDE">+ IDE</button>`
-      + `<button class="mact" onclick="CH._msgSaveToProject('${mid}')" title="Add this message to a project (or a new one) in the dream system">+ Project</button>`
-      + `<button class="mact" onclick="CH._msgThinkLater('${mid}')" title="Mark this for later thought — a dream thinking-loop Vera revisits when idle">&#128173; Think later</button>`
-      + `<button class="mact" onclick="CH._msgPodcast('${mid}')" title="Turn this message into a spoken podcast episode (multi-voice TTS)">&#127908; Podcast</button>`
-      + `<button class="mact" onclick="CH._msgHtmlReport('${mid}')" title="Re-deliver this message as a rich, self-contained HTML report (themed doc + Mermaid + infographics)">&#128444; As HTML</button>`
-      + `<button class="mact" onclick="CH._msgRedeliver('${mid}')" title="Re-deliver this message through another channel (podcast / email / telegram / notebook / …) — original untouched">&#8646; Re-deliver</button>`
-      + `<button class="mact-more" onclick="this.parentElement.classList.toggle('all')" title="Every action for this message">⋯</button>`;
+    /* THE REPLY'S ACTIONS (owner, 2026-10-03: "i dont like the style of the menu at the bottom of responses - its just a
+       bunch of vanilla looking buttons ... and the menu is not ergonomic"): the few you use every time stand in the row
+       as icon + word; everything that SENDS the message somewhere is one "Send to…" menu, each entry saying what it
+       does. Same handlers as before - only the face changed. */
+    const _ma=(ico,label,act,tip,cls)=>`<button class="mact${cls?' '+cls:''}" onclick="${act}" title="${tip}">${_MA_ICO[ico]||''}<span>${label}</span></button>`;
+    const _mi=(ico,label,act,hint)=>`<button class="ma-it" role="menuitem" onclick="CH._maClose();${act}">${_MA_ICO[ico]||''}<span class="ma-l">${label}<small>${hint}</small></span></button>`;
+    // ONE ROW FOR WRITING, wherever it is drawn: the shared kit's prose row (vera_output.js) - the canvas's reading items
+    // and the loop's answer carry the same one - with this message's own Edit/Resend in front; the chat's ways of doing
+    // each action are the kit's hooks (_voHooks). Below: the chat's own row, where the kit is not on the page.
+    const _userLead=role==='user'
+        ? _ma('edit','Edit',`CH._msgEdit('${mid}')`,'Edit and resubmit - rewinds the chat from here')
+        + _ma('resend','Resend',`CH._msgResubmit('${mid}')`,'Resubmit unchanged - rewinds the chat from here')
+        : '';
+    if(typeof VeraOut!=='undefined'&&VeraOut.proseMenu){
+      const _row=document.createElement('div'); _row.innerHTML=VeraOut.proseMenu(mid, {lead:_userLead, getMd:()=>(_MSG_REGISTRY[mid]?_MSG_REGISTRY[mid].getContent():'')});
+      actions.innerHTML=_row.firstChild.innerHTML; actions.classList.add('vo-acts'); actions.setAttribute('data-vo-prose', mid);
+    } else
+    actions.innerHTML=(role==='user'
+        ? _userLead
+        : '')
+      + _ma('copy','Copy',`CH._msgCopy('${mid}',this)`,'Copy the message text')
+      + _ma('explode','Explode',`CH._msgExplode('${mid}',this)`,'A structured diagram of this message - its code, or its prose')
+      + _ma('canvas','Canvas',`CH._msgToCanvas('${mid}',this)`,'Put this message on the session canvas, beside the chat')
+      + `<span class="ma-sep"></span><div class="ma-dd">`
+      +   _ma('send','Send to',`CH._maMenu(this)`,'Deliver this message somewhere else - the original stays here','ma-ddb')
+      +   `<div class="ma-menu" role="menu">`
+      +     _mi('html','HTML report',`CH._msgHtmlReport('${mid}')`,'a rich document - on the canvas or a tab (Settings › Delivery)')
+      +     _mi('podcast','Podcast',`CH._msgPodcast('${mid}')`,'a spoken episode, multi-voice')
+      +     _mi('notebook','Notebook',`CH._msgSaveToNotebook('${mid}')`,'a cell in a notebook')
+      +     _mi('ide','A file in the IDE',`CH._msgSaveToIde('${mid}')`,'saved through the IDE')
+      +     _mi('project','A project',`CH._msgSaveToProject('${mid}')`,'added to a dream-system project')
+      +     _mi('think','Think about it later',`CH._msgThinkLater('${mid}')`,'Vera revisits it when idle')
+      +     `<hr>`
+      +     _mi('channel','Another channel…',`CH._msgRedeliver('${mid}')`,'email, telegram, memory - with a style')
+      +   `</div></div>`;
     wrap.appendChild(actions);
 
     // Register so the save handlers can find the message's text. The body
@@ -4655,26 +4900,22 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
 
   /* ── Session ──
      Session-id lifecycle:
-       - On page load: if localStorage has a session_id less than
-         SESSION_RESUME_HOURS old, restore it (preserves continuity across
+       - On page load: if localStorage has a session_id, restore it, whatever its age (continuity across
          reloads). Otherwise generate a fresh `chat-<ts>` id.
        - Explicit "+ New" button calls newSession() which forces a fresh id.
        - opts.sessionId (passed by harness) overrides everything.
      This avoids the previous behaviour of creating a brand-new :Session
      node on every panel refresh — which would accumulate dozens of empty
      "assistant" session nodes over a normal day's use.                 */
-  const SESSION_RESUME_HOURS = 4;
+  /* THE CHAT YOU LEFT IS THE CHAT YOU COME BACK TO (owner, 2026-10-03: "if i leave the chat ui for a while and come back
+     to it the chat is wiped but the canvas remains"). A reload resumed the stored session only while it was under four
+     hours old - counted from when the session STARTED, a stamp nothing refreshed - so any reload after that (the harness
+     parking an idle frame, the browser discarding a tab, a restart) opened an empty session beside the canvas that was
+     still there. The stored session is resumed whatever its age; a new one is the reader's choice (+ New). */
   function initSid(id){
     let resolved = id || '';
     if(!resolved){
-      try{
-        const stored = localStorage.getItem('vera_session_id') || '';
-        const tsRaw  = localStorage.getItem('vera_session_id_ts') || '';
-        const ageMs  = tsRaw ? (Date.now() - parseInt(tsRaw, 10)) : Infinity;
-        if(stored && ageMs < SESSION_RESUME_HOURS * 3600 * 1000){
-          resolved = stored;
-        }
-      }catch(_){}
+      try{ resolved = localStorage.getItem('vera_session_id') || ''; }catch(_){}
     }
     if(!resolved) resolved = 'chat-' + Date.now();
     SID = resolved;
@@ -5540,6 +5781,16 @@ IMPORTANT:
     const manual=document.getElementById('cfgModel')?.value||'';if(manual)return manual;
     const name=document.getElementById('agentBarSel')?.value||'';const a=AGENTS.find(x=>x.name===name);return a?.model||'';
   }
+  /* WHERE A TURN RUNS, for every request the turn makes (owner, 2026-10-02: "i set the model and instance using the
+     dropdowns and it still went to the gpu node ... i even tried turning 2 gpu toggles off"). The reply took the config's
+     instance, but the continuation after a capability and a stepwise step sent none, and every path sent the agent's
+     prefer_gpu OR'd with the toggle - so unticking it changed nothing. The toggle is set from the agent when the agent
+     is chosen, so what it shows now is the choice: ticked prefers the GPU, unticked keeps the turn OFF it (no_gpu). */
+  function _gpuOn(a){ const g=document.getElementById('cfgGpu'); return g?!!g.checked:!!(a&&a.prefer_gpu); }
+  function _routeFields(a){
+    const on=_gpuOn(a);
+    return { model_override:effectiveModel(), instance_id:document.getElementById('cfgInst')?.value||'', prefer_gpu:on, no_gpu:!on };
+  }
 
   /* ── Markdown ── */
   /* Markdown renderer with code-fence enrichment.
@@ -5588,8 +5839,11 @@ IMPORTANT:
       f.setAttribute('referrerpolicy','no-referrer'); f.srcdoc=_cbDoc(blk.lang, blk.code); host.appendChild(f); }
   }
   let _codeBlockSeq=0;
-  const _CODE_BLOCKS={}; // id -> {lang, code, filename}
+  // ONE registry with the shared output kit (vera_output.js): a card drawn by the chat, the agent loop or the canvas
+  // is the same {lang, code, filename} wherever it is read - Run, Save, Explode and an edit all see one copy
+  const _CODE_BLOCKS=(typeof VeraOut!=='undefined'&&VeraOut.blocks)||{}; // id -> {lang, code, filename}
   function _registerCodeBlock(lang, code, filename){
+    if(typeof VeraOut!=='undefined') return VeraOut.register(lang, code, filename);
     const id='cb'+(++_codeBlockSeq);
     _CODE_BLOCKS[id]={lang:lang||'',code:code||'',filename:filename||''};
     return id;
@@ -5732,6 +5986,7 @@ IMPORTANT:
   }
   const _hlCache=new Map();
   function highlightCode(code, lang){
+    if(typeof VeraOut!=='undefined') return VeraOut.highlight(code, lang);   // the one highlighter (vera_output.js); below, its fallback
     code=String(code==null?'':code);
     const fam=_HL_FAMILY[(lang||'').toLowerCase()]||null;
     const key=(fam||'_')+' '+code;
@@ -5782,6 +6037,7 @@ IMPORTANT:
     return null;
   }
   function _lintCode(lang, code){
+    if(typeof VeraOut!=='undefined') return VeraOut.lintCode(lang, code);    // the one linter (vera_output.js); below, its fallback
     const l=(lang||'').toLowerCase(), fam=_HL_FAMILY[l], out=[];
     if(!code || !code.trim()) return out;
     if(l==='json'){
@@ -5804,6 +6060,8 @@ IMPORTANT:
   const _lintCache=new Map();
   function _lintRenderedBlocks(container){
     if(!container) return;
+    // the shared kit lints the finished cards, opens whole pages and draws its diagrams - the same pass the loop and the canvas run
+    if(typeof VeraOut!=='undefined'){ try{ VeraOut.hydrate(container); }catch(_){} return; }
     if(document.getElementById('cfgLintCode')?.checked===false) return; // optional toggle, default on
     container.querySelectorAll('.code-card[data-cb]').forEach(card=>{
       if(card.getAttribute('data-incomplete')==='1') return;   // skip the in-progress block
@@ -5930,12 +6188,95 @@ IMPORTANT:
     if(!els.length)return;
     const pool=_thinkPhrases().concat(_thinkRefs());
     els.forEach(el=>{
+      if(el.dataset.phase) return;   // saying what the turn is actually doing: no stock phrase over it
       const next=pool[Math.floor(Math.random()*pool.length)];
       if(!next||next===el.textContent)return;
       el.classList.remove('swap'); void el.offsetWidth;   // retrigger fade-in
       el.textContent=next; el.classList.add('swap');
     });
   },2600);
+  /* ═══ THE TURN SAYS WHAT IT IS DOING (owner, 2026-10-04: "any pre or post processing of messages should be
+     clearly communicated in the chat throbber i.e. 'searching the web'"). The stream sends phase frames when asked
+     ({type:'phase', turn_id, id, stage, label, state, at_ms, ms?, ...} - the shape the chat turn record is built
+     from too), and this page adds its own for the steps it takes before the request. Every frame is kept on its
+     message (wrap._phases); while a step is running its label replaces the stock phrases, and when none is the
+     stock phrases come back. 'vera:chat:phases' = '0' asks for none. ═══ */
+  const _phasesOn=()=>{ try{ return localStorage.getItem('vera:chat:phases')!=='0'; }catch(_){ return true; } };
+  // message ids repeat across sessions; the turn record needs one that does not
+  const _phaseTurnId=(wrap)=>{ const m=wrap&&wrap.dataset?wrap.dataset.mid:''; return m?((SID?SID+':':'')+m):''; };
+  function _phaseNote(wrap, f){
+    if(!wrap||!f||f.type!=='phase') return;
+    (wrap._phases||(wrap._phases=[])).push(f);
+    const live=wrap._phaseLive||(wrap._phaseLive=new Map()), key=f.stage+':'+f.id;
+    if(f.state==='start') live.set(key, f); else live.delete(key);
+    const el=wrap.querySelector('.think-throb .phrase'); if(!el) return;
+    let cur=null; live.forEach(v=>{ cur=v; });   // the step started last is the one to name
+    if(cur&&cur.label){
+      const t=cur.label+'…';
+      if(el.textContent!==t){ el.classList.remove('swap'); void el.offsetWidth; el.textContent=t; el.classList.add('swap'); }
+      el.dataset.phase=cur.stage;
+    } else delete el.dataset.phase;
+  }
+  // a step this page takes itself before the request, in the same shape
+  function _phaseLocal(wrap, stage, id, label, state){
+    if(!wrap||!_phasesOn()) return;
+    const now=performance.now(), t0=wrap._phaseT0||(wrap._phaseT0=now);
+    const f={ type:'phase', turn_id:_phaseTurnId(wrap), id, stage, label, state, at_ms:Math.round(now-t0), local:true };
+    if(state!=='start'){ const st=(wrap._phaseStarts||{})[stage+':'+id]; if(st!=null) f.ms=Math.round(now-st); }
+    else (wrap._phaseStarts||(wrap._phaseStarts={}))[stage+':'+id]=now;
+    _phaseNote(wrap, f);
+  }
+  /* ═══ THE TURN FOOTER (context-and-ui; owner 2026-10-04: pre/post processing "clearly communicated"). When a reply
+     ends, its own phase frames become one row per step - when it started, how long it took, how it ended - drawn by
+     the registered widget template chat:turn-phases (the gantt form) inside a collapsed line under the reply. The
+     page's own steps are timed from the turn's start; the server's from when the request went, so they are shifted
+     by that. Page-local like the frames themselves: a reloaded transcript has no footer. ═══ */
+  function _phaseRows(wrap){
+    const frames=(wrap&&wrap._phases)||[]; if(!frames.some(f=>f&&!f.local)) return null;
+    const shift=(wrap._phaseSentAt!=null&&wrap._phaseT0!=null)?Math.max(0,wrap._phaseSentAt-wrap._phaseT0):0;
+    const by=new Map(), skipped=[]; let first=null, end=0;
+    frames.forEach(f=>{
+      if(!f||f.type!=='phase') return;
+      const at=(f.at_ms||0)+(f.local?0:shift), k=f.stage+':'+f.id;
+      if(f.state==='first'){ first=at; return; }
+      if(f.state==='skip'){ skipped.push(f.label||f.id); return; }
+      const r=by.get(k)||{ id:k, name:f.label||f.id, start:null, end:null, state:'', detail:'', count:null };
+      if(f.state==='start'){ if(r.start==null) r.start=at; }
+      else{
+        r.end=at; r.state=f.state; if(r.start==null) r.start=Math.max(0, at-(f.ms||0));
+        if(f.label) r.name=f.label; if(f.detail) r.detail=f.detail; if(f.count!=null) r.count=f.count;
+      }
+      by.set(k,r);
+    });
+    const secs=(ms)=>ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(1)+' s';
+    const rows=[...by.values()].filter(r=>r.start!=null).map(r=>{
+      const e=r.end!=null?r.end:r.start, d=Math.max(0,e-r.start); end=Math.max(end,e);
+      const row={ id:r.id, name:r.name+' · '+secs(d)+(r.count!=null?' · '+r.count+(r.id==='model:answer'?' chars':' found'):''), start:r.start, end:Math.max(e, r.start+1),
+                  detail:r.detail, state:(r.state==='done'?'done':(r.state==='fail'?'failed':'')) };
+      if(r.state==='late') row.col='var(--warn, #d9a441)';
+      return row;
+    }).sort((a,b)=>a.start-b.start);
+    return rows.length?{ rows, total:end, first, skipped }:null;
+  }
+  function _phaseFooter(wrap, bubEl){
+    if(!wrap||!bubEl||!_phasesOn()) return;
+    const ph=_phaseRows(wrap); if(!ph) return;
+    const old=wrap.querySelector(':scope .turn-phases'); if(old) old.remove();
+    const secs=(ms)=>ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(1)+' s';
+    const det=document.createElement('details'); det.className='turn-phases';
+    const sum=document.createElement('summary');
+    sum.textContent=ph.rows.length+' step'+(ph.rows.length===1?'':'s')+' · '+secs(ph.total)
+      +(ph.first!=null?' · first word at '+secs(ph.first):'')+(ph.skipped.length?' · skipped: '+ph.skipped.join(', '):'');
+    det.appendChild(sum);
+    det.addEventListener('toggle',()=>{
+      if(!det.open||det.querySelector('vera-widget')) return;
+      const w=document.createElement('vera-widget'); w.setAttribute('bare',''); w.setAttribute('size','m');
+      w.record={ id:'chat:turn-phases', form:'gantt', title:'How this turn was made', data:{ stages:ph.rows },
+                 draw:{ rows:Math.min(16, ph.rows.length), names:230 } };
+      det.appendChild(w);
+    });
+    bubEl.insertAdjacentElement('afterend', det);
+  }
   async function _genThinkPhrases(){
     const st=document.getElementById('thinkPhraseStatus');
     const theme=(document.getElementById('cfgThinkTheme')?.value||'').trim();
@@ -5995,6 +6336,8 @@ IMPORTANT:
         // Bare inside an art-card (the card is the frame) and fills it;
         // standalone inline gets its own toolbar + a pop-out button.
         if(bare){ el.setAttribute('bare',''); el.setAttribute('fill',''); }
+        // inside a diagram card (VeraOut.diagram) the card's bar is the chrome - Copy, Edit, Source, Pop out, SVG, PNG
+        else if(slot.closest('.vo-diagram')){ el.setAttribute('bare',''); el.removeAttribute('popout'); }
         else{ el.setAttribute('popout',''); }
         slot.innerHTML=''; slot.appendChild(el);
         try{ el.render(code); }catch(_){}
@@ -6023,11 +6366,53 @@ IMPORTANT:
   // A streaming paint: the message body is re-rendered on every token; the ONE <vera-mermaid> of the fence that is
   // still open survives the repaint (it is moved into the fresh slot, not remade) and streams the complete lines.
   const _MM_LIVE_EL={};
+  /* A PAGE DRAWS AS IT IS WRITTEN, as a diagram does (owner, 2026-10-03: "it should be able to stream the preview to
+     the canvas and to the chat, just like the mermaid diagrams can"). While the reply's html block is still open and is
+     a whole page (a doctype, <html>, <body> or <svg>), the card shows the page, not the source: ONE frame per message
+     survives the repaints (moved into the fresh card each paint, as the live diagram is), redrawn at most every 350 ms
+     and double-buffered - the new page loads behind the old one and replaces it when it has painted - so it never
+     blanks. The finished reply's card opens its page itself (the kit's auto-preview); the canvas streams its own. */
+  const _HTML_LIVE={};
+  /* (2026-10-03, measured: the frame loaded 202 times in an 11 s stream - once per paint. A frame MOVED in the document
+     reloads, and the frame was moved into each paint's fresh card. It lives beside the reply now, never moved, and loads
+     only on its own swaps; and a page still being written follows its newest line, as the code does.) */
+  const _HTML_TAIL='<script>try{scrollTo(0,document.documentElement.scrollHeight)}catch(e){}<\/script>';
+  function _htmlLiveSwap(L, doc){
+    const holder=L.holder; L.doc=doc; L.at=Date.now();
+    const nf=document.createElement('iframe'); nf.setAttribute('sandbox','allow-scripts'); nf.setAttribute('referrerpolicy','no-referrer');
+    const first=!holder.querySelector('iframe'); if(!first) nf.style.cssText='position:absolute;left:0;top:0;width:100%;visibility:hidden';
+    nf.onload=()=>{ holder.querySelectorAll('iframe').forEach(f=>{ if(f!==nf) f.remove(); }); nf.style.cssText=''; };
+    holder.appendChild(nf); nf.srcdoc=doc+_HTML_TAIL;
+  }
+  // the reply is finished: its own card opens the finished page (the kit's auto-preview); the streaming frame goes
+  function _htmlLiveEnd(bubEl){
+    try{ const key=(bubEl&&bubEl.dataset&&bubEl.dataset.mid)||'live'; const L=_HTML_LIVE[key]; if(!L) return;
+      clearTimeout(L.t); if(L.holder&&L.holder.parentNode) L.holder.remove(); delete _HTML_LIVE[key]; }catch(_){}
+  }
+  function _htmlLive(bubEl, key){
+    if(!_cvOneplaceOff()) return;       // the canvas is open: the page streams there, and only there
+    const card=bubEl.querySelector('.code-card[data-incomplete="1"]'); if(!card) return;
+    const code=card.querySelector('code.language-html, code.language-svg'); if(!code) return;
+    const id=card.getAttribute('data-cb'); const blk=(typeof VeraOut!=='undefined'&&VeraOut.blocks[id])||null;
+    const src=blk?blk.code:String(code.textContent||'');
+    if(!/<\s*(!doctype\s+html|html[\s>]|body[\s>]|svg[\s>])/i.test(src)) return;     // a fragment waits for its fence to close
+    let L=_HTML_LIVE[key];
+    if(!L){ L=_HTML_LIVE[key]={holder:document.createElement('div'), doc:'', at:0, want:'', t:0}; L.holder.className='cb-live-out';
+      L.holder.style.cssText='position:relative;height:340px;margin:6px 0 4px;border:1px solid var(--border,rgba(255,255,255,.09));border-radius:var(--ui-radius,6px);overflow:hidden;background:#fff'; }
+    card.classList.add('prev');                                   // the card shows its bar; its page is drawn just below
+    if(L.holder.previousElementSibling!==bubEl) bubEl.after(L.holder);   // placed ONCE beside the reply, never moved again
+    L.want=src; if(src===L.doc) return;
+    const wait=350-(Date.now()-L.at);
+    if(wait<=0) _htmlLiveSwap(L, src);
+    else if(!L.t) L.t=setTimeout(()=>{ L.t=0; if(L.want!==L.doc) _htmlLiveSwap(L, L.want); }, wait);
+  }
   function _paintStream(bubEl, fullText){
     const key=(bubEl&&bubEl.dataset&&bubEl.dataset.mid)||'live';
     _MM_LIVE_KEY=key; _mmLiveTaken=false;
     let html=''; try{ html=_renderStreamingMarkdown(fullText); } finally { _MM_LIVE_KEY=''; _mmLiveTaken=false; }
     bubEl.innerHTML=html+'<span class="cur"></span>';
+    try{ _htmlLive(bubEl, key); }catch(_){}
+    try{ _cvHoldForCanvas(bubEl, true); }catch(_){}
     const slot=bubEl.querySelector('.mm-slot[data-mm-live]');
     if(!slot) return;
     _ensureMermaidJs();
@@ -6709,9 +7094,26 @@ IMPORTANT:
     try{ document.dispatchEvent(new CustomEvent('vera:canvas:enriched',{detail:{mid, result:r}})); }catch(_){}
     return r;
   }
+  /* WHAT THE REPLY NAMES (canvas-enrichment slice 1 - owner, 2026-10-03: "the nlp enrichment is still few and far
+     between"): the NLP tier's entity model was live and never asked. turn.understand reads the reply (code fences
+     out) and, when it names three things or more, places them as one `entities` item anchored to the turn; the
+     answer is kept with the message for whatever reads it next. The canvas's ✦ switch turns this off with the rest. */
+  async function _cvEntities(mid, reply){
+    const t=String(reply||''); if(!SID||!_cvEnrichOn()||t.replace(/```[\s\S]*?```/g,'').trim().length<160) return null;
+    let r=null; try{ r=await _capCall('turn.understand',{ text:t.slice(0,12000), session_id:SID, mid:String(mid||''), place:true }); }catch(_){ return null; }
+    try{ if(r&&r.ok&&mid&&_MSG_REGISTRY[mid]) _MSG_REGISTRY[mid].entities=r.entities||[]; }catch(_){}
+    return r;
+  }
   function _cvEnrichToggle(btn){ const on=!_cvEnrichOn(); try{ localStorage.setItem('vera:canvas:enrich', on?'1':'0'); }catch(_){} _cvEnrichPaint(btn); }
   function _cvEnrichPaint(btn){ const b=btn||document.getElementById('cvEnrichBtn'); if(!b) return; const on=_cvEnrichOn(); b.classList.toggle('on',on); b.style.opacity=on?'':'.55'; b.setAttribute('aria-pressed',on?'true':'false'); }
   setTimeout(()=>_cvEnrichPaint(),0);
+  /* TELL THE MODEL (canvas-enrichment plan - owner: the model is told what's on the canvas, ~300 tokens, opt-out): the
+     note turn.prepare writes into the turn's prompt. Off with the canvas column's ◉ tell (localStorage 'vera:canvas:tell'
+     = '0'); the placing goes on either way. */
+  function _cvTellOn(){ try{ return localStorage.getItem('vera:canvas:tell')!=='0'; }catch(_){ return true; } }
+  function _cvTellPaint(btn){ const b=btn||document.getElementById('cvTellBtn'); if(!b) return; const on=_cvTellOn(); b.classList.toggle('on',on); b.style.opacity=on?'':'.55'; b.setAttribute('aria-pressed',on?'true':'false'); }
+  function _cvTellToggle(btn){ const on=!_cvTellOn(); try{ localStorage.setItem('vera:canvas:tell', on?'1':'0'); }catch(_){} _cvTellPaint(btn); }
+  setTimeout(()=>_cvTellPaint(),0);
   window.veraCanvasEnrich=function(on){ try{ if(on!=null) localStorage.setItem('vera:canvas:enrich', on?'1':'0'); }catch(_){} return _cvEnrichOn(); };
   // a parked item the turn brings into focus comes back through the resolver (canvas.add with its key: recall over
   // recreate), anchored to the turn; the pass itself moved nothing
@@ -6841,6 +7243,9 @@ IMPORTANT:
 
   /* A TIMELINE OUT OF WHAT THE RESEARCH FOUND.
 
+     (2026-10-03: what follows was true when written; it is not now - nlp.ner answers on the CPU nodes in about half a
+     second with an OntoNotes model that HAS a DATE label, and turn.understand uses it for every reply. The dates here
+     still come from the matcher below, which keeps working when the nodes are down.)
      The plan was to lean on the research system's NLP for this. It does not work: nlp.ner answers
      "optimum/transformers not installed" on prod and on the mirror, and the model it would load if it were
      installed is dslim/bert-base-NER - CoNLL-2003, whose labels are PER, ORG, LOC and MISC. There is no DATE
@@ -7244,7 +7649,10 @@ IMPORTANT:
       if(made){ out.push(made); return; }
       out.push({kind:'markdown', n:n.split(' ')[0]||'capability', d:'capability \u00b7 '+(el.classList.contains('error')?'failed':'done'), content:{md:'**'+n+'**\n\n'+(res?'```\n'+res+'\n```':'')}, col:'var(--acc2)', k:'cap'}); });
 
-    cvHook('code', 'pre code', (el, out, i) => { const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; const s=String(el.textContent||''); if(!s.trim()) return;
+    cvHook('code', 'pre code', (el, out, i) => { const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||'';
+      // the source from the card's registry entry (a card's DOM carries line numbers and edits the text does not)
+      const _card=el.closest&&el.closest('.code-card[data-cb]'); const _blk=_card&&typeof VeraOut!=='undefined'&&VeraOut.blocks[_card.getAttribute('data-cb')];
+      const s=_blk?String(_blk.code||''):String(el.textContent||''); if(!s.trim()) return;
       if(lang==='mermaid'){ out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{mermaid:s.slice(0,24000)}, col:'#a78bfa', k:'diagram'}); return; }
       if(lang==='widget') return;
       out.push({kind:'code', n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', content:{code:s.slice(0,12000), lang}, col:'#fb923c', k:'code'}); });
@@ -7338,7 +7746,7 @@ IMPORTANT:
   function _cvOneplace(){ const s=document.getElementById('cfgCvWhere'); return (s&&s.value)||'canvas'; }
   function _cvOnCanvas(m, key){
     try{
-      const el=m&&m._el; if(!el||!el.classList) return;
+      let el=m&&m._el; if(!el||!el.classList) return;
       if(_cvOneplaceOff()) return;
       /* ⛔ NEVER A BUBBLE THAT IS STILL BEING WRITTEN, whoever asks. _paintStream rebuilds the whole bubble on every
          token and survives it by keeping ONE vera-mermaid and re-appending it to the fresh .mm-slot — and .mm-slot is
@@ -7347,7 +7755,15 @@ IMPORTANT:
          (owner, 2026-09-25: "the chat is still flickering the mermaid render as its streamed - it didnt do this
          before you added the canvas streaming"). The cursor span is the streaming bubble's own mark. */
       const bub=el.closest&&el.closest('.msg-body'); if(bub&&bub.querySelector('.cur,.think-throb')) return;
+      /* THE WHOLE CARD GOES, not the code inside it (owner, 2026-10-03: "if the canvas is open the code is supposed to
+         display on the canvas not in the chat"). The code hook hands back the <code> element; hiding only that left the
+         card standing in the reply - its bar, its run strip, and for a page its whole preview - so the block was drawn
+         twice. The card (and a diagram's slot) is what moves; the chip says where it went. */
+      el=(el.closest&&el.closest('.code-card'))||el;
       el.classList.add('cv-elsewhere'); el.dataset.cvKey=key;
+      // the line the paint already left (_cvHoldForCanvas) now knows which item it points at
+      { const nx=el.nextElementSibling; if(nx&&nx.classList.contains('cv-moved')&&!nx.dataset.cvKey){ nx.dataset.cvKey=key; nx.textContent=(m.n?String(m.n).slice(0,48):'item')+' · on the canvas ↗';
+          nx.addEventListener('click',()=>{ try{ _capCall('canvas.add',{session_id:SID, key}); }catch(_){} try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} }); } }
       if(!el.nextElementSibling||!el.nextElementSibling.classList.contains('cv-moved')){
         const chip=document.createElement('button'); chip.className='cv-moved'; chip.type='button';
         chip.dataset.cvKey=key; chip.title='On the session canvas — click to bring it into view there';
@@ -7359,6 +7775,26 @@ IMPORTANT:
     }catch(_){}
   }
   function _cvOneplaceOff(){ return !_pages.has('canvas') || _cvOneplace()==='both'; }
+  /* WHILE THE CANVAS IS OPEN, CODE NEVER STREAMS INTO THE CHAT (owner, 2026-10-03: "the chat message area still has the
+     code streaming to it if the canvas is open - it should not do this"). The harvest only hid a block once the reply
+     had finished (a bubble being written was left alone: hiding a diagram's slot on the harvest's beat and showing it
+     on the next token made it flicker). Every paint now hides the reply's code cards and diagram slots itself - the
+     same state every frame, so nothing blinks - with the line saying where they are going; the live landing still
+     reads them (a hidden card is still in the DOM), and the canvas draws them as they grow. The finished reply is
+     held the same way at once, so a card never flashes back in before its item is confirmed on the canvas. */
+  function _cvHoldForCanvas(bubEl, streaming){
+    if(!bubEl||_cvOneplaceOff()) return;
+    bubEl.querySelectorAll('.code-card, .mm-slot').forEach(el=>{
+      if(el.closest('.cap-inline')) return;                       // a tool card's own drawing is the tool card's
+      if(el.classList.contains('mm-slot')&&el.parentElement&&el.parentElement.closest('.code-card')) return;   // a diagram card moves whole
+      if(!el.classList.contains('cv-elsewhere')) el.classList.add('cv-elsewhere');
+      const nx=el.nextElementSibling; if(nx&&nx.classList&&nx.classList.contains('cv-moved')) return;
+      const lang=((el.querySelector('code')||{}).className||'').match(/language-([\w-]+)/);
+      const chip=document.createElement('button'); chip.className='cv-moved'; chip.type='button';
+      chip.title='On the session canvas'; chip.textContent=(el.classList.contains('mm-slot')||el.classList.contains('vo-diagram')?'diagram':(lang?lang[1]:'code'))+(streaming?' · streaming to the canvas ↗':' · on the canvas ↗');
+      el.after(chip);
+    });
+  }
   /* the column closed (or the reader asked for both): everything the canvas was holding comes back into the reply */
   function _cvRestoreInline(){
     try{ document.querySelectorAll('#msgs .cv-elsewhere').forEach(el=>el.classList.remove('cv-elsewhere'));
@@ -7373,10 +7809,36 @@ IMPORTANT:
        made both columns flicker (owner, 2026-09-25): the reply's markup is rebuilt on every token, so the hide and
        the "on the canvas" line were destroyed and re-made several times a second. The swap happens once, when the
        message is finished — until then you watch it fill in where you always did. */
-    Promise.resolve(_cvLandFrom(bubEl, _cvRelMid, (bubEl.dataset&&bubEl.dataset.mid)||_cvRelMid, true))
+    _cvLiveRun=Promise.resolve(_cvLandFrom(bubEl, _cvRelMid, (bubEl.dataset&&bubEl.dataset.mid)||_cvRelMid, true))
       .catch(()=>{}).then(()=>{ _cvLiveBusy=false; });
   }
+  /* THE LAST ITEM WAITED FOR THE NEXT MESSAGE (owner, 2026-10-03: "the canvas has a bug where the last element added
+     does not fully display untill the next message is sent"). The reply's final landing ran while the last live landing
+     was still in flight: neither knew the other had the key, the final one's canvas.add met the key the live one had
+     just made - and the resolver SHOWS an existing key, it does not rewrite it - so the item kept its half-streamed
+     content until a later turn landed it again. The final landing now waits for the live one, then updates. */
+  let _cvLiveRun=null;
+  /* THE CANVAS DRAWS AS SMOOTHLY AS THE CHAT (owner, 2026-10-03: "the streaming to the canvas is not smooth like the
+     chat"). The live landing writes a growing item to the server a couple of times a second and the canvas drew it
+     when the revision came back - a still item, then a jump. Every ~100 ms of paint the same harvest hands what has
+     grown straight to the open canvas (liveUpdate), which draws it on the next frame; the server writes go on as
+     before and persist it. Only items already landed - a new one still arrives through canvas.add. */
+  let _cvLocalAt=0;
+  function _cvLiveLocal(bubEl){
+    if(!SID||!bubEl||!_pages.has('canvas')||Date.now()-_cvLocalAt<100) return;
+    const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv||typeof cv.liveUpdate!=='function') return;
+    _cvLocalAt=Date.now();
+    const made=_cvHarvest(bubEl), mid=_cvRelMid;
+    made.forEach((m,i)=>{ const key=m.key||('turn:'+mid+':'+m.k+':'+i); if(!_CV_LANDED[key]) return;
+      let sig=''; try{ sig=JSON.stringify(m.content); }catch(_){ return; }
+      if(_CV_LOCAL_SIG[key]===sig) return; _CV_LOCAL_SIG[key]=sig;
+      try{ cv.liveUpdate(key, m.content); }catch(_){} });
+  }
+  const _CV_LOCAL_SIG={};
   async function _cvLandReply(mid){
+    if(_cvLiveRun){ try{ await _cvLiveRun; }catch(_){} }
+    // the stream is over: what the canvas was holding over its revisions gives way to the stored item again
+    try{ setTimeout(()=>{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&cv.liveDone) cv.liveDone(); }, 2500); }catch(_){}
     if(!SID||!mid) return 0; const q=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); if(!q) return 0;
     let w=q.nextElementSibling; while(w&&!(w.classList&&w.classList.contains('mwrap')&&w.classList.contains('a'))) w=w.nextElementSibling;
     const body=w&&w.querySelector('.msg-body'); if(!body||body.querySelector('.think-throb')) return 0;
@@ -7404,6 +7866,9 @@ IMPORTANT:
       }
       // the reply is the maker: the run leaves ITS block, while the turn stays the question the station is keyed by
       try{ const r=await _capCall('canvas.add',{session_id:SID, kind:m.kind, content:m.content, key, at:'now', size:_cvLandSize(m), anchor:{mid, turn:mid, from:from||mid}});
+        /* THE KEY WAS ALREADY THERE (resolved 'shown'): the resolver brings an item back, it does not rewrite it - so
+           what this landing holds is sent as an update, or the item keeps whatever an earlier landing gave it */
+        if(r&&r.ok&&r.resolved==='shown'){ try{ await _capCall('canvas.update',{session_id:SID, key, content:m.content}); }catch(_){} }
         if(r&&r.ok){ _CV_SIG[key]=sig; if(!live) _cvOnCanvas(m, key); }
         if(!(r&&r.ok)) continue; _CV_LANDED[key]=true; n++;
         (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:m.n, d:'canvas · '+(r.resolved==='shown'?'already there':'lifted out of the reply'), col:m.col, kind:m.k, key, form:m.kind==='widget'?(m.content.widget||''):undefined, mermaid:m.kind==='diagram'?m.content.mermaid:undefined, record:m.kind==='widget'?(m.content.record||undefined):undefined});
@@ -7650,6 +8115,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       const msgsEl=document.getElementById('msgs');
       if(msgsEl&&!msgsEl._cvRelBound){ msgsEl._cvRelBound=true; msgsEl.addEventListener('scroll', _cvRelFocus, {passive:true}); msgsEl.addEventListener('click', _cvRelFocus); }
       _cvColsSync();
+      try{ _cvEnrichPaint(); _cvTellPaint(); }catch(_){}   // the banner's switches exist from here: their state, drawn
       try{ _cvApplyCfg(); }catch(_){}   // the reader's own canvas settings, onto the element that just mounted
       try{ _cvSyncBlocks(); }catch(_){}  // and the blocks tier as it stands NOW, not as it stood when this line ran
       el.addEventListener('vera:canvas:rendered', ev=>{ const d=ev.detail||{}; const s=document.getElementById('cvColSub'); if(s) s.textContent=(d.pinned?d.pinned+' pinned · ':'')+(d.parked?d.parked+' parked · ':'')+'rev '+(d.revision||0); _cvStageSync(true); }); }
@@ -8542,13 +9008,23 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       if(_MM_LIVE_KEY && !_mmLiveTaken){ _mmLiveTaken=true; const mid='mml-'+_MM_LIVE_KEY; _MM_BLOCKS[mid]=raw; return `<div class="mm-slot mm-live" data-mm="${mid}" data-mm-live="1" data-live="1" style="margin:8px 0"></div>`; }
       // every other fence: a slot the hydrator fills once it is closed (a second diagram still being typed stays a
       // code card until it closes, as it always has - only one drawing can be the live one)
-      if(!st.incomplete && (opts.liveMermaid!==false || _MM_LIVE_KEY)){ const mid='mm'+(++_mmSeq); _MM_BLOCKS[mid]=raw; return `<div class="mm-slot" data-mm="${mid}" style="margin:8px 0"></div>`; }
+      if(!st.incomplete && (opts.liveMermaid!==false || _MM_LIVE_KEY)){ const mid='mm'+(++_mmSeq); _MM_BLOCKS[mid]=raw; const slot=`<div class="mm-slot" data-mm="${mid}" style="margin:8px 0"></div>`;
+        // the diagram card (vera_output.js): the code card's bar over the drawing - Copy, Edit, Source, Pop out, Save,
+        // Canvas, Send to (owner, 2026-10-03: "mermaid diagrams ... need the unified menu style and the relevant options")
+        return (typeof VeraOut!=='undefined' && VeraOut.diagram) ? VeraOut.diagram(raw, {body:slot}) : slot; }
     }
     // ```widget fences are widgets in the reply (the record the model wrote)
     if(L==='widget' && !st.incomplete){ try{ const w=_widgetFence(raw); if(w) return w; }catch(_){} }
     // opts.title names a card that did not come from a fence (render.html passes the cap's title); a fence's own
     // filename still wins, because that is what the author wrote above the block
     const fname=_parseFenceFilename(info||'')||String(opts.title||'');
+    // THE CARD IS THE SHARED ONE (vera_output.js): the same card, actions and look the agent loop and the canvas
+    // draw - Copy · Edit · Explode · Preview · Pop out · Pane · Run · Save · Canvas - with the chat's own explode
+    // panel, artifact save, pop-out and pane plugged in as its hooks (_voHooks). Below: the fallback without it.
+    // a deck, a sheet, a page (```slides · ```sheet/```csv/```tsv · ```document): the kit's file cards - drawn as they
+    // stream, with every file type they can be downloaded as (owner, 2026-10-04)
+    if(typeof VeraOut!=='undefined' && VeraOut.fileKind && VeraOut.fileKind(L)) return VeraOut.fence(lang, info, raw, st, {title:fname});
+    if(typeof VeraOut!=='undefined') return VeraOut.card(lang, raw, {filename:fname, incomplete:!!st.incomplete, pane:true});
     const id=_registerCodeBlock(lang,raw,fname);
     const langLbl=esc((lang||'plain').toLowerCase())+(fname?` · <span style="color:var(--acc,#5a9e8f)">${esc(fname)}</span>`:'');
     if(st.incomplete){
@@ -8593,6 +9069,44 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
          + `<div class="code-exec-out" data-exec-out="${id}" style="display:none"></div>`
          + `</div>`;
   }
+  /* the chat's way of doing what the shared code card offers: its inline explode panel, its artifact save (the Code
+     tab follows), its floating pop-out and preview pane, its session - and an EDIT kept with the message, so Copy,
+     the canvas and every delivery carry the version the reader made */
+  (function _voHooks(){
+    if(typeof VeraOut==='undefined') return;
+    Object.assign(VeraOut.hooks, {
+      session:()=>SID||'',
+      explode:(blk,id,b)=>{ _codeExplode(id,b); return true; },
+      save:(blk,id,b)=>{ _codeSaveArtifact(id,b); return true; },
+      pop:(blk,id)=>{ _codePop(id); return true; },
+      pane:(blk,id)=>{ const r=document.getElementById('rightRail'); if(!r||r.getBoundingClientRect().width<40||getComputedStyle(r).display==='none') return false;
+        _codePreview(id); const f=document.getElementById('codePreviewFrame'); return !!(f&&f.getBoundingClientRect().width>40); },
+      edited:(blk,id,d,card)=>{ try{ const sl=card.querySelector('.mm-slot[data-mm]'); if(sl) _MM_BLOCKS[sl.dataset.mm]=d.code; }catch(_){}
+        try{ const body=card.closest('.msg-body'); const md=body&&body.dataset.markdown;
+        if(md&&d.before&&md.indexOf(d.before)>=0) body.dataset.markdown=md.replace(d.before, d.code); }catch(_){} },
+      // ── what the page does for a card or a piece of writing ANYWHERE on it - the canvas's items and the loop's
+      //    answers included (these reach every root: the kit's HOSTWIDE set) ──
+      notify:(html)=>{ appendSys('<span style="color:var(--ok)">'+html+'</span>'); },
+      reveal:(channel, url)=>{ try{ _dlvReveal(channel, url?BASE+url:''); }catch(_){} },
+      // the session's VS Code: the code saved into the session's artifacts, then its VS Code opened
+      vscode:async (blk)=>{ const name=blk.filename||('snippet.'+((_LANG_EXT[String(blk.lang||'').toLowerCase()])||'txt'));
+        try{ const r=await fetch(BASE+'/exec/sandbox/write_artifact',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({filename:name, content:blk.code||'', session_id:SID||''})}); const j=await r.json();
+          appendSys('<span style="color:var(--ok)">Saved '+esc(name)+' to the session\'s artifacts'+(j&&j.path?' ('+esc(j.path)+')':'')+' - opening VS Code…</span>'); }
+        catch(e){ appendSys('<span style="color:var(--err)">Could not save '+esc(name)+': '+esc(String(e&&e.message||e))+'</span>'); }
+        try{ await _sessionSbxVscode(); }catch(_){} return true; },
+      // the prose row's deliveries, from the text it is given (a message, a canvas item, a loop's answer)
+      html:(ctx)=>{ _msgHtmlReport(ctx.id, ctx.md); return true; },
+      podcast:(ctx)=>{ _msgPodcast(ctx.id, ctx.md); return true; },
+      notebook:(ctx)=>{ _saveModalOpen('nb-msg', 'Save to notebook', ctx.md); return true; },
+      ide:(ctx)=>{ _saveModalOpen('ide-msg', 'Save to a file', ctx.md); return true; },
+      project:(ctx)=>{ _saveModalOpen('proj-msg', 'Add to a project', ctx.md); return true; },
+      think:(ctx)=>{ _saveModalOpen('think-msg', 'Mark for later thought', ctx.md); return true; },
+      // a chat message's own explode and canvas (a message has its own place in the transcript to draw them)
+      prose_explode:(ctx)=>{ if(_MSG_REGISTRY[ctx.id]){ _msgExplode(ctx.id, ctx.btn); return true; } return false; },
+      prose_canvas:(ctx)=>{ if(_MSG_REGISTRY[ctx.id]){ _msgToCanvas(ctx.id, ctx.btn); return true; } return false; },
+    });
+  })();
   function renderMd(t,opts){
     opts=opts||{};
     if(window.VeraMD && typeof VeraMD.render==='function' && VeraMD.version>=2){
@@ -8724,7 +9238,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   const _LANG_EXT={html:'html',htm:'html',css:'css',js:'js',javascript:'js',
     jsx:'jsx',ts:'ts',tsx:'tsx',python:'py',py:'py',json:'json',markdown:'md',
     md:'md',bash:'sh',sh:'sh',shell:'sh',yaml:'yaml',yml:'yaml',svg:'svg',
-    sql:'sql',go:'go',rust:'rs',rs:'rs',java:'java',c:'c',cpp:'cpp',plain:'txt',text:'txt'};
+    sql:'sql',go:'go',rust:'rs',rs:'rs',java:'java',c:'c',cpp:'cpp',plain:'txt',text:'txt',mermaid:'mmd'};
   async function _codeSaveArtifact(id, btn){
     const blk=_CODE_BLOCKS[id]; if(!blk) return;
     const ext=_LANG_EXT[(blk.lang||'').toLowerCase()]||'txt';
@@ -10793,7 +11307,7 @@ Your task: decide what to do next to advance toward the goal.
       try{
         const resp=await fetch(BASE+'/agents/chat/stream',{
           method:'POST',headers:{'Content-Type':'application/json'},signal:abort.signal,
-          body:JSON.stringify({agent_name:agentName,message:stepPrompt,history:[],session_id:SID,model_override:effectiveModel(),prefer_gpu:!!(a?.prefer_gpu),think:false,tts:false})
+          body:JSON.stringify({agent_name:agentName,message:stepPrompt,history:[],session_id:SID,..._routeFields(a),think:false,tts:false})
         });
         if(!resp.ok)break;
         const reader=resp.body.getReader();const dec=new TextDecoder();let buf='';
@@ -11418,7 +11932,9 @@ Your task: decide what to do next to advance toward the goal.
     const bubEl=aMsg.body; // alias for the body div
 
     // Always fetch fresh agent data so domain_caps changes take effect immediately
+    _phaseLocal(aMsg.wrap,'needs','agent','finding the agent','start');
     const a=await _getCurrentAgent()||AGENTS.find(x=>x.name===agentName);
+    _phaseLocal(aMsg.wrap,'needs','agent','finding the agent','done');
     try{ const g=aMsg.wrap.querySelector('.msg-gutter'); if(g && a?.label) g.textContent=a.label; }catch(_){}
     // Explicit "open the X panel" → resolve & mount it in code (the model is
     // unreliable at picking the right panel id). This is the ONLY pre-response
@@ -11447,7 +11963,9 @@ Your task: decide what to do next to advance toward the goal.
     // changes the dropdown mid-stream.
     const outFmt=document.getElementById('cfgFormat')?.value||'';
     // Fetch skills/ontologies/DAGs context block (async, may be empty)
+    _phaseLocal(aMsg.wrap,'acquire','assemble','gathering skills and context','start');
     const ctxBlock=await _fetchContextBlock(a,msg);
+    _phaseLocal(aMsg.wrap,'acquire','assemble','gathering skills and context','done');
 
     // ── Context freshness guard ───────────────────────────────────────
     // In live-context mode, if CTX_NODES were gathered for a DIFFERENT input
@@ -11473,7 +11991,9 @@ Your task: decide what to do next to advance toward the goal.
     if(document.getElementById('ctxInject')?.checked && _ctxLiveOn()
        && msg.trim().length>2 && !_ctxMatches(msg)){
       const _fetchP=ctxFetch(false,msg,true).catch(()=>{});
+      _phaseLocal(aMsg.wrap,'acquire','memory','checking memory for this question','start');
       await Promise.race([_fetchP, new Promise(res=>setTimeout(res,600))]);
+      _phaseLocal(aMsg.wrap,'acquire','memory','checking memory for this question','done');
     }
     // Recompute injection now that context is guaranteed to match this msg,
     // then reconcile the "+N ctx" pill on the already-painted user message.
@@ -11571,8 +12091,15 @@ Your task: decide what to do next to advance toward the goal.
         _sc[i]={top:p.scrollTop,
                 atEnd:(p.scrollHeight-p.scrollTop-p.clientHeight)<40};
       });
+      // the reply only grows while it streams: hold the height it has, so a repaint whose code cards and widgets are
+      // still mounting cannot shrink it for a frame (the page clamped its scroll up, then the follow pulled it back
+      // down - the reply jerked up and down). The floor goes once the tokens stop.
+      try{ const cs=getComputedStyle(bubEl), pad=cs.boxSizing==='border-box'?0:(parseFloat(cs.paddingTop)||0)+(parseFloat(cs.paddingBottom)||0)+(parseFloat(cs.borderTopWidth)||0)+(parseFloat(cs.borderBottomWidth)||0);
+        const h0=bubEl.offsetHeight-pad; if(h0>(parseFloat(bubEl.style.minHeight)||0)) bubEl.style.minHeight=h0+'px';   // min-height is the content box here
+        clearTimeout(bubEl._hold); bubEl._hold=setTimeout(()=>{ bubEl.style.minHeight=''; }, 1200); }catch(_){}
       _paintStream(bubEl, fullText);
       try{ _cvLandLive(bubEl); }catch(_){}   // and the canvas keeps up with it, item by item as they appear
+      try{ _cvLiveLocal(bubEl); }catch(_){}  // ...and draws what has grown at once, not when the write comes back
       bubEl.querySelectorAll('.code-card pre').forEach((p,i)=>{
         const s=_sc[i];
         const streaming=!!p.closest('.code-card[data-incomplete]');
@@ -11591,9 +12118,12 @@ Your task: decide what to do next to advance toward the goal.
     const myAbort = _GLOBAL_ABORT;
     _streamStart();
     // the room, as the model will see it this turn (the control plane's manifest)
+    _phaseLocal(aMsg.wrap,'needs','room','noting what is open','start');
     const roomText = await _uiRoomText();
+    _phaseLocal(aMsg.wrap,'needs','room','noting what is open','done');
 
     try{
+      if(aMsg.wrap) aMsg.wrap._phaseSentAt=performance.now();   // the server times its frames from here
       const resp=await fetch(BASE+'/agents/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
         signal: myAbort.signal,
         body:JSON.stringify({
@@ -11607,7 +12137,7 @@ Your task: decide what to do next to advance toward the goal.
           history:JSON.stringify(HISTORY.slice(-20)),
           session_id:SID,model_override:modelOverride,
           instance_id:document.getElementById('cfgInst')?.value||'',
-          prefer_gpu:!!(document.getElementById('cfgGpu')?.checked||(a?.prefer_gpu)),
+          prefer_gpu:_gpuOn(a), no_gpu:!_gpuOn(a),
           think:!!(document.getElementById('cfgThink')?.checked||(a?.think)),
           tts:useTts,
           output_format:outFmt,  // shared format profile (vera.output_formats)
@@ -11631,6 +12161,13 @@ Your task: decide what to do next to advance toward the goal.
           // Session memory notes: unchecking the ctx toggle disables the
           // server-side (agent-level) injection too; checked defers to it.
           session_notes:(document.getElementById('ctxNotes')&&!document.getElementById('ctxNotes').checked)?false:undefined,
+          // the canvas before the answer (canvas-enrichment slice 4): the server places what answers the question on
+          // the session canvas within its budget and tells the model what is shown. The canvas's ✦ switch turns it off;
+          // 'vera:canvas:tell' = '0' keeps the placing and leaves the model untold.
+          canvas_enrich:_cvEnrichOn()||undefined, canvas_text:msg, canvas_mid:_cvRelMid||'',
+          canvas_tell:_cvTellOn(), chat_files:true,
+          // what the turn is doing, as it happens (the throbber names it); the turn's id ties the frames to it
+          phase_frames:_phasesOn()||undefined, turn_id:_phaseTurnId(aMsg.wrap)||undefined,
         })
       });
       if(!resp.ok){bubEl.textContent='✗ HTTP '+resp.status;return;}
@@ -11658,6 +12195,7 @@ Your task: decide what to do next to advance toward the goal.
               // Coalesced to one paint per frame; see _scheduleStreamRender.
               _scheduleStreamRender();}
             else if(ev.type==='thinking'){fullThink+=ev.text||'';thkEl.style.display='block';thkEl.textContent=fullThink;}
+            else if(ev.type==='phase'){ _phaseNote(aMsg.wrap, ev); }
             /* What this turn is waiting for, refreshed until the first token.
                The server only names jobs Vera itself started; when it cannot
                see what is holding the node it says so rather than claiming the
@@ -11818,10 +12356,15 @@ Your task: decide what to do next to advance toward the goal.
     }
     // Lint the completed code blocks once the final DOM is in place (C).
     try{ _lintRenderedBlocks(bubEl); }catch(_){}
+    // the canvas is open: the finished reply's code and diagrams stay where they were streaming - on the canvas
+    try{ _cvHoldForCanvas(bubEl, false); }catch(_){}
+    try{ _htmlLiveEnd(bubEl); }catch(_){}
     // Auto-open the preview pane for the last renderable code block, if enabled.
     _maybeAutoPreview(bubEl);
     // Auto-persist labeled code blocks into the artifact system (no manual Save).
     try{ _maybeAutoSaveArtifacts(bubEl); }catch(_){}
+    // how the turn was made: its steps, collapsed under the reply
+    try{ _phaseFooter(aMsg.wrap, bubEl); }catch(_){}
     // NOTE: audio is played in-stream via _enqueueAudio above.
     // Show a playback indicator row if audio was received (for replaying)
     if(_hadAudio&&useTts){
@@ -11835,12 +12378,18 @@ Your task: decide what to do next to advance toward the goal.
     // sees its own past panel-opens in the history and parrots them on later
     // turns — the cause of it re-opening exec-panel on "thanks" / "huh?".
     HISTORY.push({role:'assistant',content:_stripPanelMarkup(fullText),thinking:fullThink});
+    // Settings › Delivery: the answer may ALSO go to the canvas, a report, a podcast... - unless it called capabilities,
+    // when the continuation that reads their results is the answer (continueConversation delivers that one)
+    try{ if(!new RegExp(CAP_PLACEHOLDER_RE.source,'i').test(fullText||'')) _deliverAfter(_stripPanelMarkup(fullText), msg); }catch(_){}
     // the reply landed: what it MADE lands on the session canvas (keyed to the turn, through the resolver), then what is
     // in focus now (parks · recalls)
     try{ _cvLandReply(_cvRelMid).then(()=>{ try{ _cvRelevance(_cvRelMid, _cvRelText+'\n'+String(fullText||'').slice(0,1500)); }catch(_){} }); }catch(_){ try{ _cvRelevance(_cvRelMid, _cvRelText+'\n'+String(fullText||'').slice(0,1500)); }catch(__){} }
     // and what ELSE on the estate is relevant to the turn - a dashboard read as its widget, the news, the web, the
     // fabric's records as browsers (canvas.enrich; no model is called). Its own items, keyed and anchored to the turn.
     try{ _cvEnrich(_cvRelMid, _cvRelText, String(fullText||'')); }catch(_){}
+    // ...and what the reply NAMES - its people, organisations, places, tickers, dates - read by the NLP tier's entity
+    // model (turn.understand, CPU nodes) and kept as one chip item on the canvas when it names enough things
+    try{ _cvEntities(_cvRelMid, String(fullText||'')); }catch(_){}
 
     // NOTE: NO /memory/record/turn call here — handled server-side by agents.py
 
@@ -12153,6 +12702,13 @@ Your task: decide what to do next to advance toward the goal.
       if(finalText){
         try{ statusCard.body.dataset.markdown = String(finalText); }catch(_){}
         HISTORY.push({role:'assistant', content: String(finalText)});
+        // the agent loop's final answer goes the same way as a chat reply (Settings › Delivery)
+        try{ _deliverAfter(String(finalText), goal); }catch(_){}
+        /* ...and what it MADE reaches the session canvas the way a reply's does (owner, 2026-10-03: "code and output
+           produced by the agentic loop should be able to reach the canvas just like the chat"): the final pane is drawn
+           with the shared cards now, so the reply's harvest reads it - code, diagrams, widgets - keyed to this turn */
+        try{ setTimeout(()=>{ const fb=aloEl.shadowRoot&&aloEl.shadowRoot.querySelector('[data-part="final-body"]');
+          if(fb) _cvLandFrom(fb, uMsg.mid, statusCard.mid||uMsg.mid); }, 700); }catch(_){}
       }
       scroll();
     });
@@ -12183,9 +12739,11 @@ Your task: decide what to do next to advance toward the goal.
              || effectiveModel()
              || a?.model || '',
       instance_id: document.getElementById('loopInstanceOverride')?.value?.trim()
+                   || document.getElementById('cfgInst')?.value
                    || a?.instance_id || '',
-      prefer_gpu: document.getElementById('loopPreferGpu')?.checked!==false
-                  && a?.prefer_gpu!==false,
+      // the loop pane's GPU toggle AND the chat's: either one unticked keeps the run off the GPU
+      prefer_gpu: document.getElementById('loopPreferGpu')?.checked!==false && _gpuOn(a),
+      no_gpu: !(document.getElementById('loopPreferGpu')?.checked!==false && _gpuOn(a)),
       attach_skills: (a?.skill_ids||[]).join(','),
       attach_ontologies: (a?.ontology_ids||[]).join(','),
       session_id: SID||'',
@@ -12762,7 +13320,7 @@ Your task: decide what to do next to advance toward the goal.
     let txt='';
     try{
       const resp=await fetch(BASE+'/agents/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({agent_name:agentName,message:prompt,history:JSON.stringify(HISTORY.slice(-6)),session_id:SID,model_override:effectiveModel(),prefer_gpu:!!(a?.prefer_gpu),think:false,tts:useTts})
+        body:JSON.stringify({agent_name:agentName,message:prompt,history:JSON.stringify(HISTORY.slice(-6)),session_id:SID,..._routeFields(a),think:false,tts:useTts})
       });
       if(!resp.ok)return;
       const reader=resp.body.getReader();const dec=new TextDecoder();let buf='';
@@ -12787,6 +13345,9 @@ Your task: decide what to do next to advance toward the goal.
     const chainAuto=!!document.getElementById('cfgCapAutoExec')?.checked;
     await processCapPlaceholders(txt||'',targetBody,chainAuto);
     if(txt)HISTORY.push({role:'assistant',content:txt});
+    // the answer after a capability IS the turn's answer: Settings › Delivery applies to it (a further capability
+    // call means yet another continuation follows - that one delivers)
+    try{ if(txt&&!new RegExp(CAP_PLACEHOLDER_RE.source,'i').test(txt)){ const ask=[...HISTORY].reverse().find(h=>h&&h.role==='user'); _deliverAfter(txt, ask?ask.content:''); } }catch(_){}
   }
 
   /* ═══ WEB SEARCH — configurable SearXNG + DDG fallback ═══ */
@@ -13189,15 +13750,14 @@ Your task: decide what to do next to advance toward the goal.
     if(CTX_SRCS.has('memory')&&!stale()){
       // Fetch ~3x the desired k so the rerank has headroom — server ignores
       // hits below its own min similarity, so this is an upper bound.
-      // fast=true (the pre-send freshness-guard call in send()) restricts to
-      // postgres+neo4j: chroma's vector leg requires a query embedding that
-      // memory.search computes unconditionally when chroma is in play —
-      // live-measured 4.65s vs 0.08s with it excluded (2026-08 chat-send-
-      // latency investigation) on this instance's shared embed nodes. The
-      // on-type live-preview call (fast=false) keeps the richer chroma-
-      // inclusive search since nothing is blocking on it.
+      // Only a fetch YOU ask for (Fetch now, the result-count selects, opening the popover: force=true) waits for
+      // chroma's vector leg. It needs a query embedding first - live-measured 4.65s vs 0.08s without it (2026-08)
+      // and again 5.31s vs 0.38s on 2026-10-04 with the IDENTICAL top 12 - and everything below this await (agent
+      // context, session edges, graph neighbours, recall, web) waits behind it, so the automatic fetches (typing,
+      // after a reply, the pre-send guard) search postgres+neo4j only. With memory injection on, the turn
+      // still gets the vector search: the server's two-tier memory delivers it to the next turn.
       const mBody={query,limit:Math.max(k*3,12)};
-      if(fast) mBody.backends='postgres,neo4j';
+      if(fast||!force) mBody.backends='postgres,neo4j';
       const hr=await fetchA('/memory/search','POST',mBody);
       if(!stale()){
         const candidates=[];
@@ -13341,6 +13901,9 @@ Your task: decide what to do next to advance toward the goal.
         seed_ids:seedIds, top_k:k, sources:recallSrcs.join(','),
         fabric_dataset:fabDS, min_score:minSim,
         use_rollout:!!document.getElementById('ctxRollout')?.checked,
+        // recall waited for its slowest source (7.1-7.3 s of a ~9 s fetch, 2026-10-05): an automatic fetch takes what
+        // answered in 1.5 s and the late sources come with the next fetch; one you ask for still waits for all
+        budget_ms:force?0:1500,
       });
       if(!stale()&&rr?.results){
         const _renderSrc=(r)=>{
@@ -13491,6 +14054,16 @@ Your task: decide what to do next to advance toward the goal.
   }
 
   /* ═══ SESSION MEMORY GRAPH — with edge filter ═══ */
+  /* THE GRAPH FOLLOWS THE TURNS (owner, 2026-10-04: "the memory graph in the lhm of chat needs me to press reload to load
+     in"): it was read when a session loaded and when its tab was picked, never again - a new chat's graph stayed empty,
+     and an old one stayed a turn behind, while every reply stored more. When a reply finishes, the chat reads the
+     graph again once its memories have had time to land (twice: the stores are written after the reply), and tells the
+     menu instance - the harness's LHM, a frame of its own - to do the same. */
+  let _memTurnT=[];
+  function _memAfterTurn(){
+    if(_EMBED.only!=='menu') _lhmPost('memory',{});
+    _memTurnT.forEach(clearTimeout); _memTurnT=[4000, 15000].map(ms=>setTimeout(()=>{ try{ if(SID) memGraphLoad(); }catch(_){} }, ms));
+  }
   async function memGraphLoad(){
     if(!SID){document.getElementById('memGraphStatus').textContent='No session';return;}
     document.getElementById('memGraphStatus').textContent='Loading…';
@@ -13553,8 +14126,66 @@ Your task: decide what to do next to advance toward the goal.
       _memVG.load({ nodes:nodes.map(n=>({ id:String(n.id), name:label(n), type:String(n.type||n.node_type||n.kind||'memory'), props:n })),
                     edges:edges.map(e=>({ from:String(e.from_id||e.from), to:String(e.to_id||e.to), rel:String(e.relation||e.type||'') })) });
       pane.classList.add('vg');
+      _memVGCount=nodes.length;
+      _memViewApply();
       return true;
     }catch(e){ console.warn('memory graph: vera-graph', e); pane.classList.remove('vg'); return false; }
+  }
+  /* THE MEMORY GRAPH'S VIEW AND EXPAND, IN REACH (owner, 2026-10-04: "the memory graph in the chat lhm should let you
+     change the graph style and expand the graph just like the context graph"). Both existed and could not be found:
+     vera-graph draws its own view picker (Graph · Exploded · Estate 3D · Estate 2D · Mermaid) in a header the docked
+     section hides unless its ☰ is open. The section's head now carries a picker driving the same setMode, kept per
+     browser, and ⤢, which grows the menu in place into the full graph - the context graph, which holds this session's
+     memory beside the turn's context - with memory shown in full. Nothing here changes either graph. */
+  const _MEMVIEW_KEY='vera:chat:memview';
+  const _memViewWanted=()=>{ try{ return localStorage.getItem(_MEMVIEW_KEY)||'graph'; }catch(_){ return 'graph'; } };
+  function _memViewOptions(){
+    const ms=(window.veraUI&&veraUI.Graph&&typeof veraUI.Graph.listModes==='function')?veraUI.Graph.listModes():[];
+    return [{ id:'graph', label:'Graph' }].concat(ms.map(m=>({ id:String(m.id), label:String(m.label||m.id) })));
+  }
+  let _memViewTries=0;
+  function _memViewSync(){
+    const sel=document.querySelector('.lhm-dk[data-dock="paneMemGraph"] select.dk-view'); if(!sel) return;
+    const opts=_memViewOptions(), sig=opts.map(o=>o.id).join(',');
+    if(sel.dataset.sig!==sig){ sel.innerHTML=opts.map(o=>'<option value="'+esc(o.id)+'">'+esc(o.label)+'</option>').join(''); sel.dataset.sig=sig; }
+    let cur=_memViewWanted();   // the choice, even while an empty graph is drawn plainly
+    sel.value=opts.some(o=>o.id===cur)?cur:'graph';
+    // the display modes register after the graph library loads them: look again a few times until they have
+    if(opts.length<2&&_memViewTries<12){ _memViewTries++; setTimeout(()=>{ _memViewApply(); }, 700); }
+  }
+  // the view kept for this browser, applied once its mode exists AND there is something to draw: an empty session's
+  // graph stays the plain graph (the other views answer an empty graph with a parse error, e.g. Mermaid's "no nodes
+  // found"), and the picker keeps showing the choice
+  let _memVGCount=0;
+  function _memViewApply(){
+    const want=_memViewWanted();
+    try{ if(_memVG&&typeof _memVG.setMode==='function'){
+      if(!_memVGCount){ if(_memVG.getMode()!=='graph') _memVG.setMode('graph'); }
+      else if(want!=='graph'&&_memVG.getMode()!==want&&_memViewOptions().some(o=>o.id===want)) _memVG.setMode(want); } }catch(_){}
+    _memViewSync();
+  }
+  function _memViewSet(id){
+    try{ localStorage.setItem(_MEMVIEW_KEY, id||'graph'); }catch(_){}
+    try{ if(_memVG&&typeof _memVG.setMode==='function'&&(_memVGCount||(id||'graph')==='graph')) _memVG.setMode(id||'graph'); }catch(_){}
+    _memViewSync();
+  }
+  function _memGrow(){
+    _ctxGrow(true);
+    // memory in full in the grown graph; the element may be mounting, so try for a moment
+    let n=0; const go=()=>{ try{ if(_ctxCol&&typeof _ctxCol.mix==='function'){ _ctxCol.mix('memory','all'); return; } }catch(_){} if(++n<10) setTimeout(go, 300); };
+    setTimeout(go, 0);
+  }
+  function _memHeadControls(w){
+    const head=w&&w.querySelector('.grp'); if(!head||head.querySelector('.dk-view')) return;
+    const burger=head.querySelector('.dk-burger');
+    const sel=document.createElement('select'); sel.className='dk-view'; sel.title='How the memory graph is drawn - the same records, another view';
+    sel.addEventListener('click', ev=>ev.stopPropagation());
+    sel.addEventListener('change', ()=>_memViewSet(sel.value));
+    const gr=document.createElement('button'); gr.type='button'; gr.className='dk-grow'; gr.textContent='⤢';
+    gr.title='Expand - grow this menu into the full graph: the session\'s memory with this turn\'s context';
+    gr.addEventListener('click', ev=>{ ev.stopPropagation(); _memGrow(); });
+    head.insertBefore(sel, burger||null); head.insertBefore(gr, burger||null);
+    _memViewSync();
   }
   function _renderMemGraph(nodes,allEdges){
     { const fe=allEdges.filter(e=>!_memEdgeHideTypes.has(e.relation||e.type||''));
@@ -14599,7 +15230,9 @@ Your task: decide what to do next to advance toward the goal.
       if(rpEl) rpEl.style.display='none';
       if(amEl) amEl.style.display='none';
     }
-    document.getElementById('paneMemGraph').style.display=name==='memgraph'?'flex':'none';document.getElementById('paneMemGraph').className='ctx-pane'+(name==='memgraph'?' on':'');
+    /* only 'on' is the tab's to set: the pane also carries 'vg' (its Vera graph drawn) - overwriting the whole class
+       dropped it, and the memory graph docked in the LHM went blank until something drew it again */
+    { const mp=document.getElementById('paneMemGraph'); mp.style.display=name==='memgraph'?'flex':'none'; mp.classList.add('ctx-pane'); mp.classList.toggle('on', name==='memgraph'); }
     {const lp=document.getElementById('paneLoopGraph');if(lp){lp.style.display=name==='loop'?'flex':'none';lp.className='ctx-pane'+(name==='loop'?' on':'');}}
     // Combined DAG tab: graph on top, execution log below (both scroll/flex).
     document.getElementById('paneDagGraph').style.display=name==='dag'?'flex':'none';document.getElementById('paneDagGraph').className='ctx-pane'+(name==='dag'?' on':'');
@@ -15182,21 +15815,42 @@ Your task: decide what to do next to advance toward the goal.
      again when their menu is picked. ═══ */
   const _lhmTxt=(id)=>{ const el=document.getElementById(id); return el?(el.textContent||'').trim():''; };
   const LHM_MENUS=[
-    {id:'sessions', icon:'◷', label:'Sessions',  tabs:[{id:'Hist',label:'History'}],
+    /* desc: the pointer's line; desc_long: an agent's (both ride the published spec - panel.query, nav_select) */
+    {id:'sessions', icon:'◷', label:'Sessions',  desc:'Past conversations - open, search or start one',
+     desc_long:'Lists this user\'s chat sessions, newest first. Picking one loads its transcript into the chat; the action at the foot starts a new session. Navigate here to resume earlier work.',
+     tabs:[{id:'Hist',label:'History', desc:'Every past session', desc_long:'The session history list: click a row to reopen that conversation.'}],
      meta:()=>{ const n=document.querySelectorAll('#histList > div').length; return n?n+' sessions':''; }, cta:{label:'+ New session', run:()=>newSession()}},
-    {id:'context',  icon:'◎', label:'Context',   tabs:[{id:'ctx',label:'Context'},{id:'memgraph',label:'Memory'}],
+    {id:'context',  icon:'◎', label:'Context',   desc:'What the agent is using for this turn, and memory',
+     desc_long:'The context assembled for the current turn (records, agent, skills, ontologies, capabilities) with its size meter, and the memory graph. The action at the foot grows it into the full context graph. Navigate here to see or inspect why the agent answered as it did.',
+     tabs:[{id:'ctx',label:'Context', desc:'This turn\'s assembled context', desc_long:'The records and parts assembled into the current turn\'s context.'},{id:'memgraph',label:'Memory', desc:'The memory graph', desc_long:'The memory graph of this session\'s stored records.'}],
      meta:()=>_lhmTxt('ctxMeterLabel'), cta:{get label(){ return _ctxGrown?'Fold back to the quick menu ←':'Expand to the full graph →'; }, run:()=>_ctxGrow()}},
-    {id:'activity', icon:'∿', label:'Activity',  tabs:[{id:'dag',label:'DAG'},{id:'monitor',label:'Monitor'}],
+    {id:'activity', icon:'∿', label:'Activity',  desc:'What is running: the call DAG and the live monitor',
+     desc_long:'Live activity for this chat: the DAG of capability calls the turn made, and the monitor stream of events. The action at the foot clears the monitor. Navigate here to follow or debug a running turn.',
+     tabs:[{id:'dag',label:'DAG', desc:'The turn\'s call graph', desc_long:'The DAG of capability calls made by the current turn.'},{id:'monitor',label:'Monitor', desc:'The live event stream', desc_long:'The monitor: a live stream of events for this session.'}],
      meta:()=>{ const n=(document.getElementById('monitorStream')||{children:[]}).children.length; return n?n+' monitor lines':''; }, cta:{label:'Clear the monitor', run:()=>_monitorClear()}},
-    {id:'loop',     icon:'⟳', label:'Loop',      tabs:[{id:'loop',label:'Loop'},{id:'loops',label:'Loops'},{id:'goals',label:'Goals'}],
+    {id:'loop',     icon:'⟳', label:'Loop',      desc:'Agent loops: run one, see runs and goals',
+     desc_long:'The agentic loop: the current loop and its variant, the list of loop runs, and goals. The action at the foot opens the loop settings. Navigate here to start, watch or review an autonomous loop.',
+     tabs:[{id:'loop',label:'Loop', desc:'The current loop', desc_long:'The loop for this session and its chosen variant.'},{id:'loops',label:'Loops', desc:'Loop runs', desc_long:'The list of loop runs.'},{id:'goals',label:'Goals', desc:'Goals', desc_long:'The goals loops work towards.'}],
      meta:()=>_lhmTxt('loopVariantDesc').slice(0,48), cta:{label:'Loop settings ⚙', run:()=>_settingsPage(true,'variant')}},
-    {id:'workspace',icon:'⊞', label:'Workspace', tabs:[{id:'Panels',label:'Panels'},{id:'browser',label:'Browser'}],
+    {id:'workspace',icon:'⊞', label:'Workspace', desc:'Panels and the browser beside the chat',
+     desc_long:'What is open beside the chat: any registered UI panel, and the browser. The action at the foot opens a panel beside the chat. Navigate here to open or switch the panel the chat works with (panel.dispatch / panel.query target it).',
+     tabs:[{id:'Panels',label:'Panels', desc:'Open a panel beside the chat', desc_long:'The registered UI panels; picking one opens it beside the chat.'},{id:'browser',label:'Browser', desc:'The browser', desc_long:'The browser view beside the chat.'}],
      meta:()=>_activePanelId?('open · '+_lhmTxt('chatPanelTitle')):'nothing open beside the chat', cta:{label:'Open a panel beside the chat →', run:()=>railTab('Panels')}},
-    {id:'sandbox',  icon:'⌨', label:'Sandbox',   tabs:[{id:'code',label:'Code'}],
+    {id:'sandbox',  icon:'⌨', label:'Sandbox',   desc:'This session\'s code sandbox',
+     desc_long:'The session\'s sandbox: its status and the code it holds. The action at the foot opens its terminal. Navigate here to inspect or run what the agent wrote.',
+     tabs:[{id:'code',label:'Code', desc:'Files and code in the sandbox', desc_long:'The code and files in this session\'s sandbox.'}],
      meta:()=>_lhmTxt('sbxSessionStatus').slice(0,48), cta:{label:'Open the terminal →', run:()=>_sessionSbxTerminal()}},
-    {id:'ops',      icon:'✦', label:'Ops glance', tabs:[{id:'Caps',label:'Caps'}],
+    {id:'ops',      icon:'✦', label:'Capabilities', desc:'The capabilities this chat can call',
+     desc_long:'A glance at the capabilities available to the agent, with their count. The action at the foot reloads them. Navigate here to check whether a capability exists.',
+     tabs:[{id:'Caps',label:'Caps', desc:'Available capabilities', desc_long:'The list of capabilities the agent can call.'}],   // (owner, 2026-10-03: "should be called Capabilities not Ops Glance")
      meta:()=>_lhmTxt('capBadge'), cta:{label:'Reload capabilities', run:()=>_capsReload()}},
-    {id:'settings', icon:'⚙', label:'Settings',  tabs:[{id:'Cfg',label:'Config'}],
+    {id:'agents',   icon:'◈', label:'Agents',    desc:'Pick, edit or create an agent',
+     desc_long:'Every agent: pick one to edit its prompt, model, capabilities, skills, memory and reply style, or use it in this chat. Saving changes only the fields you edited. The action at the foot starts a new agent. Navigate here to set up or change an agent without leaving the chat.',
+     tabs:[{id:'Agents',label:'Agents', desc:'Every agent', desc_long:'The agents as cards; a pick opens its editor below.'}],
+     meta:()=>{ const n=(AGENTS||[]).length; return n?n+' agents':''; }, cta:{label:'+ New agent', run:()=>_agentNew()}},
+    {id:'settings', icon:'⚙', label:'Settings',  desc:'The agent and chat configuration',
+     desc_long:'Chat configuration: the agent in use and its options. The action at the foot opens the full Settings page (also Ctrl/Cmd+,). Navigate here to change the agent or its settings.',
+     tabs:[{id:'Cfg',label:'Config', desc:'Agent and options', desc_long:'The quick configuration: agent and options.'}],
      meta:()=>{ const s=document.getElementById('cfgAgent'); return s&&s.selectedOptions&&s.selectedOptions[0]?('agent · '+s.selectedOptions[0].textContent.trim()):''; }, cta:{label:'Open Settings ⌘,', run:()=>_settingsPage(true)}},
   ];
   const _lhmTabEl=(id)=>document.querySelector('#rightRail .ctx-tab-bar .ctab[onclick*="(\''+id+'\'"]');
@@ -15265,6 +15919,7 @@ Your task: decide what to do next to advance toward the goal.
       {id:'agent', n:'Agent & model', from:[['rpCfg','Execution modes'],['rpCfg','Agent'],['rpCfg','Model override'],['rpLoop','Model override'],['rpCfg','Agent capabilities'],['rpCfg','DAG']], note:'who answers, on what, with which capabilities'},
       {id:'format', n:'Output format', from:[['rpCfg','Output format']], note:'markdown · thinking · the throbber'},
       {id:'motion', n:'Motion', from:[['rpCfg','Motion']], note:'the cursor, how messages and capabilities arrive'},
+      {id:'delivery', n:'Delivery', from:[['rpCfg','Delivery']], note:'where an answer also goes, in what style, and who chooses'},
       {id:'media', n:'Media & rendering', from:[['rpCfg','Media & rendering'],['rpCfg','Output']], note:'images · artifacts · live render · speech'},
       {id:'web', n:'Web search', from:[['rpCfg','Web Search']], note:'search before answering'},
       {id:'research', n:'Research streaming', from:[['rpCfg','Research Streaming']], note:'the researcher API'},
@@ -15329,8 +15984,6 @@ Your task: decide what to do next to advance toward the goal.
     // the panes keep a line saying where their fields went (nothing vanishes; the page is where it lives now)
     Object.keys(moved).forEach(pid=>{ const pane=document.getElementById(pid); if(!pane) return; const l=document.createElement('div'); l.className='sp-gone'; l.innerHTML='<span>'+moved[pid]+' section'+(moved[pid]>1?'s':'')+' moved to <b>Settings</b> — ⌘,</span><button class="btn xs" type="button">Open Settings</button>'; l.querySelector('button').addEventListener('click',()=>_settingsPage(true)); pane.insertBefore(l, pane.firstChild); });
     page.querySelector('.sp-count').textContent=n+' sections · every field keeps its id and handler';
-    // the pack segment in the page header (the board)
-    try{ const hd=page.querySelector('.sp-hd'), k=hd&&hd.querySelector('.kbd'); if(hd&&k&&window.veraUI&&typeof veraUI.makeStyleControl==='function'&&!hd.querySelector('.sp-hd-pack')){ const w=document.createElement('span'); w.className='sp-hd-pack'; w.appendChild(veraUI.makeStyleControl()); hd.insertBefore(w, k); } }catch(_){}
     // the theme picker fills its card now that the card is in the document (injectPicker looks the container up by id)
     try{ if(document.getElementById('spThemePick')&&window.veraUI&&typeof veraUI.injectPicker==='function') veraUI.injectPicker('spThemePick'); }catch(_){}
     _spShow('variant');
@@ -15361,6 +16014,8 @@ Your task: decide what to do next to advance toward the goal.
 var _EMBED_CHAT=(function(){ try{ const q=new URLSearchParams(location.search); return { agent:q.get('agent')||'', system:String(q.get('system')||'').slice(0,8000), session:q.get('session')||'', title:q.get('title')||'', embed:q.get('embed')==='1' }; }catch(_){ return { agent:'', system:'', session:'', title:'', embed:false }; } })();
 try{ if(_EMBED_CHAT.title) document.title=_EMBED_CHAT.title; }catch(_){}
 const _EMBED=(function(){ try{ const q=new URLSearchParams(location.search); return { only:q.get('only')||'', harness:q.get('harness')==='yes' }; }catch(_){ return { only:'', harness:false }; } })();
+// the harness folds the menu frame to its rail (auto-hide, «): this frame shows the rail alone until it opens again (owner, 2026-10-03)
+if(_EMBED.only==='menu') window.addEventListener('message', ev=>{ const d=ev.data; if(!d||typeof d!=='object'||d.type!=='vera:lhm:folded'||ev.source!==window.parent) return; document.documentElement.classList.toggle('lhm-folded', !!d.on); });
 const _LHMBC=(function(){ try{ return new BroadcastChannel('vera:chat:lhm'); }catch(_){ return null; } })();
 function _lhmPost(act, args){ try{ if(_LHMBC) _LHMBC.postMessage({ act, args:args||{}, sid:SID||'', from:_EMBED.only||'full', t:Date.now() }); }catch(_){} }
 function _embedMount(){
@@ -15380,6 +16035,7 @@ function _embedMount(){
          on whatever they had, which on the board is the whole context graph the user actually looks at. */
       else if(m.act==='focus'){ _grFocusMid=a.mid||''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid); }catch(_){} } try{ _ctxFollow(true); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
+      else if(m.act==='memory'){ try{ _memAfterTurn(); }catch(_){} }   // a reply finished in the chat: the memory graph follows
       else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
       else if(m.act==='runs'){ _runsApply(a.which, a.off); }
       // updateFrameUI too: the legacy strip and Frames pane are views onto CTX_FRAMES like any other, and the
@@ -15454,7 +16110,7 @@ function _embedMount(){
   /* ── THE QUICK MENUS as the Canvas board draws them: every menu's body is a list of widgets ─────────────────
      Context: the context galaxy (the context_graph widget form — galaxy · iso · flow · time, the family chips, All
      edges), the budget bar (8 families as shares of the window), "In this prompt" rows, the CTA to the full graph.
-     Sessions · Activity · Loop · Workspace · Sandbox · Ops glance · Settings: the board's compact bodies, read from
+     Sessions · Activity · Loop · Workspace · Sandbox · Capabilities · Settings: the board's compact bodies, read from
      the chat's own state. The old pane of every menu is one press away ("Full ▸" in the header) in the same panel. */
   const _CTX_FAM_LABEL={agent:'Agent + system',skill:'Skills',ontology:'Ontologies',memory:'Memory recalls',vector:'Vector matches',graph:'Graph (Neo4j)',fabric:'Fabric records',cap:'Capabilities',web:'Web',news:'News',run:'Runs',related_qa:'Related Q&A',worldview:'Worldview',entities:'Entities',urls:'URLs',both:'Vector + graph'};
   let _qGalView='galaxy', _qGalAll=false, _qSrcOn='', _qSessQ='', _qPanelQ='';   // _qGalOff is declared with _ctxLayers, which reads it
@@ -15787,7 +16443,14 @@ function _embedMount(){
       if(!(window.customElements&&customElements.get('vera-terminal'))){ const s=document.createElement('script'); s.src='/ui/vera-terminal.js'; s.async=true; document.head.appendChild(s); } }
     el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>{ const a=b.dataset.act; try{ if(a==='on') _sessionSbxToggle(true); else if(a==='term') _sessionSbxTerminal(); else if(a==='vscode') _sessionSbxVscode(); else if(a==='code'){ _dkScroll('paneCode'); _artifactsRefresh(); } else if(a==='refresh'){ _sbxQ.sid=''; _sessionSbxRefresh(); } }catch(_){} }));
   }
-  // Ops glance: the capability estate at a glance (loaded · in reach for this agent · queued) as the board's cards
+  // Capabilities: the capability estate at a glance (loaded · in reach for this agent · queued) as the board's cards
+  // the Agents menu's head card: how many agents, which one this chat talks to (the list and the editor dock below)
+  function _quickAgents(el){
+    const n=(typeof AGENTS!=='undefined'&&Array.isArray(AGENTS))?AGENTS.length:0, cur=(document.getElementById('agentBarSel')||{}).value||'';
+    const sig=n+':'+cur; if(el.dataset.sig===sig) return; el.dataset.sig=sig;
+    try{ _dkRelease(el); }catch(_){}   // a docked pane goes home before the body is redrawn - it is never out of the document
+    el.innerHTML='<div class="wcard" data-w="agents · counter"><span class="wc-h"><span class="mono">◈</span><b>Agents</b><span class="mono">agent.list</span></span><span class="wc-v"><b class="num">'+n+'</b><span class="u">'+(cur?'this chat talks to '+esc(cur):'pick one to edit it')+'</span></span></div>';
+  }
   function _quickOps(el){
     const all=(typeof ALL_CAPS!=='undefined'&&Array.isArray(ALL_CAPS))?ALL_CAPS:[]; const badge=_lhmTxt('capBadge'); let reach=all.length; try{ const a=(typeof AGENTS!=='undefined'&&Array.isArray(AGENTS))?AGENTS.find(x=>x.name===(document.getElementById('cfgAgent')||{}).value):null; if(a) reach=(_getAgentCaps(a)||[]).length; }catch(_){}
     const groups={}; all.forEach(c=>{ const g=String(c.name||'').split('.')[0]||'?'; groups[g]=(groups[g]||0)+1; }); const top=Object.entries(groups).sort((a,b)=>b[1]-a[1]).slice(0,6);
@@ -15815,6 +16478,8 @@ function _embedMount(){
     workspace:{ panes:[{ id:'paneBrowser', n:'Browser', tab:'browser', cls:'dk-frame', load:()=>_renderBrowserCtxList() }], cards:{ titles:['Session canvas','Media & rendering'] } },
     sandbox:  { panes:[{ id:'paneCode', n:'Artifacts & preview', tab:'code', cls:'dk-frame', load:()=>_artifactsRefresh() }], cards:{ titles:['Session container'] } },
     ops:      { panes:[{ id:'rpCaps', n:'Capabilities', tab:'Caps', cls:'dk-caps', load:()=>_renderRailCaps() }], cards:{ titles:['Agent capabilities'] } },
+    agents:   { panes:[{ id:'rpAgentList', n:'Agents', tab:'Agents', cls:'dk-list', load:()=>_renderRailAgents() },
+                       { id:'rpAgentEdit', n:'Edit agent', tab:'Agents', cls:'dk-agent-edit' }] },
     settings: { all:true }
   };
   const _dkHome={};      // pane id -> { mark (a comment where it lived), el }
@@ -15855,9 +16520,15 @@ function _embedMount(){
       if(!_dkHome[p.id]){ const mk=document.createComment('lhm-dock '+p.id); pane.parentNode.insertBefore(mk, pane); _dkHome[p.id]={ mark:mk, el:pane }; }
       let w=el.querySelector(':scope > .lhm-dk[data-dock="'+p.id+'"]');
       if(!w){ w=document.createElement('div'); w.className='wid lhm-dk '+(p.cls||''); w.dataset.dock=p.id; w.setAttribute('data-w', p.n.toLowerCase()+' \u00b7 '+String(p.cls||'dk-pane').replace('dk-',''));
-        w.innerHTML='<div class="grp">'+esc(p.n)+'</div><div class="lhm-dk-b"></div>'; if(p.h) w.style.setProperty('--dk-h', p.h+'px'); el.appendChild(w); }   // a graph fits itself to its box when it loads, so the box is sized first
+        w.innerHTML='<div class="grp">'+esc(p.n)+'</div><div class="lhm-dk-b"></div>'; if(p.h) w.style.setProperty('--dk-h', p.h+'px'); el.appendChild(w);   // a graph fits itself to its box when it loads, so the box is sized first
+        // a small graph's controls behind ☰ (shown again by it, for this pane, until the menu is redrawn)
+        if(String(p.cls||'').indexOf('dk-graph')>=0){ const bg=document.createElement('button'); bg.type='button'; bg.className='dk-burger'; bg.textContent='\u2630'; bg.title='The graph\'s controls - load, search, layout, fit, legend';
+          bg.addEventListener('click',ev=>{ ev.stopPropagation(); const on=w.classList.toggle('dk-tools'); const lg=w.querySelector('vera-loop-graph'); if(lg){ if(on) lg.removeAttribute('tools'); else lg.setAttribute('tools','hidden'); } });
+          w.querySelector('.grp').appendChild(bg);
+          if(p.id==='paneMemGraph') _memHeadControls(w); } }
       const b=w.querySelector('.lhm-dk-b');
       if(pane.parentNode!==b) b.appendChild(pane);
+      { const lg=w.classList.contains('dk-graph')&&pane.querySelector('vera-loop-graph'); if(lg){ if(w.classList.contains('dk-tools')) lg.removeAttribute('tools'); else lg.setAttribute('tools','hidden'); } }
       if(p.load&&(_dkLoaded[p.id]||{}).sid!==(SID||'')){ _dkMark(p.id); try{ p.load(); }catch(_){} }   // docked, or the session changed under it
     });
     // the menu's own settings: a fold at its foot, the page's cards inside while it is open
@@ -15900,7 +16571,7 @@ function _embedMount(){
     el.querySelectorAll('.lrow[data-sprow]').forEach(r=>r.addEventListener('click',()=>{ const id=r.dataset.sprow; if(_qSpOpen[id]) delete _qSpOpen[id]; else _qSpOpen[id]=1; try{ localStorage.setItem('vera_lhm_sprow', JSON.stringify(_qSpOpen)); }catch(_){} VeraLHM.render(); }));
     el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation(); try{ const a=b.dataset.act; if(a==='aa') _appearanceSheet(ev); else if(a==='page') _settingsPage(true); else _toolsSheet(true); }catch(_){} }));
   }
-  const _QUICK={context:_quickContext, sessions:_quickSessions, activity:_quickActivity, loop:_quickLoop, workspace:_quickWorkspace, sandbox:_quickSandbox, ops:_quickOps, settings:_quickSettings};
+  const _QUICK={context:_quickContext, sessions:_quickSessions, activity:_quickActivity, loop:_quickLoop, workspace:_quickWorkspace, sandbox:_quickSandbox, ops:_quickOps, agents:_quickAgents, settings:_quickSettings};
   // every quick body docks its menu's panes and settings after it draws (and after an early return on an unchanged key)
   Object.keys(_QUICK).forEach(k=>{ const f=_QUICK[k]; _QUICK[k]=function(el, api){ f(el, api); try{ _dockSync(el, k); }catch(e){ try{ console.warn('LHM dock: '+k, e); }catch(_){} } }; });
   // the quick bodies follow the chat's state: a light tick re-draws only when a body's signature changed
@@ -15927,7 +16598,8 @@ function _embedMount(){
       if(el.tagName==='DIV'&&!el.className&&!id) return;   // the spacer
       if(id==='hdrMore'){ el.dataset.hid='more'; out.push({ grp:'more', prio:0, items:[{ hid:'more', kind:'more', label:'\u22ef', title:el.title||'All chat tools', on:el.classList.contains('on') }] }); return; }
       if(el.classList.contains('agent')){ const s=el.querySelector('select'); if(!s) return; s.dataset.hid='agent';
-        out.push({ grp:'agent', prio:1, items:[{ hid:'agent', kind:'select', value:s.value, title:String(((document.getElementById('agentMeta')||{}).textContent)||el.title||'').slice(0,160),
+        const cb=document.getElementById('capBadge');
+        out.push({ grp:'agent', prio:1, items:[{ hid:'agent', kind:'select', value:s.value, meta:String(((document.getElementById('agentMeta')||{}).textContent)||'').trim().slice(0,48), caps:!!(cb&&!cb.classList.contains('hidden')), title:String(((document.getElementById('agentMeta')||{}).textContent)||el.title||'').slice(0,160),
           options:[...s.options].slice(0,80).map(o=>[o.value, String(o.textContent||'').trim().slice(0,40)]) }] }); return; }
       if(el.classList.contains('sess')){ const n=document.getElementById('sessionName'); if(!n) return; n.dataset.hid='session';
         out.push({ grp:'session', prio:1, items:[{ hid:'session', kind:'text', label:String(n.textContent||'').trim().slice(0,60), title:'Rename the session \u00b7 '+String(((document.getElementById('sessMeta')||{}).textContent)||'').trim() }] }); return; }
@@ -16122,6 +16794,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     }
     if(name==='Hist')histLoad();
     if(name==='Caps')_renderRailCaps();
+    if(name==='Agents')_renderRailAgents();
     if(name==='Panels'){ _loadUiPanels().then(_renderRailPanels); }
 
     // Keep the top-bar Caps/Panels button highlights in sync so the user
@@ -16291,7 +16964,13 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
         const colId='col-'+Date.now()+'-'+Math.random().toString(36).slice(2,6);
         let bodyHtml;
         if(long){
-          const preview=renderMd(txt.slice(0,300))+'…';
+          /* the preview never ends inside a fence (owner, 2026-10-04: a finished deck came back from history as a card
+             saying "streaming… writing" - the 300 characters cut its ```slides open): it stops before the fence it would
+             cut, and the fence is named instead; Show full draws everything */
+          let cut=txt.slice(0,300); const fences=[...cut.matchAll(/^\s*(```|~~~)([\w+-]*)/gm)];
+          let more='';
+          if(fences.length%2===1){ const f=fences[fences.length-1]; cut=cut.slice(0,f.index); more=' <span style="color:var(--dim2)">['+esc(f[2]||'code')+' block]</span>'; }
+          const preview=(cut.trim()?renderMd(cut):'')+more+'…';
           bodyHtml=`<div>${preview}<br><button class="btn xs" style="margin-top:4px" onclick="(function(b,id){b.closest('.msg-body').innerHTML=document.getElementById(id).innerHTML;b.closest('.msg-body').removeChild=function(){};document.getElementById(id).remove();})(this,'${colId}')">Show full</button></div><template id="${colId}">${renderMd(txt)}</template>`;
         }else{
           bodyHtml=renderMd(txt);
@@ -18048,6 +18727,75 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
      on subsequent turns. */
   let _railRunCap=null; // currently-open run form's cap name
 
+  /* ═══ THE AGENTS MENU (owner, 2026-10-04: "id like to be able to setup agents from the chat ui lhm"; the editor is
+     "a reusable writable form"). Two widgets, nothing hand-drawn: cards over agent.list, and a form over agent.get that
+     saves through agent.patch - only the fields edited, every other field of the agent kept (agent.update would reset
+     them). A new agent is the same form with no source, saved through agent.create. ═══ */
+  const _AGENT_FIELDS=[
+    { key:'label', label:'Name shown', type:'text' },
+    { key:'description', label:'What it is for', type:'textarea', rows:2 },
+    { key:'model', label:'Model (blank = the default)', type:'text' },
+    { key:'system_prompt', label:'System prompt', type:'textarea', rows:8 },
+    { key:'temperature', label:'Temperature', type:'number' },
+    { key:'num_ctx', label:'Context window (0 = automatic)', type:'number' },
+    { key:'domain_caps', label:'Capabilities it may call (comma-separated, * = all)', type:'list' },
+    { key:'skill_ids', label:'Skills', type:'list' },
+    { key:'ontology_ids', label:'Ontologies', type:'list' },
+    { key:'memory_enabled', label:'Remember conversations', type:'bool' },
+    { key:'memory_inject', label:'Bring memories into its turns', type:'bool' },
+    { key:'memory_inject_limit', label:'Memories per turn', type:'number' },
+    { key:'notes_inject', label:'Session notes', type:'bool' },
+    { key:'two_tier', label:'Two-tier reply', type:'select', options:['off','fetched','message'] },
+    { key:'quick_opener', label:'Quick opener', type:'bool' },
+    { key:'think', label:'Think before answering', type:'bool' },
+    { key:'prefer_gpu', label:'Prefer the GPU', type:'bool' },
+  ];
+  let _agentListW=null;
+  function _renderRailAgents(){
+    const list=document.getElementById('rpAgentList'); if(!list) return;
+    if(_agentListW&&list.contains(_agentListW)){ try{ _agentListW.read(true); }catch(_){} return; }
+    list.innerHTML='';
+    _agentListW=document.createElement('vera-widget'); _agentListW.setAttribute('size','l'); _agentListW.setAttribute('bare','');
+    // rows shaped by the widget's own map: each card is named by the agent's name (not its id) and shows its label and model
+    _agentListW.setAttribute('record', JSON.stringify({ form:'cards', title:'Agents', source:'agent.list',
+      read:{ map:{ rows:'agents', fields:['label','model'] } }, draw:{ limit:80, columns:2 } }));
+    _agentListW.addEventListener('widget:item', ev=>{ const it=(ev.detail||{}).item; const name=it&&typeof it==='object'?(it.name||''):''; if(!name) return; ev.preventDefault(); _agentEdit(name); });
+    list.appendChild(_agentListW);
+  }
+  function _agentUse(name){
+    const sel=document.getElementById('agentBarSel'); if(!sel||!name) return;
+    if(![...sel.options].some(o=>o.value===name)){ const o=document.createElement('option'); o.value=name; o.textContent=name; sel.appendChild(o); }
+    sel.value=name; try{ agentBarChanged(); }catch(_){}
+  }
+  function _agentEditorHead(box, name){
+    const acts=document.createElement('div'); acts.className='ag-acts';
+    if(name){ const use=document.createElement('button'); use.className='btn xs pri'; use.textContent='Use in this chat'; use.title='Make '+name+' the agent this chat talks to'; use.addEventListener('click', ()=>_agentUse(name)); acts.appendChild(use); }
+    const full=document.createElement('button'); full.className='btn xs'; full.textContent='Agents panel ↗'; full.title='Every setting (voice, RAG knowledge, routing, versions) in the Agents panel';
+    full.addEventListener('click', ()=>{ try{ panelOpen('agents-skills-ontologies'); }catch(_){} }); acts.appendChild(full);   // the registered Agents panel (/ui/panels)
+    box.appendChild(acts);
+  }
+  function _agentEdit(name){
+    const box=document.getElementById('rpAgentEdit'); if(!box||!name) return;
+    box.innerHTML=''; _agentEditorHead(box, name);
+    const w=document.createElement('vera-widget'); w.setAttribute('size','l');
+    w.setAttribute('record', JSON.stringify({ form:'form', title:'Agent · '+name, source:'agent.get', read:{ args:{ name, force_refresh:true } },
+      draw:{ fields:_AGENT_FIELDS, save:{ cap:'agent.patch', from:{ agent_id:'id' }, edits_as:'fields', label:'Save changes' } } }));
+    w.addEventListener('widget:saved', ()=>{ try{ _agentListW&&_agentListW.read(true); }catch(_){} try{ loadAgents(); }catch(_){} });
+    box.appendChild(w);
+    try{ _dkScroll('rpAgentEdit'); }catch(_){}
+  }
+  function _agentNew(){
+    try{ if(window.VeraLHM) VeraLHM.pick('agents'); }catch(_){}
+    const box=document.getElementById('rpAgentEdit'); if(!box) return;
+    box.innerHTML=''; _agentEditorHead(box, '');
+    const w=document.createElement('vera-widget'); w.setAttribute('size','l');
+    w.setAttribute('record', JSON.stringify({ form:'form', title:'New agent',
+      draw:{ fields:[{ key:'name', label:'Short name (letters, digits, dashes)', type:'text' }].concat(_AGENT_FIELDS.filter(f=>['label','description','model','system_prompt','temperature'].includes(f.key))),
+             save:{ cap:'agent.create', label:'Create agent' } } }));
+    w.addEventListener('widget:saved', ev=>{ const a=((ev.detail||{}).args)||{}; try{ _agentListW&&_agentListW.read(true); }catch(_){} try{ loadAgents(); }catch(_){} if(a.name) setTimeout(()=>_agentEdit(String(a.name)), 300); });
+    box.appendChild(w);
+    try{ _dkScroll('rpAgentEdit'); }catch(_){}
+  }
   function _renderRailCaps(){
     const list=document.getElementById('rpCapList');
     const meta=document.getElementById('rpCapMeta');
@@ -18344,6 +19092,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   function explode(on){
     if(_EMBED.only==='menu'){ _lhmPost('explode',{ on }); return; }
     on=(on==null)?!_xpl.on:!!on; _xpl.on=on;
+    if(!on&&_xpl.doc){ _xpl.doc=null; try{ _xplDocChip(); }catch(_){} }   // a structure shown in the scene goes with it
     // the scene has the canvas and the context graph built in (the Canvas board): the columns fold away while it is
     // open and come back as they were when it closes — + Canvas / + Graph by hand still open one over the scene
     if(on){ _xplHid={ canvas:_pages.has('canvas'), graph:_ctxGrown, remote:_ctxRemote.on }; if(_xplHid.graph) _ctxGrow(false); if(_xplHid.remote) _lhmPost('grow-set',{ on:false }); if(_xplHid.canvas){ _pages.delete('canvas'); _pagesApply(); } }
@@ -18376,7 +19125,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       try{ if(_ctxMeterLast.max>0&&typeof _xplEl.setBudget==='function') _xplEl.setBudget(_ctxMeterLast.used,_ctxMeterLast.max); }catch(_){}   // the chip bar's window meter from the turn before the scene opened
     document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===_xpl.mode));
     _ctxRunsFollowScene(); _xplEl.addEventListener('vera:xpl:close', ()=>_xplClose());
-    _xplEl.addEventListener('vera:xpl:place', ev=>_xplPlaceOpen((ev.detail||{}).mid||''));
+    _xplEl.addEventListener('vera:xpl:place', ev=>{ if(!_xpl.doc) _xplPlaceOpen((ev.detail||{}).mid||''); });
     // the two optional layers and the galaxy are the element's own switches (remembered per browser); the host fetches what they need
     _xplEl.addEventListener('vera:xpl:layers', ev=>{ _xplLayers=Object.assign({}, _xplLayers, ev.detail||{}); _xplSync(true); });
     try{ const st=_xplEl.state(); _xplLayers=Object.assign({}, _xplLayers, st.layers||{}, { galaxy:!!st.galaxy }); }catch(_){}
@@ -18389,7 +19138,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _xplEl.addEventListener('vera:xpl:edit', ev=>_xplEdit(ev.detail||{}));
     // a turn selected in the exploded scene (the turn dots, the scrubber, ← →, a station caption, the exchange) is the focused turn
     // everywhere: the grown context graph at that turn's frame, the mini graph re-drawn, the canvas with that turn's items in focus
-    _xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid) return; _grFocusMid=mid;
+    _xplEl.addEventListener('vera:xpl:turn', ev=>{ const mid=(ev.detail||{}).mid||''; if(!mid||_xpl.doc) return; _grFocusMid=mid;
       try{ _ctxFollow(true); }catch(_){}   // the chat's own follow: the frame in view is this turn's — the mini re-draws when it changes, the anchor posts when the graph page is open
       try{ _ctxColSig=''; _ctxColumnSync(mid); }catch(_){}   // the grown graph for the turn, at the turn's frame (the sync activates the frame in view)
       try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
@@ -18460,7 +19209,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       _xplRefresh(); try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){}
     }catch(e){ appendSys('Place failed: '+esc(String(e&&e.message||e))); }
   }
-  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.dataset.rels=_runsOff.xpl?'off':'on'; _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: scene', e); } try{ _xplSync(false); }catch(_){} }
+  function _xplRefresh(){ if(!_xpl.on||!_xplEl||typeof _xplEl.setScene!=='function') return; try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.dataset.rels=_runsOff.xpl?'off':'on'; _xplEl.setScene(_xpl.doc?_xpl.doc.scene:_xplScene()); }catch(e){ console.warn('explode: scene', e); } try{ _xplSync(false); }catch(_){} }
   const _xplCtxCard=(n)=>({id:n.id, n:n.label||n.id, d:(n.source||'')+' · '+(+(n.score||0)).toFixed(2), col:srcCol(n.source), kind:n.type||n.source||'', score:+(n.score||0), body:String(n.text||'').slice(0,240)});
   function _xplRecordReads(mid){ try{ if(!mid||typeof CTX_NODES==='undefined') return; _TURN_READS[mid]=CTX_NODES.filter(n=>n.included!==false).slice(0,40).map(_xplCtxCard); _TURN_RELS[mid]=_xplRels(); }catch(_){} }
   // what a turn read, for the scene: the reads recorded when the question was sent; when none were (the first send of a
@@ -18491,7 +19240,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       body.querySelectorAll('.art-card').forEach(el=>{ const n=String(((el.querySelector('.art-hd .t')||{}).textContent)||'artifact').trim().slice(0,60); made.push({n, d:'artifact', col:'#c9955a', kind:'artifact', html:(function(){ const f=el.querySelector('iframe'); const h=f&&(f.srcdoc||f.getAttribute('srcdoc')||f.getAttribute('data-art-srcdoc-html')); return h?String(h).slice(0,60000):undefined; })()}); });   // the render travels with the card: an opened card shows the artifact itself, as the chat does
       body.querySelectorAll('vera-widget').forEach(el=>{ let form=el.getAttribute('form')||'', data=null; try{ const rec=el.record||JSON.parse(el.getAttribute('record')||'null'); if(rec){ form=form||rec.form||''; data=rec.data!=null?rec.data:(el._data!=null?el._data:null); } }catch(_){} made.push({n:el.getAttribute('title')||form||'widget', d:'widget · '+form, col:'#a78bfa', kind:'widget', form:form||'kv', data}); });
       body.querySelectorAll('vera-mermaid,.mermaid,pre.mermaid').forEach(el=>{ const src=String((el._code!=null?el._code:el.textContent)||'').trim(); made.push({n:'Diagram', d:'mermaid', col:'#a78bfa', kind:'diagram', mermaid:src.slice(0,24000)}); });
-      body.querySelectorAll('pre code').forEach(el=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; if(lang==='mermaid'||lang==='widget') return; const s=String(el.textContent||''); made.push({n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', col:'#fb923c', kind:'code', body:s.slice(0,400)}); });
+      body.querySelectorAll('pre code').forEach(el=>{ const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||''; if(lang==='mermaid'||lang==='widget') return; const s=String(el.textContent||''); made.push({n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', col:'#fb923c', kind:'code', body:s.slice(0,400), text:s.slice(0,200000), lang}); });   /* the card shows 400 characters; its structure reads the whole */
       body.querySelectorAll('vera-agent-loop-output').forEach(el=>{ let steps=[]; try{ steps=[...el.querySelectorAll('[data-step],.step,.alo-step')].slice(0,12).map(s=>({label:String(s.textContent||'').trim().slice(0,40), status:/done|ok/.test(s.className)?'ok':/run|active/.test(s.className)?'run':/err|fail/.test(s.className)?'fail':''})); }catch(_){} made.push({n:'Agentic loop', d:'loop · '+(steps.length?steps.length+' steps':'running'), col:'var(--acc)', kind:'loop', steps}); });
       // every image the reply carries — a diffusion render, an artifact's picture, a capability's screenshot — with its source, so the scene can show it per tier
       body.querySelectorAll('img').forEach(el=>{ if(el.closest('.msg-actions,.cap-inline-header,.pa-att')||/\b(ico|icon|avatar)\b/.test(String(el.className||''))) return; const src=el.currentSrc||el.getAttribute('src')||''; if(!src) return; made.push({n:el.getAttribute('alt')||'image', d:el.closest('.sd-img,.cap-imgs')?'image · diffusion':'image', col:'#e879f9', kind:'image', src}); });
@@ -18501,7 +19250,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     if(last&&!last.read.length&&typeof CTX_NODES!=='undefined'){ const live=CTX_NODES.filter(n=>n.included!==false).map(_xplCtxCard); last.read=live.slice(0,12); last.readAll=live.slice(0,40); last.rel=_xplRels(); }
     // every turn: its moment, its canvas items as the session canvas holds them (a reload keeps what was placed; a move
     // lands where it was dropped), and — when the layers are on — the calls it made and where they ran
-    turns.forEach(t=>{ t.ts=tsOf[t.mid]||0; t.land=_xplLandOf(t.mid, t.land); });
+    turns.forEach(t=>{ t.ts=tsOf[t.mid]||0; t.land=_xplLandOf(t.mid, t.land); const s=_XPL_STRUCT[t.mid]; if(s){ t.struct=s.cards; t.structLinks=s.links; t.structFrom=s.from; } });   // a card exploded in place
     if(_xplLayers.activity||_xplLayers.estate){ const by=_xplBucket(turns), llm=_xplLLMFor(turns, by); turns.forEach(t=>{ const a=by[t.mid]||[]; if(_xplLayers.activity) t.activity=a; if(_xplLayers.estate) t.estate=_xplEstateOf(a, llm[t.mid]||[]); }); }
     return {turns, sel:(_grFocusMid&&turns.some(t=>t.mid===_grFocusMid))?_grFocusMid:(last?last.mid:'')};
   }
@@ -18530,7 +19279,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
           const merged=_xplMerge(_xplEvents, mine, e=>e.type+'|'+e.trace+'|'+e.ts); const sig=merged.length+'|'+(merged.length?merged[merged.length-1].ts:0); if(sig!==_xplSyncSig){ _xplSyncSig=sig; _xplEvents=merged; changed=true; } }catch(_){} }
       if(_xplLayers.estate&&(force||!_xplTopo||now-_xplTopoAt>60000)){ _xplTopoAt=now; try{ const t=await _capCall('topology.snapshot',{}); if(t&&Array.isArray(t.nodes)){ _xplTopo=t; changed=true; } }catch(_){} }
     } finally { _xplSyncing=false; }
-    if(changed&&_xpl.on&&_xplEl){ try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.setScene(_xplScene()); }catch(e){ console.warn('explode: sync', e); } }
+    if(changed&&_xpl.on&&_xplEl){ try{ _xplEl.dataset.den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase(); _xplEl.setScene(_xpl.doc?_xpl.doc.scene:_xplScene()); }catch(e){ console.warn('explode: sync', e); } }
   }
   function _xplMerge(old, add, keyOf){ const seen=new Set(old.map(keyOf)); const out=old.slice(); add.forEach(e=>{ const k=keyOf(e); if(!seen.has(k)){ seen.add(k); out.push(e); } }); out.sort((a,b)=>a.ts-b.ts); return out.slice(-4000); }
   // a canvas block as a card of the scene's LAND layer (the same vocabulary the chat's own landings use)
@@ -20246,22 +20995,21 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
      The user can also pin "full" view explicitly via the view
      toggle button (top bar) — that disables the minimal CSS
      altogether. Persists across reloads in localStorage. */
+  /* FULL IS WIDER, MIN IS AS IT IS (owner, 2026-10-03: "there is a full and min mode in the chat ui - its not working it
+     should be full is a wider width to the chat messages and min is the default (the width it is now)"). The switch
+     used to turn the minimal layout off altogether, and every width is the column's measure (--measure), which it
+     never touched - so the conversation stayed the same width either way. It is now the measure alone: the layout
+     is the same, Full widens the conversation (data-width="full"), Min keeps today's width. */
   function setViewMode(mode){
-    const body=document.body;
-    if(mode==='full'){
-      body.dataset.view='full';
-      try{localStorage.setItem('vera_view_mode','full');}catch(_){}
-    } else {
-      body.dataset.view='minimal';
-      try{localStorage.setItem('vera_view_mode','minimal');}catch(_){}
-    }
-    // Update toggle button label if present
+    const body=document.body; const full=mode==='full';
+    body.dataset.view='minimal';
+    if(full) body.dataset.width='full'; else delete body.dataset.width;
+    try{localStorage.setItem('vera_view_mode', full?'full':'minimal');}catch(_){}
     const btn=document.getElementById('viewToggleBtn');
-    if(btn) btn.textContent = mode==='minimal'?'Min':'Full';
+    if(btn){ btn.textContent = full?'Full':'Min'; btn.title = full?'Full width - the conversation uses the room there is (press for the usual width)':'The usual width (press for full width - the conversation uses the room there is)'; }
   }
   function toggleViewMode(){
-    const cur=document.body.dataset.view||'minimal';
-    setViewMode(cur==='minimal'?'full':'minimal');
+    setViewMode(document.body.dataset.width==='full'?'minimal':'full');
   }
 
   function cycleTheme(){const r=document.documentElement;r.dataset.theme=r.dataset.theme==='light'?'':'light';}
@@ -20343,7 +21091,14 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     try{
       const box=BOX();
       const empty=!box || box.children.length===0 || !!box.querySelector('.min-welcome');
-      const known=Array.isArray(SESSIONS) && SESSIONS.some(x=>x.session_id===SID);
+      /* THE TRANSCRIPT COMES BACK WITH THE FRAME (owner, 2026-10-03: "the chat wipe/reset happend in minutes"). The
+         harness unloads a chat tab hidden for 45 s (_parkPanel) and reloads it when it is shown; this asked whether the
+         session was in SESSIONS - the history list, fetched without being awaited and capped at the 80 newest messages
+         of every session - 700 ms after load. Usually it was not there yet, so the chat came back empty beside the
+         canvas, which is keyed by the same session and so stayed. The session's own messages are asked for instead. */
+      let known=Array.isArray(SESSIONS) && SESSIONS.some(x=>x.session_id===SID);
+      if(empty && !known && SID){ try{ const r=await api('/memory/search','POST',{query:'',limit:3,record_type:'message',category:'chat',session_id:SID});
+        known=(r&&Array.isArray(r.results)?r.results:[]).some(x=>((x&&(x.record||x))||{}).session_id===SID); }catch(_){} }
       if(empty && known && !document.body.classList.contains('has-msgs')){
         await loadSession(SID);   // loadSession already replays this session's loops
         _loadedSession=true;
@@ -20593,8 +21348,8 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _renderRailPanels,_loadUiPanelsForce,
     _scrollToBottom,
     _msgEdit,_msgEditCancel,_msgEditCommit,_msgResubmit,
-    _msgExplode,_codeExplode,
-    _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_msgHtmlReport,_msgRedeliver,_redeliverDo,_gallerySave,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
+    _msgExplode,_codeExplode,_xplShowDoc,_xplShowContract,_xplDocClear,_xpGraphPanel,
+    _msgSaveToNotebook,_msgSaveToIde,_msgSaveToProject,_msgThinkLater,_msgPodcast,_msgHtmlReport,_msgRedeliver,_redeliverDo,_maMenu,_maClose,_msgToCanvas,_dlvPersist,_dlvStyles,_deliverAfter,_gallerySave,_chatSaveToNotebook,_chatSaveToIde,_msgCopy,
     _saveModalClose,_saveModalConfirm,_saveModalNbCellTypeChange,
     getActivePanelState,dispatchPanelAction,requestPanelState,
     _startDispatchListener,_stopDispatchListener,
@@ -20617,7 +21372,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,_chromeFold,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvTellToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_persistCanvasCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},

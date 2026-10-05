@@ -50,6 +50,17 @@ _SYSTEM = (
     "ref fits (e.g. a canvas / remote-desktop surface).\n"
     "• Take the smallest useful step. Do not repeat an action that just failed.\n"
     "• When the GOAL is achieved, use action \"done\" with a short summary.\n"
+    # A failed check is a finished check (edge mirror 2026-10-02, run fa706e575d:
+    # told to confirm a countdown decreased, it saw 03:00 at load, after a wait,
+    # after Start, and after three more waits - then ran out of its 480 s. The
+    # page was broken; "it did not change" was the answer and the loop needed
+    # it early, to fix the file. A done summary is the step's evidence, and the
+    # loop is told to edit the file when that report shows it is wrong.)
+    "• If the GOAL is to check or verify something, a check that FAILS is a "
+    "finished check: once you have seen enough to answer - e.g. the value did not "
+    "change across two observations after the action meant to change it, or the "
+    "expected message never appeared - use \"done\" and say plainly what you saw "
+    "and that it did NOT behave as asked. Do not keep waiting or re-clicking.\n"
     "• Respond with EXACTLY ONE JSON object and nothing else."
 )
 
@@ -95,7 +106,8 @@ def build_prompt(goal: str, observation, history: Optional[List[Dict[str, Any]]]
         # recent runs ever said done; 16 ran out of steps or time.
         + 'Reply with one JSON object: '
         '{"thought": "...", "action": "<name>", "args": {...}, '
-        '"done": true if the goal is now verified, otherwise false}'
+        '"done": true once you can answer the GOAL (verified, or seen NOT to work), '
+        'otherwise false}'
     )
     return {"system": _SYSTEM, "user": user}
 
@@ -164,11 +176,15 @@ def parse_decision(text: str) -> Dict[str, Any]:
         except Exception:
             d = None
     if d is None:
-        # last resort: some models emit action on its own line
-        m = re.search(r'"?action"?\s*[:=]\s*"?(\w+)"?', text)
-        if m:
-            return {"thought": "", "action": m.group(1), "args": {}, "done": False,
-                    "raw": text[:400]}
+        # last resort: some models emit action on its own line. Only a REAL
+        # action name counts - prose like "Action: I will click Start" matched
+        # as action "I" (edge mirror 2026-10-02, run fa706e575d): a wasted step
+        # that also hid the truncation, so the "answer with ONLY the JSON" hint
+        # `decide` adds to a cut-off reply never reached the model.
+        for m in re.finditer(r'"?action"?\s*[:=]\s*"?(\w+)"?', text, re.IGNORECASE):
+            if m.group(1).lower() in ACTIONS:
+                return {"thought": "", "action": m.group(1).lower(), "args": {}, "done": False,
+                        "raw": text[:400]}
         return {"error": f"could not parse decision JSON: {text[:160]}"}
     if not isinstance(d, dict):
         return {"error": "decision was not a JSON object"}
@@ -225,6 +241,24 @@ THINK_MAX_TOKENS = max(64, int(os.getenv("VERA_OPERATOR_THINK_TOKENS", "2048") o
 THINK_JOB_TYPE = (os.getenv("VERA_OPERATOR_THINK_JOB", "loop_executor") or "loop_executor").strip()
 
 
+def default_think():
+    """The thinking pass for an operator decision when the caller names none: OFF.
+
+    User, 2026-10-03: "id say its good to turn it off" - after a real operator.run A/B on
+    prod (same pages, interleaved): with the model's own default (thinking on) two of four
+    checks never answered - a broken and a working countdown both clicked Start until the
+    repeat guard stopped them (370 s, 336 s) - and the two that did took 85 s and 66 s;
+    with thinking off all four finished, in 66 / 137 / 35 / 23 s. Earlier that week two of
+    five thinks were lost to the 2048-token cap mid "Thinking Process:". Override with
+    VERA_OPERATOR_THINK=on (always think) or =model (the model's own default)."""
+    v = (os.getenv("VERA_OPERATOR_THINK", "off") or "off").strip().lower()
+    if v in ("on", "true", "1", "yes"):
+        return True
+    if v in ("model", "default", "none", "auto"):
+        return None
+    return False
+
+
 def _split_provider(provider: str) -> tuple:
     p = (provider or "ollama").strip()
     if ":" in p:
@@ -240,6 +274,8 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
                  think=None) -> Dict[str, Any]:
     """Run one think step through the LLM. Returns a decision dict (see
     ``parse_decision``) plus {provider, error}. Never raises."""
+    if think is None:
+        think = default_think()
     prompt = build_prompt(goal, observation, history, canvas=canvas)
     name, pmodel = _split_provider(provider)
     model = model or pmodel
@@ -311,6 +347,33 @@ async def decide(goal: str, observation, history: Optional[List[Dict[str, Any]]]
         decision["model_dropped"] = model_dropped
     if truncated:
         decision["truncated"] = True
+    if decision.get("error") and truncated and think is not False \
+            and name in ("ollama", "vllm", "local", "cluster"):
+        # Cut off while THINKING OUT LOUD: ask the same question once more with
+        # the model's thinking pass off. Prod 2026-10-02 22:03, a three-step
+        # check (operator run b7e3c5a00e): two of five thinks hit the 2048-token
+        # cap mid "Thinking Process: 1. **Analyze the Goal:** ..." - 3m43s and
+        # 1m53s gone, each a wasted step - while the decisions that did parse
+        # took ~30 s. The same prompt with think=False answered in 5-41 s with
+        # no truncation (15 A/B calls, same evening). The default stays the
+        # caller's (`think=None`); only a reply already lost to the cap is
+        # retried, so this never costs a working step anything.
+        try:
+            res2 = await call_cap(
+                "llm.generate", prompt=prompt["user"], system=prompt["system"],
+                model=model or None, job_type=THINK_JOB_TYPE, caller="operator.think",
+                think=False, options={"num_predict": THINK_MAX_TOKENS},
+            )
+        except Exception as e:
+            res2 = {"error": str(e)}
+        if isinstance(res2, dict) and not res2.get("error"):
+            d2 = parse_decision(str(res2.get("text") or ""))
+            if not d2.get("error"):
+                d2["provider"] = provider
+                d2["retried_without_thinking"] = True
+                if model_dropped:
+                    d2["model_dropped"] = model_dropped
+                return finalise_decision(d2)
     if decision.get("error"):
         if truncated:
             decision["error"] = (

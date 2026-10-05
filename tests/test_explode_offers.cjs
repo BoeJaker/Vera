@@ -36,7 +36,7 @@ const codeBlock = (key, lines, extra) => Object.assign({ key, type: 'code', stat
     /const xploded = xplodable && xplodedKeys\.has\(String\(b\.key\)\);/.test(CANVAS) &&
     /data-act="explode"/.test(CANVAS));
   t('taking it builds the bound item, and taking it back removes it',
-    /this\.call\('canvas\.add', \{ kind: 'explode', key: 'explode:' \+ key, content, at: 'now', size: 'l' \}\)/.test(CANVAS) &&
+    /this\.call\('canvas\.add', Object\.assign\(\{ kind: 'explode', key: 'explode:' \+ key, content, at: b\.state === 'pinned' \? 'pinned' : 'now', size: 'l' \}/.test(CANVAS) &&
     /if \(bound\) return this\.call\('canvas\.remove'/.test(CANVAS));
   t('the document\'s own suggestions are untouched by any of it',
     suggestionsOf({ suggestions: [{ n: 'Draw the plan', kind: 'diagram' }] }, [codeBlock('a', 30)], 'm1')[0].n === 'Draw the plan');

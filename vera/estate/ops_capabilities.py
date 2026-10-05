@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability
+from Vera.vera.estate import compute_load_core as cl_core
 from Vera.vera.estate import ops_core as core
 
 log = logging.getLogger("vera.ops")
@@ -195,6 +196,62 @@ async def ops_node_events(node: str = "", limit: int = 60, trace_id=None) -> Dic
         if len(out) >= int(limit or 60):
             break
     return {"node": node, "events": out}
+
+
+# reader -> timeout (s) for estate.compute.load
+COMPUTE_READERS: Dict[str, float] = {
+    "ollama.instances": 8.0, "estate.machines": 12.0, "obs.node_temps": 8.0, "nodes.agent.status": 10.0,
+}
+COMPUTE_CACHE_S = 10.0
+_compute_cache: Dict[str, Any] = {"at": 0.0, "out": None, "inflight": None}
+
+
+PIN_READ_S = 30.0      # pxstore.cpu.map SSHes to the Proxmox node and asks its API
+
+
+async def _compute_gather() -> Dict[str, Any]:
+    names = list(COMPUTE_READERS)
+    answers = await asyncio.gather(*(_read(n, COMPUTE_READERS[n]) for n in names))
+    src: Dict[str, Any] = dict(zip(names, answers))
+    # then the pinning of each Proxmox node a model-serving guest runs on: which host cpus each guest holds, so a
+    # container's cores take the host's temperature and load for exactly those cpus, and who else shares them
+    targets = cl_core.pin_targets(src)
+    pins = await asyncio.gather(*(_read("pxstore.cpu.map", PIN_READ_S, cluster_id=c, node=n) for c, n in targets))
+    src["pxstore.cpu.map"] = {n: a for (_c, n), a in zip(targets, pins)}
+    return cl_core.build(src)
+
+
+@capability(
+    "estate.compute.load",
+    http_method="GET", http_path="/estate/compute/load", http_tags=["estate", "ops", "nodes"],
+    memory="off", silent=True,
+    description="Each model-serving node with what it runs on: the estate machine that owns its "
+                "address (guest, Proxmox node), that machine's per-core load as it reports it "
+                "(obs.node_temps), every GPU on the node (nodes.agent.status: VRAM, util %, temp), "
+                "and its Proxmox host's own per-core load beside it. A container reports the host's "
+                "cpu numbers, so each of its cores also carries the host's temperature for that "
+                "physical core and the host's whole load on it; the Proxmox pinning "
+                "(pxstore.cpu.map) says whether it is pinned and which other running guests share "
+                "its cpus. A VM numbers its own vCPUs and gets none of that mapped. Instances on "
+                "one machine name each other in `same_machine`. Figures are never subtracted. "
+                "Cached 10 s. Output: {nodes:[{id, label, machine, host, cores:[{cpu, load, temp?, "
+                "host_load?, shared_with?}], summary, pinning, sharers, gpus, load, runners, notes}], "
+                "hosts:[{label, ref, cores, summary, nodes}], hot_pct, sources, ts}.",
+)
+async def estate_compute_load(refresh: bool = False, trace_id=None) -> Dict[str, Any]:
+    now = time.monotonic()
+    if _compute_cache["out"] is not None and not refresh and now - _compute_cache["at"] < COMPUTE_CACHE_S:
+        return dict(_compute_cache["out"], cached=True)
+    if _compute_cache["inflight"] is None:
+        _compute_cache["inflight"] = asyncio.ensure_future(_compute_gather())
+    fut = _compute_cache["inflight"]
+    try:
+        out = await asyncio.shield(fut)
+    finally:
+        if fut.done() and _compute_cache["inflight"] is fut:
+            _compute_cache["inflight"] = None
+    _compute_cache["out"], _compute_cache["at"] = out, time.monotonic()
+    return dict(out, cached=False)
 
 
 _PANEL = Path(__file__).parent / "ops_panel.html"

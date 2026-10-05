@@ -718,6 +718,11 @@ def build(src: Mapping[str, Any], own_ips: Iterable[str] = (), now: Optional[dat
             nodes[nid]["p95_ms"] = s[min(len(s) - 1, int(len(s) * 0.95))]
             nodes[nid]["latency"] = s[-40:]
     ordered = sorted(nodes.values(), key=lambda n: ([p[0] for p in PLANES].index(n["plane"]), n["domain"], n["label"].lower()))
+    # each node names its plane and its area, so a view handed only the nodes (a graph tile) keeps the lattice's own words
+    pname = {p[0]: p[1] for p in PLANES}
+    for n in ordered:
+        n["plane_name"] = pname.get(n["plane"], n["plane"])
+        n["domain_name"] = DOMAINS[n["domain"]] if 0 <= n["domain"] < len(DOMAINS) else str(n["domain"])
     return {
         "planes": planes, "domains": DOMAINS, "link_kinds": [list(k) for k in LINK_KINDS],
         "nodes": ordered, "links": kept, "inflight": inflight, "inflight_kinds": kinds, "inflight_total": total,

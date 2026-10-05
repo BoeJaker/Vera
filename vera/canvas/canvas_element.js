@@ -142,7 +142,10 @@
      the datasets that hold the records, the records sized by how close they are, and the tags two or more of them
      share - a tag every record carries links everything and says nothing, so it is left out. Built from the item's own
      records: no second read. */
-  function recGraph(c, bodies) {
+  /* a page's names as graph node types (the Vera graph colours by type) */
+  const ENT_NODE = { PERSON: 'Person', ORG: 'Organisation', GPE: 'Place', LOC: 'Place', FAC: 'Place', NORP: 'Group', PRODUCT: 'Product',
+                     EVENT: 'Event', WORK_OF_ART: 'Work', LAW: 'Law', TICKER: 'Ticker' };
+  function recGraph(c, bodies, ents) {
     const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object').slice(0, 80);
     const nodes = [], edges = [], seen = {};
     const node = (n) => { if (seen[n.id]) return; seen[n.id] = 1; nodes.push(n); };
@@ -168,7 +171,18 @@
           props: { title: String(m.snippet || '').slice(0, 120), text: String(m.snippet || ''), dataset_id: ds, record_id: String(m.id), neighbour: true } });
           if (ds) { node({ id: 'd:' + ds, label: ds, type: 'Dataset', r: 11, props: { name: ds } }); edges.push({ from: 'd:' + ds, to: nid, rel: 'holds' }); } }
         edges.push({ from: 'r:' + r.id, to: nid, rel: 'similar', dashed: true }); }); });
-    return { nodes, edges, caption: items.length + ' record' + (items.length === 1 ? '' : 's') + (nbN ? ' \u00b7 ' + nbN + ' neighbour' + (nbN === 1 ? '' : 's') : '') };
+    /* WHAT THE PAGES NAME (a research answer's pages, from the reader cache): a name two or more pages share is a node
+       linked to each page that names it - the people and organisations the run keeps meeting, and which pages meet them */
+    let entN = 0;
+    if (ents) {
+      const n = {}; items.forEach((r) => (ents[String(r.id)] || []).forEach((e) => { n[e[0]] = (n[e[0]] || 0) + 1; }));
+      const keep = Object.keys(n).filter((k) => n[k] >= 2).sort((a, b) => n[b] - n[a]).slice(0, 24); const on = new Set(keep);
+      items.forEach((r) => (ents[String(r.id)] || []).forEach((e) => { if (!on.has(e[0])) return;
+        if (!seen['e:' + e[0]]) entN++;
+        node({ id: 'e:' + e[0], label: e[0].slice(0, 32), type: ENT_NODE[e[1]] || 'Entity', r: Math.min(16, 7 + 2 * n[e[0]]), props: { name: e[0], kind: e[1], pages: n[e[0]] } });
+        edges.push({ from: 'r:' + r.id, to: 'e:' + e[0], rel: 'names' }); }));
+    }
+    return { nodes, edges, caption: items.length + ' record' + (items.length === 1 ? '' : 's') + (nbN ? ' \u00b7 ' + nbN + ' neighbour' + (nbN === 1 ? '' : 's') : '') + (entN ? ' \u00b7 ' + entN + ' name' + (entN === 1 ? '' : 's') + ' they share' : '') };
   }
 
 
@@ -192,7 +206,11 @@
      validity), and the diagnostics once the code has SETTLED. A code item still being streamed is half a brace, and
      flagging it on every beat is noise - the chat lints only closed fences for the same reason. */
   function codeLintHtml(c, key, el) {
-    const VC = root.VeraCode; if (!VC || typeof VC.summary !== 'function') return '';
+    // the chat's VeraCode gives the summary line and the lint; on a page without the chat, the shared kit's linter
+    const VO = root.VeraOut;
+    const VC = (root.VeraCode && typeof root.VeraCode.summary === 'function') ? root.VeraCode
+      : (VO && typeof VO.lintCode === 'function') ? { summary: (l, code) => ({ parts: [String(code).split('\n').length + ' lines'], cls: 'ok' }), lint: VO.lintCode } : null;
+    if (!VC) return '';
     const code = String(c.code || ''); const lang = String(c.lang || '');
     if (!code.trim()) return '';
     let settled = true;
@@ -257,11 +275,27 @@
      result drawn inside another) keeps it here instead. */
   const _recFallback = {};
   const recState = (el, key) => { const box = el ? (el._recUi = el._recUi || {}) : _recFallback; const k = String(key || '');
-    return box[k] || (box[k] = { page: 0, q: '', sort: 'rank', view: 'list', dom: '', open: {}, body: {} }); };
+    return box[k] || (box[k] = { page: 0, q: '', sort: 'rank', view: 'list', dom: '', ent: '', open: {}, body: {} }); };
   const BLOCK = {
     /* a document item draws with the reader's renderer (mdx): a research report's tables, numbered lists, quotes and
        figures were pipes and bare lines under the note subset */
-    markdown: c => `<div class="vc-md">${mdx(c.md || c.text || '')}</div>`,
+    // a reading item through the shared kit when it is on the page: its fences are the same cards as the chat's and the
+    // loop's (Copy · Edit · Explode · Preview · Run · Save); the canvas's own mdx where it is not
+    /* ...and under it the same row a chat reply carries (owner, 2026-10-03: "prose sent to the canvas also needs the same
+       options as code (like the menu under responses) so it can be converted into other formats sent to other areas or
+       saved or edited"): Copy, then the item's own Edit (kept with the item) and Explode (the bound explode item), then
+       "Send to" - an HTML report, a podcast, a notebook, a file, a project, any channel with a style. */
+    markdown: (c, size, key, el) => {
+      const VO = root.VeraOut; const md = String(c.md || c.text || '');
+      const body = VO && typeof VO.render === 'function' ? VO.render(md, { canvas: false }) : mdx(md);
+      let row = '';
+      if (VO && typeof VO.proseMenu === 'function' && key) {
+        const own = (act, ico, label, tip) => `<button class="mact" data-act="${act}" title="${esc(tip)}">${(VO.icons && VO.icons[ico]) || ''}<span>${label}</span></button>`;
+        row = VO.proseMenu('cvp-' + key, { md, canvas: false, explode: false,
+          extra: own('edit', 'edit', 'Edit', 'Edit this text - the item keeps your version') + own('explode', 'explode', 'Explode', 'A structured diagram of this text, beside it') });
+      }
+      return `<div class="vc-md">${body}</div>` + (row ? `<div class="vc-prose-row">${row}</div>` : '');
+    },
 
     /* A MONTH, WITH WHAT IS ON IT. Backed by the diary rather than by a copy of it: the month buttons and a day
        press go back to cal.events.list, so the item is a VIEW of the calendar and not a screenshot taken once.
@@ -379,6 +413,14 @@
       const shot = String(c.shot || '');
       const text = String(c.text || '');
       const rdr = c.reader && typeof c.reader === 'object' ? c.reader : null;
+      /* A PAGE, DEEPER (canvas-enrichment slice 6 - owner, 2026-10-03: "the canvas elements mentioned here need to be much
+         better more engaging and informative, interactive, deep"). A page read once is in the reader cache, so the item
+         carries its reading at once (the canvas asks the cache, never the web, for every source it draws): who wrote it,
+         how long it is, the people, organisations and places it names - each a chip that looks the name up beside it -
+         the other sites it points to, and an Explode of the page itself. */
+      const meta = rdr ? [rdr.site, rdr.byline, rdr.published ? String(rdr.published).slice(0, 10) : '', rdr.minutes ? rdr.minutes + ' min read' : ''].filter(Boolean).map(String) : [];
+      const ents = rdr && Array.isArray(rdr.entities) ? rdr.entities.filter((e) => e && /^(PERSON|ORG|GPE|LOC|PRODUCT|EVENT|NORP|WORK_OF_ART|LAW|TICKER)$/.test(String(e.type || ''))).slice(0, 10) : [];
+      const outs = []; if (rdr && rdr.markdown) { const seen = new Set([host]); const rx = /\]\((https?:\/\/[^)\s]+)\)/g; let m; while ((m = rx.exec(String(rdr.markdown))) && outs.length < 6) { let h = ''; try { h = new URL(m[1]).host; } catch (e) { continue; } if (!h || seen.has(h)) continue; seen.add(h); outs.push([h, m[1]]); } }
       return `<div class="vc-src${c.failed ? ' bad' : ''}${open ? ' open' : ''}">`
         + `<div class="vc-src-hd">`
         + `<span class="vc-src-dom">${esc(host)}</span>`
@@ -386,10 +428,14 @@
         + (c.failed ? `<span class="vc-src-n bad">did not load</span>` : '')
         + `</div>`
         + `<a class="vc-src-t" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(url)}">${esc(title)}</a>`
+        + (meta.length ? `<div class="vc-src-m">${esc(meta.join(' \u00b7 '))}</div>` : '')
         + (c.snippet ? `<div class="vc-src-s">${esc(String(c.snippet).slice(0, 400))}</div>` : '')
+        + (ents.length ? `<div class="vc-src-ents">${ents.map((e) => `<button class="vc-chip" data-act="srcent" data-ent-t="${esc(String(e.text))}" data-ent-y="${esc(String(e.type))}" title="${esc(e.type + ' - look it up beside this')}">${esc(String(e.text))}${e.count > 1 ? `<i>${e.count}</i>` : ''}</button>`).join('')}</div>` : '')
+        + (outs.length ? `<div class="vc-src-out"><span>points to</span>${outs.map(([h, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${esc(h)}</a>`).join('')}</div>` : '')
         + `<div class="vc-src-act">`
         + `<button class="vc-src-b" data-src-act="read" data-src-key="${esc(key || '')}">${open ? 'less' : (text || rdr ? 'read' : 'reader mode')}</button>`
         + `<button class="vc-src-b" data-src-act="shot" data-src-key="${esc(key || '')}">${shot ? 'hide the picture' : 'see the page'}</button>`
+        + (rdr && rdr.markdown ? `<button class="vc-src-b" data-src-act="explode" data-src-key="${esc(key || '')}" title="A structured diagram of the page - its sections, what it names, how they connect">explode</button>` : '')
         + `</div>`
         + (open && rdr ? `<div class="vc-src-body rd">${readerHtml(rdr)}</div>` : open && text ? `<div class="vc-src-body">${md(text.slice(0, 20000))}</div>` : '')
         + (shot ? `<img class="vc-src-shot" src="${esc(shot)}" alt="${esc(title)}">` : '')
@@ -407,14 +453,40 @@
       const pdef = !el || typeof el.previewOn !== 'function' || el.previewOn();   // the canvas's Preview setting
       const prev = PREVIEWABLE(c.lang) && (pset ? !!el._prevOn[key] : (pdef && WHOLE_PAGE(c.lang, c.code)));
       if (key && el) { el._prevSeen = el._prevSeen || {}; el._prevSeen[key] = prev; }
+      /* THE SAME CARD AS THE CHAT'S AND THE LOOP'S (owner, 2026-10-03: "all rendering of output types needs to be
+         consistent and use the same element"): the shared kit's bar - Copy, Run, Save, Pop out, in its look - with the
+         canvas's own actions beside them in the same style: Edit (the item's editor, kept with the item), Preview (the
+         column's live layer, which survives a redraw). The body stays the canvas's: line-addressable, so an explode item
+         bound to this one still lights its spans. */
+      const VO = root.VeraOut;
+      const vid = key ? 'cv-' + key : '';
+      /* THE KIT'S CARD, ENTIRE (owner, 2026-10-03: "the code renderer in the canvas does not have the same options as the
+         one in the chat - it should - and it should be using the same underlying code"): VeraOut.card draws it - the
+         same bar, every action (Copy · Edit · Explode · Outline · Preview · Pop out · Run · Save), the numbered lines an
+         explode item binds to, the reader's helpers - with only what the canvas does its own way plugged in: Preview
+         draws in the column's live layer (it survives a redraw), Explode makes the bound explode item, an edit is kept
+         with the item. While the chat is still streaming into it, it is the kit's streaming card. */
+      /* A DECK, A SHEET, A PAGE (```slides / ```sheet ```csv ```tsv / ```document) is drawn as what it is - the kit's file
+         card - not as its source: a long one streams out of the chat onto the canvas as a code item (owner, 2026-10-04:
+         a 4-slide deck landed here as 55 lines of markdown). Drawn as it streams in; its Edit is kept with the item. */
+      const fk = VO && vid && typeof VO.fileKind === 'function' ? VO.fileKind(c.lang) : '';
+      if (fk && typeof VO.fileCard === 'function') {
+        const streaming = !!(el && el._liveOv && el._liveOv[key]);
+        return `<div class="vc-codewrap vc-filewrap">${VO.fileCard(fk, String(c.lang || ''), String(c.code || ''), { id: vid, canvas: false, cls: 'vc-kit', incomplete: streaming, title: String(c.title || c.filename || '') })}</div>`;
+      }
+      if (VO && vid && typeof VO.card === 'function') {
+        const streaming = !!(el && el._liveOv && el._liveOv[key]);
+        const live = prev ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>` : null;
+        // autoPrev off: the canvas decides what is drawn - a page it switched to source stays source (owner, 2026-10-03:
+        // "the source button on html in the canvas doent open the source": the kit drew the page straight back over it)
+        const cardHtml = VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming, autoPrev: false });
+        return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${cardHtml}</div>`;
+      }
+      // (without the kit on the page: the canvas's own numbered body and Preview switch)
       const head = `<div class="vc-codehead">${esc(c.filename || c.lang || 'code')}<span class="sp"></span>`
         + (PREVIEWABLE(c.lang) && key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
         + '</div>';
-      // Every line is ADDRESSABLE (data-line). An explode item bound to this one scrolls to a card's span and
-      // highlights those lines, and a selection here is read back as a line range — the two-way span binding
-      // (EXPLODE.md §8.3). The number sits in a gutter the selection does not reach, so copying still yields code.
       const lines = String(c.code || '').replace(/\n$/, '').split('\n');
-      // coloured by the chat's own highlighter when the page has it; a line count that disagrees is plain text instead
       let hl = null; const VC = root.VeraCode;
       if (!prev && VC && typeof VC.highlight === 'function') { try { hl = splitHl(VC.highlight(String(c.code || '').replace(/\n$/, ''), c.lang)); if (hl.length !== lines.length) hl = null; } catch (e) { hl = null; } }
       const bodyHtml = prev
@@ -422,7 +494,6 @@
         : `<pre class="vc-pre vc-code"><code>${lines.map((l, i) => `<span class="vc-line" data-line="${i + 1}"><i class="vc-lno">${i + 1}</i>${hl ? (hl[i] || ' ') : (esc(l) || ' ')}</span>`).join('')}</code></pre>`;
       return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${head}${bodyHtml}${codeLintHtml(c, key, el)}</div>`;
     },
-
     /* AN EXPLODE ITEM — the structured diagram of something, in the canvas beside what it is a diagram OF
        (EXPLODE.md §8.3). content:
          {binds?: the KEY of a code item in this canvas — its code is what gets exploded, and the two are bound
@@ -455,6 +526,13 @@
       if (typeof document === 'undefined') return `<pre class="vc-pre vc-dim"><code>${esc(src)}</code></pre>` + cap;
       const title = String(c.title || c.caption || 'Diagram');
       const live = !!(el && el._live && el._live[key]);
+      /* THE DIAGRAM CARD (owner, 2026-10-03: "mermaid diagrams rendered in the chat and canvas need the unified menu
+         style and the relevant options for along the top same as the rendered code output"): the kit's bar - Copy, Edit,
+         Source, Pop out, Save, Send to - over the column's live drawing; Pop out is the canvas's own "open in the chat" */
+      const VO = root.VeraOut;
+      if (key && VO && typeof VO.diagram === 'function') return `<div class="vc-codewrap vc-diagwrap" data-w="canvas.diagram">`
+        + VO.diagram(src, { id: 'cvd-' + key, title, canvas: false, cls: 'vc-kit',
+          body: `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div>` }) + `</div>` + cap;
       if (key) return `<div class="vc-diag" data-w="canvas.diagram"><div class="vc-th"><i class="dot${live ? ' on' : ' wait'}"></i><b>${esc(title)}</b><span class="mono">mermaid · ${src.split('\n').length} lines</span><span class="sp"></span>`
         + '<button class="ib" data-act="dgopen" title="Open it in the chat — the chat\'s own diagram pop-out">Open in the chat ↗</button><button class="ib" data-act="dgcopy" title="Copy the mermaid source">copy</button><button class="ib" data-act="dgsrc" title="Show the source">source</button></div>'
         + `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div><pre class="vc-pre vc-dgsrc" hidden><code>${esc(src)}</code></pre></div>` + cap;
@@ -481,10 +559,18 @@
       const st = recState(el, key);
       // the view the item asks for (the fabric's: graph) is where it starts; the reader's own choice wins after that
       if (!st._v0) { st._v0 = true; if (c.view) st.view = String(c.view); }
-      const canGraph = c.kind === 'memory' || c.view === 'graph';
+      /* WHAT THE PAGES NAME: each row's page's entities, from the reader cache (_srcPrefetch fills them, in memory - never
+         the web), as facets beside the sites - the people, organisations and places two or more of the pages name.
+         Choosing one shows the pages that name it; each row carries its own top three; and the shared names make a
+         graph of the pages and what links them. */
+      const ents = (el && el._recEnts && el._recEnts[String(key)]) || {};
+      const entsOf = (r) => ents[String(r.id)] || [];
+      const entN = {}; all.forEach((r) => entsOf(r).forEach((e) => { entN[e[0]] = (entN[e[0]] || 0) + 1; }));
+      const entList = Object.keys(entN).filter((n) => entN[n] >= 2).sort((a, b) => entN[b] - entN[a]).slice(0, size === 'xl' ? 12 : 6);
+      const canGraph = c.kind === 'memory' || c.view === 'graph' || entList.length > 0;
       if (st.view === 'graph' && !canGraph) st.view = 'list';
       const q = String(st.q || '').toLowerCase().trim();
-      let rows = all.filter((r) => (!st.dom || r.domain === st.dom) && (!q || (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.domain || '') + ' ' + JSON.stringify(r.meta || {})).toLowerCase().includes(q)));
+      let rows = all.filter((r) => (!st.ent || entsOf(r).some((e) => e[0] === st.ent)) && (!st.dom || r.domain === st.dom) && (!q || (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.domain || '') + ' ' + JSON.stringify(r.meta || {})).toLowerCase().includes(q)));
       if (st.sort === 'newest') rows = rows.slice().sort((a, b) => (Date.parse(b.when) || 0) - (Date.parse(a.when) || 0));
       else if (st.sort === 'title') rows = rows.slice().sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
       const per = st.view === 'cards' ? ({ s: 4, m: 6, l: 9, xl: 18 }[size] || 6) : ({ s: 4, m: 6, l: 10, xl: 20 }[size] || 8);
@@ -546,7 +632,7 @@
       let body = '';
       if (!all.length) body = `<div class="vc-rbx-empty">nothing in it</div>`;
       else if (!rows.length) body = `<div class="vc-rbx-empty">nothing matches “${esc(st.q || st.dom)}”</div>`;
-      else if (st.view === 'graph') body = `<div class="vc-rbx-graph"><div class="vc-live" data-live="rgraph" data-key="${K}"><span class="vc-dim">drawing the graph…</span></div><div class="vc-rbx-gnote">a record's node opens it in the list</div></div>`;
+      else if (st.view === 'graph') body = `<div class="vc-rbx-graph"><div class="vc-live" data-live="rgraph" data-key="${K}"><span class="vc-dim">drawing the graph…</span></div><div class="vc-rbx-gnote">a record's node opens it in the list; a name, the pages that name it</div></div>`;
       else if (st.view === 'table') {
         body = `<div class="vc-tablewrap"><table class="vc-table vc-rbx-tbl"><thead><tr><th>title</th><th>source</th><th>when</th>${all.some((r) => r.score != null) ? '<th>score</th>' : ''}</tr></thead><tbody>`
           + shown.map((r) => `<tr class="${(st.open || {})[r.id] ? 'on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}"><td>${title(r)}</td><td class="mono">${esc(r.domain || (r.meta && (r.meta.dataset_id || r.meta.engine)) || '')}</td><td class="mono">${esc(r.when ? ago(r.when) : '')}</td>${all.some((x) => x.score != null) ? `<td>${score(r)}</td>` : ''}</tr>` + ((st.open || {})[r.id] ? `<tr class="vc-rbx-tr-open"><td colspan="4">${opened(r)}</td></tr>` : '')).join('')
@@ -555,17 +641,34 @@
         body = `<div class="vc-rbx-${st.view === 'cards' ? 'cards' : 'list'}">` + shown.map((r) => {
           const on = !!(st.open || {})[r.id];
           return `<div class="vc-rbx-row${on ? ' on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}">`
-            + `<div class="vc-rbx-hd">${badge(r)}<div class="vc-rbx-tt">${title(r)}<div class="vc-rbx-sub">${r.domain ? `<span>${esc(r.domain)}</span>` : ''}${r.when ? `<span>${esc(ago(r.when))}</span>` : ''}${r.meta && r.meta.engine ? `<span>${esc(r.meta.engine)}</span>` : ''}${r.meta && r.meta.dataset_id ? `<span>${esc(r.meta.dataset_id)}</span>` : ''}${score(r)}</div></div></div>`
+            + `<div class="vc-rbx-hd">${badge(r)}<div class="vc-rbx-tt">${title(r)}${entsOf(r).length ? `<div class="vc-rbx-ents">${entsOf(r).slice(0, 3).map((e) => `<span title="${esc(e[1])}">${esc(e[0])}</span>`).join('')}</div>` : ''}<div class="vc-rbx-sub">${r.domain ? `<span>${esc(r.domain)}</span>` : ''}${r.when ? `<span>${esc(ago(r.when))}</span>` : ''}${r.meta && r.meta.engine ? `<span>${esc(r.meta.engine)}</span>` : ''}${r.meta && r.meta.dataset_id ? `<span>${esc(r.meta.dataset_id)}</span>` : ''}${score(r)}</div></div></div>`
             + (!on && r.snippet ? `<div class="vc-rbx-s">${esc(String(r.snippet).slice(0, 400))}</div>` : '')
             + (on ? opened(r) : '') + `</div>`;
         }).join('') + `</div>`;
+      }
+      /* A RESEARCH RUN AT A GLANCE (a web or research answer): where its pages came from - one bar, each site its share,
+         a site's part choosing it - and, when the pages carry dates, when they were written, each a dot that opens its page */
+      let glance = '';
+      if ((c.kind === 'research' || c.kind === 'web') && all.length > 2) {
+        const sites = Object.keys(doms).sort((a, b) => doms[b] - doms[a]); const top = sites.slice(0, 10); const rest = all.length - top.reduce((s, d) => s + doms[d], 0);
+        const map = sites.length > 1 ? `<div class="vc-rbx-map" title="where the pages came from">${top.map((d) => `<button class="${st.dom === d ? 'on' : ''}" style="flex:${doms[d]};--h:${hue(d)}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}" title="${esc(d)} · ${doms[d]}"><span>${esc(d.replace(/^www\./, ''))}</span></button>`).join('')}${rest > 0 ? `<i style="flex:${rest}" title="${rest} more"></i>` : ''}</div>` : '';
+        const dated = all.map((r) => [r, Date.parse(r.when)]).filter((x) => isFinite(x[1]));
+        let tl = '';
+        if (dated.length >= 2) {
+          const t0 = Math.min(...dated.map((x) => x[1])), t1 = Math.max(...dated.map((x) => x[1])), span = Math.max(1, t1 - t0);
+          const day = (t) => new Date(t).toISOString().slice(0, 10);
+          tl = `<div class="vc-rbx-tl" title="when the pages were written"><span>${day(t0)}</span><div class="vc-rbx-tlb">${dated.map(([r, t]) => `<button style="left:${(100 * (t - t0) / span).toFixed(1)}%;--h:${hue(r.domain || '')}" data-rec-act="goto" data-rec-key="${K}" data-rec-arg="${esc(r.id)}" title="${esc(day(t) + ' · ' + (r.title || r.url || ''))}"></button>`).join('')}</div><span>${day(t1)}</span></div>`;
+        }
+        if (map || tl) glance = `<div class="vc-rbx-glance">${map}${tl}</div>`;
       }
       const seg = (name, opts) => `<span class="vc-rbx-seg">${opts.map((o) => `<button class="${(st[name] || opts[0][0]) === o[0] ? 'on' : ''}" data-rec-act="${name}" data-rec-key="${K}" data-rec-arg="${o[0]}" title="${esc(o[2] || '')}">${o[1]}</button>`).join('')}</span>`;
       const from = rows.length ? page * per + 1 : 0, to = Math.min(rows.length, page * per + per);
       const dots = pages > 1 ? Array.from({ length: Math.min(pages, 9) }, (_, i) => { const n = pages <= 9 ? i : Math.round(i * (pages - 1) / 8); return `<button class="vc-rbx-dot${n === page ? ' on' : ''}" data-rec-act="page" data-rec-key="${K}" data-rec-arg="${n}" title="page ${n + 1}"></button>`; }).join('') : '';
       return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
         + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
-        + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
+        + glance
+        + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags and names they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
+        + (entList.length ? `<div class="vc-rbx-facets vc-rbx-efacets"><span class="vc-rbx-fl">names</span>${entList.map((n) => `<button class="${st.ent === n ? 'on' : ''}" data-rec-act="ent" data-rec-key="${K}" data-rec-arg="${esc(n)}">${esc(n)}<i>${entN[n]}</i></button>`).join('')}</div>` : '')
         + (domList.length > 1 ? `<div class="vc-rbx-facets">${domList.map((d) => `<button class="${st.dom === d ? 'on' : ''}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}">${esc(d)}<i>${doms[d]}</i></button>`).join('')}</div>` : '')
         + body
         + `<div class="vc-rbx-foot"><span>${from}–${to} of ${rows.length}${rows.length !== all.length ? ' (of ' + all.length + ')' : ''}</span><span class="vc-rbx-pg">${pages > 1 ? `<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="prev" ${page ? '' : 'disabled'}>‹</button>${dots}<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="next" ${page < pages - 1 ? '' : 'disabled'}>›</button>` : ''}</span>${c.next && c.next.cap ? actBtn('loadmore', '', 'more from ' + esc(c.next.cap), 'fetch the next page from the source') : ''}</div>`
@@ -673,6 +776,26 @@
     },
 
 
+    /* WHAT A TURN NAMES (canvas-enrichment slice 1 - owner, 2026-10-03: "the nlp enrichment is still few and far
+       between"). turn.understand's answer: the people, organisations, places, products, tickers, money and dates
+       the reply named, as chips in their groups with how often each was named. Pressed, a chip opens under its
+       group: the sentences it was named in, and "look it up" - the fabric's records and a web search for it,
+       landed beside this item as browsers (turn.entity.look). */
+    entities: (c, size, key, el) => {
+      const groups = Array.isArray(c && c.groups) ? c.groups : [];
+      if (!groups.length) return '<div class="vc-dim">nothing named</div>';
+      const open = (el && el._entOpen && el._entOpen[key]) || '';
+      return '<div class="vc-ent" data-w="canvas.entities">' + groups.map((g, gi) => {
+        const ents = Array.isArray(g.entities) ? g.entities : [];
+        const chips = ents.map((e, ei) => { const id = gi + ':' + ei;
+          return `<button class="vc-chip${open === id ? ' on' : ''}" data-act="entopen" data-ent="${id}" title="${esc(e.type + (e.count > 1 ? ' · named ' + e.count + ' times' : ''))}">${esc(e.text)}${e.count > 1 ? `<i>${e.count}</i>` : ''}</button>`; }).join('');
+        const [ogi, oei] = open.split(':').map(Number); const oe = (ogi === gi && ents[oei]) || null;
+        const detail = oe ? `<div class="vc-ent-d"><div class="vc-ent-h"><b>${esc(oe.text)}</b><span class="mono">${esc(oe.type)}</span><span class="sp"></span>`
+          + `<button class="ib" data-act="entlook" data-ent="${gi}:${oei}" title="The fabric's records and a web search for it, beside this item">look it up</button></div>`
+          + (Array.isArray(oe.sentences) && oe.sentences.length ? oe.sentences.map((s) => `<p>${esc(s)}</p>`).join('') : '') + '</div>' : '';
+        return `<div class="vc-ent-g"><div class="vc-ent-gl">${esc(g.group || '')}</div><div class="vc-ent-cs">${chips}</div>${detail}</div>`;
+      }).join('') + '</div>';
+    },
     /* ── elements for what a capability answers with (canvas.run, and the chat's adapter) ────────────────────── */
     // a nested answer as a tree you can open and close, rather than a wall of braces in a code fence
     json: (c) => {
@@ -727,14 +850,33 @@
        The head carries the switch, and the Preview setting decides which way it starts. */
     html: (c, size, key, el) => {
       const src = String(c.html || '');
+      /* A DELIVERED REPORT (owner, 2026-10-02: "html delivery to be able to go to the canvas instead of automatically
+         opening a new tab"): report.canvas puts the report's address here, not its markup - the document Vera serves,
+         drawn in a sandboxed frame (scripts for its diagrams; no same-origin, so it cannot reach the chat), with the
+         tab and the download one press away. */
+      const url = String(c.url || '');
+      if (!src && url && /^\/[^/]/.test(url)) {
+        const head = `<div class="vc-codehead">${esc(c.title || 'report')}<span class="sp"></span>`
+          + `<a class="ib" href="${esc(url)}" target="_blank" rel="noopener" title="Open the report in its own tab">open</a>`
+          + (c.download_url ? `<a class="ib" href="${esc(c.download_url)}" download title="Download the report">download</a>` : '') + '</div>';
+        const body = key
+          ? `<div class="vc-live vc-preview vc-report" data-live="report" data-key="${esc(key)}" data-src="${esc(url)}"><span class="vc-dim">opening the report…</span></div>`
+          : `<div class="vc-dim"><a href="${esc(url)}" target="_blank" rel="noopener">open the report</a></div>`;
+        return `<div class="vc-codewrap">${head}${body}</div>`;
+      }
       if (!src) return '<div class="vc-dim">nothing to draw yet</div>';
       const pset = key && el && el._prevOn && Object.prototype.hasOwnProperty.call(el._prevOn, key);
       const pdef = !el || typeof el.previewOn !== 'function' || el.previewOn();
       const prev = key ? (pset ? !!el._prevOn[key] : pdef) : pdef;
       if (key && el) { el._prevSeen = el._prevSeen || {}; el._prevSeen[key] = prev; }
+      // ...and Send to, as every card has it (owner, 2026-10-03: "the 'send to' menu ... integrated into the code and
+      // markdown and html rendering")
+      const VO = root.VeraOut;
+      const send = key && VO && typeof VO.sendMenu === 'function'
+        ? VO.sendMenu('cvh-' + key, { getMd: () => '```html\n' + src.replace(/\n$/, '') + '\n```', raw: () => src, title: String(c.title || 'page'), skip: ['podcast'] }) : '';
       const head = `<div class="vc-codehead">${esc(c.title || 'html')}<span class="sp"></span>`
         + (key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Draw it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
-        + '</div>';
+        + send + '</div>';
       const body = prev && key
         ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="html"><span class="vc-dim">drawing…</span></div>`
         : `<pre class="vc-pre vc-code"><code>${esc(src)}</code></pre>`;
@@ -857,6 +999,13 @@
   .vc-out{max-height:200px;overflow:auto}
   .vc-codehead{font-size:9.5px;color:var(--dim,#6b7480);margin-bottom:2px;
     letter-spacing:.04em}
+  /* a code item drawn as the shared kit's card: the item is already the frame, so the card is not a box inside it;
+     its bar sits flush on the code, and the canvas's own line-numbered body keeps its look */
+  .vc-codewrap > .code-card.vc-kit{margin:0;border:none;border-radius:0;background:transparent;overflow:visible}
+  .vc-codewrap > .code-card.vc-kit > .code-bar{margin:0 0 4px;border-radius:var(--r-sm,5px);border-bottom:none}
+  .vc-codewrap > .code-card.vc-kit > pre.vc-pre{max-height:none}
+  /* the reading item's row (the shared prose row) under its text */
+  .vc-prose-row{margin-top:6px;padding-top:4px;border-top:1px solid color-mix(in srgb,var(--border,#2a2f37) 60%,transparent)}
   .vc-note{border-left:2px solid var(--acc,#5a9e8f);padding:3px 0 3px 8px;
     color:var(--fg2,#c3cad4);white-space:pre-wrap}
   .vc-by{color:var(--dim,#6b7480);font-size:11px;margin-left:5px}
@@ -939,11 +1088,40 @@
      oscillation at every item edge. Now each is an overlay - the header over the top, the rail over the foot - that fades
      in when you are on the item; an item's height never changes because you pointed at it. */
   /* (an item is already position:relative - absolute on the stage - so the overlays anchor to it either way) */
-  :host([data-tier="hover"]) .it:not(.compact) > .it-hd,:host([data-tier="zen"]) .it:not(.compact) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
-  :host([data-tier="hover"]) .it:not(.compact) > .it-ft,:host([data-tier="zen"]) .it:not(.compact) > .it-ft{position:absolute;left:0;right:0;bottom:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:0 0 var(--r,8px) var(--r,8px)}
-  :host([data-tier="hover"]) .it:not(.compact):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft),:host([data-tier="zen"]) .it:not(.compact):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft){opacity:1;pointer-events:auto}
-  :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-codehead,
-  :host([data-tier="zen"]) .it:not(:hover):not(:focus-within) .vc-th{opacity:.35}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-hd,:host([data-tier="zen"]) .it:not(.compact):not(.overfold) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-ft,:host([data-tier="zen"]) .it:not(.compact):not(.overfold) > .it-ft{position:absolute;left:0;right:0;bottom:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:0 0 var(--r,8px) var(--r,8px)}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft){opacity:1;pointer-events:auto}
+  /* ...in bands of their own (owner, 2026-10-04: "the top and bottom bar appear over the top of the element instead of
+     above and below - sometimes it can block entire parts of the elements"): an overlay at the item's edge covered its
+     first and last lines - a short note's header and rail met in the middle and hid it whole. The item keeps their room
+     all the time, so they fade in above and below its content, over nothing - and its height still never changes
+     because you pointed at it (the reason they are overlays). */
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-hd:not(.own-fold)),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-hd:not(.own-fold)){padding-top:var(--vc-hd-band,29px)}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}
+  /* ONE BAR PER ITEM, ON HOVER (owner, 2026-10-04: "the top bar that appear on mouseover ... makes the static title at
+     the top of each element pretty much redundant and those actions could be integrated so the static title is merged
+     into the on-hover element and only appears on-hover. i think the canvas should better respect the full hover and zen
+     modes too"). Full: every head, rail and control drawn. Hover and Zen: an item has ONE head and it comes with the
+     pointer - the card's header for most items (their body's own title goes: a records item's heading, a widget's - the
+     widget is drawn bare, the header carries its name); for the kinds that draw their own head (code, a diagram, a page,
+     an explode, a terminal, a notebook cell, a panel) that head is the bar, holding its title and its actions, faded in
+     with the fold and maximise controls. Each keeps its room, so nothing moves under the pointer. The canvas's own
+     toolbar follows the tier too: Hover shows it while the pointer is on the canvas, Zen only while it is on the toolbar. */
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > .vc-codewrap > .code-card > .code-bar,
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > .vc-codewrap > .vc-codehead,
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel) > :is(.vc-codehead,.vc-th):first-child{opacity:0;transition:opacity .15s}
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > .vc-codewrap > .code-card > .code-bar,
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > .vc-codewrap > .vc-codehead,
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel) > :is(.vc-codehead,.vc-th):first-child{opacity:1}
+  :host(:is([data-tier="hover"],[data-tier="zen"])) .it:not(.compact) .vc-rbx > .vc-rbx-top{display:none}
+  /* the item's fold / maximise / open controls sit at the head's right end: the head leaves them room (they lay over
+     its last button, "Send to") */
+  .it.ownhead > .it-bd > .vc-codewrap > .code-card > .code-bar,.it.ownhead > .it-bd > .vc-codewrap > .vc-codehead,
+  .it.ownhead > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel) > :is(.vc-codehead,.vc-th):first-child{padding-right:58px}
+  :host([data-tier="full"]) .it:not(.ufold) > .it-hd .fdn{display:none}
+  :host([data-tier="full"]) .it > :is(.fd,.mx,.xp).solo{opacity:.8}
+  :host([data-tier="hover"]) .addbar,:host([data-tier="zen"]) .addbar{opacity:0;transition:opacity .2s}
+  :host([data-tier="hover"]:hover) .addbar,:host([data-tier="zen"]) .addbar:is(:hover,:focus-within){opacity:1}
   /* the solo expand of an item whose drawer draws its own head: a corner mark, not a row of its own */
   .xp.solo{position:absolute;right:4px;top:3px;z-index:3;font-size:10px;color:var(--dim,#6b7480);cursor:pointer;opacity:0;transition:opacity .15s}
   .it:is(:hover,.hov) > .xp.solo,.it:focus-within > .xp.solo{opacity:.8}
@@ -965,7 +1143,38 @@
   .it.sized .vc-codewrap,.it.openin .vc-codewrap,.it.sized .vc-diag,.it.openin .vc-diag,
   .it.sized .vc-xp,.it.openin .vc-xp,.it.sized .vc-term,.it.openin .vc-term{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
   .it.sized .vc-pre,.it.openin .vc-pre{flex:1 1 auto;min-height:0;max-height:none}
+  /* ...and every other drawing takes the room you gave it (owner, 2026-10-04: "i can re-size elements in the canvas but
+     they dont fill the space of the resized container"): the body grew, but a widget's slot (in .vc-wid), a records
+     list, a table and a deck / sheet / page card kept their own height - measured on the mirror, a widget dragged
+     260 px taller filled 8% of its body. Each wrapper is a column now and its working part grows: the widget's slot
+     (the widget follows it), the list or table or graph (scrolling inside), the card's view. */
+  .it:is(.sized,.openin,.maxed) > .it-bd > :is(.vc-wid,.vc-rbx,.vc-filewrap){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-wid > .vc-live{flex:1 1 auto;height:auto;min-height:60px}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-rbx > :is(.vc-rbx-list,.vc-rbx-cards,.vc-tablewrap,.vc-rbx-graph){flex:1 1 auto;min-height:0;overflow:auto}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-rbx > .vc-rbx-graph{display:flex;flex-direction:column}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-rbx > .vc-rbx-graph > .vc-live{flex:1 1 auto;height:auto!important;min-height:160px}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-tablewrap{flex:1 1 auto;min-height:0;overflow:auto}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap > .code-card{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;margin:0}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap > .code-card > .vo-fview{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-fview > :is(.vo-sheet,.vo-doc){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-fview > .vo-deck{flex:1 1 auto}   /* block: its centred 16:9 stage keeps its width */
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-stage{max-height:none}   /* a slide keeps 16:9 - it grows with the width */
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-grid-w{flex:1 1 auto;max-height:none}
   .it.hovopen{z-index:5;box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
+  /* the preview of a folded item: over the column, its own scroll past a screenful, no slide (it does not move) */
+  .stage .it.peek{z-index:8;max-height:min(70vh,640px);overflow:auto;transition:none;background:var(--bg1,#16181d);scrollbar-width:thin}
+  .stage .it.peek .it-bd{max-height:none}
+  /* the header line of an item that draws its own head: hidden while that head shows, the chip when the COLUMN folds it */
+  .it > .it-hd.own-fold{display:none}
+  .stage .it.overfold > .it-hd.own-fold{display:flex}
+  .stage .it.overfold > .solo{display:none}
+  .stage .it.overfold.peek .it-bd{display:block}
+  /* A FOLDED CHIP SAYS WHAT IT IS (owner, 2026-10-04: "when they are collapsed its hard to tell what each chip is"): its
+     line held the kind, the title, the turn, the item's key, a score and two buttons, so the title - the one thing that
+     says what it is - was cut to "ht…". Folded, it is the kind and the title, in full where it fits; the rest is in its
+     preview's header a moment away. */
+  .it.compact > .it-hd :is(.k,.src,.sc,.mx,.xp,.fu-w){display:none}
+  .it.compact > .it-hd .t{flex:1 1 auto;min-width:0;max-width:none;white-space:normal;line-height:1.25;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
   .it.sized .rz{opacity:.45}
   .it.resizing{transition:none!important;user-select:none}
   /* the resize handle — a corner grip that shows on hover; a drop saves the item's size */
@@ -1250,6 +1459,9 @@
   .fu-p:hover .fu-t button,.fu-t button:focus{opacity:1}
   .fu-t button:hover{color:var(--acc,#5a9e8f)}
   .fu-b{flex:1 1 auto;min-height:0;overflow:auto}
+  /* a pane's drawing takes the pane's height (owner, 2026-10-04: an exploded code item "you can barely see it"): the
+     body was a block, so the explode diagram beside its code fell to its 140 px minimum whatever the code's height */
+  .it-bd.fu-beside > .fu-p > .fu-b,.it-bd.fu-over > .fu-p > .fu-b{display:flex;flex-direction:column}
   /* the strip's panes are as wide as their content, not a share of a column */
   .it-bd.fu-strip>.fu-p{max-width:100%}
   .it-bd.fu-strip .fu-b{overflow:visible}
@@ -1286,7 +1498,7 @@
   .edit{display:flex;flex-direction:column;gap:4px}
   .edit textarea{font:inherit;font-size:11px;line-height:1.5;min-height:72px;width:100%;box-sizing:border-box;
     background:var(--bg1,#15181d);color:var(--fg,#dce1e8);border:1px solid var(--acc,#5a9e8f);border-radius:6px;padding:6px;resize:vertical}
-  .edit textarea.code{font-family:ui-monospace,Consolas,monospace}
+  .edit textarea.code{font-family:ui-monospace,Consolas,monospace;white-space:pre;overflow-x:auto;tab-size:4}
   .edit-a{display:flex;gap:4px;align-items:center}
   .ib{font:inherit;height:19px;padding:0 8px;border-radius:5px;font-size:9.5px;color:var(--fg2,#c3cad4);background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);cursor:pointer;line-height:1}
   .ib:hover{color:var(--fg,#dce1e8);border-color:var(--acc,#5a9e8f)}
@@ -1382,6 +1594,8 @@
      (.vc-diag below); previews never were. Same treatment: a real height per size, and the dragged size still
      wins through .it.sized. Specificity carries .vc-live.vc-preview over the size rules above. */
   .vc-live.vc-preview{height:260px}
+  /* a delivered report is a document to read, not a preview to glance at */
+  .vc-live.vc-report{height:420px}.it[data-size="xl"] .vc-live.vc-report{height:560px}
   .it[data-size="s"] .vc-live.vc-preview{height:200px}
   .it[data-size="l"] .vc-live.vc-preview{height:380px}
   .it[data-size="xl"] .vc-live.vc-preview{height:560px}
@@ -1414,8 +1628,41 @@
   /* the diagram's slot takes the diagram's own height at the slot's width (--dh, set when it renders), up to the size's
      ceiling — s 120 · m 400 · l 640 · xl the diagram's own — never a fixed strip; a dragged size still wins */
   .vc-diag .vc-live{height:var(--dh,150px);max-height:400px}.it[data-size="s"] .vc-diag .vc-live{max-height:120px}.it[data-size="l"] .vc-diag .vc-live{max-height:640px}.it[data-size="xl"] .vc-diag .vc-live{max-height:none}
+  /* ...the same in the diagram card (the kit's bar over the live drawing) */
+  .vc-diagwrap .vc-live{height:var(--dh,150px);max-height:400px}.it[data-size="s"] .vc-diagwrap .vc-live{max-height:120px}.it[data-size="l"] .vc-diagwrap .vc-live{max-height:640px}.it[data-size="xl"] .vc-diagwrap .vc-live{max-height:none}
+  .it.sized .vc-diagwrap > .code-card,.it.openin .vc-diagwrap > .code-card,.it.maxed .vc-diagwrap > .code-card{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
   .it[data-type="diagram"] .it-bd{max-height:none}
   .vc-dgsrc{margin-top:6px;max-height:160px}
+  /* a page, deeper: its reading's who and how long, what it names, where it points */
+  .vc-src-m{font-size:10px;color:var(--t3,var(--dim,#6b7480));margin:2px 0 4px}
+  /* a records item: the names its pages share, and each row's own */
+  .vc-rbx-efacets .vc-rbx-fl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7480));margin-right:4px;align-self:center}
+  /* a research run at a glance: its sites as one bar, its pages' dates as a line */
+  .vc-rbx-glance{display:flex;flex-direction:column;gap:6px;margin:6px 0 4px}
+  .vc-rbx-map{display:flex;height:18px;border-radius:5px;overflow:hidden;gap:1px}
+  .vc-rbx-map button{min-width:6px;border:0;padding:0 5px;cursor:pointer;background:hsl(var(--h) 45% 42% / .55);color:var(--t1,var(--fg,#e6e9ee));font-size:9.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left}
+  .vc-rbx-map button span{pointer-events:none}.vc-rbx-map button.on,.vc-rbx-map button:hover{background:hsl(var(--h) 55% 50% / .85)}
+  .vc-rbx-map i{background:var(--s2,var(--bg2,#1c2026))}
+  .vc-rbx-tl{display:flex;align-items:center;gap:8px;font-size:9.5px;color:var(--t3,var(--dim,#6b7480));font-variant-numeric:tabular-nums}
+  .vc-rbx-tlb{position:relative;flex:1;height:12px;border-bottom:1px solid var(--bd,var(--border,#2a2f37))}
+  .vc-rbx-tlb button{position:absolute;bottom:-4px;width:8px;height:8px;margin-left:-4px;border-radius:50%;border:0;padding:0;cursor:pointer;background:hsl(var(--h) 55% 55%)}
+  .vc-rbx-tlb button:hover{transform:scale(1.5)}
+  .vc-rbx-ents{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0}.vc-rbx-ents span{font-size:9.5px;padding:0 6px;border-radius:99px;background:var(--s2,var(--bg2,#1c2026));color:var(--t2,var(--fg2,#c3cad4))}
+  /* a page's pictures inside its reading are figures, not the page: a logo drawn at its natural size filled the item */
+  .vc-src-body img,.vc-rbx-body img{max-width:100%;max-height:260px;width:auto;height:auto;object-fit:contain;display:block;margin:6px auto}
+  .vc-src-ents{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 2px}
+  .vc-src-out{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0;font-size:10px}.vc-src-out span{color:var(--t3,var(--dim,#6b7480))}
+  .vc-src-out a{color:var(--ac,var(--acc,#5a9e8f));text-decoration:none}.vc-src-out a:hover{text-decoration:underline}
+  /* what a turn names: chips in their groups, a pressed one opens under its group */
+  .vc-ent{display:flex;flex-direction:column;gap:8px}
+  .vc-ent-gl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7480));margin-bottom:3px}
+  .vc-ent-cs{display:flex;flex-wrap:wrap;gap:4px}
+  .vc-chip{display:inline-flex;align-items:center;gap:5px;border:0;border-radius:99px;padding:3px 9px;font:inherit;font-size:11px;cursor:pointer;background:var(--s2,var(--bg2,#1c2026));color:var(--t1,var(--fg,#dce1e8));box-shadow:inset 0 0 0 1px var(--bd,var(--border,#2a2f37))}
+  .vc-chip i{font-style:normal;font-size:9px;color:var(--t3,var(--dim,#6b7480))}
+  .vc-chip:hover,.vc-chip.on{box-shadow:inset 0 0 0 1px var(--ac,var(--acc,#5a9e8f));color:var(--ac,var(--acc,#5a9e8f))}
+  .vc-ent-d{margin-top:6px;padding:6px 8px;border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1c2026))}
+  .vc-ent-h{display:flex;align-items:center;gap:8px;margin-bottom:4px}.vc-ent-h .mono{font-family:var(--f-mono,ui-monospace,monospace);font-size:9px;color:var(--t3,var(--dim,#6b7480))}.vc-ent-h .sp{flex:1}
+  .vc-ent-d p{margin:3px 0;font-size:11px;line-height:1.5;color:var(--t2,var(--fg2,#c3cad4))}
   vera-mermaid.vc-mm{display:block;min-height:120px;margin:.3em 0}`;
 
   /* ── THE PLACER (Notes/38 §3.5; the canvas's final form §2), pure: items → a column and a top for each. An item sits
@@ -1446,16 +1693,23 @@
      many exist) read the widths here, so the count and the widths can never disagree. A kind you read rather than
      glance at wants a reading width; a kind you glance at wants a share. ── */
   const WIDE = { code: 1, html: 1, explode: 1, markdown: 1, panel: 1, session: 1, table: 1 };
-  function unitsOf(d) {
+  /* colW, when the placer knows it: NOT GREEDY (owner, 2026-10-04: "lots of the widgets or elements in the canvas are very
+     greedy with the width - the hover previews are often big enough"). A reading width was two columns - in the chat's
+     column, the whole stage - for every markdown, table, panel and large item, the records and widgets enrichment
+     places among them. Where one column is wide enough to read (340 px) they take one; code, a page, an explode and a
+     terminal keep two, a line of code being worth its width. And a folded chip is the smallest share that still reads
+     its title (~170 px), not a fixed third. Opened, dragged or xl still asks for the stage. */
+  const CODEISH = { code: 1, html: 1, explode: 1, session: 1 };
+  function unitsOf(d, colW) {
     d = d || {};
-    if (d.folded) return 1 / 3;              // folded to its header line it is a chip, whatever kind it is
+    if (d.folded) return colW ? ([1 / 3, 0.5, 1].find((s) => s * colW - 10 >= 170) || 1) : 1 / 3;   // a chip, whatever its kind
     if (d.open) return 4;                    // opened in place or dragged: it asked for the stage
     // a FUSED group is one element holding two or more: a strip of indicators is a column wide, anything with a
     // pane beside or under it is a reading width, whatever the lead on its own would have asked for
     if (d.fuse) return d.fuse === 'strip' ? 1 : 2;
     const sz = d.size || 'm', ty = d.type || '';
     if (sz === 'xl') return 4;
-    if (WIDE[ty] || sz === 'l') return 2;
+    if (WIDE[ty] || sz === 'l') return colW >= 340 && !CODEISH[ty] ? 1 : 2;
     return sz === 'xs' ? (1 / 3) : sz === 's' ? 0.5 : 1;
   }
   /* ── HOW MANY COLUMNS: the width says how many FIT, the content says how many are WANTED, and the answer is the
@@ -2044,6 +2298,21 @@
       this._stageW = W;
       const maxCard = this._max ? st.querySelector('.it.maxed') : null;   // placed on its own, below
       const cards = [...st.querySelectorAll('.it')].filter((c) => c !== maxCard);
+      /* AN ITEM THAT GROWS AFTER IT WAS PLACED IS PLACED AGAIN (owner, 2026-10-03: "the last element added does not fully
+         display untill the next message is sent"). The stage measured each card once, when it was placed; a card that
+         grew afterwards - its markdown and widgets finishing, a run's output, an explode panel, an editor opened -
+         kept the slot of its first height, ran over the item below it and past the end of the stage until something
+         else (the next message) placed the stage again. Each card's height is watched now; a real change re-places. */
+      if (!this._cardRO && typeof ResizeObserver !== 'undefined') {
+        this._cardH = new WeakMap();
+        this._cardRO = new ResizeObserver((entries) => {
+          let moved = false;
+          entries.forEach((e) => { if (e.target.classList.contains('peek')) return;   // a preview opening is not a card growing
+            const h = Math.round(e.contentRect.height); if (this._cardH.get(e.target) !== h) { if (this._cardH.has(e.target)) moved = true; this._cardH.set(e.target, h); } });
+          if (moved && !this._cardRaf) this._cardRaf = requestAnimationFrame(() => { this._cardRaf = 0; this._placeNow(); });
+        });
+      }
+      if (this._cardRO) cards.forEach((c) => { if (!c._roOn) { c._roOn = true; this._cardRO.observe(c); } });
       /* what each card wants, read off the card and independent of the count — so the count can be chosen from it */
       const descOf = (c) => ({ type: c.dataset.type || '', size: c.dataset.size || 'm', fuse: c.dataset.fuse || '',
         folded: c.classList.contains('compact') || c.classList.contains('overfold'),
@@ -2061,7 +2330,8 @@
          canvas of folded items was a stack of identical bars — the shape the owner keeps calling a rigid grid. */
       /* over 1 = a number of COLUMNS to span, clamped to the columns there are: a kind you read takes the stage when
          there is more than one column to take; an l or xl item of any kind takes two. */
-      const wantOf = (c) => { const u = unitsOf(descOf(c)); return u > 1 ? Math.max(1, Math.min(cols, Math.round(u))) : u; };
+      // the same classifier the count was chosen by, told the column width it now has (a reading width, a chip's share)
+      const wantOf = (c) => { const u = unitsOf(descOf(c), w); return u > 1 ? Math.max(1, Math.min(cols, Math.round(u))) : u; };
       /* ⛔ A WIDTH YOU DRAGGED IS A NUMBER OF PIXELS, and it outranks every share and every span. The drag in progress
          counts as much as one already dropped, or the placer would fight the mouse: it set the card back to the share
          its kind asks for on the very next frame, which is why dragging left did nothing at all. Bounded by the
@@ -2121,16 +2391,17 @@
          changed (owner, 2026-09-24: "re-sizing the canvas items doesnt function", "open in place doesnt do
          anything"). The column scrolls for them instead, which is what the packed regime is for. */
       const capH = Math.max(120, V - pad - 10);
-      const asked = (c) => c.classList.contains('openin') || c.classList.contains('sized');
+      const asked = (c) => c.classList.contains('openin') || c.classList.contains('sized') || c.classList.contains('peek');
       if (V) { cards.forEach((c) => { if (c.style.maxHeight) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
         const hs = cards.map((c) => c.offsetHeight);
         cards.forEach((c, i) => { if (hs[i] > capH && !asked(c)) { c.style.maxHeight = capH + 'px'; c.classList.add('capped'); } }); }
       else cards.forEach((c) => { if (c.classList.contains('capped')) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
       this._fullH = this._fullH || {};
-      const items = cards.map((c, ci) => { const k = c.dataset.key || ''; const hd = c.querySelector('.it-hd');
-        const isFolded = c.classList.contains('overfold'); const measured = c.offsetHeight;
+      const items = cards.map((c, ci) => { const k = c.dataset.key || ''; const hd = c.querySelector(':scope > .it-hd:not(.own-fold)') || c.querySelector(':scope > .it-hd');
+        // a folded item being previewed is still its folded line to the column: its preview lies over the items below
+        const isFolded = c.classList.contains('overfold'); const measured = c.classList.contains('peek') && c._peekH ? c._peekH : c.offsetHeight;
         if (!isFolded) this._fullH[k] = measured;                              // what it is when OPEN: the placer judges on that, so folding cannot oscillate
-        return { key: k, h: isFolded ? (this._fullH[k] || measured) : measured, hFold: hd ? hd.offsetHeight + 2 : 28,
+        return { key: k, h: isFolded ? (this._fullH[k] || measured) : measured, hFold: hd && hd.offsetHeight ? hd.offsetHeight + 2 : 28,
                  want: wants[ci], wpx: pws[ci] || 0, mid: c.dataset.mid || '', beside: c.dataset.beside || '',
                  /* AN ITEM YOU OPENED IS NEVER FOLDED BY THE COLUMN, any more than a pinned one is: you asked for it
                     open, and a room that shuts what you just opened is worse than a room that scrolls. */
@@ -2145,7 +2416,8 @@
       P.placements.forEach((p) => { const c = cards.find((x) => x.dataset.key === p.key); if (!c) return;
         c.style.left = p.x + 'px'; c.style.top = p.y + 'px'; c.dataset.col = String(p.col);
         if (p.w > 0) c.style.width = p.w + 'px';                 // the width it flowed at
-        c.classList.toggle('level', !!p.level); c.classList.toggle('beside', !!p.beside); });
+        c.classList.toggle('level', !!p.level); c.classList.toggle('beside', !!p.beside);
+        if (c.classList.contains('peek')) this._peekGeom(c); });
       /* THE STAGE IS THE ITEMS' OWN HEIGHT, not the transcript's. It used to be made as tall as the whole transcript
          so the column could be driven from the transcript's scrollTop — the projection this replaces. */
       st.style.height = (P.mode === 'stage' ? Math.max(P.height, (this._turnsH || 0) + 40) : P.height) + 'px';
@@ -2198,6 +2470,9 @@
     render(doc) {
       const root = this.shadowRoot;
       const blocks = doc.blocks || [];
+      // what the host is streaming into an item outranks whatever an older revision says it holds (liveUpdate)
+      if (this._liveOv) blocks.forEach((b) => { const ov = b && b.key != null && this._liveOv[String(b.key)]; if (ov) b.content = Object.assign({}, b.content || {}, ov); });
+      try { this._srcPrefetch(blocks); } catch (e) {}
       root.getElementById('title').textContent = doc.title || 'Canvas';
       root.getElementById('count').textContent =
         blocks.length + (blocks.length === 1 ? ' block' : ' blocks');
@@ -2273,8 +2548,9 @@
             <div class="opts">${d.options.map(o => `<button data-act="answer" data-ans="${esc(o.v)}" class="${d.answer === o.v ? 'on' : ''}" title="Answer — it goes to the run">${esc(o.n)}</button>`).join('')}${d.answer ? '' : '<span class="or">or type below — it goes to the run, not into a new turn</span>'}</div>
             <span class="st">${d.answer ? 'answered' + (hhmm(d.answered) ? ' ' + hhmm(d.answered) : '') + ' · "' + esc(d.answer) + '" sent to the run' : 'waiting' + (hhmm(d.since) ? ' since ' + hhmm(d.since) : '') + ' · the composer answers this too'}</span></div>`;
       const editHtml = b => { const c = b.content || {}; const ask = c.ask && typeof c.ask === 'object' && !c[textFieldOf(b.type)]; const f = ask ? 'ask.question' : textFieldOf(b.type); const v = ask ? (c.ask.question || '') : (c[f] || '');   // a decision's editor edits its question
-        return `<div class="edit" data-w="canvas.update"><textarea class="ta${b.type === 'code' || b.type === 'html' ? ' code' : ''}" data-field="${f}" spellcheck="false">${esc(v)}</textarea>
-          <div class="edit-a"><button class="ib" data-act="save">Done</button><button class="ib" data-act="cancel">Cancel</button><span class="vc-dim">${esc(b.type)} · ${f}</span></div></div>`; };
+        // Done / Cancel above the text, where editing starts (owner, 2026-10-04: scrolling to the bottom to stop editing)
+        return `<div class="edit" data-w="canvas.update"><div class="edit-a"><button class="ib" data-act="save">Done</button><button class="ib" data-act="cancel">Cancel</button><span class="vc-dim">${esc(b.type)} · ${f}</span></div>
+          <textarea class="ta${b.type === 'code' || b.type === 'html' ? ' code' : ''}" data-field="${f}" spellcheck="false">${esc(v)}</textarea></div>`; };
       /* A PANE: a fused member, drawn inside its lead's body. Its own drawer, its own key (so its live slot, its
          runs and every capability that addresses it are unchanged) — and one control, to take it back out. */
       const paneHtml = m => {
@@ -2322,7 +2598,9 @@
         const open = this._open.has(key) || editing || this._max === key;   // a maximised item is open
         const maxed = this._max === key;
         const aged = isAged(mid, focusMid, order) && !(F && F.has(key)) && b.state !== 'pinned';
-        const hovered = this._hovKey === key && (tier === 'hover' || aged);
+        // a hovered folded item is drawn folded: its preview is laid over the column after the render (_peekOpen), never
+        // opened in the layout - that moved the column under the pointer
+        const hovered = false;
         const fresh = !!mid && mid === focusMid;                                    // the turn in view produced it: open, in every tier
         // a header line, until opened. `hasFocus`: with no focus set there is nothing to be out of, so nothing folds
         const wouldFold = foldOf({ tier, aged, open, now: isNow, fresh, hasFocus: !!F, inFocus: !!F && F.has(key) });
@@ -2331,13 +2609,22 @@
            on the header opens it. What the canvas brings forth unasked (from='enrich') starts folded: its header says
            what it is and how much it holds, and it opens when it is wanted. Opening it in place, maximising or editing
            it overrides the fold. */
-        const ufold = !b._bid && !open && this._isUFolded(key, from);
+        /* PLACED FOR THE QUESTION (turn.prepare, from='prepare'; owner, 2026-10-04: "im not seeing any of the markets info
+           ... perhaps it did but i cant see it"): what was picked for the question and told to the model shows open - the
+           reply talks about it. Any of its anchors counts: the after-reply pass may bring the same item back as 'enrich'. */
+        const prepared = (b.anchors || []).concat(a ? [a] : []).some((x) => x && typeof x === 'object' && x.from === 'prepare');
+        const ufold = !b._bid && !open && this._isUFolded(key, from, prepared);
         const compact = (wouldFold && !hovered) || ufold;
         const px = this._px[key];
         /* the WIDTH you dragged it to, as a data attribute rather than a style: the placer applies it (it is the one
            thing that knows the columns it has to fit into), and it must survive the markup being rewritten */
         const pw = this._pw[key];
-        const editable = EDITABLE.includes(b.type);
+        /* ONE EDIT PER ITEM (owner, 2026-10-04: two Edit buttons on a code item). A code item's card bar has the kit's
+           editor (numbered, linted, full screen; saved through the `edited` hook) and a reading item's row has its own
+           Edit - the header's would be the second. It stays where nothing else edits: a note, a page, any item drawn
+           without the kit. */
+        const kitEdits = !!(root.VeraOut && key && (b.type === 'code' || b.type === 'markdown'));
+        const editable = EDITABLE.includes(b.type) && !kitEdits;
         const bid = b._bid ? String(b.id) : '';   // a keyless block: addressed by its id (canvas.update · canvas.remove · canvas.move)
         /* ONE HEADER PER ITEM. Several kinds draw a head of their own — a code item its filename and its preview
            switch, a terminal its host and its dot, an explode item what it is bound to — and the card drew ANOTHER
@@ -2355,8 +2642,11 @@
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
         const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
-          ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>`
-            : `<div class="it-hd">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${ufold && Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
+          ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>` : ''}${
+            /* the header line is drawn for EVERY item. An item whose drawer has its own head shows it only when the COLUMN
+               folds it (its body, and that head inside it, hidden): it used to be nothing but three hover-only icons,
+               0 px tall (owner, 2026-10-04: "if collapsed some canvas elements are only appearing on hover") */ ''}${
+              `<div class="it-hd${ownHead && !compact ? ' own-fold' : ''}">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
             ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
@@ -2433,10 +2723,27 @@
       const keepTop = body.scrollTop;
       const layers = this._layers(body);
       const mark = this.canvasId + '\u0000' + html;    // another canvas's identical markup is not this canvas's
-      if (this._html !== mark || !layers.items.childElementCount) {
+      // a code card being edited in place (the kit's editor) keeps the column as it is until the edit ends
+      if (this._html !== mark && layers.items.querySelector('.code-card.editing')) this._editHeld = true;
+      else if (this._html !== mark || !layers.items.childElementCount) {
+        /* AN ITEM BEING WRITTEN FOLLOWS ITS LAST LINE (owner, 2026-10-03: "it also doesnt auto scroll to the most recent
+           line if the user is already scrolled to the bottom or not been scrolled up"). Redrawing the markup put every
+           scrolling part of every item back at its top. What each one was doing is read first - at its end (or never
+           scrolled), or held somewhere by the reader - and given back: the first follows the new end, the second keeps
+           its place. */
+        const sc = {};
+        layers.items.querySelectorAll('.it[data-key]').forEach((it) => {
+          const k = it.dataset.key; const parts = it.querySelectorAll('.it-bd, pre, .vc-out');
+          parts.forEach((el, j) => { if (el.scrollHeight > el.clientHeight + 2) sc[k + '\u0000' + j] = { top: el.scrollTop, end: el.scrollHeight - el.scrollTop - el.clientHeight < 24 }; else sc[k + '\u0000' + j] = { top: 0, end: true }; });
+        });
         this._html = mark;
         layers.items.innerHTML = html;
         if (!stage) body.scrollTop = keepTop;
+        layers.items.querySelectorAll('.it[data-key]').forEach((it) => {
+          const k = it.dataset.key; it.querySelectorAll('.it-bd, pre, .vc-out').forEach((el, j) => {
+            const s = sc[k + '\u0000' + j]; if (!s || el.scrollHeight <= el.clientHeight + 2) return;
+            el.scrollTop = s.end ? el.scrollHeight : s.top; });
+        });
       }
       this._bind(body);
       if (stage) this._placeNow();
@@ -2448,7 +2755,13 @@
          alignment is the exception: there the transcript owns the column's scroll and setView has just written it. */
       if (stage && !this.strictAlign() && body.scrollTop !== keepTop) body.scrollTop = Math.min(keepTop, Math.max(0, body.scrollHeight - body.clientHeight));
       this._mountLive(body);
-      if (this._editKey) { const ta = body.querySelector('.it[data-key="' + this._editKey.replace(/"/g, '\\"') + '"] textarea'); if (ta && !this._editFocused) { this._editFocused = true; try { ta.focus(); } catch (e) {} } }
+      /* the shared output kit in this shadow root (its click handler, its style) and on what was just drawn (lint,
+         whole pages, diagrams) - loaded once when a page that shows the canvas did not load it, then drawn again */
+      if (root.VeraOut) { try { root.VeraOut.wire(this.shadowRoot, this._voHooks()); root.VeraOut.hydrate(layers.items); } catch (e) {} }
+      else if (!this._voLoading) { this._voLoading = true; ensureLib('/ui/elements/vera_output.js', '').then((ok) => { if (ok && root.VeraOut && this._doc) { this._html = null; this.render(this._doc); } }); }
+      if (this._editKey) { const ta = body.querySelector('.it[data-key="' + this._editKey.replace(/"/g, '\\"') + '"] textarea'); if (ta && !this._editFocused) { this._editFocused = true; try { ta.focus(); } catch (e) {} } if (ta) this._editWire(ta); }
+      // a preview open before the redraw is open after it (the markup was rebuilt folded)
+      if (this._peekKey) { const pk = this._peekKey; this._peekKey = null; this._peekOpen(pk); }
       if (body.querySelector('vera-mermaid')) ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid');
       if (window.mermaid && body.querySelector('.mermaid')) {
         try { window.mermaid.run({ nodes: body.querySelectorAll('.mermaid') }); }
@@ -2515,14 +2828,15 @@
       body.addEventListener('mouseleave', () => hovTo(null));
       // the corner grip: a drag sizes the item; the drop saves it as the item's size (s · m · l · xl)
       body.addEventListener('mousedown', (ev) => { const g = ev.target.closest && ev.target.closest('.rz'); if (!g) return; const it = g.closest('.it[data-key]'); if (!it) return;
-        ev.preventDefault(); ev.stopPropagation(); it.classList.add('sized', 'resizing');
+        ev.preventDefault(); ev.stopPropagation();
+        // its height and width as they are NOW - read before 'sized' (which lets a drawing take the room) changes them
+        const h0 = it.offsetHeight, w0 = it.offsetWidth; it.classList.add('sized', 'resizing');
         /* BOTH AXES. The grip's cursor has always said nwse-resize, but only clientY was ever read: the height
            followed the mouse and the width was whatever the placer handed out — and since a dragged item asked for
            the stage, that was every column of it. So an item you resized went full width and no amount of dragging
            left brought it back (owner, 2026-09-25: "if i resize an element in the canvas it takes the full width and
            cant be shrunk in width"). The width is now a pixel fact of the item, like its height. */
-        this._rz = { key: it.dataset.key, el: it, y0: ev.clientY, h0: it.offsetHeight, h: it.offsetHeight,
-                     x0: ev.clientX, w0: it.offsetWidth, w: it.offsetWidth }; });
+        this._rz = { key: it.dataset.key, el: it, y0: ev.clientY, h0, h: h0, x0: ev.clientX, w0, w: w0 }; });
       const doc = this.ownerDocument || document;
       doc.addEventListener('mousemove', (ev) => { const r = this._rz; if (!r) return;
         const h = Math.max(40, r.h0 + (ev.clientY - r.y0)); r.h = h; r.el.style.height = h + 'px';
@@ -2531,6 +2845,10 @@
         if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
+        /* ...and onto the card NOW: the placer reads the card's data-pw, which only a redraw rewrites - a drag that kept
+           the size class placed the card at the width of the drag before and it snapped back (owner, 2026-10-04: "i
+           also cannot resize an element on the canvas to span more columns than it has") */
+        r.el.dataset.pw = String(Math.round(r.w));
         const size = sizeOfHeight(r.h, this._vh || 0);   // against the column you dragged it in, not a fixed number
         try { this.dispatchEvent(new CustomEvent('vera:canvas:resized', { bubbles: true, detail: { key, height: r.h, size } })); } catch (e) {}
         if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage')) this._placeNow(); });
@@ -2555,13 +2873,46 @@
       this._hoverOpen(it);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:hover', { bubbles: true, detail: { key: k } })); } catch (e) {}
     }
+    /* A FOLDED ITEM, PREVIEWED IN PLACE (owner, 2026-10-04: "hovering over lots of collapsed canvas items makes the
+       previews flicker in and out as it doesnt stay in-place under the mouse. sometime hovering them doesnt open the
+       preview"). It opened inside the layout: the column re-placed around the opened item, the item or its neighbours
+       slid, the pointer was over something else, it folded, the column re-placed - the flicker. And only items the tier
+       folded opened; one folded by you or by the enrich default (the same chip to look at) did not. Now any folded item
+       previews after a short pause, OVER the items below it: to the column it is still its folded line (the placer reads
+       its folded height, its height watcher ignores it), it opens down and to the right from where the pointer is, at
+       least a reading width wide, and folds back the moment the pointer is elsewhere. A click still opens it for good. */
     _hoverOpen(it) {
-      const hoverTier = this.tier() === 'hover'; let moved = false;
-      const prev = this._hovEl;
-      if (prev && prev !== it && prev.classList.contains('hovopen')) { prev.classList.add('compact'); prev.classList.remove('hovopen'); moved = true; }
-      this._hovEl = it || null;
-      if (it && it.classList.contains('compact') && it.classList.contains('foldable') && (hoverTier || it.classList.contains('aged'))) { it.classList.remove('compact'); it.classList.add('hovopen'); moved = true; }
-      if (moved && this.hasAttribute('stage')) this._placeNow();
+      clearTimeout(this._peekT);
+      const key = it && it.dataset ? it.dataset.key : null;
+      if (this._peekKey && this._peekKey !== key) this._peekClose();
+      if (!key || this._peekKey === key || this._rz || it.classList.contains('ghost') || !(it.classList.contains('compact') || it.classList.contains('overfold'))) return;
+      this._peekT = setTimeout(() => { if (this._hovKey === key) this._peekOpen(key); }, 220);
+    }
+    _peekFind(key) { const body = this.shadowRoot && this.shadowRoot.getElementById('body');
+      return key && body ? body.querySelector('#items .it[data-key="' + String(key).replace(/"/g, '\\"') + '"]') : null; }
+    _peekOpen(key) {
+      const it = this._peekFind(key); if (!it || !(it.classList.contains('compact') || it.classList.contains('overfold'))) return;
+      it._peekH = it.offsetHeight; it._peekSave = { w: it.style.width, l: it.style.left };
+      this._peekKey = key;
+      // a fold the column made stays the column's (it re-folds on its own pass); the preview shows the body over it
+      it._peekWas = it.classList.contains('compact') ? 'compact' : 'overfold';
+      it.classList.remove('compact'); it.classList.add('peek', 'hovopen');
+      this._peekGeom(it);
+      try { this._liveLayout(); } catch (e) {}
+    }
+    // a preview is at least a reading width wide (the column's share can be a sliver), kept inside the stage
+    _peekGeom(it) {
+      const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); const W = st ? st.clientWidth : 0; if (!W) return;
+      const left = parseFloat(it.style.left) || 0, cur = it.offsetWidth, want = Math.min(W, Math.max(cur, 440));
+      it._peekSave = { w: it.style.width, l: it.style.left };
+      if (want > cur) { it.style.width = want + 'px'; if (left + want > W) it.style.left = Math.max(0, W - want) + 'px'; }
+    }
+    _peekClose() {
+      const key = this._peekKey; this._peekKey = null; clearTimeout(this._peekT);
+      const it = this._peekFind(key); if (!it || !it.classList.contains('peek')) return;
+      it.classList.remove('peek', 'hovopen'); if (it._peekWas !== 'overfold') it.classList.add('compact');
+      const s = it._peekSave; if (s) { it.style.width = s.w; it.style.left = s.l; } it._peekSave = null;
+      try { this._liveLayout(); } catch (e) {}
     }
     /* the folds you made, per canvas: {key: true|false}; an item you never folded or opened takes its default (an enrich
        item folded, the rest open) */
@@ -2570,9 +2921,10 @@
       if (this._foldsFor !== id) { this._foldsFor = id; this._foldMap = {}; try { this._foldMap = JSON.parse(localStorage.getItem('vera:canvas:fold:' + id) || '{}') || {}; } catch (e) { this._foldMap = {}; } }
       return this._foldMap;
     }
-    _isUFolded(key, from) {
+    _isUFolded(key, from, prepared) {
       const f = this._folds(); key = String(key);
       if (Object.prototype.hasOwnProperty.call(f, key)) return !!f[key];
+      if (prepared) return false;
       return from === 'enrich' || key.indexOf('enrich:') === 0;
     }
     _setFold(key, on) {
@@ -2604,6 +2956,65 @@
     _blockOf(key) { const bl = (this._doc && this._doc.blocks) || []; key = String(key); return bl.find(b => b && b.key != null && String(b.key) === key) || (key.startsWith('blk:') ? bl.find(b => b && !b.key && String(b.id) === key.slice(4)) : null) || null; }
     /* how a write names the block: the resolver's key, or — a keyless block of an agent's canvas — its block_id */
     _bidOf(key) { const b = this._blockOf(key); return b && !b.key ? String(b.id) : ''; }
+    /* THE ITEM BEING WRITTEN, AS IT IS WRITTEN (owner, 2026-10-03: "the streaming to the canvas is not smooth like the
+       chat"). The host's writes go to the server a few times a second and come back as a revision; between them the
+       item stood still and then jumped. The host hands the growing content here on every paint instead: the item's
+       content in this canvas's document is replaced and the column redrawn on the next frame - the write that
+       persists it still follows, and the revision it brings back changes nothing that is already drawn. */
+    liveUpdate(key, content) {
+      const b = this._blockOf(key); if (!b || !content || typeof content !== 'object') return false;
+      // held over every document until the host says the stream is done: a revision that left the server before the
+      // last write would otherwise draw the item a step back
+      (this._liveOv = this._liveOv || {})[String(key)] = content;
+      (this._liveAt = this._liveAt || {})[String(key)] = Date.now();
+      b.content = Object.assign({}, b.content || {}, content);
+      this._liveRedraw(); this._liveExpire();
+      return true;
+    }
+    /* THE STREAM IS OVER, SO IS THE STREAMING CARD (owner, 2026-10-03: "sometimes the code is stuck in the 'streaming'
+       state and the controls on the top of the code in the canvas dont appear"). Two ways it stuck: the end let go of the
+       item but drew nothing, so a card whose last revision had already come back stayed the streaming card (no bar)
+       until something else redrew the column; and a stream that never ended in the chat's landing (stopped, failed,
+       the page's own error) never let go at all. Now the end redraws, and an item nothing has grown for a few seconds
+       lets go by itself. */
+    liveDone(key) {
+      if (!this._liveOv) return;
+      if (key == null) { this._liveOv = null; this._liveAt = null; } else { delete this._liveOv[String(key)]; if (this._liveAt) delete this._liveAt[String(key)]; }
+      this._liveRedraw();
+    }
+    _liveRedraw() { if (!this._liveRaf) this._liveRaf = requestAnimationFrame(() => { this._liveRaf = 0; if (this._doc) this.render(this._doc); }); }
+    _liveExpire() {
+      if (this._liveT) return;
+      this._liveT = setTimeout(() => {
+        this._liveT = 0; if (!this._liveOv) return;
+        const now = Date.now(); let gone = false;
+        Object.keys(this._liveOv).forEach((k) => { if (now - ((this._liveAt && this._liveAt[k]) || 0) > 8000) { delete this._liveOv[k]; if (this._liveAt) delete this._liveAt[k]; gone = true; } });
+        if (gone) this._liveRedraw();
+        if (Object.keys(this._liveOv).length) this._liveExpire();
+      }, 2000);
+    }
+    /* what the canvas does its own way for the shared code card (vera_output.js hooks, this shadow root only): Preview in
+       the live layer and Explode as the bound explode item - through this column's one dispatcher, as its own buttons
+       always went - and an applied edit kept with the item (canvas.update), so it is there after any redraw */
+    _voHooks() {
+      if (this.__voh) return this.__voh;
+      const viaAct = (act, b) => { if (!b) return false; const was = b.dataset.act; b.dataset.act = act; try { this._act(b); } finally { if (was == null) delete b.dataset.act; else b.dataset.act = was; } return true; };
+      const keyOf = (c) => { const it = c && c.closest && c.closest('.it[data-key]'); return it ? it.dataset.key : ''; };
+      this.__voh = {
+        preview: (blk, id, b) => viaAct('cprev', b),
+        explode: (blk, id, b) => viaAct('explode', b),
+        dpop: (blk, id, b) => viaAct('dgopen', b),      // a diagram's Pop out: the canvas's own "open in the chat"
+        // a diagram's SVG / PNG: the drawing is in the column's live layer, not in the card
+        dimg: (blk, id, b, c, fmt) => { const L = this._live && this._live[keyOf(c)]; const vm = L && L.querySelector && L.querySelector('vera-mermaid');
+          if (vm && typeof vm._download === 'function') { vm._download(fmt); return true; } return false; },
+        edited: (blk, id, d, c) => { const key = keyOf(c); const bl = key && this._blockOf(key); if (!bl) return;
+          const was = bl.content || {}; const next = { code: d.code };
+          if (bl.type === 'diagram' || was.mermaid != null) { next.mermaid = d.code; if (was.source != null) next.source = d.code; }   // a diagram draws from `mermaid` first
+          return this.call('canvas.update', Object.assign(this._ref(key), { content: Object.assign({}, was, next) })); } };
+      // an edit in progress is never redrawn away: the column waits for it, then draws what it missed
+      this.shadowRoot.addEventListener('vera:code:editend', () => { if (this._editHeld) { this._editHeld = false; this._html = null; if (this._doc) this.render(this._doc); } });
+      return this.__voh;
+    }
     _ref(key) { const bid = this._bidOf(key); return bid ? { block_id: bid } : { key }; }
     /* every action on the column — the old per-item controls (pin · park · size · remove) and the board's new ones
        (add · open · edit · answer · take · in context) — one dispatcher */
@@ -2635,7 +3046,11 @@
         const content = what === 'code'
           ? { binds: key, title: String(c.filename || c.title || 'code') + ' — exploded' }
           : { binds: key, text: String(c.md || c.text || '').slice(0, 20000), title: String(c.title || 'passage') + ' — exploded' };
-        return this.call('canvas.add', { kind: 'explode', key: 'explode:' + key, content, at: 'now', size: 'l' });
+        /* in the source's band and at the source's turn (owner, 2026-10-04: the explode "opens very far away from the
+           other elements"): fusing is per band, so a diagram of a PINNED item - added to 'now', with no turn - was a card
+           of its own placed where nothing anchors it, far from its code; fusing switched off did the same */
+        return this.call('canvas.add', Object.assign({ kind: 'explode', key: 'explode:' + key, content, at: b.state === 'pinned' ? 'pinned' : 'now', size: 'l' },
+          b.anchor && typeof b.anchor === 'object' ? { anchor: b.anchor } : {}));
       }
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
@@ -2705,6 +3120,16 @@
         // flip what is on SCREEN: the first press on a page that opened drawn turns it off, not on
         this._prevOn[key] = !(this._prevSeen && this._prevSeen[key]);
         this._open.add(key); if (this._doc) this.render(this._doc); return; }
+      // a named thing: open its sentences under its group (a second press closes), or look it up beside the item
+      if (act === 'srcent') { const t = String(btn.dataset.entT || ''); if (!t) return; btn.disabled = true;
+        this.callResult('turn.entity.look', { session_id: this._sid(), text: t, type: String(btn.dataset.entY || '') }).then(() => { btn.disabled = false; this.refresh && this.refresh(); });
+        return; }
+      if (act === 'entopen') { this._entOpen = this._entOpen || {}; const id = String(btn.dataset.ent || ''); this._entOpen[key] = this._entOpen[key] === id ? '' : id; this._open.add(key); if (this._doc) this.render(this._doc); return; }
+      if (act === 'entlook') { const c = this._contentOf(key) || {}; const [gi, ei] = String(btn.dataset.ent || '').split(':').map(Number);
+        const e = ((((c.groups || [])[gi]) || {}).entities || [])[ei]; if (!e) return; btn.textContent = 'looking…'; btn.disabled = true;
+        this.callResult('turn.entity.look', { session_id: this._sid(), text: e.text, type: e.type, mid: c.mid || '' })
+          .then((r) => { btn.textContent = r && r.ok ? ((r.items || []).length ? 'beside this →' : 'nothing found') : 'failed'; btn.disabled = false; this.refresh && this.refresh(); });
+        return; }
       if (act === 'dgcopy') { const c = this._contentOf(key) || {}; try { navigator.clipboard.writeText(String(c.mermaid || c.code || c.source || '')); } catch (e) {} return; }
       if (act === 'dgsrc') { const p = it && it.querySelector('.vc-dgsrc'); if (p) p.hidden = !p.hidden; return; }
       if (act === 'tshare') { const h = it.querySelector('.vc-live[data-ws]'); const ws = h ? h.dataset.ws : ''; try { navigator.clipboard.writeText(location.origin + ws); } catch (e) {} return; }
@@ -2788,8 +3213,8 @@
           else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
           inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
           // a code item previews its code; an html item previews the page it IS (its content field is `html`)
-          h.textContent = ''; const cc = this._contentOf(key) || {}; const pd = previewDoc(h.dataset.lang || cc.lang, cc.code || cc.html || ''); inner._doc = pd; inner.srcdoc = pd; }
-          else if (kind === 'explode') { inner = document.createElement('vera-graph-embed'); h.textContent = '';
+          h.textContent = ''; const cc = this._contentOf(key) || {}; const pd = this._pdoc(key, h.dataset.lang || cc.lang, cc.code || cc.html || ''); inner._doc = pd; inner.srcdoc = pd; }
+          else if (kind === 'explode') { inner = document.createElement('vera-graph-embed'); h.textContent = ''; inner.setAttribute('resize', 'off');   // the item is sized by the canvas
             ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
             this._explodeAttrs(inner, key);
             // the diagram answers the reader: a card click scrolls the bound code item to that span and lights it
@@ -2800,6 +3225,10 @@
             ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
             this._rgFeed(inner, key);
             inner.addEventListener('vera-graph-node', (ev) => this._rgNode(key, (ev.detail || {}).node)); }
+          // a delivered report: Vera's own page, but written by a model - scripts may run (its diagrams), it may open
+          // a tab, it may not be same-origin with the chat
+          else if (kind === 'report') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
+            inner.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox'); h.textContent = ''; inner.src = h.dataset.src || 'about:blank'; }
           else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
@@ -2809,7 +3238,9 @@
         } else if (kind === 'preview') { if (h.textContent) h.textContent = ''; const cc = this._contentOf(key) || {};
           /* an html item's page is its `html`, not `code` - reading only `code` redrew every html item as an empty page on
              its first update; and the redraw is double-buffered (_previewSwap) so there is never a blank frame */
-          this._previewSwap(el, previewDoc(h.dataset.lang || cc.lang, cc.code || cc.html || ''));
+          this._previewSwap(el, this._pdoc(key, h.dataset.lang || cc.lang, cc.code || cc.html || ''));
+        } else if (kind === 'report') { if (h.textContent) h.textContent = ''; const fr = el.firstChild, want = h.dataset.src || '';
+          if (fr && want && fr.getAttribute('src') !== want) fr.setAttribute('src', want);   // a re-render never reloads the same report
         } else if (kind === 'explode') { if (h.textContent) h.textContent = ''; this._explodeAttrs(el.firstChild, key);
         } else if (kind === 'rgraph') { if (h.textContent) h.textContent = ''; this._rgFeed(el.firstChild, key);
         } else if (kind === 'term' && h.dataset.ws) { const t = el.firstChild; if (t && t.getAttribute('ws') !== h.dataset.ws) { t.setAttribute('ws', h.dataset.ws); try { t.destroy && t.destroy(); t.connect(h.dataset.ws); } catch (e) {} } }
@@ -2835,10 +3266,30 @@
        covers them. Nothing is persisted; this is a reader's pointer, not a document change. */
     /* the graph of a records item: rebuilt only when its records change (a render is not a new answer), handed to the
        embed once it is defined */
+    /* THE EDITOR IS AS TALL AS ITS TEXT (owner, 2026-10-04: "pressing edit on code in the canvas only lets you edit the
+       first few lines"): the textarea opened at its 72 px minimum - four lines of a sixty-line file, the rest behind a
+       scroll inside a scroll. It takes its text's height (to 70% of the window), grows as it is typed into, and in code
+       Tab indents rather than leaving the field. */
+    _editWire(ta) {
+      const fit = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 4, Math.round((root.innerHeight || 900) * 0.7)) + 'px'; };
+      fit(); if (ta._vcEdit) return; ta._vcEdit = true;
+      ta.addEventListener('input', fit);
+      if (ta.classList.contains('code')) ta.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Tab' || ev.ctrlKey || ev.altKey || ev.metaKey) return; ev.preventDefault();
+        const s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
+        if (s === e && !ev.shiftKey) { ta.value = v.slice(0, s) + '    ' + v.slice(e); ta.selectionStart = ta.selectionEnd = s + 4; return; }
+        // a selection (or shift): indent / outdent each line it touches
+        const ls = v.lastIndexOf('\n', s - 1) + 1; const block = v.slice(ls, e);
+        const out = ev.shiftKey ? block.replace(/^( {1,4}|\t)/gm, '') : block.replace(/^/gm, '    ');
+        ta.value = v.slice(0, ls) + out + v.slice(e); ta.selectionStart = ls; ta.selectionEnd = ls + out.length; fit();
+      });
+    }
     _rgFeed(embed, key) {
       if (!embed) return;
-      const c = this._contentOf(key) || {}; const bodies = recState(this, key).body || {}; const g = recGraph(c, bodies);
-      const sig = (c.query || '') + '|' + (Array.isArray(c.items) ? c.items.map((r) => r && r.id).join(',') : '') + '|' + Object.keys(bodies).map((k) => k + ':' + ((bodies[k] && bodies[k].nb) || []).length).join(',');
+      const c = this._contentOf(key) || {}; const bodies = recState(this, key).body || {};
+      const ents = (this._recEnts && this._recEnts[String(key)]) || null; const g = recGraph(c, bodies, ents);
+      const sig = (c.query || '') + '|' + (Array.isArray(c.items) ? c.items.map((r) => r && r.id).join(',') : '') + '|' + Object.keys(bodies).map((k) => k + ':' + ((bodies[k] && bodies[k].nb) || []).length).join(',')
+        + '|' + (ents ? Object.keys(ents).map((k) => k + ':' + ents[k].length).join(',') : '');
       if (embed._rgSig === sig) return; embed._rgSig = sig;
       const go = () => { try { embed.setGraph(g); } catch (e) {} this._adoptGraphCss(); };
       if (typeof embed.setGraph === 'function') go();
@@ -2858,10 +3309,13 @@
     }
     // a record's node, clicked: the list, on the page that holds it, with that record open
     _rgNode(key, node) {
-      const id = node && String(node.id || ''); if (!id || id.indexOf('r:') !== 0) return;
+      const id = node && String(node.id || '');
+      // a name opens the list at the pages that name it
+      if (id.indexOf('e:') === 0) { const st = recState(this, key); st.view = 'list'; st.ent = id.slice(2); st.page = 0; if (this._doc) this.render(this._doc); return; }
+      if (!id || id.indexOf('r:') !== 0) return;
       const rid = id.slice(2); const b = this._blockOf(key); const c = (b && b.content) || {};
       const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object');
-      const st = recState(this, key); st.view = 'list'; st.q = ''; st.dom = ''; st.sort = 'rank'; st.open = st.open || {}; st.open[rid] = true;
+      const st = recState(this, key); st.view = 'list'; st.q = ''; st.dom = ''; st.ent = ''; st.sort = 'rank'; st.open = st.open || {}; st.open[rid] = true;
       const per = ({ s: 4, m: 6, l: 10, xl: 20 }[b && b.size] || 8); const i = items.findIndex((r) => String(r.id) === rid);
       st.page = i >= 0 ? Math.floor(i / per) : 0;
       if (this._doc) this.render(this._doc);
@@ -2937,6 +3391,10 @@
        black/white on every streamed beat, and kept flickering while the chat streamed on after it (owner,
        2026-09-27). The next document loads in a second frame BEHIND the one on screen and replaces it once it has
        painted; while one is loading only the newest document is kept, and a swap is at most every half second. */
+    /* a page the chat is still writing follows its newest line: each swap is a fresh page, which opens at its top - so
+       as the page grew past the frame its new content was never in view (owner, 2026-10-03: "the canvas is better but
+       still bad"). While the item is streaming its document carries the scroll to its end; finished, it opens as itself. */
+    _pdoc(key, lang, src) { const d = previewDoc(lang, src); return (this._liveOv && this._liveOv[String(key)]) ? d + '<script>try{scrollTo(0,document.documentElement.scrollHeight)}catch(e){}<\/script>' : d; }
     _previewSwap(wrap, doc) {
       if (!wrap) return;
       const shown = () => [...wrap.querySelectorAll(':scope > iframe.vc-pframe')].filter((f) => !f._pending).pop() || null;
@@ -2968,7 +3426,13 @@
         if (!h || !h.getClientRects().length) { el.style.display = 'none'; return; }
         const r = h.getBoundingClientRect(); const w = Math.max(0, Math.round(r.width)), ht = Math.max(0, Math.round(r.height));
         el.style.display = ''; el.style.left = Math.round(r.left - B.left + body.scrollLeft) + 'px'; el.style.top = Math.round(r.top - B.top + body.scrollTop) + 'px';
-        if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } if (el.dataset.kind === 'mermaid') { const m = el.firstChild; try { m && m.fit && m.fit(); } catch (e) {} } }
+        if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } if (el.dataset.kind === 'mermaid') { const m = el.firstChild; try { m && m.fit && m.fit(); } catch (e) {} }
+          /* a records item's graph takes its slot's height (owner, 2026-10-04: "elements on the canvas still dont resize on
+             the y axis ... im trying to expand the graph elements"): the embed's box was fixed at the height it was made
+             with, so the slot grew under a graph that stayed put. Its caption line sits under the box. */
+          if (el.dataset.kind === 'rgraph') { const g = el.firstChild; try { if (g && typeof g._setHeight === 'function' && Math.abs((g._h || 0) - (ht - 16)) > 3) g._setHeight(Math.max(160, ht - 16)); } catch (e) {}
+            // ...and fits its nodes to the new box once it has settled (they were laid out for the old one)
+            clearTimeout(el._fitT); el._fitT = setTimeout(() => { try { const gg = g && g._graph; if (gg && typeof gg.fit === 'function') gg.fit(); } catch (e) {} }, 350); } }
       });
     }
     /* the diagram rendered: its slot takes the diagram's height at the slot's width (the size's ceiling is the CSS's);
@@ -3045,6 +3509,8 @@
       if (act === 'page') { st.page = arg === 'prev' ? Math.max(0, (st.page | 0) - 1) : arg === 'next' ? (st.page | 0) + 1 : (+arg || 0); return redraw(); }
       if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0; return redraw(); }
       if (act === 'dom') { st.dom = st.dom === arg ? '' : arg; st.page = 0; return redraw(); }
+      if (act === 'ent') { st.ent = st.ent === arg ? '' : arg; st.page = 0; return redraw(); }
+      if (act === 'goto') return this._rgNode(key, { id: 'r:' + arg });   // a timeline dot: its page, opened, wherever it sits
       if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key);
           // a fabric record opened is READ at once: its facts, its source, its text - the depth is the point of opening it
           const cur = st.body[it.id] || {};
@@ -3108,16 +3574,60 @@
        the page's bare text when the reader found nothing to call a body (or is not on this instance). Kept small
        enough to write into the item: a reader answer is its fields and at most 40k of markdown. */
     async _readPage(url) {
-      let r = null; try { r = await this.callResult('browser.reader', { url, max_chars: 40000 }); } catch (e) { r = null; }
+      /* reader.page first (canvas-enrichment slice 2 - owner, 2026-10-03: "the reader mode should not be processed as the
+         user clicks it - takes a while to load"): a page the research, a fetch or a click read in the last week opens
+         from the reader cache at once; one never read is read the cheap way (the fetched page, in memory) before the
+         slow one (a real render). browser.reader stays the fallback on an instance without reader.page. */
+      let r = null; try { r = await this.callResult('reader.page', { url, max_chars: 40000 }); } catch (e) { r = null; }
+      if (!(r && r.ok) && !(r && /no article/i.test(String(r.error || '')))) { try { r = await this.callResult('browser.reader', { url, max_chars: 40000 }); } catch (e) { r = null; } }
       const mdTxt = String((r && r.markdown) || '');
       if (mdTxt.trim().length > 200) {
-        const keep = ['title', 'byline', 'site', 'published', 'image', 'minutes', 'words', 'composite', 'parts', 'url'];
+        const keep = ['title', 'byline', 'site', 'published', 'image', 'minutes', 'words', 'composite', 'parts', 'url', 'entities', 'via', 'cached'];
         const reader = { markdown: mdTxt.slice(0, 40000) }; keep.forEach((k) => { if (r[k] != null && r[k] !== '') reader[k] = r[k]; });
         return { reader };
       }
       let c = null; try { c = await this.callResult('browser.content', { url, max_chars: 40000 }); } catch (e) { c = null; }
       const text = String((c && (c.text || c.content)) || '');
       return text ? { text } : { err: (c && c.error) || (r && r.error) || '' };
+    }
+    /* every source drawn asks the reader cache (never the web) whether its page has been read; a page the research or a
+       fetch already read arrives with its reading, so "read" opens at once and the item shows who, how long and what */
+    _srcPrefetch(blocks) {
+      this._srcProbed = this._srcProbed || new Set();
+      const todo = (blocks || []).filter((b) => b && b.type === 'source' && b.key != null && b.content && b.content.url && !b.content.reader
+        && !b.content.text && !b.content.failed && !this._srcProbed.has(String(b.key))).slice(0, 12);
+      todo.forEach((b) => this._srcProbed.add(String(b.key)));
+      const keep = ['title', 'byline', 'site', 'published', 'image', 'minutes', 'words', 'composite', 'parts', 'url', 'entities', 'via'];
+      todo.forEach(async (b) => {
+        let r = null; try { r = await this.callResult('reader.page', { url: String(b.content.url), max_chars: 40000, mode: 'cache' }); } catch (e) { return; }
+        if (!(r && r.ok && String(r.markdown || '').trim().length > 200)) return;
+        const reader = { markdown: String(r.markdown).slice(0, 40000) }; keep.forEach((k) => { if (r[k] != null && r[k] !== '') reader[k] = r[k]; });
+        this.call('canvas.update', { key: String(b.key), content: Object.assign({}, b.content, { reader }) });
+      });
+      /* a records item's pages: their entities (its "names" facets) and their reading (a row opens at once), held in
+         the element only - the canvas is not written, so twenty rows cost no twenty updates */
+      this._recEnts = this._recEnts || {};
+      const SAL = /^(PERSON|ORG|GPE|LOC|FAC|PRODUCT|EVENT|NORP|WORK_OF_ART|LAW|TICKER)$/;
+      let left = 40;
+      (blocks || []).forEach((b) => {
+        if (!b || b.type !== 'records' || b.key == null || !b.content || !Array.isArray(b.content.items)) return;
+        const k = String(b.key); const em = this._recEnts[k] = this._recEnts[k] || {};
+        b.content.items.filter((r) => r && r.url && r.id != null && !this._srcProbed.has(k + '|' + r.id)).slice(0, 20).forEach((r) => {
+          if (left-- <= 0) return; this._srcProbed.add(k + '|' + r.id);
+          this.callResult('reader.page', { url: String(r.url), max_chars: 40000, mode: 'cache' }).then((x) => {
+            if (!(x && x.ok)) return;
+            em[String(r.id)] = (Array.isArray(x.entities) ? x.entities : []).filter((e) => e && e.text && SAL.test(String(e.type || e.label || '')))
+              .slice(0, 12).map((e) => [String(e.text), String(e.type || e.label)]);
+            const st = recState(this, k); st.body = st.body || {};
+            const had = st.body[r.id] || {};
+            if (String(x.markdown || '').trim().length > 200 && !had.reader && !had.text) {
+              const reader = { markdown: String(x.markdown).slice(0, 40000) }; keep.forEach((kk) => { if (x[kk] != null && x[kk] !== '') reader[kk] = x[kk]; });
+              st.body[r.id] = Object.assign({}, had, { reader });
+            }
+            clearTimeout(this._recEntT); this._recEntT = setTimeout(() => { if (this._doc) this.render(this._doc); }, 400);
+          }).catch(() => {});
+        });
+      });
     }
     async _srcAct(key, act) {
       const b = this._blockOf(key); const c = (b && b.content) || null; if (!c || !c.url) return;
@@ -3131,6 +3641,13 @@
         if (!rd.reader && !rd.text) return this._readout(key, rd.err || 'nothing came back');
         this._srcOpen[key] = true;
         return this.call('canvas.update', { key, content: Object.assign({}, c, rd.reader ? { reader: rd.reader } : { text: rd.text.slice(0, 40000) }) });
+      }
+      if (act === 'explode') {
+        const md = String((c.reader && c.reader.markdown) || c.text || ''); if (!md.trim()) return this._readout(key, 'read the page first');
+        const sb = this._blockOf(key) || {};   // the page's band and turn, as for a code item's diagram
+        return this.call('canvas.add', Object.assign({ kind: 'explode', key: 'explode:' + key, at: sb.state === 'pinned' ? 'pinned' : 'now', size: 'l',
+          content: { text: md.slice(0, 20000), title: String(c.title || 'page') + ' \u2014 exploded', binds: '' } },
+          sb.anchor && typeof sb.anchor === 'object' ? { anchor: sb.anchor } : {}));
       }
       if (act === 'shot') {
         if (c.shot) return this.call('canvas.update', { key, content: Object.assign({}, c, { shot: '' }) });

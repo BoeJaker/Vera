@@ -135,7 +135,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("stacks", "parts", ("iso",), glyph="stacks", motion=True, options=("columns", "coin"), name="Coin stacks", boards=("motion",)),
     # ── stages and time ──
     _F("stepper", "stages", glyph="stepper", name="Stepper", boards=("widgets",)),
-    _F("gantt", "stages", ("flat", "iso"), glyph="gantt", options=("rows",), name="Gantt", boards=("widgets",)),
+    _F("gantt", "stages", ("flat", "iso"), glyph="gantt", options=("rows", "names"), name="Gantt", boards=("widgets",)),
     _F("pipeline", "stages", ("flat", "iso"), glyph="pipeline", name="Pipeline", boards=("widgets", "iso")),
     _F("conveyor", "stages", ("iso",), glyph="conveyor", motion=True, options=("belt", "work"), name="Conveyor", boards=("motion",)),
     _F("approvals", "stages", ("iso",), glyph="approvals", name="Approvals", boards=("iso",)),
@@ -206,7 +206,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("globe", "points", ("flat", "iso"), glyph="globe", motion=True, sizes=("s", "m", "l", "xl"), options=("layer", "page", "limit", "pins", "view", "night", "sweep", "list", "grat"), name="Globe", boards=("globes", "reply")),
     # ── the three the spec adds, the composites, and the chrome the registry already names ──
     _F("panel", "panel", glyph="panel", sizes=("l", "xl"), name="Registered panel", boards=("spec",)),
-    _F("form", "values", ("flat", "iso"), glyph="form", options=("fields",), name="Form", boards=("spec", "iso")),
+    _F("form", "values", ("flat", "iso"), glyph="form", options=("fields", "save"), name="Form", boards=("spec", "iso")),
     _F("kv", "values", glyph="kv", options=("keys", "limit"), name="Key · value", boards=("spec", "reply")),   # a record's plain values, one per line (the element's kv)
     _F("composite", "composite", ("flat", "iso"), glyph="composite", options=("layout",), name="Composite", boards=("motion",)),
     _F("iso", "items", ("iso",), glyph="iso", name="Iso", boards=("reply",)),
@@ -230,7 +230,7 @@ FORMS: List[Dict[str, Any]] = [
     # ── the calendar and the Vera graph as forms (the widget review, round 3): the calendar panel's month, its schedule
     #    and its controls (they read cal.events.list with arguments that follow the month: '@month_start' . '@month_end'
     #    . '@today' . '@today+14d'; calnav drives every month and schedule of its draw.group on the page), and the estate's
-    #    own graph in a tile (draw.mode: graph . exploded . estate-3d . estate-2d . mermaid; draw.layer when it reads itself) ──
+    #    own graph in a tile (draw.mode: graph . exploded . ops-iso . ops-2d . estate-3d . estate-2d . mermaid; draw.layer when it reads itself) ──
     _F("month", "calendar", glyph="month", options=("controls", "group"), name="Month calendar", boards=("widgets", "spec")),
     _F("schedule", "calendar", glyph="schedule", options=("group",), name="Schedule", boards=("widgets", "spec")),
     _F("calnav", "calendar", glyph="calnav", sizes=("s", "m", "l"), options=("group", "views", "view"), name="Calendar controls", boards=("widgets", "spec")),
@@ -357,6 +357,9 @@ def normalise_template(t: Dict[str, Any]) -> Dict[str, Any]:
         "created_at": str(t.get("created_at") or ""),
         "updated_at": str(t.get("updated_at") or ""),
     }
+    # its host hands the data in (the chat's turn footer gives the turn's own phase frames): it reads nothing itself
+    if reads.get("inline") is True:
+        out["reads"]["inline"] = True
     # a template may carry its read.map (the answer's envelope -> the form's shape) and its form's draw options (columns,
     # sort, limit, palette ...): the element draws a template with both, so they ride along whenever they are present
     rd = t.get("read") if isinstance(t.get("read"), dict) else {}
@@ -377,8 +380,10 @@ def template_problems(t: Dict[str, Any], forms: Tuple[str, ...], wheres: Tuple[s
         out.append("a template needs a name")
     if t.get("form") not in forms and not form(t.get("form") or ""):
         out.append("unknown form %r (one of: %s)" % (t.get("form"), ", ".join(forms)))
-    if not (t.get("reads") or {}).get("cap") and t.get("form") not in NO_SOURCE_FORMS:
-        out.append("a %s widget must say what it reads (reads.cap)" % t.get("form"))
+    rd = t.get("reads") if isinstance(t.get("reads"), dict) else {}
+    if not rd.get("cap") and t.get("form") not in NO_SOURCE_FORMS and rd.get("inline") is not True:
+        out.append("a %s widget must say what it reads (reads.cap, or reads.inline when its host hands the data in)"
+                   % t.get("form"))
     for w in t.get("placed") or []:
         if w not in wheres and not w.startswith("harness") and not w.startswith("header"):
             out.append("unknown placement %r (one of: %s)" % (w, ", ".join(wheres)))
@@ -501,6 +506,38 @@ def to_template(record: Dict[str, Any]) -> Dict[str, Any]:
     })
 
 
+# The capabilities a form may save through (draw.save.cap). A record can be placed by a model; Save is pressed by a
+# person - so what Save can do is fixed here, not by the record. Mirrored by FORM_WRITES in widget_element.js (a test
+# keeps the two the same).
+FORM_WRITES = ("agent.patch", "agent.create")
+FORM_FIELD_TYPES = ("text", "textarea", "number", "bool", "select", "list")
+
+
+def form_problems(draw: Any) -> List[str]:
+    """What is wrong with a form's draw.fields / draw.save, in words."""
+    out: List[str] = []
+    if not isinstance(draw, dict):
+        return out
+    fields = draw.get("fields")
+    if fields is not None:
+        if not isinstance(fields, list):
+            out.append("draw.fields must be a list of {key, label, type}")
+        else:
+            for i, f in enumerate(fields):
+                if not isinstance(f, dict) or not str(f.get("key") or "").strip():
+                    out.append("draw.fields[%d] needs a key" % i)
+                elif f.get("type") and f["type"] not in FORM_FIELD_TYPES:
+                    out.append("draw.fields[%d] type %r is not one of %s" % (i, f["type"], ", ".join(FORM_FIELD_TYPES)))
+    save = draw.get("save")
+    if save is not None:
+        cap = save.get("cap") if isinstance(save, dict) else None
+        if not cap:
+            out.append("draw.save needs a cap")
+        elif cap not in FORM_WRITES:
+            out.append("a form may not save through %s (allowed: %s)" % (cap, ", ".join(FORM_WRITES)))
+    return out
+
+
 def validate(record: Any, source_shape: Optional[str] = None) -> Tuple[Dict[str, Any], List[str], List[str]]:
     """Bind-time validation (the WidgetSpec board): the source's shape must equal the form's shape; unknown draw
     options are dropped with a warning; a missing source renders "no source" and the record stays editable.
@@ -529,6 +566,8 @@ def validate(record: Any, source_shape: Optional[str] = None) -> Tuple[Dict[str,
         if dropped:
             warnings.append("draw options %s are not %s's (%s); dropped" % (", ".join(sorted(dropped)), f["id"], ", ".join(f["options"]) or "none"))
             r["draw"] = {k: v for k, v in r["draw"].items() if k in known}
+        if f["id"] == "form":
+            problems += form_problems(r["draw"])
     if not r["source"] and "data" not in r and r["form"] not in NO_SOURCE_FORMS:
         problems.append("no source")
     if source_shape and r["shape"] and source_shape != r["shape"] and r["form"] not in NO_SOURCE_FORMS:

@@ -68,6 +68,10 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     CAPABILITY_REGISTRY, capability, emit_event, now_iso,
 )
+try:                                    # who a recalled record came from; one hit per repeated text
+    from Vera.vera.fabric import recall_core as _recall_core
+except ImportError:                     # pragma: no cover
+    from . import recall_core as _recall_core
 
 log = logging.getLogger("vera.memory_hooks")
 
@@ -696,40 +700,8 @@ async def get_agent_memory_context(
     if not results:
         return ""
 
-    lines = ["=== Relevant memories from past conversations ==="]
-    for item in results:
-        # HybridMemory.search returns List[Dict] with {"record": ..., "score": ...}
-        # but individual backends return List[Tuple[MemoryRecord, float]].
-        # Handle both shapes defensively.
-        if isinstance(item, dict):
-            rec_data = item.get("record") or item
-            score = item.get("score", 0.0)
-            # rec_data may be a dict (from to_dict()) or a MemoryRecord
-            if isinstance(rec_data, dict):
-                created_at = rec_data.get("created_at") or ""
-                human_text = rec_data.get("human_text", True)
-                text       = (rec_data.get("text") or "")[:200]
-            else:
-                created_at = getattr(rec_data, "created_at", "") or ""
-                human_text = getattr(rec_data, "human_text", True)
-                text       = (getattr(rec_data, "text", "") or "")[:200]
-        else:
-            # Tuple (MemoryRecord, float)
-            try:
-                rec, score = item
-            except (TypeError, ValueError):
-                continue
-            created_at = getattr(rec, "created_at", "") or ""
-            human_text = getattr(rec, "human_text", True)
-            text       = (getattr(rec, "text", "") or "")[:200]
-
-        text = _sanitize_recalled_text(text)
-        ts = created_at[:16].replace("T", " ") if created_at else ""
-        role = "User" if human_text else "Assistant"
-        if text:
-            lines.append(f"[{ts}] {role}: {text}")
-
-    return "\n".join(lines) if len(lines) > 1 else ""
+    items = [f for f in (_extract_record_fields(it) for it in results) if f]
+    return _chatmem_format(items)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -779,33 +751,31 @@ def _extract_record_fields(item: Any) -> Optional[Dict[str, Any]]:
     shape this module stores/formats. Mirrors get_agent_memory_context's own
     inline handling of both shapes; extracted so the two-tier path can share
     it instead of re-deriving the same logic a second time."""
+    repeats = 1
     if isinstance(item, dict):
-        rec_data = item.get("record") or item
+        rec = item.get("record") or item
         score = item.get("score", 0.0)
-        if isinstance(rec_data, dict):
-            rid        = rec_data.get("id") or ""
-            created_at = rec_data.get("created_at") or ""
-            human_text = rec_data.get("human_text", True)
-            text       = (rec_data.get("text") or "")[:200]
-        else:
-            rid        = getattr(rec_data, "id", "") or ""
-            created_at = getattr(rec_data, "created_at", "") or ""
-            human_text = getattr(rec_data, "human_text", True)
-            text       = (getattr(rec_data, "text", "") or "")[:200]
+        repeats = int(item.get("repeats", 1) or 1)       # set by the search's one-hit-per-text pass
     else:
         try:
             rec, score = item
         except (TypeError, ValueError):
             return None
-        rid        = getattr(rec, "id", "") or ""
-        created_at = getattr(rec, "created_at", "") or ""
-        human_text = getattr(rec, "human_text", True)
-        text       = (getattr(rec, "text", "") or "")[:200]
-    text = _sanitize_recalled_text(text)
+    get = (lambda k, d=None: rec.get(k, d)) if isinstance(rec, dict) else (lambda k, d=None: getattr(rec, k, d))
+    rid        = get("id", "") or ""
+    created_at = get("created_at", "") or ""
+    human_text = get("human_text", True)
+    # The speaker is read from what the record IS. `human_text` defaults to True, so judging by it alone showed
+    # every tool call, dream and event to the model as something the user had said.
+    role       = _recall_core.role_label(rec)
+    text       = _sanitize_recalled_text((get("text", "") or "")[:200])
     if not text or not rid:
         return None
-    return {"id": rid, "created_at": created_at, "human_text": bool(human_text),
-            "text": text, "score": float(score or 0.0)}
+    out = {"id": rid, "created_at": created_at, "human_text": bool(human_text), "role": role,
+           "text": text, "score": float(score or 0.0)}
+    if repeats > 1:
+        out["repeats"] = repeats
+    return out
 
 
 async def _chatmem_load_active(session_id: str) -> Dict[str, Dict[str, Any]]:
@@ -890,12 +860,16 @@ def _chatmem_format(items: List[Dict[str, Any]]) -> str:
     if not items:
         return ""
     lines = ["=== Relevant memories from past conversations ==="]
-    for it in items:
+    # One line per distinct text: the active set is keyed by record id, so two records carrying the same sentence
+    # (a line repeated across turns) would otherwise take two of the block's few lines.
+    for it in _recall_core.collapse_repeats(list(items)):
         ts = (it.get("created_at") or "")[:16].replace("T", " ")
-        role = "User" if it.get("human_text", True) else "Assistant"
+        # Entries saved before "role" was stored carry only the flag; read them as before.
+        role = it.get("role") or ("User" if it.get("human_text", True) else "Assistant")
         text = it.get("text", "")
         if text:
-            lines.append(f"[{ts}] {role}: {text}")
+            rep = int(it.get("repeats", 1) or 1)
+            lines.append(f"[{ts}] {role}: {text}" + (f" (x{rep})" if rep > 1 else ""))
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
@@ -990,6 +964,76 @@ async def get_agent_memory_context_v2(
     return _chatmem_format(ranked[:limit])
 
 
+async def get_agent_memory_context_fast(
+    session_id:  str,
+    query:       str,
+    agent_name:  str  = "",
+    limit:       int  = 5,
+    tags:        Optional[List[str]] = None,
+) -> str:
+    """What a chat turn would be given right now, read without changing anything.
+
+    The fast tier (Postgres + Neo4j, no embedding) for `query`, merged with the session's current two-tier active
+    set as it stands. Unlike get_agent_memory_context_v2 it does not age the active set, take the pending slow-tier
+    delivery or start an embed - so a live preview can call it on every keystroke without decaying the session's
+    memory or loading the shared embed nodes. The full blocking search stays available as depth="full"."""
+    MEMORY, _ = _memory()
+    if not MEMORY:
+        return ""
+    if not hasattr(MEMORY, "search_fast"):
+        return await get_agent_memory_context(session_id=session_id, query=query,
+                                              agent_name=agent_name, limit=limit, tags=tags)
+    filters: Dict = {}
+    if agent_name:
+        filters["tags"] = [agent_name]
+    elif tags:
+        filters["tags"] = tags
+    try:
+        hits = await MEMORY.search_fast(query=query, limit=limit, filters=filters or None,
+                                        timeout=_CHATMEM_FAST_TIMEOUT_S)
+    except Exception as e:
+        log.debug("get_agent_memory_context_fast: %s", e)
+        hits = []
+    merged: Dict[str, Dict[str, Any]] = {}
+    if session_id and _redis() is not None:
+        merged.update(await _chatmem_load_active(session_id))      # read only - never saved back from here
+    for f in (_extract_record_fields(it) for it in hits):
+        if f and (f["id"] not in merged or merged[f["id"]].get("score", 0.0) < f["score"]):
+            merged[f["id"]] = f
+    ranked = sorted(merged.values(), key=lambda it: it.get("score", 0.0), reverse=True)
+    return _chatmem_format(ranked[:limit])
+
+
+_DEEP_HEADING = "=== Earlier conversations (deep memory search, all sessions) ==="
+
+
+async def get_memory_context_deep(query: str, limit: int = 8, budget_s: float = 1.5) -> Dict[str, Any]:
+    """Deep memory for a turn that refers back ("last time", "what did we decide"): every session and agent, the
+    vector leg included when it answers inside the budget (the owner's 1.5 s, 2026-10-04).
+
+    The fast tier (Postgres + Neo4j) is always used; the vector leg replaces it with the merged result only if it
+    lands in what is left of the budget. A vector result that misses the budget is cancelled, not stashed - the
+    session's pending slot belongs to the agent's own two-tier memory. Never raises.
+    Returns {text, hits, vector (bool: the vector leg made it), ms, fast_ms, fast_hits (the text tier's own time and
+    hits), found (hits before they were read as memories)}."""
+    out: Dict[str, Any] = {"text": "", "hits": 0, "vector": False, "ms": 0.0}
+    MEMORY, _ = _memory()
+    if not MEMORY or not hasattr(MEMORY, "search_fast_and_slow") or not str(query or "").strip():
+        return out
+    t0 = time.monotonic()
+    info: Dict[str, Any] = {}
+    hits, out["vector"] = await _recall_core.fast_then_vector(
+        lambda fast_timeout: MEMORY.search_fast_and_slow(query=query, limit=limit, fast_timeout=fast_timeout),
+        budget_s, info=info)
+    items = [f for f in (_extract_record_fields(it) for it in (hits or [])) if f][:limit]
+    out.update(text=_recall_core.retitle_block(_chatmem_format(items), _DEEP_HEADING), hits=len(items),
+               ms=round((time.monotonic() - t0) * 1000, 1), found=len(hits or []),
+               fast_ms=info.get("fast_ms"), fast_hits=info.get("fast_hits"))
+    if info.get("error"):
+        out["error"] = info["error"]
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1047,7 +1091,11 @@ async def memory_record_turn(
     "memory.agent_context",
     http_method="POST", http_path="/memory/agent/context", http_tags=["memory"],
     memory="off",
-    description="Retrieve relevant past memories for injection into an agent's context.",
+    description="Retrieve relevant past memories for injection into an agent's context, each line naming who or "
+                "what it came from (User, Assistant, Tool call, Dream, ...) and repeated texts shown once. "
+                "depth='fast' (default): keyword and graph search without an embedding, plus what the session's "
+                "chat memory currently holds - quick, and it changes nothing. depth='full': the complete hybrid "
+                "search including vector similarity (slower: it waits for an embedding).",
 )
 async def memory_agent_context(
     session_id:  str,
@@ -1055,17 +1103,39 @@ async def memory_agent_context(
     agent_name:  str  = "",
     limit:       int  = 5,
     tags:        str  = "",
+    depth:       str  = "fast",
     trace_id=None,
 ):
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-    context = await get_agent_memory_context(
+    full = str(depth or "").strip().lower() == "full"
+    getter = get_agent_memory_context if full else get_agent_memory_context_fast
+    context = await getter(
         session_id  = session_id,
         query       = query,
         agent_name  = agent_name,
         limit       = limit,
         tags        = tag_list,
     )
-    return {"context": context, "found": bool(context)}
+    return {"context": context, "found": bool(context), "depth": "full" if full else "fast"}
+
+
+@capability(
+    "memory.context.deep",
+    http_method="POST", http_path="/memory/context/deep", http_tags=["memory"],
+    memory="off",
+    description="The deep memory search a chat turn gets when it refers back ('last time', 'what did we decide'): "
+                "every session and agent, the keyword and graph tier always and the vector tier only if it answers "
+                "inside the budget. Read-only. Inputs: query, limit (int=8), budget_s (float=1.5). Output: {text, "
+                "hits, vector, ms, fast_ms, fast_hits, found} - the block a turn would be given, and how long each "
+                "tier took.",
+)
+async def memory_context_deep(query: str, limit: int = 8, budget_s: float = 1.5, trace_id=None):
+    try:
+        limit = max(1, min(int(limit or 8), 30))
+        budget_s = max(0.2, min(float(budget_s or 1.5), 10.0))
+    except (TypeError, ValueError):
+        limit, budget_s = 8, 1.5
+    return await get_memory_context_deep(query, limit=limit, budget_s=budget_s)
 
 
 @capability(

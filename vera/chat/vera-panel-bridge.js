@@ -107,6 +107,7 @@
     if(!fr) return null; var k = { win: win, frame: fr, nav: null, hdr: null }; _kids.push(k); return k;
   }
   function _kidShown(k){ try{ return !!(k.frame && k.frame.isConnected && (k.frame.offsetWidth || k.frame.offsetHeight)); }catch(e){ return false; } }
+  function _shownKidCta(){ for(var i = _kids.length - 1; i >= 0; i--){ var k = _kids[i]; if(_kidShown(k) && k.cta && k.cta.length) return k; } return null; }
   function _activeKid(){ for(var i = _kids.length - 1; i >= 0; i--){ var k = _kids[i]; if(_kidShown(k) && k.nav && k.nav.items && k.nav.items.length) return k; } return null; }
   // ── A PAGE'S OWN SUB-SECTIONS (owner, 2026-09-28: "the estate ui's observe menu is missing the perf section"). A section
   // that switches between views in the page itself (Observe: Events / Perf) marks each tab data-vera-sub="<id>"; while its
@@ -119,7 +120,7 @@
   function _pageSubs(){ try{
     var els = Array.prototype.slice.call(document.querySelectorAll('[data-vera-sub]')).filter(_subShown).slice(0, 24); if(!els.length) return null;
     var on = els.filter(function(el){ return /\b(active|on|selected)\b/.test(String(el.className || '')) || el.getAttribute('aria-selected') === 'true'; })[0];
-    return { items: els.map(function(el){ return { id: String(el.getAttribute('data-vera-sub')), label: _subLabel(el), el: el }; }), active: on ? String(on.getAttribute('data-vera-sub')) : '' };
+    return { items: els.map(function(el){ return { id: String(el.getAttribute('data-vera-sub')), label: _subLabel(el), desc: String(el.getAttribute('data-desc') || '').slice(0, 140), desc_long: String(el.getAttribute('data-desc-long') || '').slice(0, 600), el: el }; }), active: on ? String(on.getAttribute('data-vera-sub')) : '' };
   }catch(e){ return null; } }
   function _kidsHosted(on){ _hostedUp = !!on; _kids.forEach(function(k){ try{ k.win.postMessage({ type: on ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){} }); }
   window.addEventListener('message', function(ev){
@@ -129,14 +130,20 @@
     if(d.type !== 'vera:panel:state' && d.type !== 'vera:hdr:offer') return;
     var k = _kidOf(ev.source); if(!k) return;
     if(d.type === 'vera:panel:state'){
-      var nv = d.state && d.state.nav; k.nav = (nv && Array.isArray(nv.items)) ? { items: nv.items.slice(0, 60).map(function(it){ return { id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48) }; }), active: String(nv.active || '') } : null;
+      var nv = d.state && d.state.nav; k.nav = (nv && Array.isArray(nv.items)) ? { items: nv.items.slice(0, 60).map(function(it){ return { id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48), desc: String(it.desc || '').slice(0, 140), desc_long: String(it.desc_long || '').slice(0, 600) }; }), active: String(nv.active || '') } : null;
       if(k.nav && nv.lhm && Array.isArray(nv.lhm.widgets)) k.nav.widgets = nv.lhm.widgets.slice(0, 8).map(String);   // the child's menu widgets ride up with its sections
+      /* the child's primary action rides up too: a nested panel with no menu of its own (an IDE view, an Estate pane) has its
+         action end the host's open menu, and a press goes back down to it */
+      k.cta = (d.state && Array.isArray(d.state.cta)) ? d.state.cta.filter(function(c){ return c && !c.for; }).slice(0, 4) : null;
       try{ ev.source.postMessage({ type: (_hostedUp || document.documentElement.classList.contains('vpb-nav-hosted')) ? 'vera:panel:nav_hosted' : 'vera:panel:nav_unhosted' }, '*'); }catch(e){}
       publishStateDebounced();
     } else { k.hdr = d; _hdrRelay(); }
   });
   // what is shown changes as this page switches its own item: look again, cheaply
-  setInterval(function(){ if(!_nestOn()) return; var k = _activeKid(); var ps = (typeof _pageSubs === 'function') ? _pageSubs() : null; var sig = (k ? k.frame.getAttribute('src') + '|' + k.nav.active : '') + '|' + (ps ? ps.items.map(function(it){ return it.id; }).join(',') + '>' + ps.active : ''); if(sig !== _kidSig){ _kidSig = sig; publishStateDebounced(); _hdrRelay(); } }, 1000);
+  /* ...and which shown child's BAR is relayed: a child with a bar but no menu (Fabric's Memory Graph) changed nothing above
+     when this page hid it, so its bar stayed in the harness over every other section (2026-10-03, found by a sweep) */
+  function _barKidSig(){ for(var i = _kids.length - 1; i >= 0; i--){ if(_kidShown(_kids[i]) && _kids[i].hdr) return String(_kids[i].frame.getAttribute('src') || i); } return ''; }
+  setInterval(function(){ if(!_nestOn()) return; var k = _activeKid(); var ps = (typeof _pageSubs === 'function') ? _pageSubs() : null; var sig = (k ? k.frame.getAttribute('src') + '|' + k.nav.active : '') + '|' + (ps ? ps.items.map(function(it){ return it.id; }).join(',') + '>' + ps.active : '') + '|bar:' + _barKidSig(); if(sig !== _kidSig){ _kidSig = sig; publishStateDebounced(); _hdrRelay(); } }, 1000);
   var _kidSig = '';
   function _hdrRelay(){
     if(typeof _hdrBar !== 'undefined' && _hdrBar) return;   // this page has its own bar
@@ -167,7 +174,13 @@
   // optional. They ride in the lhm spec (spec.widgets); a nesting page passes its shown child's up with the child's sections.
   function _navWidgets(){ try{ var el = document.querySelector('[data-lhm-widgets]'); if(!el) return [];
     return String(el.getAttribute('data-lhm-widgets') || '').split(/[\s,]+/).filter(function(s){ return /^[\w.:-]+(@(xs|s|m|l|xl))?$/.test(s); }).slice(0, 8); }catch(e){ return []; } }
-  function _navIcon(it){ var t = String(it.icon || '').trim(); if(t) return t; return (String(it.label || it.id || '').trim().charAt(0) || '\u2022').toUpperCase(); }
+  /* an item's own mark, or none: never its initial (owner, 2026-10-03: "sub LHMs should not use letters as icons"). The host
+     draws an unmarked item with the glyph its name maps to (VeraLHM.glyphFor) - one table, in the library that draws it. */
+  function _navIcon(it){ var t = String((it && it.icon) || '').trim(); return (!t || /^[A-Za-z0-9]{1,2}$/.test(t)) ? '' : t; }
+  function _navTab(it){ return { id: it.id, label: it.label, icon: _navIcon(it), icon_svg: it.icon_svg || '', desc: it.desc || '', desc_long: it.desc_long || '' }; }
+  function _navCtaEls(){ try{ return Array.prototype.slice.call(document.querySelectorAll('[data-lhm-cta]'), 0, 12); }catch(e){ return []; } }
+  function _navCtas(){ return _navCtaEls().map(function(el, i){ var cl = function(v, n){ return String(v || '').replace(/\s+/g, ' ').trim().slice(0, n); };
+    return { i: i, for: cl(el.getAttribute('data-lhm-cta'), 80), label: cl(el.getAttribute('data-label') || el.textContent || el.title, 40), desc: cl(el.getAttribute('data-desc') || el.title, 140) }; }); }
   function _navLhm(){
     if(!_navItems || !_navItems.length || (_navLhmOpts && _navLhmOpts.lhm === false)) return null;
     // the panel's name: its page title carries the product's name first ("Vera — Estate"), which the menu's head does not need
@@ -177,22 +190,36 @@
     var act = { menu: '', tab: '' }, menus;
     if(groups.filter(function(g){ return g.name; }).length >= 2){
       menus = groups.map(function(g, gi){ var id = '\u00a7g' + gi; g.items.forEach(function(it){ if(it.id === _navActiveId){ act.menu = id; act.tab = it.id; } });
-        return { id: id, icon: _navIcon(g.items[0]), label: g.name || 'More', title: g.name || 'More', tabs: g.items.map(function(it){ return { id: it.id, label: it.label }; }) }; });
+        var g0 = g.items[0] || {};
+        return { id: id, icon: _navIcon({ icon: g0.group_icon }), icon_alt: _navIcon(g0), icon_alt_svg: g0.icon_svg || '', label: g.name || 'More', title: g.name || 'More', desc: g0.group_desc || '', desc_long: g0.group_desc_long || '', tabs: g.items.map(_navTab) }; });
     } else {
-      var all = _navItems.map(function(it){ return { id: it.id, label: it.label }; });
+      var all = _navItems.map(_navTab);
       menus = _navItems.map(function(it, i){ var id = '\u00a7i' + i; if(it.id === _navActiveId){ act.menu = id; act.tab = it.id; }
-        return { id: id, icon: _navIcon(it), label: it.label, title: title || 'Sections', tabs: all }; });
+        return { id: id, icon: _navIcon(it), icon_svg: it.icon_svg || '', label: it.label, title: title || 'Sections', desc: it.desc || '', desc_long: it.desc_long || '', tabs: all }; });
     }
     if(!act.menu && menus.length) act.menu = menus[0].id;
     var kid = (typeof _activeKid === 'function') ? _activeKid() : null, ps = (act.menu && typeof _pageSubs === 'function') ? _pageSubs() : null;
     if((kid || ps) && act.menu){
       // the page's own sub-sections, and a framed child's sections under the one that shows it (or under the item, as before)
-      var kidSub = kid ? kid.nav.items.map(function(it){ return { id: 'c:' + it.id, label: String(it.label || it.id), depth: ps ? 2 : 1 }; }) : [], sub = kidSub;
-      if(ps){ sub = []; ps.items.forEach(function(it){ sub.push({ id: 's:' + it.id, label: it.label, depth: 1 }); if(it.id === ps.active) sub = sub.concat(kidSub); }); if(!ps.active) sub = sub.concat(kidSub); }
+      var kidSub = kid ? kid.nav.items.map(function(it){ return { id: 'c:' + it.id, label: String(it.label || it.id), desc: it.desc || '', desc_long: it.desc_long || '', depth: ps ? 2 : 1 }; }) : [], sub = kidSub;
+      if(ps){ sub = []; ps.items.forEach(function(it){ sub.push({ id: 's:' + it.id, label: it.label, desc: it.desc || '', desc_long: it.desc_long || '', depth: 1 }); if(it.id === ps.active) sub = sub.concat(kidSub); }); if(!ps.active) sub = sub.concat(kidSub); }
       menus.forEach(function(m){ if(m.id !== act.menu) return; var at = -1; m.tabs.forEach(function(tb, i){ if(tb.id === _navActiveId) at = i; });
         m.tabs = m.tabs.slice(0, at + 1).concat(sub, m.tabs.slice(at + 1)); });
       if(kid && kid.nav.active) act.tab = 'c:' + kid.nav.active; else if(ps && ps.active) act.tab = 's:' + ps.active;
     }
+    /* THE CHAT'S MENU ANATOMY (owner, 2026-10-03, the LHM audit points 3/4: "chat UI is the template"): under its items a chat
+       menu carries its quick widgets and one primary action. A panel names them: data-lhm-widgets on an item (that item's
+       menu's widgets) and data-lhm-cta on its primary action (="<item id>" for one item's menu, empty for every menu). */
+    var ctas = _navCtas();
+    menus.forEach(function(m){ var ids = (m.tabs || []).map(function(t){ return String(t.id); });
+      var own = []; _navItems.forEach(function(it){ if(ids.indexOf(String(it.id)) >= 0 && it.widgets) it.widgets.forEach(function(w){ if(own.indexOf(w) < 0) own.push(w); }); });
+      if(m.id.charAt(1) === 'i'){ var one = _navItems[+m.id.slice(2)]; own = (one && one.widgets) ? one.widgets.slice() : []; }
+      if(own.length) m.widgets = own.slice(0, 8);
+      var c = ctas.filter(function(x){ return x.for && (m.id.charAt(1) === 'i' ? (_navItems[+m.id.slice(2)] || {}).id === x.for : ids.indexOf(x.for) >= 0); })[0] || ctas.filter(function(x){ return !x.for; })[0];
+      if(c) m.cta = { id: 'cta:' + c.i, label: c.label, desc: c.desc };
+      /* a panel shown nested under the open item is what that item is about: its action wins over the host's every-menu one
+         (IDE > Remotes & Queue ends with the remote view's Run a task, not the IDE's New worker); one the host names for this item still wins */
+      if(m.id === act.menu && !(c && c.for)){ var kc = _shownKidCta(); if(kc) m.cta = { id: 'c:cta:' + kc.cta[0].i, label: kc.cta[0].label, desc: kc.cta[0].desc }; } });
     var wd = _navWidgets(); if(kid && kid.nav.widgets) kid.nav.widgets.forEach(function(w){ if(wd.indexOf(w) < 0) wd.push(w); });
     return { title: title, active: act, menus: menus, open: [], widgets: wd };
   }
@@ -285,6 +312,9 @@
       var h = document.querySelector('h1, h2, .panel-title, [data-panel-title]');
       if(h && h.textContent) st.heading = h.textContent.trim().slice(0, 120);
     }catch(e){}
+    /* the panel's primary actions (data-lhm-cta): a menu-less panel's shows at the foot of the harness's list, and an agent
+       reads what the panel is for - nav_select {id:'cta:<i>'} presses one */
+    try{ var _ct = _navCtas(); if(_ct.length) st.cta = _ct; }catch(e){}
     var cat = _uiCatalog();
     st.ui = cat;
     // Auto-derive a named-action catalog from the panel's buttons so EVERY
@@ -513,6 +543,10 @@
     var id = (p || {}).id;
     if(id == null) return {ok: false, error: 'nav_select requires {id}'};
     id = _navResolve(String(id));
+    /* a menu's primary action: pressed, the menu stays where it is */
+    if(id.indexOf('c:cta:') === 0){ var kk = _shownKidCta(); if(!kk) return {ok: false, error: 'no shown nested panel has a primary action'};
+      try{ kk.win.postMessage({type: 'vera:panel:action', action: 'nav_select', action_id: 'nest-' + Date.now(), payload: {id: id.slice(2)}}, '*'); }catch(e){} return {ok: true}; }
+    if(id.indexOf('cta:') === 0){ var ce = _navCtaEls()[+id.slice(4)]; if(!ce) return {ok: false, error: 'no primary action ' + id}; ce.click(); return {ok: true}; }
     if(id.indexOf('c:') === 0){ var kid = _activeKid(); if(!kid) return {ok: false, error: 'no nested panel is shown'};
       if(kid.nav && kid.nav.items && !kid.nav.items.some(function(it){ return it.id === id.slice(2); })) return {ok: false, error: 'the shown nested panel has no ' + id.slice(2)};
       try{ kid.win.postMessage({type: 'vera:panel:action', action: 'nav_select', action_id: 'nest-' + Date.now(), payload: {id: id.slice(2)}}, '*'); }catch(e){}
@@ -728,6 +762,7 @@
       // visible there — this is never assumed, only confirmed by the host.
       document.documentElement.classList.add('vpb-nav-hosted');
       _kidsHosted(true);
+      _hdrReoffer();   // its sub-sections now ride in the docked menu: the bar it offers drops them
     } else if(t === 'vera:panel:nav_unhosted'){
       // The inverse — the host's own top-level menu just stopped reliably
       // covering these sections (its "keep inner nav visible while the main
@@ -735,6 +770,7 @@
       // nav at all right now), so un-hide this panel's own rail again.
       document.documentElement.classList.remove('vpb-nav-hosted');
       _kidsHosted(false);
+      _hdrReoffer();   // and back in the bar when the menu is not docked
     } else if(t === 'vera:panel:query'){
       // Explicit freshness ping — bypass the changed-state dedupe. Without
       // this, an idle panel whose state hasn't changed republishes NOTHING,
@@ -815,7 +851,12 @@
       out.push(el);
     });
     out = out.filter(function(el){ if(_hdrNative(el)) return true; for(var i = 0; i < out.length; i++){ if(out[i] !== el && el.contains(out[i])) return false; } return true; });
-    return out.filter(function(el){ return _hdrShownIn(el, bar); });
+    /* A PAGE'S SUB-SECTIONS RIDE IN ITS MENU, NOT THE TOP BAR (owner, 2026-10-03: "sub uis ... available from the lhm
+       instead" - top bars are for settings and status). While this page's menu is docked, the docked menu lists every
+       shown data-vera-sub tab under the open item (_pageSubs); offering them up here too put the same sections in two
+       places. Undocked - standalone, or a page with no menu to dock - they stay in the bar, the only way to reach them. */
+    var subsDocked = false; try{ subsDocked = document.documentElement.classList.contains('vpb-nav-hosted') && !!(_navItems && _navItems.length); }catch(e){}
+    return out.filter(function(el){ return _hdrShownIn(el, bar) && !(subsDocked && el.matches && el.matches('[data-vera-sub]')); });
   }
   function _hdrOn(el){ return /\b(on|active|selected|current)\b/.test(String(el.className && el.className.baseVal != null ? el.className.baseVal : el.className || '')) || el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-selected') === 'true' || (el.getAttribute('aria-current') || 'false') !== 'false'; }
   function _hdrLabel(el, t){ return (_hdrText(el) || t || el.getAttribute('data-label') || '\u00b7').slice(0, 24); }
@@ -844,6 +885,9 @@
       var r = c[i].getBoundingClientRect();
       if(r.width < 1 || r.top > 90 || r.height < 18 || r.height > 96 || r.width < W * 0.4) continue;
       if(!c[i].querySelector('button, select, input')) continue;
+      /* a page that opens OVER the panel (the shared Settings page, a dialog) has a header of its own - never the panel's top bar:
+         taken, the harness lifted it away and the page lost its ✕ (owner, 2026-10-04: "you cant get out of the settings panel") */
+      try{ if(c[i].closest('.vs-page, [role="dialog"], [aria-modal="true"], [data-vera-float]')) continue; }catch(e){}
       return c[i];
     }
     return null;
@@ -898,6 +942,8 @@
     try{ window.parent.postMessage({ type: 'vera:hdr:offer', title: document.title || '', groups: groups, hello: hello }, '*'); }catch(e){}
   }
   var _hdrHello = true;
+  // the bar again, at once - its contents depend on whether this page's menu is docked (see _hdrCtls)
+  function _hdrReoffer(){ try{ if(_hdrBar){ _hdrSig = ''; setTimeout(function(){ try{ _hdrOffer(true); }catch(e){} }, 0); } }catch(e){} }
   function _hdrSoon(){ if(_hdrT) return; _hdrT = setTimeout(function(){ _hdrT = null; _hdrOffer(); }, 160); }
   function _hdrFind(){
     if(_hdrBar && document.contains(_hdrBar)) return;
@@ -965,7 +1011,18 @@
     // switch didn't originate from an injected click.
     registerNav: function(items, selectFn){
       _navItems = (items || []).map(function(it){
-        return {id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48), group: it.group ? String(it.group) : '', icon: it.icon ? String(it.icon) : ''};
+        var o = {id: String(it.id), label: String(it.label || it.id).replace(/\s+/g, ' ').trim().slice(0, 48), group: it.group ? String(it.group) : '', icon: it.icon ? String(it.icon) : ''};
+        // what the item is for: desc (short, the pointer's) and desc_long (an agent's: panel.query reads nav.items); and the
+        // group's own mark and descriptions, which the harness draws on the group's ONE rail icon
+        var cl = function(v, n){ return String(v || '').replace(/\s+/g, ' ').trim().slice(0, n); };
+        o.desc = cl(it.desc, 140); o.desc_long = cl(it.desc_long, 600);
+        if(it.group_icon) o.group_icon = cl(it.group_icon, 4);
+        if(it.icon_svg && String(it.icon_svg).length <= 3000) o.icon_svg = String(it.icon_svg);   /* drawn by the host only through its SVG cleaner */
+        /* the group's descriptions sat after a // on the line above and never ran - a group's rail icon had no description */
+        if(it.group_desc) o.group_desc = cl(it.group_desc, 140); if(it.group_desc_long) o.group_desc_long = cl(it.group_desc_long, 600);
+        /* the widgets the panel names for this item's menu ('template@size'), as the chat's menus carry theirs */
+        if(it.widgets && it.widgets.length) o.widgets = (Array.isArray(it.widgets) ? it.widgets : String(it.widgets).split(/[\s,]+/)).filter(function(s){ return /^[\w.:-]+(@(xs|s|m|l|xl))?$/.test(s); }).slice(0, 8);
+        return o;
       });
       if(typeof selectFn === 'function') _navSelectFn = selectFn;
       publishStateDebounced();

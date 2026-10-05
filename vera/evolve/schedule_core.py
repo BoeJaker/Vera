@@ -215,6 +215,7 @@ def _normalize_target(kind: str, t: Dict[str, Any]) -> Dict[str, Any]:
         if core and core not in CENSUS_INTENT_CORES:
             raise ValueError("census intent_core must be one of: %s" % ", ".join(CENSUS_INTENT_CORES))
         t["intent_core"] = "" if core in ("", "off") else core
+        _census_minds(t)
     elif kind == "suite":
         if not str(t.get("tag") or "").strip():
             raise ValueError("a suite schedule needs target.tag")
@@ -276,8 +277,52 @@ def _normalize_target(kind: str, t: Dict[str, Any]) -> Dict[str, Any]:
     return t
 
 
+#: A census arm's label (CENSUS_MINDS contract v1, four-minds ROADMAP §4.1, rule 2).
+MINDS_LABEL_RE = re.compile(r"^[a-z0-9-]{1,24}$")
+
+
+def _switchboard():
+    try:
+        from Vera.vera.minds import switchboard_core as _sb
+    except Exception:                                  # pragma: no cover
+        from vera.minds import switchboard_core as _sb
+    return _sb
+
+
+def _census_minds(t: Dict[str, Any]) -> None:
+    """Validate a census arm's switchboard set at SAVE time (contract rule 6).
+
+    target.minds   {feature_id: mode} - strict, census-settable switches only
+    minds_label    required with minds; [a-z0-9-]{1,24}; not 'style-*'/'core-*'; not the template
+    pair_of        the control schedule this arm is compared with (contract rule 7)
+    """
+    minds = t.get("minds") or {}
+    if not isinstance(minds, dict):
+        raise ValueError("census minds must be an object of {feature_id: mode}")
+    label = str(t.get("minds_label") or "").strip()
+    if minds:
+        sb = _switchboard()
+        v = sb.validate(minds, census=True)
+        if not v["ok"]:
+            raise ValueError("census minds: " + sb.explain(v))
+        if not MINDS_LABEL_RE.match(label):
+            raise ValueError("census minds needs minds_label matching [a-z0-9-]{1,24}")
+        if label.startswith(("style-", "core-")) or label == str(t.get("template") or ""):
+            raise ValueError("census minds_label must not start with style-/core- or equal the template name")
+        t["minds"] = {str(k): str(val) for k, val in sorted(minds.items())}
+        t["minds_label"] = label
+    else:
+        t["minds"] = {}
+        t["minds_label"] = ""
+    t["pair_of"] = str(t.get("pair_of") or "").strip()
+
+
 #: The intent-core modes a census may force (dag/intent_core_core.MODES).
 CENSUS_INTENT_CORES = ("off", "order")
+
+
+#: is_due's reason when a due census displaces another schedule's parked one.
+DISPLACE = "displace parked"
 
 
 def census_plan_styles() -> List[str]:
@@ -297,7 +342,8 @@ def cap_denied(name: str) -> bool:
 def _default_title(kind: str, t: Dict[str, Any]) -> str:
     return {"census": f"Census · {t.get('template', 'default')}"
                       + (f" · {t['plan_style']} planning" if t.get("plan_style") else "")
-                      + (f" · intent core {t['intent_core']}" if t.get("intent_core") else ""),
+                      + (f" · intent core {t['intent_core']}" if t.get("intent_core") else "")
+                      + (f" · minds {t['minds_label']}" if t.get("minds_label") else ""),
             "suite": f"Suite · {t.get('tag', '')}",
             "task": f"Task · {t.get('id', '')}",
             "pipeline": f"Pipeline {t.get('action', '')} · {t.get('id') or t.get('branch', '')}",
@@ -412,6 +458,16 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
     if kind == "census":
         if state.get("census_parked_by_us") and state.get("census_owner") == rec.get("id"):
             return True, "resume"          # parked on this schedule's own yield
+        if (state.get("census_running") and state.get("census_parked_by_us")
+                and state.get("window_end_applied")
+                and state.get("census_owner") != rec.get("id")):
+            # Parked on ANOTHER schedule's window-end yield: that run resumes only
+            # when its own window reopens (the next day, or days later), and a
+            # parked census counts as in flight - 1 Oct 2026 the operator-family
+            # run parked at 07:00 and blocked the baseline and every style slot.
+            # A due census displaces it (it is dropped and archived partial).
+            # Never a person's pause: parked_by_us is the scheduler's own yield.
+            return True, DISPLACE
         if state.get("census_running"):
             return False, "census in flight"
         if int(state.get("loops_running") or 0) > 0:
@@ -435,8 +491,9 @@ def plan_tick(schedules: Iterable[Dict[str, Any]], now: datetime, state: Dict[st
         if len(out) >= max_starts:
             break
         if rec.get("kind") == "census" and census_taken and not (
-                st.get("census_parked_by_us") and st.get("census_owner") == rec.get("id")):
-            continue
+                st.get("census_parked_by_us") and (st.get("census_owner") == rec.get("id")
+                                                  or st.get("window_end_applied"))):
+            continue                    # (a window-end park is judged by is_due: DISPLACE)
         due, why = is_due(rec, now, st)
         if not due:
             continue

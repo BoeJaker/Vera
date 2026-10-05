@@ -45,13 +45,12 @@ def test_every_declared_tier_has_rules_and_a_button():
     assert DEFAULT_DENSITY in named
 
 
-def test_the_controls_sit_in_the_top_bar_beside_the_layout_toggles():
-    i = HTML.index('id="denGroup"')
-    assert HTML.index('id="blocksBtn"') > i
-    assert HTML.index('<!-- Layout toggles -->') > i
+def test_the_level_of_detail_is_in_the_appearance_menu_not_the_bar():
+    # (owner, 2026-10-03: "full hover and zen are allready in the top bar in the appearance menu - no need for them to
+    # have seperate dedicated buttons in the top bar")
+    assert 'id="denGroup"' not in HTML
     assert 'onclick="CH.toggleBlocks()"' in HTML
-    # the group appears once: one set of controls, not one per re-render
-    assert HTML.count('id="denGroup"') == 1
+    assert HTML.index('id="blocksBtn"') < HTML.index('<!-- Layout toggles -->')
 
 
 # ── the handlers exist, are exported, and run from init ─────────────────────
@@ -130,12 +129,13 @@ def test_blocks_off_outranks_the_minimal_views_own_question_rules():
     base = HTML[:HTML.index("Density tiers and Blocks")]
     assert 'body[data-view="minimal"].has-msgs #msgs > .mwrap.u{' in base, "the minimal view moved; re-check the override"
     assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u{background:transparent;border-left-color:transparent}' in css
-    # A pinned question is position:sticky and the answer scrolls underneath, so it has to hide what passes
-    # behind it - that is why it keeps a ground where every other message loses one. A FLAT ground hides the
-    # background wash as well, and read as a box Blocks off had failed to remove (Notes/42 defect 94). It
-    # occludes through a ground at about a third opacity over a blur now: the text under it is unreadable, the
-    # gradient carries through. The requirement is the occlusion, not the opacity.
-    assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background-color:color-mix(in srgb,var(--bg0) 34%,transparent);background-image:none;border-left-color:transparent;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}' in css
+    # The pinned question kept a third-opacity ground over a blur so the answer would not scroll through it - but
+    # the board draws it position:static (it no longer pins), and the owner saw that ground as the box Blocks off
+    # should have removed (2026-10-04: "the blocks off makes the last user message in chat have a background - this
+    # is the opposite of what blocks off should do"). With Blocks off it has no ground and no glass.
+    assert '#msgs .mwrap.u.pin{position:static}' in HTML, "the pinned question pins again - it needs an occluding ground back"
+    assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs #msgs > .mwrap.u.pin{background:transparent;background-image:none;border-left-color:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}' in css
+    assert 'html[data-blocks="off"] .mwrap.u.pin{box-shadow:none;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}' in css
     assert 'background-color:var(--bg0);background-image:none;border-left-color:transparent}' not in css, "no flat fill over the wash"
     assert 'html[data-blocks="off"] body[data-view="minimal"].has-msgs:not(.has-panel) #inputBar' in css
 

@@ -13,6 +13,10 @@
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <script src="/ui/vera-dashboard.js"></script>
+<!-- the widget element, asked for at parse time (2026-10-03): VeraDash injected it ~2 s in, after the panes' start-up
+     reads had taken all six connections to the server - on a slow prod it queued 28-50 s behind them and every record
+     tile stayed empty. data-vera-widget-el is the mark VeraDash's ensureElement looks for, so it is never added twice. -->
+<script src="/ui/widgets/widget_element.js" defer data-vera-widget-el="1"></script>
 <script src="/ui/vera-terminal.js"></script>
 <script type="module">
   import('https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js')
@@ -64,6 +68,7 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
 #panes{flex:1;overflow:hidden;position:relative;min-width:0}
 .pane{position:absolute;inset:0;display:none;overflow-y:auto;padding:12px}
 .pane.on{display:block}
+#pane-specialist.on{display:flex}
 
 /* ── Buttons ── */
 .btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg2);color:var(--dim2);cursor:pointer;font-family:var(--sans);font-size:10.5px;font-weight:500;transition:all .14s;white-space:nowrap}
@@ -383,39 +388,41 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
     </div>
     <nav id="nav">
       <div class="nav-grp" data-view="estate">Overview</div>
-      <button type="button" class="nav-btn active" data-pane="overview" data-view="estate" title="Overview" onclick="P.show('overview',this)"><span class="gl">▦</span>Overview</button>
-      <button type="button" class="nav-btn" data-pane="activity" data-view="estate" title="Everything the nodes are doing: running now, every call (prod, sandboxes, external) with prompt, response and stats" onclick="P.show('activity',this)"><span class="gl">↯</span>Activity</button>
-      <button type="button" class="nav-btn" data-pane="nodemodels" data-view="estate" title="Which models each node keeps loaded, the workloads that hotload models, NLP placement and switches, and the specialist catalog" onclick="P.show('nodemodels',this)"><span class="gl">◈</span>Models &amp; NLP</button>
-      <button type="button" class="nav-btn" data-pane="estate" data-view="estate" title="Map" onclick="P.show('estate',this)"><span class="gl">⬡</span>Map</button>
-      <button type="button" class="nav-btn" data-pane="observe" data-view="estate" title="Observe" onclick="P.show('observe',this)"><span class="gl">◎</span>Observe</button>
-      <button type="button" class="nav-btn" data-pane="ops" data-view="estate" title="Live ops" onclick="P.show('ops',this)"><span class="gl">✦</span>Live ops</button>
+      <button data-label="Overview" data-desc="The estate at a glance" data-desc-long="The estate overview: a dashboard of widgets across the machines, nodes and services Vera runs on." type="button" class="nav-btn active" data-pane="overview" data-view="estate" title="Overview" onclick="P.show('overview',this)"><span class="gl">▦</span>Overview</button>
+      <button data-label="Activity" data-desc="Everything the nodes are doing" data-desc-long="Everything the nodes are doing (/nodes/activity/panel): what is running now and every call - prod, sandboxes, external - with prompt, response and stats." type="button" class="nav-btn" data-pane="activity" data-view="estate" title="Everything the nodes are doing: running now, every call (prod, sandboxes, external) with prompt, response and stats" onclick="P.show('activity',this)"><span class="gl">↯</span>Activity</button>
+      <button data-label="Map" data-desc="The interaction map" data-desc-long="The estate map (/interaction/panel): the machines, services and agents as a map of who talks to whom." type="button" class="nav-btn" data-pane="estate" data-view="estate" title="Map" onclick="P.show('estate',this)"><span class="gl">⬡</span>Map</button>
+      <button data-label="Health" data-desc="Is Vera healthy, and what needs attention" data-desc-long="Vera's own health: what needs attention (perf.scan), whether its stores are reachable (obs.health), and vital signs - event-loop stalls, Redis, pending jobs, stuck runners." type="button" class="nav-btn" data-pane="observe" data-view="estate" title="Health - Vera's own health" onclick="P.show('observe',this)"><span class="gl">◎</span>Health</button>
+      <button data-label="Live ops" data-desc="The live event stream and ops" data-desc-long="Live ops: the live event stream (all, none or errors only) alongside configurable ops widgets." type="button" class="nav-btn" data-pane="ops" data-view="estate" title="Live ops" onclick="P.show('ops',this)"><span class="gl">✦</span>Live ops</button>
       <div class="nav-grp" data-view="estate">Machines</div>
-      <button type="button" class="nav-btn" data-pane="machines" data-view="estate" title="All" onclick="P.show('machines',this)"><span class="gl">▤</span>All</button>
-      <button type="button" class="nav-btn" data-pane="workers" data-view="estate" title="Workers" onclick="P.show('workers',this)"><span class="gl">⚙</span>Workers</button>
-      <button type="button" class="nav-btn" data-pane="proxmox" data-view="estate" title="Proxmox" onclick="P.show('proxmox',this)"><span class="gl">▣</span>Proxmox</button>
-      <button type="button" class="nav-btn" data-pane="docker" data-view="estate" title="Docker" onclick="P.show('docker',this)"><span class="gl">◧</span>Docker</button>
-      <button type="button" class="nav-btn" data-pane="sandbox" data-view="estate" title="Sandbox" onclick="P.show('sandbox',this)"><span class="gl">◱</span>Sandbox</button>
-      <button type="button" class="nav-btn" data-pane="connections" data-view="estate" title="Connections" onclick="P.show('connections',this)"><span class="gl">⇄</span>Connections</button>
-      <button type="button" class="nav-btn" data-pane="remote" data-view="estate" title="Remote" onclick="P.show('remote',this)"><span class="gl">↗</span>Remote</button>
+      <button data-label="All machines" data-desc="Every machine, guest and host" data-desc-long="Every machine: Proxmox guests and hosts and Docker - kind, state, address, hardware, what runs on it, and actions; or make something new." type="button" class="nav-btn" data-pane="machines" data-view="estate" title="All" onclick="P.show('machines',this)"><span class="gl">▤</span>All</button>
+      <button data-label="Workers" data-desc="Vera's worker nodes and jobs" data-desc-long="Vera's worker nodes (GPU, CPU, light) and their jobs, auto-refreshing; remove stale workers." type="button" class="nav-btn" data-pane="workers" data-view="estate" title="Workers" onclick="P.show('workers',this)"><span class="gl">⚙</span>Workers</button>
+      <button data-label="Proxmox" data-desc="The Proxmox clusters" data-desc-long="Proxmox: the clusters' dashboard and CPU/NUMA, and creating LXC containers from templates." type="button" class="nav-btn" data-pane="proxmox" data-view="estate" title="Proxmox" onclick="P.show('proxmox',this)"><span class="gl">▣</span>Proxmox</button>
+      <button data-label="Docker" data-desc="Docker hosts and containers" data-desc-long="Docker: connect to a Docker host and see its running and stopped containers, images, volumes and networks." type="button" class="nav-btn" data-pane="docker" data-view="estate" title="Docker" onclick="P.show('docker',this)"><span class="gl">◧</span>Docker</button>
+      <button data-label="Sandbox" data-desc="The sandbox policy" data-desc-long="The sandbox policy: what gates exec.*, IDE Run and docker CLI calls; the sandbox containers themselves are under Docker." type="button" class="nav-btn" data-pane="sandbox" data-view="estate" title="Sandbox" onclick="P.show('sandbox',this)"><span class="gl">◱</span>Sandbox</button>
+      <button data-label="Connections" data-desc="The SSH credential store" data-desc-long="Connections: the canonical SSH credential store used by Proxmox, Storage, netmap and exec - every host with its user, port, auth and a reachability test." type="button" class="nav-btn" data-pane="connections" data-view="estate" title="Connections" onclick="P.show('connections',this)"><span class="gl">⇄</span>Connections</button>
+      <button data-label="Remote" data-desc="Open a terminal on any machine" data-desc-long="Remote (/remote/panel): pick a saved, Docker, SSH or Proxmox target and open a terminal on it; enroll a guest to SSH." type="button" class="nav-btn" data-pane="remote" data-view="estate" title="Remote" onclick="P.show('remote',this)"><span class="gl">↗</span>Remote</button>
       <div class="nav-div" data-view="estate"></div>
-      <button type="button" class="nav-btn" data-pane="storage" data-view="estate" title="Storage" onclick="P.show('storage',this)"><span class="gl">▥</span>Storage</button>
-      <button type="button" class="nav-btn" data-pane="network" data-view="estate" title="Network" onclick="P.show('network',this)"><span class="gl">⌗</span>Network</button>
-      <button type="button" class="nav-btn" data-pane="provision" data-view="estate" title="Trust" onclick="P.show('provision',this)"><span class="gl">⚿</span>Trust</button>
+      <button data-label="Storage" data-desc="The storage fabric" data-desc-long="The storage fabric (/pxstore/panel): pools, the file fabric, Docker storage, the model store, Vera's data, estate backups and setup." type="button" class="nav-btn" data-pane="storage" data-view="estate" title="Storage" onclick="P.show('storage',this)"><span class="gl">▥</span>Storage</button>
+      <button data-label="Network" data-desc="The network graph, traffic and netctl" data-desc-long="The network: the graph &amp; firewall, live traffic through NWM-01, and netctl." type="button" class="nav-btn" data-pane="network" data-view="estate" title="Network" onclick="P.show('network',this)"><span class="gl">⌗</span>Network</button>
+      <button data-label="Trust" data-desc="Identity, secrets and certificates" data-desc-long="Identity &amp; trust: security, secrets, certificates, registration, identity, enrollment and mesh." type="button" class="nav-btn" data-pane="provision" data-view="estate" title="Trust" onclick="P.show('provision',this)"><span class="gl">⚿</span>Trust</button>
       <div class="nav-grp" data-view="estate">Build</div>
-      <button type="button" class="nav-btn" data-pane="build" data-view="estate" title="New" onclick="P.show('build',this)"><span class="gl">＋</span>New</button>
-      <button type="button" class="nav-btn" data-pane="foundry" data-view="estate" title="Foundry" onclick="P.show('foundry',this)"><span class="gl">⚗</span>Foundry</button>
-      <button type="button" class="nav-btn" data-pane="software" data-view="estate" title="Provision" onclick="P.show('software',this)"><span class="gl">⇩</span>Provision</button>
+      <button data-label="New" data-desc="Make something new" data-desc-long="Make something new: pick the target (a container or VM on Proxmox, an OS image ...) and it opens the page that builds it - Foundry or Provision." type="button" class="nav-btn" data-pane="build" data-view="estate" title="New" onclick="P.show('build',this)"><span class="gl">＋</span>New</button>
+      <button data-label="Foundry" data-desc="Provision an OS image with features baked in" data-desc-long="Foundry (/foundry/panel): provision an OS onto a target - image x features, with SSH certificates, FreeIPA and the mesh baked in (CT, VM, Docker; bare metal via PXE)." type="button" class="nav-btn" data-pane="foundry" data-view="estate" title="Foundry" onclick="P.show('foundry',this)"><span class="gl">⚗</span>Foundry</button>
+      <button data-label="Provision" data-desc="Deploy and install onto machines" data-desc-long="Provision (/provision/panel): deploy and install onto an existing node, a Docker engine or a new CT/VM, which is created, started and enrolled as a node." type="button" class="nav-btn" data-pane="software" data-view="estate" title="Provision" onclick="P.show('software',this)"><span class="gl">⇩</span>Provision</button>
       <div class="nav-grp" data-view="estate">Integrations</div>
-      <button type="button" class="nav-btn" data-pane="integrations" data-view="estate" title="Services" onclick="P.show('integrations',this)"><span class="gl">◈</span>Services</button>
-      <button type="button" class="nav-btn" data-pane="platforms" data-view="estate" title="Platforms" onclick="P.show('platforms',this)"><span class="gl">▩</span>Platforms</button>
-      <button type="button" class="nav-btn" data-pane="nodemodels" data-view="models" title="Warm slots per node, workload hotloading, NLP and the specialist catalog" onclick="P.show('nodemodels',this)"><span class="gl">◈</span>Nodes &amp; NLP</button>
-      <button type="button" class="nav-btn" data-pane="ollama" data-view="models" title="Ollama" onclick="P.show('ollama',this)"><span class="gl">◍</span>Ollama</button>
-      <button type="button" class="nav-btn" data-pane="modelrouting" data-view="models" title="Model Routing" onclick="P.show('modelrouting',this)"><span class="gl">⇉</span>Model Routing</button>
+      <button data-label="Services" data-desc="The integrations hub" data-desc-long="The integrations hub (/integrations/panel): the services Vera connects to - add, discover, register and secure them, with evidence of their external effects." type="button" class="nav-btn" data-pane="integrations" data-view="estate" title="Services" onclick="P.show('integrations',this)"><span class="gl">◈</span>Services</button>
+      <button data-label="Platforms" data-desc="Set a fact once, push it everywhere" data-desc-long="Platforms (/platform/panel): non-secret shared values each platform would otherwise keep its own copy of - set once, pushed everywhere." type="button" class="nav-btn" data-pane="platforms" data-view="estate" title="Platforms" onclick="P.show('platforms',this)"><span class="gl">▩</span>Platforms</button>
+      <button data-label="Warm models" data-desc="Models kept loaded on each node" data-desc-long="Which models each node keeps loaded, and the workloads that hotload models into the slots." type="button" class="nav-btn" data-pane="warmmodels" data-view="models" title="Which models each node keeps loaded, and the workloads that hotload models into the slots" onclick="P.show('warmmodels',this)"><span class="gl">◈</span>Warm models</button>
+      <button data-label="Node settings" data-desc="Threads, flags and runners per node" data-desc-long="Threads, flags and drop-ins tuned on each Ollama node, and the runners loaded now." type="button" class="nav-btn" data-pane="nodesettings" data-view="models" title="Threads, flags and drop-ins tuned on each Ollama node, and the runners loaded now" onclick="P.show('nodesettings',this)"><span class="gl">⚙</span>Node settings</button>
+      <button data-label="NLP" data-desc="Where NLP runs" data-desc-long="Where NLP runs, the models each node has loaded, and its switches." type="button" class="nav-btn" data-pane="nlpnodes" data-view="models" title="Where NLP runs, the models each node has loaded, and its switches" onclick="P.show('nlpnodes',this)"><span class="gl">◇</span>NLP</button>
+      <button data-label="Node jobs" data-desc="Training and test shards on the nodes" data-desc-long="Training and gate test shards on the node workers: each node's free CPU and memory, where each job runs and why, recent jobs." type="button" class="nav-btn" data-pane="trainnodes" data-view="models" title="Training and gate test shards on the node workers: each node's free CPU and memory, where each job runs and why, recent jobs" onclick="P.show('trainnodes',this)"><span class="gl">∿</span>Node jobs</button>
+      <button data-label="Ollama" data-desc="The Ollama cluster" data-desc-long="The Ollama cluster: its nodes, jobs, model catalog, benchmark and traffic (the sections under this item)." type="button" class="nav-btn" data-pane="ollama" data-view="models" title="Ollama" onclick="P.show('ollama',this)"><span class="gl">◍</span>Ollama</button>
+      <button data-label="Model Routing" data-desc="Which model serves what" data-desc-long="Model routing (/ui/panels/model-routing): which model and node serve each role and capability - the routing rules and their overrides." type="button" class="nav-btn" data-pane="modelrouting" data-view="models" title="Model Routing" onclick="P.show('modelrouting',this)"><span class="gl">⇉</span>Model Routing</button>
       <div class="nav-div" data-view="models"></div>
-      <button type="button" class="nav-btn" data-pane="mimic" data-view="models" title="Mimic" onclick="P.show('mimic',this)"><span class="gl">◑</span>Mimic</button>
-      <button type="button" class="nav-btn" data-pane="vllm" data-view="models" title="vLLM" onclick="P.show('vllm',this)"><span class="gl">◐</span>vLLM</button>
-      <button type="button" class="nav-btn" data-pane="specialist" data-view="models" title="Non-LLM models: NLP, STT/TTS, diffusion, host NER" onclick="P.show('specialist',this)"><span class="gl">◇</span>Specialist</button>
-      <button type="button" class="nav-btn" data-pane="api" data-view="models" title="API" onclick="P.show('api',this)"><span class="gl">⌸</span>API</button>
+      <button data-label="Mimic" data-desc="The Ollama Mimic proxy" data-desc-long="Ollama Mimic (/cluster/mimic/panel): the proxy in front of the Ollama nodes - where it routes, active and queued requests, max concurrency, logged requests; pause it." type="button" class="nav-btn" data-pane="mimic" data-view="models" title="Mimic" onclick="P.show('mimic',this)"><span class="gl">◑</span>Mimic</button>
+      <button data-label="vLLM" data-desc="vLLM servers" data-desc-long="vLLM (/vllm/panel): vLLM instances - launch servers, LoRA, metrics and a chat/completion playground." type="button" class="nav-btn" data-pane="vllm" data-view="models" title="vLLM" onclick="P.show('vllm',this)"><span class="gl">◐</span>vLLM</button>
+      <button data-label="Specialist models" data-desc="The non-LLM model catalog" data-desc-long="The non-LLM model catalog: browse, put models in the store, and what each node runs." type="button" class="nav-btn" data-pane="specialist" data-view="models" title="The non-LLM model catalog: browse, put models in the store, and what each node runs" onclick="P.show('specialist',this)"><span class="gl">◇</span>Specialist models</button>
+      <button data-label="API" data-desc="External model API providers" data-desc-long="API providers (/providers/panel): the external model API providers Vera can call." type="button" class="nav-btn" data-pane="api" data-view="models" title="API" onclick="P.show('api',this)"><span class="gl">⌸</span>API</button>
     </nav>
   </aside>
 
@@ -439,8 +446,8 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
         <span class="tb-sep"></span>
         <!-- Sub-tabs: Nodes / Jobs -->
         <div style="display:flex;gap:1px;margin-right:8px">
-          <button class="btn sm wk-sub active" data-wksub="nodes" onclick="P.wkSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
-          <button class="btn sm wk-sub" data-wksub="jobs" onclick="P.wkSubTab('jobs',this)" style="border-radius:0 3px 3px 0">Jobs</button>
+          <button class="btn sm wk-sub active" data-wksub="nodes" data-vera-sub="wk-nodes" data-desc="The worker nodes" data-desc-long="Vera worker nodes: each node, its role, status and the capability classes it can run." onclick="P.wkSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
+          <button class="btn sm wk-sub" data-wksub="jobs" data-vera-sub="wk-jobs" data-desc="Jobs the workers ran" data-desc-long="The jobs the worker nodes are running and have run, with their state and timings." onclick="P.wkSubTab('jobs',this)" style="border-radius:0 3px 3px 0">Jobs</button>
         </div>
         <span class="tb-sep"></span>
         <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
@@ -614,11 +621,11 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
         <span class="tb-sep"></span>
         <!-- Sub-tabs: Nodes / Jobs / Catalog / Benchmark / Traffic -->
         <div style="display:flex;gap:1px;margin-right:8px">
-          <button class="btn sm ol-sub active" data-olsub="nodes" onclick="P.olSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
-          <button class="btn sm ol-sub" data-olsub="jobs" onclick="P.olSubTab('jobs',this)" style="border-radius:0">Jobs</button>
-          <button class="btn sm ol-sub" data-olsub="catalog" onclick="P.olSubTab('catalog',this)" style="border-radius:0">Catalog<span id="ol-dl-badge" style="display:none;margin-left:4px;font-size:8px;padding:0 4px;border-radius:7px;background:#e6b800;color:#111;font-weight:700">0</span></button>
-          <button class="btn sm ol-sub" data-olsub="benchmark" onclick="P.olSubTab('benchmark',this)" style="border-radius:0">Benchmark</button>
-          <button class="btn sm ol-sub" data-olsub="wrapper" onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0" title="Who is calling each node, and what else runs on it — read from the node's own access log">Traffic</button>
+          <button class="btn sm ol-sub active" data-olsub="nodes" data-vera-sub="ol-nodes" data-desc="The Ollama nodes" data-desc-long="Every Ollama node: online state, latency, the models it holds and what is loaded now." onclick="P.olSubTab('nodes',this)" style="border-radius:3px 0 0 3px">Nodes</button>
+          <button class="btn sm ol-sub" data-olsub="jobs" data-vera-sub="ol-jobs" data-desc="Generation jobs" data-desc-long="The Ollama generation jobs: running and recent, per node, with model and timing." onclick="P.olSubTab('jobs',this)" style="border-radius:0">Jobs</button>
+          <button class="btn sm ol-sub" data-olsub="catalog" data-vera-sub="ol-catalog" data-label="Catalog" data-desc="Models to pull, and pulls running" data-desc-long="The model catalog: browse and pull models onto the nodes; the badge counts downloads in progress." onclick="P.olSubTab('catalog',this)" style="border-radius:0">Catalog<span id="ol-dl-badge" style="display:none;margin-left:4px;font-size:8px;padding:0 4px;border-radius:7px;background:#e6b800;color:#111;font-weight:700">0</span></button>
+          <button class="btn sm ol-sub" data-olsub="benchmark" data-vera-sub="ol-benchmark" data-desc="Benchmark the nodes" data-desc-long="Benchmark models across the nodes and compare their speed." onclick="P.olSubTab('benchmark',this)" style="border-radius:0">Benchmark</button>
+          <button class="btn sm ol-sub" data-olsub="wrapper" data-vera-sub="ol-traffic" data-label="Traffic" data-desc="Who calls each node" data-desc-long="Traffic: who is calling each node, and what else runs on it, read from the node's own access log." onclick="P.olSubTab('wrapper',this)" style="border-radius:0 3px 3px 0" title="Who is calling each node, and what else runs on it — read from the node's own access log">Traffic</button>
         </div>
         <span class="tb-sep"></span>
         <button class="btn sm" onclick="P.refresh()">↻ Refresh</button>
@@ -1206,15 +1213,12 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
     <div class="pane" id="pane-observe" style="padding:0;overflow:hidden">
       <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
       <div class="pane-tb" style="flex-shrink:0;padding:12px 12px 0;margin-bottom:8px">
-        <span class="pane-tb-title" style="color:var(--acc4)">OBSERVE</span>
+        <span class="pane-tb-title" style="color:var(--acc4)">HEALTH</span>
         <span class="tb-sep"></span>
         <div style="display:flex;gap:2px">
-          <span class="j-tab active" id="obss-events" onclick="P.obsSub('events')" data-vera-sub="events" style="padding:3px 9px;font-size:9px">Events</span>
+          <span class="j-tab active" id="obss-events" onclick="P.obsSub('events')" data-vera-sub="events" style="padding:3px 9px;font-size:9px">Overview</span>
           <span class="j-tab" id="obss-perf" onclick="P.obsSub('perf')" data-vera-sub="perf" style="padding:3px 9px;font-size:9px;color:#e6bd66">⚡ Perf</span>
         </div>
-        <span class="tb-sep" data-obs-events></span>
-        <button class="btn sm" onclick="P.obsClear()" data-obs-events>Clear</button>
-        <button class="btn sm" id="obs-pause-btn" onclick="P.obsTogglePause()" data-obs-events>Pause</button>
         <span class="tb-sep" data-obs-events></span>
         <button class="btn sm" onclick="P.gridToggleEdit('observe')" data-obs-events>⚙ Configure</button>
         <button class="btn sm" onclick="P.gridReset('observe')" data-obs-events>Reset</button>
@@ -1698,8 +1702,17 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
 
     <!-- Sandbox pane — shared exec-sandbox policy editor (gates exec.*, IDE Run, docker.* CLI) -->
     <!-- Models & NLP: the <vera-node-models> element (ollama.warm.*, nlp.*, specialist.*) -->
-    <div class="pane" id="pane-nodemodels" style="padding:0;overflow:hidden">
-      <iframe id="nodemodels-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    <div class="pane" id="pane-warmmodels" style="padding:0;overflow:hidden">
+      <iframe id="warmmodels-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
+    <div class="pane" id="pane-nodesettings" style="padding:0;overflow:hidden">
+      <iframe id="nodesettings-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
+    <div class="pane" id="pane-nlpnodes" style="padding:0;overflow:hidden">
+      <iframe id="nlpnodes-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
+    <div class="pane" id="pane-trainnodes" style="padding:0;overflow:hidden">
+      <iframe id="trainnodes-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
     </div>
     <!-- Activity: the <vera-node-activity> element (nodes.activity) -->
     <div class="pane" id="pane-activity" style="padding:0;overflow:hidden">
@@ -1933,8 +1946,15 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
       <iframe id="vllm-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)" allow="clipboard-read; clipboard-write"></iframe>
     </div>
     <!-- Specialist: the <vera-specialist-models> element (specialist.status) -->
-    <div class="pane" id="pane-specialist" style="padding:0;overflow:hidden">
-      <iframe id="specialist-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    <div class="pane" id="pane-specialist" style="padding:0;overflow:hidden;flex-direction:column">
+      <!-- the page's sections: the harness lists them as a submenu (data-vera-sub) -->
+      <div class="j-tabs" id="spec-subs" style="display:flex;gap:4px;padding:6px 10px 0">
+        <span class="j-tab active" id="specs-catalog" onclick="specSub('catalog')" data-vera-sub="catalog" style="padding:3px 9px;font-size:9px">Catalog</span>
+        <span class="j-tab" id="specs-status" onclick="specSub('status')" data-vera-sub="status" style="padding:3px 9px;font-size:9px">Nodes</span>
+        <span class="j-tab" id="specs-jobs" onclick="specSub('jobs')" data-vera-sub="jobs" style="padding:3px 9px;font-size:9px">Builds</span>
+        <span class="j-tab" id="specs-caches" onclick="specSub('caches')" data-vera-sub="caches" style="padding:3px 9px;font-size:9px">Node caches</span>
+      </div>
+      <iframe id="specialist-frame" src="about:blank" style="flex:1;width:100%;border:none;background:var(--bg0)"></iframe>
     </div>
 
     <div class="pane" id="pane-api" style="padding:0;overflow:hidden">
@@ -6334,11 +6354,14 @@ function showPane(name, el){
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
   if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
   if(name==='activity'){ _mountFrame('activity-frame', BASE+'/nodes/activity/panel'); }
-  if(name==='nodemodels'){ _mountFrame('nodemodels-frame', BASE+'/nodes/models/panel'); }
+  if(name==='warmmodels'){ _mountFrame('warmmodels-frame', BASE+'/nodes/models/panel?section=warm'); }
+  if(name==='nodesettings'){ _mountFrame('nodesettings-frame', BASE+'/nodes/models/panel?section=settings'); }
+  if(name==='nlpnodes'){ _mountFrame('nlpnodes-frame', BASE+'/nodes/models/panel?section=nlp'); }
+  if(name==='trainnodes'){ _mountFrame('trainnodes-frame', BASE+'/nodes/models/panel?section=training'); }
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }
-  if(name==='specialist'){ _mountFrame('specialist-frame', BASE+'/specialist/panel'); }
+  if(name==='specialist'){ _mountFrame('specialist-frame', BASE+'/specialist/panel?tabs=external&tab='+(window._specTab||'catalog')); }
   if(name==='api'){ _mountFrame('api-frame', BASE+'/providers/panel'); }
   if(name==='provision'){ provSub(_prvSub); }
   if(name==='storage'){ _mountFrame('storage-frame', BASE+'/pxstore/panel'); }
@@ -6368,10 +6391,27 @@ function showPane(name, el){
 // 'estate' map page needs: its pane id collides with the view name, and a
 // lookup by attribute used to land on a section heading instead.
 const _VIEW=(new URLSearchParams(location.search).get('view')==='models')?'models':'estate';
-if(_VIEW==='models') document.documentElement.classList.add('view-models');
+if(_VIEW==='models'){
+  document.documentElement.classList.add('view-models');
+  // the Models tab is this same panel: say so in its own header
+  const _t = document.getElementById('lhmTitle'), _s = document.getElementById('lhmSub');
+  if (_t) _t.textContent = 'Models';
+  if (_s) _s.textContent = 'LLM \u00b7 specialist \u00b7 nodes';
+}
+// Specialist models: its sections (Catalog / Nodes / Builds / Node caches) are
+// the harness submenu - each switches the element inside the frame.
+// window.specSub, not P.specSub: this runs INSIDE the function that builds P,
+// where a reference to P throws (TDZ) and stops the whole panel script; and a
+// plain function here would be local to it, out of reach of the onclick.
+window.specSub = function specSub(t){
+  window._specTab = t;
+  document.querySelectorAll('#spec-subs .j-tab').forEach(function(x){ x.classList.toggle('active', x.id === 'specs-' + t); });
+  const f = document.getElementById('specialist-frame');
+  try { if (f && f.contentWindow) f.contentWindow.postMessage({type:'vera:specialist:tab', tab:t}, '*'); } catch(e) {}
+};
 function estateOpen(pane, sub, entity){
   if(!$('pane-'+pane)) return false;
-  // a pane listed in both views (nodemodels): highlight this view's entry
+  // a pane listed in more than one view: highlight this view's entry
   showPane(pane, document.querySelector('#nav .nav-btn[data-view="'+_VIEW+'"][data-pane="'+pane+'"]')
                  || document.querySelector('#nav .nav-btn[data-pane="'+pane+'"]'));
   if(sub&&pane==='provision') provSub(sub);
@@ -7551,10 +7591,10 @@ async function ndRun(){
   const body=_ndProvArgs();
   if(!body.components.length){ $('nd-prov-out').textContent='Pick at least one component.'; return; }
   const btn=$('nd-run-btn'); btn.disabled=true;
-  $('nd-prov-out').textContent='Provisioning… (installs can take several minutes — progress also streams to Observe)';
+  $('nd-prov-out').textContent='Provisioning… (installs can take several minutes — progress also streams to Health)';
   const r=await api('/nodes/provision','POST',body);
   btn.disabled=false;
-  if(!r){ $('nd-prov-out').textContent='No response (still running server-side — check Observe).'; return; }
+  if(!r){ $('nd-prov-out').textContent='No response (still running server-side — check Health).'; return; }
   if(r.error){ $('nd-prov-out').textContent='Failed: '+r.error; return; }
   const lines=(r.results||[]).map(x=>(x.ok?'✓ ':(x.skipped?'✗ (skipped) ':'✗ '))+x.component+' ['+(x.backend||'-')+']'
     +(x.error?'  — '+x.error:'')

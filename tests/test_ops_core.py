@@ -72,6 +72,7 @@ def test_planes_nodes_and_lattice():
     # running guests only, never templates or stopped ones
     assert "guest:250" in ids and "guest:160" in ids and "guest:999" not in ids and "guest:900" not in ids
     assert ids["guest:250"]["domain"] == oc.COMPUTE and ids["guest:160"]["domain"] == oc.STORAGE
+    assert ids["guest:250"]["domain_name"] == "compute" and ids["guest:160"]["domain_name"] == "storage" and all(n.get("plane_name") for n in s["nodes"])
     # the role decides the lane: a guest with no hint in its name that serves a model instance is compute, and says so
     assert ids["guest:246"]["domain"] == oc.COMPUTE and ids["guest:246"]["role"] == "serves CPU A"
     assert ids["guest:138"]["role"] == "runs Vera" and ids["guest:138"]["domain"] == oc.COMPUTE

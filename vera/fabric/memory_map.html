@@ -2302,6 +2302,7 @@ function toast(msg){
 
 function closeModal(){
   document.getElementById('modal-overlay').classList.remove('open');
+  try{ if(window.VeraSettings&&VeraSettings.isOpen()) VeraSettings.close(); }catch(e){}
 }
 
 function buildEdgeFilterPanel(){
@@ -4772,6 +4773,8 @@ buildKeybindPanel();
 
 
 document.getElementById('config-btn').addEventListener('click',()=>{
+  /* the shared Settings page, as every panel's settings open (the LHM audit, point 5); the modal when it is not loaded */
+  if(window.VeraSettings&&VeraSettings.openSection){ VeraSettings.openSection(document.getElementById('modal-body'),{label:'Data sources'}); return; }
   document.getElementById('modal-overlay').classList.add('open');
 });
 document.getElementById('modal-close').addEventListener('click',closeModal);
@@ -9683,5 +9686,6 @@ setTimeout(_initVeraThemePicker, 500);   // init Vera theme picker after vera-ui
 
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>

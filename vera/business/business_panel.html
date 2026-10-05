@@ -266,9 +266,39 @@ function _lhmHead(title, sub){
   const t=$('#lhmTitle'), s=$('#lhmSub');
   if(t) t.textContent=title; if(s) s.textContent=sub;
 }
+/* what each menu item is for: short (hover) and long (agents) - read by the shell into the docked menu */
+const NAV_DESC = {
+  dashboard:['The business at a glance','The business dashboard: cash, 30-day net, goal progress and streams at a glance.'],
+  streams:['Income streams','Income streams: every way the business earns, and how each is doing.'],
+  graph:['The business as a network','The business network graph: streams, accounts, gigs, content, bounties, channels and platforms and how they connect; drag nodes, scroll to zoom.'],
+  stores:['Your stores','Stores: the online stores the business runs; open one to manage it here.'],
+  money:['Money accounts','Money accounts: balances per account, recalculated from the ledger.'],
+  ledger:['Every transaction','The ledger: every transaction the business has recorded.'],
+  gigs:['Freelance gigs','Freelance gigs: the gig work the business takes on.'],
+  content:['The content pipeline','The content pipeline: pieces in progress, with publishing scheduled.'],
+  bounties:['Bug bounties','Bug bounties the business works on.'],
+  marketing:['Social accounts and campaigns','Marketing: social accounts and campaigns, linked to real credentials from the accounts system.'],
+  tasks:['Operational tasks','Operational tasks, which can be scheduled into the calendar.'],
+  sim:['Simulate the business','Business simulation: run the business forward in simulation.'],
+  printer:['The thermal printer','The thermal printer: print receipts and notes.'],
+};
+const STORE_DESC = {
+  __back:['Back to all stores','Leave this store and return to the business menu.'],
+  dashboard:['This store at a glance','The store dashboard.'],
+  inventory:['Stock on hand','Inventory: the store\'s stock on hand.'],
+  quicklist:['List an item fast','Quick list: put an item up for sale quickly.'],
+  listings:['Items for sale','Listings: the store\'s items for sale.'],
+  orders:['Orders to fulfil','Orders: the store\'s orders.'],
+  customers:['The store\'s customers','Customers of this store.'],
+  shipping:['Shipping orders out','Shipping: getting orders to customers.'],
+  market:['Market prices and deals','Market & deals: market prices and deals for the store\'s items.'],
+  tax:['Tax and profit','Tax & profit for the store.'],
+  settings:['Store settings','The store\'s settings.'],
+};
 function _navBtn(id, ic, label, active, onclick, cls){
   const b=el('button',{type:'button',class:'nav-btn'+(active?' active':'')+(cls?' '+cls:''),title:label,onclick});
   b.dataset.section=id;
+  const d=(STORE_OPEN?STORE_DESC:NAV_DESC)[id]; b.dataset.label=label; if(d){ b.dataset.desc=d[0]; b.dataset.descLong=d[1]; }
   b.append(el('span',{class:'gl'},ic), label);
   return b;
 }

@@ -47,6 +47,7 @@ from . import nav_pin as _nav_pin
 from . import operator_progress as _progress
 from . import repeat_guard as _repeat_guard
 from . import thinker as _thinker
+from . import completion as _completion
 
 log = logging.getLogger("vera.operator.loop")
 
@@ -70,9 +71,10 @@ def _make_default_think(call_cap, provider: str, model: str,
 
     Measured in census run 18: each operator.think spent 35-60s generating
     560-946 tokens to decide ONE browser action, and every one of the fifteen
-    steps was phase="act" - the reasoning was not buying observation. Off by
-    default (None = the model's own default) since this trades decision quality
-    for speed and that is the caller's call, not ours.
+    steps was phase="act" - the reasoning was not buying observation. `None`
+    means "the default", which is OFF since 2026-10-03 (thinker.default_think:
+    measured on prod, thinking on was slower AND left two of four checks
+    unanswered); pass True to ask for it.
     """
     async def _think(goal, observation, history, canvas):
         return await _thinker.decide(goal, observation, history, call_cap,
@@ -298,6 +300,11 @@ async def run_loop(goal: str, session, *,
             done = True
             reason = "done"
             summary = args.get("summary") or thought or "goal complete"
+            # "goal complete" is not a report - append what the page showed (completion.py).
+            try:
+                summary = _completion.evidence_summary(summary, history, _observed_text(obs))
+            except Exception:
+                pass
             rec = {"i": i, "phase": "done", "thought": thought, "summary": summary,
                    "url": getattr(obs, "url", ""),
                    "screenshot": getattr(obs, "screenshot_path", "")}

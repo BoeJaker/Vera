@@ -28,6 +28,9 @@ _CRITICAL_MODULES = {
     "test_worldview_stream_yields",  # the stream worker reattached without yielding and wedged a release restart (2026-09-29)
     "test_worker_dispatch_stages",  # node workers never received work; results went to one reader of a shared group, not the asker (2026-09-28)
     "test_warm_models_core",  # every node let its models lapse after 5 min; a CPU cold load is 10-62 s (2026-09-28)
+    "test_node_compute",  # model training ran on the Vera host, not the nodes (2026-10-02)
+    "test_node_scheduling_and_test_pool",  # node jobs ignored node load; gates ran one at a time on the host (2026-10-04)
+    "test_node_parity_evidence",  # node workers ran 91 of 2,700 caps; parity needs evidence per cap (2026-10-04)
     "test_route_warm",  # the picker scored raw in_use (a 2-slot CPU node looked full) and ignored residency (2026-09-28)
     "test_route_warm_picker",  # an oversized context went to the GPU and spilled: the patched picker dropped ctx_need (2026-09-28)
     "test_cpu_concurrency",  # a CPU node's Ollama served one request at a time and prod's own limit was 1 per node (2026-09-28)
@@ -190,6 +193,8 @@ _CRITICAL_MODULES = {
     "test_autonomous_lock_core",  # closed-loop Phase A — hard main-lockout while autonomous mode is engaged
     "test_orchestrator_core",  # closed-loop Phase B — orchestrator decision logic (dispatch/idle, interlock, no v7)
     "test_session_watch_core",  # closed-loop Phase C — auto-resume gate: never re-run finished/human/declared work
+    "test_recall_budget_core",   # context.recall waited for its slowest source: 7 s of a 9 s chat fetch (2026-10-05)
+    "test_recall_core",          # recalled tool calls/dreams were injected as "User:"; repeats filled the slots (2026-10-04)
     "test_board_core",          # Agent Boards leasing — claim resolution + Phase E handoff (only holder can hand off)
     "test_gate_sweep",          # Ollama-gate leaked-lease sweep — MUST never clear a peer host's live slot (double-books GPU)
     "test_ollama_slot_permit",   # leaked per-node generation permit wedged ALL generation (2026-08-29)

@@ -48,6 +48,10 @@ from Vera.vera.capability_orchestration import (
     capability, emit_event, schedule,
 )
 from Vera.vera import capability_orchestration as _orch
+try:
+    from Vera.vera.http_tls_core import shared_ssl_context as _tls   # one TLS context for every client (not one per call)
+except ImportError:                                                 # pragma: no cover
+    from vera.http_tls_core import shared_ssl_context as _tls         # type: ignore
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "edge"))
@@ -99,7 +103,7 @@ def _nodes() -> Dict[str, Dict]:
 async def _agent_get(url: str, path: str, timeout: float = 10.0) -> Optional[Dict]:
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout, verify=_tls()) as c:
             r = await c.get(f"{url}{path}")
             return r.json() if r.status_code == 200 else None
     except Exception as e:
@@ -112,7 +116,7 @@ async def _agent_post(url: str, path: str, body: Dict,
     try:
         import httpx
         headers = {"X-Vera-Node-Token": AGENT_TOKEN} if AGENT_TOKEN else {}
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout, verify=_tls()) as c:
             r = await c.post(f"{url}{path}", json=body, headers=headers)
             try:
                 payload = r.json()
@@ -151,7 +155,9 @@ async def _collect_runners(node_filter: str = "") -> Dict[str, Any]:
     "nodes.agent.status", memory="off", silent=True,
     http_method="GET", http_path="/nodes/agent/status", http_tags=["nodes", "obs"],
     description="Host facts from every compute node running the Vera node agent "
-                "— cores, load, memory, GPU (name/total/used/free), runner count. "
+                "— cores, load, memory, runner count, and every GPU under `gpus` "
+                "(index, name, total/used/free MB, util %, temp °C; `gpu` is the "
+                "first card, kept for older readers). "
                 "Nodes with no agent are listed under `unreachable` rather than "
                 "omitted. Output: {nodes:[...], unreachable:[...]}.")
 async def cap_nodes_agent_status(trace_id=None) -> Dict[str, Any]:
@@ -248,7 +254,7 @@ async def _probe_dispatch(nid: str, inst: Dict) -> DispatchProbe:
         return p
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=8.0) as c:
+        async with httpx.AsyncClient(timeout=8.0, verify=_tls()) as c:
             r = await c.get(f"{url}/api/ps")
             if r.status_code != 200:
                 p.skipped = f"/api/ps HTTP {r.status_code}"
@@ -284,7 +290,7 @@ async def _probe_dispatch(nid: str, inst: Dict) -> DispatchProbe:
     t0 = time.time()
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=DISPATCH_PROBE_S) as c:
+        async with httpx.AsyncClient(timeout=DISPATCH_PROBE_S, verify=_tls()) as c:
             await c.post(f"{url}{path}", json=payload)
         # ANY reply — including 4xx/5xx — proves the scheduler is alive and
         # answering. Only never answering at all is the wedge. Asserting

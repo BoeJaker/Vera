@@ -171,7 +171,7 @@
     if (!idAttr) {
       var at0 = btns[0].attributes || [];
       for (var ai = 0; ai < at0.length && !idAttr; ai++) {
-        var nm = at0[ai].name; if (!/^data-/.test(nm) || /^data-(w|tip|title|label|i18n|vera-|rcm-|icon|lhm-|vpb-)/.test(nm)) continue;   /* data-icon is the glyph, never the id */
+        var nm = at0[ai].name; if (!/^data-/.test(nm) || /^data-(w|tip|title|label|desc|i18n|vera-|rcm-|icon|lhm-|vpb-)/.test(nm)) continue;   /* data-icon is the glyph, never the id */
         var seen2 = {}, ok = true;
         for (var bj = 0; bj < btns.length; bj++) { var v2 = btns[bj].getAttribute(nm); if (!v2 || seen2[v2]) { ok = false; break; } seen2[v2] = 1; }
         if (ok) idAttr = nm;
@@ -215,7 +215,28 @@
       return g ? String(g.getAttribute('data-nav-group') || '').slice(0, 40) : '';
     }
     function iconOf(b) { var di = b.getAttribute && b.getAttribute('data-icon'); if (di) return Array.from(di.trim()).slice(0, 2).join(''); var g = b.querySelector('.gl'); return g ? Array.from((g.textContent || '').trim()).slice(0, 2).join('') : ''; }
-    var items = Array.prototype.map.call(btns, function (b) { return { id: idOf(b), label: labelOf(b), group: groupOf(b), icon: iconOf(b) }; });
+    /* WHAT AN ITEM IS FOR (owner, 2026-10-03: descriptions "visible on mouseover and could even aide the agents"): data-desc,
+       short, for the pointer - or a title the item does not take its name from (it has a data-label); data-desc-long, for
+       an agent. A group heading (.nav-grp, or the [data-nav-group] box) may carry data-icon / data-desc / data-desc-long
+       for the group's one rail icon. */
+    function descOf(b) { var d = (b.getAttribute('data-desc') || '').trim(); if (d) return d; var t = (b.getAttribute('title') || '').trim(); return (t && b.getAttribute('data-label') && t !== labelOf(b)) ? t : ''; }
+    function descLongOf(b) { return (b.getAttribute('data-desc-long') || '').trim(); }
+    function groupEl(b) {
+      for (var el = b.previousElementSibling; el; el = el.previousElementSibling) { if (el.classList && el.classList.contains('nav-grp')) return el; }
+      return (b.closest && b.closest('[data-nav-group]')) || null;
+    }
+    var items = Array.prototype.map.call(btns, function (b) {
+      var it = { id: idOf(b), label: labelOf(b), group: groupOf(b), icon: iconOf(b), desc: descOf(b), desc_long: descLongOf(b) };
+      /* the widgets the panel names for this item's menu (data-lhm-widgets="template@size ..."), as the chat's menus carry theirs */
+      var wl = (b.getAttribute('data-lhm-widgets') || '').trim(); if (wl) it.widgets = wl.split(/[\s,]+/);
+      // an item drawn with an SVG icon (Dream, the DAG workshop, Telegram) hands it on; the host draws only what its cleaner keeps
+      if (!it.icon) { var sv = b.querySelector && b.querySelector('svg'); if (sv && sv.outerHTML && sv.outerHTML.length <= 3000) it.icon_svg = sv.outerHTML; }
+      var ge = it.group ? groupEl(b) : null;
+      if (ge) { it.group_icon = (ge.getAttribute('data-icon') || '').trim(); it.group_desc = (ge.getAttribute('data-desc') || '').trim(); it.group_desc_long = (ge.getAttribute('data-desc-long') || '').trim(); }
+      // the panel's own menu (standalone) shows it on hover too; the name is pinned first, so the title never renames the item
+      if (it.desc) { try { if (!b.getAttribute('data-label')) b.setAttribute('data-label', it.label); b.title = it.label + ' — ' + it.desc; } catch (e) {} }
+      return it;
+    });
     // ".active" is the canonical mark; ".on" is still accepted for a panel
     // that has not moved to this markup yet — scoped to just these nav
     // buttons, so it's never ambiguous with an unrelated "on" state
@@ -307,9 +328,178 @@
         after.parentNode.insertBefore(b, after.nextSibling); after = b; });
     }
     syncSubs(); setInterval(syncSubs, 700);
+    /* a menu measured while its page is hidden (a harness tab not shown yet) has no size to say which way it runs: decide once it has one */
+    function placeMenus() { var strip = initStripMenu(host, btns, items); initMenuWidgets(strip || host, btns, idOf, groupOf, items); }
+    var hr0 = null; try { hr0 = host.getBoundingClientRect(); } catch (e) {}
+    if (hr0 && (hr0.width || hr0.height)) placeMenus();
+    else if (typeof ResizeObserver === 'function') { var ro0 = new ResizeObserver(function () { var r = host.getBoundingClientRect(); if (!r.width && !r.height) return; ro0.disconnect(); placeMenus(); }); ro0.observe(host); }
+    else placeMenus();
   }
 
-  function init() { initCollapse(); initSections(); initNavBridge(); }
+  /* ── 3c. A MENU THAT IS A STRIP ACROSS THE PAGE, DRAWN AS THE MENU (owner, 2026-10-03, the LHM audit point 1: "each panel
+     use a common lhm styling that matches the lhm of the harness"). Nine panels mark a tab strip as their menu (ML Lab,
+     Home Assistant, Perf, the vector browser, the widget registry and gallery, Cap ontology, the system monitor, Research):
+     docked, the harness draws it as its LHM; opened on their own they showed a strip. On their own they now get the
+     menu column - the same items, words, descriptions and icons - each item pressing the panel's own tab, the lit one
+     following the panel. The strip's tabs step aside; anything else in the strip (a search, a button) stays. Docked, the
+     column steps aside and the strip is back, as before. A panel can keep its strip: data-vp-strip-keep on the menu. */
+  /* WHICH WAY A MENU RUNS, from where its items sit: the second item below the first is a column, beside it a strip. The
+     menu's own box said it wrongly while the page was still laying out (Research's column read as a strip, 2026-10-04). */
+  function isColumn(host, btns) {
+    if (host.id === 'sidebar' || host.tagName === 'ASIDE' || (host.classList.contains('vp-menu') && !host.classList.contains('inline'))) return true;
+    try {
+      var a = btns[0] && btns[0].getBoundingClientRect(), b = btns[1] && btns[1].getBoundingClientRect();
+      if (a && b && (a.width || a.height) && (b.width || b.height)) return Math.abs(b.top - a.top) > Math.abs(b.left - a.left);
+      var fd = getComputedStyle(host).flexDirection; if (/column/.test(fd) && getComputedStyle(host).display.indexOf('flex') >= 0) return true;
+      var hr = host.getBoundingClientRect(); return hr.height > hr.width * 1.5 && hr.width < 420;
+    } catch (e) { return false; }
+  }
+  function initStripMenu(host, btns, items) {
+    if (!host || host._vpStrip || host.hasAttribute('data-vp-strip-keep')) return null;
+    if (isColumn(host, btns) || btns.length < 2) return null;
+    host._vpStrip = true;
+    if (!document.getElementById('vp-strip-css')) { var st = document.createElement('style'); st.id = 'vp-strip-css';
+      st.textContent = 'body.vp-has-strip-menu{padding-left:var(--lhm-width,184px)!important;box-sizing:border-box}'
+        + '.vp-menu.vp-strip-menu{position:fixed;left:0;top:0;bottom:0;z-index:40;box-sizing:border-box}'
+        + '.vp-strip-menu .vp-sm-hd{font-size:9px;letter-spacing:.09em;text-transform:uppercase;font-weight:600;color:var(--dim2,var(--t3,#6b7280));padding:6px 10px 8px}'
+        + 'body.vp-has-strip-menu .vp-strip-tab{display:none!important}'
+        + 'html.vpb-nav-hosted body.vp-has-strip-menu{padding-left:0!important}html.vpb-nav-hosted .vp-strip-menu{display:none!important}'
+        + 'html.vpb-nav-hosted body.vp-has-strip-menu .vp-strip-tab{display:revert!important}';
+      (document.head || document.documentElement).appendChild(st); }
+    var col = document.createElement('nav'); col.className = 'vp-menu vp-strip-menu'; col.setAttribute('aria-label', 'Menu'); col.setAttribute('data-w', 'menu · column');
+    var hd = document.createElement('div'); hd.className = 'vp-sm-hd'; hd.textContent = String(document.title || '').replace(/^\s*Vera\s*[—–\-·|:]\s*/i, '').trim() || 'Menu'; col.appendChild(hd);
+    var mine = [];
+    items.forEach(function (it, i) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'nav-btn';
+      var gl = document.createElement('span'); gl.className = 'gl';
+      if (it.icon_svg) gl.innerHTML = it.icon_svg; else gl.textContent = it.icon || '';
+      b.appendChild(gl); b.appendChild(document.createTextNode(it.label));
+      b.title = it.desc ? it.label + ' — ' + it.desc : it.label;
+      if (it.desc) b.setAttribute('data-desc', it.desc); if (it.desc_long) b.setAttribute('data-desc-long', it.desc_long);
+      b.addEventListener('click', function () { try { btns[i].click(); } catch (e) {} setTimeout(lit, 30); });
+      col.appendChild(b); mine.push({ b: b, gl: gl, it: it });
+      try { btns[i].classList.add('vp-strip-tab'); } catch (e) {}
+    });
+    function lit() { mine.forEach(function (m, i) { var on = btns[i].classList.contains('active') || btns[i].classList.contains('on') || btns[i].getAttribute('aria-selected') === 'true';
+      m.b.classList.toggle('active', !!on); }); }
+    /* an item with no mark of its own takes the glyph its name maps to - the one table the harness's menu uses (no letters) */
+    function glyphs() { if (!window.VeraLHM || !VeraLHM.glyphFor) return; mine.forEach(function (m) { if (!m.gl.textContent && !m.gl.firstElementChild) { try { m.gl.textContent = VeraLHM.glyphFor(m.it.label) || ''; } catch (e) {} } }); }
+    if (window.VeraLHM) glyphs(); else { var s = document.createElement('script'); s.src = '/ui/vera-lhm.js'; s.onload = glyphs; (document.head || document.documentElement).appendChild(s); }
+    document.body.insertBefore(col, document.body.firstChild);
+    document.body.classList.add('vp-has-strip-menu');
+    lit(); var mo = new MutationObserver(lit);
+    Array.prototype.forEach.call(btns, function (b) { mo.observe(b, { attributes: true, attributeFilter: ['class', 'aria-selected'] }); });
+    initMenuLook();
+    return col;
+  }
+
+  /* ── 3b. THE MENU'S WIDGETS ON THE PANEL'S OWN MENU (owner, 2026-10-03, the LHM audit: "sub/internal LHMs editable, with
+     widgets like the chat UI"; 2026-10-04: "go ahead on 3/4"). The harness's docked menu took widgets (✎, + Add widget, the
+     chat's widget sheet); the panel opened on its own showed none and could not take any. The same lists, from the same
+     store (/ui/lhm/widgets, per panel and per menu), under the open item's menu - 'i:<item id>', or 'g:<group>' when the
+     menu has groups, the names the docked menu uses - with the same ✎. Docked, the harness draws them and this steps aside. */
+  function initMenuWidgets(host, btns, idOf, groupOf, items) {
+    if (!host || host._vpMw || !window.fetch) return;
+    /* a menu that is a column (the canonical sidebar, a .vp-menu column, an aside) - never a tab strip across the page */
+    if (!(host.classList.contains('vp-strip-menu') || isColumn(host, btns))) return;
+    host._vpMw = true;
+    var grouped = (function () { var g = {}; items.forEach(function (it) { if (it.group) g[it.group] = 1; }); return Object.keys(g).length >= 2; })();
+    var path = location.pathname, panel = '', store = null, editing = false, elAsked = false;
+    if (!document.getElementById('vp-mw-css')) { var st = document.createElement('style'); st.id = 'vp-mw-css';
+      st.textContent = '.vp-mw{display:flex;flex-direction:column;gap:8px;margin:10px 6px 6px;padding-top:8px;border-top:1px solid var(--border,var(--bd,rgba(255,255,255,.09)))}'
+        + '.vp-mw-h{display:flex;align-items:center;gap:6px;font-size:9px;letter-spacing:.09em;text-transform:uppercase;font-weight:600;color:var(--dim2,var(--t3,#6b7280))}'
+        + '.vp-mw-h span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}.vp-mw-h button{white-space:nowrap;flex:0 0 auto;background:transparent;border:1px solid transparent;border-radius:var(--r-sm,4px);color:inherit;font:inherit;font-size:11px;letter-spacing:0;text-transform:none;padding:1px 6px;cursor:pointer}'
+        + '.vp-mw-h button:hover,.vp-mw-h button.on{color:var(--acc,var(--ac,#5a9e8f));border-color:currentColor}'
+        + '.vp-mw.empty:not(.editing) .vp-mw-h span{visibility:hidden}.vp-mw.empty:not(.editing){border-top-color:transparent;opacity:.55}'
+        + '.vp-mw-w{position:relative}.vp-mw-w vera-widget{display:block}'
+        + '.vp-mw-rm{position:absolute;top:4px;right:4px;z-index:2;background:var(--bg2,var(--s2,#1a1f26));border:1px solid var(--border2,var(--bd2,#444));border-radius:4px;color:var(--text,var(--t1,#ddd));font-size:10px;line-height:1;padding:3px 5px;cursor:pointer}'
+        + '.vp-cta{margin:6px 6px 8px;padding:7px 10px;border:1px solid var(--border,var(--bd,rgba(255,255,255,.12)));border-radius:var(--r-sm,6px);background:var(--bg2,var(--s2,#1a1f26));color:var(--text,var(--t1,#ddd));font:inherit;font-size:11px;text-align:left;cursor:pointer}'
+        + '.vp-cta:hover{border-color:var(--acc,var(--ac,#5a9e8f));color:var(--acc,var(--ac,#5a9e8f))}.vp-cta[hidden]{display:none}'
+        + 'html.vpb-nav-hosted .vp-mw,body.lhm-collapsed .vp-mw,html.vpb-nav-hosted .vp-cta,body.lhm-collapsed .vp-cta{display:none!important}';
+      (document.head || document.documentElement).appendChild(st); }
+    var box = document.createElement('div'); box.className = 'vp-mw'; box.setAttribute('data-w', 'menu widgets · host');
+    host.appendChild(box);
+    /* the menu's primary action under its widgets, as the chat's menus end: the panel's [data-lhm-cta] for the open item
+       (="<item id>"), else its one for every menu (=""); pressing it presses the panel's own */
+    var cta = document.createElement('button'); cta.type = 'button'; cta.className = 'vp-cta'; cta.setAttribute('data-w', 'cta · button'); host.appendChild(cta);
+    function ctaFor() { var b = active(), id = b ? String(idOf(b)) : '', els = Array.prototype.slice.call(document.querySelectorAll('[data-lhm-cta]'));
+      return els.filter(function (e) { return e.getAttribute('data-lhm-cta') === id && id; })[0] || els.filter(function (e) { return !e.getAttribute('data-lhm-cta'); })[0] || null; }
+    function drawCta() { var e = ctaFor(); cta.hidden = !e; if (!e) return; cta.textContent = (e.getAttribute('data-label') || e.textContent || e.title || 'Go').replace(/\s+/g, ' ').trim().slice(0, 40);
+      cta.title = e.getAttribute('data-desc') || e.title || ''; cta.onclick = function () { e.click(); }; }
+    drawCta(); var ctaMo = new MutationObserver(drawCta); Array.prototype.forEach.call(btns, function (b) { ctaMo.observe(b, { attributes: true, attributeFilter: ['class'] }); });
+    function active() { for (var i = 0; i < btns.length; i++) if (btns[i].classList.contains('active') || btns[i].classList.contains('on')) return btns[i]; return btns[0] || null; }
+    function menuKey() { var b = active(); if (!b) return ''; return grouped ? 'g:' + (groupOf(b) || 'More').slice(0, 80) : 'i:' + String(idOf(b)).slice(0, 80); }
+    function defaults() { var b0 = active(), el = (b0 && b0.hasAttribute('data-lhm-widgets')) ? b0 : document.querySelector('[data-lhm-widgets]:not(.nav-btn)'); if (!el) return [];
+      return String(el.getAttribute('data-lhm-widgets') || '').split(/[\s,]+/).filter(function (x) { return /^[\w.:-]+(@(xs|s|m|l|xl))?$/.test(x); }).slice(0, 8)
+        .map(function (x) { var p = x.split('@'); return { template_id: p[0], size: p[1] || 's' }; }); }
+    function list() { var k = menuKey(); return (store && Object.prototype.hasOwnProperty.call(store, k)) ? store[k].slice() : defaults(); }
+    function save(l) { var k = menuKey(); if (!k) return; store = store || {}; store[k] = l;
+      fetch('/ui/lhm/widgets/set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ panel: panel, path: path, menu: k, widgets: l }) }).catch(function () {}); }
+    /* the widget element and its sheet (widget_element.js), loaded the first time a widget is drawn or added */
+    function withEl(cb) {
+      if (window.customElements && customElements.get('vera-widget') && window.VeraWidgetConfig) return cb();
+      var sc = document.querySelector('script[src*="widget_element.js"]');
+      if (!sc && !elAsked) { elAsked = true; sc = document.createElement('script'); sc.src = '/ui/widgets/widget_element.js'; (document.head || document.documentElement).appendChild(sc); }
+      var n = 0; (function wait() { if (window.customElements && customElements.get('vera-widget')) return cb(); if (++n < 50) setTimeout(wait, 100); })();
+    }
+    function draw() {
+      var l = list(); box.innerHTML = ''; box.classList.toggle('empty', !l.length); box.classList.toggle('editing', editing);
+      var h = document.createElement('div'); h.className = 'vp-mw-h'; var lab = document.createElement('span'); lab.textContent = 'Widgets'; h.appendChild(lab);
+      if (editing) { var add = document.createElement('button'); add.type = 'button'; add.textContent = '+ Add widget'; add.title = 'Any widget form, a template of yours - with a preview';
+        add.addEventListener('click', function () { withEl(function () { var S = window.VeraWidgetConfig; if (!S || !S.open) return;
+          try { Promise.resolve(S.open({ mode: 'add', into: 'side', title: 'Add to this menu', templates: true, sizes: ['xs', 's', 'm'] })).then(function (rec) { if (!rec) return; var l2 = list(); l2.push(rec); save(l2); draw(); }).catch(function () {}); } catch (e) {} }); });
+        h.appendChild(add); }
+      var ed = document.createElement('button'); ed.type = 'button'; ed.className = editing ? 'on' : ''; ed.textContent = editing ? '✓ Done' : '✎';
+      ed.title = editing ? 'Leave edit mode (what you changed stays)' : 'Edit this menu - add widgets to it, as the chat\'s menus take them';
+      ed.addEventListener('click', function () { editing = !editing; draw(); }); h.appendChild(ed); box.appendChild(h);
+      if (!l.length) return;
+      withEl(function () {
+        l.forEach(function (rec, i) {
+          var w = document.createElement('div'); w.className = 'vp-mw-w'; w.setAttribute('data-w', (rec.title || rec.template_id || rec.form || 'widget') + ' · widget');
+          var vw = document.createElement('vera-widget');
+          if (rec.template_id) { vw.setAttribute('template-id', rec.template_id); vw.setAttribute('size', rec.size || 's'); }
+          else { try { vw.setAttribute('record', JSON.stringify(rec)); } catch (e) {} vw.setAttribute('size', (rec.frame && rec.frame.size) || 's'); }
+          vw.setAttribute('item-drawer', ''); w.appendChild(vw);
+          if (editing) { var rm = document.createElement('button'); rm.type = 'button'; rm.className = 'vp-mw-rm'; rm.textContent = '✕'; rm.title = 'Take it out of this menu';
+            rm.addEventListener('click', function () { var l3 = list(); l3.splice(i, 1); save(l3); draw(); }); w.appendChild(rm); }
+          box.appendChild(w);
+        });
+      });
+    }
+    function drop() { if (box.parentNode) box.parentNode.removeChild(box); }
+    fetch('/ui/lhm/widgets?path=' + encodeURIComponent(path)).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) { drop(); return; } panel = d.panel || ''; store = d.menus || {}; draw();
+      var key = menuKey(), mo = new MutationObserver(function () { var k = menuKey(); if (k !== key) { key = k; draw(); } });
+      Array.prototype.forEach.call(btns, function (b) { mo.observe(b, { attributes: true, attributeFilter: ['class'] }); });
+    }).catch(drop);
+  }
+
+  /* ── 4. ONE LOOK FOR A MENU THAT IS NOT THE CANONICAL SIDEBAR (owner, 2026-10-03: "each panel use a common lhm styling
+     that matches the lhm of the harness"). A page whose menu cannot be the canonical <aside id="sidebar"> (its own
+     #sidebar already holds a list, its views are a column beside the page) marks it class="vp-menu" - a column - or
+     "vp-menu inline" - a block heading a column - and gets the canonical item look from here, without vera-panel.css's
+     page-wide rules (.chip, .opt, .field ...). The values are the canonical sidebar's (vera-panel.css #sidebar[data-vera-lhm]
+     .nav-btn; test_lhm_shared_menu_look keeps them equal); colours fall back through the names the page's own theme uses. */
+  var VPM_BG1 = 'var(--bg1, var(--s1, #16181d))', VPM_BG2 = 'var(--bg2, var(--s2, #1a1f26))',
+      VPM_BD = 'var(--border, var(--line, var(--bd, rgba(255,255,255,.09))))', VPM_BD2 = 'var(--border2, var(--bd2, var(--line, rgba(255,255,255,.16))))',
+      VPM_FG2 = 'var(--fg2, var(--dim2, var(--t2, var(--fg-dim, #9aa3ad))))', VPM_FG = 'var(--fg, var(--text, var(--t1, #d8dde3)))',
+      VPM_ACC = 'var(--acc, var(--accent, var(--ac, #5a9e8f)))';
+  function initMenuLook() {
+    if (!document.querySelector('.vp-menu') || document.getElementById('vp-menu-css')) return;
+    var st = document.createElement('style'); st.id = 'vp-menu-css';
+    st.textContent =
+      '.vp-menu{width:var(--lhm-width,184px);flex-shrink:0;display:flex;flex-direction:column;padding:8px 6px;overflow-y:auto;background:' + VPM_BG1 + ';border-right:1px solid ' + VPM_BD + '}' +
+      '.vp-menu.inline{width:auto;border-right:none;border-bottom:1px solid ' + VPM_BD + ';overflow:visible}' +
+      '.vp-menu .nav-btn{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;background:transparent;border:1px solid transparent;color:' + VPM_FG2 + ';border-radius:var(--ui-radius,5px);font:inherit;font-size:11px;cursor:pointer;text-align:left;margin-bottom:2px;white-space:nowrap;overflow:hidden;transition:background .12s,color .12s,border-color .12s}' +
+      '.vp-menu .nav-btn:hover{background:' + VPM_BG2 + ';color:' + VPM_FG + '}' +
+      '.vp-menu .nav-btn.active,.vp-menu .nav-btn.on{background:' + VPM_BG2 + ';border-color:' + VPM_BD2 + ';color:' + VPM_ACC + '}' +
+      '.vp-menu .nav-btn svg{width:14px;height:14px;flex-shrink:0;opacity:.82}.vp-menu .nav-btn.active svg{opacity:1}' +
+      '.vp-menu .nav-btn .gl{width:15px;flex-shrink:0;text-align:center;opacity:.85;font-size:13px}' +
+      'html.vpb-nav-hosted .vp-menu{display:none!important}';   // docked: the harness draws this menu
+    (document.head || document.documentElement).appendChild(st);
+  }
+
+  function init() { initMenuLook(); initCollapse(); initSections(); initNavBridge(); }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

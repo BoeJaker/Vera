@@ -82,9 +82,9 @@
 <body>
 <div class="wrap">
   <div class="tabs" data-vera-lhm>
-    <div class="tab on" data-v="scan" data-label="Scan" data-icon="⚑" onclick="P.tab('scan')">⚑ Scan <span class="b" id="tb-scan">–</span></div>
-    <div class="tab" data-v="stalls" data-label="Loop stalls" data-icon="⏱" onclick="P.tab('stalls')">⏱ Loop Stalls <span class="b" id="tb-stalls">0</span></div>
-    <div class="tab" data-v="logs" data-label="Logs" data-icon="▤" onclick="P.tab('logs')">▤ Logs</div>
+    <div data-label="Scan" data-desc="Scan the stack for problems" data-desc-long="Scan for issues: check the stack for performance and health problems (auto every 30 s); the badge counts findings." class="tab on" data-v="scan" data-icon="⚑" onclick="P.tab('scan')">⚑ Scan <span class="b" id="tb-scan">–</span></div>
+    <div data-label="Loop stalls" data-desc="Event-loop stalls" data-desc-long="Event-loop stalls: each blocks every WebSocket; 'hang' rows carry the blocking call's stack. The badge counts them." class="tab" data-v="stalls" data-icon="⏱" onclick="P.tab('stalls')">⏱ Loop Stalls <span class="b" id="tb-stalls">0</span></div>
+    <div data-label="Logs" data-desc="The live log" data-desc-long="The live log (ring buffer), copyable." class="tab" data-v="logs" data-icon="▤" onclick="P.tab('logs')">▤ Logs</div>
   </div>
   <div class="body">
     <!-- SCAN -->

@@ -89,13 +89,14 @@
   // board's captions too (the motion and iso forms land in the next slices)
   // a form id the catalogue names but this file does not draw in its own right resolves to the nearest face; the board's
   // captions and the WidgetConfig board's own ids too
-  const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', form: 'kv', rate: 'counter',
+  // (form is drawn by R.form now - it falls back to the kv face when it has no draw.fields, so it is no longer an alias)
+  const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', rate: 'counter',
                   iso: 'table', controls: 'pills', button: 'string', header: 'string', galaxy: 'context_graph', battery: 'level', tablei: 'table', checks: 'checklist',
                   memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines', cores: 'cellmap', 'core-matrix': 'cellmap', 'status-matrix': 'cellmap', cpumap: 'cellmap' };
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
                   stack: 'items', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', globe: 'points',
-                  calendar: 'calendar', string: 'string', kv: 'values', pipes: 'graph', context_graph: 'graph', structgraph: 'graph', scatter: 'points', panel: 'panel', composite: 'composite',
+                  calendar: 'calendar', string: 'string', kv: 'values', form: 'values', pipes: 'graph', context_graph: 'graph', structgraph: 'graph', scatter: 'points', panel: 'panel', composite: 'composite',
                   // the Widgets board's still forms, drawn in their own right
                   feed: 'events', gallery: 'items', terminal: 'string', agenda: 'calendar', people: 'items', links: 'items', announcement: 'string', board: 'items', hero: 'level', gauge: 'level', carousel: 'items',
                   'small-multiples': 'series', ring: 'level', area: 'series', histogram: 'values', waterfall: 'values', treemap: 'parts', radar: 'values', gantt: 'stages', flow: 'graph', bullet: 'values',
@@ -158,7 +159,7 @@
       if ((form === 'pipes' || form === 'context_graph') && Array.isArray(x.nodes)) return x;
       if (form === 'globe' && ['points', 'pins', 'hosts', 'events', 'nodes', 'items', 'rows'].some((k) => Array.isArray(x[k]))) return x;   // the globe reads its record whole: the points AND the links, the night, the page size
       if (form === 'stepper' && (Array.isArray(x.stages) || Array.isArray(x.steps))) return x;
-      const ks = Object.keys(x); if ((form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'stack') && ks.length >= 2 && ks.every((k) => typeof x[k] === 'number')) return x;
+      const ks = Object.keys(x); if ((form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'form' || form === 'stack') && ks.length >= 2 && ks.every((k) => typeof x[k] === 'number')) return x;
       for (const k of ['data', 'result', 'items', 'rows', 'points', 'series', 'history', 'values', 'entries', 'results']) if (x[k] != null) { const f = formByShape(x[k], depth + 1); if (f) return dataFor(x[k], form, depth + 1); }
       for (const k of ['data', 'result', 'items', 'rows', 'points', 'series', 'history', 'values', 'entries', 'results']) if (Array.isArray(x[k]) && !x[k].length) return x[k];   // an empty read is empty, not an envelope to list
       if (/^(items|events|stages)$/.test(DRAWN[form] || '')) { const la = ks.filter((k) => Array.isArray(x[k])); if (la.length === 1) return dataFor(x[la[0]], form, depth + 1); }   // a list form reads the answer's one list, whatever it is called ({todos, count})
@@ -308,7 +309,9 @@
     diff: () => ({ diff: 'diff --git a/vera/gate.py b/vera/gate.py\n--- a/vera/gate.py\n+++ b/vera/gate.py\n@@ -12,3 +12,4 @@ def acquire():\n-    wait = 5\n+    wait = 2\n+    log.info("lease")\n     return lease' }),
     code: () => ({ path: 'vera/gate.py', code: 'def acquire(node):\n    lease = gate.take(node)\n    return lease\n' }),
     progress: () => ({ steps: [{ name: 'recall', status: 'done', elapsed_s: 1.2 }, { name: 'read', status: 'done', elapsed_s: 3.4 }, { name: 'author', status: 'running' }, { name: 'verify', status: 'waiting' }] }),
-    status: () => ({ status: 'degraded', message: '1 of 4 checks needs a look', checks: [{ name: 'redis', status: 'ok' }, { name: 'neo4j', status: 'ok' }, { name: 'gate', status: 'warn' }, { name: 'ct126', status: 'ok' }] }),
+    /* neutral (owner, 2026-10-03): the sample a status tile shows while its first reading is on its way said "Degraded ·
+       gate warn" - an alarm nothing had raised. It says it is checking, every check grey */
+    status: () => ({ status: 'checking', message: 'waiting for the first reading', checks: [{ name: 'redis', status: '' }, { name: 'postgres', status: '' }, { name: 'chroma', status: '' }, { name: 'neo4j', status: '' }] }),
     media: () => ({ url: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiPjxyZWN0IHdpZHRoPSIxNjAiIGhlaWdodD0iOTAiIGZpbGw9IiMyMjI2MzAiLz48Y2lyY2xlIGN4PSI4MCIgY3k9IjQ1IiByPSIyNCIgZmlsbD0iIzZlYThkOCIvPjwvc3ZnPg==', title: 'a drawing' }),
     error: () => ({ ok: false, error: 'ct130 did not answer in 25 s', detail: 'ConnectTimeout: 192.168.0.130:11435' }),
     month: () => { const t = new Date(), k = (n, h) => ymdOf(addDays(t, n)) + (h ? 'T' + h + ':00' : ''); return { events: [[0, '09:00', '10:00', 'digest', '#6ea8d8'], [0, '14:00', '15:30', 'loop v7 · step 5', '#a78bfa'], [1, '11:30', '12:00', 'sweep · fabric', '#5ec9a0'], [3, '', '', 'benchmark', '#e09a55'], [-2, '16:00', '17:00', 'review', '#e07a9a'], [6, '09:00', '09:30', 'digest', '#6ea8d8']].map((r, i) => ({ id: 's' + i, title: r[3], start: r[1] ? k(r[0], r[1]) : k(r[0]), end: r[2] ? k(r[0], r[2]) : k(r[0] + 1), all_day: !r[1], color: r[4], location: i === 1 ? 'the lab' : '' })) }; },
@@ -466,7 +469,7 @@
     if (form === 'lines') { const ls = linesOf(d); return ls.length ? ls.slice(0, 2).map((s) => (s.n ? esc(s.n) + ' ' : '') + fmt(s.pts[s.pts.length - 1].v)).join(' · ') : ''; }   /* the first two series' latest */
     if (DRAWN[form] === 'level') { const l = level(d); if (!l) return ''; const u = l.unit || ((l.bounded && form !== 'counter' && form !== 'hero' && l.lo === 0 && l.hi === 100) ? '%' : ''); return fmt(l.v) + (u && u !== '%' ? ' ' : '') + esc(u); }
     if (form === 'trace' || form === 'scatter') { const s = series(d); return s.length ? fmt(s[s.length - 1]) : ''; }
-    if (form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'stack' || form === 'matrix') { const kv = keyed(d); return kv.length ? kv.length + ' · ' + esc(kv[0][0]) + ' ' + fmt(kv[0][1]) : ''; }
+    if (form === 'thermo' || form === 'heat' || form === 'bars' || form === 'donut' || form === 'pills' || form === 'kv' || form === 'form' || form === 'stack' || form === 'matrix') { const kv = keyed(d); return kv.length ? kv.length + ' · ' + esc(kv[0][0]) + ' ' + fmt(kv[0][1]) : ''; }
     if (form === 'stepper') { const st = (d.stages || d.steps || d); const arr = Array.isArray(st) ? st : []; const done = arr.filter((s) => s && (s.done || s.state === 'done' || s.status === 'done')).length; return arr.length ? done + ' / ' + arr.length : ''; }
     if (form === 'string') return esc(String(typeof d === 'string' ? d : (d.text ?? d.value ?? d.title ?? '')).slice(0, 24));
     // a structured graph at sticker size: what it found, which is the only thing that fits
@@ -642,6 +645,32 @@
     const rh = Math.round(15 * ((o2 && o2.textK) || 1)) + 2;   /* a pair's height at the page's text size (14 px assumed a text size the dashboard no longer uses) */
     const n = Math.max(1, Math.min((o2 && o2.draw && o2.draw.limit) || 12, Math.floor(((H || 70) - 2 - (all.length > 2 ? rh : 0)) / rh))); const ks = all.slice(0, n);   // the pairs that fit, a line kept for '+ N more'
     return '<div class="vw-log vw-kv">' + ks.map((k) => '<div><span class="k">' + esc(k) + '</span><span>' + esc(String(o[k])) + '</span></div>').join('') + (all.length > n ? '<div class="more">+ ' + (all.length - n) + ' more</div>' : '') + '</div>';
+  };
+  /* A FORM THAT SAVES (owner, 2026-10-04: set up agents from the chat's menu with "a reusable writable form", the first
+     piece of the modular UI). draw.fields [{key, label, type: text|textarea|number|bool|select|list, options, rows,
+     help}] are drawn over the record the source read (agent.get → the agent); what is typed is kept on the element
+     (ui._edits, never re-read over); Save sends ONLY what changed through draw.save {cap, args, from: {arg: path in the
+     record}, edits_as: 'fields' | '' (spread), label}. A form can save only through a capability on FORM_WRITES - a
+     record placed by a model can never turn Save into anything else (the catalogue refuses it too: widget_record).
+     Without draw.fields the form shows its values, as it did before. */
+  const FORM_WRITES = new Set(['agent.patch', 'agent.create']);
+  R.form = (d, H, o) => {
+    const dr = (o && o.draw) || {}; const fields = Array.isArray(dr.fields) ? dr.fields.filter((f) => f && f.key) : [];
+    if (!fields.length) return R.kv(d, H, o);
+    const src = (d && typeof d === 'object' && !Array.isArray(d)) ? d : {}, ed = (o && o.ui && o.ui._edits) || {};
+    const val = (f) => (Object.prototype.hasOwnProperty.call(ed, f.key) ? ed[f.key] : pick(src, f.key));
+    const row = (f) => {
+      const k = esc(f.key), t = f.type || 'text', v = val(f); let input;
+      if (t === 'textarea') input = '<textarea data-vf="' + k + '" rows="' + Math.max(2, Math.min(16, +f.rows || 4)) + '">' + esc(v == null ? '' : String(v)) + '</textarea>';
+      else if (t === 'bool') input = '<input type="checkbox" data-vf="' + k + '" data-vft="bool"' + (v === true || v === 'true' ? ' checked' : '') + '>';
+      else if (t === 'select') input = '<select data-vf="' + k + '">' + (Array.isArray(f.options) ? f.options : []).map((x) => { const ov = (x && typeof x === 'object') ? x.value : x, ol = (x && typeof x === 'object') ? (x.label || x.value) : x; return '<option value="' + esc(ov) + '"' + (String(ov) === String(v == null ? '' : v) ? ' selected' : '') + '>' + esc(ol) + '</option>'; }).join('') + '</select>';
+      else if (t === 'list') input = '<input type="text" data-vf="' + k + '" data-vft="list" value="' + esc(Array.isArray(v) ? v.join(', ') : (v == null ? '' : v)) + '">';
+      else input = '<input type="' + (t === 'number' ? 'number' : 'text') + '" data-vf="' + k + '"' + (t === 'number' ? ' data-vft="number" step="any"' : '') + ' value="' + esc(v == null ? '' : String(v)) + '">';
+      return '<label class="vw-fm-row' + (t === 'bool' ? ' vw-fm-bool' : '') + (Object.prototype.hasOwnProperty.call(ed, f.key) ? ' dirty' : '') + '"><span class="vw-fm-l">' + esc(f.label || f.key) + '</span>' + input + (f.help ? '<small>' + esc(f.help) + '</small>' : '') + '</label>';
+    };
+    const n = Object.keys(ed).length, st = (o && o.ui && o.ui._fmStatus) || (n ? n + ' changed' : '');
+    const foot = (dr.save && dr.save.cap) ? '<div class="vw-fm-foot"><span class="vw-fm-st" data-vf-status>' + esc(st) + '</span><button type="button" class="vw-fm-save" data-vf-save' + (n ? '' : ' disabled') + '>' + esc(dr.save.label || 'Save') + '</button></div>' : '';
+    return '<div class="vw-fm">' + fields.map(row).join('') + foot + '</div>';
   };
   R.scatter = (d, H) => {
     const pts = rows(d).map((p) => [num(p.x ?? p.t ?? p[0]), num(p.y ?? p.v ?? p.value ?? p[1]), num(p.size ?? p.r ?? 3)]); if (pts.length < 2) return EMPTY('a scatter needs points');
@@ -1465,25 +1494,52 @@
      per thing - a core, a thread, a cpu - in groups (a host, a NUMA node), coloured by the lens the viewer picks in the tile. Two
      shapes: hosts [{label, <dict>: {key: value}}] (obs.node_temps: percpu loads, "Core N" temperatures) and a cpu map
      {topology: {cpus, numa_nodes}, guests: [{name, status, cpus, flags}]} (pxstore.cpu.map: pinning, NUMA nodes, guests that
-     span them). A lens a shape cannot fill is not offered; draw.lenses narrows the list; draw.lens is the first shown. */
+     span them). A lens a shape cannot fill is not offered; draw.lenses narrows the list; draw.lens is the first shown.
+     A third shape, compute load {nodes: [{label, machine, cores: [{cpu, load}], gpus, same_machine}], hosts: [...]}
+     (estate.compute.load), becomes the first: one group per machine serving models (instances on one machine share a group),
+     then each Proxmox host's whole-host group; its GPUs fill the GPU util and VRAM lenses. */
   const CM_LENS = {
     load: { label: 'load', dict: 'percpu', match: /^cpu(\d+)$/i, unit: '%', warn: 60, bad: 85 },
+    /* (2026-10-02) a container's cores with the host's temperature for that physical core and the host's whole load
+       on it, mapped through the Proxmox pinning (estate.compute.load) */
+    ctemp: { label: 'core °C', dict: 'cputemp', match: /^cpu(\d+)$/i, unit: '°C', warn: 70, bad: 85 },
+    hostload: { label: 'host load', dict: 'hostload', match: /^cpu(\d+)$/i, unit: '%', warn: 60, bad: 85 },
+    gpu: { label: 'GPU util', dict: 'gpuutil', match: /^gpu(\d+)$/i, unit: '%', warn: 60, bad: 85 },
+    vram: { label: 'VRAM', dict: 'gpuvram', match: /^gpu(\d+)$/i, unit: '%', warn: 75, bad: 92 },
     temp: { label: 'core °C', dict: 'temps', match: /^core\s*(\d+)$/i, unit: '°C', warn: 70, bad: 85 },
     pins: { label: 'pinned', cpumap: true },
     numa: { label: 'NUMA node', cpumap: true },
     span: { label: 'spans NUMA', cpumap: true },
   };
   const cmBand = (v, L) => v == null || !isFinite(v) ? B.s3 : v >= L.bad ? B.ac4 : v >= L.warn ? B.ac3 : mix(B.ac2, Math.round(30 + 60 * Math.max(0, Math.min(1, v / L.warn))));
+  /* estate.compute.load -> the hosts shape: cores [{cpu, load}] -> percpu, gpus -> gpuutil / gpuvram, an instance whose
+     machine an earlier one already drew folded into that group's name; every cell carries where it is (item.on) */
+  function cmCompute(d) {
+    const one = (h, label, on) => { const out = { label, _on: on, percpu: {}, cputemp: {}, hostload: {}, gpuutil: {}, gpuvram: {}, _cell: {} };
+      (h.cores || []).forEach((c) => { if (!c || c.cpu == null) return; const k = 'cpu' + c.cpu;
+        if (c.load != null) out.percpu[k] = c.load; if (c.temp != null) out.cputemp[k] = c.temp; if (c.host_load != null) out.hostload[k] = c.host_load;
+        const x = {}; if (c.temp != null) x['core °C'] = c.temp; if (c.host_load != null) x['host load %'] = c.host_load; if (c.shared_with && c.shared_with.length) x['shared with'] = c.shared_with.join(', ');
+        if (Object.keys(x).length) out._cell[k] = x; });
+      (h.gpus || []).forEach((g, i) => { if (!g) return; const k = 'gpu' + (g.index != null ? g.index : i); if (g.util_pct != null) out.gpuutil[k] = g.util_pct; if (num(g.total_mb) > 0) out.gpuvram[k] = Math.round(num(g.used_mb) / num(g.total_mb) * 1000) / 10; });
+      return out; };
+    const rows = [], seen = {};
+    (d.nodes || []).forEach((n) => { if (!n) return; const m = n.machine || {}, key = n.ip || n.id;
+      if (seen[key]) { seen[key].label += ' + ' + (n.label || n.id); return; }
+      const on = m.label ? (m.label + (m.vmid != null ? ' (CT ' + m.vmid + ')' : '') + (n.host ? ' on ' + n.host.label : '')) : (n.ip || '');
+      seen[key] = one(n, String(n.label || n.id), on); rows.push(seen[key]); });
+    (d.hosts || []).forEach((h) => { if (h) rows.push(one(h, String(h.label || h.ref) + ' · whole host', 'Proxmox host ' + (h.pve_node || ''))); });
+    return rows; }
   function cellmapOf(d, want, allow) {
     const isMap = !!(d && typeof d === 'object' && !Array.isArray(d) && d.topology && Array.isArray(d.topology.cpus));
-    const hostsArr = isMap ? [] : (Array.isArray(d) ? d : (d && Array.isArray(d.hosts) ? d.hosts : (d && Array.isArray(d.rows) ? d.rows : [])));
+    const isCompute = !isMap && !!(d && typeof d === 'object' && !Array.isArray(d) && Array.isArray(d.nodes) && d.nodes.some((n) => n && (Array.isArray(n.cores) || Array.isArray(n.gpus))));
+    const hostsArr = isMap ? [] : isCompute ? cmCompute(d) : (Array.isArray(d) ? d : (d && Array.isArray(d.hosts) ? d.hosts : (d && Array.isArray(d.rows) ? d.rows : [])));
     const ok = Object.keys(CM_LENS).filter((id) => (!allow || allow.includes(id)) && (CM_LENS[id].cpumap ? isMap : hostsArr.some((h) => h && h[CM_LENS[id].dict] && Object.keys(h[CM_LENS[id].dict]).some((k) => CM_LENS[id].match.test(k)))));
     const lens = ok.includes(want) ? want : ok[0]; if (!lens) return { lenses: ok, lens: '', groups: [] }; const L = CM_LENS[lens]; const groups = [];
     if (!isMap) {
       hostsArr.forEach((h) => { const dict = (h && h[L.dict]) || {}; const ks = Object.keys(dict).filter((k) => L.match.test(k)).sort((a, b) => +a.match(L.match)[1] - +b.match(L.match)[1]); if (!ks.length) return;
         const vals = ks.map((k) => num(dict[k])), peak = Math.max(...vals), mean = vals.reduce((a, b) => a + b, 0) / vals.length;
         groups.push({ name: String(h.label || h.name || h.host_id || 'host'), note: ks.length + ' · peak ' + fmt(Math.round(peak)) + L.unit + ' · mean ' + fmt(Math.round(mean)) + L.unit,
-          cells: ks.map((k, i) => ({ id: k, v: vals[i], col: cmBand(vals[i], L), item: { name: k, value: Math.round(vals[i] * 10) / 10, unit: L.unit, host: String(h.label || h.host_id || '') } })) }); });
+          cells: ks.map((k, i) => ({ id: k, v: vals[i], col: cmBand(vals[i], L), item: { name: k, value: Math.round(vals[i] * 10) / 10, unit: L.unit, host: String(h.label || h.host_id || ''), ...(h._on ? { on: h._on } : {}), ...((h._cell && h._cell[k]) || {}) } })) }); });
     } else {
       const numa = {}; Object.keys(d.topology.numa_nodes || {}).forEach((n) => (d.topology.numa_nodes[n] || []).forEach((c) => { numa[c] = +n; }));
       const on = {}, spans = {}; (d.guests || []).forEach((g) => { if (!g || !Array.isArray(g.cpus)) return; const run = String(g.status || '') === 'running';
@@ -1545,8 +1601,8 @@
     return wrap('stepper', stepr(st) + cap(st.map((s) => esc(nameOf(s))).join(' → ') + (now >= 0 ? ' · currently at ' + esc(nameOf(st[now])) : '')));
   };
   R.gantt = (d, H, o) => {
-    const st = stagesOf(d); if (!st.length) return EMPTY('a gantt needs rows with a start and a length'); const s0 = st.map((s) => num(s.start ?? s.x ?? s.from ?? 0)), s1 = st.map((s, i) => num(s.end ?? s.to ?? (s0[i] + num(s.duration ?? s.w ?? s.ms ?? s.len ?? 1)))); const lo = Math.min(...s0), hi = Math.max(...s1), sp = (hi - lo) || 1;
-    return wrap('gantt', st.slice(0, (o && o.draw && o.draw.rows) || 8).map((s, i) => '<span class="vb-gr"><span class="n">' + esc(nameOf(s)) + '</span><span class="track"><i style="left:' + ((s0[i] - lo) / sp * 100).toFixed(1) + '%;width:' + Math.max(1, (s1[i] - s0[i]) / sp * 100).toFixed(1) + '%;background:' + (s.col || (s.st === 'done' ? B.ac2 : s.st === 'now' ? B.ac : s.st === 'bad' ? B.ac4 : B.t3)) + '" title="' + esc(nameOf(s)) + ' · ' + fmt(s0[i]) + ' → ' + fmt(s1[i]) + '"></i></span></span>').join(''));
+    const st = stagesOf(d); if (!st.length) return EMPTY('a gantt needs rows with a start and a length'); /* draw.names: the name column's width in px (a turn's steps need more than a tile's 52) */ const nw = (o && o.draw && +o.draw.names) ? Math.max(40, Math.min(260, +o.draw.names, (o.width > 0 ? Math.floor(o.width * 0.45) : 260))) : 0; /* never more than 45% of a narrow widget: the bars must stay readable (a 330 px reply left them none) */ const s0 = st.map((s) => num(s.start ?? s.x ?? s.from ?? 0)), s1 = st.map((s, i) => num(s.end ?? s.to ?? (s0[i] + num(s.duration ?? s.w ?? s.ms ?? s.len ?? 1)))); const lo = Math.min(...s0), hi = Math.max(...s1), sp = (hi - lo) || 1;
+    return wrap('gantt', st.slice(0, (o && o.draw && o.draw.rows) || 8).map((s, i) => '<span class="vb-gr"><span class="n"' + (nw ? ' style="width:' + nw + 'px"' : '') + ' title="' + esc(nameOf(s)) + '">' + esc(nameOf(s)) + '</span><span class="track"><i style="left:' + ((s0[i] - lo) / sp * 100).toFixed(1) + '%;width:' + Math.max(1, (s1[i] - s0[i]) / sp * 100).toFixed(1) + '%;background:' + (s.col || (s.st === 'done' ? B.ac2 : s.st === 'now' ? B.ac : s.st === 'bad' ? B.ac4 : B.t3)) + '" title="' + esc(nameOf(s)) + ' · ' + fmt(s0[i]) + ' → ' + fmt(s1[i]) + '"></i></span></span>').join(''));
   };
   R.timeline = (d, H, o) => {
     const ev = evsOf(d).filter((r) => hhmm(r.when ?? r.t ?? r.ts ?? r.time).includes(':')); if (!ev.length) return EMPTY('a timeline needs timed events'); const mins = (t) => { const m = hhmm(t).match(/(\d{1,2}):(\d{2})/); return +m[1] * 60 + +m[2]; }; const ms = ev.map((r) => mins(r.when ?? r.t ?? r.ts ?? r.time)); const lo = Math.floor(Math.min(...ms) / 60) * 60, hi = Math.ceil((Math.max(...ms) + 1) / 60) * 60, sp = (hi - lo) || 1; const now = new Date().getHours() * 60 + new Date().getMinutes();
@@ -2138,6 +2194,7 @@
       19 string     a short text                                                  → string
      The python catalogue mirrors it (widget_cap_output.py, widget.from_result) so an agent can ask for the same answer. */
   const CAP_HINTS = {
+    'markets.chart': { form: 'candles', map: { bars: 'bars' } },   /* a symbol's candles (canvas enrichment, slice 5) */
     'sysmon.history': { form: 'trace', map: { series: 'samples', v: 'cpu' } }, 'sysmon.status': { form: 'numbers', map: { pick: { cpu: 'resources.cpu', memory: 'resources.mem', guests: 'proxmox.running', containers: 'docker.running' } } },
     'obs.events': { form: 'log', map: { events: '$', t: 'ts', kind: 'type', text: 'name' } }, 'ollama.request_log': { form: 'log', map: { events: 'entries', t: 'ts', kind: 'instance', text: 'model' } },
     'ollama.route_stats': { form: 'ranked', map: { values: 'stats', count: 'model', sum: 'n' } }, 'obs.node_temps': { form: 'temps', map: { values: 'hosts', name: 'label', value: 'max_c' } },
@@ -2345,7 +2402,7 @@
      The estate's own graph (window.veraUI.Graph, /ui/vera-graph.js, loaded the first time a vgraph draws) inside the
      tile: from the record's source (any answer with nodes and edges - a fabric snapshot, a memory graph read, a
      topology) or, with no source, from a layer the graph fetches itself (draw.layer: fabric · entity · memory), shown
-     in a display MODE (draw.mode: graph · exploded · estate-3d · estate-2d · mermaid - whatever veraUI.Graph.listModes()
+     in a display MODE (draw.mode: graph · exploded · ops-iso · ops-2d · estate-3d · estate-2d · mermaid - whatever veraUI.Graph.listModes()
      has registered). The graph lives in the element's light DOM (a slot), so the page's graph styles reach it, and it
      is kept across refreshes (a new answer is loaded into it only when its nodes or edges changed). Without the element
      (VeraWidget.draw alone) the slot shows the flat node graph as its fallback. */
@@ -2692,9 +2749,9 @@
      script is fetched once from /ui/elements/. At XS/S it says what it is. */
   const EL_SRC = { 'vera-git-graph': 'git_graph', 'vera-author-map': 'author_map', 'vera-node-workers': 'node_workers', 'vera-test-activity-timeline': 'test_activity_timeline', 'vera-error-radar': 'error_radar',
     'vera-branch-pipeline': 'branch_pipeline', 'vera-task-matrix': 'task_matrix', 'vera-bench-compare': 'bench_compare', 'vera-ollama-map': 'ollama_map', 'vera-ci-ops': 'ci_ops', 'vera-agent-loop-output': 'agent_loop_output',
-    'vera-live-event-stream': 'live_event_stream', 'vera-system-log': 'system_log' };
+    'vera-live-event-stream': 'live_event_stream', 'vera-system-log': 'system_log', 'vera-intel-timeline': 'intel_timeline' };
   const EL_NAME = { 'vera-git-graph': 'commit graph', 'vera-author-map': 'authorship', 'vera-node-workers': 'node workers', 'vera-test-activity-timeline': 'test activity', 'vera-error-radar': 'error radar', 'vera-branch-pipeline': 'branch pipeline', 'vera-task-matrix': 'task matrix', 'vera-bench-compare': 'bench compare', 'vera-ollama-map': 'routing map', 'vera-ci-ops': 'CI command centre',
-    'vera-live-event-stream': 'live event stream', 'vera-system-log': 'system log' };
+    'vera-live-event-stream': 'live event stream', 'vera-system-log': 'system log', 'vera-intel-timeline': 'intel timeline' };
   const elOf = (d, o) => { const dr = (o && o.draw) || (o && o.record && o.record.draw) || {}; const tag = String(dr.tag || (d && d.tag) || '').toLowerCase(); return { tag, attrs: dr.attrs || (d && d.attrs) || {} }; };
   R.element = (d, H, o) => { const e = elOf(d, o); if (!/^vera-[a-z0-9-]+$/.test(e.tag)) return wrap('element', '<div class="vb-el-pick"><b>A page element</b><span>draw.tag names it:</span>' + Object.keys(EL_NAME).map((t) => '<code>' + esc(t) + '</code><i>' + esc(EL_NAME[t]) + '</i>').join('') + '</div>');
     return wrap('element', '<div class="vb-el" style="height:' + Math.max(90, (H || 200) - 4) + 'px"><slot name="el"><span class="vb-lbl">' + esc(EL_NAME[e.tag] || e.tag) + '</span></slot></div>'); };
@@ -2920,7 +2977,7 @@
     + '[data-item]{cursor:pointer}';
 
   /* ── draw at a size: the composition around the form ─────────────────── */
-  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞', lines: '≋', cellmap: '▦' };
+  const GLYPH = { context_graph: '◎', trace: '∿', radial: '◔', counter: '123', bar: '▬', bars: '▥', thermo: '≣', heat: '▦', matrix: '▦', donut: '◑', stack: '▤', pills: '◦', log: '≡', lane: '≡', table: '▦', files: '⊞', list: '≡', checklist: '☑', stepper: '⋮', calendar: '▦', string: '¶', kv: '≔', form: '≔', pipes: '⌥', scatter: '⁘', panel: '▭', composite: '⊞', lines: '≋', cellmap: '▦' };
   // the glyph a size below M carries (the Sizes board): a ring for a level or a share, a spark for a series, a tube for
   // named values, a dot for events and graphs, the count glyph for the rest — drawn from the data, never a character
   function glyphOf(form, data) {
@@ -2946,7 +3003,8 @@
     const d = dataFor(data, f);
     // nothing to draw yet (no result, an empty one, or a placeholder string handed to a form that draws numbers): the
     // form's SAMPLE face, marked — never "no data yet" (opts.sample === false keeps the bare answer for a caller that asks)
-    if (f !== 'panel' && f !== 'composite' && f !== 'calnav' && f !== 'element' && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
+    const editing = f === 'form' && opts.draw && Array.isArray(opts.draw.fields) && opts.draw.fields.length;   // a form to fill in has a face of its own, empty or not
+    if (f !== 'panel' && f !== 'composite' && f !== 'calnav' && f !== 'element' && !editing && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
       if (opts.sample === false) { let own = ''; try { own = R[fi](d == null || typeof d === 'string' ? [] : d, H, Object.assign({ size: size }, opts)); } catch (_) { own = ''; } return (typeof own === 'string' && own) ? own : EMPTY('no data yet'); }
       return sampleFace(draw(f0, sample(f), size, Object.assign({}, opts, { sample: false, map: false })), size, opts.sampleTag);
     }
@@ -2955,10 +3013,10 @@
       return sampleFace(draw(f0, data, size, Object.assign({}, opts, { sample: false, record: Object.assign({}, opts.record || {}, sample('composite')) })), size, opts.sampleTag);
     }
     if (size === 'xs') return '<span class="vw-xs" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i>' + (figure(f, data) || '—') + '</span>';
-    if (size === 's' && !CI_FORMS.test(f) && (DRAWN[f] === 'items' || f === 'kv' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f, d, opts); if (cs) return cs; }
+    if (size === 's' && !CI_FORMS.test(f) && (DRAWN[f] === 'items' || f === 'kv' || f === 'form' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f === 'form' ? 'kv' : f, d, opts); if (cs) return cs; }
     if (size === 's' && f !== 'calnav') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
-    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || CI_FORMS.test(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|numbers|month|schedule|calnav|vgraph|cellmap)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
+    if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || CI_FORMS.test(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|form|numbers|month|schedule|calnav|vgraph|cellmap)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
     // L: the form plus its detail list beside it; XL: the form, its table, its log
     // the detail list beside the form holds the rows its body has room for (~16 px a row) - eight in a two-row tile ran
     // past its foot - and a form that already names every value it draws (ranked bars, pills, a number grid, a
@@ -3547,6 +3605,28 @@ span.vw-sampled{opacity:.85}
 
   /* ── the element ──────────────────────────────────────────────────────── */
   const ELEMENT_CSS = fontScale(`:host{display:block;color:var(--text,#d8dce4);font-family:var(--sans,system-ui,sans-serif);font-size:11px;min-width:0}
+/* scrollbars, minimal (owner, 2026-10-03: "lots of widgets have unstyled scroll bars"): a page's own scrollbar styling
+   never reaches into this shadow root, so every widget scrolled with the browser's default - thin and quiet here instead */
+*{scrollbar-width:thin;scrollbar-color:var(--bd2,var(--border2,rgba(255,255,255,.16))) transparent}
+/* the writable form (R.form): label over field, a quiet ground per field, Save at the foot */
+.vw-fm{display:flex;flex-direction:column;gap:7px;min-width:0}
+.vw-fm-row{display:flex;flex-direction:column;gap:3px;min-width:0}
+.vw-fm-row.vw-fm-bool{flex-direction:row;align-items:center;gap:7px}
+.vw-fm-l{font-size:9.5px;letter-spacing:.04em;color:var(--t3,var(--dim2,#8a92a0))}
+.vw-fm-row.dirty .vw-fm-l{color:var(--ac,var(--acc,#5a9e8f))}
+.vw-fm-row small{font-size:9px;color:var(--t3,var(--dim,#6b7280))}
+.vw-fm input[type=text],.vw-fm input[type=number],.vw-fm textarea,.vw-fm select{font:inherit;font-size:10.5px;color:var(--t1,var(--text,#d8dce4));background:var(--s2,var(--bg2,#1a1c20));border:1px solid var(--bd,var(--border,rgba(255,255,255,.09)));border-radius:var(--r-sm,5px);padding:4px 6px;min-width:0;width:100%;box-sizing:border-box}
+.vw-fm textarea{resize:vertical;font-family:var(--mono,ui-monospace,monospace);line-height:1.45}
+.vw-fm :is(input,textarea,select):focus{outline:none;border-color:var(--ac,var(--acc,#5a9e8f))}
+.vw-fm-foot{display:flex;align-items:center;gap:8px;position:sticky;bottom:0;padding-top:4px;background:inherit}
+.vw-fm-st{flex:1;font-size:9.5px;color:var(--t3,var(--dim2,#8a92a0))}
+.vw-fm-save{font:inherit;font-size:10px;padding:4px 12px;border:0;border-radius:var(--r-pill,99px);cursor:pointer;color:var(--on-ac,var(--on-acc,#fff));background:var(--ac,var(--acc,#5a9e8f))}
+.vw-fm-save[disabled]{opacity:.45;cursor:default}
+/* a form to fill in is as tall as its fields: the body's size containment (height only from its box) collapsed it to
+   nothing in a host with no fixed height - the chat menu's agent editor (2026-10-04) */
+.vw-root[data-form="form"]:has(.vw-fm){height:auto}
+.vw-root[data-form="form"] .vw-body:has(.vw-fm){display:block;flex:none;container-type:inline-size;overflow:visible}
+.vw-fit{overflow:hidden!important}
 :host([data-state="reading"]) .vw-sampled{opacity:.42;filter:saturate(.4)}
 [data-b],[data-tip]{transition:filter .14s ease,opacity .14s ease,stroke-width .14s ease}
 .vw-root.lit .vb-isow i.f[data-b]:not(.hot):not(.warm),.vw-root.lit .vw-arc:not(.hot){filter:brightness(.62) saturate(.7)}
@@ -3686,9 +3766,9 @@ span.vw-sampled{opacity:.85}
     + '.vw-tip{max-width:360px}.vw-tip .vw-tkv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:1px 10px;margin:4px 0 2px}.vw-tip .vw-tkv > i{font-style:normal;color:var(--t2,var(--dim2,#8a92a0));font-size:10.5px;white-space:nowrap}'
     + '.vw-tip .vw-tkv > u{text-decoration:none;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-tip .vw-tkv i.st{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:1px}'
     + '.vw-tip small{display:block;margin-top:5px;padding-top:4px;border-top:1px solid var(--bd,rgba(255,255,255,.08));font-size:9.5px;color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vw-tip a{color:inherit;text-decoration:none}'
-    + ':host{position:relative}.vw-as{position:absolute;top:4px;right:4px;z-index:6;opacity:0;transition:opacity .15s}:host(:hover) .vw-as,.vw-as.open{opacity:1}:host-context(.dash-grid.editing) .vw-as{display:none}'
+    + ':host{position:relative}.vw-as{position:absolute;top:4px;right:4px;z-index:6;opacity:.38;transition:opacity .15s}.vw-as:hover,.vw-as:focus-within,.vw-as.open{opacity:1}:host-context(.dash-grid.editing) .vw-as{display:none}'   /* the owner (2026-09-28): the view-as list appears only when the ⇄ is pressed, never on mouseover. It used to fade in on the widget's hover and sat at opacity 0 the rest of the time - still the topmost thing in the corner, so a click there opened the list unseen. Now the ⇄ is always faintly there and nothing changes on the widget's hover */
     + '.vw-as-b{all:unset;cursor:pointer;width:22px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;font-size:12px;color:var(--b-t2,#8a92a0);background:var(--b-s2,#1f232b);box-shadow:inset 0 0 0 1px var(--b-bd,rgba(255,255,255,.12))}.vw-as-b:hover{color:var(--b-ac,#6ea8d8)}'
-    + '.vw-as-m{position:fixed;z-index:2147483001;min-width:170px;display:flex;flex-direction:column;padding:4px;border-radius:8px;background:var(--b-s1,var(--s1,#15171c));box-shadow:0 10px 30px -10px rgba(0,0,0,.65),inset 0 0 0 1px var(--b-bd,rgba(255,255,255,.12))}'
+    + '.vw-as-m{position:fixed;z-index:2147483001;min-width:170px;display:flex;flex-direction:column;padding:4px;border-radius:8px;background:var(--b-s1,var(--s1,#15171c));box-shadow:0 10px 30px -10px rgba(0,0,0,.65),inset 0 0 0 1px var(--b-bd,rgba(255,255,255,.12))}.vw-as-m[hidden]{display:none}'   /* the owner (2026-10-02, Loop Lab): the list faded but never went, and stayed put while the page scrolled - its display:flex outranked the hidden attribute, so a "closed" list was still laid out at its fixed place, drawn at the ⇄'s idle opacity */
     + '.vw-as-m > small{padding:3px 8px 4px;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--b-t3,#6b7280)}.vw-as-m button{all:unset;cursor:pointer;display:flex;gap:8px;align-items:center;padding:4px 8px;border-radius:5px;font-size:11.5px;color:var(--b-t1,#d8dce4)}'
     + '.vw-as-m button:hover{background:var(--b-s2,#1f232b)}.vw-as-m button.on{color:var(--b-ac,#6ea8d8)}.vw-as-m button i{width:16px;height:14px;display:inline-flex;align-items:center;justify-content:center;font-style:normal;color:var(--b-t2,#8a92a0)}.vw-as-m button i svg{width:14px;height:14px}';
   const TIP_CSS_S = fontScale(TIP_CSS);
@@ -3896,7 +3976,11 @@ span.vw-sampled{opacity:.85}
     const common = (k, v) => { const n = share[k + '=' + v] || 0; return n > 3 && (n > rowsN * .3 || n > hits.length * .5); };
     return hits.map((h) => ({ path: h.path, row: h.row, via: h.via.filter((k) => !common(k, h.row[k])).map((k) => k + ' ' + h.row[k]) })).filter((h) => h.via.length)
       .sort((a, b2) => b2.via.length - a.via.length).slice(0, max); }
-  const DRAWER_CSS = '.vw-drawer{position:fixed;top:0;right:0;bottom:0;z-index:9400;width:min(460px,94vw);display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15171c));color:var(--t1,var(--text,#d8dce4));box-shadow:-18px 0 50px -20px rgba(0,0,0,.65),-1px 0 0 var(--bd2,rgba(255,255,255,.12));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:12px;animation:vw-drin .2s cubic-bezier(.2,.7,.2,1)}@keyframes vw-drin{from{transform:translateX(24px);opacity:0}}'
+  /* the owner (2026-09-28): "the details sidepanel that pops out is partially transparent on lots of pages". Its ground is
+     opaque on every page and style measured (alpha 1, blocks on and off, all four styles); what was not is its own opacity -
+     the slide-in faded it up from 0 and was caught at 0.98 and at 0 well after opening (an animation that does not tick
+     while its frame is not painted stays where it started). It slides in now without fading, so it is never see-through. */
+  const DRAWER_CSS = '.vw-drawer{position:fixed;top:0;right:0;bottom:0;z-index:9400;width:min(460px,94vw);display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15171c));color:var(--t1,var(--text,#d8dce4));box-shadow:-18px 0 50px -20px rgba(0,0,0,.65),-1px 0 0 var(--bd2,rgba(255,255,255,.12));font-family:var(--f-ui,var(--sans,system-ui,sans-serif));font-size:12px;animation:vw-drin .2s cubic-bezier(.2,.7,.2,1)}@keyframes vw-drin{from{transform:translateX(24px)}}'
     + '.vw-drawer header{display:flex;align-items:flex-start;gap:8px;padding:12px 14px 10px;border-bottom:1px solid var(--bd,rgba(255,255,255,.08))}.vw-drawer header .tt{flex:1;min-width:0}.vw-drawer header b{display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-drawer header small{display:block;font-family:var(--f-mono,var(--mono,monospace));font-size:10.5px;color:var(--t3,var(--dim,#6b7280));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
     + '.vw-drawer button{font:inherit;font-size:11.5px;color:inherit;background:var(--s2,var(--bg2,#1f232b));border:1px solid var(--bd2,rgba(255,255,255,.12));border-radius:6px;padding:4px 9px;cursor:pointer}.vw-drawer button:hover{border-color:var(--acc,#6ea8d8)}.vw-drawer button.x,.vw-drawer button.bk{padding:2px 8px}.vw-drawer button.pri{border-color:var(--acc,#6ea8d8);color:var(--acc,#6ea8d8)}'
     + '.vw-dr-acts{display:flex;flex-wrap:wrap;gap:6px;padding:8px 14px;border-bottom:1px solid var(--bd,rgba(255,255,255,.08))}.vw-dr-bd{flex:1;min-height:0;overflow:auto;padding:4px 14px 18px}'
@@ -3910,7 +3994,15 @@ span.vw-sampled{opacity:.85}
     + '.vw-dr-json summary::before{content:"\\25BE";display:inline-block;width:14px;margin-left:-14px;color:var(--t3,var(--dim,#6b7280))}.vw-dr-json details:not([open]) > summary::before{content:"\\25B8"}.vw-dr-json details:not([open]) > summary::after{content:" \\2026";color:var(--t3,var(--dim,#6b7280))}'
     + '.vw-dr-json i{font-style:normal}.vw-dr-json .k{color:var(--t1,var(--text,#d8dce4))}.vw-dr-json .s{color:var(--ok,#5fc49a)}.vw-dr-json .m{color:var(--acc,#6ea8d8)}.vw-dr-json .b{color:var(--warn,#f5b341)}.vw-dr-json .n,.vw-dr-json .p{color:var(--t3,var(--dim,#6b7280))}'
     + '.vw-dr-json .c{color:var(--t3,var(--dim,#6b7280));font-size:10px;margin-left:8px;font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}.vw-dr-json .t{font-size:9px;letter-spacing:.06em;text-transform:uppercase;margin-right:6px;padding:0 5px;border-radius:3px;color:var(--acc,#6ea8d8);box-shadow:inset 0 0 0 1px var(--acc,#6ea8d8)}'
-    + '.vw-dr-kv .vw-dr-json{padding:4px 6px 4px 18px;font-size:11px}.vw-dr-argl{margin:8px 0 4px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7280))}.vw-drawer button.on{border-color:var(--acc,#6ea8d8);color:var(--acc,#6ea8d8)}';
+    + '.vw-dr-kv .vw-dr-json{padding:4px 6px 4px 18px;font-size:11px}.vw-dr-argl{margin:8px 0 4px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7280))}.vw-drawer button.on{border-color:var(--acc,#6ea8d8);color:var(--acc,#6ea8d8)}'
+    + '.vw-dr-tree{display:flex;flex-direction:column;gap:6px;min-width:0}.vw-dr-sec{border-radius:7px;background:var(--s2,var(--bg2,#1f232b));box-shadow:inset 0 0 0 1px var(--bd,rgba(255,255,255,.06));min-width:0}'
+    + '.vw-dr-sec > summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:8px;padding:5px 9px;border-radius:7px}.vw-dr-sec > summary::-webkit-details-marker{display:none}.vw-dr-sec > summary:hover{background:var(--s3,rgba(255,255,255,.04))}'
+    + '.vw-dr-sec > summary::before{content:"\\25BE";color:var(--t3,var(--dim,#6b7280));width:10px}.vw-dr-sec:not([open]) > summary::before{content:"\\25B8"}.vw-dr-sec > summary b{font-weight:600;color:var(--t1,var(--text,#d8dce4))}'
+    + '.vw-dr-sec > .in{display:flex;flex-direction:column;gap:6px;padding:2px 9px 8px 19px;min-width:0}.vw-dr-tree .c{color:var(--t3,var(--dim,#6b7280));font-size:10.5px;font-style:normal}'
+    + '.vw-dr-tw{overflow:auto;max-height:340px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--bd,rgba(255,255,255,.06))}.vw-dr-tb{border-collapse:collapse;width:100%;font-size:11px}'
+    + '.vw-dr-tb th{position:sticky;top:0;text-align:left;font-weight:600;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--t2,var(--dim2,#8a92a0));background:var(--s2,var(--bg2,#1f232b));padding:4px 7px;white-space:nowrap}'
+    + '.vw-dr-tb td{padding:3px 7px;border-top:1px solid var(--bd,rgba(255,255,255,.06));vertical-align:top;max-width:220px;overflow-wrap:anywhere}.vw-dr-chips{display:flex;flex-wrap:wrap;gap:4px}'
+    + '.vw-dr-chips > span{padding:1px 7px;border-radius:999px;font-size:11px;background:var(--s2,var(--bg2,#1f232b));box-shadow:inset 0 0 0 1px var(--bd,rgba(255,255,255,.08));overflow-wrap:anywhere}';
 
   /* THE DRAWER'S JSON (owner, 2026-09-27: "prettyfy all the json properly in the right hand details panel"). The tile's json
      form, drawn into the page, lost its styles (they live in the widget's shadow root) and cut every value to a line. This
@@ -3934,6 +4026,41 @@ span.vw-sampled{opacity:.85}
     };
     return '<div class="vw-dr-json">' + node(null, root, 0, true) + '</div>';
   }
+  /* THE DRAWER'S DATA AS HTML (owner, 2026-09-28: "the json content of the right details panel could be formatted much nicer
+     as html instead of as raw json"). The fields view draws what is nested the way it draws the top: plain values as rows
+     (formatted as the fields are - status dots, dates, bytes, links), an object or a list as a section that says how much is
+     in it (the first level open, the rest a click away), a list of records as a table of their plain columns, a list of
+     plain values as chips. The { } JSON button still shows the raw JSON. */
+  function drTree(root) {
+    let left = 3000;
+    const cnt = (v) => Array.isArray(v) ? v.length + (v.length === 1 ? ' item' : ' items') : Object.keys(v).length + (Object.keys(v).length === 1 ? ' key' : ' keys');
+    const lbl = (k) => esc(String(k).replace(/_/g, ' '));
+    const rowsOf = (o, ks) => '<div class="vw-dr-kv">' + ks.map((k) => '<span class="k">' + lbl(k) + '</span><span class="v">' + fieldVal(k, o[k]) + '</span>').join('') + '</div>';
+    const table = (arr) => {
+      const rs = arr.slice(0, 50), cols = [];
+      rs.forEach((r) => Object.keys(r).forEach((k) => { if (!cols.includes(k) && rs.some((x) => isPlain(x[k]) && x[k] !== '' && x[k] != null)) cols.push(k); }));
+      if (!cols.length) return '';
+      const cs = cols.slice(0, 7), deep = rs.some((r) => Object.keys(r).some((k) => !isPlain(r[k])));
+      return '<div class="vw-dr-tw"><table class="vw-dr-tb"><thead><tr>' + cs.map((k) => '<th>' + lbl(k) + '</th>').join('') + '</tr></thead><tbody>'
+        + rs.map((r) => '<tr>' + cs.map((k) => '<td>' + (isPlain(r[k]) ? fieldVal(k, r[k]) : '<i class="c">' + cnt(r[k]) + '</i>') + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>'
+        + ((arr.length > 50 || cols.length > 7 || deep) ? '<i class="c">' + [arr.length > 50 ? (arr.length - 50) + ' more rows' : '', cols.length > 7 ? (cols.length - 7) + ' more columns' : '', deep ? 'nested values counted' : ''].filter(Boolean).join(' · ') + ' - { } JSON shows everything</i>' : '');
+    };
+    const block = (v, depth) => {
+      if (--left < 0) return '<i class="c">… more than the drawer draws - { } JSON shows everything</i>';
+      if (Array.isArray(v)) {
+        if (!v.length) return '<i class="c">empty</i>';
+        if (v.every(isPlain)) return '<div class="vw-dr-chips">' + v.slice(0, 120).map((x) => '<span>' + fieldVal('', x) + '</span>').join('') + (v.length > 120 ? '<span class="c">+ ' + (v.length - 120) + '</span>' : '') + '</div>';
+        if (v.every((x) => x && typeof x === 'object' && !Array.isArray(x))) { const t = table(v); if (t) return t; }
+        return v.slice(0, 60).map((x, i) => sec('#' + (i + 1), x, depth)).join('') + (v.length > 60 ? '<i class="c">+ ' + (v.length - 60) + ' more</i>' : '');
+      }
+      if (isPlain(v)) return '<span class="v">' + fieldVal('', v) + '</span>';
+      const ks = Object.keys(v); if (!ks.length) return '<i class="c">empty</i>';
+      const pl = ks.filter((k) => isPlain(v[k])), ns = ks.filter((k) => !isPlain(v[k]));
+      return (pl.length ? rowsOf(v, pl) : '') + ns.map((k) => sec(k, v[k], depth)).join('');
+    };
+    const sec = (k, v, depth) => (isPlain(v) ? rowsOf({ [k]: v }, [k]) : '<details class="vw-dr-sec"' + (depth < 1 ? ' open' : '') + '><summary><b>' + lbl(k) + '</b><i class="c">' + cnt(v) + '</i></summary><div class="in">' + block(v, depth + 1) + '</div></details>');
+    return '<div class="vw-dr-tree">' + block(root, 0) + '</div>';
+  }
   const isPlain = (v) => v == null || typeof v !== 'object';
   /* an item with no name field is named by what identifies it (a request log row: its model, else its id) - the drawer's
      head and the hover card said the widget's title for every row */
@@ -3943,7 +4070,7 @@ span.vw-sampled{opacity:.85}
   const fieldVal = (k, v) => { if (v === null || v === undefined) return '<i style="opacity:.5">—</i>'; if (typeof v === 'boolean') return '<i class="st" style="background:' + (v ? 'var(--ok,#28c28a)' : 'var(--warn,#f5b341)') + '"></i>' + (v ? 'yes' : 'no');
     if (typeof v === 'number') return esc(TIP_RAW.test(k) ? String(v) : ((/(^|_)(created|updated|started|ended|at|ts|time|last_run|next_run)$/i.test(k) && v > 1e9 && v < 4e10) ? new Date(v * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' · ' + v : (/bytes?$|_b$/.test(k) ? fmtBytesS(v) + ' · ' + v : fmt(v))));
     const s = String(v); if (/^(status|state|health|level|severity)$/i.test(k)) return '<i class="st" style="background:' + stCol(s).replace(/var\(--b-(ac\d?|t3)\)/, (m, x) => ({ ac: 'var(--acc,#6ea8d8)', ac2: 'var(--ok,#28c28a)', ac3: 'var(--warn,#f5b341)', ac4: 'var(--err,#ef5b5b)', t3: 'var(--dim,#6b7280)' }[x] || m)) + '"></i>' + esc(s);
-    if (/^\s*[\[{]/.test(s)) { try { const o = JSON.parse(s); if (o && typeof o === 'object') return drJson(o); } catch (_) {} }
+    if (/^\s*[\[{]/.test(s)) { try { const o = JSON.parse(s); if (o && typeof o === 'object') return drTree(o); } catch (_) {} }
     if (/^https?:\/\//.test(s)) return '<a href="' + esc(s) + '" target="_blank" rel="noopener" style="color:var(--acc,#6ea8d8)">' + esc(s) + '</a>'; return esc(s.length > 2000 ? s.slice(0, 2000) + '…' : s); };
   const itemName = (it, fb) => (it && typeof it === 'object' && !Array.isArray(it)) ? String(nameOf(it) || it.date || it.title || idName(it) || fb || 'item') : (Array.isArray(it) ? (fb || 'the answer') + ' · ' + it.length + ' items' : String(it ?? fb ?? 'item'));
   let _drawer = null;
@@ -3982,9 +4109,9 @@ span.vw-sampled{opacity:.85}
       + drMedia(obj, host)
       + (D.view === 'json' ? '<h4>The item · JSON</h4>' + drJson(it) : '')
       + (D.view !== 'json' && plain.length ? '<h4>Fields · ' + (plain.length + nested.length) + '</h4><div class="vw-dr-kv">' + plain.map((k) => '<span class="k">' + esc(k.replace(/_/g, ' ')) + '</span><span class="v">' + fieldVal(k, obj[k]) + '</span>').join('') + '</div>' : '')
-      + (D.view !== 'json' && nested.length ? '<h4>' + (plain.length ? 'Nested' : 'Everything') + '</h4>' + drJson(Array.isArray(obj) ? obj : nested.reduce((o2, k) => { o2[k] = obj[k]; return o2; }, {})) : '')
+      + (D.view !== 'json' && nested.length ? '<h4>' + (plain.length ? 'Nested' : 'Everything') + '</h4>' + drTree(Array.isArray(obj) ? obj : nested.reduce((o2, k) => { o2[k] = obj[k]; return o2; }, {})) : '')
       + (rel.length ? '<h4>Related · ' + rel.length + ' in the same answer</h4><div class="vw-dr-rel">' + rel.map((r, i) => '<div data-dr-rel="' + i + '"><b>' + esc(itemName(r.row, r.path)) + '</b><small>' + esc(r.via.join(' · ')) + '</small></div>').join('') + '</div>' : '')
-      + '<h4>Where it comes from</h4><div class="vw-dr-src">' + esc((src ? src : 'the record\'s own data') + (cur.path ? '\npart ' + cur.path : '') + (rec.id ? '\nrecord ' + rec.id : '')) + '</div>' + (args ? '<div class="vw-dr-argl">args</div>' + drJson(JSON.parse(args)) : '')
+      + '<h4>Where it comes from</h4><div class="vw-dr-src">' + esc((src ? src : 'the record\'s own data') + (cur.path ? '\npart ' + cur.path : '') + (rec.id ? '\nrecord ' + rec.id : '')) + '</div>' + (args ? '<div class="vw-dr-argl">args</div>' + drTree(JSON.parse(args)) : '')
       + '</div>';
     el.onclick = (e) => { const b = e.target.closest && e.target.closest('[data-dr],[data-dr-rel]'); if (!b) return;
       if (b.hasAttribute('data-dr-rel')) { const r = rel[+b.getAttribute('data-dr-rel')]; if (r) { D.stack.push({ record: rec, item: r.row, path: r.path, ref: rowRef(r.row), data: cur.data, host }); paintDrawer(); } return; }
@@ -4099,18 +4226,71 @@ span.vw-sampled{opacity:.85}
     // minutes away (a backup census reads every five), and until then the tile would have nothing true to show
     _retrySoon(fn) { if (this._retry || !this.isConnected) return; this._retry = setTimeout(() => { this._retry = null; if (this.isConnected) fn(); }, RETRY_S * 1000); }
     _act(id) { this.dispatchEvent(new CustomEvent('widget:' + id, { bubbles: true, composed: true, detail: { record: this._rec, data: this._data, key: key(this._rec) } })); }
+    // the writable form (R.form): keep an edit, mark its row, enable Save - no re-render, so the field keeps focus
+    _formEdit(i) {
+      const ed = this._ui._edits || (this._ui._edits = {}), t = i.dataset.vft, k = i.dataset.vf;
+      ed[k] = t === 'bool' ? !!i.checked : (t === 'number' ? (i.value === '' ? '' : Number(i.value)) : i.value);
+      const row = i.closest('.vw-fm-row'); if (row) row.classList.add('dirty');
+      const sv = this._sh.querySelector('[data-vf-save]'); if (sv) sv.disabled = false;
+      this._ui._fmStatus = Object.keys(ed).length + ' changed';
+      const st = this._sh.querySelector('[data-vf-status]'); if (st) st.textContent = this._ui._fmStatus;
+    }
+    async _formSave() {
+      const rec = this._rec || {}, dr = rec.draw || {}, sv = dr.save || {}, cap = String(sv.cap || '');
+      const say = (t) => { this._ui._fmStatus = t; const st = this._sh.querySelector('[data-vf-status]'); if (st) st.textContent = t; };
+      if (!FORM_WRITES.has(cap)) { say('saving through ' + (cap || 'nothing') + ' is not allowed'); return; }
+      const ed = Object.assign({}, this._ui._edits || {}); if (!Object.keys(ed).length) { say('nothing changed'); return; }
+      const src = (this._data && typeof this._data === 'object' && !Array.isArray(this._data)) ? this._data : {};
+      const args = Object.assign({}, (sv.args && typeof sv.args === 'object') ? sv.args : {});
+      Object.keys(sv.from || {}).forEach((a) => { const v = pick(src, sv.from[a]); if (v !== undefined && v !== null && v !== '') args[a] = v; });
+      if (sv.edits_as) args[String(sv.edits_as)] = ed; else Object.assign(args, ed);
+      const btn = this._sh.querySelector('[data-vf-save]'); if (btn) btn.disabled = true;
+      say('saving…');
+      try {
+        const r = await fetch((this.base || '') + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: cap, arguments: args }) });
+        const j = await r.json().catch(() => ({})); const c = (j && j.content !== undefined) ? j.content : j;
+        const err = !r.ok ? ('HTTP ' + r.status) : (c && (c.error || (c.ok === false ? 'refused' : '')));
+        if (err) { say('not saved — ' + String(err).slice(0, 140)); if (btn) btn.disabled = false; return; }
+        const rej = (c && Array.isArray(c.rejected)) ? c.rejected : [];
+        this._ui._edits = {}; say(rej.length ? 'saved; not changed: ' + rej.map((x) => x.field + ' (' + x.why + ')').join(', ') : 'saved ✓');
+        this.dispatchEvent(new CustomEvent('widget:saved', { bubbles: true, composed: true, detail: { record: rec, cap, args, result: c } }));
+        this.read(true);
+      } catch (e) { say('not saved — ' + String((e && e.message) || e).slice(0, 140)); if (btn) btn.disabled = false; }
+    }
     // the ⇄ control: the forms of the data's family that would draw this answer; the pick redraws in place
     _viewAsWire(form0, form, rec) {
       if (this.hasAttribute('no-view-as') || (/^(xs|s)$/.test(this.size) && !this.hasAttribute('bare'))) return;
       const alts = viewsFor(rec, form0, this._data); if (alts.length < 2) return;
       const box = document.createElement('div'); box.className = 'vw-as';
-      box.innerHTML = '<button type="button" class="vw-as-b" title="View this as another form">\u21c4</button><div class="vw-as-m" hidden><small>view as</small>'
+      /* no title: the hover card turns any title into a card, so pointing at the \u21c4 popped up "View this as another form" -
+         the list appearing on mouseover the owner reported. aria-label names it for a screen reader instead */
+      box.innerHTML = '<button type="button" class="vw-as-b" aria-label="View this as another form">\u21c4</button><div class="vw-as-m" hidden><small>view as</small>'
         + alts.map((f) => '<button type="button" data-as="' + esc(f) + '" class="' + (f === form ? 'on' : '') + '"><i>' + glyphOf(f, this._data) + '</i>' + esc(f) + (f === canon(form0) ? ' \u00b7 as made' : '') + '</button>').join('') + '</div>';
       const m = box.querySelector('.vw-as-m'), b = box.querySelector('.vw-as-b');
-      const close = () => { m.hidden = true; box.classList.remove('open'); document.removeEventListener('click', close, true); };
+      /* open, the list is pinned to where the ⇄ was; a scroll that moves the ⇄ (capture: any scroller around it), a resize
+         or Escape closes it rather than leave it standing still while the page moves under it. A scroll elsewhere - a live
+         log following its newest line - moves nothing and leaves it open */
+      let at = null;
+      const onKey = (e) => { if (e.key === 'Escape') close(); };
+      const onScroll = () => { const r = b.getBoundingClientRect(); if (!at || Math.abs(r.top - at.top) > 2 || Math.abs(r.left - at.left) > 2) close(); };
+      const close = () => { m.hidden = true; box.classList.remove('open'); document.removeEventListener('click', close, true); document.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', close); document.removeEventListener('keydown', onKey, true); };
       b.addEventListener('click', (ev) => { ev.stopPropagation(); if (!m.hidden) { close(); return; } const r = b.getBoundingClientRect(); m.hidden = false; box.classList.add('open');
-        const mw = m.offsetWidth || 170, mh = m.offsetHeight || 200; m.style.left = Math.max(4, Math.min((window.innerWidth || 1200) - mw - 4, r.right - mw)) + 'px'; m.style.top = ((r.bottom + 4 + mh > (window.innerHeight || 800)) ? Math.max(4, r.top - mh - 4) : r.bottom + 4) + 'px';
-        setTimeout(() => document.addEventListener('click', close, true), 0); });
+        const vw = document.documentElement.clientWidth || window.innerWidth || 1200, vh = document.documentElement.clientHeight || window.innerHeight || 800;
+        const mr0 = m.getBoundingClientRect(), mw = mr0.width || m.offsetWidth || 170, mh = mr0.height || m.offsetHeight || 200, want ={ x: Math.max(4, Math.min(vw - mw - 4, r.right - mw)), y: (r.bottom + 4 + mh > vh) ? Math.max(4, r.top - mh - 4) : r.bottom + 4 };
+        m.style.left = want.x + 'px'; m.style.top = want.y + 'px';
+        /* the owner (2026-10-01): the list often showed cut off at the right edge of the screen. position:fixed is the
+           viewport only when no ancestor makes a containing block (a transform, a filter, container-type on a parent
+           widget's body...); then left/top count from that box instead. Measure where it landed and shift by the
+           difference, so it sits where it was meant to whatever is around the widget */
+        /* (2026-10-02, prod) a shift alone is not enough: a zoom or scale on the page around the widget stretches left/top
+           too - the list opened 12 px left of and 46 px above its place, over the ⇄. So measure it at two places and solve
+           each axis exactly (landed = origin + scale × set) */
+        const got = m.getBoundingClientRect(); if (Math.abs(got.left - want.x) > 1 || Math.abs(got.top - want.y) > 1) {
+          m.style.left = (want.x + 100) + 'px'; m.style.top = (want.y + 100) + 'px'; const g2 = m.getBoundingClientRect();
+          const sx = (g2.left - got.left) / 100 || 1, sy = (g2.top - got.top) / 100 || 1;
+          m.style.left = (want.x + (want.x - got.left) / sx) + 'px'; m.style.top = (want.y + (want.y - got.top) / sy) + 'px'; }
+        at = b.getBoundingClientRect();
+        setTimeout(() => { if (m.hidden) return; document.addEventListener('click', close, true); document.addEventListener('scroll', onScroll, true); window.addEventListener('resize', close); document.addEventListener('keydown', onKey, true); }, 0); });
       m.addEventListener('click', (ev) => { const x = ev.target.closest && ev.target.closest('[data-as]'); if (!x) return; ev.stopPropagation(); const f = x.getAttribute('data-as');
         this._viewAs = f === canon(form0) ? '' : f; try { if (this._viewAs) localStorage.setItem('vera.widget.as.' + key(rec), this._viewAs); else localStorage.removeItem('vera.widget.as.' + key(rec)); } catch (_) {}
         close(); this.render(); this.dispatchEvent(new CustomEvent('widget:view-as', { bubbles: true, composed: true, detail: { record: rec, form: this._viewAs || form0 } })); });
@@ -4124,7 +4304,8 @@ span.vw-sampled{opacity:.85}
       // nothing read yet — no source, a source that waits for a click, a read in flight, a read that failed — draws the
       // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
       const wasRead = !!this._read, dataM = mapped(rec, form, this._data), have = this._data !== undefined && !isEmpty(dataFor(dataM, form));   // what the form would draw of the answer
-      const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite' && form !== 'element';   // an element draws itself: it is never a sample      // the sample face: no source, or never read
+      const fillIn = canon(form) === 'form' && rec.draw && Array.isArray(rec.draw.fields) && rec.draw.fields.length > 0;   // a form to fill in is never a sample
+      const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite' && form !== 'element' && !fillIn;   // an element draws itself: it is never a sample      // the sample face: no source, or never read
       const readEmpty = wasRead && !have && !this._err, stale = wasRead && !!this._err && have;
       // the face's STATE, on the host (data-state) and in widget:rendered: reading (a read is on its way - the sample face
       // is drawn faint, never as though it were the reading) · failed (a read that never answered) · sample (nothing to
@@ -4165,6 +4346,9 @@ span.vw-sampled{opacity:.85}
       this._sh.querySelectorAll('[data-vb-set]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); setUi(b.dataset.vbSet); if (b.dataset.vbSet2) setUi(b.dataset.vbSet2); if (/^(off|view):/.test(b.dataset.vbSet) && /^(month|schedule|calnav|agenda)$/.test(canon(this._rec.form))) this._calMove(b.dataset.vbSet); else this.render(); }));
       this._sh.querySelectorAll('[data-vb-input]').forEach((i) => i.addEventListener('input', () => { this._ui[i.dataset.vbInput] = /^-?\d+(\.\d+)?$/.test(i.value) ? Number(i.value) : i.value; this.render(); }));
       this._sh.querySelectorAll('[data-vb-link]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); this.dispatchEvent(new CustomEvent('widget:open', { bubbles: true, composed: true, detail: { record: this._rec, href: a.dataset.vbLink, key: key(this._rec) } })); }));
+      // the writable form: an edit is kept without a re-render (typing keeps its focus); Save sends what changed
+      this._sh.querySelectorAll('[data-vf]').forEach((i) => { const on = () => this._formEdit(i); i.addEventListener('input', on); i.addEventListener('change', on); });
+      { const sv = this._sh.querySelector('[data-vf-save]'); if (sv) sv.addEventListener('click', (ev) => { ev.preventDefault(); this._formSave(); }); }
       hydrate(this._sh);
       this._viewAsWire(form0, form, rec);
       motionAfter(this._sh, was);
@@ -4175,6 +4359,11 @@ span.vw-sampled{opacity:.85}
       if (state === 'live' && !this.hasAttribute('data-entered') && !this._entering) { this._entering = true; setTimeout(() => { this.setAttribute('data-entered', ''); this._entering = false; }, 900); }
       // a bare element (a dashboard tile's body) measures too: its host sizes it, and the forms fit what they are given
       if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body') || (this.hasAttribute('bare') ? (this._sh.querySelector('.vw-root') || this) : null); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0;   /* bare: the root is the box the content has */ if (hb > 0 || wb > 0) this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
+      /* NOTHING TO SCROLL, NO SCROLLBAR (owner, 2026-10-03: "some of the widgets get an internal scrollbar on hover but
+         there is nothing to scroll"): a face a few pixels taller than its box (a rounding, a margin - 355 in 352,
+         measured on the dashboard) showed a scrollbar for nothing. Within 6 px the box keeps it, unscrolled. */
+      { const sc = [...this._sh.querySelectorAll('.vw-root,.vw-body,.vw-slot-b')]; const fit = () => sc.forEach((e) => { const over = e.scrollHeight - e.clientHeight; e.classList.toggle('vw-fit', over > 0 && over <= 6); });
+        fit(); requestAnimationFrame(fit); }
       this.dispatchEvent(new CustomEvent('widget:rendered', { bubbles: true, composed: true, detail: { form, size, sample: sampled, empty: readEmpty, stale } }));   // the state rides on the host: data-state
     }
     /* ── THE FACE'S OWN WIDTH, when it has one ────────────────────────────────────────────────────────────────

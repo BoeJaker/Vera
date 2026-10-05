@@ -70,7 +70,45 @@ NODE_SAFE_CAPS: Dict[str, Tuple[str, str]] = {
     "data.json_validate": ("general", "pure JSON parsing"),
     "data.json_flatten":  ("general", "pure JSON transform"),
     "system.timestamp":   ("general", "reads the clock"),
+    # model training for the host: inputs and outputs are Redis keys the host
+    # writes and reads; the function is allow-listed and touches no store
+    # (node_compute_core). It is queued on a node-only stream, never a class
+    # stream, so the host cannot take its own job back.
+    "compute.run":        ("cpu_compute", "runs an allow-listed training function on "
+                                          "inputs the host put in Redis"),
 }
+
+#: Capabilities vetted for nodes by evidence (cap_footprint_core: the static
+#: audit AND the host footprint observed while they ran both clean), cap ->
+#: (class, why). Loaded from Redis by every process (set_vetted), so vetting
+#: needs no release; host-only (VERA_WORKER_HOST_ONLY) and the mutator rule
+#: still win over it.
+VETTED: Dict[str, Tuple[str, str]] = {}
+#: The class vetted capabilities run in on a node: off on every node until an
+#: operator enables it there (Workers > roles).
+VETTED_CLASS = "extended"
+
+
+def set_vetted(mapping: Optional[Dict[str, object]]) -> bool:
+    """Replace the vetted set; True when it changed. Values: (class, why) or
+    {"cls", "why"}."""
+    new: Dict[str, Tuple[str, str]] = {}
+    for cap, v in (mapping or {}).items():
+        if isinstance(v, dict):
+            cls, why = str(v.get("cls") or VETTED_CLASS), str(v.get("why") or "vetted")
+        elif isinstance(v, (tuple, list)) and len(v) == 2:
+            cls, why = str(v[0]), str(v[1])
+        else:
+            continue
+        if cls not in CLASSES:
+            cls = VETTED_CLASS
+        new[str(cap)] = (cls, why)
+    if new == VETTED:
+        return False
+    VETTED.clear()
+    VETTED.update(new)
+    return True
+
 
 #: Final name segments that change process-local settings. Such a cap is
 #: host-only even inside a node-safe namespace (`nlp.config.set` flips
@@ -124,6 +162,12 @@ def placement(cap_name: str, *, node_ok: Iterable[str] = (),
     ok = set(_names(node_ok))
     if name in ok:
         return "any", "admitted by VERA_WORKER_NODE_OK"
+    # Vetted by evidence beats the setter-by-name rule below: the rule guesses
+    # from a name that a cap changes process-local settings; the audit checks
+    # it (a write to module state, or a `global` rebind, keeps it host-bound),
+    # and most setters write a shared store (owner, 2026-10-04: go further).
+    if name in VETTED:
+        return "any", "vetted: " + VETTED[name][1]
     last = name.rsplit(".", 1)[-1] if "." in name else ""
     if last in MUTATOR_SEGMENTS or ".config." in name:
         return "host", "changes process-local settings"
@@ -151,9 +195,13 @@ CLASSES: Dict[str, Dict[str, object]] = {
                         "through the node NLP servers",
                 "namespaces": ("nlp",)},
     "cpu_compute": {"label": "CPU compute",
-                    "desc": "parsing, transforms, test runs - nothing vetted into this "
-                            "class yet",
+                    "desc": "model training for the host - worldview, ML Lab and "
+                            "markets models (compute.run)",
                     "namespaces": ()},
+    "extended": {"label": "Extended (vetted)",
+                 "desc": "capabilities proven node-safe by evidence: the static audit and "
+                         "the host footprint seen while they ran (nodes.parity)",
+                 "namespaces": ()},
     "media":   {"label": "Media (GPU)",
                 "desc": "STT and TTS calls to the gpu_inference server; diffusion "
                         "stays on the host (it archives into the fabric)",
@@ -172,6 +220,11 @@ NO_CLASSES = "none"
 
 #: One stream per class; a node worker reads only the classes it has.
 CLASS_STREAM = "vera:tasks:cls:{cls}"
+#: Work that must NOT run on the host, per class: the host reads every class
+#: stream, so a job that exists to take load off the host needs a stream the
+#: host does not read. Only cpu_compute has one (node_compute_core).
+NODE_ONLY_STREAM = "vera:tasks:node:{cls}"
+NODE_ONLY_CLASSES = ("cpu_compute",)
 
 #: Redis hash host_id -> JSON list of classes, set from the Workers UI. A node
 #: worker re-reads its entry every 30 s, so a change applies without a restart.
@@ -180,6 +233,10 @@ ROLES_KEY = "vera:node_workers:roles"
 
 def class_stream(cls: str) -> str:
     return CLASS_STREAM.format(cls=cls)
+
+
+def node_only_stream(cls: str) -> str:
+    return NODE_ONLY_STREAM.format(cls=cls)
 
 
 def class_of(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
@@ -191,6 +248,8 @@ def class_of(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
         return ""
     if cap_name in NODE_SAFE_CAPS:
         return NODE_SAFE_CAPS[cap_name][0]
+    if cap_name in VETTED:
+        return VETTED[cap_name][0]
     ns = namespace(cap_name)
     for cls, spec in CLASSES.items():
         if ns in spec["namespaces"]:
@@ -221,13 +280,24 @@ def stream_for(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
     return class_stream(cls) if cls else HOST_TASK_STREAM
 
 
-def streams_to_read(*, is_worker: bool, classes: Optional[Iterable[str]] = None) -> Tuple[str, ...]:
+#: A node worker's own queue (node_compute_core.NODE_STREAM): the host sends a
+#: scheduled job to the one node it chose.
+NODE_HOST_STREAM = "vera:tasks:node:host:{host_id}"
+
+
+def streams_to_read(*, is_worker: bool, classes: Optional[Iterable[str]] = None,
+                    host_id: str = "") -> Tuple[str, ...]:
     """The host reads everything. A node worker reads the shared legacy stream
     (tasks queued by a process running older code) and its own classes' streams
-    - never the host stream, never a class it was not given."""
+    - never the host stream, never a class it was not given - plus the
+    node-only stream of a class that has one."""
     if not is_worker:
         return (TASK_STREAM, HOST_TASK_STREAM) + tuple(class_stream(c) for c in CLASSES)
-    return (TASK_STREAM,) + tuple(class_stream(c) for c in clean_classes(classes))
+    mine = clean_classes(classes)
+    own = ((NODE_HOST_STREAM.format(host_id=host_id),)
+           if host_id and any(c in NODE_ONLY_CLASSES for c in mine) else ())
+    return ((TASK_STREAM,) + tuple(class_stream(c) for c in mine)
+            + tuple(node_only_stream(c) for c in mine if c in NODE_ONLY_CLASSES) + own)
 
 
 def may_run_here(cap_name: str, *, is_worker: bool,
@@ -333,6 +403,9 @@ def offload_decision(cap_name: str, *, stage, free: Dict[str, int],
         return False, "already on a worker"
     if is_sandbox:
         return False, "a dev sandbox has no node workers on its Redis"
+    if any(cap_name == c for c, (cls, _w) in NODE_SAFE_CAPS.items()
+           if cls in NODE_ONLY_CLASSES):
+        return False, "queued on its node-only stream by its own caller"
     st = stage_of(stage)
     if not st["classes"]:
         return False, "stage %s" % st["name"]

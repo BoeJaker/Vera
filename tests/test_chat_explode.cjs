@@ -26,7 +26,8 @@ const _xpFences = src ? eval('(' + src[0].replace(/^function /, 'function ') + '
 
 // ── the three ways in ────────────────────────────────────────────────────────────────────────────────────────
 t('a message carries an Explode action, beside Copy',
-  /onclick="CH\._msgExplode\('\$\{mid\}',this\)"/.test(HTML) && /_msgExplode/.test(HTML.split('const api=')[0]));
+  (/onclick="CH\._msgExplode\('\$\{mid\}',this\)"/.test(HTML) || /_ma\('explode','Explode',`CH\._msgExplode\('\$\{mid\}',this\)`/.test(HTML))   // the action row builds it through _ma (2026-10-03)
+  && /_msgExplode/.test(HTML.split('const api=')[0]));
 t('a code fence carries its own Explode button, beside Copy',
   /onclick="CH\._codeExplode\('\$\{id\}',this\)"/.test(HTML));
 t('/explode is a slash command, and says what it takes',
@@ -37,9 +38,11 @@ t('the diagram is the shared embed, not a second renderer',
   /createElement\('vera-graph-embed'\)/.test(HTML) && /setAttribute\('renderer','struct'\)/.test(HTML));
 t('the slash command asks the SERVER what a thing is, rather than guessing it is a record',
   /fetch\(BASE\+'\/explode\/target'/.test(HTML) && /tg\.why/.test(HTML));
-t('a second Explode on the same thing closes the first, rather than stacking diagrams',
-  (HTML.match(/const old=wrap\.querySelector\(':scope > \.xp-inline'\); if\(old\)\{ old\.remove\(\); return; \}/) || []).length === 1
-  && /const old=card\.querySelector\(':scope > \.xp-inline'\); if\(old\)/.test(HTML));
+t('Explode opens the exploded scene with the structure (cards · front · iso), and again on the same thing goes back',
+  /if\(_xpl\.doc&&_xpl\.doc\.key===key\)\{ _xplDocClear\(\); return; \}/.test(HTML) && /window\.VeraExploded\.contractScene\(doc,\{label\}\)/.test(HTML)
+  && /_xplShowDoc\('msg:'\+mid, '\/code\/explode'/.test(HTML) && /_xplShowDoc\('msg:'\+mid, '\/nlp\/explode\/prose'/.test(HTML) && /_xplShowDoc\('code:'\+id, '\/code\/explode'/.test(HTML)
+  && /_xplShowDoc\('slash:'\+what,/.test(HTML) && /_xplEl\.setScene\(_xpl\.doc\?_xpl\.doc\.scene:_xplScene\(\)\)/.test(HTML));
+t('the chip over the scene keeps the structured diagram and the way back to the chat', /data-xd="diagram"/.test(HTML) && /data-xd="back"/.test(HTML) && /_xpPanel\(host, _xpl\.doc\.attrs/.test(HTML));
 t('the embed library is loaded once, on demand, not on every chat load',
   /_XP_LIB = new Promise/.test(HTML) && /ui\/vera-graph-embed\.js/.test(HTML));
 
@@ -47,4 +50,11 @@ t('the embed library is loaded once, on demand, not on every chat load',
 t('the embed can be asked for one function\'s flow', /var flow = this\.getAttribute\('flow'\); if \(flow\) body\.flow = flow;/.test(EMBED));
 t('the embed can be asked for several records, as lanes', /body\.record_ids = this\.getAttribute\('records'\)/.test(EMBED));
 
+t('a card\'s own structure explodes the card into the scene (cards, front, iso), its whole code read', /_xplShowContract\('card:' \+ d\.id, doc,/.test(HTML) && /text:s\.slice\(0,200000\), lang\}/.test(HTML));
+t('the chip opens the structure as a vera-graph opening on Structure 3D', /data-xd="graph"/.test(HTML) && /g\.load\(veraUI\.Graph\.fromContract\(doc\)\)/.test(HTML) && /g\.setMode\('struct-iso'\)/.test(HTML));
+t('a card\'s structure explodes IN PLACE in the chat scene (a structure plate on its turn); pressed again it folds away', /_XPL_STRUCT\[mid\]=\{ from, cards:cards\.slice\(0,60\), links/.test(HTML) && /t\.struct=s\.cards; t\.structLinks=s\.links; t\.structFrom=s\.from;/.test(HTML) && /delete _XPL_STRUCT\[mid\]/.test(HTML));
+{ const g = HTML.match(/function _xpGuessLang\(s\)\{[\s\S]*?return ''; \}/); const guess = g ? eval('(' + g[0] + ')') : () => '';
+  t('a code block with no language is guessed (the explode reads only the module without one)', guess('import os\ndef f():\n  pass') === 'python' && guess('const a = (x) => x + 1;') === 'javascript' && guess('interface A { b: string }') === 'typescript' && guess('package main\nfunc main() {}') === 'go'); }
+t('the full-screen structure replaces the exploded view until closed (the double-click, the chip\'s diagram and graph)', /box\.style\.cssText=full \? 'position:absolute;inset:0;z-index:42/.test(HTML) && (HTML.match(/, true\);/g) || []).length >= 4 && /xb\.textContent='back to the scene'/.test(HTML));
+t('the in-place explode also draws the card\'s mini structure', /_xplEl\.setCardGraph\(d\.id, doc0\);/.test(HTML));
 console.log(fails ? 'FAILED ' + fails + ' check(s)' : 'ALL OK'); process.exit(fails ? 1 : 0);

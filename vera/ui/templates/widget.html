@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<!-- ═══ THE VERA WIDGET TEMPLATE - placing one (served /ui/templates/widget.html; the record is widget.json) ═══════════
+     A widget is ONE element, <vera-widget>, from /ui/widgets/widget_element.js. It draws a form (the catalogue:
+     GET /ui/widgets/forms) from a reading (a capability, GET /ui/widgets/sources), follows the theme and blocks on/off,
+     and opens an item's data in its drawer. Three ways to give it what to draw - never draw a widget by hand.
+     ═════════════════════════════════════════════════════════════════════════════════════════════════════════════ -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>(function(){try{var d=document.documentElement,S=localStorage;var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<title>Vera — EXAMPLE Widgets</title>
+<link rel="stylesheet" href="/ui/bootstrap.css">
+</head>
+<body class="vb">
+<main class="vb-main" style="height:100%">
+  <header class="vb-topbar"><h2>EXAMPLE widgets</h2></header>
+  <div class="vb-content"><div class="vb-grid">
+    <!-- 1. a saved template, by id: what the registry holds (widget.json, saved with widget.template.save) -->
+    <div class="card"><h4>From the registry</h4><vera-widget template-id="example-items-ranked" size="m" item-drawer></vera-widget></div>
+    <!-- 2. an inline record: the same shape, not saved - for a one-off on this page -->
+    <div class="card"><h4>Inline record</h4>
+      <vera-widget size="s" record='{"name":"EXAMPLE count","form":"counter","reads":{"cap":"EXAMPLE.stats","args":{},"every":"30s"}}'></vera-widget></div>
+    <!-- 3. a panel as a widget: every registered panel is a template "panel:<id>" -->
+    <div class="card"><h4>A panel</h4><vera-widget template-id="panel:accounts-panel" size="s"></vera-widget></div>
+  </div></div>
+</main>
+<!-- a widget a viewer can add to a panel's MENU instead: the menu's ✎ (+ Add widget) or the panel naming it on an item:
+     <button class="nav-btn" data-lhm-widgets="example-items-ranked@s" ...> - kept per panel and menu by ui.lhm.widgets -->
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/widgets/widget_element.js"></script>
+</body>
+</html>
