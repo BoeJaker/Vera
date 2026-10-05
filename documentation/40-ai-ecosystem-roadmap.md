@@ -764,11 +764,22 @@ Sources: [Lance format](https://lance.org/),
 [DuckDB VSS](https://duckdb.org/docs/lts/core_extensions/vss), and
 [DuckDB extension tiers](https://duckdb.org/docs/current/core_extensions/overview).
 
-**Lance** (the format, separate from LanceDB) is a planned experiment: store a
-frozen multimodal dataset artifact and prove schema, identity, time-travel
-revision, portability, and cleanup, compared with Parquet plus ArtifactRefs. It
-does not become canonical until transaction, evolution, repair, and ecosystem
-behaviour are tested.
+**Lance** (the format, separate from LanceDB) now has an offline experiment
+contract in
+[`vera/fabric/lance_format_experiment.py`](../vera/fabric/lance_format_experiment.py).
+It binds one exact frozen `DatasetSnapshot` to checksum-verified Lance and
+Parquet `ArtifactRef`s, pinned format/reader revisions, schema and provenance
+digests, modalities, identical query fixtures, time-travel expectations and
+resource ceilings. Payload-free observations must cover both formats and prove
+record/schema identity, query and multimodal fidelity, corruption refusal,
+portable reading, removal and cleanup; Lance additionally carries transaction,
+schema-evolution and planned time-travel evidence. The deterministic result is
+only `experimental_candidate` or `rejected` and has no migration, deletion,
+canonical-store or query-routing authority. The module imports no Lance,
+PyArrow or DuckDB package and performs no file, object-store or network I/O.
+Live format creation/read, malformed/corrupt data, measured concurrency and
+resources, cleanup/teardown and a second portable reader remain queued before
+any canonical-store decision.
 
 **DuckDB** is a strong `QueryProvider` for local snapshots and artifacts. An
 offline adapter ([`vera/fabric/duckdb_artifact_query.py`](../vera/fabric/duckdb_artifact_query.py),
