@@ -266,3 +266,12 @@ def test_a_first_assessment_has_nothing_changed():
     p = {"headline": "h", "state": "s", "changed": ["Previous assessment was null; this is the baseline"]}
     assert core.make_snapshot({"id": "t"}, p, [], first=True)["changed"] == []
     assert core.make_snapshot({"id": "t"}, p, [])["changed"]
+
+
+def test_prompts_carry_today_and_the_source_date():
+    sig = {"title": "T", "url": "https://x", "published": "2024-05-02T00:00:00Z", "summary": "s", "score": 5, "site": "x"}
+    for triaged in (False, True):
+        p = core.enrich_prompt({"name": "n"}, sig, "text", triaged=triaged)
+        assert "TODAY: " in p and "SOURCE PUBLISHED: 2024-05-02" in p and "background, not news" in p
+    sp = core.snapshot_prompt({"name": "n"}, None, [sig])
+    assert "published 2024-05-02" in sp and "Today is " in sp and "never the current picture" in sp

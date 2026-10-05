@@ -195,6 +195,24 @@ def ner_entities(result: Dict[str, Any], min_score: float = 0.45, limit: int = 2
     return [w for w, _ in sorted(seen.items(), key=lambda kv: -kv[1])][:limit]
 
 
+_YEAR = re.compile(r"(?<!\d)(20[0-4]\d|19[89]\d)(?!\d)")
+
+
+def newest_year(text: str, now_year: int) -> Optional[int]:
+    """The latest plausible year a text mentions (no later than next year)."""
+    ys = [int(y) for y in _YEAR.findall(str(text or "")) if int(y) <= now_year + 1]
+    return max(ys) if ys else None
+
+
+def staleness_factor(signal: Dict[str, Any], now_year: int) -> float:
+    """Undated text whose newest year is two or more years back is probably old
+    news: 0.7. Signals with a publication date are judged by it elsewhere."""
+    if signal.get("published"):
+        return 1.0
+    y = newest_year(f"{signal.get('title') or ''} {signal.get('snippet') or ''}", now_year)
+    return 0.7 if (y is not None and y <= now_year - 2) else 1.0
+
+
 def entity_types(result: Dict[str, Any], keep: Iterable[str]) -> Dict[str, str]:
     """{entity: label} for the entities kept, from the best-scoring mention of each."""
     keep_s = set(keep)

@@ -245,3 +245,11 @@ def test_headline_hubs_are_indexes_not_stories():
     assert not ops.index_hint("https://www.bbc.co.uk/news/articles/c1234", "House prices rise 0.2% in August, Nationwide says")
     assert not ops.index_hint("https://www.ft.com/content/abc", "Property news: Landsec sells its stake")
     assert ops.genre_factor("index") == 0.4
+
+
+def test_old_undated_text_is_marked_down():
+    assert ops.newest_year("Zoopla May 2024 data; forecasts to 2030", 2026) == 2024
+    assert ops.newest_year("phone 0207 123 4567, 12000 homes", 2026) is None
+    assert ops.staleness_factor({"title": "Housing outlook 2023", "snippet": "as of 2023"}, 2026) == 0.7
+    assert ops.staleness_factor({"title": "Prices rise in 2026"}, 2026) == 1.0
+    assert ops.staleness_factor({"title": "2019 review", "published": "2026-10-01"}, 2026) == 1.0
