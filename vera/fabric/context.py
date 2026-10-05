@@ -1346,29 +1346,6 @@ def _merge_recall_results(buckets: List[List[Dict]], top_k: int) -> List[Dict]:
     return out[:top_k]
 
 
-@capability(
-    "context.recall",
-    http_method="POST", http_path="/context/recall", http_tags=["context"],
-    memory="off",
-    description=(
-        "Widen context recall beyond plain vector search. Concurrently: crawls "
-        "the data-fabric entity graph out from seed records (records sharing an "
-        "entity with the seeds), pulls worldview latent-space neighbours (and "
-        "optionally predicted-next-concept members via rollout), and recalls "
-        "paired answers for similar past questions. Results are deduped across "
-        "every source by record id with merged provenance. "
-        "Inputs: query (str!), session_id, agent_name, seed_ids (list[str] — ids "
-        "the caller already found, used as crawl seeds), top_k (int 12), sources "
-        "(csv of entities,worldview,related_qa — default all), fabric_dataset "
-        "(str), min_score (float 0.4), use_rollout (bool), rollout_steps (int 4), "
-        "budget_ms (int 0 = wait for every source; >0 = answer with the sources that "
-        "finished in time - the others finish in the background and are given to the "
-        "next call for the same question). "
-        "Output: {results:[{id,text,source,sources,score,dataset_id,concept_label,"
-        "entities,via}], edges, pairs, count, sources_used, cached, timings "
-        "({source: ms | 'cached' | 'late'}), late (sources still running)}."
-    ),
-)
 def _recall_timing_record(by_source: Dict[str, Any], timings: Dict[str, Any], total_ms: float,
                           cached_whole: bool = False) -> None:
     """context.recall into retrieval.timing (four-minds FM-7.0): each source's ms and how it
@@ -1397,6 +1374,29 @@ def _recall_timing_record(by_source: Dict[str, Any], timings: Dict[str, Any], to
         pass
 
 
+@capability(
+    "context.recall",
+    http_method="POST", http_path="/context/recall", http_tags=["context"],
+    memory="off",
+    description=(
+        "Widen context recall beyond plain vector search. Concurrently: crawls "
+        "the data-fabric entity graph out from seed records (records sharing an "
+        "entity with the seeds), pulls worldview latent-space neighbours (and "
+        "optionally predicted-next-concept members via rollout), and recalls "
+        "paired answers for similar past questions. Results are deduped across "
+        "every source by record id with merged provenance. "
+        "Inputs: query (str!), session_id, agent_name, seed_ids (list[str] — ids "
+        "the caller already found, used as crawl seeds), top_k (int 12), sources "
+        "(csv of entities,worldview,related_qa — default all), fabric_dataset "
+        "(str), min_score (float 0.4), use_rollout (bool), rollout_steps (int 4), "
+        "budget_ms (int 0 = wait for every source; >0 = answer with the sources that "
+        "finished in time - the others finish in the background and are given to the "
+        "next call for the same question). "
+        "Output: {results:[{id,text,source,sources,score,dataset_id,concept_label,"
+        "entities,via}], edges, pairs, count, sources_used, cached, timings "
+        "({source: ms | 'cached' | 'late'}), late (sources still running)}."
+    ),
+)
 async def cap_context_recall(
     query:          str,
     session_id:     str  = "",

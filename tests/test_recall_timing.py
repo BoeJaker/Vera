@@ -56,3 +56,12 @@ def test_no_window_no_error(monkeypatch):
 def test_both_returns_are_recorded():
     seg = TEXT[TEXT.index("async def cap_context_recall("):TEXT.index("async def cap_context_recall_fabric(")]
     assert seg.count("_recall_timing_record(") == 2
+
+
+def test_the_capability_decorator_still_wraps_context_recall():
+    # the recorder was first inserted between @capability("context.recall") and the function, which registered
+    # the recorder as the capability - two budget tests caught it
+    tree = ast.parse(TEXT)
+    fn = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_context_recall")
+    rec = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_recall_timing_record")
+    assert fn.decorator_list and not rec.decorator_list
