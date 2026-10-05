@@ -1697,6 +1697,23 @@ def _find_chroma_stores(root: str) -> list[str]:
     return stores or [root]   # fallback: try root even if no markers found
 
 
+# One chromadb client per server or store for the life of the process (RF-82). Each
+# HttpClient keeps its own pool of keep-alive connections and is never closed, and research
+# built a new one on every query: a mirror running research goals held 518 connections to
+# Chroma after a day, which exhausted Chroma's pool and timed out prod's memory search.
+_CHROMA_CLIENTS: dict = {}
+
+
+def _chroma_client(kind: str, key: str, make):
+    """The cached client for (kind, key), built with make() the first time."""
+    k = (kind, key)
+    c = _CHROMA_CLIENTS.get(k)
+    if c is None:
+        c = make()
+        _CHROMA_CLIENTS[k] = c
+    return c
+
+
 def _chroma_make_clients(src) -> list:
     """
     Return a list of (client, label) tuples to query.
@@ -1737,7 +1754,7 @@ def _chroma_make_clients(src) -> list:
                 continue
             seen_paths.add(real)
             try:
-                client = chromadb.PersistentClient(path=store_path)
+                client = _chroma_client("path", real, lambda: chromadb.PersistentClient(path=store_path))
                 label  = _os.path.basename(store_path.rstrip("/"))
                 clients.append((client, f"local:{label}"))
                 log.debug("chroma: PersistentClient at %s", store_path)
@@ -1745,7 +1762,7 @@ def _chroma_make_clients(src) -> list:
                 log.warning("chroma: cannot open store %s: %s", store_path, e)
     else:
         try:
-            client = chromadb.HttpClient(host=host, port=port)
+            client = _chroma_client("http", f"{host}:{port}", lambda: chromadb.HttpClient(host=host, port=port))
             clients.append((client, f"http:{host}:{port}"))
             log.debug("chroma: HttpClient at %s:%s", host, port)
         except Exception as e:
@@ -7868,13 +7885,13 @@ async def test_source(req: SourceTestRequest):
                     if real in seen_test: continue
                     seen_test.add(real)
                     try:
-                        c=chromadb.PersistentClient(path=path)
+                        c=_chroma_client("path", real, lambda: chromadb.PersistentClient(path=path))
                         clients_info.append((c, _os.path.basename(path.rstrip("/"))))
                     except Exception as exc:
                         clients_info.append((None, f"{_os.path.basename(path)}: {exc}"))
             else:
                 try:
-                    c=chromadb.HttpClient(host=host,port=port)
+                    c=_chroma_client("http", f"{host}:{port}", lambda: chromadb.HttpClient(host=host,port=port))
                     c.heartbeat()
                     clients_info.append((c, f"http:{host}:{port}"))
                 except Exception as exc:
