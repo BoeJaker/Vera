@@ -39,7 +39,8 @@ def test_generate_pin_goes_through_routed_call_and_reports_meta():
     body = _func(CO, "ollama_generate")
     block = body[body.index('_pin.startswith("vllm:")'):]
     block = block[:block.index("API-provider delegation")]
-    assert '_vllm_mod.routed_call(\n                "generate"' in block
+    # through the chat template (_vllm_generate_routed), not a raw completion
+    assert "_vllm_generate_routed(\n                _vllm_mod, eff_rule" in block
     assert '"backend": "vllm"' in block
     assert "_vllm_gen(" not in block            # the old ungated direct call
 

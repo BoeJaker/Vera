@@ -2528,6 +2528,44 @@ def _inflight_sweep() -> None:
 NO_GPU: "contextvars.ContextVar[bool]" = contextvars.ContextVar("vera_no_gpu", default=False)
 
 
+
+async def _vllm_generate_routed(vm, rule: Optional[dict], *, prompt: str, system: str,
+                                json_mode: bool, think: Optional[bool],
+                                options: Optional[dict], model: Optional[str],
+                                prefer_gpu: bool, job_type: str, timeout, stream_cb) -> Optional[dict]:
+    """A routed generate served on vLLM, shaped like the Ollama call it stands
+    in for: the model's chat template (system + user turns), `think` as
+    enable_thinking (off for json_mode unless asked, as the Ollama path does),
+    num_predict as max_tokens - else the rest of the server's window - and the
+    thinking stripped from the text. It used to post a raw /v1/completions
+    prompt: no template, `think` ignored, max_tokens 1024, so a Qwen model
+    rambled for minutes on a CPU node (5 Oct 2026). routed_call's result for
+    kind "chat" is the message; this returns it with result = the answer text."""
+    _opts = options or {}
+    _np = int(_opts.get("num_predict") or 0)
+    if think is None and json_mode:
+        think = False
+    extra: Dict[str, Any] = {}
+    if think is not None:
+        extra["chat_template_kwargs"] = {"enable_thinking": bool(think)}
+    if json_mode:
+        extra["response_format"] = {"type": "json_object"}
+    msgs = ([{"role": "system", "content": system}] if system else []) \
+        + [{"role": "user", "content": prompt}]
+    vr = await vm.routed_call(
+        "chat", rule, model=model, prefer_gpu=prefer_gpu, job_type=job_type,
+        slot_timeout=timeout, stream_cb=stream_cb, messages=msgs,
+        max_tokens=(_np if _np > 0 else None),
+        temperature=float(_opts.get("temperature", 0.7)),
+        top_p=float(_opts.get("top_p", 0.9)),
+        extra=(extra or None))
+    if vr and vr.get("ok"):
+        msg = vr.get("result") or {}
+        text = str(msg.get("content") or "") if isinstance(msg, dict) else str(msg)
+        rc = getattr(vm, "_route_core", None)
+        vr = dict(vr, result=(rc.strip_think(text) if rc is not None else text))
+    return vr
+
 def _standin_candidates(model: Optional[str] = None) -> Dict[str, dict]:
     """Switched nodes as pick candidates (vllm_capabilities.standins); {} when
     the vLLM module is not loaded."""
@@ -3580,19 +3618,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                          or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
             if _vllm_mod is None:
                 raise RuntimeError("vllm module not loaded")
-            _opts = options or {}
-            _np = int(_opts.get("num_predict") or 0)
-            _vr = await _vllm_mod.routed_call(
-                "generate", eff_rule, model=eff_model or None,
+            _vr = await _vllm_generate_routed(
+                _vllm_mod, eff_rule, prompt=prompt, system=system, json_mode=json_mode,
+                think=think, options=options, model=eff_model or None,
                 prefer_gpu=prefer_gpu, job_type=str(eff_job_type or ""),
-                slot_timeout=timeout, stream_cb=stream_cb,
-                prompt=(f"{system}\n\n{prompt}" if system else prompt),
-                max_tokens=(_np if _np > 0 else 1024),
-                temperature=float(_opts.get("temperature", 0.7)),
-                top_p=float(_opts.get("top_p", 0.9)),
-                extra=({"response_format": {"type": "json_object"}} if json_mode else None),
-                caller_override=caller,
-            )
+                timeout=timeout, stream_cb=stream_cb)
             if _vr and _vr.get("ok"):
                 if meta_out is not None:
                     meta_out.update({"model": _vr.get("model"), "instance": _vr.get("instance"),
@@ -3707,19 +3737,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         _sv_node = OLLAMA_INSTANCES.get(chosen) or {}
         _sv_node["in_use"] = _sv_node.get("in_use", 0) + 1
         try:
-            _opts = options or {}
-            _np = int(_opts.get("num_predict") or 0)
-            _vr = await _vm_r.routed_call(
-                "generate", {"pin": f"vllm:{_sv_id}"}, model=eff_model or None,
+            _vr = await _vllm_generate_routed(
+                _vm_r, {"pin": f"vllm:{_sv_id}"}, prompt=prompt, system=system,
+                json_mode=json_mode, think=think, options=options, model=eff_model or None,
                 prefer_gpu=prefer_gpu, job_type=str(eff_job_type or ""),
-                slot_timeout=timeout, stream_cb=stream_cb,
-                prompt=(f"{system}\n\n{prompt}" if system else prompt),
-                max_tokens=(_np if _np > 0 else 1024),
-                temperature=float(_opts.get("temperature", 0.7)),
-                top_p=float(_opts.get("top_p", 0.9)),
-                extra=({"response_format": {"type": "json_object"}} if json_mode else None),
-                caller_override=caller,
-            )
+                timeout=timeout, stream_cb=stream_cb)
             if _vr and _vr.get("ok"):
                 if meta_out is not None:
                     meta_out.update({"model": _vr.get("model"), "instance": _vr.get("instance"),
