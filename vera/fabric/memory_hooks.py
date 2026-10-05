@@ -1263,11 +1263,37 @@ _FADE_REPORT_KEY = "vera:memory:fade:report"
     description="DRY RUN ONLY - what the memory fading job would archive today, and why. Every live memory record is "
                 "scored with its class's half-life, renewed by use (memory_strength_core + the usage counts chat turns "
                 "write); a record below its class's floor would fade (a soft archive, revived on use). Nothing is "
-                "changed: the owner reads this before any fading is switched on. Inputs: samples (int=5 per class), "
-                "batch (int=5000). Output: {policy, total, fading, by_class:{cls:{total, fading, mean_strength, "
-                "samples:[{id, text, strength, record_type}]}}, ms} - also kept at " + _FADE_REPORT_KEY + ".",
+                "changed: the owner reads this before any fading is switched on. The scan of the whole store runs in "
+                "the background (one at a time) and keeps its result at " + _FADE_REPORT_KEY + "; this answers at "
+                "once with the last report. Inputs: refresh (bool - start a new scan; one starts anyway when none is "
+                "kept), samples (int=5 per class), batch (int=5000). Output: {report: {policy, total, fading, "
+                "by_class:{cls:{total, fading, mean_strength, samples:[{id, text, strength, record_type}]}}, ms, at} "
+                "| null, computing (bool)}.",
 )
-async def memory_fade_report(samples: int = 5, batch: int = 5000, trace_id=None):
+async def memory_fade_report(refresh: bool = False, samples: int = 5, batch: int = 5000, trace_id=None):
+    global _FADE_TASK
+    stored = None
+    r = _redis()
+    if r is not None:
+        try:
+            raw = await r.get(_FADE_REPORT_KEY)
+            if raw:
+                stored = json.loads(raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else raw)
+        except Exception:
+            stored = None
+    running = _FADE_TASK is not None and not _FADE_TASK.done()
+    want = str(refresh).strip().lower() in ("1", "true", "yes", "on")
+    if (want or stored is None) and not running:
+        _FADE_TASK = asyncio.create_task(_fade_compute(samples, batch))
+        running = True
+    return {"report": stored, "computing": running}
+
+
+_FADE_TASK = None
+
+
+async def _fade_compute(samples: int = 5, batch: int = 5000) -> Dict[str, Any]:
+    """The scan behind memory.fade.report - a background task, never inside a request's 60 s."""
     t0 = time.monotonic()
     try:
         n_samples = max(0, min(int(samples or 5), 20))
