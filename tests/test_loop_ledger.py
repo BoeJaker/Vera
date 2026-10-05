@@ -98,3 +98,14 @@ def test_runner_hooks_are_wired():
     for line in src.splitlines():
         if "_dl." in line and ("await " in line):
             pytest.fail("decision recording must not add an await: " + line.strip())
+
+
+def test_declared_origin_wins_when_it_is_a_v0_origin():
+    assert LD.origin_for("claude", "census") == "census"
+    assert LD.origin_for("claude", "nonsense") == "delegate"
+    assert LD.origin_for("", "") == "user"
+
+
+def test_census_harness_declares_its_origin():
+    src = open(os.path.join(ROOT, "tools", "loop-census", "run_census.py"), encoding="utf-8").read()
+    assert '_args["decision_origin"] = "census"' in src

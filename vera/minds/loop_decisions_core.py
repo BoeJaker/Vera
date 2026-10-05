@@ -37,8 +37,13 @@ _ORIGIN_BY_CALLER = {"census": "census", "claude": "delegate", "codex": "delegat
                      "background": "background"}
 
 
-def origin_for(caller_kind: Any) -> str:
-    """The Decision v0 origin for whoever started the run (a person by default)."""
+def origin_for(caller_kind: Any, explicit: Any = "") -> str:
+    """The Decision v0 origin of a run: what the caller declared (decision_origin=, e.g. the
+    census harness says "census") when it is a v0 origin, else derived from the caller kind
+    (a person by default)."""
+    e = str(explicit or "").strip().lower()
+    if e in LC.ORIGINS:
+        return e
     return _ORIGIN_BY_CALLER.get(str(caller_kind or "").strip().lower(), "user")
 
 

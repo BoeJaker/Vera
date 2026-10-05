@@ -8428,7 +8428,7 @@ async def mcp_call_endpoint(name: str, arguments: str = "", trace_id=None):
 # (the MCP bridge sends one with every Claude/Codex call) is not injected into them: it scoped
 # each agent's memory.search / memory.recall to records from its own session, which is
 # almost always nothing (2026-10-04). An explicit session_id in arguments still filters.
-_SESSION_FILTER_CAPS = frozenset({"memory.search", "memory.recall"})
+_SESSION_FILTER_CAPS = frozenset({"memory.search", "memory.recall", "decide.ledger"})
 
 
 def _inject_attribution_session(cap_name: str, own_props: Dict[str, Any]) -> bool:

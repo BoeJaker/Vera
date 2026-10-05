@@ -24292,6 +24292,10 @@ async def cap_dag_agent_loop_v6(
     # resolved with the global layer; published on switchboard_core.RUN_MINDS;
     # emitted as agent_loop_v6.minds and returned as result["minds"].
     minds:              Optional[Dict[str, str]] = None,
+    # Who started this run, for the decision ledger's `origin` (census | delegate | user |
+    # schedule | background | ...). The census harness passes "census"; blank = from the
+    # caller kind. Recording only - it changes nothing the loop does.
+    decision_origin:    str = "",
     # Per-run role models + effort (dag/role_override_core.py): an MoE executor
     # or a bigger coder on a chosen node ('auto' = the GPU if it fits, else a CPU
     # node); effort 'bigger-coder' (qwen3-coder:30b) or 'max' (the bigger coder
@@ -24363,9 +24367,10 @@ async def cap_dag_agent_loop_v6(
     if _loop_ledger is not None:
         try:
             _orch_mod = sys.modules.get("Vera.vera.capability_orchestration")
-            _dl_origin = _loop_ledger.LD.origin_for(_orch_mod.CALLER_KIND.get("") if _orch_mod else "")
+            _dl_origin = _loop_ledger.LD.origin_for(_orch_mod.CALLER_KIND.get("") if _orch_mod else "",
+                                                    decision_origin)
         except Exception:
-            _dl_origin = "user"
+            _dl_origin = _loop_ledger.LD.origin_for("", decision_origin)
         try:
             _dl = _loop_ledger.RunLedger(sid, origin=_dl_origin,
                                          digest=lambda: _minds_rec.get("digest", "default"))
