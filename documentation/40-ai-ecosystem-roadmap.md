@@ -158,16 +158,16 @@ of these now have offline Vera contracts; see
 | DSPy | Optimisation | P1 experimental | OptimizerProvider consuming evaluations and prompt packages | Proposal-only optimiser contracts shipped |
 | MLflow | Lifecycle/observability | P1 | Run/evaluation/prompt/model export and import | Offline interchange boundary shipped; SDK/service execution queued |
 | Qdrant | Retrieval | P1 | VectorIndexProvider | Injected-driver exact-snapshot adapter shipped; no package imported |
-| Hugging Face PEFT | Training | P1/P2 | TrainingAdapter producing derived ModelPackages | Provider-neutral training contracts shipped |
+| Hugging Face PEFT | Training | P1/P2 | TrainingAdapter producing derived ModelPackages | Offline derived-package boundary shipped; training/loading queued |
 | LlamaIndex | Data/RAG/agents | P2 | Loss-aware manifest/Workflow IR boundary and evidence comparison | Offline boundary shipped; live pilot queued |
 | Haystack | RAG/pipelines | P2 | Loss-aware manifest/Workflow IR boundary and evidence comparison | Offline boundary shipped; live pilot queued |
 | GraphRAG | Graph retrieval | P2 experimental | Offline Index/Evidence adapter over snapshots | Injected-runtime exact-snapshot boundary shipped |
 | Ray Serve | Distributed serving | P2 | DeploymentProvider | Planned |
 | BentoML | Model serving | P2 | DeploymentProvider | Planned |
-| Langfuse | Observability/evals | P2 backend | OTLP/OpenInference export target | Comparison evidence contract shipped; deployment queued |
-| Phoenix | Observability/evals | P2 backend | OTLP/OpenInference export target | Comparison evidence contract shipped; deployment queued |
-| Guardrails AI | Validation/safety | P2 | ValidatorProvider | Planned |
-| Ragas | RAG evaluation | P2 metric pack | EvalProvider metric extension | Planned |
+| Langfuse | Observability/evals | P2 backend | OTLP/OpenInference export target | Bounded live comparison complete; no backend activated |
+| Phoenix | Observability/evals | P2 backend | OTLP/OpenInference export target | Bounded live comparison complete; no backend activated |
+| Guardrails AI | Validation/safety | P2 | ValidatorProvider | Offline manifest and frozen-evidence import shipped; execution queued |
+| Ragas | RAG evaluation | P2 metric pack | EvalProvider metric extension | Strict frozen-projection import shipped; execution queued |
 | Microsoft Agent Framework | Agent runtime | Watch/P2 | RuntimeAdapter after API stabilisation | Watch |
 | Unstructured | Document ingestion | Watch/alternative | DocumentParser provider | Later comparison against the Docling corpus |
 | DBOS | Durable execution | P1 experimental | Workflow IR runtime adapter over Postgres | Static mapping shipped; executable spike queued |
@@ -179,11 +179,11 @@ of these now have offline Vera contracts; see
 | Strands Agents | Agent SDK | Watch/P2 | RuntimeAdapter | In the runtime matrix (prospective) |
 | Agno | Agent platform | Watch | Prefer A2A or generic RuntimeAdapter | In the runtime matrix (prospective) |
 | Hugging Face Datasets | Dataset access | P1 | DatasetProvider and SourcePackage adapter | Offline adapter shipped (pinned to `datasets==4.8.4`) |
-| Hugging Face Accelerate | Distributed training | P2 | TrainingRuntime adapter | Planned |
+| Hugging Face Accelerate | Distributed training | P2 | TrainingRuntime adapter | Offline distributed-runtime mapping shipped; execution queued |
 | DVC | Data versioning | P2 | External Dataset/Artifact registry adapter | Offline local-file adapter shipped |
 | llama.cpp server | Inference | P1 | InferenceProvider for GGUF and CPU/edge placement | Planned |
 | SGLang | Inference | P2 conditional | InferenceProvider | Admission benchmark defined, not run |
-| Lance format | Multimodal data | P2 experimental | Dataset/Artifact format adapter | Planned |
+| Lance format | Multimodal data | P2 experimental | Dataset/Artifact format adapter | Offline Lance-versus-Parquet experiment contract shipped |
 | DuckDB | Analytical query | P1 | QueryProvider over artifacts/dataset snapshots | Offline adapter shipped (pinned to `duckdb==1.5.5`) |
 
 ## Standards
@@ -569,9 +569,23 @@ validator ecosystem. Ragas focuses on RAG evaluation.
 Sources: [Guardrails AI](https://guardrailsai.com/guardrails/docs) and
 [Ragas](https://aclanthology.org/2024.eacl-demo.16.pdf).
 
-Validators and metrics would be optional provider packs. Vera retains policy,
-effect authorisation, evidence, failure mode, and audit. Third-party validators
-must declare model calls, egress, latency, and measured errors.
+Validators and metrics are optional provider packs. Vera retains policy, effect
+authorisation, evidence, failure mode, and audit. A payload-free validator
+manifest declares every validator's version, stage, requested failure mode,
+timeout, model package, network-egress scope, secret-reference need, and other
+effects. A frozen evidence projection binds each observation to a digest-only
+evaluation case and validator, with bounded violation/error codes, exact Fabric
+record/revision citations, and token, cost, and latency accounting. External
+providers cannot claim policy authority, and incomplete case-by-validator
+matrices remain explicitly partial.
+
+Ragas projections use the same strict external-evaluation importer and
+`PartialEvaluationReport` as DeepEval and Promptfoo; they do not create another
+evaluation schema or truth store. Payload-bearing fields are rejected, exact
+case and dataset-revision identities are preserved, and every completed case
+must supply all requested metrics and judge provenance. These offline adapters
+import no package and invoke no validator, model, network, or metric. Live
+execution and any policy integration remain separately authorized work.
 
 ## Durable execution
 
