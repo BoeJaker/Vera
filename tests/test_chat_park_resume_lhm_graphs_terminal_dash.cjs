@@ -93,5 +93,10 @@ t('a finished reply re-reads the memory graph, here and in the menu instance', H
     CV.includes("at: b.state === 'pinned' ? 'pinned' : 'now', size: 'l' },\n          b.anchor && typeof b.anchor === 'object' ? { anchor: b.anchor } : {}));")
     && CV.includes("at: sb.state === 'pinned' ? 'pinned' : 'now', size: 'l',"));
   t('...and its diagram takes the pane\'s height beside the code', CV.includes('.it-bd.fu-beside > .fu-p > .fu-b,.it-bd.fu-over > .fu-p > .fu-b{display:flex;flex-direction:column}')); }
+// owner, 2026-10-04: "the explode opens but there isnt enough space to scroll down and see it"
+{ const CV = R('vera/canvas/canvas_element.js');
+  t('an exploded item is one you opened (never folded by the column) and is brought into view', CV.includes('this._open.add(key); this._revealSoon(key);') && CV.includes('_revealSoon(key, tries) {'));
+  t('...its panes stay side by side, in halves, when it is opened or resized', CV.includes('.it:is(.openin,.sized,.maxed) > .it-bd.fu-beside{flex-direction:row}')
+    && CV.includes('.it:is(.openin,.sized,.maxed) > .it-bd.fu-beside > *{flex:1 1 0;min-width:0}')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

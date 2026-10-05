@@ -1462,6 +1462,10 @@
   /* a pane's drawing takes the pane's height (owner, 2026-10-04: an exploded code item "you can barely see it"): the
      body was a block, so the explode diagram beside its code fell to its 140 px minimum whatever the code's height */
   .it-bd.fu-beside > .fu-p > .fu-b,.it-bd.fu-over > .fu-p > .fu-b{display:flex;flex-direction:column}
+  /* an OPENED or resized fused item keeps its panes side by side: the opened body is a column (for one drawing to fill
+     it), which stacked the explode under its code at 60 px */
+  .it:is(.openin,.sized,.maxed) > .it-bd.fu-beside{flex-direction:row}
+  .it:is(.openin,.sized,.maxed) > .it-bd.fu-beside > *{flex:1 1 0;min-width:0}   /* halves, not the code taking it all */
   /* the strip's panes are as wide as their content, not a share of a column */
   .it-bd.fu-strip>.fu-p{max-width:100%}
   .it-bd.fu-strip .fu-b{overflow:visible}
@@ -2888,6 +2892,17 @@
       if (!key || this._peekKey === key || this._rz || it.classList.contains('ghost') || !(it.classList.contains('compact') || it.classList.contains('overfold'))) return;
       this._peekT = setTimeout(() => { if (this._hovKey === key) this._peekOpen(key); }, 220);
     }
+    // an item scrolled into the column's view once the canvas has drawn and placed it (a few tries: the add is a round trip)
+    _revealSoon(key, tries) {
+      const n = (tries | 0) + 1; if (n > 12) return;
+      setTimeout(() => {
+        const it = this._peekFind(key); const body = this.shadowRoot && this.shadowRoot.getElementById('body');
+        if (!it || !body || it.classList.contains('overfold') || it.offsetHeight < 60) return this._revealSoon(key, n);
+        const b = body.getBoundingClientRect(), r = it.getBoundingClientRect();
+        if (r.bottom > b.bottom - 8) body.scrollTop += Math.min(r.bottom - b.bottom + 16, r.top - b.top - 60);
+        else if (r.top < b.top + 60) body.scrollTop -= (b.top + 60 - r.top);
+      }, n === 1 ? 600 : 400);
+    }
     _peekFind(key) { const body = this.shadowRoot && this.shadowRoot.getElementById('body');
       return key && body ? body.querySelector('#items .it[data-key="' + String(key).replace(/"/g, '\\"') + '"]') : null; }
     _peekOpen(key) {
@@ -3049,6 +3064,11 @@
         /* in the source's band and at the source's turn (owner, 2026-10-04: the explode "opens very far away from the
            other elements"): fusing is per band, so a diagram of a PINNED item - added to 'now', with no turn - was a card
            of its own placed where nothing anchors it, far from its code; fusing switched off did the same */
+        /* ...and the item you exploded is one you OPENED (owner, 2026-10-04: "the explode opens but there isnt enough space
+           to scroll down and see it"): the diagram made it taller, the column had no room, and its held layout folded
+           it - the weakest first - to its header line, diagram and all. An item you opened is never folded by the column;
+           once it is placed it is brought into view. */
+        this._open.add(key); this._revealSoon(key);
         return this.call('canvas.add', Object.assign({ kind: 'explode', key: 'explode:' + key, content, at: b.state === 'pinned' ? 'pinned' : 'now', size: 'l' },
           b.anchor && typeof b.anchor === 'object' ? { anchor: b.anchor } : {}));
       }
@@ -3645,6 +3665,7 @@
       if (act === 'explode') {
         const md = String((c.reader && c.reader.markdown) || c.text || ''); if (!md.trim()) return this._readout(key, 'read the page first');
         const sb = this._blockOf(key) || {};   // the page's band and turn, as for a code item's diagram
+        this._revealSoon('explode:' + key);    // its own card (a page's explode binds nothing): brought into view once placed
         return this.call('canvas.add', Object.assign({ kind: 'explode', key: 'explode:' + key, at: sb.state === 'pinned' ? 'pinned' : 'now', size: 'l',
           content: { text: md.slice(0, 20000), title: String(c.title || 'page') + ' \u2014 exploded', binds: '' } },
           sb.anchor && typeof sb.anchor === 'object' ? { anchor: sb.anchor } : {}));
