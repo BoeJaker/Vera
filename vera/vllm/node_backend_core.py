@@ -113,7 +113,8 @@ def standin_view(ollama_inst: Dict[str, Any], vinst: Any) -> Dict[str, Any]:
     v = dict(ollama_inst or {})
     load = max(int(v.get("in_use", 0) or 0), int(_f(vinst, "in_use", 0) or 0))
     v.update(status="online", enabled=True, backend="vllm", running=[],
-             models=list(_f(vinst, "models", []) or []),
+             models=list(_f(vinst, "models", []) or [])
+             + [n for n in (_f(vinst, "stands_in_for", []) or []) if n],
              has_gpu=bool(_f(vinst, "has_gpu", v.get("has_gpu", False))),
              in_use=load + int(_f(vinst, "waiting_requests", 0) or 0))
     return v

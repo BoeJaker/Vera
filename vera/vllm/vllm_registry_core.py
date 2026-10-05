@@ -19,7 +19,20 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
-PERSISTED_FIELDS = ("url", "label", "has_gpu", "priority", "gate_as", "think_default")
+PERSISTED_FIELDS = ("url", "label", "has_gpu", "priority", "gate_as", "think_default",
+                    "stands_in_for")
+
+
+def names(v: Any) -> List[str]:
+    """A clean list of model names (comma string or list), order kept, no dups."""
+    if isinstance(v, str):
+        v = v.split(",")
+    out: List[str] = []
+    for n in v or []:
+        n = str(n).strip()
+        if n and n not in out:
+            out.append(n)
+    return out
 
 #: a server's thinking default for requests that do not choose: "" (the model's
 #: own), "on", "off"
@@ -41,6 +54,7 @@ def record(spec: Dict[str, Any]) -> Dict[str, Any]:
         # the Ollama node id whose gate this server takes (shared hardware)
         "gate_as": str(spec.get("gate_as") or ""),
         "think_default": think_default(spec.get("think_default")),
+        "stands_in_for": names(spec.get("stands_in_for")),
     }
 
 

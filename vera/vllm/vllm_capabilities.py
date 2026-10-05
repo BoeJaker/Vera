@@ -147,6 +147,8 @@ class VLLMInstance:
     gate_as: str = ""
     # thinking for requests that do not choose: "" model default | "on" | "off"
     think_default: str = ""
+    # model names routed here though this server runs another model (stand-ins)
+    stands_in_for: List[str] = field(default_factory=list)
     # runtime state
     status: str = "unknown"              # unknown | online | offline | degraded
     latency_ms: Optional[float] = None
@@ -313,7 +315,8 @@ def _apply_registry() -> None:
                 priority=int(spec.get("priority") or 0),
                 api_key=spec.get("api_key", VLLM_API_KEY),
                 gate_as=str(spec.get("gate_as") or ""),
-                think_default=_reg_core.think_default(spec.get("think_default")))
+                think_default=_reg_core.think_default(spec.get("think_default")),
+                stands_in_for=_reg_core.names(spec.get("stands_in_for")))
         else:
             cur.url = str(spec.get("url", cur.url)).rstrip("/")
             cur.label = spec.get("label") or cur.label
@@ -321,6 +324,7 @@ def _apply_registry() -> None:
             cur.priority = int(spec.get("priority", cur.priority) or 0)
             cur.gate_as = str(spec.get("gate_as", cur.gate_as) or "")
             cur.think_default = _reg_core.think_default(spec.get("think_default", cur.think_default))
+            cur.stands_in_for = _reg_core.names(spec.get("stands_in_for", cur.stands_in_for))
 
 
 def _reg_lock() -> asyncio.Lock:
@@ -1016,6 +1020,7 @@ async def vllm_status() -> dict:
             "has_gpu": inst.has_gpu,
             "gate_as": inst.gate_as,
             "think_default": inst.think_default,
+            "stands_in_for": list(inst.stands_in_for),
             "latency_ms": inst.latency_ms,
             "in_use": inst.in_use,
             "errors": inst.errors,
@@ -1088,7 +1093,7 @@ async def vllm_instances_add(
         _REG_DOC = _reg_core.note_added(_REG_DOC, id, {
             "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
             "priority": inst.priority, "gate_as": inst.gate_as,
-            "think_default": inst.think_default})
+            "think_default": inst.think_default, "stands_in_for": list(inst.stands_in_for)})
         await _save_registry()
     await _ping_vllm(inst)
     await emit_event({"type": "vllm.instance.added", "id": id, "url": url,
@@ -1119,11 +1124,42 @@ async def vllm_instances_think(instance_id: str, think: str = "default") -> dict
         _REG_DOC = _reg_core.note_added(_REG_DOC, instance_id, {
             "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
             "priority": inst.priority, "gate_as": inst.gate_as,
-            "think_default": inst.think_default})
+            "think_default": inst.think_default, "stands_in_for": list(inst.stands_in_for)})
         await _save_registry()
     await emit_event({"type": "vllm.instance.think", "id": instance_id,
                       "think_default": inst.think_default or "default"})
     return {"ok": True, "id": instance_id, "think_default": inst.think_default or "default"}
+
+
+@capability(
+    name="vllm.instances.stand_in",
+    description="Set the model names a vLLM server stands in for: Vera routes requests "
+                "for those names to it (sending the server's own model), e.g. when no "
+                "server can run the requested model. Visible on the vLLM page; an empty "
+                "list removes them. Persisted with the registry. Inputs: instance_id "
+                "(str!), names (list[str] or comma string).",
+    http_method="POST",
+    http_path="/vllm/instances/stand_in",
+    schema={"properties": {"instance_id": {"type": "string"},
+                           "names": {"type": "array", "items": {"type": "string"}}},
+            "required": ["instance_id"]},
+)
+async def vllm_instances_stand_in(instance_id: str, names=None) -> dict:
+    await _ensure_registry_loaded()
+    global _REG_DOC
+    async with _reg_lock():
+        inst = VLLM_INSTANCES.get(instance_id)
+        if inst is None:
+            return {"ok": False, "error": f"Instance '{instance_id}' not found"}
+        inst.stands_in_for = [n for n in _reg_core.names(names) if n not in inst.models]
+        _REG_DOC = _reg_core.note_added(_REG_DOC, instance_id, {
+            "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
+            "priority": inst.priority, "gate_as": inst.gate_as,
+            "think_default": inst.think_default, "stands_in_for": list(inst.stands_in_for)})
+        await _save_registry()
+    await emit_event({"type": "vllm.instance.stand_in", "id": instance_id,
+                      "stands_in_for": list(inst.stands_in_for)})
+    return {"ok": True, "id": instance_id, "stands_in_for": list(inst.stands_in_for)}
 
 
 @capability(
