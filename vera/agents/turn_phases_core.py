@@ -23,6 +23,7 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 STAGES = ("sense", "needs", "acquire", "model", "post")
+MAX_LOG = 60          # frames kept per turn for its record
 STATES = ("start", "done", "skip", "fail", "late", "first")
 _FINISHED = ("done", "skip", "fail", "late")
 
@@ -42,10 +43,15 @@ def _clean(text: Any, limit: int = 120) -> str:
 class PhaseClock:
     """Builds frames for one turn, timed from the turn's start (`t0`, a monotonic reading)."""
 
-    def __init__(self, turn_id: str, t0: float, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, turn_id: str, t0: float, clock: Callable[[], float] = time.monotonic,
+                 silent: bool = False):
         self.turn_id = str(turn_id or "")
         self.t0 = float(t0)
         self._clock = clock
+        # Every frame is kept for the turn record (four-minds FM-0.3), whether or not the client
+        # asked to see frames; a silent clock sends nothing (sse/raw give b"").
+        self.silent = bool(silent)
+        self.log: List[Dict[str, Any]] = []
 
     def at_ms(self, t: Optional[float] = None) -> int:
         return max(0, int(round(((self._clock() if t is None else t) - self.t0) * 1000)))
@@ -74,11 +80,18 @@ class PhaseClock:
                 v = [{"title": _clean(s.get("title"), 140), "url": str(s.get("url") or "")[:500]}
                      for s in list(v)[:10] if isinstance(s, dict)]
             out[k] = v
+        if len(self.log) < MAX_LOG:
+            self.log.append(out)
         return out
 
     def sse(self, *args: Any, **kwargs: Any) -> bytes:
-        """The frame as one server-sent event."""
-        return ("data: " + json.dumps(self.frame(*args, **kwargs)) + "\n\n").encode()
+        """The frame as one server-sent event (b"" on a silent clock - the frame is still logged)."""
+        f = self.frame(*args, **kwargs)
+        return b"" if self.silent else ("data: " + json.dumps(f) + "\n\n").encode()
+
+    def raw(self, frame: Dict[str, Any]) -> bytes:
+        """An already-built frame as one server-sent event (b"" on a silent clock)."""
+        return b"" if self.silent else ("data: " + json.dumps(frame) + "\n\n").encode()
 
 
 def from_marks(clock: PhaseClock, marks: Iterable[Tuple[str, float]], min_ms: int = 1) -> List[Dict[str, Any]]:
@@ -106,3 +119,39 @@ def from_marks(clock: PhaseClock, marks: Iterable[Tuple[str, float]], min_ms: in
 def web_label(query: str) -> str:
     q = _clean(query, 60)
     return f"searching the web for “{q}”" if q else "searching the web"
+
+
+def turn_record(frames: Iterable[Dict[str, Any]], *, agent: str, elapsed_ms: int, chars: int = 0,
+                ok: bool = True) -> Dict[str, Any]:
+    """One chat turn, from its phase frames (four-minds FM-0.3, ROADMAP §5.2): no second timer.
+
+    ttft_ms   the model stage's `first` frame (None when no token came);
+    kind      "triggered" when the turn acquired web or deep-memory context before the model
+              (those turns may wait up to their caps, ROADMAP §13a) - reported apart, so they
+              can't hide in the plain turns' average;
+    phases    each finished step: stage, id, state, at_ms, ms."""
+    frames = list(frames or [])
+    ttft = next((f.get("at_ms") for f in frames if f.get("stage") == "model" and f.get("state") == "first"), None)
+    triggered = any(f.get("stage") == "acquire" and f.get("id") in ("web", "memory")
+                    and f.get("state") in ("start", "done", "late", "fail") for f in frames)
+    phases = [{k: f.get(k) for k in ("stage", "id", "state", "at_ms", "ms") if f.get(k) is not None}
+              for f in frames if f.get("state") in _FINISHED or f.get("state") == "first"]
+    return {"type": "chat.turn", "turn_id": next((f.get("turn_id") for f in frames if f.get("turn_id")), ""),
+            "agent": _clean(agent, 60), "kind": "triggered" if triggered else "plain",
+            "ttft_ms": ttft, "elapsed_ms": int(elapsed_ms), "chars": int(chars or 0), "ok": bool(ok),
+            "phases": phases[:MAX_LOG]}
+
+
+def as_envelope(record: Dict[str, Any]) -> Dict[str, Any]:
+    """The record in retrieval_timing_core's Window shape: path = "<agent>|<kind>", stages = ttft + phases."""
+    stages = []
+    if record.get("ttft_ms") is not None:
+        stages.append({"stage": "ttft", "ms": float(record["ttft_ms"]), "outcome": "ok"})
+    else:
+        stages.append({"stage": "ttft", "ms": float(record.get("elapsed_ms") or 0), "outcome": "no-token"})
+    for p in record.get("phases") or []:
+        if p.get("ms") is not None:
+            stages.append({"stage": f"{p.get('stage')}.{p.get('id')}", "ms": float(p["ms"]),
+                           "outcome": str(p.get("state"))})
+    return {"path": f"{record.get('agent')}|{record.get('kind')}", "total_ms": float(record.get("elapsed_ms") or 0),
+            "stages": stages}
