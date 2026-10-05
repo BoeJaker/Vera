@@ -14390,6 +14390,16 @@ except ImportError:                                   # pragma: no cover
     except ImportError:
         _minds_core = None
 
+# Decision ledger (four-minds FM-0.2a): the controller's and the verifier's answers as
+# Decision v0 rows, sent in the background - the run never waits on them.
+try:
+    from Vera.vera.minds import loop_ledger as _loop_ledger
+except ImportError:                                   # pragma: no cover
+    try:
+        from vera.minds import loop_ledger as _loop_ledger
+    except ImportError:
+        _loop_ledger = None
+
 # Intent core (roadmap G): once the goal's intent is known, the caps that
 # intent uses move to the front of the catalogue. Ordering only, opt-in.
 try:
@@ -24349,6 +24359,18 @@ async def cap_dag_agent_loop_v6(
     except Exception:
         pass
     _minds_rec: Dict[str, Any] = {"requested": {}, "modes": {}, "source": {}, "digest": "default"}
+    _dl = None
+    if _loop_ledger is not None:
+        try:
+            _orch_mod = sys.modules.get("Vera.vera.capability_orchestration")
+            _dl_origin = _loop_ledger.LD.origin_for(_orch_mod.CALLER_KIND.get("") if _orch_mod else "")
+        except Exception:
+            _dl_origin = "user"
+        try:
+            _dl = _loop_ledger.RunLedger(sid, origin=_dl_origin,
+                                         digest=lambda: _minds_rec.get("digest", "default"))
+        except Exception as _dle:
+            log.debug("decision ledger off for this run: %s", _dle)
     if _minds_core is not None:
         _mv = _minds_core.validate(minds or {})
         if not _mv["ok"]:
@@ -25622,6 +25644,8 @@ async def cap_dag_agent_loop_v6(
         _vr = verify_reasons_by_step.setdefault(str(step.get("id")), [])
         _vr.append(str(v.get("reason") or ""))
         res["verify_reasons"] = list(_vr)
+        if _dl is not None:
+            _dl.verify(step.get("id"), v["met"], len(_vr), model=str(model or ""))
         # `ok` on a VERIFY event must be the VERDICT, not the step's own flag.
         # Emitting res["ok"] made the trace read "verify ok=True" beside a reason
         # saying the deliverable was never created — so a run that was correctly
@@ -26044,6 +26068,8 @@ async def cap_dag_agent_loop_v6(
                                         for s in ctrl.get("steps", [])]})
             action = ctrl.get("action", "continue")
             new_steps = ctrl.get("steps", [])
+            if _dl is not None:
+                _dl.controller(step["id"], action, ctrl, model=str(model or ""))
             if action == "stop":
                 break
             elif action == "replan" and new_steps:
@@ -26334,6 +26360,8 @@ async def cap_dag_agent_loop_v6(
                               stream_id=stream_id)
     await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
                              stream_id=stream_id)
+    if _dl is not None:
+        _dl.finish(_gate_last)
     await emit_event({"type": "agent_loop_v6.done", "stream_id": stream_id, "session_id": sid,
                       "summary": final, "cycles": gcycle, "steps_run": len(results),
                       "reason": _gate_finish_core.reason(_unmet), "unmet": _unmet})
