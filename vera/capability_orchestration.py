@@ -9465,7 +9465,9 @@ _SNAPSHOT_SOURCES = (
     ("cluster", "obs.cluster", {}),
     ("temps", "obs.node_temps", {}),
     ("memstats", "memory.stats", {}),
-    ("redis", "obs.redis", {}),
+    # the server figures alone: both readers (the status dots, the topology hub) use clients/memory/error, and the
+    # full call is KEYS plus a TYPE per key - 140 of 893 busy main-thread samples on prod (py-spy, 2026-10-05)
+    ("redis", "obs.redis", {"keys": False}),
     ("docker_stats", "docker.stats.top", {}),
     ("perf", "perf.stalls", {"limit": 5}),
 )
