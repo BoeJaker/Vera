@@ -176,6 +176,19 @@ _LORA_ID_COUNTER = 1
 # ── Default config ─────────────────────────────────────────────────────────────
 VLLM_MODEL          = os.environ.get("VLLM_MODEL", "")
 VLLM_API_KEY        = os.environ.get("VLLM_API_KEY", "")
+# How long a request waits on the server: between bytes when streaming, for the
+# whole reply when not. A CPU node decodes about a token a second and compiles on
+# its first request - a fixed 180 s cut ordinary replies off (5 Oct 2026).
+VLLM_READ_TIMEOUT_S = float(os.environ.get("VLLM_READ_TIMEOUT_S", "1800") or 1800)
+
+
+def _req_timeout() -> "httpx.Timeout":
+    return httpx.Timeout(VLLM_READ_TIMEOUT_S, connect=10.0)
+
+
+def _err(exc: BaseException) -> str:
+    """An exception as text - a ReadTimeout's own message is empty."""
+    return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
 VLLM_QUANTIZATION   = os.environ.get("VLLM_QUANTIZATION", "")
 VLLM_TENSOR_PAR     = int(os.environ.get("VLLM_TENSOR_PARALLEL", "1"))
 VLLM_GPU_MEM_UTIL   = float(os.environ.get("VLLM_GPU_MEM_UTIL", "0.90"))
@@ -274,6 +287,14 @@ async def _load_registry() -> None:
         log.warning("vllm: load registry: %s", e)
         return
     _REG_LOADED = True
+    _apply_registry()
+    if _REG_DOC["instances"] or _REG_DOC["removed"]:
+        log.info("vllm: registry restored - %d instance(s)", len(VLLM_INSTANCES))
+
+
+def _apply_registry() -> None:
+    """Make VLLM_INSTANCES what the environment plus the stored document say,
+    keeping each live instance's runtime state (status, load, models)."""
     wanted = {s["id"]: s for s in _reg_core.merge(_parse_instances_env(), _REG_DOC)}
     for iid in [i for i in VLLM_INSTANCES if i not in wanted]:
         del VLLM_INSTANCES[iid]
@@ -292,8 +313,41 @@ async def _load_registry() -> None:
             cur.has_gpu = bool(spec.get("has_gpu", cur.has_gpu))
             cur.priority = int(spec.get("priority", cur.priority) or 0)
             cur.gate_as = str(spec.get("gate_as", cur.gate_as) or "")
-    if _REG_DOC["instances"] or _REG_DOC["removed"]:
-        log.info("vllm: registry restored - %d instance(s)", len(VLLM_INSTANCES))
+
+
+def _reg_lock() -> asyncio.Lock:
+    global _REG_LOCK
+    if _REG_LOCK is None:
+        _REG_LOCK = asyncio.Lock()
+    return _REG_LOCK
+
+
+async def _refresh_registry() -> None:
+    """Re-read the stored registry - every health cycle. A node worker loads it
+    at boot like the host, but an instance added later (a node switched to
+    vLLM) stayed invisible to it until it restarted (5 Oct 2026). On the host
+    its own adds are already in the document, so this changes nothing there."""
+    global _REG_DOC
+    r = getattr(_orch, "REDIS", None)
+    if not r or not _REG_LOADED:
+        return
+    async with _reg_lock():
+        try:
+            raw = await r.get(KEY_VLLM_INSTANCES)
+            doc = _reg_core.normalise_doc(json.loads(raw) if raw else None)
+        except Exception as e:
+            log.debug("vllm: refresh registry: %s", e)
+            return
+        if doc == _REG_DOC:
+            return
+        _REG_DOC = doc
+        before = set(VLLM_INSTANCES)
+        _apply_registry()
+        new = sorted(set(VLLM_INSTANCES) - before)
+        for iid in new:
+            await _ping_vllm(VLLM_INSTANCES[iid])
+        if new or before - set(VLLM_INSTANCES):
+            log.info("vllm: registry refreshed - now %d instance(s)", len(VLLM_INSTANCES))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -355,6 +409,7 @@ async def _scrape_metrics(inst: VLLMInstance) -> None:
 async def _health_loop(interval: float = 20.0) -> None:
     await _ensure_registry_loaded()
     while True:
+        await _refresh_registry()
         # Nothing to probe until at least one instance is configured. Idle
         # quietly (long sleep, no event) rather than pinging hosts and emitting
         # an empty vllm.health event every cycle — this is what made the module
@@ -720,7 +775,7 @@ async def vllm_generate(
 
     inst.in_use += 1
     try:
-        async with httpx.AsyncClient(timeout=180, headers=inst.headers()) as c:
+        async with httpx.AsyncClient(timeout=_req_timeout(), headers=inst.headers()) as c:
             if stream_cb:
                 async with c.stream("POST", f"{inst.url}/v1/completions", json=body) as resp:
                     resp.raise_for_status()
@@ -771,7 +826,7 @@ async def vllm_generate(
     except Exception as exc:
         _elapsed = round(time.time() - _t0, 2)
         log.error("vllm_generate [%s] FAILED %.2fs inst=%s caller=%s:%s err=%s",
-                  _req_id, _elapsed, inst.id, _caller_file, _caller_func, exc)
+                  _req_id, _elapsed, inst.id, _caller_file, _caller_func, _err(exc))
         inst.errors += 1
         try:
             await emit_event({
@@ -788,7 +843,7 @@ async def vllm_generate(
             log.info("vllm_generate: failing over to %s", fallback.id)
             body["stream"] = False
             try:
-                async with httpx.AsyncClient(timeout=180, headers=fallback.headers()) as c:
+                async with httpx.AsyncClient(timeout=_req_timeout(), headers=fallback.headers()) as c:
                     r = await c.post(f"{fallback.url}/v1/completions", json=body)
                     r.raise_for_status()
                     return r.json()["choices"][0]["text"]
@@ -855,7 +910,7 @@ async def vllm_chat(
 
     inst.in_use += 1
     try:
-        async with httpx.AsyncClient(timeout=180, headers=inst.headers()) as c:
+        async with httpx.AsyncClient(timeout=_req_timeout(), headers=inst.headers()) as c:
             if stream_cb:
                 async with c.stream("POST", f"{inst.url}/v1/chat/completions", json=body) as resp:
                     resp.raise_for_status()
@@ -879,9 +934,9 @@ async def vllm_chat(
                 return r.json()["choices"][0]["message"]
 
     except Exception as exc:
-        log.error("vllm_chat [%s]: %s", inst.id, exc)
+        log.error("vllm_chat [%s]: %s", inst.id, _err(exc))
         inst.errors += 1
-        return {"error": str(exc)}
+        return {"error": _err(exc)}
     finally:
         inst.in_use = max(0, inst.in_use - 1)
 
@@ -989,21 +1044,22 @@ async def vllm_instances_add(
     priority: int = None, api_key: str = "", gate_as: str = "",
 ) -> dict:
     await _ensure_registry_loaded()
-    if id in VLLM_INSTANCES:
-        return {"ok": False, "error": f"Instance '{id}' already exists. Remove it first."}
-    inst = VLLMInstance(
-        id=id, url=url.rstrip("/"), label=label or id,
-        has_gpu=has_gpu,
-        priority=priority if priority is not None else len(VLLM_INSTANCES),
-        api_key=api_key or VLLM_API_KEY,
-        gate_as=str(gate_as or ""),
-    )
-    VLLM_INSTANCES[id] = inst
     global _REG_DOC
-    _REG_DOC = _reg_core.note_added(_REG_DOC, id, {
-        "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
-        "priority": inst.priority, "gate_as": inst.gate_as})
-    await _save_registry()
+    async with _reg_lock():          # a health-cycle refresh must not land mid-change
+        if id in VLLM_INSTANCES:
+            return {"ok": False, "error": f"Instance '{id}' already exists. Remove it first."}
+        inst = VLLMInstance(
+            id=id, url=url.rstrip("/"), label=label or id,
+            has_gpu=has_gpu,
+            priority=priority if priority is not None else len(VLLM_INSTANCES),
+            api_key=api_key or VLLM_API_KEY,
+            gate_as=str(gate_as or ""),
+        )
+        VLLM_INSTANCES[id] = inst
+        _REG_DOC = _reg_core.note_added(_REG_DOC, id, {
+            "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
+            "priority": inst.priority, "gate_as": inst.gate_as})
+        await _save_registry()
     await _ping_vllm(inst)
     await emit_event({"type": "vllm.instance.added", "id": id, "url": url,
                       "has_gpu": inst.has_gpu})
@@ -1019,12 +1075,13 @@ async def vllm_instances_add(
 )
 async def vllm_instances_remove(instance_id: str) -> dict:
     await _ensure_registry_loaded()
-    if instance_id not in VLLM_INSTANCES:
-        return {"ok": False, "error": f"Instance '{instance_id}' not found"}
-    del VLLM_INSTANCES[instance_id]
     global _REG_DOC
-    _REG_DOC = _reg_core.note_removed(_REG_DOC, instance_id, _env_ids())
-    await _save_registry()
+    async with _reg_lock():
+        if instance_id not in VLLM_INSTANCES:
+            return {"ok": False, "error": f"Instance '{instance_id}' not found"}
+        del VLLM_INSTANCES[instance_id]
+        _REG_DOC = _reg_core.note_removed(_REG_DOC, instance_id, _env_ids())
+        await _save_registry()
     await emit_event({"type": "vllm.instance.removed", "id": instance_id})
     return {"ok": True, "id": instance_id}
 
@@ -1465,7 +1522,7 @@ async def _vllm_proxy(instance_id: str, path: str, request: _Req):
         if is_stream:
             async def _gen():
                 try:
-                    async with httpx.AsyncClient(timeout=180) as c:
+                    async with httpx.AsyncClient(timeout=_req_timeout()) as c:
                         async with c.stream(request.method, url, content=body, headers=headers) as r:
                             async for chunk in r.aiter_bytes():
                                 yield chunk
@@ -1474,7 +1531,7 @@ async def _vllm_proxy(instance_id: str, path: str, request: _Req):
 
             return _SR(_gen(), media_type="text/event-stream")
         else:
-            async with httpx.AsyncClient(timeout=180) as c:
+            async with httpx.AsyncClient(timeout=_req_timeout()) as c:
                 r = await c.request(request.method, url, content=body, headers=headers)
             inst.in_use = max(0, inst.in_use - 1)
             return _JR(r.json(), status_code=r.status_code)
