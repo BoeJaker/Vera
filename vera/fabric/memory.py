@@ -212,6 +212,9 @@ def _lucene_escape(q: str) -> str:
 # Candidates each backend returns per hit asked for: the merge collapses repeated texts,
 # so `limit` distinct hits need more than `limit` raw ones (context-and-ui E11).
 _CANDIDATES_PER_HIT = 3
+# Neo4j fulltext candidates scored per hit asked for (see Neo4jBackend.search).
+_NEO_FULLTEXT_CANDIDATES_PER_HIT = 20
+_NEO_FULLTEXT_MIN_CANDIDATES = 500
 
 # The last 500 timing envelopes per retrieval path in this process (FM-7.0), read by the
 # retrieval.timing capability. Timeouts, errors and very slow calls also go out as events.
@@ -1309,8 +1312,13 @@ class Neo4jBackend(MemoryBackend):
 
             if query.strip():
                 params["query"] = _lucene_escape(query)
+                # A candidate limit for Lucene: without it every matching node is scored before the
+                # WHERE and LIMIT below (live 2026-10-05: a 36-word chat message, 377-932 ms; with
+                # {limit: 300}, 35-81 ms and the identical top results). Generous, because the WHERE
+                # drops excluded kinds after it.
+                params["cand"] = max(_NEO_FULLTEXT_MIN_CANDIDATES, int(limit) * _NEO_FULLTEXT_CANDIDATES_PER_HIT)
                 cypher = f"""
-                    CALL db.index.fulltext.queryNodes('vera_mem_text', $query)
+                    CALL db.index.fulltext.queryNodes('vera_mem_text', $query, {{limit: $cand}})
                     YIELD node AS m, score
                     WHERE {where}
                     RETURN m, score ORDER BY score DESC LIMIT $limit
