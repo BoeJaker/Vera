@@ -259,3 +259,19 @@ def test_fast_then_vector_says_how_the_text_tier_went():
     info2 = {}
     _arun(rc.fast_then_vector(boom, 0.2, info=info2))
     assert info2["fast_hits"] == 0 and "postgres down" in info2["error"]
+
+
+# -- resurface: a faded memory that matches strongly comes back (owner, 2026-10-05) ----------------------------------
+def test_a_faded_hit_as_strong_as_the_best_live_one_comes_back():
+    keep = rc.resurface([("a", 0.2), ("b", 0.1)], [("f1", 0.25), ("f2", 0.15), ("f3", 0.2)])
+    assert keep == [("f1", 0.25), ("f3", 0.2)]
+
+
+def test_with_nothing_live_a_clear_faded_match_comes_back_and_a_stray_one_does_not():
+    assert rc.resurface([], [("f1", 0.04), ("f2", 0.06)]) == [("f2", 0.06)]
+
+
+def test_at_most_three_and_never_a_hit_without_a_score():
+    faded = [("f%d" % i, 0.5 - i * 0.01) for i in range(6)] + [("x", None), ("y", "nan")]
+    keep = rc.resurface([], faded)
+    assert [k for k, _s in keep] == ["f0", "f1", "f2"]

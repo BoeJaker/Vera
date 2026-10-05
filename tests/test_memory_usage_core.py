@@ -73,10 +73,12 @@ def _hooks():
 
 
 class _Conn:
-    def __init__(self, texts):
-        self.texts, self.rows, self.sql = texts, [], []
+    def __init__(self, texts, faded=()):
+        self.texts, self.rows, self.sql, self.faded = texts, [], [], set(faded)
 
     async def fetch(self, sql, ids):
+        if sql.lstrip().startswith("UPDATE vera_memories"):     # the revive: only faded rows come back
+            return [{"id": i} for i in ids if i in self.faded]
         return [{"id": i, "text": self.texts[i]} for i in ids if i in self.texts]
 
     async def execute(self, sql, *a):
@@ -120,7 +122,7 @@ def test_a_turn_counts_what_it_was_given_and_what_it_used(monkeypatch):
     got = dict(conn.rows)
     assert set(got) == {"agent-1", "page-1", "page-2", "deep-1"}
     assert got["agent-1"] == 1 and got["page-1"] == 1 and got["page-2"] == 0 and got["deep-1"] == 0
-    assert out == {"injected": 4, "used": 2}
+    assert out == {"injected": 4, "used": 2, "revived": 0}
     assert any("CREATE TABLE IF NOT EXISTS vera_memory_usage" in q for q in conn.sql)
     assert "chat-9" not in H._INJECTED                          # a turn's slot is consumed
 
@@ -163,3 +165,26 @@ def test_the_wiring():
     assert 'out["items"] = [{"id": it.get("id"), "text": it.get("text", "")} for it in items if it.get("id")]' in h
     w = _src("vera/widgets/widget_registry.py")
     assert '"id": "memory:usage-used"' in w and '"id": "memory:usage-ignored"' in w
+
+
+def test_a_faded_memory_the_reply_used_is_revived(monkeypatch):
+    # owner, 2026-10-05: a strong, useful match must surface again and not be locked out for good
+    H = _hooks()
+    conn = _Conn({"page-1": DECISION}, faded={"page-1"})
+    neo_updates = []
+
+    class _Neo:
+        async def update(self, rid, upd):
+            neo_updates.append((rid, upd))
+
+    class _Mem:
+        _backends = {"neo4j": _Neo()}
+
+    async def pool():
+        return _Pool(conn)
+    monkeypatch.setattr(H, "_usage_pool", pool)
+    monkeypatch.setattr(H, "_memory", lambda: (_Mem(), None))
+    monkeypatch.setattr(H, "_USAGE_TABLE_READY", True)
+    out = _arun(H.record_turn_usage("chat-r", "The census calendar runs nightly at midnight on the weekday template.",
+                                     ["page-1"], []))
+    assert out["revived"] == 1 and neo_updates == [("page-1", {"archived": False})]

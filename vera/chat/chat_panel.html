@@ -588,6 +588,18 @@ body.has-msgs #noticeDock,body.has-panel #noticeDock{display:none}
 .audio-row{display:flex;align-items:center;gap:5px;margin-top:4px;padding:3px 7px;background:var(--bg0);border-radius:3px;border:1px solid var(--border)}
 .audio-row audio{height:20px;flex:1}
 /* the turn footer: how the reply was made, collapsed (its rows are the chat:turn-phases widget) */
+/* Forgetting: what memory may forget, and how quickly (the Settings page, Context › Forgetting) */
+.fade-ctl{display:flex;flex-direction:column;gap:5px;font-size:11px}
+.fade-note{color:var(--dim, #7d8590);line-height:1.45}
+.fade-tbl{width:100%;border-collapse:collapse}
+.fade-tbl th{font-weight:500;text-align:left;color:var(--dim, #7d8590);font-size:10px;padding:2px 4px;border-bottom:1px solid var(--border, #2a2f37)}
+.fade-tbl td{padding:2px 4px;border-bottom:1px solid color-mix(in srgb, var(--border, #2a2f37) 50%, transparent)}
+.fade-tbl td.nm{color:var(--text, #e6edf3)}
+.fade-tbl td.rt{color:var(--dim, #7d8590);font-family:var(--mono, monospace);font-size:10px;white-space:nowrap}
+.fade-tbl input[type=number]{width:72px}
+.fade-acts{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.fade-msg{color:var(--dim, #7d8590);font-size:10px}
+.fade-auto{display:flex;gap:5px;align-items:center;color:var(--text, #e6edf3)}
 /* the last turn's steps: a pane of the LHM's Context menu (never in the transcript - owner, 2026-10-05) */
 #paneTurnPhases .tp-sum{font-size:10px;color:var(--dim, #7d8590);line-height:1.4}
 #paneTurnPhases .tp-sum b{color:var(--text, #e6edf3);font-weight:600}
@@ -2361,6 +2373,9 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
 <script src="/ui/elements/vera_output.js"></script>
 <script src="/ui/widgets/widget_element.js"></script>
     <vera-session-notes id="ctxNotesEl" scope="chat" title="Chat session memory"></vera-session-notes>
+    <!-- what memory may forget, and how quickly (owner, 2026-10-05); filled by _fadeLoad from memory.fade.policy -->
+    <div class="sec" style="margin-top:5px">Memory fading</div>
+    <div id="fadeCtl" class="fade-ctl"><div class="fade-note">Loading…</div></div>
     <div class="sec" style="margin-top:5px">Sources</div>
     <div style="display:flex;flex-wrap:wrap;gap:3px">
       <span class="src-chip on" data-s="memory" onclick="CH.srcToggle(this)">Memory</span>
@@ -6298,6 +6313,61 @@ IMPORTANT:
     w.record={ id:'chat:turn-phases', form:'gantt', title:'How this turn was made', data:{ stages:ph.rows },
                draw:{ rows:Math.min(16, ph.rows.length), names:150 } };
     el.appendChild(w);
+  }
+  /* ═══ FORGETTING (owner, 2026-10-05: "add controls for the user to select what gets forgotten and how quickly"). One
+     row per class of memory - may it fade, its half-life (blank = never decays), its floor - over memory.fade.policy,
+     beside what the last dry run says each would forget today. A faded memory is soft-archived, and a strong match still
+     brings it back (resurfacing); using it revives it. ═══ */
+  const _FADE_LABEL={conversation:'Conversation', session:'Session notes', observation:'Observations', research:'Research & reports',
+    dream:'Dreams', transcript:'Coding-agent transcripts', tool:'Tool calls', estate:'Estate telemetry', fact:'Facts', preference:'Preferences'};
+  let _fadeState=null;
+  async function _fadeLoad(){
+    const el=document.getElementById('fadeCtl'); if(!el) return;
+    const [pol, rep]=await Promise.all([api('/memory/fade/policy','POST',{}), api('/memory/fade/report','POST',{})]);
+    if(!pol||!pol.policy){ el.innerHTML='<div class="fade-note">Memory settings are not available right now.</div>'; return; }
+    _fadeState={ pol, rep:(rep&&rep.report)||null, computing:!!(rep&&rep.computing) };
+    _fadeRender();
+  }
+  function _fadeRender(){
+    const el=document.getElementById('fadeCtl'); if(!el||!_fadeState) return;
+    const P=_fadeState.pol.policy, R=_fadeState.rep, by=(R&&R.by_class)||{};
+    const rows=Object.keys(_FADE_LABEL).filter(k=>P[k]).map(k=>{ const p=P[k], r=by[k];
+      const hl=p.half_life_days==null?'':String(+p.half_life_days);
+      return '<tr data-cls="'+k+'"><td class="nm">'+esc(_FADE_LABEL[k])+'</td>'
+        +'<td><input type="checkbox" class="f-on"'+(p.enabled?' checked':'')+' title="May this kind of memory fade at all?"></td>'
+        +'<td><input type="number" class="f-hl" min="0.5" max="3650" step="0.5" value="'+esc(hl)+'" placeholder="never" title="Half-life in days - how quickly it fades when nothing uses it (blank = never)"></td>'
+        +'<td><input type="number" class="f-fl" min="0" max="0.5" step="0.01" value="'+esc(String(p.floor))+'" title="Below this strength it fades"></td>'
+        +'<td class="rt">'+(r?esc(String(r.fading))+' of '+esc(String(r.total)):'-')+'</td></tr>'; }).join('');
+    el.innerHTML='<div class="fade-note">What memory may forget, and how quickly. Faded memories are set aside, not deleted: a strong match brings one back, and using it revives it.</div>'
+      +'<table class="fade-tbl"><thead><tr><th>Kind</th><th>May fade</th><th>Half-life (days)</th><th>Floor</th><th>Would fade today</th></tr></thead><tbody>'+rows+'</tbody></table>'
+      +'<label class="fade-auto"><input type="checkbox" class="f-auto"'+(_fadeState.pol.auto?' checked':'')+'> Fade every night (about 04:00, after the backup)</label>'
+      +'<div class="fade-acts"><button class="btn xs" data-a="save">Save</button><button class="btn xs" data-a="reset">Defaults</button>'
+      +'<button class="btn xs" data-a="dry">Run dry run</button><button class="btn xs" data-a="fade">Fade now…</button><span class="fade-msg">'
+      +(_fadeState.computing?'a dry run is running…':(R?'last dry run: '+esc(String(R.fading))+' of '+esc(String(R.total))+(R.at?' · '+esc(String(R.at).slice(0,16).replace('T',' ')):''):'no dry run yet'))+'</span></div>';
+    el.querySelector('[data-a="save"]').addEventListener('click', _fadeSave);
+    el.querySelector('[data-a="reset"]').addEventListener('click', async()=>{ await api('/memory/fade/policy','POST',{reset:true, by:'chat settings'}); _fadeLoad(); });
+    el.querySelector('[data-a="dry"]').addEventListener('click', async()=>{ await api('/memory/fade/report','POST',{refresh:true}); _fadeLoad(); });
+    el.querySelector('.f-auto').addEventListener('change', async(ev)=>{ const res=await api('/memory/fade/policy','POST',{auto:!!ev.target.checked, by:'chat settings'}); if(res&&_fadeState) _fadeState.pol=res; });
+    // two presses: the first says how many it would set aside, the second does it (no prompt dialogs - vera-design)
+    const fb=el.querySelector('[data-a="fade"]');
+    fb.addEventListener('click', async()=>{ const m=el.querySelector('.fade-msg');
+      if(fb.dataset.armed!=='1'){ const n=R?R.fading:null; fb.dataset.armed='1'; fb.textContent='Press again to fade';
+        if(m) m.textContent=(n!=null?n+' memories would be set aside (not deleted)':'run a dry run first to see how many')+' - press again to go ahead';
+        setTimeout(()=>{ if(fb.isConnected){ fb.dataset.armed=''; fb.textContent='Fade now…'; } }, 8000); return; }
+      fb.dataset.armed=''; fb.disabled=true;
+      const res=await api('/memory/fade/run','POST',{confirm:true, by:'chat settings'});
+      if(m) m.textContent=res&&res.started?'fading started in the background':(res&&res.refused?res.refused:(res&&res.running?'a fading run is already going':'could not start'));
+      fb.disabled=false; fb.textContent='Fade now…'; });
+  }
+  // filled once the page has settled (two small reads), so the Context pane's section never sits on "Loading…"
+  setTimeout(()=>{ try{ if(_EMBED.only!=='chat') _fadeLoad(); }catch(_){} }, 6000);
+  async function _fadeSave(){
+    const el=document.getElementById('fadeCtl'); if(!el) return; const set={};
+    el.querySelectorAll('tr[data-cls]').forEach(tr=>{ const hl=tr.querySelector('.f-hl').value.trim(), fl=tr.querySelector('.f-fl').value.trim();
+      set[tr.dataset.cls]={ enabled:tr.querySelector('.f-on').checked, half_life_days:hl===''?null:+hl, floor:fl===''?0:+fl }; });
+    const res=await api('/memory/fade/policy','POST',{set, by:'chat settings'});
+    const m=el.querySelector('.fade-msg'); if(m) m.textContent=res&&res.policy?'saved - run a dry run to see what it would forget':'could not save';
+    if(res&&res.policy&&_fadeState){ _fadeState.pol=res; }
   }
   async function _genThinkPhrases(){
     const st=document.getElementById('thinkPhraseStatus');
@@ -15983,6 +16053,7 @@ Your task: decide what to do next to advance toward the goal.
       {id:'sources', n:'Sources', from:[['rpCtx','Sources']], note:'what goes into the prompt'},
       {id:'injection', n:'Injection', from:[['rpCtx','Context Injection']], note:'skills · ontologies · caps'},
       {id:'memory', n:'Session memory', from:[['rpCtx','Session Memory']], note:'recall'},
+      {id:'fading', n:'Forgetting', from:[['rpCtx','Memory fading']], note:'what memory may forget, and how quickly'},
       {id:'params', n:'Parameters', from:[['rpCtx','Parameters'],['rpCtx','Behaviour']], note:'k · similarity · limits · when'},
       {id:'fabric', n:'Fabric dataset', from:[['rpCtx','Fabric dataset']], note:'the curated dataset'}]},
     {grp:'Appearance', rows:[
@@ -16042,7 +16113,7 @@ Your task: decide what to do next to advance toward the goal.
     try{ if(document.getElementById('spThemePick')&&window.veraUI&&typeof veraUI.injectPicker==='function') veraUI.injectPicker('spThemePick'); }catch(_){}
     _spShow('variant');
   }
-  function _spShow(id){ _spCur=id; const page=document.getElementById('settingsPage'); if(!page) return; const gid=_SP_ROWGRP[id]||id;
+  function _spShow(id){ _spCur=id; if(id==='fading'){ try{ _fadeLoad(); }catch(_){} } const page=document.getElementById('settingsPage'); if(!page) return; const gid=_SP_ROWGRP[id]||id;
     page.querySelectorAll('.sp-irow').forEach(r=>r.classList.toggle('on', r.dataset.sec===id)); page.querySelectorAll('.sp-sec').forEach(s=>{ s.classList.toggle('on', s.dataset.sec===gid); });
     page.querySelectorAll('.sp-card').forEach(c=>c.classList.toggle('on', c.dataset.row===id));
     const cn=page.querySelector('.sp-cn'); const first=page.querySelector('.sp-sec.on .sp-card.on'); if(first&&cn){ try{ cn.scrollTo({ top: Math.max(0, first.offsetTop-12), behavior:'smooth' }); }catch(_){ first.scrollIntoView({block:'start'}); } } else if(cn) cn.scrollTop=0;

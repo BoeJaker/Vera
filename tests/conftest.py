@@ -197,6 +197,8 @@ _CRITICAL_MODULES = {
     "test_memory_strength_core",  # memory half-life: used memories stay, unused fade (owner 2026-10-04)
     "test_memory_usage_core",    # which memories a chat turn was given and used - the half-life's input (2026-10-05)
     "test_memory_fade_report",   # fading dry run: says what would fade and changes nothing (owner Q2)
+    "test_memory_resurface",     # a faded memory that matches strongly surfaces again (owner 2026-10-05)
+    "test_memory_fade_run",      # fading applies the policy: soft-archive, never in the backup window (owner 2026-10-05)
     "test_recall_core",          # recalled tool calls/dreams were injected as "User:"; repeats filled the slots (2026-10-04)
     "test_board_core",          # Agent Boards leasing — claim resolution + Phase E handoff (only holder can hand off)
     "test_gate_sweep",          # Ollama-gate leaked-lease sweep — MUST never clear a peer host's live slot (double-books GPU)
