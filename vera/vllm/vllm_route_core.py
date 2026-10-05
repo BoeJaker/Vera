@@ -22,6 +22,7 @@ they cannot drift apart:
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Iterable, List, Optional
 
 UP = ("online", "degraded")
@@ -91,6 +92,20 @@ def served_model(inst: Any, wanted: Optional[str]) -> Optional[str]:
 def gate_id(inst: Any, own_id: str) -> str:
     """Which node's semaphore + cross-process gate this server takes."""
     return str(_f(inst, "gate_as", "") or own_id)
+
+
+_THINK_BLOCK = re.compile(r"^\s*<think>.*?</think>\s*", re.S)
+
+
+def strip_think(text: str) -> str:
+    """The answer without a reasoning model's thinking: a leading
+    <think>...</think> block, or everything up to a lone </think> (the chat
+    template opened the block in the prompt). A server without a reasoning
+    parser returns it inside the content; Ollama returns the answer alone."""
+    t = text or ""
+    if "<think>" not in t and "</think>" in t:
+        return t.rsplit("</think>", 1)[1].lstrip()
+    return _THINK_BLOCK.sub("", t, count=1)
 
 
 def ollama_ids_shadowed(instances: Dict[str, Any]) -> Iterable[str]:
