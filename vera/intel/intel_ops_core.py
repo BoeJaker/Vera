@@ -415,6 +415,19 @@ def apply_brief(doc: Dict[str, Any], parsed: Optional[Dict[str, Any]]) -> Dict[s
     return out
 
 
+def night_note(night: Dict[str, Any]) -> str:
+    """What the morning brief owes the reader when the night did not finish:
+    how much was refreshed and that the rest follows."""
+    n = night or {}
+    total = int((n.get("stats") or {}).get("topics") or 0)
+    left = len(n.get("pending") or [])
+    if not total or not left:
+        return ""
+    done = max(0, total - left)
+    return (f"Overnight: {done} of {total} topics refreshed. The other {left} are still queued - background work "
+            f"waits while Vera is in use - and will follow in a later message.")
+
+
 def night_summary(stats: Dict[str, Any]) -> str:
     s = stats or {}
     msg = (f"Intel night: {s.get('topics', 0)} topics, {s.get('searched', 0)} searches, {s.get('new', 0)} new, "

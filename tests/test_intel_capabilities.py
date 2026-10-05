@@ -761,3 +761,14 @@ def test_geocoder_caches_rate_limits_and_tags_signals(tmp_path):
     assert len(calls) == 2                                                      # Leeds came from the cache
     pts = _R(orch, "intel.places.get", topic_id=t["id"])["points"]
     assert pts[0]["name"] == "Leeds" and pts[0]["size"] == len(tagged) and pts[0]["lit"] and pts[0]["detail"]
+
+
+def test_a_cut_short_night_says_so_in_the_morning_brief(tmp_path):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    mod.store().set_kv("night", {"id": "n1", "stats": {"topics": 3}, "pending": ["x", "y"]})
+    doc = _run(mod.build_report([], period_hours=24, note=mod.ops.night_note(mod.store().get_kv("night"))))
+    assert doc["note"].startswith("Overnight: 1 of 3 topics refreshed")
+    assert "Overnight: 1 of 3" in mod.core.render_html(doc) and "Overnight: 1 of 3" in mod.core.render_markdown(doc)
+    assert "Overnight: 1 of 3" in mod.core.render_telegram(doc)["text"]
