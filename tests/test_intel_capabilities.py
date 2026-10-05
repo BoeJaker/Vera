@@ -851,3 +851,19 @@ def test_a_report_is_read_aloud_with_chapters(tmp_path):
     assert f'/intel/report/audio/{doc["id"]}' in page and 'class="listen"' in page
     assert _run(mod._serve_audio(doc["id"])).status_code == 200
     assert _R(orch, "intel.report.speak", id="nope").get("error")
+
+
+def test_app_routes(tmp_path):
+    import json as _json
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    doc = _run(mod.build_report([t["id"]], period_hours=24))
+    rows = _json.loads(_run(mod._serve_app_list()).body)["rows"]
+    assert rows and rows[0]["id"] == doc["id"]
+    assert b"/intel/app/list" in _run(mod._serve_app()).body
+    assert _json.loads(_run(mod._serve_manifest()).body)["scope"] == "/intel/"
+    sw = _run(mod._serve_sw())
+    assert sw.headers["Service-Worker-Allowed"] == "/intel/" and b"caches" in sw.body
+    assert _run(mod._serve_icon_png(77)).status_code == 404
+    assert _run(mod._serve_icon_svg()).body.startswith(b"<svg")

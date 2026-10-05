@@ -75,6 +75,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_pm_core as pm
     from vera.intel import intel_geo_core as geo
     from vera.intel.intel_store import IntelStore
+app = core._app                      # the installable app: the same module the report pages are rendered with
 
 log = logging.getLogger("vera.intel")
 
@@ -1788,6 +1789,68 @@ async def cap_report_speak(id: str = "", now: bool = False, trace_id=None):
     if now:
         return await speak_report(id)
     return await _submit("speak", "intel: read aloud", key=f"speak:{id}", payload={"report_id": id}, priority=60)
+
+
+# ── the installable app (PWA): a phone-first list of reports ─────────────────
+
+@APP.get("/intel/app", include_in_schema=False)
+async def _serve_app():
+    return HTMLResponse(app.app_html(), headers={"Cache-Control": "no-cache"})
+
+
+@APP.get("/intel/app/list", include_in_schema=False)
+async def _serve_app_list(limit: int = 40):
+    from fastapi.responses import JSONResponse
+    st = store()
+    full = (st.get_report(r["id"]) for r in st.reports(limit=max(1, min(100, int(limit or 40)))))
+    rows = [d for d in full if d and _has_content(d)]
+    return JSONResponse({"rows": app.list_rows(rows)}, headers={"Cache-Control": "no-store"})
+
+
+@APP.get("/intel/manifest.webmanifest", include_in_schema=False)
+async def _serve_manifest():
+    return Response(app.manifest(), media_type="application/manifest+json")
+
+
+@APP.get("/intel/sw.js", include_in_schema=False)
+async def _serve_sw():
+    # served from /intel/ so its scope covers the app and every report page
+    return Response(app.SERVICE_WORKER, media_type="application/javascript",
+                    headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/intel/"})
+
+
+@APP.get("/intel/app/icon.svg", include_in_schema=False)
+async def _serve_icon_svg():
+    return Response(app.ICON_SVG, media_type="image/svg+xml", headers={"Cache-Control": "max-age=86400"})
+
+
+_ICON_PNG: Dict[int, bytes] = {}
+
+
+@APP.get("/intel/app/icon-{size}.png", include_in_schema=False)
+async def _serve_icon_png(size: int):
+    """The home-screen icon as PNG (some launchers ignore SVG): drawn once with
+    Pillow; without Pillow the manifest's SVG icon still serves."""
+    if size not in (192, 512):
+        return Response(status_code=404)
+    if size not in _ICON_PNG:
+        try:
+            import io
+            from PIL import Image, ImageDraw
+            im = Image.new("RGBA", (size, size), (15, 17, 21, 255))
+            d = ImageDraw.Draw(im)
+            k = size / 512.0
+            acc = (122, 162, 247, 255)
+            d.ellipse([106 * k, 106 * k, 406 * k, 406 * k], outline=acc, width=max(2, int(28 * k)))
+            d.ellipse([194 * k, 194 * k, 318 * k, 318 * k], fill=acc)
+            for a, b in (((256, 70), (256, 130)), ((256, 382), (256, 442)), ((70, 256), (130, 256)), ((382, 256), (442, 256))):
+                d.line([a[0] * k, a[1] * k, b[0] * k, b[1] * k], fill=acc, width=max(2, int(28 * k)))
+            buf = io.BytesIO()
+            im.save(buf, format="PNG")
+            _ICON_PNG[size] = buf.getvalue()
+        except Exception:  # noqa: BLE001
+            return Response(status_code=404)
+    return Response(_ICON_PNG[size], media_type="image/png", headers={"Cache-Control": "max-age=86400"})
 
 
 @APP.get("/intel/report/view/{rid}", include_in_schema=False)
