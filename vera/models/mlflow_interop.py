@@ -275,13 +275,19 @@ def plan_mlflow_export(*, source_revision: str, experiment_name: str,
                        training_runs: Sequence[TrainingRun] = (),
                        ) -> MlflowExportPlan:
     """Build a deterministic plan; never imports or calls the MLflow SDK."""
-    entities = []
-    for kind, values in (
-            ("run", runs), ("evaluation_report", evaluations),
-            ("prompt_package", prompts), ("model_package", models),
-            ("training_run", training_runs)):
+    groups = (
+        ("run", runs), ("evaluation_report", evaluations),
+        ("prompt_package", prompts), ("model_package", models),
+        ("training_run", training_runs),
+    )
+    for kind, values in groups:
         if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
             raise TypeError(f"{kind} values must be a sequence")
+    total = sum(len(values) for _, values in groups)
+    if not 0 < total <= MAX_EXPORT_ENTITIES:
+        raise ValueError("export plan must contain 1..1000 entities")
+    entities = []
+    for kind, values in groups:
         entities.extend(_entity(kind, value) for value in values)
     entities.sort(key=lambda item: (item.kind, item.vera_id))
     plan = MlflowExportPlan(source_revision, experiment_name, tuple(entities))
@@ -362,6 +368,8 @@ def import_mlflow_candidate(
         raise ValueError("artifact digest roles must be unique")
     if kind == "model_package":
         candidate = model_package_from_dict(candidate_value)
+        if dict(candidate_value) != candidate.to_dict():
+            raise ValueError("model candidate must use its canonical schema")
         expected_artifacts = tuple(sorted(
             (item.role, "sha256:" + item.sha256) for item in candidate.artifacts))
         if artifacts != expected_artifacts:
@@ -369,6 +377,8 @@ def import_mlflow_candidate(
         candidate_id = candidate.package_id
     elif kind == "prompt_package":
         candidate = prompt_package_from_dict(candidate_value)
+        if dict(candidate_value) != candidate.to_dict():
+            raise ValueError("prompt candidate must use its canonical schema")
         if artifacts:
             raise ValueError("prompt candidates cannot claim model artifacts")
         candidate_id = candidate.prompt_package_id

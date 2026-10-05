@@ -152,6 +152,10 @@ def test_export_rejects_unverified_artifacts_and_non_scalar_usage():
         plan_mlflow_export(
             source_revision="commit123", experiment_name="vera-eval",
             runs=(nested_usage,))
+    with pytest.raises(ValueError, match="1..1000"):
+        plan_mlflow_export(
+            source_revision="commit123", experiment_name="vera-eval",
+            runs=tuple(completed_run() for _ in range(1_001)))
 
 
 @pytest.mark.parametrize("kind", ["model_package", "prompt_package"])
@@ -184,6 +188,11 @@ def test_import_rejects_digest_revision_schema_and_unknown_field_drift():
     unknown["tracking_uri"] = "secret"
     with pytest.raises(ValueError, match="unsupported fields"):
         import_mlflow_candidate(unknown)
+    nested_unknown = projection()
+    nested_unknown["candidate"]["tracking_uri"] = "secret"
+    nested_unknown["candidate_digest"] = digest(nested_unknown["candidate"])
+    with pytest.raises(ValueError, match="canonical schema"):
+        import_mlflow_candidate(nested_unknown)
 
 
 def test_import_rejects_artifact_and_content_identity_forgery():
