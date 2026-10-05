@@ -2203,6 +2203,17 @@ async def _ping_instance(iid: str, inst: dict):
 
 async def instance_health_loop(interval: float = 20.0):
     while True:
+        if _IS_WORKER:
+            # The host writes routing profiles, node enabled flags (a backend
+            # switch), the embed config and role/cap routing to Redis; a node
+            # worker read them once at boot, so a switch or a routing change
+            # after it never reached the worker - it kept routing to a switched
+            # node's stopped Ollama and missed new pins (5 Oct 2026: an embed
+            # pin to vLLM went to Ollama from a worker). Re-read each cycle.
+            try:
+                await _load_ollama_persistence()
+            except Exception as e:
+                log.debug("worker routing refresh: %s", e)
         await asyncio.gather(*[_ping_instance(iid,inst) for iid,inst in OLLAMA_INSTANCES.items()],return_exceptions=True)
         await emit_event({"type":"ollama.health","instances":{iid:{"status":i["status"],"latency_ms":i["latency_ms"],
                                                                    "backend":i.get("backend","ollama")} for iid,i in OLLAMA_INSTANCES.items()}})
