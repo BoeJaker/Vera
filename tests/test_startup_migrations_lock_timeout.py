@@ -33,6 +33,6 @@ def test_no_bare_index_creation_can_fail_the_memory_connect():
 
 def test_the_fabric_connect_sets_a_lock_timeout_too():
     s = _src("vera/fabric/data_fabric.py")
-    a = s.index("CREATE TABLE IF NOT EXISTS fabric_datasets")
+    a = s.rindex("CREATE TABLE IF NOT EXISTS fabric_datasets")   # the Postgres store (the first is the SQLite schema)
     head = s[a - 600:a]
     assert "SET lock_timeout = '" in head and "VERA_PG_STARTUP_LOCK_TIMEOUT" in head
