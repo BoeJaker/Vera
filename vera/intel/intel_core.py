@@ -26,6 +26,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+try:                                         # the installable app's head + worker registration (same package)
+    from . import intel_app_core as _app
+except ImportError:                          # loaded from its file, outside a package
+    import importlib.util as _ilu
+    import os as _os
+    _spec = _ilu.spec_from_file_location("intel_app_core", _os.path.join(_os.path.dirname(__file__), "intel_app_core.py"))
+    _app = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_app)
+
 # ── vocabulary ───────────────────────────────────────────────────────────────
 
 DEPTHS = ("scan", "standard", "deep")
@@ -876,11 +885,30 @@ def _sig_view(s: Dict[str, Any]) -> Dict[str, Any]:
 _E = _html.escape
 
 
+def _when(ts: Any, tz: str = "Europe/London") -> str:
+    """'Mon 5 Oct 2026, 10:50' in the reader's time zone (the raw value if it will not parse)."""
+    d = parse_ts(ts)
+    if not d:
+        return str(ts or "")
+    try:
+        from zoneinfo import ZoneInfo
+        d = d.astimezone(ZoneInfo(tz))
+    except Exception:  # noqa: BLE001
+        pass
+    return f"{d:%a} {d.day} {d:%b %Y, %H:%M}"
+
+
 def _md_inline(text: str) -> str:
     t = _E(text or "")
     t = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", t)
     t = re.sub(r"`([^`]+)`", r"<code>\1</code>", t)
     t = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2" target="_blank" rel="noopener">\1</a>', t)
+
+    def _bare(m: "re.Match[str]") -> str:  # a bare URL becomes a short link: the site, not 80 characters of path
+        url = m.group(2)
+        host = re.sub(r"^www\.", "", urlsplit(_html.unescape(url)).netloc or "") or "link"
+        return f'{m.group(1)}<a href="{url}" target="_blank" rel="noopener">{host} ↗</a>'
+    t = re.sub(r'(^|[\s(])(https?://[^\s)<"]+)', _bare, t)
     return t
 
 
@@ -922,6 +950,8 @@ vera-mermaid{display:block;margin:12px 0}.mm{background:var(--card);border:1px s
 @media print{.acts,.toc{display:none}details.dg{display:block}details.dg .rd{display:block}}
 .fbr{display:flex;gap:4px;margin-top:4px}.fbr button{border:1px solid rgba(127,127,127,.35);background:none;border-radius:6px;cursor:pointer;font-size:12px;padding:1px 6px}.fbr button:disabled{opacity:.6;cursor:default}
 .player{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;margin:10px 0;padding:8px 10px;background:var(--card);border:1px solid var(--bd);border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.12)}.player .pp{width:40px;height:40px;border-radius:50%;border:0;background:var(--acc);color:#fff;font-size:15px;cursor:pointer;flex:0 0 auto}.player input[type=range]{flex:1;min-width:60px;accent-color:var(--acc)}.player .tm{font-size:.8rem;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}.player select{background:none;color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:2px}h2 .listen{margin-left:8px;font-size:.75rem;vertical-align:middle;border:1px solid var(--bd);background:none;color:var(--acc);border-radius:999px;padding:2px 10px;cursor:pointer}
+main{overflow-wrap:anywhere}.mm{max-width:100%;overflow-x:auto}.back{position:sticky;top:0;z-index:6;padding:8px 14px;background:var(--bg);border-bottom:1px solid var(--bd)}.back a{text-decoration:none;font-size:.9rem}img,svg,video{max-width:100%;height:auto}pre{overflow-x:auto}table{display:block;overflow-x:auto}.player{top:38px}@media (max-width:640px){body{font-size:16px}main{padding:14px 12px 48px}h1{font-size:1.35rem}h2{font-size:1.12rem;margin-top:1.6em}.toc{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px}.toc a{white-space:nowrap}.player{gap:6px;padding:6px 8px}.player .tm{font-size:.72rem}.player select{display:none}button.act{width:100%;text-align:left}.fbr button{padding:4px 10px;font-size:15px}}
+@media print{.back,.player,.fbr,h2 .listen{display:none}}
 """
 
 _KW = r"\b(def|class|return|import|from|if|else|elif|for|while|in|async|await|function|const|let|var|new|try|except|catch|fn|pub|struct|impl|use|package|func|go|yield|with|as|lambda|true|false|null|None|True|False)\b"
@@ -1004,7 +1034,7 @@ def render_html(doc: Dict[str, Any], *, base_url: str = "") -> str:
     parts: List[str] = []
     title = doc.get("title") or "Intel brief"
     topics = [s for s in doc.get("sections") or [] if s.get("kind") == "topic"]
-    parts.append(f'<header><h1>{_E(title)}</h1><div class="meta">{_E(doc.get("ts", ""))} · '
+    parts.append(f'<header><h1>{_E(title)}</h1><div class="meta">{_E(_when(doc.get("ts", "")))} · '
                  f'{doc.get("counts", {}).get("topics", 0)} topics · {doc.get("counts", {}).get("signals", 0)} signals'
                  f' · last {int(doc.get("period_hours") or 24)}h</div></header>')
     if doc.get("note"):
@@ -1056,11 +1086,15 @@ def render_html(doc: Dict[str, Any], *, base_url: str = "") -> str:
     parts.append(f'<div class="foot">Vera intelligence \u00b7 report {_E(doc.get("id", ""))}'
                  + (f' · <a href="{_safe_href(base_url + "/intel/panel")}">open in Vera</a>' if base_url is not None else "")
                  + "</div>")
+    # every report page is part of the installable app: its manifest, a way back to
+    # the list, and the worker that keeps it readable offline
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width, initial-scale=1">'
-            f"<title>{_E(title)}</title><style>{REPORT_CSS}</style></head><body><main>"
+            '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
+            + _app.HEAD +
+            f"<title>{_E(title)}</title><style>{REPORT_CSS}</style></head><body>"
+            '<nav class="back"><a href="/intel/app">‹ Briefs</a></nav><main>'
             + "".join(parts) + "</main>" + (_mermaid_script() if _has_diagram(doc) else "") + _ACTION_JS
-            + (_PLAYER_JS if audio.get("url") else "")
+            + (_PLAYER_JS if audio.get("url") else "") + _app.REGISTER
             + "</body></html>")
 
 

@@ -317,3 +317,29 @@ def test_spoken_script_and_player():
     assert 'id="au"' in html and 'src="/intel/report/audio/abc"' in html and "0:00 / 1:35" in html
     assert 'class="listen" data-start="31.5"' in html and "mediaSession" in html
     assert 'id="au"' not in core.render_html(dict(doc, audio={}))
+
+
+def test_the_installable_app():
+    import json as _json
+    m = _json.loads(core._app.manifest())
+    assert m["start_url"] == "/intel/app" and m["scope"] == "/intel/" and m["display"] == "standalone"
+    assert {i["sizes"] for i in m["icons"]} >= {"192x192", "512x512"}
+    sw = core._app.SERVICE_WORKER
+    assert "caches.match" in sw and "/intel/report/audio/" in sw and "/intel/report/view/" in sw
+    html = core._app.app_html()
+    assert 'rel="manifest"' in html and "serviceWorker" in html and "/intel/app/list" in html
+    rows = core._app.list_rows([{"id": "a", "title": "Brief", "ts": "t", "counts": {"signals": 3},
+                                 "sections": [{"kind": "headline", "items": [{"topic": "X", "text": "h"}] * 5}],
+                                 "audio": {"url": "/intel/report/audio/a", "seconds": 61}}])
+    assert rows[0]["audio"] == 61 and len(rows[0]["heads"]) == 3 and "sections" not in rows[0]
+    page = core.render_html({"title": "t", "sections": []})
+    assert 'rel="manifest"' in page and 'href="/intel/app"' in page and "serviceWorker" in page
+    assert "@media (max-width:640px)" in page
+
+
+def test_bare_links_are_short_and_dates_read_like_dates():
+    h = core._md_inline("AI stalls at 7-9% (https://www.forbes.com/sites/x/2026/these-startups) and [RICS](https://rics.org/a)")
+    assert '>forbes.com ↗</a>' in h and 'href="https://www.forbes.com/sites/x/2026/these-startups"' in h
+    assert '<a href="https://rics.org/a" target="_blank" rel="noopener">RICS</a>' in h and h.count("<a ") == 2
+    assert core._when("2026-10-05T09:50:47Z") == "Mon 5 Oct 2026, 10:50"
+    assert core._when("garbage") == "garbage"
