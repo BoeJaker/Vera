@@ -102,3 +102,9 @@ def test_the_shown_command_masks_the_key():
     a = ic.local_serve_argv("m", vllm_bin="vllm", port=1, api_key="sekrit")
     shown = ic.redact_argv(a)
     assert "sekrit" not in shown and "--api-key '***'" in shown
+
+
+def test_cpu_env_forces_tritons_cpu_backend():
+    # a GPU node's CPU slot has libcuda: Triton would pick its NVIDIA driver
+    assert "TRITON_DEFAULT_BACKEND=cpu" in ic.env_body("cpu", cpu_threads=6)
+    assert "TRITON_DEFAULT_BACKEND" not in ic.env_body("gpu")
