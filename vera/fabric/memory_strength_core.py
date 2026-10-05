@@ -15,7 +15,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-POLICY_VERSION = "2026-10-05.1"
+POLICY_VERSION = "2026-10-05.2"   # .2: dream_report, extraction_result, cap_result and dag classed (prod's types)
 
 # class -> (half-life in days, floor). None = no decay (importance alone decides). From the roadmap's CU-M.3 table.
 HALF_LIFE: Dict[str, tuple] = {
@@ -39,9 +39,10 @@ _TYPE_CLASS = {
     "observation": "observation", "event": "observation", "insight": "observation",
     "fact": "fact", "entity": "fact", "preference": "preference", "profile": "preference",
     "research": "research", "report": "research", "document": "research",
-    "dream": "dream",
+    "dream": "dream", "dream_report": "dream",
+    "extraction_result": "observation",
     "estate": "estate", "telemetry": "estate", "metric": "estate", "health": "estate",
-    "cap_call": "tool", "dag_step": "tool", "tool": "tool",
+    "cap_call": "tool", "dag_step": "tool", "tool": "tool", "cap_result": "tool", "dag": "tool",
     "transcript": "transcript",
 }
 _DAY = 86400.0

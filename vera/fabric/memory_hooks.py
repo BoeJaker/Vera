@@ -76,6 +76,10 @@ try:                                    # was a recalled memory used in the repl
     from Vera.vera.fabric import memory_usage_core as _usage_core
 except ImportError:                     # pragma: no cover
     from . import memory_usage_core as _usage_core
+try:                                    # how strong a memory still is: half-life per class, renewed by use (CU-M.3)
+    from Vera.vera.fabric import memory_strength_core as _strength_core
+except ImportError:                     # pragma: no cover
+    from . import memory_strength_core as _strength_core
 
 log = logging.getLogger("vera.memory_hooks")
 
@@ -1247,6 +1251,87 @@ async def memory_usage_top(order: str = "used", limit: int = 20, trace_id=None):
             d[k] = d[k].isoformat() if d.get(k) else ""
         out.append(d)
     return {"rows": out, "count": len(out)}
+
+
+_FADE_REPORT_KEY = "vera:memory:fade:report"
+
+
+@capability(
+    "memory.fade.report",
+    http_method="POST", http_path="/memory/fade/report", http_tags=["memory"],
+    memory="off", silent=True,
+    description="DRY RUN ONLY - what the memory fading job would archive today, and why. Every live memory record is "
+                "scored with its class's half-life, renewed by use (memory_strength_core + the usage counts chat turns "
+                "write); a record below its class's floor would fade (a soft archive, revived on use). Nothing is "
+                "changed: the owner reads this before any fading is switched on. Inputs: samples (int=5 per class), "
+                "batch (int=5000). Output: {policy, total, fading, by_class:{cls:{total, fading, mean_strength, "
+                "samples:[{id, text, strength, record_type}]}}, ms} - also kept at " + _FADE_REPORT_KEY + ".",
+)
+async def memory_fade_report(samples: int = 5, batch: int = 5000, trace_id=None):
+    t0 = time.monotonic()
+    try:
+        n_samples = max(0, min(int(samples or 5), 20))
+        size = max(500, min(int(batch or 5000), 20000))
+    except (TypeError, ValueError):
+        n_samples, size = 5, 5000
+    pool = await _usage_pool()
+    if pool is None:
+        return {"error": "memory postgres not connected"}
+    now = time.time()
+    usage: Dict[str, Dict[str, Any]] = {}
+    by: Dict[str, Dict[str, Any]] = {}
+    total = fading = 0
+    try:
+        async with pool.acquire() as conn:
+            if await conn.fetchval("SELECT to_regclass('vera_memory_usage') IS NOT NULL"):
+                for r in await conn.fetch("SELECT record_id, injected_n, used_n, last_used FROM vera_memory_usage"):
+                    usage[r["record_id"]] = {"injected_n": r["injected_n"], "used_n": r["used_n"], "last_used": r["last_used"]}
+            last = ""
+            while True:      # keyset pages, the loop handed back between them - never one long hold
+                rows = await conn.fetch(
+                    "SELECT id, record_type, source_type, category, importance, created_at, "
+                    "left(coalesce(text, ''), 24) AS head FROM vera_memories "
+                    "WHERE NOT archived AND id > $1 ORDER BY id LIMIT $2", last, size)
+                if not rows:
+                    break
+                for r in rows:
+                    rec = dict(r)
+                    rec["text"] = rec.pop("head") or ""
+                    cls = _strength_core.class_of(rec)
+                    s = _strength_core.strength(rec, usage.get(rec["id"]), now)
+                    b = by.setdefault(cls, {"total": 0, "fading": 0, "sum": 0.0, "samples": []})
+                    b["total"] += 1
+                    b["sum"] += s
+                    total += 1
+                    if _strength_core.fades(rec, usage.get(rec["id"]), now):
+                        b["fading"] += 1
+                        fading += 1
+                        if len(b["samples"]) < n_samples:
+                            b["samples"].append({"id": rec["id"], "record_type": rec.get("record_type") or "",
+                                                 "strength": round(s, 4)})
+                last = rows[-1]["id"]
+                await asyncio.sleep(0)
+            ids = [x["id"] for b in by.values() for x in b["samples"]]
+            if ids:
+                texts = {r["id"]: r["t"] for r in await conn.fetch(
+                    "SELECT id, left(coalesce(text, ''), 160) AS t FROM vera_memories WHERE id = ANY($1::text[])", ids)}
+                for b in by.values():
+                    for x in b["samples"]:
+                        x["text"] = texts.get(x["id"], "")
+    except Exception as e:
+        return {"error": str(e)[:200], "total": total}
+    out = {"policy": _strength_core.POLICY_VERSION, "dry_run": True, "total": total, "fading": fading,
+           "by_class": {k: {"total": v["total"], "fading": v["fading"],
+                            "mean_strength": round(v["sum"] / v["total"], 4) if v["total"] else 0.0,
+                            "samples": v["samples"]} for k, v in sorted(by.items(), key=lambda kv: -kv[1]["total"])},
+           "usage_rows": len(usage), "ms": round((time.monotonic() - t0) * 1000)}
+    r = _redis()
+    if r is not None:
+        try:
+            await r.set(_FADE_REPORT_KEY, json.dumps(dict(out, at=now_iso())))
+        except Exception:
+            pass
+    return out
 
 
 @capability(
