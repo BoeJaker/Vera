@@ -1512,5 +1512,8 @@ async def _vllm_panel_html():
                      status_code=404)
 
 # ── Start health loop ──────────────────────────────────────────────────────────
-schedule(_health_loop, interval=0)
+# A one-time startup (the loop runs forever) under a name node workers run too:
+# it is also what loads the registry from Redis, so a worker that skipped it
+# knew no vLLM server and sent every offloaded vLLM call to Ollama instead.
+schedule(_health_loop, interval=999999, name="vllm_health")
 log.info("vllm: module loaded — %d instance(s) configured", len(VLLM_INSTANCES))

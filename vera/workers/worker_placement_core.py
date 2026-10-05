@@ -126,6 +126,10 @@ WORKER_STARTUP_HOOKS = frozenset({
     "memory_startup",        # memory backends (its promoter is worker-gated in memory.py)
     "memory_hooks_startup",  # in-process memory-mode wrappers, so a cap records
                              # memory on a worker the way it does on the host
+    "vllm_health",           # the vLLM registry (from Redis) and each server's
+                             # online state - what llm.generate(backend="vllm")
+                             # and a pin naming a switched node route by. The
+                             # Ollama health loop already runs on every worker.
 })
 
 #: Both routes a startup takes - schedule(..., interval=STARTUP_INTERVAL) and
