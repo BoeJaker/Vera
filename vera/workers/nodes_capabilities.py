@@ -546,6 +546,13 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                 "CUDA build that keeps the V100; CPU nodes the AVX2 wheel from the "
                 "shared store's vllm/ family.",
     },
+    "vllm_server_cpu": {
+        "group": "workers", "label": "vLLM CPU slot (beside a GPU node's CPU Ollama)",
+        "backends": ["ssh"], "gpu": "optional", "heavy": True,
+        "desc": "The CPU build of vLLM in a second slot (port 8001) on a container that "
+                "also runs a GPU Ollama - for its CPU sibling (e.g. gpu-250-cpu). Not "
+                "started: Switch backend moves the sibling over.",
+    },
     "gpu_inference": {
         "group": "workers", "label": "SD · TTS · STT (GPU inference)",
         "backends": ["ssh"], "gpu": "required", "heavy": True,
@@ -784,6 +791,8 @@ async def cap_nodes_provision_plan(node_id: str = "",
             ("vllm_server", "ssh"): "provision.deploy component=vllm_server "
                                     "(install deps + unit, not started - then Switch "
                                     "backend)",
+            ("vllm_server_cpu", "ssh"): "provision.deploy component=vllm_server_cpu "
+                                        "(CPU build in the second slot, not started)",
             ("mesh_gateway", "ssh"): "provision.deploy component=mesh_gateway",
             ("docker", "ssh"): "provision.install target=docker + register "
                                "docker host",
@@ -1104,7 +1113,8 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
         return {"ok": bool(res.get("ok")), "worker": res}
 
     # ── bundled edge components over ssh ────────────────────────────────────
-    if key in ("gpu_inference", "onnx_runtime", "nlp_server", "mesh_gateway", "vllm_server"):
+    if key in ("gpu_inference", "onnx_runtime", "nlp_server", "mesh_gateway", "vllm_server",
+               "vllm_server_cpu"):
         dep = _rawcap("provision.deploy")
         if not dep:
             return {"error": "provision.deploy unavailable"}
@@ -1114,7 +1124,8 @@ async def _prov_step(node: Dict, key: str, b: str, opt: Dict) -> Dict:
             "host_id": hid, "component": key,
             "install_deps": bool(opt.get("install_deps", True)),
             "launch": True,
-            "systemd": bool(opt.get("systemd", key in ("nlp_server", "vllm_server")))}
+            "systemd": bool(opt.get("systemd", key in ("nlp_server", "vllm_server",
+                                                       "vllm_server_cpu")))}
         if (opt.get("ports") or {}).get(key):
             kwargs["port"] = int(opt["ports"][key])
         if key == "mesh_gateway":
@@ -3075,12 +3086,14 @@ async def cap_nodes_backend_switch(instance_id: str = "", backend: str = "vllm",
                                    extra_args: str = "", dry_run: bool = True,
                                    force: bool = False, wait_s: int = 900,
                                    trace_id=None) -> Dict[str, Any]:
-    from Vera.vera.provisioning.components_capabilities import (
-        VLLM_NODE_DIR, VLLM_NODE_ENV, VLLM_NODE_PORT, VLLM_NODE_SERVICE)
+    from Vera.vera.provisioning.components_capabilities import vllm_slot
     insts = getattr(_orch, "OLLAMA_INSTANCES", {}) or {}
     inst = insts.get(instance_id)
     if not inst:
         return {"ok": False, "error": f"unknown node {instance_id!r}", "nodes": sorted(insts)}
+    _slot = vllm_slot(_backend_core.slot_for(instance_id, insts))
+    VLLM_NODE_DIR, VLLM_NODE_ENV = _slot["dir"], _slot["env"]
+    VLLM_NODE_PORT, VLLM_NODE_SERVICE = _slot["port"], _slot["service"]
     if backend == "vllm" and not (model or "").strip():
         return {"ok": False, "error": "model is required to switch to vllm"}
     if not dry_run and _orch.is_dev_sandbox():
@@ -3105,7 +3118,8 @@ async def cap_nodes_backend_switch(instance_id: str = "", backend: str = "vllm",
                               switched=switched, in_flight=int(inst.get("in_use") or 0),
                               force=bool(force),
                               sharing=_backend_core.same_container_switched(
-                                  instance_id, insts, _sw_now))
+                                  instance_id, insts, _sw_now),
+                              component=_slot["component"])
     out: Dict[str, Any] = {"instance": instance_id, "host": addr, "plan": plan,
                            "dry_run": bool(dry_run)}
     if plan["action"] != "switch" or dry_run:

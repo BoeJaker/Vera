@@ -134,3 +134,38 @@ def test_one_vllm_per_container():
     assert p["action"] == "refuse" and "one vLLM per container" in p["why"]
     assert bc.plan("vllm", ollama_id="gpu-250", inst={}, vllm_present=True, switched=False,
                    in_flight=0, force=False, sharing=[])["action"] == "switch"
+
+
+ESTATE = {"gpu-250": {"url": "http://192.168.0.250:11435", "has_gpu": True},
+          "gpu-250-cpu": {"url": "http://192.168.0.250:11436", "has_gpu": False},
+          "cpu-246": {"url": "http://192.168.0.246:11435", "has_gpu": False}}
+
+
+def test_a_cpu_sibling_of_a_gpu_instance_gets_the_cpu_slot():
+    assert bc.slot_for("gpu-250-cpu", ESTATE) == bc.SLOT_CPU
+    assert bc.slot_for("gpu-250", ESTATE) == bc.SLOT_DEFAULT
+    assert bc.slot_for("cpu-246", ESTATE) == bc.SLOT_DEFAULT
+    # the GPU and its CPU sibling use different slots, so both may serve vLLM
+    assert bc.same_container_switched("gpu-250-cpu", ESTATE, ["gpu-250"]) == []
+    p = bc.plan("vllm", ollama_id="gpu-250-cpu", inst=ESTATE["gpu-250-cpu"], vllm_present=False,
+                switched=False, in_flight=0, force=False, component="vllm_server_cpu")
+    assert p["action"] == "refuse" and p["component"] == "vllm_server_cpu"
+    assert "vllm_server_cpu is not installed" in p["why"]
+
+
+def test_a_failed_switch_rolls_the_node_back_to_ollama():
+    s = bc.switch_script("vllm", vllm_service="vera-vllm_server", env_path="/e", env_text="",
+                         public_port=11435, vllm_port=8000, serve_path="/s", wait_s=10)
+    assert "rollback() {" in s
+    assert "journalctl -u vera-vllm_server -n 30 --no-pager; rollback; exit 4" in s
+    assert "rollback; exit 5" in s
+    assert s.index("rollback() {") < s.index("systemctl restart vera-vllm_server")
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+def test_the_switch_script_is_valid_shell():
+    for b in ("vllm", "ollama"):
+        s = bc.switch_script(b, vllm_service="vera-vllm_server", env_path="/e", env_text="X=1\n",
+                             public_port=11435, vllm_port=8000, serve_path="/s", wait_s=10)
+        r = subprocess.run(["bash", "-n", "-c", s], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, r.stderr

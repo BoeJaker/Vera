@@ -124,6 +124,21 @@ VLLM_NODE_PORT = 8000
 VLLM_NODE_ENV = "/etc/default/vera-vllm"
 VLLM_NODE_SERVICE = "vera-vllm_server"
 VLLM_STORE_WHEELS = "/opt/vera-store/models/vllm"
+# The CPU slot: a CPU Ollama sharing its container with a GPU one moves to its own
+# CPU build, service and port (node_backend_core.slot_for).
+VLLM_CPU_NODE_DIR = "/opt/vera-vllm-cpu"
+VLLM_CPU_NODE_PORT = 8001
+VLLM_CPU_NODE_ENV = "/etc/default/vera-vllm-cpu"
+VLLM_CPU_NODE_SERVICE = "vera-vllm_server_cpu"
+
+
+def vllm_slot(slot: str) -> Dict[str, Any]:
+    """dir / port / env / service / component of a vLLM slot on a node."""
+    if slot == "cpu":
+        return {"dir": VLLM_CPU_NODE_DIR, "port": VLLM_CPU_NODE_PORT, "env": VLLM_CPU_NODE_ENV,
+                "service": VLLM_CPU_NODE_SERVICE, "component": "vllm_server_cpu"}
+    return {"dir": VLLM_NODE_DIR, "port": VLLM_NODE_PORT, "env": VLLM_NODE_ENV,
+            "service": VLLM_NODE_SERVICE, "component": "vllm_server"}
 
 _COMPONENTS: Dict[str, Dict[str, Any]] = {
     "gpu_inference": {
@@ -403,6 +418,29 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                 "nodes use the CUDA build that keeps sm_70; CPU nodes a wheel from "
                 "the shared store built for them (INT8 W8A8 and AWQ/GPTQ int4 on "
                 "AVX2), with the same CPU thread count as the node's Ollama.",
+    },
+    # The CPU slot: the same recipe forced to the CPU build, in its own dir,
+    # unit, env file and port - for a CPU Ollama sharing a GPU node's container
+    # (gpu-250-cpu beside gpu-250), whose GPU slot holds the CUDA build.
+    "vllm_server_cpu": {
+        "label": "vLLM server (CPU slot)",
+        "port": VLLM_CPU_NODE_PORT,
+        "python": False,
+        "install_dir": VLLM_CPU_NODE_DIR, "venv": "venv",
+        "files": [],
+        "install_script": lambda has_gpu, venv, sudo: (
+            _vllm_core.system_deps_cmd(sudo) + "\n" +
+            _vllm_core.install_script(
+                venv, mode="cpu", wheel_dir=VLLM_STORE_WHEELS,
+                cpu_threads=_node_threads_core.DEFAULT_CPU_THREADS)),
+        "run": VLLM_CPU_NODE_DIR + "/venv/serve.sh $VLLM_MODEL {port} $VLLM_EXTRA_ARGS",
+        "unit_env_file": VLLM_CPU_NODE_ENV,
+        "env": {"HF_HOME": VLLM_CPU_NODE_DIR + "/hf", "HOME": "/"},
+        "autostart": False,
+        "heavy": True, "sync": True, "systemd": True,
+        "desc": "The CPU build of vLLM in a second slot (port 8001), for a CPU Ollama "
+                "that shares its container with a GPU one: Switch backend moves that "
+                "instance here while the container's GPU slot stays free.",
     },
 }
 

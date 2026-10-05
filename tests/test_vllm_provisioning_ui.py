@@ -40,9 +40,9 @@ def test_estate_catalogue_offers_vllm_server_and_runs_it_as_a_component():
     src = _src(NODES)
     cat = src[src.index("_COMPONENTS: Dict[str, Dict[str, Any]] = {"):]
     cat = cat[:cat.index("\n}\n")]
-    assert '"vllm_server": {' in cat
+    assert '"vllm_server": {' in cat and '"vllm_server_cpu": {' in cat
     body = _func(NODES, "_prov_step")
-    assert '"mesh_gateway", "vllm_server")' in body
+    assert '"mesh_gateway", "vllm_server",\n               "vllm_server_cpu")' in body
 
 
 def test_vllm_build_options_reach_the_installers():
@@ -91,7 +91,8 @@ def test_vllm_page_sets_gate_as():
 def test_vllm_launch_page_launches_on_a_node_through_provisioning():
     ui = _src(VLLM_UI)
     assert 'name="lnch-where" value="node" checked' in ui           # a node is the default
-    assert "'/nodes/provision', {node_id: n.node, components: ['vllm_server']" in ui
+    assert "'/nodes/provision', {node_id: n.node, components: [comp]" in ui
+    assert "(pre && pre.plan && pre.plan.component) || 'vllm_server'" in ui
     assert "api(path, 'POST', body)" in ui and "'/nodes/backend/switch'" in ui
     assert "--limit-mm-per-prompt.image" in ui                       # text-only
     assert "data-host-only" in ui

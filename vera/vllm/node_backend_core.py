@@ -54,6 +54,31 @@ def ollama_unit_expr(public_port: int) -> str:
     )
 
 
+#: A container runs one vLLM per slot. The second slot is for a CPU Ollama that
+#: shares its container with a GPU one (CT126: gpu-250-cpu beside gpu-250) - its
+#: own CPU build, service and port, so the GPU's vLLM stays free for the GPU.
+SLOT_DEFAULT, SLOT_CPU = "default", "cpu"
+SLOT_COMPONENT = {SLOT_DEFAULT: "vllm_server", SLOT_CPU: "vllm_server_cpu"}
+
+
+def _host(inst: Dict[str, Any]) -> str:
+    from urllib.parse import urlparse
+    return urlparse(str((inst or {}).get("url") or "")).hostname or ""
+
+
+def slot_for(ollama_id: str, ollama: Dict[str, Dict[str, Any]]) -> str:
+    """The vLLM slot an Ollama instance moves into: the CPU slot for a CPU
+    instance on a container that also hosts a GPU instance, else the default."""
+    me = (ollama or {}).get(ollama_id) or {}
+    if me.get("has_gpu"):
+        return SLOT_DEFAULT
+    host = _host(me)
+    if host and any(i != ollama_id and o.get("has_gpu") and _host(o) == host
+                    for i, o in (ollama or {}).items()):
+        return SLOT_CPU
+    return SLOT_DEFAULT
+
+
 def vllm_instance_id(ollama_id: str) -> str:
     """The id of the node's vLLM instance: the registry entry for the vLLM service
     on the SAME container as its Ollama (port 8000), used while it is switched."""
@@ -158,7 +183,7 @@ def switch_script(backend: str, *, vllm_service: str, env_path: str, env_text: s
     if backend == "vllm":
         return "\n".join([
             "set -e",
-            f"test -x {shlex.quote(serve_path)} || {{ echo 'vllm_server is not installed on this node'; exit 3; }}",
+            f"test -x {shlex.quote(serve_path)} || {{ echo 'vLLM is not installed in this slot on the node'; exit 3; }}",
             f"printf '%s' {shlex.quote(env_text)} > {shlex.quote(env_path)}.new",
             f"mv {shlex.quote(env_path)}.new {shlex.quote(env_path)}",
             f"U={ollama_unit_expr(public_port)}",
@@ -167,17 +192,26 @@ def switch_script(backend: str, *, vllm_service: str, env_path: str, env_text: s
             "echo \"stopping $U\"",
             f"if {has_tap}; then systemctl disable --now {tap} || true; fi",
             "systemctl disable --now $U || true",
+            # vLLM not coming up must not leave the node serving nothing (5 Oct
+            # 2026: a failed GPU switch left the V100 idle until restored by hand)
+            "rollback() {",
+            f"  systemctl disable --now {vllm_service} 2>/dev/null || true",
+            "  systemctl enable $U; systemctl restart $U",
+            f"  if {has_tap}; then systemctl enable {tap}; systemctl restart {tap}; fi",
+            f"  rm -f {UNIT_STATE.format(port=int(public_port))}",
+            "  echo \"rolled back: $U serves the node again\"",
+            "}",
             "systemctl daemon-reload",
             f"systemctl enable {vllm_service}",
             f"systemctl restart {vllm_service}",
             f"for i in $(seq 1 {tries}); do",
             f"  systemctl is-active --quiet {vllm_service} || {{ echo 'vllm exited'; "
-            f"journalctl -u {vllm_service} -n 30 --no-pager; exit 4; }}",
+            f"journalctl -u {vllm_service} -n 30 --no-pager; rollback; exit 4; }}",
             f"  curl -sf -m 5 http://127.0.0.1:{int(vllm_port)}/v1/models >/dev/null && "
             f"{{ echo \"{DONE} backend=vllm after $((i*5))s\"; exit 0; }}",
             "  sleep 5",
             "done",
-            f"echo 'vllm did not answer within {int(wait_s)}s'; exit 5",
+            f"echo 'vllm did not answer within {int(wait_s)}s'; rollback; exit 5",
         ])
     return "\n".join([
         "set -e",
@@ -199,17 +233,18 @@ def switch_script(backend: str, *, vllm_service: str, env_path: str, env_text: s
 
 def same_container_switched(ollama_id: str, ollama: Dict[str, Dict[str, Any]],
                             switched: Iterable[str]) -> List[str]:
-    """Other instances on the same host as `ollama_id` that already serve vLLM."""
-    from urllib.parse import urlparse
-    host = urlparse(str(((ollama or {}).get(ollama_id) or {}).get("url") or "")).hostname
+    """Other instances on the same host as `ollama_id` that already serve vLLM
+    from the SAME slot (each slot has one vLLM service)."""
+    host = _host((ollama or {}).get(ollama_id) or {})
+    slot = slot_for(ollama_id, ollama)
     return sorted(i for i in switched
-                  if i != ollama_id and host and
-                  urlparse(str(((ollama or {}).get(i) or {}).get("url") or "")).hostname == host)
+                  if i != ollama_id and host and _host((ollama or {}).get(i) or {}) == host
+                  and slot_for(i, ollama) == slot)
 
 
 def plan(backend: str, *, ollama_id: str, inst: Dict[str, Any], vllm_present: bool,
          switched: bool, in_flight: int, force: bool,
-         sharing: Iterable[str] = ()) -> Dict[str, Any]:
+         sharing: Iterable[str] = (), component: str = "vllm_server") -> Dict[str, Any]:
     """What a switch would do, or why it refuses. `sharing`: other instances on
     the same container already on vLLM (same_container_switched) - a container
     has one vLLM service (port 8000), so a second instance cannot move over
@@ -225,11 +260,11 @@ def plan(backend: str, *, ollama_id: str, inst: Dict[str, Any], vllm_present: bo
     if backend == "ollama" and not switched:
         return {"action": "noop", "why": f"{ollama_id} already serves Ollama"}
     if backend == "vllm" and not vllm_present:
-        return {"action": "refuse",
-                "why": "vllm_server is not installed on the node - provision.deploy "
-                       "component=vllm_server install_deps=true first"}
+        return {"action": "refuse", "component": component,
+                "why": f"{component} is not installed on the node - provision.deploy "
+                       f"component={component} install_deps=true first"}
     if in_flight > 0 and not force:
         return {"action": "refuse", "why": f"{in_flight} request(s) in flight on {ollama_id}; "
                                             "wait, or force=true"}
     return {"action": "switch", "to": backend, "vllm_instance": vllm_instance_id(ollama_id),
-            "has_gpu": bool((inst or {}).get("has_gpu"))}
+            "has_gpu": bool((inst or {}).get("has_gpu")), "component": component}
