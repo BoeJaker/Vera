@@ -140,6 +140,8 @@ def test_worker_runs_no_periodic_job_and_only_loading_hooks():
     assert not wp.scheduler_may_run("memory_startup", 60, is_worker=True)  # periodic, even if named
     assert wp.scheduler_may_run("memory_startup", S, is_worker=True)
     assert wp.scheduler_may_run("worker_metrics", S, is_worker=True)
+    # vLLM's registry + health: an offloaded llm.generate routes by it
+    assert wp.scheduler_may_run("vllm_health", S, is_worker=True)
     # pollers, promoters, proxies, sweeps and host-local loaders
     for hook in ("telegram_startup", "email_startup", "dream_startup",
                  "cluster_startup", "job_persist_startup", "fabric_startup",

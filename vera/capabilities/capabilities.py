@@ -1968,6 +1968,9 @@ async def llm_generate(
                             if i.status == "online"]
             if _online_vllm:
                 _use_vllm = True
+        if not _use_vllm:
+            log.warning("llm.generate: backend=vllm asked for but no vLLM server is "
+                        "online in this process - serving it on Ollama")
 
     if _use_vllm:
         # Route through vllm.generate cap so its own event pipeline fires
