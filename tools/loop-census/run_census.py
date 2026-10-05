@@ -749,6 +749,8 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
     # entirely when blank, so the default census still exercises whatever the
     # live Model Routing says - which is the configuration prod actually uses.
     _args = {"goal": g["goal"]}
+    # the decision ledger's origin for every decision this run records (FM-0.2a)
+    _args["decision_origin"] = "census"
     if model:
         _args["model"] = model
     # A census run is a measurement, not a goal to keep. v7 reads a long goal

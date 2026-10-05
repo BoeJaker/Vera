@@ -32,6 +32,7 @@ def test_filters_are_not_injected_attribution_is():
     props = {"session_id": {"type": "string"}, "query": {}}
     assert not inject("memory.search", props)
     assert not inject("memory.recall", props)
+    assert not inject("decide.ledger", props)
     assert inject("memory.store", props)
     assert inject("sandbox.exec", props)
     assert not inject("memory.store", {"query": {}})
