@@ -2860,6 +2860,31 @@ def _now_context_line() -> str:
             f"against this, never against your training data.")
 
 
+def _vllm_mod():
+    # The loader registers vllm_capabilities under its bare name; a package
+    # import would build a second copy whose instances are never health-polled.
+    return (sys.modules.get("vllm_capabilities")
+            or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+
+
+def _vllm_chat_target(agent: "AgentRecord", job_type: str, model: str) -> Optional[dict]:
+    """The vLLM server a chat turn goes to when its routing rule pins vLLM
+    ("vllm:<id>" / "vllm:*"), else None (Ollama routing, unchanged). An agent
+    pinned to an instance_id keeps it - that names an Ollama node, and a
+    caller's explicit node wins on the generate path too."""
+    if getattr(agent, "instance_id", None):
+        return None
+    vm = _vllm_mod()
+    if vm is None or not hasattr(vm, "chat_target"):
+        return None
+    try:
+        return vm.chat_target(_orch._resolve_rule(job_type), model=model,
+                              prefer_gpu=bool(agent.prefer_gpu))
+    except Exception as e:
+        log.warning("vllm chat target for job_type %s: %s", job_type, e)
+        return None
+
+
 def _agent_classify_job_type(agent: "AgentRecord", message: str) -> str:
     """First matching row in the agent's routing_table decides this turn's
     job_type — the classification is entirely LOCAL (no LLM call, no extra
@@ -2983,14 +3008,19 @@ class AgentRunner:
         # classify THIS message to a different job_type first — e.g. route
         # anything that looks like code to a "code" job_type pinned to a
         # coding model/node, automatically, per-turn.
-        chosen = pick_instance(
+        _jt = _agent_classify_job_type(agent, message)
+        # A rule pinning vLLM routes this turn there; `chosen` is then the
+        # GPU-gate key of the hardware it runs on, so the slot below queues
+        # with every other generation on that device.
+        _vt = _vllm_chat_target(agent, _jt, model)
+        chosen = (_vt["gate"] if _vt else pick_instance(
             prefer_gpu=agent.prefer_gpu,
             instance_id=agent.instance_id or None,
             model=model,
-            job_type=_agent_classify_job_type(agent, message),
-        ) or "cpu-246"
+            job_type=_jt,
+        ) or "cpu-246")
         inst = OLLAMA_INSTANCES.get(chosen, {})
-        url  = inst.get("url", "http://192.168.0.246:11435")
+        url  = _vt["url"] if _vt else inst.get("url", "http://192.168.0.246:11435")
 
         # Node-safe CEILING (model max, capped by the agent's num_ctx and
         # OLLAMA_MAX_AUTO_CTX) — then size THIS turn's request inside it, so we
@@ -3025,9 +3055,12 @@ class AgentRunner:
             # long batch generation.
             async with _chat_gpu_slot(chosen):
                 async with httpx.AsyncClient(timeout=180) as c:
-                    r = await c.post(f"{url}/api/chat", json=body)
-                    r.raise_for_status()
-                    data = r.json()
+                    if _vt:
+                        data = await _vllm_mod().ollama_chat_once(c, _vt, body)
+                    else:
+                        r = await c.post(f"{url}/api/chat", json=body)
+                        r.raise_for_status()
+                        data = r.json()
 
             msg_out  = data.get("message", {})
             raw_text = msg_out.get("content", "").strip()
@@ -3157,17 +3190,20 @@ class AgentRunner:
             messages.append(msg)
         messages.append({"role": "user", "content": message})
 
-        chosen = pick_instance(
+        # steerable via the Model Routing table; an agent's own routing_table
+        # can classify this message to a different job_type first — see
+        # _agent_classify_job_type(). A rule pinning vLLM routes the turn there
+        # (`chosen` = the GPU-gate key of its hardware, see run()).
+        _jt = _agent_classify_job_type(agent, message)
+        _vt = _vllm_chat_target(agent, _jt, model)
+        chosen = (_vt["gate"] if _vt else pick_instance(
             prefer_gpu=agent.prefer_gpu,
             instance_id=agent.instance_id or None,
             model=model,
-            # steerable via the Model Routing table; an agent's own
-            # routing_table can classify this message to a different
-            # job_type first — see _agent_classify_job_type().
-            job_type=_agent_classify_job_type(agent, message),
-        ) or "cpu-246"
+            job_type=_jt,
+        ) or "cpu-246")
         inst = OLLAMA_INSTANCES.get(chosen, {})
-        url  = inst.get("url", "http://192.168.0.246:11435")
+        url  = _vt["url"] if _vt else inst.get("url", "http://192.168.0.246:11435")
 
         # Effective context window + compaction (see compact_messages / run()).
         # `effective_num_ctx` is the node-safe CEILING, not the request: asking
@@ -3459,7 +3495,8 @@ class AgentRunner:
                 # so the reply hung until the browser gave up — no tokens, no
                 # error, an empty bubble and no way to tell what failed. Bound
                 # the wait for the FIRST line separately and say what happened.
-                _stream_cm = c.stream("POST", f"{url}/api/chat", json=body)
+                _stream_cm = (_vllm_mod().ollama_chat_stream(c, _vt, body) if _vt
+                              else c.stream("POST", f"{url}/api/chat", json=body))
                 try:
                     resp = await asyncio.wait_for(_stream_cm.__aenter__(),
                                                   timeout=_CHAT_FIRST_TOKEN_S)

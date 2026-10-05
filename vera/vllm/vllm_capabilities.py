@@ -97,6 +97,7 @@ import re
 import subprocess
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, asdict
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
@@ -115,8 +116,10 @@ from Vera.vera.config import cfg
 
 try:
     from Vera.vera.vllm import vllm_registry_core as _reg_core
+    from Vera.vera.vllm import vllm_route_core as _route_core
 except Exception:                                    # worktree / app-free import
     from vera.vllm import vllm_registry_core as _reg_core
+    from vera.vllm import vllm_route_core as _route_core
 
 log = logging.getLogger("vera.vllm")
 
@@ -132,6 +135,10 @@ class VLLMInstance:
     has_gpu: bool = True
     priority: int = 0
     api_key: str = ""                     # optional bearer token
+    # Ollama node id this server shares hardware with (e.g. the V100 twin of
+    # gpu-250): its calls take THAT node's semaphore + cross-process gate, so a
+    # vLLM and an Ollama generation can never overlap on one device.
+    gate_as: str = ""
     # runtime state
     status: str = "unknown"              # unknown | online | offline | degraded
     latency_ms: Optional[float] = None
@@ -203,6 +210,7 @@ def _init_instances():
             has_gpu=spec.get("has_gpu", True),
             priority=spec.get("priority", len(VLLM_INSTANCES)),
             api_key=spec.get("api_key", VLLM_API_KEY),
+            gate_as=str(spec.get("gate_as") or ""),
         )
         VLLM_INSTANCES[iid] = inst
         log.info("vllm: registered instance %s → %s", iid, inst.url)
@@ -274,12 +282,14 @@ async def _load_registry() -> None:
                 id=iid, url=str(spec.get("url", "")).rstrip("/"),
                 label=spec.get("label") or iid, has_gpu=bool(spec.get("has_gpu", True)),
                 priority=int(spec.get("priority") or 0),
-                api_key=spec.get("api_key", VLLM_API_KEY))
+                api_key=spec.get("api_key", VLLM_API_KEY),
+                gate_as=str(spec.get("gate_as") or ""))
         else:
             cur.url = str(spec.get("url", cur.url)).rstrip("/")
             cur.label = spec.get("label") or cur.label
             cur.has_gpu = bool(spec.get("has_gpu", cur.has_gpu))
             cur.priority = int(spec.get("priority", cur.priority) or 0)
+            cur.gate_as = str(spec.get("gate_as", cur.gate_as) or "")
     if _REG_DOC["instances"] or _REG_DOC["removed"]:
         log.info("vllm: registry restored - %d instance(s)", len(VLLM_INSTANCES))
 
@@ -423,6 +433,154 @@ def pick_vllm_instance(
         return status_penalty + queue_penalty + cache_penalty + inst.priority
 
     return min(candidates.values(), key=_score)
+
+
+async def routed_call(kind: str, rule: Optional[dict], *, model: Optional[str] = None,
+                      prefer_gpu: bool = False, job_type: str = "",
+                      slot_timeout: Optional[float] = None,
+                      stream_cb: Optional[Callable] = None, **kw) -> Optional[dict]:
+    """Serve one routed request on vLLM when the routing-table rule pins it.
+
+    The routing-table counterpart of an Ollama node: target chosen by
+    vllm_route_core (pin / deny_gpu / prefer_gpu / model), the hardware's
+    semaphore + cross-process gate held for generate and chat (embeddings never
+    take it, as on Ollama), route demand recorded, and the server's real model
+    reported. kind: 'generate' (kw: prompt, max_tokens, temperature, top_p,
+    guided_json, caller_override) | 'chat' (kw: messages, max_tokens, ...) |
+    'embed' (kw: inputs).
+
+    Returns None when the rule does not pin vLLM (the caller routes to Ollama).
+    Otherwise {ok, result, instance, model, gate, error}; on ok=False the caller
+    falls back to Ollama routing, exactly as for a failed Ollama node.
+    """
+    pin = _route_core.pin_target(rule)
+    if not pin:
+        return None
+    rule = rule or {}
+    iid = _route_core.choose(VLLM_INSTANCES, pin, model=model,
+                             prefer_gpu=bool(prefer_gpu or rule.get("prefer_gpu")),
+                             deny_gpu=bool(rule.get("deny_gpu")))
+    if not iid:
+        return {"ok": False, "error": f"no vLLM server up for pin vllm:{pin}",
+                "instance": "", "model": model or "", "gate": ""}
+    inst = VLLM_INSTANCES[iid]
+    mdl = _route_core.served_model(inst, model) or ""
+    try:
+        _orch.ROUTE_DEMAND.append((time.time(), str(job_type or "default")))
+    except Exception:
+        pass
+    out: Dict[str, Any] = {"instance": iid, "model": mdl, "gate": "", "error": ""}
+    if kind == "embed":
+        # Never substitute an embedder: another model's vectors (often another
+        # dimension) would land in stores indexed by the requested one.
+        if not _route_core.serves(inst, model):
+            out.update(ok=False, result=[],
+                       error=f"{iid} does not serve embedding model {model!r}")
+            return out
+        vecs = await vllm_embed(kw.get("inputs") or [], model=mdl or None, instance_id=iid)
+        out.update(ok=bool(vecs), result=vecs, error="" if vecs else "empty embedding")
+        return out
+    gid = _route_core.gate_id(inst, iid)
+    out["gate"] = gid
+    async with _orch._ollama_slot(gid, timeout=slot_timeout) as act:
+        # Stream internally so the gate heartbeat sees token liveness, exactly
+        # as for an Ollama generation; forward tokens to the caller's callback.
+        async def _tok(t: str):
+            if isinstance(act, dict):
+                act["t"] = time.monotonic()
+            if stream_cb is not None:
+                r = stream_cb(t)
+                if asyncio.iscoroutine(r):
+                    await r
+
+        if kind == "generate":
+            text = await vllm_generate(model=mdl or None, instance_id=iid,
+                                       prefer_gpu=bool(inst.has_gpu), stream_cb=_tok, **kw)
+            # vllm_generate reports a failure as "" (it logs + emits request_error)
+            out.update(ok=bool(text), result=text,
+                       error="" if text else "empty vLLM generation")
+        elif kind == "chat":
+            msg = await vllm_chat(model=mdl or None, instance_id=iid,
+                                  prefer_gpu=bool(inst.has_gpu), stream_cb=_tok, **kw)
+            err = (msg or {}).get("error") if isinstance(msg, dict) else "no reply"
+            out.update(ok=not err, result=msg, error=str(err or ""))
+        else:
+            raise ValueError(f"routed_call: unknown kind {kind!r}")
+    return out
+
+
+def chat_target(rule: Optional[dict], *, model: Optional[str] = None,
+                prefer_gpu: bool = False) -> Optional[dict]:
+    """Where a routed CHAT goes when its rule pins vLLM (None = Ollama routing).
+
+    {instance, gate, url, model}: `gate` is the semaphore/GPU-gate key the chat
+    path takes (the Ollama twin's id for a server that shares its hardware).
+    """
+    pin = _route_core.pin_target(rule)
+    if not pin:
+        return None
+    rule = rule or {}
+    iid = _route_core.choose(VLLM_INSTANCES, pin, model=model,
+                             prefer_gpu=bool(prefer_gpu or rule.get("prefer_gpu")),
+                             deny_gpu=bool(rule.get("deny_gpu")))
+    if not iid:
+        log.info("vllm chat pin vllm:%s: no server up - Ollama routing", pin)
+        return None
+    inst = VLLM_INSTANCES[iid]
+    try:
+        _orch.ROUTE_DEMAND.append((time.time(), "chat"))
+    except Exception:
+        pass
+    return {"instance": iid, "gate": _route_core.gate_id(inst, iid), "url": inst.url,
+            "model": _route_core.served_model(inst, model) or (model or "")}
+
+
+async def ollama_chat_once(client: "httpx.AsyncClient", target: dict,
+                           ollama_body: dict) -> dict:
+    """POST an Ollama-shaped chat body to the vLLM target; Ollama-shaped reply."""
+    inst = VLLM_INSTANCES.get(target["instance"])
+    body = _route_core.chat_body(dict(ollama_body, stream=False), target.get("model"))
+    r = await client.post(f"{target['url']}/v1/chat/completions", json=body,
+                          headers=inst.headers() if inst else None)
+    r.raise_for_status()
+    return _route_core.chat_reply(r.json())
+
+
+class _OllamaShapedStream:
+    """The bits of an httpx streaming response Vera's chat loop reads, with
+    vLLM's SSE chat deltas rewritten as Ollama NDJSON lines (one done line)."""
+
+    def __init__(self, resp):
+        self._resp = resp
+        self.status_code = resp.status_code
+        self.headers = resp.headers
+
+    async def aread(self):
+        return await self._resp.aread()
+
+    async def aiter_lines(self):
+        done_sent = False
+        async for line in self._resp.aiter_lines():
+            ch = _route_core.sse_to_ollama_line(line)
+            if ch is None:
+                continue
+            if ch.get("done"):
+                if done_sent:
+                    continue
+                done_sent = True
+            yield json.dumps(ch)
+        if not done_sent:
+            yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True})
+
+
+@asynccontextmanager
+async def ollama_chat_stream(client: "httpx.AsyncClient", target: dict, ollama_body: dict):
+    """`async with` a streaming vLLM chat that reads like an Ollama /api/chat stream."""
+    inst = VLLM_INSTANCES.get(target["instance"])
+    body = _route_core.chat_body(dict(ollama_body, stream=True), target.get("model"))
+    async with client.stream("POST", f"{target['url']}/v1/chat/completions", json=body,
+                             headers=inst.headers() if inst else None) as resp:
+        yield _OllamaShapedStream(resp)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -757,6 +915,7 @@ async def vllm_status() -> dict:
             "label": inst.label,
             "status": inst.status,
             "has_gpu": inst.has_gpu,
+            "gate_as": inst.gate_as,
             "latency_ms": inst.latency_ms,
             "in_use": inst.in_use,
             "errors": inst.errors,
@@ -791,7 +950,9 @@ async def vllm_status() -> dict:
     description="Register a vLLM server instance at runtime (persisted across "
                 "restarts). Inputs: id (str!), url (str!), label, has_gpu (bool="
                 "true — false for a CPU server), priority (int), api_key (str — "
-                "not persisted; env VLLM_API_KEY applies after a restart).",
+                "not persisted; env VLLM_API_KEY applies after a restart), "
+                "gate_as (str — the Ollama node id this server shares hardware "
+                "with; its calls then take that node's GPU gate).",
     http_method="POST",
     http_path="/vllm/instances",
     schema={
@@ -802,13 +963,14 @@ async def vllm_status() -> dict:
             "has_gpu":  {"type": "boolean"},
             "priority": {"type": "integer"},
             "api_key":  {"type": "string"},
+            "gate_as":  {"type": "string"},
         },
         "required": ["id", "url"],
     },
 )
 async def vllm_instances_add(
     id: str, url: str, label: str = "", has_gpu: bool = True,
-    priority: int = None, api_key: str = "",
+    priority: int = None, api_key: str = "", gate_as: str = "",
 ) -> dict:
     await _ensure_registry_loaded()
     if id in VLLM_INSTANCES:
@@ -818,12 +980,13 @@ async def vllm_instances_add(
         has_gpu=has_gpu,
         priority=priority if priority is not None else len(VLLM_INSTANCES),
         api_key=api_key or VLLM_API_KEY,
+        gate_as=str(gate_as or ""),
     )
     VLLM_INSTANCES[id] = inst
     global _REG_DOC
     _REG_DOC = _reg_core.note_added(_REG_DOC, id, {
         "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
-        "priority": inst.priority})
+        "priority": inst.priority, "gate_as": inst.gate_as})
     await _save_registry()
     await _ping_vllm(inst)
     await emit_event({"type": "vllm.instance.added", "id": id, "url": url,

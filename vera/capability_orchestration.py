@@ -1607,10 +1607,21 @@ _OLLAMA_SEMAPHORES: Dict[str, asyncio.Semaphore] = {}
 _OLLAMA_SEM_OVERRIDE = os.environ.get("OLLAMA_CONCURRENCY", "").strip()
 
 
+def _node_has_gpu(iid: str) -> bool:
+    """GPU flag for a gate/semaphore key: an Ollama node, or a vLLM server
+    routed under its own id (one that shares hardware gates as the Ollama id)."""
+    if iid in OLLAMA_INSTANCES:
+        return bool((OLLAMA_INSTANCES.get(iid) or {}).get("has_gpu"))
+    _vm = sys.modules.get("vllm_capabilities") or sys.modules.get(
+        "Vera.vera.vllm.vllm_capabilities")
+    _vi = getattr(_vm, "VLLM_INSTANCES", {}).get(iid) if _vm else None
+    return bool(getattr(_vi, "has_gpu", False))
+
+
 def _ollama_sem_limit(iid: str) -> int:
     if _OLLAMA_SEM_OVERRIDE:
         return max(1, int(_OLLAMA_SEM_OVERRIDE))
-    has_gpu = bool((OLLAMA_INSTANCES.get(iid) or {}).get("has_gpu"))
+    has_gpu = _node_has_gpu(iid)
     return 1 if has_gpu else max(1, _gate.capacity_for(False))
 
 
@@ -2071,7 +2082,7 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None,
         # that ignore the yielded marker fall back to the heartbeat's hard cap.
         _activity = {"t": time.monotonic(), "beats": 0}
         if _GATE_ON:
-            _cap = _gate.capacity_for(bool(OLLAMA_INSTANCES.get(iid, {}).get("has_gpu")))
+            _cap = _gate.capacity_for(_node_has_gpu(iid))
             # A configured broker is a security boundary for sandboxes: it must
             # produce a real shared lease or inference is refused. Never fall
             # through to the local/private Redis gate under a broker failure.
@@ -3529,10 +3540,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         if _um:
             eff_model = _um
     # ── vLLM delegation: a rule/profile pin of "vllm:<id>" (or "vllm:*" for
-    # any node) sends this request to the vLLM backend instead of Ollama — the
-    # router treats vLLM servers as routable targets. A caller-explicit
-    # instance_id still wins (it names an Ollama node). If no vLLM node is
-    # online the request falls through to normal Ollama routing.
+    # any vLLM server) routes this request to vLLM like a node: chosen under
+    # the rule (deny_gpu / prefer_gpu / model), holding the hardware's
+    # semaphore + GPU gate, route demand and the routed model recorded. A
+    # caller-explicit instance_id still wins (it names an Ollama node). When no
+    # pinned server is up, or the call fails, normal Ollama routing continues.
     _pin = str((eff_rule or {}).get("pin") or "")
     if _pin.startswith("vllm:") and not instance_id:
         try:
@@ -3542,25 +3554,25 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                          or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
             if _vllm_mod is None:
                 raise RuntimeError("vllm module not loaded")
-            _vllm_gen, _vllm_pick = _vllm_mod.vllm_generate, _vllm_mod.pick_vllm_instance
-            _vid = _pin.split(":", 1)[1]
-            _vid = None if _vid in ("", "*") else _vid
-            if _vllm_pick(instance_id=_vid) is None:
-                raise RuntimeError("no online vLLM instance")
             _opts = options or {}
             _np = int(_opts.get("num_predict") or 0)
-            return await _vllm_gen(
-                (f"{system}\n\n{prompt}" if system else prompt),
-                model=eff_model or None,
-                instance_id=_vid,
-                prefer_gpu=prefer_gpu or bool((eff_rule or {}).get("prefer_gpu")),
+            _vr = await _vllm_mod.routed_call(
+                "generate", eff_rule, model=eff_model or None,
+                prefer_gpu=prefer_gpu, job_type=str(eff_job_type or ""),
+                slot_timeout=timeout, stream_cb=stream_cb,
+                prompt=(f"{system}\n\n{prompt}" if system else prompt),
                 max_tokens=(_np if _np > 0 else 1024),
                 temperature=float(_opts.get("temperature", 0.7)),
                 top_p=float(_opts.get("top_p", 0.9)),
-                guided_json=({"type": "object"} if json_mode else None),
-                stream_cb=stream_cb,
+                extra=({"response_format": {"type": "json_object"}} if json_mode else None),
                 caller_override=caller,
             )
+            if _vr and _vr.get("ok"):
+                if meta_out is not None:
+                    meta_out.update({"model": _vr.get("model"), "instance": _vr.get("instance"),
+                                     "backend": "vllm", "gate": _vr.get("gate")})
+                return _vr.get("result") or ""
+            raise RuntimeError((_vr or {}).get("error") or "vllm route failed")
         except Exception as _ve:
             log.warning("vllm delegation for pin '%s' failed (%s) — "
                         "falling back to Ollama routing", _pin, _ve)
@@ -4483,6 +4495,28 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
     # Apply runtime embed config: prefer_gpu / pinned_instance from UI settings
     eff_prefer_gpu = prefer_gpu or _EMBED_PREFER_GPU
     eff_instance   = instance_id or _EMBED_INSTANCE_ID
+    # The "embedding" rule may pin vLLM ("vllm:<id>" / "vllm:*"), as a generate
+    # or chat rule can. Only a server that serves exactly this embedding model
+    # is used; anything else (no pin, none up, other model, error) continues
+    # with Ollama routing below. An explicit instance names an Ollama node.
+    if not eff_instance:
+        _vm = (sys.modules.get("vllm_capabilities")
+               or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+        if _vm is not None and hasattr(_vm, "routed_call"):
+            try:
+                _vr = await _vm.routed_call("embed", _resolve_rule("embedding"), model=mdl,
+                                            prefer_gpu=eff_prefer_gpu, job_type="embedding",
+                                            inputs=[text[:4096]])
+                if _vr and _vr.get("ok") and _vr.get("result"):
+                    vec = list(_vr["result"][0])
+                    if normalize:
+                        _n = (sum(v * v for v in vec)) ** 0.5 or 1.0
+                        vec = [v / _n for v in vec]
+                    return vec
+                if _vr:
+                    log.info("embed vllm pin: %s - Ollama routing", _vr.get("error"))
+            except Exception as _ve:
+                log.warning("embed vllm pin failed (%s) - Ollama routing", _ve)
     chosen = pick_instance(prefer_gpu=eff_prefer_gpu, instance_id=eff_instance,
                            model=mdl, job_type="embedding") or "cpu-246"
     inst = OLLAMA_INSTANCES.get(chosen)
