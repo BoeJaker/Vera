@@ -5660,7 +5660,7 @@ async def run_analyst_phase(job: ResearchJob, draft: str,
             timeout=ANALYST_TIMEOUT + 10
         )
         slot_off(slot_a)
-        return result or draft
+        return _merge_analyst_output(draft, result)
     except asyncio.TimeoutError:
         slot_off(slot_a)
         await step_emit(job, "Verify timeout", f"Skipped after {int(ANALYST_TIMEOUT)}s")
@@ -5701,6 +5701,28 @@ class ResearchNode:
     sub_questions: list[str] = field(default_factory=list)
 
 
+def _planning_slots(remaining_after_level: int, per_node: int) -> int:
+    """How many nodes of a level should plan follow-up questions: enough to fill what is left of
+    the question budget after this level, plus one spare (an earlier node may return fewer)."""
+    if remaining_after_level <= 0:
+        return 0
+    per_node = max(1, int(per_node))
+    return -(-int(remaining_after_level) // per_node) + 1
+
+
+def _merge_analyst_output(draft: str, result: str) -> str:
+    """The analyst is asked to APPEND a verification note, not rewrite the report. A reply that is
+    clearly just that note (much shorter than the draft, and without the draft's opening) is
+    appended; a full rewrite is kept as it was. It used to return the reply alone, so a compliant
+    model replaced the whole report with its note."""
+    result = (result or "").strip()
+    if not result:
+        return draft
+    head = " ".join((draft or "").split())[:80]
+    looks_like_note = len(result) < 0.5 * len(draft or "") and (not head or head not in " ".join(result.split()))
+    return (draft.rstrip() + "\n\n" + result) if looks_like_note else result
+
+
 async def research_node(
     node: ResearchNode,
     job: ResearchJob,
@@ -5709,6 +5731,7 @@ async def research_node(
     all_citations: list[Citation],
     knowledge_base: list[str],
     directive: "Optional[ResearchDirective]" = None,
+    plan_children: bool = True,
 ) -> None:
     """
     Research one question node — three instances working in parallel:
@@ -5861,7 +5884,7 @@ async def research_node(
 
     # ── Sub-question planning (THINKER = smart model) ────────────────────────
     # Directive scope guard prevents drift — thinker knows what to stay focused on.
-    if node.depth < MAX_RECURSIVE_DEPTH:
+    if node.depth < MAX_RECURSIVE_DEPTH and plan_children:
         plan_inst = thinker or writer
         sub_sys = "Identify precise follow-up research questions. Return ONLY a JSON array of strings."
 
@@ -5978,10 +6001,14 @@ async def recursive_research(
         await step_emit(job, f"Level {batch[0].depth}",
             f"Investigating {len(batch)} question(s) in parallel…")
 
+        # Only nodes whose follow-up questions can still fit the question budget plan them:
+        # planning for the rest was discarded (with the defaults, 11 of the 16 thinker calls).
+        _planners = _planning_slots(MAX_TOTAL_QUESTIONS - question_count - len(batch),
+                                    MAX_QUESTIONS_PER_LEVEL)
         await asyncio.gather(*[
             research_node(node, job, thinker, writer, all_citations, knowledge_base,
-                          directive=directive)
-            for node in batch
+                          directive=directive, plan_children=_i < _planners)
+            for _i, node in enumerate(batch)
         ])
         all_nodes.extend(batch)
         question_count += len(batch)
