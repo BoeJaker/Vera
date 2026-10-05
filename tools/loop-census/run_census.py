@@ -54,6 +54,10 @@ POLL_S       = 15            # session status over HTTP
 # no loop event - a 300 s threshold dumped a healthy goal. The real stall was 16 min.
 STALL_DUMP_S = int(os.environ.get("CENSUS_STALL_DUMP_S", "600") or 600)
 STALL_CHECK_S = 60
+# A prod restart kills every in-process loop. Seen within a minute (process start time
+# changed) instead of waiting ~20 min for the stale-session rule to call it interrupted
+# (5 Oct 2026: research-report sat 21 min on a loop the 12:04 restart had killed).
+RESTART_GRACE_S = int(os.environ.get("CENSUS_RESTART_GRACE_S", "60") or 60)
 CONTROL_POLL_S = 3           # census.control.json, a local file (pause/drop must not be missed)
 
 # ── Who is running this, and what drove them ─────────────────────────────────
@@ -654,6 +658,31 @@ class Dropped(Exception):
     """A drop arrived: stop the census without recording the current goal."""
 
 
+def restart_check(code_start, snap, seen_t, seen_ev, n_ev, now, grace=None):
+    """Did prod restart under the goal, and is its loop gone? {seen: t, process, dead}.
+    `snap` is called for prod's current process (code_snapshot); a prod that cannot be
+    read (restarting) says nothing yet. Dead = restarted AND no new loop event for
+    `grace` seconds since the restart was seen (a loop that somehow survived would
+    show events). Pure apart from `snap`."""
+    grace = RESTART_GRACE_S if grace is None else grace
+    was = (code_start or {}).get("process_started_at") or ""
+    if not was:
+        return {}
+    if seen_t is not None:
+        if n_ev is None or n_ev < 0 or seen_ev is None or seen_ev < 0:
+            return {}                              # events unreadable: unknown, not dead
+        if n_ev != seen_ev:
+            return {}                              # events after the restart: alive
+        return {"dead": True} if now - seen_t >= grace else {}
+    try:
+        cur = (snap() or {}).get("process_started_at") or ""
+    except Exception:
+        cur = ""
+    if cur and cur != was:
+        return {"seen": now, "process": cur}
+    return {}
+
+
 def run_goal(g, model="", template="", wall_cap_default=0):
     """Run one goal, re-running it after a pause or an unannounced interruption.
     Returns the row; raises Dropped."""
@@ -798,6 +827,7 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
     next_status = 0.0
     yielded = False
     last_ev, last_ev_t, next_ev_check, stall_dumped = None, time.time(), 0.0, False
+    restart_seen_t, restart_ev = None, None
     while time.time() - t0 < wall_cap:
         time.sleep(CONTROL_POLL_S)
         c = read_control()
@@ -846,6 +876,23 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
                         stall_dump(sid, g["id"], int(time.time() - last_ev_t))
                     except Exception as _se:
                         log("  STALL: dump error %s" % _se)
+            # Prod restarted under this goal? Its loop died with the old process.
+            _restart = restart_check(code_start, code_snapshot, restart_seen_t, restart_ev,
+                                     n_ev, time.time())
+            if _restart.get("seen") and restart_seen_t is None:
+                restart_seen_t, restart_ev = _restart["seen"], n_ev
+                log("  prod restarted under this goal (process %s) - the loop has %ds to show "
+                    "it is alive" % (_restart.get("process") or "?", RESTART_GRACE_S))
+            if _restart.get("dead"):
+                log("  loop gone with the restart (no events for %ds after it) - cancelling "
+                    "%s and re-running" % (RESTART_GRACE_S, sid[:12]))
+                cancel_loop(sid)                  # the orphan record must not stay "running"
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                status = "interrupted"
+                break
         if status in ("done", "error", "cancelled", "failed", "interrupted"):
             # Do not take a terminal reading at face value - see confirm_terminal.
             if confirm_terminal(sid, status):
