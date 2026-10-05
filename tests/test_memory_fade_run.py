@@ -37,13 +37,15 @@ ROWS = [
 
 
 class _Conn:
-    def __init__(self):
-        self.updated = []
+    def __init__(self, faded=()):
+        self.updated, self.faded = [], sorted(faded)       # faded: already archived with faded_at by an earlier run
 
     async def fetchval(self, sql, *a):
         return False                                       # no usage table yet
 
     async def fetch(self, sql, *a):
+        if "faded_at" in sql and sql.lstrip().startswith("SELECT"):
+            return [{"id": i} for i in self.faded if i > a[0]][:20000]
         if "id > $1" in sql:
             return [r for r in ROWS if r["id"] > a[0]][:5000]
         if sql.lstrip().startswith("UPDATE vera_memories"):
@@ -112,16 +114,16 @@ class _Coll:
     def __init__(self, have):
         self.have, self.updates = set(have), []
 
-    def get(self, ids, include):
-        hit = [i for i in ids if i in self.have]
+    def get(self, ids=None, include=None, limit=None, offset=0):
+        hit = [i for i in ids if i in self.have] if ids is not None else sorted(self.have)[offset:offset + limit]
         return {"ids": hit, "metadatas": [{"record_type": "message"} for _ in hit]}
 
     def update(self, ids, metadatas):
         self.updates.append((list(ids), metadatas))
 
 
-def _wire(H, monkeypatch, coll_have=()):
-    conn, r, neo, coll = _Conn(), _Redis(), _Neo(), _Coll(coll_have)
+def _wire(H, monkeypatch, coll_have=(), faded=()):
+    conn, r, neo, coll = _Conn(faded), _Redis(), _Neo(), _Coll(coll_have)
 
     async def pool():
         return _Pool(conn)
@@ -186,3 +188,35 @@ def test_nightly_fading_is_off_until_switched_on(monkeypatch):
     pol = getattr(H.memory_fade_policy, "__wrapped__", H.memory_fade_policy)
     assert _arun(pol())["auto"] is False and _arun(H._fade_auto_on()) is False
     assert _arun(pol(auto=True, by="owner"))["auto"] is True and _arun(H._fade_auto_on()) is True
+
+
+def test_a_run_cut_short_is_levelled_by_the_next(monkeypatch):
+    """2026-10-06: a restart stopped run 1 after Postgres had 28,000 faded and before Neo4j or Chroma heard of them."""
+    H = _hooks()
+    conn, r, neo, coll, _M = _wire(H, monkeypatch, coll_have={"z-left", "y-live"}, faded={"z-left", "x-left"})
+    out = _arun(H._fade_apply(100, None, "test"))
+    assert out["reconciled"]["faded_in_postgres"] == 2
+    assert sorted(neo.log[0]) == ["x-left", "z-left"]                 # Neo4j told first
+    assert coll.updates[0][0] == ["z-left"]                           # only the faded vector, not the live one
+    assert out["reconciled"]["chroma"] == 1
+
+
+def test_each_batch_reaches_every_store_and_the_backup_window_stops_the_run(monkeypatch):
+    H = _hooks()
+    conn, r, neo, coll, _M = _wire(H, monkeypatch, coll_have={"b-old", "c-tool"})
+    monkeypatch.setattr(H, "_FADE_BATCH", 1)
+    calls = iter([False, True])
+    monkeypatch.setattr(H, "_in_backup_window", lambda t=None: next(calls, True))
+    out = _arun(H._fade_apply(100, None, "test"))
+    assert out["faded"] == 1 and out["neo4j"] == 1 and out["chroma"] == 1   # the one batch done is done everywhere
+    assert "backup" in out["stopped"] and out["picked"] == 2
+    assert json.loads(r.kv[H._FADE_RUN_KEY])["running"] is False
+
+
+def test_a_run_a_restart_stopped_says_so(monkeypatch):
+    H = _hooks()
+    conn, r, neo, coll, _M = _wire(H, monkeypatch)
+    monkeypatch.setattr(H, "_FADE_RUN_TASK", None)
+    r.kv[H._FADE_RUN_KEY] = json.dumps({"faded": 28000, "running": True})
+    fn = getattr(H.memory_fade_run, "__wrapped__", H.memory_fade_run)
+    assert "interrupted" in _arun(fn())["last_run"]

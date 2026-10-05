@@ -1515,22 +1515,122 @@ async def _fade_candidates(pool, policy: Dict[str, Any], limit: int, classes: Op
     return out
 
 
+def _fade_stores():
+    """(neo4j backend or None, chroma collection or None, memory class or None) of the live memory store."""
+    MEMORY, _ = _memory()
+    backs = (getattr(MEMORY, "_backends", {}) or {}) if MEMORY else {}
+    neo = backs.get("neo4j")
+    neo = neo if neo is not None and getattr(neo, "_driver", None) else None
+    cb = backs.get("chroma")
+    return neo, (getattr(cb, "_collection", None) if cb else None), (type(MEMORY) if MEMORY else None)
+
+
+async def _fade_mark_neo4j(neo, ids: List[str], out: Dict[str, Any], key: str = "neo4j") -> None:
+    """Set archived on the Memory nodes of `ids`; counts only the nodes that changed."""
+    try:
+        async with neo._driver.session() as ses:
+            res = await ses.run("UNWIND $ids AS id MATCH (m:Memory {id: id}) WHERE coalesce(m.archived, false) = false "
+                                "SET m.archived = true RETURN count(m) AS n", {"ids": ids})
+            row = await res.single()
+            out[key] = out.get(key, 0) + int((row or {}).get("n", 0) or 0)
+    except Exception as e:
+        out.setdefault("errors", []).append("neo4j: %s" % str(e)[:120])
+
+
+async def _fade_mark_chroma(coll, ids: List[str], out: Dict[str, Any], key: str = "chroma") -> None:
+    """Set archived on the vectors of `ids` that exist, keeping the rest of their metadata; paced (E13)."""
+    for i in range(0, len(ids), _FADE_CHROMA_BATCH):
+        part = ids[i:i + _FADE_CHROMA_BATCH]
+        try:
+            got = await _chroma_bound.run(lambda: coll.get(ids=part, include=["metadatas"]))
+            have = got.get("ids") or []
+            if have:
+                metas = [dict(m or {}, archived=True) for m in (got.get("metadatas") or [{}] * len(have))]
+                await _chroma_bound.run(lambda: coll.update(ids=have, metadatas=metas))
+                out[key] = out.get(key, 0) + len(have)
+                await asyncio.sleep(_FADE_CHROMA_PAUSE_S)
+        except Exception as e:
+            out.setdefault("errors", []).append("chroma: %s" % str(e)[:120])
+            await asyncio.sleep(_FADE_CHROMA_PAUSE_S * 5)
+
+
+async def _fade_reconcile(pool, neo, coll, out: Dict[str, Any]) -> None:
+    """Postgres is the record of what has faded (archived with faded_at; a revive clears both). A run cut short - a
+    restart mid-run, 2026-10-06 - leaves Neo4j and Chroma behind it: bring them level before fading more."""
+    faded: set = set()
+    last = ""
+    async with pool.acquire() as conn:
+        while True:
+            rows = await conn.fetch("SELECT id FROM vera_memories WHERE archived AND metadata ? 'faded_at' "
+                                    "AND id > $1 ORDER BY id LIMIT 20000", last)
+            if not rows:
+                break
+            faded.update(r["id"] for r in rows)
+            last = rows[-1]["id"]
+            await asyncio.sleep(0)
+    out["reconciled"] = {"faded_in_postgres": len(faded), "neo4j": 0, "chroma": 0}
+    if not faded:
+        return
+    if neo is not None:
+        ids = sorted(faded)
+        for i in range(0, len(ids), _FADE_BATCH):
+            await _fade_mark_neo4j(neo, ids[i:i + _FADE_BATCH], out["reconciled"])
+            await asyncio.sleep(0)
+    if coll is not None:                # the vector store is far smaller than the faded set: walk it, not the ids
+        behind: List[str] = []
+        off = 0
+        while True:
+            try:
+                got = await _chroma_bound.run(lambda: coll.get(include=["metadatas"], limit=500, offset=off))
+            except Exception as e:
+                out.setdefault("errors", []).append("chroma: %s" % str(e)[:120])
+                break
+            ids = got.get("ids") or []
+            if not ids:
+                break
+            for vid, meta in zip(ids, got.get("metadatas") or [{}] * len(ids)):
+                if vid in faded and not (meta or {}).get("archived"):
+                    behind.append(vid)
+            off += len(ids)
+            await asyncio.sleep(0)
+        if behind:
+            await _fade_mark_chroma(coll, behind, out["reconciled"])
+
+
 async def _fade_apply(limit: int = 20000, classes: Optional[List[str]] = None, by: str = "") -> Dict[str, Any]:
     """Soft-archive what fades: archived in Postgres (with faded_at and the reason), Neo4j and - where a vector is
-    left - Chroma. Revived on use; a strong match still finds it (resurfacing). Never raises; the run is recorded."""
+    left - Chroma, a batch at a time in all three, so a run cut short leaves at most one batch behind and the next run
+    levels it first. Stops at the nightly backup. Revived on use; a strong match still finds it (resurfacing). Never
+    raises; progress is recorded after every batch."""
     t0 = time.monotonic()
     out: Dict[str, Any] = {"by": by, "started_at": now_iso(), "policy": _strength_core.POLICY_VERSION,
-                           "faded": 0, "neo4j": 0, "chroma": 0, "by_class": {}}
+                           "faded": 0, "neo4j": 0, "chroma": 0, "by_class": {}, "running": True}
+    r = _redis()
+
+    async def _record():
+        if r is not None:
+            try:
+                await r.set(_FADE_RUN_KEY, json.dumps(out))
+            except Exception:
+                pass
+
+    MEMORY_CLS = None
     try:
         pool = await _usage_pool()
         if pool is None:
             out["error"] = "memory postgres not connected"
+            out["running"] = False
             return out
+        neo, coll, MEMORY_CLS = _fade_stores()
+        await _fade_reconcile(pool, neo, coll, out)
+        await _record()
         policy = _strength_core.policy_from(await _fade_overrides())
         picked = await _fade_candidates(pool, policy, limit, classes)
-        for _id, cls, _s, _f in picked:
-            out["by_class"][cls] = out["by_class"].get(cls, 0) + 1
+        out["picked"] = len(picked)
         for i in range(0, len(picked), _FADE_BATCH):
+            if _in_backup_window():
+                out["stopped"] = "the nightly backup window began - the rest waits for the next run"
+                break
             chunk = picked[i:i + _FADE_BATCH]
             ids = [c[0] for c in chunk]
             reasons = ["%s: strength %.4f below floor %.3f (policy %s)" % (c[1], c[2], c[3], _strength_core.POLICY_VERSION)
@@ -1543,53 +1643,29 @@ async def _fade_apply(limit: int = 20000, classes: Optional[List[str]] = None, b
                        FROM unnest($1::text[], $2::text[]) AS r(id, reason)
                        WHERE m.id = r.id AND NOT m.archived
                        RETURNING m.id""", ids, reasons)
-            out["faded"] += len(done)
+            done_ids = [d["id"] for d in done]
+            cls_of = {c[0]: c[1] for c in chunk}
+            for d in done_ids:
+                out["by_class"][cls_of[d]] = out["by_class"].get(cls_of[d], 0) + 1
+            out["faded"] += len(done_ids)
+            if done_ids and neo is not None:
+                await _fade_mark_neo4j(neo, done_ids, out)
+            if done_ids and coll is not None:
+                await _fade_mark_chroma(coll, done_ids, out)
+            await _record()
             await asyncio.sleep(0)
-        MEMORY, _ = _memory()
-        backs = (getattr(MEMORY, "_backends", {}) or {}) if MEMORY else {}
-        neo = backs.get("neo4j")
-        if neo is not None and getattr(neo, "_driver", None):
-            for i in range(0, len(picked), _FADE_BATCH):
-                ids = [c[0] for c in picked[i:i + _FADE_BATCH]]
-                try:
-                    async with neo._driver.session() as ses:
-                        res = await ses.run("UNWIND $ids AS id MATCH (m:Memory {id: id}) SET m.archived = true "
-                                            "RETURN count(m) AS n", {"ids": ids})
-                        row = await res.single()
-                        out["neo4j"] += int((row or {}).get("n", 0) or 0)
-                except Exception as e:
-                    out.setdefault("errors", []).append("neo4j: %s" % str(e)[:120])
-                await asyncio.sleep(0)
-        cb = backs.get("chroma")
-        coll = getattr(cb, "_collection", None) if cb else None
-        if coll is not None:
-            for i in range(0, len(picked), _FADE_CHROMA_BATCH):
-                ids = [c[0] for c in picked[i:i + _FADE_CHROMA_BATCH]]
-                try:
-                    got = await _chroma_bound.run(lambda: coll.get(ids=ids, include=["metadatas"]))
-                    have = got.get("ids") or []
-                    if have:
-                        metas = [dict(m or {}, archived=True) for m in (got.get("metadatas") or [{}] * len(have))]
-                        await _chroma_bound.run(lambda: coll.update(ids=have, metadatas=metas))
-                        out["chroma"] += len(have)
-                        await asyncio.sleep(_FADE_CHROMA_PAUSE_S)
-                except Exception as e:
-                    out.setdefault("errors", []).append("chroma: %s" % str(e)[:120])
-                    await asyncio.sleep(_FADE_CHROMA_PAUSE_S * 5)
-        try:   # recall asks for faded matches from now on, not in ten minutes
-            type(MEMORY)._FADED_SEEN["t"] = 0.0
-        except Exception:
-            pass
     except Exception as e:
         out["error"] = str(e)[:200]
-    out["ms"] = round((time.monotonic() - t0) * 1000)
-    out["finished_at"] = now_iso()
-    r = _redis()
-    if r is not None:
-        try:
-            await r.set(_FADE_RUN_KEY, json.dumps(out))
+    finally:
+        try:   # recall asks for faded matches from now on, not in ten minutes
+            if MEMORY_CLS is not None:
+                MEMORY_CLS._FADED_SEEN["t"] = 0.0
         except Exception:
             pass
+    out["running"] = False
+    out["ms"] = round((time.monotonic() - t0) * 1000)
+    out["finished_at"] = now_iso()
+    await _record()
     try:
         await emit_event({"type": "memory.faded", **{k: out[k] for k in ("faded", "neo4j", "chroma", "by_class", "by")}})
     except Exception:
@@ -1618,12 +1694,14 @@ async def memory_fade_run(confirm: bool = False, limit: int = 20000, classes: st
             last = json.loads(raw) if raw else None
         except Exception:
             last = None
+    running = _FADE_RUN_TASK is not None and not _FADE_RUN_TASK.done()
+    if isinstance(last, dict) and last.get("running") and not running:
+        last["interrupted"] = "the run stopped part-way (a restart); the next run levels the stores first"
     try:
         lim = max(1, min(int(limit or 20000), 200000))
     except (TypeError, ValueError):
         lim = 20000
     cls = [c.strip() for c in str(classes or "").split(",") if c.strip() in _strength_core.HALF_LIFE]
-    running = _FADE_RUN_TASK is not None and not _FADE_RUN_TASK.done()
     if running:
         return {"running": True, "last_run": last}
     if str(confirm).strip().lower() not in ("1", "true", "yes", "on"):
