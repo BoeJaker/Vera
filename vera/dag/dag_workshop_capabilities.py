@@ -10587,9 +10587,17 @@ async def code_store_save(path: str, content: str, *, session_id: str = "", repo
     content = _unescape_collapsed_code(content)
     scope = _code_scope(session_id, repo)
     lang = lang or _code_lang_for(path)
+    # The WORKSPACE first: a version is recorded only once the file is really there,
+    # so the store can never run ahead of the sandbox the run reads (5 Oct 2026).
+    fs_path = ""
+    if mirror_fs:
+        fs_path = await _code_mirror_to_fs(session_id, path, content)
+        if not fs_path:
+            return {"ok": False, "path": path,
+                    "error": f"could not write {path} into the run's workspace - nothing "
+                             "saved (no version is recorded for a file that is not there)"}
     saved = await asyncio.to_thread(_code_save_sync, scope, path, content,
                                     lang=lang, message=message, session_id=session_id)
-    fs_path = await _code_mirror_to_fs(session_id, path, content) if mirror_fs else ""
     out = {"ok": True, "path": path, "scope": scope, "version": saved["version"],
            "unchanged": saved.get("unchanged", False),
            "bytes": len(content.encode("utf-8", "replace")), "lang": lang,
@@ -11974,24 +11982,63 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
 # (Plain helpers — kept ABOVE the next @capability decorator, see the note on
 #  _v5_check_syntax for why that matters.)
 
-async def _v5_load_current(path: str, session_id: str = "", repo: str = "") -> str:
-    """Latest content of `path`: the code store first (it is the versioned truth),
-    then the run's working directory. "" when it exists in neither."""
+def _v5_exec_mod():
+    import importlib as _il_e
+    return _il_e.import_module("Vera.vera.execution.exec_capabilities")
+
+
+async def _code_sync_from_workspace(key: str, content: str, *, session_id: str = "",
+                                    repo: str = "") -> None:
+    """A file the code tools track was changed in the workspace by something else (a
+    shell sed, a script): record that content as a new version, so code.versions /
+    code.diff / code.restore keep the whole history. Untracked files are left alone;
+    an unchanged file is a no-op (_code_save_sync compares the sha). Never raises."""
     try:
-        rec = await asyncio.to_thread(_code_get_sync, _code_scope(session_id, repo),
-                                      _code_norm_path(path), None)
+        scope = _code_scope(session_id, repo)
+        if not await asyncio.to_thread(_code_get_sync, scope, key, None):
+            return
+        await asyncio.to_thread(
+            _code_save_sync, scope, key, content, lang=_code_lang_for(key),
+            message="workspace: changed outside the code tools - recorded on read",
+            session_id=session_id)
+    except Exception as e:
+        log.debug("workspace->store sync failed for %s: %s", key, e)
+
+
+async def _v5_load_current(path: str, session_id: str = "", repo: str = "") -> str:
+    """Latest content of `path` = what is in the run's WORKSPACE: its sandbox when the
+    session has one, else the host artifact dir - the one place every writer lands
+    (code.*, prose.author, exec, shell). The code store is the version HISTORY: a
+    workspace change it has not seen is recorded first, and it is read for content
+    only when the session has no sandbox and the workspace has no such file. "" when
+    the file exists nowhere.
+
+    5 Oct 2026: this read the store first. A run that fixed timer.html with `sed`
+    then had its editor, critic, reviewers and answer check all read the store's
+    older copy - and code.edit wrote that copy back over the fixed file."""
+    key = _code_workspace_path(path, repo)
+    _ex = None
+    try:
+        _ex = _v5_exec_mod()
+        ws = await _ex.read_artifact_file(session_id=session_id, relpath=key, max_bytes=400000)
+    except Exception as e:
+        log.debug("workspace read failed for %s: %s", key, e)
+        ws = None
+    if ws is not None:
+        await _code_sync_from_workspace(key, str(ws), session_id=session_id, repo=repo)
+        return str(ws)
+    try:
+        has_sb = getattr(_ex, "session_has_sandbox", None) if _ex is not None else None
+        if has_sb is not None and await has_sb(session_id):
+            return ""                          # sandboxed: the sandbox is the only place
+    except Exception as e:
+        log.debug("sandbox check failed for %s: %s", key, e)
+    try:
+        rec = await asyncio.to_thread(_code_get_sync, _code_scope(session_id, repo), key, None)
         if rec and rec.get("content"):
             return str(rec["content"])
     except Exception as e:
-        log.debug("code.edit: store read failed for %s: %s", path, e)
-    try:
-        import importlib as _il_e
-        _ex = _il_e.import_module("Vera.vera.execution.exec_capabilities")
-        rd = getattr(_ex, "read_artifact_file", None)
-        if rd:
-            return str(await rd(session_id=session_id, relpath=path, max_bytes=400000) or "")
-    except Exception as e:
-        log.debug("code.edit: workspace read failed for %s: %s", path, e)
+        log.debug("store read failed for %s: %s", key, e)
     return ""
 
 
@@ -12497,6 +12544,18 @@ async def cap_code_read(path: str, session_id: str = "", repo: str = "", version
                         trace_id=None) -> Dict[str, Any]:
     path = _code_workspace_path(path, repo)
     scope = _code_scope(session_id, repo)
+    if not int(version or 0):
+        # LATEST = what is in the run's workspace (the sandbox): the bytes exec, the
+        # editor and the reviewers see. A change made outside the code tools is
+        # recorded as a version first (_v5_load_current). History stays in the store.
+        cur = await _v5_load_current(path, session_id=session_id, repo=repo)
+        if not cur:
+            return {"ok": False, "error": "not found in the run's workspace", "path": path}
+        rec = await asyncio.to_thread(_code_get_sync, scope, path, None)
+        return {"ok": True, "path": path, "version": (rec or {}).get("version"),
+                "content": cur, "bytes": len(cur.encode("utf-8", "replace")),
+                "lang": (rec or {}).get("lang") or _code_lang_for(path), "latest": True,
+                "source": "workspace"}
     rec = await asyncio.to_thread(_code_get_sync, scope, path, int(version) or None)
     if not rec:
         return {"ok": False, "error": "not found", "path": path}

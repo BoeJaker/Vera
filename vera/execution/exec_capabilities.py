@@ -975,6 +975,28 @@ async def artifact_dir_async(*, session_id: str = "", project: str = "",
                         workspace=workspace, artifact=artifact, create=create)
 
 
+class ArtifactSplitError(ValueError):
+    """A write for a session WITH a sandbox could not reach it. Its files live in the
+    sandbox only, so the write fails instead of landing on the host (5 Oct 2026)."""
+
+
+async def session_has_sandbox(session_id: str = "") -> bool:
+    """Does this session have a sandbox (record present and active - asleep or
+    unreachable included)? Then the sandbox is the ONLY place its files are written to
+    or read from: no host artifact-dir fallback either way. An INACTIVE record is an
+    explicit opt-out and keeps the host. One definition for every read and write."""
+    session_id = session_id or _trigger_session_id()
+    sb = _sandbox_mod()
+    fn = getattr(sb, "cap_sbx_status", None) if sb is not None else None
+    if not session_id or fn is None:
+        return False
+    try:
+        st = await fn(session_id=session_id) or {}
+        return bool(st.get("exists")) and bool(st.get("active", True))
+    except Exception:
+        return False
+
+
 async def write_artifact_file(*, relpath: str, content: str, session_id: str = "",
                               project: str = "", workspace: str = "") -> str:
     """Write `relpath` under the (sandbox-aware) artifact dir — INTO the container
@@ -1033,13 +1055,19 @@ async def write_artifact_file(*, relpath: str, content: str, session_id: str = "
         # Does the session HAVE a sandbox even though routing failed? If so the
         # host write below is a SPLIT, not a fallback — say so loudly rather than
         # letting the run discover it as a mysterious missing file.
-        try:
-            _stfn = getattr(sb, "cap_sbx_status", None)
-            if _stfn:
-                _st = await _stfn(session_id=session_id)
-                _has_sandbox = _has_sandbox or bool((_st or {}).get("exists"))
-        except Exception:
-            pass
+        _has_sandbox = _has_sandbox or await session_has_sandbox(session_id)
+        if _has_sandbox:
+            # Its files live in the sandbox and nowhere else: a host copy would be a
+            # second truth no exec or read in the run can see. Fail loudly instead.
+            _rel = "/".join(parts)
+            log.warning(
+                "ARTIFACT SPLIT refused: '%s' NOT written - session %s has a sandbox and "
+                "routing failed across all %d attempts (%.0fs of backoff)",
+                _rel, session_id, len(_backoff) + 1, sum(_backoff))
+            raise ArtifactSplitError(
+                f"could not write {_rel} into the run's sandbox (container waking or docker "
+                "host unreachable) - not written to the host instead, where the run could "
+                "never read it")
 
     base = artifact_dir(session_id=session_id, project=project, workspace=workspace)
     target = _norm_path(os.path.join(base, *parts))
@@ -1048,13 +1076,6 @@ async def write_artifact_file(*, relpath: str, content: str, session_id: str = "
     os.makedirs(os.path.dirname(target) or base, exist_ok=True)
     with open(target, "w", encoding="utf-8") as fh:
         fh.write(content)
-    if _has_sandbox:
-        log.warning(
-            "ARTIFACT SPLIT: '%s' was written to the HOST (%s) even though session %s has a "
-            "sandbox — the session's exec/reads resolve inside the CONTAINER, so this file "
-            "will read as 'File not found'. Sandbox routing failed across all %d attempts "
-            "(%.0fs of backoff) — container waking or docker host unreachable.",
-            "/".join(parts), target, session_id, len(_backoff) + 1, sum(_backoff))
     return target
 
 
@@ -1154,8 +1175,12 @@ async def read_artifact_file(session_id: str = "", relpath: str = "",
             r = await sb.route_fs_read(session_id, cpath, max_bytes=max_bytes)
             if r is not None and not r.get("error"):
                 return str(r.get("content") or "")[:max_bytes]
+            if r is not None:
+                return None          # in the sandbox and not readable there: never the host copy
         except Exception as e:
             log.debug("read_artifact_file sandbox read failed for %s: %s", cpath, e)
+        if await session_has_sandbox(session_id):
+            return None              # a sandboxed session never reads the host artifact dir
     try:
         base = artifact_dir(session_id=session_id)
         rel = _collapse_workspace_prefix(pnorm).lstrip("/")
