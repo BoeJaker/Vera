@@ -194,6 +194,7 @@ _CRITICAL_MODULES = {
     "test_orchestrator_core",  # closed-loop Phase B — orchestrator decision logic (dispatch/idle, interlock, no v7)
     "test_session_watch_core",  # closed-loop Phase C — auto-resume gate: never re-run finished/human/declared work
     "test_recall_budget_core",   # context.recall waited for its slowest source: 7 s of a 9 s chat fetch (2026-10-05)
+    "test_memory_strength_core",  # memory half-life: used memories stay, unused fade (owner 2026-10-04)
     "test_memory_usage_core",    # which memories a chat turn was given and used - the half-life's input (2026-10-05)
     "test_recall_core",          # recalled tool calls/dreams were injected as "User:"; repeats filled the slots (2026-10-04)
     "test_board_core",          # Agent Boards leasing — claim resolution + Phase E handoff (only holder can hand off)
