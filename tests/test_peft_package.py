@@ -87,13 +87,16 @@ def test_proposal_is_deterministic_content_safe_and_non_authoritative():
     lambda: PeftMethodConfig("unknown", "causal_lm", ("q",), 8, 16),
     lambda: PeftMethodConfig("lora", "unknown", ("q",), 8, 16),
     lambda: PeftMethodConfig("lora", "causal_lm", (), 8, 16),
+    lambda: PeftMethodConfig("lora", "causal_lm", "q_proj", 8, 16),
     lambda: PeftMethodConfig("lora", "causal_lm", ("q",), True, 16),
+    lambda: PeftMethodConfig("lora", "causal_lm", ("q",), 8, "16"),
     lambda: PeftMethodConfig("lora", "causal_lm", ("q",), 8, float("nan")),
+    lambda: PeftMethodConfig("lora", "causal_lm", ("q",), 8, 16, "0.1"),
     lambda: PeftMethodConfig("ia3", "causal_lm", ("q",), 8, None),
     lambda: PeftMethodConfig("ia3", "causal_lm", ("q",), None, None, .1),
 ])
 def test_method_configuration_fails_closed(factory):
-    with pytest.raises(ValueError):
+    with pytest.raises((TypeError, ValueError)):
         factory()
 
 

@@ -53,6 +53,17 @@ def _positive_int(value: Any, label: str, maximum: int) -> int:
     return value
 
 
+def _finite_number(value: Any, label: str, *, minimum: float,
+                   maximum: float | None = None) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a finite number")
+    result = float(value)
+    if (not math.isfinite(result) or result < minimum or
+            (maximum is not None and result > maximum)):
+        raise ValueError(f"{label} is outside its supported range")
+    return result
+
+
 @dataclass(frozen=True)
 class PeftMethodConfig:
     method: str
@@ -73,6 +84,11 @@ class PeftMethodConfig:
             raise ValueError("unsupported PEFT task type")
         object.__setattr__(self, "method", method)
         object.__setattr__(self, "task_type", task_type)
+        if (isinstance(self.target_modules, (str, bytes)) or
+                not isinstance(self.target_modules, Sequence) or
+                isinstance(self.modules_to_save, (str, bytes)) or
+                not isinstance(self.modules_to_save, Sequence)):
+            raise TypeError("PEFT module selections must be sequences")
         targets = tuple(sorted({_identifier(item, "target module")
                                 for item in self.target_modules}))
         saved = tuple(sorted({_identifier(item, "module to save")
@@ -83,20 +99,14 @@ class PeftMethodConfig:
         object.__setattr__(self, "modules_to_save", saved)
         if self.bias not in {"none", "all", "lora_only"}:
             raise ValueError("unsupported PEFT bias mode")
-        if isinstance(self.dropout, bool):
-            raise ValueError("dropout must be a finite number from 0 to 1")
-        dropout = float(self.dropout)
-        if not math.isfinite(dropout) or not 0 <= dropout <= 1:
-            raise ValueError("dropout must be a finite number from 0 to 1")
+        dropout = _finite_number(
+            self.dropout, "dropout", minimum=0, maximum=1)
         object.__setattr__(self, "dropout", dropout)
         if method in {"lora", "adalora"}:
             object.__setattr__(self, "rank", _positive_int(
                 self.rank, "adapter rank", 65_536))
-            if isinstance(self.alpha, bool) or self.alpha is None:
-                raise ValueError("adapter alpha must be a positive finite number")
-            alpha = float(self.alpha)
-            if not math.isfinite(alpha) or alpha <= 0:
-                raise ValueError("adapter alpha must be a positive finite number")
+            alpha = _finite_number(
+                self.alpha, "adapter alpha", minimum=float.fromhex("0x0.0000000000001p-1022"))
             object.__setattr__(self, "alpha", alpha)
         elif self.rank is not None or self.alpha is not None or dropout != 0:
             raise ValueError("IA3 does not accept rank, alpha, or dropout")
