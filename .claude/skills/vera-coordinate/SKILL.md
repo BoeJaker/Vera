@@ -21,6 +21,17 @@ comes from is `shared-planning/agent-ops/PLAN.md`. References:
 
 - **Name yourself** consistently everywhere: `claude:<session-id>`, `codex:<session-id>`, `vera:<job-id>`. Use the
   same string as `frm` on board comments, `owner` on worktree claims and `agent:` labels.
+- **Publish how to reach you.** Your board identity says who did something; your **session name** is how another
+  session messages you. In Claude Code that is the name `ListAgents` prints for you ("This session is vera-62"); a
+  Codex run uses the handle its operator reaches it by. Record it once per session and keep it fresh:
+  - `agents.contact.set(agent=<identity>, session_name=<name>, tool=claude-code|codex, units=<unit,unit>)` at start;
+  - pass `session=<name>` (and `tool=`) on `board.claim` and `board.comment`, which refreshes the contact;
+  - put `Reach: <name> (<tool>, <identity>)` in the header of every unit README you own and every HANDOVER you write.
+- **Reach another agent** from what you are reading: `board.item.get(id)` and `board.context(id)` return `contacts`
+  (identity -> session_name, tool, last_seen, stale) for the owner and every commenter; `agents.contact.get(unit=…)`
+  lists who works a unit, `agents.contact.get(session_name=…)` resolves a name. Message a Claude session with
+  `SendMessage(to=<session_name>)`. A contact marked `stale` (not seen for 7 days) may be gone: comment on the board
+  item instead, which reaches whoever picks it up.
 - **Reach Vera** through the MCP bridge registered with your caller kind (`--caller-kind claude|codex`), or directly
   with `POST https://<vera-host>:8999/mcp/call {"name","arguments","caller_kind","session_id"}` (see
   `improve-vera-sandboxed` §1). If the bridge's allow-list hides `board.*` / `registry.*`, use `/mcp/call`.
@@ -45,7 +56,7 @@ than moving it silently.
 Git over SMB fails inside worktrees; read and write these files directly.
 
 **A work unit** is a kebab-case folder with a `README.md` whose first lines are the standard header:
-Status · Updated · Owner · Board label · Base sha, then Read first and Current state (what is NOT done first). Other
+Status · Updated · Owner · **Reach** · Board label · Base sha, then Read first and Current state (what is NOT done first). Other
 files: `PLAN.md`/`ROADMAP.md`, `EVIDENCE-<date>.md`, `HANDOVER-<date>-<agent>.md`, `ISSUES.md`,
 `REVIEW-<date>.md`, `DECISIONS.md` (the owner's words, dated), `tools/`. **Append under dated headings; don't
 rewrite another agent's section; don't make `.bak` copies.**
@@ -54,13 +65,16 @@ rewrite another agent's section; don't make `.bak` copies.**
 
 1. Read `shared-planning/README.md`, then the README and latest HANDOVER of the unit you're working in. If there is
    no unit for your work, create one (the header, one paragraph, Read first).
-2. `board.inbox(agent=<you>)`: items you hold, mentions of you, open help requests.
-3. **Search before you start**, by the files you'll touch and the area: `board.items(text=…)`,
+2. **Publish your contact** (§0): `agents.contact.set(agent=<you>, session_name=<your session name>, tool=…,
+   units=<the units you'll work>)`, and add or refresh the `Reach:` line in each unit README you own.
+3. `board.inbox(agent=<you>)`: items you hold, mentions of you, open help requests.
+4. **Search before you start**, by the files you'll touch and the area: `board.items(text=…)`,
    `board.items(label="files:<glob>")`, `label="unit:<unit>"`, `label="area:<subsystem>"`. Read the comments of
    anything relevant (`board.item.get(id)`). Another agent may hold it, have found the cause, or have decided against it.
-4. **Claim before editing**: `board.claim(id=<item>, agent=<you>)`. The lowest claim wins; if you lost, pick other work or
+   Its `contacts` tell you who to message if a comment isn't enough.
+5. **Claim before editing**: `board.claim(id=<item>, agent=<you>, session=<your session name>)`. The lowest claim wins; if you lost, pick other work or
    comment. Claim hand-made worktrees too (`evolve.worktree.claim`).
-5. Check the shared constraints the unit README names (census calendar, GPU gate, frozen contracts) before anything
+6. Check the shared constraints the unit README names (census calendar, GPU gate, frozen contracts) before anything
    that uses the GPU or prod.
 
 ## 3. Findings for other agents — the board is the message bus
@@ -69,7 +83,7 @@ You will often find something outside your task: a bug, a stale doc, a risk in s
 to know who owns it.
 
 1. **Search** the board by file, symbol and area.
-2. **If an item exists:** `board.comment(id=<item>, frm=<you>, kind="note", body=…)` with the finding, the evidence
+2. **If an item exists:** `board.comment(id=<item>, frm=<you>, session=<your session name>, kind="note", body=…)` with the finding, the evidence
    (`path:line`, sha, log or dump path), and a suggested action. Use `kind="steer"` if it should change that item's
    plan, and `kind="help-request"` if you need its holder to act.
 3. **If none exists:** create an item to the standard (`references/board-standard.md`), with `kind:bug|…`, `sev:`,
@@ -82,8 +96,9 @@ partial patch. Before changing only a lane or one metadata field, read the item
 with `board.item.get` and resubmit its complete title, labels, routing metadata,
 and body. Comments are preserved independently.
 
-Live peer messages (Claude's cross-session messaging) are a convenience. **Anything agreed that way is written to
-the board item or the plan**, or it didn't happen.
+Live peer messages (Claude's cross-session messaging, `SendMessage` to a session name from `contacts`) are a
+convenience for when you need an answer, not just a record. **Anything agreed that way is written to the board item or
+the plan**, or it didn't happen.
 
 ## 4. Status: a by-product of the work, not a separate act
 

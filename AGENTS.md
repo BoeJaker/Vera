@@ -36,6 +36,10 @@ Never put secrets, tokens, credentials, private data or personal content in code
   `{"name": "<cap.name>", "arguments": {...}, "caller_kind": "codex", "session_id": "<your session id>"}`.
   Check `GET https://<vera-host>:8999/health` before deciding Vera is down.
 - Name yourself consistently: `codex:<session-id>` (board `frm`, worktree claim `owner`).
+- Publish how other sessions reach you: `agents.contact.set(agent=codex:<session-id>, session_name=<the handle your
+  operator reaches you by>, tool=codex, units=<units>)` at the start, pass `session=` on `board.claim`/`board.comment`,
+  and put `Reach: <handle> (codex, codex:<session-id>)` in unit READMEs and handovers you write. To reach another agent,
+  read `contacts` from `board.item.get` / `board.context`, or `agents.contact.get(unit=…)` (vera-coordinate §0).
 
 ## The procedures (read the one that matches your task)
 
