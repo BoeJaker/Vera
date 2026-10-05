@@ -172,6 +172,43 @@ def serve_args(model: str, aliases: Iterable[str] = (), extra: str = "") -> str:
     return out + (f" {extra}" if extra else "")
 
 
+EMBEDDING_HINTS = ("embed", "bge-", "e5-", "gte-", "minilm")
+
+
+def is_embedding_model(model: str) -> bool:
+    m = str(model or "").lower()
+    return any(h in m for h in EMBEDDING_HINTS)
+
+
+def suggest_alias(model: str) -> str:
+    """The Ollama-style tag a store checkpoint stands for: .../QuantTrio--Qwen3.5-9B-AWQ
+    -> qwen3.5:9b, .../Qwen--Qwen3-4B -> qwen3:4b; '' when it cannot tell."""
+    import re
+    name = str(model or "").rstrip("/").rsplit("/", 1)[-1].lower()
+    m = re.search(r"(qwen|llama|gemma|mistral|phi)[-_]?(\d+(?:\.\d+)?)[-_]+(\d+(?:\.\d+)?)b\b", name)
+    if not m:
+        m = re.search(r"(qwen|llama|gemma|mistral|phi)[-_]?(\d+(?:\.\d+)?)[-_]+(\d+(?:\.\d+)?)b", name)
+    return f"{m.group(1)}{m.group(2)}:{m.group(3)}b" if m else ""
+
+
+def suggest_extra(model: str, has_gpu: bool) -> str:
+    """vllm serve flags a model needs on this kind of node - what took trial and
+    error on 5 Oct 2026: the V100 has no bf16 and 12 GB (fp16, 8k window, a small
+    batch so the warm-up fits); Qwen3.5 on CPU needs bf16 (its GDN kernels) and a
+    multimodal model is served text-only (the vision encoder's warm-up costs
+    minutes). The switch adds the reasoning parser itself."""
+    m = str(model or "").lower()
+    multimodal = any(k in m for k in ("qwen3.5", "qwen3_5", "-vl", "vision"))
+    flags: List[str] = []
+    if has_gpu:
+        flags += ["--dtype float16", "--max-model-len 8192", "--max-num-seqs 16"]
+    elif "qwen3.5" in m or "qwen3_5" in m:
+        flags += ["--dtype bfloat16"]
+    if multimodal:
+        flags += ["--limit-mm-per-prompt.image 0", "--limit-mm-per-prompt.video 0"]
+    return " ".join(flags)
+
+
 def reasoning_parser_for(model: str, aliases: Iterable[str] = ()) -> str:
     """The vLLM reasoning parser a model needs so its thinking comes back in its
     own field (as Ollama returns `thinking` apart from the answer): qwen3 for
