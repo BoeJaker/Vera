@@ -101,6 +101,11 @@ def env_body(mode: str, *, max_model_len: int = 8192, gpu_util: float = 0.85,
                 + omp +
                 "VLLM_CPU_KVCACHE_SPACE=%d\n"
                 'VLLM_SERVE_ARGS="--dtype float32 --max-model-len %d"\n'
+                # On a container that also has a GPU (a GPU node's CPU slot), Triton
+                # picks its NVIDIA driver from libcuda and calls into the CPU-only
+                # torch: "Torch not compiled with CUDA enabled" while loading the
+                # model's linear-attention kernels (gpu-250-cpu, 5 Oct 2026).
+                "TRITON_DEFAULT_BACKEND=cpu\n"
                 % (int(cpu_kv_gb), int(max_model_len)))
     raise ValueError(f"env_body needs a concrete mode, not {mode!r}")
 
