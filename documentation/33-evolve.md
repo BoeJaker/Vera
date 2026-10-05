@@ -771,7 +771,10 @@ yielded). The Ship page's release button asks which mode.
 
 With `sync_nodes` (default true) a finished release also brings the nodes onto
 it: every syncable node component (`provision.component.sync` — `nlp_server`,
-`gpu_inference`, `model_builder`), the Ollama activity taps (`nodes.ollama.tap`),
+`gpu_inference`, `model_builder`, and `vllm_server` on the nodes that have it,
+which is updated but only restarted where the node already serves vLLM), the
+Ollama activity taps (`nodes.ollama.tap`; a node switched to vLLM is skipped, as
+it is by the warm-slot step),
 the node workers (`nodes.workers.sync`) and the warm model slots
 (`ollama.warm.apply`). The sync runs from the same 30 s job in the new process
 after the restart, never while a census goal is in flight (a refusal for a

@@ -5650,7 +5650,7 @@ async function edgeRelease(name,branch){
   if(!ok)return;
   const mode=(prompt('If a census is in flight, how should the release wait?\n  finish = wait until the census has ended (default)\n  goal   = yield: let the goal in flight finish, park, release, resume after\n  force  = release now (the census goal is paused and re-run)','finish')||'finish').trim().toLowerCase();
   if(['finish','goal','force'].indexOf(mode)<0){toast('unknown mode '+mode);return}
-  const sync=confirm('Also bring the NODES onto this release once it is done?\n\nOK = sync nlp_server / gpu_inference / model_builder, the node workers and the warm model slots (after the restart, never while a census goal is in flight).\nCancel = release prod only.');
+  const sync=confirm('Also bring the NODES onto this release once it is done?\n\nOK = sync nlp_server / gpu_inference / model_builder / vllm_server (vLLM is updated, never started), the node workers and the warm model slots (after the restart, never while a census goal is in flight).\nCancel = release prod only.');
   const r=await post('/evolve/release/prod',{edge:name,confirm:true,census:mode,force:mode==='force',sync_nodes:sync,reason:'Loop Lab release button'});
   if(r&&r.held)toast('release pending ('+mode+'): '+(r.why||''));
   else toast(r&&r.ok?('releasing: '+(r.status||'')+' main @ '+String((r.merge||{}).commit||'').slice(0,8)):(r&&(r.error||r.refused))||'refused');
