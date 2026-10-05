@@ -130,8 +130,38 @@ def _src(rel):
 def test_generate_chat_and_embed_divert_a_standin_pick():
     co = _src("vera/capability_orchestration.py")
     gen = co[co.index("async def ollama_generate("):]
-    assert "_vm_r.standin_for(chosen)" in gen and 'routed_call(\n                "generate", {"pin": f"vllm:{_sv_id}"}' in gen
+    assert "_vm_r.standin_for(chosen)" in gen
+    assert '_vllm_generate_routed(\n                _vm_r, {"pin": f"vllm:{_sv_id}"}' in gen
     assert "no_standins=True" in gen
     assert '_vm_e.routed_call("embed", {"pin": f"vllm:{_sv_e}"}' in co
     ag = _src("vera/agents/agents.py")
     assert ag.count("_vt = _vllm_standin_target(chosen, model)") == 2      # run + run_stream
+
+
+def test_a_routed_generate_uses_the_chat_template_and_think():
+    import asyncio
+    seen = {}
+
+    async def routed_call(kind, rule, **kw):
+        seen.update(kind=kind, rule=rule, kw=kw)
+        return {"ok": True, "instance": "vllm-cpu-247", "model": M,
+                "result": {"role": "assistant", "content": "<think>x</think>\n\nRiver Notes Today"}}
+
+    vm = types.SimpleNamespace(routed_call=routed_call, _route_core=rc)
+    out = asyncio.run(CO._vllm_generate_routed(
+        vm, {"pin": "vllm:vllm-cpu-247"}, prompt="Title this.", system="Be brief.",
+        json_mode=False, think=False, options={"num_predict": 32}, model=M,
+        prefer_gpu=False, job_type="naming", timeout=None, stream_cb=None))
+    assert seen["kind"] == "chat"
+    assert seen["kw"]["messages"] == [{"role": "system", "content": "Be brief."},
+                                      {"role": "user", "content": "Title this."}]
+    assert seen["kw"]["extra"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert seen["kw"]["max_tokens"] == 32
+    assert out["result"] == "River Notes Today"
+    # json_mode turns thinking off unless asked, and asks for a JSON object
+    asyncio.run(CO._vllm_generate_routed(
+        vm, None, prompt="p", system="", json_mode=True, think=None, options=None, model=M,
+        prefer_gpu=False, job_type="", timeout=None, stream_cb=None))
+    assert seen["kw"]["extra"] == {"chat_template_kwargs": {"enable_thinking": False},
+                                   "response_format": {"type": "json_object"}}
+    assert seen["kw"]["max_tokens"] is None          # the rest of the window
