@@ -806,3 +806,14 @@ def test_the_night_sweeps_every_topic_before_any_model_work(tmp_path):
     assert submitted[0] == ("sweeps", 25) and ("brief", 20) in submitted
     n = mod.store().get_kv("night")
     assert sorted(n["swept"]) == sorted([a["id"], b["id"]]) and n["stats"]["new"] >= 1 and not n["pending"]
+
+
+def test_report_page_is_rendered_from_the_record_not_stored_html(tmp_path):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    doc = _run(mod.build_report([t["id"]], period_hours=24))
+    st = mod.store()
+    st.put_report(st.get_report(doc["id"]), "<html>stale broken page</html>")     # what old reports hold
+    page = _run(mod._serve_report(doc["id"]))
+    assert b"stale broken page" not in page.body and b"<main>" in page.body
