@@ -24,6 +24,10 @@ Endpoints:
 """
 
 import asyncio, contextvars, copy, functools, hashlib, inspect, json, logging, os, re, sys, time, uuid
+try:
+    from Vera.vera.json_head_core import json_head as _json_head
+except ImportError:  # pragma: no cover - a worktree test imports the package as vera
+    from vera.json_head_core import json_head as _json_head
 import logging.handlers  # noqa: E402  (submodule; `import logging` alone won't load it)
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -6422,7 +6426,7 @@ def _act_extract_text(result):
                 return v
         # Fall back to JSON repr (truncated)
         try:
-            return json.dumps(result)[:_ACT_PREVIEW_MAX_CHARS]
+            return _json_head(result, _ACT_PREVIEW_MAX_CHARS)   # never the whole result for a preview
         except Exception:
             return str(result)[:_ACT_PREVIEW_MAX_CHARS]
     return str(result)[:_ACT_PREVIEW_MAX_CHARS]
@@ -7084,7 +7088,7 @@ def capability(
                                       "ts": now_iso(), "preview": _preview,
                                       "result": (json.dumps({"redacted": True})
                                                  if redact_result else
-                                                 (json.dumps(result)[:4096]
+                                                 (_json_head(result, 4096)   # the first 4 KB only: encoding the whole result here held the loop
                                                   if isinstance(result, (dict,list))
                                                   else str(result)[:4096]))}
                             await REDIS.setex(
