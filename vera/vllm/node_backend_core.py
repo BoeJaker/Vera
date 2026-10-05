@@ -159,10 +159,22 @@ def serve_args(model: str, aliases: Iterable[str] = (), extra: str = "") -> str:
     return out + (f" {extra}" if extra else "")
 
 
+def reasoning_parser_for(model: str, aliases: Iterable[str] = ()) -> str:
+    """The vLLM reasoning parser a model needs so its thinking comes back in its
+    own field (as Ollama returns `thinking` apart from the answer): qwen3 for
+    the Qwen3 family (Qwen3, Qwen3.5, Qwen3.6), '' when unknown."""
+    names = " ".join([str(model or "")] + [str(a) for a in aliases or ()]).lower()
+    return "qwen3" if "qwen3" in names else ""
+
+
 def env_file(model: str, *, aliases: Iterable[str] = (), extra: str = "",
              threads: int = 0, has_gpu: bool = False) -> str:
     """The unit environment for the vLLM service on a switched node. On a CPU
-    node OMP_NUM_THREADS is the node's Ollama runner thread count (parity)."""
+    node OMP_NUM_THREADS is the node's Ollama runner thread count (parity).
+    A thinking model gets its reasoning parser unless `extra` names one."""
+    rp = reasoning_parser_for(model, aliases)
+    if rp and "--reasoning-parser" not in (extra or ""):
+        extra = (f"{extra} " if extra else "") + f"--reasoning-parser {rp}"
     lines = [f"VLLM_MODEL={model}",
              f"VLLM_EXTRA_ARGS={serve_args(model, aliases, extra)}"]
     if not has_gpu and int(threads or 0) > 0:

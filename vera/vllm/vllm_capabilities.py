@@ -145,6 +145,8 @@ class VLLMInstance:
     # gpu-250): its calls take THAT node's semaphore + cross-process gate, so a
     # vLLM and an Ollama generation can never overlap on one device.
     gate_as: str = ""
+    # thinking for requests that do not choose: "" model default | "on" | "off"
+    think_default: str = ""
     # runtime state
     status: str = "unknown"              # unknown | online | offline | degraded
     latency_ms: Optional[float] = None
@@ -310,13 +312,15 @@ def _apply_registry() -> None:
                 label=spec.get("label") or iid, has_gpu=bool(spec.get("has_gpu", True)),
                 priority=int(spec.get("priority") or 0),
                 api_key=spec.get("api_key", VLLM_API_KEY),
-                gate_as=str(spec.get("gate_as") or ""))
+                gate_as=str(spec.get("gate_as") or ""),
+                think_default=_reg_core.think_default(spec.get("think_default")))
         else:
             cur.url = str(spec.get("url", cur.url)).rstrip("/")
             cur.label = spec.get("label") or cur.label
             cur.has_gpu = bool(spec.get("has_gpu", cur.has_gpu))
             cur.priority = int(spec.get("priority", cur.priority) or 0)
             cur.gate_as = str(spec.get("gate_as", cur.gate_as) or "")
+            cur.think_default = _reg_core.think_default(spec.get("think_default", cur.think_default))
 
 
 def _reg_lock() -> asyncio.Lock:
@@ -927,6 +931,7 @@ async def vllm_chat(
         }
     if extra:
         body.update(extra)
+    body = _route_core.apply_think_default(body, inst.think_default)
 
     inst.in_use += 1
     try:
@@ -1007,6 +1012,7 @@ async def vllm_status() -> dict:
             "status": inst.status,
             "has_gpu": inst.has_gpu,
             "gate_as": inst.gate_as,
+            "think_default": inst.think_default,
             "latency_ms": inst.latency_ms,
             "in_use": inst.in_use,
             "errors": inst.errors,
@@ -1078,12 +1084,43 @@ async def vllm_instances_add(
         VLLM_INSTANCES[id] = inst
         _REG_DOC = _reg_core.note_added(_REG_DOC, id, {
             "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
-            "priority": inst.priority, "gate_as": inst.gate_as})
+            "priority": inst.priority, "gate_as": inst.gate_as,
+            "think_default": inst.think_default})
         await _save_registry()
     await _ping_vllm(inst)
     await emit_event({"type": "vllm.instance.added", "id": id, "url": url,
                       "has_gpu": inst.has_gpu})
     return {"ok": True, "id": id, "status": inst.status, "models": inst.models}
+
+
+@capability(
+    name="vllm.instances.think",
+    description="Set a vLLM server's thinking default for requests that do not choose: "
+                "'default' (the model's own), 'on' or 'off'. A request that chooses "
+                "(an agent's Think, llm.generate think=) still wins. Persisted with the "
+                "registry. Inputs: instance_id (str!), think ('default'|'on'|'off').",
+    http_method="POST",
+    http_path="/vllm/instances/think",
+    schema={"properties": {"instance_id": {"type": "string"},
+                           "think": {"enum": ["default", "on", "off"]}},
+            "required": ["instance_id", "think"]},
+)
+async def vllm_instances_think(instance_id: str, think: str = "default") -> dict:
+    await _ensure_registry_loaded()
+    global _REG_DOC
+    async with _reg_lock():
+        inst = VLLM_INSTANCES.get(instance_id)
+        if inst is None:
+            return {"ok": False, "error": f"Instance '{instance_id}' not found"}
+        inst.think_default = _reg_core.think_default("" if think == "default" else think)
+        _REG_DOC = _reg_core.note_added(_REG_DOC, instance_id, {
+            "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
+            "priority": inst.priority, "gate_as": inst.gate_as,
+            "think_default": inst.think_default})
+        await _save_registry()
+    await emit_event({"type": "vllm.instance.think", "id": instance_id,
+                      "think_default": inst.think_default or "default"})
+    return {"ok": True, "id": instance_id, "think_default": inst.think_default or "default"}
 
 
 @capability(
