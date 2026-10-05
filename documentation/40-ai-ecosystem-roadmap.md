@@ -156,7 +156,7 @@ of these now have offline Vera contracts; see
 | LiteLLM | Gateway/provider | P1 | InferenceProvider and usage/health adapter | Planned (generic OpenAI-compatible adapter exists) |
 | Docling | Document intelligence | P1 | DocumentParser provider | Offline contract shipped; profile `not_imported` |
 | DSPy | Optimisation | P1 experimental | OptimizerProvider consuming evaluations and prompt packages | Proposal-only optimiser contracts shipped |
-| MLflow | Lifecycle/observability | P1 | Run/evaluation/prompt/model export and import | Planned |
+| MLflow | Lifecycle/observability | P1 | Run/evaluation/prompt/model export and import | Offline interchange boundary shipped; SDK/service execution queued |
 | Qdrant | Retrieval | P1 | VectorIndexProvider | Injected-driver exact-snapshot adapter shipped; no package imported |
 | Hugging Face PEFT | Training | P1/P2 | TrainingAdapter producing derived ModelPackages | Provider-neutral training contracts shipped |
 | LlamaIndex | Data/RAG/agents | P2 | Data/Workflow adapters and selected readers | Planned |
@@ -384,7 +384,19 @@ training runs, evaluations, prompts, parameters, metrics, and artifacts, and
 imports pinned candidates as untrusted registry proposals with verified hashes
 and source revisions.
 
-**Current status.** Planned.
+**Current status.** The SDK-neutral boundary in
+[`vera/models/mlflow_interop.py`](../vera/models/mlflow_interop.py) prepares
+deterministic, content-safe export plans for Runs, evaluation reports,
+PromptPackages, ModelPackages, TrainingRuns and verified ArtifactRefs. Every
+record carries its Vera identity, an explicit MLflow identity tag and a stable
+digest; prompt templates and artifact/source URIs are represented only by
+digests, and policy values are not exported. The reverse boundary accepts only
+pinned model or prompt candidates whose complete content digest, source
+revision and artifact hashes verify. It returns an untrusted proposal and
+cannot fetch an artifact, register a package, mutate an alias or activate a
+candidate. The module imports no MLflow package and performs no network or
+credential access. A live isolated MLflow round trip, backend-version mapping,
+outage/resource measurements and teardown evidence remain queued.
 
 ### Qdrant
 
