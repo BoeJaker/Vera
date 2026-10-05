@@ -889,13 +889,15 @@ class ChromaBackend(MemoryBackend):
             return False
         try:
             def _connect_sync():
-                client = _chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
-                _chroma_bound.bound(client)      # finite timeout - RF-77
-                coll = client.get_or_create_collection(
-                    name=CHROMA_COLLECTION,
-                    metadata={"hnsw:space": "cosine"},
-                )
-                return client, coll, coll.count()
+                # a failed attempt must not leave its client's connection open (RF-82)
+                with _chroma_bound.discard_on_failure():
+                    client = _chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+                    _chroma_bound.bound(client)      # finite timeout - RF-77
+                    coll = client.get_or_create_collection(
+                        name=CHROMA_COLLECTION,
+                        metadata={"hnsw:space": "cosine"},
+                    )
+                    return client, coll, coll.count()
             self._client, self._collection, count = \
                 await _chroma_bound.run(_connect_sync)
             log.info("✓ ChromaBackend connected — %d documents", count)
