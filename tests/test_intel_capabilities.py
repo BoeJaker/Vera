@@ -817,3 +817,37 @@ def test_report_page_is_rendered_from_the_record_not_stored_html(tmp_path):
     st.put_report(st.get_report(doc["id"]), "<html>stale broken page</html>")     # what old reports hold
     page = _run(mod._serve_report(doc["id"]))
     assert b"stale broken page" not in page.body and b"<main>" in page.body
+
+
+def test_a_report_is_read_aloud_with_chapters(tmp_path):
+    import io
+    import wave
+    mod, orch = _load(tmp_path)
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    mod._audio_dir = lambda: audio_dir
+    said = []
+
+    async def tts(text, voice="", speed=1.0):
+        said.append(text)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(1000)
+            w.writeframes(b"\x01\x00" * 2000)                       # two seconds a piece
+        return buf.getvalue()
+    mod._tts = tts
+    mod.shutil.which = lambda name: None                              # no ffmpeg: keep the WAV
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    _run(mod.snapshot_topic(mod.store().get_topic(t["id"])))
+    doc = _run(mod.build_report([t["id"]], period_hours=24))
+    assert ("submit", {"mode": "speak", "key": f"speak:{doc['id']}", "payload": {"report_id": doc["id"]}}) in \
+        [(n, {k: kw[k] for k in ("mode", "key", "payload")}) for n, kw in orch.CALLS if n == "submit" and kw["mode"] == "speak"]
+    got = mod.store().get_report(doc["id"])["audio"]                  # the queue ran it inline
+    assert got["format"] == "wav" and got["seconds"] >= 4 and got["chapters"][0]["id"] == "intro"
+    assert got["chapters"][1]["id"] == t["id"] and got["chapters"][1]["start"] > 0
+    assert (audio_dir / f"{doc['id']}.wav").exists() and said
+    page = _run(mod._serve_report(doc["id"])).body.decode()
+    assert f'/intel/report/audio/{doc["id"]}' in page and 'class="listen"' in page
+    assert _run(mod._serve_audio(doc["id"])).status_code == 200
+    assert _R(orch, "intel.report.speak", id="nope").get("error")

@@ -296,3 +296,24 @@ def test_diagrams_are_left_to_the_element_and_the_renderer_is_inlined():
     assert html.count("</script>") == html.count("<script")    # the inlined source cannot close its own tag early
     plain = core.render_html({"title": "t", "sections": []})
     assert "VeraMermaid" not in plain and len(plain) < 20000  # no diagram, no 50 KB renderer
+
+
+def test_spoken_script_and_player():
+    doc = {"title": "Intel brief", "ts": "2026-10-05T06:02:08Z", "note": "Overnight: 6 of 12 topics refreshed.",
+           "sections": [{"kind": "headline", "items": [{"topic": "UK housing", "topic_id": "uk", "text": "Prices rose 0.2% ([Nationwide](https://n.example))."}]},
+                        {"kind": "topic", "topic": {"id": "uk", "name": "UK housing"}, "parts": [
+                            {"kind": "assessment", "state": "s", "changed": ["Prices up **0.2%**", "See https://x.example/a"]},
+                            {"kind": "moves", "items": [{"text": "SEGRO Plc down into a new regime on 2026-10-01"}]}]},
+                        {"kind": "topic", "topic": {"id": "quiet", "name": "Quiet"}, "parts": []}]}
+    sc = core.spoken_script(doc)
+    assert [c["id"] for c in sc] == ["intro", "uk"]                          # a topic with nothing to say is skipped
+    text = " ".join(" ".join(c["chunks"]) for c in sc)
+    assert "Monday 05 October" in text and "Overnight: 6 of 12" in text and "What moved: SEGRO" in text
+    assert "http" not in text and "**" not in text and "[" not in text and "Prices rose 0.2% (Nationwide)" in text
+    long = core._chunks("A sentence. " * 200, limit=100)
+    assert all(len(c) <= 100 for c in long) and len(long) > 10
+    doc["audio"] = {"url": "/intel/report/audio/abc", "seconds": 95, "chapters": [{"id": "intro", "start": 0}, {"id": "uk", "start": 31.5}]}
+    html = core.render_html(doc)
+    assert 'id="au"' in html and 'src="/intel/report/audio/abc"' in html and "0:00 / 1:35" in html
+    assert 'class="listen" data-start="31.5"' in html and "mediaSession" in html
+    assert 'id="au"' not in core.render_html(dict(doc, audio={}))
