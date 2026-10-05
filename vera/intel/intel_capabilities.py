@@ -2026,6 +2026,8 @@ async def _intel_job(job: Dict[str, Any], should_continue) -> Dict[str, Any]:
         return await run_advisor()
     if mode == "research":
         return await _job_research(p)
+    if mode == "sweeps":
+        return await _job_sweeps(job, p, should_continue)
     if mode == "brief":
         await _finish_night(p.get("night", ""))
         return {"ok": True}
@@ -2063,16 +2065,12 @@ async def _job_topic_inner(job: Dict[str, Any], p: Dict[str, Any], should_contin
     if why:
         return {"yielded": "pre-empted: " + why}
     out: Dict[str, Any] = {"topic": t["id"]}
-    sw = await sweep_topic(t)
+    night = st.get_kv("night", {}) or {}
+    if p.get("batch") and night.get("id") == p["batch"] and t["id"] in (night.get("swept") or []):
+        sw = {"new": 0, "queries": [], "skipped": "swept in phase 1"}      # counted by the sweeps job
+    else:
+        sw = await _sweep_and_check(t)
     out["new"] = sw["new"]
-    try:
-        out["moves"] = len(await check_indicators(st.get_topic(t["id"]) or t))
-    except Exception as ex:  # noqa: BLE001
-        log.warning("intel: indicator check failed for %s: %s", t["id"], ex)
-    try:
-        await _refresh_suggestions(t)
-    except Exception as ex:  # noqa: BLE001
-        log.warning("intel: suggestions failed for %s: %s", t["id"], ex)
     await _progress(job, 1, 3)
     if await _stop_reason(should_continue) or (p.get("until") and _past(p["until"])):
         return {"yielded": "pre-empted after sweep", **out}
@@ -2086,6 +2084,58 @@ async def _job_topic_inner(job: Dict[str, Any], p: Dict[str, Any], should_contin
     await _progress(job, 3, 3)
     return {"ok": True, **out, "_stats": {"searched": len(sw.get("queries") or []), "new": sw["new"],
                                            "assessed": en["enriched"]}}
+
+
+async def _sweep_and_check(t: Dict[str, Any]) -> Dict[str, Any]:
+    """The model-free half of a topic's night: sweep and triage, read its numbers,
+    refresh its suggestions."""
+    sw = await sweep_topic(t)
+    try:
+        await check_indicators(store().get_topic(t["id"]) or t)
+    except Exception as ex:  # noqa: BLE001
+        log.warning("intel: indicator check failed for %s: %s", t["id"], ex)
+    try:
+        await _refresh_suggestions(t)
+    except Exception as ex:  # noqa: BLE001
+        log.warning("intel: suggestions failed for %s: %s", t["id"], ex)
+    return sw
+
+
+async def _job_sweeps(job: Dict[str, Any], p: Dict[str, Any], should_continue) -> Dict[str, Any]:
+    """Phase 1 of a night: sweep EVERY topic (search, NLP triage, numbers - no
+    model) before any topic gets model time, so a night cut short by interactive
+    use still briefs fresh signals for all of them. Progress lives on the night
+    record, so a yield resumes where it stopped."""
+    st = store()
+    ids = list(p.get("topic_ids") or [])
+    done = 0
+    for tid in ids:
+        n = st.get_kv("night", {}) or {}
+        if n.get("id") != p.get("night"):
+            return {"ok": True, "skipped": "a newer night started"}
+        if tid in (n.get("swept") or []):
+            done += 1
+            continue
+        why = await _stop_reason(should_continue)
+        if why:
+            return {"yielded": "pre-empted: " + why, "swept": done}
+        t = st.get_topic(tid)
+        if t and t.get("status") == "active":
+            try:
+                sw = await _sweep_and_check(t)
+            except Exception as ex:  # noqa: BLE001 - one bad topic must not stop the phase
+                log.warning("intel: phase-1 sweep failed for %s: %s", tid, ex)
+                sw = {"new": 0, "queries": []}
+            n = st.get_kv("night", {}) or {}
+            if n.get("id") == p.get("night"):
+                agg = n.get("stats") or {}
+                agg["searched"] = agg.get("searched", 0) + len(sw.get("queries") or [])
+                agg["new"] = agg.get("new", 0) + int(sw.get("new") or 0)
+                n["stats"], n["swept"] = agg, (n.get("swept") or []) + [tid]
+                st.set_kv("night", n)
+        done += 1
+        await _progress(job, done, len(ids))
+    return {"ok": True, "swept": done}
 
 
 async def _job_research(p: Dict[str, Any]) -> Dict[str, Any]:
@@ -2111,7 +2161,10 @@ async def _start_night(night: str) -> Dict[str, Any]:
     due.sort(key=lambda t: (t.get("depth") != "deep", t.get("last_sweep") or ""))
     due = due[: int(c.get("max_topics_per_night", 12))]
     st.set_kv("night", {"id": night, "pending": [t["id"] for t in due], "stats": {"topics": len(due)},
-                        "started": core.now_iso(), "brief": ""})
+                        "started": core.now_iso(), "brief": "", "swept": []})
+    if due:                      # phase 1: every topic's sweep (no model) before any topic's model work
+        await _submit("sweeps", f"intel: sweep {len(due)} topics (no model)", key=f"sweeps:{night}",
+                      payload={"night": night, "topic_ids": [t["id"] for t in due]}, priority=25)
     if c.get("drop_folders"):
         await _submit("files", "intel: drop folders", key=f"files:{night}")
     for t in due:
@@ -2120,7 +2173,7 @@ async def _start_night(night: str) -> Dict[str, Any]:
             await _batch_done(night, t["id"], {})           # refused (already queued): never wait on it
     n = st.get_kv("night", {}) or {}
     if n.get("id") == night and not n.get("pending") and not n.get("brief"):
-        await _submit("brief", "intel: write the brief", key=f"brief:{night}", payload={"night": night})
+        await _submit("brief", "intel: write the brief", key=f"brief:{night}", payload={"night": night}, priority=20)
     return {"topics": len(due)}
 
 
@@ -2138,7 +2191,7 @@ async def _batch_done(batch: Optional[str], topic_id: str, stats: Dict[str, Any]
     n["stats"] = agg
     st.set_kv("night", n)
     if not n["pending"]:
-        await _submit("brief", "intel: write the brief", key=f"brief:{batch}", payload={"night": batch})
+        await _submit("brief", "intel: write the brief", key=f"brief:{batch}", payload={"night": batch}, priority=20)
 
 
 async def _finish_night(night: str) -> None:

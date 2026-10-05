@@ -290,7 +290,7 @@ def test_night_batch_brief_and_delivery(tmp_path):
     night = mod.store().get_kv("night")
     assert night["pending"] == [] and night["brief"] not in ("", "-")
     kinds = [c[1]["mode"] for c in orch.CALLS if c[0] == "submit"]
-    assert kinds[0] == "files" and "topic" in kinds
+    assert kinds[:2] == ["sweeps", "files"] and "topic" in kinds              # phase 1 sweeps everything first
     assert any(kw.get("role") == "brief" for _, kw in orch.PROMPTS)           # the MoE wrote the top line, at night
     doc = mod.store().get_report(night["brief"], with_html=True)
     assert doc["top_line"][0].startswith("Acme went live") and doc["follow_up_actions"]
@@ -772,3 +772,37 @@ def test_a_cut_short_night_says_so_in_the_morning_brief(tmp_path):
     assert doc["note"].startswith("Overnight: 1 of 3 topics refreshed")
     assert "Overnight: 1 of 3" in mod.core.render_html(doc) and "Overnight: 1 of 3" in mod.core.render_markdown(doc)
     assert "Overnight: 1 of 3" in mod.core.render_telegram(doc)["text"]
+
+
+def test_the_night_sweeps_every_topic_before_any_model_work(tmp_path):
+    mod, orch = _load(tmp_path)
+    a = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    b = _R(orch, "intel.topic.save", name="Second topic pilot", entities=["Acme"])["topic"]
+    order = []
+    real_sweep = mod.sweep_topic
+
+    async def sweep(t, depth=""):
+        order.append(("sweep", t["id"]))
+        return await real_sweep(t, depth=depth)
+    mod.sweep_topic = sweep
+    real_enrich = mod.enrich_topic
+
+    async def enrich(t, should_continue=None):
+        order.append(("enrich", t["id"]))
+        return await real_enrich(t, should_continue=should_continue)
+    mod.enrich_topic = enrich
+    submitted = []
+    run_inline = mod._submit
+
+    async def submit(mode, title, *, key, payload=None, priority=None):
+        submitted.append((mode, priority))
+        return await run_inline(mode, title, key=key, payload=payload, priority=priority)
+    mod._submit = submit
+    _run(mod._start_night("2026-10-05"))
+    sweeps = [x for x in order if x[0] == "sweep"]
+    assert sorted(i for _, i in sweeps) == sorted([a["id"], b["id"]])          # each swept exactly once
+    first_enrich = next(i for i, x in enumerate(order) if x[0] == "enrich")
+    assert first_enrich > max(i for i, x in enumerate(order) if x[0] == "sweep")  # all sweeps before any model work
+    assert submitted[0] == ("sweeps", 25) and ("brief", 20) in submitted
+    n = mod.store().get_kv("night")
+    assert sorted(n["swept"]) == sorted([a["id"], b["id"]]) and n["stats"]["new"] >= 1 and not n["pending"]
