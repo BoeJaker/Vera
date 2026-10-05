@@ -1369,6 +1369,34 @@ def _merge_recall_results(buckets: List[List[Dict]], top_k: int) -> List[Dict]:
         "({source: ms | 'cached' | 'late'}), late (sources still running)}."
     ),
 )
+def _recall_timing_record(by_source: Dict[str, Any], timings: Dict[str, Any], total_ms: float,
+                          cached_whole: bool = False) -> None:
+    """context.recall into retrieval.timing (four-minds FM-7.0): each source's ms and how it
+    ended (ok | error | cached | late), and whole-answer cache hits. Never raises."""
+    try:
+        import sys as _sys
+        mem = _sys.modules.get("Vera.vera.fabric.memory") or _sys.modules.get("memory")
+        window = getattr(mem, "RETRIEVAL_TIMING", None)
+        if window is None:
+            return
+        stages: List[Dict[str, Any]] = []
+        if cached_whole:
+            stages.append({"stage": "answer_cache", "ms": 0.0, "outcome": "cached"})
+        for name, took in (timings or {}).items():
+            if took == "cached":
+                stages.append({"stage": name, "ms": 0.0, "outcome": "cached"})
+            elif took == "late":
+                stages.append({"stage": name, "ms": float(total_ms), "outcome": "late"})
+            elif isinstance(took, (int, float)):
+                res = by_source.get(name)
+                stages.append({"stage": name, "ms": float(took),
+                               "outcome": "error" if isinstance(res, BaseException) else "ok"})
+        window.add({"type": "retrieval.timing", "path": "context.recall",
+                    "total_ms": round(float(total_ms), 1), "stages": stages})
+    except Exception:
+        pass
+
+
 async def cap_context_recall(
     query:          str,
     session_id:     str  = "",
@@ -1398,8 +1426,10 @@ async def cap_context_recall(
         "ds": fabric_dataset, "ro": bool(use_rollout), "k": top_k,
         "seeds": sorted(seed_ids)[:20],
     }, sort_keys=True)
+    _rt0 = time.monotonic()
     cached = _recall_cache_get(cache_key)
     if cached is not None:
+        _recall_timing_record({}, {}, 0.0, cached_whole=True)
         return {**cached, "cached": True}
 
     # Each source is also cached on its own, so one that outlives a caller's budget is given to the next call for the
@@ -1476,6 +1506,7 @@ async def cap_context_recall(
            "timings": timings, "late": sorted(pending)}
     if not pending:            # an answer missing a late source is never the cached whole answer
         _recall_cache_put(cache_key, out)
+    _recall_timing_record(by_source, timings, (time.monotonic() - _rt0) * 1000.0)
     return out
 
 
