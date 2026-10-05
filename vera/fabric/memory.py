@@ -698,7 +698,10 @@ class PostgresBackend(MemoryBackend):
                      embedding: Optional[List[float]] = None) -> List[Tuple[MemoryRecord, float]]:
         if not self._pool: return []
         try:
-            conditions = ["archived = FALSE"]
+            # faded_only: the soft-archived records the fading job set aside (metadata.faded_at) - searched only to let a
+            # strong match surface again (owner, 2026-10-05); everything else reads live records only
+            conditions = (["archived = TRUE", "metadata ? 'faded_at'"] if (filters or {}).get("faded_only")
+                          else ["archived = FALSE"])
             params: list = []
             i = 1
             if filters:
@@ -1840,6 +1843,52 @@ class HybridMemoryStore:
         return _recall_core.collapse_repeats(
             [{"record": r.to_dict(), "score": round(s, 4)} for r, s in ranked], limit=int(limit))
 
+    _FADED_SEEN: Dict[str, float] = {"any": 0.0, "t": 0.0}
+
+    async def _any_faded(self) -> bool:
+        """Has the fading job set anything aside? Asked of Postgres at most every 10 minutes, so a store with nothing
+        faded never pays for the extra query."""
+        now = time.monotonic()
+        if now - self._FADED_SEEN["t"] < 600:
+            return bool(self._FADED_SEEN["any"])
+        pg = self._backends.get("postgres")
+        pool = getattr(pg, "_pool", None)
+        any_ = False
+        if pool is not None:
+            try:
+                async with pool.acquire() as conn:
+                    any_ = bool(await conn.fetchval(
+                        "SELECT EXISTS (SELECT 1 FROM vera_memories WHERE archived AND metadata ? 'faded_at')"))
+            except Exception:
+                any_ = False
+        self._FADED_SEEN.update(any=1.0 if any_ else 0.0, t=now)
+        return any_
+
+    async def _with_resurfaced(self, query: str, limit: int, filters: Optional[Dict], names: List[str],
+                               results: List[Any], timeout: float = 0.5) -> List[Any]:
+        """Faded records that match at least as strongly as the best live Postgres hit join that backend's hits,
+        marked resurfaced (recall_core.resurface). Never slower than `timeout`; never raises."""
+        try:
+            if not (query or "").strip() or "postgres" not in names or not await self._any_faded():
+                return results
+            idx = names.index("postgres")
+            live = results[idx] if isinstance(results[idx], list) else []
+            pg = self._backends["postgres"]
+            faded = await asyncio.wait_for(
+                pg.search(query, limit=max(3, limit), filters=dict(filters or {}, faded_only=True)), timeout)
+            keep = _recall_core.resurface(live, faded)
+            for rec, _sc in keep:
+                try:
+                    rec.metadata = dict(rec.metadata or {}, resurfaced=True)
+                except Exception:
+                    pass
+            if keep:
+                results = list(results)
+                results[idx] = list(live) + list(keep)
+        except Exception as e:
+            log.debug("resurface: %s", e)
+        return results
+
     async def search_fast(
         self,
         query:   str,
@@ -1862,6 +1911,7 @@ class HybridMemoryStore:
                                                         filters=filters, embedding=None))
                  for n in names}
         results = self._fast_legs(env, list(tasks.keys()), await self._gather_fast(tasks, timeout), timeout)
+        results = await self._with_resurfaced(query, limit, filters, list(tasks.keys()), results)
         env.mark()
         out = self._merge_and_rank(tasks.keys(), results, limit, query)
         env.stage("merge", env.mark(), "ok" if out else "empty", len(out))
@@ -1944,6 +1994,7 @@ class HybridMemoryStore:
         if fast_tasks:
             fast_all = self._fast_legs(fast_env, fast_names, await self._gather_fast(fast_tasks, fast_timeout),
                                        fast_timeout)
+            fast_all = await self._with_resurfaced(query, limit, filters, fast_names, fast_all)
         else:
             fast_all = []
         fast_env.mark()

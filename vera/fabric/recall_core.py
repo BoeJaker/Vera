@@ -245,3 +245,26 @@ def retitle_block(block: str, heading: str) -> str:
     if not block.strip() or "\n" not in block:
         return ""
     return heading + block[block.index("\n"):]
+
+
+RESURFACE_FLOOR = 0.05      # a faded hit's ts_rank when nothing live matched: a clear match, not a stray word
+RESURFACE_MAX = 3
+
+
+def resurface(live: Any, faded: Any, ratio: float = 1.0, floor: float = RESURFACE_FLOOR,
+              limit: int = RESURFACE_MAX) -> List[Any]:
+    """The faded (soft-archived) hits that come back into recall: those matching at least as strongly as the best live
+    hit from the same backend (ratio 1.0), or past `floor` when nothing live matched - at most `limit`, strongest
+    first. Owner, 2026-10-05: 'if something is a strong match and obviously useful id like it to be able to surface
+    again and not get locked out forever'. `live` and `faded` are [(record, score)] on the same scale (Postgres
+    ts_rank); a hit with no usable score never comes back."""
+    def _s(p):
+        try:
+            return float(p[1])
+        except (TypeError, ValueError, IndexError):
+            return float("nan")
+    best = max((x for x in (_s(p) for p in (live or [])) if x == x), default=0.0)
+    bar = max(float(floor), best * float(ratio)) if best > 0 else float(floor)
+    keep = [p for p in (faded or []) if _s(p) == _s(p) and _s(p) >= bar]
+    keep.sort(key=lambda p: -_s(p))
+    return keep[:max(0, int(limit))]

@@ -1086,7 +1086,29 @@ async def record_turn_usage(session_id: str, reply: str, page_ids: Optional[List
                        last_injected = NOW(),
                        last_used = COALESCE(EXCLUDED.last_used, vera_memory_usage.last_used)""",
                 [(v["id"], 1 if v["used"] else 0) for v in verdicts])
-        out = {"injected": len(verdicts), "used": sum(1 for v in verdicts if v["used"])}
+            # a faded memory the reply drew on is revived: back in the live store, its fade marker cleared (owner,
+            # 2026-10-05: a useful memory must never be locked out for good)
+            used_ids = [v["id"] for v in verdicts if v["used"]]
+            revived = []
+            if used_ids:
+                try:
+                    revived = [r["id"] for r in await conn.fetch(
+                        """UPDATE vera_memories SET archived = FALSE,
+                               metadata = (COALESCE(metadata, '{}'::jsonb) - 'faded_at' - 'fade_reason')
+                                          || jsonb_build_object('revived_at', NOW()::text)
+                           WHERE id = ANY($1::text[]) AND archived AND metadata ? 'faded_at'
+                           RETURNING id""", used_ids)]
+                except Exception as e:
+                    log.debug("revive faded: %s", e)
+        for rid in revived:
+            try:
+                MEMORY, _ = _memory()
+                neo = (getattr(MEMORY, "_backends", {}) or {}).get("neo4j") if MEMORY else None
+                if neo is not None:
+                    await neo.update(rid, {"archived": False})
+            except Exception:
+                pass
+        out = {"injected": len(verdicts), "used": sum(1 for v in verdicts if v["used"]), "revived": len(revived)}
         try:
             await emit_event({"type": "memory.feedback", "session_id": session_id, **out,
                               "used_ids": [v["id"] for v in verdicts if v["used"]][:20]})
