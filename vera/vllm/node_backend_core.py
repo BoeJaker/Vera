@@ -45,6 +45,45 @@ def switched_ids(ollama: Dict[str, Dict[str, Any]], vllm: Dict[str, Any]) -> Lis
                   if i in gated and not (inst or {}).get("enabled", True))
 
 
+def vllm_of(node_id: str, vllm: Dict[str, Any]) -> str:
+    """The vLLM instance that gates as `node_id` ('' when none does)."""
+    for vid, v in (vllm or {}).items():
+        if node_id and str(_f(v, "gate_as", "") or "") == node_id:
+            return vid
+    return ""
+
+
+def standin_view(ollama_inst: Dict[str, Any], vinst: Any) -> Dict[str, Any]:
+    """A switched node as the Ollama picker sees it: its own record (id,
+    priority, gate) with its vLLM server's state - online, the names it serves,
+    its load. The picker scores it like any node; the caller then serves the
+    pick on vLLM."""
+    v = dict(ollama_inst or {})
+    load = max(int(v.get("in_use", 0) or 0), int(_f(vinst, "in_use", 0) or 0))
+    v.update(status="online", enabled=True, backend="vllm", running=[],
+             models=list(_f(vinst, "models", []) or []),
+             has_gpu=bool(_f(vinst, "has_gpu", v.get("has_gpu", False))),
+             in_use=load + int(_f(vinst, "waiting_requests", 0) or 0))
+    return v
+
+
+def standins(ollama: Dict[str, Dict[str, Any]], vllm: Dict[str, Any],
+             model: Optional[str] = None, serves=None) -> Dict[str, Dict[str, Any]]:
+    """{node id: standin_view} for every switched node whose vLLM server is up
+    and - when a model is asked for - serves it (by name or alias). A switched
+    node is never offered for a model its server does not have: an embedding
+    call must not land on a chat model's server."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for oid in switched_ids(ollama, vllm):
+        v = (vllm or {}).get(vllm_of(oid, vllm))
+        if v is None or _f(v, "status") not in ("online", "degraded"):
+            continue
+        if model and serves is not None and not serves(v, model):
+            continue
+        out[oid] = standin_view((ollama or {}).get(oid) or {}, v)
+    return out
+
+
 def resolve_pin(pin: str, ollama: Dict[str, Dict[str, Any]], vllm: Dict[str, Any]) -> str:
     """A pin naming a switched Ollama node -> "vllm:<its vLLM instance>"; any
     other pin unchanged. Rules keep saying "cpu-246" while the node serves vLLM."""

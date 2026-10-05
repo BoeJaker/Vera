@@ -2906,6 +2906,20 @@ def _vllm_chat_target(agent: "AgentRecord", job_type: str, model: str) -> Option
         return None
 
 
+def _vllm_standin_target(chosen: str, model: str) -> Optional[dict]:
+    """The chat target for a picked node that is switched to vLLM (its server,
+    gated as the node), else None."""
+    vm = _vllm_mod()
+    if vm is None or not hasattr(vm, "standin_for"):
+        return None
+    try:
+        vid = vm.standin_for(chosen)
+        return vm.chat_target({"pin": f"vllm:{vid}"}, model=model) if vid else None
+    except Exception as e:
+        log.warning("vllm stand-in target for %s: %s", chosen, e)
+        return None
+
+
 def _agent_classify_job_type(agent: "AgentRecord", message: str) -> str:
     """First matching row in the agent's routing_table decides this turn's
     job_type — the classification is entirely LOCAL (no LLM call, no extra
@@ -3040,6 +3054,9 @@ class AgentRunner:
             model=model,
             job_type=_jt,
         ) or "cpu-246")
+        if not _vt:
+            # a switched node won the pick: its turn goes to its vLLM server
+            _vt = _vllm_standin_target(chosen, model)
         inst = OLLAMA_INSTANCES.get(chosen, {})
         url  = _vt["url"] if _vt else inst.get("url", "http://192.168.0.246:11435")
 
@@ -3223,6 +3240,9 @@ class AgentRunner:
             model=model,
             job_type=_jt,
         ) or "cpu-246")
+        if not _vt:
+            # a switched node won the pick: its turn goes to its vLLM server
+            _vt = _vllm_standin_target(chosen, model)
         inst = OLLAMA_INSTANCES.get(chosen, {})
         url  = _vt["url"] if _vt else inst.get("url", "http://192.168.0.246:11435")
 
