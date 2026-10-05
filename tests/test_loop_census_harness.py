@@ -157,3 +157,40 @@ def test_probes_score_with_the_census_evaluator():
               {"file": "stats.py", "all_of": ["def mean", "def median", "def mode"]}]
     r = m.evaluate(checks, {"statkit/stats.py": "def mean(x):\ndef median(x):\ndef mode(x):\n"}, "")
     assert r["score"] == 1.0
+
+
+def _restart_check():
+    """restart_check() from run_census.py, without importing the harness (it runs on import)."""
+    import ast as _ast
+    src = (D / "run_census.py").read_text(encoding="utf-8")
+    fn = next(n for n in _ast.parse(src).body
+              if isinstance(n, _ast.FunctionDef) and n.name == "restart_check")
+    ns = {"RESTART_GRACE_S": 60}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "run_census.py", "exec"), ns)
+    return ns["restart_check"]
+
+
+def test_a_restart_under_a_goal_is_seen_and_a_silent_loop_called_dead_after_the_grace():
+    rc = _restart_check()
+    start = {"process_started_at": "2026-10-05T11:00:00Z"}
+    same = lambda: {"process_started_at": "2026-10-05T11:00:00Z"}
+    new = lambda: {"process_started_at": "2026-10-05T11:04:38Z"}
+    down = lambda: {}
+    assert rc(start, same, None, None, 10, 100.0) == {}
+    assert rc(start, down, None, None, 10, 100.0) == {}          # prod restarting: no verdict
+    seen = rc(start, new, None, None, 10, 100.0)
+    assert seen["seen"] == 100.0 and seen["process"].endswith("04:38Z")
+    assert rc(start, new, 100.0, 10, 10, 130.0) == {}            # inside the grace
+    assert rc(start, new, 100.0, 10, 10, 161.0) == {"dead": True}
+    assert rc(start, new, 100.0, 10, 14, 161.0) == {}            # events after it: alive
+    assert rc(start, new, 100.0, -1, 10, 161.0) == {}            # unreadable: unknown
+    assert rc({}, new, None, None, 10, 100.0) == {}              # no start record: no claim
+
+
+def test_the_goal_loop_acts_on_a_dead_restart():
+    src = (D / "run_census.py").read_text(encoding="utf-8")
+    loop = src[src.index("def run_goal("):]
+    loop = loop[:loop.index('if status == "interrupted" and not cancelled:')]
+    assert "restart_check(code_start, code_snapshot" in loop
+    dead = loop[loop.index('if _restart.get("dead"):'):]
+    assert dead.index("cancel_loop(sid)") < dead.index('status = "interrupted"') < dead.index("break")
