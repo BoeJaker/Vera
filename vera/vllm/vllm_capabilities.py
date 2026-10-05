@@ -804,7 +804,7 @@ async def vllm_chat(
     model: Optional[str] = None,
     instance_id: Optional[str] = None,
     prefer_gpu: bool = True,
-    max_tokens: int = 512,
+    max_tokens: Optional[int] = 512,
     temperature: float = 0.7,
     top_p: float = 0.9,
     stop: Optional[List[str]] = None,
@@ -834,11 +834,11 @@ async def vllm_chat(
     body: dict = {
         "model": mdl,
         "messages": messages,
-        "max_tokens": max_tokens,
         "temperature": temperature,
         "top_p": top_p,
         "stream": stream_cb is not None,
     }
+    if max_tokens:     body["max_tokens"] = max_tokens   # None = the rest of the window
     if stop:           body["stop"] = stop
     if tools:          body["tools"] = tools
     if tool_choice:    body["tool_choice"] = tool_choice

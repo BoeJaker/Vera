@@ -1973,31 +1973,36 @@ async def llm_generate(
                         "online in this process - serving it on Ollama")
 
     if _use_vllm:
-        # Route through vllm.generate cap so its own event pipeline fires
-        _cap = _REG.get("vllm.generate")
-        if _cap:
-            kw = dict(prompt=prompt, model=model, prefer_gpu=prefer_gpu,
-                      instance_id=instance_id or None, max_tokens=_want_ctx,
-                      _caller_label=caller or _caller_info["caller_func"])
-            if system:
-                # vLLM /v1/completions doesn't have a system field — prepend it
-                kw["prompt"] = f"{system}\n\n{prompt}"
-            try:
-                result = await _cap["raw"](**{k:v for k,v in kw.items()
-                                              if k in _cap["raw"].__code__.co_varnames},
-                                          trace_id=trace_id)
-                text = result.get("text", "") if isinstance(result, dict) else str(result)
-                used_model = result.get("model", model or "") if isinstance(result, dict) else (model or "")
-                used_inst  = result.get("instance_id", "") if isinstance(result, dict) else ""
-                _fr = str(result.get("finish_reason", "")) if isinstance(result, dict) else ""
-                _vi = getattr(_vllm_mod, "VLLM_INSTANCES", {}).get(used_inst)
-                return {"text": text, "model": used_model, "instance": used_inst,
-                        "backend": "vllm", "has_gpu": bool(getattr(_vi, "has_gpu", False)),
-                        "tokens": len(tokens_collected),
-                        "truncated": _fr == "length",
-                        **(await _llm_save_output(save_as, text, session_id))}
-            except Exception as _e:
-                log.warning("llm.generate vllm route failed (%s), falling back to ollama", _e)
+        # The routed path, as a routing-table pin takes it: the server's chat
+        # template (system + user turns), the node's slot and cross-process gate
+        # (gate_as), the served model for an Ollama-style alias, token liveness.
+        # max_tokens is left to the server (the rest of its context window): a
+        # CPU server's window is far smaller than the Ollama budget above.
+        _insts = getattr(_vllm_mod, "VLLM_INSTANCES", {})
+        _pin = "vllm:" + (instance_id if instance_id and instance_id in _insts else "")
+        _msgs = ([{"role": "system", "content": system}] if system else []) \
+            + [{"role": "user", "content": prompt}]
+        _vkw = {k: options[k] for k in ("temperature", "top_p")
+                if isinstance(options, dict) and k in options}
+        if think is not None:
+            _vkw["extra"] = {"chat_template_kwargs": {"enable_thinking": bool(think)}}
+        try:
+            _res = await _vllm_mod.routed_call(
+                "chat", {"pin": _pin}, model=model, prefer_gpu=prefer_gpu,
+                job_type=job_type, stream_cb=_tok, messages=_msgs, max_tokens=None, **_vkw)
+        except Exception as _e:
+            _res = {"ok": False, "error": f"{type(_e).__name__}: {_e}"}
+        if _res and _res.get("ok"):
+            _msg = _res.get("result") or {}
+            text = _vllm_mod._route_core.strip_think(str(_msg.get("content") or ""))
+            _vi = _insts.get(_res.get("instance") or "")
+            return {"text": text, "model": _res.get("model") or model or "",
+                    "instance": _res.get("instance") or "", "backend": "vllm",
+                    "has_gpu": bool(getattr(_vi, "has_gpu", False)),
+                    "tokens": len(tokens_collected), "truncated": False,
+                    **(await _llm_save_output(save_as, text, session_id))}
+        log.warning("llm.generate vllm route failed (%s), falling back to ollama",
+                    (_res or {}).get("error"))
 
     # ── Ollama path ─────────────────────────────────────────────────────────────
     # Call ollama_generate with the true caller so logs/events show the real source.

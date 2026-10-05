@@ -77,11 +77,23 @@ def test_llm_generate_reaches_the_loaded_vllm_module(orch, monkeypatch):
     inst.status = "online"
     monkeypatch.setitem(mod.VLLM_INSTANCES, "test-v0", inst)
 
-    async def fake_vllm(prompt="", model=None, prefer_gpu=True, instance_id=None,
-                        max_tokens=0, _caller_label="", trace_id=None, **kw):
-        return {"text": "from-vllm", "model": "m", "instance_id": "test-v0"}
+    seen = {}
 
-    monkeypatch.setitem(orch.CAPABILITY_REGISTRY["vllm.generate"], "raw", fake_vllm)
+    async def fake_routed(kind, rule, *, model=None, prefer_gpu=False, job_type="",
+                          slot_timeout=None, stream_cb=None, **kw):
+        seen.update(kind=kind, rule=rule, kw=kw)
+        return {"ok": True, "instance": "test-v0", "model": "m", "gate": "test-v0",
+                "result": {"role": "assistant", "content": "<think>hm</think>\nfrom-vllm"}}
+
+    # the routed path (chat template, node slot/gate) - not vllm.generate's raw
+    # completion, whose signature takes no trace_id (5 Oct 2026: every
+    # backend=vllm call failed on it and fell back to Ollama)
+    monkeypatch.setattr(mod, "routed_call", fake_routed)
     out = asyncio.run(orch.CAPABILITY_REGISTRY["llm.generate"]["raw"](
-        prompt="hello", backend="vllm"))
+        prompt="hello", system="be brief", backend="vllm", trace_id="t1"))
     assert out["backend"] == "vllm" and out["text"] == "from-vllm"
+    assert out["instance"] == "test-v0"
+    assert seen["kind"] == "chat" and seen["rule"] == {"pin": "vllm:"}
+    assert seen["kw"]["messages"] == [{"role": "system", "content": "be brief"},
+                                      {"role": "user", "content": "hello"}]
+    assert seen["kw"]["max_tokens"] is None

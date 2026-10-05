@@ -135,3 +135,10 @@ def test_sse_lines_become_ollama_chunks():
     assert rc.sse_to_ollama_line("data: [DONE]")["done"] is True
     for junk in ("", ": keep-alive", "data: {bad", _sse({"choices": [{"delta": {}}]})):
         assert rc.sse_to_ollama_line(junk) is None
+
+
+def test_strip_think_returns_the_answer_alone():
+    assert rc.strip_think("<think>a\nb</think>\n\nAnswer") == "Answer"
+    assert rc.strip_think("reasoning...\n</think>\n\nAnswer") == "Answer"
+    assert rc.strip_think("Plain answer") == "Plain answer"
+    assert rc.strip_think("") == ""
