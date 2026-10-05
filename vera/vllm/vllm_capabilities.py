@@ -1481,7 +1481,11 @@ async def _vllm_proxy(instance_id: str, path: str, request: _Req):
 
     body = await request.body()
     headers = dict(inst.headers())
-    headers.pop("Content-Type", None)   # let httpx set it
+    headers.pop("Content-Type", None)
+    # httpx sets no Content-Type for raw `content=`, and vLLM refuses a body
+    # without application/json (every proxied POST failed with 400, 5 Oct 2026).
+    if body:
+        headers["Content-Type"] = request.headers.get("content-type") or "application/json"
 
     url = f"{inst.url}/{path}"
     if request.query_params:

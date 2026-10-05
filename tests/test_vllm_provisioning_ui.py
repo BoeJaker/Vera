@@ -107,3 +107,29 @@ def test_vllm_add_instance_points_at_a_node_port():
     ui = _src(VLLM_UI)
     assert 'id="add-url" placeholder="http://192.168.0.247:8000"' in ui
     assert "RTX 4090" not in ui
+
+
+def test_vllm_playground_streams_through_the_proxy():
+    ui = _src(VLLM_UI)
+    send = ui[ui.index("async function pgSend()"):]
+    send = send[:send.index("\n}\n")]
+    assert "'/vllm/proxy/' + encodeURIComponent(inst)" in send
+    assert "stream: true" in send and "getReader()" in send
+    assert "chat_template_kwargs = {enable_thinking" in send
+    assert "'/vllm/chat'" not in send        # the one-shot call that hit the request timeout
+    assert 'id="pg-think"' in ui
+    # the answer alone goes back into the conversation, not the thinking
+    assert "S.pgMessages.push({role:'user',content:prompt},{role:'assistant',content:answer})" in send
+
+
+def test_the_proxy_forwards_a_json_content_type():
+    src = _src("vera/vllm/vllm_capabilities.py")
+    proxy = src[src.index("async def _vllm_proxy"):]
+    proxy = proxy[:proxy.index("inst.in_use += 1")]
+    assert 'headers["Content-Type"] = request.headers.get("content-type") or "application/json"' in proxy
+
+
+def test_vllm_launch_sets_a_reasoning_parser_for_qwen3():
+    ui = _src(VLLM_UI)
+    assert "a.push('--reasoning-parser', rp)" in ui
+    assert "/qwen3/i.test(body.model" in ui

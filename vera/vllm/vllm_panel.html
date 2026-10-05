@@ -111,6 +111,8 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
 .msg.user .bubble{background:rgba(90,158,143,.18);border:1px solid rgba(90,158,143,.3)}
 .msg.assistant .bubble{background:var(--bg2);border:1px solid var(--border)}
 .msg.assistant .bubble.streaming{border-color:var(--acc)}
+.pg-think{margin:0 0 6px;padding:4px 7px;border-left:2px solid var(--border, #2a2f3a);color:var(--dim2, #8a90a0);font-size:10.5px}
+.pg-think summary{cursor:pointer;color:var(--dim, #6a7080)}
 .msg.sys .bubble{background:var(--bg3);border:1px solid var(--border2);color:var(--dim2);font-size:9.5px;font-family:var(--mono)}
 .msg-meta{font-size:9px;color:var(--dim)}
 .msg.user .msg-meta{text-align:right}
@@ -217,6 +219,8 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
             <input type="number" class="opt-num" id="pg-topp" value="0.9" min="0" max="1" step="0.05"></div>
           <div class="opt-g"><span class="opt-lbl">LoRA:</span>
             <select class="opt-sel" id="pg-lora"><option value="">None</option></select></div>
+          <div class="opt-g"><span class="opt-lbl" title="Qwen3-family thinking (chat_template_kwargs.enable_thinking). On a CPU node thinking costs minutes.">Thinking:</span>
+            <select class="opt-sel" id="pg-think"><option value="default">Model default</option><option value="off">Off</option><option value="on">On</option></select></div>
           <div style="flex:1"></div>
           <span style="font-size:9.5px;color:var(--dim)" id="pg-chars">0 chars</span>
         </div>
@@ -301,6 +305,16 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
               <label>Names it answers to</label>
               <input type="text" id="lnch-aliases" placeholder="e.g. qwen3.5:9b">
               <div class="hint">Comma-separated. Callers and routing rules keep the Ollama names they use.</div>
+            </div>
+            <div class="fg-field">
+              <label>Reasoning parser</label>
+              <select id="lnch-reasoning">
+                <option value="auto">Auto (qwen3 for a Qwen3-family model)</option>
+                <option value="qwen3">qwen3</option>
+                <option value="deepseek_r1">deepseek_r1</option>
+                <option value="">None</option>
+              </select>
+              <div class="hint">Puts a thinking model's reasoning in its own field, so replies (chat, agent loops, the playground) carry the answer alone - as Ollama does.</div>
             </div>
             <div class="fg-field">
               <label>Text only</label>
@@ -681,17 +695,54 @@ function pgKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); pgSend(
 function pgCharCount(el){ document.getElementById('pg-chars').textContent = el.value.length + ' chars'; }
 function clearPg(){ document.getElementById('pg-body').innerHTML=''; S.pgMessages=[]; }
 
+/* The playground streams from the server itself through the passthrough proxy
+   (/vllm/proxy/<instance>/v1/...): a CPU node decodes about a token a second, so
+   a one-shot request waited minutes with nothing on screen and hit the request
+   timeout (5 Oct 2026). Thinking (reasoning_content, or a <think> block when the
+   server has no reasoning parser) is shown apart from the answer. */
+function _pgPickInstance(model){
+  const up = Object.entries(S.instances || {}).filter(([, i]) => i.status === 'online' || i.status === 'degraded');
+  const has = model ? up.filter(([, i]) => (i.models || []).includes(model)) : up;
+  const c = has.length ? has : up;
+  c.sort((a, b) => ((a[1].in_use || 0) + (a[1].waiting || 0)) - ((b[1].in_use || 0) + (b[1].waiting || 0)));
+  return c.length ? c[0][0] : '';
+}
+function _pgSplitThink(content, reasoning){
+  /* a server without a reasoning parser returns the thinking inside the content */
+  let think = reasoning || '', answer = content || '';
+  if(!think){
+    const close = answer.indexOf('</think>');
+    if(close >= 0){
+      think = answer.slice(0, close).replace(/^\s*<think>/, '');
+      answer = answer.slice(close + 8).replace(/^\s+/, '');
+    } else if(/^\s*<think>/.test(answer)){
+      think = answer.replace(/^\s*<think>/, ''); answer = '';
+    }
+  }
+  return {think, answer};
+}
+function _pgRender(el, content, reasoning, done){
+  const {think, answer} = _pgSplitThink(content, reasoning);
+  const open = !done || !answer ? ' open' : '';
+  el.innerHTML = (think ? `<details class="pg-think"${open}><summary>Thinking</summary><div>${esc(think)}</div></details>` : '')
+    + esc(answer) + (done ? '' : '<span class="cursor"></span>');
+  const area = document.getElementById('pg-body');
+  area.scrollTop = area.scrollHeight;
+  return answer;
+}
+
 async function pgSend(){
   const prompt = document.getElementById('pg-input').value.trim();
   if(!prompt || S.streaming) return;
 
   const mode      = document.getElementById('pg-mode').value;
   const model     = document.getElementById('pg-model').value || undefined;
-  const instId    = document.getElementById('pg-instance').value || undefined;
+  const instSel   = document.getElementById('pg-instance').value || '';
   const temp      = parseFloat(document.getElementById('pg-temp').value)||0.7;
   const maxTok    = parseInt(document.getElementById('pg-maxtok').value)||512;
   const topP      = parseFloat(document.getElementById('pg-topp').value)||0.9;
   const loraName  = document.getElementById('pg-lora').value || undefined;
+  const think     = document.getElementById('pg-think').value;
   const system    = document.getElementById('system-prompt')?.value.trim();
 
   document.getElementById('pg-input').value='';
@@ -700,13 +751,16 @@ async function pgSend(){
   S.streaming=true;
 
   addPgMsg('user', prompt);
-  const streamBubble = addStreamBubble();
+  const bubble = addStreamBubble();
 
-  const body = { max_tokens: maxTok, temperature: temp, top_p: topP };
-  if(model) body.model=model;
-  if(instId) body.instance_id=instId;
-  if(loraName) body.lora_name=loraName;
+  const inst = instSel || _pgPickInstance(model);
+  if(!inst){ finalizeStream(bubble, '[Error: no vLLM server is online]', true); return; }
+  const meta = bubble.parentElement.querySelector('.msg-meta');
+  if(meta) meta.textContent = 'vLLM · ' + inst + ' · ' + meta.textContent.split('·').pop().trim();
 
+  const served = ((S.instances[inst] || {}).models || [])[0];
+  const body = { max_tokens: maxTok, temperature: temp, top_p: topP, stream: true,
+                 model: loraName || model || served };
   let path;
   if(mode==='chat'){
     const msgs = [];
@@ -714,23 +768,60 @@ async function pgSend(){
     msgs.push(...S.pgMessages.map(m=>({role:m.role,content:m.content})));
     msgs.push({role:'user',content:prompt});
     body.messages = msgs;
-    path = '/vllm/chat';
+    if(think !== 'default') body.chat_template_kwargs = {enable_thinking: think === 'on'};
+    path = 'v1/chat/completions';
   } else {
     body.prompt = (system ? system+'\n\n' : '') + prompt;
-    path = '/vllm/generate';
+    path = 'v1/completions';
   }
 
+  let content = '', reasoning = '', answer = '';
   try {
-    const r = await api(path, 'POST', body);
-    if(r.error){
-      finalizeStream(streamBubble, '[Error: '+r.error+']', true);
-    } else {
-      const text = r.content || r.text || JSON.stringify(r);
-      finalizeStream(streamBubble, text);
-      S.pgMessages.push({role:'user',content:prompt},{role:'assistant',content:text});
+    const resp = await fetch('/vllm/proxy/' + encodeURIComponent(inst) + '/' + path,
+                             {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    if(!resp.ok || !resp.body){
+      let t = ''; try { t = await resp.text(); } catch(e) {}
+      let msg = t; try { const j = JSON.parse(t); msg = (j.error && (j.error.message || j.error)) || j.detail || t; } catch(e) {}
+      finalizeStream(bubble, '[Error ' + resp.status + ': ' + String(msg).slice(0, 400) + ']', true);
+      return;
     }
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for(;;){
+      const {value, done} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, {stream: true});
+      let nl;
+      while((nl = buf.indexOf('\n')) >= 0){
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if(!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if(data === '[DONE]') continue;
+        let j; try { j = JSON.parse(data); } catch(e) { continue; }
+        if(j.error){ content += '\n[Error: ' + (j.error.message || j.error) + ']'; continue; }
+        const ch = (j.choices || [])[0] || {};
+        if(mode === 'chat'){
+          const d = ch.delta || {};
+          content += d.content || '';
+          reasoning += d.reasoning_content || d.reasoning || '';
+        } else {
+          content += ch.text || '';
+        }
+      }
+      _pgRender(bubble, content, reasoning, false);
+    }
+    if(!content && !reasoning && buf.trim()){
+      /* not SSE: an error the server answered with plain JSON */
+      let msg = buf.trim(); try { const j = JSON.parse(msg); msg = (j.error && (j.error.message || j.error)) || j.detail || msg; } catch(e) {}
+      finalizeStream(bubble, '[Error: ' + String(msg).slice(0, 400) + ']', true);
+      return;
+    }
+    answer = _pgRender(bubble, content, reasoning, true);
+    finalizeStream(bubble, answer || '[empty reply]');
+    S.pgMessages.push({role:'user',content:prompt},{role:'assistant',content:answer});
   } catch(e){
-    finalizeStream(streamBubble, '[Request failed: '+e.message+']', true);
+    finalizeStream(bubble, '[Request failed: '+e.message+']', true);
   }
 }
 
@@ -892,6 +983,9 @@ function _lnchNodeArgs(body){
   if(body.quantization) a.push('--quantization', body.quantization);
   if(document.getElementById('lnch-textonly').value === 'true')
     a.push('--limit-mm-per-prompt.image', '0', '--limit-mm-per-prompt.video', '0');
+  let rp = document.getElementById('lnch-reasoning').value;
+  if(rp === 'auto') rp = /qwen3/i.test(body.model || '') ? 'qwen3' : '';
+  if(rp) a.push('--reasoning-parser', rp);
   return a.concat(body.extra_args || []).join(' ');
 }
 function _lnchSwitchBody(body, dry){
