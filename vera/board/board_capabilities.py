@@ -21,6 +21,54 @@ from typing import List, Optional
 from Vera.vera.capability_orchestration import (
     APP, capability, CAPABILITY_REGISTRY, emit_event, schedule)
 from Vera.vera.board import board_core as bc
+try:
+    from Vera.vera.board import contacts_core as cc
+except Exception:                       # worktree / app-free import
+    from vera.board import contacts_core as cc
+import json as _json
+import Vera.vera.capability_orchestration as _orch
+
+# agent identity -> {session_name, tool, units, note, last_seen}: who to message about an item
+CONTACTS_KEY = "vera:agents:contacts"
+
+
+async def contacts_all() -> dict:
+    r = _orch.REDIS
+    if r is None:
+        return {}
+    try:
+        raw = await r.hgetall(CONTACTS_KEY)
+    except Exception:
+        return {}
+    out = {}
+    for k, v in (raw or {}).items():
+        k = k if isinstance(k, str) else k.decode()
+        try:
+            out[k] = _json.loads(v if isinstance(v, str) else v.decode())
+        except Exception:
+            continue
+    return out
+
+
+async def contact_set(agent: str, session_name: str, tool: str = "claude-code",
+                      units=None, note: str = "") -> dict:
+    new = cc.make_contact(agent, session_name, tool, units, note)
+    r = _orch.REDIS
+    if r is None:
+        raise RuntimeError("redis unavailable")
+    old = None
+    try:
+        raw = await r.hget(CONTACTS_KEY, new["agent"])
+        old = _json.loads(raw) if raw else None
+    except Exception:
+        old = None
+    rec = cc.merge(old, new)
+    await r.hset(CONTACTS_KEY, rec["agent"], _json.dumps(rec))
+    return rec
+
+
+async def _contacts_on(item_dict: dict) -> dict:
+    return cc.contacts_for(cc.identities_on_item(item_dict), await contacts_all())
 from Vera.vera.sandbox_guard import write_blocked as _sbx_write_blocked
 
 
@@ -195,13 +243,17 @@ if True:  # capability registration (mirrors the guard style of the other module
         "board.item.get", http_method="GET", http_path="/board/item",
         http_tags=["board"], memory="off", silent=True,
         description="Full record of one item incl. body + the comment thread. Input: id (str!). "
-                    "Output: {ok, item:{...,body,comments:[{kind,from,to,done_when,body,...}]}}.",
+                    "Output: {ok, item:{...,body,comments:[{kind,from,to,done_when,body,...}]}, "
+                    "contacts:{<agent identity>: {session_name, tool, last_seen, stale}}} - "
+                    "contacts says how to message the owner and commenters (e.g. SendMessage to "
+                    "session_name vera-62).",
     )
     async def cap_board_item_get(id: str = "", trace_id=None) -> dict:
         it = await provider().get(id)
         if it is None:
             return {"ok": False, "error": f"no such item: {id}"}
-        return {"ok": True, "item": _item_dict(it, full=True)}
+        d = _item_dict(it, full=True)
+        return {"ok": True, "item": d, "contacts": await _contacts_on(d)}
 
     @capability(
         "board.item.upsert", http_method="POST", http_path="/board/item/upsert",
@@ -253,12 +305,20 @@ if True:  # capability registration (mirrors the guard style of the other module
         description="Claim an item as a LEASE (§3.3): posts a claim comment, takes the "
                     "agent:<name> label, moves to in_progress, stamps a heartbeat. If an EARLIER "
                     "claim from another agent exists you lose — a withdraw is posted and the item "
-                    "stays theirs (lowest comment id wins). Inputs: id (str!), agent (str!). "
+                    "stays theirs (lowest comment id wins). Inputs: id (str!), agent (str!), "
+                    "session (str — the name other sessions message you by, e.g. vera-62; "
+                    "recorded as your contact), tool (claude-code|codex|...). "
                     "Output: {ok, held_by, lost, comment_id, reason}.",
     )
-    async def cap_board_claim(id: str = "", agent: str = "", trace_id=None) -> dict:
+    async def cap_board_claim(id: str = "", agent: str = "", session: str = "",
+                              tool: str = "claude-code", trace_id=None) -> dict:
         if not agent:
             return {"ok": False, "error": "agent is required (the claiming identity)"}
+        if session:
+            try:
+                await contact_set(agent, session, tool or "claude-code")
+            except Exception as e:
+                log.debug("board.claim contact: %s", e)
         try:
             r = await provider().claim(id, agent)
         except KeyError:
@@ -273,14 +333,21 @@ if True:  # capability registration (mirrors the guard style of the other module
                     "on the write path. Inputs: id (str!), frm (str! — the from: identity), "
                     "kind (claim|withdraw|handoff|help-request|reply|progress|blocked|steer|"
                     "resume|note), to (str='any'), body (str — point at file:line, never a dump), "
-                    "done_when (str — mandatory when asking another agent to act), hops (int). "
-                    "Output: {ok, comment_id}.",
+                    "done_when (str — mandatory when asking another agent to act), hops (int), "
+                    "session (str — your messageable session name, e.g. vera-62; recorded as "
+                    "your contact), tool. Output: {ok, comment_id}.",
     )
     async def cap_board_comment(id: str = "", frm: str = "", kind: str = "note",
                                 to: str = "any", body: str = "", done_when: str = "",
-                                hops: int = 0, trace_id=None) -> dict:
+                                hops: int = 0, session: str = "", tool: str = "claude-code",
+                                trace_id=None) -> dict:
         if not frm:
             return {"ok": False, "error": "frm is required — the from: identity (§3.1)"}
+        if session:
+            try:
+                await contact_set(frm, session, tool or "claude-code")
+            except Exception as e:
+                log.debug("board.comment contact: %s", e)
         if kind not in bc.ENVELOPE_KINDS:
             return {"ok": False, "error": f"unknown kind: {kind}", "kinds": sorted(bc.ENVELOPE_KINDS)}
         reason = _scan_secret(body) or _scan_secret(done_when)
@@ -543,8 +610,55 @@ if True:  # capability registration (mirrors the guard style of the other module
             if sibs:
                 parts.append("\n## Sibling work items in this plan (the parts around yours)\n"
                              + "\n".join(f"- [{s.lane}] {s.title}" for s in sibs))
-        return {"ok": True, "item": id, "plan": it.plan,
+        contacts = await _contacts_on(_item_dict(it, full=True))
+        if contacts:
+            parts.append("\n## Who to reach\n" + "\n".join(
+                f"- {a}: message session **{c['session_name']}** ({c['tool']}, last seen "
+                f"{c['last_seen']}{', may be gone' if c['stale'] else ''})"
+                for a, c in contacts.items()))
+        return {"ok": True, "item": id, "plan": it.plan, "contacts": contacts,
                 "context": "\n".join(parts)}
+
+    @capability(
+        "agents.contact.set", http_method="POST", http_path="/agents/contact",
+        http_tags=["board", "agents"], memory="off", silent=True,
+        description="Record how to reach an agent session: its board identity (agent, e.g. "
+                    "claude:4dfcd766) -> the session name others message (session_name, e.g. "
+                    "vera-62), tool (claude-code|codex|vera-delegate|human|service), units "
+                    "(comma-separated shared-planning units it works on), note. Call at session "
+                    "start; board.claim/board.comment with session= refresh it. Units accumulate. "
+                    "Output: {ok, contact}.",
+    )
+    async def cap_agents_contact_set(agent: str = "", session_name: str = "", tool: str = "claude-code",
+                                     units: str = "", note: str = "", trace_id=None) -> dict:
+        try:
+            rec = await contact_set(agent, session_name, tool,
+                                    [u for u in str(units or "").split(",") if u.strip()], note)
+        except (ValueError, RuntimeError) as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "contact": rec, "reach": cc.reach_line(rec)}
+
+    @capability(
+        "agents.contact.get", http_method="GET", http_path="/agents/contacts",
+        http_tags=["board", "agents"], memory="off", silent=True,
+        description="Who to message: one agent's contact (agent=claude:4dfcd766), the contacts "
+                    "working a shared-planning unit (unit=four-minds), the contact behind a "
+                    "session name (session_name=vera-62), or all of them. Each: {agent, "
+                    "session_name, tool, units, note, last_seen, stale}. Output: {ok, contacts[]}.",
+    )
+    async def cap_agents_contact_get(agent: str = "", unit: str = "", session_name: str = "",
+                                     trace_id=None) -> dict:
+        allc = await contacts_all()
+        rows = []
+        for a, c in sorted(allc.items(), key=lambda kv: kv[1].get("last_seen", ""), reverse=True):
+            if agent and a != agent:
+                continue
+            if unit and unit not in (c.get("units") or []):
+                continue
+            if session_name and c.get("session_name") != session_name:
+                continue
+            rows.append(dict(c, stale=cc.stale(c)))
+        return {"ok": True, "contacts": rows, "count": len(rows)}
 
     @capability(
         "board.index", http_method="POST", http_path="/board/index",

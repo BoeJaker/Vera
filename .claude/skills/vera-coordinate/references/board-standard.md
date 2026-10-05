@@ -56,7 +56,7 @@ and a done-when.
 
 ## Comments
 
-`board.comment(id, frm, kind, body, to?, done_when?)`, secret-scanned. Kinds:
+`board.comment(id, frm, kind, body, to?, done_when?, session?, tool?)`, secret-scanned; `session=` refreshes your contact. Kinds:
 
 | Kind | Use |
 |---|---|
@@ -87,6 +87,7 @@ and a done-when.
 
 ## Claims
 
-- `board.claim(id, agent)` before editing; the lowest-id live claim wins.
+- `board.claim(id, agent, session?, tool?)` before editing; the lowest-id live claim wins. Pass `session=<your session
+  name>` so whoever reads the item can message you (`board.item.get` returns `contacts`).
 - A claim whose holder has had no heartbeat or progress for ~90 minutes is **stale**. Post `resume` with your
   reason, then claim. Code enforcement is planned (AO-B.6); until then it's etiquette.

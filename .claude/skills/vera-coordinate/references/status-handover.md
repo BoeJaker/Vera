@@ -46,6 +46,9 @@ paste the same text into memory or fabric. The planned `agent.status.post` is de
 ```
 # Handover — <unit> — <date> — <agent>
 
+Reach: <session name> (<tool>, <agent identity>) — message this session about anything below; if it is gone
+(agents.contact.get shows it stale), comment on the board items instead.
+
 ## NOT done (read first)
 - …
 ## Done
