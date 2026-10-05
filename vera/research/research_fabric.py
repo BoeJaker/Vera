@@ -380,37 +380,49 @@ async def _query_by_filter(
         return []
     try:
         rows = await fab._sqlite_query(dataset_id=dataset_id, limit=max(limit, 2000))
-        # First pass: parse + filter
-        matched: List[Dict] = []
-        for row in rows:
-            try:
-                data = json.loads(row.get("data") or "{}")
-            except Exception:
-                data = {}
-            if all(str(data.get(k)) == str(v) for k, v in filters.items()):
-                matched.append({**row, "_data": data, **data})
-        # Second pass: dedup by logical id, keep newest (by created_at/updated_at)
-        by_id: Dict[str, Dict] = {}
-        no_id: List[Dict] = []
-        for r in matched:
-            lid = str(r.get("id", "") or "")
-            if not lid:
-                no_id.append(r)
-                continue
-            prev = by_id.get(lid)
-            if prev is None:
-                by_id[lid] = r
-            else:
-                # keep whichever has the newer timestamp
-                r_ts    = max(_ts_key(r.get("updated_at")), _ts_key(r.get("created_at")))
-                prev_ts = max(_ts_key(prev.get("updated_at")), _ts_key(prev.get("created_at")))
-                if r_ts >= prev_ts:
-                    by_id[lid] = r
-        out = list(by_id.values()) + no_id
-        return out[:limit]
+        # Decoding thousands of JSON rows held the event loop (research history: 24.7 s, 2026-10-05);
+        # a big batch is parsed in a worker thread.
+        if len(rows) > _PARSE_OFF_LOOP_ROWS:
+            return await asyncio.to_thread(_filter_rows, rows, filters, limit)
+        return _filter_rows(rows, filters, limit)
     except Exception as e:
         log.warning("_query_by_filter [%s] FAILED: %s", dataset_id, e)
         return []
+
+
+_PARSE_OFF_LOOP_ROWS = 300
+
+
+def _filter_rows(rows: List[Dict], filters: Dict[str, Any], limit: int) -> List[Dict]:
+    """_query_by_filter's parse, filter and dedup pass (sync, so it can run off the loop)."""
+    # First pass: parse + filter
+    matched: List[Dict] = []
+    for row in rows:
+        try:
+            data = json.loads(row.get("data") or "{}")
+        except Exception:
+            data = {}
+        if all(str(data.get(k)) == str(v) for k, v in filters.items()):
+            matched.append({**row, "_data": data, **data})
+    # Second pass: dedup by logical id, keep newest (by created_at/updated_at)
+    by_id: Dict[str, Dict] = {}
+    no_id: List[Dict] = []
+    for r in matched:
+        lid = str(r.get("id", "") or "")
+        if not lid:
+            no_id.append(r)
+            continue
+        prev = by_id.get(lid)
+        if prev is None:
+            by_id[lid] = r
+        else:
+            # keep whichever has the newer timestamp
+            r_ts    = max(_ts_key(r.get("updated_at")), _ts_key(r.get("created_at")))
+            prev_ts = max(_ts_key(prev.get("updated_at")), _ts_key(prev.get("created_at")))
+            if r_ts >= prev_ts:
+                by_id[lid] = r
+    out = list(by_id.values()) + no_id
+    return out[:limit]
 
 
 async def _query_by_id(dataset_id: str, record_id: str) -> Optional[Dict]:
@@ -702,8 +714,9 @@ class DB:
 
         # Shape output to match research_db format
         rows = []
+        cit_counts = await _counts_by_parent(DATASET_CITATIONS, "job_id") if page else {}
         for r in page:
-            cit_count = await _count_by_parent(DATASET_CITATIONS, "job_id", r.get("job_id", r.get("id", "")))
+            cit_count = cit_counts.get(str(r.get("job_id", r.get("id", ""))), 0)
             rows.append({
                 "id":             r.get("job_id", r.get("id", "")),
                 "query":          r.get("query", ""),
@@ -1403,6 +1416,50 @@ class DB:
 # ─────────────────────────────────────────────────────────────────────────────
 # INTERNAL HELPER
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _count_rows_by(rows: List[Dict], key: str) -> Dict[str, int]:
+    """{str(data[key]): count} over `rows`, each value's rows deduplicated by logical id exactly as
+    _query_by_filter(dataset, {key: value}) does (one per data id; rows without an id each count),
+    so one pass gives what one _count_by_parent call per value gave."""
+    per: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        try:
+            data = json.loads(row.get("data") or "{}")
+        except Exception:
+            data = {}
+        b = per.setdefault(str(data.get(key)), {"ids": set(), "no_id": 0})
+        lid = str({**row, **data}.get("id", "") or "")
+        if lid:
+            b["ids"].add(lid)
+        else:
+            b["no_id"] += 1
+    return {v: len(b["ids"]) + b["no_id"] for v, b in per.items()}
+
+
+_COUNTS_CACHE: Dict[str, Any] = {}
+_COUNTS_TTL_S = 30.0
+
+
+async def _counts_by_parent(dataset_id: str, key: str, limit: int = 10000) -> Dict[str, int]:
+    """Every value's count in one read and one parse (off the loop), cached briefly - the history
+    page polls. Replaces one _count_by_parent call per job, each of which decoded the same 10 000
+    newest rows on the event loop (a 50-job page: up to 500 000 decodes, 24.7 s, 2026-10-05)."""
+    ck = f"{dataset_id}|{key}|{limit}"
+    hit = _COUNTS_CACHE.get(ck)
+    if hit and time.monotonic() - hit[0] < _COUNTS_TTL_S:
+        return hit[1]
+    fab = _fabric()
+    if not fab or not hasattr(fab, "_sqlite_query"):
+        return {}
+    try:
+        rows = await fab._sqlite_query(dataset_id=dataset_id, limit=max(limit, 2000))
+        counts = await asyncio.to_thread(_count_rows_by, rows, key)
+    except Exception as e:
+        log.warning("_counts_by_parent [%s] FAILED: %s", dataset_id, e)
+        return {}
+    _COUNTS_CACHE[ck] = (time.monotonic(), counts)
+    return counts
+
 
 async def _count_by_parent(dataset_id: str, key: str, value: str) -> int:
     """Count records in a dataset where data[key] == value."""
