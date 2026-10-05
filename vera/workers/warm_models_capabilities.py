@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -128,7 +129,22 @@ def _aliases(rules: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
 
 
 def _instances() -> Dict[str, Dict[str, Any]]:
-    return dict(getattr(_orch, "OLLAMA_INSTANCES", {}) or {})
+    """The Ollama nodes the warm plan may touch: never one switched to vLLM
+    (nodes.backend.switch) - its Ollama is stopped on purpose, and a warm load
+    would fail on it, or restart it."""
+    insts = dict(getattr(_orch, "OLLAMA_INSTANCES", {}) or {})
+    try:
+        try:
+            from Vera.vera.vllm import node_backend_core as _bc
+        except Exception:
+            from vera.vllm import node_backend_core as _bc
+        vm = sys.modules.get("vllm_capabilities") or sys.modules.get(
+            "Vera.vera.vllm.vllm_capabilities")
+        for iid in _bc.switched_ids(insts, dict(getattr(vm, "VLLM_INSTANCES", {}) or {})):
+            insts.pop(iid, None)
+    except Exception:
+        pass
+    return insts
 
 
 async def _get(url: str, timeout: float = 6.0) -> Optional[Dict[str, Any]]:

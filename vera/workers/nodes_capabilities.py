@@ -797,6 +797,24 @@ except Exception:                                    # worktree / app-free impor
     from vera.provisioning import ollama_node_core as _ollama_core
 
 
+try:
+    from Vera.vera.vllm import node_backend_core as _backend_core
+except Exception:                                    # worktree / app-free import
+    from vera.vllm import node_backend_core as _backend_core
+
+
+def _vllm_registry() -> Dict[str, Any]:
+    vm = sys.modules.get("vllm_capabilities") or sys.modules.get("Vera.vera.vllm.vllm_capabilities")
+    return dict(getattr(vm, "VLLM_INSTANCES", {}) or {}) if vm else {}
+
+
+def _switched_now() -> set:
+    """Ollama node ids currently switched to vLLM (nodes.backend.switch): their
+    Ollama is stopped on purpose, so tune / tap / warm must leave them alone."""
+    return set(_backend_core.switched_ids(dict(getattr(_orch, "OLLAMA_INSTANCES", {}) or {}),
+                                          _vllm_registry()))
+
+
 async def _ensure_docker_host(node: Dict) -> Dict:
     """Make sure the node is a registered Docker host; install docker over SSH
     if it is missing. Returns {ok, docker_host_id} or {error}."""
@@ -2550,9 +2568,14 @@ async def cap_nodes_ollama_tune(dry_run: bool = True, force: bool = False,
     sibling_ids = {_ollama_core.cpu_sibling_id(i) for i in insts}
     targets = [i for i in (instance_ids or list(insts)) if i in insts and i not in sibling_ids]
     out = []
+    _sw = _switched_now()
     for iid in targets:
         inst = insts[iid]
         addr = urlparse(str(inst.get("url") or "")).hostname or ""
+        if iid in _sw:
+            out.append({"instance": iid, "host": addr, "state": "skip",
+                        "why": "switched to vLLM (nodes.backend.switch) - its Ollama is stopped on purpose"})
+            continue
         row: Dict[str, Any] = {"instance": iid, "host": addr, "has_gpu": bool(inst.get("has_gpu"))}
         hid = by_addr.get(addr)
         if not hid:
@@ -2744,11 +2767,17 @@ async def cap_nodes_ollama_tap(dry_run: bool = True, instance_ids: Optional[List
     insts = dict(getattr(_orch, "OLLAMA_INSTANCES", {}) or {})
     installed_on: set = set()
     out = []
+    _sw = _switched_now()
     for iid in [i for i in (instance_ids or list(insts)) if i in insts]:
         inst = insts[iid]
         u = urlparse(str(inst.get("url") or ""))
         addr, port = u.hostname or "", u.port or 11435
         row: Dict[str, Any] = {"instance": iid, "host": addr, "port": port}
+        if iid in _sw:
+            row.update(state="skip", why="switched to vLLM (nodes.backend.switch) - "
+                                         "its Ollama and tap are stopped on purpose")
+            out.append(row)
+            continue
         hid = by_addr.get(addr)
         if not hid:
             row.update(state="skip", why="no stored SSH credential for this address")
@@ -2991,3 +3020,112 @@ async def cap_nodes_ollama_settings_set(instance_id: str = "", num_thread: Optio
 
 log.info("nodes: unified node estate capabilities loaded "
          "(%d components)", len(_COMPONENTS))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  nodes.backend.switch - a node serves Ollama OR vLLM, switched in place
+# ═════════════════════════════════════════════════════════════════════════════
+@capability(
+    "nodes.backend.switch", memory="off",
+    http_method="POST", http_path="/nodes/backend/switch", http_tags=["nodes"],
+    description="Move a compute node between its Ollama and its vLLM service in place "
+                "(the node keeps its id, worker stack and routing). To vLLM: writes the "
+                "model to the vLLM unit's environment (served also under `aliases`, e.g. the "
+                "Ollama tags it stands in for; on a CPU node the same thread count as the "
+                "node's Ollama runners), stops+disables the node's Ollama and its tap, "
+                "enables+starts vera-vllm_server and waits until it answers; then disables "
+                "the Ollama instance and registers vLLM instance vllm-<id> gated as the node "
+                "(a routing pin naming the node now reaches vLLM). To ollama: the reverse. "
+                "Needs component vllm_server deployed on the node first. Dry-run by default; "
+                "refuses with requests in flight unless force. Inputs: instance_id (str!), "
+                "backend ('vllm'|'ollama'), model (str - HF id or a path, e.g. under "
+                "/opt/vera-store/models/hf; required for vllm), aliases (list[str]), "
+                "extra_args (str - more `vllm serve` flags), dry_run (bool=true), force "
+                "(bool), wait_s (int=900). Output: {ok, plan, log, registry}.",
+    schema={"properties": {"backend": {"enum": ["vllm", "ollama"]},
+                           "aliases": {"type": "array", "items": {"type": "string"}}}},
+)
+async def cap_nodes_backend_switch(instance_id: str = "", backend: str = "vllm",
+                                   model: str = "", aliases: Optional[List[str]] = None,
+                                   extra_args: str = "", dry_run: bool = True,
+                                   force: bool = False, wait_s: int = 900,
+                                   trace_id=None) -> Dict[str, Any]:
+    from Vera.vera.provisioning.components_capabilities import (
+        VLLM_NODE_DIR, VLLM_NODE_ENV, VLLM_NODE_PORT, VLLM_NODE_SERVICE)
+    insts = getattr(_orch, "OLLAMA_INSTANCES", {}) or {}
+    inst = insts.get(instance_id)
+    if not inst:
+        return {"ok": False, "error": f"unknown node {instance_id!r}", "nodes": sorted(insts)}
+    if backend == "vllm" and not (model or "").strip():
+        return {"ok": False, "error": "model is required to switch to vllm"}
+    if not dry_run and _orch.is_dev_sandbox():
+        return {"ok": False, "error": "refused in a dev sandbox - nodes belong to prod"}
+    run = _rawcap("exec.ssh.run")
+    lst = _rawcap("exec.ssh.hosts.list")
+    if not (run and lst):
+        return {"ok": False, "error": "exec module (exec.ssh.run / hosts.list) unavailable"}
+    u = urlparse(str(inst.get("url") or ""))
+    addr, public_port = u.hostname or "", u.port or 11435
+    hid = {h.get("host"): h.get("id") for h in ((await lst()) or {}).get("hosts", [])
+           if h.get("host") and h.get("id")}.get(addr)
+    if not hid:
+        return {"ok": False, "error": f"no stored SSH credential for {addr}"}
+    serve_path = f"{VLLM_NODE_DIR}/venv/serve.sh"
+    probe = await run(command=f"test -x {shlex.quote(serve_path)} && echo VERA_HAS_VLLM",
+                      host_id=hid, timeout=30) or {}
+    switched = instance_id in _switched_now()
+    plan = _backend_core.plan(backend, ollama_id=instance_id, inst=inst,
+                              vllm_present="VERA_HAS_VLLM" in (probe.get("stdout") or ""),
+                              switched=switched, in_flight=int(inst.get("in_use") or 0),
+                              force=bool(force))
+    out: Dict[str, Any] = {"instance": instance_id, "host": addr, "plan": plan,
+                           "dry_run": bool(dry_run)}
+    if plan["action"] != "switch" or dry_run:
+        out["ok"] = plan["action"] in ("switch", "noop")
+        return out
+
+    has_gpu = bool(inst.get("has_gpu"))
+    env_text = _backend_core.env_file(model.strip(), aliases=aliases or [], extra=extra_args,
+                                      threads=_node_threads(inst), has_gpu=has_gpu)
+    script = _backend_core.switch_script(backend, vllm_service=VLLM_NODE_SERVICE,
+                                         env_path=VLLM_NODE_ENV, env_text=env_text,
+                                         public_port=public_port, vllm_port=VLLM_NODE_PORT,
+                                         serve_path=serve_path, wait_s=int(wait_s))
+    await emit_event({"type": "nodes.backend.switch.start", "instance": instance_id,
+                      "backend": backend, "model": model})
+    res = await run(command=f"bash -c {shlex.quote(script)}", host_id=hid,
+                    timeout=int(wait_s) + 120) or {}
+    log_tail = ((res.get("stdout") or "") + "\n" + (res.get("stderr") or ""))[-3000:]
+    out["log"] = log_tail
+    if _backend_core.DONE not in (res.get("stdout") or ""):
+        out["ok"] = False
+        out["error"] = f"the node did not come up on {backend} (see log)"
+        return out
+
+    # ── registries: the node keeps its id; its vLLM instance (the vLLM service on ──
+    # ── this same container) carries the traffic                                ──
+    reg: Dict[str, Any] = {}
+    vid = _backend_core.vllm_instance_id(instance_id)
+    vadd, vdel = _rawcap("vllm.instances.add"), _rawcap("vllm.instances.remove")
+    if backend == "vllm":
+        inst["enabled"] = False
+        if vdel and vid in _vllm_registry():
+            await vdel(instance_id=vid)
+        if vadd:
+            reg["vllm_added"] = await vadd(
+                id=vid, url=f"http://{addr}:{VLLM_NODE_PORT}",
+                label=f"{inst.get('label') or instance_id} (vLLM)", has_gpu=has_gpu,
+                priority=int(inst.get("priority") or 0), gate_as=instance_id)
+    else:
+        inst["enabled"] = True
+        if vdel and vid in _vllm_registry():
+            reg["vllm_removed"] = await vdel(instance_id=vid)
+    save = getattr(_orch, "_save_nodes", None)
+    if save:
+        await save()
+        reg["ollama_enabled"] = bool(inst["enabled"])
+    out["registry"] = reg
+    out["ok"] = True
+    await emit_event({"type": "nodes.backend.switched", "instance": instance_id,
+                      "backend": backend, "model": model if backend == "vllm" else ""})
+    return out

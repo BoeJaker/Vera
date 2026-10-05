@@ -3546,6 +3546,14 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     # caller-explicit instance_id still wins (it names an Ollama node). When no
     # pinned server is up, or the call fails, normal Ollama routing continues.
     _pin = str((eff_rule or {}).get("pin") or "")
+    # A pin naming a node switched to vLLM (nodes.backend.switch) reaches it there.
+    _vm_r = (sys.modules.get("vllm_capabilities")
+             or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+    if _pin and _vm_r is not None and hasattr(_vm_r, "effective_rule"):
+        try:
+            _pin = str((_vm_r.effective_rule(eff_rule) or {}).get("pin") or _pin)
+        except Exception:
+            pass
     if _pin.startswith("vllm:") and not instance_id:
         try:
             # Use the copy the module loader registered (bare name): a package

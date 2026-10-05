@@ -55,6 +55,8 @@ from Vera.vera.provisioning.components_core import (
 from Vera.vera.workers import worker_placement_core as _placement
 from Vera.vera.security import redis_auth_core as _redis_auth_core
 from Vera.vera.provisioning import node_sync_core as _node_sync
+from Vera.vera.vllm import vllm_install_core as _vllm_core
+from Vera.vera import node_threads_core as _node_threads_core
 
 log = logging.getLogger("vera.provision.components")
 _HERE = Path(__file__).parent
@@ -117,6 +119,12 @@ def _primary_lan_ip() -> str:
 #  basename), how to install deps, and how to run it. {py}=python, {port},
 #  {vera_url} are filled at deploy time.
 # ═════════════════════════════════════════════════════════════════════════════
+VLLM_NODE_DIR = "/opt/vera-vllm"
+VLLM_NODE_PORT = 8000
+VLLM_NODE_ENV = "/etc/default/vera-vllm"
+VLLM_NODE_SERVICE = "vera-vllm_server"
+VLLM_STORE_WHEELS = "/opt/vera-store/models/vllm"
+
 _COMPONENTS: Dict[str, Dict[str, Any]] = {
     "gpu_inference": {
         # The media server, in the layout every node already runs it in (see
@@ -359,6 +367,43 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                 "checkpoints, curated TTS files. One job at a time. Runs only on the "
                 "builder CT, the one box with the store mounted read-write.",
     },
+    "vllm_server": {
+        "label": "vLLM server",
+        "port": VLLM_NODE_PORT,
+        "python": False,                 # its own uv-managed venv (install_script)
+        "install_dir": VLLM_NODE_DIR, "venv": "venv",
+        "files": [],
+        # The shared recipe (vera/vllm/vllm_install_core): GPU nodes take the
+        # release +cu129 wheel with torch cu126 (the PyPI build has no V100 /
+        # sm_70 kernels); CPU nodes the newest wheel in the store's vllm/ family,
+        # built for the fleet's Debian 12 CTs with the AVX2 int4 kernel
+        # (vllm-build-cpu-wheel.sh). Part of the version hash (_deps_spec).
+        "install_script": lambda has_gpu, venv, sudo: (
+            _vllm_core.system_deps_cmd(sudo) + "\n" +
+            _vllm_core.install_script(
+                venv, mode="gpu" if has_gpu else "cpu",
+                wheel_dir=VLLM_STORE_WHEELS,
+                # parity with the node's Ollama runners (LLAMA_ARG_THREADS); the
+                # switch writes the node's own num_thread over this default
+                cpu_threads=_node_threads_core.DEFAULT_CPU_THREADS)),
+        # serve.sh (written by the recipe) sources the mode's env; the model comes
+        # from the unit's environment file, which nodes.backend.switch writes.
+        "run": VLLM_NODE_DIR + "/venv/serve.sh $VLLM_MODEL {port} $VLLM_EXTRA_ARGS",
+        "unit_env_file": VLLM_NODE_ENV,
+        "env": {"HF_HOME": VLLM_NODE_DIR + "/hf", "HOME": "/"},
+        # Installed beside the node's Ollama but NEVER started by a deploy or a
+        # release sync: a node runs one LLM backend, and nodes.backend.switch is
+        # what moves it. A sync still updates it, and restarts it only on a node
+        # already switched to vLLM.
+        "autostart": False,
+        "heavy": True, "sync": True, "systemd": True,
+        "desc": "vLLM OpenAI-compatible server installed beside the node's Ollama, "
+                "not running: nodes.backend.switch moves the node between the two "
+                "(the node keeps its routing identity and its worker stack). V100 "
+                "nodes use the CUDA build that keeps sm_70; CPU nodes a wheel from "
+                "the shared store built for them (INT8 W8A8 and AWQ/GPTQ int4 on "
+                "AVX2), with the same CPU thread count as the node's Ollama.",
+    },
 }
 
 
@@ -403,11 +448,17 @@ def _read_local(rel: str) -> Optional[bytes]:
 def _deps_spec(comp: Dict[str, Any]) -> bytes:
     """What a deploy installs, as bytes, so a pin change moves the version too."""
     req = _read_local(comp["requirements"]) if comp.get("requirements") else None
+    script = comp.get("install_script")
     return json.dumps({"requirements": (req or b"").decode("utf-8", "replace"),
                        "pip_steps": comp.get("pip_steps") or [],
                        "pip": comp.get("pip") or [],
                        "pip_optional": comp.get("pip_optional") or [],
-                       "apt": comp.get("apt") or []}, sort_keys=True).encode("utf-8")
+                       "apt": comp.get("apt") or [],
+                       "install_script": ([script(True, "<venv>", ""), script(False, "<venv>", "")]
+                                          if callable(script) else []),
+                       "autostart": comp.get("autostart", True),
+                       "unit_env_file": comp.get("unit_env_file", "")},
+                      sort_keys=True).encode("utf-8")
 
 
 def _shipped_files(comp: Dict[str, Any]) -> Optional[List[tuple]]:
@@ -667,6 +718,21 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
             out["error"] = "dependency install failed (see install_log)"
             return out
 
+    # 2a) a component installed by its own script (vLLM: uv venv + a wheel) -
+    # one remote script, its marker proves it reached the end.
+    if install_deps and callable(comp.get("install_script")):
+        s = _sudo_for(rec, sudo)
+        script = comp["install_script"](has_gpu, venv, s)
+        ires = await _ssh(host_id, f"mkdir -p {shlex.quote(edge_dir)} && " + script,
+                          timeout=max(int(timeout or 900), 3600))
+        ilog = (ires.get("stdout", "") or "") + "\n" + (ires.get("stderr", "") or "")
+        out["installed"] = _vllm_core.DONE_MARKER in (ires.get("stdout", "") or "")
+        out["install_log"] = ilog[-3000:]
+        if not out["installed"]:
+            out["ok"] = False
+            out["error"] = "install script failed (see install_log)"
+            return out
+
     # 2b) record the version - files and deps are in place; before launch, so a
     # component that reads its own version at startup sees this one.
     if version:
@@ -690,9 +756,10 @@ async def cap_deploy(host_id: str = "", component: str = "", port: int = 0,
         py = _launch_python(comp, install_deps, venv)
         run_cmd = comp["run"].format(py=py, port=port, vera_url=shlex.quote(vera_url) if vera_url else "")
         env = {k: v.format(port=port) for k, v in (comp.get("env") or {}).items()}
-        if systemd:
+        if systemd or comp.get("autostart") is False:
             lres = await _launch_systemd(host_id, rec, component, comp, run_cmd, env, sudo, edge_dir)
             out["mode"] = "systemd"
+            out["autostart"] = comp.get("autostart", True)
         else:
             lres = await _launch_nohup(host_id, component, run_cmd, env, edge_dir)
             out["mode"] = "nohup"
@@ -781,6 +848,12 @@ async def _launch_systemd(host_id: str, rec: Dict, key: str, comp: Dict,
                           edge_dir: str = "") -> Dict:
     s = _sudo_for(rec, sudo)
     envlines = "".join(f"Environment={k}={v}\\n" for k, v in env.items())
+    if comp.get("unit_env_file"):
+        # optional ("-"): the unit is valid before the file exists. $VARS in
+        # ExecStart are systemd's, read from that file - keep them from the
+        # remote shell's expansion of the printf below.
+        envlines += f"EnvironmentFile=-{comp['unit_env_file']}\\n"
+        run_cmd = run_cmd.replace("$", "\\$")
     # Heredoc expands $HOME on the host so ExecStart/WorkingDirectory are absolute.
     unit = (
         "[Unit]\\n"
@@ -793,12 +866,18 @@ async def _launch_systemd(host_id: str, rec: Dict, key: str, comp: Dict,
         "[Install]\\nWantedBy=multi-user.target\\n"
     )
     svc = f"vera-{key}.service"
-    cmd = (
-        f'printf "{unit}" | {s}tee /etc/systemd/system/{svc} >/dev/null && '
+    if comp.get("autostart") is False:
+        # Installed, not started: only a unit that is already running (a node
+        # switched to this backend) is restarted onto the new code.
+        start = (f"{{ {s}systemctl is-active --quiet {svc} && {s}systemctl restart {svc} "
+                 f"|| true; }} && ")
+    else:
         # enable + RESTART, not `enable --now`: --now starts a stopped unit but
         # leaves a running one on the old code, so a redeploy changed nothing.
-        f"{s}systemctl daemon-reload && {s}systemctl enable {svc} && "
-        f"{s}systemctl restart {svc} && "
+        start = f"{s}systemctl enable {svc} && {s}systemctl restart {svc} && "
+    cmd = (
+        f'printf "{unit}" | {s}tee /etc/systemd/system/{svc} >/dev/null && '
+        f"{s}systemctl daemon-reload && " + start +
         f'echo "VERA_LAUNCHED service={svc}"'
     )
     res = await _ssh(host_id, cmd, timeout=60)

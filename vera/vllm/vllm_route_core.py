@@ -18,7 +18,7 @@ they cannot drift apart:
                       such as the Ollama tag it stands in for), else the server's
                       own model - reported back, never silently.
   * gate           -> `gate_as` when the server shares hardware with an Ollama
-                      node (the V100 twin gates as gpu-250), else its own id.
+                      node (vLLM on gpu-250's V100 gates as gpu-250), else its own id.
 """
 from __future__ import annotations
 

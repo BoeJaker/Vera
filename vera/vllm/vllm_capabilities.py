@@ -117,9 +117,11 @@ from Vera.vera.config import cfg
 try:
     from Vera.vera.vllm import vllm_registry_core as _reg_core
     from Vera.vera.vllm import vllm_route_core as _route_core
+    from Vera.vera.vllm import node_backend_core as _backend_core
 except Exception:                                    # worktree / app-free import
     from vera.vllm import vllm_registry_core as _reg_core
     from vera.vllm import vllm_route_core as _route_core
+    from vera.vllm import node_backend_core as _backend_core
 
 log = logging.getLogger("vera.vllm")
 
@@ -135,7 +137,7 @@ class VLLMInstance:
     has_gpu: bool = True
     priority: int = 0
     api_key: str = ""                     # optional bearer token
-    # Ollama node id this server shares hardware with (e.g. the V100 twin of
+    # Ollama node id this server shares hardware with (e.g. vLLM on the V100 of
     # gpu-250): its calls take THAT node's semaphore + cross-process gate, so a
     # vLLM and an Ollama generation can never overlap on one device.
     gate_as: str = ""
@@ -435,6 +437,18 @@ def pick_vllm_instance(
     return min(candidates.values(), key=_score)
 
 
+def effective_rule(rule: Optional[dict]) -> Optional[dict]:
+    """The rule as routing applies it: a pin naming a node that is switched to
+    vLLM (nodes.backend.switch) becomes "vllm:<its vLLM instance>", so rules keep
+    naming the node ("cpu-246") whichever backend it serves."""
+    if not rule or not rule.get("pin"):
+        return rule
+    pin = _backend_core.resolve_pin(str(rule["pin"]),
+                                    getattr(_orch, "OLLAMA_INSTANCES", {}) or {},
+                                    VLLM_INSTANCES)
+    return rule if pin == rule["pin"] else dict(rule, pin=pin)
+
+
 async def routed_call(kind: str, rule: Optional[dict], *, model: Optional[str] = None,
                       prefer_gpu: bool = False, job_type: str = "",
                       slot_timeout: Optional[float] = None,
@@ -453,6 +467,7 @@ async def routed_call(kind: str, rule: Optional[dict], *, model: Optional[str] =
     Otherwise {ok, result, instance, model, gate, error}; on ok=False the caller
     falls back to Ollama routing, exactly as for a failed Ollama node.
     """
+    rule = effective_rule(rule)
     pin = _route_core.pin_target(rule)
     if not pin:
         return None
@@ -514,8 +529,9 @@ def chat_target(rule: Optional[dict], *, model: Optional[str] = None,
     """Where a routed CHAT goes when its rule pins vLLM (None = Ollama routing).
 
     {instance, gate, url, model}: `gate` is the semaphore/GPU-gate key the chat
-    path takes (the Ollama twin's id for a server that shares its hardware).
+    path takes (the Ollama node's id for a server on the same hardware).
     """
+    rule = effective_rule(rule)
     pin = _route_core.pin_target(rule)
     if not pin:
         return None

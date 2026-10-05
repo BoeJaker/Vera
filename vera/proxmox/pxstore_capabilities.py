@@ -86,6 +86,7 @@ from Vera.vera.capability_orchestration import (
 # A guest's exec login: its pve:<vmid>@ label, else its guest tag (one SSH store).
 from Vera.vera.provisioning import ssh_store_merge_core as _ssh_store
 from Vera.vera.vllm import vllm_install_core as _vllm_install_core
+from Vera.vera.vllm import node_backend_core as _node_backend_core
 from Vera.vera.proxmox import pool_core as _pool
 from Vera.vera.proxmox.pxstore_attach_core import (
     DEFAULT_CT_PATH as _ATTACH_CT_PATH,
@@ -2083,16 +2084,24 @@ async def cap_backend_switch(cluster_id: str = "", node: str = "", vmid: int = 0
         return {"error": "backend must be 'vllm' or 'ollama'"}
     if not (cluster_id and node and vmid):
         return {"error": "cluster_id, node, vmid required"}
+    # The fleet's Ollama unit is ollama-vera (stock installs: ollama), fronted by
+    # its activity tap on the public port; both go down / come back together.
+    # (nodes.backend.switch is the node-level switch for the vllm_server
+    # component; this one serves CTs provisioned with provision_vllm.)
+    _u = _node_backend_core.OLLAMA_UNIT_EXPR
+    _tap = "vera-ollama-tap@11435"
     if backend == "vllm":
-        inner = ("systemctl stop ollama 2>/dev/null || true; "
+        inner = (f"U={_u}; systemctl disable --now {_tap} 2>/dev/null || true; "
+                 "systemctl disable --now $U 2>/dev/null || true; "
                  "[ -e /dev/nvidia0 ] && echo VERA_GPU=1; "
                  "systemctl enable --now vera-vllm && "
                  "sleep 2 && systemctl is-active vera-vllm")
     else:
         inner = ("systemctl stop vera-vllm 2>/dev/null || true; "
                  "systemctl disable vera-vllm 2>/dev/null || true; "
-                 "systemctl enable --now ollama && "
-                 "sleep 2 && systemctl is-active ollama")
+                 f"U={_u}; systemctl enable --now $U && "
+                 f"{{ systemctl cat {_tap} >/dev/null 2>&1 && systemctl enable --now {_tap} || true; }} && "
+                 "sleep 2 && systemctl is-active $U")
     r = await _node_ssh(cluster_id, node, _sh(_pct_exec(vmid, inner)), timeout=90)
     active = r.get("stdout", "").strip().splitlines()[-1:] or [""]
     if r.get("rc") != 0 or active[0] != "active":

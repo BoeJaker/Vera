@@ -67,13 +67,26 @@ def cpu_threads(nproc: int) -> int:
 
 def env_body(mode: str, *, max_model_len: int = 8192, gpu_util: float = 0.85,
              cpu_kv_gb: int = 2, nproc_expr: str = "$(nproc)",
-             dtype_expr: str = "") -> str:
+             dtype_expr: str = "", cpu_reserve: int = 1, cpu_threads: int = 0) -> str:
     """The vllm.env body for a concrete mode ('gpu' | 'cpu').
 
     Box-dependent values (core count, the GPU's dtype flag) are shell
     expressions; the install script writes this through an unquoted heredoc,
     so they are expanded on the box when the file is written.
+
+    cpu_reserve: on a dedicated box, cores left out of vLLM's OpenMP pool (1 =
+    the engine loop).
+    cpu_threads: a fixed thread count instead - on a fleet node, the same count
+    its Ollama runners use (node_threads_core, LLAMA_ARG_THREADS), written as a
+    DEFAULT so the unit's environment (nodes.backend.switch writes the node's own
+    num_thread there) overrides it.
     """
+    r = max(1, int(cpu_reserve))
+    if int(cpu_threads or 0) > 0:
+        # "\$" survives the install script's unquoted heredoc as a literal "$"
+        omp = "OMP_NUM_THREADS=\\${OMP_NUM_THREADS:-%d}\n" % int(cpu_threads)
+    else:
+        omp = "OMP_NUM_THREADS=$(( %s > %d ? %s - %d : 1 ))\n" % (nproc_expr, r, nproc_expr, r)
     if mode == "gpu":
         return ("# vLLM (gpu). Volta (cc 7.x) has no bf16 -> --dtype half.\n"
                 "VLLM_USE_FLASHINFER_SAMPLER=0\n"
@@ -83,10 +96,10 @@ def env_body(mode: str, *, max_model_len: int = 8192, gpu_util: float = 0.85,
         return ("# vLLM (cpu). auto OMP binding ran the worker on one thread; nobind +\n"
                 "# OMP_NUM_THREADS uses the cores. fp32: bf16 is emulated without AVX-512.\n"
                 "VLLM_CPU_OMP_THREADS_BIND=nobind\n"
-                "OMP_NUM_THREADS=$(( %s > 1 ? %s - 1 : 1 ))\n"
+                + omp +
                 "VLLM_CPU_KVCACHE_SPACE=%d\n"
                 'VLLM_SERVE_ARGS="--dtype float32 --max-model-len %d"\n'
-                % (nproc_expr, nproc_expr, int(cpu_kv_gb), int(max_model_len)))
+                % (int(cpu_kv_gb), int(max_model_len)))
     raise ValueError(f"env_body needs a concrete mode, not {mode!r}")
 
 
@@ -102,10 +115,16 @@ if [ "$MODE" = auto ]; then
   if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then MODE=gpu; else MODE=cpu; fi
 fi
 echo "vllm install mode=$MODE"
-if [ "$MODE" = cpu ]; then
+WHEEL_DIR=@WHEEL_DIR@
+if [ -z "$SPEC" ] && [ "$MODE" = cpu ] && [ -n "$WHEEL_DIR" ]; then
+  # a wheel built for the fleet (vllm-build-cpu-wheel.sh: Debian 12 glibc, AVX2 int4)
+  SPEC=$(ls -1 "$WHEEL_DIR"/vllm-*.whl 2>/dev/null | sort -V | tail -1 || true)
+  [ -n "$SPEC" ] && echo "vllm wheel from $WHEEL_DIR"
+fi
+if [ -z "$SPEC" ] && [ "$MODE" = cpu ]; then
   GL=$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+$' || echo 0.0)
   if [ "$(printf '%s\n' @GLIBC@ "$GL" | sort -V | head -1)" != @GLIBC@ ]; then
-    echo "vllm cpu wheel needs glibc >= @GLIBC@; this host has $GL (use Debian 13 / Ubuntu 24.04)" >&2
+    echo "the released vllm cpu wheel needs glibc >= @GLIBC@; this host has $GL - build one with vllm-build-cpu-wheel.sh into the store's vllm/ family" >&2
     exit 3
   fi
 fi
@@ -165,12 +184,17 @@ echo @DONE@
 def install_script(venv: str, *, mode: str = "auto", version: str = "",
                    pip_spec: str = "", max_model_len: int = 8192,
                    gpu_util: float = 0.85, cpu_kv_gb: int = 2,
-                   done_marker: str = DONE_MARKER) -> str:
+                   done_marker: str = DONE_MARKER, wheel_dir: str = "",
+                   cpu_reserve: int = 1, cpu_threads: int = 0) -> str:
     """Bash that installs vLLM into `venv` for `mode` and writes vllm.env + serve.sh.
 
     mode      'auto' picks gpu when an NVIDIA device answers, else cpu.
     version   a vLLM release (e.g. '0.31.0'); blank = the latest release.
     pip_spec  an explicit requirement or wheel URL; skips the release lookup.
+    wheel_dir (cpu) the newest vllm-*.whl in this directory wins over the release
+              wheel - e.g. the shared store's vllm/ family, holding a wheel built
+              for the fleet's Debian 12 nodes with the AVX2 int4 kernel.
+    cpu_reserve / cpu_threads (cpu) vLLM's OpenMP thread count (see env_body).
     Prints `done_marker` last; any failure exits non-zero before it.
     """
     mode = normalise_mode(mode)
@@ -183,12 +207,14 @@ def install_script(venv: str, *, mode: str = "auto", version: str = "",
         "@MODE@": q(mode),
         "@VER@": q(version.strip()),
         "@SPEC@": q(pip_spec.strip()),
+        "@WHEEL_DIR@": q(wheel_dir.strip()),
         "@GLIBC@": CPU_MIN_GLIBC,
         "@TAG_GPU@": WHEEL_TAG["gpu"], "@TAG_CPU@": WHEEL_TAG["cpu"],
         "@IDX_GPU@": TORCH_INDEX["gpu"], "@IDX_CPU@": TORCH_INDEX["cpu"],
         "@GPU_ENV@": env_body("gpu", max_model_len=max_model_len, gpu_util=gpu_util,
                               dtype_expr="$DT"),
-        "@CPU_ENV@": env_body("cpu", max_model_len=max_model_len, cpu_kv_gb=cpu_kv_gb),
+        "@CPU_ENV@": env_body("cpu", max_model_len=max_model_len, cpu_kv_gb=cpu_kv_gb,
+                              cpu_reserve=cpu_reserve, cpu_threads=cpu_threads),
         "@DONE@": q(done_marker),
     }
     out = _SCRIPT
