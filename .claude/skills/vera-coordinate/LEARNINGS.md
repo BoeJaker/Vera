@@ -43,3 +43,12 @@ Append-only autopsy log (format: `skill-smith` §3). Newest at the bottom.
   landed through the pipeline. A broadcast is a notice, not an instruction.
 - evidence: vera-13 reply, 2026-10-04
 - status: open
+
+## 2026-10-05 — a lane-only board upsert erased the item's metadata
+- task: close W5-05 after the live observability comparison (item `w5-05-live-observability-backends`)
+- what happened: `board.item.upsert` was called with only `id` and `lane`; it kept comments but replaced the title,
+  labels, project, plan, branch, pipeline, session, executor, reviewer, and body with defaults
+- cause: the coordination procedure treated upsert like a partial patch, but item fields are replacement-style
+- rule now: fetch with `board.item.get`, then resubmit the complete item when changing a lane or metadata field
+- evidence: board item `w5-05-live-observability-backends`, comments 1-10; pipeline `f56b4369`
+- status: folded into SKILL.md v1

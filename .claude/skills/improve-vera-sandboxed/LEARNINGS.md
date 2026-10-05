@@ -108,3 +108,24 @@ rules; new ones start here. Newest at the bottom.
   "running critical tier" after a gate ends.
 - evidence: release 0340fcd1 (held for 2 gates, then released); pipeline f3ebd092 record
 - status: open (belongs in §8)
+
+## 2026-10-05 — health alone was not enough to justify census control
+- task: admit the W5-05 Langfuse live trial (item `w5-05-live-observability-backends`)
+- what happened: census control was changed after reading `/health`; the owner reported the census was already
+  stopped, and the control change unnecessarily disturbed its state
+- cause: the admission check did not reconcile `/health` with `census.control`, `census.live`, and the referenced
+  loop session before mutation
+- rule now: read all three census surfaces and the live session before any control write; an owner correction
+  triggers revalidation, not another compensating control write
+- evidence: census `intent-core-probe-run8`; board item `w5-05-live-observability-backends`
+- status: folded into SKILL.md v1
+
+## 2026-10-05 — generated env values and unbounded probes delayed a disposable backend trial
+- task: run the isolated Langfuse half of W5-05 (pipeline `f56b4369`)
+- what happened: shell-sourcing the generated env file failed on an unquoted display value containing spaces; a
+  readiness `curl` without a total timeout then held the sandbox exec channel while the web service initialized
+- cause: the harness mixed Docker env-file syntax with shell-source syntax, and the readiness probe had no bound
+- rule now: quote shell-sourceable generated values or parse only exact credential keys, and give every readiness
+  probe explicit connect and total timeouts
+- evidence: shared-planning/observability-backend-comparison/EVIDENCE-2026-10-04.md; pipeline `f56b4369`
+- status: folded into SKILL.md v1

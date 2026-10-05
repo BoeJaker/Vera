@@ -77,6 +77,11 @@ to know who owns it.
 4. **If it's a defect list from a recon**, stage it in a unit's `ISSUES.md` in board-item form and file it when the
    board is reachable.
 
+`board.item.upsert` replaces omitted item fields with their defaults; it is not a
+partial patch. Before changing only a lane or one metadata field, read the item
+with `board.item.get` and resubmit its complete title, labels, routing metadata,
+and body. Comments are preserved independently.
+
 Live peer messages (Claude's cross-session messaging) are a convenience. **Anything agreed that way is written to
 the board item or the plan**, or it didn't happen.
 
