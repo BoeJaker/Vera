@@ -70,3 +70,25 @@ def test_a_transcript_line_stored_as_a_message_is_a_transcript():
     assert s.class_of({"record_type": "message", "text": "[Claude Code · repo] [tool_use: Edit]"}) == "transcript"
     assert s.class_of({"record_type": "message", "text": "  [Codex] ran tests"}) == "transcript"
     assert s.class_of({"record_type": "message", "text": "what did we decide about the census"}) == "conversation"
+
+
+# -- the user's controls (owner, 2026-10-05: "add controls for the user to select what gets forgotten and how quickly")
+def test_the_policy_lays_the_users_settings_over_the_defaults():
+    P = s.policy_from({"conversation": {"half_life_days": 60}, "tool": {"enabled": False}, "bogus": {"enabled": True}})
+    assert P["conversation"]["half_life_days"] == 60 and P["conversation"]["enabled"]
+    assert P["tool"]["enabled"] is False and "bogus" not in P
+    assert P["fact"]["enabled"] is False                     # no decay, nothing to fade by
+
+
+def test_settings_are_clamped_so_nothing_can_fade_everything_overnight():
+    P = s.policy_from({"dream": {"half_life_days": 0.001, "floor": 0.99}, "session": {"half_life_days": "x"}})
+    assert P["dream"]["half_life_days"] == s.HALF_LIFE_RANGE[0] and P["dream"]["floor"] == s.FLOOR_RANGE[1]
+    assert P["session"]["half_life_days"] == 7.0               # a bad value keeps the default
+
+
+def test_a_class_the_user_keeps_never_fades_and_a_slower_one_fades_later():
+    old_chat = rec(age_days=100)
+    assert s.fades(old_chat, None, NOW)
+    assert not s.fades(old_chat, None, NOW, s.policy_from({"conversation": {"half_life_days": 60}}))
+    assert not s.fades(old_chat, None, NOW, s.policy_from({"conversation": {"enabled": False}}))
+    assert not s.fades(rec("cap_call", age_days=300), None, NOW, s.policy_from({"tool": {"enabled": False}}))

@@ -124,3 +124,43 @@ def test_the_capability_answers_at_once_and_runs_one_scan_in_the_background(monk
     a, b = _arun(go())
     assert a == {"report": None, "computing": True} and b["computing"] is True
     assert started == [1]
+
+
+class _Redis:
+    def __init__(self):
+        self.kv = {}
+
+    async def get(self, k):
+        return self.kv.get(k)
+
+    async def set(self, k, v):
+        self.kv[k] = v
+
+
+def test_the_controls_are_kept_merged_and_reset(monkeypatch):
+    H = _hooks()
+    r = _Redis()
+    monkeypatch.setattr(H, "_redis", lambda: r)
+    fn = getattr(H.memory_fade_policy, "__wrapped__", H.memory_fade_policy)
+    first = _arun(fn())
+    assert first["overrides"] == {} and first["policy"]["conversation"]["half_life_days"] == 14.0
+    _arun(fn(set={"conversation": {"half_life_days": 60}}, by="owner"))
+    out = _arun(fn(set={"tool": {"enabled": False}, "nonsense": {"enabled": True}}))
+    assert out["overrides"] == {"conversation": {"half_life_days": 60}, "tool": {"enabled": False}}
+    assert out["policy"]["tool"]["enabled"] is False and out["ranges"]["floor"] == [0.0, 0.5]
+    back = _arun(fn(reset=True))
+    assert back["overrides"] == {} and back["policy"] == back["defaults"]
+
+
+def test_the_report_uses_the_policy_in_force(monkeypatch):
+    H = _hooks()
+    r = _Redis()
+    import json as _json
+    r.kv[H._FADE_POLICY_KEY] = _json.dumps({"overrides": {"tool": {"enabled": False}}})
+
+    async def pool():
+        return _Pool(_Conn())
+    monkeypatch.setattr(H, "_usage_pool", pool)
+    monkeypatch.setattr(H, "_redis", lambda: r)
+    out = _arun(H._fade_compute(5, 500))
+    assert out["by_class"]["tool"]["fading"] == 0 and out["policy_in_force"]["tool"]["enabled"] is False

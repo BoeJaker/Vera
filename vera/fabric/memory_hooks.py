@@ -1254,6 +1254,68 @@ async def memory_usage_top(order: str = "used", limit: int = 20, trace_id=None):
 
 
 _FADE_REPORT_KEY = "vera:memory:fade:report"
+_FADE_POLICY_KEY = "vera:memory:fade:policy"
+
+
+async def _fade_overrides() -> Dict[str, Any]:
+    """The user's fading settings (owner, 2026-10-05: choose what gets forgotten and how quickly)."""
+    r = _redis()
+    if r is None:
+        return {}
+    try:
+        raw = await r.get(_FADE_POLICY_KEY)
+        if not raw:
+            return {}
+        d = json.loads(raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else raw)
+        return d.get("overrides") or {} if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+@capability(
+    "memory.fade.policy",
+    http_method="POST", http_path="/memory/fade/policy", http_tags=["memory"],
+    memory="off",
+    description="The user's controls over memory fading (owner, 2026-10-05: 'select what gets forgotten and how "
+                "quickly'). Per class of memory (conversation, session, observation, research, dream, transcript, "
+                "tool, estate, fact, preference): enabled (may it be forgotten at all), half_life_days (how quickly; "
+                "null = never decays) and floor (the strength below which it fades). Without 'set' it reads. Inputs: "
+                "set (dict {class: {enabled?, half_life_days?, floor?}} - merged over the current settings), reset "
+                "(bool - back to the defaults), by (str). Output: {policy (in force), overrides, defaults, ranges, "
+                "version, updated_at, by}.",
+)
+async def memory_fade_policy(set: Optional[Dict[str, Any]] = None, reset: bool = False, by: str = "",
+                             trace_id=None):
+    r = _redis()
+    current = await _fade_overrides()
+    stored: Dict[str, Any] = {}
+    if reset or set:
+        overrides = {} if reset else dict(current)
+        for cls, o in (set or {}).items() if isinstance(set, dict) else []:
+            if cls in _strength_core.HALF_LIFE and isinstance(o, dict):
+                merged = dict(overrides.get(cls) or {})
+                merged.update({k: v for k, v in o.items() if k in ("enabled", "half_life_days", "floor")})
+                overrides[cls] = merged
+        stored = {"overrides": overrides, "updated_at": now_iso(), "by": str(by or "")[:80]}
+        if r is None:
+            return {"error": "redis not connected - the settings cannot be kept"}
+        await r.set(_FADE_POLICY_KEY, json.dumps(stored))
+        current = overrides
+        try:
+            await emit_event({"type": "memory.fade.policy", "by": stored["by"], "classes": sorted(set or {})})
+        except Exception:
+            pass
+    else:
+        try:
+            raw = await r.get(_FADE_POLICY_KEY) if r is not None else None
+            stored = json.loads(raw) if raw else {}
+        except Exception:
+            stored = {}
+    return {"policy": _strength_core.policy_from(current), "overrides": current,
+            "defaults": _strength_core.policy_from({}),
+            "ranges": {"half_life_days": list(_strength_core.HALF_LIFE_RANGE), "floor": list(_strength_core.FLOOR_RANGE)},
+            "version": _strength_core.POLICY_VERSION, "updated_at": stored.get("updated_at", ""),
+            "by": stored.get("by", "")}
 
 
 @capability(
@@ -1304,6 +1366,7 @@ async def _fade_compute(samples: int = 5, batch: int = 5000) -> Dict[str, Any]:
     if pool is None:
         return {"error": "memory postgres not connected"}
     now = time.time()
+    policy = _strength_core.policy_from(await _fade_overrides())
     usage: Dict[str, Dict[str, Any]] = {}
     by: Dict[str, Dict[str, Any]] = {}
     total = fading = 0
@@ -1324,12 +1387,12 @@ async def _fade_compute(samples: int = 5, batch: int = 5000) -> Dict[str, Any]:
                     rec = dict(r)
                     rec["text"] = rec.pop("head") or ""
                     cls = _strength_core.class_of(rec)
-                    s = _strength_core.strength(rec, usage.get(rec["id"]), now)
+                    s = _strength_core.strength(rec, usage.get(rec["id"]), now, policy)
                     b = by.setdefault(cls, {"total": 0, "fading": 0, "sum": 0.0, "samples": []})
                     b["total"] += 1
                     b["sum"] += s
                     total += 1
-                    if _strength_core.fades(rec, usage.get(rec["id"]), now):
+                    if _strength_core.fades(rec, usage.get(rec["id"]), now, policy):
                         b["fading"] += 1
                         fading += 1
                         if len(b["samples"]) < n_samples:
@@ -1346,7 +1409,7 @@ async def _fade_compute(samples: int = 5, batch: int = 5000) -> Dict[str, Any]:
                         x["text"] = texts.get(x["id"], "")
     except Exception as e:
         return {"error": str(e)[:200], "total": total}
-    out = {"policy": _strength_core.POLICY_VERSION, "dry_run": True, "total": total, "fading": fading,
+    out = {"policy": _strength_core.POLICY_VERSION, "policy_in_force": policy, "dry_run": True, "total": total, "fading": fading,
            "by_class": {k: {"total": v["total"], "fading": v["fading"],
                             "mean_strength": round(v["sum"] / v["total"], 4) if v["total"] else 0.0,
                             "samples": v["samples"]} for k, v in sorted(by.items(), key=lambda kv: -kv[1]["total"])},
