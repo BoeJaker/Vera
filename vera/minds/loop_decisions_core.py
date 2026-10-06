@@ -29,6 +29,13 @@ except Exception:                       # worktree / app-free import
 
 CONTROLLER_Q = "loop.controller_action"
 VERIFY_Q = "loop.step_verify"
+TIER_Q = "loop.tier"
+INTENT_Q = "loop.intent"
+TIER_LABELS = ["single", "simple", "complex", "strategic"]
+INTENT_LABELS = ["build", "research", "action", "mixed"]
+# The steps a run of each tier should take, for the tier's outcome (ROADMAP §5.1: "executed step
+# count inside the tier's band"). The code has no bands of its own; these are the measuring rule, v0.
+TIER_BANDS = {"simple": (1, 3), "complex": (2, 12), "strategic": (3, 10 ** 6)}
 CONTROLLER_LABELS = ["continue", "replan", "insert", "stop"]
 VERIFY_LABELS = ["met", "not_met"]
 
@@ -82,9 +89,63 @@ def verify_decision(sid: str, step_id: Any, met: Any, attempt: int, *, model: st
         detail={"step": step_id, "attempt": int(attempt)})
 
 
-def run_outcomes(decisions: List[Dict[str, Any]], gate: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def tier_decision(sid: str, tier: str, info: Dict[str, Any], *, model: str = "",
+                  minds_digest: str = "default", origin: str = "user") -> Dict[str, Any]:
+    tier = tier if tier in TIER_LABELS else "simple"
+    heur, llm = _short(info.get("heuristic"), 20), _short(info.get("llm"), 20)
+    return LC.make_decision(
+        TIER_Q, tier, origin=origin, surface="loop", qtype="choice", labels=TIER_LABELS,
+        state={"heuristic": heur, "llm": llm, "suggested": _short(info.get("suggested"), 20)},
+        state_ref={"kind": "loop_run", "id": _short(sid, 80)},
+        decider="llm" if llm else "rule", implementation=_short(model, 80) or "tier",
+        mode="llm_only" if llm else "rule", minds_digest=minds_digest or "default",
+        run_id=_short(sid, 80), session_id=_short(sid, 80),
+        detail={"heuristic": heur, "llm": llm,
+                "escalation_suppressed": bool(info.get("escalation_suppressed"))})
+
+
+def intent_decision(sid: str, intent: str, info: Dict[str, Any], *, model: str = "",
+                    minds_digest: str = "default", origin: str = "user") -> Dict[str, Any]:
+    """Recorded for imitation only: the roadmap rates intent outcomes weak, so none is judged here."""
+    intent = intent if intent in INTENT_LABELS else "mixed"
+    heur, llm = _short(info.get("heuristic"), 20), _short(info.get("llm"), 20)
+    return LC.make_decision(
+        INTENT_Q, intent, origin=origin, surface="loop", qtype="choice", labels=INTENT_LABELS,
+        state={"heuristic": heur, "llm": llm}, state_ref={"kind": "loop_run", "id": _short(sid, 80)},
+        decider="llm" if llm else "rule", implementation=_short(model, 80) or "intent",
+        mode="llm_only" if llm else "rule", minds_digest=minds_digest or "default",
+        run_id=_short(sid, 80), session_id=_short(sid, 80), detail={"heuristic": heur, "llm": llm})
+
+
+def tier_outcome(decision: Dict[str, Any], steps_run: Optional[int], fast_path: Optional[bool],
+                 gate: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """single: right when the fast path answered it, wrong when it fell through to planning.
+    Other tiers: right when the executed steps sit in the tier's band and the final gate found
+    nothing missing. None when the run said too little to judge."""
+    tier = decision["answer"]
+    if tier == "single":
+        if fast_path is None:
+            return None
+        return LC.make_outcome(decision["decision_id"], "correct" if fast_path else "wrong",
+                               "run.fast_path", "medium", detail={"steps": steps_run})
+    band = TIER_BANDS.get(tier)
+    if band is None or steps_run is None:
+        return None
+    missing = [m for m in ((gate or {}).get("missing") or []) if str(m).strip()]
+    ok = band[0] <= int(steps_run) <= band[1] and not missing
+    return LC.make_outcome(decision["decision_id"], "correct" if ok else "wrong", "run.tier_band", "medium",
+                           detail={"steps": int(steps_run), "band": list(band), "missing": len(missing)})
+
+
+def run_outcomes(decisions: List[Dict[str, Any]], gate: Optional[Dict[str, Any]],
+                 steps_run: Optional[int] = None, fast_path: Optional[bool] = None) -> List[Dict[str, Any]]:
     """Outcome v0 rows for the decisions of one run, in the order they were made."""
     out: List[Dict[str, Any]] = []
+    for d in decisions:
+        if d["question_id"] == TIER_Q:
+            o = tier_outcome(d, steps_run, fast_path, gate)
+            if o is not None:
+                out.append(o)
     verifies = [(i, d) for i, d in enumerate(decisions) if d["question_id"] == VERIFY_Q]
 
     # a not_met verdict that a later attempt of the same step turned into met

@@ -94,7 +94,9 @@ def test_runner_hooks_are_wired():
     src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
     assert "_dl.controller(step[\"id\"], action, ctrl" in src
     assert "_dl.verify(step.get(\"id\"), v[\"met\"], len(_vr)" in src
-    assert "_dl.finish(_gate_last)" in src
+    assert "_dl.finish(_gate_last, steps_run=len(results)" in src
+    assert "_dl.tier(tier, tier_info" in src and "_dl.intent(intent, _intent_info" in src
+    assert "_dl.finish({}, steps_run=1, fast_path=True)" in src
     for line in src.splitlines():
         if "_dl." in line and ("await " in line):
             pytest.fail("decision recording must not add an await: " + line.strip())
@@ -109,3 +111,29 @@ def test_declared_origin_wins_when_it_is_a_v0_origin():
 def test_census_harness_declares_its_origin():
     src = open(os.path.join(ROOT, "tools", "loop-census", "run_census.py"), encoding="utf-8").read()
     assert '_args["decision_origin"] = "census"' in src
+
+
+
+def test_tier_and_intent_rows_and_the_tier_outcome():
+    rows = []
+    rl = _run(rows.append)
+    rl.tier("complex", {"heuristic": "simple", "llm": "complex", "suggested": "complex"}, model="q")
+    rl.intent("build", {"heuristic": "build", "llm": ""})
+    assert [r["question_id"] for r in rows] == ["loop.tier", "loop.intent"]
+    assert rows[0]["decider"] == "llm" and rows[1]["decider"] == "rule"
+    assert all(LC.check_decision(r) == [] for r in rows)
+    rl.finish({"complete": True, "missing": []}, steps_run=5)
+    outs = [r for r in rows if r["schema"] == LC.OUTCOME_SCHEMA]
+    assert [(o["source"], o["label"]) for o in outs] == [("run.tier_band", "correct")]
+
+
+def test_tier_outcome_rules():
+    def d(t):
+        return LD.tier_decision("s", t, {})
+    assert LD.tier_outcome(d("single"), 1, True, {})["label"] == "correct"
+    assert LD.tier_outcome(d("single"), 6, False, {})["label"] == "wrong"
+    assert LD.tier_outcome(d("single"), 6, None, {}) is None
+    assert LD.tier_outcome(d("simple"), 7, None, {})["label"] == "wrong"
+    assert LD.tier_outcome(d("complex"), 4, None, {"missing": ["the report"]})["label"] == "wrong"
+    assert LD.tier_outcome(d("strategic"), 40, None, {})["label"] == "correct"
+    assert LD.tier_outcome(d("complex"), None, None, {}) is None
