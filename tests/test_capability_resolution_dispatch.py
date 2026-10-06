@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from vera.capability_resolution_dispatch import resolve_authorize_dispatch
+from vera.capability_resolution_dispatch import compare_direct_parity, resolve_authorize_dispatch
 
 
 def _entry(task, func, *, effects=None, required=None):
@@ -46,6 +46,9 @@ def test_dispatches_exactly_once_after_resolution_and_policy_allow():
         _registry(calls), "capability.contract.coverage", {"value": "x"},
         enabled=True, trace_id="trace"))
     assert result["ok"] and result["selected"] == "cap.contract.coverage"
+    assert len(result["decision"]["revision"]) == 64
+    assert len(result["decision"]["manifest_revision"]) == 64
+    assert len(result["decision"]["evidence_revision"]) == 64
     assert calls == [("coverage", {"value": "x", "trace_id": "trace"})]
 
 
@@ -117,3 +120,48 @@ def test_dispatch_does_not_replace_direct_name_callable():
         registry, "capability.contract.coverage", {}, enabled=True))
     assert registry["cap.contract.coverage"]["func"] is direct
     assert asyncio.run(direct(value="direct")) == {"value": "direct"}
+
+
+@pytest.mark.critical
+def test_direct_and_resolved_read_only_results_have_parity_receipt():
+    calls = []
+    result = asyncio.run(compare_direct_parity(
+        _registry(calls), "capability.contract.coverage", {"value": "same"},
+        enabled=True, trace_id="trace"))
+    assert result["ok"] and result["parity"]
+    assert result["direct_result_revision"] == result["resolved_result_revision"]
+    assert [name for name, _ in calls] == ["coverage", "coverage"]
+
+
+@pytest.mark.critical
+def test_parity_refuses_observation_family_without_calling_it():
+    calls = []
+    result = asyncio.run(compare_direct_parity(
+        _registry(calls), "capability.contract.observe", {}, enabled=True))
+    assert result["error"] == "parity_task_not_supported"
+    assert calls == []
+
+
+@pytest.mark.critical
+@pytest.mark.parametrize("enabled,effects,error", [
+    (False, ["read"], "dispatch_disabled"),
+    (True, ["write"], "resolution_drift"),
+])
+def test_parity_never_calls_before_kill_switch_and_policy_checks(enabled, effects, error):
+    calls = []
+    registry = _registry(calls)
+    registry["cap.contract.coverage"]["contract"]["effects"] = effects
+    result = asyncio.run(compare_direct_parity(
+        registry, "capability.contract.coverage", {}, enabled=enabled))
+    assert result["error"] == error and calls == []
+
+
+@pytest.mark.critical
+def test_parity_requires_current_idempotency_declaration():
+    calls = []
+    registry = _registry(calls)
+    registry["cap.contract.coverage"]["contract"]["idempotency"] = {
+        "status": "not_idempotent"}
+    result = asyncio.run(compare_direct_parity(
+        registry, "capability.contract.coverage", {}, enabled=True))
+    assert result["error"] == "parity_idempotency_required" and calls == []
