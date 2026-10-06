@@ -7291,7 +7291,7 @@ function agentNew(){
   _selectedCaps=new Set();
   const blank={id:'',name:'',label:'',description:'',avatar:'',model:'',instance_id:'',prefer_gpu:true,
     temperature:0.7,top_p:0.9,top_k:40,repeat_penalty:1.1,repeat_last_n:64,num_ctx:4096,
-    num_predict:-1,seed:-1,mirostat:0,system_prompt:'',greeting:'',voice:'af_heart',
+    num_predict:-1,seed:-1,mirostat:0,system_prompt:'',greeting:'',voice:'',
     tts_speed:1.0,tts_engine:'',domain_caps:[],domain_description:'',tool_mode:'none',
     think:false,memory_enabled:true,memory_inject:false,memory_inject_limit:5,memory_tags:''};
   _fillEditor(blank);
@@ -7348,7 +7348,7 @@ function _fillEditor(a){
   f('ae_memory_tags',      a.memory_tags||'');
   f('ae_stop',(a.stop||[]).join(', '));
   f('ae_system',a.system_prompt||''); f('ae_greeting',a.greeting||'');
-  f('ae_voice',a.voice||'af_heart');
+  f('ae_voice',a.voice||'');
   f('ae_tool_mode',a.tool_mode||'none');
   f('ae_domain_desc',a.domain_description||'');
   _selectedCaps=new Set(a.domain_caps||[]);
