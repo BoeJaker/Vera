@@ -878,6 +878,8 @@ body.has-panel #chatPanelHost{
    columns want an ultrawide, so below 1920 the graph column takes a fixed
    strip. Nothing here changes #chatPanelHost or the panel it holds. */
 body.has-cols #chatColumn{flex-direction:row;gap:0}
+/* the chat on the right (Chat side, the desk): it moves to the end of the row, the columns keep their order before it */
+body[data-chat-side="right"] #chatStack{order:99}
 body.has-cols #chatStack{flex:1 1 0;min-width:360px}
 /* the measure is the column's: never wider than the space the chat has (the columns, the grown graph, the harness frame) */
 #chatColumn{--measure:min(736px, calc(100% - 32px))}
@@ -2258,6 +2260,8 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="sec" style="margin-top:5px">Session canvas</div>
     <div class="row"><label style="min-width:70px" title="Held: an item is kept inside the canvas column, level with its turn while there is room — it never scrolls away with the turn, and a tall item can always be reached. Strict: the column is the transcript's own frame, so an item is always exactly level with its turn and moves with it, off the bottom included.">Alignment</label>
       <select id="cfgCvAlign" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="held">Held in view</option><option value="strict">Strict — level with the turn</option><option value="desk">Desk — sized by distance from the chat</option></select></div>
+    <div class="row"><label style="min-width:70px" title="Which side of the page the chat sits on when the canvas, the graph or a panel is open beside it. The other columns move to the other side; a Desk canvas sizes its items by their distance from the chat, wherever it is.">Chat side</label>
+      <select id="cfgCvSide" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="left">Left</option><option value="right">Right</option></select></div>
     <div class="row"><label style="min-width:70px" title="Whether an HTML item, and a code block that is a whole page, draw themselves or show their source. Drawing happens in a sandboxed frame — no network, no cookies, no reach into this page — and each item keeps its own switch either way.">HTML items</label>
       <select id="cfgCvPreview" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Draw them</option><option value="off">Show the source</option></select></div>
     <div class="row"><label style="min-width:70px" title="Where a thing that can live on the canvas is drawn while the canvas is open. On the canvas: the reply keeps a line saying where it went, and a click brings it into view there. In both: it is drawn in the reply as well. Close the canvas and everything comes back inline either way — nothing is ever removed from the reply.">Draw them</label>
@@ -6130,11 +6134,13 @@ IMPORTANT:
      canvas reads its own behaviour off itself rather than the page reaching inside it. Defaults are what the canvas
      does today: held alignment, HTML drawn, explode offered on code and prose. */
   const _CV_CFG_KEY='vera_canvas_cfg';
-  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'] };
+  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'] };
   function _cvCfg(id){ const el=document.getElementById(id); const v=el&&el.value?String(el.value):''; return v||_CV_CFG[id][1]; }
   function _cvApplyCfg(){
     const el=document.querySelector('#canvasColumnBody vera-canvas');
     if(el) Object.keys(_CV_CFG).forEach(id=>{ const a=_CV_CFG[id][0]; if(!a) return; const v=_cvCfg(id); if(el.getAttribute(a)!==v) el.setAttribute(a,v); });
+    // which side of the page the chat sits on (the desk, owner-approved 2026-10-06): the columns swap round it
+    try{ const side=_cvCfg('cfgCvSide'); if(document.body.dataset.chatSide!==side) document.body.dataset.chatSide=side; }catch(_){}
     try{ _cvOneplaceSync(); }catch(_){}   // "draw them" is the page's own, not the element's: it is about the REPLY
   }
   /* THE BLOCKS TIER, FOLLOWED RATHER THAN SAMPLED ONCE. The canvas is in a shadow root, so a rule on <html> cannot
@@ -6158,6 +6164,8 @@ IMPORTANT:
     try{ const o=JSON.parse(localStorage.getItem(_CV_CFG_KEY)||'null')||{};
       Object.keys(_CV_CFG).forEach(id=>{ const el=document.getElementById(id); if(el) el.value=(id in o)?String(o[id]):_CV_CFG[id][1]; });
     }catch(_){}
+    // the chat's side is the page's own, not only the canvas's: it applies whether or not the canvas is open
+    try{ document.body.dataset.chatSide=_cvCfg('cfgCvSide'); }catch(_){}
   }
   _restoreCanvasCfg();
 
