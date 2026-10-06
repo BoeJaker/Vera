@@ -2379,6 +2379,25 @@ async def agent_chat_stream_endpoint(request: Request):
                 yield item
 
         _first_sent = False
+        _usage_t = None
+
+        def _usage_start():
+            # which memories this turn was given, and whether the reply drew on them (CU-M.2); its database writes
+            # finish in the background whatever the stream does
+            try:
+                _mh_u = sys.modules.get("memory_hooks")
+                if _mh_u is None or not hasattr(_mh_u, "record_turn_usage"):
+                    return None
+                _deep_items = []
+                if _mem_task is not None and _mem_task.done() and not _mem_task.cancelled():
+                    _mr_u = _mem_task.result()
+                    _deep_items = (_mr_u or {}).get("items") or [] if isinstance(_mr_u, dict) else []
+                _page_ids = [str(i) for i in (body.get("ctx_ids") or []) if i][:40]
+                return asyncio.create_task(
+                    _mh_u.record_turn_usage(session_id, "".join(_resp_head), _page_ids, _deep_items))
+            except Exception as _ue:
+                log.debug("turn usage: %s", _ue)
+                return None
         try:
             async for chunk in _merged():
                 # Light-touch content sniff. Stream frames come as
@@ -2423,6 +2442,31 @@ async def agent_chat_stream_endpoint(request: Request):
                                   count=_resp_chars or None)
                 except Exception:
                     pass
+                # after the reply, said like every other step (CU-T.8): which of the memories it was given it used.
+                # Waits at most 0.8 s for the judgement; past that the step is not shown and the writes carry on.
+                _usage_t = _usage_start()
+                if _usage_t is not None and not _ph.silent:
+                    try:
+                        _u0 = _time.monotonic()
+                        yield _ph.sse("post", "memory-use", "checking which memories the answer used", "start")
+                        _ud, _ = await asyncio.wait({_usage_t}, timeout=0.8)
+                        _ur = _usage_t.result() if _ud and not _usage_t.cancelled() else None
+                        _ur = _ur if isinstance(_ur, dict) else None
+                        if _ur is None:
+                            yield _ph.sse("post", "memory-use", "checking which memories the answer used", "late",
+                                          ms=(_time.monotonic() - _u0) * 1000, detail="still counting")
+                        elif not _ur.get("injected"):
+                            yield _ph.sse("post", "memory-use", "checking which memories the answer used", "skip",
+                                          ms=(_time.monotonic() - _u0) * 1000, detail="it was given none")
+                        else:
+                            yield _ph.sse("post", "memory-use", "checking which memories the answer used", "done",
+                                          ms=(_time.monotonic() - _u0) * 1000,
+                                          detail="used %d of the %d it was given%s" % (
+                                              int(_ur.get("used") or 0), int(_ur.get("injected") or 0),
+                                              (" · %d brought back from faded" % _ur["revived"])
+                                              if _ur.get("revived") else ""))
+                    except Exception as _pe:
+                        log.debug("phase frame (post usage) skipped: %s", _pe)
         except (RuntimeError, ConnectionResetError, BrokenPipeError) as e:
             if "transport" in str(e).lower() or "closed" in str(e).lower():
                 log.debug("Client disconnected during stream: %s", e)
@@ -2436,19 +2480,9 @@ async def agent_chat_stream_endpoint(request: Request):
                     _t.cancel()
             elapsed_ms = round((_time.monotonic() - _stream_t0) * 1000)
             _record_chat_turn(_ph, agent.name, elapsed_ms, _resp_chars, session_id)
-            # which memories this turn was given, and whether the reply drew on them (CU-M.2): in the background, so
-            # the stream's end never waits on it
-            try:
-                _mh_u = sys.modules.get("memory_hooks")
-                if _mh_u is not None and hasattr(_mh_u, "record_turn_usage"):
-                    _deep_items = []
-                    if _mem_task is not None and _mem_task.done() and not _mem_task.cancelled():
-                        _mr_u = _mem_task.result()
-                        _deep_items = (_mr_u or {}).get("items") or [] if isinstance(_mr_u, dict) else []
-                    _page_ids = [str(i) for i in (body.get("ctx_ids") or []) if i][:40]
-                    asyncio.create_task(_mh_u.record_turn_usage(session_id, "".join(_resp_head), _page_ids, _deep_items))
-            except Exception as _ue:
-                log.debug("turn usage: %s", _ue)
+            # a stream that ended early (client gone, error) still counts its memory use, in the background
+            if _usage_t is None:
+                _usage_start()
             try:
                 if _act_handle is not None:
                     await end_stream_activity(
