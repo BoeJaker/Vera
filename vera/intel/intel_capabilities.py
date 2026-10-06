@@ -961,7 +961,8 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
         keys = {(c.get("indicator"), c.get("t")) for c in moves}
         st.set_kv("ind_changes", [dict(c, assessed=snap["id"]) if (c.get("indicator"), c.get("t")) in keys else c
                                   for c in st.get_kv("ind_changes", []) or []])
-    qs = [q for q in fresh.get("questions") or [] if q not in {a["question"] for a in snap["answered"]}]
+    qs = [q for q in (ops.question_text(x) for x in fresh.get("questions") or [])   # also repairs old dict-text ones
+          if q and q not in {a["question"] for a in snap["answered"]}]
     qs += [q for q in snap["new_questions"] if q not in qs]
     st.patch_topic(t["id"], {"questions": qs[:12], "last_snapshot": snap["ts"]})
     await _event("snapshot.new", topic=t["id"], id=snap["id"], headline=snap["headline"],
@@ -1626,9 +1627,14 @@ async def resolve_entity(name: str, label: str, t: Optional[Dict[str, Any]] = No
                 ).get("entities") or {}
     ctx: Dict[int, float] = {}
     if cands and t:
-        rr = await _nlp("nlp.rerank", query=ops.profile_text(t),
+        # a short query: the cross-encoder ranks short descriptions against a short topic well, but its
+        # absolute logits for them are low (-8 is normal), so context is RELATIVE to the best candidate
+        rr = await _nlp("nlp.rerank", query=f"{t.get('name', '')}. {t.get('brief', '')}"[:300],
                         documents=[f"{c['label']}: {c['description']}" for c in cands], top_k=len(cands))
-        ctx = {int(x.get("index", -1)): float(x.get("score")) for x in rr.get("ranked") or [] if x.get("score") is not None}
+        raw = {int(x.get("index", -1)): float(x.get("score")) for x in rr.get("ranked") or [] if x.get("score") is not None}
+        if raw:
+            best_raw = max(raw.values())
+            ctx = {i: v - best_raw + 2.0 for i, v in raw.items()}   # the best fit reads as a good fit (logit 2)
     scored = []
     for i, c in enumerate(cands):
         fx = rsv.facts(ents.get(c["qid"]) or {})

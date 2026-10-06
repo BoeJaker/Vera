@@ -134,7 +134,9 @@ def type_fit(kind: str, cand: Dict[str, Any], fx: Optional[Dict[str, Any]]) -> f
     if not kind:
         return 0.5
     types = set((fx or {}).get("types") or [])
-    desc = (cand.get("description") or "").lower()
+    # only the head of a description says what the thing IS: "automobile marque of the
+    # Ford Motor Company" is a marque, not a company
+    desc = re.split(r"\b(?:of|by|from|owned|for|in|at|with|founded|based)\b", (cand.get("description") or "").lower())[0]
     want_t, want_w = (ORG_TYPES, ORG_WORDS) if kind == "org" else (PLACE_TYPES, PLACE_WORDS)
     other_t, other_w = (PLACE_TYPES, PLACE_WORDS) if kind == "org" else (ORG_TYPES, ORG_WORDS)
     if types & want_t or any(w in desc for w in want_w):
@@ -178,6 +180,8 @@ def score(name: str, kind: str, cand: Dict[str, Any], fx: Optional[Dict[str, Any
         s = max(s, 0.8 if nf >= 0.6 else s)              # the topic's own sources link to it: strong
     if nf == 0.0 or tf == 0.0:
         s = min(s, 0.4)                                     # a different name or the wrong kind of thing
+    if tf < 1.0 and not site:
+        s = min(s, 0.55)                                    # no website evidence: the type must clearly fit
     if ctx is not None and ctx < 0.35 and not site:
         s = min(s, 0.55)                                    # right name, wrong world: "Mercury" the car in a property topic
     return {"score": round(s, 3), "parts": parts, "brands": sorted(brands)}
