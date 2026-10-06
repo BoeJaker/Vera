@@ -45,6 +45,7 @@ or grants authority on its own.
   - [cap.contract.gate](#capcontractgate)
   - [cap.contract.observations](#capcontractobservations)
   - [cap.resolve.shadow](#capresolveshadow)
+  - [cap.resolve.dispatch](#capresolvedispatch)
 - [Lint rules](#lint-rules)
 - [Lifecycle and deprecation](#lifecycle-and-deprecation)
 - [Resolver shadow mode](#resolver-shadow-mode)
@@ -92,6 +93,7 @@ rewriting a stable declaration.
 |---|---|
 | [`vera/capability_contract_core.py`](../vera/capability_contract_core.py) | Pure projection (`project_contract`, `project_registry`), fingerprinting, lint, coverage, strict gate, and redacted observation summaries. No I/O. |
 | [`vera/capability_resolver_core.py`](../vera/capability_resolver_core.py) | Pure shadow resolver (`resolve_shadow`): eligibility, exclusion reasons, deterministic ranking. Never invokes or authorizes. |
+| [`vera/capability_resolution_dispatch.py`](../vera/capability_resolution_dispatch.py) | Guarded execution boundary for explicitly migrated read-only canonical tasks. It fails closed on resolution, contract, policy, or argument drift. |
 | [`vera/capability_orchestration.py`](../vera/capability_orchestration.py) | The `@capability(..., contract=...)` decorator argument, and the `cap.contract.*` / `cap.resolve.shadow` capabilities and HTTP routes. |
 | [`vera/capability_policy_core.py`](../vera/capability_policy_core.py) | Consumes contracts to produce shadow policy verdicts (see [Capability policy](45-capability-policy.md)). |
 | [`vera/evaluation_corpus_core.py`](../vera/evaluation_corpus_core.py) | Projects synthetic registries through Contract v2 for the frozen resolver corpus (see [Evaluation corpus](44-evaluation-corpus.md)). |
@@ -257,6 +259,7 @@ callable through `/mcp/call`, the WebSocket harness, or their HTTP route.
 | `cap.contract.gate` | `POST /cap/contracts/gate` | Strictly validate an explicit migration set. | `names` (required, CSV/list), `fail_on_warnings` |
 | `cap.contract.observations` | `GET /cap/contracts/observations` | Redacted health/latency evidence from recent events. | `prefix`, `event_limit` 1–500 (default 500), `cap_limit` 1–500 (default 200), `include_internal` |
 | `cap.resolve.shadow` | `POST /cap/resolve/shadow` | Rank implementations of a canonical task without invoking them. | `canonical_task` (required), `allowed_effects`, `required_resources`, `preferred`, `output_schema`, `policy_requirements`, `candidate_limit`, `event_limit` |
+| `cap.resolve.dispatch` | `POST /cap/resolve/dispatch` | Resolve, authorize and invoke an explicitly migrated read-only canonical task. | `canonical_task` (required), `arguments` |
 
 By default the registry projection skips capabilities registered with
 `mcp_expose=False`; pass `include_internal=true` to include them.
@@ -334,6 +337,16 @@ evidence is a separate, expiring view.
 ### cap.resolve.shadow
 
 See [Resolver shadow mode](#resolver-shadow-mode).
+
+### cap.resolve.dispatch
+
+This is the first bounded execution path through the resolver. It accepts only
+the fully declared contract-inspection tasks for coverage, strict gating and
+redacted observations. The allowed effects and candidate mapping are fixed by
+Vera rather than supplied by the caller. Unknown tasks, ambiguous selection,
+contract or policy drift, reserved execution arguments and schema mismatches
+fail before invocation. `VERA_RESOLVER_DISPATCH_ENABLED=0` disables this route
+without changing direct-name calls.
 
 ## Lint rules
 

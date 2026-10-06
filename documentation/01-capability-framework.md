@@ -15,6 +15,7 @@ schema generation, HTTP mounting, MCP endpoints, WebSocket, Redis dispatch,
 event emission, activity recording, scheduler and module loader), with the
 Capability Contract v2 projection, shadow resolver and policy layers in
 `vera/capability_contract_core.py`, `vera/capability_resolver_core.py`,
+`vera/capability_resolution_dispatch.py`,
 `vera/capability_policy_core.py` and `vera/capability_enforcement.py`. The
 registry has two complementary layers: the original entry remains the
 execution source of truth, while Contract v2 projects a machine-readable
@@ -119,6 +120,7 @@ are uniform.
 | `vera/workers/worker_placement_core.py` | Pure placement rules: which streams exist, which caps a node worker may run, offload stages, reply-stream naming |
 | `vera/capability_contract_core.py` | Capability Contract v2 projection, lint, coverage, gate and observation schemas |
 | `vera/capability_resolver_core.py` | Deterministic, non-executing shadow resolution over contract manifests |
+| `vera/capability_resolution_dispatch.py` | Fail-closed resolve-authorize-dispatch path for an explicit migrated read-only allowlist |
 | `vera/capability_policy_core.py` | Content-free policy shadow verdicts (`evaluate_policy_shadow`) |
 | `vera/capability_enforcement.py` | Bounded enforcement rollout (`VERA_POLICY_MODE`, `VERA_POLICY_ENFORCE_FAMILIES`), `PolicyEnforcementDenied` |
 | `vera/capability_policy_eval_core.py` | Evaluator for the frozen adversarial policy-boundary corpus |
@@ -261,7 +263,7 @@ Common groups:
 |---|---|
 | `mcp` | MCP protocol endpoints (`mcp.tools`, `mcp.call`, `mcp.servers`, `mcp.register_server`) |
 | `obs` | Observability (`obs.health`, `obs.workers`, `obs.cluster`, `obs.events`, `obs.modules`, …) |
-| `cap` | Contract, resolver and policy inspection (`cap.contract.*`, `cap.resolve.shadow`, `cap.policy.*`) |
+| `cap` | Contract, resolver and policy inspection plus guarded migrated dispatch (`cap.contract.*`, `cap.resolve.*`, `cap.policy.*`) |
 | `dag` | DAG planning and execution (`dag.run`, `dag.plan`, `dag.plan_and_run`) |
 | `run`, `workflow`, `interop`, `eval` | Run shadow projections, Workflow IR, interoperability conformance, evaluation corpora |
 | `ui` | Harness UI integration (`ui.panels`, `ui.theme.*`, `ui.panel.*`) |
@@ -808,7 +810,7 @@ noted):
 | Group | Capability → route |
 |---|---|
 | MCP | `mcp.tools` → `GET /mcp/tools`; `mcp.call` → `POST /mcp/call`; `mcp.servers` → `GET /mcp/servers`; `mcp.register_server` → `POST /mcp/servers/register` |
-| Contracts & policy | `cap.contract.manifest` → `GET /cap/contracts`; `cap.contract.lint` → `GET /cap/contracts/lint`; `cap.contract.coverage` → `GET /cap/contracts/coverage`; `cap.contract.gate` → `POST /cap/contracts/gate`; `cap.contract.observations` → `GET /cap/contracts/observations`; `cap.resolve.shadow` → `POST /cap/resolve/shadow`; `cap.policy.shadow` (auto route); `cap.policy.enforcement.status` → `GET /cap/policy/enforcement` |
+| Contracts & policy | `cap.contract.manifest` → `GET /cap/contracts`; `cap.contract.lint` → `GET /cap/contracts/lint`; `cap.contract.coverage` → `GET /cap/contracts/coverage`; `cap.contract.gate` → `POST /cap/contracts/gate`; `cap.contract.observations` → `GET /cap/contracts/observations`; `cap.resolve.shadow` → `POST /cap/resolve/shadow`; `cap.resolve.dispatch` → `POST /cap/resolve/dispatch`; `cap.policy.shadow` (auto route); `cap.policy.enforcement.status` → `GET /cap/policy/enforcement` |
 | Evaluation | `eval.corpus.inspect` → `GET /eval/corpus`; `eval.resolver.shadow` → `GET /eval/resolver/shadow`; `eval.ontology.decision` → `GET /eval/ontology/decision`; `eval.policy.boundary` → `GET /eval/policy/boundary`; `eval.run.telemetry` → `GET /eval/run/telemetry` |
 | Observability | `obs.provenance` → `GET /obs/provenance`; `obs.health` → `GET /health`; `obs.neo4j_diag` → `GET /health/neo4j`; `obs.workers` → `GET /workers`; `obs.pending` → `GET /pending`; `obs.scheduler` → `GET /scheduler`; `obs.events` → `GET /events`; `obs.stream_history` → `GET /streams/history`; `obs.redis` → `GET /redis/inspect`; `obs.diagnostics` → `GET /diagnostics`; `obs.modules` → `GET /modules`; `dash.health.summary` → `GET /dash/health/summary`; `topology.snapshot` → `GET /topology/snapshot`; `activity.ping` → `POST /activity/ping`; `health.check` → `GET /debug/health` |
 | Ollama nodes & routing | `ollama.instances`, `ollama.add_instance`, `ollama.node.config`, `ollama.ping_instance`, `ollama.pull`, `ollama.model_ctx`, `ollama.request_log`, `ollama.route_stats`, `ollama.embed_config`, `ollama.embed_config_set`, `ollama.gate.status`, `ollama.interactive.get/set`, `ollama.routing.get/save`, `ollama.profile.activate/delete`, `ollama.model_tags.get/set`, `ollama.cap_routing.get/save/delete`, `ollama.role_profiles.get/save/delete`, `llm.route` → `POST /llm/route`, `llm.route.resolve` → `GET /llm/route/resolve`, `cluster.instance_update` → `POST /cluster/instance/update` (see [Ollama Cluster](./04-ollama-cluster.md)) |
