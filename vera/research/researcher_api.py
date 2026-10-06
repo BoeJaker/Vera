@@ -947,6 +947,7 @@ async def deep_crawl_url(url: str, depth: int, breadth: int, timeout: float,
 async def query_redis(query: str) -> list[Citation]:
     src = next((s for s in sources if s.id == "redis" and s.enabled), None)
     if not src: return []
+    r = None
     try:
         import redis.asyncio as aioredis  # type: ignore
         r = aioredis.Redis(
@@ -977,7 +978,6 @@ async def query_redis(query: str) -> list[Citation]:
                     snippet=val[:300],
                     source_type="redis",
                 ))
-        await r.aclose()
         return citations
     except ImportError:
         log.debug("redis package not installed")
@@ -985,6 +985,12 @@ async def query_redis(query: str) -> list[Citation]:
     except Exception as e:
         log.warning("Redis query failed: %s", e)
         return []
+    finally:                    # a failed scan left its connection open (open-files outage, 2026-10-06)
+        if r is not None:
+            try:
+                await r.aclose()
+            except Exception:
+                pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
