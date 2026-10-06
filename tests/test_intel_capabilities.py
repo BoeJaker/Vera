@@ -842,6 +842,7 @@ def test_a_report_is_read_aloud_with_chapters(tmp_path):
         return buf.getvalue()
     mod._tts = tts
     mod.shutil.which = lambda name: None                              # no ffmpeg: keep the WAV
+    mod._mp3_with_soundfile = lambda w, m: False
     t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
     _R(orch, "intel.sweep", topic_id=t["id"])
     _run(mod.snapshot_topic(mod.store().get_topic(t["id"])))
@@ -897,6 +898,7 @@ def test_the_narration_follows_the_brief_to_telegram_once(tmp_path):
         return buf.getvalue()
     mod._tts = tts
     mod.shutil.which = lambda name: None
+    mod._mp3_with_soundfile = lambda w, m: False
     t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
     _R(orch, "intel.sweep", topic_id=t["id"])
     doc = _run(mod.build_report([t["id"]], period_hours=24))           # narrated inline by the fake queue
@@ -1031,3 +1033,30 @@ def test_worldview_hint_only_while_healthy_and_only_what_is_new(tmp_path):
     _run(mod.snapshot_topic(mod.store().get_topic(t["id"])))
     assert "WHAT VERA'S WORLDVIEW NOTICED" not in orch.PROMPTS[-1][0]                # steady since: no hint
     assert any(d["question_id"] == "intel.worldview_drift" and d["shadow"] for d in mod.store().decisions(limit=50))
+
+
+def test_narration_is_compressed_to_mp3_without_ffmpeg(tmp_path):
+    import importlib.util as _u
+    import io
+    import wave
+    if not _u.find_spec("soundfile"):
+        return
+    import soundfile as sf
+    if "MP3" not in sf.available_formats():
+        return
+    mod, orch = _load(tmp_path)
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    mod._audio_dir = lambda: audio_dir
+    mod.shutil.which = lambda name: None
+    wav = audio_dir / "abc123.wav"
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+        w.writeframes(b"\x10\x00\xf0\xff" * 24000)              # one second
+    out = _run(mod._to_mp3(wav))
+    assert out.suffix == ".mp3" and out.exists() and not wav.exists() and out.stat().st_size < 48000
+    with wave.open(str(wav), "wb") as w:                                # an old WAV narration to compact
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+        w.writeframes(b"\x10\x00\xf0\xff" * 24000)
+    r = _R(orch, "intel.audio.compact")
+    assert r["converted"] == 1 and r["kept_wav"] == 0
