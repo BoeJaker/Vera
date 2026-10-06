@@ -928,5 +928,4 @@ def test_ratings_build_a_topic_curve_that_only_watches_until_switched_on(tmp_pat
     d = [x for x in st.decisions(question_id="intel.signal_relevant", limit=50) if x["decider"] == "rule" and x["detail"].get("p_shadow") is not None]
     assert d and d[0]["p"] is not None
     _R(orch, "intel.config.set", settings={"calibrated_gate": True})
-    st.delete_topic(t["id"], purge=False) if False else None
     assert _R(orch, "intel.calibration.status")["on"]
