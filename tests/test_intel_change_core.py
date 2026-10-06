@@ -84,3 +84,13 @@ def test_levels_and_resolution_lines():
         == "BoE hike 91% (7d +7 pts, 30d -2 pts)"
     rc = chg.resolution_change({"label": "BoE hike"}, "yes", 1000.0)
     assert rc["kind"] == "resolved" and rc["text"] == "BoE hike resolved YES" and chg.material([rc]) == [rc]
+
+
+def test_attention_finds_a_real_surge_and_ignores_the_weekly_rhythm():
+    days = list(range(0, 90 * 86400, 86400))
+    rhythm = [60 + (25 if (i % 7) in (5, 6) else 0) + (i * 7) % 9 for i in range(90)]   # weekends louder
+    assert not chg.detect(days, rhythm, kind="attention")
+    surge = rhythm[:80] + [420, 260] + rhythm[82:]
+    found = chg.detect(days, surge, kind="attention")
+    assert len(found) == 1 and found[0]["index"] == 80 and found[0]["detail"]["factor"] >= 5
+    assert "drew" in chg.describe(found[0], "Savills", "attention") and "Wikipedia views" in chg.describe(found[0], "Savills", "attention")

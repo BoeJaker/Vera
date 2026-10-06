@@ -1154,7 +1154,7 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
                         "intel.indicator.suggest). Output: {ok, indicator}.")
 async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str = "", dataset_id: str = "",
                             label: str = "", market_source: str = "", market_id: str = "", provider: str = "",
-                            symbol: str = "", trace_id=None):
+                            symbol: str = "", wiki_title: str = "", trace_id=None):
     t = store().get_topic(topic_id)
     if not t:
         return {"error": f"unknown topic: {topic_id}"}
@@ -1162,6 +1162,22 @@ async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str 
     if kind not in chg.KINDS:
         return {"error": f"kind must be one of {', '.join(chg.KINDS)}"}
     ds, name, market = (dataset_id or "").strip(), "", None
+    if kind == "attention" and not ds:
+        title = (wiki_title or "").strip()
+        if not title and query:                 # a name: resolve it to its Wikipedia article
+            try:
+                r = await resolve_entity(query, "company", t,
+                                         source_domains=sorted({s.get("site") for s in store().signals(topic_id, limit=300)
+                                                                if s.get("site")}))
+            except _Throttled as ex:
+                return {"error": f"Wikidata refused the lookup for now: {ex}"}
+            title = r.get("wiki") or ""
+            if not title:
+                return {"error": f"no Wikipedia article found for {query!r}" + (f" ({r.get('why')})" if r.get("why") else "")}
+            name = r.get("label") or query
+        if not title or len(title) > 200:
+            return {"error": "attention needs query (a name) or wiki_title"}
+        ds, name = f"wiki:en:{title.replace(' ', '_')}", (label or name or title)
     if kind == "probability" and not ds:
         if not (market_source and market_id):
             rows, _ = await pm_search(query, 5) if query else ([], [])
@@ -1289,7 +1305,28 @@ async def _pm_market(source: str, market_id: str) -> Optional[Dict[str, Any]]:
 async def _series(ind: Dict[str, Any]) -> Tuple[List[float], List[float], str]:
     """An indicator's (times, values) oldest first, or an error: a market's price
     history straight from its source (hourly), or stored bars from the markets
-    subsystem (daily)."""
+    subsystem (daily), or a Wikipedia article's daily views (attention)."""
+    ds = str(ind.get("dataset_id") or "")
+    if ds.startswith("wiki:"):
+        _, lang, title = ds.split(":", 2)
+        from urllib.parse import quote
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=120)
+        url = (f"https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/{lang}.wikipedia/all-access/user/"
+               f"{quote(title, safe='')}/daily/{start:%Y%m%d}/{end:%Y%m%d}")
+        try:
+            items = (await _http_json(url, headers={"User-Agent": rsv.USER_AGENT})).get("items") or []
+        except Exception as ex:  # noqa: BLE001
+            return [], [], f"{type(ex).__name__}: {ex}"[:200]
+        pts = []
+        for it in items:
+            try:
+                d = datetime.strptime(str(it["timestamp"])[:8], "%Y%m%d").replace(tzinfo=timezone.utc)
+                pts.append((d.timestamp(), float(it.get("views") or 0)))
+            except (KeyError, ValueError):
+                continue
+        pts.sort()
+        return [p[0] for p in pts], [p[1] for p in pts], ""
     m = ind.get("market")
     if m:
         try:
@@ -1376,7 +1413,8 @@ async def _refresh_suggestions(t: Dict[str, Any], *, every_days: int = 7) -> Non
     if not r.get("error"):
         st.set_kv(f"ind_suggest:{t['id']}", {"at": core.now_iso(), "prices": r.get("prices") or [],
                                              "markets": [{k: m.get(k) for k in ("source", "id", "question", "prob", "match")}
-                                                         for m in r.get("markets") or []]})
+                                                         for m in r.get("markets") or []],
+                                             "attention": r.get("attention") or []})
 
 
 def _watch_actions(t: Dict[str, Any], *, n: int = 2, mark: bool = True) -> List[Dict[str, Any]]:
@@ -1393,6 +1431,8 @@ def _watch_actions(t: Dict[str, Any], *, n: int = 2, mark: bool = True) -> List[
               f"mkt.{p['provider'].lower()}.{_mkt_slug(p['symbol'])}.1d") for p in sug.get("prices") or []]
     cands += [(f"pm:{m['source']}:{m['id']}", f"Watch the odds: {m.get('question') or ''}"[:70], "",
                f"pm:{m['source']}:") for m in sug.get("markets") or [] if (m.get("match") or 0) > 1]
+    cands += [(f"wiki:en:{a['wiki'].replace(' ', '_')}", f"Watch attention on {a.get('label') or a['wiki']}"[:70],
+               a.get("label") or "", f"wiki:en:{a['wiki'].replace(' ', '_')}") for a in sug.get("attention") or []]
     for target, label, name, ds in cands:
         if len(out) >= n:
             break
@@ -1446,7 +1486,17 @@ async def cap_indicator_suggest(topic_id: str = "", days: int = 60, trace_id=Non
                     and all(m["id"] != r["id"] for m in markets):
                 markets.append(dict(r, for_question=q))
     markets.sort(key=lambda m: -(m.get("match") if m.get("match") is not None else -99.0))
-    return {"prices": prices, "markets": markets[:5], "errors": sorted(set(errors))}
+    # attention: the organisations already given an identity that have a Wikipedia article
+    attention: List[Dict[str, Any]] = []
+    for ent, _n in ops.org_mentions(sigs, follow=t.get("entities") or []):
+        r = st.get_kv(f"wd:{rsv._key(ent)}|org|{topic_id}") or {}
+        if r.get("wiki") and f"wiki:en:{r['wiki'].replace(' ', '_')}" not in watched \
+                and all(a["wiki"] != r["wiki"] for a in attention):
+            attention.append({"entity": ent, "wiki": r["wiki"], "label": r.get("label") or ent,
+                              "description": r.get("description") or ""})
+        if len(attention) >= 4:
+            break
+    return {"prices": prices, "markets": markets[:5], "attention": attention, "errors": sorted(set(errors))}
 
 
 _GEO_LOCK = asyncio.Lock()
@@ -1528,7 +1578,7 @@ async def resolve_entity(name: str, label: str, t: Optional[Dict[str, Any]] = No
                                       "type": "item", "limit": 7}))
     ents: Dict[str, Any] = {}
     if cands:
-        ents = (await _wd({"action": "wbgetentities", "ids": "|".join(c["qid"] for c in cands), "props": "claims"})
+        ents = (await _wd({"action": "wbgetentities", "ids": "|".join(c["qid"] for c in cands), "props": "claims|sitelinks", "sitefilter": "enwiki"})
                 ).get("entities") or {}
     ctx: Dict[int, float] = {}
     if cands and t:
@@ -1546,7 +1596,7 @@ async def resolve_entity(name: str, label: str, t: Optional[Dict[str, Any]] = No
            "note": ch.get("note", "")}
     if best:
         out.update(label=best["label"], description=best["description"], score=best["score"],
-                   website=(best["facts"].get("websites") or [""])[0], tickers=best["facts"].get("tickers") or [],
+                   website=(best["facts"].get("websites") or [""])[0], tickers=best["facts"].get("tickers") or [], wiki=best["facts"].get("wiki") or "",
                    url=f"https://www.wikidata.org/wiki/{best['qid']}")
     st.set_kv(key, out)
     _decide("intel.entity_resolve", "resolved" if out["qid"] else "abstain",

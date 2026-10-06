@@ -970,3 +970,35 @@ def test_entities_get_stable_identities_and_the_resolver_backs_off(tmp_path):
         raise mod._Throttled("429")
     mod._wd = refuse
     assert "refused" in _R(orch, "intel.entity.resolve", name="CBRE", topic_id=t["id"], force=True)["error"]
+
+
+def test_attention_indicator_from_a_name(tmp_path):
+    import time as _t
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Savills"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    mod.store().put_signal({"id": "sv1", "topic_id": t["id"], "title": "Savills research", "site": "savills.co.uk",
+                            "url": "https://www.savills.co.uk/research", "score": 6, "seen": "2026-10-05T00:00:00Z"})
+
+    async def wd(params):
+        if params["action"] == "wbsearchentities":
+            return {"search": [{"id": "Q10458056", "label": "Savills", "description": "real estate services provider"}]}
+        return {"entities": {"Q10458056": {"claims": {"P31": [{"mainsnak": {"datavalue": {"value": {"id": "Q891723"}}}}],
+                                                      "P856": [{"mainsnak": {"datavalue": {"value": "https://www.savills.com"}}}]},
+                                           "sitelinks": {"enwiki": {"title": "Savills"}}}}}
+    mod._wd = wd
+    today = int(_t.time()) // 86400 * 86400
+    views = [60 + (i * 7) % 9 for i in range(90)]
+    views[-2] = 500                                                    # yesterday: in the news
+
+    async def http_json(url, params=None, timeout=20.0, headers=None):
+        assert "pageviews/per-article/en.wikipedia" in url and "/Savills/" in url
+        return {"items": [{"timestamp": _t.strftime("%Y%m%d00", _t.gmtime(today - (89 - i) * 86400)), "views": v}
+                          for i, v in enumerate(views)]}
+    mod._http_json = http_json
+    add = _R(orch, "intel.indicator.add", topic_id=t["id"], kind="attention", query="Savills")
+    assert add["ok"] and add["indicator"]["dataset_id"] == "wiki:en:Savills" and add["indicator"]["label"] == "Savills"
+    ch = _R(orch, "intel.indicator.check", topic_id=t["id"])["changes"]
+    assert len(ch) == 1 and "drew" in ch[0]["text"] and ch[0]["stories"]      # the sweep's stories around it
+    a = mod.core.make_action("watch", topic_id=t["id"], target="wiki:en:Knight_Frank", query="Knight Frank")
+    assert mod.core.action_args(a) == {"topic_id": t["id"], "kind": "attention", "wiki_title": "Knight_Frank", "label": "Knight Frank"}
