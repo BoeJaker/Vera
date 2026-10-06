@@ -35,6 +35,30 @@ def norm_agent(agent: Any) -> str:
     return a if _AGENT_RE.match(a) else ""
 
 
+def parse_units(units: Any) -> List[str]:
+    """Units as given: a list, a JSON list string, or comma-separated text. A Codex session sent
+    a JSON list as text, which comma-splitting turned into entries like "['roadmap-activation'"."""
+    if isinstance(units, str):
+        s = units.strip()
+        if s.startswith("["):
+            try:
+                import json as _json
+                units = _json.loads(s)
+            except Exception:
+                units = s.strip("[]").split(",")
+        else:
+            units = s.split(",")
+    out = []
+    for u in units or []:
+        u = str(u).strip().strip("'\"[] ").strip()
+        if u and _UNIT_RE.match(u):
+            out.append(u)
+    return out
+
+
+_UNIT_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,60}$")
+
+
 def make_contact(agent: str, session_name: str, tool: str = "claude-code",
                  units: Optional[Iterable[str]] = None, note: str = "",
                  last_seen: str = "") -> Dict[str, Any]:
@@ -48,7 +72,7 @@ def make_contact(agent: str, session_name: str, tool: str = "claude-code",
     t = str(tool or "claude-code").strip().lower()
     if t not in TOOLS:
         raise ValueError(f"tool must be one of {list(TOOLS)}")
-    us = sorted({str(u).strip() for u in (units or []) if str(u).strip()})[:20]
+    us = sorted(set(parse_units(units)))[:20]
     return {"agent": a, "session_name": s, "tool": t, "units": us,
             "note": str(note or "")[:200], "last_seen": last_seen or now_iso()}
 
@@ -59,7 +83,7 @@ def merge(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -> Dict[str, Any]:
     if not old:
         return new
     out = dict(new)
-    out["units"] = sorted(set(old.get("units") or []) | set(new.get("units") or []))[:20]
+    out["units"] = sorted(set(parse_units(old.get("units") or [])) | set(new.get("units") or []))[:20]
     if not new.get("note"):
         out["note"] = old.get("note", "")
     return out

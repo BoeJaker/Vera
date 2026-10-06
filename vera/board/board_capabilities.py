@@ -632,8 +632,7 @@ if True:  # capability registration (mirrors the guard style of the other module
     async def cap_agents_contact_set(agent: str = "", session_name: str = "", tool: str = "claude-code",
                                      units: str = "", note: str = "", trace_id=None) -> dict:
         try:
-            rec = await contact_set(agent, session_name, tool,
-                                    [u for u in str(units or "").split(",") if u.strip()], note)
+            rec = await contact_set(agent, session_name, tool, cc.parse_units(units), note)
         except (ValueError, RuntimeError) as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "contact": rec, "reach": cc.reach_line(rec)}
