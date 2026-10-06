@@ -666,8 +666,9 @@ Storage: agent records (see [§3 Persistence](#persistence)), per-agent RAG data
 
 ## 18. Observability and run evidence
 
-Every streamed agent-loop request is also observed through the shared Run
-protocol. The native loop and SSE stream remain authoritative; the observer
+Every numbered agent-loop capability invocation is also observed through the
+shared Run protocol, whether it arrives through the SSE UI, HTTP, MCP or an
+internal caller. The native loop and SSE stream remain authoritative; the observer
 creates a non-authoritative parent Run plus child Runs for capability calls so
 Activity, run graphs, Chat, and IDE can correlate the same lifecycle. It records
 engine/profile, capability name, step/cycle identity, status, and elapsed time.
@@ -676,6 +677,11 @@ excluded. Human-approval and clarification pauses appear as Run state changes,
 and cancellation, timeout, failure, completion, and session supersession close
 the projection explicitly. A projection outage never interrupts the native
 loop.
+
+The boundary preserves all v1–v8 identities and native executors. Nested
+compatibility delegation reuses the outer Run instead of manufacturing a
+second parent, and only the boundary owner closes the Run on success, failure
+or cancellation.
 
 Long-horizon constituent runs also retain an inert runtime-dispatch projection.
 It identifies the selected native engine or specialist profile, Run/workflow
