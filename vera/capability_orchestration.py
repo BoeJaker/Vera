@@ -9569,6 +9569,7 @@ async def obs_diagnostics(trace_id=None):
 
     # Try a live Redis ping even if REDIS is already set
     if HAS_REDIS:
+        probe = None
         try:
             probe = aioredis.from_url(REDIS_URL, decode_responses=False,
                                       socket_connect_timeout=3, socket_timeout=3)
@@ -9583,7 +9584,13 @@ async def obs_diagnostics(trace_id=None):
             diag["workers_in_redis"] = len(wkeys)
             diag["worker_ids"] = [k.decode().split(":")[-1] for k in wkeys]
             await probe.aclose()
+            probe = None
         except Exception as e:
+            if probe is not None:           # a failed probe kept its connection (open-files outage, 2026-10-06)
+                try:
+                    await probe.aclose()
+                except Exception:
+                    pass
             diag["redis_ping"]  = f"FAILED: {e}"
             diag["redis_hint"]  = (
                 "Ping succeeded but Redis connection failed. Common causes: "
@@ -13574,6 +13581,13 @@ def _ensure_self_signed_cert(certfile: str, keyfile: str) -> None:
 
 
 if __name__=="__main__":
+    # The shell's 1024 open files ran out on 2026-10-06 (936 Redis connections) and every accept failed for hours.
+    try:
+        from Vera.vera import proc_limits_core as _proc_limits
+        _nf = _proc_limits.raise_nofile()
+        log.info("open files: soft limit %s -> %s", _nf[0], _nf[1])
+    except Exception as _nfe:
+        log.warning("open files: could not raise the soft limit: %s", _nfe)
     ssl_kwargs: Dict[str, Any] = {}
     if cfg.TLS_ENABLED:
         _ensure_self_signed_cert(cfg.TLS_CERTFILE, cfg.TLS_KEYFILE)
