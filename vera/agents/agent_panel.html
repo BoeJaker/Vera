@@ -254,7 +254,8 @@ input[type=range]{padding:0;accent-color:var(--acc3);cursor:pointer}
           <div class="g2">
             <div><div style="font-size:9.5px;color:var(--dim2);margin-bottom:3px">Voice</div>
               <select id="f-voice">
-                <option value="af_heart">af_heart — Female, warm</option>
+                <option value="">Vera's voice (set in Settings → Voice and narration)</option>
+                <option value="af_heart">af_heart — Female, warm (also follows Vera's voice)</option>
                 <option value="af_bella">af_bella — Female, soft</option>
                 <option value="af_sarah">af_sarah — Female, clear</option>
                 <option value="am_adam">am_adam — Male, deep</option>
@@ -606,7 +607,7 @@ const AP = (() => {
     seSel('f-mirostat',String(a.mirostat??0));
     document.getElementById('f-stop').value=(a.stop||[]).join(', ');
     document.getElementById('f-system_prompt').value=a.system_prompt||'';
-    seSel('f-voice',a.voice||'af_heart');
+    seSel('f-voice',a.voice||'');
     seRange('f-tts_speed','spd-v',a.tts_speed??1.0);
     seSel('f-tool_mode',a.tool_mode||'none');
     document.getElementById('f-domain_description').value=a.domain_description||'';
@@ -641,7 +642,7 @@ const AP = (() => {
     renderList();
     fillEditor({name:'',label:'',description:'',avatar:'',model:'',instance_id:'',prefer_gpu:true,
       temperature:0.7,top_p:0.9,top_k:40,repeat_penalty:1.1,num_ctx:0,num_predict:-1,seed:-1,
-      mirostat:0,stop:[],think:false,system_prompt:'',greeting:'',voice:'af_heart',tts_speed:1.0,
+      mirostat:0,stop:[],think:false,system_prompt:'',greeting:'',voice:'',tts_speed:1.0,
       domain_caps:[],domain_description:'',tool_mode:'none',
       memory_enabled:true,memory_inject:false,memory_inject_limit:5,memory_tags:'',
       notes_inject:true,cap_ontology_inject:false,

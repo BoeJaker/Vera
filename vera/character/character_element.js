@@ -117,7 +117,7 @@
       this._agentName = '';
       this._rec = null;
       this._avatar = '🤖';
-      this._voice = 'af_heart';
+      this._voice = '';                 // '' = the voice set for all of Vera
       this._frames = {};          // state → {img, url}
       this._state = 'idle';
       this._mode = 'auto';
@@ -425,7 +425,8 @@
       try {
         const r = await fetch(this._base + '/tts/synthesize', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, voice: this._voice, speed: (this._rec && this._rec.tts_speed) || 1.0 }),
+          body: JSON.stringify(Object.assign({ text }, (this._voice && this._voice !== 'af_heart') ? { voice: this._voice } : {},
+                                             (this._rec && this._rec.tts_speed) ? { speed: this._rec.tts_speed } : {})),
         });
         const data = await r.json();
         if (data && data.audio_b64) { await this._playWithLipSync(data.audio_b64); played = true; }

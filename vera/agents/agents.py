@@ -2984,6 +2984,19 @@ def _vllm_standin_target(chosen: str, model: str) -> Optional[dict]:
         return None
 
 
+#: the voice every agent was created with before Vera had one configurable voice
+_OLD_DEFAULT_VOICE = "af_heart"
+
+
+def spoken_voice(voice: Optional[str]) -> str:
+    """The voice to ask the speech server for: an agent's own choice, or "" -
+    meaning the voice set for all of Vera (tts.config.set) - when the agent has
+    none or still has the old built-in default (owner decision 2026-10-06:
+    agents left on the default follow the global voice)."""
+    v = (voice or "").strip()
+    return "" if v in ("", _OLD_DEFAULT_VOICE) else v
+
+
 def _agent_classify_job_type(agent: "AgentRecord", message: str) -> str:
     """First matching row in the agent's routing_table decides this turn's
     job_type — the classification is entirely LOCAL (no LLM call, no extra
@@ -3428,7 +3441,9 @@ class AgentRunner:
                 if not text:
                     continue
                 try:
-                    _b = {"text": text, "voice": voice, "speed": speed}
+                    _b = {"text": text, "speed": speed}
+                    if voice:                       # "" = the voice set for all of Vera
+                        _b["voice"] = voice
                     if engine:
                         _b["engine"] = engine
                     async with httpx.AsyncClient(
@@ -3447,7 +3462,7 @@ class AgentRunner:
         # Start the serial worker immediately if TTS is requested
         _tts_worker_task = None
         if use_tts:
-            _v = agent.voice or "af_heart"
+            _v = spoken_voice(agent.voice)
             _sp = agent.tts_speed or 1.0
             _eng = agent.tts_engine or ""
             _tts_worker_task = asyncio.create_task(_tts_worker(_v, _sp, _eng))
@@ -3930,9 +3945,10 @@ class AgentRunner:
         # TTS
         tts_body: dict = {
             "text":  text[:2000],
-            "voice": agent.voice,
             "speed": agent.tts_speed,
         }
+        if spoken_voice(agent.voice):                 # otherwise the voice set for all of Vera
+            tts_body["voice"] = spoken_voice(agent.voice)
         if agent.tts_engine:
             tts_body["engine"] = agent.tts_engine
 
