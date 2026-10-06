@@ -199,6 +199,7 @@ _CRITICAL_MODULES = {
     "test_memory_fade_report",   # fading dry run: says what would fade and changes nothing (owner Q2)
     "test_memory_resurface",     # a faded memory that matches strongly surfaces again (owner 2026-10-05)
     "test_memory_fade_run",      # fading applies the policy: soft-archive, never in the backup window (owner 2026-10-05)
+    "test_memory_noise_core",    # status lines, prompt scaffolding and injected context rank last in recall (2026-10-06)
     "test_recall_core",          # recalled tool calls/dreams were injected as "User:"; repeats filled the slots (2026-10-04)
     "test_board_core",          # Agent Boards leasing — claim resolution + Phase E handoff (only holder can hand off)
     "test_gate_sweep",          # Ollama-gate leaked-lease sweep — MUST never clear a peer host's live slot (double-books GPU)
