@@ -136,7 +136,8 @@ def type_fit(kind: str, cand: Dict[str, Any], fx: Optional[Dict[str, Any]]) -> f
     types = set((fx or {}).get("types") or [])
     # only the head of a description says what the thing IS: "automobile marque of the
     # Ford Motor Company" is a marque, not a company
-    desc = re.split(r"\b(?:of|by|from|owned|for|in|at|with|founded|based)\b", (cand.get("description") or "").lower())[0]
+    # ("London based property consultancy" keeps its head: "based" and "founded" do not cut)
+    desc = re.split(r"\b(?:of|by|from|owned|for|in|at|with)\b", (cand.get("description") or "").lower())[0]
     want_t, want_w = (ORG_TYPES, ORG_WORDS) if kind == "org" else (PLACE_TYPES, PLACE_WORDS)
     other_t, other_w = (PLACE_TYPES, PLACE_WORDS) if kind == "org" else (ORG_TYPES, ORG_WORDS)
     if types & want_t or any(w in desc for w in want_w):
