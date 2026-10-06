@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
-from Vera.vera.execution.workflow_ir import export_native_dag, import_native_dag
+from Vera.vera.execution.workflow_ir import (
+    WorkflowIRValidationError,
+    export_native_dag,
+    import_native_dag,
+    normalize_workflow,
+)
 
 
 SCHEMA = "vera.dag-workflow-execution/v1"
+
+
+def native_bridge_enabled() -> bool:
+    """Return whether Workflow IR may own the native definition boundary."""
+    return str(os.getenv("VERA_WORKFLOW_IR_NATIVE_BRIDGE", "1")).strip().lower() \
+        not in {"0", "false", "no", "off"}
 
 
 def _canonical(value: Any) -> str:
@@ -25,6 +37,8 @@ def prepare_plain_dag_execution(graph: list) -> dict[str, Any]:
     """
     if not isinstance(graph, list):
         raise TypeError("graph must be an array")
+    if not native_bridge_enabled():
+        return _fallback(graph, "bridge_disabled")
     try:
         imported = import_native_dag(graph, name="dag.run", allow_lossy=False)
     except (TypeError, ValueError) as exc:
@@ -53,6 +67,49 @@ def prepare_plain_dag_execution(graph: list) -> dict[str, Any]:
         "ir_version": workflow["ir_version"],
         "gaps": (imported.get("gaps") or []) + (exported.get("gaps") or []),
         "executes": False,
+    }
+
+
+def prepare_workflow_ir_native_execution(workflow: dict[str, Any]) -> dict[str, Any]:
+    """Compile the exact supported IR subset for the existing native DAG engine.
+
+    This function only prepares execution. It never invokes a capability and
+    therefore cannot become a second retry, cancellation, or effects owner.
+    Unsupported or lossy definitions are returned as blocked evidence with no
+    executable graph.
+    """
+    if not native_bridge_enabled():
+        return {
+            "schema": SCHEMA, "ok": False, "authoritative": False,
+            "mode": "native_compatibility", "reason": "bridge_disabled",
+            "graph": None, "workflow_hash": "", "ir_version": "",
+            "gaps": [], "executes": False,
+        }
+    try:
+        normalized = normalize_workflow(workflow)
+    except (TypeError, ValueError, WorkflowIRValidationError) as exc:
+        return {
+            "schema": SCHEMA, "ok": False, "authoritative": False,
+            "mode": "workflow_ir_blocked", "reason": "invalid_workflow",
+            "detail": str(exc), "graph": None, "workflow_hash": "",
+            "ir_version": "", "gaps": [], "executes": False,
+        }
+    exported = export_native_dag(normalized, allow_lossy=False)
+    if not exported.get("ok") or exported.get("dag") is None:
+        return {
+            "schema": SCHEMA, "ok": False, "authoritative": False,
+            "mode": "workflow_ir_blocked",
+            "reason": "unsupported_workflow_semantics", "graph": None,
+            "workflow_hash": normalized["content_hash"],
+            "ir_version": normalized["ir_version"],
+            "gaps": list(exported.get("gaps") or []), "executes": False,
+        }
+    return {
+        "schema": SCHEMA, "ok": True, "authoritative": True,
+        "mode": "workflow_ir_native_bridge", "graph": exported["dag"],
+        "workflow_hash": normalized["content_hash"],
+        "ir_version": normalized["ir_version"],
+        "gaps": list(exported.get("gaps") or []), "executes": False,
     }
 
 

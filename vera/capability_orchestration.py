@@ -10862,12 +10862,26 @@ async def cap_dag_run(dag: list = None, state: dict = None, supervised: bool = F
                       session_id: str = "", include_workflow_ir: bool = False,
                       trace_id=None):
     from Vera.vera.execution.dag_workflow_execution import prepare_dag_execution
-    from Vera.vera.execution.run_shadow import execute_dag_with_run_shadow
-    tid = trace_id or new_id()
     execution_graph = dag or []
     workflow_evidence = prepare_dag_execution(
         execution_graph, supervised=supervised,
     )
+    return await _execute_native_dag_with_workflow_evidence(
+        workflow_evidence=workflow_evidence,
+        state=state or {},
+        supervised=supervised,
+        session_id=session_id,
+        include_workflow_ir=include_workflow_ir,
+        trace_id=trace_id,
+    )
+
+
+async def _execute_native_dag_with_workflow_evidence(
+        *, workflow_evidence: dict, state: dict, supervised: bool,
+        session_id: str, include_workflow_ir: bool, trace_id=None):
+    """Delegate one prepared definition to the existing native DAG authority."""
+    from Vera.vera.execution.run_shadow import execute_dag_with_run_shadow
+    tid = trace_id or new_id()
     execution_graph = workflow_evidence["graph"]
     if supervised:
         async def native_executor(graph, initial_state, _trace_id, _observer):
@@ -11063,6 +11077,43 @@ async def cap_workflow_ir_export_dag(workflow: dict, allow_lossy: bool = False,
                                      trace_id=None):
     from Vera.vera.execution.workflow_ir import export_native_dag
     return export_native_dag(workflow, allow_lossy=allow_lossy)
+
+
+@capability("workflow.ir.run_native", memory="on",
+            http_method="POST", http_path="/workflow/ir/run-native",
+            http_tags=["workflow", "dag"],
+            description="Execute the exact supported Workflow IR subset through Vera's existing "
+                        "native DAG engine. Unsupported or lossy semantics fail before dispatch; "
+                        "the native DAG engine remains the execution, retry, cancellation and "
+                        "effects owner.")
+async def cap_workflow_ir_run_native(workflow: dict, state: dict = None,
+                                     session_id: str = "", trace_id=None):
+    from Vera.vera.execution.dag_workflow_execution import (
+        prepare_workflow_ir_native_execution,
+    )
+    if state is not None and not isinstance(state, dict):
+        return {"ok": False, "error": "invalid_state",
+                "detail": "state must be an object", "executes": False}
+    prepared = prepare_workflow_ir_native_execution(workflow)
+    if not prepared.get("ok"):
+        return {
+            "ok": False,
+            "error": prepared.get("reason", "workflow_ir_blocked"),
+            "workflow_ir": {
+                key: value for key, value in prepared.items()
+                if key not in {"graph", "ok"}
+            },
+            "executes": False,
+        }
+    response = await _execute_native_dag_with_workflow_evidence(
+        workflow_evidence=prepared,
+        state=state or {},
+        supervised=False,
+        session_id=session_id,
+        include_workflow_ir=True,
+        trace_id=trace_id,
+    )
+    return {"ok": True, **response, "executes": True}
 
 
 @capability("workflow.ir.validate", memory="off",

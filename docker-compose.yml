@@ -110,6 +110,10 @@ services:
       VERA_RUN_JOURNAL_MODE: "${VERA_RUN_JOURNAL_MODE:-durable}"
       VERA_RUN_JOURNAL_PATH: "${VERA_RUN_JOURNAL_PATH:-/var/lib/vera-run-observation/runs.sqlite3}"
       VERA_RUN_JOURNAL_RETENTION_RUNS: "${VERA_RUN_JOURNAL_RETENTION_RUNS:-5000}"
+      # Exact Workflow IR definitions may dispatch only through the established
+      # native DAG executor. Set to 0 to restore the legacy DAG-definition path
+      # and fail closed for direct Workflow IR execution.
+      VERA_WORKFLOW_IR_NATIVE_BRIDGE: "${VERA_WORKFLOW_IR_NATIVE_BRIDGE:-1}"
 
       # ── Central VS Code (code-server) — the primary IDE surface. The vera
       #    orchestrator reverse-proxies it same-origin at /vscode/central/ so

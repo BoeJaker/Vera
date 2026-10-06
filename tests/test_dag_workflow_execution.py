@@ -4,12 +4,15 @@ from pathlib import Path
 import pytest
 
 from vera.execution.dag_workflow_execution import (
+    native_bridge_enabled,
     prepare_dag_execution,
     prepare_plain_dag_execution,
     prepare_stepwise_dag_action,
     prepare_streamed_dag_execution,
+    prepare_workflow_ir_native_execution,
     workflow_execution_metadata,
 )
+from vera.execution.workflow_ir import import_native_dag
 from vera.execution.run_projection import ShadowRunRegistry
 import vera.execution.run_shadow as run_shadow
 
@@ -33,6 +36,57 @@ def test_supported_plain_graph_is_exactly_materialized_through_ir():
     assert result["graph"] is not graph
     assert result["workflow_hash"].startswith("sha256:")
     assert result["executes"] is False
+
+
+def test_exact_workflow_ir_compiles_for_native_execution_with_original_identity():
+    workflow = import_native_dag(
+        [["alpha.read", "read"], [["beta.left", "left"],
+                                   ["beta.right", "right"]]],
+        name="portable-definition",
+    )["workflow"]
+
+    result = prepare_workflow_ir_native_execution(workflow)
+
+    assert result["ok"] is True
+    assert result["authoritative"] is True
+    assert result["mode"] == "workflow_ir_native_bridge"
+    assert result["graph"] == [
+        ["alpha.read", "read"],
+        [["beta.left", "left"], ["beta.right", "right"]],
+    ]
+    assert result["workflow_hash"] == workflow["content_hash"]
+    assert result["executes"] is False
+
+
+def test_unsupported_workflow_ir_fails_before_producing_an_execution_graph():
+    workflow = import_native_dag([["alpha", "out"]], name="retrying")["workflow"]
+    workflow["steps"][0]["retry"] = {"max_attempts": 2, "owner": "runtime"}
+
+    result = prepare_workflow_ir_native_execution(workflow)
+
+    assert result["ok"] is False
+    assert result["reason"] == "unsupported_workflow_semantics"
+    assert result["graph"] is None
+    assert any(gap["blocking"] and gap["code"] == "unsupported_contract"
+               and gap["path"] == "steps[0].retry"
+               for gap in result["gaps"])
+
+
+def test_native_bridge_rollback_preserves_legacy_dag_and_blocks_ir(monkeypatch):
+    graph = [["alpha", "out"]]
+    workflow = import_native_dag(graph, name="portable")["workflow"]
+    monkeypatch.setenv("VERA_WORKFLOW_IR_NATIVE_BRIDGE", "0")
+
+    assert native_bridge_enabled() is False
+    native = prepare_plain_dag_execution(graph)
+    portable = prepare_workflow_ir_native_execution(workflow)
+
+    assert native["authoritative"] is False
+    assert native["reason"] == "bridge_disabled"
+    assert native["graph"] is graph
+    assert portable["ok"] is False
+    assert portable["reason"] == "bridge_disabled"
+    assert portable["graph"] is None
 
 
 def test_native_maps_remain_exact_despite_non_blocking_adapter_gaps():

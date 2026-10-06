@@ -539,7 +539,9 @@ Vera includes a versioned, runtime-neutral description layer for portable
 workflow definitions. `workflow.ir.import_dag` converts supported native DAG
 structure into Workflow IR; `workflow.ir.export_dag` performs the reverse
 conversion; and `workflow.ir.validate` returns the normalized document and stable
-SHA-256 content hash. All three report `executes: false`.
+SHA-256 content hash. All three report `executes: false`. For an exact supported
+definition, `workflow.ir.run_native` is the explicit execution bridge described
+below; conversion alone never starts work.
 
 `dag.workflow.inspect` connects that definition layer to persisted DAGs. Unlike
 the raw array converter, this read-only facade starts from a DAG ID or name and
@@ -563,6 +565,7 @@ permitted.
 
 | Path | Boundary behaviour |
 |---|---|
+| `workflow.ir.run_native` | Validates and normalizes the supplied IR, refuses every blocking or lossy gap before dispatch, then hands the exact native graph to the established unsupervised DAG engine. The original IR hash becomes the Run `workflow_id` |
 | `dag.run` (unsupervised) | Exact round-trip; hash becomes Run `workflow_id` |
 | `dag.store_run`, DAG capabilities, `dag.run_monitored` | Same exact preparation when unsupervised; monitoring, error collection, correction, usage statistics and state overrides stay native. `include_workflow_ir=true` adds graph-free provenance |
 | `dag.run` supervised | The exact definition is materialized before the first node; the native supervisor remains the control authority for checkpoints, retries, inserted recovery nodes and aborts |
@@ -571,7 +574,9 @@ permitted.
 | Agent-loop capability calls | The embedded Workflow runtime adapter exact-round-trips each one-node action, then delegates it once to the native call-tool function (admission, argument handling, streaming callbacks, long-running awaiting, cancellation). The result or failure envelope is preserved and gains only a content-free runtime/Workflow identity. Set `VERA_AGENT_WORKFLOW_RUNTIME=0` before startup to bypass the adapter |
 
 Default response and event shapes are unchanged on every path; provenance is
-opt-in.
+opt-in. `VERA_WORKFLOW_IR_NATIVE_BRIDGE=0` restores the legacy native-definition
+path for existing DAG callers and makes direct IR execution fail closed; it does
+not reinterpret an IR document as an unchecked DAG.
 
 ### 7.4 Portable core, contracts, and gaps
 
@@ -713,6 +718,7 @@ effect.
 | `run.shadow.export` | Checksummed journal export for one Run | `run_id` |
 | `run.telemetry.preview` / `.status` / `.export` | Content-redacted OpenTelemetry/OpenInference projection; export to a configured OTLP endpoint is disabled by default | Export failure never affects the Run |
 | `workflow.ir.import_dag` / `export_dag` | Native DAG ↔ Workflow IR with gap report | `allow_lossy` |
+| `workflow.ir.run_native` | Exact Workflow IR subset → existing native DAG executor | Lossy or unsupported definitions never dispatch |
 | `workflow.ir.validate` / `migrate` | Normalize + hash / version migration | Never executes |
 | `workflow.ir.adapters` / `gaps` | Adapter profiles / compatibility analysis | Default adapter `vera.native_dag` |
 | `workflow.durability.fixture` / `gaps` | Durability fixture / profile comparison | `gaps` takes exactly one of `adapter` or `profile` |

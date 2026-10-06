@@ -735,6 +735,7 @@ relative to `vera/`.
 | `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | `(unset)` | `execution/portable_telemetry.py` |
 | `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | `(unset)` | `execution/portable_telemetry.py` |
 | `VERA_AGENT_WORKFLOW_RUNTIME` | `1` | `execution/workflow_runtime_adapter.py` |
+| `VERA_WORKFLOW_IR_NATIVE_BRIDGE` | `1` | `execution/dag_workflow_execution.py` |
 | `VERA_CAP_ONTOLOGY_AUTO_GENERATION` | `(unset)` | `ontologies/capability_ontology_snapshot.py` |
 | `VERA_CAP_ONTOLOGY_GENERATED_RELATIONS` | `(unset)` | `ontologies/capability_ontology_snapshot.py` |
 | `VERA_INTEGRATION_API_EFFECT_ENFORCEMENT` | `""` | `integrations/integrations_capabilities.py` |
