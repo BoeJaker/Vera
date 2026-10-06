@@ -1196,6 +1196,8 @@
      bottom of the last turn's item — could not be reached at all. */
   /* the desk (align="desk", owner approved 2026-10-06): sized by the distance to the chat on the column's left edge */
   :host([align="desk"]) .stage .it{transition:left .45s cubic-bezier(.2,.8,.2,1), top .45s cubic-bezier(.2,.8,.2,1), width .35s, height .35s; overflow:hidden!important; contain:paint; box-sizing:border-box; min-height:0}
+  /* on the desk the distance is the fold: a card or full-size face shows its body even if it was folded in held */
+  :host([align="desk"]) .stage .it.compact:not(.desk-chip) > .it-bd{display:block}
   :host([align="desk"]) .stage .it.desk-chip{border-radius:17px;padding:0 10px!important;display:flex!important;flex-direction:row!important;align-items:center;justify-content:flex-start}
   :host([align="desk"]) .stage .it.desk-chip > .it-hd{position:static!important;margin:0!important;flex:1 1 0;width:100%;max-width:100%;min-width:0;display:flex;align-items:center;justify-content:flex-start;gap:6px;overflow:hidden}
   :host([align="desk"]) .stage .it.desk-chip > .it-hd > *{flex:0 0 auto}
