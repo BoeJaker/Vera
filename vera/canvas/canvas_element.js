@@ -2185,7 +2185,7 @@
          preview="on|off"           whether an HTML item, and a code block that is a whole page, DRAW by default or
                                     show their source. Either way the drawing is a sandboxed frame.
          explode-offer="both|code|never"  whether the canvas offers to explode a code item, a prose item, or neither. */
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side']; }
 
     constructor() {
       super();
@@ -2242,6 +2242,7 @@
       // a setting changed: preview and the explode offer are drawn, alignment is placed
       if ((name === 'preview' || name === 'explode-offer' || name === 'fuse') && this._doc) this.render(this._doc);
       if (name === 'align' && this.hasAttribute('stage')) { this._view = null; this._placeNow(); }
+      if (name === 'chat-side' && this.deskAlign() && this.hasAttribute('stage')) this._placeNow();
     }
     /* held (the default) or strict: the one place the two regimes are named, so nothing else has to ask twice */
     strictAlign() { return String(this.getAttribute('align') || 'held').toLowerCase() === 'strict'; }
@@ -2324,7 +2325,9 @@
       const H = Math.max(360, (body ? body.clientHeight : 600) - pad - 8);
       const f = Math.max(0.8, Math.min(1.6, W / 1000));          // a wide column gets proportionally larger faces
       const desk = { W: W, H: H, m: 8, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22, scale: f };
-      const R = { l: -440, t: 0, r: 0, b: H };
+      // the chat beside the column: on its left edge (the default), or on its right when the page puts the chat there
+      const R = String(this.getAttribute('chat-side') || 'left').toLowerCase() === 'right'
+        ? { l: W, t: 0, r: W + 440, b: H } : { l: -440, t: 0, r: 0, b: H };
       const fm = this._focusMid || '';
       const ranked = cards.map((c, i) => ({ c, i })).sort((a, b) => {
         const fa = fm && a.c.dataset.mid === fm ? 1 : 0, fb = fm && b.c.dataset.mid === fm ? 1 : 0;
