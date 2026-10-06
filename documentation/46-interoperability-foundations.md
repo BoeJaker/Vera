@@ -125,6 +125,12 @@ Workflow IR provides typed, bounded control flow and loss-aware adapter analysis
 retries, idempotency, recovery, cancellation, versioning, and artifacts before a
 third-party engine is selected:
 
+- `workflow.ir.run_native` executes only the exactly representable
+  task/parallel/state-condition subset through Vera's existing DAG engine. It
+  preserves the IR content hash in the shared Run lineage and rejects lossy or
+  unsupported semantics before any capability is dispatched. The native engine
+  retains effects, cancellation and retry ownership.
+
 - `workflow.durability.fixture` returns a vendor-neutral crash/recovery fixture
   (clean, retry, cancel, timeout, compatible-version resume,
   incompatible-version refusal, and crash before/after every step).
