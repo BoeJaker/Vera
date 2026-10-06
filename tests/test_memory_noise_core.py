@@ -156,7 +156,7 @@ def test_marking_the_stored_noise_counts_first_then_marks_and_clears(monkeypatch
     monkeypatch.setattr(H, "_memory", lambda: (None, None))
     monkeypatch.setattr(H, "_NOISE_RUN_TASK", None)
     fn = getattr(H.memory_noise_mark, "__wrapped__", H.memory_noise_mark)
-    dry = _arun(fn())
+    dry = _arun(fn(trace_id="t-1"))                           # the dispatcher always passes trace_id
     assert dry["dry"] is True and dry["would_mark"] == 1 and dry["would_unmark"] == 1 and conn.marked == {}
     out = _arun(H._noise_apply())
     assert json.loads(conn.marked["a"]) == ["status"]          # newly noise: marked with why

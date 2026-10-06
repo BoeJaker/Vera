@@ -1830,7 +1830,7 @@ async def _noise_apply() -> Dict[str, Any]:
                 "Without confirm=true it only counts. Runs in the background, never 01:00-03:30. Inputs: confirm "
                 "(bool). Output: {dry, would_mark, would_unmark, by_reason | started | running, last_run}.",
 )
-async def memory_noise_mark(confirm: Any = False) -> Dict[str, Any]:
+async def memory_noise_mark(confirm: Any = False, trace_id=None) -> Dict[str, Any]:
     global _NOISE_RUN_TASK
     r = _redis()
     last = None
