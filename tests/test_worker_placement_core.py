@@ -254,3 +254,14 @@ def test_worker_dir_never_assumes_home():
     assert WORKER_DIR_CANDIDATES[-1].startswith("$HOME")
     probe = edge_dir_probe_cmd(WORKER_DIR_CANDIDATES)
     assert probe.index("/opt/vera/worker") < probe.index("$HOME/.vera/worker")
+
+
+def test_memory_background_jobs_stay_on_the_host():
+    # 2026-10-06: memory.fade.run ran on a node worker; status depended on which process answered, a second start ran
+    # alongside the first
+    for cap in ("memory.fade.run", "memory.fade.report", "memory.noise.mark", "memory.canonical.mark"):
+        assert wp.placement(cap)[0] == "host" and wp.class_of(cap) == ""
+        ok, why = wp.offload_decision(cap, stage=4, free={"general": 3}, is_worker=False, is_sandbox=False,
+                                      args_ok=True)
+        assert ok is False and why == "host-bound"
+    assert wp.placement("memory.search")[0] == "any"          # the rest of memory.* still may run on a node
