@@ -748,7 +748,9 @@ relative to `vera/`.
 | `VERA_OTLP_RETRY_MAX` | `(unset)` | `execution/portable_telemetry.py` |
 | `VERA_POLICY_ENFORCE_FAMILIES` | `""` | `capability_enforcement.py` |
 | `VERA_POLICY_MODE` | `shadow` | `capability_enforcement.py` |
-| `VERA_RUN_JOURNAL_PATH` | `""` | `execution/run_projection.py` |
+| `VERA_RUN_JOURNAL_MODE` | standalone: `memory`; Compose: `durable` | `execution/run_projection.py` |
+| `VERA_RUN_JOURNAL_PATH` | standalone durable mode: `<VERA_STATE_DIR>/execution/runs.sqlite3`; Compose: `/var/lib/vera-run-observation/runs.sqlite3` | `execution/run_projection.py` |
+| `VERA_RUN_JOURNAL_RETENTION_RUNS` | `5000` | `execution/run_projection.py` |
 
 ### Diagnostics, GC and logging
 

@@ -104,6 +104,13 @@ services:
       # ── IDE projects root (inside container)
       VERA_PROJECT_ROOT: "/data/projects"
 
+      # ── Durable Run observation state. This uses its own volume rather than
+      #    moving VERA_STATE_DIR (which may already own unrelated live state).
+      #    Set VERA_RUN_JOURNAL_MODE=memory for the one-step persistence rollback.
+      VERA_RUN_JOURNAL_MODE: "${VERA_RUN_JOURNAL_MODE:-durable}"
+      VERA_RUN_JOURNAL_PATH: "${VERA_RUN_JOURNAL_PATH:-/var/lib/vera-run-observation/runs.sqlite3}"
+      VERA_RUN_JOURNAL_RETENTION_RUNS: "${VERA_RUN_JOURNAL_RETENTION_RUNS:-5000}"
+
       # ── Central VS Code (code-server) — the primary IDE surface. The vera
       #    orchestrator reverse-proxies it same-origin at /vscode/central/ so
       #    login works inside the Vera page (raw-URL iframes drop the session
@@ -120,6 +127,7 @@ services:
     volumes:
       - vera-projects:/data/projects
       - vera-tls:/root/.vera/tls   # persist auto-generated self-signed TLS cert
+      - vera-run-observation:/var/lib/vera-run-observation
     depends_on:
       redis:
         condition: service_healthy
@@ -333,6 +341,7 @@ volumes:
   neo4j-data:
   vera-projects:
   vera-tls:
+  vera-run-observation:
   vscode-data:
   garage-meta:
   garage-data:
