@@ -84,3 +84,12 @@ def test_contact_set_get_and_filters(board):
     assert asyncio.run(board.cap_agents_contact_get())["count"] == 2
     bad = asyncio.run(board.cap_agents_contact_set(agent="claude:x", session_name="no spaces please"))
     assert not bad["ok"]
+
+
+def test_units_accept_lists_json_text_and_commas_and_old_junk_is_cleaned():
+    assert cc.parse_units('["legacy-documentation", "roadmap-activation"]') == ["legacy-documentation", "roadmap-activation"]
+    assert cc.parse_units("four-minds, recon-fixes") == ["four-minds", "recon-fixes"]
+    assert cc.parse_units(["a", " b "]) == ["a", "b"]
+    old = {"units": ["'legacy-documentation']", "['roadmap-activation'", "legacy-documentation"]}
+    new = cc.make_contact("codex:x", "codex-x", tool="codex", units=["roadmap-activation"])
+    assert cc.merge(old, new)["units"] == ["legacy-documentation", "roadmap-activation"]
