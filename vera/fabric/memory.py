@@ -111,6 +111,10 @@ try:                                                    # one 0..1 hybrid score 
     from Vera.vera.fabric import memory_score_core as _memory_score_core
 except ImportError:                                     # pragma: no cover
     from . import memory_score_core as _memory_score_core
+try:                                                    # long questions: content terms only (FM-7)
+    from Vera.vera.fabric import fusion_core as _fusion_core
+except ImportError:                                     # pragma: no cover
+    from . import fusion_core as _fusion_core
 try:                                                    # noisy records rank after the rest (memory_noise_core)
     from Vera.vera.fabric import memory_noise_core as _noise_core
 except ImportError:                                     # pragma: no cover
@@ -1361,7 +1365,8 @@ class Neo4jBackend(MemoryBackend):
             where = " AND ".join(where_parts)
 
             if query.strip():
-                params["query"] = _lucene_escape(query)
+                # a long question keeps only its content terms (fusion_core.lexical_query)
+                params["query"] = _lucene_escape(_fusion_core.lexical_query(query))
                 # A candidate limit for Lucene: without it every matching node is scored before the
                 # WHERE and LIMIT below (live 2026-10-05: a 36-word chat message, 377-932 ms; with
                 # {limit: 300}, 35-81 ms and the identical top results). Generous, because the WHERE

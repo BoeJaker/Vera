@@ -54,6 +54,27 @@ def query_terms(text: str) -> Set[str]:
     return {t for t in _TOKEN_RE.findall((text or "").lower()) if t not in STOPWORDS}
 
 
+# A query of this many words or more is a chat message, not a search: see lexical_query.
+LONG_QUERY_WORDS = 8
+
+
+def lexical_query(text: str, min_words: int = LONG_QUERY_WORDS) -> str:
+    """The text to send a keyword index for ``text``.
+
+    Short queries go as they are. A long one (a chat message) keeps only its content
+    terms, in order and once each: an index that keeps stopwords (Neo4j's
+    ``standard-no-stop-words``) ORs every word, so filler-heavy messages ("you", "is",
+    "working") outrank the record that names the subject. Live 2026-10-06, 14 long
+    questions: Neo4j leg hit@5 0.64 -> 0.79; hybrid MRR 0.50 -> 0.69; short queries
+    unchanged. A query of stopwords only goes as it is.
+    """
+    text = text or ""
+    if len(text.split()) < int(min_words):
+        return text
+    terms = [t for t in dict.fromkeys(_TOKEN_RE.findall(text.lower())) if t not in STOPWORDS]
+    return " ".join(terms) if terms else text
+
+
 def lexical_pass(terms: Set[str], text: str, min_overlap: int = 1) -> bool:
     """True when ``text`` shares at least ``min_overlap`` content terms with the query.
 
