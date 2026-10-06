@@ -936,6 +936,9 @@ async def get_agent_memory_context_v2(
     Falls back to the plain single-tier path if Redis or the two-tier
     method aren't available, so this degrades to the old (correct, just
     slower) behaviour rather than ever failing outright."""
+    # search for what the user typed: the page appends recalled context and capability instructions to the message,
+    # and searching with them found the last turn's recalled text again (the write side strips them too)
+    query = _noise_core.user_said(query)
     MEMORY, _ = _memory()
     if not MEMORY:
         return ""

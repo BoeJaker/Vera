@@ -174,3 +174,9 @@ def test_marking_the_stored_noise_counts_first_then_marks_and_clears(monkeypatch
 ])
 def test_only_what_the_user_typed_is_kept(sent, said):
     assert N.user_said(sent) == said
+
+def test_memory_is_searched_with_what_the_user_typed():
+    src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "fabric", "memory_hooks.py"), encoding="utf-8").read()
+    head = src[src.index("async def get_agent_memory_context_v2("):]
+    head = head[:head.index("MEMORY, _ = _memory()")]
+    assert "query = _noise_core.user_said(query)" in head          # before either tier searches
