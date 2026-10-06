@@ -212,6 +212,105 @@ async def list_tts_voices(trace_id=None):
         ]}
 
 
+# ── Speech defaults across the media nodes ────────────────────────────────────
+
+def _tts_desired_path():
+    from Vera.vera.state_paths import state_dir
+    return state_dir("tts") / "config.json"
+
+
+def _tts_nodes() -> list:
+    """Every online media node that serves TTS: (instance_id, label, url)."""
+    import Vera.vera.capability_orchestration as _o
+    out = []
+    for iid, i in (getattr(_o, "MEDIA_INSTANCES", {}) or {}).items():
+        if i.get("status") == "online" and i.get("enabled", True) and "tts" in (i.get("services") or ["tts"]):
+            out.append((iid, i.get("label") or iid, str(i.get("url") or "").rstrip("/")))
+    return out
+
+
+@capability(
+    "tts.config.get",
+    http_method="GET", http_path="/tts/config/get", http_tags=["gpu", "tts"],
+    memory="off", silent=True,
+    description="The speech defaults Vera wants (voice, language, speed, normaliser) and what each media "
+                "node actually has, so drift shows. Output: {desired, nodes:[{id, label, config, lang_used, "
+                "matches}]}.",
+)
+async def tts_config_get(trace_id=None):
+    try:
+        desired = json.loads(_tts_desired_path().read_text(encoding="utf-8"))
+    except Exception:
+        desired = {}
+    nodes = []
+    async with httpx.AsyncClient(timeout=8) as c:
+        for iid, label, url in _tts_nodes():
+            try:
+                r = await c.get(f"{url}/tts/config")
+                r.raise_for_status()
+                d = r.json()
+                cfg_ = d.get("config") or {}
+                nodes.append({"id": iid, "label": label, "config": cfg_, "lang_used": d.get("lang_used"),
+                              "matches": all(cfg_.get(k) == v for k, v in desired.items())})
+            except Exception as e:
+                nodes.append({"id": iid, "label": label, "error": f"{type(e).__name__}: {e}"[:160]})
+    return {"desired": desired, "nodes": nodes}
+
+
+@capability(
+    "tts.config.set",
+    http_method="POST", http_path="/tts/config/set", http_tags=["gpu", "tts"],
+    memory="on",
+    description="Set the speech defaults for every media node at once - the voice everything speaks with "
+                "unless a caller names its own (see tts.voices; b* voices are British, a* American), the "
+                "accent (blank = from the voice), speed (0.5-2) and number/date normalisation (rules|nemo|off). "
+                "Vera remembers it and pushes it to each node; a node keeps it across restarts. "
+                "Input: voice, lang, speed, normalizer (any subset). Output: {ok, desired, nodes:[{id, ok, error}]}.",
+)
+async def tts_config_set(voice: str = "", lang: Optional[str] = None, speed: Optional[float] = None,
+                         normalizer: str = "", trace_id=None):
+    p = _tts_desired_path()
+    try:
+        desired = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        desired = {}
+    body = {}
+    if voice:
+        body["voice"] = voice.strip()
+    if lang is not None:
+        body["lang"] = lang.strip().lower()
+    if speed is not None:
+        body["speed"] = max(0.5, min(2.0, float(speed)))
+    if normalizer:
+        if normalizer not in ("rules", "nemo", "off"):
+            return {"ok": False, "error": "normalizer must be rules, nemo or off"}
+        body["normalizer"] = normalizer
+    if not body:
+        return {"ok": False, "error": "nothing to set: give voice, lang, speed or normalizer"}
+    results = []
+    async with httpx.AsyncClient(timeout=15) as c:
+        for iid, label, url in _tts_nodes():
+            try:
+                r = await c.post(f"{url}/tts/config", json=body)
+                if r.status_code == 404:
+                    results.append({"id": iid, "label": label, "ok": False,
+                                    "error": "node runs an older media server - redeploy gpu_inference"})
+                    continue
+                r.raise_for_status()
+                results.append({"id": iid, "label": label, "ok": True})
+            except Exception as e:
+                detail = ""
+                try:
+                    detail = r.json().get("detail", "")  # type: ignore[name-defined]
+                except Exception:
+                    pass
+                results.append({"id": iid, "label": label, "ok": False, "error": (detail or str(e))[:200]})
+    if any(x["ok"] for x in results) or not results:
+        desired.update(body)
+        p.write_text(json.dumps(desired), encoding="utf-8")
+    return {"ok": all(x["ok"] for x in results) and bool(results), "desired": desired, "nodes": results}
+
+
 # ── Stable Diffusion ──────────────────────────────────────────────────────────
 
 # job_id → media-node base URL: image jobs report progress on the node that
