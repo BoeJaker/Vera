@@ -115,6 +115,20 @@ try:                                                    # noisy records rank aft
     from Vera.vera.fabric import memory_noise_core as _noise_core
 except ImportError:                                     # pragma: no cover
     from . import memory_noise_core as _noise_core
+try:                                                    # the time a question asks about (CU-M.9)
+    from Vera.vera.fabric import recall_scope_core as _scope_core
+except ImportError:                                     # pragma: no cover
+    from . import recall_scope_core as _scope_core
+
+
+def _as_dt(v: Any) -> datetime:
+    """A window bound as an aware datetime (a datetime, or an ISO string with Z or an offset)."""
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
 try:                                                    # one canonical record per repeated text (CU-M.5)
     from Vera.vera.fabric import memory_canonical_core as _canon_core
 except ImportError:                                     # pragma: no cover
@@ -731,6 +745,10 @@ class PostgresBackend(MemoryBackend):
                     elif k == "exclude_transcripts" and v:
                         # imported coding-agent transcript lines (recall_core.is_transcript); LIKE treats '[' literally
                         conditions.append("NOT (text LIKE '[Claude Code%' OR text LIKE '[Codex%')")
+                    elif k in ("since", "until") and v:
+                        # the time the question asks about (recall_scope_core)
+                        conditions.append(f"created_at {'>=' if k == 'since' else '<'} ${i}")
+                        params.append(_as_dt(v)); i += 1
             where = " AND ".join(conditions)
             if query.strip():
                 params.append(query)
@@ -1002,6 +1020,14 @@ class ChromaBackend(MemoryBackend):
             else:
                 where_arg = {"$and": clauses}
 
+            # the time the question asks about: Chroma cannot range over its string dates, so hits are kept here
+            win = ((filters or {}).get("since"), (filters or {}).get("until"))
+            if win[0] or win[1]:
+                lo = _as_dt(win[0]).isoformat() if win[0] else ""
+                hi = _as_dt(win[1]).isoformat() if win[1] else "~"
+                inner_filters = {k: v for k, v in (filters or {}).items() if k not in ("since", "until")}
+                hits = await self.search(query, limit=limit * 3, filters=inner_filters, embedding=embedding)
+                return [(r, s) for r, s in hits if lo <= str(r.created_at or "") < hi][:limit]
             if not embedding:
                 # No query vector (embedder offline / circuit-breaker cooling).
                 # query_texts would embed with Chroma's default 384-dim function
@@ -1328,6 +1354,10 @@ class Neo4jBackend(MemoryBackend):
                 elif k == "exclude_transcripts" and v:
                     where_parts.append("NOT (coalesce(m.text, '') STARTS WITH '[Claude Code' "
                                        "OR coalesce(m.text, '') STARTS WITH '[Codex')")
+                elif k in ("since", "until") and v:
+                    # ISO strings compare in time order (recall_scope_core)
+                    where_parts.append(f"coalesce(m.created_at, '') {'>=' if k == 'since' else '<'} ${k}")
+                    params[k] = _as_dt(v).isoformat()
             where = " AND ".join(where_parts)
 
             if query.strip():
@@ -1953,6 +1983,29 @@ class HybridMemoryStore:
             log.debug("resurface: %s", e)
         return results
 
+    async def _time_tier(self, query: str, limit: int, filters: Optional[Dict], timeout: float = 1.0):
+        """(query, filters, tier) to search with. A question that names a time ("yesterday", "last week", "in
+        March") is searched there with the phrase taken out of the text query - the text search wants every word, so
+        "yesterday" itself found nothing - then in a window four times as wide, then over all time (recall_scope_core;
+        CU-M.9): a tier stands when it finds at least min(limit, 3). A caller's own window is left alone."""
+        f = dict(filters or {})
+        if f.get("since") or f.get("until") or f.get("_unscoped"):
+            return query, filters, None
+        sc = _scope_core.time_scope(query)
+        if not sc:
+            return query, filters, None
+        q = _scope_core.strip(query, sc["phrase"])
+        need = max(1, min(int(limit or 1), 3))
+        for tier in (sc, _scope_core.widen(sc)):
+            tf = dict(f, since=tier["since"], until=tier["until"])
+            try:
+                hits = await self.search_fast(q, limit=need, filters=dict(tf, _unscoped=True), timeout=timeout)
+            except Exception:
+                hits = []
+            if len(hits) >= need:
+                return q, tf, tier["kind"]
+        return q, f, "all time"
+
     async def search_fast(
         self,
         query:   str,
@@ -1966,6 +2019,7 @@ class HybridMemoryStore:
         starts no embed and leaves no background task behind, so calling it on every keystroke costs nothing on
         the shared embed nodes."""
         query = (query or "")[:_HYBRID_SEARCH_QUERY_MAX_CHARS]
+        query, filters, _tier = await self._time_tier(query, limit, filters, min(timeout, 1.0))
         filters = _recall_core.default_recall_filters(filters, _RECALL_EXCLUDE_TYPES, _RECALL_EXCLUDE_TRANSCRIPTS)
         names = [n for n in ("postgres", "neo4j") if n in self._backends]
         if not names:
@@ -2042,6 +2096,7 @@ class HybridMemoryStore:
             than await it inline — awaiting it defeats the entire point.
         """
         query = (query or "")[:_HYBRID_SEARCH_QUERY_MAX_CHARS]
+        query, filters, _tier = await self._time_tier(query, limit, filters, min(fast_timeout, 1.0))
         filters = _recall_core.default_recall_filters(filters, _RECALL_EXCLUDE_TYPES, _RECALL_EXCLUDE_TRANSCRIPTS)
 
         # Start the embed NOW, in parallel with the fast tier below — not
