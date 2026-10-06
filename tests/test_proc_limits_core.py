@@ -35,3 +35,17 @@ def test_raise_sets_it_and_reports_before_and_after():
     r = _Res(1024, 1048576)
     assert pl.raise_nofile(r) == (1024, pl.WANT) and r.lim == (pl.WANT, 1048576)
     assert pl.raise_nofile(r) == (pl.WANT, pl.WANT)              # a second call changes nothing
+
+
+def test_health_warns_from_a_quarter_of_the_limit():
+    assert pl.files_status(200, 65536, 37) == {"open": 200, "limit": 65536, "share": 0.003, "redis_conns": 37,
+                                              "warn": False}
+    assert pl.files_status(1000, 1024, 936)["warn"] is True       # 2026-10-06 would have warned days earlier
+    assert pl.files_status(256, 1024)["warn"] is True and pl.files_status(255, 1024)["warn"] is False
+    assert pl.files_status(-1, 1024)["warn"] is False and pl.files_status(10, 0)["share"] == -1.0
+
+
+def test_health_carries_the_files_block():
+    src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "capability_orchestration.py"),
+               encoding="utf-8").read()
+    assert '"files":_health_files(),' in src
