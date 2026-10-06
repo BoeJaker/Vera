@@ -1960,6 +1960,61 @@ async def _tts(text: str, voice: str = "", speed: float = 0.0) -> bytes:
     return base64.b64decode(b64)
 
 
+def _mp3_with_soundfile(wav_path: Path, mp3: Path) -> bool:
+    """libsndfile >= 1.1 writes MP3 itself (the box has no ffmpeg)."""
+    try:
+        import soundfile as sf
+        if "MP3" not in sf.available_formats():
+            return False
+        data, rate = sf.read(str(wav_path), dtype="int16")
+        sf.write(str(mp3), data, rate, format="MP3", subtype="MPEG_LAYER_III")
+        return mp3.exists() and mp3.stat().st_size > 0
+    except Exception as ex:  # noqa: BLE001
+        log.debug("intel: soundfile mp3 failed: %s", ex)
+        return False
+
+
+async def _to_mp3(wav_path: Path) -> Path:
+    """The narration as MP3 (about a sixth of the WAV - it matters on a phone):
+    ffmpeg when the box has it, else libsndfile's own encoder; the WAV when
+    neither can. Returns the file to serve."""
+    mp3 = wav_path.with_suffix(".mp3")
+    ok = False
+    if shutil.which("ffmpeg"):
+        proc = await asyncio.create_subprocess_exec("ffmpeg", "-y", "-loglevel", "error", "-i", str(wav_path),
+                                                    "-codec:a", "libmp3lame", "-qscale:a", "5", str(mp3),
+                                                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        ok = await proc.wait() == 0 and mp3.exists()
+    if not ok:
+        ok = await asyncio.get_running_loop().run_in_executor(None, _mp3_with_soundfile, wav_path, mp3)
+    if ok:
+        wav_path.unlink(missing_ok=True)
+        return mp3
+    return wav_path
+
+
+@capability("intel.audio.compact", http_method="POST", http_path="/intel/audio/compact", http_tags=["intel"],
+            description="Re-encode reports' WAV narrations as MP3 (about a sixth of the size). Input: none. "
+                        "Output: {converted, kept_wav, freed_mb}.")
+async def cap_audio_compact(trace_id=None):
+    st = store()
+    conv, kept, freed = 0, 0, 0
+    for wav in sorted(_audio_dir().glob("*.wav")):
+        before = wav.stat().st_size
+        out = await _to_mp3(wav)
+        if out.suffix == ".mp3":
+            conv += 1
+            freed += before - out.stat().st_size
+            rid = wav.stem
+            doc = st.get_report(rid)
+            if doc and doc.get("audio"):
+                doc["audio"]["format"] = "mp3"
+                st.put_report(doc, core.render_html(doc))
+        else:
+            kept += 1
+    return {"converted": conv, "kept_wav": kept, "freed_mb": round(freed / 1e6, 1)}
+
+
 async def speak_report(rid: str, *, should_continue=None) -> Dict[str, Any]:
     """Read a report aloud: each chapter of its spoken script through the speech
     server, stitched into one file with chapter start times, attached to the report
@@ -2003,15 +2058,7 @@ async def speak_report(rid: str, *, should_continue=None) -> Dict[str, Any]:
     with wave.open(str(wav_path), "wb") as w:
         w.setnchannels(params[0]); w.setsampwidth(params[1]); w.setframerate(params[2])
         w.writeframes(b"".join(frames))
-    path = wav_path
-    if shutil.which("ffmpeg"):
-        mp3 = d / f"{doc['id']}.mp3"
-        proc = await asyncio.create_subprocess_exec("ffmpeg", "-y", "-loglevel", "error", "-i", str(wav_path),
-                                                    "-codec:a", "libmp3lame", "-qscale:a", "5", str(mp3),
-                                                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-        if await proc.wait() == 0 and mp3.exists():
-            wav_path.unlink(missing_ok=True)
-            path = mp3
+    path = await _to_mp3(wav_path)
     doc = st.get_report(doc["id"]) or doc               # the record may have moved on while we spoke
     doc["audio"] = {"url": f"/intel/report/audio/{doc['id']}", "seconds": round(pos / params[2], 1),
                     "chapters": chapters, "format": path.suffix.lstrip("."), "made": core.now_iso()}
