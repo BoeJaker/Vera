@@ -77,6 +77,29 @@ try:
     import tts_text_core as _tn
 except Exception:  # noqa: BLE001 - an older deploy without the file still speaks
     _tn = None
+
+# The speech defaults Vera sets (tts.config.set pushes them to every media node):
+# kept in tts_config.json next to this file, which a redeploy does not overwrite,
+# so a node keeps its voice across restarts. Env values are only the first default.
+_TTS_CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tts_config.json")
+_TTS_CFG = {"voice": KOKORO_VOICE, "lang": "", "speed": 1.0, "normalizer": TTS_NORMALIZER}
+try:
+    with open(_TTS_CFG_PATH, encoding="utf-8") as _f:
+        _TTS_CFG.update({k: v for k, v in json.load(_f).items() if k in _TTS_CFG})
+except FileNotFoundError:
+    pass
+except Exception as _e:  # noqa: BLE001
+    logging.getLogger("gpu-inference").warning("tts_config.json unreadable, using defaults: %s", _e)
+
+
+def _voice_lang(voice: str, explicit: str = "") -> str:
+    """espeak's language for a Kokoro voice: the prefix says the accent
+    (a* American, b* British, e Spanish, f French, h Hindi, i Italian, j Japanese,
+    p Portuguese, z Mandarin) unless a language is set."""
+    if explicit:
+        return explicit
+    return {"a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr", "h": "hi", "i": "it", "j": "ja",
+            "p": "pt-br", "z": "cmn"}.get((voice or "a")[:1].lower(), KOKORO_LANG)
 KOKORO_SAMPLE_RATE  = 24000
 
 OLLAMA_BASE_URL     = os.getenv("OLLAMA_BASE_URL",      "http://localhost:11434")
@@ -836,9 +859,10 @@ def _tts_synthesize(text: str, opts: dict) -> tuple[np.ndarray, int]:
     # Written forms -> spoken words (money, dates, times, percentages, quarters,
     # acronyms...): espeak's own rules read "£1.2bn" or "2026-10-05" badly. One place,
     # so chat voice, podcasts and intel narration all get it. Never fatal.
-    if _tn is not None and TTS_NORMALIZER != "off" and opts.get("normalize", True) is not False:
+    mode = str(_TTS_CFG.get("normalizer") or TTS_NORMALIZER).lower()
+    if _tn is not None and mode != "off" and opts.get("normalize", True) is not False:
         try:
-            text = _tn.normalize_best(text, TTS_NORMALIZER)
+            text = _tn.normalize_best(text, mode)
         except Exception as e:  # noqa: BLE001
             log.warning("TTS text normalisation failed, speaking the text as written: %s", e)
     if not text:
@@ -858,15 +882,19 @@ def _tts_synthesize(text: str, opts: dict) -> tuple[np.ndarray, int]:
 
 
 def _synthesize_kokoro(text: str, opts: dict) -> tuple[np.ndarray, int]:
-    voice = opts.get("voice") or opts.get("speaker") or KOKORO_VOICE
-    speed = float(opts.get("speed") or 1.0)
+    voice = opts.get("voice") or opts.get("speaker") or _TTS_CFG.get("voice") or KOKORO_VOICE
+    speed = float(opts.get("speed") or _TTS_CFG.get("speed") or 1.0)
     speed = max(0.5, min(2.0, speed))
+    # the accent follows the voice actually used (a British voice with American
+    # phonemes sounds wrong); a per-request or configured language wins
+    lang = opts.get("language") or (_TTS_CFG.get("lang") if voice == _TTS_CFG.get("voice") else "") or ""
+    lang = _voice_lang(voice, lang)
 
     kk = _kokoro_pipeline
 
     # v0.3.x: create(text, voice, speed, lang) is synchronous, returns (samples, sample_rate)
     if hasattr(kk, "create"):
-        result = kk.create(text, voice=voice, speed=speed, lang=KOKORO_LANG)
+        result = kk.create(text, voice=voice, speed=speed, lang=lang)
         # Returns (audio_array, sample_rate) tuple
         if isinstance(result, tuple):
             audio, sr = result
@@ -2907,7 +2935,55 @@ class TTSRequest(BaseModel):
     voice:    Optional[str]   = None   # kokoro voice id
     speaker:  Optional[str]   = None   # coqui speaker name
     language: Optional[str]   = None
-    speed:    Optional[float] = 1.0
+    speed:    Optional[float] = None   # None -> the node's configured speed
+    normalize: Optional[bool] = None   # False -> speak the text as written (no number/date normalisation)
+
+
+class TTSConfig(BaseModel):
+    voice:      Optional[str]   = None   # default Kokoro voice, e.g. bf_emma
+    lang:       Optional[str]   = None   # "" -> from the voice's prefix (b* -> en-gb)
+    speed:      Optional[float] = None   # 0.5 - 2.0
+    normalizer: Optional[str]   = None   # rules | nemo | off
+
+
+@app.get("/tts/config")
+async def tts_config_get():
+    return {"config": dict(_TTS_CFG), "lang_used": _voice_lang(_TTS_CFG.get("voice", ""), _TTS_CFG.get("lang", "")),
+            "normalizer_loaded": _tn is not None}
+
+
+@app.post("/tts/config")
+async def tts_config_set(cfg: TTSConfig):
+    """Change this node's speech defaults (Vera's tts.config.set calls it on every node)."""
+    new = dict(_TTS_CFG)
+    if cfg.voice is not None:
+        v = cfg.voice.strip()
+        known = []
+        try:
+            if _kokoro_pipeline is not None and hasattr(_kokoro_pipeline, "get_voices"):
+                raw = _kokoro_pipeline.get_voices()
+                known = list(raw.keys()) if isinstance(raw, dict) else list(raw)
+        except Exception:  # noqa: BLE001
+            known = []
+        if not re.fullmatch(r"[a-z]{2}_[a-z0-9_]{1,24}", v) or (known and v not in known):
+            raise HTTPException(status_code=400, detail=f"unknown voice {v!r}")
+        new["voice"] = v
+    if cfg.lang is not None:
+        if cfg.lang and not re.fullmatch(r"[a-z]{2,3}(-[a-z]{2})?", cfg.lang.strip().lower()):
+            raise HTTPException(status_code=400, detail=f"bad language {cfg.lang!r}")
+        new["lang"] = cfg.lang.strip().lower()
+    if cfg.speed is not None:
+        new["speed"] = max(0.5, min(2.0, float(cfg.speed)))
+    if cfg.normalizer is not None:
+        if cfg.normalizer not in ("rules", "nemo", "off"):
+            raise HTTPException(status_code=400, detail="normalizer must be rules, nemo or off")
+        new["normalizer"] = cfg.normalizer
+    tmp = _TTS_CFG_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(new, f)
+    os.replace(tmp, _TTS_CFG_PATH)
+    _TTS_CFG.update(new)
+    return {"ok": True, "config": dict(_TTS_CFG), "lang_used": _voice_lang(new["voice"], new["lang"])}
 
 
 @app.post("/tts")

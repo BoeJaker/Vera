@@ -73,3 +73,28 @@ def test_the_speech_server_normalises_before_synthesis():
 def test_the_media_server_deploy_ships_the_normaliser():
     src = open(os.path.join(ROOT, "vera", "provisioning", "components_capabilities.py"), encoding="utf-8").read()
     assert '("edge/tts_text_core.py", "tts_text_core.py")' in src
+
+
+def _gpu_src():
+    return open(os.path.join(ROOT, "edge", "GPU_inference.py"), encoding="utf-8").read()
+
+
+def test_the_accent_follows_the_voice():
+    src = _gpu_src()
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "_voice_lang")
+    ns = {"KOKORO_LANG": "en-us"}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "x", "exec"), ns)
+    vl = ns["_voice_lang"]
+    assert vl("bf_emma") == "en-gb" and vl("bm_george") == "en-gb" and vl("af_heart") == "en-us"
+    assert vl("bf_emma", "en-us") == "en-us" and vl("") == "en-us"
+
+
+def test_the_speech_server_takes_its_defaults_from_vera():
+    src = _gpu_src()
+    assert '@app.get("/tts/config")' in src and '@app.post("/tts/config")' in src
+    model = src[src.index("class TTSRequest"):src.index("class TTSConfig")]
+    assert "normalize: Optional[bool]" in model and "speed:    Optional[float] = None" in model
+    kok = src[src.index("def _synthesize_kokoro"):src.index("def _synthesize_coqui")]
+    assert '_TTS_CFG.get("voice")' in kok and "lang=lang" in kok and "_voice_lang(" in kok
+    caps = open(os.path.join(ROOT, "vera", "capabilities", "capabilities.py"), encoding="utf-8").read()
+    assert '"tts.config.set"' in caps and '"tts.config.get"' in caps
