@@ -50,7 +50,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, Response
@@ -67,6 +67,7 @@ try:
     from Vera.vera.intel import intel_pm_core as pm
     from Vera.vera.intel import intel_geo_core as geo
     from Vera.vera.intel import intel_calib_core as calib
+    from Vera.vera.intel import intel_resolve_core as rsv
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -76,6 +77,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_pm_core as pm
     from vera.intel import intel_geo_core as geo
     from vera.intel import intel_calib_core as calib
+    from vera.intel import intel_resolve_core as rsv
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -104,7 +106,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "speak_speed": 0.0,           # 0 = the speed set for all of Vera
     "telegram_audio": True,       # send the narration after a brief that went to Telegram
     "geocode": True,
-    "calibrated_gate": False,     # let a topic's learned curve decide (only once it is calibrated)              # turn the places a source names into coordinates (OpenStreetMap)
+    "calibrated_gate": False,
+    "resolve_entities": True,     # give the organisations sources name a stable Wikidata identity (nightly, cached)     # let a topic's learned curve decide (only once it is calibrated)              # turn the places a source names into coordinates (OpenStreetMap)
     "persona": ops.DEFAULT_PERSONA,
     "competitors": [],
     "phone_target": "mobile_app_smasnug",
@@ -591,8 +594,13 @@ async def cap_entities_get(topic_id: str = "", limit: int = 40, trace_id=None):
             links.append({"source": a, "target": b, "kind": r.get("rel") or r.get("type") or ""})
     top = sorted(counts.items(), key=lambda kv: -kv[1])[: int(limit)]
     names = {n for n, _ in top}
+    st = store()
+
+    def ident(n: str) -> Dict[str, Any]:
+        r = st.get_kv(f"wd:{rsv._key(n)}|org|{topic_id}") or {}
+        return {k: r[k] for k in ("qid", "description", "url", "website") if r.get("qid") and r.get(k)}
     nodes = [{"id": t["name"], "label": t["name"], "kind": "topic", "weight": 10}] + \
-            [{"id": n, "label": n, "kind": "entity", "weight": c} for n, c in top]
+            [dict({"id": n, "label": n, "kind": "entity", "weight": c}, **ident(n)) for n, c in top]
     links = [l for l in links if l["source"] in names and l["target"] in names] + \
             [{"source": t["name"], "target": n, "kind": "mentions", "weight": c} for n, c in top]
     return {"nodes": nodes, "links": links, "count": len(nodes)}
@@ -1478,6 +1486,125 @@ async def geo_lookup(name: str, cc: str = "") -> Optional[Dict[str, Any]]:
     return res
 
 
+_WD_LOCK = asyncio.Lock()
+_WD_LAST = [0.0]
+WD_SPACING_S = 1.5                       # Wikidata: a polite single client, well under its limits
+
+
+class _Throttled(Exception):
+    pass
+
+
+async def _wd(params: Dict[str, Any]) -> Dict[str, Any]:
+    """One Wikidata API read, spaced across the process; a refusal (429/5xx or a
+    non-JSON page) raises _Throttled so a batch stops and resumes next night."""
+    async with _WD_LOCK:
+        wait = WD_SPACING_S - (time.time() - _WD_LAST[0])
+        if wait > 0:
+            await asyncio.sleep(wait)
+        try:
+            return await _http_json(rsv.API, dict(params, format="json"), headers={"User-Agent": rsv.USER_AGENT})
+        except Exception as ex:  # noqa: BLE001
+            raise _Throttled(str(ex)[:160]) from ex
+        finally:
+            _WD_LAST[0] = time.time()
+
+
+async def resolve_entity(name: str, label: str, t: Optional[Dict[str, Any]] = None, *,
+                         source_domains: Sequence[str] = (), force: bool = False) -> Dict[str, Any]:
+    """A name to a Wikidata item, or an honest abstention - cached 30 days either
+    way. Evidence: the name, the type GLiNER gave it, the topic's own sources
+    linking the item's website, and the reranker's view of its description
+    against the topic. Recorded on the ledger as intel.entity_resolve."""
+    key = f"wd:{rsv._key(name)}|{rsv.kind_of(label)}|{(t or {}).get('id', '')}"
+    st = store()
+    hit = st.get_kv(key)
+    if hit and not force:
+        at = core.parse_ts(hit.get("at"))
+        if at and at > datetime.now(timezone.utc) - timedelta(days=30):
+            return hit
+    kind = rsv.kind_of(label)
+    cands = rsv.candidates(await _wd({"action": "wbsearchentities", "search": name, "language": "en", "uselang": "en",
+                                      "type": "item", "limit": 7}))
+    ents: Dict[str, Any] = {}
+    if cands:
+        ents = (await _wd({"action": "wbgetentities", "ids": "|".join(c["qid"] for c in cands), "props": "claims"})
+                ).get("entities") or {}
+    ctx: Dict[int, float] = {}
+    if cands and t:
+        rr = await _nlp("nlp.rerank", query=ops.profile_text(t),
+                        documents=[f"{c['label']}: {c['description']}" for c in cands], top_k=len(cands))
+        ctx = {int(x.get("index", -1)): float(x.get("score")) for x in rr.get("ranked") or [] if x.get("score") is not None}
+    scored = []
+    for i, c in enumerate(cands):
+        fx = rsv.facts(ents.get(c["qid"]) or {})
+        sc = rsv.score(name, kind, c, fx, source_domains=source_domains, context=ctx.get(i), rank=i, of=len(cands))
+        scored.append(dict(sc, qid=c["qid"], label=c["label"], description=c["description"], facts=fx))
+    ch = rsv.choose(scored)
+    best = next((s for s in scored if s["qid"] == ch.get("qid")), None)
+    out = {"name": name, "kind": kind, "at": core.now_iso(), "qid": ch.get("qid"), "why": ch.get("why", ""),
+           "note": ch.get("note", "")}
+    if best:
+        out.update(label=best["label"], description=best["description"], score=best["score"],
+                   website=(best["facts"].get("websites") or [""])[0], tickers=best["facts"].get("tickers") or [],
+                   url=f"https://www.wikidata.org/wiki/{best['qid']}")
+    st.set_kv(key, out)
+    _decide("intel.entity_resolve", "resolved" if out["qid"] else "abstain",
+            state={"name": name, "kind": kind, "candidates": [s["qid"] for s in scored]},
+            ref_kind="entity", ref_id=rsv._key(name)[:60] or "?", decider="rule", mode="rule",
+            detail={"qid": out["qid"], "score": out.get("score"), "why": out["why"][:120],
+                    "candidates": len(scored)})
+    return out
+
+
+async def _resolve_topic_entities(t: Dict[str, Any], limit: int = 5) -> int:
+    """Each night: resolve the organisations a topic's sources name most that are
+    not resolved yet (GLiNER-typed only; places are the geocoder's). Stops quietly
+    when Wikidata pushes back; the rest wait for the next night."""
+    st = store()
+    sigs = st.signals(t["id"], since=_since(24 * 60), limit=500)
+    domains = sorted({s.get("site") for s in sigs if s.get("site")})
+    typed = {}
+    for s in sigs:
+        for e, lab in (s.get("entity_types") or {}).items():
+            if rsv.kind_of(lab) == "org":
+                typed.setdefault(e, lab)
+    done = 0
+    for name, _n in ops.org_mentions(sigs, follow=t.get("entities") or [], min_mentions=2, limit=limit * 3):
+        if done >= limit:
+            break
+        if name not in typed and name not in (t.get("entities") or []):
+            continue
+        if st.get_kv(f"wd:{rsv._key(name)}|org|{t['id']}"):
+            continue
+        try:
+            await resolve_entity(name, typed.get(name, "company"), t, source_domains=domains)
+        except _Throttled as ex:
+            log.info("intel: Wikidata refused (%s) - resolving resumes next night", ex)
+            break
+        done += 1
+    return done
+
+
+@capability("intel.entity.resolve", http_method="POST", http_path="/intel/entity/resolve", http_tags=["intel"],
+            description="Resolve a name to a stable Wikidata identity (QID) - with its description, official "
+                        "website and stock listing - or abstain when the evidence is not clear. Evidence: the name, "
+                        "the kind of thing (company / organisation), the topic's sources linking its website and "
+                        "how its description fits the topic. Cached 30 days. Input: name (str!), topic_id, kind "
+                        "(company|organization|... - a GLiNER type), force (bool). Output: {qid, label, "
+                        "description, website, tickers, url, why}.")
+async def cap_entity_resolve(name: str = "", topic_id: str = "", kind: str = "company", force: bool = False,
+                             trace_id=None):
+    if not (name or "").strip():
+        return {"error": "name required"}
+    t = store().get_topic(topic_id) if topic_id else None
+    domains = sorted({s.get("site") for s in store().signals(topic_id, limit=500) if s.get("site")}) if t else []
+    try:
+        return await resolve_entity(name.strip(), kind, t, source_domains=domains, force=bool(force))
+    except _Throttled as ex:
+        return {"error": f"Wikidata refused the request for now: {ex}"}
+
+
 @capability("geo.lookup", http_method="GET", http_path="/geo/lookup", http_tags=["intel", "geo"],
             memory="off", silent=True,
             description="A place name to coordinates (OpenStreetMap Nominatim, cached; at most one request a "
@@ -2332,6 +2459,11 @@ async def _sweep_and_check(t: Dict[str, Any]) -> Dict[str, Any]:
         await _refresh_suggestions(t)
     except Exception as ex:  # noqa: BLE001
         log.warning("intel: suggestions failed for %s: %s", t["id"], ex)
+    if config().get("resolve_entities", True):
+        try:
+            await _resolve_topic_entities(t)
+        except Exception as ex:  # noqa: BLE001
+            log.warning("intel: entity resolution failed for %s: %s", t["id"], ex)
     return sw
 
 

@@ -929,3 +929,39 @@ def test_ratings_build_a_topic_curve_that_only_watches_until_switched_on(tmp_pat
     assert d and d[0]["p"] is not None
     _R(orch, "intel.config.set", settings={"calibrated_gate": True})
     assert _R(orch, "intel.calibration.status")["on"]
+
+
+def test_entities_get_stable_identities_and_the_resolver_backs_off(tmp_path):
+    mod, orch = _load(tmp_path)
+    mod.WD_SPACING_S = 0.0
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Savills"])["topic"]
+    st = mod.store()
+    for i in range(3):
+        st.put_signal({"id": f"s{i}", "topic_id": t["id"], "title": f"Savills news {i}", "url": f"https://www.savills.co.uk/{i}",
+                       "site": "savills.co.uk", "score": 7, "seen": "2026-10-05T00:00:00Z",
+                       "entities": ["Savills"], "entity_types": {"Savills": "property agency or consultancy"}})
+    calls = []
+
+    async def wd(params):
+        calls.append(params["action"])
+        if params["action"] == "wbsearchentities":
+            return {"search": [{"id": "Q10458056", "label": "Savills", "description": "real estate services provider"},
+                               {"id": "Q7628329", "label": "Savills North America", "description": ""}]}
+        return {"entities": {"Q10458056": {"claims": {"P31": [{"mainsnak": {"datavalue": {"value": {"id": "Q891723"}}}}],
+                                                       "P856": [{"mainsnak": {"datavalue": {"value": "https://www.savills.com"}}}]}},
+                             "Q7628329": {"claims": {}}}}
+    mod._wd = wd
+    n = _run(mod._resolve_topic_entities(st.get_topic(t["id"])))
+    rec = st.get_kv(f"wd:savills|org|{t['id']}")
+    assert n == 1 and rec["qid"] == "Q10458056" and rec["website"] == "https://www.savills.com"
+    assert any(d["question_id"] == "intel.entity_resolve" and d["answer"] == "resolved" for d in st.decisions(limit=50))
+    node = next(x for x in _R(orch, "intel.entities.get", topic_id=t["id"])["nodes"] if x["id"] == "Savills")
+    assert node["qid"] == "Q10458056" and node["url"].endswith("Q10458056")
+    before = len(calls)
+    _run(mod._resolve_topic_entities(st.get_topic(t["id"])))
+    assert len(calls) == before                                   # cached: no second lookup
+
+    async def refuse(params):
+        raise mod._Throttled("429")
+    mod._wd = refuse
+    assert "refused" in _R(orch, "intel.entity.resolve", name="CBRE", topic_id=t["id"], force=True)["error"]

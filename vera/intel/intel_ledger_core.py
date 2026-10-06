@@ -23,8 +23,11 @@ OUTCOME_SCHEMA = "vera.outcome/v0"
 QUESTIONS: Dict[str, Dict[str, Any]] = {
     "intel.signal_relevant": {"qtype": "binary", "labels": ["relevant", "not_relevant"],
                               "implementation": "nlp.rerank+blend+threshold"},
-    "intel.page_genre": {"qtype": "choice", "labels": ["news", "research", "marketing", "listing", "repo", "unsure"],
+    "intel.page_genre": {"qtype": "choice", "labels": ["news", "research", "marketing", "listing", "repo", "index",
+                                                       "unsure"],
                          "implementation": "nlp.zeroshot"},
+    "intel.entity_resolve": {"qtype": "choice", "labels": ["resolved", "abstain"],
+                             "implementation": "wikidata.search+type+site+nlp.rerank"},
     "intel.enrich_worth": {"qtype": "binary", "labels": ["model", "nlp_only"],
                            "implementation": "rule:score>=llm_gate,genre"},
     "intel.material_change": {"qtype": "binary", "labels": ["alert", "no_alert"],
