@@ -26,6 +26,8 @@ QUESTIONS: Dict[str, Dict[str, Any]] = {
     "intel.page_genre": {"qtype": "choice", "labels": ["news", "research", "marketing", "listing", "repo", "index",
                                                        "unsure"],
                          "implementation": "nlp.zeroshot"},
+    "intel.worldview_drift": {"qtype": "binary", "labels": ["shifted", "steady"],
+                              "implementation": "worldview.detect_drift (health-gated), new over-represented concepts"},
     "intel.entity_resolve": {"qtype": "choice", "labels": ["resolved", "abstain"],
                              "implementation": "wikidata.search+type+site+nlp.rerank"},
     "intel.enrich_worth": {"qtype": "binary", "labels": ["model", "nlp_only"],

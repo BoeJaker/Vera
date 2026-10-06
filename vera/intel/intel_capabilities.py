@@ -107,7 +107,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "telegram_audio": True,       # send the narration after a brief that went to Telegram
     "geocode": True,
     "calibrated_gate": False,
-    "resolve_entities": True,     # give the organisations sources name a stable Wikidata identity (nightly, cached)     # let a topic's learned curve decide (only once it is calibrated)              # turn the places a source names into coordinates (OpenStreetMap)
+    "resolve_entities": True,
+    "worldview_wake": True,       # use the worldview's concept drift as a hint - only while worldview.health is ok     # give the organisations sources name a stable Wikidata identity (nightly, cached)     # let a topic's learned curve decide (only once it is calibrated)              # turn the places a source names into coordinates (OpenStreetMap)
     "persona": ops.DEFAULT_PERSONA,
     "competitors": [],
     "phone_target": "mobile_app_smasnug",
@@ -941,7 +942,13 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
             s["summary"] = (s.get("summary") or s.get("snippet") or "") + " | " + "; ".join(
                 f"{e['question']} -> {e['answer']}" for e in s["evidence"][:3])
     levels = "\n".join(x for x in (chg.level_line(i) for i in _indicators(t["id"])) if x)
-    parsed = await _llm_json(core.snapshot_prompt(t, prev, sigs, market=chg.prompt_lines(moves), levels=levels),
+    try:
+        drift = await _worldview_shift(t)
+    except Exception as ex:  # noqa: BLE001 - a hint must never cost an assessment
+        log.debug("intel: worldview hint skipped: %s", ex)
+        drift = ""
+    parsed = await _llm_json(core.snapshot_prompt(t, prev, sigs, market=chg.prompt_lines(moves), levels=levels,
+                                                  drift=drift),
                              role="assess", timeout=1800.0)
     if not parsed:
         return {"topic": t["id"], "error": "no assessment"}
@@ -977,6 +984,43 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
                 pend.append({"topic_id": t["id"], "query": q, "added": core.now_iso()})
         st.set_kv("research_wanted", pend[-40:])
     return {"topic": t["id"], "snapshot": snap, "alert": why if alert else ""}
+
+
+async def _worldview_ok() -> bool:
+    """worldview.health, read at most every six hours. The worldview's concepts
+    are only used while it reports ok (four-minds FM-0.5 / plan ID-5.2)."""
+    st = store()
+    h = st.get_kv("wv_health") or {}
+    at = core.parse_ts(h.get("at"))
+    if not at or at < datetime.now(timezone.utc) - timedelta(hours=6):
+        r = await _call("worldview.health") if _has("worldview.health") else {}
+        h = {"at": core.now_iso(), "status": str(r.get("status") or "unavailable"), "reasons": (r.get("reasons") or [])[:4]}
+        st.set_kv("wv_health", h)
+    return h.get("status") == "ok"
+
+
+async def _worldview_shift(t: Dict[str, Any]) -> str:
+    """The concepts a topic's sources now over-represent that they did not at the
+    last assessment - "the mix of what is being said shifted towards ...". The
+    worldview's detect_drift compares a dataset with everything; intel keeps the
+    previous set, so what is reported is a change over time. Dormant (and nothing
+    recorded) while the worldview is not healthy."""
+    if not config().get("worldview_wake", True) or not _has("worldview.detect_drift") or not await _worldview_ok():
+        return ""
+    r = await _call("worldview.detect_drift", dataset_id=f"intel.{t['id']}")
+    if r.get("error"):
+        return ""
+    over = [str(d.get("label") or d.get("concept")) for d in r.get("drifted_concepts") or []
+            if d.get("direction") == "over"][:8]
+    st = store()
+    key = f"wv_over:{t['id']}"
+    prev = st.get_kv(key)
+    st.set_kv(key, over)
+    new = [x for x in over if prev is not None and x not in prev][:3]
+    _decide("intel.worldview_drift", "shifted" if new else "steady", state={"topic": t["id"], "over": over},
+            ref_kind="topic", ref_id=t["id"], decider="rule", mode="rule", shadow=True,
+            detail={"new": new, "over": len(over), "first": prev is None})
+    return ("the mix of what is being said shifted towards: " + ", ".join(new)) if new else ""
 
 
 async def _alert(t: Dict[str, Any], snap: Dict[str, Any], why: str) -> None:

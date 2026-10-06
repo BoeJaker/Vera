@@ -1002,3 +1002,32 @@ def test_attention_indicator_from_a_name(tmp_path):
     assert len(ch) == 1 and "drew" in ch[0]["text"] and ch[0]["stories"]      # the sweep's stories around it
     a = mod.core.make_action("watch", topic_id=t["id"], target="wiki:en:Knight_Frank", query="Knight Frank")
     assert mod.core.action_args(a) == {"topic_id": t["id"], "kind": "attention", "wiki_title": "Knight_Frank", "label": "Knight Frank"}
+
+
+def test_worldview_hint_only_while_healthy_and_only_what_is_new(tmp_path):
+    mod, orch = _load(tmp_path)
+    health = {"status": "degraded"}
+    drift_calls = []
+
+    async def wv_health(trace_id=None):
+        return dict(health)
+
+    async def detect_drift(dataset_id="", trace_id=None):
+        drift_calls.append(dataset_id)
+        over = [{"concept": 1, "label": "valuation models", "direction": "over"}]
+        if len(drift_calls) > 1:
+            over.append({"concept": 2, "label": "planning reform", "direction": "over"})
+        return {"drifted_concepts": over}
+    orch.CAPABILITY_REGISTRY["worldview.health"] = {"func": wv_health, "raw": wv_health}
+    orch.CAPABILITY_REGISTRY["worldview.detect_drift"] = {"func": detect_drift, "raw": detect_drift}
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    assert _run(mod._worldview_shift(t)) == "" and not drift_calls                  # degraded: not even asked
+    health["status"] = "ok"
+    mod.store().set_kv("wv_health", {})                                             # forget the cached reading
+    assert _run(mod._worldview_shift(t)) == ""                                      # first look: nothing to compare
+    assert _run(mod._worldview_shift(t)) == "the mix of what is being said shifted towards: planning reform"
+    assert drift_calls == ["intel." + t["id"]] * 2
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    _run(mod.snapshot_topic(mod.store().get_topic(t["id"])))
+    assert "WHAT VERA'S WORLDVIEW NOTICED" not in orch.PROMPTS[-1][0]                # steady since: no hint
+    assert any(d["question_id"] == "intel.worldview_drift" and d["shadow"] for d in mod.store().decisions(limit=50))
