@@ -130,6 +130,11 @@ KEY_TASKS    = "vera:evolve:tasks"
 KEY_SEEDED   = "vera:evolve:seeded"
 KEY_RUNS     = "vera:evolve:runs"
 KEY_RUN      = "vera:evolve:run:"        # + run_id
+# Chat turns (four-minds FM-0.3) in their OWN list, so they never push census/loop runs out of
+# KEY_RUNS (capped at RUNS_CAP and full); evolve.runs reads it only for source=chat or all.
+KEY_CHAT_TURNS = "vera:evolve:chat_turns"
+KEY_CHAT_TURN  = "vera:evolve:chat_turn:"   # + run_id (detail)
+CHAT_TURNS_CAP = 1000
 KEY_SUITES   = "vera:evolve:suites"
 KEY_SESSIONS = "vera:evolve:sessions"
 KEY_SESSION  = "vera:evolve:session:"    # + session_id
@@ -2794,7 +2799,8 @@ async def _evolve_authors_uncached(hours: int, branch: str):
                         "Query: limit, task, session (a suite id, an improve "
                         "session, or a census run such as run52), source "
                         "(suite | run | manual | improve | census | goal | "
-                        "captest | ide).")
+                        "captest | ide | chat - chat turns, kept in their own "
+                        "list | all - every list merged by time).")
 async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
                       source: str = "", fields: str = "", trace_id=None):
     # fields (a comma list) cuts each run to those keys and skips the git join unless `commits` is one of them
@@ -2802,17 +2808,28 @@ async def evolve_runs(limit: int = 50, task: str = "", session: str = "",
     out: List[Dict[str, Any]] = []
     if r:
         try:
-            rows = await r.lrange(KEY_RUNS, 0, RUNS_CAP - 1)
+            # chat turns only when asked for: source=chat reads their list, source=all merges both
+            src = str(source or "")
+            if src == "chat":
+                rows = await r.lrange(KEY_CHAT_TURNS, 0, CHAT_TURNS_CAP - 1)
+            else:
+                rows = await r.lrange(KEY_RUNS, 0, RUNS_CAP - 1)
+                if src == "all":
+                    rows = list(rows or []) + list(await r.lrange(KEY_CHAT_TURNS, 0, CHAT_TURNS_CAP - 1) or [])
+            recs = []
             for row in rows or []:
                 try:
-                    rec = json.loads(row.decode() if isinstance(row, bytes) else row)
+                    recs.append(json.loads(row.decode() if isinstance(row, bytes) else row))
                 except Exception:
                     continue
+            if src == "all":
+                recs.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
+            for rec in recs:
                 if task and rec.get("task") != task:
                     continue
                 if session and rec.get("session") != session:
                     continue
-                if source and str(rec.get("source") or "") != source:
+                if src and src != "all" and str(rec.get("source") or "") != src:
                     continue
                 out.append(rec)
                 if len(out) >= int(limit):
