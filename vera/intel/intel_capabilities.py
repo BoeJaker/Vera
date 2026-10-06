@@ -97,6 +97,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "alert_channels": ["telegram"],
     "public_base": "https://llm.int:8999",   # links in Telegram / phone / email must work off the box
     "illustrate": False,
+    "speak": True,                # read every report aloud (background) - the page gets a player
+    "speak_voice": "",            # "" = the voice set for all of Vera (tts.config.set)
+    "speak_speed": 0.0,           # 0 = the speed set for all of Vera
+    "telegram_audio": True,       # send the narration after a brief that went to Telegram
+    "geocode": True,              # turn the places a source names into coordinates (OpenStreetMap)
     "persona": ops.DEFAULT_PERSONA,
     "competitors": [],
     "phone_target": "mobile_app_smasnug",
@@ -1689,13 +1694,16 @@ def _audio_dir() -> Path:
     return state_dir("intel", "audio")
 
 
-async def _tts(text: str, voice: str = "", speed: float = 1.0) -> bytes:
-    """One piece of narration from the media node's speech server -> WAV bytes."""
+async def _tts(text: str, voice: str = "", speed: float = 0.0) -> bytes:
+    """One piece of narration from the media node's speech server -> WAV bytes.
+    No voice / speed given = the node's defaults, which tts.config.set controls."""
     import base64
     import httpx
     base = _orch.media_base("tts")
     hdr = _orch.vera_origin_header(job_type="tts", cap="intel.speak") if hasattr(_orch, "vera_origin_header") else {}
-    body: Dict[str, Any] = {"text": text, "speed": speed}
+    body: Dict[str, Any] = {"text": text}
+    if speed:
+        body["speed"] = speed
     if voice:
         body["voice"] = voice
     async with httpx.AsyncClient(timeout=180) as c:
@@ -1729,7 +1737,7 @@ async def speak_report(rid: str, *, should_continue=None) -> Dict[str, Any]:
         chapters.append({"id": ch["id"], "title": ch["title"], "start": round(pos / params[2], 1) if params else 0.0})
         for chunk in ch["chunks"]:
             try:
-                wav = await _tts(chunk, c.get("speak_voice", ""), float(c.get("speak_speed", 1.0) or 1.0))
+                wav = await _tts(chunk, c.get("speak_voice", ""), float(c.get("speak_speed") or 0.0))
                 with wave.open(io.BytesIO(wav), "rb") as w:
                     p = (w.getnchannels(), w.getsampwidth(), w.getframerate())
                     data = w.readframes(w.getnframes())
@@ -1764,6 +1772,7 @@ async def speak_report(rid: str, *, should_continue=None) -> Dict[str, Any]:
                     "chapters": chapters, "format": path.suffix.lstrip("."), "made": core.now_iso()}
     st.put_report(doc, core.render_html(doc))
     await _event("report.audio", id=doc["id"], seconds=doc["audio"]["seconds"])
+    await _send_audio(doc["id"])               # the brief already went to Telegram: its narration follows
     return {"ok": True, "seconds": doc["audio"]["seconds"], "chapters": len(chapters)}
 
 
@@ -1919,7 +1928,34 @@ async def deliver_report(rid: str, channels: List[str], *, target: str = "") -> 
     st.update_report(rid, delivered=sorted({r["channel"] for r in results if r["ok"]} |
                                            set((st.get_report(rid) or {}).get("delivered") or [])))
     await _event("report.delivered", id=rid, channels=[r["channel"] for r in results if r["ok"]])
+    if any(r["ok"] and r["channel"] == "telegram" for r in results):
+        await _send_audio(rid)                 # the narration follows the brief, when it is ready
     return {"results": results}
+
+
+async def _send_audio(rid: str) -> bool:
+    """Send a report's narration to Telegram once: when the brief went to Telegram
+    and the narration exists (whichever happens second calls this)."""
+    st = store()
+    doc = st.get_report(rid) or {}
+    audio = doc.get("audio") or {}
+    if not (config().get("telegram_audio", True) and audio.get("url") and "telegram" in (doc.get("delivered") or [])):
+        return False
+    sent = st.get_kv("audio_sent", []) or []
+    if rid in sent or not _has("tg.send_audio"):
+        return False
+    path = next((p for p in (_audio_dir() / f"{rid}.mp3", _audio_dir() / f"{rid}.wav") if p.exists()), None)
+    if not path:
+        return False
+    mins = int(float(audio.get("seconds") or 0) // 60)
+    r = await _call("tg.send_audio", path=str(path), title=(doc.get("title") or "Intel brief")[:60],
+                    performer="Vera intelligence",
+                    caption=f"\U0001F50A {doc.get('title') or 'Intel brief'} - about {max(1, mins)} min")
+    if r.get("ok"):
+        st.set_kv("audio_sent", (sent + [rid])[-200:])
+        return True
+    log.info("intel: narration not sent to Telegram: %s", r.get("error"))
+    return False
 
 
 @capability("intel.deliver", http_method="POST", http_path="/intel/deliver", http_tags=["intel"],
