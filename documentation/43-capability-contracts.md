@@ -46,6 +46,7 @@ or grants authority on its own.
   - [cap.contract.observations](#capcontractobservations)
   - [cap.resolve.shadow](#capresolveshadow)
   - [cap.resolve.dispatch](#capresolvedispatch)
+  - [cap.resolve.parity](#capresolveparity)
 - [Lint rules](#lint-rules)
 - [Lifecycle and deprecation](#lifecycle-and-deprecation)
 - [Resolver shadow mode](#resolver-shadow-mode)
@@ -260,6 +261,7 @@ callable through `/mcp/call`, the WebSocket harness, or their HTTP route.
 | `cap.contract.observations` | `GET /cap/contracts/observations` | Redacted health/latency evidence from recent events. | `prefix`, `event_limit` 1–500 (default 500), `cap_limit` 1–500 (default 200), `include_internal` |
 | `cap.resolve.shadow` | `POST /cap/resolve/shadow` | Rank implementations of a canonical task without invoking them. | `canonical_task` (required), `allowed_effects`, `required_resources`, `preferred`, `output_schema`, `policy_requirements`, `candidate_limit`, `event_limit` |
 | `cap.resolve.dispatch` | `POST /cap/resolve/dispatch` | Resolve, authorize and invoke an explicitly migrated read-only canonical task. | `canonical_task` (required), `arguments` |
+| `cap.resolve.parity` | automatic | Compare direct-name and resolved result revisions for approved read-only idempotent canaries. | `canonical_task` (required), `arguments` |
 
 By default the registry projection skips capabilities registered with
 `mcp_expose=False`; pass `include_internal=true` to include them.
@@ -346,7 +348,17 @@ redacted observations. The allowed effects and candidate mapping are fixed by
 Vera rather than supplied by the caller. Unknown tasks, ambiguous selection,
 contract or policy drift, reserved execution arguments and schema mismatches
 fail before invocation. `VERA_RESOLVER_DISPATCH_ENABLED=0` disables this route
-without changing direct-name calls.
+without changing direct-name calls. Successful responses include a content-free
+decision receipt whose revision binds the selected task to the exact manifest,
+empty-evidence set and policy projection used for authorization.
+
+### cap.resolve.parity
+
+Parity inspection executes the guarded route and then the unchanged direct-name
+route for the deterministic coverage and gate canaries. It compares stable
+result revisions and does not return a second result body. Observation and any
+effectful family are refused; the dispatch kill switch and policy checks run
+before either parity call can proceed.
 
 ## Lint rules
 

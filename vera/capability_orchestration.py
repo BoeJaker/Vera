@@ -8338,6 +8338,36 @@ async def cap_resolve_dispatch(canonical_task: str, arguments: dict = None, trac
 
 
 @capability(
+    "cap.resolve.parity", memory="off", silent=True,
+    description="Compare content-free result revisions for direct-name and guarded "
+                "resolver calls of explicitly approved read-only idempotent canaries. "
+                "Observation and effectful tasks are refused.",
+    schema={"properties": {
+        "canonical_task": {"type": "string"}, "arguments": {"type": "object"},
+    }, "required": ["canonical_task"]},
+    contract={
+        "canonical_task": "capability.resolve.parity", "effects": ["read"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "fixed_migrated_allowlist"},
+        "secrets": {"status": "not_required"}, "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"}, "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "idempotent"},
+        "cancellation": {"status": "not_required"},
+        "pagination": {"status": "not_applicable"},
+        "resources": {"status": "declared", "classes": ["cpu"]}, "owner": "vera",
+    },
+)
+async def cap_resolve_parity(canonical_task: str, arguments: dict = None, trace_id=None):
+    import os
+    from Vera.vera.capability_resolution_dispatch import compare_direct_parity
+    enabled = os.getenv("VERA_RESOLVER_DISPATCH_ENABLED", "1").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    return await compare_direct_parity(
+        CAPABILITY_REGISTRY, canonical_task, arguments, enabled=enabled, trace_id=trace_id)
+
+
+@capability(
     "cap.policy.shadow", memory="off",
     description="Preview the shared execution-policy decision for one registered "
                 "capability without granting authority or invoking it. Supplied grants "
