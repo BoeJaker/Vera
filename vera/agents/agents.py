@@ -2106,6 +2106,28 @@ async def agent_chat_stream_endpoint(request: Request):
         _mem_phase = None
         _MEM_LABEL = "searching earlier conversations (all sessions)"
         _model_t0 = _time.monotonic()
+        # the answer's model slot already taken as it starts: say "waiting for the GPU" until the first word, not
+        # "writing the answer" (CU-T.8; MASTER-TODO l.76). One status read, bounded; nothing said when unknown.
+        _gpu_q = {"t": None, "label": ""}
+
+        async def _gpu_queue_start():
+            if _ph is None or _ph.silent:
+                return
+            try:
+                _g = await asyncio.wait_for(_orch.ollama_gate_status(), 0.3)
+                _gq = _phases.gpu_queue(_g, str(getattr(agent, "instance_id", "") or ""))
+                if _gq:
+                    _gpu_q.update(t=_time.monotonic(), label=_gq["label"])
+                    await _q.put(_ph.sse("model", "queue", _gq["label"], "start", detail=_gq["detail"]))
+            except Exception as _e:
+                log.debug("phase frame (gpu queue) skipped: %s", _e)
+
+        def _gpu_queue_done():
+            if _gpu_q["t"] is None:
+                return b""
+            _t, _gpu_q["t"] = _gpu_q["t"], None
+            return _ph.sse("model", "queue", _gpu_q["label"], "done", ms=(_time.monotonic() - _t) * 1000,
+                           detail="until the first word")
         # tier 1 of a two-tier reply starts at once; a single-pass answer waits for the searches
         _model_waits_for_context = ((_web_task is not None or _mem_task is not None)
                                     and not (_two_tier is not None and _tt_plan.get("split")))
@@ -2169,6 +2191,7 @@ async def agent_chat_stream_endpoint(request: Request):
                 if not _model_waits_for_context:
                     _model_t0 = _time.monotonic()
                     await _q.put(_ph.sse("model", "answer", "writing the answer", "start", t=_model_t0))
+                    await _gpu_queue_start()
             except Exception as _e:
                 log.debug("phase frames (pre-stream) skipped: %s", _e)
 
@@ -2198,6 +2221,7 @@ async def agent_chat_stream_endpoint(request: Request):
                     await asyncio.wait(_watch, timeout=0.25)
                 _model_t0 = _time.monotonic()
                 await _q.put(_ph.sse("model", "answer", "writing the answer", "start", t=_model_t0))
+                await _gpu_queue_start()
             except Exception as _e:
                 log.debug("phase frame (model start) skipped: %s", _e)
 
@@ -2380,6 +2404,9 @@ async def agent_chat_stream_endpoint(request: Request):
                         if _ph is not None and not _first_sent and _text:
                             _first_sent = True          # the first token: the time to it is the turn's TTFT
                             try:
+                                _gqd = _gpu_queue_done()
+                                if _gqd:
+                                    yield _gqd
                                 yield _ph.sse("model", "answer", "writing the answer", "first")
                             except Exception:
                                 pass
@@ -2388,6 +2415,9 @@ async def agent_chat_stream_endpoint(request: Request):
                 yield chunk
             if _ph is not None:
                 try:
+                    _gqd = _gpu_queue_done()            # no word came: the wait still ends here
+                    if _gqd:
+                        yield _gqd
                     yield _ph.sse("model", "answer", "writing the answer", "done",
                                   ms=(_time.monotonic() - _model_t0) * 1000,
                                   count=_resp_chars or None)
