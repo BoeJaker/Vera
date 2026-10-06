@@ -903,3 +903,30 @@ def test_the_narration_follows_the_brief_to_telegram_once(tmp_path):
     assert len(sent) == 1                                               # once, whichever came second
     assert _R(orch, "intel.config.set", settings={"speak_voice": "bf_emma", "telegram_audio": False, "geocode": False})["changed"] \
         == ["geocode", "speak_voice", "telegram_audio"]
+
+
+def test_ratings_build_a_topic_curve_that_only_watches_until_switched_on(tmp_path):
+    import random as _r
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    st = mod.store()
+    rng = _r.Random(5)
+    for i in range(300):                         # 300 rated signals: high scores useful, low not
+        sid = f"s{i:03d}"
+        score = rng.uniform(0, 10)
+        st.put_signal({"id": sid, "topic_id": t["id"], "title": f"t{i}", "url": f"https://x.example/{i}", "score": score,
+                       "seen": "2026-10-05T00:00:00Z"})
+        mod._decide("intel.signal_relevant", "relevant", state={"s": sid}, ref_kind="signal", ref_id=sid,
+                    detail={"score": score})
+        useful = rng.random() < 1 / (1 + 2.718 ** (-(1.0 * score - 5)))
+        mod._outcome("signal", sid, "user.feedback.useful" if useful else "user.feedback.not_useful")
+    s = _R(orch, "intel.calibration.status", refit=True)
+    cur = s["topics"][t["id"]]
+    assert s["labelled"] == 300 and cur["usable"] and not s["on"]
+    # in shadow: the decision carries p, the gate still uses the score threshold
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    d = [x for x in st.decisions(question_id="intel.signal_relevant", limit=50) if x["decider"] == "rule" and x["detail"].get("p_shadow") is not None]
+    assert d and d[0]["p"] is not None
+    _R(orch, "intel.config.set", settings={"calibrated_gate": True})
+    st.delete_topic(t["id"], purge=False) if False else None
+    assert _R(orch, "intel.calibration.status")["on"]

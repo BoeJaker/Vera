@@ -670,10 +670,18 @@ async function loadGates() {
   $('acGates').innerHTML = Object.keys(q).length ? '<table style="width:100%"><tr><th align=left>gate</th><th>decisions</th><th>rated</th><th>right</th></tr>'
     + Object.entries(q).map(([k, v]) => `<tr><td>${esc(k.replace('intel.', ''))}</td><td align=center>${v.decisions}</td><td align=center>${v.with_outcome}</td><td align=center>${v.precision == null ? '–' : Math.round(v.precision * 100) + '%'}</td></tr>`).join('') + '</table>'
     : '<span class="muted">no decisions yet</span>';
+  const cal = await call('intel.calibration.status');
+  const ct = Object.entries(cal.topics || {});
+  $('acGates').innerHTML += '<h3 style="margin-top:10px">Learned relevance per topic</h3>' + (ct.length
+    ? ct.map(([tid, c]) => `<div>${c.usable ? '✓' : '·'} <b>${esc(tid)}</b> - ${c.n} rated (${c.useful} useful)`
+        + (c.usable ? ` · calibrated (error ${c.ece}) · 50/50 at score ${c.score_at_half}` : ` · ${esc(c.why || '')}`) + '</div>').join('')
+    : '<div class="muted">no ratings yet - 👍 👎 🔇 on signals and report pages teach it</div>')
+    + `<label class="small"><input type="checkbox" ${cal.on ? 'checked' : ''} onchange="setLearned(this.checked)"> let a calibrated curve decide what reaches a report (until then it only watches)</label>`;
   const sp = g.spend || {};
   $('acSpend').innerHTML = Object.entries(sp).map(([day, rec]) => `<div><b>${esc(day)}</b> ` + Object.entries(rec).map(([k, v]) =>
     `<span class="chip">${esc(k)} · ${v.calls} calls · ${Math.round(v.seconds / 60)} min</span>`).join('') + '</div>').join('') || '<span class="muted">nothing yet</span>';
 }
+async function setLearned(on) { await call('intel.config.set', {settings: {calibrated_gate: on}}); }
 async function runCmd() { const t = $('acCmd').value.trim(); if (!t) return; $('acOut').textContent = '…'; const r = await call('intel.command', {text: t}); $('acOut').textContent = r.text || r.error || JSON.stringify(r); tile(); }
 async function runFiles() { const r = await call('intel.files.run', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }
 async function runAdvise() { const r = await call('intel.advise', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }
