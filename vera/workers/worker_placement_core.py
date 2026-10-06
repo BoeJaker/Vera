@@ -113,6 +113,17 @@ def set_vetted(mapping: Optional[Dict[str, object]]) -> bool:
 #: Final name segments that change process-local settings. Such a cap is
 #: host-only even inside a node-safe namespace (`nlp.config.set` flips
 #: `nlp.local` in the process that runs it).
+#: Capabilities that start a background job in the process that received them and answer later calls from that
+#: process's handle on it (running, last run). In a namespace a node may serve, each process would hold its own job:
+#: on 2026-10-06 memory.fade.run started on a node worker, status calls answered "running" or "nothing running" by
+#: which process took them, and a second start began a second run alongside the first.
+HOST_BOUND_CAPS: Dict[str, str] = {
+    "memory.fade.run":       "a background fading job held by this process",
+    "memory.fade.report":    "a background recount held by this process",
+    "memory.noise.mark":     "a background marking job held by this process",
+    "memory.canonical.mark": "a background folding job held by this process",
+}
+
 MUTATOR_SEGMENTS = frozenset({
     "set", "config", "configure", "enable", "disable", "reset", "reload",
     "register", "unregister", "save", "delete",
@@ -163,6 +174,8 @@ def placement(cap_name: str, *, node_ok: Iterable[str] = (),
     brake = set(_names(host_only))
     if name in brake or ns in brake:
         return "host", "listed in VERA_WORKER_HOST_ONLY"
+    if name in HOST_BOUND_CAPS:
+        return "host", HOST_BOUND_CAPS[name]
     ok = set(_names(node_ok))
     if name in ok:
         return "any", "admitted by VERA_WORKER_NODE_OK"
