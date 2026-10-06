@@ -116,6 +116,23 @@ def from_marks(clock: PhaseClock, marks: Iterable[Tuple[str, float]], min_ms: in
     return out
 
 
+def gpu_queue(gate: Any, node: str = "") -> Optional[Dict[str, Any]]:
+    """Whether the answer will queue for its model's slot, from an `ollama.gate.status` payload taken as the model
+    stage starts: {label, detail, held, capacity} when the node the answer runs on (`node`; else every GPU node) has
+    no free slot, None when one is free or nothing is known. The gate records only a lease token per holder, so the
+    detail says how many hold it, not what they are."""
+    nodes = [n for n in ((gate or {}).get("nodes") or []) if isinstance(n, dict) and n.get("gated")]
+    pick = [n for n in nodes if node and n.get("node") == node] or [n for n in nodes if n.get("has_gpu")]
+    full = [n for n in pick if int(n.get("capacity") or 0) > 0 and int(n.get("held") or 0) >= int(n.get("capacity"))]
+    if not pick or len(full) < len(pick):
+        return None
+    n = full[0]
+    held = int(n.get("held") or 0)
+    return {"label": "waiting for the GPU",
+            "detail": "%s busy with %d other job%s" % (n.get("node"), held, "" if held == 1 else "s"),
+            "held": held, "capacity": int(n.get("capacity") or 0)}
+
+
 def web_label(query: str) -> str:
     q = _clean(query, 60)
     return f"searching the web for “{q}”" if q else "searching the web"

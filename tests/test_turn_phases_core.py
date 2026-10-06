@@ -84,3 +84,30 @@ def test_tiny_steps_are_left_out():
 def test_web_label():
     assert tp.web_label("bitcoin price today") == "searching the web for “bitcoin price today”"
     assert tp.web_label("") == "searching the web"
+
+
+def _gate(*nodes):
+    return {"nodes": [dict(n, gated=True) for n in nodes]}
+
+
+def test_a_full_gpu_says_the_answer_waits_for_it():
+    g = _gate({"node": "gpu-250", "has_gpu": True, "capacity": 1, "held": 1},
+              {"node": "cpu-246", "has_gpu": False, "capacity": 2, "held": 0})
+    q = tp.gpu_queue(g, "gpu-250")
+    assert q["label"] == "waiting for the GPU" and q["detail"] == "gpu-250 busy with 1 other job"
+    assert tp.gpu_queue(g, "") is not None                       # unknown node: the GPU nodes decide
+
+
+def test_a_free_slot_or_nothing_known_says_nothing():
+    assert tp.gpu_queue(_gate({"node": "gpu-250", "has_gpu": True, "capacity": 1, "held": 0}), "gpu-250") is None
+    assert tp.gpu_queue({}, "gpu-250") is None and tp.gpu_queue(None) is None
+    # the answer runs on a CPU node with room: a busy GPU is not its queue
+    g = _gate({"node": "gpu-250", "has_gpu": True, "capacity": 1, "held": 1},
+              {"node": "cpu-246", "has_gpu": False, "capacity": 2, "held": 1})
+    assert tp.gpu_queue(g, "cpu-246") is None
+
+
+def test_the_wait_is_a_model_step_in_the_frame_shape():
+    clock = tp.PhaseClock("t1", 0.0, clock=lambda: 1.5)
+    f = clock.frame("model", "queue", "waiting for the GPU", "done", ms=1200, detail="until the first word")
+    assert f["stage"] == "model" and f["id"] == "queue" and f["ms"] == 1200
