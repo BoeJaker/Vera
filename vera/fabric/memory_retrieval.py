@@ -75,6 +75,13 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.fabric import fusion_core as _fc
 except ImportError:                      # pragma: no cover
     from vera.fabric import fusion_core as _fc   # type: ignore
+try:                                     # the retrieval eval set (FM-7.0): seeks + reads as labels
+    from Vera.vera.fabric import retrieval_eval as _reval
+except Exception:                        # pragma: no cover
+    try:
+        from vera.fabric import retrieval_eval as _reval   # type: ignore
+    except Exception:
+        _reval = None
 
 log = logging.getLogger("vera.memory_retrieval")
 
@@ -612,6 +619,8 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
            "candidates": len(cands), "collapsed": collapsed_total,
            "weak": bool(weak_ctx),
            "datasets": sorted({c["dataset_id"] for c in selected})}
+    if _reval is not None:
+        _reval.on_seek(query, [r["id"] for r in results if r.get("id")])
     if weak_ctx:
         out["note"] = ("No strongly-relevant stored knowledge — the closest matches are "
                        "below the relevance floor. Treat this as little/no data on the topic "
@@ -639,6 +648,8 @@ async def cap_memory_read(record_id: str, offset: int = 0, max_chars: int = 6000
     record_id = str(record_id or "").strip()
     if not record_id:
         return {"error": "record_id required"}
+    if _reval is not None:
+        _reval.on_read(record_id)
     df = _df()
     if df is None:
         return {"error": "data fabric not loaded"}
