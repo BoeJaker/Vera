@@ -202,6 +202,7 @@ _CRITICAL_MODULES = {
     "test_memory_noise_core",    # status lines, prompt scaffolding and injected context rank last in recall (2026-10-06)
     "test_proc_limits_core",     # 1024 open files ran out (936 Redis connections) and prod answered nothing (2026-10-06)
     "test_memory_canonical_core",  # 30% of the recall pool were copies of another record (2026-10-06)
+    "test_recall_scope_core",    # "yesterday" made the text search want the word, not the day (2026-10-06)
     "test_recall_core",          # recalled tool calls/dreams were injected as "User:"; repeats filled the slots (2026-10-04)
     "test_board_core",          # Agent Boards leasing — claim resolution + Phase E handoff (only holder can hand off)
     "test_gate_sweep",          # Ollama-gate leaked-lease sweep — MUST never clear a peer host's live slot (double-books GPU)
