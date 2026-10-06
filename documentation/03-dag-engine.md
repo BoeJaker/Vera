@@ -498,14 +498,19 @@ Workshop and clearly label the view `run_protocol_shadow` versus authority
 `native_dag`. Control records describe request/acknowledgement intent only; they
 never execute a native approve, reject, retry, resume, or cancel operation.
 
-When `VERA_RUN_JOURNAL_PATH` enables the SQLite journal, new Runs also persist
+When `VERA_RUN_JOURNAL_MODE=durable` (the Compose deployment default) or an
+explicit `VERA_RUN_JOURNAL_PATH` enables the SQLite journal, new Runs also persist
 immutable identity metadata and a sequence-bound, content-free projection
 checkpoint. On process start, the shadow registry verifies each Run's checksum
 chain and reconstructs the newest bounded catalog, including parent/child,
 workflow, task, session and trace identity, progress, attempts, errors and
 artifact references. One corrupt Run is omitted and reported without preventing
 healthy Runs from loading. Recovery rebuilds observation only: it never invokes
-the DAG, a capability, or a control request.
+the DAG, a capability, or a control request. The journal lives in Vera's
+out-of-tree state volume, retains a configurable bounded number of terminal Runs,
+and defers active or uncheckpointed rows rather than deleting recovery evidence.
+Set `VERA_RUN_JOURNAL_MODE=memory` to roll persistence back without changing
+native DAG execution.
 
 `run.shadow.list`, `run.shadow.get`, and `run.shadow.graph` expose the same
 content-free recovery summary: whether startup recovery ran, recovered and
@@ -1564,7 +1569,9 @@ warnings.
 | `VERA_LOOP_STALE_SECS` | max(600, gen timeout + 300) | Run considered stale after this long without events |
 | `VERA_RESUME_TTL` / `VERA_RESUME_MAX_EVENTS` | `604800` / `4000` | Loop event replay retention |
 | `VERA_AGENT_WORKFLOW_RUNTIME` | `1` | Workflow runtime adapter around loop tool calls (`0` bypasses) |
-| `VERA_RUN_JOURNAL_PATH` | `""` | SQLite journal for Run shadow persistence |
+| `VERA_RUN_JOURNAL_MODE` | standalone: `memory`; Compose: `durable` | Select Run observation persistence; `memory` is the rollback |
+| `VERA_RUN_JOURNAL_PATH` | state directory default | Override the durable SQLite journal path |
+| `VERA_RUN_JOURNAL_RETENTION_RUNS` | `5000` | Maximum terminal Run journals retained; active Runs are deferred |
 | `MAX_CAPS_IN_PROMPT` | `25` | Capabilities offered to the DAG planner |
 | `DAG_QUERY_EMBED_WAIT_S` | `30` | Bounded wait for a query embedding in capability search |
 | `EMBED_CAPS_ON_START` | `1` | Embed capability descriptions at startup |

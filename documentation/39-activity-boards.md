@@ -194,9 +194,14 @@ These distinctions are deliberate:
   content.
 - Artifact checksums are recorded metadata, not proof that content is currently
   available or verified.
-- With the opt-in SQLite journal (`VERA_RUN_JOURNAL_PATH`; in-memory otherwise),
-  recovery verifies each checksum chain and rebuilds the newest bounded
-  searchable projection catalog. Corrupt Runs are isolated and reported.
+- The Compose deployment selects the SQLite journal with
+  `VERA_RUN_JOURNAL_MODE=durable` and stores it in the persistent,
+  dedicated out-of-tree Run-observation volume. Standalone processes retain the previous
+  in-memory default unless a mode or `VERA_RUN_JOURNAL_PATH` is set; `memory` is
+  the immediate persistence rollback. Recovery verifies each checksum chain and
+  rebuilds the newest bounded searchable projection catalog. Terminal history
+  is capped by `VERA_RUN_JOURNAL_RETENTION_RUNS`; active or uncheckpointed Runs
+  are never removed by retention. Corrupt Runs are isolated and reported.
   Activity shows aggregate recovered/quarantined counts and the catalog bound,
   while the compact harness overlay adds status badges. The UI still cannot
   replay or resume a native run.
@@ -375,7 +380,9 @@ coordination surfaces rather than product documentation or UI labels.
 | `VERA_BOARD_SYNC_INTERVAL_S` | 300 | Sync interval |
 | `VERA_LOOP_STALE_SECS` | 600 | Age after which a loop session counts as interrupted |
 | `vera:ollama:interactive_priority` | see [§5](#5-interaction-signals) | Interactive-priority policy |
-| `VERA_RUN_JOURNAL_PATH` | unset (memory) | SQLite Run journal |
+| `VERA_RUN_JOURNAL_MODE` | standalone: `memory`; Compose: `durable` | Select Run observation persistence |
+| `VERA_RUN_JOURNAL_PATH` | deployment/state-directory default | Override the durable SQLite journal path |
+| `VERA_RUN_JOURNAL_RETENTION_RUNS` | `5000` | Bound terminal Run history without deleting active Runs |
 | `VERA_OTLP_AUTO_EXPORT`, `OTEL_EXPORTER_OTLP_*` | off | Run telemetry export |
 | fabric dataset `board_index` | — | Derived board index |
 

@@ -362,7 +362,8 @@ URI) for the saved job and citation records; missing records are omitted and
 malformed identities rejected.
 
 Projections are recorded in the shared bounded Run registry used by DAG and
-agent-loop observations. With `VERA_RUN_JOURNAL_PATH` set, parent and child
+agent-loop observations. With `VERA_RUN_JOURNAL_MODE=durable` or an explicit
+`VERA_RUN_JOURNAL_PATH`, parent and child
 events are checkpointed to a checksummed SQLite journal and rebuilt after
 restart; otherwise storage is reported as process-local memory. Deleting a
 pipeline run removes its projections through checksum-verified journal
@@ -597,7 +598,9 @@ query.
 | `RESEARCH_FAST_TIMEOUT` | `90` | Seconds for fast-writer calls (intent detection, decomposition) |
 | `OLLAMA_KEEP_ALIVE` | `30m` | Keep-alive sent with research generations |
 | `OLLAMA_MAX_AUTO_CTX` | `0` | Cap on auto-detected context size (0 = no cap) |
-| `VERA_RUN_JOURNAL_PATH` | — | Enables the checksummed Run journal for pipeline projections |
+| `VERA_RUN_JOURNAL_MODE` | standalone: `memory`; Compose: `durable` | Selects checksummed Run-journal persistence |
+| `VERA_RUN_JOURNAL_PATH` | deployment/state-directory default | Overrides the Run-journal SQLite path |
+| `VERA_RUN_JOURNAL_RETENTION_RUNS` | `5000` | Bounds terminal Run history; active Runs are retained |
 | `VERA_NLP_PORT` | `8771` | Port of the node NLP server |
 
 Persisted runtime configuration: sources, web-search config, instance defaults

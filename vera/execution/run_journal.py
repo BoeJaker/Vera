@@ -347,6 +347,49 @@ class SqliteRunJournal:
             self._db.commit()
             return True
 
+    def prune(self, max_runs: int) -> dict[str, int]:
+        """Bound history without deleting active or unrecoverable Runs.
+
+        Retention is per Run rather than per event: a retained Run keeps its
+        complete checksum chain, identity and latest snapshot. Rows without a
+        terminal checkpoint are deferred so retention cannot masquerade as a
+        cancellation or discard crash-recovery evidence.
+        """
+        limit = int(max_runs)
+        if limit < 1:
+            raise ValueError("max_runs must be positive")
+        terminal = {"completed", "failed", "cancelled", "timed_out", "skipped"}
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT e.run_id, s.run_json FROM run_events AS e "
+                "LEFT JOIN run_snapshots AS s ON s.run_id=e.run_id "
+                "GROUP BY e.run_id ORDER BY MAX(e.rowid) DESC"
+            ).fetchall()
+            candidates = rows[limit:]
+            deleted = 0
+            deferred = 0
+            for run_id, snapshot_json in candidates:
+                try:
+                    status = str((json.loads(snapshot_json) if snapshot_json else {})
+                                 .get("status") or "")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    status = ""
+                if status not in terminal:
+                    deferred += 1
+                    continue
+                self._db.execute("DELETE FROM run_events WHERE run_id=?", (run_id,))
+                self._db.execute("DELETE FROM run_identity WHERE run_id=?", (run_id,))
+                self._db.execute("DELETE FROM run_snapshots WHERE run_id=?", (run_id,))
+                deleted += 1
+            self._db.commit()
+        return {
+            "limit": limit,
+            "observed": len(rows),
+            "deleted_terminal": deleted,
+            "deferred_nonterminal": deferred,
+            "retained": len(rows) - deleted,
+        }
+
     def close(self) -> None:
         with self._lock:
             self._db.close()
