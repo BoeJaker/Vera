@@ -54,3 +54,23 @@ def test_seek_uses_the_core_for_memory_hits():
     assert "lexical_pass" in mem and "weight" in mem
     seek = ast.get_source_segment(src, funcs["cap_memory_seek"])
     assert "_fc.rrf(" in seek and "list_weight(len(ranked))" in seek
+
+
+def test_lexical_query_keeps_short_queries_as_they_are():
+    assert fc.lexical_query("telegram bot") == "telegram bot"
+    assert fc.lexical_query("what is the redis port") == "what is the redis port"
+
+
+def test_lexical_query_keeps_content_terms_of_a_long_question():
+    q = "what did we set up for telegram, the bot token and the bot thing, is it working"
+    assert fc.lexical_query(q) == "set telegram bot token thing working"
+
+
+def test_lexical_query_of_stopwords_only_goes_as_it_is():
+    q = "what is it that you would have been about to do there"
+    assert fc.lexical_query(q) == q
+
+
+def test_neo4j_leg_sends_the_lexical_query():
+    src = open(os.path.join(ROOT, "vera", "fabric", "memory.py"), encoding="utf-8").read()
+    assert 'params["query"] = _lucene_escape(_fusion_core.lexical_query(query))' in src
