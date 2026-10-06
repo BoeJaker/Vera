@@ -38,3 +38,18 @@ def raise_nofile(resource_mod=None, want: int = WANT) -> Tuple[int, int]:
         return soft, res.getrlimit(res.RLIMIT_NOFILE)[0]
     except Exception:
         return -1, -1
+
+
+WARN_SHARE = 0.25
+
+
+def files_status(open_now: int, soft: int, redis_conns: int = -1, warn_share: float = WARN_SHARE) -> dict:
+    """What /health says about open files: {open, limit, share, redis_conns, warn}. `warn` is True from
+    `warn_share` of the limit - early enough that a leak like 2026-10-06's (~110 Redis connections an hour) is seen
+    days before it stops the server. Unknown values are -1 and never warn."""
+    limit = int(soft) if soft and int(soft) > 0 else -1
+    n = int(open_now) if open_now is not None and int(open_now) >= 0 else -1
+    share = round(n / limit, 3) if n >= 0 and limit > 0 else -1.0
+    return {"open": n, "limit": limit, "share": share,
+            "redis_conns": int(redis_conns) if redis_conns is not None else -1,
+            "warn": bool(share >= 0 and share >= warn_share)}

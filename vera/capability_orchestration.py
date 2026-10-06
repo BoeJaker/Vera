@@ -9298,6 +9298,32 @@ async def _health_census() -> Dict[str, Any]:
         return {"busy": False, "state": "unknown", "error": str(e)[:120]}
 
 
+_FILES_WARNED = {"t": 0.0}
+
+
+def _health_files() -> Dict[str, Any]:
+    """Open files against the soft limit, and the shared Redis client's pool size: on 2026-10-06 936 Redis
+    connections used up 1024 files and prod answered nothing for nine hours. Warns in the log at most every 10 min."""
+    try:
+        from Vera.vera import proc_limits_core as _pl
+        import resource as _res
+        try:
+            n = len(os.listdir("/proc/self/fd"))
+        except Exception:
+            n = -1
+        pool = getattr(REDIS, "connection_pool", None) if REDIS is not None else None
+        conns = len(getattr(pool, "_available_connections", []) or []) + len(getattr(pool, "_in_use_connections", ()) or ()) \
+            if pool is not None else -1
+        st = _pl.files_status(n, _res.getrlimit(_res.RLIMIT_NOFILE)[0], conns)
+        if st["warn"] and time.monotonic() - _FILES_WARNED["t"] > 600:
+            _FILES_WARNED["t"] = time.monotonic()
+            log.warning("open files: %s of %s (%.0f%%), Redis pool %s connections - a leak? (2026-10-06 outage)",
+                        st["open"], st["limit"], st["share"] * 100, st["redis_conns"])
+        return st
+    except Exception as e:
+        return {"error": str(e)[:120]}
+
+
 @capability("obs.health", memory="off", silent=True,
             http_method="GET", http_path="/health", http_tags=["obs"],
             description="Overall orchestrator health: backends, workers, caps, "
@@ -9326,6 +9352,7 @@ async def obs_health(trace_id=None):
             "gpu_gate":await _health_gpu_gate(),
             "census":await _health_census(),
             "activity":await _health_activity(),
+            "files":_health_files(),
             "mode":"distributed" if REDIS else "local"}
 
 
