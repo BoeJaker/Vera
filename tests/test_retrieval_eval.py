@@ -73,7 +73,8 @@ def test_hooks_never_raise_and_send_in_the_background(monkeypatch):
     monkeypatch.setattr(RE, "_append", fake_append)
     monkeypatch.setattr(RE, "_store_query", fake_store)
     monkeypatch.setattr(RE, "RECENT", REC.RecentSeeks())
-    monkeypatch.setattr(RE, "_orch", lambda: _types.SimpleNamespace(REDIS=_FakeRedis(), CALLER_KIND=None))
+    _orch_ns = _types.SimpleNamespace(REDIS=_FakeRedis(), CALLER_KIND=None)   # ONE store for seek and read
+    monkeypatch.setattr(RE, "_orch", lambda: _orch_ns)
 
     async def go():
         RE.on_seek("q", ["a", "b"])
