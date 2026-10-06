@@ -169,6 +169,8 @@ def detect(ts: Sequence[Any], values: Sequence[float], *, kind: str = "price") -
     are one change; the spike, then the shift, is kept). Each change carries the
     level it settled at (`detail.level_move`); a probability keeps only changes
     that settled at least PROB_MIN_MOVE away, in the direction they settled."""
+    if kind == "attention":
+        return _attention(ts, values)
     vals = [float(v) for v in values]
     prob = kind == "probability"
     rk = "abs" if kind in ("probability", "rate", "count", "geo_rate", "macro") else "pct"
@@ -192,6 +194,32 @@ def detect(ts: Sequence[Any], values: Sequence[float], *, kind: str = "price") -
     return out
 
 
+ATTENTION_MIN_FACTOR = 2.0       # a day with at least twice the week's usual views
+ATTENTION_WINDOW = 7
+
+
+def _attention(ts: Sequence[Any], values: Sequence[float]) -> List[Dict[str, Any]]:
+    """Daily pageviews: heavy-tailed and spiky, with a weekly rhythm. Spikes are
+    found on log(1 + views) and kept only when the day had at least
+    ATTENTION_MIN_FACTOR times the median of the week before - ordinary weekday
+    wobble is not news; a company in the headlines is."""
+    vals = [math.log1p(max(0.0, float(v))) for v in values]
+    out = []
+    for c in spikes(ts, vals, kind="abs", window=28, z=4.0, min_history=14, min_sigma=0.05):
+        i = c["index"]
+        before = vals[max(0, i - ATTENTION_WINDOW):i]
+        if not before:
+            continue
+        factor = math.exp(vals[i] - _median(before))
+        if factor < ATTENTION_MIN_FACTOR or c["direction"] != "up":
+            continue
+        c["detail"].update(factor=round(factor, 2), views=int(round(math.expm1(vals[i]))),
+                           usual=int(round(math.expm1(_median(before)))))
+        if not out or i - out[-1]["index"] > 2:            # a story's two or three loud days are one change
+            out.append(c)
+    return out
+
+
 def corroborate(change_t: float, stories: Sequence[Dict[str, Any]], *, before_h: float = 24.0,
                 after_h: float = 48.0) -> List[Dict[str, Any]]:
     """Stories whose first sighting falls in the window around a change (story times
@@ -209,7 +237,7 @@ def corroborate(change_t: float, stories: Sequence[Dict[str, Any]], *, before_h:
 
 # ── indicators: what a topic watches, and how a change reads ─────────────────
 
-KINDS = ("price", "macro", "probability", "count")
+KINDS = ("price", "macro", "probability", "count", "attention")
 
 
 def describe(c: Dict[str, Any], label: str, kind: str = "price") -> str:
@@ -220,6 +248,9 @@ def describe(c: Dict[str, Any], label: str, kind: str = "price") -> str:
     except (TypeError, ValueError, OverflowError, OSError):
         day = str(c.get("t") or "")[:10]
     d = c.get("detail") or {}
+    if kind == "attention" and d.get("factor"):
+        return (f"{label} drew {float(d['factor']):.1f}x its usual attention on {day} "
+                f"({d.get('views')} Wikipedia views against about {d.get('usual')})")
     if c.get("kind") == "spike" and d.get("move") is not None:
         mv = float(d["move"])
         size = f"{abs(mv) * 100:.1f}%" if kind == "price" else (

@@ -715,7 +715,8 @@ ACTIONS: Dict[str, Dict[str, Any]] = {
 
 # What a watch action may point at: a listing (price:<provider>:<symbol>) or a
 # prediction market (pm:<source>:<id>) - nothing else reaches intel.indicator.add.
-_WATCH_TARGET = re.compile(r"^(price:[a-z0-9_]{2,20}:[A-Za-z0-9.\-=^]{1,24}|pm:(polymarket|manifold):[A-Za-z0-9_\-]{1,80})$")
+_WATCH_TARGET = re.compile(r"^(price:[a-z0-9_]{2,20}:[A-Za-z0-9.\-=^]{1,24}|pm:(polymarket|manifold):[A-Za-z0-9_\-]{1,80}"
+                           r"|wiki:en:[A-Za-z0-9_().,'&\-]{1,120})$")
 
 
 def make_action(kind: str, *, label: str = "", topic_id: str = "", target: str = "",
@@ -760,6 +761,8 @@ def action_args(action: Dict[str, Any]) -> Dict[str, Any]:
         kind, a, b = t.split(":", 2)
         if kind == "price":
             return {"topic_id": action.get("topic_id", ""), "kind": "price", "provider": a, "symbol": b, "label": q[:60]}
+        if kind == "wiki":
+            return {"topic_id": action.get("topic_id", ""), "kind": "attention", "wiki_title": b, "label": q[:60]}
         return {"topic_id": action.get("topic_id", ""), "kind": "probability", "market_source": a, "market_id": b}
     return {}
 

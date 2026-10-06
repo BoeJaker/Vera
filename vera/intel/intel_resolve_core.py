@@ -91,7 +91,9 @@ def facts(entity: Dict[str, Any]) -> Dict[str, Any]:
                 tickers.append({"exchange": exch, "ticker": tk})
     coord = next((v for v in _vals(claims, "P625") if isinstance(v, dict)), None)
     country = next((v.get("id") for v in _vals(claims, "P17") if isinstance(v, dict)), None)
+    wiki = (((entity or {}).get("sitelinks") or {}).get("enwiki") or {}).get("title") or ""
     return {"types": types, "websites": sites[:3], "domains": sorted({_domain(u) for u in sites if _domain(u)}),
+            "wiki": wiki,
             "tickers": tickers[:3], "country": country,
             "coords": {"lat": coord.get("latitude"), "lon": coord.get("longitude")} if coord else None}
 
