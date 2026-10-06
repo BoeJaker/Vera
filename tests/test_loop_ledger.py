@@ -97,6 +97,12 @@ def test_runner_hooks_are_wired():
     assert "_dl.finish(_gate_last, steps_run=len(results)" in src
     assert "_dl.tier(tier, tier_info" in src and "_dl.intent(intent, _intent_info" in src
     assert "_dl.finish({}, steps_run=1, fast_path=True)" in src
+    assert '_dl.step_done(step.get("id"), res["done_by"]' in src
+    assert '_dl.prestep(step["id"], pinfo.get("gaps") or [], len(results)' in src
+    assert '"actual_caps": _v5_actual_caps_used(history), "done_by": done_by}' in src
+    for rule in ("research_done", "reauthor_done", "duplicate_call", "browser_done", "author_answered",
+                 "same_tool_cap"):
+        assert 'done_by = "%s"' % rule in src, rule
     for line in src.splitlines():
         if "_dl." in line and ("await " in line):
             pytest.fail("decision recording must not add an await: " + line.strip())
@@ -137,3 +143,41 @@ def test_tier_outcome_rules():
     assert LD.tier_outcome(d("complex"), 4, None, {"missing": ["the report"]})["label"] == "wrong"
     assert LD.tier_outcome(d("strategic"), 40, None, {})["label"] == "correct"
     assert LD.tier_outcome(d("complex"), None, None, {}) is None
+
+
+def test_step_done_rows_and_outcome():
+    rows = []
+    rl = _run(rows.append)
+    rl.step_done(1, "", 1)                     # no rule ended it: no row
+    rl.step_done(1, "duplicate_call", 1)
+    rl.verify(1, True, 1)
+    rl.step_done(2, "research_done", 1)
+    rl.verify(2, False, 1)
+    rl.step_done(3, "browser_done", 1)         # verification off for step 3: no outcome
+    rl.verify(3, None, 1)
+    ds = [r for r in rows if r["schema"] != LC.OUTCOME_SCHEMA]
+    assert [d["question_id"] for d in ds].count(LD.STEP_DONE_Q) == 3
+    assert all(LC.check_decision(d) == [] for d in ds)
+    sd = [d for d in ds if d["question_id"] == LD.STEP_DONE_Q]
+    assert sd[0]["decider"] == "rule" and sd[0]["implementation"] == "duplicate_call"
+    rl.finish({})
+    outs = [(o["source"], o["label"], o["detail"].get("rule")) for o in rows if o["schema"] == LC.OUTCOME_SCHEMA]
+    assert outs == [("run.step_verify", "correct", "duplicate_call"), ("run.step_verify", "wrong", "research_done")]
+
+
+def test_prestep_rows_and_one_sided_outcome():
+    rows = []
+    rl = _run(rows.append)
+    rl.prestep(1, [], 0, model="q")            # no gaps, first attempt met -> correct
+    rl.verify(1, True, 1)
+    rl.prestep(2, [" "], 1)                    # blank gaps count as none; first attempt not met -> no outcome
+    rl.verify(2, False, 1)
+    rl.verify(2, True, 2)
+    rl.prestep(3, ["the exchange rate"], 2)    # needed: no outcome
+    rl.verify(3, True, 1)
+    ds = [r for r in rows if r.get("question_id") == LD.PRESTEP_Q]
+    assert [d["answer"] for d in ds] == ["not_needed", "not_needed", "needed"]
+    assert all(LC.check_decision(d) == [] for d in ds)
+    rl.finish({})
+    outs = [o for o in rows if o["schema"] == LC.OUTCOME_SCHEMA and o["source"] == "run.first_attempt_met"]
+    assert [o["decision_id"] for o in outs] == [ds[0]["decision_id"]]
