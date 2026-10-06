@@ -24835,6 +24835,8 @@ async def cap_dag_agent_loop_v6(
                           "llm": tier_info.get("llm", ""),
                           "reason": tier_info.get("reason", ""),
                           "escalation_suppressed": tier_info.get("escalation_suppressed", False)})
+        if _dl is not None:
+            _dl.tier(tier, tier_info, model=str(model or ""))
         # GOAL INTENT (build/research/action/mixed) — the KIND of work, which
         # drives the plan SHAPE (direct-authoring vs research-first) and the
         # phase/HITL tuning below. Same cheap LLM budget as the tier pass.
@@ -24849,6 +24851,8 @@ async def cap_dag_agent_loop_v6(
                           "heuristic": _intent_info.get("heuristic", ""),
                           "llm": _intent_info.get("llm", ""),
                           "reason": _intent_info.get("reason", "")})
+        if _dl is not None:
+            _dl.intent(intent, _intent_info, model=str(model or ""))
     # ── INTENT CORE (opt-in): the intent is known now, so the caps it uses move
     #    to the front. Stages that read a prefix see them: fast path 16, master
     #    planner 24, broad 40. Nothing is removed; the cap-guard still applies. ──
@@ -24916,6 +24920,8 @@ async def cap_dag_agent_loop_v6(
                     await stream_complete(stream_id, final)
                 except Exception:
                     pass
+            if _dl is not None:
+                _dl.finish({}, steps_run=1, fast_path=True)
             return {
                 "goal": goal, "tier": tier, "fast_path": True,
                 "steps": [{"id": 1, "title": _title, "ok": True,
@@ -26366,7 +26372,8 @@ async def cap_dag_agent_loop_v6(
     await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
                              stream_id=stream_id)
     if _dl is not None:
-        _dl.finish(_gate_last)
+        _dl.finish(_gate_last, steps_run=len(results),
+                   fast_path=(False if (enable_fast_path and tier == "single") else None))
     await emit_event({"type": "agent_loop_v6.done", "stream_id": stream_id, "session_id": sid,
                       "summary": final, "cycles": gcycle, "steps_run": len(results),
                       "reason": _gate_finish_core.reason(_unmet), "unmet": _unmet})

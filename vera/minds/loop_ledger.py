@@ -132,10 +132,26 @@ class RunLedger:
         self.decisions.append(d)
         self._send(d)
 
-    def finish(self, gate: Optional[Dict[str, Any]]) -> int:
+    def tier(self, tier: str, info: Dict[str, Any], model: str = "") -> None:
+        self._decide(LD.tier_decision, tier, info or {}, model)
+
+    def intent(self, intent: str, info: Dict[str, Any], model: str = "") -> None:
+        self._decide(LD.intent_decision, intent, info or {}, model)
+
+    def _decide(self, build, answer, info, model) -> None:
+        try:
+            d = build(self.sid, answer, info, model=model, minds_digest=self._digest_now(), origin=self.origin)
+        except Exception as e:
+            log.debug("loop ledger %s: %s", getattr(build, "__name__", "decision"), e)
+            return
+        self.decisions.append(d)
+        self._send(d)
+
+    def finish(self, gate: Optional[Dict[str, Any]], steps_run: Optional[int] = None,
+               fast_path: Optional[bool] = None) -> int:
         """Send the outcomes this run can judge. Returns how many."""
         try:
-            outs = LD.run_outcomes(self.decisions, gate or {})
+            outs = LD.run_outcomes(self.decisions, gate or {}, steps_run=steps_run, fast_path=fast_path)
         except Exception as e:
             log.debug("loop ledger outcomes: %s", e)
             return 0
