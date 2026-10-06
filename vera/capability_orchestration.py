@@ -280,9 +280,58 @@ def _traced_cap(name: str, fn):
     async def _traced(*a, **k):
         tok = RUNNING_CAPS.set(RUNNING_CAPS.get() + (name,))
         CAP_RUN_COUNTS[name] = CAP_RUN_COUNTS.get(name, 0) + 1
+        _loop_names = {
+            "dag.agent_loop", "dag.agent_loop_v2", "dag.agent_loop_v3",
+            "dag.agent_loop_v4", "dag.agent_loop_v5", "dag.agent_loop_v6",
+            "dag.agent_loop_v7", "dag.agent_loop_v8",
+        }
+        _projection = _projection_token = None
+        _projection_owned = False
+        _exit_projection = None
+        if name in _loop_names:
+            try:
+                from .execution.agent_loop_run_projection import (
+                    enter_agent_loop_run_boundary, exit_agent_loop_run_boundary,
+                )
+                _engine = ("v1" if name == "dag.agent_loop"
+                           else name.rsplit("_", 1)[-1])
+                _projection, _projection_token, _projection_owned = (
+                    enter_agent_loop_run_boundary(
+                        session_id=k.get("session_id") or k.get("trace_id") or "",
+                        engine=_engine,
+                        profile=k.get("profile") or k.get("loop_profile") or "",
+                    ))
+                _exit_projection = exit_agent_loop_run_boundary
+            except Exception:
+                # Projection is observability: native loop execution remains
+                # authoritative if the boundary cannot be constructed.
+                _projection = _projection_token = None
+                _projection_owned = False
         try:
-            return await fn(*a, **k)
+            result = await fn(*a, **k)
+        except asyncio.CancelledError:
+            if _exit_projection:
+                _exit_projection(_projection, _projection_token,
+                                 _projection_owned, cancelled=True)
+                _projection_token = None
+            raise
+        except BaseException as exc:
+            if _exit_projection:
+                _exit_projection(
+                    _projection, _projection_token, _projection_owned,
+                    error_type=type(exc).__name__)
+                _projection_token = None
+            raise
+        else:
+            if _exit_projection:
+                _exit_projection(_projection, _projection_token,
+                                 _projection_owned, result=result)
+                _projection_token = None
+            return result
         finally:
+            if _projection_token is not None and _exit_projection:
+                _exit_projection(_projection, _projection_token,
+                                 False)
             RUNNING_CAPS.reset(tok)
     return _traced
 

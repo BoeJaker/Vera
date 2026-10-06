@@ -424,6 +424,42 @@ def bind_agent_loop_projection(
 def reset_agent_loop_projection(token: Token | None) -> None:
     if token is None:
         return
+
+
+def enter_agent_loop_run_boundary(*, session_id: str, engine: str = "",
+                                  profile: str = "", registry=None
+                                  ) -> tuple[AgentLoopRunProjection | None,
+                                             Token | None, bool]:
+    """Enter the shared boundary, reusing an outer loop projection when present.
+
+    The ownership flag is essential for nested compatibility modes (notably v7
+    delegating to v6) and the SSE adapter: only the caller that created a Run
+    may finish it.
+    """
+    current = _CURRENT.get()
+    sid = _text(session_id)
+    if current is not None and not current.terminal:
+        return current, None, False
+    projection = start_agent_loop_projection(
+        session_id=sid, engine=engine, profile=profile, registry=registry)
+    if projection is None:
+        return None, None, False
+    return projection, bind_agent_loop_projection(projection), True
+
+
+def exit_agent_loop_run_boundary(
+    projection: AgentLoopRunProjection | None, token: Token | None, owned: bool,
+    *, result: Any = None, cancelled: bool = False, timed_out: bool = False,
+    error_type: str = "",
+) -> None:
+    """Finish only an owned boundary and always restore the caller's context."""
+    try:
+        if owned:
+            finish_agent_loop_projection(
+                projection, result=result, cancelled=cancelled,
+                timed_out=timed_out, error_type=error_type)
+    finally:
+        reset_agent_loop_projection(token)
     try:
         _CURRENT.reset(token)
     except Exception:

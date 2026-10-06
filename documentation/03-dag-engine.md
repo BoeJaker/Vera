@@ -1467,8 +1467,10 @@ dead.
   `loop.ci.race` (gate rounds, red → green), `loop.ci.board` (plan as a board) and
   `loop.ci.perf` (wall time, planned vs executed steps, tool time, model calls by
   stage); see [Loop Lab](33-evolve.md).
-- **Run projection** — `agent_loop_run_projection.py` records loop runs in the
-  Run shadow (§7.1).
+- **Run projection** — `agent_loop_run_projection.py` records every numbered
+  loop capability invocation (v1–v8) in the Run shadow (§7.1), including
+  direct, MCP and HTTP calls. The SSE route reuses that same boundary, and
+  compatibility delegation such as v7 → v6 remains one parent Run.
 
 ### 13.5 Reusable UI elements
 
