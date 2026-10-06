@@ -1,16 +1,22 @@
 """The agent loop's typed decisions as ledger rows, and the outcomes a run's end can judge
 (four-minds FM-0.2a, ROADMAP §5.1).
 
-Two questions, recorded where the v6/v7 runner already knows the answer (no new model call):
+Questions, recorded where the v6/v7 runner already knows the answer (no new model call):
 - `loop.controller_action`: after a step, the controller chose continue | replan | insert | stop;
-- `loop.step_verify`: a step's result met its success criterion, or did not.
+- `loop.step_verify`: a step's result met its success criterion, or did not;
+- `loop.tier` / `loop.intent`: how the run was classed (FM-0.2b);
+- `loop.step_done`: a rule ended a step early (sources in hand, a repeat, the browser done...), FM-0.2b;
+- `loop.prestep_needed`: the pre-step pass found gaps to gather first, or none (FM-0.2b).
 
 Outcomes, judged at run end from what the run itself saw (deliberately modest; FM-11
 calibration reports how often each fires):
 - a `not_met` verdict was right when a later attempt of the same step was met (the retry
   changed something and passed): strong;
 - a `continue` was right when the next step to be verified was met, wrong when it was not: medium;
-- a `stop` was right when the final gate found nothing missing, wrong when it named gaps: strong.
+- a `stop` was right when the final gate found nothing missing, wrong when it named gaps: strong;
+- a rule's `end` (step_done) was right when that attempt was then verified met, wrong when not: medium;
+- a `not_needed` prestep was right when the step's first attempt was verified met: medium. One-sided:
+  a failed first attempt cannot be pinned on a missing gap, and `needed` has no outcome here.
 Nothing else gets an outcome here; the ledger's sweeper (a later slice) marks runs that never
 finished as interrupted.
 
@@ -37,6 +43,10 @@ INTENT_LABELS = ["build", "research", "action", "mixed"]
 # count inside the tier's band"). The code has no bands of its own; these are the measuring rule, v0.
 TIER_BANDS = {"simple": (1, 3), "complex": (2, 12), "strategic": (3, 10 ** 6)}
 CONTROLLER_LABELS = ["continue", "replan", "insert", "stop"]
+STEP_DONE_Q = "loop.step_done"
+PRESTEP_Q = "loop.prestep_needed"
+STEP_DONE_LABELS = ["end", "continue"]          # only a rule's `end` is recorded (one row per firing)
+PRESTEP_LABELS = ["needed", "not_needed"]
 VERIFY_LABELS = ["met", "not_met"]
 
 _ORIGIN_BY_CALLER = {"census": "census", "claude": "delegate", "codex": "delegate", "mcp": "delegate",
@@ -117,6 +127,33 @@ def intent_decision(sid: str, intent: str, info: Dict[str, Any], *, model: str =
         run_id=_short(sid, 80), session_id=_short(sid, 80), detail={"heuristic": heur, "llm": llm})
 
 
+def step_done_decision(sid: str, step_id: Any, done_by: str, attempt: int, *,
+                       minds_digest: str = "default", origin: str = "user") -> Optional[Dict[str, Any]]:
+    """A rule ended this step attempt early; `done_by` names the rule. None when no rule did."""
+    rule = _short(done_by, 40)
+    if not rule:
+        return None
+    return LC.make_decision(
+        STEP_DONE_Q, "end", origin=origin, surface="loop", qtype="binary", labels=STEP_DONE_LABELS,
+        state={"step": step_id, "attempt": int(attempt), "rule": rule},
+        state_ref={"kind": "loop_step_attempt", "id": f"{_short(sid, 80)}:{step_id}:a{int(attempt)}"},
+        decider="rule", implementation=rule, mode="rule", minds_digest=minds_digest or "default",
+        run_id=_short(sid, 80), session_id=_short(sid, 80),
+        detail={"step": step_id, "attempt": int(attempt), "rule": rule})
+
+
+def prestep_decision(sid: str, step_id: Any, gaps: List[Any], known_steps: int, *, model: str = "",
+                     minds_digest: str = "default", origin: str = "user") -> Dict[str, Any]:
+    n = len([g for g in (gaps or []) if str(g).strip()])
+    return LC.make_decision(
+        PRESTEP_Q, "needed" if n else "not_needed", origin=origin, surface="loop", qtype="binary",
+        labels=PRESTEP_LABELS, state={"step": step_id, "known_steps": int(known_steps)},
+        state_ref={"kind": "loop_step", "id": f"{_short(sid, 80)}:{step_id}"},
+        decider="llm", implementation=_short(model, 80) or "prestep", mode="llm_only",
+        minds_digest=minds_digest or "default", run_id=_short(sid, 80), session_id=_short(sid, 80),
+        detail={"step": step_id, "gaps": n, "known_steps": int(known_steps)})
+
+
 def tier_outcome(decision: Dict[str, Any], steps_run: Optional[int], fast_path: Optional[bool],
                  gate: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """single: right when the fast path answered it, wrong when it fell through to planning.
@@ -156,6 +193,28 @@ def run_outcomes(decisions: List[Dict[str, Any]], gate: Optional[Dict[str, Any]]
         later_met = any(j > i and e["detail"].get("step") == step and e["answer"] == "met" for j, e in verifies)
         if later_met:
             out.append(LC.make_outcome(d["decision_id"], "correct", "run.retry_passed", "strong",
+                                       detail={"step": step}))
+
+    # a rule's step end: that attempt's verdict
+    for d in decisions:
+        if d["question_id"] != STEP_DONE_Q:
+            continue
+        step, att = d["detail"].get("step"), d["detail"].get("attempt")
+        v = next((e for _j, e in verifies
+                  if e["detail"].get("step") == step and e["detail"].get("attempt") == att), None)
+        if v is not None:
+            out.append(LC.make_outcome(d["decision_id"], "correct" if v["answer"] == "met" else "wrong",
+                                       "run.step_verify", "medium",
+                                       detail={"step": step, "attempt": att, "rule": d["detail"].get("rule")}))
+
+    # no gaps to gather, and the step's first attempt was met
+    for i, d in enumerate(decisions):
+        if d["question_id"] != PRESTEP_Q or d["answer"] != "not_needed":
+            continue
+        step = d["detail"].get("step")
+        v = next((e for j, e in verifies if j > i and e["detail"].get("step") == step), None)
+        if v is not None and v["answer"] == "met":
+            out.append(LC.make_outcome(d["decision_id"], "correct", "run.first_attempt_met", "medium",
                                        detail={"step": step}))
 
     for i, d in enumerate(decisions):

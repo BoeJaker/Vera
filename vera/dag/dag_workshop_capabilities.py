@@ -16195,6 +16195,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     think_cycle: Optional[int] = None     # current thinking-streak card id
     streak_thoughts: List[str] = []
     tool_calls: Dict[str, int] = {}       # per-tool call count (stuck-loop guard)
+    done_by = ""                           # the rule that ended this step early, if one did (loop.step_done)
     _MAX_SAME_TOOL = 3                     # break the step after this many calls to one cap
     denied_req_turns = 0                   # consecutive request-only turns that granted nothing
     denied_req_caps: List[str] = []        # every cap ever denied (for the stall summary)
@@ -17910,6 +17911,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                   "note": "sources in hand - served the latest web.research result",
                                   "session_id": sid})
                 if _research_done.should_end(research_served):
+                    done_by = "research_done"
                     result_summary = _v5_sentence(
                         "web.research", research_latest,
                         f"The loop ended this step: its sources were in hand after {research_ok} web.research results and `{tool}` kept being re-issued.")[:_V5_DONE_SUMMARY]
@@ -17944,6 +17946,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                                   "note": "re-author of a file this step already wrote - served the earlier result",
                                   "session_id": sid})
                 if reauthor_hits >= 2:
+                    done_by = "reauthor_done"
                     result_summary = _v5_sentence(
                         tool, authored_here[_apath],
                         f"The loop ended this step: `{tool}` was re-issued for {_apath}, which it had already written.")[:_V5_DONE_SUMMARY]
@@ -17978,6 +17981,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "error": "", "note": "duplicate call — served the earlier result",
                               "session_id": sid})
             if dup_call_hits >= _MAX_DUP_HITS:
+                done_by = "duplicate_call"
                 result_summary = _v5_sentence(
                     tool, _cached_preview,
                     f"The loop ended this step: `{tool}` was re-issued unchanged and its result was already in hand.")[:_V5_DONE_SUMMARY]
@@ -18097,6 +18101,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "note": "browser already done - served the done result",
                               "session_id": sid})
             if _browser_done.should_end(browser_done_served[str(step_id)]):
+                done_by = "browser_done"
                 result_summary = _v5_sentence(
                     tool, _dsum,
                     f"The loop ended this step: the browser had already reported the goal done and `{tool}` was re-issued.")[:_V5_DONE_SUMMARY]
@@ -19305,6 +19310,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 _ans, _why = False, ""
                 log.debug("author_done check failed: %s", _e)
             if _ans:
+                done_by = "author_answered"
                 result_summary = _v5_sentence(
                     tool, outputs.get(tool) or preview,
                     f"The loop ended this step: {_why}.")[:_V5_DONE_SUMMARY]
@@ -19338,6 +19344,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 f"The loop ended this step after {_tool_call_n} calls to `{tool}`.")[:_V5_DONE_SUMMARY]
             ok = ok or had_useful
             if _got:
+                done_by = "same_tool_cap"
                 _wrap = (f"(auto-completed: `{tool}` already returned a usable result — ending the "
                          f"step after {_tool_call_n} calls so the run moves on instead of "
                          "re-running it.)")
@@ -19379,7 +19386,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
     res = {"id": step_id, "title": step["title"], "ok": ok,
            "summary": result_summary, "outputs": outputs, "cycle_end": gc,
            "history": history, "user_clarifications": user_clarifications,
-           "actual_caps": _v5_actual_caps_used(history)}
+           "actual_caps": _v5_actual_caps_used(history), "done_by": done_by}
     await emit_event({"type": "agent_loop_v5.step_done", "session_id": sid, "stream_id": stream_id,
                       "step_id": step_id, "ok": ok, "summary": result_summary[:_V5_DONE_SUMMARY]})
     return res
@@ -25649,6 +25656,10 @@ async def cap_dag_agent_loop_v6(
     async def _verify_one(step, res):
         """Judge the step's result against its success criterion (one cheap call)
         and stamp met/met_reason onto the result for the ledger + controller."""
+        if _dl is not None and res.get("done_by"):
+            # a rule ended this attempt early; this attempt's verdict judges it (loop.step_done)
+            _dl.step_done(step.get("id"), res["done_by"],
+                          len(verify_reasons_by_step.get(str(step.get("id")), [])) + 1)
         if not (enable_step_verify and str(step.get("success") or "").strip()):
             res["met"] = None
             return
@@ -25953,6 +25964,8 @@ async def cap_dag_agent_loop_v6(
                 pinfo = await _v7_prestep_info(
                     step, results, goal, model=model,
                     instance_id=instance_id, prefer_gpu=prefer_gpu)
+                if _dl is not None:
+                    _dl.prestep(step["id"], pinfo.get("gaps") or [], len(results), model=str(model or ""))
                 if pinfo.get("gaps"):
                     step["goal"] = (
                         str(step.get("goal", "")) +

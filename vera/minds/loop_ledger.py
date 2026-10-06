@@ -132,6 +132,28 @@ class RunLedger:
         self.decisions.append(d)
         self._send(d)
 
+    def step_done(self, step_id: Any, done_by: str, attempt: int) -> None:
+        try:
+            d = LD.step_done_decision(self.sid, step_id, done_by, attempt,
+                                      minds_digest=self._digest_now(), origin=self.origin)
+        except Exception as e:
+            log.debug("loop ledger step_done: %s", e)
+            return
+        if d is None:
+            return
+        self.decisions.append(d)
+        self._send(d)
+
+    def prestep(self, step_id: Any, gaps: List[Any], known_steps: int, model: str = "") -> None:
+        try:
+            d = LD.prestep_decision(self.sid, step_id, gaps or [], known_steps, model=model,
+                                    minds_digest=self._digest_now(), origin=self.origin)
+        except Exception as e:
+            log.debug("loop ledger prestep: %s", e)
+            return
+        self.decisions.append(d)
+        self._send(d)
+
     def tier(self, tier: str, info: Dict[str, Any], model: str = "") -> None:
         self._decide(LD.tier_decision, tier, info or {}, model)
 
