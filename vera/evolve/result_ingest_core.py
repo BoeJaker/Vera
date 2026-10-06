@@ -296,3 +296,32 @@ def compact_bytes(rec: Dict[str, Any]) -> int:
     """How much of the shared run list one record takes. The list is read whole
     by every runs view, so a record must stay small; the detail can be large."""
     return len(json.dumps(rec, default=str))
+
+
+def run_record_from_chat_turn(turn: Dict[str, Any], *, ingested_at: str = "") -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    """(compact, detail) for one chat.turn record (four-minds FM-0.3), or None for something that
+    is not one. Chat turns live in their own list, never in the census/loop run list; the id is
+    `chat:<turn_id>` so it cannot collide with a loop session id."""
+    if not isinstance(turn, dict) or turn.get("type") != "chat.turn" or not turn.get("turn_id"):
+        return None
+    agent = str(turn.get("agent") or "chat")[:60]
+    ttft = turn.get("ttft_ms")
+    ok = bool(turn.get("ok")) and ttft is not None
+    compact: Dict[str, Any] = {
+        "run_id": "chat:%s" % str(turn["turn_id"])[:64],
+        "task": "chat:%s" % agent,
+        "label": str(turn.get("kind") or "plain"),
+        "task_type": "chat",
+        "ts": str(turn.get("ts") or ingested_at or ""),
+        "elapsed_s": round(float(turn.get("elapsed_ms") or 0) / 1000.0, 2),
+        "ttft_ms": ttft,
+        "kind": str(turn.get("kind") or "plain"),
+        "chars": int(turn.get("chars") or 0),
+        "ok": ok,
+        "source": "chat",
+        "session": str(turn.get("session_id") or "")[:80],
+        "error": "" if ok else ("no-token" if ttft is None else "empty"),
+    }
+    detail = dict(turn)
+    detail["ingested_at"] = ingested_at
+    return compact, detail

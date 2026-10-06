@@ -686,3 +686,40 @@ async def cap_evolve_work_live(trace_id=None) -> Dict[str, Any]:
     any_live = bool(census.get("active") or hz.get("live") or (suite.get("status") or {}).get("running")
                     or suite.get("running") or improve or run.get("live") or run.get("running"))
     return {"census": census, "suite": suite, "improve": improve, "run": run, "any_live": any_live}
+
+
+@capability(
+    "evolve.chat.ingest", memory="off", silent=True,
+    http_method="POST", http_path="/evolve/chat/ingest", http_tags=["evolve", "chat"],
+    description=(
+        "Record chat turns as Loop Lab records (four-minds FM-0.3). Each chat.turn (agent, kind "
+        "plain|triggered, ttft_ms, elapsed_ms, chars, phases) becomes a record with source=chat, "
+        "run_id=chat:<turn_id>, task=chat:<agent>, in its OWN list (never the census/loop run "
+        "list), capped at 1000, detail kept 14 days. evolve.runs source=chat reads it. "
+        "Inputs: turn (dict) and/or turns (list). Output: {ok, ingested, skipped}."),
+)
+async def cap_evolve_chat_ingest(turn: Any = None, turns: Any = None, trace_id=None) -> Dict[str, Any]:
+    items = _as_rows(turn, turns)
+    if not items:
+        return {"error": "no chat turns: pass turn (one) or turns (a list)"}
+    _cc, ev = _mods()
+    if ev is None:
+        return {"error": "the suite store (evolve_capabilities) is not loaded"}
+    r = ev._redis()
+    if not r:
+        return {"error": "the suite store has no Redis here; nothing recorded"}
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    ingested = skipped = 0
+    for it in items:
+        built = ric.run_record_from_chat_turn(it, ingested_at=now)
+        if not built:
+            skipped += 1
+            continue
+        compact, detail = built
+        await r.lpush(ev.KEY_CHAT_TURNS, json.dumps(compact, default=str))
+        await r.set(ev.KEY_CHAT_TURN + compact["run_id"], json.dumps(detail, default=str))
+        await r.expire(ev.KEY_CHAT_TURN + compact["run_id"], _DETAIL_TTL_S)
+        ingested += 1
+    if ingested:
+        await r.ltrim(ev.KEY_CHAT_TURNS, 0, ev.CHAT_TURNS_CAP - 1)
+    return {"ok": True, "ingested": ingested, "skipped": skipped}
