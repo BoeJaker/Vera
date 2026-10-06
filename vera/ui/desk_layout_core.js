@@ -64,7 +64,10 @@
     var t = clamp((FAR - nd) / (FAR - NEAR), 0, 1);
     t = 1 - Math.pow(1 - t, 2);                         /* large sizes hold over most of the way */
     var face = t > 0.6 ? 'max' : t > 0.25 ? 'card' : 'chip';
-    var w = Math.round(SIZE.chip.w + t * (SIZE.max.w - SIZE.chip.w)), h = Math.round(SIZE.chip.h + t * (SIZE.max.h - SIZE.chip.h));
+    /* d.scale grows or shrinks the larger faces with the desk (a narrow canvas column, a wide screen); a chip keeps its
+       size so its title stays readable */
+    var sc = (d && d.scale) || 1, mw = SIZE.max.w * sc, mh = SIZE.max.h * sc;
+    var w = Math.round(SIZE.chip.w + t * (mw - SIZE.chip.w)), h = Math.round(SIZE.chip.h + t * (mh - SIZE.chip.h));
     var why = '';
     if (o.size && o.pinned) { w = o.size.w; h = o.size.h; face = faceOf(w, h); t = 1; why = 'pinned'; }
     else if (o.size && nd < USER_FAR) { w = o.size.w; h = o.size.h; face = faceOf(w, h); t = 1; why = 'your size'; }
@@ -72,13 +75,19 @@
   }
 
   function edgeSlots(R, d) {
-    var s = [], i;
-    for (i = 0; i < 9; i++) s.push([d.W * 0.15 + i * (d.W * 0.7 / 8), d.H - d.edgeBottom]);
-    for (i = 0; i < 12; i++) { var y = d.edgeTop + 24 + i * ((d.H - d.edgeTop - 80) / 11); s.push([d.edgeX + 16, y]); s.push([d.W - d.edgeX - 16, y]); }
-    return s.filter(function (p) {
+    // spaced by a chip's own size, so chips at the border never sit on each other
+    var s = [], i, cw = SIZE.chip.w + 10, ch = SIZE.chip.h + 6;
+    var nRow = Math.max(1, Math.floor((d.W * 0.8) / cw)), nCol = Math.max(1, Math.floor((d.H - d.edgeTop - 60) / ch));
+    for (i = 0; i < nRow; i++) s.push([d.W * 0.1 + cw / 2 + i * cw, d.H - d.edgeBottom]);
+    for (i = 0; i < nCol; i++) { var y = d.edgeTop + 10 + i * ch; s.push([d.edgeX + SIZE.chip.w / 2 - 10, y]); s.push([d.W - SIZE.chip.w / 2 - 8, y]); }
+    var clear = s.filter(function (p) {
       var dx = Math.max(R.l - p[0], 0, p[0] - R.r), dy = Math.max(R.t - p[1], 0, p[1] - R.b);
       return Math.sqrt(dx * dx + dy * dy) > 140;
     });
+    /* a border slot is one where an item really is a chip - far from the chat - or a docked chat's bottom row puts
+       full-size items under its elbow (the canvas column, 2026-10-06: 12 of 20 came out full size) */
+    var far = clear.filter(function (p) { return distance(R, p[0], p[1], d) >= 0.78; });
+    return far.length >= 4 ? far : clear;
   }
 
   function arrange(mode, R, items, d) {
@@ -87,16 +96,34 @@
     var pos = {}, chips = [];
     var dockedLeft = R.l < 200, dockedRight = R.r > W - 200, below = R.t > H * 0.55;
     var sides = dockedLeft ? [1] : dockedRight ? [-1] : [1, -1];
-    function cl(x, y) { return [clamp(x, 90, W - 90), clamp(y, 60, H - 40)]; }
+    function cl(x, y) { return [clamp(x, Math.min(90, W / 2), Math.max(W / 2, W - 90)), clamp(y, Math.min(60, H / 2), Math.max(H / 2, H - 40))]; }
     if (mode === 'orbit' && (dockedLeft || dockedRight || below)) {
-      var dir = dockedLeft ? 1 : dockedRight ? -1 : 0, span = dir > 0 ? W - R.r : dir < 0 ? R.l : R.t, k = 0;
-      [[0.17, 3], [0.47, 4], [0.77, 4]].forEach(function (bd) {
-        for (var q = 0; q < bd[1] && k < items.length; q++) {
-          var it = items[k++], along = (q + 0.5) / bd[1];
-          pos[it.id] = dir !== 0 ? cl(dir > 0 ? R.r + span * bd[0] : R.l - span * bd[0], 110 + along * (H - 220))
-                                 : cl(90 + along * (W - 180), R.t - span * bd[0]);
+      /* BANDS, ONE AFTER ANOTHER away from the chat, each as deep as the items it holds are at that distance (sizeAt
+         there), each holding as many as its length fits at that size, and none reaching into the border's chip strip.
+         Fractions of the free side overlapped in a narrow desk (the canvas column, 2026-10-06: 21 overlapping pairs). */
+      var dir = dockedLeft ? 1 : dockedRight ? -1 : 0, k = 0, gapB = 14;
+      var vertical = dir === 0;                                  /* bottom dock: bands are rows above the chat */
+      var reserve = vertical ? SIZE.chip.h + 30 : SIZE.chip.w + 20;   /* the border strip at the far side */
+      var cursor = vertical ? R.t - gapB : (dir > 0 ? R.r + gapB : R.l - gapB);
+      var lengthAlong = vertical ? W - 2 * d.m : H - 2 * d.m;
+      for (var band = 0; band < 4 && k < items.length; band++) {
+        var probe = vertical ? sizeAt(R, W / 2, cursor - 60, {}, d) : sizeAt(R, cursor + dir * 80, H / 2, {}, d);
+        var depth = vertical ? probe.h : probe.w;
+        var centre = vertical ? cursor - depth / 2 : cursor + dir * depth / 2;
+        var real = vertical ? sizeAt(R, W / 2, centre, {}, d) : sizeAt(R, centre, H / 2, {}, d);
+        if (real.face === 'chip') break;                          /* past the cards: the rest are border chips */
+        depth = vertical ? real.h : real.w;
+        centre = vertical ? cursor - depth / 2 : cursor + dir * depth / 2;
+        var farEdge = vertical ? centre - depth / 2 : centre + dir * depth / 2;
+        if (vertical ? farEdge < d.edgeTop + reserve : (dir > 0 ? farEdge > W - reserve : farEdge < reserve)) break;
+        var cross = vertical ? real.w : real.h;
+        var count = Math.max(1, Math.min(band === 0 ? 3 : 4, Math.floor(lengthAlong / (cross + gapB))));
+        for (var q = 0; q < count && k < items.length; q++) {
+          var it = items[k++], at = (q + 0.5) / count;
+          pos[it.id] = vertical ? cl(d.m + at * lengthAlong, centre) : cl(centre, d.m + at * lengthAlong);
         }
-      });
+        cursor = vertical ? farEdge - gapB : farEdge + dir * gapB;
+      }
       chips = items.slice(k);
     } else if (mode === 'orbit') {
       var ring = function (off, n, start) {

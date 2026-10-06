@@ -48,6 +48,12 @@ t('arrangements place every item, and a docked orbit fills the free side in band
     const pos = D.arrange(mode, FLOAT, items);
     assert.strictEqual(Object.keys(pos).length, items.length, mode + ' places every item');
   });
+  // what does not fit in the bands sits at the border, and there it really is a chip
+  const narrow = { W: 702, H: 639, m: 8, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22 }, CR = { l: -440, t: 0, r: 0, b: 639 };
+  const many = 'abcdefghijklmnopqrst'.split('').map((id) => ({ id, kind: 'x' }));
+  const np = D.arrange('orbit', CR, many, narrow);
+  const faces = many.slice(11).map((it) => D.sizeAt(CR, np[it.id][0], np[it.id][1], {}, narrow).face);
+  assert.ok(faces.every((f) => f === 'chip'), 'border items are chips: ' + faces.join(','));
   const bands = D.arrange('orbit', LEFT, items);
   assert.ok(bands.a[0] > LEFT.r && bands.a[0] < 700, 'the first band sits just beside a left-docked chat');
   assert.strictEqual(D.sizeAt(LEFT, bands.a[0], bands.a[1]).face, 'max');

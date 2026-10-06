@@ -1194,6 +1194,15 @@
   /* HELD LAYOUT (the canvas's final form §2): an item taller than the column keeps its head and its rail and scrolls
      its OWN body. It used to run off the end of a stage nobody could scroll, so the part of it you wanted — the
      bottom of the last turn's item — could not be reached at all. */
+  /* the desk (align="desk", owner approved 2026-10-06): sized by the distance to the chat on the column's left edge */
+  :host([align="desk"]) .stage .it{transition:left .45s cubic-bezier(.2,.8,.2,1), top .45s cubic-bezier(.2,.8,.2,1), width .35s, height .35s; overflow:hidden; box-sizing:border-box; min-height:0}
+  :host([align="desk"]) .stage .it.desk-chip{border-radius:17px;padding:0 10px!important;display:flex;align-items:center}
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd{position:static!important;margin:0!important;flex:1 1 auto;min-width:0;display:flex;align-items:center;justify-content:flex-start;gap:6px;overflow:hidden}
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd > *{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  :host([align="desk"]) .stage .it.desk-chip > :not(.it-hd){display:none}
+  :host([align="desk"]) .stage .it.desk-chip .it-hd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-wrap:nowrap}
+  :host([align="desk"]) .stage .it.desk-chip .it-hd *{white-space:nowrap}
+  @media (prefers-reduced-motion: reduce){:host([align="desk"]) .stage .it{transition:none}}
   .stage .it.capped{overflow:hidden}
   .stage .it.capped .it-bd{max-height:none;overflow:auto}
   /* folded because the COLUMN ran out of room, not because the tier folds it: the header line alone, and it opens
@@ -2231,6 +2240,8 @@
     }
     /* held (the default) or strict: the one place the two regimes are named, so nothing else has to ask twice */
     strictAlign() { return String(this.getAttribute('align') || 'held').toLowerCase() === 'strict'; }
+    /* desk: the approved desk's rules (/ui/desk-layout.js, window.VeraDesk) with the chat docked on the column's left */
+    deskAlign() { return String(this.getAttribute('align') || '').toLowerCase() === 'desk'; }
     previewOn() { return String(this.getAttribute('preview') || 'on').toLowerCase() !== 'off'; }
     explodeOffer() { const v = String(this.getAttribute('explode-offer') || 'both').toLowerCase(); return ['both', 'code', 'never'].indexOf(v) >= 0 ? v : 'both'; }
     /* ── the stage (the column's split projection): the host hands the transcript's turn tops ({mid:{top,height}} in
@@ -2294,6 +2305,52 @@
       this.shadowRoot.querySelectorAll('.it[data-key]').forEach((el) => { const r = el.getBoundingClientRect(); out.push({ key: el.dataset.key, mid: el.dataset.mid || '', from: el.dataset.from || '', anchors: String(el.dataset.anchors || '').split(' ').filter(Boolean), col: +(el.dataset.col || 0), state: el.classList.contains('pinned') ? 'pinned' : 'now', inFocus: !F || F.has(el.dataset.key) || el.classList.contains('pinned'), out: el.classList.contains('out'), compact: el.classList.contains('compact'), open: el.classList.contains('openin'), ghost: el.classList.contains('ghost'), rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }); });
       return out;
     }
+    /* THE DESK (align="desk"; owner approved the desk 2026-10-06, shared planning context-and-ui PLAN-WS-U-desk U-D2).
+       The chat sits on the column's left edge, so the whole column is the desk's free side: an item is full size
+       beside the chat, a card further out, a chip near the far edge (VeraDesk.sizeAt), laid out in bands (VeraDesk
+       .arrange 'orbit' with a docked chat) - this turn's items first, then pinned ones, then the newest. A width you
+       dragged (data-pw) is your size and holds until ~93% out; a pinned item with a size of yours holds it anywhere.
+       Closer to the chat stacks higher. Nothing here runs unless align is "desk". */
+    _placeDesk(st, cards) {
+      const D = root.VeraDesk, body = this.shadowRoot.getElementById('body');
+      const W = st.clientWidth || 300;
+      const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
+      const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);
+      const H = Math.max(360, (body ? body.clientHeight : 600) - pad - 8);
+      const f = Math.max(0.8, Math.min(1.6, W / 1000));          // a wide column gets proportionally larger faces
+      const desk = { W: W, H: H, m: 8, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22, scale: f };
+      const R = { l: -440, t: 0, r: 0, b: H };
+      const fm = this._focusMid || '';
+      const ranked = cards.map((c, i) => ({ c, i })).sort((a, b) => {
+        const fa = fm && a.c.dataset.mid === fm ? 1 : 0, fb = fm && b.c.dataset.mid === fm ? 1 : 0;
+        if (fa !== fb) return fb - fa;
+        const pa = a.c.classList.contains('pinned') ? 1 : 0, pb = b.c.classList.contains('pinned') ? 1 : 0;
+        if (pa !== pb) return pb - pa;
+        return b.i - a.i;
+      });
+      const pos = D.arrange('orbit', R, ranked.map((x) => ({ id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '' })), desk);
+      const out = [];
+      ranked.forEach((x) => {
+        const c = x.c, key = c.dataset.key || String(x.i), p = pos[key] || [W - 90, H - 30];
+        const pw = (this._rz && this._rz.el === c ? this._rz.w : 0) || parseInt(c.dataset.pw || '0', 10) || 0;
+        const user = pw > 0 ? { w: pw, h: c.classList.contains('sized') ? c.offsetHeight : Math.round(pw * 0.66) } : null;
+        const s = D.sizeAt(R, p[0], p[1], { size: user, pinned: !!user && c.classList.contains('pinned') }, desk);
+        const w = Math.min(W - 16, s.w), h = Math.min(H - 8, s.h);
+        const left = Math.max(0, Math.min(W - w, Math.round(p[0] - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(p[1] - h / 2)));
+        c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
+        c.classList.toggle('desk-chip', s.face === 'chip');
+        c.dataset.deskFace = s.face;
+        // the desk owns the size here: a compact card's own height rule must not grow a chip under its neighbours
+        c.style.left = left + 'px'; c.style.top = top + 'px'; c.style.setProperty('width', w + 'px', 'important'); c.style.setProperty('height', h + 'px', 'important'); c.style.setProperty('min-height', '0px', 'important');
+        c.style.zIndex = String(D.stackOrder(s.nd));
+        out.push({ key: key, x: left, y: top, w: w, h: h, face: s.face });
+      });
+      st.style.height = H + 'px';
+      this._placed = { mode: 'desk', placements: out, height: H, folded: [] };
+      try { this._liveLayout(); } catch (e) { /* the live layout readers are optional */ }
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:placed', { bubbles: true, detail: { n: out.length, mode: 'desk', height: H,
+        faces: out.reduce((m, o) => { m[o.face] = (m[o.face] || 0) + 1; return m; }, {}) } })); } catch (e) { /* no listener */ }
+    }
     _placeNow() {
       const st = this.shadowRoot.getElementById('stage'); if (!st) return;
       const W = st.clientWidth || 300, gap = 10;
@@ -2306,6 +2363,16 @@
       this._stageW = W;
       const maxCard = this._max ? st.querySelector('.it.maxed') : null;   // placed on its own, below
       const cards = [...st.querySelectorAll('.it')].filter((c) => c !== maxCard);
+      if (this.deskAlign()) {
+        // the rules live in one library; it is fetched the first time desk is chosen, then the stage is placed again
+        if (root.VeraDesk) { this._placeDesk(st, cards); return; }
+        if (!root.__veraDeskLoading) {
+          root.__veraDeskLoading = true;
+          const s = document.createElement('script'); s.src = '/ui/desk-layout.js';
+          s.onload = () => this._placeNow(); s.onerror = () => { root.__veraDeskLoading = false; };
+          document.head.appendChild(s);
+        }
+      } else cards.forEach((c) => { if (c.dataset.deskFace) { c.classList.remove('desk-chip'); delete c.dataset.deskFace; c.style.zIndex = ''; c.style.removeProperty('height'); c.style.removeProperty('width'); c.style.removeProperty('min-height'); } });
       /* AN ITEM THAT GROWS AFTER IT WAS PLACED IS PLACED AGAIN (owner, 2026-10-03: "the last element added does not fully
          display untill the next message is sent"). The stage measured each card once, when it was placed; a card that
          grew afterwards - its markdown and widgets finishing, a run's output, an explode panel, an editor opened -
