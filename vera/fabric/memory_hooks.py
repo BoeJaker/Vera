@@ -88,6 +88,10 @@ try:                                    # which memories are noise: kept, ranked
     from Vera.vera.fabric import memory_noise_core as _noise_core
 except ImportError:                     # pragma: no cover
     from . import memory_noise_core as _noise_core
+try:                                    # one canonical record per repeated text (CU-M.5)
+    from Vera.vera.fabric import memory_canonical_core as _canon_core
+except ImportError:                     # pragma: no cover
+    from . import memory_canonical_core as _canon_core
 
 log = logging.getLogger("vera.memory_hooks")
 
@@ -1852,6 +1856,167 @@ async def memory_noise_mark(confirm: Any = False, trace_id=None) -> Dict[str, An
     if _in_backup_window():
         return {"refused": "the nightly backup runs 01:00-03:30 - marking waits", "last_run": last}
     _NOISE_RUN_TASK = asyncio.create_task(_noise_apply())
+    return {"started": True, "last_run": last}
+
+
+# ── canonical records for the copies already stored (new ones are folded in as they are written) ──
+_CANON_RUN_KEY = "vera:memory:canonical:last_run"
+_CANON_RUN_TASK = None
+
+
+async def _canon_scan(pool) -> Dict[str, Any]:
+    """Over the live records recall can return: the text keys still to store, {occurrence: canonical} to set, the
+    canonical marks to clear, and counts."""
+    rows: List[Dict[str, Any]] = []
+    keys: Dict[str, str] = {}
+    last = ""
+    async with pool.acquire() as conn:
+        while True:
+            batch = await conn.fetch(
+                "SELECT id, record_type, created_at, left(coalesce(text, ''), 4000) AS text, "
+                "metadata->>'text_key' AS text_key, metadata->>'canonical_id' AS canonical_id "
+                "FROM vera_memories WHERE NOT archived AND id > $1 AND record_type <> ALL($2::text[]) "
+                "AND NOT (text LIKE '[Claude Code%' OR text LIKE '[Codex%') ORDER BY id LIMIT 5000",
+                last, list(_canon_core.SKIP_TYPES))
+            if not batch:
+                break
+            for r in batch:
+                d = dict(r)
+                if not _canon_core.eligible(d):
+                    continue
+                if not d.get("text_key"):
+                    d["text_key"] = _canon_core.text_key(d["text"])
+                    if d["text_key"]:
+                        keys[d["id"]] = d["text_key"]
+                d["created_at"] = str(d.get("created_at") or "")
+                d.pop("text", None)
+                rows.append(d)
+            last = batch[-1]["id"]
+            await asyncio.sleep(0)
+    point = _canon_core.plan(rows)
+    clear = _canon_core.unmark(rows)
+    return {"rows": len(rows), "keys": keys, "point": point, "clear": clear,
+            "canonicals": len(set(point.values()))}
+
+
+async def _canon_apply() -> Dict[str, Any]:
+    """Store text keys, point every copy at its canonical (Postgres metadata, Neo4j property, an OCCURRENCE_OF edge
+    in both), clear marks that no longer hold. Never raises; the run is recorded."""
+    t0 = time.monotonic()
+    out: Dict[str, Any] = {"started_at": now_iso(), "keys": 0, "pointed": 0, "cleared": 0, "neo4j": 0, "edges": 0}
+    try:
+        pool = await _usage_pool()
+        if pool is None:
+            out["error"] = "memory postgres not connected"
+            return out
+        scan = await _canon_scan(pool)
+        out["scanned"] = scan["rows"]
+        kitems = list(scan["keys"].items())
+        for i in range(0, len(kitems), _FADE_BATCH):
+            chunk = kitems[i:i + _FADE_BATCH]
+            async with pool.acquire() as conn:
+                done = await conn.fetch(
+                    """UPDATE vera_memories m SET metadata = COALESCE(m.metadata, '{}'::jsonb)
+                                                         || jsonb_build_object('text_key', r.k)
+                       FROM unnest($1::text[], $2::text[]) AS r(id, k) WHERE m.id = r.id RETURNING m.id""",
+                    [c[0] for c in chunk], [c[1] for c in chunk])
+            out["keys"] += len(done)
+            await asyncio.sleep(0)
+        pitems = list(scan["point"].items())
+        for i in range(0, len(pitems), _FADE_BATCH):
+            chunk = pitems[i:i + _FADE_BATCH]
+            ids, canons = [c[0] for c in chunk], [c[1] for c in chunk]
+            async with pool.acquire() as conn:
+                done = await conn.fetch(
+                    """UPDATE vera_memories m SET metadata = COALESCE(m.metadata, '{}'::jsonb)
+                                                         || jsonb_build_object('canonical_id', r.c)
+                       FROM unnest($1::text[], $2::text[]) AS r(id, c) WHERE m.id = r.id RETURNING m.id""",
+                    ids, canons)
+                out["pointed"] += len(done)
+                res = await conn.execute(
+                    """INSERT INTO vera_memory_edges (from_id, to_id, relation, properties, session_id, created_at)
+                       SELECT r.id, r.c, 'OCCURRENCE_OF', '{}'::jsonb, '', NOW()
+                       FROM unnest($1::text[], $2::text[]) AS r(id, c)
+                       ON CONFLICT (from_id, to_id, relation) DO NOTHING""", ids, canons)
+                try:
+                    out["edges"] += int(str(res).split()[-1])
+                except Exception:
+                    pass
+            await asyncio.sleep(0)
+        for i in range(0, len(scan["clear"]), _FADE_BATCH):
+            async with pool.acquire() as conn:
+                done = await conn.fetch("UPDATE vera_memories SET metadata = metadata - 'canonical_id' "
+                                        "WHERE id = ANY($1::text[]) RETURNING id", scan["clear"][i:i + _FADE_BATCH])
+            out["cleared"] += len(done)
+        neo, _coll, _cls = _fade_stores()
+        if neo is not None:
+            for i in range(0, len(pitems), _FADE_BATCH):
+                rows = [{"id": a, "c": b} for a, b in pitems[i:i + _FADE_BATCH]]
+                try:
+                    async with neo._driver.session() as ses:
+                        res = await ses.run(
+                            "UNWIND $rows AS r MATCH (m:Memory {id: r.id}) SET m.canonical_id = r.c "
+                            "WITH m, r MATCH (c:Memory {id: r.c}) MERGE (m)-[:OCCURRENCE_OF]->(c) "
+                            "RETURN count(m) AS n", {"rows": rows})
+                        row = await res.single()
+                        out["neo4j"] += int((row or {}).get("n", 0) or 0)
+                except Exception as e:
+                    out.setdefault("errors", []).append("neo4j: %s" % str(e)[:120])
+                await asyncio.sleep(0)
+            if scan["clear"]:
+                try:
+                    async with neo._driver.session() as ses:
+                        await ses.run("UNWIND $ids AS id MATCH (m:Memory {id: id}) REMOVE m.canonical_id",
+                                      {"ids": scan["clear"]})
+                except Exception as e:
+                    out.setdefault("errors", []).append("neo4j: %s" % str(e)[:120])
+    except Exception as e:
+        out["error"] = str(e)[:200]
+    out["ms"] = round((time.monotonic() - t0) * 1000)
+    out["finished_at"] = now_iso()
+    r = _redis()
+    if r is not None:
+        try:
+            await r.set(_CANON_RUN_KEY, json.dumps(out))
+        except Exception:
+            pass
+    return out
+
+
+@capability(
+    "memory.canonical.mark",
+    http_method="POST", http_path="/memory/canonical/mark", http_tags=["memory"],
+    memory="off",
+    description="Fold the stored copies of one text into one canonical record: the oldest record of each text (per "
+                "record type) is the canonical one, every other copy is kept as its occurrence (linked "
+                "OCCURRENCE_OF) and recall returns the canonical record once. Nothing is deleted or archived; new "
+                "copies are folded in as they are written. Without confirm=true it only counts. Runs in the "
+                "background, never 01:00-03:30. Inputs: confirm (bool). Output: {dry, scanned, would_point, "
+                "canonicals, would_clear | started | running, last_run}.",
+)
+async def memory_canonical_mark(confirm: Any = False, trace_id=None) -> Dict[str, Any]:
+    global _CANON_RUN_TASK
+    r = _redis()
+    last = None
+    if r is not None:
+        try:
+            raw = await r.get(_CANON_RUN_KEY)
+            last = json.loads(raw) if raw else None
+        except Exception:
+            last = None
+    if _CANON_RUN_TASK is not None and not _CANON_RUN_TASK.done():
+        return {"running": True, "last_run": last}
+    if str(confirm).strip().lower() not in ("1", "true", "yes", "on"):
+        pool = await _usage_pool()
+        if pool is None:
+            return {"error": "memory postgres not connected", "last_run": last}
+        scan = await _canon_scan(pool)
+        return {"dry": True, "scanned": scan["rows"], "would_key": len(scan["keys"]),
+                "would_point": len(scan["point"]), "canonicals": scan["canonicals"],
+                "would_clear": len(scan["clear"]), "last_run": last}
+    if _in_backup_window():
+        return {"refused": "the nightly backup runs 01:00-03:30 - folding waits", "last_run": last}
+    _CANON_RUN_TASK = asyncio.create_task(_canon_apply())
     return {"started": True, "last_run": last}
 
 

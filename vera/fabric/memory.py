@@ -115,6 +115,10 @@ try:                                                    # noisy records rank aft
     from Vera.vera.fabric import memory_noise_core as _noise_core
 except ImportError:                                     # pragma: no cover
     from . import memory_noise_core as _noise_core
+try:                                                    # one canonical record per repeated text (CU-M.5)
+    from Vera.vera.fabric import memory_canonical_core as _canon_core
+except ImportError:                                     # pragma: no cover
+    from . import memory_canonical_core as _canon_core
 # "0" ranks noisy records with the rest again.
 _RECALL_NOISE_LAST = __import__("os").getenv("VERA_MEMORY_NOISE_LAST", "1") != "0"
 try:                                                    # retrieval timing envelopes (FM-7.0)
@@ -632,6 +636,9 @@ class PostgresBackend(MemoryBackend):
                 await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_fts ON vera_memories USING gin(search_vector)")
                 await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_tags ON vera_memories USING gin(tags)")
                 await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_hash ON vera_memories(content_hash)")
+                # the canonical record of a text, found as each memory is written (memory_canonical_core)
+                await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vm_text_key ON vera_memories ((metadata->>'text_key')) "
+                                    "WHERE metadata ? 'text_key'")
                 await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vme_from ON vera_memory_edges(from_id)")
                 await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vme_to   ON vera_memory_edges(to_id)")
                 await _pg_try(conn, "CREATE INDEX IF NOT EXISTS vme_sess ON vera_memory_edges(session_id)")
@@ -732,6 +739,7 @@ class PostgresBackend(MemoryBackend):
                     FROM vera_memories
                     WHERE {where}
                       AND search_vector @@ plainto_tsquery('english', ${i})
+                      AND NOT (metadata ? 'canonical_id')
                     ORDER BY (metadata ? 'noise'), score DESC, importance DESC
                     LIMIT {limit}
                 """
@@ -1233,6 +1241,8 @@ class Neo4jBackend(MemoryBackend):
                 "content_hash": record.content_hash,
                 "graph_id":     record.id,  # use record id as graph node identity
                 "noise":        bool((record.metadata or {}).get("noise")),   # ranks last (memory_noise_core)
+                # an occurrence of another record's text; Neo4j drops a null property, so a canonical has none
+                "canonical_id": (record.metadata or {}).get("canonical_id") or None,
             }
             async with self._driver.session() as s:
                 await s.run(
@@ -1330,7 +1340,7 @@ class Neo4jBackend(MemoryBackend):
                 cypher = f"""
                     CALL db.index.fulltext.queryNodes('vera_mem_text', $query, {{limit: $cand}})
                     YIELD node AS m, score
-                    WHERE {where}
+                    WHERE {where} AND m.canonical_id IS NULL
                     RETURN m, score ORDER BY coalesce(m.noise, false), score DESC LIMIT $limit
                 """
             else:
@@ -1709,6 +1719,17 @@ class HybridMemoryStore:
         if why:
             record.metadata = dict(record.metadata or {}, noise=why)
             worthy = False
+        # The same text as a live record of the same type: kept, as an occurrence of that canonical record, which is
+        # the one recall returns (memory_canonical_core). Not embedded - the canonical's vector already stands for it.
+        canon = ""
+        if _canon_core.eligible(record):
+            key = _canon_core.text_key(record.text or record.full_text)
+            if key:
+                record.metadata = dict(record.metadata or {}, text_key=key)
+                canon = await self._canonical_for(key, record.record_type, record.id)
+                if canon:
+                    record.metadata["canonical_id"] = canon
+                    worthy = False
         if worthy and not record.embedding and MEMORY_AUTO_EMBED:
             emb = await embed_text(record.text or record.summary)
             if emb:
@@ -1730,6 +1751,12 @@ class HybridMemoryStore:
                 log.warning("Memory backend %s store timed out after %.1fs",
                             name, _BACKEND_OP_TIMEOUT_S)
             outcome[name] = res if isinstance(res, bool) else False
+        if canon:
+            try:                            # the occurrence stays reachable: a path from it to the canonical
+                await asyncio.wait_for(self.relate(record.id, canon, "OCCURRENCE_OF",
+                                                   {"session_id": record.session_id}), _BACKEND_OP_TIMEOUT_S)
+            except Exception as e:
+                log.debug("occurrence link %s -> %s: %s", record.id, canon, e)
 
         await emit_event({
             "type":       "memory.stored",
@@ -1754,6 +1781,23 @@ class HybridMemoryStore:
             },
         })
         return outcome
+
+    async def _canonical_for(self, key: str, record_type: str, record_id: str, timeout: float = 0.3) -> str:
+        """The live canonical record with this text key and type, or "" (none, or Postgres slow - the record is then
+        stored as its own canonical and a later memory.canonical.mark run folds it in). Never raises."""
+        pool = getattr(self._backends.get("postgres"), "_pool", None)
+        if pool is None:
+            return ""
+        try:
+            async def _q():
+                async with pool.acquire() as conn:
+                    return await conn.fetchval(
+                        "SELECT id FROM vera_memories WHERE metadata->>'text_key' = $1 AND record_type = $2 "
+                        "AND NOT archived AND NOT (metadata ? 'canonical_id') AND id <> $3 "
+                        "ORDER BY created_at, id LIMIT 1", key, record_type or "", record_id or "")
+            return str(await asyncio.wait_for(_q(), timeout) or "")
+        except Exception:
+            return ""
 
     async def search(
         self,
