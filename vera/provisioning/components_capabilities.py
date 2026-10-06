@@ -161,6 +161,8 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
         "files": [("edge/GPU_inference.py", "GPU_inference.py"),
                   ("edge/gpu_residency_core.py", "gpu_residency_core.py"),
                   ("edge/media_store_core.py", "media_store_core.py"),
+                  # written forms -> spoken words before TTS (money, dates, times, acronyms)
+                  ("edge/tts_text_core.py", "tts_text_core.py"),
                   # reports every call to the Estate Activity pane
                   ("edge/activity_record.py", "activity_record.py"),
                   ("edge/gpu_inference_start.sh", "start.sh", "755")],

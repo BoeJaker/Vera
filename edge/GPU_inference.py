@@ -68,6 +68,15 @@ TTS_LANGUAGE        = os.getenv("TTS_LANGUAGE",         None)
 # Kokoro config
 KOKORO_VOICE        = os.getenv("KOKORO_VOICE",         "af_heart")
 KOKORO_LANG         = os.getenv("KOKORO_LANG",          "en-us")
+# Text normalisation before synthesis (tts_text_core.py, next to this file):
+#   rules - the built-in British-English rules (default, no dependencies)
+#   nemo  - NVIDIA NeMo's WFST normaliser first when nemo_text_processing (pynini) is installed, then the rules
+#   off   - speak the text as written
+TTS_NORMALIZER      = os.getenv("TTS_NORMALIZER",       "rules").strip().lower()
+try:
+    import tts_text_core as _tn
+except Exception:  # noqa: BLE001 - an older deploy without the file still speaks
+    _tn = None
 KOKORO_SAMPLE_RATE  = 24000
 
 OLLAMA_BASE_URL     = os.getenv("OLLAMA_BASE_URL",      "http://localhost:11434")
@@ -824,6 +833,14 @@ def redis_get_result(job_id: str) -> Optional[dict]:
 def _tts_synthesize(text: str, opts: dict) -> tuple[np.ndarray, int]:
     """Returns (float32_audio_array, sample_rate)."""
     text   = _clean_for_tts(text)
+    # Written forms -> spoken words (money, dates, times, percentages, quarters,
+    # acronyms...): espeak's own rules read "£1.2bn" or "2026-10-05" badly. One place,
+    # so chat voice, podcasts and intel narration all get it. Never fatal.
+    if _tn is not None and TTS_NORMALIZER != "off" and opts.get("normalize", True) is not False:
+        try:
+            text = _tn.normalize_best(text, TTS_NORMALIZER)
+        except Exception as e:  # noqa: BLE001
+            log.warning("TTS text normalisation failed, speaking the text as written: %s", e)
     if not text:
         # Return a short silence rather than erroring on empty cleaned text
         silence = np.zeros(int(TTS_SAMPLE_RATE * 0.1), dtype=np.float32)
