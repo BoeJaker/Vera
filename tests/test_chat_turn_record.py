@@ -85,3 +85,20 @@ def test_stream_wiring():
     assert "silent=not body.get(\"phase_frames\"))" in src
     assert "_record_chat_turn(_ph, agent.name, elapsed_ms, _resp_chars, session_id)" in src
     assert "if _ph.silent:                      # no frames to order for this client" in src
+
+
+def test_the_post_reply_step_is_said_and_usage_is_counted_once():
+    src = open(os.path.join(ROOT, "vera", "agents", "agents.py"), encoding="utf-8").read()
+    assert '_ph.sse("post", "memory-use", "checking which memories the answer used", "start")' in src
+    assert "await asyncio.wait({_usage_t}, timeout=0.8)" in src         # bounded: the stream's end waits <= 0.8 s
+    assert "if _usage_t is None:\n                _usage_start()" in src  # an early end still counts, once
+    assert src.count("record_turn_usage(session_id") == 1
+
+
+def test_post_steps_enter_the_turn_record():
+    ph = tp.PhaseClock("t2", 0.0, clock=lambda: 2.0)
+    ph.frame("model", "answer", "writing the answer", "done", ms=1500)
+    ph.frame("post", "memory-use", "checking which memories the answer used", "done", ms=120,
+             detail="used 2 of the 6 it was given")
+    rec = tp.turn_record(ph.log, agent="assistant", elapsed_ms=2000)
+    assert {"stage": "post", "id": "memory-use", "state": "done", "at_ms": 2000, "ms": 120} in rec["phases"]
