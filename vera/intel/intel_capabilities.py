@@ -66,6 +66,7 @@ try:
     from Vera.vera.intel import intel_change_core as chg
     from Vera.vera.intel import intel_pm_core as pm
     from Vera.vera.intel import intel_geo_core as geo
+    from Vera.vera.intel import intel_calib_core as calib
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -74,6 +75,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_change_core as chg
     from vera.intel import intel_pm_core as pm
     from vera.intel import intel_geo_core as geo
+    from vera.intel import intel_calib_core as calib
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -101,7 +103,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "speak_voice": "",            # "" = the voice set for all of Vera (tts.config.set)
     "speak_speed": 0.0,           # 0 = the speed set for all of Vera
     "telegram_audio": True,       # send the narration after a brief that went to Telegram
-    "geocode": True,              # turn the places a source names into coordinates (OpenStreetMap)
+    "geocode": True,
+    "calibrated_gate": False,     # let a topic's learned curve decide (only once it is calibrated)              # turn the places a source names into coordinates (OpenStreetMap)
     "persona": ops.DEFAULT_PERSONA,
     "competitors": [],
     "phone_target": "mobile_app_smasnug",
@@ -666,11 +669,22 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
         recent_titles.append(c["title"])
         batch[c["id"]] = c
         out.append(c)
-        rel_ans = "relevant" if (c.get("score") or 0) >= float(t.get("min_score", 5)) else "not_relevant"
+        # the topic's learned curve (from the reader's ratings) in shadow: its p rides on
+        # the decision and the signal; it decides only when calibrated AND switched on
+        curve = _curves().get(t["id"])
+        ps = calib.p_useful(curve, c.get("score"))
+        if ps is not None:
+            c["p_useful"] = ps
+        learned = bool(curve and curve.get("usable") and config().get("calibrated_gate"))
+        if learned:
+            rel_ans = "relevant" if ps >= 0.5 else "not_relevant"
+        else:
+            rel_ans = "relevant" if (c.get("score") or 0) >= float(t.get("min_score", 5)) else "not_relevant"
         _decide("intel.signal_relevant", rel_ans, state=ledger.signal_state(c, t["id"]), ref_kind="signal",
-                ref_id=c["id"], decider="rule", mode="rule",
+                ref_id=c["id"], decider="calibrated" if learned else "rule", mode="learned" if learned else "rule",
+                p=ps if (curve and curve.get("usable")) else None,
                 detail={"score": c.get("score"), "rerank": rel.get(i), "novelty": c.get("novelty"),
-                        "threshold": float(t.get("min_score", 5))})
+                        "threshold": float(t.get("min_score", 5)), "p_shadow": ps})
         if c.get("genre") or c.get("genre_p") is not None:
             _decide("intel.page_genre", c.get("genre") or "unsure", state=ledger.signal_state(c, t["id"]),
                     ref_kind="signal", ref_id=c["id"], decider="student", mode="rule",
@@ -1578,7 +1592,11 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
                 if (s.get("score") or 0) >= 4:
                     competitors.append({"firm": firm, "title": s.get("title"), "url": s.get("url"),
                                         "topic": t["name"], "score": s.get("score")})
-        sigs = [s for s in sigs if (s.get("score") or 0) >= float(t.get("min_score", 5))]
+        curve = _curves().get(t["id"])
+        if curve and curve.get("usable") and config().get("calibrated_gate"):
+            sigs = [s for s in sigs if (calib.p_useful(curve, s.get("score")) or 0) >= 0.5]   # the topic's own curve
+        else:
+            sigs = [s for s in sigs if (s.get("score") or 0) >= float(t.get("min_score", 5))]
         snap = st.latest_snapshot(t["id"])
         if snap and core.parse_ts(snap.get("ts")) and core.parse_ts(snap["ts"]) < core.parse_ts(since):
             snap = None                       # an old assessment is not news
@@ -2577,6 +2595,46 @@ async def _tick() -> None:
     if st.get_kv("decisions_pruned") != today:
         st.set_kv("decisions_pruned", today)
         st.prune_decisions(_since(24 * 90))
+    if st.get_kv("calibrated_week") != week:      # refit the topic curves from a week's new ratings
+        st.set_kv("calibrated_week", week)
+        fit_curves()
+
+
+def _curves() -> Dict[str, Dict[str, Any]]:
+    return (store().get_kv("calibration", {}) or {}).get("topics") or {}
+
+
+def fit_curves() -> Dict[str, Any]:
+    """Fit each topic's p(useful | score) from the reader's ratings: the relevance
+    decisions that collected outcomes (useful / not useful / mute, links opened,
+    report buttons). Pure arithmetic over the local store - no model call."""
+    st = store()
+    by_topic: Dict[str, List[Tuple[float, int]]] = {}
+    for d in st.decisions(question_id="intel.signal_relevant", limit=20000, with_outcomes=True):
+        y = calib.label_of(o.get("source") for o in d.get("outcomes") or [])
+        score = (d.get("detail") or {}).get("score")
+        if y is None or score is None:
+            continue
+        sig = st.get_signal((d.get("state_ref") or {}).get("id", ""))
+        if sig:
+            by_topic.setdefault(sig["topic_id"], []).append((float(score), y))
+    topics = {tid: calib.calibrate(pairs) for tid, pairs in by_topic.items()}
+    rec = {"at": core.now_iso(), "topics": topics,
+           "labelled": sum(len(v) for v in by_topic.values())}
+    st.set_kv("calibration", rec)
+    return rec
+
+
+@capability("intel.calibration.status", http_method="GET", http_path="/intel/calibration/status", http_tags=["intel"],
+            memory="off", silent=True,
+            description="How far each topic's learned relevance curve has got: ratings collected (useful / not), "
+                        "whether the curve is calibrated (held-out ECE <= 0.05 on 30+ ratings) and so usable, the "
+                        "score where it says 50/50, and whether the learned gate is switched on (calibrated_gate). "
+                        "Input: refit (bool - fit now from the ratings so far). Output: {at, labelled, on, topics}.")
+async def cap_calibration_status(refit: bool = False, trace_id=None):
+    rec = fit_curves() if refit else (store().get_kv("calibration", {}) or {})
+    return {"at": rec.get("at"), "labelled": rec.get("labelled", 0), "on": bool(config().get("calibrated_gate")),
+            "topics": rec.get("topics") or {}}
 
 
 schedule(_tick, 300, name="intel.tick", skip_in_sandbox=True, singleton=True)
