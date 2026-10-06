@@ -67,6 +67,25 @@ class RecentSeeks:
         return None
 
 
+def pick_seeks(entries: Iterable[Dict[str, Any]], record_id: str, now: float,
+               window_s: float = RECENT_WINDOW_S) -> List[Tuple[str, int]]:
+    """From shared recent-seek entries ({"did", "ids", "ts"}, newest first), the seeks in the window
+    that ranked this record, newest first, as (decision_id, 1-based rank)."""
+    rid = str(record_id or "")
+    out: List[Tuple[str, int]] = []
+    for e in entries or []:
+        try:
+            ts = float(e.get("ts") or 0)
+            ids = [str(i) for i in e.get("ids") or []]
+        except Exception:
+            continue
+        if now - ts > window_s:
+            continue
+        if rid in ids:
+            out.append((str(e.get("did")), ids.index(rid) + 1))
+    return out
+
+
 def summarize(seeks: List[Dict[str, Any]]) -> Dict[str, Any]:
     """seeks: [{"decision_id", "k", "used_ranks": [int]}]. Use rate, hit@1, hit@3 and MRR over used seeks."""
     n = len(seeks)

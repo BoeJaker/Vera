@@ -24,8 +24,13 @@ except Exception:                       # worktree / app-free import
     from vera.minds import ledger_core as LC  # type: ignore
 
 log = logging.getLogger("vera.retrieval_eval")
-RECENT = REC.RecentSeeks()
+RECENT = REC.RecentSeeks()            # this process only: the fallback when Redis is absent
 _PENDING: set = set()
+# Seeks and reads can be served by different processes, so the recent seeks a read is credited
+# against live in Redis (a capped list), and a (seek, record) pair is credited once (SET NX).
+KEY_RECENT = "vera:reval:recent"
+KEY_CREDIT = "vera:reval:credited:"
+RECENT_CAP = 300
 _DDL = """CREATE TABLE IF NOT EXISTS retrieval_eval_queries (
               state_hash TEXT PRIMARY KEY, query TEXT NOT NULL, ts TIMESTAMPTZ NOT NULL DEFAULT NOW())"""
 
@@ -88,6 +93,7 @@ def on_seek(query: str, ids: List[str]) -> None:
         RECENT.add(d["decision_id"], d["answer"])
         _bg(_append(d))
         _bg(_store_query(d["state_hash"], query))
+        _bg(_remember(d["decision_id"], d["answer"]))
     except Exception as e:
         log.debug("retrieval eval seek: %s", e)
 
@@ -95,11 +101,48 @@ def on_seek(query: str, ids: List[str]) -> None:
 def on_read(record_id: str) -> None:
     """A read of a record a recent seek ranked: the seek's outcome. Never raises."""
     try:
-        hit = RECENT.match(record_id)
-        if hit:
-            _bg(_append(REC.read_outcome(hit[0], hit[1])))
+        _bg(_credit(str(record_id or "")))
     except Exception as e:
         log.debug("retrieval eval read: %s", e)
+
+
+async def _remember(decision_id: str, ids: List[str]) -> None:
+    r = getattr(_orch(), "REDIS", None)
+    if r is None:
+        return
+    try:
+        import time as _t
+        await r.lpush(KEY_RECENT, json.dumps({"did": decision_id, "ids": ids, "ts": _t.time()}))
+        await r.ltrim(KEY_RECENT, 0, RECENT_CAP - 1)
+    except Exception as e:
+        log.debug("retrieval eval remember: %s", e)
+
+
+async def _credit(record_id: str) -> None:
+    """Credit the newest seek in the window that ranked this record and has not been credited for it."""
+    if not record_id:
+        return
+    r = getattr(_orch(), "REDIS", None)
+    if r is None:
+        hit = RECENT.match(record_id)
+        if hit:
+            await _append(REC.read_outcome(hit[0], hit[1]))
+        return
+    try:
+        import time as _t
+        raw = await r.lrange(KEY_RECENT, 0, RECENT_CAP - 1) or []
+        entries = []
+        for x in raw:
+            try:
+                entries.append(json.loads(x if isinstance(x, str) else x.decode()))
+            except Exception:
+                continue
+        for did, rank in REC.pick_seeks(entries, record_id, _t.time()):
+            if await r.set(KEY_CREDIT + did + "|" + record_id, "1", nx=True, ex=int(REC.RECENT_WINDOW_S) * 2):
+                await _append(REC.read_outcome(did, rank))
+                return
+    except Exception as e:
+        log.debug("retrieval eval credit: %s", e)
 
 
 @capability(
