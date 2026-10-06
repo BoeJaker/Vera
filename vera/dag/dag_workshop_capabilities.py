@@ -22100,6 +22100,7 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
                           f"running to check it. Touch it again only if you need its CONTENT "
                           f"for a further change, or its OUTPUT as input to a later step.")
         res["finalized"] = True
+        res["authored_path"] = _authored     # the journal records it without a model call (Q2)
         return
     crit = str(step.get("success") or "").strip()
     outs = "\n".join(f"- {k}: {str(v)[:400]}"
@@ -22447,6 +22448,15 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
         "note": "",
         "source": "extract",  # vs. "specialist" — a live note the acting model wrote itself
     }
+    # A code-authoring step's summary is finalize's fixed sentence, not the step's output: there is
+    # nothing for a model to distil, and the file is the one fact later steps need (four-minds Q2).
+    _authored = str(res.get("authored_path") or "")
+    if _authored:
+        if _authored not in rec["files"]:
+            rec["files"] = [_authored] + list(rec["files"])
+        rec["note"] = f"authored {_authored} (syntax verified)"
+        rec["source"] = "authored"
+        return rec
     summary = str(res.get("summary") or res.get("raw_summary") or "")
     if len(summary) < 40:
         return rec
