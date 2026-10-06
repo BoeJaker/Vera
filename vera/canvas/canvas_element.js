@@ -1195,10 +1195,15 @@
      its OWN body. It used to run off the end of a stage nobody could scroll, so the part of it you wanted — the
      bottom of the last turn's item — could not be reached at all. */
   /* the desk (align="desk", owner approved 2026-10-06): sized by the distance to the chat on the column's left edge */
-  :host([align="desk"]) .stage .it{transition:left .45s cubic-bezier(.2,.8,.2,1), top .45s cubic-bezier(.2,.8,.2,1), width .35s, height .35s; overflow:hidden; box-sizing:border-box; min-height:0}
-  :host([align="desk"]) .stage .it.desk-chip{border-radius:17px;padding:0 10px!important;display:flex;align-items:center}
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd{position:static!important;margin:0!important;flex:1 1 auto;min-width:0;display:flex;align-items:center;justify-content:flex-start;gap:6px;overflow:hidden}
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd > *{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  :host([align="desk"]) .stage .it{transition:left .45s cubic-bezier(.2,.8,.2,1), top .45s cubic-bezier(.2,.8,.2,1), width .35s, height .35s; overflow:hidden!important; contain:paint; box-sizing:border-box; min-height:0}
+  :host([align="desk"]) .stage .it.desk-chip{border-radius:17px;padding:0 10px!important;display:flex!important;flex-direction:row!important;align-items:center;justify-content:flex-start}
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd{position:static!important;margin:0!important;flex:1 1 0;width:100%;max-width:100%;min-width:0;display:flex;align-items:center;justify-content:flex-start;gap:6px;overflow:hidden}
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd > *{flex:0 0 auto}
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd > .t{flex:1 1 auto;min-width:0;display:block;direction:ltr;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:none!important;transform:none!important}
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd > .t *{animation:none!important;transform:none!important}
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd > .fd,
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd > .src,
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd > :not(.ic):not(.t){display:none}
   :host([align="desk"]) .stage .it.desk-chip > :not(.it-hd){display:none}
   :host([align="desk"]) .stage .it.desk-chip .it-hd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-wrap:nowrap}
   :host([align="desk"]) .stage .it.desk-chip .it-hd *{white-space:nowrap}
