@@ -217,6 +217,11 @@ def _load(tmp_path, *, nlp=True):
         orch.CALLS.append(("submit", {"mode": mode, "key": key, "payload": payload}))
         return await mod._intel_job({"payload": dict(payload or {}, mode=mode)}, None)
     mod._submit = run_inline
+
+    async def no_network(params):                 # tests never reach Wikidata; a test that needs it fakes it
+        raise mod._Throttled("no network in tests")
+    mod._wd = no_network
+    mod.WD_SPACING_S = 0.0
     return mod, orch
 
 
