@@ -58,3 +58,12 @@ def test_wrong_kind_or_name_and_ambiguity_abstain():
     tie = [{"qid": "Q1", "score": 0.81, "brands": []}, {"qid": "Q2", "score": 0.80, "brands": []}]
     assert r.choose(tie)["qid"] is None and "ambiguous" in r.choose(tie)["why"]
     assert r.choose([])["qid"] is None
+
+
+def test_without_website_evidence_the_type_must_clearly_fit():
+    car = {"label": "Mercury", "description": "automobile marque of the Ford Motor Company"}
+    s = r.score("Mercury", "org", car, {"types": []}, context=2.0)            # best-ranked by context, unclear type
+    assert s["score"] <= 0.55
+    co = {"label": "Savills", "description": "real estate services provider"}
+    s2 = r.score("Savills", "org", co, {"types": ["Q891723"]}, context=2.0)   # a public company, no site evidence
+    assert s2["score"] >= 0.62

@@ -253,3 +253,11 @@ def test_old_undated_text_is_marked_down():
     assert ops.staleness_factor({"title": "Housing outlook 2023", "snippet": "as of 2023"}, 2026) == 0.7
     assert ops.staleness_factor({"title": "Prices rise in 2026"}, 2026) == 1.0
     assert ops.staleness_factor({"title": "2019 review", "published": "2026-10-01"}, 2026) == 1.0
+
+
+def test_questions_written_as_objects_become_text():
+    assert ops.question_text({"question": "Who is next?", "answer": "?"}) == "Who is next?"
+    assert ops.question_text("{'question': 'What drives the drop?', 'answer': 'No explanation'}") == "What drives the drop?"
+    assert ops.question_text("Plain question?") == "Plain question?"
+    prof = ops.profile_text({"name": "T", "questions": ["{'question': 'Why now?', 'answer': 'x'}"]})
+    assert "Why now?" in prof and "answer" not in prof

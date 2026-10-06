@@ -151,10 +151,27 @@ def blend_score(*, relevance: Optional[float], heuristic: float, novelty: float)
     return round(max(0.0, min(10.0, s)), 1)
 
 
+def question_text(q: Any) -> str:
+    """An open question as text. The model sometimes writes questions as objects
+    ({question, answer}); older topics hold them stringified ("{'question': ...}")."""
+    if isinstance(q, dict):
+        return str(q.get("question") or q.get("text") or "").strip()
+    s = str(q or "").strip()
+    if s.startswith("{") and "question" in s:
+        try:
+            import ast as _ast
+            d = _ast.literal_eval(s)
+            if isinstance(d, dict):
+                return str(d.get("question") or "").strip()
+        except (ValueError, SyntaxError):
+            pass
+    return s
+
+
 def profile_text(topic: Dict[str, Any]) -> str:
     """What a reranker compares a signal with: the topic, why it matters, what is open."""
     parts = [topic.get("name", ""), topic.get("brief", ""), topic.get("why", "")]
-    parts += (topic.get("questions") or [])[:5]
+    parts += [question_text(q) for q in (topic.get("questions") or [])[:5]]
     parts += (topic.get("entities") or [])[:6]
     return ". ".join(p for p in parts if p)[:1200]
 

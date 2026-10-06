@@ -579,7 +579,9 @@ def make_snapshot(topic: Dict[str, Any], parsed: Dict[str, Any], signals: Sequen
         "changed": [] if first else _clean_list(p.get("changed"), 10),
         "confidence": conf if conf in ("low", "medium", "high") else "medium",
         "answered": answered[:8],
-        "new_questions": _clean_list(p.get("new_questions"), 4),
+        # the model sometimes writes questions as {question, answer} objects: keep the question
+        "new_questions": _clean_list([(q.get("question") if isinstance(q, dict) else q)
+                                      for q in (p.get("new_questions") or []) if q], 4),
         "watch": _clean_list(p.get("watch"), 6),
         "diagram": diagram,
         "signal_ids": [s.get("id") for s in signals][:40],
