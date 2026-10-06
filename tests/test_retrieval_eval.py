@@ -40,7 +40,28 @@ def test_outcome_and_summary():
     assert s == {"seeks": 4, "used": 3, "use_rate": 0.75, "hit@1": 0.333, "hit@3": 1.0, "mrr": round((1 + 1/3 + 1/2) / 3, 3)}
 
 
+class _FakeRedis:
+    def __init__(self):
+        self.lst, self.kv = [], {}
+
+    async def lpush(self, k, v):
+        self.lst.insert(0, v)
+
+    async def ltrim(self, k, a, b):
+        self.lst = self.lst[a:b + 1]
+
+    async def lrange(self, k, a, b):
+        return self.lst[a:b + 1]
+
+    async def set(self, k, v, nx=False, ex=None):
+        if nx and k in self.kv:
+            return None
+        self.kv[k] = v
+        return True
+
+
 def test_hooks_never_raise_and_send_in_the_background(monkeypatch):
+    import types as _types
     from vera.fabric import retrieval_eval as RE
     sent = []
 
@@ -52,6 +73,8 @@ def test_hooks_never_raise_and_send_in_the_background(monkeypatch):
     monkeypatch.setattr(RE, "_append", fake_append)
     monkeypatch.setattr(RE, "_store_query", fake_store)
     monkeypatch.setattr(RE, "RECENT", REC.RecentSeeks())
+    _orch_ns = _types.SimpleNamespace(REDIS=_FakeRedis(), CALLER_KIND=None)   # ONE store for seek and read
+    monkeypatch.setattr(RE, "_orch", lambda: _orch_ns)
 
     async def go():
         RE.on_seek("q", ["a", "b"])
@@ -69,3 +92,27 @@ def test_seek_and_read_are_wired():
     src = open(os.path.join(ROOT, "vera", "fabric", "memory_retrieval.py"), encoding="utf-8").read()
     assert "_reval.on_seek(query, [r[\"id\"] for r in results if r.get(\"id\")])" in src
     assert "_reval.on_read(record_id)" in src
+
+
+
+def test_pick_seeks_newest_first_within_the_window():
+    entries = [{"did": "b", "ids": ["y", "q"], "ts": 100.0}, {"did": "a", "ids": ["x", "y"], "ts": 90.0},
+               {"did": "old", "ids": ["y"], "ts": 0.0}]
+    assert REC.pick_seeks(entries, "y", now=110.0, window_s=50) == [("b", 1), ("a", 2)]
+    assert REC.pick_seeks(entries, "none", now=110.0) == []
+
+
+def test_a_read_in_another_process_is_credited_once(monkeypatch):
+    import types as _types
+    from vera.fabric import retrieval_eval as RE
+    sent, red = [], _FakeRedis()
+
+    async def fake_append(row):
+        sent.append(row)
+    monkeypatch.setattr(RE, "_append", fake_append)
+    monkeypatch.setattr(RE, "_orch", lambda: _types.SimpleNamespace(REDIS=red))
+    monkeypatch.setattr(RE, "RECENT", REC.RecentSeeks())       # an empty local list: another process
+    asyncio.run(RE._remember("dec_x", ["a", "b"]))
+    asyncio.run(RE._credit("b"))
+    asyncio.run(RE._credit("b"))                               # second read: no second credit
+    assert [(o["decision_id"], o["detail"]["rank"]) for o in sent] == [("dec_x", 2)]
