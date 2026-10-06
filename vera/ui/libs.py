@@ -16,6 +16,9 @@ from the same copy.
   /ui/structgraph.js -> vera/ui/structgraph_element.js  <vera-structgraph>: code and
                                                        prose as bands, columns, cards
                                                        and routed runs
+  /ui/desk-layout.js -> vera/ui/desk_layout_core.js  window.VeraDesk  the desk's layout
+                                                       rules (sizes by distance to the chat,
+                                                       arrangements, layers, making room)
 
 Routes only - no state, no capabilities - so the module body may run more than
 once (the namespace import trap) without a side effect.
@@ -107,3 +110,10 @@ async def _serve_routes_js():
 @APP.get("/ui/structgraph.js", include_in_schema=False)
 async def _serve_structgraph_js():
     return _script("structgraph_element.js")
+
+
+# the desk's layout rules (window.VeraDesk; owner approved 2026-10-06): sizes by distance to the chat, arrangements,
+# the chat's path, stacking, the layers and a panel's widgets making room - pure, Node-tested
+@APP.get("/ui/desk-layout.js", include_in_schema=False)
+async def _serve_desk_layout_js():
+    return _script("desk_layout_core.js")
