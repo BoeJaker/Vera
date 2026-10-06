@@ -401,6 +401,7 @@ and [Workers, Jobs & Syslog](./22-workers-jobs-syslog.md).
 | Variable | Default | Purpose |
 |---|---|---|
 | `VERA_POLICY_MODE` | `shadow` | `enforce` enables enforcement for selected families |
+| `VERA_RESOLVER_DISPATCH_ENABLED` | `1` | Set to `0` to disable canonical-task dispatch immediately; direct capability names are unaffected |
 | `VERA_POLICY_ENFORCE_FAMILIES` | empty | Families to enforce; only `run.shadow` is supported |
 | `VERA_OTLP_AUTO_EXPORT` | off | Preload and enable automatic OTLP export of completed Runs |
 | `OTEL_EXPORTER_OTLP_*` | unset | Standard OTLP exporter settings honoured by the portable telemetry queue |

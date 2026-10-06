@@ -8306,6 +8306,38 @@ async def cap_resolve_shadow(canonical_task: str, allowed_effects=None,
 
 
 @capability(
+    "cap.resolve.dispatch", memory="off", silent=True,
+    http_method="POST", http_path="/cap/resolve/dispatch", http_tags=["cap"],
+    description="Resolve, authorize, and invoke one explicitly migrated read-only "
+                "capability by canonical task. The allowlist and grants are fixed by Vera; "
+                "unknown tasks, contract drift, policy drift, and invalid arguments fail closed.",
+    schema={"properties": {
+        "canonical_task": {"type": "string"},
+        "arguments": {"type": "object"},
+    }, "required": ["canonical_task"]},
+    contract={
+        "canonical_task": "capability.resolve.dispatch", "effects": ["read"],
+        "output_schema": {"type": "object"}, "approval": {"status": "not_required"},
+        "trust": {"status": "fixed_migrated_allowlist"},
+        "secrets": {"status": "not_required"}, "filesystem": {"status": "not_required"},
+        "network": {"status": "not_required"}, "tenant": {"status": "global_read_only"},
+        "idempotency": {"status": "target_defined"},
+        "cancellation": {"status": "target_defined"},
+        "pagination": {"status": "target_defined"},
+        "resources": {"status": "declared", "classes": ["cpu"]}, "owner": "vera",
+    },
+)
+async def cap_resolve_dispatch(canonical_task: str, arguments: dict = None, trace_id=None):
+    import os
+    from Vera.vera.capability_resolution_dispatch import resolve_authorize_dispatch
+    enabled = os.getenv("VERA_RESOLVER_DISPATCH_ENABLED", "1").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    return await resolve_authorize_dispatch(
+        CAPABILITY_REGISTRY, canonical_task, arguments, enabled=enabled, trace_id=trace_id)
+
+
+@capability(
     "cap.policy.shadow", memory="off",
     description="Preview the shared execution-policy decision for one registered "
                 "capability without granting authority or invoking it. Supplied grants "
