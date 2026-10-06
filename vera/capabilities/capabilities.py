@@ -158,13 +158,15 @@ async def stt_transcribe(
 )
 async def tts_synthesize(
     text:     str,
-    voice:    str   = "af_heart",
-    speed:    float = 1.0,
+    voice:    str   = "",    # "" = the voice set for all of Vera (tts.config.set)
+    speed:    float = 0.0,   # 0 = the configured speed
     engine:   str   = "",    # "kokoro" | "coqui" | "" = server default
     language: str   = "",
     trace_id=None,
 ):
-    body: dict = {"text": text, "voice": voice, "speed": speed}
+    body: dict = {"text": text}
+    if voice:    body["voice"]    = voice
+    if speed:    body["speed"]    = speed
     if engine:   body["engine"]   = engine
     if language: body["language"] = language
     try:

@@ -867,3 +867,39 @@ def test_app_routes(tmp_path):
     assert sw.headers["Service-Worker-Allowed"] == "/intel/" and b"caches" in sw.body
     assert _run(mod._serve_icon_png(77)).status_code == 404
     assert _run(mod._serve_icon_svg()).body.startswith(b"<svg")
+
+
+def test_the_narration_follows_the_brief_to_telegram_once(tmp_path):
+    import io
+    import wave
+    mod, orch = _load(tmp_path)
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    mod._audio_dir = lambda: audio_dir
+    sent = []
+
+    async def send_audio(path="", title="", performer="", caption="", chat_id="", trace_id=None):
+        sent.append({"path": path, "title": title, "caption": caption})
+        return {"ok": True}
+    orch.CAPABILITY_REGISTRY["tg.send_audio"] = {"func": send_audio, "raw": send_audio}
+
+    async def tts(text, voice="", speed=0.0):
+        assert speed == 0.0 and voice == ""                       # no override: the node's configured voice
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(1000)
+            w.writeframes(b"\x01\x00" * 1000)
+        return buf.getvalue()
+    mod._tts = tts
+    mod.shutil.which = lambda name: None
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    doc = _run(mod.build_report([t["id"]], period_hours=24))           # narrated inline by the fake queue
+    assert not sent                                                     # not delivered to Telegram yet
+    _run(mod.deliver_report(doc["id"], ["telegram"]))
+    assert len(sent) == 1 and sent[0]["path"].endswith(f"{doc['id']}.wav") and "min" in sent[0]["caption"]
+    _run(mod.deliver_report(doc["id"], ["telegram"]))
+    _run(mod.speak_report(doc["id"]))
+    assert len(sent) == 1                                               # once, whichever came second
+    assert _R(orch, "intel.config.set", settings={"speak_voice": "bf_emma", "telegram_audio": False, "geocode": False})["changed"] \
+        == ["geocode", "speak_voice", "telegram_audio"]
