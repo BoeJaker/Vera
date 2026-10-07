@@ -12,7 +12,8 @@ user, and the **System Narrator**, a two-tier loop that narrates system state.
 Source lives in `vera/dream/`: `dream_capabilities.py` (scheduler, sensors,
 stages, cycle runner, director, narrator, review subsystem, ~150 capabilities,
 ~19k lines), `project_capabilities.py` (long-running projects and goals),
-`dream_workflow_ir.py` (Workflow IR adapter for the generic pipeline) and three
+`dream_workflow_ir.py` (Workflow IR adapter for the generic pipeline),
+`vera/execution/dream_run_projection.py` (content-free shared Run projection) and three
 panel files. It is the largest module in Vera. This page maps its architecture
 and every capability group rather than documenting each cap's arguments.
 
@@ -127,6 +128,17 @@ progress and cycle persistence. This separates the portable workflow
 description from Dream product policy without introducing a second executor or
 changing custom and iterative pipelines.
 
+Every cycle also projects into the shared Run catalogue without moving
+execution authority out of Dream. The parent `vera.dream.cycle` Run uses the
+cycle ID as its trace identity. Each actual native stage invocation becomes a
+`vera.dream.stage` child, so repeated iterative stages remain distinct and
+success, failure and cancellation are visible through the same lifecycle as
+other Vera work. Workflow-IR-backed cycles bind the parent to the exact IR
+content hash; custom pipelines receive a stable hash of their ordered stage
+names. The projection records only lifecycle metadata—never the trigger prompt,
+shared state or stage result—and any projection failure is isolated from the
+native cycle.
+
 Each migrated cycle records the Workflow IR version, stable content hash, stage
 IDs and execution owner (`dream.native-stage-runner`, schema
 `vera.dream.workflow/v1`) in its event, history record, detail record and
@@ -144,6 +156,7 @@ silently fall back to the legacy list.
 | `vera/dream/dream_capabilities.py` | Constants and Redis keys, default triggers, pipeline templates, sensors (built-in and custom), stages, cycle runner, scheduler, Director, Narrator, trigger caps, composite pipelines, deep source review, dream chat, stepwise stage, listing, timeline projection, panel registration, startup. |
 | `vera/dream/project_capabilities.py` | `project.*` and `goals.*` caps: projects, plans, artifacts, loops, context assembly and incremental update, project dreams, git integration, Projects panel. |
 | `vera/dream/dream_workflow_ir.py` | Compiles and materialises the generic pipeline as Workflow IR. |
+| `vera/execution/dream_run_projection.py` | Projects the native cycle and each invoked stage into content-free shared Runs without executing or persisting Dream state. |
 | `vera/dream/dream_panel.html` | The Dream panel (triggers, live cycle, flow builder, timeline, director, journal, projects view). |
 | `vera/dream/dream_review_panel.html` | Deep source review panel (`/dream/review/panel`). |
 | `vera/dream/dream_pipelines_panel.html` | Legacy pipelines page. Not served by any route; pipelines are managed in the Dream panel. |
@@ -414,7 +427,7 @@ Dream stages that run an agent loop resolve settings from `DEFAULT_LOOP_SETTINGS
 1. Copy the trigger and apply the seed; resolve `pipeline_ref` (pipeline fields fill in whatever the trigger has not set inline).
 2. Compile the generic pipeline to Workflow IR when applicable ([§1](#workflow-ir-convergence)).
 3. Apply project isolation, split iterate stages, and assign one shared sandbox owner for the whole cycle (`goal-<slug>` or `dream-<trigger>`).
-4. For each stage: emit `dream.stage.started`; run under `BACKGROUND_LLM` (so LLM calls are demoted off the GPU while a human is active) and the sandbox owner; emit `dream.stage.summary`; update progress; collate output files; append to the journal.
+4. For each stage: emit `dream.stage.started`; open a content-free child Run; run under `BACKGROUND_LLM` (so LLM calls are demoted off the GPU while a human is active) and the sandbox owner; close the child as completed, failed or cancelled; emit `dream.stage.summary`; update progress; collate output files; append to the journal.
 5. Low-signal early exit after `gather`.
 6. Post stages, then finalise the output workspace, store cycle detail, optionally persist the dream graph to the memory "dream layer" (`persist_to_memory`, `dream.memory.persisted`), run the auto-continue, pivot and handover hooks.
 
