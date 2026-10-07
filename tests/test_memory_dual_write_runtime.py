@@ -1,0 +1,179 @@
+import asyncio
+import sqlite3
+
+import pytest
+
+from vera.fabric.memory_dual_write_runtime import (
+    store_public_memory_with_revision_canary,
+)
+
+
+pytestmark = pytest.mark.critical
+NOW = "2026-01-01T00:00:00Z"
+
+
+def run(value):
+    return asyncio.run(value)
+
+
+def snapshot():
+    return {
+        "id": "native-1", "created_at": NOW,
+        "text": "short", "full_text": "complete memory",
+        "summary": "summary", "record_type": "message",
+        "source_type": "human", "category": "general",
+        "tags": ["one"], "importance": 0.7,
+        "human_text": True, "ai_output": False,
+        "content_hash": "native:0123456789abcdef",
+    }
+
+
+def paths(tmp_path, enabled="1", policy='{"writers":["codex"]}'):
+    return {
+        "VERA_MEMORY_REVISION_CANARY": enabled,
+        "FABRIC_REVISION_SQLITE": str(tmp_path / "revisions.sqlite3"),
+        "VERA_MEMORY_DUAL_WRITE_RECEIPTS": str(tmp_path / "receipts.sqlite3"),
+        "FABRIC_REVISION_POLICY": policy,
+    }
+
+
+def test_disabled_path_is_exact_native_await_and_constructs_nothing(tmp_path):
+    calls = 0
+    expected = {"postgres": True}
+
+    async def native():
+        nonlocal calls
+        calls += 1
+        return expected
+
+    result = run(store_public_memory_with_revision_canary(
+        {"deliberately": "not a valid snapshot"}, native_write=native,
+        actor="not-a-policy-actor", observed_at="not-a-time",
+        environ=paths(tmp_path, enabled="0", policy="not-json")))
+    assert result is expected
+    assert calls == 1
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_enabled_path_commits_revision_and_receipt_after_native(tmp_path):
+    order = []
+
+    async def native():
+        order.append("native")
+        return {"postgres": True, "chroma": True, "neo4j": True}
+
+    result = run(store_public_memory_with_revision_canary(
+        snapshot(), native_write=native, actor="codex", observed_at=NOW,
+        environ=paths(tmp_path)))
+    assert result == {"postgres": True, "chroma": True, "neo4j": True}
+    assert order == ["native"]
+    with sqlite3.connect(tmp_path / "revisions.sqlite3") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM fabric_record_revisions").fetchone()[0] == 1
+        assert conn.execute("SELECT state FROM fabric_projection_receipts").fetchone()[0] == "pending"
+    with sqlite3.connect(tmp_path / "receipts.sqlite3") as conn:
+        row = conn.execute(
+            "SELECT authority_state,requires_reconciliation "
+            "FROM memory_dual_write_receipts").fetchone()
+    assert row == ("dual_committed", 0)
+
+
+def test_enabled_path_derives_the_pre_native_memory_hash(tmp_path):
+    value = snapshot()
+    value["content_hash"] = ""
+
+    async def native():
+        return {"postgres": True}
+
+    run(store_public_memory_with_revision_canary(
+        value, native_write=native, actor="codex", observed_at=NOW,
+        environ=paths(tmp_path)))
+    with sqlite3.connect(tmp_path / "receipts.sqlite3") as conn:
+        evidence = conn.execute(
+            "SELECT evidence_json FROM memory_dual_write_receipts").fetchone()[0]
+    assert '"native_content_hash":"5d8551b49d08723e"' in evidence
+
+
+def test_enabled_path_preserves_empty_native_content_and_nonfinite_importance(tmp_path):
+    value = snapshot()
+    value.update(text="", full_text="", summary="", importance=float("nan"),
+                 content_hash="")
+    calls = 0
+
+    async def native():
+        nonlocal calls
+        calls += 1
+        return {"postgres": True}
+
+    result = run(store_public_memory_with_revision_canary(
+        value, native_write=native, actor="codex", observed_at=NOW,
+        environ=paths(tmp_path)))
+    assert calls == 1 and result == {"postgres": True}
+    with sqlite3.connect(tmp_path / "revisions.sqlite3") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM fabric_record_revisions").fetchone()[0] == 1
+
+
+def test_policy_denial_isolated_from_successful_native_write(tmp_path):
+    calls = 0
+
+    async def native():
+        nonlocal calls
+        calls += 1
+        return {"postgres": True}
+
+    result = run(store_public_memory_with_revision_canary(
+        snapshot(), native_write=native, actor="codex", observed_at=NOW,
+        environ=paths(tmp_path, policy='{"writers":["user"]}')))
+    assert calls == 1 and result == {"postgres": True}
+    with sqlite3.connect(tmp_path / "receipts.sqlite3") as conn:
+        row = conn.execute(
+            "SELECT authority_state,requires_reconciliation,evidence_json "
+            "FROM memory_dual_write_receipts").fetchone()
+    assert row[0:2] == ("native_only", 1)
+    assert "revision_write_failed" in row[2]
+
+
+def test_native_cancellation_propagates_and_never_commits_revision(tmp_path):
+    async def native():
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        run(store_public_memory_with_revision_canary(
+            snapshot(), native_write=native, actor="codex", observed_at=NOW,
+            environ=paths(tmp_path)))
+    with sqlite3.connect(tmp_path / "revisions.sqlite3") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM fabric_record_revisions").fetchone()[0] == 0
+    with sqlite3.connect(tmp_path / "receipts.sqlite3") as conn:
+        evidence = conn.execute(
+            "SELECT evidence_json FROM memory_dual_write_receipts").fetchone()[0]
+    assert "native_cancelled" in evidence
+
+
+def test_public_memory_store_uses_the_narrow_canary_seam(monkeypatch):
+    from vera.fabric import memory
+
+    seen = {}
+
+    async def native_store(record):
+        seen["record"] = record
+        record.content_hash = record.compute_hash()
+        return {"postgres": True}
+
+    async def seam(snapshot_value, *, native_write, actor, observed_at):
+        seen["snapshot"] = snapshot_value
+        seen["actor"] = actor
+        seen["observed_at"] = observed_at
+        return await native_write()
+
+    monkeypatch.setattr(memory.MEMORY, "store", native_store)
+    monkeypatch.setattr(
+        memory._revision_canary,
+        "store_public_memory_with_revision_canary",
+        seam,
+    )
+    result = run(memory.memory_store(text="remember me", session_id="session-1"))
+    assert result["backends"] == {"postgres": True}
+    assert result["content_hash"] == seen["record"].compute_hash()
+    assert seen["snapshot"]["text"] == "remember me"
+    assert seen["snapshot"]["session_id"] == "session-1"
+    assert seen["actor"] == "user"
+    assert seen["observed_at"]

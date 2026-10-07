@@ -69,6 +69,18 @@ def test_enabled_success_persists_exact_non_authorizing_receipt(tmp_path):
     assert MemoryDualWriteReceiptStore(tmp_path / "receipts.sqlite3").count() == 1
 
 
+def test_optional_outer_timeouts_preserve_injected_writer_ownership(tmp_path):
+    async def native():
+        await asyncio.sleep(0.06)
+        return {"postgres": True}
+
+    result = run(call(
+        tmp_path, native, revision_ok,
+        native_timeout_s=None, revision_timeout_s=None))
+    assert result.native_result == {"postgres": True}
+    assert result.receipt.revision_outcome == "committed"
+
+
 @pytest.mark.parametrize("mode,expected", [("error", "failed"), ("timeout", "timed_out")])
 def test_revision_failure_isolated_from_native_result_and_reconciled(tmp_path, mode, expected):
     async def canonical(value):

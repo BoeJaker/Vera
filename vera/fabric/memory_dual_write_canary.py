@@ -81,8 +81,8 @@ async def execute_memory_dual_write_canary(
     *, enabled: bool = False, operation_id: str, native_memory_id: str,
     native_content_hash: str, revision: RecordRevision, observed_at: str,
     native_write: NativeWriter, revision_write: RevisionWriter,
-    receipt_sink: ReceiptSink, native_timeout_s: float = 30.0,
-    revision_timeout_s: float = 10.0,
+    receipt_sink: ReceiptSink, native_timeout_s: float | None = 30.0,
+    revision_timeout_s: float | None = 10.0,
 ) -> MemoryDualWriteCanaryResult:
     """Run the native write once and optionally observe a canonical shadow write.
 
@@ -91,12 +91,14 @@ async def execute_memory_dual_write_canary(
     """
     if not isinstance(revision, RecordRevision):
         raise TypeError("revision must be a RecordRevision")
-    if native_timeout_s <= 0 or revision_timeout_s <= 0:
+    if ((native_timeout_s is not None and native_timeout_s <= 0)
+            or (revision_timeout_s is not None and revision_timeout_s <= 0)):
         raise ValueError("timeouts must be positive")
 
     raw_native: Mapping[str, bool | str] = {}
     try:
-        raw_native = await asyncio.wait_for(native_write(), timeout=native_timeout_s)
+        raw_native = (await native_write() if native_timeout_s is None else
+                      await asyncio.wait_for(native_write(), timeout=native_timeout_s))
         native_outcomes = _classify_native(raw_native)
     except asyncio.CancelledError:
         if enabled:
@@ -146,7 +148,9 @@ async def execute_memory_dual_write_canary(
     })
     revision_outcome = "committed"
     try:
-        result = await asyncio.wait_for(revision_write(revision), timeout=revision_timeout_s)
+        result = (await revision_write(revision) if revision_timeout_s is None else
+                  await asyncio.wait_for(
+                      revision_write(revision), timeout=revision_timeout_s))
         if not isinstance(result, Mapping) or result.get("authority_commit") != "committed":
             revision_outcome = "failed"
             errors["revision"] = "revision_not_committed"
