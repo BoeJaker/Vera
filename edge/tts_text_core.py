@@ -24,11 +24,18 @@ for British English news and analysis text:
 `normalize(text)` is the only entry point. GPU_inference calls it after it has
 stripped markdown, so the rules never see `**` or `[link](url)`. When NeMo's
 normaliser is installed and TTS_NORMALIZER=nemo, it runs first and these rules
-tidy what it leaves (acronyms, links, the house vocabulary).
+tidy what it leaves (acronyms, links, the house vocabulary). Line breaks are kept.
+
+`speech_plan(text)` then cuts the normalised text into the pieces a person would
+breathe between - sentences, lines, paragraphs, and long sentences at their
+clauses - each with the pause that should follow it. Kokoro trims the silence
+off what it renders and only pauses where its own batches join, so a heading
+ran straight into the line below it and streamed sentences had no gap.
 """
 from __future__ import annotations
 
 import re
+import zlib
 from typing import Callable, List, Optional, Tuple
 
 # ── numbers to words ─────────────────────────────────────────────────────────
@@ -389,12 +396,19 @@ def _safe(fn: Callable[["re.Match[str]"], str]) -> Callable[["re.Match[str]"], s
 
 
 def normalize(text: str) -> str:
-    """Written text -> text a TTS voice reads naturally (British English)."""
+    """Written text -> text a TTS voice reads naturally (British English).
+
+    Line by line, and the breaks are kept: speech_plan pauses on them."""
     if not text:
         return ""
-    t = str(text)
+    t = str(text).replace("\r\n", "\n").replace("\r", "\n")
+    out = "\n".join(_normalize_line(line) for line in t.split("\n"))
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+def _normalize_line(t: str) -> str:
     # SHOUTED HEADLINES (three or more capitalised words in a row) are words, not acronyms
-    t = re.sub(r"\b[A-Z]{2,}(?:[\s,:\-–]+[A-Z]{2,}){2,}\b",
+    t = re.sub(r"\b[A-Z]{2,}(?:[ \t,:\-–]+[A-Z]{2,}){2,}\b",
                lambda m: " ".join(w if (w in SPOKEN or w in WORDS or w.strip(",:") in ACRONYMS)
                                   else w.capitalize() for w in m.group(0).split(" ")), t)
     for k, v in sorted(SPOKEN.items(), key=lambda kv: -len(kv[0])):
@@ -409,8 +423,8 @@ def normalize(text: str) -> str:
     # an amount used as an adjective: "a £1.2bn stake" -> "a one point two billion pound stake"
     t = re.sub(r"\b([Aa]n?) ((?:[a-z-]+ )*?(?:thousand|million|billion|trillion) )(pound|dollar|euro)s\b", r"\1 \2\3", t)
     t = re.sub(r"\b([Tt]he)\s+the\b", r"\1", t)          # "the BoE" -> "the the Bank of England"
-    t = re.sub(r"\s+([,.;:!?])", r"\1", t)
-    return re.sub(r"\s{2,}", " ", t).strip()
+    t = re.sub(r"[ \t]+([,.;:!?])", r"\1", t)
+    return re.sub(r"[ \t]{2,}", " ", t).strip()
 
 
 _NEMO: List[Optional[object]] = []
@@ -433,3 +447,108 @@ def normalize_best(text: str, prefer: str = "rules") -> str:
             except Exception:  # noqa: BLE001
                 pass
     return normalize(text)
+
+
+# ── pacing ───────────────────────────────────────────────────────────────────
+
+# Seconds of silence after each kind of break, at speed 1.0, on top of the ~0.1 s
+# quiet tail Kokoro leaves on a piece. Read British English pauses around 0.5 s
+# between sentences and near double that between paragraphs; a clause break inside
+# a sentence is a short catch of breath. (Measured on cpu-246, bf_emma: a sentence
+# gap lands at 0.45-0.55 s, a paragraph at ~0.85 s.)
+PAUSES = {"comma": 0.12, "clause": 0.2, "colon": 0.28, "sentence": 0.4, "exclaim": 0.42, "question": 0.48,
+          "ellipsis": 0.55, "line": 0.48, "paragraph": 0.78}
+# A sentence longer than this is cut at its clauses: one breath, and well inside
+# the 510 phonemes Kokoro renders in one pass.
+MAX_SEGMENT = 240
+_SENT_END = re.compile(r"[.!?…]+[\"')\]]*(?=\s+[\"'(\[]?[A-Z0-9]|\s*$)")
+
+
+def _sentences(line: str) -> List[str]:
+    out, start = [], 0
+    for m in _SENT_END.finditer(line):
+        out.append(line[start:m.end()].strip())
+        start = m.end()
+    rest = line[start:].strip()
+    if rest:
+        out.append(rest)
+    return [s for s in out if s]
+
+
+def _clauses(sentence: str, limit: int = MAX_SEGMENT) -> List[str]:
+    """A long sentence in breath-sized pieces, cut after ; : , - never mid-clause."""
+    if len(sentence) <= limit:
+        return [sentence]
+    pieces = [p for p in re.split(r"(?<=[;:,])\s+", sentence) if p]
+    out: List[str] = []
+    for p in pieces:
+        if out and len(out[-1]) + 1 + len(p) <= limit and not out[-1].endswith((";", ":")):
+            out[-1] += " " + p
+        else:
+            out.append(p)
+    return out
+
+
+def _end_pause(seg: str) -> float:
+    tail = seg.rstrip("\"')] ")
+    if tail.endswith("…") or tail.endswith("..."):
+        return PAUSES["ellipsis"]
+    if tail.endswith("?"):
+        return PAUSES["question"]
+    if tail.endswith("!"):
+        return PAUSES["exclaim"]
+    if tail.endswith("."):
+        return PAUSES["sentence"]
+    if tail.endswith(":"):
+        return PAUSES["colon"]
+    if tail.endswith(";"):
+        return PAUSES["clause"]
+    if tail.endswith(","):
+        return PAUSES["comma"]
+    return 0.0
+
+
+def _vary(seg: str, pause: float) -> float:
+    """People are not metronomes: +-8%, fixed per piece of text so a replay sounds the same."""
+    if pause <= 0:
+        return 0.0
+    k = (zlib.crc32(seg.encode("utf-8")) % 1000) / 1000.0
+    return round(pause * (0.92 + 0.16 * k), 3)
+
+
+def speech_plan(text: str) -> List[Tuple[str, float]]:
+    """Normalised text -> [(piece to synthesise, seconds of silence after it)].
+
+    One piece per sentence (long ones cut at clauses); a line with no closing
+    punctuation - a heading, a list item - gets a full stop so it is said as a
+    statement and is followed by a line pause; paragraphs get a longer one. The
+    last piece keeps its own pause, so pieces synthesised one at a time (the
+    streaming routes) still have a gap between them.
+    """
+    plan: List[Tuple[str, float]] = []
+    paragraphs = [p for p in re.split(r"\n[ \t]*\n", text or "") if p.strip()]
+    for pi, para in enumerate(paragraphs):
+        lines: List[str] = []
+        for ln in (x.strip() for x in para.split("\n")):
+            if not ln:
+                continue
+            # a hard-wrapped sentence carries on in lower case: one line, not two
+            if lines and ln[0].islower() and not re.search(r"[.!?…:;][\"')\]]*$", lines[-1]):
+                lines[-1] += " " + ln
+            else:
+                lines.append(ln)
+        for li, line in enumerate(lines):
+            if not re.search(r"[.!?…:;,][\"')\]]*$", line):
+                line += "."
+            for sentence in _sentences(line):
+                for clause in _clauses(sentence):
+                    if not re.search(r"\w", clause):          # a stray mark: its pause goes to what came before
+                        if plan:
+                            plan[-1] = (plan[-1][0], max(plan[-1][1], _end_pause(clause)))
+                        continue
+                    plan.append((clause, _end_pause(clause)))
+            if plan and li < len(lines) - 1:
+                plan[-1] = (plan[-1][0], max(plan[-1][1], PAUSES["line"]))
+        if plan and pi < len(paragraphs) - 1:
+            plan[-1] = (plan[-1][0], max(plan[-1][1], PAUSES["paragraph"]))
+    return [(seg, _vary(seg, pause)) for seg, pause in plan]

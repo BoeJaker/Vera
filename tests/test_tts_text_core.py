@@ -47,6 +47,33 @@ def test_written_forms_become_spoken_words():
         assert tn.normalize(written) == spoken, (written, tn.normalize(written))
 
 
+def test_line_breaks_survive_normalisation():
+    assert tn.normalize("Key points\n\n5 homes\n6 flats") == "Key points\n\nfive homes\nsix flats"
+
+
+def test_the_speech_plan_pauses_like_a_reader():
+    plan = tn.speech_plan("U K House Prices\nPrices rose. Did they? Yes!\n\nNext paragraph here")
+    texts = [t for t, _ in plan]
+    assert texts == ["U K House Prices.", "Prices rose.", "Did they?", "Yes!", "Next paragraph here."]
+    pause = dict(plan)
+    # a heading is a statement with a line pause; a paragraph break is the longest gap
+    assert pause["U K House Prices."] >= tn.PAUSES["line"] * 0.9
+    assert pause["Yes!"] >= tn.PAUSES["paragraph"] * 0.9 > pause["Prices rose."]
+    assert pause["Did they?"] > pause["Prices rose."] * 0.9 > 0
+    # the last piece keeps its pause: the streaming routes synthesise one sentence at a time
+    assert plan[-1][1] > 0
+
+
+def test_the_speech_plan_joins_wrapped_lines_and_cuts_long_sentences():
+    assert [t for t, _ in tn.speech_plan("This sentence is hard\nwrapped across lines.")] == \
+        ["This sentence is hard wrapped across lines."]
+    long = ", ".join(f"clause number {word}" for word in ("one", "two", "three", "four") * 12) + "."
+    pieces = tn.speech_plan(long)
+    assert len(pieces) > 1 and all(len(t) <= tn.MAX_SEGMENT for t, _ in pieces)
+    assert " ".join(t for t, _ in pieces) == long
+    assert tn.speech_plan("") == [] and tn.speech_plan("…") == []
+
+
 def test_number_words():
     assert tn.cardinal(1_234_567) == "one million two hundred and thirty-four thousand five hundred and sixty-seven"
     assert tn.cardinal(1005) == "one thousand and five" and tn.cardinal(-12) == "minus twelve"
@@ -98,3 +125,27 @@ def test_the_speech_server_takes_its_defaults_from_vera():
     assert '_TTS_CFG.get("voice")' in kok and "lang=lang" in kok and "_voice_lang(" in kok
     caps = open(os.path.join(ROOT, "vera", "capabilities", "capabilities.py"), encoding="utf-8").read()
     assert '"tts.config.set"' in caps and '"tts.config.get"' in caps
+
+
+def test_the_speech_server_paces_sentence_by_sentence():
+    src = _gpu_src()
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "_tts_synthesize")
+    body = ast.get_source_segment(src, fn)
+    # normalise, then plan, then one synthesis per piece with its silence after it
+    assert body.index("normalize_best") < body.index("speech_plan") < body.index("_synthesize_piece")
+    assert "np.zeros(int(sr * pause * pacing / speed)" in body
+    assert '"pacing"' in src[src.index("_TTS_CFG = {"):src.index("_TTS_CFG = {") + 300]
+    assert "pacing:" in src[src.index("class TTSRequest"):src.index("class TTSConfig")]
+    assert "pacing:" in src[src.index("class TTSConfig"):src.index('@app.get("/tts/config")')]
+    caps = open(os.path.join(ROOT, "vera", "capabilities", "capabilities.py"), encoding="utf-8").read()
+    setter = caps[caps.index('"tts.config.set"'):]
+    assert 'body["pacing"]' in setter[:3000]
+
+
+def test_headings_and_list_items_end_as_statements():
+    src = _gpu_src()
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "_clean_for_tts")
+    ns = {"re": __import__("re"), "_expand_roman_numerals": lambda t: t}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "x", "exec"), ns)
+    out = ns["_clean_for_tts"]("## Key points\n- **Mortgage approvals** up\n- 5-year fixes\n1. Third item\nProse line.")
+    assert out == "Key points.\nMortgage approvals up.\n5-year fixes.\nThird item.\nProse line.", out

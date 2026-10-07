@@ -265,12 +265,13 @@ async def tts_config_get(trace_id=None):
     memory="on",
     description="Set the speech defaults for every media node at once - the voice everything speaks with "
                 "unless a caller names its own (see tts.voices; b* voices are British, a* American), the "
-                "accent (blank = from the voice), speed (0.5-2) and number/date normalisation (rules|nemo|off). "
+                "accent (blank = from the voice), speed (0.5-2), number/date normalisation (rules|nemo|off) and "
+                "pacing - how long the pauses between sentences, lines and paragraphs are (0 none, 1 natural, 2 slow). "
                 "Vera remembers it and pushes it to each node; a node keeps it across restarts. "
-                "Input: voice, lang, speed, normalizer (any subset). Output: {ok, desired, nodes:[{id, ok, error}]}.",
+                "Input: voice, lang, speed, normalizer, pacing (any subset). Output: {ok, desired, nodes:[{id, ok, error}]}.",
 )
 async def tts_config_set(voice: str = "", lang: Optional[str] = None, speed: Optional[float] = None,
-                         normalizer: str = "", trace_id=None):
+                         normalizer: str = "", pacing: Optional[float] = None, trace_id=None):
     p = _tts_desired_path()
     try:
         desired = json.loads(p.read_text(encoding="utf-8"))
@@ -287,8 +288,10 @@ async def tts_config_set(voice: str = "", lang: Optional[str] = None, speed: Opt
         if normalizer not in ("rules", "nemo", "off"):
             return {"ok": False, "error": "normalizer must be rules, nemo or off"}
         body["normalizer"] = normalizer
+    if pacing is not None:
+        body["pacing"] = max(0.0, min(2.0, float(pacing)))
     if not body:
-        return {"ok": False, "error": "nothing to set: give voice, lang, speed or normalizer"}
+        return {"ok": False, "error": "nothing to set: give voice, lang, speed, normalizer or pacing"}
     results = []
     async with httpx.AsyncClient(timeout=15) as c:
         for iid, label, url in _tts_nodes():
