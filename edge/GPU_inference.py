@@ -862,6 +862,13 @@ def redis_get_result(job_id: str) -> Optional[dict]:
 
 def _tts_synthesize(text: str, opts: dict) -> tuple[np.ndarray, int]:
     """Returns (float32_audio_array, sample_rate)."""
+    # Speech markup first (<sub alias>, <say-as>, <break>): the writer's own reading of
+    # what it meant wins over every rule below, and the markdown pass strips all tags.
+    if _tn is not None and hasattr(_tn, "resolve_speech_markup"):
+        try:
+            text = _tn.resolve_speech_markup(text)
+        except Exception as e:  # noqa: BLE001
+            log.warning("TTS speech markup unreadable, dropping the tags: %s", e)
     text   = _clean_for_tts(text)
     # Written forms -> spoken words (money, dates, times, percentages, quarters,
     # acronyms...): espeak's own rules read "£1.2bn" or "2026-10-05" badly. One place,
@@ -2163,17 +2170,38 @@ def _redis_listener():
 _SENT_END = re.compile(r'(?<![A-Z][a-z])(?<![A-Z])(?<=[.!?])\s+')
 
 
+def _sentence_cuts(text: str) -> list[int]:
+    """Where text can be cut into sentences - never inside speech markup
+    (<sub alias="U.S. rates">…</sub> has a full stop and a space in it)."""
+    spans = _tn.markup_spans(text) if (_tn is not None and hasattr(_tn, "markup_spans")) else []
+    return [m.start() for m in _SENT_END.finditer(text)
+            if not any(a < m.start() < b for a, b in spans)]
+
+
+def _cut(text: str, cuts: list[int]) -> list[str]:
+    out, start = [], 0
+    for c in cuts:
+        out.append(text[start:c])
+        start = c
+    out.append(text[start:])
+    return out
+
+
 def _extract_sentences(buf: str) -> tuple[list[str], str]:
-    """Split buffer at sentence boundaries. Returns (complete_sentences, remainder)."""
-    parts = _SENT_END.split(buf)
+    """Split buffer at sentence boundaries. Returns (complete_sentences, remainder).
+    A tag still open at the end of the buffer (the model is mid-way through writing
+    it) holds everything from there back until it closes."""
+    safe = _tn.markup_safe_cut(buf) if (_tn is not None and hasattr(_tn, "markup_safe_cut")) else len(buf)
+    head, held = buf[:safe], buf[safe:]
+    parts = _cut(head, _sentence_cuts(head))
     if len(parts) <= 1:
         return [], buf
-    return [s.strip() for s in parts[:-1] if s.strip()], parts[-1]
+    return [s.strip() for s in parts[:-1] if s.strip()], parts[-1].lstrip() + held
 
 
 def _split_sentences(text: str) -> list[str]:
-    parts = _SENT_END.split(text.strip())
-    return [p.strip() for p in parts if p.strip()]
+    text = text.strip()
+    return [p.strip() for p in _cut(text, _sentence_cuts(text)) if p.strip()]
 
 # ─────────────────────────── STARTUP ─────────────────────────────────────────
 

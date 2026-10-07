@@ -526,7 +526,8 @@ def speech_plan(text: str) -> List[Tuple[str, float]]:
     streaming routes) still have a gap between them.
     """
     plan: List[Tuple[str, float]] = []
-    paragraphs = [p for p in re.split(r"\n[ \t]*\n", text or "") if p.strip()]
+    explicit = set()                                    # pieces whose pause a <break> set exactly
+    paragraphs = [p for p in re.split(r"\n[ \t]*\n", text or "") if p.strip(PAUSE_MARK + " \t\n")]
     for pi, para in enumerate(paragraphs):
         lines: List[str] = []
         for ln in (x.strip() for x in para.split("\n")):
@@ -538,17 +539,137 @@ def speech_plan(text: str) -> List[Tuple[str, float]]:
             else:
                 lines.append(ln)
         for li, line in enumerate(lines):
-            if not re.search(r"[.!?…:;,][\"')\]]*$", line):
-                line += "."
-            for sentence in _sentences(line):
-                for clause in _clauses(sentence):
-                    if not re.search(r"\w", clause):          # a stray mark: its pause goes to what came before
-                        if plan:
-                            plan[-1] = (plan[-1][0], max(plan[-1][1], _end_pause(clause)))
-                        continue
-                    plan.append((clause, _end_pause(clause)))
+            if not re.search(r"[.!?…:;,][\"')\]]*$", line.rstrip(PAUSE_MARK + " \t")):
+                line = re.sub("([" + PAUSE_MARK + r" \t]*)$", r".\1", line, count=1)
+            # an explicit <break> (a run of PAUSE_MARK) cuts the line there, with exactly that pause
+            for chunk in re.split("(" + PAUSE_MARK + "+)", line):
+                if chunk.startswith(PAUSE_MARK):
+                    if plan:
+                        plan[-1] = (plan[-1][0], max(plan[-1][1], len(chunk) * 0.1))
+                        explicit.add(len(plan) - 1)
+                    continue
+                for sentence in _sentences(chunk.strip()):
+                    for clause in _clauses(sentence):
+                        if not re.search(r"\w", clause):      # a stray mark: its pause goes to what came before
+                            if plan:
+                                plan[-1] = (plan[-1][0], max(plan[-1][1], _end_pause(clause)))
+                            continue
+                        plan.append((clause, _end_pause(clause)))
             if plan and li < len(lines) - 1:
                 plan[-1] = (plan[-1][0], max(plan[-1][1], PAUSES["line"]))
         if plan and pi < len(paragraphs) - 1:
             plan[-1] = (plan[-1][0], max(plan[-1][1], PAUSES["paragraph"]))
-    return [(seg, _vary(seg, pause)) for seg, pause in plan]
+    return [(seg, pause if i in explicit else _vary(seg, pause)) for i, (seg, pause) in enumerate(plan)]
+
+
+# ── speech markup: an SSML subset the speaking models may write ──────────────
+#
+# Only the writer knows whether "3-2" is a score, "1500" a year, "FOMC" spelled out.
+# So a model whose words will be spoken may mark what it means, in standard SSML:
+#   <sub alias="one hundred and eight to three hundred">108-300</sub>
+#   <say-as interpret-as="characters">FOMC</say-as>   (characters|digits|telephone|cardinal|ordinal)
+#   <break time="600ms"/>   <break strength="strong"/>
+# Anything else - an unknown tag, a broken one, one left open - is dropped to its
+# text, never spoken as markup. Untagged text goes through normalize() as before.
+
+PAUSE_MARK = ""          # one per 100 ms of an explicit pause; private use, so no rule reads it
+_BREAK_STRENGTH = {"none": 0.0, "x-weak": 0.1, "weak": 0.2, "medium": 0.4, "strong": 0.7, "x-strong": 1.0}
+_ATTR = re.compile(r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>/]+))""")
+# a tag starts "<name" or "</name" with no space after "<", so "a < b" is never taken for markup
+_ANY_TAG = re.compile(r"</?[A-Za-z][\w:-]*(?:\s[^<>]*)?/?>")
+_PAIRED = re.compile(r"<(?P<name>sub|say-as|phoneme)\b(?P<attrs>[^<>]*)>(?P<inner>.*?)</(?P=name)\s*>",
+                     re.IGNORECASE | re.DOTALL)
+_BREAK = re.compile(r"<break\b(?P<attrs>[^<>]*?)/?>(?:\s*</break\s*>)?", re.IGNORECASE)
+_ENTITIES = {"&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'", "&#39;": "'"}
+_OPENERS = re.compile(r"<(sub|say-as|phoneme)\b[^<>]*>", re.IGNORECASE)
+
+
+def _attrs(s: str) -> dict:
+    return {k.lower(): (a or b or c) for k, a, b, c in _ATTR.findall(s or "")}
+
+
+def _break_seconds(attrs: dict) -> float:
+    t = (attrs.get("time") or "").strip().lower()
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(ms|s)?", t)
+    if m:
+        v = float(m.group(1))
+        sec = v if m.group(2) == "s" else v / 1000.0
+    else:
+        sec = _BREAK_STRENGTH.get((attrs.get("strength") or "medium").lower(), 0.4)
+    return max(0.0, min(3.0, sec))
+
+
+def _say_as(kind: str, inner: str) -> str:
+    k = (kind or "").lower()
+    text = inner.strip()
+    if k in ("characters", "spell-out", "letters", "verbatim"):
+        return " ".join(c.upper() if c.isalpha() else c for c in text if not c.isspace())
+    if k in ("digits", "telephone"):
+        groups = [g for g in re.split(r"[^\d+]+", text) if g]
+        said = [("plus " if g.startswith("+") else "")
+                + " ".join("oh" if d == "0" else _ONES[int(d)] for d in g if d.isdigit()) for g in groups]
+        return ", ".join(s for s in said if s)
+    if k in ("cardinal", "number") and re.fullmatch(r"-?\d[\d,]*(?:\.\d+)?", text):
+        return number(text.replace("-", "")) if not text.startswith("-") else "minus " + number(text[1:])
+    if k == "ordinal" and re.fullmatch(r"\d+(?:st|nd|rd|th)?", text):
+        return ordinal(int(re.sub(r"\D", "", text)))
+    return text                                           # date, time, unknown: the normaliser reads it
+
+
+def _unescape(t: str) -> str:
+    for k, v in _ENTITIES.items():
+        t = t.replace(k, v)
+    return t
+
+
+def resolve_speech_markup(text: str) -> str:
+    """Speech markup -> plain text for the voice (aliases said, breaks as PAUSE_MARK runs)."""
+    if not text or "<" not in text:
+        return _unescape(text or "")
+
+    def paired(m: "re.Match[str]") -> str:
+        name, attrs, inner = m.group("name").lower(), _attrs(m.group("attrs")), _ANY_TAG.sub("", m.group("inner"))
+        if name == "sub":
+            alias = attrs.get("alias")
+            return alias if alias is not None else inner
+        if name == "say-as":
+            return _say_as(attrs.get("interpret-as") or attrs.get("interpret_as") or "", inner)
+        return inner                                      # <phoneme>: its text, until the phonemiser can take ph=
+
+    t = _PAIRED.sub(paired, text)
+    t = _BREAK.sub(lambda m: " " + PAUSE_MARK * max(1, round(_break_seconds(_attrs(m.group("attrs"))) * 10)) + " "
+                   if _break_seconds(_attrs(m.group("attrs"))) > 0 else " ", t)
+    t = _ANY_TAG.sub("", t)                               # every other tag, known or not, to its text
+    t = re.sub(r"<[A-Za-z/][^<>]*$", "", t)               # a tag cut off at the end
+    return _unescape(t)
+
+
+def strip_speech_markup(text: str) -> str:
+    """Speech markup -> the written form, for showing the text (aliases dropped, breaks removed)."""
+    if not text or "<" not in text:
+        return _unescape(text or "")
+    t = _BREAK.sub("", text)
+    t = _ANY_TAG.sub("", t)
+    t = re.sub(r"<[A-Za-z/][^<>]*$", "", t)
+    return _unescape(re.sub(r"[ \t]{2,}", " ", t))
+
+
+def markup_safe_cut(buf: str) -> int:
+    """How much of a streaming buffer can be cut into sentences: up to the first
+    tag that is still open (or cut off mid-tag), so a sentence never ends inside one."""
+    cut = len(buf)
+    partial = re.search(r"<[A-Za-z/][^<>]*$", buf)
+    if partial:
+        cut = partial.start()
+    for m in _OPENERS.finditer(buf, 0, cut):
+        closer = re.compile(r"</" + re.escape(m.group(1)) + r"\s*>", re.IGNORECASE)
+        if not closer.search(buf, m.end()):
+            return m.start()
+    return cut
+
+
+def markup_spans(text: str) -> List[Tuple[int, int]]:
+    """Where the complete tags and tagged phrases are, so a sentence split skips them."""
+    spans = [(m.start(), m.end()) for m in _PAIRED.finditer(text)]
+    spans += [(m.start(), m.end()) for m in _ANY_TAG.finditer(text)]
+    return spans
