@@ -82,7 +82,14 @@ except Exception:  # noqa: BLE001 - an older deploy without the file still speak
 # kept in tts_config.json next to this file, which a redeploy does not overwrite,
 # so a node keeps its voice across restarts. Env values are only the first default.
 _TTS_CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tts_config.json")
-_TTS_CFG = {"voice": KOKORO_VOICE, "lang": "", "speed": 1.0, "normalizer": TTS_NORMALIZER}
+# pacing: how long the pauses between sentences, lines and paragraphs are (1 = as
+# tts_text_core.PAUSES plans them, 0 = none - the text in one piece, as before)
+_TTS_CFG = {"voice": KOKORO_VOICE, "lang": "", "speed": 1.0, "normalizer": TTS_NORMALIZER,
+            "pacing": 1.0}
+try:
+    _TTS_CFG["pacing"] = max(0.0, min(2.0, float(os.getenv("TTS_PACING", "1.0") or 1.0)))
+except ValueError:
+    pass
 try:
     with open(_TTS_CFG_PATH, encoding="utf-8") as _f:
         _TTS_CFG.update({k: v for k, v in json.load(_f).items() if k in _TTS_CFG})
@@ -869,6 +876,66 @@ def _tts_synthesize(text: str, opts: dict) -> tuple[np.ndarray, int]:
         # Return a short silence rather than erroring on empty cleaned text
         silence = np.zeros(int(TTS_SAMPLE_RATE * 0.1), dtype=np.float32)
         return silence, TTS_SAMPLE_RATE
+
+    # Pacing: one piece per sentence (or clause of a long one), with the pause a
+    # reader leaves after it. Kokoro trims the silence off what it renders and only
+    # pauses where its own 510-phoneme batches join, so handed a paragraph whole it
+    # reads it as one breathless run; handed one sentence at a time it is given the
+    # gaps here. The last piece keeps its pause too, so the streaming routes - which
+    # call this once per sentence - leave a gap between sentences as well.
+    pacing = _tts_pacing(opts)
+    plan = [(text, 0.0)]
+    if _tn is not None and pacing > 0 and hasattr(_tn, "speech_plan"):
+        try:
+            plan = _tn.speech_plan(text) or plan
+        except Exception as e:  # noqa: BLE001
+            log.warning("TTS pacing plan failed, speaking the text in one piece: %s", e)
+    speed = max(0.5, min(2.0, float(opts.get("speed") or _TTS_CFG.get("speed") or 1.0)))
+
+    parts: list = []
+    sr = TTS_SAMPLE_RATE
+    failed = None
+    for piece, pause in plan:
+        try:
+            wav, sr = _synthesize_piece(piece, opts)
+        except Exception as e:  # noqa: BLE001 - one odd sentence must not silence the rest
+            if len(plan) == 1:
+                raise
+            failed = e
+            log.warning("TTS piece skipped (%s): %r", e, piece[:80])
+            continue
+        parts.append(_soften_edges(np.asarray(wav, dtype=np.float32), sr))
+        if pause > 0:
+            parts.append(np.zeros(int(sr * pause * pacing / speed), dtype=np.float32))
+    if not parts:
+        raise RuntimeError(f"TTS produced no audio: {failed}")
+    return np.concatenate(parts), sr
+
+
+def _tts_pacing(opts: dict) -> float:
+    """How long the pauses are: 1 = as planned, 0 = none (the text in one piece), up to 2."""
+    v = opts.get("pacing")
+    if v is None:
+        v = _TTS_CFG.get("pacing", 1.0)
+    try:
+        return max(0.0, min(2.0, float(v)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _soften_edges(wav: np.ndarray, sr: int, ms: float = 6.0) -> np.ndarray:
+    """A few milliseconds of fade at each end, so a piece cut from silence never clicks."""
+    n = min(len(wav) // 4, int(sr * ms / 1000))
+    if n <= 1:
+        return wav
+    ramp = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    wav = wav.copy()
+    wav[:n] *= ramp
+    wav[-n:] *= ramp[::-1]
+    return wav
+
+
+def _synthesize_piece(text: str, opts: dict) -> tuple[np.ndarray, int]:
     engine = opts.get("engine") or TTS_ENGINE
 
     if engine == "kokoro" and _kokoro_pipeline is not None:
@@ -980,6 +1047,11 @@ def _clean_for_tts(text: str) -> str:
     text = re.sub(r'!\[([^\]]*)\]\([^)]*\)', '', text)
     text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
 
+    # ── Headings and list items are said as statements, with a pause after ───
+    # (a full stop where the line has none; the pacing reads it as a line end)
+    text = re.sub(r'^([ \t]*(?:#{1,6}|[-+*•▪◦]|\d+[.)])[ \t]+.*?[^\s.!?:;,…])[ \t]*$', r'\1.', text,
+                  flags=re.MULTILINE)
+
     # ── Headers ──────────────────────────────────────────────────────────────
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
 
@@ -1004,7 +1076,7 @@ def _clean_for_tts(text: str) -> str:
     text = re.sub(r'<[^>]+>', '', text)
 
     # ── List markers ─────────────────────────────────────────────────────────
-    text = re.sub(r'^\s*[-+]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*[-+•▪◦]\s+', '', text, flags=re.MULTILINE)
     text = re.sub(r'^\s*\d+[.):\-]\s+', '', text, flags=re.MULTILINE)
 
     # ── Tables ───────────────────────────────────────────────────────────────
@@ -2937,6 +3009,7 @@ class TTSRequest(BaseModel):
     language: Optional[str]   = None
     speed:    Optional[float] = None   # None -> the node's configured speed
     normalize: Optional[bool] = None   # False -> speak the text as written (no number/date normalisation)
+    pacing:   Optional[float] = None   # pause length between sentences: 0 none, 1 natural, up to 2; None -> node's
 
 
 class TTSConfig(BaseModel):
@@ -2944,6 +3017,7 @@ class TTSConfig(BaseModel):
     lang:       Optional[str]   = None   # "" -> from the voice's prefix (b* -> en-gb)
     speed:      Optional[float] = None   # 0.5 - 2.0
     normalizer: Optional[str]   = None   # rules | nemo | off
+    pacing:     Optional[float] = None   # 0 - 2: pauses between sentences, lines, paragraphs (1 natural)
 
 
 @app.get("/tts/config")
@@ -2978,6 +3052,8 @@ async def tts_config_set(cfg: TTSConfig):
         if cfg.normalizer not in ("rules", "nemo", "off"):
             raise HTTPException(status_code=400, detail="normalizer must be rules, nemo or off")
         new["normalizer"] = cfg.normalizer
+    if cfg.pacing is not None:
+        new["pacing"] = max(0.0, min(2.0, float(cfg.pacing)))
     tmp = _TTS_CFG_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(new, f)
