@@ -2187,21 +2187,59 @@ def _cut(text: str, cuts: list[int]) -> list[str]:
     return out
 
 
-def _extract_sentences(buf: str) -> tuple[list[str], str]:
+# The first thing said sets how long a listener waits: a long opening sentence is
+# rendered whole before a sound comes out (about 4.5 s for 200 characters on a CPU
+# node). So the FIRST piece of a stream may end at its first clause instead - after
+# a comma, semicolon or colon at least _FIRST_MIN characters in - when the opening
+# sentence is longer than _FIRST_LONG. The clause keeps its comma, so it is said as
+# a continuing phrase with a short pause; everything after goes sentence by sentence.
+_FIRST_MIN = 30
+_FIRST_LONG = 80
+_CLAUSE_END = re.compile(r'(?<=[,;:])\s+')
+
+
+def _first_clause_cut(text: str, sentence_end: Optional[int] = None) -> Optional[int]:
+    """Where the first piece of a stream can end early, or None to wait for the sentence."""
+    if sentence_end is not None and sentence_end <= _FIRST_LONG:
+        return None
+    if sentence_end is None and len(text.strip()) <= _FIRST_LONG:
+        return None                       # still streaming: wait until the sentence is known to be long
+    spans = _tn.markup_spans(text) if (_tn is not None and hasattr(_tn, "markup_spans")) else []
+    for m in _CLAUSE_END.finditer(text):
+        at = m.start()
+        if sentence_end is not None and at >= sentence_end:
+            return None
+        if at >= _FIRST_MIN and not any(a < at < b for a, b in spans):
+            return at
+    return None
+
+
+def _extract_sentences(buf: str, first: bool = False) -> tuple[list[str], str]:
     """Split buffer at sentence boundaries. Returns (complete_sentences, remainder).
     A tag still open at the end of the buffer (the model is mid-way through writing
-    it) holds everything from there back until it closes."""
+    it) holds everything from there back until it closes. With first=True (nothing
+    has been said yet) a long opening sentence may be cut at its first clause."""
     safe = _tn.markup_safe_cut(buf) if (_tn is not None and hasattr(_tn, "markup_safe_cut")) else len(buf)
     head, held = buf[:safe], buf[safe:]
-    parts = _cut(head, _sentence_cuts(head))
+    cuts = _sentence_cuts(head)
+    if first:
+        early = _first_clause_cut(head, cuts[0] if cuts else None)
+        if early is not None:
+            return [head[:early].strip()], head[early:].lstrip() + held
+    parts = _cut(head, cuts)
     if len(parts) <= 1:
         return [], buf
     return [s.strip() for s in parts[:-1] if s.strip()], parts[-1].lstrip() + held
 
 
-def _split_sentences(text: str) -> list[str]:
+def _split_sentences(text: str, first_clause: bool = False) -> list[str]:
     text = text.strip()
-    return [p.strip() for p in _cut(text, _sentence_cuts(text)) if p.strip()]
+    parts = [p.strip() for p in _cut(text, _sentence_cuts(text)) if p.strip()]
+    if first_clause and parts:
+        early = _first_clause_cut(parts[0], len(parts[0]))
+        if early is not None:
+            parts[0:1] = [parts[0][:early].strip(), parts[0][early:].strip()]
+    return parts
 
 # ─────────────────────────── STARTUP ─────────────────────────────────────────
 
@@ -3104,7 +3142,7 @@ async def tts(req: TTSRequest):
 async def tts_stream(req: TTSRequest):
     if not ENABLE_TTS or _active_engine() == "none":
         raise HTTPException(status_code=503, detail="TTS not loaded.")
-    sentences = _split_sentences(req.text)
+    sentences = _split_sentences(req.text, first_clause=True)
     if not sentences:
         raise HTTPException(status_code=400, detail="Empty text.")
     opts = req.model_dump()
@@ -3194,7 +3232,7 @@ async def chat_speak(req: ChatSpeakRequest):
                         # Fan ALL tokens including whitespace-only to text queue
                         await text_q.put(("token", token))
 
-                        sentences, text_buf = _extract_sentences(text_buf)
+                        sentences, text_buf = _extract_sentences(text_buf, first=chunks_out == 0)
                         for sentence in sentences:
                             if not sentence:
                                 continue
@@ -3474,7 +3512,7 @@ async def _duplex_respond(session: dict, query_text: str, req: DuplexQueryReques
                         text_buf += token
                         await text_q.put(("token", token))
 
-                        sentences, text_buf = _extract_sentences(text_buf)
+                        sentences, text_buf = _extract_sentences(text_buf, first=chunks_out == 0)
                         for sentence in sentences:
                             if interrupt.is_set():
                                 break

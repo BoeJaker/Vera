@@ -239,13 +239,14 @@ def test_the_written_form_drops_the_markup():
 
 def _sentence_helpers():
     src = _gpu_src()
-    names = {"_sentence_cuts", "_cut", "_extract_sentences", "_split_sentences"}
-    fns = [n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name in names]
-    sent_end = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign)
-                    and getattr(n.targets[0], "id", "") == "_SENT_END")
-    ns = {"re": __import__("re"), "_tn": tn}
+    names = {"_sentence_cuts", "_cut", "_extract_sentences", "_split_sentences", "_first_clause_cut"}
+    consts = {"_SENT_END", "_FIRST_MIN", "_FIRST_LONG", "_CLAUSE_END"}
+    tree = ast.parse(src).body
+    fns = [n for n in tree if isinstance(n, ast.FunctionDef) and n.name in names]
+    assigns = [n for n in tree if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in consts]
+    ns = {"re": __import__("re"), "_tn": tn, "Optional": object}
     flags = __import__("__future__").annotations.compiler_flag    # list[int] on older Pythons
-    exec(compile(ast.Module(body=[sent_end] + fns, type_ignores=[]), "x", "exec", flags=flags), ns)
+    exec(compile(ast.Module(body=assigns + fns, type_ignores=[]), "x", "exec", flags=flags), ns)
     return ns
 
 
@@ -283,3 +284,39 @@ def test_without_the_lexicon_the_rules_still_speak(tmp_path):
     assert tn.load_lexicon(str(tmp_path / "missing.json")) == {}
     (tmp_path / "bad.json").write_text("{not json", encoding="utf-8")
     assert tn.load_lexicon(str(tmp_path / "bad.json")) == {}
+
+
+
+# ── the first thing said comes sooner ────────────────────────────────────────
+
+LONG_OPENING = ("Mortgage approvals rose to sixty-five thousand in August, the highest level since the autumn of "
+                "last year, as lenders cut their rates. Prices followed.")
+
+
+def test_a_long_opening_sentence_is_started_at_its_first_clause():
+    ns = _sentence_helpers()
+    parts = ns["_split_sentences"](LONG_OPENING, first_clause=True)
+    assert parts[0] == "Mortgage approvals rose to sixty-five thousand in August,"
+    assert parts[1].startswith("the highest level") and parts[-1] == "Prices followed."
+    # without the flag, or with a short opening sentence, nothing changes
+    assert ns["_split_sentences"](LONG_OPENING)[0].endswith("cut their rates.")
+    assert ns["_split_sentences"]("Prices rose, sharply. Then fell.", first_clause=True) ==         ["Prices rose, sharply.", "Then fell."]
+
+
+def test_streaming_cuts_early_only_once_the_sentence_is_known_to_be_long():
+    ns = _sentence_helpers()
+    ex = ns["_extract_sentences"]
+    assert ex("Mortgage approvals rose to sixty-five thousand, ", first=True) ==         ([], "Mortgage approvals rose to sixty-five thousand, ")          # could still be short: wait
+    done, rest = ex(LONG_OPENING[:100], first=True)
+    assert done == ["Mortgage approvals rose to sixty-five thousand in August,"] and rest.startswith("the highest")
+    done, rest = ex(LONG_OPENING[:100], first=False)                       # after the first piece: sentences
+    assert done == [] and rest == LONG_OPENING[:100]
+    # never inside markup, never at a thousands comma
+    tagged = 'Approvals rose to <sub alias="sixty-five thousand, a record">65,000</sub> in the month of August and more'
+    assert ex(tagged, first=True) == ([], tagged)
+
+
+def test_the_streaming_routes_ask_for_the_early_first_piece():
+    src = _gpu_src()
+    assert "_split_sentences(req.text, first_clause=True)" in src
+    assert src.count("_extract_sentences(text_buf, first=chunks_out == 0)") == 2
