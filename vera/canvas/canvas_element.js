@@ -1220,6 +1220,25 @@
   .back{display:none}
   :host([align="desk"][back="behind"]) .wrap{position:relative}
   :host([align="desk"][back="behind"]) .back{display:block;position:absolute;inset:0;z-index:0;opacity:.38;transition:opacity .25s}
+  /* THE PANEL LAYER (owner, 2026-10-06: the UI panel "penultimate to last - it covers the graph", and "bring the ui
+     panel to the top so it covers the desk"): the page's UI panel in the "panel" slot, over the graph and under the
+     items, from below the head down; panel-front lifts it over the items. */
+  .mid{display:none}
+  :host([align="desk"][panel]) .wrap{position:relative}
+  :host([align="desk"][panel]) .mid{display:flex;position:absolute;left:0;right:0;bottom:0;top:var(--vc-head,34px);z-index:1}
+  :host([align="desk"][panel]) .mid ::slotted(*){flex:1;min-width:0;min-height:0}
+  :host([align="desk"][panel]) .head,
+  :host([align="desk"][panel]) .body{position:relative;z-index:2}
+  :host([align="desk"][panel][panel-front]) .mid{z-index:3;box-shadow:0 18px 48px rgba(0,0,0,.45)}
+  :host([align="desk"][panel]) .body,
+  :host([align="desk"][panel]) .body .stage,
+  :host([align="desk"][panel]) .body .band{background:transparent;pointer-events:none}
+  :host([align="desk"][panel]) .body .it,
+  :host([align="desk"][panel]) .body .band-h > *,
+  :host([align="desk"][panel]) .body .chips > *,
+  :host([align="desk"][panel]) .body .addbar,
+  :host([align="desk"][panel]) .body :is(button,a,input,select,textarea){pointer-events:auto}
+  :host([align="desk"][panel]) .stage .it{background:color-mix(in srgb, var(--bg1,#15181d) 90%, transparent)!important;border-radius:8px}
   /* a card over the layer keeps a ground in every blocks tier, or its text runs into the graph's */
   :host([align="desk"][back="behind"]) .stage .it{background:color-mix(in srgb, var(--bg1,#15181d) 90%, transparent)!important;border-radius:8px}
   :host([align="desk"][back="behind"]) .back:hover{opacity:.9}
@@ -2229,6 +2248,7 @@
         <div class="shell"><aside class="rail" id="rail" data-w="canvas.rail" hidden></aside>
         <div class="wrap">
           <div class="back" part="back"><slot name="back"></slot></div>
+          <div class="mid" part="panel"><slot name="panel"></slot></div>
           <div class="head">
             <span class="live" title="live — it follows the document"></span>
             <span class="title" id="title">Canvas</span>
@@ -2355,6 +2375,8 @@
       const H = Math.max(360, (body ? body.clientHeight : 600) - pad - 8);
       const f = Math.max(0.8, Math.min(1.6, W / 1000));          // a wide column gets proportionally larger faces
       const desk = { W: W, H: H, m: 8, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22, scale: f };
+      /* the panel layer starts under the head */
+      const hd = this.shadowRoot.querySelector('.head'); if (hd) this.style.setProperty('--vc-head', hd.offsetHeight + 'px');
       // the chat beside the column: on its left edge (the default), or on its right when the page puts the chat there
       const side = String(this.getAttribute('chat-side') || 'left').toLowerCase();
       const cr = String(this.getAttribute('chat-rect') || '').split(',').map(Number);

@@ -923,6 +923,11 @@ body[data-cols~="canvas"] #canvasColumn,body[data-cols~="graph"] #graphColumn{di
 /* the graph behind the desk: the canvas's back layer fills the desk; the element fills the layer */
 #deskBack{width:100%;height:100%;display:flex;min-height:0}
 #deskBack vera-context-graph{flex:1;min-height:0;min-width:0}
+/* the UI panel on the desk: the canvas's panel layer holds it, so it no longer halves the chat column */
+#chatPanelFront{display:none}
+body[data-panel-desk="1"] #chatPanelFront{display:inline-flex}
+body[data-panel-desk="1"] #chatPanelResize{display:none!important}
+body[data-panel-desk="1"].has-panel #chatPanelHost{width:100%;height:100%;border-left:none}
 /* the records in the focused turn's context run to the message: drawn over the columns, one collector per source */
 body.has-cols #chatColumn{position:relative}
 #ctxRunsOverlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;display:none}
@@ -2280,6 +2285,8 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       <select id="cfgCvSide" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="left">Left</option><option value="right">Right</option><option value="float">Float over the desk</option></select></div>
     <div class="row"><label style="min-width:70px" title="Where the context graph is drawn when it is open. In the grown menu: beside the chat, as before. Behind the desk: with a Desk canvas, the graph is the desk's back layer - the cards sit over it and the empty desk between them reaches it.">Graph</label>
       <select id="cfgCvBack" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="column">In the grown menu</option><option value="behind">Behind the desk</option></select></div>
+    <div class="row"><label style="min-width:70px" title="Where an open UI panel is drawn. Beside the chat: half the chat column, as before. On the desk: with a Desk canvas, the panel is a layer of the desk - over the graph, under the items - and its front button brings it over the items until you send it back. Switching moves the panel, which reloads it.">UI panel</label>
+      <select id="cfgCvPanel" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="beside">Beside the chat</option><option value="desk">On the desk</option></select></div>
     <div class="row"><label style="min-width:70px" title="Whether an HTML item, and a code block that is a whole page, draw themselves or show their source. Drawing happens in a sandboxed frame — no network, no cookies, no reach into this page — and each item keeps its own switch either way.">HTML items</label>
       <select id="cfgCvPreview" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Draw them</option><option value="off">Show the source</option></select></div>
     <div class="row"><label style="min-width:70px" title="Where a thing that can live on the canvas is drawn while the canvas is open. On the canvas: the reply keeps a line saying where it went, and a click brings it into view there. In both: it is drawn in the reply as well. Close the canvas and everything comes back inline either way — nothing is ever removed from the reply.">Draw them</label>
@@ -3151,6 +3158,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
           <span class="panel-host-title" id="chatPanelTitle">Panel</span>
           <!-- the Driven ribbon (chat wiring pass): shown when the aide opened this panel — who, the policy in force, undo, the log -->
           <span id="chatPanelRibbon" class="drv-ribbon" style="display:none" data-w="driven ribbon · controls"><i></i><b>driven</b><span class="who"></span><span class="pol"></span><button class="btn xs" onclick="CH._drvUndo()" title="Undo the directive that opened this panel">undo</button><button class="btn xs" onclick="CH._drvLog()" title="The directive log, the policy, the asks — the Driven panel">log</button></span>
+          <button class="btn xs" id="chatPanelFront" onclick="CH._panelFrontToggle()" title="On the desk: bring the panel in front of the desk's items, or send it back behind them (never over the chat)">front</button>
           <button class="btn xs" onclick="CH.panelPopOut()" title="Open in new tab">&#8599;</button>
           <button class="btn xs" onclick="CH.panelClose()"  title="Close">&#215;</button>
         </div>
@@ -6155,7 +6163,7 @@ IMPORTANT:
      canvas reads its own behaviour off itself rather than the page reaching inside it. Defaults are what the canvas
      does today: held alignment, HTML drawn, explode offered on code and prose. */
   const _CV_CFG_KEY='vera_canvas_cfg';
-  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'] };
+  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'], cfgCvPanel:['panel-layer','beside'] };
   function _cvCfg(id){ const el=document.getElementById(id); const v=el&&el.value?String(el.value):''; return v||_CV_CFG[id][1]; }
   function _cvApplyCfg(){
     const el=document.querySelector('#canvasColumnBody vera-canvas');
@@ -6164,6 +6172,7 @@ IMPORTANT:
     try{ const side=_cvCfg('cfgCvSide'); if(document.body.dataset.chatSide!==side) document.body.dataset.chatSide=side; }catch(_){}
     setTimeout(()=>{ try{ _chatRectToCanvas(); }catch(_){} }, 60);
     try{ _ctxBackSync(); }catch(_){}   // the graph follows the "behind the desk" choice, both ways
+    try{ _panelLayerSync(); }catch(_){}   // and the UI panel the "on the desk" one
     try{ _cvOneplaceSync(); }catch(_){}   // "draw them" is the page's own, not the element's: it is about the REPLY
   }
   /* THE BLOCKS TIER, FOLLOWED RATHER THAN SAMPLED ONCE. The canvas is in a shadow root, so a rule on <html> cannot
@@ -7217,6 +7226,7 @@ IMPORTANT:
     try{ _cvOneplaceSync(); }catch(_){}
     _cvResizeMount();
     try{ _ctxBackSync(); }catch(_){}
+    try{ _panelLayerSync(); }catch(_){}
     if(_pages.has('graph')) _graphColumnMount();
     try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{placement:'column', pages:_pagesOpen()}})); }catch(_){}
     try{ _uiEvent('pages',{pages:_pagesOpen()}); }catch(_){}
@@ -8500,6 +8510,25 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const rr=document.getElementById('rightRail');
     if(rr&&rr.classList.contains('lhm-grown')===behind) _ctxGrow(true); else _graphColumnMount();
   }
+  /* THE UI PANEL ON THE DESK (owner-approved desk 2026-10-06: "a UI panel layer, penultimate to last - it covers the
+     graph so the graph doesn't cover it"; "bring the ui panel to the top so it covers the desk"). With "UI panel: on the
+     desk" and a Desk canvas, the panel host moves into the canvas's `panel` slot - over the graph, under the items -
+     and its front button lifts it over the items. The host is held by reference: a canvas that goes away must never
+     take the panel with it. Moving a loaded frame reloads it, so panelOpen moves the host before the frame loads. */
+  let _panelHome=null;
+  function _deskPanelOn(){ return _cvCfg('cfgCvPanel')==='desk' && _cvCfg('cfgCvAlign')==='desk' && _pages.has('canvas') && !!document.querySelector('#canvasColumnBody vera-canvas'); }
+  function _panelLayerSync(){
+    if(!_panelHome){ const h=document.getElementById('chatPanelHost'); if(!h||!h.parentNode) return; _panelHome={ el:h, parent:h.parentNode, next:h.nextSibling }; }
+    const host=_panelHome.el, cv=document.querySelector('#canvasColumnBody vera-canvas'), on=_deskPanelOn();
+    if(on){ if(host.parentNode!==cv){ host.slot='panel'; cv.appendChild(host); } }
+    else if(host.parentNode!==_panelHome.parent){ host.removeAttribute('slot'); const nx=_panelHome.next; _panelHome.parent.insertBefore(host, nx&&nx.parentNode===_panelHome.parent?nx:null); }
+    const v=on?'1':''; if((document.body.dataset.panelDesk||'')!==v) document.body.dataset.panelDesk=v;
+    if(cv){ const pl=on&&document.body.classList.contains('has-panel');
+      if(pl!==cv.hasAttribute('panel')) cv.toggleAttribute('panel', pl);
+      if(!pl&&cv.hasAttribute('panel-front')) cv.removeAttribute('panel-front'); }
+    const fb=document.getElementById('chatPanelFront'); if(fb){ const f=!!(cv&&cv.hasAttribute('panel-front')); fb.textContent=f?'back':'front'; fb.classList.toggle('on', f); }
+  }
+  function _panelFrontToggle(){ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv||!cv.hasAttribute('panel')) return; cv.toggleAttribute('panel-front'); _panelLayerSync(); }
   function _ctxGraphHost(){ if(_ctxGrown&&_deskBehind()) return _deskBackHost(); return document.getElementById('ctxGrown') || document.getElementById('graphColumnBody'); }
   function _graphColumnTick(){ if(!_pages.has('graph')){ clearInterval(_ctxColTimer); _ctxColTimer=null; _ctxRunsDraw(); return; } const host=_ctxGraphHost(); if(!_ctxCol||!host||!host.contains(_ctxCol)){ _graphColumnMount(); return; } _ctxColumnSync(_grFocusMid||''); }
   // feed the element when the records or the focus changed (a signature, so a tick costs nothing)
@@ -18096,6 +18125,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     document.body.classList.add('has-panel');
     document.body.dataset.uiPanel=p.id;
     document.getElementById('chatPanelTitle').textContent=p.label||p.id;
+    try{ _panelLayerSync(); }catch(_){}   /* onto the desk BEFORE the frame loads: moving a loaded frame reloads it */
     const frame=document.getElementById('chatPanelFrame');
     if(frame){
       // Forward the parent's BASE / sessionId so the panel can talk to the
@@ -18208,6 +18238,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     try{ setTimeout(_panelsOpenReport,0); }catch(_){}
     document.body.classList.remove('has-panel');
     delete document.body.dataset.uiPanel;
+    try{ _panelLayerSync(); }catch(_){}   /* the desk's panel layer closes with it */
     _activePanelId=null;
     _panelExtraCaps=[];
     _panelState=null;
@@ -21611,7 +21642,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _cmpChip,_cmpSync,_paOpen,_paCopy,
     _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvTellToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
-    _persistMediaCfg,_persistCanvasCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
+    _persistMediaCfg,_persistCanvasCfg,_panelFrontToggle,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
     setBase:url=>{BASE=url;},
