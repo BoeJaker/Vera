@@ -49,3 +49,10 @@ def test_health_carries_the_files_block():
     src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "capability_orchestration.py"),
                encoding="utf-8").read()
     assert '"files":_health_files(),' in src
+
+def test_the_redis_pool_checks_idle_connections_and_health_splits_the_pool():
+    src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "capability_orchestration.py"),
+               encoding="utf-8").read()
+    assert 'REDIS_POOL_OPTS = {"health_check_interval": 30, "socket_keepalive": True}' in src
+    assert src.count("**REDIS_POOL_OPTS") >= 2                       # the host's client and a worker's reconnect
+    assert 'st["redis_in_use"]' in src and 'st["redis_idle"]' in src
