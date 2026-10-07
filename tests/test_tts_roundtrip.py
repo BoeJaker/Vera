@@ -36,3 +36,12 @@ def test_word_error_rate_reads_digits_and_words_alike():
     assert rt.wer(rt.words("one hundred and eight to three hundred"), rt.words("108 to 300")) == 0
     assert rt.wer(rt.words("the F O M C met"), rt.words("the FOMC met")) == 0
     assert rt.wer(rt.words("Arsenal won three nil"), rt.words("Arsenal 1-3-0")) > 0.5
+
+
+def test_the_corpus_ships_with_the_harness():
+    # **/*.jsonl is ignored repo-wide; the corpus is excepted, and every line parses
+    import json
+    path = os.path.join(ROOT, "tools", "tts-roundtrip", "corpus.jsonl")
+    lines = [json.loads(x) for x in open(path, encoding="utf-8") if x.strip() and not x.startswith("#")]
+    assert len(lines) >= 20 and all({"id", "text", "expect"} <= set(x) for x in lines)
+    assert "!tools/tts-roundtrip/corpus.jsonl" in open(os.path.join(ROOT, ".gitignore"), encoding="utf-8").read()

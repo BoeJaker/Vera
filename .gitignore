@@ -51,6 +51,8 @@ lib/
 **/*.log
 **/*.log.*
 **/*.jsonl
+# a test corpus, not runtime data
+!tools/tts-roundtrip/corpus.jsonl
 **/*.sqlite3
 
 /bin
