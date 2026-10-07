@@ -85,3 +85,11 @@ def test_native_loop_emits_projection_only_after_query_generation():
     assert generation < projection < native_job
     assert "projection failures must never delay or suppress" in source
     assert "_iter_evidence_tasks.add(task)" in source
+    assert "await _run_scheduled_iteration_job(job, project_obj, it, tm, it_id)" in source
+    helper = source[source.index("async def _run_scheduled_iteration_job"):
+                    source.index("async def _run_iteration_loop")]
+    assert "start_scheduled_run(" in helper
+    assert "finish_scheduled_run(" in helper
+    assert 'source="research_iteration"' in helper
+    assert "except BaseException as exc:" in helper
+    assert "raise" in helper

@@ -388,6 +388,12 @@ The loop (`_run_iteration_loop`) chooses the next query, runs a job through
 streams on `/ws/iterate/{it_id}` (`iter_start`, `iter_job`, `iter_done`).
 `research.iterate.stop` stops **and deletes** the target.
 
+Each job the native loop actually starts projects one content-free scheduled
+Run, bound to the iteration's exact schedule identity and occurrence number.
+The Run contains no seed query, generated query or result. Research continues
+to own query generation, job execution, persistence, restart behaviour and
+stopping; projection failure cannot delay or suppress an iteration.
+
 API and capability responses carry non-executing schedule evidence
 (`schedule_contract`, `schedule_policy`, `schedule_lifecycle`,
 `schedule_projection`) shared with Vera's other native schedulers. The

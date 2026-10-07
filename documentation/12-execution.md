@@ -461,6 +461,15 @@ The execution foundation separates Vera's durable `Run` identity and events from
 
 The long-term Calendar scheduler, Dream's idle scheduler and Research's continuous-iteration loop project their native fire decisions into the same `vera.workflow-trigger/v1` envelope (`workflow_trigger.py`). The envelope carries a stable trigger and idempotency key, source revision, opaque target reference, schedule kind, explicit timezone, occurrence identity and native authority declaration. It never contains an action title, goal, instructions, Dream prompt, sensor result or workflow payload, and it cannot execute work. Calendar still owns timestamp and threshold evaluation, notification and system-action dispatch; Dream still owns its idle, hour-window, cooldown, sensor and resource gates and cycle creation. Projection or event-bus failure is isolated from those decisions.
 
+After an eligible native dispatch has actually begun, `schedule_run_projection.py`
+adds content-free execution evidence without becoming a scheduler. Calendar
+system-side actions and each Research iteration job receive a Run bound to the
+exact portable schedule identity. Scheduler-fired Dream cycles bind that same
+identity to their existing cycle Run. Terminal status follows the native
+execution, and projection failure cannot change dispatch or results. Calendar
+notifications that await a user reply are deliberately excluded, as are
+process/service timers: neither is a self-contained scheduled workflow run.
+
 - **Schedule definitions** (`vera.workflow-schedule/v1`, `workflow_schedule.py`). Calendar one-shots normalise to a canonical UTC instant. Dream recurrences carry an explicit IANA timezone, a local-hours window and an elapsed-time interval anchored to the last completed run, so window checks follow daylight-saving transitions while cooldowns measure real elapsed time. Definitions are content-addressed, reject unknown fields and invalid zones, and declare `executes: false`.
 - **Misfire and catch-up** (`vera.workflow-schedule-policy/v1` and `vera.workflow-schedule-decision/v1`, `workflow_schedule_policy.py`). Calendar one-shots keep their native "fire once when next observed" behaviour after downtime. Dream coalesces any number of missed intervals into at most one eligible cycle. Research exposes the same bounded catch-up evidence while keeping its native immediate-on-restart behaviour. Each decision records the due instant, lateness, missed-occurrence count, disposition and schedule/policy/trigger identities, and declares `executes: false` and `replay_effects: false`. A closed `skip` classification exists but is not applied to existing schedules.
 - **Receipts** (`vera.workflow-trigger-receipt/v1`, `workflow_trigger_receipts.py`). A small out-of-tree SQLite ledger records each valid trigger identity atomically, classifies first observations versus duplicates, keeps bounded UTC observation times and counts, and rejects identity reuse with changed schedule or authority semantics. It does not suppress a native dispatch, schedule work, replay a trigger or claim exactly-once effects; ledger and stream failures are isolated from native execution.
@@ -486,7 +495,7 @@ Job surfaces are layered too: worker job persistence owns durable inference hist
 | `portable_telemetry.py`, `observability_comparison.py`, `telemetry_eval_core.py` | Redacted trace projections and offline evaluation of observability backends |
 | `workflow_ir.py`, `dag_workflow_execution.py`, `workflow_runtime_adapter.py`, `workflow_runtime_plan.py` | Workflow IR and its DAG/embedded boundaries |
 | `langgraph_*`, `temporal_*`, `dbos_mapping.py`, `a2a_*` | External runtime adapters and mapping contracts |
-| `workflow_schedule*.py`, `workflow_trigger*.py` | Schedule, policy, lifecycle, trigger and receipt evidence |
+| `workflow_schedule*.py`, `workflow_trigger*.py`, `schedule_run_projection.py` | Schedule, policy, lifecycle, trigger, receipt and eligible native-execution evidence |
 
 ---
 

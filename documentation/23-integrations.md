@@ -213,9 +213,14 @@ and the agentic loops (what Vera can do). It reads the user's calendar and the
 - **System-side** actions run unattended through a loop profile
   (`default_profile`, `planning`). While one runs, `vera:sched:system_busy` is
   set and the dream scheduler stands aside; a system action never spawns a dream.
+  Each execution projects a content-free Run bound to the exact portable
+  schedule identity; the Calendar scheduler still owns due evaluation,
+  persistence, loop selection and terminal state.
 - **User-side** actions send a notification over the comms channel (Telegram by
   default) and wait for the reply, which is routed back through
-  [`comms_inbox`](#62-replies-to-questions-vera-asked).
+  [`comms_inbox`](#62-replies-to-questions-vera-asked). They are not projected
+  as completed schedule Runs because the interaction remains open until a
+  separate human reply and includes a credentialed external effect.
 
 | Cap | Purpose |
 |---|---|

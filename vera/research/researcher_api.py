@@ -9321,6 +9321,43 @@ def _schedule_iteration_workflow_trigger(it: dict, tm: TraversalMap) -> None:
     task.add_done_callback(_iter_evidence_tasks.discard)
 
 
+async def _run_scheduled_iteration_job(
+    job: ResearchJob, project_obj: Optional[Project], it: dict,
+    tm: TraversalMap, it_id: str,
+) -> None:
+    """Run one native iteration occurrence with content-free Run observation."""
+    from Vera.vera.execution.schedule_run_projection import (
+        finish_scheduled_run, start_scheduled_run,
+    )
+    try:
+        from Vera.vera.execution.workflow_schedule import research_iteration_schedule
+        schedule_id = research_iteration_schedule(it)["schedule_id"]
+    except Exception:
+        schedule_id = ""
+    projection = start_scheduled_run(
+        source="research_iteration", native_id=it_id,
+        schedule_id=schedule_id, occurrence=tm.iteration_count + 1)
+    try:
+        await run_job_body(job, project_obj)
+    except asyncio.CancelledError:
+        finish_scheduled_run(projection, cancelled=True)
+        raise
+    except Exception as exc:
+        log.warning("Iteration %s: job %s failed: %s", it_id, job.id, exc)
+        job.status = JobStatus.ERROR
+        job.error = str(exc)
+        finish_scheduled_run(projection, error_type=type(exc).__name__)
+    except BaseException as exc:
+        finish_scheduled_run(projection, error_type=type(exc).__name__)
+        raise
+    else:
+        finish_scheduled_run(
+            projection,
+            cancelled=job.status == JobStatus.CANCELLED,
+            error_type=("native_research_failed"
+                        if job.status == JobStatus.ERROR else ""))
+
+
 async def _run_iteration_loop(it_id: str) -> None:
     """
     The main iteration background loop.
@@ -9456,13 +9493,8 @@ async def _run_iteration_loop(it_id: str) -> None:
         if it.get("target_type") == "project" and it.get("target_id") in projects:
             project_obj = projects[it["target_id"]]
 
-        try:
-            # Run the actual research (single/parallel/deep all work here)
-            await run_job_body(job, project_obj)
-        except Exception as e:
-            log.warning("Iteration %s: job %s failed: %s", it_id, job.id, e)
-            job.status = JobStatus.ERROR
-            job.error  = str(e)
+        # Run the actual research (single/parallel/deep all work here).
+        await _run_scheduled_iteration_job(job, project_obj, it, tm, it_id)
 
         # Persist job
         try:

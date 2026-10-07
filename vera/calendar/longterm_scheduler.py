@@ -461,7 +461,7 @@ async def resolve_schedule_reply(action_id: str, text: str) -> bool:
 # SYSTEM-side execution — run the action's goal through a specialised loop
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _run_system_action(action: Dict[str, Any], cfg: Dict[str, Any]) -> None:
+async def _run_system_action_native(action: Dict[str, Any], cfg: Dict[str, Any]) -> None:
     aid = action["id"]
     _RUNNING.add(aid)
     await _set_system_busy(aid)
@@ -504,6 +504,40 @@ async def _run_system_action(action: Dict[str, Any], cfg: Dict[str, Any]) -> Non
                       "title": fresh.get("title", ""), "summary": summary[:300]})
 
 
+async def _run_system_action(action: Dict[str, Any], cfg: Dict[str, Any], *,
+                             due_kind: str = "") -> None:
+    """Run one system-side action natively with content-free Run observation."""
+    from Vera.vera.execution.schedule_run_projection import (
+        finish_scheduled_run, start_scheduled_run,
+    )
+    try:
+        from Vera.vera.execution.workflow_schedule import calendar_action_schedule
+        due_kind = (due_kind or
+                    ("condition" if (action.get("trigger") or {}).get("cap")
+                     else "time"))
+        schedule_id = calendar_action_schedule(
+            action, due_kind=due_kind)["schedule_id"]
+    except Exception:
+        schedule_id = ""
+    projection = start_scheduled_run(
+        source="calendar_action", native_id=str(action.get("id") or ""),
+        schedule_id=schedule_id)
+    try:
+        await _run_system_action_native(action, cfg)
+    except asyncio.CancelledError:
+        finish_scheduled_run(projection, cancelled=True)
+        raise
+    except BaseException as exc:
+        finish_scheduled_run(projection, error_type=type(exc).__name__)
+        raise
+    else:
+        fresh = await _get_action(str(action.get("id") or "")) or action
+        finish_scheduled_run(
+            projection,
+            error_type=("native_action_failed"
+                        if str(fresh.get("status") or "") == "failed" else ""))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # THE TICK — evaluate all actions, fire the due ones
 # ─────────────────────────────────────────────────────────────────────────────
@@ -540,7 +574,7 @@ async def _evaluate_once() -> Dict[str, Any]:
             # Respect the concurrency cap so parallel system runs don't stampede.
             if len(_RUNNING) >= int(cfg.get("max_concurrent_system", 1)):
                 continue
-            asyncio.create_task(_run_system_action(a, cfg))
+            asyncio.create_task(_run_system_action(a, cfg, due_kind=due_kind))
             fired.append(a["id"])
         else:
             channel = a.get("comms_channel") or cfg.get("comms_channel") or "telegram"

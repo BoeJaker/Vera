@@ -462,6 +462,11 @@ after a process restart increments its receipt instead of inventing another
 identity. This currently improves audit and duplicate diagnosis; it does not
 gate cycle creation.
 
+When the scheduler—not a manual or forced caller—starts a cycle, its existing
+cycle Run also records `run.schedule.bound` with the exact portable schedule
+identity. Dream still decides whether and when to fire, and still owns the
+cycle; the binding only connects trigger evidence to the execution record.
+
 The timeline and upcoming-event projections use the same timezone-aware window
 and elapsed-recurrence evaluator as the scheduler gate. Their records include
 the IANA timezone, local time/UTC offset, canonical UTC instant and stable
