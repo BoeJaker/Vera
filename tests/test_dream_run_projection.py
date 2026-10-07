@@ -29,6 +29,7 @@ def test_cycle_and_repeated_stages_project_content_free_parent_child_runs():
     configure_dream_run(
         stages=["dream.stage.gather", "dream.stage.investigate"],
         workflow_plan={"content_hash": "sha256:workflow"},
+        schedule_id="dream-schedule-1",
     )
 
     first = start_dream_stage(
@@ -43,6 +44,7 @@ def test_cycle_and_repeated_stages_project_content_free_parent_child_runs():
     observed = registry.get(projection.parent.id)
     assert observed["run"]["status"] == "completed"
     assert observed["run"]["workflow_id"] == "dream-workflow:sha256:workflow"
+    assert observed["journal"]["ok"] is True
     assert len(observed["children"]) == 2
     assert [child["status"] for child in observed["children"]] == [
         "completed", "failed"]
@@ -50,6 +52,12 @@ def test_cycle_and_repeated_stages_project_content_free_parent_child_runs():
         "stage:1", "stage:2"]
     assert observed["run"]["events"][-1]["payload"] == {
         "early_exit": True, "observed_stages": 2}
+    schedule_events = [event for event in observed["run"]["events"]
+                       if event["type"] == "run.schedule.bound"]
+    assert schedule_events[0]["payload"] == {
+        "native_owner": "vera.dream.scheduler",
+        "schedule_id": "dream-schedule-1",
+    }
     payloads = [event["payload"] for child in observed["children"]
                 for event in child["events"]]
     assert not any("result" in payload or "state" in payload or "prompt" in payload

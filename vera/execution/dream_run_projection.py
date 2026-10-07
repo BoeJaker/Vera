@@ -43,7 +43,6 @@ class DreamRunProjection:
         )
         self.children: dict[str, Run] = {}
         self.sequence = 0
-        self._safe(self._start)
 
     @property
     def terminal(self) -> bool:
@@ -66,13 +65,23 @@ class DreamRunProjection:
         self._record(self.parent, event)
 
     def configure(self, *, stages: list[str],
-                  workflow_plan: Mapping[str, Any] | None = None) -> None:
-        self._safe(self._configure, list(stages), workflow_plan)
+                  workflow_plan: Mapping[str, Any] | None = None,
+                  schedule_id: str = "") -> None:
+        self._safe(self._configure, list(stages), workflow_plan, schedule_id)
 
-    def _configure(self, stages: list[str], workflow_plan: Mapping[str, Any] | None) -> None:
+    def _configure(self, stages: list[str], workflow_plan: Mapping[str, Any] | None,
+                   schedule_id: str) -> None:
         if self.terminal:
             return
-        self.parent.workflow_id = _workflow_identity(stages, workflow_plan)
+        workflow_id = _workflow_identity(stages, workflow_plan)
+        if self.parent.status == RunStatus.CREATED:
+            # Run identity is immutable once registered in the durable journal.
+            # Resolve the workflow before the first event rather than mutating
+            # a registered "pending" identity.
+            self.parent.workflow_id = workflow_id
+            self._start()
+        elif self.parent.workflow_id != workflow_id:
+            return
         event = self.parent.record_event(
             "run.workflow.bound",
             payload={"workflow_id": self.parent.workflow_id,
@@ -81,6 +90,14 @@ class DreamRunProjection:
             causation_id=self.parent.events[-1].id,
         )
         self._record(self.parent, event)
+        if _text(schedule_id):
+            event = self.parent.record_event(
+                "run.schedule.bound",
+                payload={"schedule_id": _text(schedule_id),
+                         "native_owner": "vera.dream.scheduler"},
+                causation_id=self.parent.events[-1].id,
+            )
+            self._record(self.parent, event)
 
     def stage_started(self, *, stage: str, index: int | None,
                       iteration: int | None) -> tuple[str, float] | None:
@@ -90,6 +107,8 @@ class DreamRunProjection:
                        iteration: int | None) -> tuple[str, float] | None:
         if self.terminal:
             return None
+        if self.parent.status == RunStatus.CREATED:
+            self._configure([], None, "")
         self.sequence += 1
         child = Run(
             id=str(uuid4()), kind="vera.dream.stage",
@@ -140,6 +159,8 @@ class DreamRunProjection:
     def _finish(self, cancelled: bool, error_type: str, early_exit: bool) -> None:
         if self.terminal:
             return
+        if self.parent.status == RunStatus.CREATED:
+            self._start()
         for child in self.children.values():
             if child.status not in TERMINAL_STATUSES:
                 event = child.transition(
@@ -178,10 +199,12 @@ def enter_dream_run_boundary(*, cycle_id: str, registry=None
 
 
 def configure_dream_run(*, stages: list[str],
-                        workflow_plan: Mapping[str, Any] | None = None) -> None:
+                        workflow_plan: Mapping[str, Any] | None = None,
+                        schedule_id: str = "") -> None:
     projection = _CURRENT.get()
     if projection:
-        projection.configure(stages=stages, workflow_plan=workflow_plan)
+        projection.configure(
+            stages=stages, workflow_plan=workflow_plan, schedule_id=schedule_id)
 
 
 def start_dream_stage(*, stage: str, index: int | None,

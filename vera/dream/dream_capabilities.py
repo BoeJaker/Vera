@@ -9615,7 +9615,15 @@ async def _run_cycle_native(
     }
     if workflow_plan:
         state["workflow_ir"] = dict(workflow_plan)
-    configure_dream_run(stages=list(pipeline_seed), workflow_plan=workflow_plan)
+    _scheduled_id = ""
+    if not force:
+        try:
+            _scheduled_id = str(_dream_schedule_contract(trig).get("schedule_id") or "")
+        except Exception:
+            _scheduled_id = ""
+    configure_dream_run(
+        stages=list(pipeline_seed), workflow_plan=workflow_plan,
+        schedule_id=_scheduled_id)
 
     # Journal id: each TRIGGER keeps a persistent journal so its "train of
     # thought" accrues across cycles (the unit of continuation). Project dreams
