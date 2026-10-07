@@ -920,6 +920,9 @@ body[data-cols~="canvas"] #canvasColumn,body[data-cols~="graph"] #graphColumn{di
 .tri-bd{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
 #canvasColumn vera-canvas{--vc-max:none;margin:0;flex:1;min-height:0}
 #graphColumn vera-context-graph{flex:1;min-height:0}
+/* the graph behind the desk: the canvas's back layer fills the desk; the element fills the layer */
+#deskBack{width:100%;height:100%;display:flex;min-height:0}
+#deskBack vera-context-graph{flex:1;min-height:0;min-width:0}
 /* the records in the focused turn's context run to the message: drawn over the columns, one collector per source */
 body.has-cols #chatColumn{position:relative}
 #ctxRunsOverlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;display:none}
@@ -2275,6 +2278,8 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       <select id="cfgCvAlign" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="held">Held in view</option><option value="strict">Strict — level with the turn</option><option value="desk">Desk — sized by distance from the chat</option></select></div>
     <div class="row"><label style="min-width:70px" title="Which side of the page the chat sits on when the canvas, the graph or a panel is open beside it. The other columns move to the other side; a Desk canvas sizes its items by their distance from the chat, wherever it is.">Chat side</label>
       <select id="cfgCvSide" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="left">Left</option><option value="right">Right</option><option value="float">Float over the desk</option></select></div>
+    <div class="row"><label style="min-width:70px" title="Where the context graph is drawn when it is open. In the grown menu: beside the chat, as before. Behind the desk: with a Desk canvas, the graph is the desk's back layer - the cards sit over it and the empty desk between them reaches it.">Graph</label>
+      <select id="cfgCvBack" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="column">In the grown menu</option><option value="behind">Behind the desk</option></select></div>
     <div class="row"><label style="min-width:70px" title="Whether an HTML item, and a code block that is a whole page, draw themselves or show their source. Drawing happens in a sandboxed frame — no network, no cookies, no reach into this page — and each item keeps its own switch either way.">HTML items</label>
       <select id="cfgCvPreview" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Draw them</option><option value="off">Show the source</option></select></div>
     <div class="row"><label style="min-width:70px" title="Where a thing that can live on the canvas is drawn while the canvas is open. On the canvas: the reply keeps a line saying where it went, and a click brings it into view there. In both: it is drawn in the reply as well. Close the canvas and everything comes back inline either way — nothing is ever removed from the reply.">Draw them</label>
@@ -6150,7 +6155,7 @@ IMPORTANT:
      canvas reads its own behaviour off itself rather than the page reaching inside it. Defaults are what the canvas
      does today: held alignment, HTML drawn, explode offered on code and prose. */
   const _CV_CFG_KEY='vera_canvas_cfg';
-  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'] };
+  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'] };
   function _cvCfg(id){ const el=document.getElementById(id); const v=el&&el.value?String(el.value):''; return v||_CV_CFG[id][1]; }
   function _cvApplyCfg(){
     const el=document.querySelector('#canvasColumnBody vera-canvas');
@@ -6158,6 +6163,7 @@ IMPORTANT:
     // which side of the page the chat sits on (the desk, owner-approved 2026-10-06): the columns swap round it
     try{ const side=_cvCfg('cfgCvSide'); if(document.body.dataset.chatSide!==side) document.body.dataset.chatSide=side; }catch(_){}
     setTimeout(()=>{ try{ _chatRectToCanvas(); }catch(_){} }, 60);
+    try{ _ctxBackSync(); }catch(_){}   // the graph follows the "behind the desk" choice, both ways
     try{ _cvOneplaceSync(); }catch(_){}   // "draw them" is the page's own, not the element's: it is about the REPLY
   }
   /* THE BLOCKS TIER, FOLLOWED RATHER THAN SAMPLED ONCE. The canvas is in a shadow root, so a rule on <html> cannot
@@ -7176,12 +7182,16 @@ IMPORTANT:
   function _ctxGrow(on){
     if(_EMBED.only==='chat'&&_EMBED.harness&&!_ctxGrown){ on=(on==null)?!_ctxRemote.on:!!on; _lhmPost('grow-set',{ on:on }); return _ctxRemote.on; }   // the harness: the LHM slot holds the one large graph — never a second one here
     if(_EMBED.only==='menu'){ on=(on==null)?!_ctxGrown:!!on; try{ window.parent.postMessage({ type:'vera:lhm:grow', on:on, width:on?706:318 }, '*'); }catch(_){} _lhmPost('grown',{ on:on }); }   // the menu instance grows IN PLACE: the harness widens the slot, the chat instance draws the seam runs
-    on=(on==null)?!_ctxGrown:!!on; if(on===_ctxGrown && document.getElementById('rightRail').classList.contains('lhm-grown')===on) return _ctxGrown;
+    on=(on==null)?!_ctxGrown:!!on;
+    /* behind the desk the graph is open but the menu does not grow: the graph is drawn in the canvas's back layer */
+    const vis=on&&!_deskBehind();
+    if(on===_ctxGrown && document.getElementById('rightRail').classList.contains('lhm-grown')===vis) return _ctxGrown;
     _ctxGrown=on; const host=document.getElementById('rightRail');
-    if(host) host.classList.toggle('lhm-grown', on); document.body.classList.toggle('ctx-grown', on);
-    try{ const det=host&&host.querySelector(':scope > .lhm-det'); if(det){ const kept=parseInt(localStorage.getItem('vera_ctx_grown_w')||'0',10); if(on&&kept>=420){ det.style.width=kept+'px'; det.style.flex='0 0 '+kept+'px'; } else if(!on){ det.style.width=''; det.style.flex=''; } } }catch(_){}   // the grown width you set, kept
+    if(host) host.classList.toggle('lhm-grown', vis); document.body.classList.toggle('ctx-grown', vis);
+    try{ const det=host&&host.querySelector(':scope > .lhm-det'); if(det){ const kept=parseInt(localStorage.getItem('vera_ctx_grown_w')||'0',10); if(vis&&kept>=420){ det.style.width=kept+'px'; det.style.flex='0 0 '+kept+'px'; } else if(!vis){ det.style.width=''; det.style.flex=''; } } }catch(_){}   // the grown width you set, kept
     try{ const gb=document.getElementById('colGraphBtn'); if(gb) gb.classList.toggle('col-on', on); }catch(_){}
-    if(on){ _pages.add('graph'); try{ if(window.VeraLHM){ VeraLHM.deep(false); VeraLHM.pick('context'); if(host&&host.classList.contains('slim')) toggleRight(); } }catch(_){} }
+    try{ document.body.dataset.graphBehind=(on&&!vis)?'1':''; }catch(_){}
+    if(on){ _pages.add('graph'); if(vis){ try{ if(window.VeraLHM){ VeraLHM.deep(false); VeraLHM.pick('context'); if(host&&host.classList.contains('slim')) toggleRight(); } }catch(_){} } }
     else { _pages.delete('graph'); _ctxRunsDraw(); }
     try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
     if(on) _graphColumnMount();
@@ -7198,6 +7208,7 @@ IMPORTANT:
     // opened or closed, the reply follows: one place while the column is open, everything inline once it is not
     try{ _cvOneplaceSync(); }catch(_){}
     _cvResizeMount();
+    try{ _ctxBackSync(); }catch(_){}
     if(_pages.has('graph')) _graphColumnMount();
     try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{placement:'column', pages:_pagesOpen()}})); }catch(_){}
     try{ _uiEvent('pages',{pages:_pagesOpen()}); }catch(_){}
@@ -8424,6 +8435,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const host=_ctxGraphHost(); if(!host) return;
     if(!_ctxCol||!host.contains(_ctxCol)){
       if(!(window.customElements&&window.customElements.get('vera-context-graph'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The context graph is loading…</div>'; if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800); return; }
+      if(_ctxCol&&_ctxCol.parentNode) _ctxCol.remove();   /* moved between the grown menu and the desk's back: one graph, never two */
       host.innerHTML=''; _ctxCol=document.createElement('vera-context-graph'); host.appendChild(_ctxCol);
       _ctxColSig=''; _ctxColMemSig=''; _ctxColDagSig=''; _ctxColFrameSig='';   // a fresh element knows nothing yet: every sync feeds it again (the graph was empty after Explode closed)
       // a fresh column shows this session's run again (replayed from its persisted events) and refreshes the runs list
@@ -8465,7 +8477,22 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800);
     _graphAnchorPost(true);
   }
-  function _ctxGraphHost(){ return document.getElementById('ctxGrown') || document.getElementById('graphColumnBody'); }
+  /* THE GRAPH BEHIND THE DESK (WS-U, owner-approved desk 2026-10-06: "the graph at the back, visible in exploded mode").
+     With the canvas on the Desk alignment and "Graph: behind the desk" chosen, the grown graph is drawn in the canvas's
+     back layer (its `back` slot) instead of the grown menu: the cards sit over it and the empty desk between them
+     reaches the graph. Everything else about the graph — its feed, its frames, its picks — is the same element. */
+  function _deskBehind(){ return _cvCfg('cfgCvBack')==='behind' && _cvCfg('cfgCvAlign')==='desk' && _pages.has('canvas') && !!document.querySelector('#canvasColumnBody vera-canvas'); }
+  function _deskBackHost(){ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv) return null;
+    let b=cv.querySelector(':scope > #deskBack'); if(!b){ b=document.createElement('div'); b.id='deskBack'; b.slot='back'; cv.appendChild(b); } return b; }
+  function _ctxBackSync(){
+    const behind=!!(_ctxGrown&&_deskBehind());
+    if((document.body.dataset.graphBehind==='1')!==behind) document.body.dataset.graphBehind=behind?'1':'';
+    if(!behind){ const b=document.getElementById('deskBack'); if(b&&!(_ctxCol&&b.contains(_ctxCol))) b.remove(); }
+    if(!_ctxGrown) return;
+    const rr=document.getElementById('rightRail');
+    if(rr&&rr.classList.contains('lhm-grown')===behind) _ctxGrow(true); else _graphColumnMount();
+  }
+  function _ctxGraphHost(){ if(_ctxGrown&&_deskBehind()) return _deskBackHost(); return document.getElementById('ctxGrown') || document.getElementById('graphColumnBody'); }
   function _graphColumnTick(){ if(!_pages.has('graph')){ clearInterval(_ctxColTimer); _ctxColTimer=null; _ctxRunsDraw(); return; } const host=_ctxGraphHost(); if(!_ctxCol||!host||!host.contains(_ctxCol)){ _graphColumnMount(); return; } _ctxColumnSync(_grFocusMid||''); }
   // feed the element when the records or the focus changed (a signature, so a tick costs nothing)
   function _ctxColumnSync(mid){
@@ -8771,7 +8798,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     }
     if(Date.now()-_ctxTypingT<900){ _ctxRunsStand(svg); if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
     const col=document.getElementById('chatColumn'), gcol=_ctxGrown?document.querySelector('#rightRail.lhm-host > .lhm-det'):document.getElementById('graphColumn');
-    if(!_pages.has('graph')||!_ctxCol||!col||!gcol||!_runsGraphVisible()){ _ctxRunsStand(svg); return; }
+    if(!_pages.has('graph')||!_ctxCol||!col||!gcol||!_runsGraphVisible()||document.body.dataset.graphBehind==='1'){ _ctxRunsStand(svg); return; }
     if(!_ctxCol._ctxRunsHoverBound){ _ctxCol._ctxRunsHoverBound=true; _ctxCol.addEventListener('mouseover', ev=>{ const n=ev.target&&ev.target.closest&&ev.target.closest('.cg-node[data-id],.cg-mem[data-id]'); _ctxRunsHover(n?n.dataset.id:''); }); _ctxCol.addEventListener('mouseleave', ()=>_ctxRunsHover('')); }
     // the types in this turn's context decide the channel's width; the channel is set first, everything measured after
     const gc0=gcol.getBoundingClientRect();
