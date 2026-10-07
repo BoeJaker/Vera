@@ -1210,6 +1210,25 @@
   :host([align="desk"]) .stage .it.desk-chip .it-hd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-wrap:nowrap}
   :host([align="desk"]) .stage .it.desk-chip .it-hd *{white-space:nowrap}
   @media (prefers-reduced-motion: reduce){:host([align="desk"]) .stage .it{transition:none}}
+  /* THE BACK LAYER (the desk's graph, owner-approved 2026-10-06): whatever the page puts in the "back" slot is drawn
+     under the cards, dimmed until the pointer is on it. The desk's own ground goes so the layer shows through, and
+     the empty desk lets the pointer reach the layer; the cards and the head still take it. */
+  .back{display:none}
+  :host([align="desk"][back="behind"]) .wrap{position:relative}
+  :host([align="desk"][back="behind"]) .back{display:block;position:absolute;inset:0;z-index:0;opacity:.38;transition:opacity .25s}
+  /* a card over the layer keeps a ground in every blocks tier, or its text runs into the graph's */
+  :host([align="desk"][back="behind"]) .stage .it{background:color-mix(in srgb, var(--bg1,#15181d) 90%, transparent)!important;border-radius:8px}
+  :host([align="desk"][back="behind"]) .back:hover{opacity:.9}
+  :host([align="desk"][back="behind"]) .head,
+  :host([align="desk"][back="behind"]) .body{position:relative;z-index:1}
+  :host([align="desk"][back="behind"]) .body,
+  :host([align="desk"][back="behind"]) .body .stage,
+  :host([align="desk"][back="behind"]) .body .band{background:transparent;pointer-events:none}
+  :host([align="desk"][back="behind"]) .body .it,
+  :host([align="desk"][back="behind"]) .body .band-h > *,
+  :host([align="desk"][back="behind"]) .body .chips > *,
+  :host([align="desk"][back="behind"]) .body .addbar,
+  :host([align="desk"][back="behind"]) .body :is(button,a,input,select,textarea){pointer-events:auto}
   .stage .it.capped{overflow:hidden}
   .stage .it.capped .it-bd{max-height:none;overflow:auto}
   /* folded because the COLUMN ran out of room, not because the tier folds it: the header line alone, and it opens
@@ -2205,6 +2224,7 @@
       this.shadowRoot.innerHTML = `<style>${CSS}</style>
         <div class="shell"><aside class="rail" id="rail" data-w="canvas.rail" hidden></aside>
         <div class="wrap">
+          <div class="back" part="back"><slot name="back"></slot></div>
           <div class="head">
             <span class="live" title="live — it follows the document"></span>
             <span class="title" id="title">Canvas</span>
