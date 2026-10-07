@@ -66,6 +66,16 @@ t('an item in the chat’s path moves to the nearest side and takes the size it 
   assert.strictEqual(D.pushOut(FLOAT, 1300, 450, (x, y) => D.sizeAt(FLOAT, x, y)).pushed, false);
 });
 
+t('overlapping items are separated - the first keeps its place, none lands in the chat or off the desk', () => {
+  const R = { l: 600, t: 200, r: 1000, b: 700 };
+  const items = [{ id: 'a', x: 300, y: 300, w: 260, h: 160 }, { id: 'b', x: 320, y: 320, w: 260, h: 160 }, { id: 'c', x: 340, y: 340, w: 200, h: 100 }];
+  D.separate(items, R, null, { W: 1600, H: 900 });
+  assert.deepStrictEqual([items[0].x, items[0].y], [300, 300]);
+  const ov = (p, q) => p.x - p.w / 2 < q.x + q.w / 2 && q.x - q.w / 2 < p.x + p.w / 2 && p.y - p.h / 2 < q.y + q.h / 2 && q.y - q.h / 2 < p.y + p.h / 2;
+  assert.ok(!ov(items[0], items[1]) && !ov(items[0], items[2]) && !ov(items[1], items[2]));
+  items.forEach((it) => assert.ok(!(it.x + it.w / 2 > R.l && it.x - it.w / 2 < R.r && it.y + it.h / 2 > R.t && it.y - it.h / 2 < R.b)));
+});
+
 t('closer to the chat stacks higher; dragged and fullscreen on top', () => {
   assert.ok(D.stackOrder(0.1) > D.stackOrder(0.8));
   assert.strictEqual(D.stackOrder(0.5, { dragging: true }), 200);

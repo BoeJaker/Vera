@@ -880,6 +880,19 @@ body.has-panel #chatPanelHost{
 body.has-cols #chatColumn{flex-direction:row;gap:0}
 /* the chat on the right (Chat side, the desk): it moves to the end of the row, the columns keep their order before it */
 body[data-chat-side="right"] #chatStack{order:99}
+/* THE CHAT ON THE DESK (WS-U, owner approved 2026-10-06): a grip at its top drags it - to an edge to dock it, anywhere
+   else to float it over the canvas, which then takes the whole width behind it */
+#chatGrip{display:none}
+body.has-cols #chatGrip{display:flex;position:absolute;top:0;left:50%;transform:translateX(-50%);width:72px;height:14px;z-index:30;cursor:grab;align-items:center;justify-content:center}
+#chatGrip span{width:38px;height:4px;border-radius:2px;background:var(--border2,#4a4540)}
+body.has-cols #chatGrip:hover span,body.chat-dragging #chatGrip span{background:var(--acc,#5a9e8f)}
+body.chat-dragging,body.chat-dragging *{cursor:grabbing!important;user-select:none}
+body[data-chat-side="float"].has-cols #chatColumn{position:relative}
+body[data-chat-side="float"].has-cols #chatStack{position:absolute;z-index:40;left:var(--chat-x,40%);top:var(--chat-y,6%);width:min(460px,46%);height:86%;flex:none!important;min-width:0!important;background:var(--bg0);border:1px solid var(--border2,#4a4540);border-radius:12px;box-shadow:0 30px 70px rgba(0,0,0,.55);overflow:hidden;transition:left .2s ease,top .2s ease}
+body.chat-dragging[data-chat-side="float"] #chatStack{transition:none}
+#chatDockHint{display:none;position:absolute;top:0;bottom:0;width:6px;background:var(--acc,#5a9e8f);opacity:.7;z-index:39;pointer-events:none}
+body.chat-dragging[data-dock-hint="left"] #chatDockHint{display:block;left:0}
+body.chat-dragging[data-dock-hint="right"] #chatDockHint{display:block;right:0}
 body.has-cols #chatStack{flex:1 1 0;min-width:360px}
 /* the measure is the column's: never wider than the space the chat has (the columns, the grown graph, the harness frame) */
 #chatColumn{--measure:min(736px, calc(100% - 32px))}
@@ -2261,7 +2274,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="row"><label style="min-width:70px" title="Held: an item is kept inside the canvas column, level with its turn while there is room — it never scrolls away with the turn, and a tall item can always be reached. Strict: the column is the transcript's own frame, so an item is always exactly level with its turn and moves with it, off the bottom included.">Alignment</label>
       <select id="cfgCvAlign" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="held">Held in view</option><option value="strict">Strict — level with the turn</option><option value="desk">Desk — sized by distance from the chat</option></select></div>
     <div class="row"><label style="min-width:70px" title="Which side of the page the chat sits on when the canvas, the graph or a panel is open beside it. The other columns move to the other side; a Desk canvas sizes its items by their distance from the chat, wherever it is.">Chat side</label>
-      <select id="cfgCvSide" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="left">Left</option><option value="right">Right</option></select></div>
+      <select id="cfgCvSide" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="left">Left</option><option value="right">Right</option><option value="float">Float over the desk</option></select></div>
     <div class="row"><label style="min-width:70px" title="Whether an HTML item, and a code block that is a whole page, draw themselves or show their source. Drawing happens in a sandboxed frame — no network, no cookies, no reach into this page — and each item keeps its own switch either way.">HTML items</label>
       <select id="cfgCvPreview" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Draw them</option><option value="off">Show the source</option></select></div>
     <div class="row"><label style="min-width:70px" title="Where a thing that can live on the canvas is drawn while the canvas is open. On the canvas: the reply keeps a line saying where it went, and a click brings it into view there. In both: it is drawn in the reply as well. Close the canvas and everything comes back inline either way — nothing is ever removed from the reply.">Draw them</label>
@@ -2953,7 +2966,10 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
        msgs + ctxStrip + inputBar render in their normal vertical order
        and only span 50% of the centre area. -->
   <div id="chatColumn">
+    <div id="chatDockHint" aria-hidden="true"></div>
     <div id="chatStack">
+      <!-- the chat on the desk: drag it by this grip - to the left or right edge to dock it there, anywhere else to float it -->
+      <div id="chatGrip" title="Drag the chat: to the left or right edge to dock it, anywhere else to float it over the desk"><span></span></div>
       <!-- the turns of this conversation as a column of dots, top left, opening to each turn's first words -->
       <div id="turnRail" aria-label="turns in this conversation" hidden></div>
       <div id="xplHost"></div>
@@ -6141,6 +6157,7 @@ IMPORTANT:
     if(el) Object.keys(_CV_CFG).forEach(id=>{ const a=_CV_CFG[id][0]; if(!a) return; const v=_cvCfg(id); if(el.getAttribute(a)!==v) el.setAttribute(a,v); });
     // which side of the page the chat sits on (the desk, owner-approved 2026-10-06): the columns swap round it
     try{ const side=_cvCfg('cfgCvSide'); if(document.body.dataset.chatSide!==side) document.body.dataset.chatSide=side; }catch(_){}
+    setTimeout(()=>{ try{ _chatRectToCanvas(); }catch(_){} }, 60);
     try{ _cvOneplaceSync(); }catch(_){}   // "draw them" is the page's own, not the element's: it is about the REPLY
   }
   /* THE BLOCKS TIER, FOLLOWED RATHER THAN SAMPLED ONCE. The canvas is in a shadow root, so a rule on <html> cannot
@@ -6168,6 +6185,56 @@ IMPORTANT:
     try{ document.body.dataset.chatSide=_cvCfg('cfgCvSide'); }catch(_){}
   }
   _restoreCanvasCfg();
+
+  /* ── THE CHAT ON THE DESK: dragged by its grip (WS-U U-D3, owner approved the desk 2026-10-06) ──────────────────────
+     Pulled 80px away from its edge, a docked chat floats; dropped within 60px of the left or right edge, it docks there;
+     anywhere else it floats where it was let go. Its place is kept (percent of the chat column) and the canvas is told
+     where it is (chat-rect, in the stage's own pixels) so a Desk canvas sizes and arranges its items round it. */
+  const _CHAT_POS_KEY='vera_chat_float';
+  function _chatPos(){ try{ const p=JSON.parse(localStorage.getItem(_CHAT_POS_KEY)||'null'); return p&&typeof p.x==='number'?p:{x:40,y:6}; }catch(_){ return {x:40,y:6}; } }
+  function _chatApplyPos(p){ const col=document.getElementById('chatColumn'); if(!col) return; col.style.setProperty('--chat-x',p.x+'%'); col.style.setProperty('--chat-y',p.y+'%'); }
+  function _chatRectToCanvas(){
+    const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv) return;
+    if(document.body.dataset.chatSide!=='float'){ if(cv.hasAttribute('chat-rect')) cv.removeAttribute('chat-rect'); return; }
+    const st=cv.shadowRoot&&cv.shadowRoot.getElementById('stage'), cs=document.getElementById('chatStack'); if(!st||!cs) return;
+    const a=st.getBoundingClientRect(), b=cs.getBoundingClientRect(), k=st.offsetWidth?(a.width/st.offsetWidth):1;
+    const v=[(b.left-a.left)/k,(b.top-a.top)/k,b.width/k,b.height/k].map(n=>Math.round(n)).join(',');
+    if(cv.getAttribute('chat-rect')!==v) cv.setAttribute('chat-rect',v);
+  }
+  function _chatSetSide(side){ const sel=document.getElementById('cfgCvSide'); if(sel) sel.value=side; _persistCanvasCfg(); }
+  window.addEventListener('resize',()=>{ try{ _chatRectToCanvas(); }catch(_){} });
+  (function(){
+    const grip=document.getElementById('chatGrip'); if(!grip) return; let d=null;
+    _chatApplyPos(_chatPos());
+    grip.addEventListener('pointerdown',(e)=>{
+      const col=document.getElementById('chatColumn'), cs=document.getElementById('chatStack'); if(!col||!cs) return;
+      const c=col.getBoundingClientRect(), s=cs.getBoundingClientRect();
+      d={ c, ox:e.clientX-s.left, oy:e.clientY-s.top, w:s.width, sx:e.clientX, p:null, hint:'', raf:0 };
+      try{ grip.setPointerCapture(e.pointerId); }catch(_){}
+      document.body.classList.add('chat-dragging'); e.preventDefault();
+    });
+    grip.addEventListener('pointermove',(e)=>{
+      if(!d) return;
+      if((document.body.dataset.chatSide||'left')!=='float'){
+        if(Math.abs(e.clientX-d.sx)<80) return;                 // a docked chat floats once pulled away from its edge
+        document.body.dataset.chatSide='float';
+        d.w=Math.min(460,d.c.width*0.46); d.ox=Math.min(d.ox,d.w/2);
+      }
+      const x=Math.max(0,Math.min(d.c.width-d.w,e.clientX-d.c.left-d.ox)), y=Math.max(0,Math.min(d.c.height*0.14,e.clientY-d.c.top-d.oy));
+      d.p={ x:+(x/d.c.width*100).toFixed(2), y:+(y/d.c.height*100).toFixed(2) }; _chatApplyPos(d.p);
+      d.hint=(e.clientX-d.c.left<60)?'left':((d.c.right-e.clientX<60)?'right':'');
+      if(d.hint) document.body.dataset.dockHint=d.hint; else delete document.body.dataset.dockHint;
+      if(!d.raf) d.raf=requestAnimationFrame(()=>{ if(d) d.raf=0; try{ _chatRectToCanvas(); }catch(_){} });
+    });
+    const end=()=>{
+      if(!d) return;
+      document.body.classList.remove('chat-dragging'); delete document.body.dataset.dockHint;
+      const side=d.hint||document.body.dataset.chatSide||'left';
+      if(d.p){ try{ localStorage.setItem(_CHAT_POS_KEY,JSON.stringify(d.p)); }catch(_){} }
+      d=null; _chatSetSide(side);
+    };
+    grip.addEventListener('pointerup',end); grip.addEventListener('pointercancel',end);
+  })();
 
   /* ── Rolling thinking phrases ─────────────────────────────────────── */
   const _THINK_DEFAULTS=[
