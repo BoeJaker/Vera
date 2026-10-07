@@ -74,7 +74,7 @@
     return { face: face, w: w, h: h, t: t, nd: nd, why: why };
   }
 
-  function edgeSlots(R, d) {
+  function edgeSlots(R, d, need) {
     // spaced by a chip's own size, so chips at the border never sit on each other
     var s = [], i, cw = SIZE.chip.w + 10, ch = SIZE.chip.h + 6;
     var nRow = Math.max(1, Math.floor((d.W * 0.8) / cw)), nCol = Math.max(1, Math.floor((d.H - d.edgeTop - 60) / ch));
@@ -87,7 +87,17 @@
     /* a border slot is one where an item really is a chip - far from the chat - or a docked chat's bottom row puts
        full-size items under its elbow (the canvas column, 2026-10-06: 12 of 20 came out full size) */
     var far = clear.filter(function (p) { return distance(R, p[0], p[1], d) >= 0.78; });
-    return far.length >= 4 ? far : clear;
+    /* not enough far slots for the chips (a floating chat leaves little "far"): further columns inward at both sides */
+    for (var col = 1; far.length < (need || 0) && col < 6; col++) {
+      for (i = 0; i < nCol; i++) {
+        var yy = d.edgeTop + 10 + i * ch, inset = col * (SIZE.chip.w + 10);
+        [[d.edgeX + SIZE.chip.w / 2 - 10 + inset, yy], [d.W - SIZE.chip.w / 2 - 8 - inset, yy]].forEach(function (q) {
+          var dx = Math.max(R.l - q[0], 0, q[0] - R.r), dy = Math.max(R.t - q[1], 0, q[1] - R.b);
+          if (Math.sqrt(dx * dx + dy * dy) > 140 && distance(R, q[0], q[1], d) >= 0.78) far.push(q);
+        });
+      }
+    }
+    return far.length >= Math.min(4, need || 4) ? far : clear;
   }
 
   function arrange(mode, R, items, d) {
@@ -167,7 +177,7 @@
         else chips.push(it);
       });
     }
-    var slots = edgeSlots(R, d);
+    var slots = edgeSlots(R, d, chips.length);
     chips.forEach(function (it, i) { if (slots.length) pos[it.id] = slots[i % slots.length]; });
     return pos;
   }
@@ -188,6 +198,37 @@
       s = sizeFn(x, y);
     }
     return { x: x, y: y, size: s, pushed: pushed };
+  }
+
+  /* items = [{id, x, y, w, h, fixed?}] in priority order (the first keep their places). A later item overlapping an
+     earlier one moves the shorter way out of it - away from the chat when that is no longer - and is re-sized where it
+     lands (sizeFn(x, y, item) -> {w, h}); it never moves into the chat or off the desk. A few passes, as the
+     floating chat's ring and its path pushed items onto each other (the canvas, 2026-10-07). Returns the items. */
+  function separate(items, R, sizeFn, d) {
+    d = desk(d);
+    var gap = 8;
+    function over(a, b) { return a.x - a.w / 2 < b.x + b.w / 2 + gap && b.x - b.w / 2 < a.x + a.w / 2 + gap && a.y - a.h / 2 < b.y + b.h / 2 + gap && b.y - b.h / 2 < a.y + a.h / 2 + gap; }
+    function inChat(it) { return it.x + it.w / 2 > R.l - gap && it.x - it.w / 2 < R.r + gap && it.y + it.h / 2 > R.t - gap && it.y - it.h / 2 < R.b + gap; }
+    function fits(it) { return it.x - it.w / 2 >= 0 && it.x + it.w / 2 <= d.W && it.y - it.h / 2 >= 0 && it.y + it.h / 2 <= d.H; }
+    function at(b, x, y) { var t = { x: x, y: y, w: b.w, h: b.h }, s = sizeFn ? sizeFn(x, y, b) : null; if (s) { t.w = s.w; t.h = s.h; } return t; }
+    var placed = [];
+    items.forEach(function (b) {
+      var clear = function (t) { return fits(t) && !inChat(t) && !placed.some(function (a) { return over(a, t); }); };
+      if (b.fixed || clear(b)) { placed.push(b); return; }
+      /* the nearest clear spot, searched in widening rings round where it was put (re-sized at each, as its size
+         depends on where it lands); none clear within reach: it stays, the least overlapped it can be */
+      var best = null;
+      for (var rad = 24; rad <= Math.max(d.W, d.H) && !best; rad += 24) {
+        var n = Math.max(8, Math.round(rad / 12));
+        for (var k = 0; k < n; k++) {
+          var ang = (k / n) * 2 * Math.PI, t = at(b, b.x + rad * Math.cos(ang), b.y + rad * Math.sin(ang));
+          if (clear(t)) { best = t; break; }
+        }
+      }
+      if (best) { b.x = best.x; b.y = best.y; b.w = best.w; b.h = best.h; }
+      placed.push(b);
+    });
+    return items;
   }
 
   function stackOrder(nd, o) {
@@ -267,7 +308,7 @@
   }
 
   var api = { DESK: DESK, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
-              arrange: arrange, pushOut: pushOut, stackOrder: stackOrder, fullRegion: fullRegion, makeRoom: makeRoom };
+              arrange: arrange, pushOut: pushOut, separate: separate, stackOrder: stackOrder, fullRegion: fullRegion, makeRoom: makeRoom };
   root.VeraDesk = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -2187,7 +2187,7 @@
          preview="on|off"           whether an HTML item, and a code block that is a whole page, DRAW by default or
                                     show their source. Either way the drawing is a sandboxed frame.
          explode-offer="both|code|never"  whether the canvas offers to explode a code item, a prose item, or neither. */
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect']; }
 
     constructor() {
       super();
@@ -2245,6 +2245,10 @@
       if ((name === 'preview' || name === 'explode-offer' || name === 'fuse') && this._doc) this.render(this._doc);
       if (name === 'align' && this.hasAttribute('stage')) { this._view = null; this._placeNow(); }
       if (name === 'chat-side' && this.deskAlign() && this.hasAttribute('stage')) this._placeNow();
+      // a floating chat moved: place again on the next frame (a drag sends many)
+      if (name === 'chat-rect' && this.deskAlign() && this.hasAttribute('stage') && !this._chatRaf) {
+        this._chatRaf = requestAnimationFrame(() => { this._chatRaf = 0; this._placeNow(); });
+      }
     }
     /* held (the default) or strict: the one place the two regimes are named, so nothing else has to ask twice */
     strictAlign() { return String(this.getAttribute('align') || 'held').toLowerCase() === 'strict'; }
@@ -2328,8 +2332,12 @@
       const f = Math.max(0.8, Math.min(1.6, W / 1000));          // a wide column gets proportionally larger faces
       const desk = { W: W, H: H, m: 8, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22, scale: f };
       // the chat beside the column: on its left edge (the default), or on its right when the page puts the chat there
-      const R = String(this.getAttribute('chat-side') || 'left').toLowerCase() === 'right'
-        ? { l: W, t: 0, r: W + 440, b: H } : { l: -440, t: 0, r: 0, b: H };
+      const side = String(this.getAttribute('chat-side') || 'left').toLowerCase();
+      const cr = String(this.getAttribute('chat-rect') || '').split(',').map(Number);
+      // floating: the chat is over the stage, where the page says (chat-rect, stage pixels); else beside the column
+      const R = side === 'float' && cr.length === 4 && cr.every((n) => isFinite(n)) && cr[2] > 0
+        ? { l: cr[0], t: cr[1], r: cr[0] + cr[2], b: cr[1] + cr[3] }
+        : side === 'right' ? { l: W, t: 0, r: W + 440, b: H } : { l: -440, t: 0, r: 0, b: H };
       const fm = this._focusMid || '';
       const ranked = cards.map((c, i) => ({ c, i })).sort((a, b) => {
         const fa = fm && a.c.dataset.mid === fm ? 1 : 0, fb = fm && b.c.dataset.mid === fm ? 1 : 0;
@@ -2339,14 +2347,21 @@
         return b.i - a.i;
       });
       const pos = D.arrange('orbit', R, ranked.map((x) => ({ id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '' })), desk);
-      const out = [];
-      ranked.forEach((x) => {
+      // one: where each card goes and its size there (out of the chat's path); two: separate any that overlap; three: write
+      const plan = ranked.map((x) => {
         const c = x.c, key = c.dataset.key || String(x.i), p = pos[key] || [W - 90, H - 30];
         const pw = (this._rz && this._rz.el === c ? this._rz.w : 0) || parseInt(c.dataset.pw || '0', 10) || 0;
         const user = pw > 0 ? { w: pw, h: c.classList.contains('sized') ? c.offsetHeight : Math.round(pw * 0.66) } : null;
-        const s = D.sizeAt(R, p[0], p[1], { size: user, pinned: !!user && c.classList.contains('pinned') }, desk);
+        const so = { size: user, pinned: !!user && c.classList.contains('pinned') };
+        const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
+        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h) };
+      });
+      D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h) }; }, { W: W, H: H });
+      const out = [];
+      plan.forEach((it) => {
+        const c = it.c, key = it.id, s = D.sizeAt(R, it.x, it.y, it.so, desk);
         const w = Math.min(W - 16, s.w), h = Math.min(H - 8, s.h);
-        const left = Math.max(0, Math.min(W - w, Math.round(p[0] - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(p[1] - h / 2)));
+        const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
         c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
         c.classList.toggle('desk-chip', s.face === 'chip');
         c.dataset.deskFace = s.face;
