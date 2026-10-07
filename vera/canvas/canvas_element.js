@@ -759,8 +759,12 @@
     panel: (c, size, key, el) => {
       const id = String(c.panel || c.id || '').trim(); const src = c.src || (id ? '/ui/panels/' + encodeURIComponent(id) : '');
       const q = el && el._pq && el._pq[key];
+      /* behind / front live in the panel's own head, always drawn: in the item's footer rail they were hidden until hover
+         and, on a panel sent behind, under the other items (owner, 2026-10-07: "i dont see the behind or front buttons") */
+      const lay = el && el.getAttribute && el.getAttribute('align') === 'desk' ? ((el._layer || {})[String(key)] || '') : null;
+      const layBtns = lay === null ? '' : `<button class="ib${lay === 'behind' ? ' on' : ''}" data-act="layer-behind" title="Behind the desk: the panel fills the free part of the desk, under the other items - press again to put it back among them">behind</button><button class="ib${lay === 'front' ? ' on' : ''}" data-act="layer-front" title="In front: the panel fills the free part of the desk, over the other items (never over the chat) - press again to put it back among them">front</button>`;
       return `<div class="vc-panel" data-w="canvas.panel"><div class="vc-th"><i class="dot on"></i><b>${esc(c.title || c.label || id || 'panel')}</b><span class="mono">${esc(id)} · over the bridge</span><span class="sp"></span>`
-        + `<button class="ib" data-act="pquery" title="panel.query — what the panel holds">query</button><button class="ib" data-act="pdispatch" title="panel.dispatch — drive it">dispatch</button><button class="ib" data-act="prefresh" title="Reload the panel">refresh</button><button class="ib" data-act="pstand" title="Open it standalone">standalone ↗</button></div>`
+        + layBtns + `<button class="ib" data-act="pquery" title="panel.query — what the panel holds">query</button><button class="ib" data-act="pdispatch" title="panel.dispatch — drive it">dispatch</button><button class="ib" data-act="prefresh" title="Reload the panel">refresh</button><button class="ib" data-act="pstand" title="Open it standalone">standalone ↗</button></div>`
         + (src ? `<div class="vc-live vc-frame" data-live="frame" data-key="${esc(key)}" data-src="${esc(src)}"></div>` : '<div class="vc-dim">no panel id</div>')
         + `<div class="vc-bridge"${el && el._pdOpen && el._pdOpen[key] ? '' : ' hidden'} data-w="canvas.panel.bridge"><div class="row"><input class="ti" data-f="action" placeholder="action" spellcheck="false"><input class="ti" data-f="payload" placeholder="payload {…}" spellcheck="false"><button class="ib on" data-act="psend">Send</button></div></div>`
         + `<pre class="vc-pre vc-out vc-pq"${q ? '' : ' hidden'}><code>${esc(q ? (q.text || '') : '')}</code></pre></div>`;
@@ -1205,7 +1209,13 @@
   :host([align="desk"]) .stage .it.desk-chip > .it-hd > .t *{animation:none!important;transform:none!important}
   :host([align="desk"]) .stage .it.desk-chip > .it-hd > .fd,
   :host([align="desk"]) .stage .it.desk-chip > .it-hd > .src,
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd > :not(.ic):not(.t){display:none}
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd > :not(.ic):not(.t):not(.ly){display:none}
+  /* a chip IS its header line: the hover and zen tiers' hidden, unclickable header left a chip blank until hovered */
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd{opacity:1!important;pointer-events:auto!important;background:none}
+  /* a panel's chip keeps its two layer controls: a chip has no body to hold them */
+  .it-hd > .ly{display:none}
+  :host([align="desk"]) .stage .it.desk-chip:not(.desk-icon) > .it-hd > .ly{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:18px;height:18px;border-radius:5px;cursor:pointer;color:var(--dim,#8b93a1);border:1px solid var(--border,#2a2f37)}
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd > .ly:hover{color:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f)}
   :host([align="desk"]) .stage .it.desk-chip > :not(.it-hd){display:none}
   :host([align="desk"]) .stage .it.desk-chip .it-hd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-wrap:nowrap}
   :host([align="desk"]) .stage .it.desk-chip .it-hd *{white-space:nowrap}
@@ -1216,6 +1226,12 @@
   /* a panel item sent behind the desk or brought in front: it fills its region the way a maximised item fills the column */
   :host([align="desk"]) .stage .it[data-desk-face^="layer-"]{display:flex!important;flex-direction:column;border-radius:10px;background:var(--bg1,#15181d)!important}
   :host([align="desk"]) .stage .it[data-desk-face="layer-front"]{box-shadow:0 18px 48px rgba(0,0,0,.45)}
+  .stage > .lay-pill{position:absolute;z-index:190;display:flex;align-items:center;gap:6px;max-width:60%;padding:3px 4px 3px 9px;border-radius:14px;font-size:11px;
+    background:var(--bg2,#1d2128);border:1px solid var(--border2,#3a3f48);box-shadow:0 6px 18px rgba(0,0,0,.4);pointer-events:auto}
+  .stage > .lay-pill > b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .stage > .lay-pill > .m{color:var(--dim,#8b93a1);white-space:nowrap}
+  .stage > .lay-pill > .ic{color:var(--acc,#5a9e8f)}
+  :host(:not([align="desk"])) .stage > .lay-pill{display:none}
   /* on the desk a live element stacks WITH its card (each .lv carries its card's z-index): the live layer as one plane
      at z 4 put a panel sent behind over the items, and hid a panel brought in front under its own card's ground */
   :host([align="desk"]) #live{z-index:auto}
@@ -2435,6 +2451,19 @@
         c.style.zIndex = mode === 'front' ? String(D.stackOrder(0, { full: true })) : '1';
         out.push({ key: c.dataset.key, x: left, y: top, w: w, h: h, face: 'layer-' + mode });
       });
+      /* each layered panel's PILL, over every item at the panel's corner: a panel sent behind has its own head under the
+         items, so its controls are here as well - always in reach (owner, 2026-10-07: "i dont see the behind or front") */
+      st.querySelectorAll(':scope > .lay-pill').forEach((p) => p.remove());
+      layered.forEach((c) => {
+        const mode = this._layer[c.dataset.key], k = esc(c.dataset.key), other = mode === 'front' ? 'behind' : 'front';
+        const t = ((c.querySelector('.vc-th b') || c.querySelector('.it-hd .t') || {}).textContent || c.dataset.key).trim();
+        const pill = document.createElement('div'); pill.className = 'lay-pill'; pill.dataset.w = 'canvas.panel.layer';
+        pill.innerHTML = `<span class="ic">▤</span><b title="${esc(t)}">${esc(t)}</b><span class="m">${mode === 'front' ? 'in front' : 'behind'}</span>`
+          + `<button class="ib" data-act="layer-${other}" data-layer-key="${k}" title="${other === 'front' ? 'Bring it over the other items' : 'Send it behind the other items'}">${other}</button>`
+          + `<button class="ib" data-act="layer-${mode}" data-layer-key="${k}" title="Put it back among the other items">among</button>`;
+        pill.style.left = (Math.round(g.l) + 10) + 'px'; pill.style.top = (Math.round(g.t) + 6) + 'px';
+        st.appendChild(pill);
+      });
       st.style.height = H + 'px';
       this._placed = { mode: 'desk', placements: out, height: H, folded: [] };
       try { this._liveLayout(); } catch (e) { /* the live layout readers are optional */ }
@@ -2814,7 +2843,7 @@
             /* the header line is drawn for EVERY item. An item whose drawer has its own head shows it only when the COLUMN
                folds it (its body, and that head inside it, hidden): it used to be nothing but three hover-only icons,
                0 px tall (owner, 2026-10-04: "if collapsed some canvas elements are only appearing on hover") */ ''}${
-              `<div class="it-hd${ownHead && !compact ? ' own-fold' : ''}">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
+              `<div class="it-hd${ownHead && !compact ? ' own-fold' : ''}">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${b.type === 'panel' && this.getAttribute('align') === 'desk' ? '<span class="ly" data-act="layer-behind" title="Send it behind the other items, filling the free desk">⇣</span><span class="ly" data-act="layer-front" title="Bring it over the other items, filling the free desk">⇡</span>' : ''}${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
             ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
@@ -2824,7 +2853,6 @@
               ${plainDoc ? '<button data-act="up" title="Move it up — canvas.move">↑</button><button data-act="down" title="Move it down — canvas.move">↓</button>' : ''}
               ${bid ? '' : `<button data-act="pin" class="${b.state === 'pinned' ? 'on' : ''}" title="${b.state === 'pinned' ? 'Unpin — back into the flow' : 'Pin above the flow'}">${b.state === 'pinned' ? 'unpin' : 'pin'}</button>
               <button data-act="park" title="Park it below the flow">park</button>`}
-              ${b.type === 'panel' && this.getAttribute('align') === 'desk' ? `<button data-act="layer-behind" class="${this._layer[String(b.key)] === 'behind' ? 'on' : ''}" title="Behind the desk: the panel fills the free part of the desk, under the other items - click again to put it back among them">behind</button><button data-act="layer-front" class="${this._layer[String(b.key)] === 'front' ? 'on' : ''}" title="In front: the panel fills the free part of the desk, over the other items (never over the chat) - click again to put it back among them">front</button>` : ''}
               <button data-act="size" title="Size: ${size} — click for the next">${size}</button>
               <button data-act="remove" title="Take it off the canvas">drop</button>
               ${bid ? '' : `<button data-act="ctx" class="ctx ${inF && (F || b.state === 'pinned') ? 'on' : ''}" title="${b.state === 'pinned' ? 'Pinned — always in context; click to release it' : inF && F ? 'In focus now — pin it to keep it in context' : 'Put it in context — pins it, so it never leaves focus'}">${inF && (F || b.state === 'pinned') ? '✓ In context' : 'In context'}</button>`}
@@ -3203,7 +3231,7 @@
       /* WHOSE BUTTON IT IS. A fused member is drawn inside its lead's card, so a control its own drawer put there
          (a code item's preview switch, say) would otherwise act on the LEAD's key. The nearest pane wins. */
       const pane = btn.closest('.fu-p[data-key]');
-      const key = pane ? pane.dataset.key : it ? it.dataset.key : '';
+      const key = btn.dataset.layerKey || (pane ? pane.dataset.key : it ? it.dataset.key : '');   /* a layered panel's pill is outside its card */
       const focusMid = this.dataset.focusMid || '';
       /* a fused pane's own control: take THIS item out of the group it was drawn into and give it its card back.
          A reader's choice about how the canvas is drawn, so it is kept here and written nowhere. */
