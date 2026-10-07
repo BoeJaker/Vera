@@ -2358,6 +2358,9 @@
       st.style.height = H + 'px';
       this._placed = { mode: 'desk', placements: out, height: H, folded: [] };
       try { this._liveLayout(); } catch (e) { /* the live layout readers are optional */ }
+      // the cards slide to their places (.45s): the live layer follows once they have arrived
+      clearTimeout(this._deskLiveT);
+      this._deskLiveT = setTimeout(() => { try { this._liveLayout(); } catch (e) { /* optional */ } }, 520);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:placed', { bubbles: true, detail: { n: out.length, mode: 'desk', height: H,
         faces: out.reduce((m, o) => { m[o.face] = (m[o.face] || 0) + 1; return m; }, {}) } })); } catch (e) { /* no listener */ }
     }
@@ -3521,12 +3524,29 @@
     _liveLayout() {
       const L = this._live; if (!L) return; const body = this.shadowRoot.getElementById('body'); if (!body) return;
       const B = body.getBoundingClientRect();
+      /* SCREEN PIXELS ARE NOT LAYOUT PIXELS under a UI scale (zoom 1.4 on the panel): the rects below are measured on
+         screen and the live layer is placed in layout pixels, so every offset was multiplied by the scale and a widget
+         drew far from its card (2026-10-07: a slot at 569,1044 drew its widget at 773,1489). Divide by the scale. */
+      const k0 = body.offsetWidth ? (B.width / body.offsetWidth) : 1, Z = k0 > 0.2 && k0 < 5 ? k0 : 1;
       Object.keys(L).forEach((k) => {
         if (this._max && k !== this._max) { L[k].style.display = 'none'; return; }   // a maximised item covers the column
         const el = L[k]; const h = body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]');
         if (!h || !h.getClientRects().length) { el.style.display = 'none'; return; }
-        const r = h.getBoundingClientRect(); const w = Math.max(0, Math.round(r.width)), ht = Math.max(0, Math.round(r.height));
-        el.style.display = ''; el.style.left = Math.round(r.left - B.left + body.scrollLeft) + 'px'; el.style.top = Math.round(r.top - B.top + body.scrollTop) + 'px';
+        const r = h.getBoundingClientRect(); const w = Math.max(0, Math.round(r.width / Z)), ht = Math.max(0, Math.round(r.height / Z));
+        el.style.display = ''; el.style.left = Math.round((r.left - B.left) / Z + body.scrollLeft) + 'px'; el.style.top = Math.round((r.top - B.top) / Z + body.scrollTop) + 'px';
+        /* THE LIVE LAYER IS NOT INSIDE THE CARD, so the card's own clipping never reached it: a widget whose slot ran
+           past a smaller card (a desk face, a capped item) drew over its neighbours (2026-10-07, a checks widget on the
+           desk). Each live element is cut to its card's box and stacks with its card. */
+        const card = h.closest('.it');
+        if (card) {
+          const c = card.getBoundingClientRect();
+          const ct = Math.max(0, Math.round((c.top - r.top) / Z)), cl = Math.max(0, Math.round((c.left - r.left) / Z));
+          const cr = Math.max(0, Math.round((r.right - c.right) / Z)), cb = Math.max(0, Math.round((r.bottom - c.bottom) / Z));
+          const clip = (ct || cl || cr || cb) ? 'inset(' + ct + 'px ' + cr + 'px ' + cb + 'px ' + cl + 'px)' : '';
+          if (el.style.clipPath !== clip) el.style.clipPath = clip;
+          const z = card.style.zIndex || '';
+          if (el.style.zIndex !== z) el.style.zIndex = z;
+        }
         if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } if (el.dataset.kind === 'mermaid') { const m = el.firstChild; try { m && m.fit && m.fit(); } catch (e) {} }
           /* a records item's graph takes its slot's height (owner, 2026-10-04: "elements on the canvas still dont resize on
              the y axis ... im trying to expand the graph elements"): the embed's box was fixed at the height it was made
