@@ -133,6 +133,8 @@ The system has four layers:
 | `vera/fabric/memory_audit.py` | `AuditedMemoryProvider` — payload-free operation receipts |
 | `vera/fabric/memory_reconciliation.py` | `reconcile_memory_provider` — payload-free drift report |
 | `vera/fabric/memory_context_provider.py` | `MemoryContextProvider` — `MemoryProvider` → `ContextProvider` adapter |
+| `vera/fabric/memory_authority_inventory.py` | Source-bound inventory of native writers, mutators, readers, stored references and identity shapes |
+| `vera/fabric/memory_dual_write_receipt.py` | Payload-free observation binding one native write attempt to an exact `RecordRevision` and per-backend outcomes |
 
 ---
 
@@ -334,6 +336,26 @@ cancellation, restart and recovery parity. Direct writers and stored/external
 consumers must also be inventoried. Until that evidence exists, native records
 remain operational and no stored memory or backend copy is eligible for
 automatic deletion.
+
+The first authority-canary seam makes those prerequisites executable without
+changing traffic. `memory_authority_inventory` binds the currently known
+in-repository routes to exact source evidence: the public store/promote
+capabilities, Redis promoter, agent-turn and DAG hooks, lifecycle and graph
+mutators, public/context readers, agent/chat/delivery consumers and stored
+project `memory_ids`. It also names the native, backend, canonical and portable
+identity shapes. Dynamic Python callers, external consumers and stored record
+instances remain explicitly unobserved and therefore remain pre-cutover gates.
+
+`memory_dual_write_receipt` records one attempted native/canonical pair without
+performing either write. The receipt binds an operation and native
+`MemoryRecord.id` to the exact canonical `record_id`, `revision_id` and content
+hash, plus classified outcomes for the revision, Postgres, Chroma and Neo4j.
+It distinguishes `dual_committed`, `canonical_only`, `native_only` and
+`uncommitted`; partial projection outcomes require reconciliation. Receipts
+contain no memory payload or exception text and always report
+`authority_switch_allowed: false`. A later canary coordinator must produce and
+persist them around the real writes, then prove recovery and rollback before
+authority can move.
 
 ---
 

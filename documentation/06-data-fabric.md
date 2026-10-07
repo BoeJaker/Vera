@@ -224,6 +224,27 @@ projection failure does not erase the authoritative revision. `fabric.ingest`
 behaviour is unchanged, and this path does not write FAISS, Chroma, Postgres
 or Neo4j.
 
+### Memory authority canary boundary
+
+The native Memory runtime still owns live writes and reads. Two offline
+contracts make its eventual migration auditable without silently redirecting
+traffic:
+
+- `memory_authority_inventory.py` identifies the bound in-repository writers,
+  mutators, readers, stored `memory_ids` references and the identity used by
+  every native/canonical/projection surface. It does not infer dynamic or
+  external consumers and never reads stored records.
+- `memory_dual_write_receipt.py` binds a caller-supplied operation and native
+  memory ID to one exact `RecordRevision`, the revision-write outcome and the
+  Postgres/Chroma/Neo4j outcomes. Only bounded classifications are accepted;
+  content and backend exception text are excluded.
+
+The receipt describes evidence, not a transaction: it performs no write,
+cannot advance a head, cannot mark a projection receipt and never grants
+authority-switch permission. The next canary slice must coordinate the real
+writes, durably store this evidence, reconcile split outcomes and prove
+rollback while keeping legacy records intact.
+
 ### Caller policy
 
 Revision and artifact capabilities share `CallerPolicy`
