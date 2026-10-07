@@ -245,6 +245,15 @@ authority-switch permission. The next canary slice must coordinate the real
 writes, durably store this evidence, reconcile split outcomes and prove
 rollback while keeping legacy records intact.
 
+The injected coordinator and SQLite evidence journal now implement that
+offline seam. Disabled operation calls only the native writer. Enabled
+operation remains native-first, bounds the revision shadow write separately,
+records success/split/error/timeout/cancellation evidence, and preserves caller
+semantics when the shadow or its journal fails. Exact replay is idempotent;
+changed evidence for one operation conflicts; stored evidence is digest-checked
+after restart; reconciliation queries are bounded. These components are not
+imported by the live Memory path and therefore do not activate dual writing.
+
 ### Caller policy
 
 Revision and artifact capabilities share `CallerPolicy`

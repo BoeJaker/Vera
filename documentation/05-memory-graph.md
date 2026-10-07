@@ -135,6 +135,8 @@ The system has four layers:
 | `vera/fabric/memory_context_provider.py` | `MemoryContextProvider` — `MemoryProvider` → `ContextProvider` adapter |
 | `vera/fabric/memory_authority_inventory.py` | Source-bound inventory of native writers, mutators, readers, stored references and identity shapes |
 | `vera/fabric/memory_dual_write_receipt.py` | Payload-free observation binding one native write attempt to an exact `RecordRevision` and per-backend outcomes |
+| `vera/fabric/memory_dual_write_canary.py` | Injected default-off native-first coordinator; isolates canonical shadow/evidence failure and propagates cancellation |
+| `vera/fabric/memory_dual_write_store.py` | Durable idempotent receipt journal and bounded reconciliation query |
 
 ---
 
@@ -356,6 +358,27 @@ contain no memory payload or exception text and always report
 `authority_switch_allowed: false`. A later canary coordinator must produce and
 persist them around the real writes, then prove recovery and rollback before
 authority can move.
+
+The next offline slice supplies that coordinator and journal without wiring
+them into the production write path. `execute_memory_dual_write_canary` is
+default-off and calls the injected native writer exactly once; while disabled
+it never calls the revision writer or receipt sink. When explicitly enabled,
+it runs the native write first, observes an exact revision write under a
+separate timeout and appends the resulting receipt to
+`MemoryDualWriteReceiptStore`. Native errors, timeouts and cancellation still
+propagate. Revision failure/timeout is isolated so it cannot retroactively turn
+a successful legacy write into failure; cancellation is recorded and then
+propagated. A journal failure is returned as `receipt_store_failed`, making the
+attempt ineligible as evidence while preserving the already-completed native
+result.
+
+The SQLite journal owns evidence only. Replaying the same operation and exact
+receipt is idempotent; changed evidence under the same operation conflicts.
+Reads recheck the receipt digest, restart from the same database, and expose a
+bounded list of attempts requiring reconciliation. It stores no memory text,
+does not advance Fabric heads or projection receipts, and supplies no runtime
+activation switch. Wiring one narrow writer to this seam and proving recovery
+remain subsequent work.
 
 ---
 
