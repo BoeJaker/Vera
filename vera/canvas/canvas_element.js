@@ -1209,6 +1209,10 @@
   :host([align="desk"]) .stage .it.desk-chip > :not(.it-hd){display:none}
   :host([align="desk"]) .stage .it.desk-chip .it-hd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-wrap:nowrap}
   :host([align="desk"]) .stage .it.desk-chip .it-hd *{white-space:nowrap}
+  /* an icon: a chip the border had no room for - its icon alone, its title on hover */
+  :host([align="desk"]) .stage .it.desk-icon{padding:0!important;border-radius:9px;justify-content:center}
+  :host([align="desk"]) .stage .it.desk-icon > .it-hd{justify-content:center;gap:0}
+  :host([align="desk"]) .stage .it.desk-icon > .it-hd > :not(.ic){display:none!important}
   @media (prefers-reduced-motion: reduce){:host([align="desk"]) .stage .it{transition:none}}
   /* THE BACK LAYER (the desk's graph, owner-approved 2026-10-06): whatever the page puts in the "back" slot is drawn
      under the cards, dimmed until the pointer is on it. The desk's own ground goes so the layer shows through, and
@@ -2372,7 +2376,7 @@
         const c = x.c, key = c.dataset.key || String(x.i), p = pos[key] || [W - 90, H - 30];
         const pw = (this._rz && this._rz.el === c ? this._rz.w : 0) || parseInt(c.dataset.pw || '0', 10) || 0;
         const user = pw > 0 ? { w: pw, h: c.classList.contains('sized') ? c.offsetHeight : Math.round(pw * 0.66) } : null;
-        const so = { size: user, pinned: !!user && c.classList.contains('pinned') };
+        const so = { size: user, pinned: !!user && c.classList.contains('pinned'), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
         return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h) };
       });
@@ -2383,8 +2387,10 @@
         const w = Math.min(W - 16, s.w), h = Math.min(H - 8, s.h);
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
         c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
-        c.classList.toggle('desk-chip', s.face === 'chip');
+        c.classList.toggle('desk-chip', s.face === 'chip' || s.face === 'icon');
+        c.classList.toggle('desk-icon', s.face === 'icon');
         c.dataset.deskFace = s.face;
+        if (s.face === 'icon') { const t = c.querySelector('.it-hd > .t'); c.title = t ? t.textContent.trim() : ''; } else if (c.title) c.removeAttribute('title');
         // the desk owns the size here: a compact card's own height rule must not grow a chip under its neighbours
         c.style.left = left + 'px'; c.style.top = top + 'px'; c.style.setProperty('width', w + 'px', 'important'); c.style.setProperty('height', h + 'px', 'important'); c.style.setProperty('min-height', '0px', 'important');
         c.style.zIndex = String(D.stackOrder(s.nd));

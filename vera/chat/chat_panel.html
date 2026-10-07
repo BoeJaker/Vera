@@ -6199,10 +6199,18 @@ IMPORTANT:
   const _CHAT_POS_KEY='vera_chat_float';
   function _chatPos(){ try{ const p=JSON.parse(localStorage.getItem(_CHAT_POS_KEY)||'null'); return p&&typeof p.x==='number'?p:{x:40,y:6}; }catch(_){ return {x:40,y:6}; } }
   function _chatApplyPos(p){ const col=document.getElementById('chatColumn'); if(!col) return; col.style.setProperty('--chat-x',p.x+'%'); col.style.setProperty('--chat-y',p.y+'%'); }
-  function _chatRectToCanvas(){
-    const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv) return;
+  /* the canvas is often still loading when the side is applied: a missing stage is retried, not skipped (a floating
+     chat at 1366 px left the desk arranged as if it were docked, 18 cards under it - the desk matrix, 2026-10-07) */
+  let _chatRectRetry=0, _chatRectRO=null;
+  function _chatRectToCanvas(again){
+    if(!again) _chatRectRetry=0;
+    const cv=document.querySelector('#canvasColumnBody vera-canvas');
+    if(cv&&window.ResizeObserver){ if(!_chatRectRO) _chatRectRO=new ResizeObserver(()=>{ try{ _chatRectToCanvas(); }catch(_){} });
+      if(!cv._chatRectObs){ cv._chatRectObs=true; _chatRectRO.observe(cv); const cs0=document.getElementById('chatStack'); if(cs0&&!cs0._chatRectObs){ cs0._chatRectObs=true; _chatRectRO.observe(cs0); } } }
+    if(!cv){ if(document.body.dataset.chatSide==='float'&&_pages.has('canvas')&&_chatRectRetry++<40) setTimeout(()=>_chatRectToCanvas(true), 250); return; }
     if(document.body.dataset.chatSide!=='float'){ if(cv.hasAttribute('chat-rect')) cv.removeAttribute('chat-rect'); return; }
-    const st=cv.shadowRoot&&cv.shadowRoot.getElementById('stage'), cs=document.getElementById('chatStack'); if(!st||!cs) return;
+    const st=cv.shadowRoot&&cv.shadowRoot.getElementById('stage'), cs=document.getElementById('chatStack');
+    if(!st||!cs||!st.offsetWidth){ if(_chatRectRetry++<40) setTimeout(()=>_chatRectToCanvas(true), 250); return; }
     const a=st.getBoundingClientRect(), b=cs.getBoundingClientRect(), k=st.offsetWidth?(a.width/st.offsetWidth):1;
     const v=[(b.left-a.left)/k,(b.top-a.top)/k,b.width/k,b.height/k].map(n=>Math.round(n)).join(',');
     if(cv.getAttribute('chat-rect')!==v) cv.setAttribute('chat-rect',v);
