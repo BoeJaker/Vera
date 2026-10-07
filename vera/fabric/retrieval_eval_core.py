@@ -7,6 +7,11 @@ held. Mining this after the fact did not work: the loop's event log keeps neithe
 arguments nor more than the first 600 characters of its result (2026-10-06: 82 seeks, 85 reads,
 0 matchable).
 
+Chat turns are the second source (FM-7.0 b): the memories a chat turn was given, in rank order,
+are a `memory.chat_recall` ranking decision, and each one the reply drew on (memory_usage_core's
+verdict) is "used" at its rank. Recorded only for turns that count toward use (no census, probe
+or empty turn), so automated traffic does not dilute the set.
+
 Only positives come from reads; a seek with no read says nothing. So the summary reports use
 rate, hit@1 / hit@3 and MRR over the seeks that were used, not precision against a full truth set.
 
@@ -24,6 +29,9 @@ except Exception:                       # worktree / app-free import
     from vera.minds import ledger_core as LC  # type: ignore
 
 SEEK_Q = "memory.seek"
+CHAT_Q = "memory.chat_recall"
+# per question: the outcome source that marks a ranked record used
+USED_SOURCE = {SEEK_Q: "seek.read", CHAT_Q: "chat.reply"}
 RECENT_WINDOW_S = 1800.0
 MAX_IDS = 25
 
@@ -36,6 +44,26 @@ def seek_decision(query: str, ids: List[str], *, origin: str = "user", minds_dig
         labels=[], state={"q": str(query or "")}, state_ref={"kind": "seek", "id": seek_id or LC.new_decision_id()[4:]},
         decider="rule", implementation="memory.seek:rrf+floor+mmr", mode="rule",
         minds_digest=minds_digest or "default", detail={"k": len(ids)})
+
+
+def chat_recall_decision(query: str, ids: List[str], *, origin: str = "user",
+                         minds_digest: str = "default", session_id: str = "") -> Dict[str, Any]:
+    ids = [str(i)[:80] for i in (ids or [])][:MAX_IDS]
+    return LC.make_decision(
+        CHAT_Q, ids, origin=origin, surface="chat", qtype="ranking",
+        labels=[], state={"q": str(query or "")},
+        state_ref={"kind": "chat_turn", "id": LC.new_decision_id()[4:]},
+        decider="rule", implementation="chatmem:two-tier", mode="rule",
+        minds_digest=minds_digest or "default", session_id=str(session_id or "")[:80],
+        detail={"k": len(ids)})
+
+
+def chat_used_outcomes(decision_id: str, ranked: List[str], used_ids: Iterable[str]) -> List[Dict[str, Any]]:
+    """One "used" outcome per ranked record the reply drew on, at its 1-based rank."""
+    pos = {str(r): i + 1 for i, r in enumerate(ranked or [])}
+    ranks = sorted({pos[str(u)] for u in (used_ids or []) if str(u) in pos})
+    return [LC.make_outcome(decision_id, "used", USED_SOURCE[CHAT_Q], "medium", detail={"rank": r})
+            for r in ranks]
 
 
 def read_outcome(decision_id: str, rank: int) -> Dict[str, Any]:
