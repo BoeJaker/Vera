@@ -42,9 +42,85 @@ CASES = [
 ]
 
 
+# Ranges were read as "one hundred and eight-three hundred thousand" whenever a
+# unit, scale or currency followed, because those rules ran first and left the dash.
+RANGES = [
+    ("108-300", "one hundred and eight to three hundred"),
+    ("108‑300 and 108−300", "one hundred and eight to three hundred and one hundred and eight to three hundred"),
+    ("108-300k users", "one hundred and eight to three hundred thousand users"),
+    ("108-300 sq ft", "one hundred and eight to three hundred square feet"),
+    ("108-300kg", "one hundred and eight to three hundred kilograms"),
+    ("1.08-3.00", "one point zero eight to three point zero zero"),
+    ("£5-10m", "five to ten million pounds"),
+    ("£5m-£10m", "five to ten million pounds"),
+    ("$1.2-1.5bn", "one point two to one point five billion dollars"),
+    ("£3.50-£4.20", "three pounds fifty to four pounds twenty"),
+    ("2-3pp", "two to three percentage points"),
+    ("2020-21 and 1990-95", "twenty twenty to twenty-one and nineteen ninety to ninety-five"),
+    ("1800-2000 people", "one thousand eight hundred to two thousand people"),
+    ("9am-5pm, 9.30-11am, 12:30-14:00", "nine a m to five p m, nine thirty to eleven a m, twelve thirty to two p m"),
+    ("1-3 June 2026", "the first to the third of June twenty twenty-six"),
+    ("June 1-3", "June the first to the third"),
+    ("1 June - 3 June", "the first of June to the third of June"),
+    ("Jan-Mar, Mon-Fri", "January to March, Monday to Friday"),
+    ("Q1-Q3 2026", "the first to the third quarter of twenty twenty-six"),
+    ("Arsenal won 3-0", "Arsenal won three nil"),
+]
+
+MORE_FORMS = [
+    ("50p and up 5pp", "fifty pence and up five percentage points"),
+    ("the 80s, 1980's, in his 20s", "the eighties, the nineteen eighties, in his twenties"),
+    ("a 30s timeout, wait 45s", "a thirty second timeout, wait forty-five seconds"),
+    ("100s of homes", "hundreds of homes"),
+    ("1/2 of them, 3/4 full, rated 8/10, 2½ hours, 24/7",
+     "one half of them, three quarters full, rated eight out of ten, two and a half hours, twenty-four seven"),
+    ("+3.5% and -5°C", "plus three point five per cent and minus five degrees Celsius"),
+    ("GBP 100, 100 USD", "one hundred pounds, one hundred dollars"),
+    ("call 0800 123 4567", "call oh eight oh oh, one two three, four five six seven"),
+    ("Python 3.12 and v2.0.1", "Python three point twelve and version two point zero point one"),
+    ("1920x1080 at 1080p", "nineteen twenty by ten eighty at ten eighty p"),
+    ("In 1500 there were 1500 people", "In fifteen hundred there were one thousand five hundred people"),
+    ("The year was 2026, over 2000 staff", "The year was twenty twenty-six, over two thousand staff"),
+    ("5ft 10in, 5 min. later", "five feet ten inches, five minutes later"),
+    ("in the U.S. economy", "in the U S economy"),
+    ("This is VERY important for NVIDIA, not HTML", "This is Very important for Nvidia, not H T M L"),
+    ("the FOMC, AAPL and FIFA", "the F O M C, A A P L and FIFA"),
+    ("Elizabeth II and World War II", "Elizabeth the second and World War two"),
+    ("The market (as expected) fell – again.", "The market, as expected, fell, again."),
+    ("Sat 5 Oct", "Saturday the fifth of October"),
+]
+
+
 def test_written_forms_become_spoken_words():
-    for written, spoken in CASES:
+    for written, spoken in CASES + RANGES + MORE_FORMS:
         assert tn.normalize(written) == spoken, (written, tn.normalize(written))
+
+
+def test_line_breaks_survive_normalisation():
+    assert tn.normalize("Key points\n\n5 homes\n6 flats") == "Key points\n\nfive homes\nsix flats"
+
+
+def test_the_speech_plan_pauses_like_a_reader():
+    plan = tn.speech_plan("U K House Prices\nPrices rose. Did they? Yes!\n\nNext paragraph here")
+    texts = [t for t, _ in plan]
+    assert texts == ["U K House Prices.", "Prices rose.", "Did they?", "Yes!", "Next paragraph here."]
+    pause = dict(plan)
+    # a heading is a statement with a line pause; a paragraph break is the longest gap
+    assert pause["U K House Prices."] >= tn.PAUSES["line"] * 0.9
+    assert pause["Yes!"] >= tn.PAUSES["paragraph"] * 0.9 > pause["Prices rose."]
+    assert pause["Did they?"] > pause["Prices rose."] * 0.9 > 0
+    # the last piece keeps its pause: the streaming routes synthesise one sentence at a time
+    assert plan[-1][1] > 0
+
+
+def test_the_speech_plan_joins_wrapped_lines_and_cuts_long_sentences():
+    assert [t for t, _ in tn.speech_plan("This sentence is hard\nwrapped across lines.")] == \
+        ["This sentence is hard wrapped across lines."]
+    long = ", ".join(f"clause number {word}" for word in ("one", "two", "three", "four") * 12) + "."
+    pieces = tn.speech_plan(long)
+    assert len(pieces) > 1 and all(len(t) <= tn.MAX_SEGMENT for t, _ in pieces)
+    assert " ".join(t for t, _ in pieces) == long
+    assert tn.speech_plan("") == [] and tn.speech_plan("…") == []
 
 
 def test_number_words():
@@ -98,3 +174,149 @@ def test_the_speech_server_takes_its_defaults_from_vera():
     assert '_TTS_CFG.get("voice")' in kok and "lang=lang" in kok and "_voice_lang(" in kok
     caps = open(os.path.join(ROOT, "vera", "capabilities", "capabilities.py"), encoding="utf-8").read()
     assert '"tts.config.set"' in caps and '"tts.config.get"' in caps
+
+
+def test_the_speech_server_paces_sentence_by_sentence():
+    src = _gpu_src()
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "_tts_synthesize")
+    body = ast.get_source_segment(src, fn)
+    # normalise, then plan, then one synthesis per piece with its silence after it
+    assert body.index("normalize_best") < body.index("speech_plan") < body.index("_synthesize_piece")
+    assert "np.zeros(int(sr * pause * pacing / speed)" in body
+    assert '"pacing"' in src[src.index("_TTS_CFG = {"):src.index("_TTS_CFG = {") + 300]
+    assert "pacing:" in src[src.index("class TTSRequest"):src.index("class TTSConfig")]
+    assert "pacing:" in src[src.index("class TTSConfig"):src.index('@app.get("/tts/config")')]
+    caps = open(os.path.join(ROOT, "vera", "capabilities", "capabilities.py"), encoding="utf-8").read()
+    setter = caps[caps.index('"tts.config.set"'):]
+    assert 'body["pacing"]' in setter[:3000]
+
+
+def test_headings_and_list_items_end_as_statements():
+    src = _gpu_src()
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "_clean_for_tts")
+    ns = {"re": __import__("re"), "_expand_roman_numerals": lambda t: t}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "x", "exec"), ns)
+    out = ns["_clean_for_tts"]("## Key points\n- **Mortgage approvals** up\n- 5-year fixes\n1. Third item\nProse line.")
+    assert out == "Key points.\nMortgage approvals up.\n5-year fixes.\nThird item.\nProse line.", out
+
+
+# ── speech markup (SSML subset) ──────────────────────────────────────────────
+
+def test_speech_markup_says_what_the_writer_meant():
+    r = tn.resolve_speech_markup
+    assert r('Rates of <sub alias="one hundred and eight to three hundred">108-300</sub> bps') == \
+        "Rates of one hundred and eight to three hundred bps"
+    assert r('The <say-as interpret-as="characters">FOMC</say-as> met') == "The F O M C met"
+    assert r('Call <say-as interpret-as="telephone">0800 123</say-as>') == "Call oh eight oh oh, one two three"
+    assert r('the <say-as interpret-as="ordinal">3</say-as> time') == "the third time"
+    assert r("<sub alias='Bank of England'>BoE</sub> &amp; co") == "Bank of England & co"
+    assert r('<phoneme alphabet="ipa" ph="x">Kokoro</phoneme> speaks') == "Kokoro speaks"
+
+
+def test_speech_markup_never_reaches_the_voice_broken():
+    r = tn.resolve_speech_markup
+    assert r('An <emphasis level="strong">unknown</emphasis> tag') == "An unknown tag"
+    assert r('Left open <sub alias="x">108') == "Left open 108"
+    assert r("Cut off at the end <say-as interpret") == "Cut off at the end "
+    assert r("maths: a < b and c > d") == "maths: a < b and c > d"       # not markup
+    assert r("") == "" and r("plain text") == "plain text"
+
+
+def test_breaks_become_exact_pauses_in_the_plan():
+    t = tn.resolve_speech_markup('Well <break time="800ms"/> maybe. Then <break strength="weak"/> go.')
+    assert t.count(tn.PAUSE_MARK) == 8 + 2
+    plan = tn.speech_plan(tn.normalize(t))
+    assert [p for p, _ in plan] == ["Well", "maybe.", "Then", "go."]
+    assert plan[0][1] == 0.8 and plan[2][1] == 0.2
+
+
+def test_the_written_form_drops_the_markup():
+    s = tn.strip_speech_markup
+    assert s('Rates of <sub alias="one hundred and eight to three hundred">108-300</sub>.<break time="1s"/>') == \
+        "Rates of 108-300."
+    assert s('The <say-as interpret-as="characters">FOMC</say-as> met') == "The FOMC met"
+
+
+def _sentence_helpers():
+    src = _gpu_src()
+    names = {"_sentence_cuts", "_cut", "_extract_sentences", "_split_sentences", "_first_clause_cut"}
+    consts = {"_SENT_END", "_FIRST_MIN", "_FIRST_LONG", "_CLAUSE_END"}
+    tree = ast.parse(src).body
+    fns = [n for n in tree if isinstance(n, ast.FunctionDef) and n.name in names]
+    assigns = [n for n in tree if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in consts]
+    ns = {"re": __import__("re"), "_tn": tn, "Optional": object}
+    flags = __import__("__future__").annotations.compiler_flag    # list[int] on older Pythons
+    exec(compile(ast.Module(body=assigns + fns, type_ignores=[]), "x", "exec", flags=flags), ns)
+    return ns
+
+
+def test_streaming_never_cuts_a_sentence_inside_markup():
+    ns = _sentence_helpers()
+    done, rest = ns["_extract_sentences"]('First one. Then <sub alias="U.S. rates. Up">US')
+    assert done == ["First one."] and rest == 'Then <sub alias="U.S. rates. Up">US'
+    done, rest = ns["_extract_sentences"](rest + ' rates</sub> rose. Next')
+    assert done == ['Then <sub alias="U.S. rates. Up">US rates</sub> rose.'] and rest == "Next"
+    done, rest = ns["_extract_sentences"]("Held here. Partial <say-a")
+    assert done == ["Held here."] and rest == "Partial <say-a"
+    assert ns["_split_sentences"]('A <sub alias="x. y">z</sub> b. C.') == ['A <sub alias="x. y">z</sub> b.', "C."]
+
+
+def test_the_speech_server_resolves_markup_before_cleaning():
+    src = _gpu_src()
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "_tts_synthesize")
+    body = ast.get_source_segment(src, fn)
+    assert body.index("resolve_speech_markup") < body.index("_clean_for_tts(")
+
+
+# ── the house vocabulary is data ─────────────────────────────────────────────
+
+def test_the_house_vocabulary_is_data_shipped_with_the_normaliser():
+    import json
+    lex = json.load(open(os.path.join(ROOT, "edge", "tts_lexicon.json"), encoding="utf-8"))
+    assert lex["say"]["BoE"] == "the Bank of England" and "FOMC" not in lex["say_as_word"]
+    assert not set(lex["spell"]) & set(lex["say_as_word"])
+    assert tn.SPOKEN == lex["say"] and tn.ACRONYMS == set(lex["spell"]) and tn.WORDS == set(lex["say_as_word"])
+    deploy = open(os.path.join(ROOT, "vera", "provisioning", "components_capabilities.py"), encoding="utf-8").read()
+    assert '("edge/tts_lexicon.json", "tts_lexicon.json")' in deploy
+
+
+def test_without_the_lexicon_the_rules_still_speak(tmp_path):
+    assert tn.load_lexicon(str(tmp_path / "missing.json")) == {}
+    (tmp_path / "bad.json").write_text("{not json", encoding="utf-8")
+    assert tn.load_lexicon(str(tmp_path / "bad.json")) == {}
+
+
+
+# ── the first thing said comes sooner ────────────────────────────────────────
+
+LONG_OPENING = ("Mortgage approvals rose to sixty-five thousand in August, the highest level since the autumn of "
+                "last year, as lenders cut their rates. Prices followed.")
+
+
+def test_a_long_opening_sentence_is_started_at_its_first_clause():
+    ns = _sentence_helpers()
+    parts = ns["_split_sentences"](LONG_OPENING, first_clause=True)
+    assert parts[0] == "Mortgage approvals rose to sixty-five thousand in August,"
+    assert parts[1].startswith("the highest level") and parts[-1] == "Prices followed."
+    # without the flag, or with a short opening sentence, nothing changes
+    assert ns["_split_sentences"](LONG_OPENING)[0].endswith("cut their rates.")
+    assert ns["_split_sentences"]("Prices rose, sharply. Then fell.", first_clause=True) ==         ["Prices rose, sharply.", "Then fell."]
+
+
+def test_streaming_cuts_early_only_once_the_sentence_is_known_to_be_long():
+    ns = _sentence_helpers()
+    ex = ns["_extract_sentences"]
+    assert ex("Mortgage approvals rose to sixty-five thousand, ", first=True) ==         ([], "Mortgage approvals rose to sixty-five thousand, ")          # could still be short: wait
+    done, rest = ex(LONG_OPENING[:100], first=True)
+    assert done == ["Mortgage approvals rose to sixty-five thousand in August,"] and rest.startswith("the highest")
+    done, rest = ex(LONG_OPENING[:100], first=False)                       # after the first piece: sentences
+    assert done == [] and rest == LONG_OPENING[:100]
+    # never inside markup, never at a thousands comma
+    tagged = 'Approvals rose to <sub alias="sixty-five thousand, a record">65,000</sub> in the month of August and more'
+    assert ex(tagged, first=True) == ([], tagged)
+
+
+def test_the_streaming_routes_ask_for_the_early_first_piece():
+    src = _gpu_src()
+    assert "_split_sentences(req.text, first_clause=True)" in src
+    assert src.count("_extract_sentences(text_buf, first=chunks_out == 0)") == 2

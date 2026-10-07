@@ -1,0 +1,29 @@
+# id, text (as written), expect (as a British reader says it), gaps (pauses a reader leaves inside it)
+{"id": "range-plain", "text": "Approvals ranged 108-300 a month.", "expect": "Approvals ranged one hundred and eight to three hundred a month."}
+{"id": "range-scale", "text": "Between 108-300k users signed up.", "expect": "Between one hundred and eight to three hundred thousand users signed up."}
+{"id": "range-unit", "text": "Units of 108-300 sq ft are planned.", "expect": "Units of one hundred and eight to three hundred square feet are planned."}
+{"id": "range-money", "text": "The deal is worth £5-10m.", "expect": "The deal is worth five to ten million pounds."}
+{"id": "range-money-dec", "text": "Funding of $1.2-1.5bn was raised.", "expect": "Funding of one point two to one point five billion dollars was raised."}
+{"id": "range-pct", "text": "Rates may fall 7-9% next year.", "expect": "Rates may fall seven to nine per cent next year."}
+{"id": "range-time", "text": "Open 9am-5pm, Mon-Fri.", "expect": "Open nine a m to five p m, Monday to Friday."}
+{"id": "range-years", "text": "Prices fell in 2020-21.", "expect": "Prices fell in twenty twenty to twenty-one."}
+{"id": "range-dates", "text": "The fair runs 1-3 June 2026.", "expect": "The fair runs the first to the third of June twenty twenty-six."}
+{"id": "hyphen-u2011", "text": "Approvals ranged 108‑300 a month.", "expect": "Approvals ranged one hundred and eight to three hundred a month."}
+{"id": "money", "text": "Landsec sold a £1.2bn stake for £250,000 less.", "expect": "Landsec sold a one point two billion pound stake for two hundred and fifty thousand pounds less."}
+{"id": "pence", "text": "Stamps cost 50p more.", "expect": "Stamps cost fifty pence more."}
+{"id": "date-iso", "text": "Due on 2026-10-05.", "expect": "Due on the fifth of October twenty twenty-six."}
+{"id": "quarter", "text": "JLL raised $45m in Q3 2026.", "expect": "J L L raised forty-five million dollars in the third quarter of twenty twenty-six."}
+{"id": "score", "text": "Arsenal won 3-0.", "expect": "Arsenal won three nil."}
+{"id": "year-vs-count", "text": "In 1500 there were 1500 people.", "expect": "In fifteen hundred there were one thousand five hundred people."}
+{"id": "tickers", "text": "The FOMC met as AAPL and NVDA fell.", "expect": "The F O M C met as A A P L and N V D A fell."}
+{"id": "acronyms", "text": "The BoE, the FTSE 100 and NATO.", "expect": "The Bank of England, the footsie one hundred and NATO."}
+{"id": "fraction", "text": "About 3/4 of homes, 24/7.", "expect": "About three quarters of homes, twenty-four seven."}
+{"id": "phone", "text": "Call 0800 123 4567.", "expect": "Call oh eight oh oh, one two three, four five six seven."}
+{"id": "version", "text": "Upgrade to Python 3.12 today.", "expect": "Upgrade to Python three point twelve today."}
+{"id": "markup-sub", "text": "Rates of <sub alias=\"one hundred and eight to three hundred\">108-300</sub> basis points.", "expect": "Rates of one hundred and eight to three hundred basis points."}
+{"id": "markup-sayas", "text": "The <say-as interpret-as=\"characters\">FOMC</say-as> met.", "expect": "The F O M C met."}
+{"id": "pace-sentences", "text": "Prices rose. Sales fell. Rents held.", "expect": "Prices rose. Sales fell. Rents held.", "gaps": 2}
+{"id": "pace-heading", "text": "UK House Prices\nPrices rose in September.", "expect": "U K House Prices. Prices rose in September.", "gaps": 1}
+{"id": "pace-list", "text": "Key points\n- Approvals up\n- Rates down", "expect": "Key points. Approvals up. Rates down.", "gaps": 2}
+{"id": "pace-paragraph", "text": "The market was quiet.\n\nThen it moved.", "expect": "The market was quiet. Then it moved.", "gaps": 1}
+{"id": "pace-break", "text": "Well <break time=\"800ms\"/> maybe.", "expect": "Well maybe.", "gaps": 1}
