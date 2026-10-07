@@ -23,7 +23,7 @@
 
   var DESK = { W: 1600, H: 900, m: 16, top: 70, edgeX: 80, edgeTop: 96, edgeBottom: 34 };
   var CHAT_FLOAT = { w: 440, h: 470 }, CHAT_SIDE_W = 440, CHAT_BOTTOM = { w: 760, h: 274 };
-  var SIZE = { chip: { w: 150, h: 34 }, max: { w: 300, h: 196 } };
+  var SIZE = { icon: { w: 34, h: 34 }, chip: { w: 150, h: 34 }, max: { w: 300, h: 196 } };
   var NEAR = 0.28, FAR = 0.85, USER_FAR = 0.93;
 
   function desk(d) { var o = {}, k; for (k in DESK) o[k] = DESK[k]; if (d) for (k in d) o[k] = d[k]; return o; }
@@ -71,6 +71,7 @@
     var why = '';
     if (o.size && o.pinned) { w = o.size.w; h = o.size.h; face = faceOf(w, h); t = 1; why = 'pinned'; }
     else if (o.size && nd < USER_FAR) { w = o.size.w; h = o.size.h; face = faceOf(w, h); t = 1; why = 'your size'; }
+    else if (o.icon && face !== 'max') { w = SIZE.icon.w; h = SIZE.icon.h; face = 'icon'; why = 'the border is full'; }
     return { face: face, w: w, h: h, t: t, nd: nd, why: why };
   }
 
@@ -87,15 +88,34 @@
     /* a border slot is one where an item really is a chip - far from the chat - or a docked chat's bottom row puts
        full-size items under its elbow (the canvas column, 2026-10-06: 12 of 20 came out full size) */
     var far = clear.filter(function (p) { return distance(R, p[0], p[1], d) >= 0.78; });
+    /* a slot on top of one already taken is no slot: on a narrow desk the columns stepping in from one side reach the
+       other side's border column (the desk matrix, 2026-10-07: 465 against 477, chips printed over each other) */
+    var onTaken = function (list, p) { return list.some(function (q) { return Math.abs(q[0] - p[0]) < cw && Math.abs(q[1] - p[1]) < ch; }); };
     /* not enough far slots for the chips (a floating chat leaves little "far"): further columns inward at both sides */
     for (var col = 1; far.length < (need || 0) && col < 6; col++) {
       for (i = 0; i < nCol; i++) {
         var yy = d.edgeTop + 10 + i * ch, inset = col * (SIZE.chip.w + 10);
         [[d.edgeX + SIZE.chip.w / 2 - 10 + inset, yy], [d.W - SIZE.chip.w / 2 - 8 - inset, yy]].forEach(function (q) {
           var dx = Math.max(R.l - q[0], 0, q[0] - R.r), dy = Math.max(R.t - q[1], 0, q[1] - R.b);
-          if (Math.sqrt(dx * dx + dy * dy) > 140 && distance(R, q[0], q[1], d) >= 0.78) far.push(q);
+          var on = q[0] - SIZE.chip.w / 2 >= 0 && q[0] + SIZE.chip.w / 2 <= d.W;   /* a tiny desk: never off its far side */
+          if (on && Math.sqrt(dx * dx + dy * dy) > 140 && distance(R, q[0], q[1], d) >= 0.78 && !onTaken(far, q)) far.push(q);
         });
       }
+    }
+    /* still short (a narrow desk: 18 chips, 1366 px): fill from a chip-sized grid over the rest of the desk, farthest
+       first, only where an item really is a chip, never on a slot already taken - the chips wrapped round onto the
+       same slots and printed over each other (the desk matrix, 2026-10-07: 15 overlapping pairs) */
+    if (far.length < (need || 0)) {
+      var taken = far.length >= Math.min(4, need || 4) ? far.slice() : clear.slice();
+      var grid = [];
+      for (var gy = d.edgeTop + 10; gy <= d.H - d.edgeBottom; gy += ch)
+        for (var gx = d.edgeX + SIZE.chip.w / 2 - 10; gx <= d.W - SIZE.chip.w / 2 - 8; gx += cw) {
+          var ex = Math.max(R.l - gx, 0, gx - R.r), ey = Math.max(R.t - gy, 0, gy - R.b);
+          if (Math.sqrt(ex * ex + ey * ey) > 140 && sizeAt(R, gx, gy, {}, d).face === 'chip') grid.push([gx, gy]);
+        }
+      grid.sort(function (a, b) { return distance(R, b[0], b[1], d) - distance(R, a[0], a[1], d); });
+      for (var gi = 0; gi < grid.length && taken.length < need; gi++) if (!onTaken(taken, grid[gi])) taken.push(grid[gi]);
+      return taken;
     }
     return far.length >= Math.min(4, need || 4) ? far : clear;
   }
@@ -177,9 +197,27 @@
         else chips.push(it);
       });
     }
-    var slots = edgeSlots(R, d, chips.length);
-    chips.forEach(function (it, i) { if (slots.length) pos[it.id] = slots[i % slots.length]; });
+    var cells = iconCells(R, d, edgeSlots(R, d, chips.length), chips.length);
+    chips.forEach(function (it, i) { if (cells.length) pos[it.id] = cells[i % cells.length]; });
     return pos;
+  }
+
+  /* MORE CHIPS THAN THE BORDER HOLDS (a narrow desk: 18 chips in a 423 x 407 column) - the farthest chip slots each
+     become a row of four ICONS, the owner's "the border can be chips or icons for items" (2026-10-06); the chips
+     wrapped round onto the same slots before and printed over each other (the desk matrix, 2026-10-07: 15 pairs).
+     Returns [x, y] cells, an icon's as [x, y, 'icon']. */
+  function iconCells(R, d, slots, need) {
+    if (!slots.length || need <= slots.length) return slots;
+    var conv = Math.min(slots.length, Math.ceil((need - slots.length) / 3));
+    var byFar = slots.slice().sort(function (a, b) { return distance(R, b[0], b[1], d) - distance(R, a[0], a[1], d); });
+    var gone = byFar.slice(0, conv), out = slots.filter(function (p) { return gone.indexOf(p) < 0; });
+    gone.forEach(function (p) {
+      for (var j = 0; j < 4; j++) {
+        var x = clamp(p[0] + (j - 1.5) * (SIZE.icon.w + 4), SIZE.icon.w / 2, d.W - SIZE.icon.w / 2);
+        out.push([x, p[1], 'icon']);
+      }
+    });
+    return out;
   }
 
   function pushOut(R, x, y, sizeFn, d) {
@@ -207,7 +245,9 @@
   function separate(items, R, sizeFn, d) {
     d = desk(d);
     var gap = 8;
-    function over(a, b) { return a.x - a.w / 2 < b.x + b.w / 2 + gap && b.x - b.w / 2 < a.x + a.w / 2 + gap && a.y - a.h / 2 < b.y + b.h / 2 + gap && b.y - b.h / 2 < a.y + a.h / 2 + gap; }
+    /* two border faces (chips, icons) sit in rows 6 px apart and icons 4 px apart: an 8 px gap between them read the
+       border's own spacing as an overlap and scattered it (the desk matrix, 2026-10-07) */
+    function over(a, b) { var g = a.h <= 40 && b.h <= 40 ? 2 : gap; return a.x - a.w / 2 < b.x + b.w / 2 + g && b.x - b.w / 2 < a.x + a.w / 2 + g && a.y - a.h / 2 < b.y + b.h / 2 + g && b.y - b.h / 2 < a.y + a.h / 2 + g; }
     function inChat(it) { return it.x + it.w / 2 > R.l - gap && it.x - it.w / 2 < R.r + gap && it.y + it.h / 2 > R.t - gap && it.y - it.h / 2 < R.b + gap; }
     function fits(it) { return it.x - it.w / 2 >= 0 && it.x + it.w / 2 <= d.W && it.y - it.h / 2 >= 0 && it.y + it.h / 2 <= d.H; }
     function at(b, x, y) { var t = { x: x, y: y, w: b.w, h: b.h }, s = sizeFn ? sizeFn(x, y, b) : null; if (s) { t.w = s.w; t.h = s.h; } return t; }

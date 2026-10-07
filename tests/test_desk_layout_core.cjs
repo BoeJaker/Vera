@@ -107,4 +107,34 @@ t('panel widgets move to the free space nearest home, compact before covered, st
   assert.ok(kept[0].covered && !kept[0].moved);
 });
 
+t('a narrow desk never puts two border chips on one slot (more chips than border slots)', () => {
+  /* the canvas column beside a docked chat at 1366 px: the chat is off the desk's left edge */
+  const d = { W: 560, H: 640, top: 40, edgeX: 80, edgeTop: 60, edgeBottom: 34 };
+  const R = { l: -460, t: 40, r: -16, b: 624 };
+  const items = Array.from({ length: 20 }, (_, i) => ({ id: 'n' + i, kind: 'note', age: i }));
+  const pos = D.arrange('orbit', R, items, d);
+  const small = Object.keys(pos).map((id) => ({ p: pos[id], s: D.sizeAt(R, pos[id][0], pos[id][1], { icon: pos[id][2] === 'icon' }, d) }))
+    .filter((x) => x.s.face === 'chip' || x.s.face === 'icon');
+  let clash = 0;
+  for (let i = 0; i < small.length; i++) for (let j = i + 1; j < small.length; j++) {
+    const a = small[i], b = small[j];
+    if (Math.abs(a.p[0] - b.p[0]) < (a.s.w + b.s.w) / 2 && Math.abs(a.p[1] - b.p[1]) < (a.s.h + b.s.h) / 2) clash++;
+  }
+  assert.ok(small.length >= 10, 'small: ' + small.length);
+  assert.strictEqual(clash, 0);
+  /* a tiny desk: the border cannot hold them all, the rest are icons - and still none on another */
+  const tiny = { W: 423, H: 407, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22 };
+  const tp = D.arrange('orbit', { l: -440, t: 0, r: 0, b: 407 }, items, tiny);
+  const ic = Object.keys(tp).filter((id) => tp[id][2] === 'icon');
+  assert.ok(ic.length > 0, 'icons on a tiny desk');
+  const tr = { l: -440, t: 0, r: 0, b: 407 };
+  const ts = Object.keys(tp).map((id) => ({ p: tp[id], s: D.sizeAt(tr, tp[id][0], tp[id][1], { icon: tp[id][2] === 'icon' }, tiny) })).filter((x) => x.s.face !== 'max' && x.s.face !== 'card');
+  let tc = 0;
+  for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++) {
+    const a = ts[i], b = ts[j];
+    if (Math.abs(a.p[0] - b.p[0]) < (a.s.w + b.s.w) / 2 && Math.abs(a.p[1] - b.p[1]) < (a.s.h + b.s.h) / 2) tc++;
+  }
+  assert.strictEqual(tc, 0);
+});
+
 console.log(n + ' passed');
