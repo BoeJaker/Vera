@@ -98,6 +98,9 @@ with descriptions and a primary action, settings on the shared Settings page, an
 - **Lifecycle operations are preflighted, exact-target, and dry-run first.** Call
   `evolve.sandbox.preflight(name=...|branch=..., action=...)` and require
   `allowed=true` before restart, stop, reuse, removal, or descriptor reconciliation.
+  The preflight action for `evolve.sandbox.down` is **`stop`**, not `down`;
+  `down` is rejected as `unknown_action` even though it is the later mutation
+  capability's name.
   Reconciliation is planning-only; it never removes a descriptor or worktree. Never use
   `evolve.sandbox.up` to refresh a spawned branch — that controls the primary.
   Use `evolve.sandbox.restart(branch=..., dry_run=true)` and then restart the
@@ -287,6 +290,12 @@ Before changing a reused sandbox, read its revisioned handoff with
 description, owner/session, current step, actionable steps, and links to relevant
 board item IDs or notes references. On revision conflict, re-read and merge;
 never force over another agent's update.
+
+Work-plan `status` is a closed tool schema, not free text. Preserve the current
+status unless the capability schema explicitly advertises the desired value;
+`completed` and `done` are not accepted. To close landed work, mark every step
+`completed`, put the landing receipt in the final step, and let the linked board
+item and pipeline carry the authoritative terminal state.
 
 The plan lives at gitignored `.vera-work/work-plan.json` inside the worktree so
 all agents using that sandbox can discover it. It is operational handoff context,

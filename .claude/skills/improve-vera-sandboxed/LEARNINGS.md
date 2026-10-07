@@ -129,3 +129,31 @@ rules; new ones start here. Newest at the bottom.
   probe explicit connect and total timeouts
 - evidence: shared-planning/observability-backend-comparison/EVIDENCE-2026-10-04.md; pipeline `f56b4369`
 - status: folded into SKILL.md v1
+
+## 2026-10-07 — sandbox down uses the stop preflight action
+- task: release the merged Dream execution sandbox (pipeline `7e6e19f6`)
+- what happened: `evolve.sandbox.preflight(action="down")` refused a healthy,
+  merged sandbox with `unknown_action`, although the mutation is named
+  `evolve.sandbox.down`.
+- cause: preflight names the intended effect (`stop`), while the mutation uses
+  the command name (`down`); the skill did not document that mapping.
+- rule now: before `sandbox.down`, preflight the exact target with
+  `action="stop"`, require `allowed=true`, then dry-run and execute `down`.
+- evidence: pipeline `7e6e19f6`; traces
+  `3bef9521-daa1-4466-bfc3-250f04dda83b` and
+  `867a2002-d939-49b9-806d-131b10d36ab3`
+- status: folded into SKILL.md v2
+
+## 2026-10-07 — workplan status is closed and has no completed value
+- task: close the Dream and schedule execution workplans (pipelines `7e6e19f6`,
+  `740a7b59`)
+- what happened: revision-guarded updates were rejected for both
+  `status="completed"` and `status="done"`.
+- cause: the capability has a closed status vocabulary that the skill did not
+  document and exposes no terminal value through the current interface.
+- rule now: do not invent workplan status values. Mark every step completed and
+  record the receipt in the final step; use the board and pipeline as the
+  authoritative terminal state.
+- evidence: traces `c6142d3a-e40b-4fc1-a409-b240d923fdeb` and
+  `ccb2aae7-a13c-439c-8517-2739fa3dfc5d`
+- status: folded into SKILL.md v2
