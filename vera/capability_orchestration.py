@@ -729,6 +729,11 @@ REDIS = PG_POOL = CHROMA = NEO = None
 # nobody was reading. Readers use this constant, not a literal.
 REDIS_SOCKET_TIMEOUT_S = 4
 STREAM_BLOCK_MS = 3000
+# THE POOL'S IDLE CONNECTIONS ARE CHECKED BEFORE REUSE (2026-10-07). Prod held ~1,280 sockets to Redis while the
+# server counted 74 clients: connections opened in a busy spell sat idle, the far end dropped them, and the pool never
+# noticed, so every busy spell opened more. A connection idle longer than this is PINGed before it is handed out (a
+# dead one is replaced), and TCP keepalive lets the kernel find dead ones too.
+REDIS_POOL_OPTS = {"health_check_interval": 30, "socket_keepalive": True}
 
 # COORD_REDIS — a SHARED coordination Redis handle used for cross-process
 # primitives that must be visible across prod AND every dev sandbox container
@@ -6058,7 +6063,7 @@ async def worker_loop(worker_id: str):
             try:
                 candidate = aioredis.from_url(REDIS_URL, decode_responses=False,
                                               socket_connect_timeout=4,
-                                              socket_timeout=REDIS_SOCKET_TIMEOUT_S)
+                                              socket_timeout=REDIS_SOCKET_TIMEOUT_S, **REDIS_POOL_OPTS)
                 await candidate.ping()
                 REDIS = candidate
                 log.info("Worker %s: Redis reconnected ✓", worker_id)
@@ -9426,6 +9431,11 @@ def _health_files() -> Dict[str, Any]:
         conns = len(getattr(pool, "_available_connections", []) or []) + len(getattr(pool, "_in_use_connections", ()) or ()) \
             if pool is not None else -1
         st = _pl.files_status(n, _res.getrlimit(_res.RLIMIT_NOFILE)[0], conns)
+        # in use vs idle: connections never handed back (a leak) grow "in use"; a pool that grew in a busy spell grows
+        # "idle" (2026-10-07: ~1,280 pooled against 74 clients the server counted)
+        if pool is not None:
+            st["redis_in_use"] = len(getattr(pool, "_in_use_connections", ()) or ())
+            st["redis_idle"] = len(getattr(pool, "_available_connections", []) or [])
         if st["warn"] and time.monotonic() - _FILES_WARNED["t"] > 600:
             _FILES_WARNED["t"] = time.monotonic()
             log.warning("open files: %s of %s (%.0f%%), Redis pool %s connections - a leak? (2026-10-06 outage)",
@@ -11861,7 +11871,7 @@ async def lifespan(app: FastAPI):
             try:
                 _r = aioredis.from_url(
                     REDIS_URL, decode_responses=False,
-                    socket_connect_timeout=4, socket_timeout=REDIS_SOCKET_TIMEOUT_S,
+                    socket_connect_timeout=4, socket_timeout=REDIS_SOCKET_TIMEOUT_S, **REDIS_POOL_OPTS,
                 )
                 await _r.ping()
                 info = await _r.info("server")
