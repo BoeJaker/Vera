@@ -22,7 +22,7 @@ Vera has one address per node for both "what are you doing" and "do this".
 
 Endpoints
 ---------
-  GET  /node/status            host facts: cores, load, memory, uptime, gpu
+  GET  /node/status            host facts: cores, load, memory, uptime, gpus
   GET  /node/runners           compute-worker processes + whether each is stuck
   POST /node/runner/kill       terminate one runner by pid (token-gated)
   GET  /node/media             is a local media service present, and healthy
@@ -46,8 +46,8 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from node_runner_core import (
-    DEFAULT_STUCK_S, Runner, parse_model_from_cmdline, parse_port_from_cmdline,
-    reap_plan,
+    DEFAULT_STUCK_S, GPU_QUERY, Runner, parse_gpus, parse_model_from_cmdline,
+    parse_port_from_cmdline, reap_plan,
 )
 
 NODE_NAME = os.getenv("VERA_NODE_NAME", os.uname().nodename)
@@ -129,24 +129,20 @@ def _runners() -> List[Runner]:
     return sorted(out, key=lambda r: -r.cpu_seconds)
 
 
-def _gpu() -> Optional[Dict]:
-    """nvidia-smi if this node has a card, else None. Never raises."""
+def _gpus() -> List[Dict]:
+    """Every card nvidia-smi lists, [] when there is none. Never raises."""
     exe = shutil.which("nvidia-smi")
     if not exe:
-        return None
+        return []
     try:
-        q = ("name,memory.total,memory.used,memory.free,utilization.gpu")
         res = subprocess.run(
-            [exe, f"--query-gpu={q}", "--format=csv,noheader,nounits"],
+            [exe, f"--query-gpu={GPU_QUERY}", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10)
-        if res.returncode != 0 or not res.stdout.strip():
-            return None
-        name, tot, used, free, util = [
-            p.strip() for p in res.stdout.strip().splitlines()[0].split(",")]
-        return {"name": name, "total_mb": int(float(tot)), "used_mb": int(float(used)),
-                "free_mb": int(float(free)), "util_pct": int(float(util))}
+        if res.returncode != 0:
+            return []
+        return parse_gpus(res.stdout)
     except Exception:
-        return None
+        return []
 
 
 def _require_token(tok: Optional[str]) -> None:
@@ -174,13 +170,17 @@ async def node_status():
                     mem[k] = int(v.strip().split()[0]) // 1024
     except Exception:
         pass
+    gpus = _gpus()
     return {
         "node": NODE_NAME,
         "cores": os.cpu_count(),
         "load": [round(load1, 2), round(load5, 2), round(load15, 2)],
         "mem_total_mb": mem.get("MemTotal", 0),
         "mem_available_mb": mem.get("MemAvailable", 0),
-        "gpu": _gpu(),
+        # `gpu` stays the first card: nodes.agent.status reads its total_mb
+        # into _NODE_VRAM_OBSERVED, and older readers expect one dict or None.
+        "gpu": gpus[0] if gpus else None,
+        "gpus": gpus,
         "runners": len(_runners()),
         "stuck_after_s": STUCK_S,
         "can_control": bool(NODE_TOKEN),

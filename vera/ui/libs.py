@@ -16,6 +16,9 @@ from the same copy.
   /ui/structgraph.js -> vera/ui/structgraph_element.js  <vera-structgraph>: code and
                                                        prose as bands, columns, cards
                                                        and routed runs
+  /ui/desk-layout.js -> vera/ui/desk_layout_core.js  window.VeraDesk  the desk's layout
+                                                       rules (sizes by distance to the chat,
+                                                       arrangements, layers, making room)
 
 Routes only - no state, no capabilities - so the module body may run more than
 once (the namespace import trap) without a side effect.
@@ -64,6 +67,29 @@ async def _serve_design_css():
     return _style("design.css")
 
 
+# the PAGE a panel is built on (owner, 2026-10-04: "a bootstrap for widgets and ui panels"): grid, top bar, sections,
+# cards, buttons, badges, key/value rows, tables - in the theme's names only. documentation/51-ui-design-system.md
+@APP.get("/ui/bootstrap.css", include_in_schema=False)
+async def _serve_bootstrap_css():
+    return _style("bootstrap.css")
+
+
+# the starting files - a panel, a widget (its record and its placing), a graph - copied to begin one; the capability
+# ui.templates lists them for an agent. Only the files in templates/ - a name is never a path.
+TEMPLATES = {
+    "panel.html": "text/html", "widget.json": "application/json", "widget.html": "text/html", "graph.html": "text/html",
+}
+
+
+@APP.get("/ui/templates/{name}", include_in_schema=False)
+async def _serve_template(name: str):
+    from fastapi.responses import Response
+    ct = TEMPLATES.get(name)
+    p = _HERE / "templates" / name
+    if not ct or not p.exists():
+        return Response(content="no template %r - one of: %s" % (name, ", ".join(sorted(TEMPLATES))), status_code=404, media_type="text/plain")
+    return Response(content=p.read_text(encoding="utf-8"), media_type=ct + "; charset=utf-8", headers={"Cache-Control": "no-cache"})
+
 # the chat UI as an element (<vera-chat agent system session title>) any page can place
 @APP.get("/ui/chat.js", include_in_schema=False)
 async def _serve_chat_js():
@@ -84,3 +110,10 @@ async def _serve_routes_js():
 @APP.get("/ui/structgraph.js", include_in_schema=False)
 async def _serve_structgraph_js():
     return _script("structgraph_element.js")
+
+
+# the desk's layout rules (window.VeraDesk; owner approved 2026-10-06): sizes by distance to the chat, arrangements,
+# the chat's path, stacking, the layers and a panel's widgets making room - pure, Node-tested
+@APP.get("/ui/desk-layout.js", include_in_schema=False)
+async def _serve_desk_layout_js():
+    return _script("desk_layout_core.js")

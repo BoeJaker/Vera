@@ -48,7 +48,7 @@ def test_the_five_pages_are_gone_and_agents_is_there(src):
     assert rail.index("agents") == rail.index("ship") + 1, "Agents follows Ship"
     nav = src[src.index("VeraPanelBridge.registerNav(["):]
     nav = nav[:nav.index("]);")]
-    assert "{id:'agents', label:'Agents'}" in nav
+    assert "{id:'agents', label:'Agents'," in nav
     for old in ("'csessions'", "'board'", "'notes'", "'capacity'", "'swarm'"):
         assert old not in nav, old
 

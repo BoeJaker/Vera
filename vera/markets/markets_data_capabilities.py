@@ -662,6 +662,48 @@ if _CAP_AVAILABLE:
                 "symbol": meta.get("symbol", ""), "exchange": meta.get("exchange", ""),
                 "timeframe": meta.get("timeframe", "")}
 
+    # ── A symbol's chart, as a widget draws it (canvas-enrichment slice 5) ───────
+    # (owner, 2026-10-03: "the canvas could display the charts from the markets UI - lots of the markets UI could be
+    # converted to widgets so the LLM can include them in the canvas"). markets.bars wants a dataset id; a turn names a
+    # SYMBOL ("BTC", "$SPY", "BTC/USD"). markets.chart finds the tracked asset that symbol is (the watchlist's own
+    # keys - BTC is BTC-USD where that is what is tracked), reads its stored bars - no network, nothing written - and
+    # answers in the candle form's own rows, with the last price and the change over the window, so the widget
+    # catalogue draws it as candles and the surface index can fill it from the turn's ticker.
+    @capability(
+        "markets.chart", http_method="GET", http_path="/markets/chart",
+        http_tags=["markets"], memory="off", silent=True,
+        description="A tracked symbol's price chart from stored bars (no network, nothing written): the symbol a person "
+                    "names (BTC, $SPY, BTC/USD, eth) resolved to the tracked asset it is, its bars as candle rows. Input: "
+                    "symbol (str!), timeframe (str='1d'), limit (int=120, max 2000). Output: {symbol, key, provider, "
+                    "timeframe, last, change_pct, count, bars:[{t, open, high, low, close, volume}]} or {error, tracked}.",
+    )
+    async def cap_markets_chart(symbol: str = "", timeframe: str = "1d", limit: int = 120, trace_id=None) -> dict:
+        s = re.sub(r"[\s$]", "", str(symbol or "")).upper()
+        if not s:
+            return {"error": "symbol required"}
+        want = {s, s.replace("/", "-"), s.replace("/", "")}
+        base = re.split(r"[/-]", s)[0]
+        want |= {base + "-USD", base + "-USDT", base + "/USDT", base + "/USD", base}
+        q = await cap_markets_quotes()
+        quotes = (q or {}).get("quotes") or [] if isinstance(q, dict) else []
+        hit = next((x for x in quotes if str(x.get("symbol") or "").upper() in want), None)
+        if not hit:
+            return {"error": "%s is not tracked - add it to the watchlist to chart it" % s,
+                    "tracked": [x.get("symbol") for x in quotes][:30]}
+        key = str(hit.get("key") or "")
+        provider = key.split(":", 1)[0] if ":" in key else str(hit.get("exchange") or "yahoo")
+        sym = str(hit.get("symbol") or s)
+        n = max(2, min(2000, int(limit or 120)))
+        raw = await cap_markets_bars(dataset_id=_dataset_id(provider, sym, timeframe or "1d"), limit=n)
+        if not isinstance(raw, dict) or not raw.get("count"):
+            return {"error": "no stored %s bars for %s" % (timeframe or "1d", sym), "key": key}
+        rows = [{"t": raw["t"][i], "open": raw["o"][i], "high": raw["h"][i], "low": raw["l"][i], "close": raw["c"][i],
+                 "volume": raw["v"][i]} for i in range(raw["count"])]
+        first, last = rows[0]["close"], rows[-1]["close"]
+        chg = round((last - first) / first * 100, 2) if first and last is not None else None
+        return {"symbol": sym, "key": key, "provider": provider, "timeframe": timeframe or "1d", "last": last,
+                "change_pct": chg, "count": len(rows), "bars": rows}
+
     # ── Quotes for the whole watchlist ────────────────────────────────────────
 
     def _quote_from_bars_sync(provider: str, symbol: str, tfs: List[str]) -> dict:

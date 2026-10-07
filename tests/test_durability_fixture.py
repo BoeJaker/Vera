@@ -95,12 +95,23 @@ def test_exactly_once_external_effect_claim_is_explicitly_rejected():
     assert [gap["code"] for gap in report["gaps"]] == ["unsupported_guarantee"]
 
 
-@pytest.mark.parametrize("adapter_id", ["portable.core", "vera.native_dag", "temporal"])
+@pytest.mark.parametrize("adapter_id", ["portable.core", "temporal"])
 def test_existing_workflow_adapter_profiles_fail_lib15_without_execution(adapter_id):
     report = analyze_workflow_adapter_durability(adapter_id)
     assert not report["ok"]
     assert report["executes"] is False
     assert "adapter_not_executable" in {gap["code"] for gap in report["gaps"]}
+
+
+def test_executable_native_subset_still_fails_unimplemented_durability_semantics():
+    report = analyze_workflow_adapter_durability("vera.native_dag")
+
+    assert not report["ok"]
+    assert report["executes"] is False
+    codes = {gap["code"] for gap in report["gaps"]}
+    assert "adapter_not_executable" not in codes
+    assert {"missing_semantic", "missing_run_event", "effect_delivery_gap",
+            "version_policy_gap"}.issubset(codes)
 
 
 def test_unknown_workflow_adapter_is_an_explicit_nonexecuting_gap():

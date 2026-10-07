@@ -76,6 +76,23 @@ def test_every_vetted_namespace_is_in_exactly_one_class():
     assert set(seen) == set(wp.NODE_SAFE)
 
 
+def test_vetted_single_caps_join_a_class_without_opening_their_namespace():
+    assert wp.class_of("stt.transcribe", env={}) == "media"
+    assert wp.class_of("tts.synthesize", env={}) == "media"
+    assert wp.class_of("gpu.health", env={}) == "media"
+    assert wp.class_of("data.json_flatten", env={}) == "general"
+    assert wp.stream_for("tts.voices", env={}) == wp.class_stream("media")
+    # their siblings were checked and stay home
+    for cap in ("vision.describe", "web.search", "image.generate", "image.progress",
+                "system.ping", "gpu.chat_speak"):
+        assert wp.placement(cap)[0] == "host", cap
+    # the operator's brake still wins
+    assert wp.placement("stt.transcribe", host_only=["stt"])[0] == "host"
+    for cap, (cls, why) in wp.NODE_SAFE_CAPS.items():
+        assert cls in wp.CLASSES and why, cap
+        assert wp.namespace(cap) not in wp.NODE_SAFE, cap
+
+
 def test_class_of():
     assert wp.class_of("llm.generate", env={}) == "general"
     assert wp.class_of("memory.store", env={}) == "general"
@@ -123,6 +140,8 @@ def test_worker_runs_no_periodic_job_and_only_loading_hooks():
     assert not wp.scheduler_may_run("memory_startup", 60, is_worker=True)  # periodic, even if named
     assert wp.scheduler_may_run("memory_startup", S, is_worker=True)
     assert wp.scheduler_may_run("worker_metrics", S, is_worker=True)
+    # vLLM's registry + health: an offloaded llm.generate routes by it
+    assert wp.scheduler_may_run("vllm_health", S, is_worker=True)
     # pollers, promoters, proxies, sweeps and host-local loaders
     for hook in ("telegram_startup", "email_startup", "dream_startup",
                  "cluster_startup", "job_persist_startup", "fabric_startup",
@@ -185,8 +204,12 @@ def test_bundle_mode_unpacks_stdin_and_swaps_the_tree():
     assert "git clone" not in cmd
     assert "base64 -d | tar -xzf - -C /opt/vera/worker/src.new" in cmd
     # unpack beside, then swap: a file the new commit deleted must not linger
-    assert cmd.index("tar -xzf") < cmd.index("rm -rf /opt/vera/worker/src;") \
+    assert cmd.index("tar -xzf") < cmd.index("mv /opt/vera/worker/src /opt/vera/worker/src.old") \
         < cmd.index("mv /opt/vera/worker/src.new /opt/vera/worker/src")
+    # the old tree is moved aside, never rm'd in place under set -e: the
+    # running worker writes bytecode into it mid-delete (cpu-246, 2026-10-04)
+    assert "rm -rf /opt/vera/worker/src;" not in cmd
+    assert "rm -rf /opt/vera/worker/src.old 2>/dev/null || true" in cmd
     # the venv is outside the swapped tree, and not rebuilt when present
     assert "/opt/vera/worker/venv/bin/python" in cmd
     assert "[ -x /opt/vera/worker/venv/bin/python ] || python3 -m venv" in cmd
@@ -231,3 +254,14 @@ def test_worker_dir_never_assumes_home():
     assert WORKER_DIR_CANDIDATES[-1].startswith("$HOME")
     probe = edge_dir_probe_cmd(WORKER_DIR_CANDIDATES)
     assert probe.index("/opt/vera/worker") < probe.index("$HOME/.vera/worker")
+
+
+def test_memory_background_jobs_stay_on_the_host():
+    # 2026-10-06: memory.fade.run ran on a node worker; status depended on which process answered, a second start ran
+    # alongside the first
+    for cap in ("memory.fade.run", "memory.fade.report", "memory.noise.mark", "memory.canonical.mark"):
+        assert wp.placement(cap)[0] == "host" and wp.class_of(cap) == ""
+        ok, why = wp.offload_decision(cap, stage=4, free={"general": 3}, is_worker=False, is_sandbox=False,
+                                      args_ok=True)
+        assert ok is False and why == "host-bound"
+    assert wp.placement("memory.search")[0] == "any"          # the rest of memory.* still may run on a node

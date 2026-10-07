@@ -65,7 +65,8 @@ def test_memory_and_fabric_embeds_wait_bounded_and_do_not_cancel():
     ingest traffic on 2026-09-13; both embed entry points now go through
     bounded_embed_result and neither cuts the embed with wait_for."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for rel, fn in (("vera/fabric/memory.py", "embed_text"),
+    # memory.embed_text is a wrapper; the bounded embed lives in embed_text_outcome (FM-7.0).
+    for rel, fn in (("vera/fabric/memory.py", "embed_text_outcome"),
                     ("vera/fabric/data_fabric.py", "_embed")):
         src = open(os.path.join(root, *rel.split("/")), encoding="utf-8").read()
         body = src.split(f"async def {fn}(")[1]
@@ -107,7 +108,8 @@ def test_memory_seek_waits_for_its_query_vector_without_cancelling_it():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     src = open(os.path.join(root, "vera", "fabric", "memory_retrieval.py"), encoding="utf-8").read()
     assert "asyncio.wait_for(df._embed(query), timeout=10)" not in src
-    assert "_bounded_embed(lambda: df._embed(query), _SEEK_EMBED_WAIT_S)" in src
+    # bounded_embed_result: the same bounded, uncancelled wait, plus whether it ran out (FM-7.0).
+    assert "_bounded_embed_result(lambda: df._embed(query), _SEEK_EMBED_WAIT_S)" in src
 
 
 def test_syscomms_panel_polls_only_while_on_screen():

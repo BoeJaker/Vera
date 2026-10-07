@@ -62,6 +62,33 @@ def _copy_overlay(source: Path, target: Path) -> None:
             shutil.copy2(item, destination)
 
 
+def mounts_from_container_list(rows: Any) -> tuple[dict[str, set[str]] | None, str]:
+    """{container id: {mount sources}} from ONE Engine `/containers/json?all=true`.
+
+    The list carries every container's mounts, so nothing is inspected one by
+    one (562 containers on prod, 2026-09-28: per-id inspects - and then one
+    batched inspect - timed out and refused every repair). Returns (None, why)
+    on anything unreadable: unknown ownership is never permission to repair.
+    """
+    if not isinstance(rows, list):
+        return None, "container list is not a list"
+    mounts: dict[str, set[str]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("Id"):
+            return None, "container row without an Id"
+        raw = row.get("Mounts")
+        if raw is None:
+            raw = []
+        if not isinstance(raw, list):
+            return None, "container %s: unreadable Mounts" % str(row["Id"])[:12]
+        sources: set[str] = set()
+        for m in raw:
+            src = (m or {}).get("Source") if isinstance(m, dict) else None
+            if src:
+                sources.add(str(src).replace("\\", "/").rstrip("/"))
+        mounts[str(row["Id"])] = sources
+    return mounts, ""
+
 def _registered(root: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     current = ""

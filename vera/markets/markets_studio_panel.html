@@ -313,14 +313,14 @@ table.tbl tr:hover td{background:color-mix(in srgb, var(--acc) 5%, transparent)}
       <div><h1>Markets</h1><div class="sub">quant studio</div></div>
     </div>
     <nav id="nav">
-      <button type="button" class="nav-btn active" data-view="charts" title="Charts"><span class="gl">◫</span>Charts</button>
-      <button type="button" class="nav-btn" data-view="strat" title="Strategy"><span class="gl">⚗</span>Strategy</button>
-      <button type="button" class="nav-btn" data-view="run" title="Backtest"><span class="gl">▶</span>Backtest</button>
-      <button type="button" class="nav-btn" data-view="pulse" title="Pulse"><span class="gl">⌁</span>Pulse</button>
-      <button type="button" class="nav-btn" data-view="folio" title="Portfolio"><span class="gl">💼</span>Portfolio</button>
-      <button type="button" class="nav-btn" data-view="proj" title="Project"><span class="gl">⧗</span>Project</button>
-      <button type="button" class="nav-btn" data-view="sim" title="Sim"><span class="gl">◎</span>Sim</button>
-      <button type="button" class="nav-btn" data-view="alerts" title="Alerts"><span class="gl">🔔</span>Alerts<span class="ct" id="railAlBadge" style="display:none;background:var(--dn);color:#fff"></span></button>
+      <button data-label="Charts" data-desc="Price charts in a grid" data-desc-long="Charts: a grid of 1-6 price charts with synced crosshair, a watch strip, data &amp; layers, history coverage (fetch full history, audit, repair) and key dates." type="button" class="nav-btn active" data-view="charts" title="Charts"><span class="gl">◫</span>Charts</button>
+      <button data-label="Strategy" data-desc="Build trading strategies" data-desc-long="Strategy studio: build strategies with the node builder or a form, and launch a backtest of one." type="button" class="nav-btn" data-view="strat" title="Strategy"><span class="gl">⚗</span>Strategy</button>
+      <button data-label="Backtest" data-desc="Run and optimise backtests" data-desc-long="The backtest run centre: run a strategy on an asset, timeframe, engine and window, or optimise it for a metric (Sharpe, Sortino, total return ...)." type="button" class="nav-btn" data-view="run" title="Backtest"><span class="gl">▶</span>Backtest</button>
+      <button data-label="Pulse" data-desc="The market at a glance" data-desc-long="Market pulse: a market map (size and colour by move) over a chosen window, the tracked baseline, and projections of the real portfolio." type="button" class="nav-btn" data-view="pulse" title="Pulse"><span class="gl">⌁</span>Pulse</button>
+      <button data-label="Accounts" data-desc="The real book and the sim accounts" data-desc-long="Accounts: the real portfolio (every ledger edit is real bookkeeping) and every paper-trading sim account in one view - allocation, P&amp;L, value curve and holdings with live pulse stats; project or optimise it." type="button" class="nav-btn" data-view="folio" title="Portfolio"><span class="gl">💼</span>Portfolio</button>
+      <button data-label="Project" data-desc="Project a portfolio forward" data-desc-long="Project a portfolio forward: Monte-Carlo bands over a horizon with inflation and costs, and optimise its weights for an objective." type="button" class="nav-btn" data-view="proj" title="Project"><span class="gl">⧗</span>Project</button>
+      <button data-label="Sim" data-desc="Paper trading accounts" data-desc-long="Sim: paper-trading accounts - agents, monitors and you trade here, never real money (now shown within Accounts)." type="button" class="nav-btn" data-view="sim" title="Sim"><span class="gl">◎</span>Sim</button>
+      <button data-label="Alerts" data-desc="Every monitored strategy's signals" data-desc-long="Alerts &amp; monitors: every monitored strategy's signals in one place - active monitors and the alert feed, unseen only or all." type="button" class="nav-btn" data-view="alerts" title="Alerts"><span class="gl">🔔</span>Alerts<span class="ct" id="railAlBadge" style="display:none;background:var(--dn);color:#fff"></span></button>
     </nav>
     <div id="status-tile">
       <span class="dot" id="wsDot" title="live event stream"></span>
@@ -8312,7 +8312,7 @@ function openDataPop(t,anchor){
   /* rail button */
   const rail=$('nav');
   if(rail&&!document.querySelector('#nav .nav-btn[data-view="news"]')){
-    const b=document.createElement('button'); b.type='button'; b.className='nav-btn'; b.dataset.view='news'; b.title='News';
+    const b=document.createElement('button'); b.type='button'; b.className='nav-btn'; b.dataset.view='news'; b.title='News'; b.dataset.label='News'; b.dataset.desc='Market news'; b.dataset.descLong='News: market news for the assets you follow.';
     b.innerHTML='<span class="gl">▤</span>News';
     b.onclick=()=>switchView('news');
     rail.appendChild(b);
@@ -8398,7 +8398,7 @@ switchView=function(n){ _svNews(n); if(n==='news') renderNews(); };
 (function(){
   const rail=$('nav');
   if(rail&&!document.querySelector('#nav .nav-btn[data-view="flow"]')){
-    const b=document.createElement('button'); b.type='button'; b.className='nav-btn'; b.dataset.view='flow'; b.title='Flow';
+    const b=document.createElement('button'); b.type='button'; b.className='nav-btn'; b.dataset.view='flow'; b.title='Flow'; b.dataset.label='Flow'; b.dataset.desc='Market flow'; b.dataset.descLong='Market flow: where money is moving across the markets you follow.';
     b.innerHTML='<span class="gl">✦</span>Flow';
     b.onclick=()=>switchView('flow');
     rail.appendChild(b);
@@ -8658,7 +8658,7 @@ handleEvent=function(ev){
 
   const rail=$('nav');
   if(rail&&!document.querySelector('#nav .nav-btn[data-view="dash"]')){
-    const b=document.createElement('button'); b.type='button'; b.className='nav-btn'; b.dataset.view='dash'; b.title='Dash';
+    const b=document.createElement('button'); b.type='button'; b.className='nav-btn'; b.dataset.view='dash'; b.title='Dash'; b.dataset.label='Dash'; b.dataset.desc='Your market dashboards'; b.dataset.descLong='Dashboards: your own market dashboards of widgets.';
     b.innerHTML='<span class="gl">◲</span>Dash';
     b.onclick=()=>switchView('dash'); rail.appendChild(b);
   }

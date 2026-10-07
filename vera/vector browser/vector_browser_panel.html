@@ -178,12 +178,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg0);color:var(--text);
   <div class="topbar">
     <h1><span class="icon">&#x25C8;</span> Vector Browser</h1>
     <div class="tab-bar" data-vera-lhm>
-      <div class="tab active" data-tab="overview" data-icon="▦">Overview</div>
-      <div class="tab" data-tab="chroma" data-icon="◈">Chroma</div>
-      <div class="tab" data-tab="faiss" data-icon="⁘">FAISS</div>
-      <div class="tab" data-tab="audit" data-icon="✓">Audit</div>
-      <div class="tab" data-tab="compare" data-icon="⇄">Compare</div>
-      <div class="tab" data-tab="reencode" data-icon="↻">Re-encode</div>
+      <div data-label="Overview" data-desc="The vector stores at a glance" data-desc-long="Overview of the vector stores, with a dimension-alignment check." class="tab active" data-tab="overview" data-icon="▦">Overview</div>
+      <div data-label="Chroma" data-desc="Browse the Chroma store" data-desc-long="The Chroma store: browse records per dataset with their embeddings' dimension, norm, mean and spread." class="tab" data-tab="chroma" data-icon="◈">Chroma</div>
+      <div data-label="FAISS" data-desc="Browse the FAISS indexes" data-desc-long="FAISS: the global shards and per-dataset indexes, with vector samples." class="tab" data-tab="faiss" data-icon="⁘">FAISS</div>
+      <div data-label="Audit" data-desc="Find dimension problems" data-desc-long="Audit: the dimension distribution per dataset and its issues; run a full audit." class="tab" data-tab="audit" data-icon="✓">Audit</div>
+      <div data-label="Compare" data-desc="One record across stores" data-desc-long="Compare one record across the stores by id and dataset." class="tab" data-tab="compare" data-icon="⇄">Compare</div>
+      <div data-label="Re-encode" data-desc="Re-embed a store" data-desc-long="Re-encode: probe an embedding model's output dimension, then re-encode a Chroma store with it." class="tab" data-tab="reencode" data-icon="↻">Re-encode</div>
     </div>
     <div class="spacer"></div>
     <div class="model-tag" id="modelTag">--</div>
@@ -1185,14 +1185,14 @@ async function probeModel() {
   if (!model) { el.innerHTML = '<span style="color:var(--warn)">Enter a model name</span>'; return; }
   el.innerHTML = '<span style="color:var(--dim2)">Probing…</span>';
   try {
-    // Set the model first, then probe via worldview/diagnose
+    // Set the model first, then probe via worldview/diagnose (embeds one probe string)
     const r = await api('/ollama/embed_config', { embed_model: model });
     if (r.error) { el.innerHTML = `<span style="color:var(--err)">${esc(r.error)}</span>`; return; }
     const probe = await api('/worldview/diagnose', {});
-    const dim = probe.embed_dim || probe.probe_dim || '?';
+    const dim = probe.probe_dim || '?';
     const ok = typeof dim === 'number' && dim > 0;
     el.innerHTML = `<span style="color:var(--${ok ? 'ok' : 'warn'})">
-      ${ok ? '✓' : '⚠'} model=${esc(model)} · dim=${dim}${ok ? '' : ' · probe returned no dim'}
+      ${ok ? '✓' : '⚠'} model=${esc(model)} · dim=${dim}${ok ? '' : ' · probe returned no dim' + (probe.probe_error ? ' (' + esc(String(probe.probe_error)) + ')' : '')}
     </span>`;
     await loadReencode();
   } catch(e) {

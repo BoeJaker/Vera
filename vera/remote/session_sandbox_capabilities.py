@@ -800,6 +800,20 @@ async def _wake(dk, host, rec: Dict, state: Optional[str]) -> bool:
         return False
 
 
+#: One auto-create per session at a time. The agent loop now starts the
+#: session's sandbox in the background while it plans (census 2026-09-30:
+#: creation took 30-54 s on the critical path of every run), so a tool call can
+#: race it; without this both would call cap_sbx_start.
+_CREATE_LOCKS: dict = {}
+
+
+def _create_lock(sid: str) -> "asyncio.Lock":
+    lk = _CREATE_LOCKS.get(sid)
+    if lk is None:
+        lk = _CREATE_LOCKS[sid] = asyncio.Lock()
+    return lk
+
+
 async def _ensure_routable(session_id: str, *, create: bool = True) -> Optional[Dict]:
     """The routing gatekeeper: resolve aliases, WAKE a sleeping container, and —
     when the system-wide `auto_create` default is on (sandbox.config, default
@@ -843,13 +857,19 @@ async def _ensure_routable(session_id: str, *, create: bool = True) -> Optional[
     cfg = await _get_cfg()
     if not cfg.get("auto_create", True):
         return None
-    try:
-        res = await cap_sbx_start(session_id=sid, enable=True)
-        if not res.get("ok"):
+    async with _create_lock(sid):
+        # A concurrent caller may have created it while this one waited.
+        _made = await _get_rec(await _resolve_sid(sid))
+        if _made and _made.get("container") and _made.get("active"):
+            await _touch(_made)
+            return _made
+        try:
+            res = await cap_sbx_start(session_id=sid, enable=True)
+            if not res.get("ok"):
+                return None
+        except Exception as e:
+            log.debug("sandbox auto-create failed for %s: %s", sid, e)
             return None
-    except Exception as e:
-        log.debug("sandbox auto-create failed for %s: %s", sid, e)
-        return None
     # start() may have REDIRECTED the session into its run-owner's container
     # (aliasing sid) — resolve again so routing lands in the shared container.
     rec = await _get_rec(await _resolve_sid(sid))
@@ -4696,12 +4716,33 @@ async def _idle_archive_tick() -> None:
             return
         now = time.time()
         threshold_s = idle_days * 86400
+        # Only a container that EXISTS is archived. A row that already holds a committed image is kept by cap_sbx_stop
+        # (it is the restore handle) and still names its long-gone container, so without this check every tick - and the
+        # first tick after every restart - "archived" the same rows again: 1,857 snapshot-cp + rm attempts against
+        # missing containers per pass on prod (2026-10-05, ~7 min of serial docker/SSH calls at each start-up). One
+        # bulk listing per host, as the sleep tick does; a host that cannot be listed is skipped, never archived blind.
+        dk = _dk()
+        listed: Dict[str, Any] = {}
         for rec in await _all_recs():
             if not rec.get("container"):
                 continue
             last = float(rec.get("last_used") or 0)
             if not last or now - last < threshold_s:
                 continue
+            host_id = rec.get("docker_host_id", "local")
+            if host_id not in listed:
+                listed[host_id] = None
+                try:
+                    host = await _docker_host(dk, host_id) if dk is not None else None
+                    if host:
+                        states, ok = await _state_map_checked(dk, host, host_id, "vera-sbx-")
+                        if ok:
+                            listed[host_id] = states
+                except Exception as e:
+                    log.debug("idle archive: listing host %s failed: %s", host_id, e)
+            states = listed.get(host_id)
+            if states is None or rec["container"] not in states:
+                continue      # the host could not be listed, or there is no container left to archive
             try:
                 res = await cap_sbx_stop(session_id=rec["session_id"], remove=True)
                 if res.get("ok"):

@@ -9,7 +9,7 @@ t('a docked menu has no ☰ unless asked; a spacer keeps the rail level', /if\(o
 t('one rhythm: title 28, item 34, gap 2', /\.lhm-absorbed \.lhm-rsp\{height:28px;flex:0 0 28px\}/.test(L) && /\.lhm-absorbed \.lhm-tab\{height:34px;box-sizing:border-box;line-height:20px\}/.test(L) && /\.lhm-absorbed \.lhm-tabs \.lhm-ttl\{height:28px/.test(L));
 t('the bridge knows more top-bar names', /\.pane-tb, #tb, #toolbar, \.toolbar, \.bar, header, \.page-head, \.panel-head';/.test(BR));
 t('the harness brings the bridge to a panel that lacks it, then inits it', /function _bridgeInto\(f\)\{/.test(H) && /s\.src = '\/ui\/vera-panel-bridge\.js'/.test(H) && /document\.addEventListener\('load', e => \{ const t = e\.target; if\(t && t\.tagName === 'IFRAME'\) _bridgeInto\(t\); \}, true\);/.test(H));
-t('dashboards: a higher text floor at every setting', /\.dash-grid vera-widget\{--vw-fmin:11\.5px\}/.test(WE) && /html\[data-text="larger"\] \.dash-grid vera-widget\{--vw-fmin:13\.5px\}/.test(WE));
+t('dashboards: a higher text floor at every setting', /\.dash-grid vera-widget\{--vw-fmin:12\.5px\}/.test(WE) && /html\[data-text="larger"\] \.dash-grid vera-widget\{--vw-fmin:14\.5px\}/.test(WE));
 t('the element measures its text scale; pills and log lines fit with it', /textK: textKOf\(this\)/.test(WE) && /const pillsFit = \(labels, H, W, k\) =>/.test(WE) && /Math\.floor\(H \/ \(15 \* \(\(o && o\.textK\) \|\| 1\)\)\)/.test(WE));
 // behaviour: a composite of a figure, a list and a chart - the list takes a whole row, below the packed ones
 {

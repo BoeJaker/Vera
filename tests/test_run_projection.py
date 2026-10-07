@@ -4,16 +4,53 @@ import time
 
 import pytest
 
-from vera.execution.run_journal import SqliteRunJournal
+from vera.execution.run_journal import MemoryRunJournal, SqliteRunJournal
 from vera.execution.run_projection import (
     DagRunObserver,
     ShadowRunRegistry,
     StreamDagRunProjection,
+    _journal_from_environment,
 )
 from vera.execution.run_protocol import Run, RunStatus
 
 
 pytestmark = pytest.mark.critical
+
+
+def test_journal_configuration_preserves_standalone_memory_default(monkeypatch):
+    monkeypatch.delenv("VERA_RUN_JOURNAL_MODE", raising=False)
+    monkeypatch.delenv("VERA_RUN_JOURNAL_PATH", raising=False)
+    monkeypatch.delenv("VERA_RUN_JOURNAL_RETENTION_RUNS", raising=False)
+
+    journal, retention = _journal_from_environment()
+
+    assert isinstance(journal, MemoryRunJournal)
+    assert retention == 5000
+
+
+def test_journal_configuration_uses_out_of_tree_durable_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("VERA_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("VERA_RUN_JOURNAL_MODE", "durable")
+    monkeypatch.delenv("VERA_RUN_JOURNAL_PATH", raising=False)
+    monkeypatch.setenv("VERA_RUN_JOURNAL_RETENTION_RUNS", "17")
+
+    journal, retention = _journal_from_environment()
+
+    assert isinstance(journal, SqliteRunJournal)
+    assert journal.path == str(
+        (tmp_path / "state" / "execution" / "runs.sqlite3").resolve())
+    assert retention == 17
+    journal.close()
+
+
+def test_journal_configuration_rejects_unknown_mode_or_bad_retention(monkeypatch):
+    monkeypatch.setenv("VERA_RUN_JOURNAL_MODE", "sometimes")
+    with pytest.raises(ValueError, match="must be memory"):
+        _journal_from_environment()
+    monkeypatch.setenv("VERA_RUN_JOURNAL_MODE", "memory")
+    monkeypatch.setenv("VERA_RUN_JOURNAL_RETENTION_RUNS", "0")
+    with pytest.raises(ValueError, match="between 1"):
+        _journal_from_environment()
 
 
 async def _ignore(_event):

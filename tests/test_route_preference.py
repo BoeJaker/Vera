@@ -110,11 +110,15 @@ def test_rule_defaults_prefer_off(orch):
     assert r["prefer"] == ""
 
 
-def test_the_defaults_split_the_two_cpu_nodes(orch):
+def test_the_defaults_split_the_cpu_work(orch):
+    """User 2026-09-28: the GPU node's CPU sibling is the primary embedder (and
+    takes the small naming model), so the two CPU nodes are free for the large
+    models - cpu-247 keeps the long-horizon work."""
     d = orch.DEFAULT_ROUTING_RULES
-    assert d["embedding"]["prefer"] == "cpu-246"
+    assert d["embedding"]["prefer"] == "gpu-250-cpu"
+    assert d["naming"]["prefer"] == "gpu-250-cpu"
     # summarize is NOT here: it left the CPU entirely (GPU-only, see below).
-    for jt in ("naming", "dream_director", "research_reader"):
+    for jt in ("dream_director", "research_reader"):
         assert d[jt]["prefer"] == "cpu-247", jt
 
 

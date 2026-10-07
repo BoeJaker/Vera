@@ -62,6 +62,8 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
 .inst-card{border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:6px;cursor:pointer;transition:border-color .14s;background:var(--bg2)}
 .inst-card:hover{border-color:var(--border2)}
 .inst-card.selected{border-color:var(--acc);background:rgba(90,158,143,.07)}
+.inst-think{display:flex;align-items:center;gap:6px;margin-top:5px}
+.inst-standin{display:flex;align-items:center;gap:6px;margin-top:5px}
 .inst-row{display:flex;align-items:center;gap:6px;margin-bottom:4px}
 .inst-name{font-size:11px;font-weight:600;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inst-url{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:2px;word-break:break-all}
@@ -111,6 +113,8 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
 .msg.user .bubble{background:rgba(90,158,143,.18);border:1px solid rgba(90,158,143,.3)}
 .msg.assistant .bubble{background:var(--bg2);border:1px solid var(--border)}
 .msg.assistant .bubble.streaming{border-color:var(--acc)}
+.pg-think{margin:0 0 6px;padding:4px 7px;border-left:2px solid var(--border, #2a2f3a);color:var(--dim2, #8a90a0);font-size:10.5px}
+.pg-think summary{cursor:pointer;color:var(--dim, #6a7080)}
 .msg.sys .bubble{background:var(--bg3);border:1px solid var(--border2);color:var(--dim2);font-size:9.5px;font-family:var(--mono)}
 .msg-meta{font-size:9px;color:var(--dim)}
 .msg.user .msg-meta{text-align:right}
@@ -217,6 +221,8 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
             <input type="number" class="opt-num" id="pg-topp" value="0.9" min="0" max="1" step="0.05"></div>
           <div class="opt-g"><span class="opt-lbl">LoRA:</span>
             <select class="opt-sel" id="pg-lora"><option value="">None</option></select></div>
+          <div class="opt-g"><span class="opt-lbl" title="Qwen3-family thinking (chat_template_kwargs.enable_thinking). On a CPU node thinking costs minutes.">Thinking:</span>
+            <select class="opt-sel" id="pg-think"><option value="default">Model default</option><option value="off">Off</option><option value="on">On</option></select></div>
           <div style="flex:1"></div>
           <span style="font-size:9.5px;color:var(--dim)" id="pg-chars">0 chars</span>
         </div>
@@ -230,15 +236,15 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
         <div class="form-grid">
           <div class="fg-field">
             <label>Instance ID</label>
-            <input type="text" id="add-id" placeholder="gpu-0">
+            <input type="text" id="add-id" placeholder="vllm-lab-1">
           </div>
           <div class="fg-field">
             <label>URL</label>
-            <input type="text" id="add-url" placeholder="http://192.168.0.250:8001">
+            <input type="text" id="add-url" placeholder="http://192.168.0.247:8000">
           </div>
           <div class="fg-field">
             <label>Label</label>
-            <input type="text" id="add-label" placeholder="RTX 4090 Node">
+            <input type="text" id="add-label" placeholder="Lab box (CPU)">
           </div>
           <div class="fg-field">
             <label>API Key (optional)</label>
@@ -255,7 +261,12 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
             <label>Priority (lower = preferred)</label>
             <input type="number" id="add-priority" value="0" min="0">
           </div>
+          <div class="fg-field">
+            <label title="The Ollama node this server shares hardware with (e.g. gpu-250 for vLLM on that V100). Its calls then queue on that node's GPU gate, so the two never run at once.">Shares hardware with (gate as)</label>
+            <input type="text" id="add-gateas" placeholder="Ollama node id, e.g. gpu-250 - blank: its own">
+          </div>
         </div>
+        <div style="padding:4px 14px 8px;font-size:9.5px;line-height:1.5;color:var(--dim, #6a7080)">For a vLLM server Vera did not start - another machine, a container you run yourself. A node launched from <a href="#" onclick="showTab('launch');return false">Launch</a> (or switched in Estate → Machines) registers itself as vllm-&lt;node&gt;, gated as the node - no entry needed here. A node's vLLM listens on port 8000; registering checks /v1/models at once.</div>
         <div class="form-actions">
           <button class="btn pri" onclick="addInstance()">Register Instance</button>
         </div>
@@ -269,83 +280,132 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
     <!-- LAUNCH SERVER -->
     <div class="panel" id="panel-launch" data-panel="launch">
       <div class="launch-section">
-        <div class="sec">Launch vLLM OpenAI Server</div>
+        <div class="sec">Launch vLLM</div>
+        <div style="padding:0 14px 8px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:10.5px;color:var(--dim2, #8a90a0)">
+          <label><input type="radio" name="lnch-where" value="node" checked onchange="lnchWhere()"> On a node (provisioned)</label>
+          <label><input type="radio" name="lnch-where" value="host" onchange="lnchWhere()"> On this host (local process)</label>
+        </div>
+
+        <!-- on a node: installed by the vllm_server component, moved over by nodes.backend.switch -->
+        <div id="lnch-node-opts">
+          <div class="form-grid">
+            <div class="fg-field">
+              <label>Node</label>
+              <select id="lnch-node" onchange="lnchNodeChanged()"><option value="">Loading nodes&hellip;</option></select>
+              <div class="hint" id="lnch-node-hint">A node serves Ollama or vLLM, one at a time; it keeps its id, workers and routing.</div>
+            </div>
+            <div class="fg-field">
+              <label>Install vLLM</label>
+              <select id="lnch-install">
+                <option value="auto">If missing</option>
+                <option value="yes">Always (re-install)</option>
+                <option value="no">No - it is installed</option>
+              </select>
+              <div class="hint">The vllm_server component: the CUDA build on a GPU node (keeps the V100), the shared store's CPU wheel (AVX2 int4) otherwise.</div>
+            </div>
+            <div class="fg-field">
+              <label>Names it answers to</label>
+              <input type="text" id="lnch-aliases" placeholder="e.g. qwen3.5:9b">
+              <div class="hint">Comma-separated. Callers and routing rules keep the Ollama names they use.</div>
+            </div>
+            <div class="fg-field">
+              <label>Reasoning parser</label>
+              <select id="lnch-reasoning">
+                <option value="auto">Auto (qwen3 for a Qwen3-family model)</option>
+                <option value="qwen3">qwen3</option>
+                <option value="deepseek_r1">deepseek_r1</option>
+                <option value="">None</option>
+              </select>
+              <div class="hint">Puts a thinking model's reasoning in its own field, so replies (chat, agent loops, the playground) carry the answer alone - as Ollama does.</div>
+            </div>
+            <div class="fg-field">
+              <label>Text only</label>
+              <select id="lnch-textonly">
+                <option value="true">Yes - skip the vision encoder</option>
+                <option value="false">No</option>
+              </select>
+              <div class="hint">A multimodal model (Qwen3.5) otherwise profiles its vision tower at start-up - minutes on a CPU node.</div>
+            </div>
+          </div>
+        </div>
+
         <div class="form-grid">
           <div class="fg-field" style="grid-column:1/-1">
-            <label>Model (HuggingFace ID or local path)</label>
-            <input type="text" id="lnch-model" placeholder="mistralai/Mistral-7B-Instruct-v0.3">
-            <div class="hint">e.g. meta-llama/Meta-Llama-3.1-8B-Instruct, /mnt/models/mistral-7b</div>
-          </div>
-          <div class="fg-field">
-            <label>Instance ID</label>
-            <input type="text" id="lnch-id" placeholder="gpu-local">
-          </div>
-          <div class="fg-field">
-            <label>Port</label>
-            <input type="number" id="lnch-port" value="8001">
-          </div>
-          <div class="fg-field">
-            <label>Tensor Parallel Size</label>
-            <input type="number" id="lnch-tp" value="1" min="1" max="8">
-            <div class="hint">Number of GPUs to shard across</div>
-          </div>
-          <div class="fg-field">
-            <label>GPU Memory Utilization</label>
-            <input type="number" id="lnch-gmem" value="0.90" min="0.1" max="1.0" step="0.01">
-            <div class="hint">Fraction of VRAM for KV cache (PagedAttention pool)</div>
-          </div>
-          <div class="fg-field">
-            <label>CPU Offload (GB RAM)</label>
-            <input type="number" id="lnch-cpuoff" value="0" min="0">
-            <div class="hint">Spill KV cache to host RAM. 0 = disabled. Up to 200 on 256 GB host.</div>
-          </div>
-          <div class="fg-field">
-            <label>Quantization</label>
-            <select id="lnch-quant">
-              <option value="">None (full precision)</option>
-              <option value="fp8">FP8 (best perf on Ampere+)</option>
-              <option value="awq">AWQ (4-bit, fast inference)</option>
-              <option value="gptq">GPTQ (4-bit, wide model support)</option>
-              <option value="gguf">GGUF</option>
-              <option value="turbomind">TurboMind / TurboQuant</option>
-              <option value="bitsandbytes">BitsAndBytes (NF4)</option>
-            </select>
+            <label>Model (a path in the shared store, or a HuggingFace ID)</label>
+            <input type="text" id="lnch-model" placeholder="/opt/vera-store/models/hf/QuantTrio--Qwen3.5-9B-AWQ">
+            <div class="hint">Nodes read the shared store at /opt/vera-store/models (hf/ holds downloaded repos). A HuggingFace ID downloads on first start.</div>
           </div>
           <div class="fg-field">
             <label>dtype</label>
             <select id="lnch-dtype">
               <option value="auto">auto</option>
-              <option value="bfloat16">bfloat16 (recommended A100/H100)</option>
-              <option value="float16">float16 (RTX / older GPU)</option>
+              <option value="bfloat16">bfloat16 (CPU nodes; Qwen3.5 on CPU needs it)</option>
+              <option value="float16">float16 (V100 / Volta - no bf16)</option>
               <option value="float32">float32</option>
             </select>
           </div>
           <div class="fg-field">
             <label>Max Model Length (tokens)</label>
-            <input type="number" id="lnch-mml" placeholder="(model default)" min="512">
-            <div class="hint">Override context window. Reduce to fit VRAM on 12 GB GPUs.</div>
+            <input type="number" id="lnch-mml" placeholder="(8192 on a node)" min="512">
+            <div class="hint">The context window. Smaller fits a 12 GB GPU or a CPU node's KV space.</div>
           </div>
           <div class="fg-field">
+            <label>Quantization</label>
+            <select id="lnch-quant">
+              <option value="">From the model's config</option>
+              <option value="awq">AWQ (4-bit; GPU sm_75+, CPU via the store wheel)</option>
+              <option value="gptq">GPTQ (4-bit; GPU sm_60+)</option>
+              <option value="compressed-tensors">compressed-tensors (W4A16 / W8A8)</option>
+              <option value="fp8">FP8 (GPU sm_89+)</option>
+              <option value="bitsandbytes">BitsAndBytes (NF4)</option>
+              <option value="gguf">GGUF (needs vllm-gguf-plugin; GPU only)</option>
+            </select>
+            <div class="hint">Leave it on the model's config unless you know better - vLLM reads the method from the repo.</div>
+          </div>
+          <div class="fg-field" data-host-only>
+            <label>Instance ID</label>
+            <input type="text" id="lnch-id" placeholder="vllm-local">
+          </div>
+          <div class="fg-field" data-host-only>
+            <label>Port</label>
+            <input type="number" id="lnch-port" value="8001">
+          </div>
+          <div class="fg-field" data-host-only>
+            <label>Tensor Parallel Size</label>
+            <input type="number" id="lnch-tp" value="1" min="1" max="8">
+            <div class="hint">Number of GPUs to shard across</div>
+          </div>
+          <div class="fg-field" data-host-only>
+            <label>GPU Memory Utilization</label>
+            <input type="number" id="lnch-gmem" value="0.90" min="0.1" max="1.0" step="0.01">
+            <div class="hint">Fraction of VRAM for weights + KV cache</div>
+          </div>
+          <div class="fg-field" data-host-only>
+            <label>CPU Offload (GB RAM)</label>
+            <input type="number" id="lnch-cpuoff" value="0" min="0">
+            <div class="hint">Spill weights to host RAM. 0 = disabled.</div>
+          </div>
+          <div class="fg-field" data-host-only>
             <label>Speculative Decoding Draft Model</label>
             <input type="text" id="lnch-spec" placeholder="(none)">
-            <div class="hint">Smaller model that drafts tokens; target model verifies. Cuts latency.</div>
+            <div class="hint">A smaller model drafts tokens; the target verifies them (--speculative-config).</div>
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Speculative Tokens per Step</label>
             <input type="number" id="lnch-spec-n" value="5" min="1" max="20">
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Enable LoRA</label>
             <select id="lnch-lora">
               <option value="false">No</option>
               <option value="true">Yes</option>
             </select>
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Max Concurrent LoRAs</label>
             <input type="number" id="lnch-maxlora" value="4" min="1" max="64">
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Prefix Caching (APC)</label>
             <select id="lnch-apc">
               <option value="true">Enabled (recommended)</option>
@@ -353,7 +413,7 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
             </select>
             <div class="hint">Reuses KV blocks for repeated system prompts / few-shot prefixes</div>
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Chunked Prefill</label>
             <select id="lnch-chunked">
               <option value="true">Enabled (recommended)</option>
@@ -361,30 +421,33 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
             </select>
             <div class="hint">Interleaves prefill and decode to reduce latency on long prompts</div>
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>API Key (optional)</label>
             <input type="password" id="lnch-apikey" placeholder="">
           </div>
-          <div class="fg-field">
+          <div class="fg-field" data-host-only>
             <label>Served Model Name Override</label>
             <input type="text" id="lnch-served-name" placeholder="(same as model)">
           </div>
           <div class="fg-field" style="grid-column:1/-1">
             <label>Extra CLI Flags (one per line)</label>
-            <textarea id="lnch-extra" rows="3" placeholder="--max-num-seqs 256&#10;--disable-log-requests"></textarea>
+            <textarea id="lnch-extra" rows="3" placeholder="--max-num-seqs 64&#10;--enforce-eager"></textarea>
           </div>
         </div>
         <div class="form-actions">
-          <button class="btn pri" onclick="launchServer()">Launch Server</button>
-          <button class="btn" onclick="generateCmd()">Preview Command</button>
+          <button class="btn pri" id="lnch-go" onclick="launchServer()">Launch</button>
+          <button class="btn" onclick="generateCmd()">Preview</button>
         </div>
         <div id="launch-cmd-preview" style="display:none;padding:0 14px 12px">
-          <div class="sec">Generated Command</div>
+          <div class="sec" id="launch-cmd-title">Generated Command</div>
           <pre id="launch-cmd-text" style="font-family:var(--mono);font-size:9.5px;color:var(--acc2);background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:8px 10px;white-space:pre-wrap;word-break:break-all"></pre>
         </div>
-        <div id="launch-status" style="padding:0 14px;font-size:10px"></div>
+        <div id="launch-status" style="padding:0 14px;font-size:10px;white-space:pre-wrap;font-family:var(--mono)"></div>
 
-        <div class="sec">Running Managed Servers</div>
+        <div class="sec">Nodes serving vLLM</div>
+        <div id="lnch-node-list" style="padding:0 14px 12px;font-size:10.5px;color:var(--dim)">None</div>
+
+        <div class="sec">Running Managed Servers (this host)</div>
         <div id="managed-servers" style="padding:0 14px 12px;font-size:10.5px;color:var(--dim)">None</div>
       </div>
     </div>
@@ -463,6 +526,8 @@ async function api(path, method='GET', body=null){
 // ── Boot ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   refreshStatus();
+  lnchWhere();
+  lnchLoadNodes();
   // Baseline poll only while the tab is actually visible — a backgrounded panel
   // doesn't need live status, and SSE vllm.* events refresh us on real changes.
   // With zero instances configured there is nothing to watch: back off to
@@ -502,7 +567,7 @@ async function refreshStatus(){
 function renderSidebar(){
   const el = document.getElementById('inst-list');
   if(!Object.keys(S.instances).length){
-    el.innerHTML = '<div style="color:var(--dim);font-size:9.5px;text-align:center;padding:24px 0">No instances configured.<br>Use "Launch" or "Add Instance".</div>';
+    el.innerHTML = '<div style="color:var(--dim);font-size:9.5px;text-align:center;padding:24px 0">No instances configured.<br>Launch vLLM on a node, or add a server you run.</div>';
     return;
   }
   el.innerHTML = Object.values(S.instances).map(inst => {
@@ -520,8 +585,22 @@ function renderSidebar(){
       <div class="inst-models">${(inst.models||[]).slice(0,2).join(', ') || '—'}</div>
       <div class="inst-badges">
         ${inst.has_gpu?'<span class="badge gpu">GPU</span>':'<span class="badge cpu">CPU</span>'}
+        ${inst.gate_as?`<span class="badge" title="Shares hardware with Ollama node ${inst.gate_as}: queues on its GPU gate" style="color:var(--dim2, #8a90a0)">⇄ ${inst.gate_as}</span>`:''}
         ${(inst.loaded_loras||[]).length?`<span class="badge lora">${inst.loaded_loras.length} LoRA</span>`:''}
         ${inst.status==='degraded'?'<span class="badge" style="background:rgba(201,163,90,.15);border:1px solid var(--warn);color:var(--warn)">degraded</span>':''}
+      </div>
+      <div class="inst-standin" onclick="event.stopPropagation()" title="Model names Vera routes to this server though it runs another model (it is sent this server's own model). Comma-separated; empty = none.">
+        <span style="font-size:9px;color:var(--dim2, #8a90a0)">Stands in for</span>
+        <input data-standin-inst="${esc(inst.id)}" value="${esc((inst.stands_in_for||[]).join(', '))}" placeholder="none" style="flex:1;min-width:0;font-size:9.5px;padding:1px 4px">
+        <button class="btn xs" onclick="setStandIn('${esc(inst.id)}')">Save</button>
+      </div>
+      <div class="inst-think" onclick="event.stopPropagation()" title="Thinking for requests that do not choose. An agent's Think switch, or llm.generate think=, always wins.">
+        <span style="font-size:9px;color:var(--dim2, #8a90a0)">Thinking</span>
+        <select data-think-inst="${esc(inst.id)}" onchange="setThink(this.dataset.thinkInst, this.value)" style="font-size:9.5px;padding:1px 4px">
+          <option value="default"${!inst.think_default?' selected':''}>model default</option>
+          <option value="on"${inst.think_default==='on'?' selected':''}>on</option>
+          <option value="off"${inst.think_default==='off'?' selected':''}>off</option>
+        </select>
       </div>
       <div class="stat-row">
         <div class="stat"><span class="stat-val">${inst.running_requests||0}</span><span class="stat-lbl">running</span></div>
@@ -631,17 +710,54 @@ function pgKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); pgSend(
 function pgCharCount(el){ document.getElementById('pg-chars').textContent = el.value.length + ' chars'; }
 function clearPg(){ document.getElementById('pg-body').innerHTML=''; S.pgMessages=[]; }
 
+/* The playground streams from the server itself through the passthrough proxy
+   (/vllm/proxy/<instance>/v1/...): a CPU node decodes about a token a second, so
+   a one-shot request waited minutes with nothing on screen and hit the request
+   timeout (5 Oct 2026). Thinking (reasoning_content, or a <think> block when the
+   server has no reasoning parser) is shown apart from the answer. */
+function _pgPickInstance(model){
+  const up = Object.entries(S.instances || {}).filter(([, i]) => i.status === 'online' || i.status === 'degraded');
+  const has = model ? up.filter(([, i]) => (i.models || []).includes(model)) : up;
+  const c = has.length ? has : up;
+  c.sort((a, b) => ((a[1].in_use || 0) + (a[1].waiting || 0)) - ((b[1].in_use || 0) + (b[1].waiting || 0)));
+  return c.length ? c[0][0] : '';
+}
+function _pgSplitThink(content, reasoning){
+  /* a server without a reasoning parser returns the thinking inside the content */
+  let think = reasoning || '', answer = content || '';
+  if(!think){
+    const close = answer.indexOf('</think>');
+    if(close >= 0){
+      think = answer.slice(0, close).replace(/^\s*<think>/, '');
+      answer = answer.slice(close + 8).replace(/^\s+/, '');
+    } else if(/^\s*<think>/.test(answer)){
+      think = answer.replace(/^\s*<think>/, ''); answer = '';
+    }
+  }
+  return {think, answer};
+}
+function _pgRender(el, content, reasoning, done){
+  const {think, answer} = _pgSplitThink(content, reasoning);
+  const open = !done || !answer ? ' open' : '';
+  el.innerHTML = (think ? `<details class="pg-think"${open}><summary>Thinking</summary><div>${esc(think)}</div></details>` : '')
+    + esc(answer) + (done ? '' : '<span class="cursor"></span>');
+  const area = document.getElementById('pg-body');
+  area.scrollTop = area.scrollHeight;
+  return answer;
+}
+
 async function pgSend(){
   const prompt = document.getElementById('pg-input').value.trim();
   if(!prompt || S.streaming) return;
 
   const mode      = document.getElementById('pg-mode').value;
   const model     = document.getElementById('pg-model').value || undefined;
-  const instId    = document.getElementById('pg-instance').value || undefined;
+  const instSel   = document.getElementById('pg-instance').value || '';
   const temp      = parseFloat(document.getElementById('pg-temp').value)||0.7;
   const maxTok    = parseInt(document.getElementById('pg-maxtok').value)||512;
   const topP      = parseFloat(document.getElementById('pg-topp').value)||0.9;
   const loraName  = document.getElementById('pg-lora').value || undefined;
+  const think     = document.getElementById('pg-think').value;
   const system    = document.getElementById('system-prompt')?.value.trim();
 
   document.getElementById('pg-input').value='';
@@ -650,13 +766,16 @@ async function pgSend(){
   S.streaming=true;
 
   addPgMsg('user', prompt);
-  const streamBubble = addStreamBubble();
+  const bubble = addStreamBubble();
 
-  const body = { max_tokens: maxTok, temperature: temp, top_p: topP };
-  if(model) body.model=model;
-  if(instId) body.instance_id=instId;
-  if(loraName) body.lora_name=loraName;
+  const inst = instSel || _pgPickInstance(model);
+  if(!inst){ finalizeStream(bubble, '[Error: no vLLM server is online]', true); return; }
+  const meta = bubble.parentElement.querySelector('.msg-meta');
+  if(meta) meta.textContent = 'vLLM · ' + inst + ' · ' + meta.textContent.split('·').pop().trim();
 
+  const served = ((S.instances[inst] || {}).models || [])[0];
+  const body = { max_tokens: maxTok, temperature: temp, top_p: topP, stream: true,
+                 model: loraName || model || served };
   let path;
   if(mode==='chat'){
     const msgs = [];
@@ -664,23 +783,60 @@ async function pgSend(){
     msgs.push(...S.pgMessages.map(m=>({role:m.role,content:m.content})));
     msgs.push({role:'user',content:prompt});
     body.messages = msgs;
-    path = '/vllm/chat';
+    if(think !== 'default') body.chat_template_kwargs = {enable_thinking: think === 'on'};
+    path = 'v1/chat/completions';
   } else {
     body.prompt = (system ? system+'\n\n' : '') + prompt;
-    path = '/vllm/generate';
+    path = 'v1/completions';
   }
 
+  let content = '', reasoning = '', answer = '';
   try {
-    const r = await api(path, 'POST', body);
-    if(r.error){
-      finalizeStream(streamBubble, '[Error: '+r.error+']', true);
-    } else {
-      const text = r.content || r.text || JSON.stringify(r);
-      finalizeStream(streamBubble, text);
-      S.pgMessages.push({role:'user',content:prompt},{role:'assistant',content:text});
+    const resp = await fetch('/vllm/proxy/' + encodeURIComponent(inst) + '/' + path,
+                             {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    if(!resp.ok || !resp.body){
+      let t = ''; try { t = await resp.text(); } catch(e) {}
+      let msg = t; try { const j = JSON.parse(t); msg = (j.error && (j.error.message || j.error)) || j.detail || t; } catch(e) {}
+      finalizeStream(bubble, '[Error ' + resp.status + ': ' + String(msg).slice(0, 400) + ']', true);
+      return;
     }
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for(;;){
+      const {value, done} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, {stream: true});
+      let nl;
+      while((nl = buf.indexOf('\n')) >= 0){
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if(!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if(data === '[DONE]') continue;
+        let j; try { j = JSON.parse(data); } catch(e) { continue; }
+        if(j.error){ content += '\n[Error: ' + (j.error.message || j.error) + ']'; continue; }
+        const ch = (j.choices || [])[0] || {};
+        if(mode === 'chat'){
+          const d = ch.delta || {};
+          content += d.content || '';
+          reasoning += d.reasoning_content || d.reasoning || '';
+        } else {
+          content += ch.text || '';
+        }
+      }
+      _pgRender(bubble, content, reasoning, false);
+    }
+    if(!content && !reasoning && buf.trim()){
+      /* not SSE: an error the server answered with plain JSON */
+      let msg = buf.trim(); try { const j = JSON.parse(msg); msg = (j.error && (j.error.message || j.error)) || j.detail || msg; } catch(e) {}
+      finalizeStream(bubble, '[Error: ' + String(msg).slice(0, 400) + ']', true);
+      return;
+    }
+    answer = _pgRender(bubble, content, reasoning, true);
+    finalizeStream(bubble, answer || '[empty reply]');
+    S.pgMessages.push({role:'user',content:prompt},{role:'assistant',content:answer});
   } catch(e){
-    finalizeStream(streamBubble, '[Request failed: '+e.message+']', true);
+    finalizeStream(bubble, '[Request failed: '+e.message+']', true);
   }
 }
 
@@ -727,6 +883,7 @@ async function addInstance(){
     has_gpu:  document.getElementById('add-hasgpu').value==='true',
     priority: parseInt(document.getElementById('add-priority').value)||0,
     api_key:  document.getElementById('add-apikey').value,
+    gate_as:  document.getElementById('add-gateas').value.trim(),
   });
 
   const st = document.getElementById('add-status');
@@ -741,6 +898,20 @@ async function addInstance(){
   }
 }
 
+async function setStandIn(id){
+  const el = document.querySelector('[data-standin-inst="' + id + '"]');
+  const names = (el ? el.value : '').split(',').map(s => s.trim()).filter(Boolean);
+  const r = await api('/vllm/instances/stand_in', 'POST', {instance_id: id, names});
+  if(!r || !r.ok){ alert('Could not save: ' + ((r && r.error) || 'no response')); }
+  await refreshStatus();
+}
+
+async function setThink(id, value){
+  const r = await api('/vllm/instances/think', 'POST', {instance_id: id, think: value});
+  if(!r || !r.ok){ alert('Could not set thinking: ' + ((r && r.error) || 'no response')); }
+  await refreshStatus();
+}
+
 async function removeInstance(id){
   if(!confirm(`Remove instance "${id}"?`)) return;
   await api(`/vllm/instances/${id}`, 'DELETE');
@@ -748,8 +919,60 @@ async function removeInstance(id){
 }
 
 // ── Launch server ─────────────────────────────────────────────────────────────
+/* Two places to launch: a NODE (the usual one) - the vllm_server component
+   installs vLLM beside the node's Ollama and nodes.backend.switch moves the node
+   over, keeping its id, workers and routing - or THIS host, as a managed local
+   process (only where a vllm CLI is installed). */
+function _lnchWhere(){
+  const r = document.querySelector('input[name="lnch-where"]:checked');
+  return r ? r.value : 'node';
+}
+function lnchWhere(){
+  const node = _lnchWhere() === 'node';
+  document.getElementById('lnch-node-opts').style.display = node ? '' : 'none';
+  document.querySelectorAll('[data-host-only]').forEach(e => { e.style.display = node ? 'none' : ''; });
+  document.getElementById('lnch-go').textContent = node ? 'Install + switch node' : 'Launch on this host';
+}
+
+let _lnchNodes = [];
+async function lnchLoadNodes(){
+  let r = null;
+  try { r = await api('/nodes'); } catch(e) { r = null; }      /* nodes.list (GET /nodes) */
+  _lnchNodes = [];
+  ((r && r.nodes) || []).forEach(n => (n.ollama || []).forEach(o => {
+    if(o && o.id) _lnchNodes.push({node: n.id, label: n.label || n.id, inst: o.id,
+                                    gpu: !!o.has_gpu, switched: !!o.switched});
+  }));
+  const sel = document.getElementById('lnch-node');
+  const keep = sel.value;
+  sel.innerHTML = _lnchNodes.length
+    ? _lnchNodes.map(x => `<option value="${esc(x.inst)}" data-node="${esc(x.node)}">${esc(x.inst)} · ${esc(x.label)}${x.gpu ? ' · GPU' : ' · CPU'}${x.switched ? ' · on vLLM' : ''}</option>`).join('')
+    : '<option value="">No Ollama nodes found</option>';
+  if(keep && _lnchNodes.some(x => x.inst === keep)) sel.value = keep;
+  const on = _lnchNodes.filter(x => x.switched);
+  document.getElementById('lnch-node-list').innerHTML = on.length
+    ? on.map(x => `<div>${esc(x.inst)} → vllm-${esc(x.inst)} <span style="color:var(--dim, #6a7080)">(${esc(x.label)}${x.gpu ? ', GPU' : ', CPU'}) - switch back from Estate → Machines</span></div>`).join('')
+    : 'None';
+  lnchNodeChanged();
+}
+function _lnchNode(){
+  const inst = document.getElementById('lnch-node').value;
+  return _lnchNodes.find(x => x.inst === inst) || null;
+}
+function lnchNodeChanged(){
+  const n = _lnchNode();
+  const hint = document.getElementById('lnch-node-hint');
+  if(!n){ hint.textContent = 'A node serves Ollama or vLLM, one at a time; it keeps its id, workers and routing.'; return; }
+  /* the dtype the hardware wants: Volta has no bf16; CPU Qwen3.5 (GDN) needs it */
+  const dt = document.getElementById('lnch-dtype');
+  if(dt.value === 'auto') dt.value = n.gpu ? 'float16' : 'bfloat16';
+  hint.textContent = (n.switched ? 'Already on vLLM - switch it back to Ollama (Estate → Machines) to change its model. ' : 'Its Ollama stops while vLLM serves. ')
+    + (n.gpu ? 'GPU node: the V100 (sm_70) runs fp16 and GPTQ/compressed-tensors, not AWQ or bf16.'
+             : 'CPU node: AWQ/GPTQ int4 run on the store wheel; expect about a token a second on a 9B.');
+}
+
 function buildLaunchBody(){
-  const extraLines = document.getElementById('lnch-extra').value.trim().split('\n').filter(Boolean);
+  const extraLines = document.getElementById('lnch-extra').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
   const body = {
     model:                    document.getElementById('lnch-model').value.trim(),
     port:                     parseInt(document.getElementById('lnch-port').value)||8001,
@@ -780,42 +1003,127 @@ function buildLaunchBody(){
   return body;
 }
 
-async function launchServer(){
-  const body = buildLaunchBody();
-  if(!body.model){ alert('Model is required'); return; }
+/* nodes.backend.switch's extra_args: the flags the node's serve.sh adds to its
+   own (later flags win, so dtype / context here override the recipe's). */
+function _lnchNodeArgs(body){
+  const a = [];
+  if(body.dtype && body.dtype !== 'auto') a.push('--dtype', body.dtype);
+  if(body.max_model_len) a.push('--max-model-len', String(body.max_model_len));
+  if(body.quantization) a.push('--quantization', body.quantization);
+  if(document.getElementById('lnch-textonly').value === 'true')
+    a.push('--limit-mm-per-prompt.image', '0', '--limit-mm-per-prompt.video', '0');
+  let rp = document.getElementById('lnch-reasoning').value;
+  if(rp === 'auto') rp = /qwen3/i.test(body.model || '') ? 'qwen3' : '';
+  if(rp) a.push('--reasoning-parser', rp);
+  return a.concat(body.extra_args || []).join(' ');
+}
+function _lnchSwitchBody(body, dry){
+  const n = _lnchNode();
+  return {instance_id: n ? n.inst : '', backend: 'vllm', model: body.model,
+          aliases: (document.getElementById('lnch-aliases').value || '').split(',').map(s => s.trim()).filter(Boolean),
+          extra_args: _lnchNodeArgs(body), dry_run: !!dry, wait_s: 1500};
+}
+function _lnchSay(text, color){
   const st = document.getElementById('launch-status');
-  st.style.color='var(--dim2)'; st.textContent='Launching…';
+  st.style.color = color || 'var(--dim2)';
+  st.textContent = text;
+}
+async function _lnchApi(path, body){
+  try { return await api(path, 'POST', body); }
+  catch(e) { return {ok: false, error: 'no response (' + (e && e.message || e) + ') - it may still be running; check Health'}; }
+}
+function _lnchPlanLine(r){
+  const p = (r && r.plan) || {};
+  if(p.action === 'switch') return '→ switch ' + (r.instance || '') + ' to vLLM (as ' + (p.vllm_instance || '') + ')';
+  if(p.action === 'noop') return '= ' + (p.why || 'already on vLLM');
+  return '✗ ' + (p.why || (r && r.error) || 'refused');
+}
 
-  const r = await api('/vllm/server/start', 'POST', body);
-  if(r.ok){
-    st.style.color='var(--ok)';
-    st.textContent=`Launched: PID ${r.pid} — ${r.url}. Health check in ~15s.`;
-    await refreshStatus();
-  } else {
-    st.style.color='var(--err)';
-    st.textContent='Error: ' + (r.error||'unknown');
+async function launchNode(){
+  const body = buildLaunchBody();
+  const n = _lnchNode();
+  if(!n){ _lnchSay('Pick a node.', 'var(--err)'); return; }
+  if(!body.model){ _lnchSay('Pick the model vLLM should serve.', 'var(--err)'); return; }
+  const btn = document.getElementById('lnch-go'); btn.disabled = true;
+  const lines = [];
+  const say = (l, c) => { lines.push(l); _lnchSay(lines.join('\n'), c); };
+  try {
+    say('Checking ' + n.inst + '…');
+    let pre = await _lnchApi('/nodes/backend/switch', _lnchSwitchBody(body, true));
+    const missing = pre && pre.plan && pre.plan.action === 'refuse' && /install/i.test(pre.plan.why || '');
+    /* the slot's component: vllm_server, or vllm_server_cpu for a CPU instance
+       sharing a GPU node's container */
+    const comp = (pre && pre.plan && pre.plan.component) || 'vllm_server';
+    const inst = document.getElementById('lnch-install').value;
+    if(inst === 'yes' || (inst === 'auto' && missing)){
+      say('Installing vLLM on ' + n.label + ' (' + comp + ' - several minutes)…');
+      const pr = await _lnchApi('/nodes/provision', {node_id: n.node, components: [comp], backend: 'auto', options: {}});
+      const res = ((pr && pr.results) || []).find(x => x.component === comp) || {};
+      if(!(pr && !pr.error && res.ok)){ say('✗ install failed: ' + ((pr && pr.error) || res.error || 'see Health'), 'var(--err)'); return; }
+      say('✓ vLLM installed');
+      pre = await _lnchApi('/nodes/backend/switch', _lnchSwitchBody(body, true));
+    }
+    say(_lnchPlanLine(pre));
+    if(!pre || !pre.plan || pre.plan.action !== 'switch'){ if(pre && pre.plan && pre.plan.action === 'noop') return; _lnchSay(lines.join('\n'), 'var(--err)'); return; }
+    say('Switching… the node answers once the model is loaded (minutes on a CPU node).');
+    const r = await _lnchApi('/nodes/backend/switch', _lnchSwitchBody(body, false));
+    if(r && r.ok){
+      say('✓ ' + n.inst + ' serves vLLM' + (r.registry && r.registry.vllm_added && r.registry.vllm_added.id ? ' as ' + r.registry.vllm_added.id : ''), 'var(--ok)');
+    } else {
+      say('✗ ' + ((r && r.error) || 'switch failed'), 'var(--err)');
+      if(r && r.log) say(String(r.log).trim().split('\n').slice(-10).join('\n'), 'var(--err)');
+    }
+  } finally {
+    btn.disabled = false;
+    lnchLoadNodes();
+    refreshStatus();
   }
 }
 
-function generateCmd(){
+async function launchServer(){
+  if(_lnchWhere() === 'node') return launchNode();
   const body = buildLaunchBody();
   if(!body.model){ alert('Model is required'); return; }
+  _lnchSay('Launching…');
+  const r = await _lnchApi('/vllm/server/start', body);
+  if(r.ok){
+    _lnchSay(`Launched: PID ${r.pid} — ${r.url}. Health check in ~15s.`, 'var(--ok)');
+    await refreshStatus();
+  } else {
+    _lnchSay('Error: ' + (r.error||'unknown'), 'var(--err)');
+  }
+}
 
-  let cmd = `python -m vllm.entrypoints.openai.api_server \\\n  --model ${body.model} \\\n  --port ${body.port} \\\n  --tensor-parallel-size ${body.tensor_parallel_size} \\\n  --gpu-memory-utilization ${body.gpu_memory_utilization} \\\n  --dtype ${body.dtype}`;
-
+async function generateCmd(){
+  const body = buildLaunchBody();
+  if(!body.model){ alert('Model is required'); return; }
+  const title = document.getElementById('launch-cmd-title');
+  const pre = document.getElementById('launch-cmd-text');
+  document.getElementById('launch-cmd-preview').style.display='block';
+  if(_lnchWhere() === 'node'){
+    const sw = _lnchSwitchBody(body, true);
+    title.textContent = 'Plan (dry run - nothing changes)';
+    pre.textContent = 'Checking…';
+    const r = await _lnchApi('/nodes/backend/switch', sw);
+    pre.textContent = [_lnchPlanLine(r),
+      'model:   ' + sw.model,
+      'aliases: ' + (sw.aliases.join(', ') || '(none)'),
+      'flags:   ' + (sw.extra_args || '(the node recipe\'s defaults)')].join('\n');
+    return;
+  }
+  title.textContent = 'Generated Command';
+  let cmd = `vllm serve ${body.model} \\\n  --port ${body.port} \\\n  --tensor-parallel-size ${body.tensor_parallel_size} \\\n  --gpu-memory-utilization ${body.gpu_memory_utilization} \\\n  --dtype ${body.dtype}`;
   if(body.cpu_offload_gb>0) cmd+=` \\\n  --cpu-offload-gb ${body.cpu_offload_gb}`;
   if(body.quantization) cmd+=` \\\n  --quantization ${body.quantization}`;
   if(body.max_model_len) cmd+=` \\\n  --max-model-len ${body.max_model_len}`;
-  if(body.spec_model) cmd+=` \\\n  --speculative-model ${body.spec_model} \\\n  --num-speculative-tokens ${body.spec_num_speculative_tokens}`;
+  if(body.spec_model) cmd+=` \\\n  --speculative-config '${JSON.stringify({model: body.spec_model, num_speculative_tokens: body.spec_num_speculative_tokens})}'`;
   if(body.enable_lora) cmd+=` \\\n  --enable-lora --max-loras ${body.max_loras}`;
   if(body.enable_prefix_caching) cmd+=` \\\n  --enable-prefix-caching`;
   if(body.enable_chunked_prefill) cmd+=` \\\n  --enable-chunked-prefill`;
   if(body.api_key) cmd+=` \\\n  --api-key ***`;
   if(body.served_model_name) cmd+=` \\\n  --served-model-name ${body.served_model_name}`;
   if(body.extra_args) cmd+=` \\\n  ` + body.extra_args.join(' \\\n  ');
-
-  document.getElementById('launch-cmd-preview').style.display='block';
-  document.getElementById('launch-cmd-text').textContent=cmd;
+  pre.textContent=cmd;
 }
 
 async function stopServer(id){

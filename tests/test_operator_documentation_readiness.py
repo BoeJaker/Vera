@@ -114,6 +114,18 @@ def test_click_failure_names_action_and_never_takes_screenshot(tmp_path: Path):
     assert page.screenshots == []
 
 
+def test_click_waits_for_its_data_and_never_clicks_an_empty_view(tmp_path: Path):
+    page = _Page({"count", "click"})
+    result = asyncio.run(_shoot_panel(
+        SimpleNamespace(page=page), "https://vera.test/panel",
+        str(tmp_path / "panel.png"),
+        state={"click_after_count": "#s-nodes", "click": "#view2d-btn"}))
+
+    assert result["ok"] is False
+    assert result["failed_condition"] == "click_after:#s-nodes"
+    assert page.screenshots == []
+
+
 def test_navigation_failure_names_load_condition(tmp_path: Path):
     page = _Page({"navigation"})
     result = asyncio.run(_shoot_panel(

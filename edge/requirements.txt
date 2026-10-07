@@ -34,13 +34,20 @@ diffusers>=0.27          # ControlNet, IP-Adapter (load_ip_adapter), SDXL
 transformers>=4.38
 accelerate>=0.27
 safetensors>=0.4
-numpy>=1.23,<2.0         # <2.0: basicsr/realesrgan + some torch builds dislike numpy 2
+# No <2.0 cap: every working node runs numpy 2 (gpu-250 2.4.3, cpu-246 2.4.6), and
+# the cap made pip DOWNGRADE numpy on cpu-247 (2026-09-28), dragging kokoro-onnx
+# down to 0.3.3, which cannot read the v1.0 voices file -> Kokoro failed, TTS fell
+# back to Coqui. basicsr (the optional /upscale tier) may not import on numpy 2;
+# that tier degrades on its own.
+numpy>=1.23
 Pillow>=9.3
 
 # ── Speech (STT + TTS) ───────────────────────────────────────────────────────
 openai-whisper>=20231117
 soundfile>=0.12
-kokoro-onnx>=0.3.0       # default TTS engine (CPU/GPU, Apache-2.0)
+kokoro-onnx>=0.3.4       # default TTS engine (CPU/GPU, Apache-2.0). 0.3.3 reads the
+                         # voices file as JSON and fails on voices-v1.0.bin (the store's
+                         # tts/kokoro-v1.0); 0.3.4 (gpu-250) and 0.6.1 (cpu-246) load it.
 # TTS>=0.22              # OPTIONAL — Coqui TTS (only if TTS_ENGINE=coqui)
 
 # ── Sprite pipeline tiers (all OPTIONAL; the server degrades gracefully) ──────

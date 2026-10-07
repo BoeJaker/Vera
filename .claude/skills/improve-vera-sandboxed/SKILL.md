@@ -1,6 +1,6 @@
 ---
 name: improve-vera-sandboxed
-description: Build, fix, or improve Vera's own RUNTIME source by working inside a Loop Lab sandbox — cut a typed branch off `bleeding-edge`, edit in its worktree, commit via the HOST (git-over-SMB fails), test, then land through the CI/CD pipeline (adopt → review_request → promote) into `bleeding-edge` — the shared integration branch every change (code AND docs) funnels through before `main`. Diagnose against the live prod instance (its Redis traces, UI, behaviour are ground truth) but land the FIX here, never by editing prod's live checkout. Use this whenever the work is a source or docs change to Vera itself.
+description: Build, fix, or improve Vera's own RUNTIME source by working inside a Loop Lab sandbox — cut a typed branch off `bleeding-edge`, edit in its worktree, commit via the HOST (git-over-SMB fails), test, then land through the CI/CD pipeline (adopt → review.request → review → promote) into `bleeding-edge` — the shared integration branch every change (code AND docs) funnels through before `main`. Diagnose against the live prod instance (its Redis traces, UI, behaviour are ground truth) but land the FIX here, never by editing prod's live checkout. Use this whenever the work is a source or docs change to Vera itself.
 ---
 
 # Improving Vera — sandboxed, adversarially-reviewed, gated, attributed
@@ -9,6 +9,11 @@ Diagnose against the real running instance (Redis event traces, live UI, actual
 behaviour — see `improve-vera` §1–§3a, still valid), but land the FIX through
 this sandboxed pipeline, not a direct edit to prod's working tree. Direct-to-prod
 editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
+
+**Any UI change - a panel, widget, graph, menu, settings page or the appearance - also follows the `vera-design`
+skill** (`.claude/skills/vera-design/SKILL.md`; reference: `documentation/51-ui-design-system.md`): start from
+the UI bootstrap (`ui.templates`, `/ui/bootstrap.css`), colour only from the theme's names, the canonical menu
+with descriptions and a primary action, settings on the shared Settings page, and prove it live with Playwright.
 
 ## 0. Still true, unchanged
 - **⛔ NEVER assume how long an LLM/generation takes — it is UNBOUNDED.** A call
@@ -67,6 +72,11 @@ editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
   gate: pause → ack → cancel owned loops → re-exec → restore), and a paused/yielded
   census that is not yours is someone else's — do not resume it for them (`by`
   says whose it is).
+- **Never write census control from `/health` alone.** Read `census.control`,
+  `census.live`, and the referenced loop session first, because scheduled-harness
+  health and the live census registry can disagree. If the owner says a census
+  is already stopped or yielded, revalidate those authoritative records before
+  issuing any control action.
 - **Multi-agent estate is live.** Other agents may be working in their own
   containers (`evolve.sandbox.list` shows them), all sharing one GPU. Never touch
   another agent's branch/container. Before a **prod restart**, check
@@ -88,6 +98,9 @@ editing is the rare exception (small, urgent, explicitly sanctioned infra fix).
 - **Lifecycle operations are preflighted, exact-target, and dry-run first.** Call
   `evolve.sandbox.preflight(name=...|branch=..., action=...)` and require
   `allowed=true` before restart, stop, reuse, removal, or descriptor reconciliation.
+  The preflight action for `evolve.sandbox.down` is **`stop`**, not `down`;
+  `down` is rejected as `unknown_action` even though it is the later mutation
+  capability's name.
   Reconciliation is planning-only; it never removes a descriptor or worktree. Never use
   `evolve.sandbox.up` to refresh a spawned branch — that controls the primary.
   Use `evolve.sandbox.restart(branch=..., dry_run=true)` and then restart the
@@ -278,6 +291,12 @@ description, owner/session, current step, actionable steps, and links to relevan
 board item IDs or notes references. On revision conflict, re-read and merge;
 never force over another agent's update.
 
+Work-plan `status` is a closed tool schema, not free text. Preserve the current
+status unless the capability schema explicitly advertises the desired value;
+`completed` and `done` are not accepted. To close landed work, mark every step
+`completed`, put the landing receipt in the final step, and let the linked board
+item and pipeline carry the authoritative terminal state.
+
 The plan lives at gitignored `.vera-work/work-plan.json` inside the worktree so
 all agents using that sandbox can discover it. It is operational handoff context,
 not a replacement for the durable board or notes stores. Link those sources;
@@ -397,8 +416,24 @@ commit, same as code, then land via §7 like any other change.
   - Host venv (has pytest): `/home/boejaker/langchain/bin/python3 -m pytest
     tests/… -q` — fast, but only correct via the lowercase `vera.X` + sys.path
     insert above; `Vera.vera.X` there still hits main.
+- **Package re-exports expand the import closure (confirmed 2026-10-01).** A
+  new export in `vera/<package>/__init__.py` is eager: every import of any child
+  first runs the parent initializer, then every relative import it exposes.
+  Production can load the same tree as `Vera.vera`; a descendant containing a
+  plain-only `from vera...` import then fails even when the new bridge itself
+  uses correct relative imports. This exact chain removed Operator
+  capabilities, JEPA Worldview, and model inventory after a models-package
+  re-export reached a plain-only import in a training adapter. Before adding a
+  package export, walk parent initializers and relative imports and smoke-import
+  through the production `Vera.vera...` path. A lowercase-only focused test
+  does not cover this failure mode.
 - **Loop Lab task** (`evolve.task.upsert`) for behavioural/loop changes, with
   `checks` that would actually fail if the bug returned.
+- **Disposable live-service harnesses must be shell-safe and bounded.** Quote
+  generated env values containing spaces, or parse only the exact required keys;
+  never source an env file whose values have not been validated as shell syntax.
+  Set explicit connect and total timeouts on every readiness probe so a warming
+  service cannot hold the sandbox exec channel indefinitely.
 - Verify the module **boots** — restart your exact spawned branch with
   `evolve.sandbox.restart` (dry-run first), or recreate only your container with
   `evolve.sandbox.spawn`; a reachable
@@ -411,17 +446,30 @@ uses the SAFE merge (never a blind `git checkout`):
 ```
 evolve.pipeline.adopt(branch="feat/<name>", to="bleeding-edge", title, summary, session_id)  # via /mcp/call
    → gate_passed: true | false | null
-evolve.pipeline.review_request(id, reason)
+evolve.pipeline.review.request(id, reason)
+evolve.pipeline.review(id, verdict="approved|changes_requested|blocked",
+                       findings="<adversarial findings>")
 evolve.pipeline.promote(id, to="bleeding-edge"[, force=true])   # force for docs/UI/infra
 ```
 `to="bleeding-edge"` per §2 — `evolve.pipeline.promote`'s own default is
 `bleeding-edge` too now (as of 2026-08-16), but `adopt`'s default is still
 `main`, so pass it explicitly on `adopt` regardless. If you started with
 `evolve.pipeline.begin` (§3) you already have the pipeline `id` — skip `adopt`
-and go straight to `review_request` + `promote(to="bleeding-edge")` (promote
+and go straight to `review.request` + recorded `review` +
+`promote(to="bleeding-edge")` (promote
 refreshes the branch's commits before merging; if you omit `to`, it defaults
 there anyway, but pass it — explicit beats relying on a default that could
 change again).
+
+The critical tier currently exceeds the historical 900-second starter ceiling.
+Never launch duplicate runners to work around that. `evolve.unittest.run` is
+single-flight by exact worktree plus pytest tokens (the timeout is deliberately
+not part of the key): start one exact `paths="tests", markers="critical"` run
+with `timeout=1800`, then call `evolve.pipeline.test` while it is active so the
+pipeline joins the same execution and records the shared JUnit receipt. Do not
+change `extra` between those calls; that creates a different key and therefore
+a second container. A client timeout is not a test failure and not permission
+to re-fire—inspect test history/pipeline state and running containers first.
 
 **`gate_passed` is TWO checks, not one** (as of the 2026-08-16 M3 work — the
 description on the cap itself is the source of truth if this drifts):
@@ -475,6 +523,10 @@ is a separate, higher-stakes step — always confirm first unless already
 authorized for the session. It all shows in the Loop Lab CI/CD + Review tabs.
 
 ## 10. Keep the plan and the board current — the board is the primary planning surface
+**The full coordination procedure is now the `vera-coordinate` skill** (homes for plans/handovers, board
+item standard and comment kinds, findings-by-comment, status cadence, degraded mode, handovers) with the
+conventions file `<git-common-dir>/vera-work/shared-planning/README.md`. The rules below stay as the summary.
+
 Work isn't done when the code lands; it's done when the **shared planning state
 reflects reality**. Two standing obligations, every unit:
 
@@ -687,3 +739,51 @@ purpose on the row: it should say WHAT ran and WHY, not carry the script.
 
 Loading is best-effort by design — a missing or malformed manifest yields no
 helpers rather than failing a census over bookkeeping.
+
+### 11.8 The Loop Lab schedule — what is due, and how to run a census through it
+
+Censuses are scheduled in Loop Lab, not only launched by hand. Read the schedule
+BEFORE any GPU work and before a release: `/health` says what is running now,
+the schedule says what will start inside its window even when the box looks
+idle.
+
+    evolve.schedule.list                      every entry: kind, target, days,
+                                              start/end, timezone, enabled,
+                                              last_started_at / last_result
+    evolve.schedule.get / history / events    one entry, its runs, its log
+    evolve.schedule.upsert                    create or change an entry
+    evolve.schedule.enable id=… enabled=…     switch one on/off
+    evolve.schedule.run_now id=…              start it now
+
+A census entry is `kind: census`, `target: {template, mode: harness,
+plan_style?}`, with `repeat: continuous`, `exclusive: true` (never starts while
+another census is in flight) and `at_window_end: yield` (the goal in flight
+finishes, then the census parks — nothing runs past the window). Standing
+entries (2026-09-28): the default census weekdays 07:00-17:00 Europe/London,
+operator-family 05:00-07:00.
+
+- **A style series goes through `target.plan_style`**: it is validated against
+  the loop's planning styles and sets `CENSUS_PLAN_STYLE`, so the run archives
+  in its own series (`default-style-<style>-runN`) — prefer this to a
+  hand-launched `run_census.py` for anything you want compared in Loop Lab.
+- **Switching a standing schedule off is the user's decision**, and switching
+  it back on is a manual call: a schedule of `kind: cap` refuses denied
+  capabilities (`may not run from a schedule`), so a schedule cannot re-enable
+  another one. If you were allowed to disable one, record the re-enable in
+  your notes with its deadline.
+- Other kinds exist: `task` (a Loop Lab task), `pipeline` (test/adopt/promote),
+  `board` (board.dispatch), `cap` (one capability).
+
+**When no census is scheduled or running**, the GPU is free for development:
+one test at a time (§0), or a code report delegated to Vera
+(`evolve.delegate.*`, see the improve-vera skill §8 — prod only, report mode,
+not restart-safe yet).
+
+
+## 12. Coordination and autopsy
+
+- **Working alongside other agents:** follow `vera-coordinate`. Plans, handovers and evidence go only in
+  `<git-common-dir>/vera-work/shared-planning/<unit>/`. Tasks and findings go on the board (search before filing;
+  comment on the related item). Status rides on the records you already write, and chat gets one line.
+- **Close with an autopsy:** if a step here failed, misled or slowed you, append an entry to this skill's
+  `LEARNINGS.md` (format: `skill-smith` §3). If it needs a code or tool change, file a `kind:skill-issue` board item.

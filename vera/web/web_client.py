@@ -84,6 +84,11 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 
+try:                                                    # 4 Oct: typed URLs, nav-only pages
+    from Vera.vera.web import url_core as _url_core
+except ImportError:                                     # pragma: no cover
+    from . import url_core as _url_core
+
 log = logging.getLogger("vera.web_client")
 
 
@@ -592,7 +597,7 @@ async def fetch_page(url: str, *,
     Hardened single-page fetch. See module docstring for the pipeline.
     Never raises — transport failures come back as {"error": ...}.
     """
-    url = (url or "").strip()
+    url = _url_core.normalize_url(url or "")
     out: Dict[str, Any] = {
         "url": url, "final_url": url, "domain": urlparse(url).netloc,
         "status": 0, "html": "", "text": "", "title": "", "chars": 0,
@@ -659,10 +664,18 @@ async def fetch_page(url: str, *,
     out["block_reason"] = reason
 
     # 6. Reader fallback when blocked, transport-failed, or nearly empty.
-    if use_reader and READER_PROXY and (reason or transport_err or len(out["text"]) < 200):
+    # A page that is only its menu (rendered by JavaScript) goes to the reader too - the
+    # reader renders it (4 Oct: qdrant.tech/documentation came back as its menu).
+    _nav = _url_core.looks_nav_only(out["text"])
+    if use_reader and READER_PROXY and (reason or transport_err or len(out["text"]) < 200 or _nav):
         try:
             rtext, rstatus, rtitle = await _fetch_via_reader(url, timeout)
-            if rtext and len(rtext) > len(out["text"]) and not detect_block(rtext, rstatus):
+            # The reader's own 4xx/5xx is an error message, not the page (4 Oct: a 422
+            # "Domain 'https' could not be resolved" came back as the page, ok:true).
+            if rstatus >= 400:
+                out["reader_error"] = "reader HTTP %s: %s" % (rstatus, " ".join(str(rtext).split())[:160])
+            elif rtext and (len(rtext) > len(out["text"]) or (_nav and not _url_core.looks_nav_only(rtext))) \
+                    and not detect_block(rtext, rstatus):
                 out.update({
                     "text":         rtext[:max_chars],
                     "title":        out["title"] or rtitle,
@@ -690,4 +703,5 @@ async def fetch_page(url: str, *,
 
     if transport_err and not out["text"]:
         out["error"] = transport_err
+    out["nav_only"] = bool(out["text"]) and _url_core.looks_nav_only(out["text"])
     return _done()

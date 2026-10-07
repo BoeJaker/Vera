@@ -1,0 +1,256 @@
+# Vera's core Docker stack on the Vera host, as it runs (generated from the live containers 2026-09-29).
+#
+# THIS FILE DESCRIBES THE RUNNING STACK; IT IS NOT (YET) HOW IT IS STARTED. The containers were created by the
+# LLM_Stack compose files and by Vera's provisioning capabilities, so `docker compose up` here would stop at
+# "container name already in use". Moving a service onto this file is a deliberate step: stop and remove its
+# container (its volumes are external - kept), then `docker compose -p vera-host up -d <service>`.
+#
+# Data: every volume is `external` with the name it has TODAY - several are anonymous (hash names) - so this file
+# can never start Redis, Neo4j or OpenBao on an empty volume. Images are pinned to what runs (digest for a
+# :latest). Every environment value is a ${VAR} from .env (gitignored, 0600); .env.example has the names.
+# restart: always - a service stopped by a daemon that went down comes back (unless-stopped did not, 2026-09-29).
+# The daemon itself: see deploy/host-stack/docker (live-restore, OOM protection) and the Foundry docker-resilience feature.
+
+name: vera-host
+
+services:
+
+  # Vera's coordination store (queues, caches, the syslog streams). ACL users live in /data/users.acl; their passwords are in OpenBao.
+  redis:
+    image: "redis:7"
+    container_name: "redis"
+    restart: always
+    command: ["redis-server", "--bind", "0.0.0.0", "--port", "6379", "--protected-mode", "no", "--aclfile", "/data/users.acl"]
+    ports:
+      - "6379:6379/tcp"
+    volumes:
+      - "redis-data:/data"
+    networks:
+      - "src_agentic-network"
+
+  # Relational store (published on 5433).
+  postgres:
+    image: "postgres:17"
+    container_name: "postgres"
+    restart: always
+    ports:
+      - "5433:5432/tcp"
+    volumes:
+      - "/home/boejaker/LLM_Stack/agentic-ai-stack-2/src/postgres:/docker-entrypoint-initdb.d"
+      - "src_postgres-data:/var/lib/postgresql/data"
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    networks:
+      - "src_agentic-network"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: "10s"
+      timeout: "5s"
+      retries: 5
+
+  # Vector store (published on 8008).
+  chroma:
+    image: "chromadb/chroma:1.0.22.dev17"
+    container_name: "1d1f7d26f84f_chroma"
+    restart: always
+    ports:
+      - "8008:8000/tcp"
+    volumes:
+      - "src_chroma-data:/chroma/db"
+    environment:
+      CHROMA_SERVER_HOST: "${CHROMA_SERVER_HOST}"
+      CHROMA_DB_IMPL: "${CHROMA_DB_IMPL}"
+    networks:
+      - "src_agentic-network"
+
+  # The shared knowledge graph.
+  neo4j:
+    image: "neo4j:5.22"
+    container_name: "neo4j"
+    restart: always
+    ports:
+      - "7474:7474/tcp"
+      - "7687:7687/tcp"
+    volumes:
+      - "neo4j-data:/data"
+      - "neo4j-logs:/logs"
+    environment:
+      NEO4J_AUTH: "${NEO4J_AUTH}"
+    network_mode: bridge
+
+  # S3-compatible blob store (media, reports). Its ring must be bootstrapped on a fresh volume (see stores_capabilities).
+  garage:
+    image: "dxflrs/garage:v1.0.1"
+    container_name: "vera-garage"
+    restart: always
+    command: ["/garage", "-c", "/etc/garage/garage.toml", "server"]
+    ports:
+      - "3900:3900/tcp"
+      - "3903:3903/tcp"
+    volumes:
+      - "vera-garage-etc:/etc/garage"
+      - "vera-garage-data:/var/lib/garage/data"
+      - "vera-garage-meta:/var/lib/garage/meta"
+    network_mode: bridge
+    labels:
+      "vera.store": "garage"
+
+  # Secrets. Shamir-sealed, file storage; Vera auto-unseals it at boot (_openbao_autounseal_boot) when configured.
+  openbao:
+    image: "openbao/openbao@sha256:6150c4a6b62067db6141c8da7a6a6b5763f4f47c315343d0c848b40fecdfd452"   # openbao/openbao:latest
+    container_name: "vera-openbao"
+    restart: always
+    command: ["server", "-config=/openbao/config/openbao.hcl"]
+    ports:
+      - "127.0.0.1:8200:8200/tcp"
+    volumes:
+      - "/mnt/dockerdata/vera-openbao/config:/openbao/config:ro"
+      - "openbao-openbao-file:/openbao/file"
+      - "openbao-openbao-logs:/openbao/logs"
+    network_mode: bridge
+
+  # The estate's certificate authority.
+  step-ca:
+    image: "smallstep/step-ca@sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270"   # smallstep/step-ca:latest
+    container_name: "vera-step-ca"
+    restart: always
+    ports:
+      - "9000:9000/tcp"
+    volumes:
+      - "vera-stepca:/home/step"
+    environment:
+      DOCKER_STEPCA_INIT_ACME: "${DOCKER_STEPCA_INIT_ACME}"
+      DOCKER_STEPCA_INIT_PASSWORD: "${DOCKER_STEPCA_INIT_PASSWORD}"
+      DOCKER_STEPCA_INIT_NAME: "${DOCKER_STEPCA_INIT_NAME}"
+      DOCKER_STEPCA_INIT_DNS_NAMES: "${DOCKER_STEPCA_INIT_DNS_NAMES}"
+    network_mode: bridge
+    labels:
+      "vera.secsvc": "step-ca"
+
+  # Directory (LDAP) for estate identities.
+  lldap:
+    image: "lldap/lldap@sha256:bce90cfef8f13c59f74386376a9b541f4e214170eebecc73f8ff7c1f7a375a87"   # lldap/lldap:latest
+    container_name: "vera-lldap"
+    restart: always
+    ports:
+      - "17170:17170/tcp"
+      - "3890:3890/tcp"
+    volumes:
+      - "vera-lldap:/data"
+    environment:
+      LLDAP_LDAP_BASE_DN: "${LLDAP_LDAP_BASE_DN}"
+      LLDAP_JWT_SECRET: "${LLDAP_JWT_SECRET}"
+      LLDAP_LDAP_USER_PASS: "${LLDAP_LDAP_USER_PASS}"
+    network_mode: bridge
+    labels:
+      "vera.secsvc": "lldap"
+
+  # Policy decisions.
+  opa:
+    image: "openpolicyagent/opa@sha256:cba27d3c6af2feba1e4d6e6b5e24df5b53db332420d4148a90acccd12efae6ed"   # openpolicyagent/opa:latest
+    container_name: "vera-opa"
+    restart: always
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level", "info"]
+    ports:
+      - "8181:8181/tcp"
+    network_mode: bridge
+    labels:
+      "vera.secsvc": "opa"
+
+  # The estate's image registry (vera:latest for sandboxes and node workers).
+  registry:
+    image: "registry:2"
+    container_name: "vera-registry"
+    restart: always
+    ports:
+      - "5000:5000/tcp"
+    volumes:
+      - "vera-registry-data:/var/lib/registry"
+    network_mode: bridge
+
+  # Web search backend for research.
+  searxng:
+    image: "searxng/searxng@sha256:511fa3f34c1d119c47f88c9a1e7eda1340f346543e980c17e5f14b27dac6a1ed"   # searxng/searxng:latest
+    container_name: "searxng"
+    restart: always
+    ports:
+      - "8088:8080/tcp"
+    volumes:
+      - "/home/boejaker/LLM_Stack/agentic-ai-stack-2/src/searxng:/etc/searxng"
+      - "searxng-var-cache-searxng:/var/cache/searxng"
+    environment:
+      SEARXNG_REDIS_URL: "${SEARXNG_REDIS_URL}"
+      SEARXNG_BASE_URL: "${SEARXNG_BASE_URL}"
+    networks:
+      - "src_agentic-network"
+
+  # Firmware build service (Arduino / PlatformIO).
+  vera-builder:
+    image: "vera-builder:latest"
+    container_name: "vera-builder"
+    restart: always
+    ports:
+      - "8785:8080/tcp"
+    volumes:
+      - "vera-builder-cache:/opt/arduino"
+      - "vera-builder-pio:/opt/platformio"
+    environment:
+      BUILDER_DEFAULT_FQBN: "${BUILDER_DEFAULT_FQBN}"
+    network_mode: bridge
+
+volumes:
+  redis-data:
+    external: true
+    name: "01fd4228c16d5651a6a66cfba0a29e3d8cc62be1c61f0c8090fb57e1ef206c63"
+  src_postgres-data:
+    external: true
+    name: "src_postgres-data"
+  src_chroma-data:
+    external: true
+    name: "src_chroma-data"
+  neo4j-data:
+    external: true
+    name: "168b7c194a2fa2a4c911bd6723cbfbf28073f7c44f04dbeca9832d2b73582da1"
+  neo4j-logs:
+    external: true
+    name: "b72c6409fd54949d27aa4dff7f07ebbff2b5e2248bfdd9365e8b851eb4460b38"
+  vera-garage-etc:
+    external: true
+    name: "vera-garage-etc"
+  vera-garage-data:
+    external: true
+    name: "vera-garage-data"
+  vera-garage-meta:
+    external: true
+    name: "vera-garage-meta"
+  openbao-openbao-file:
+    external: true
+    name: "5629f47dfcc73c127a30ca68fa4d623393ebf0d115ceeb5fa772da3a344050b7"
+  openbao-openbao-logs:
+    external: true
+    name: "cef3dafce8f2eca956be04ec8a1f20b979a20a604b21e90e498b4b38fe7248de"
+  vera-stepca:
+    external: true
+    name: "vera-stepca"
+  vera-lldap:
+    external: true
+    name: "vera-lldap"
+  vera-registry-data:
+    external: true
+    name: "vera-registry-data"
+  searxng-var-cache-searxng:
+    external: true
+    name: "70d5bf4c0b5613d2553a3b7fc30a395a8cdb78e63fe0fdc882b32764ccfb8669"
+  vera-builder-cache:
+    external: true
+    name: "vera-builder-cache"
+  vera-builder-pio:
+    external: true
+    name: "vera-builder-pio"
+
+networks:
+  src_agentic-network:
+    external: true
+    name: "src_agentic-network"

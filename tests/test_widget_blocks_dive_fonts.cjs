@@ -43,7 +43,7 @@ const css = W.css();
 const small = [...css.matchAll(/font-size:\s*([0-9.]+)px/g)].map((m) => +m[1]).filter((n) => n < 13);
 t('every font size under 13 px follows the setting (none left as a bare px value)', small.length === 0 && /font-size:calc\(max\(var\(--vw-fmin, 10px\), 8\.5px\) \* var\(--vw-fx, 1\)\)/.test(css), small.slice(0, 5).join(','));
 t('the sizes inside a clamp() follow it too', !/clamp\(\s*[0-9.]+px,/.test(css.replace(/font-size:clamp\(calc/g, '')) || /font-size:clamp\(calc\(max\(var\(--vw-fmin/.test(css));
-t('the setting sets the floor and the factor on the document (compact 0 · default 10 · large 11 ×1.1 · larger 12 ×1.22)', WE.includes('html{--vw-fmin:10px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:11px;--vw-fx:1.1}html[data-text="larger"]{--vw-fmin:12px;--vw-fx:1.22}'));
+t('the setting sets the floor and the factor on the document (compact 0 · default 11 · large 12 ×1.08 · larger 13 ×1.16 · largest 14 ×1.25 - stepped up 2026-09-28)', WE.includes('html{--vw-fmin:11px;--vw-fx:1}html[data-text="compact"]{--vw-fmin:0px;--vw-fx:1}html[data-text="large"]{--vw-fmin:12px;--vw-fx:1.08}html[data-text="larger"]{--vw-fmin:13px;--vw-fx:1.16}html[data-text="largest"]{--vw-fmin:14px;--vw-fx:1.25}'));
 t('no SVG font-size attribute the setting cannot reach (the bar labels are a class now)', !/font-size="8"/.test(WE) && /class="vw-svgt"/.test(WE));
 // ── 4. the donut ──
 const d1 = W.draw('donut', { a: 3, b: 2, c: 1 }, 'm', { height: 90 });

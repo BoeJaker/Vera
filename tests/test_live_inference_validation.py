@@ -1,10 +1,17 @@
 import asyncio
 import json
 
+import httpx
 import pytest
 
 from vera.models.live_inference_validation import (
-    LIVE_INFERENCE_REPORT_SCHEMA, require_shared_gate, validate_ollama_provider)
+    HTTPXOpenAICompatibleTransport,
+    LIVE_INFERENCE_REPORT_SCHEMA,
+    discover_openai_artifact,
+    require_shared_gate,
+    validate_ollama_provider,
+    validate_openai_provider,
+)
 
 
 pytestmark = pytest.mark.critical
@@ -184,6 +191,9 @@ def test_cli_source_uses_gate_status_not_direct_redis_access():
     assert '_ensure_coord_redis' not in run_source
     assert 'require_shared_gate(gate, instance_id)' in run_source
     assert '"error_code": code' in source
+    vllm_source = source[source.index('async def _run_vllm'):source.index('\ndef main')]
+    assert 'require_shared_gate(gate, gate_as)' in vllm_source
+    assert 'async with _ollama_slot(gate_as, timeout=30)' in vllm_source
 
 
 @pytest.mark.asyncio
@@ -242,3 +252,128 @@ async def test_optional_cancellation_case_reaps_owned_runner():
     assert evidence["passed"] is True
     assert 0 <= evidence["elapsed_ms"] < 1_000
     assert cancelled.is_set()
+
+
+class OpenAITransport:
+    def __init__(self, *, stall_on=0):
+        self.calls = []
+        self.stall_on = stall_on
+        self.cancelled = asyncio.Event()
+
+    def request(self, path, payload, *, stream, cancellation=None):
+        async def events():
+            self.calls.append((path, dict(payload), stream))
+            if self.stall_on and len(self.calls) == self.stall_on:
+                try:
+                    await asyncio.Future()
+                finally:
+                    self.cancelled.set()
+            if stream:
+                yield {"choices": [{"text": "VERA_", "finish_reason": None}]}
+                yield {"choices": [{"text": "OK", "finish_reason": None}],
+                       "usage": {"completion_tokens": 2}}
+                yield {"choices": [{"text": "", "finish_reason": "stop"}]}
+            else:
+                yield {"choices": [{"text": "VERA_OK", "finish_reason": "stop"}],
+                       "usage": {"completion_tokens": 2}}
+        return events()
+
+
+@pytest.mark.asyncio
+async def test_openai_live_validator_exercises_nonstream_and_sse_without_content():
+    transport = OpenAITransport()
+    report = await validate_openai_provider(
+        model="qwen3.5:9b", instance_id="vllm-cpu",
+        artifact_sha256="c" * 64, artifact_size=123,
+        transport=transport, validate_cancellation=False)
+
+    assert report["passed"] is True
+    assert report["transport_passed"] is True
+    assert report["content_conformant"] is True
+    assert [case["case"] for case in report["cases"]] == ["non_stream", "stream"]
+    assert [call[2] for call in transport.calls] == [False, True]
+    assert all(call[0] == "/v1/completions" for call in transport.calls)
+    assert all(call[1]["max_tokens"] == 8 for call in transport.calls)
+    encoded = json.dumps(report)
+    assert "Reply with" not in encoded
+    assert "VERA_OK" not in encoded
+
+
+@pytest.mark.asyncio
+async def test_openai_live_validator_cancellation_reaps_transport():
+    transport = OpenAITransport(stall_on=3)
+    report = await validate_openai_provider(
+        model="model", instance_id="node", artifact_sha256="d" * 64,
+        artifact_size=1, transport=transport,
+        cancellation_delay_seconds=0.01)
+
+    assert report["passed"] is True
+    assert report["cancellation"] == {
+        "case": "cancellation", "status": "cancelled",
+        "cancellation_observed": True, "task_reaped": True,
+        "passed": True, "elapsed_ms": report["cancellation"]["elapsed_ms"],
+    }
+    assert transport.cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_httpx_openai_transport_parses_bounded_sse_and_auth():
+    seen = []
+
+    async def handler(request):
+        seen.append(request)
+        assert request.headers["authorization"] == "Bearer test-key"
+        return httpx.Response(
+            200, content=(b'data: {"choices":[{"text":"OK"}]}\n\n'
+                          b'data: [DONE]\n\n'),
+            headers={"content-type": "text/event-stream"})
+
+    transport = HTTPXOpenAICompatibleTransport(
+        "http://vllm.test", api_key="test-key",  # pragma: allowlist secret
+        http_transport=httpx.MockTransport(handler))
+    frames = [frame async for frame in transport.request(
+        "/v1/completions", {"model": "m", "prompt": "p", "stream": True},
+        stream=True)]
+
+    assert frames == [{"choices": [{"text": "OK"}]}]
+    assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_httpx_openai_transport_rejects_oversized_response():
+    async def handler(_request):
+        return httpx.Response(200, json={"choices": [{"text": "too long"}]})
+
+    transport = HTTPXOpenAICompatibleTransport(
+        "http://vllm.test", http_transport=httpx.MockTransport(handler))
+    transport._MAX_RESPONSE_BYTES = 8
+    with pytest.raises(ValueError, match="exceeded limit"):
+        _ = [frame async for frame in transport.request(
+            "/v1/completions", {"model": "m", "prompt": "p"}, stream=False)]
+
+
+@pytest.mark.asyncio
+async def test_openai_model_declaration_has_stable_bounded_digest():
+    async def handler(request):
+        assert request.url.path == "/v1/models"
+        return httpx.Response(200, json={"object": "list", "data": [
+            {"id": "qwen", "object": "model", "created": 7,
+             "owned_by": "vllm", "ignored": "not-in-identity"}]})
+
+    artifact = await discover_openai_artifact(
+        "http://vllm.test", "qwen",
+        http_transport=httpx.MockTransport(handler))
+    assert artifact["size_bytes"] < 256
+    assert len(artifact["sha256"]) == 64
+    assert artifact["declaration"] == {
+        "id": "qwen", "object": "model", "owned_by": "vllm"}
+
+    async def later_handler(_request):
+        return httpx.Response(200, json={"object": "list", "data": [
+            {"id": "qwen", "object": "model", "created": 999,
+             "owned_by": "vllm"}]})
+
+    later = await discover_openai_artifact(
+        "http://vllm.test", "qwen",
+        http_transport=httpx.MockTransport(later_handler))
+    assert later["sha256"] == artifact["sha256"]

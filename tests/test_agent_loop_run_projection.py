@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -7,6 +8,8 @@ from vera.execution.agent_loop_run_projection import (
     AgentLoopRunProjection,
     bind_agent_loop_projection,
     finish_agent_loop_projection,
+    enter_agent_loop_run_boundary,
+    exit_agent_loop_run_boundary,
     observe_agent_loop_event,
     reset_agent_loop_projection,
     start_agent_loop_projection,
@@ -21,6 +24,92 @@ pytestmark = pytest.mark.critical
 
 def _registry():
     return ShadowRunRegistry(max_runs=30, journal=MemoryRunJournal())
+
+
+def test_boundary_owns_one_run_and_nested_modes_reuse_it():
+    registry = _registry()
+    outer, token, owned = enter_agent_loop_run_boundary(
+        session_id="direct-loop", engine="v7", profile="coding", registry=registry)
+    assert owned and outer is not None
+    nested, nested_token, nested_owned = enter_agent_loop_run_boundary(
+        session_id="direct-loop", engine="v6", registry=registry)
+    assert nested is outer
+    assert nested_token is None and not nested_owned
+    exit_agent_loop_run_boundary(nested, nested_token, nested_owned, result={"ok": True})
+    assert not outer.terminal
+    exit_agent_loop_run_boundary(outer, token, owned, result={"ok": True})
+    assert registry.get(outer.run_id)["run"]["status"] == "completed"
+
+
+def test_boundary_failure_and_cancellation_preserve_native_terminal_semantics():
+    registry = _registry()
+    failed, failed_token, failed_owned = enter_agent_loop_run_boundary(
+        session_id="failed-loop", engine="v3", registry=registry)
+    exit_agent_loop_run_boundary(
+        failed, failed_token, failed_owned, error_type="RuntimeError")
+    assert registry.get(failed.run_id)["run"]["status"] == "failed"
+
+    cancelled, cancel_token, cancel_owned = enter_agent_loop_run_boundary(
+        session_id="cancelled-loop", engine="v4", registry=registry)
+    exit_agent_loop_run_boundary(
+        cancelled, cancel_token, cancel_owned, cancelled=True)
+    assert registry.get(cancelled.run_id)["run"]["status"] == "cancelled"
+
+
+@pytest.mark.parametrize(("cap_name", "expected_engine"), [
+    ("dag.agent_loop", "v1"),
+    ("dag.agent_loop_v2", "v2"),
+    ("dag.agent_loop_v3", "v3"),
+    ("dag.agent_loop_v4", "v4"),
+    ("dag.agent_loop_v5", "v5"),
+    ("dag.agent_loop_v6", "v6"),
+    ("dag.agent_loop_v7", "v7"),
+    ("dag.agent_loop_v8", "v8"),
+])
+def test_shared_traced_cap_seam_wraps_direct_numbered_loop_calls(
+        monkeypatch, cap_name, expected_engine):
+    import vera.capability_orchestration as orchestration
+    import vera.execution.agent_loop_run_projection as projection_module
+
+    registry = _registry()
+    monkeypatch.setattr(projection_module, "SHADOW_RUNS", registry)
+
+    async def native_loop(session_id: str = "", trace_id: str = ""):
+        observe_agent_loop_event({
+            "type": "agent_loop_v3.toolkit", "session_id": session_id,
+            "toolkit": ["ide.fs.read"],
+        })
+        return {"ok": True}
+
+    session_id = f"direct-{expected_engine}"
+    wrapped = orchestration._traced_cap(cap_name, native_loop)
+    assert asyncio.run(wrapped(session_id=session_id, trace_id=f"trace-{expected_engine}")) == {
+        "ok": True}
+    runs = registry.list()
+    assert len(runs) == 1
+    assert runs[0]["kind"] == "vera.agent_loop"
+    assert runs[0]["status"] == "completed"
+    root = registry.get(runs[0]["id"])["run"]
+    assert root["workflow_id"] == f"agent-loop:{expected_engine}"
+    assert root["session_id"] == session_id
+
+
+def test_shared_traced_cap_seam_closes_cancelled_direct_loop(monkeypatch):
+    import vera.capability_orchestration as orchestration
+    import vera.execution.agent_loop_run_projection as projection_module
+
+    registry = _registry()
+    monkeypatch.setattr(projection_module, "SHADOW_RUNS", registry)
+
+    async def cancelled_loop(session_id: str = "", trace_id: str = ""):
+        raise asyncio.CancelledError()
+
+    wrapped = orchestration._traced_cap("dag.agent_loop_v8", cancelled_loop)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(wrapped(session_id="direct-v8", trace_id="trace-v8"))
+    runs = registry.list()
+    assert len(runs) == 1
+    assert runs[0]["status"] == "cancelled"
 
 
 def test_agent_loop_and_tools_project_to_parent_child_runs_without_content():

@@ -20,6 +20,7 @@ the output dir).
 
 from __future__ import annotations
 
+import asyncio
 import html as _html
 import json
 import logging
@@ -45,7 +46,12 @@ from Vera.vera import delivery as _delivery
 log = logging.getLogger("vera.render")
 
 _OUT_DIR = Path(__file__).parent / "_out"
-_OUT_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    _OUT_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # a read-only checkout (the test runner mounts the branch read-only): importing must not fail for want of it
+    _OUT_DIR = Path(tempfile.gettempdir()) / "vera_render_out"
+    _OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Target formats we know how to produce. "text" formats are written directly;
 # everything else goes through pandoc. "pdf" additionally needs a PDF engine.
@@ -192,41 +198,201 @@ def _export(content: str, fmt: str, title: str = "",
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# FILES - documents, presentations, spreadsheets (owner, 2026-10-04: "add the various file output types to the menu
+# under the responses ... options for documents, presentations and spreadsheets ... as many types as you can
+# implement"). export_core reads a reply three ways (a page, its slides, its tables) and writes what Python can;
+# LibreOffice (soffice, headless, its own profile per run, off the event loop) makes the office files from that:
+# docx/odt/rtf/pdf/epub from the page, pptx/odp/pdf from the slides, ods from the workbook. pandoc, where installed,
+# is the fallback for a document LibreOffice cannot make.
+# ─────────────────────────────────────────────────────────────────────────────
+def _load_export_core():
+    """export_core beside this file, by its path: a package import (Vera.vera.render...) resolves to the main checkout's
+    copy in a sandbox, which may not have it yet - the module that is running is the one that must be used."""
+    import importlib.util as _ilu
+    import sys as _sys
+    mod = _sys.modules.get("vera_render_export_core")
+    if mod is None:
+        spec = _ilu.spec_from_file_location("vera_render_export_core", str(Path(__file__).parent / "export_core.py"))
+        mod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _sys.modules["vera_render_export_core"] = mod
+    return mod
+
+
+_xc = _load_export_core()
+
+_ALIASES = {"markdown": "md", "text": "txt", "tex": "latex", "word": "docx", "excel": "xlsx", "powerpoint": "pptx",
+            "slides": "pptx", "presentation": "pptx", "spreadsheet": "xlsx", "sheet": "xlsx", "slideshow": "deck",
+            "odf": "odt", "ebook": "epub", "web": "html", "slides_html": "deck"}
+
+
+def _soffice() -> Optional[str]:
+    return shutil.which("soffice") or shutil.which("libreoffice")
+
+
+def _xlsxwriter_ok() -> bool:
+    try:
+        import xlsxwriter  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _file_formats() -> List[Dict[str, Any]]:
+    """Every file type, its family, and whether it can be made right now (LibreOffice / xlsxwriter / pandoc present)."""
+    lo, xw, pd = bool(_soffice()), _xlsxwriter_ok(), bool(_pandoc_path())
+    out = []
+    for fid, f in _xc.FORMATS.items():
+        if fid == "xlsx":
+            live = xw
+        elif fid == "ods":
+            live = xw and lo
+        elif f["via"] == "lo" and f["family"] == "presentation":
+            live = lo                                  # the slides are made by LibreOffice alone
+        elif f["via"] == "lo":
+            live = lo or (pd and fid in ("docx", "odt", "rtf", "epub")) or (fid == "pdf" and pd and bool(_pdf_engine()))
+        else:
+            live = True
+        out.append({"id": fid, "family": f["family"], "ext": f["ext"], "label": f["label"], "mime": f["mime"], "live": live})
+    return out
+
+
+async def _lo_convert(src: Path, fmt: str, work: Path, infilter: str = "") -> Dict[str, Any]:
+    """LibreOffice, headless, converting `src` to `fmt` (its filter) into `work` - its own user profile per run (two at
+    once would otherwise fight over one), off the event loop."""
+    try:
+        from Vera.vera.execution.spawn_core import run_argv
+    except ImportError:                               # pragma: no cover
+        from vera.execution.spawn_core import run_argv
+    exe = _soffice()
+    if not exe:
+        return {"ok": False, "error": "LibreOffice is not installed"}
+    argv = [exe, "-env:UserInstallation=" + (work / "lo-profile").as_uri(), "--headless", "--norestore"]
+    if infilter:
+        argv.append("--infilter=" + infilter)
+    argv += ["--convert-to", _xc.LO_FILTER[fmt], "--outdir", str(work), str(src)]
+    r = await run_argv(argv, timeout=150, env={"HOME": str(work)})
+    want = work / (src.stem + "." + _xc.FORMATS[fmt]["ext"])
+    if not want.exists():
+        return {"ok": False, "error": (r.get("error") or r.get("stderr") or "LibreOffice made nothing")[:400]}
+    return {"ok": True, "path": want}
+
+
+async def _export_file(content: str, fmt: str, title: str = "", filename: str = "") -> Dict[str, Any]:
+    """content (markdown, or a ```slides / ```sheet / ```document fence) -> a file of type `fmt` under _OUT_DIR."""
+    fmt = _ALIASES.get(fmt, fmt)
+    spec = _xc.FORMATS.get(fmt)
+    if not spec:
+        return {"ok": False, "error": "unsupported format: %s" % fmt, "supported": sorted(_xc.FORMATS)}
+    fam = spec["family"]
+    title = title or _xc.first_heading(content) or ""
+    stem = _safe_stem(filename or title or fam)
+    out_name = "%s-%s.%s" % (stem, uuid.uuid4().hex[:8], spec["ext"])
+    out_path = _OUT_DIR / out_name
+    work = Path(tempfile.mkdtemp(prefix="vera-export-"))
+    try:
+        if fam == "spreadsheet":
+            tables = _xc.tables_of(content)
+            if not tables:
+                return {"ok": False, "error": "there is no table in it to make a spreadsheet of", "format": fmt}
+            if fmt in ("csv", "tsv"):
+                out_path.write_text(_xc.delimited_text(tables, "," if fmt == "csv" else "\t"), encoding="utf-8")
+            elif fmt == "json":
+                out_path.write_text(_xc.tables_json(tables), encoding="utf-8")
+            else:
+                if not _xlsxwriter_ok():
+                    return {"ok": False, "error": "xlsxwriter is not installed", "format": fmt}
+                book = work / (stem + ".xlsx")
+                await asyncio.to_thread(_xc.write_xlsx, tables, str(book))
+                if fmt == "xlsx":
+                    shutil.copyfile(book, out_path)
+                else:
+                    r = await _lo_convert(book, "ods", work)
+                    if not r.get("ok"):
+                        return dict(r, format=fmt)
+                    shutil.copyfile(r["path"], out_path)
+        elif fam == "presentation":
+            slides = _xc.slides_of(content)
+            if fmt == "deck":
+                out_path.write_text(_xc.deck_html(slides, title), encoding="utf-8")
+            elif fmt == "md":
+                out_path.write_text(content, encoding="utf-8")
+            else:
+                src = work / (stem + ".fodp")
+                src.write_text(_xc.odp_flat(slides, title), encoding="utf-8")
+                r = await _lo_convert(src, fmt, work)
+                if not r.get("ok"):
+                    return dict(r, format=fmt)
+                shutil.copyfile(r["path"], out_path)
+        else:
+            body = _xc.strip_doc_fences(content)
+            if fmt == "md":
+                out_path.write_text(body, encoding="utf-8")
+            elif fmt == "txt":
+                out_path.write_text(_xc.plain_text(body), encoding="utf-8")
+            elif fmt == "html":
+                out_path.write_text(_xc.document_html(body, title), encoding="utf-8")
+            elif _soffice():
+                src = work / (stem + ".html")
+                src.write_text(_xc.document_html(body, title), encoding="utf-8")
+                r = await _lo_convert(src, fmt, work, infilter="HTML (StarWriter)")
+                if not r.get("ok"):
+                    return dict(r, format=fmt)
+                shutil.copyfile(r["path"], out_path)
+            else:
+                res = await asyncio.to_thread(_run_pandoc, body, out_path, fmt, title)
+                if not res.get("ok"):
+                    return {"ok": False, "error": res.get("error"), "format": fmt}
+        size = out_path.stat().st_size if out_path.exists() else 0
+        return {"ok": True, "format": fmt, "family": fam, "filename": out_name, "path": str(out_path),
+                "url": "/render/download?name=%s" % out_name, "bytes": size, "mime": spec["mime"]}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
 @capability(
     "render.formats", memory="off", silent=True,
     http_method="GET", http_path="/render/formats", http_tags=["render"],
-    description="List document export targets and whether each is live right now "
-                "(md/txt always; docx/html/odt/rtf/epub/pptx/latex need pandoc; pdf "
-                "also needs a PDF engine). Output: {pandoc, pdf_engine, formats:[{id,live}]}.",
+    description="Every file type a reply can be exported as, by family, and whether each can be made right now. "
+                "Families: document (docx, pdf, odt, rtf, epub, html, md, txt), presentation (pptx, odp, slides_pdf, "
+                "deck = a web slideshow), spreadsheet (xlsx, ods, csv, tsv, json). LibreOffice makes the office files, "
+                "xlsxwriter the workbook; pandoc is the fallback. Output: {formats:[{id,family,ext,label,mime,live}], "
+                "families, libreoffice, pandoc, pdf_engine}.",
 )
 async def render_formats(trace_id=None):
-    live = _live_formats()
+    files = _file_formats()
     return {
-        "pandoc":     bool(_pandoc_path()),
-        "pdf_engine": _pdf_engine() or "",
-        "formats":    [{"id": k, "live": v} for k, v in sorted(live.items())],
-        "count":      len(live),
+        "formats":     files,
+        "families":    list(_xc.FAMILIES),
+        "libreoffice": bool(_soffice()),
+        "pandoc":      bool(_pandoc_path()),
+        "pdf_engine":  _pdf_engine() or "",
+        "count":       len(files),
     }
 
 
 @capability(
     "render.export", memory="off",
     http_method="POST", http_path="/render/export", http_tags=["render"],
-    description="Export Markdown/text content to a file in a target format and return "
-                "a download URL. Inputs: content (str! — markdown source), "
-                "format (md|txt|docx|pdf|html|odt|rtf|epub|pptx|latex, default md), "
-                "title (str, optional), filename (str, optional base name). "
-                "Output: {ok, format, filename, url, bytes}. PDF/office formats need "
-                "pandoc (+ a PDF engine) — see render.formats.",
+    description="Export a reply (markdown) as a file and return a download URL. A document is the reply as a page "
+                "(docx|pdf|odt|rtf|epub|html|md|txt); a presentation is its slides - a ```slides fence, or the reply "
+                "cut at its --- rules or headings, 'Note:' lines as speaker notes (pptx|odp|slides_pdf|deck); a "
+                "spreadsheet is its tables - ```sheet/```csv/```tsv fences and markdown tables, a sheet each, formulas "
+                "kept (xlsx|ods|csv|tsv|json). Inputs: content (str!), format (str, default md; aliases word, excel, "
+                "powerpoint, slides, spreadsheet), title (str), filename (str). Output: {ok, format, family, filename, "
+                "url, bytes, mime}. See render.formats for what is live.",
 )
 async def render_export(content: str = "", format: str = "md",
                         title: str = "", filename: str = "", trace_id=None):
     if not content or not content.strip():
         return {"ok": False, "error": "content required"}
-    res = _export(content, format, title=title, filename=filename)
+    fmt = _canonical(format)
+    res = (_export(content, fmt, title=title, filename=filename) if fmt == "latex"
+           else await _export_file(content, fmt, title=title, filename=filename))
     if res.get("ok"):
         await emit_event({"type": "render.export", "format": res.get("format"),
                           "filename": res.get("filename"), "bytes": res.get("bytes")})
@@ -261,8 +427,9 @@ async def render_dream_export(cycle_id: str = "", format: str = "docx",
     if not report:
         return {"ok": False, "error": "no report found for this cycle"}
 
-    res = _export(report, format, title=title,
-                  filename=filename or _safe_stem(title) or cycle_id)
+    fmt = _canonical(format)
+    res = (_export(report, fmt, title=title, filename=filename or _safe_stem(title) or cycle_id) if fmt == "latex"
+           else await _export_file(report, fmt, title=title, filename=filename or _safe_stem(title) or cycle_id))
     if res.get("ok"):
         await emit_event({"type": "render.export", "source": "dream",
                           "cycle_id": cycle_id, "format": res.get("format"),
@@ -702,6 +869,10 @@ async def output_redeliver(channel: str = "", content: str = "", title: str = ""
     rendered = await _reshape_for_format(content, fmt)
     # ctx mirrors the dream deliver stage; `target` is channel-specific (email
     # address for email, chat/html/podcast session id, …) — never auto-filled.
+    # A channel addressed by session (chat, canvas) with no target goes to the CALLING session - its label has
+    # always said "blank = calling session"; the canvas channels need it to know whose canvas.
+    if not target and not ch.get("fixed_target") and ch.get("target_field") == "session_id":
+        target = session_id or ""
     ctx: Dict[str, Any] = {
         "label": title, "name": title,
         "target": (target or ch.get("fixed_target") or ""),
@@ -723,13 +894,212 @@ async def output_redeliver(channel: str = "", content: str = "", title: str = ""
     out: Dict[str, Any] = {"ok": ok, "channel": channel, "cap": cap_name,
                            "title": title, "format_used": fmt, "result": res}
     for k in ("url", "download_url", "filename", "artifact_id", "job_id",
-              "episode_id"):
+              "episode_id", "store_url", "key", "bucket"):
         if res.get(k):
             out[k] = res[k]
     if res.get("error"):
         out["error"] = res["error"]
     await emit_event({"type": "output.redeliver", "stage": "done",
                       "channel": channel, "ok": ok, "title": title})
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE CANVAS AS A DELIVERY VECTOR, AND A MODEL THAT PICKS (owner, 2026-10-02: "could the output options be turned
+# into a proper system that can deliver a selection of styles via any of the available delivery methods and expose
+# this to the chat/agentic loops - add a configuration option to the ui that lets the llm pick a delivery method -
+# also id like for html delivery to be able to go to the canvas instead of automatically opening a new tab").
+# The channels and the styles were already one registry each (vera.delivery, vera.output_formats) and
+# output.redeliver already crossed them; what was missing was the canvas, and a way for a model to choose.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@capability(
+    "report.canvas", memory="off",
+    http_method="POST", http_path="/render/report_canvas", http_tags=["render", "output", "canvas"],
+    description="Build a rich HTML report (report.html) and put it ON THE CANVAS instead of opening a tab: an html "
+                "item that draws the report in a sandboxed frame, keyed by the report so the same one is brought "
+                "back, not doubled. Input: content (str!), title (str), mode (auto|author|template|pandoc), "
+                "illustrate (int), session_id (str — whose session canvas) or id (a canvas id). "
+                "Output: {ok, url, download_url, artifact_id, canvas, key, resolved}.",
+)
+async def report_canvas(content: str = "", title: str = "", mode: str = "auto", illustrate: int = 0,
+                        session_id: str = "", id: str = "", trace_id=None):
+    if not (content or "").strip():
+        return {"ok": False, "error": "content required"}
+    if not (session_id or id):
+        return {"ok": False, "error": "session_id or id required (whose canvas)"}
+    rep, add = _cap("report.html"), _cap("canvas.add")
+    if not rep or not add:
+        return {"ok": False, "error": "report.html or canvas.add unavailable"}
+    r = await rep(content=content, title=title or "Report", mode=mode or "auto",
+                  illustrate=int(illustrate or 0), session_id=session_id)
+    r = r if isinstance(r, dict) else {}
+    if not r.get("url"):
+        return {"ok": False, "error": r.get("error") or "report.html made no document"}
+    ttl = r.get("title") or title or "Report"
+    key = "report:" + str(r.get("artifact_id") or r.get("filename") or r["url"])[-80:]
+    a = await add(id=id, session_id=session_id, kind="html", key=key, size="xl", at="now",
+                  content={"url": r["url"], "title": ttl, "download_url": r.get("download_url") or ""})
+    a = a if isinstance(a, dict) else {}
+    out = {"ok": bool(a.get("ok")), "url": r["url"], "download_url": r.get("download_url") or "",
+           "artifact_id": r.get("artifact_id") or "", "title": ttl, "canvas": a.get("id") or id,
+           "key": key, "resolved": a.get("resolved") or ""}
+    if not a.get("ok"):
+        out["error"] = a.get("error") or "canvas.add failed"
+    return out
+
+
+# THE ESTATE'S STORAGE AS A DELIVERY VECTOR (owner, 2026-10-03: "can the vera estate cloud storage be a delivery
+# mechanism so we could save reports there as an output option"). The same rich report report.html makes, kept in the
+# estate's object store (the fabric's bucket) with its markdown source beside it - reports/<year-month>/<name>.html and
+# .md - and a link that fetches it. The local copy is still served (url), so the chat can open it as it does any report.
+@capability(
+    "report.store", memory="off",
+    http_method="POST", http_path="/render/report_store", http_tags=["render", "output", "storage"],
+    description="Build a rich HTML report (report.html) and KEEP IT in the estate's object store (the fabric's bucket) "
+                "beside its markdown source, under reports/<year-month>/. Input: content (str!), title (str), "
+                "mode (auto|author|template|pandoc), illustrate (int), session_id (str), prefix (str - default "
+                "reports/<year-month>/). Output: {ok, url, download_url, artifact_id, title, bucket, key, source_key, "
+                "store_url (a link, through Vera, that serves it from the store)}.",
+)
+async def report_store(content: str = "", title: str = "", mode: str = "auto", illustrate: int = 0,
+                       session_id: str = "", prefix: str = "", trace_id=None):
+    if not (content or "").strip():
+        return {"ok": False, "error": "content required"}
+    rep, put = _cap("report.html"), _cap("fabric.objects.put")
+    if not rep or not put:
+        return {"ok": False, "error": "report.html or the object store (fabric.objects.put) unavailable"}
+    r = await rep(content=content, title=title or "", mode=mode or "auto",
+                  illustrate=int(illustrate or 0), session_id=session_id)
+    r = r if isinstance(r, dict) else {}
+    name = str(r.get("filename") or "")
+    if not r.get("ok") or not name:
+        return {"ok": False, "error": r.get("error") or "report.html made no document"}
+    try:
+        doc = (_OUT_DIR / name).read_bytes()
+    except OSError as e:
+        return {"ok": False, "error": f"the report could not be read back: {e}"}
+    import base64 as _b64
+    pre = (prefix or "").strip().strip("/") or ("reports/" + time.strftime("%Y-%m"))
+    key, src_key = f"{pre}/{name}", f"{pre}/{name[:-5] if name.endswith('.html') else name}.md"
+    p = await put(key=key, content_base64=_b64.b64encode(doc).decode("ascii"), content_type="text/html; charset=utf-8")
+    p = p if isinstance(p, dict) else {}
+    if not p.get("ok"):
+        return {"ok": False, "error": p.get("error") or "the object store did not take the report", "url": r.get("url") or ""}
+    s = await put(key=src_key, content_base64=_b64.b64encode(content.encode("utf-8")).decode("ascii"),
+                  content_type="text/markdown; charset=utf-8")
+    # the link goes through Vera (/render/stored): the store's presigned links name its internal endpoint
+    from urllib.parse import quote as _q
+    link = "/render/stored?key=" + _q(key, safe="/")
+    out = {"ok": True, "url": r.get("url") or "", "download_url": r.get("download_url") or "",
+           "artifact_id": r.get("artifact_id") or name, "title": r.get("title") or title or "Report",
+           "bucket": p.get("bucket") or "", "key": key, "source_key": src_key if (isinstance(s, dict) and s.get("ok")) else "",
+           "store_url": link, "bytes": len(doc)}
+    await emit_event({"type": "report.store", "key": key, "bucket": out["bucket"], "title": out["title"],
+                      "session_id": session_id})
+    return out
+
+
+def _model_channels(allow: str = "") -> List[Dict[str, Any]]:
+    """The channels a model may be offered: loaded, not the chat itself, and within the caller's allow list."""
+    want = {s.strip() for s in str(allow or "").split(",") if s.strip()}
+    out = []
+    for c in _delivery.list_channels():
+        if c["id"] in _delivery._NOT_FOR_MODEL or c.get("cap") not in CAPABILITY_REGISTRY:
+            continue
+        if want and c["id"] not in want:
+            continue
+        out.append(c)
+    return out
+
+
+def _style_list() -> List[Dict[str, Any]]:
+    try:
+        from Vera.vera.output_formats import list_profiles
+        return [{"id": p.get("id"), "label": p.get("label") or p.get("id")} for p in list_profiles() if p.get("id")]
+    except Exception:
+        return []
+
+
+@capability(
+    "output.delivery_menu", memory="off", silent=True,
+    http_method="GET", http_path="/render/delivery_menu", http_tags=["render", "output"],
+    description="The delivery menu a model reads when it may choose where a finished answer ALSO goes: every "
+                "loaded channel (canvas, HTML on the canvas, HTML report, podcast, email, telegram, notebook, "
+                "memory, + skill channels) with what it is for, and the output styles. Input: allow (str — "
+                "comma-separated channel ids to offer; blank = all). Output: {channels, styles, text}.",
+)
+async def output_delivery_menu(allow: str = "", trace_id=None):
+    chans = _model_channels(allow)
+    styles = _style_list()
+    return {"channels": [{"id": c["id"], "label": c["label"], "use": _delivery.CHANNEL_USE.get(c["id"], "")}
+                         for c in chans],
+            "styles": styles,
+            "text": _delivery.describe_for_model([c["id"] for c in chans], styles)}
+
+
+@capability(
+    "output.deliver_auto", memory="off",
+    http_method="POST", http_path="/render/deliver_auto", http_tags=["render", "output"],
+    description="Let a model choose where a finished answer ALSO goes, then deliver it there (output.redeliver). A "
+                "small model off the GPU reads the request, the answer and the menu (output.delivery_menu) and "
+                "picks one channel and style - or none, which is most answers. Input: content (str!), question "
+                "(str — what the user asked; named so because the capability layer reserves `request`), session_id (str), allow (str — channel ids to offer, comma-"
+                "separated), channel (str — skip the pick and use this one), style (str — force a style), "
+                "html_to_canvas (bool — an HTML pick lands on the canvas, not in a tab), dry_run (bool — pick, do "
+                "not deliver). Output: {ok, channel, style, why, delivered, ...output.redeliver's result}.",
+)
+async def output_deliver_auto(content: str = "", question: str = "", session_id: str = "", allow: str = "",
+                              channel: str = "", style: str = "", html_to_canvas: bool = False,
+                              dry_run: bool = False, trace_id=None):
+    if not (content or "").strip():
+        return {"ok": False, "error": "content required"}
+    chans = _model_channels(allow)
+    ids = [c["id"] for c in chans]
+    styles = _style_list()
+    sids = [str(s["id"]).lower() for s in styles]
+    why = "chosen by the caller"
+    ch = (channel or "").strip()
+    if ch:
+        if ch not in ids and not _delivery.get_channel(ch):
+            return {"ok": False, "error": f"unknown channel: {ch}"}
+    else:
+        if not chans:
+            return {"ok": True, "channel": "none", "delivered": False, "why": "no channel to offer"}
+        # the request names a place: that decides (a small model got the plainest asks wrong); a short answer stays
+        # in the chat; only what is left is the model's to judge
+        asked = _delivery.explicit_ask(question, ids)
+        if asked == "none":
+            return {"ok": True, "channel": "none", "delivered": False, "why": "you asked for it short: the chat alone"}
+        if asked:
+            ch, why = asked, "you asked for it"
+        elif len(content.strip()) < _delivery.SHORT_ANSWER:
+            return {"ok": True, "channel": "none", "delivered": False, "why": "a short answer stays in the chat"}
+    if not ch:
+        gen = _cap("llm.generate")
+        if not gen:
+            return {"ok": False, "error": "llm.generate unavailable"}
+        try:
+            res = await gen(prompt=_delivery.pick_prompt(content, question, chans, styles),
+                            job_type="delivery_pick", think=False, caller="output.deliver_auto",
+                            options={"temperature": 0.1, "num_predict": 80})
+        except Exception as e:
+            return {"ok": False, "error": f"delivery pick failed: {e}"}
+        pick = _delivery.parse_pick(_gen_text(res), ids, sids)
+        ch, why = pick["channel"], pick["why"]
+        if not style:
+            style = pick["style"]
+    if ch == "html" and html_to_canvas and "report.canvas" in CAPABILITY_REGISTRY:
+        ch = "canvas_html"
+    out: Dict[str, Any] = {"ok": True, "channel": ch, "style": style or "", "why": why, "delivered": False}
+    if ch in ("", "none") or dry_run:
+        return out
+    res = await output_redeliver(channel=ch, content=content, format=style or "", session_id=session_id,
+                                 title=next((l.strip().lstrip("# ").strip() for l in content.splitlines()
+                                             if l.strip()), "Delivered")[:140])
+    out.update(res if isinstance(res, dict) else {})
+    out["delivered"] = bool(out.get("ok"))
+    out["why"] = why
     return out
 
 
@@ -964,6 +1334,27 @@ async def render_report_view(name: str):
     return HTMLResponse(target.read_text(encoding="utf-8", errors="replace"))
 
 
+@APP.get("/render/stored", include_in_schema=False)
+async def render_stored_view(key: str = ""):
+    """A report kept in the estate's object store (report.store), served through Vera - the store's own presigned
+    links name its internal endpoint (localhost:3900), which no browser elsewhere can reach. Only what report.store
+    writes (reports/...) is served here; anything else in the bucket is not this route's to hand out."""
+    k = str(key or "").lstrip("/")
+    if not k.startswith("reports/") or ".." in k.split("/"):
+        return JSONResponse({"error": "only reports/… keys are served here"}, status_code=400)
+    get = _cap("fabric.objects.get")
+    if not get:
+        return JSONResponse({"error": "the object store is unavailable"}, status_code=503)
+    r = await get(key=k)
+    r = r if isinstance(r, dict) else {}
+    if r.get("error") or not r.get("content_base64"):
+        return JSONResponse({"error": r.get("error") or "not found", "key": k}, status_code=404)
+    import base64 as _b64
+    from fastapi.responses import Response
+    ctype = str(r.get("content_type") or ("text/html; charset=utf-8" if k.endswith(".html") else "text/markdown; charset=utf-8"))
+    return Response(content=_b64.b64decode(r["content_base64"]), media_type=ctype)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GALLERY PANEL — a self-contained browser page (served same-origin so /mcp/call
 # works) iframed by the "Artifacts" tab. Plain string (NOT an f-string) so the
@@ -973,8 +1364,9 @@ async def render_report_view(name: str):
 _GALLERY_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Artifacts</title>
 <style>
-:root{--bg:#14161a;--card:#1b1e24;--ink:#e8e9ec;--dim:#9aa1ad;--acc:#6fb6a5;--bd:#2a2e37;}
-@media (prefers-color-scheme:light){:root{--bg:#fbfbfa;--card:#fff;--ink:#1c1d22;--dim:#5c6270;--acc:#5a9e8f;--bd:#e6e6e9;}}
+/* the theme's colours (2026-10-04, a dark-theme sweep: this page's own --ink stayed dark on a dark theme). vera-ui.js sets
+   --bg --dim --acc --bd itself; --card and --ink are this page's names for the theme's surface and text */
+:root{--bg:#14161a;--card:var(--bg1,var(--s1,#1b1e24));--ink:var(--text,var(--t1,#e8e9ec));--dim:#9aa1ad;--acc:#6fb6a5;--bd:#2a2e37;}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
 font:14px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
 .bar{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--bd);
@@ -988,7 +1380,7 @@ button{cursor:pointer}
 .c{background:var(--card);border:1px solid var(--bd);border-radius:12px;overflow:hidden;
 display:flex;flex-direction:column;}
 .mlink{display:block}
-.thumb{height:130px;background:#0000000f;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.thumb{height:130px;background:color-mix(in srgb,var(--ink) 6%,transparent);display:flex;align-items:center;justify-content:center;overflow:hidden;}
 .thumb img{width:100%;height:100%;object-fit:cover;}
 .ph{font-size:2.6rem;opacity:.6}
 .body{padding:11px 12px;display:flex;flex-direction:column;gap:6px;flex:1;}
@@ -996,7 +1388,7 @@ display:flex;flex-direction:column;}
 .t{font-weight:600;line-height:1.3;}
 .note{color:var(--dim);font-size:.82rem;}
 .tags{display:flex;flex-wrap:wrap;gap:4px;}
-.tag{background:#6fb6a522;color:var(--acc);border-radius:5px;padding:1px 6px;font-size:.72rem;}
+.tag{background:color-mix(in srgb,var(--acc) 14%,transparent);color:var(--acc);border-radius:5px;padding:1px 6px;font-size:.72rem;}
 .meta{color:var(--dim);font-size:.72rem;margin-top:auto;}
 .acts{display:flex;gap:6px;flex-wrap:wrap;}
 .acts .btn{font-size:.78rem;padding:4px 9px;border-radius:6px;text-decoration:none;color:var(--ink);
@@ -1052,7 +1444,9 @@ async function del(id){if(!confirm('Remove from gallery? (the underlying file is
 $('#fKind').onchange=load;$('#ref').onclick=load;
 $('#fQ').oninput=()=>{clearTimeout(window._t);window._t=setTimeout(load,250);};
 load();
-</script></body></html>"""
+</script>
+<script src="/ui/vera-ui.js"></script>
+</body></html>"""
 
 
 @APP.get("/gallery/view", include_in_schema=False)

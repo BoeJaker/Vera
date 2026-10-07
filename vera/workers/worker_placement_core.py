@@ -54,9 +54,76 @@ NODE_SAFE: Dict[str, str] = {
     "echo":   "diagnostic",
 }
 
+#: Single caps checked to be node-safe in a namespace that, as a whole, is not
+#: (the rest of `gpu`/`tts`/`data`/`system` was not vetted, or keeps local
+#: state). cap -> (class, what makes it safe). Each was read in full: no fabric
+#: path, no process-local map, no in-process call to another cap. Checked and
+#: left host-only, with why: vision.describe (fetches a fabric path from the
+#: orchestrator on 127.0.0.1), web.search (fabric recall + background ingest),
+#: image.* (archives into the fabric; image.progress reads a process-local job
+#: map), system.ping (answers from the node's network position, not the host's).
+NODE_SAFE_CAPS: Dict[str, Tuple[str, str]] = {
+    "gpu.health":         ("media", "GET /health on the media node"),
+    "stt.transcribe":     ("media", "POST to the media node's Whisper server"),
+    "tts.synthesize":     ("media", "POST to the media node's TTS server"),
+    "tts.voices":         ("media", "GET the media node's voice list"),
+    "data.json_validate": ("general", "pure JSON parsing"),
+    "data.json_flatten":  ("general", "pure JSON transform"),
+    "system.timestamp":   ("general", "reads the clock"),
+    # model training for the host: inputs and outputs are Redis keys the host
+    # writes and reads; the function is allow-listed and touches no store
+    # (node_compute_core). It is queued on a node-only stream, never a class
+    # stream, so the host cannot take its own job back.
+    "compute.run":        ("cpu_compute", "runs an allow-listed training function on "
+                                          "inputs the host put in Redis"),
+}
+
+#: Capabilities vetted for nodes by evidence (cap_footprint_core: the static
+#: audit AND the host footprint observed while they ran both clean), cap ->
+#: (class, why). Loaded from Redis by every process (set_vetted), so vetting
+#: needs no release; host-only (VERA_WORKER_HOST_ONLY) and the mutator rule
+#: still win over it.
+VETTED: Dict[str, Tuple[str, str]] = {}
+#: The class vetted capabilities run in on a node: off on every node until an
+#: operator enables it there (Workers > roles).
+VETTED_CLASS = "extended"
+
+
+def set_vetted(mapping: Optional[Dict[str, object]]) -> bool:
+    """Replace the vetted set; True when it changed. Values: (class, why) or
+    {"cls", "why"}."""
+    new: Dict[str, Tuple[str, str]] = {}
+    for cap, v in (mapping or {}).items():
+        if isinstance(v, dict):
+            cls, why = str(v.get("cls") or VETTED_CLASS), str(v.get("why") or "vetted")
+        elif isinstance(v, (tuple, list)) and len(v) == 2:
+            cls, why = str(v[0]), str(v[1])
+        else:
+            continue
+        if cls not in CLASSES:
+            cls = VETTED_CLASS
+        new[str(cap)] = (cls, why)
+    if new == VETTED:
+        return False
+    VETTED.clear()
+    VETTED.update(new)
+    return True
+
+
 #: Final name segments that change process-local settings. Such a cap is
 #: host-only even inside a node-safe namespace (`nlp.config.set` flips
 #: `nlp.local` in the process that runs it).
+#: Capabilities that start a background job in the process that received them and answer later calls from that
+#: process's handle on it (running, last run). In a namespace a node may serve, each process would hold its own job:
+#: on 2026-10-06 memory.fade.run started on a node worker, status calls answered "running" or "nothing running" by
+#: which process took them, and a second start began a second run alongside the first.
+HOST_BOUND_CAPS: Dict[str, str] = {
+    "memory.fade.run":       "a background fading job held by this process",
+    "memory.fade.report":    "a background recount held by this process",
+    "memory.noise.mark":     "a background marking job held by this process",
+    "memory.canonical.mark": "a background folding job held by this process",
+}
+
 MUTATOR_SEGMENTS = frozenset({
     "set", "config", "configure", "enable", "disable", "reset", "reload",
     "register", "unregister", "save", "delete",
@@ -70,6 +137,10 @@ WORKER_STARTUP_HOOKS = frozenset({
     "memory_startup",        # memory backends (its promoter is worker-gated in memory.py)
     "memory_hooks_startup",  # in-process memory-mode wrappers, so a cap records
                              # memory on a worker the way it does on the host
+    "vllm_health",           # the vLLM registry (from Redis) and each server's
+                             # online state - what llm.generate(backend="vllm")
+                             # and a pin naming a switched node route by. The
+                             # Ollama health loop already runs on every worker.
 })
 
 #: Both routes a startup takes - schedule(..., interval=STARTUP_INTERVAL) and
@@ -103,14 +174,24 @@ def placement(cap_name: str, *, node_ok: Iterable[str] = (),
     brake = set(_names(host_only))
     if name in brake or ns in brake:
         return "host", "listed in VERA_WORKER_HOST_ONLY"
+    if name in HOST_BOUND_CAPS:
+        return "host", HOST_BOUND_CAPS[name]
     ok = set(_names(node_ok))
     if name in ok:
         return "any", "admitted by VERA_WORKER_NODE_OK"
+    # Vetted by evidence beats the setter-by-name rule below: the rule guesses
+    # from a name that a cap changes process-local settings; the audit checks
+    # it (a write to module state, or a `global` rebind, keeps it host-bound),
+    # and most setters write a shared store (owner, 2026-10-04: go further).
+    if name in VETTED:
+        return "any", "vetted: " + VETTED[name][1]
     last = name.rsplit(".", 1)[-1] if "." in name else ""
     if last in MUTATOR_SEGMENTS or ".config." in name:
         return "host", "changes process-local settings"
     if ns in ok:
         return "any", "admitted by VERA_WORKER_NODE_OK"
+    if name in NODE_SAFE_CAPS:
+        return "any", NODE_SAFE_CAPS[name][1]
     if ns in NODE_SAFE:
         return "any", NODE_SAFE[ns]
     return "host", "not vetted as node-safe"
@@ -131,12 +212,16 @@ CLASSES: Dict[str, Dict[str, object]] = {
                         "through the node NLP servers",
                 "namespaces": ("nlp",)},
     "cpu_compute": {"label": "CPU compute",
-                    "desc": "parsing, transforms, test runs - nothing vetted into this "
-                            "class yet",
+                    "desc": "model training for the host - worldview, ML Lab and "
+                            "markets models (compute.run)",
                     "namespaces": ()},
+    "extended": {"label": "Extended (vetted)",
+                 "desc": "capabilities proven node-safe by evidence: the static audit and "
+                         "the host footprint seen while they ran (nodes.parity)",
+                 "namespaces": ()},
     "media":   {"label": "Media (GPU)",
-                "desc": "diffusion, STT, TTS - served by the node's gpu_inference "
-                        "server directly; no worker tasks in this class yet",
+                "desc": "STT and TTS calls to the gpu_inference server; diffusion "
+                        "stays on the host (it archives into the fabric)",
                 "namespaces": ()},
 }
 
@@ -152,6 +237,11 @@ NO_CLASSES = "none"
 
 #: One stream per class; a node worker reads only the classes it has.
 CLASS_STREAM = "vera:tasks:cls:{cls}"
+#: Work that must NOT run on the host, per class: the host reads every class
+#: stream, so a job that exists to take load off the host needs a stream the
+#: host does not read. Only cpu_compute has one (node_compute_core).
+NODE_ONLY_STREAM = "vera:tasks:node:{cls}"
+NODE_ONLY_CLASSES = ("cpu_compute",)
 
 #: Redis hash host_id -> JSON list of classes, set from the Workers UI. A node
 #: worker re-reads its entry every 30 s, so a change applies without a restart.
@@ -162,6 +252,10 @@ def class_stream(cls: str) -> str:
     return CLASS_STREAM.format(cls=cls)
 
 
+def node_only_stream(cls: str) -> str:
+    return NODE_ONLY_STREAM.format(cls=cls)
+
+
 def class_of(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
     """The class a node-safe cap belongs to; '' for a host-bound one. A cap an
     operator admitted with VERA_WORKER_NODE_OK that no class names is
@@ -169,6 +263,10 @@ def class_of(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
     where, _ = placement_from_env(cap_name, env)
     if where != "any":
         return ""
+    if cap_name in NODE_SAFE_CAPS:
+        return NODE_SAFE_CAPS[cap_name][0]
+    if cap_name in VETTED:
+        return VETTED[cap_name][0]
     ns = namespace(cap_name)
     for cls, spec in CLASSES.items():
         if ns in spec["namespaces"]:
@@ -199,13 +297,24 @@ def stream_for(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
     return class_stream(cls) if cls else HOST_TASK_STREAM
 
 
-def streams_to_read(*, is_worker: bool, classes: Optional[Iterable[str]] = None) -> Tuple[str, ...]:
+#: A node worker's own queue (node_compute_core.NODE_STREAM): the host sends a
+#: scheduled job to the one node it chose.
+NODE_HOST_STREAM = "vera:tasks:node:host:{host_id}"
+
+
+def streams_to_read(*, is_worker: bool, classes: Optional[Iterable[str]] = None,
+                    host_id: str = "") -> Tuple[str, ...]:
     """The host reads everything. A node worker reads the shared legacy stream
     (tasks queued by a process running older code) and its own classes' streams
-    - never the host stream, never a class it was not given."""
+    - never the host stream, never a class it was not given - plus the
+    node-only stream of a class that has one."""
     if not is_worker:
         return (TASK_STREAM, HOST_TASK_STREAM) + tuple(class_stream(c) for c in CLASSES)
-    return (TASK_STREAM,) + tuple(class_stream(c) for c in clean_classes(classes))
+    mine = clean_classes(classes)
+    own = ((NODE_HOST_STREAM.format(host_id=host_id),)
+           if host_id and any(c in NODE_ONLY_CLASSES for c in mine) else ())
+    return ((TASK_STREAM,) + tuple(class_stream(c) for c in mine)
+            + tuple(node_only_stream(c) for c in mine if c in NODE_ONLY_CLASSES) + own)
 
 
 def may_run_here(cap_name: str, *, is_worker: bool,
@@ -259,3 +368,114 @@ WORKER_NICE = 5
 def worker_thread_env(threads: int = DEFAULT_WORKER_THREADS) -> Dict[str, str]:
     n = str(max(1, int(threads or DEFAULT_WORKER_THREADS)))
     return {k: n for k in THREAD_ENV_VARS}
+
+
+# ── rollout stages: which node-safe work is SENT to node workers ──────────────
+# Until 2026-09-28 nothing was: no capability declares mode="distributed", so
+# node workers only ever ran what the idle queue queued. The user decided
+# (2026-09-28) that node workers should receive the full set of node-safe work,
+# in stages, each stage a TYPE of worker deployment. A stage is cumulative.
+#
+# A call is offloaded only when a node worker of the cap's class is IDLE right
+# now: a worker runs one task at a time, so sending work to a busy one would
+# queue a caller behind it where running it on the host would not. When no
+# node worker is free the call runs on the host exactly as before.
+DISPATCH_KEY = "vera:node_workers:dispatch"      # json {"stage": int, "exclude": [...]}
+STAGES = (
+    {"id": 0, "name": "idle", "label": "Idle queue only",
+     "desc": "nothing is sent to node workers except idle-queue jobs",
+     "classes": (), "skip_ns": ()},
+    {"id": 1, "name": "nlp", "label": "NLP workers",
+     "desc": "nlp.* - NER, classification, zero-shot, QA, embeddings, rerank",
+     "classes": ("nlp",), "skip_ns": ()},
+    {"id": 2, "name": "compute", "label": "+ compute workers",
+     "desc": "text, math, http, memory and the vetted pure caps (general class, not llm)",
+     "classes": ("nlp", "general"), "skip_ns": ("llm",)},
+    {"id": 3, "name": "llm", "label": "+ LLM workers",
+     "desc": "llm.* - generation still routes through the shared GPU gate and node routing",
+     "classes": ("nlp", "general"), "skip_ns": ()},
+    {"id": 4, "name": "media", "label": "+ media workers",
+     "desc": "STT and TTS calls to the media servers",
+     "classes": ("nlp", "general", "media"), "skip_ns": ()},
+    {"id": 5, "name": "full", "label": "Full",
+     "desc": "every node-safe class, including any vetted into cpu_compute later",
+     "classes": tuple(CLASSES), "skip_ns": ()},
+)
+
+
+def stage_of(n) -> Dict[str, object]:
+    try:
+        i = int(n)
+    except (TypeError, ValueError):
+        i = 0
+    return STAGES[max(0, min(len(STAGES) - 1, i))]
+
+
+def offload_decision(cap_name: str, *, stage, free: Dict[str, int],
+                     is_worker: bool, is_sandbox: bool, args_ok: bool,
+                     exclude: Iterable[str] = (),
+                     env: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
+    """(send to a node worker?, why). Pure."""
+    if is_worker:
+        return False, "already on a worker"
+    if is_sandbox:
+        return False, "a dev sandbox has no node workers on its Redis"
+    if any(cap_name == c for c, (cls, _w) in NODE_SAFE_CAPS.items()
+           if cls in NODE_ONLY_CLASSES):
+        return False, "queued on its node-only stream by its own caller"
+    st = stage_of(stage)
+    if not st["classes"]:
+        return False, "stage %s" % st["name"]
+    cls = class_of(cap_name, env)
+    if not cls:
+        return False, "host-bound"
+    if cls not in st["classes"]:
+        return False, "class %s not in stage %s" % (cls, st["name"])
+    if namespace(cap_name) in st["skip_ns"]:
+        return False, "%s.* not in stage %s" % (namespace(cap_name), st["name"])
+    ex = set(_names(exclude))
+    if cap_name in ex or namespace(cap_name) in ex:
+        return False, "excluded"
+    if not args_ok:
+        return False, "arguments cannot travel (not JSON)"
+    if int((free or {}).get(cls, 0)) <= 0:
+        return False, "no free node worker for class %s" % cls
+    return True, "stage %s: idle %s worker" % (st["name"], cls)
+
+
+def free_workers(workers: Iterable[Dict[str, object]],
+                 inflight: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+    """{class: node workers idle right now, less this process's own offloads
+    still in flight to that class}. `workers` are registry records ({role,
+    status, classes (list or json)}); a dead worker's record expires (120 s
+    TTL), so presence means alive. A worker serving two classes counts for
+    both - the in-flight subtraction keeps that from double-booking it."""
+    import json as _json
+    out: Dict[str, int] = {}
+    for w in workers or ():
+        if str(w.get("role") or "") != "node-worker" or str(w.get("status") or "") != "idle":
+            continue
+        cl = w.get("classes") or ()
+        if isinstance(cl, str):
+            try:
+                cl = _json.loads(cl)
+            except ValueError:
+                cl = _names(cl)
+        for c in clean_classes(cl):
+            out[c] = out.get(c, 0) + 1
+    for c, n in (inflight or {}).items():
+        if c in out:
+            out[c] = max(0, out[c] - int(n or 0))
+    return out
+
+
+#: Per-process reply stream: a result goes back to the process that asked.
+#: The shared result stream is read through ONE consumer group, which hands
+#: each result to exactly one reader - often not the process waiting for it,
+#: which is the "stuck-pending jobs" that turned distributed mode off.
+REPLY_STREAM = "vera:results:p:{proc}"
+REPLY_TTL_S = 3600
+
+
+def reply_stream(proc: str) -> str:
+    return REPLY_STREAM.format(proc=proc)

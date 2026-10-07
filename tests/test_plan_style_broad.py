@@ -361,8 +361,9 @@ def test_only_one_heavy_cpu_generation_runs_at_a_time(monkeypatch):
 def test_the_enrich_route_is_the_long_horizon_cpu_job_type():
     from Vera.vera import capability_orchestration as O
     rule = O.DEFAULT_ROUTING_RULES["plan_enrich"]
-    assert rule["deny_gpu"] and rule["prefer"] == "cpu-247"          # not the embedder, cpu-246
-    assert O.DEFAULT_ROUTING_RULES["embedding"]["prefer"] == "cpu-246"
+    assert rule["deny_gpu"] and rule["prefer"] == "cpu-247"          # the long-horizon node
+    # the primary embedder is the GPU node's CPU sibling (user, 2026-09-28)
+    assert O.DEFAULT_ROUTING_RULES["embedding"]["prefer"] == "gpu-250-cpu"
     assert "plan_enrich" in O.OLLAMA_JOB_TYPES
     role = (O.ROLE_PROFILES_DECLARED.get("planning_style") or {}).get("roles", {}).get("enrich")
     if role:                                                          # planning module loaded

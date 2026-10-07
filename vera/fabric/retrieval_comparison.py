@@ -17,7 +17,7 @@ _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SNAPSHOT_ID = re.compile(r"^snap_[0-9a-f]{64}$")
 PROVIDER_KINDS = frozenset({
     "fabric_graph", "fabric_vector", "qdrant", "graphrag",
-    "jepa_worldview_evidence", "analytical",
+    "jepa_worldview_evidence", "analytical", "llamaindex", "haystack",
 })
 
 

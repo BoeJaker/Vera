@@ -17,8 +17,14 @@ import re
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlsplit
 
-from vera.context_provider import ContextItem
-from vera.fabric.dataset_provider import DatasetSnapshot
+# Dual-spelled: in the running app the package is only importable as Vera.vera (the plain 'vera' is a test-path
+# spelling), and a plain-only import here took operator_web_capabilities down with it on prod (2026-09-30).
+try:  # the test path's spelling first; the app has only Vera.vera, so it takes the fallback - one spelling per process
+    from vera.context_provider import ContextItem
+    from vera.fabric.dataset_provider import DatasetSnapshot
+except ImportError:  # pragma: no cover - the running app
+    from Vera.vera.context_provider import ContextItem
+    from Vera.vera.fabric.dataset_provider import DatasetSnapshot
 
 
 DISCOVERY_REQUEST_SCHEMA = "vera.discovery-request/v1"

@@ -27,7 +27,7 @@ contains shell braces.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from Vera.vera.node_threads_core import DEFAULT_CPU_THREADS
@@ -152,7 +152,278 @@ def registration_threads(has_gpu: bool, requested: Any = None) -> int:
     return n if n > 0 else DEFAULT_CPU_THREADS
 
 
+# ── concurrency on CPU Ollama servers ─────────────────────────────────────────
+# Measured 2026-09-28 (cpu-246 / gpu-250's CPU, 6 threads): with the default one
+# slot, a second request to a CPU server WAITS for the first (2x0.5b: 4.6 s then
+# 8.9 s wall). Two slots run them together: 0.5b 44.8 -> 2x30.3 tok/s (+35%
+# total), 7b 6.16 -> 2x3.7 (+20%). Each request is slower, the node does more.
+# The embedding model is a different runner, so it runs beside a generation as
+# long as both stay loaded - MAX_LOADED_MODELS 3 keeps a big LLM, the embedder
+# and one more resident (the CPU nodes have 50 GB).
+CPU_NUM_PARALLEL = 2
+CPU_MAX_LOADED_MODELS = 3
+CONCURRENCY_DROPIN_NAME = "20-vera-concurrency.conf"
+
+#: The CPU-only sibling Ollama on a GPU node (user, 2026-09-28): the GPU node's
+#: cores serve embeddings and small models beside the GPU runner. Measured: CPU
+#: embeds (6.1-6.6 docs/s) and a 0.5b (42-47 tok/s) on gpu-250's CPU did not
+#: move the GPU's 9b throughput beyond run-to-run noise.
+CPU_SIBLING_PORT = 11436
+CPU_SIBLING_UNIT = "ollama-vera-cpu.service"
+
+
+def concurrency_dropin(num_parallel: int = CPU_NUM_PARALLEL,
+                       max_loaded: int = CPU_MAX_LOADED_MODELS) -> str:
+    return ("[Service]\n"
+            "# Written by Vera (nodes.ollama.tune): two requests at once on a CPU\n"
+            "# server, and room for the embedder beside a large model.\n"
+            f'Environment="OLLAMA_NUM_PARALLEL={int(num_parallel)}"\n'
+            f'Environment="OLLAMA_MAX_LOADED_MODELS={int(max_loaded)}"\n')
+
+
+def cpu_sibling_id(gpu_instance_id: str) -> str:
+    return f"{gpu_instance_id}-cpu"
+
+
+def cpu_sibling_unit(models_dir: str, port: int = CPU_SIBLING_PORT) -> str:
+    """A CPU-only Ollama beside a GPU node's own. The GPU is hidden from it
+    (and the CPU library forced), it reads the SAME model store read-only
+    (NOPRUNE), and it has the CPU concurrency settings."""
+    return ("[Unit]\n"
+            f"Description=Ollama CPU-only sibling (Vera, port {int(port)}) - embeddings and small models\n"
+            "After=network-online.target ollama-vera.service\nWants=network-online.target\n\n"
+            "[Service]\nExecStart=/usr/local/bin/ollama serve\nUser=root\nGroup=root\n"
+            'Environment="HOME=/"\n'
+            f'Environment="OLLAMA_MODELS={models_dir}"\n'
+            f'Environment="OLLAMA_HOST=0.0.0.0:{int(port)}"\n'
+            'Environment="OLLAMA_NOPRUNE=1"\n'
+            'Environment="CUDA_VISIBLE_DEVICES="\n'
+            'Environment="HIP_VISIBLE_DEVICES="\n'
+            'Environment="OLLAMA_LLM_LIBRARY=cpu"\n'
+            f'Environment="OLLAMA_NUM_PARALLEL={CPU_NUM_PARALLEL}"\n'
+            f'Environment="OLLAMA_MAX_LOADED_MODELS={CPU_MAX_LOADED_MODELS}"\n'
+            'Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"\n'
+            "Restart=always\nRestartSec=3\n\n[Install]\nWantedBy=multi-user.target\n")
+
+
+def tune_probe_cmd() -> str:
+    """Shell that reports a node's Ollama unit, its model dir, its current
+    concurrency drop-in and whether a CPU sibling runs. Read-only."""
+    return ('U=ollama; systemctl is-active --quiet ollama-vera && U=ollama-vera; echo "UNIT=$U"; '
+            'echo "MODELS=$(systemctl show $U -p Environment --value | tr " " "\\n" '
+            '| sed -n "s/^OLLAMA_MODELS=//p")"; '
+            'echo "USER=$(systemctl show $U -p User --value)"; '
+            f'D=/etc/systemd/system/$U.service.d/{CONCURRENCY_DROPIN_NAME}; '
+            '[ -f $D ] && echo "DROPIN_B64=$(base64 -w0 $D)" || echo "DROPIN_B64="; '
+            f'systemctl is-active --quiet {CPU_SIBLING_UNIT} && echo SIBLING=active || echo SIBLING=absent')
+
+
+def parse_tune_probe(stdout: str) -> Dict[str, str]:
+    import base64 as _b64
+    out: Dict[str, str] = {}
+    for line in (stdout or "").splitlines():
+        k, sep, v = line.partition("=")
+        if sep and k in ("UNIT", "MODELS", "DROPIN_B64", "SIBLING", "USER"):
+            out[k] = v.strip()
+    try:
+        out["dropin"] = _b64.b64decode(out.get("DROPIN_B64") or "").decode("utf-8", "replace")
+    except Exception:
+        out["dropin"] = ""
+    return out
+
+
+def default_models_dir(user: str) -> str:
+    """Where a unit with no OLLAMA_MODELS keeps its models: Ollama's installer
+    runs the stock unit as `ollama` (home /usr/share/ollama); root's is /root."""
+    u = str(user or "").strip()
+    return "/usr/share/ollama/.ollama/models" if u == "ollama" else (
+        "/root/.ollama/models" if u in ("", "root") else f"/home/{u}/.ollama/models")
+
+
+def tune_plan(has_gpu: bool, probe: Dict[str, str]) -> Dict[str, Any]:
+    """What tuning a node takes. A CPU node needs the concurrency drop-in on
+    its Ollama unit (a restart of that unit - loaded models reload). A GPU node
+    keeps ONE slot on its GPU server (a V100 cannot hold two big models) and
+    gets the CPU-only sibling instead."""
+    unit = probe.get("UNIT") or "ollama"
+    if has_gpu:
+        if probe.get("SIBLING") == "active":
+            return {"action": "none", "why": "CPU sibling already running", "unit": unit}
+        models = probe.get("MODELS") or ""
+        if not models and "USER" in probe:
+            # a fresh install: the stock unit keeps the installer's default
+            models = default_models_dir(probe.get("USER") or "")
+        if not models:
+            return {"action": "skip", "why": f"could not read OLLAMA_MODELS from {unit}",
+                    "unit": unit}
+        return {"action": "add_sibling", "unit": unit, "models": models,
+                "why": f"add the CPU-only sibling on :{CPU_SIBLING_PORT}"}
+    want = concurrency_dropin()
+    if (probe.get("dropin") or "") == want:
+        return {"action": "none", "why": "concurrency already set", "unit": unit}
+    return {"action": "set_concurrency", "unit": unit,
+            "why": f"{unit}: OLLAMA_NUM_PARALLEL={CPU_NUM_PARALLEL}, "
+                   f"MAX_LOADED_MODELS={CPU_MAX_LOADED_MODELS} (restarts {unit})"}
+
+
 def install_succeeded(stdout: Any) -> bool:
     """The recipe only succeeds when it reached its end marker — which it only
     prints after the node answered on the port."""
     return DONE_MARKER in str(stdout or "")
+
+
+# ── the runner thread default, server-side (2026-09-29) ──────────────────────
+# Vera sends options.num_thread on every call it routes to a CPU node, so its
+# runners start with `-t 6`. Any request WITHOUT it - a sandbox on older code,
+# an external client, anything that bypasses the router - started a runner
+# with no -t, and llama.cpp then takes 24 threads on these 12-CPU containers
+# (the 0.24 tok/s pathology node_threads_core documents). Measured on
+# gpu-250-cpu 2026-09-29: a bare /api/generate spawned exactly that runner.
+# llama-server reads LLAMA_ARG_THREADS when no -t is given, and an explicit
+# -t still wins - so a drop-in makes the node's num_thread the default for
+# every caller.
+THREADS_DROPIN_NAME = "25-vera-threads.conf"
+
+
+def threads_dropin(n: int) -> str:
+    return ("[Service]\n# Written by Vera (nodes.ollama.tune): runners started without\n"
+            "# num_thread use this, not llama.cpp's 24-on-12-CPUs default.\n"
+            f'Environment="LLAMA_ARG_THREADS={int(n)}"\n')
+
+
+def threads_probe_cmd(unit_expr: str) -> str:
+    """Prints THREADS=<effective LLAMA_ARG_THREADS of the unit> (may be empty)."""
+    return (f"U={unit_expr}; echo \"UNIT=$U\"; echo \"THREADS=$(systemctl show $U -p Environment "
+            "--value | tr ' ' '\\n' | sed -n 's/^LLAMA_ARG_THREADS=//p')\"")
+
+
+def threads_plan(current: str, want: int) -> Dict[str, Any]:
+    try:
+        cur = int(str(current or "").strip() or 0)
+    except ValueError:
+        cur = 0
+    if int(want or 0) <= 0:
+        return {"action": "none", "why": "no thread count configured"}
+    if cur == int(want):
+        return {"action": "none", "why": f"runners default to {cur} threads"}
+    return {"action": "set_threads", "want": int(want), "current": cur,
+            "why": f"runners without num_thread default to {cur or 'llama.cpp (24)'}; set {int(want)}"}
+
+
+# ── node settings: what is set on each Ollama unit, and the live runners ─────
+CUSTOM_DROPIN_NAME = "40-vera-custom.conf"
+#: Keys an operator may set through Vera: Ollama's own and llama-server's.
+import re as _re
+_CUSTOM_KEY = _re.compile(r"^(OLLAMA_|LLAMA_ARG_)[A-Z0-9_]{1,60}$")
+_CUSTOM_VAL = _re.compile(r"^[A-Za-z0-9_.:/,=+-]{0,200}$")
+#: Keys Vera's own drop-ins manage; setting them as custom flags would fight them.
+MANAGED_KEYS = frozenset({"OLLAMA_HOST", "OLLAMA_MODELS", "LLAMA_ARG_THREADS"})
+
+
+def settings_probe_cmd(unit_expr: str) -> str:
+    """Read-only: the unit, its Ollama/llama/GPU env, every drop-in (base64),
+    and each live runner: ctx | parallel | -t | model blob | OS threads."""
+    return (
+        f"U={unit_expr}; echo \"UNIT=$U\"; "
+        "systemctl show $U -p Environment --value | tr ' ' '\\n' | "
+        "grep -E '^(OLLAMA_|LLAMA_ARG_|CUDA_VISIBLE_DEVICES|HIP_VISIBLE_DEVICES|GGML_)' | sed 's/^/ENV=/'; "
+        "for f in /etc/systemd/system/$U.service.d/*.conf; do [ -f \"$f\" ] && "
+        "echo \"DROPIN=$(basename $f):$(base64 -w0 $f)\"; done; "
+        "M=$(systemctl show $U -p Environment --value | tr ' ' '\\n' | sed -n 's/^OLLAMA_MODELS=//p'); "
+        "P=$(systemctl show $U -p MainPID --value); "
+        "for c in $(pgrep -P $P 2>/dev/null); do a=$(tr '\\0' '\\n' < /proc/$c/cmdline 2>/dev/null); "
+        "b=$(echo \"$a\" | grep -A1 -x -- --model | tail -1 | xargs -r basename); "
+        # the model a runner serves: the manifest that references its blob
+        "m=$([ -n \"$M\" ] && [ -n \"$b\" ] && grep -rl \"$(echo $b | sed 's/-/:/')\" $M/manifests 2>/dev/null "
+        "| head -1 | sed \"s#^$M/manifests/##\"); "
+        "echo \"RUNNER=$(echo \"$a\" | grep -A1 -x -- -c | tail -1)|$(echo \"$a\" | grep -A1 -x -- -np | tail -1)"
+        "|$(echo \"$a\" | grep -A1 -xE -- '-t|--threads' | tail -1)|$b"
+        "|$(ls /proc/$c/task 2>/dev/null | wc -l)|$(echo \"$a\" | grep -cx -- --embedding)|$m\"; done")
+
+
+def model_from_manifest(path: str) -> str:
+    """A manifest path under manifests/ -> the tag callers use:
+    registry.ollama.ai/library/qwen2.5/0.5b -> qwen2.5:0.5b,
+    registry.ollama.ai/jaahas/qwen3.5-uncensored/9b -> jaahas/qwen3.5-uncensored:9b,
+    hf.co/user/repo/Q4 -> hf.co/user/repo:Q4."""
+    parts = [p for p in str(path or "").strip().split("/") if p]
+    if len(parts) < 3:
+        return ""
+    host, rest, tag = parts[0], parts[1:-1], parts[-1]
+    if host == "registry.ollama.ai":
+        if rest and rest[0] == "library":
+            rest = rest[1:]
+        return "/".join(rest) + ":" + tag
+    return "/".join([host] + rest) + ":" + tag
+
+
+def parse_settings(stdout: str) -> Dict[str, Any]:
+    import base64 as _b64
+    out: Dict[str, Any] = {"unit": "", "env": {}, "dropins": [], "runners": []}
+    for line in (stdout or "").splitlines():
+        k, sep, v = line.partition("=")
+        if not sep:
+            continue
+        if k == "UNIT":
+            out["unit"] = v.strip()
+        elif k == "ENV":
+            ek, _, ev = v.partition("=")
+            out["env"][ek] = ev
+        elif k == "DROPIN":
+            name, _, b = v.partition(":")
+            try:
+                text = _b64.b64decode(b).decode("utf-8", "replace")
+            except Exception:
+                text = ""
+            out["dropins"].append({"name": name, "text": text})
+        elif k == "RUNNER":
+            parts = (v.split("|") + [""] * 7)[:7]
+            def _i(x):
+                try:
+                    return int(x)
+                except ValueError:
+                    return 0
+            out["runners"].append({"ctx": _i(parts[0]), "parallel": _i(parts[1]) or 1,
+                                   "threads": _i(parts[2]), "blob": parts[3],
+                                   "os_threads": _i(parts[4]), "embedding": parts[5] == "1",
+                                   "model": model_from_manifest(parts[6])})
+    return out
+
+
+def custom_flags_from_dropin(text: str) -> Dict[str, str]:
+    """KEY -> value from a drop-in's Environment= lines."""
+    out: Dict[str, str] = {}
+    for m in _re.finditer(r'Environment="?([A-Z0-9_]+)=([^"\n]*)"?', text or ""):
+        out[m.group(1)] = m.group(2)
+    return out
+
+
+def custom_dropin(flags: Dict[str, str]) -> str:
+    lines = ["[Service]", "# Written by Vera (nodes.ollama.settings.set): custom flags.",
+             "# Edit them in Estate > Models & NLP > Node settings, not here."]
+    for k in sorted(flags):
+        lines.append(f'Environment="{k}={flags[k]}"')
+    return "\n".join(lines) + "\n"
+
+
+def validate_flags(changes: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """(clean changes, errors). A value of None removes the key."""
+    clean: Dict[str, Any] = {}
+    errors: List[str] = []
+    for k, v in (changes or {}).items():
+        k = str(k or "").strip()
+        if not _CUSTOM_KEY.match(k):
+            errors.append(f"{k!r}: only OLLAMA_* and LLAMA_ARG_* keys")
+            continue
+        if k in MANAGED_KEYS:
+            errors.append(f"{k}: managed by Vera (use num_thread, or the tap/store settings)")
+            continue
+        if v is None:
+            clean[k] = None
+            continue
+        v = str(v).strip()
+        if not _CUSTOM_VAL.match(v):
+            errors.append(f"{k}: value may use letters, digits and _.:/,=+- only")
+            continue
+        clean[k] = v
+    return clean, errors

@@ -42,6 +42,14 @@ from __future__ import annotations
 import asyncio
 import os as _os_seek
 try:
+    from Vera.vera.dag.query_embed_core import bounded_embed_result as _bounded_embed_result
+except Exception:                      # pragma: no cover - worktree import
+    from vera.dag.query_embed_core import bounded_embed_result as _bounded_embed_result
+try:                                   # retrieval timing envelopes (FM-7.0)
+    from Vera.vera.fabric import retrieval_timing_core as _rtc
+except Exception:                      # pragma: no cover - worktree import
+    from vera.fabric import retrieval_timing_core as _rtc
+try:
     from Vera.vera.dag.query_embed_core import bounded_embed as _bounded_embed
 except Exception:                                    # worktree / app-free import
     from vera.dag.query_embed_core import bounded_embed as _bounded_embed
@@ -61,6 +69,19 @@ from Vera.vera.capability_orchestration import (
     CAPABILITY_REGISTRY,
     capability,
 )
+
+
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.fabric import fusion_core as _fc
+except ImportError:                      # pragma: no cover
+    from vera.fabric import fusion_core as _fc   # type: ignore
+try:                                     # the retrieval eval set (FM-7.0): seeks + reads as labels
+    from Vera.vera.fabric import retrieval_eval as _reval
+except Exception:                        # pragma: no cover
+    try:
+        from vera.fabric import retrieval_eval as _reval   # type: ignore
+    except Exception:
+        _reval = None
 
 log = logging.getLogger("vera.memory_retrieval")
 
@@ -264,7 +285,23 @@ async def _sqlite_rows_by_ids(df, ids: List[str]) -> Dict[str, dict]:
         return {}
 
 
-async def _gather_ranked_lists(df, query: str, scope: str, pool: int):
+def _leg(env, name: str, res, ms: float) -> None:
+    if env is not None:
+        env.stage(name, ms, _rtc.leg_outcome(res),
+                  None if isinstance(res, BaseException) else len(res or []))
+
+
+def _record(env) -> None:
+    """Into the process-wide timing window kept by memory.py (retrieval.timing)."""
+    mem = _mem()
+    if env is not None and mem is not None and hasattr(mem, "_record_timing"):
+        try:
+            mem._record_timing(env)
+        except Exception as e:
+            log.debug("seek timing: %s", e)
+
+
+async def _gather_ranked_lists(df, query: str, scope: str, pool: int, env=None):
     """One ordered id list per backend; fused later with RRF (scale-free, so the
     incompatible raw score scales of FAISS/Chroma/PG never touch each other).
 
@@ -288,57 +325,71 @@ async def _gather_ranked_lists(df, query: str, scope: str, pool: int):
     # node's work away and left nothing in ollama_embed's cache, so a poller that
     # asked the same question every 45 s re-embedded it every time (2026-09-11).
     embedding = None
+    t0 = time.monotonic()
     try:
-        embedding = await _bounded_embed(lambda: df._embed(query), _SEEK_EMBED_WAIT_S)
+        embedding, timed_out = await _bounded_embed_result(lambda: df._embed(query), _SEEK_EMBED_WAIT_S)
+        embed_outcome = "ok" if embedding else ("timeout" if timed_out else "unavailable")
     except Exception as e:
         log.debug("seek embed: %s", e)
+        embed_outcome = "error"
+    if env is not None:
+        env.stage("embed", (time.monotonic() - t0) * 1000.0, embed_outcome)
 
     if embedding:
-        try:
-            if getattr(df.FAISS_STORE, "available", False):
+        if getattr(df.FAISS_STORE, "available", False):
+            t0 = time.monotonic()
+            try:
                 res = (df.FAISS_STORE.search_dataset(scoped_ds, embedding, pool)
                        if scoped_ds else df.FAISS_STORE.search_global(embedding, pool))
                 if res:
                     ranked.append([rid for rid, _ in res]); _note_vec(res)
-        except Exception as e:
-            log.debug("seek faiss: %s", e)
-        try:
-            # sync chroma HTTP client — keep it off the event loop
-            res = await asyncio.to_thread(
-                df.FABRIC_CHROMA.search, embedding,
-                dataset_id=scoped_ds or None, top_k=pool)
-            if res:
-                ranked.append([rid for rid, _ in res]); _note_vec(res)
-        except Exception as e:
-            log.debug("seek chroma: %s", e)
+            except Exception as e:
+                log.debug("seek faiss: %s", e)
+                res = e
+            _leg(env, "faiss", res, (time.monotonic() - t0) * 1000.0)
+        # sync chroma HTTP client — keep it off the event loop
+        res, ms = await _rtc.timed(asyncio.to_thread(
+            df.FABRIC_CHROMA.search, embedding, dataset_id=scoped_ds or None, top_k=pool))
+        if isinstance(res, BaseException):
+            log.debug("seek chroma: %s", res)
+        elif res:
+            ranked.append([rid for rid, _ in res]); _note_vec(res)
+        _leg(env, "chroma", res, ms)
         # A scoped call can also miss (scope was actually a prefix) — widen with
         # a global chroma pass so prefix scopes still get semantic candidates.
         if scoped_ds:
-            try:
-                res = await asyncio.to_thread(
-                    df.FABRIC_CHROMA.search, embedding,
-                    dataset_id=None, top_k=pool)
-                if res:
-                    ranked.append([rid for rid, _ in res]); _note_vec(res)
-            except Exception:
-                pass
+            res, ms = await _rtc.timed(asyncio.to_thread(
+                df.FABRIC_CHROMA.search, embedding, dataset_id=None, top_k=pool))
+            if not isinstance(res, BaseException) and res:
+                ranked.append([rid for rid, _ in res]); _note_vec(res)
+            _leg(env, "chroma_global", res, ms)
+    elif env is not None:
+        env.stage("chroma", 0.0, "skipped:no-vector")
 
     if getattr(df.FABRIC_PG, "available", False):
-        try:
-            res = await asyncio.wait_for(
-                df.FABRIC_PG.search_text(query, scoped_ds or None, limit=pool),
-                timeout=6)
-            if res:
-                ranked.append([rid for rid, _ in res])
-                text_ids.update(rid for rid, _ in res)
-        except Exception as e:
-            log.debug("seek pg_text: %s", e)
+        res, ms = await _rtc.timed(asyncio.wait_for(
+            df.FABRIC_PG.search_text(query, scoped_ds or None, limit=pool), timeout=6))
+        if isinstance(res, BaseException):
+            log.debug("seek pg_text: %s", res)
+        elif res:
+            ranked.append([rid for rid, _ in res])
+            text_ids.update(rid for rid, _ in res)
+        _leg(env, "pg_text", res, ms)
+    elif env is not None:
+        env.stage("pg_text", 0.0, "skipped:unavailable")
 
     return ranked, vec_sims, text_ids
 
 
-async def _memory_candidates(query: str, limit: int) -> List[Dict]:
-    """Optional session-memory merge so seek is genuinely canonical."""
+async def _memory_candidates(query: str, limit: int, weight: float = 1.0) -> List[Dict]:
+    """Optional session-memory merge so seek is genuinely canonical.
+
+    Memory hits are one ranked list, fused with the fabric's lists by RRF at
+    ``weight`` (the number of fabric lists, so a top memory hit scores like a record
+    every fabric backend ranked first), and must pass the relevance floor too: they
+    carry no comparable cosine, so they need a content-term match with the query -
+    the same rule fabric keyword hits get (RF-04).
+    """
     mem = _mem()
     if mem is None or not hasattr(mem, "MEMORY"):
         return []
@@ -359,9 +410,10 @@ async def _memory_candidates(query: str, limit: int) -> List[Dict]:
                     "created_at": rec.get("created_at", ""),
                     "tags": rec.get("tags", []) or [],
                     "source": "memory",
-                    "score": 1.0 / (_RRF_K + rank),
+                    "score": float(weight) / (_RRF_K + rank),
                     "origin": "memory"})
-    return out
+    terms = _fc.query_terms(query)
+    return [c for c in out if _fc.lexical_pass(terms, c["text"])]
 
 
 def _render_seek(query: str, selected: List[Dict], candidates: int,
@@ -439,13 +491,12 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
     since_dt = _parse_since(since)
 
     pool = _CANDIDATE_POOL
-    ranked, vec_sims, text_ids = await _gather_ranked_lists(df, query, scope, pool)
+    env = _rtc.Envelope("memory.seek")
+    ranked, vec_sims, text_ids = await _gather_ranked_lists(df, query, scope, pool, env)
+    env.mark()
 
     # RRF fusion — rank-based, so backend score scales never mix.
-    fused: Dict[str, float] = {}
-    for lst in ranked:
-        for rank, rid in enumerate(lst):
-            fused[rid] = fused.get(rid, 0.0) + 1.0 / (_RRF_K + rank)
+    fused: Dict[str, float] = _fc.rrf(ranked, k=_RRF_K)
 
     # Relevance floor: a record survives only if it is a decent SEMANTIC match
     # (cosine ≥ floor) or a genuine keyword hit. Without this, seek returned the
@@ -463,6 +514,7 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
             weak_ctx = True
             best = max(fused, key=lambda r: vec_sims.get(r, 0.0))
             fused = {best: fused[best]}
+    env.stage("fuse", env.mark(), "weak" if weak_ctx else ("ok" if fused else "empty"), len(fused))
 
     cands: List[Dict] = []
     if fused:
@@ -481,6 +533,7 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
             c = _norm_rec(rid, recmap.get(rid), fused[rid])
             if c and c["text"]:
                 cands.append(c)
+        env.stage("hydrate", env.mark(), "ok" if cands else "empty", len(cands))
     else:
         # Every backend came back empty/down — degrade through the legacy path
         # (its 300-char summaries are still better than nothing).
@@ -498,9 +551,13 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
                               "origin": "fabric"})
         except Exception as e:
             log.debug("seek legacy fallback: %s", e)
+        env.stage("legacy", env.mark(), "ok" if cands else "empty", len(cands))
 
     if include_memory and not scope:
-        cands.extend(await _memory_candidates(query, limit=max(4, k // 2)))
+        mem_cands = await _memory_candidates(query, limit=max(4, k // 2),
+                                             weight=_fc.list_weight(len(ranked)))
+        env.stage("memory", env.mark(), "ok" if mem_cands else "empty", len(mem_cands))
+        cands.extend(mem_cands)
 
     # Scope prefix / since filters
     if scope_prefix:
@@ -512,6 +569,7 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
         cands = [c for c in cands if (_dt(c["created_at"]) or since_dt) >= since_dt]
 
     if not cands:
+        _record(env)
         return {"text": _render_seek(query, [], 0, 0, max_chars),
                 "results": [], "count": 0, "candidates": 0,
                 "collapsed": 0, "datasets": []}
@@ -551,6 +609,8 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
         remaining.remove(best)
 
     text = _render_seek(query, selected, len(cands), collapsed_total, max_chars)
+    env.stage("select", env.mark(), "weak" if weak_ctx else "ok", len(selected))
+    _record(env)
     results = [{"n": i, "id": c["id"], "dataset_id": c["dataset_id"],
                 "score": round(c["score"], 3), "created_at": c["created_at"],
                 "collapsed": c.get("collapsed", 0)}
@@ -559,6 +619,8 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
            "candidates": len(cands), "collapsed": collapsed_total,
            "weak": bool(weak_ctx),
            "datasets": sorted({c["dataset_id"] for c in selected})}
+    if _reval is not None:
+        _reval.on_seek(query, [r["id"] for r in results if r.get("id")])
     if weak_ctx:
         out["note"] = ("No strongly-relevant stored knowledge — the closest matches are "
                        "below the relevance floor. Treat this as little/no data on the topic "
@@ -586,6 +648,8 @@ async def cap_memory_read(record_id: str, offset: int = 0, max_chars: int = 6000
     record_id = str(record_id or "").strip()
     if not record_id:
         return {"error": "record_id required"}
+    if _reval is not None:
+        _reval.on_read(record_id)
     df = _df()
     if df is None:
         return {"error": "data fabric not loaded"}

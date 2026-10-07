@@ -126,14 +126,14 @@ details.fold .twrap{background:var(--bg1)}
          Workers panel's Proxmox pane via /pxstore/panel?solo=cpu; Backends
          moved to Provision → Backends; VSCode targets moved to Remote IDE. -->
     <nav id="nav">
-      <button class="nav-btn active" data-p="overview" onclick="P.show('overview',this)"><span class="gl">▤</span><span>Overview</span></button>
-      <button class="nav-btn" data-p="fs" onclick="P.show('fs',this)"><span class="gl">🗂</span><span>File Fabric</span></button>
-      <button class="nav-btn" data-p="docker" onclick="P.show('docker',this)"><span class="gl">🐳</span><span>Docker</span></button>
-      <button class="nav-btn" data-p="store" onclick="P.show('store',this)"><span class="gl">◱</span><span>Model Store</span></button>
-      <button class="nav-btn" data-p="veradata" onclick="P.show('veradata',this)"><span class="gl">🗄</span><span>Vera Data</span></button>
-      <button class="nav-btn" data-p="estate" onclick="P.show('estate',this)"><span class="gl">⛃</span><span>Estate &amp; Backup</span></button>
+      <button data-label="Overview" data-desc="Pools, disks and guest storage" data-desc-long="Storage overview for a cluster node: ZFS pools, physical disks, each guest's backing datasets with used and quota, and non-ZFS mounts on the host." class="nav-btn active" data-p="overview" onclick="P.show('overview',this)"><span class="gl">▤</span><span>Overview</span></button>
+      <button data-label="File Fabric" data-desc="The VFS-02 file server" data-desc-long="The file fabric: VFS-02 serves every share, the name-keyed estate tree (every container and VM filesystem, read-only) and the model repository over SMB3, NFS 4.2 and a WireGuard door." class="nav-btn" data-p="fs" onclick="P.show('fs',this)"><span class="gl">🗂</span><span>File Fabric</span></button>
+      <button data-label="Docker" data-desc="Docker's disk use" data-desc-long="Docker's data disk: containers by writable layer, root fs and volumes (the engine's own walk, kept ten minutes)." class="nav-btn" data-p="docker" onclick="P.show('docker',this)"><span class="gl">🐳</span><span>Docker</span></button>
+      <button data-label="Model Store" data-desc="One copy of every model" data-desc-long="The model store: one copy of every model, one writer - every Ollama node mounts it read-only with pruning off; new models are pulled by the store's single writer on VFS-02." class="nav-btn" data-p="store" onclick="P.show('store',this)"><span class="gl">◱</span><span>Model Store</span></button>
+      <button data-label="Vera Data" data-desc="Move Vera's data off its VM disk" data-desc-long="Vera data: create a dataset on the big pool, NFS-export it to Vera's VM and move Vera's data directories onto it, so the VM's disk does not fill up." class="nav-btn" data-p="veradata" onclick="P.show('veradata',this)"><span class="gl">🗄</span><span>Vera Data</span></button>
+      <button data-label="Estate &amp; Backup" data-desc="The whole estate's storage and backups" data-desc-long="The whole estate in one place: ZFS pools, datasets, non-ZFS mounts, per-guest disk use on every PVE node and volume/image sizes on every Docker host; backups go to Proxmox Backup Server." class="nav-btn" data-p="estate" onclick="P.show('estate',this)"><span class="gl">⛃</span><span>Estate &amp; Backup</span></button>
       <div class="sb-sep" style="height:1px;background:var(--border);margin:6px 8px"></div>
-      <button class="nav-btn" data-p="setup" onclick="P.show('setup',this)"><span class="gl">⚙</span><span>Setup</span></button>
+      <button data-vera-settings="#p-setup" data-label="Setup" data-desc="SSH access for storage operations" data-desc-long="Setup: storage operations run over root SSH to each PVE node and file-fabric operations over SSH to VFS-02 - map every node to an SSH credential (credentials are managed in the Estate's Connections)." class="nav-btn" data-p="setup" onclick="P.show('setup',this)"><span class="gl">⚙</span><span>Setup</span></button>
     </nav>
     <div id="status-tile">
       <div class="lbl">Node SSH</div>
@@ -1417,5 +1417,6 @@ P.init().then(()=>{
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-panel.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/vera-settings.js"></script>
 </body>
 </html>

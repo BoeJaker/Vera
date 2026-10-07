@@ -526,8 +526,25 @@ LOOP_STYLES: Dict[str, Dict[str, Any]] = {
                           "run_planner": False, "master_plan": False, "recon": False,
                           "shape_guards": False, "lens_brief": False,
                           "stepwise_controller": True, "step_critic": True},
+    # BROAD-STEPWISE-REVIEWED (user, 2026-10-02: "possibly add a broad-stepwise-
+    # reviewed too"): broad-stepwise's work-streams, each grown step by step, plus
+    # stepwise-reviewed's CPU critic on every finished step. Broad-stepwise has
+    # the weakest census quality of the stepwise family (0.947, 8.3/11 clean) and
+    # stepwise-reviewed the best (1.000, 11/11 on both days) - this measures
+    # whether the critic carries broad's spread without its misses.
+    "broad-stepwise-reviewed": {"label": "Broad-stepwise-reviewed (work-streams, step by step, CPU critic)",
+                                "run_planner": False, "master_plan": False, "recon": False,
+                                "shape_guards": False, "lens_brief": False,
+                                "stepwise_controller": True, "broad": True, "stream_steps": 1,
+                                "step_critic": True},
 }
 DEFAULT_LOOP_STYLE = "auto"
+#: The style v7 runs when the caller names none (user, 2026-10-02). Census
+#: 27 Sep - 2 Oct over the 11 achievable default goals: stepwise-reviewed 1.000
+#: mean quality, 11/11 clean on both of its days, fastest (4878 s/run); auto
+#: 0.975, 10/11 clean, 6537 s/run. `auto` stays a style you can ask for (and the
+#: fallback for an unknown name), and the census keeps measuring it.
+V7_DEFAULT_LOOP_STYLE = "stepwise-reviewed"
 
 
 def loop_style_ids() -> List[str]:
@@ -742,20 +759,96 @@ CRITIC_SYSTEM = (
     "You are the REVIEWER beside an agentic loop. The loop has just finished one step; you "
     "check it against the GOAL while the loop carries on. Be concrete and brief, as plain "
     "bullet lines under these labels (omit a label with nothing under it):\n"
-    "MISSING: parts of the goal this step was meant to cover but did not, or that no step has "
-    "covered yet\n"
+    "MISSING: parts of THIS step's own job (its title and success criterion) that it did not do. "
+    "Work a LATER step is for is not missing - the run is not over; name it only if this step's "
+    "result makes it harder\n"
     "WRONG: anything in the step's result that contradicts the goal or is unsupported (a value "
     "that was not applied, a file that was not written, a claim with no source)\n"
     "NEXT: what the next step must do or check because of this\n"
-    "Judge only from the result shown. Never invent a value. If the step fully did its part, "
-    "answer exactly: OK. At most 8 lines.")
+    "Judge from the result and, when shown, from FILES and TOOL RESULTS - those are the real, "
+    "current content, read for you from the run's own workspace. A file shown under FILES exists: "
+    "never call it missing or unwritten. If what you need is not shown, say under NEXT what to "
+    "check instead of calling it wrong. Text shown to you is often SHORTENED by us - marked "
+    "'clipped', 'preview' or 'first N of M chars': a cut-off there is our cut, not the step's, "
+    "so never call the step's output truncated or incomplete because what you were shown ends "
+    "early. Never invent a value. If the step fully did its part, answer exactly: OK. At most "
+    "8 lines.")
 #: A critique bigger than this is trimmed - it is advice for a prompt.
 MAX_CRITIQUE_CHARS = 900
 MAX_CRITIC_RESULT_CHARS = 3000
 
+# ── What the reviewer can SEE (user, 2026-10-03: "does the reviewer have the same access
+# to files as the executing agent? ... errors that sounded like it couldn't find the files
+# created during the agentic loop"). It had none: one LLM call given the step's summary
+# text, and a system prompt that said "judge only from the result shown". Prod 2 Oct 19:25
+# - 3 Oct 11:30: 31 of 70 critiques flagged a step, 6 of them saying in so many words that
+# the content was "not provided" ("cannot verify if it contains at least 3 distinct
+# reasons") - critiques of files that existed. Now the critic reads the files the step
+# wrote through the loop's own read path (code store, then the session workspace) and sees
+# the step's last tool results, both bounded.
+#: Tools whose `path` argument names a file the step wrote.
+CRITIC_WRITE_TOOLS = frozenset({"code.author", "code.edit", "prose.author",
+                                "sandbox.session.fs.write", "artifact.write", "fs.write"})
+CRITIC_MAX_FILES = 3
+#: Raised 3 Oct (was 1500/4000): reviewing a 5-10 KB report the critic wrote "the file is
+#: truncated at 1500 chars; cannot verify coverage". It runs off the main path, in parallel.
+CRITIC_FILE_CHARS = 4000
+CRITIC_EVIDENCE_CHARS = 9000
+#: Every cut the critic is shown is marked (4 Oct 2026: of 32 flags, several said "output is
+#: truncated at 'The TestDevLab O'" - at OUR clip of the result or a tool preview).
+CLIP_MARK = " ... [clipped here for this review - the real text continues]"
+
+
+def critic_written_paths(history: Sequence[Any], limit: int = CRITIC_MAX_FILES) -> List[str]:
+    """The files this step wrote, most recent last: `path` of every successful call to a
+    writing tool, de-duplicated."""
+    out: List[str] = []
+    for h in history or []:
+        if not isinstance(h, dict) or h.get("tool") not in CRITIC_WRITE_TOOLS or h.get("ok") is False:
+            continue
+        a = h.get("args") if isinstance(h.get("args"), dict) else {}
+        p = str(a.get("path") or a.get("relpath") or "").strip()
+        if p:
+            if p in out:
+                out.remove(p)
+            out.append(p)
+    return out[-max(0, int(limit)):] if limit else []
+
+
+def critic_tool_lines(history: Sequence[Any], limit: int = 6) -> List[str]:
+    """The step's last tool calls as one line each: tool, ok/FAILED, what it returned."""
+    lines: List[str] = []
+    for h in list(history or [])[-max(0, int(limit)):]:
+        if not isinstance(h, dict) or not h.get("tool") or str(h.get("tool")).startswith("("):
+            continue
+        prev = " ".join(str(h.get("preview") or h.get("error") or "").split())[:220]
+        lines.append("  %s -> %s%s" % (h.get("tool"), "FAILED" if h.get("ok") is False else "ok",
+                                       (": " + prev) if prev else ""))
+    return lines
+
+
+def critic_evidence(files: Sequence[Any], tool_lines: Sequence[str] = ()) -> str:
+    """FILES / TOOL RESULTS for the critic's prompt; '' when there is nothing to show."""
+    parts: List[str] = []
+    if tool_lines:
+        parts.append("TOOL RESULTS THIS STEP (latest last; each is a short PREVIEW we cut, "
+                     "not the tool's whole output):\n" + "\n".join(tool_lines))
+    for path, text in files or []:
+        t = str(text or "")
+        if not t.strip():
+            continue                      # unread is not evidence of absence - show nothing
+        cut = len(t) > CRITIC_FILE_CHARS
+        parts.append("FILE %s (current content%s):\n%s%s"
+                     % (path, (", first %d of %d chars" % (CRITIC_FILE_CHARS, len(t))) if cut else "",
+                        t[:CRITIC_FILE_CHARS], CLIP_MARK if cut else ""))
+    out = "\n\n".join(parts)
+    if len(out) > CRITIC_EVIDENCE_CHARS:
+        out = out[:CRITIC_EVIDENCE_CHARS - len(CLIP_MARK)] + CLIP_MARK
+    return out
+
 
 def critic_prompt(goal: str, done_when: str, step: Dict[str, Any], result: Dict[str, Any],
-                  done_steps: Sequence[Dict[str, Any]] = ()) -> str:
+                  done_steps: Sequence[Dict[str, Any]] = (), evidence: str = "") -> str:
     prior = "\n".join("  step %s: %s -> %s" % (s.get("id"), str(s.get("title") or "")[:80],
                                                "ok" if s.get("ok") else "FAILED")
                       for s in list(done_steps)[-8:])
@@ -765,23 +858,192 @@ def critic_prompt(goal: str, done_when: str, step: Dict[str, Any], result: Dict[
             % (goal, done_when or "(not stated)", prior or "  (none)", step.get("id"),
                step.get("title") or "", step.get("success") or "(not stated)",
                "met" if result.get("met") else ("ok" if result.get("ok") else "failed"),
-               out[:MAX_CRITIC_RESULT_CHARS] or "(no output)"))
+               (out[:MAX_CRITIC_RESULT_CHARS] + (CLIP_MARK if len(out) > MAX_CRITIC_RESULT_CHARS else ""))
+               or "(no output)")
+            + (("\n\n" + evidence) if evidence else ""))
+
+
+#: A labelled line that says nothing ("MISSING: None.", "WRONG: none", "NEXT: OK"). Since
+#: 30 Sep 81 of 86 critiques counted as flags, many of them only such lines - an empty
+#: review reached the controller and the gate as REVIEWER NOTES. "None ..., but X" keeps.
+_EMPTY_LABELLED = re.compile(r"^(?:missing|wrong|next)\s*:\s*(?:none|n/?a|nothing|ok)\b(?!.*\bbut\b)",
+                             re.IGNORECASE)
 
 
 def critic_note(text: Any) -> str:
     """The critique as bounded bullet lines; '' when the reviewer found nothing
-    to add ("OK") or said nothing."""
+    to add ("OK", or only labels with None/OK under them) or said nothing."""
     t = str(text or "").strip()
     if not t or t.strip(" .").upper() == "OK":
         return ""
     lines: List[str] = []
     for raw in _LINE_SPLIT.split(t):
         line = _BULLET_STRIP.sub("", raw).strip()
-        if line and line.strip(" .").upper() != "OK":
+        if line and line.strip(" .").upper() != "OK" and not _EMPTY_LABELLED.match(line):
             lines.append(line[:MAX_BULLET_CHARS])
         if len(lines) >= 8:
             break
     return "\n".join("  - %s" % ln for ln in lines)[:MAX_CRITIQUE_CHARS]
+
+
+_FLAG_LABEL = re.compile(r"^\s*[-*]?\s*\**\s*(missing|wrong|next)\s*\**\s*:", re.IGNORECASE)
+
+
+def critic_is_flag(note: Any) -> bool:
+    """True when a critic note FINDS something: a MISSING or WRONG line, or an unlabelled
+    complaint. A note of NEXT lines only is advice ("NEXT: report the final answer") - it
+    still reaches the controller but is no flag and does not reach the completion gate.
+    4 Oct 2026: 32 of 44 notes counted as flags on runs that mostly scored 1.0; many were
+    NEXT-only notes on steps that had done their job."""
+    for line in str(note or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = _FLAG_LABEL.match(line)
+        if not m or m.group(1).lower() != "next":
+            return True
+    return False
+
+
+# ── DELIVERABLE REVIEW: a large model attacks the finished output once ─────
+# (user, 2026-10-04: "the larger models should look at the output of the gpu
+# adversarially as its a weaker model"). The step critic reviews each step; this
+# reviews the RESULT, once, when the gate says complete. Opt-in (deliverable_review).
+REVIEW_SYSTEM = (
+    "You are an ADVERSARIAL REVIEWER of an agentic run's finished deliverable. A smaller, "
+    "faster model produced it; assume it may have cut corners, padded, invented, or "
+    "stopped short. Check it against the GOAL and DONE WHEN using only what is shown. "
+    "Write plain bullet lines under these labels (omit a label with nothing under it):\n"
+    "MISSING: a part of the GOAL the deliverable does not deliver\n"
+    "WRONG: content that is incorrect, unsupported, placeholder or fake, or that "
+    "contradicts the goal (quote it)\n"
+    "NEXT: the single most useful fix\n"
+    "Text shown to you may be SHORTENED by us - marked 'clipped' or 'first N of M chars': "
+    "a cut-off there is ours, not the deliverable's. Do not ask for more than the goal "
+    "asks. If the deliverable fully meets the goal, answer exactly: OK. At most 8 lines.")
+REVIEW_MAX_FILES = 4
+REVIEW_FILE_CHARS = 3000
+REVIEW_EVIDENCE_CHARS = 9000
+REVIEW_ANSWER_CHARS = 2500
+
+
+def review_prompt(goal: str, done_when: str, files: Sequence[Any], answer: str = "") -> str:
+    """The reviewer's prompt: the goal, then the files the run wrote and its answer."""
+    parts: List[str] = []
+    for path, text in files or []:
+        s = str(text or "")
+        if not s.strip():
+            continue
+        cut = len(s) > REVIEW_FILE_CHARS
+        parts.append("FILE %s%s:\n%s%s" % (
+            path, (" (first %d of %d chars)" % (REVIEW_FILE_CHARS, len(s))) if cut else "",
+            s[:REVIEW_FILE_CHARS], CLIP_MARK if cut else ""))
+    a = str(answer or "")
+    if a.strip():
+        parts.append("THE RUN'S ANSWER:\n" + a[:REVIEW_ANSWER_CHARS]
+                     + (CLIP_MARK if len(a) > REVIEW_ANSWER_CHARS else ""))
+    body = "\n\n".join(parts) or "(the run produced no file and no answer)"
+    if len(body) > REVIEW_EVIDENCE_CHARS:
+        body = body[:REVIEW_EVIDENCE_CHARS - len(CLIP_MARK)] + CLIP_MARK
+    return ("GOAL: %s\nDONE WHEN: %s\n\nTHE DELIVERABLE:\n%s"
+            % (goal, done_when or "(not stated)", body))
+
+
+def review_fix_step(note: str, goal: str) -> Dict[str, Any]:
+    """One follow-up step that fixes what the review found, in place."""
+    return {
+        "title": "Fix what the deliverable review found",
+        "goal": ("A reviewer checked the finished deliverable against the goal and found the "
+                 "problems below. Fix THESE in the existing files/answer - edit, do not start "
+                 "over, and do not add anything the goal does not ask for.\n"
+                 "REVIEW:\n%s\nGOAL: %s" % (note, goal)),
+        "success": "Every MISSING and WRONG item the review named is fixed in the deliverable.",
+    }
+
+
+# ── ANSWER CHECK: the large model checks the FINAL ANSWER the GPU wrote ────
+# (4 Oct 2026, judged probes: the files were right and the final answer was not -
+# invented dates and licences, "tests passed" with no test run, verifier findings left
+# out. The deliverable review runs before that answer is written; this runs after it.)
+ANSWER_CHECK_SYSTEM = (
+    "You CHECK the final answer a smaller, faster model wrote for an agentic run, against "
+    "the files the run wrote and the verifier findings it left unresolved. Assume the answer "
+    "may invent facts, dates, numbers or results, overstate success, or leave out what is "
+    "still wrong. Use ONLY what is shown: the FILES are the record of what was made, and a "
+    "claim that nothing shown supports is wrong.\n"
+    "If the answer is accurate and complete about what was done and what was not, reply "
+    "exactly: OK\n"
+    "Otherwise reply with:\n"
+    "FIXES: one line per error you corrected (quote the wrong claim)\n"
+    "ANSWER:\n"
+    "the corrected answer in full - same purpose and about the same length as the original, "
+    "every claim supported by what is shown, and every unresolved finding stated plainly as "
+    "not done.\n"
+    "Text marked 'clipped' or 'first N of M chars' was SHORTENED by us; the cut is not an "
+    "error in the run.")
+ANSWER_CHECK_FILE_CHARS = 3000
+ANSWER_CHECK_EVIDENCE_CHARS = 10000
+ANSWER_CHECK_ANSWER_CHARS = 4000
+
+
+def unresolved_findings(results: Sequence[Dict[str, Any]], unmet: Optional[Sequence[Any]] = None,
+                        limit: int = 6) -> List[str]:
+    """What the run's checks left failing: steps whose last verdict was not met, and the
+    parts the final gate found unmet."""
+    out: List[str] = []
+    for r in results or []:
+        if r.get("met") is False:
+            why = str(r.get("met_reason") or "").strip()
+            if why:
+                out.append("step %s (%s): %s" % (r.get("id"), str(r.get("title") or "")[:60],
+                                                  why[:300]))
+    for u in unmet or []:
+        s = str(u or "").strip()
+        if s:
+            out.append("not met at the end: %s" % s[:300])
+    return out[:limit]
+
+
+def answer_check_prompt(goal: str, files: Sequence[Any], answer: str,
+                        findings: Sequence[str] = ()) -> str:
+    """The checker's prompt: the goal, the run's record (files + unresolved findings),
+    then the answer to check."""
+    parts: List[str] = []
+    for path, text in files or []:
+        s = str(text or "")
+        if not s.strip():
+            continue
+        cut = len(s) > ANSWER_CHECK_FILE_CHARS
+        parts.append("FILE %s%s:\n%s%s" % (
+            path, (" (first %d of %d chars)" % (ANSWER_CHECK_FILE_CHARS, len(s))) if cut else "",
+            s[:ANSWER_CHECK_FILE_CHARS], CLIP_MARK if cut else ""))
+    if findings:
+        parts.append("UNRESOLVED VERIFIER FINDINGS:\n" + "\n".join("- " + f for f in findings))
+    body = "\n\n".join(parts) or "(the run wrote no file and left no finding)"
+    if len(body) > ANSWER_CHECK_EVIDENCE_CHARS:
+        body = body[:ANSWER_CHECK_EVIDENCE_CHARS - len(CLIP_MARK)] + CLIP_MARK
+    a = str(answer or "")
+    return ("GOAL: %s\n\nTHE RUN'S RECORD:\n%s\n\nTHE FINAL ANSWER TO CHECK:\n%s%s"
+            % (goal, body, a[:ANSWER_CHECK_ANSWER_CHARS],
+               CLIP_MARK if len(a) > ANSWER_CHECK_ANSWER_CHARS else ""))
+
+
+def parse_answer_check(raw: str, original: str) -> Tuple[str, str]:
+    """(corrected answer, fixes). An empty answer means keep the original: OK, no ANSWER:
+    block, a reply too short to be a whole answer, or an original longer than the checker
+    saw (it would be rewritten from a clipped copy)."""
+    t = str(raw or "").strip()
+    i = t.find("ANSWER:")
+    if i < 0:
+        return "", ""
+    fixes = t[:i].strip()
+    if fixes.upper().startswith("FIXES:"):
+        fixes = fixes[len("FIXES:"):].strip()
+    new = t[i + len("ANSWER:"):].strip()
+    orig = str(original or "")
+    if len(orig) > ANSWER_CHECK_ANSWER_CHARS or len(new) < max(40, int(0.3 * len(orig))):
+        return "", fixes
+    return new, fixes
 
 
 def critic_block(notes: Sequence[Dict[str, Any]]) -> str:

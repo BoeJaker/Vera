@@ -573,9 +573,16 @@ const PALETTE = ['var(--dv1)', 'var(--dv3)', 'var(--dv6)', 'var(--dv4)', 'var(--
 const LCOL0 = { req: 'var(--dv3)', data: 'var(--dv6)', runs: 'var(--dv1)', repo: 'var(--dv4)', mesh: 'var(--dv2)' };
 const KCOL0 = { 'llm.generate': 'var(--dv1)', 'embed': 'var(--dv6)', 'cap call': 'var(--dv3)', 'fabric write': 'var(--dv2)', 'git op': 'var(--dv4)', 'background': 'var(--dv7)' };
 const SC0 = { ok: 'var(--ac2)', run: 'var(--ac)', warn: 'var(--ac3)', down: 'var(--ac4)' };
+const TOKENS = { '--dv1': '#866ec5', '--dv2': '#54a863', '--dv3': '#3585c9', '--dv4': '#bb881a', '--dv5': '#b95c88', '--dv6': '#00aba4', '--dv7': '#bd6533',
+  '--bg': '#0e0f12', '--s1': '#13151a', '--s2': '#1a1d24', '--s3': '#222630', '--bd': 'rgba(255,255,255,.07)', '--bd2': 'rgba(255,255,255,.14)', '--t1': '#d4dae4', '--t2': '#6b7585', '--t3': '#4d5768',
+  '--ac': '#6ea8d8', '--ac2': '#5ec9a0', '--ac3': '#e09a55', '--ac4': '#e06060', '--ac5': '#a78bfa', '--on-ac': '#0b1119', '--r': '12px', '--r-sm': '8px', '--pad': '14px',
+  '--f-ui': "'Instrument Sans',system-ui,sans-serif", '--f-mono': "'JetBrains Mono',ui-monospace,monospace" };
 function mount(host, o){
   o = o || {};
   const root = host.attachShadow ? (host.shadowRoot || host.attachShadow({ mode: 'open' })) : host;
+  // the plot paints with Live ops' palette; a page whose theme lacks a token (the dashboard has no --dv1..--dv7) left every
+  // plane's fill invalid - black on black. A token the page does not define takes Live ops' own value; the theme's win.
+  try { const cs = getComputedStyle(host); Object.keys(TOKENS).forEach((k) => { if (!cs.getPropertyValue(k).trim()) host.style.setProperty(k, TOKENS[k]); }); } catch (e) {}
   root.innerHTML = '<style>' + CSS + ':host{display:block;position:relative;width:100%;height:100%;overflow:hidden;font-family:var(--f-ui,system-ui,sans-serif);font-size:11.5px;color:var(--t1)}'
     + '.plot{position:absolute;inset:0;min-height:0;overflow:hidden;background:var(--bg)}.vlb{position:absolute;right:8px;top:8px;z-index:44;display:flex;gap:3px;padding:3px;border-radius:8px;background:color-mix(in srgb,var(--s1) 90%,transparent);box-shadow:0 0 0 1px var(--bd)}'
     + '.vlb button{font:inherit;font-size:10px;color:var(--t2);background:none;border:0;border-radius:5px;padding:3px 8px;cursor:pointer}.vlb button.on,.vlb button:hover{background:var(--s3);color:var(--t1)}</style>'
@@ -620,8 +627,8 @@ function mount(host, o){
     const nd = e.target.closest && e.target.closest('[data-node],[data-wnode]'); if (nd && o.onOpen){ const n = ID()[nd.dataset.node || nd.dataset.wnode]; if (n) o.onOpen(n); } });
   // a fit wants a host with a size: until it has one the fit waits, and the first size it gets fits the view
   let fitWant = false; const sized = () => host.clientWidth > 0 && host.clientHeight > 0;
-  const fit = (all) => { if (!sized()){ fitWant = true; return; } fitWant = false; E.fitView(!!all); };
-  let ro = null; if (window.ResizeObserver){ ro = new ResizeObserver(() => { if (!S.snap || !sized()) return; render(); if (fitWant) fit(); }); ro.observe(host); }
+  const fit = (all) => { if (!sized()){ fitWant = all ? 'all' : true; return; } fitWant = false; E.fitView(!!all); };
+  let ro = null; if (window.ResizeObserver){ ro = new ResizeObserver(() => { if (!S.snap || !sized()) return; render(); if (fitWant) fit(fitWant === 'all'); }); ro.observe(host); }
   if (o.planes) set(o);
   return { set, render, fit, option(k, val){ S[k] = val; render(); }, state: S, engine: E,
     destroy(){ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); if (ro) ro.disconnect(); root.innerHTML = ''; } };

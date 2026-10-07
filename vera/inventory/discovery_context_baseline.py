@@ -97,13 +97,36 @@ CURRENT_COMPONENTS = (
         "def plan_discovery_execution", "discovery_contract", "provider_injected",
         "none", "vera.discovery-execution-plan.v1", ("discovery.portable",)),
     DiscoveryContextComponent(
+        "discovery.orchestration", "route", "vera/discovery_orchestration.py",
+        "async def run_discovery_route", "discovery_contract", "async_local",
+        "cpu", "vera.discovery-route-report.v1",
+        ("discovery.portable", "discovery.routing")),
+    DiscoveryContextComponent(
+        "discovery.operator-readmodel", "data",
+        "vera/discovery_operator_readmodel.py",
+        "class DiscoveryOperatorLedger", "internal", "inline", "none",
+        "vera.discovery-operator-readmodel.v1",
+        ("discovery.orchestration", "discovery.benchmark")),
+    DiscoveryContextComponent(
+        "discovery.benchmark", "data", "vera/discovery_benchmark.py",
+        "def compare_context_benchmark", "discovery_contract", "inline",
+        "none", "vera.discovery-context-benchmark.v1",
+        ("discovery.orchestration", "context.enrichment-ledger")),
+    DiscoveryContextComponent(
+        "discovery.context-orchestration", "route",
+        "vera/discovery_context_orchestration.py",
+        "async def run_discovery_context_route", "discovery_contract",
+        "async_local", "cpu", "vera.discovery-context-route-report.v1",
+        ("discovery.orchestration", "context.registry")),
+    DiscoveryContextComponent(
         "context.portable", "context", "vera/context_provider.py",
         "class ContextProvider(Protocol)", "context_provider", "provider_injected",
         "cpu", "vera.context-item.v1"),
     DiscoveryContextComponent(
         "context.registry", "route", "vera/context_registry.py",
-        "class ContextRegistry", "internal", "async_local", "cpu",
-        "vera.context-component-manifest.v1", ("context.portable",)),
+        "def select_discovery_result", "discovery_contract", "async_local",
+        "cpu", "vera.context-component-manifest.v1",
+        ("context.portable", "discovery.portable")),
     DiscoveryContextComponent(
         "context.enrichment-ledger", "enrich", "vera/context_enrichment.py",
         "class ContextEnrichmentLedger", "context_provider", "inline", "none",
@@ -173,6 +196,11 @@ CURRENT_COMPONENTS = (
         "def repo_root", "native_adapter", "async_local", "storage",
         "vera.godseye-native.v1", (), True),
     DiscoveryContextComponent(
+        "godseye.portable-dataset", "data",
+        "vera/godseye/portable_dataset.py", "def make_portable_dataset",
+        "dataset_provider", "inline", "none",
+        "vera.godseye-portable-dataset.v1", ("fabric.dataset",)),
+    DiscoveryContextComponent(
         "nlp.dispatch", "enrich", "vera/research/nlp_dispatch_core.py",
         "def resolve_placement", "native_adapter", "remote_http", "cpu",
         "vera.nlp.text.v1", ("fabric.dataset",), True),
@@ -185,6 +213,10 @@ CURRENT_COMPONENTS = (
         "async def agent_rag_retrieve", "capability", "async_local", "storage",
         "vera.agent-rag-native.v1", ("context.portable",)),
     DiscoveryContextComponent(
+        "agent.rag-context", "context", "vera/agents/rag_context_adapter.py",
+        "def project_agent_rag_results", "context_provider", "inline", "none",
+        "vera.context-item.v1", ("agent.rag", "context.portable")),
+    DiscoveryContextComponent(
         "workers.node-choice", "route", "vera/workers/node_choice.py",
         "def choose", "internal", "inline", "none",
         "vera.worker-choice-native.v1"),
@@ -192,10 +224,6 @@ CURRENT_COMPONENTS = (
 
 
 CURRENT_GAPS = (
-    "discovery_does_not_share_context_registry_selection",
-    "agent_rag_uses_a_native_result_shape",
-    "no_common_speed_and_relevance_benchmark_contract",
-    "non_jepa_worldview_and_godseye_data_have_no_portable_dataset_boundary",
     "live_source_and_accelerator_evidence_is_not_part_of_this_offline_baseline",
 )
 

@@ -88,3 +88,23 @@ def test_failed_overlay_restores_original_source_and_retains_failed_copy(
     assert probe.returncode != 0
     failed = list((worktree.parent / ".quarantine").glob("*-failed-recreate-*"))
     assert len(failed) == 1 and (failed[0] / "partial.txt").read_text() == "partial"
+
+
+# The mount check (2026-09-28): ONE Engine container list, never an inspect.
+def test_mount_check_reads_the_container_list():
+    rows = [{"Id": "a" * 64, "Mounts": [
+                {"Type": "bind", "Source": "/repo/.loop-lab-worktrees/feat-x/"},
+                {"Type": "volume", "Source": "/var/lib/docker/volumes/v/_data"}]},
+            {"Id": "b" * 64, "Mounts": None},
+            {"Id": "c" * 64}]
+    mounts, why = repair_module.mounts_from_container_list(rows)
+    assert why == ""
+    assert "/repo/.loop-lab-worktrees/feat-x" in mounts["a" * 64]
+    assert mounts["b" * 64] == set() and mounts["c" * 64] == set()
+
+
+def test_an_unreadable_list_refuses_and_says_why():
+    for bad, want in ((None, "not a list"), ([{"Mounts": []}], "without an Id"),
+                      ([{"Id": "d" * 64, "Mounts": "x"}], "unreadable Mounts")):
+        mounts, why = repair_module.mounts_from_container_list(bad)
+        assert mounts is None and want in why

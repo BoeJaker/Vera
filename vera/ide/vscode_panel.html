@@ -43,7 +43,8 @@
   .chip.down{color:var(--err)} .chip.down .dot{background:var(--err)}
   .chip.warn{color:var(--warn)} .chip.warn .dot{background:var(--warn)}
   .grow{flex:1}
-  main{flex:1;position:relative;min-height:0}
+  .ide-body{flex:1;display:flex;min-height:0}
+  main{flex:1;position:relative;min-height:0;min-width:0}
   .view{position:absolute;inset:0;display:none;flex-direction:column}
   .view.active{display:flex}
   .view iframe{flex:1;border:none;width:100%;height:100%;background:var(--bg0)}
@@ -77,17 +78,10 @@
 <div class="wrap">
   <header>
     <h1>⌬ IDE</h1>
-    <div class="seg" id="views">
-      <button data-view="vscode" class="active">VS Code</button>
-      <button data-view="classic">Workbench</button>
-      <button data-view="remotes">Remotes &amp; Queue</button>
-      <button data-view="looplab" title="Loop Lab — CI/CD for the agent loops">🧪 Loop Lab</button>
-      <button data-view="dispatch" title="Dispatch — every connected Claude Code conversation">🗂 Dispatch</button>
-    </div>
     <select id="inst-sel" title="VS Code instance"></select>
     <span class="chip" id="inst-status"><span class="dot"></span><span>—</span></span>
     <span class="grow"></span>
-    <button class="btn" id="btn-worker" title="Interactive workers — code-server on a session sandbox">＋ Worker</button>
+    <button data-lhm-cta="" data-label="New worker" data-desc="Start an interactive code-server worker on a session sandbox" class="btn" id="btn-worker" title="Interactive workers — code-server on a session sandbox">＋ Worker</button>
     <button class="btn" id="btn-pw" title="Password for this instance">🔑</button>
     <button class="btn" id="btn-solo" title="Open this instance in its own browser tab">⧉</button>
     <button class="btn" id="btn-connect" title="Connect a desktop VS Code to Vera (queue Claude Code tasks) + fix the webview SSL cert">🔌 Connect</button>
@@ -112,6 +106,17 @@
     <button class="btn" id="pwbar-x" style="padding:2px 8px;font-size:11px">✕</button>
   </div>
 
+  <div class="ide-body">
+  <!-- THE IDE'S VIEWS ARE ITS MENU (owner, 2026-10-03: a sub-UI - a top-bar option that replaces the page with other HTML -
+       belongs in the LHM; the header keeps the instance, its status and actions). Docked in the harness this nav is the
+       panel's LHM menu (Loop Lab's and Dispatch's own menus nest under them); standalone it is this column. -->
+  <nav id="views" class="vp-menu" data-vera-lhm aria-label="IDE views">
+    <button class="nav-btn active" data-view="vscode" data-icon="⌨" data-label="VS Code" data-desc="The VS Code instance picked in the header" data-desc-long="VS Code (code-server) - the central instance, a remote one or a session-sandbox worker, chosen in the header's instance list - embedded through Vera's same-origin proxy. Its password and the desktop Connect are in the header."><span class="gl">⌨</span>VS Code</button>
+    <button class="nav-btn" data-view="classic" data-icon="▤" data-label="Workbench" data-desc="The original Vera IDE" data-desc-long="The classic Vera IDE workbench (/ide/panel): file browser, editor, AI chat, run, agent, project builder, docs, version control, tests and sandbox policy."><span class="gl">▤</span>Workbench</button>
+    <button class="nav-btn" data-view="remotes" data-icon="⇄" data-label="Remotes &amp; Queue" data-desc="Remote IDEs and the task queue" data-desc-long="Remote IDE connections and the queue of tasks handed to them (/ide/remote/panel)."><span class="gl">⇄</span>Remotes &amp; Queue</button>
+    <button class="nav-btn" data-view="looplab" data-icon="⚗" data-label="Loop Lab" data-desc="CI/CD for the agent loops" data-desc-long="Loop Lab (/evolve/panel): branches, sandboxes, pipelines, reviews and promotion for changes to Vera and the agent loops. Its own sections nest under this item."><span class="gl">⚗</span>Loop Lab</button>
+    <button class="nav-btn" data-view="dispatch" data-icon="▦" data-label="Dispatch" data-desc="Every connected Claude Code conversation" data-desc-long="Dispatch (/ide/claude_sessions/panel): every Claude Code conversation connected to Vera - read a session's turns and send it work."><span class="gl">▦</span>Dispatch</button>
+  </nav>
   <main>
     <!-- VS CODE (central / remote / sandbox worker — via the same-origin proxy) -->
     <section class="view active" id="v-vscode">
@@ -159,6 +164,7 @@
               allow="clipboard-read; clipboard-write"></iframe>
     </section>
   </main>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -334,5 +340,9 @@ $('#btn-deploy').onclick=async()=>{
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-select.js"></script>
+<script src="/ui/vera-panel.js"></script>
+<!-- the bridge, in the page itself: nested in a host panel (an IDE view, an Estate pane) the harness does not inject it,
+     and without it the host never hears this page - its primary action (data-lhm-cta) or its menu -->
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

@@ -7,6 +7,14 @@ from vera.context_provider import (
     ContextCitation, ContextItem, ContextRankingEvidence,
 )
 from vera.context_registry import ContextRegistry
+from vera.context_registry import (
+    DiscoveredContextAuthority, DiscoveryContextSelection,
+    DiscoveryContextSelectionPolicy,
+)
+from vera.discovery_contract import (
+    CollectionOption, CollectionReceipt, DiscoveredContext, DiscoveryRequest,
+    DiscoveryResult, SourceCandidate,
+)
 
 pytestmark = pytest.mark.critical
 
@@ -47,6 +55,40 @@ def registry(*providers, rankers=()):
     return value
 
 
+def discovery_result(provider="memory"):
+    request = DiscoveryRequest(
+        query="portable selection", requester="test.runner",
+        tenant_id="tenant.one", namespace="context.registry",
+        as_of="2026-09-29T10:00:00Z", source_kinds=("api",),
+        max_sources=2, max_context_items=4, timeout_ms=1_000,
+        max_bytes=1_000)
+    option = CollectionOption(
+        source_id="source.one", method="api", provider="collector.one",
+        provider_revision="collector-r1", resource="cpu",
+        output_kinds=("context",), estimated_latency_ms=10,
+        max_bytes=1_000)
+    candidate = SourceCandidate(
+        request_id=request.request_id, source_id="source.one",
+        locator="https://example.test/source", source_kind="api",
+        provider="scout.one", revision="source-r1",
+        observed_at="2026-09-29T10:00:00Z", authority_score=.9,
+        relevance_score=.8, freshness_score=.7, options=(option,))
+    receipt = CollectionReceipt(
+        request_id=request.request_id, candidate_id=candidate.candidate_id,
+        option_id=option.option_id, provider_revision=option.provider_revision,
+        status="succeeded", started_at="2026-09-29T10:00:00Z",
+        completed_at="2026-09-29T10:00:00Z", item_count=1,
+        byte_count=20, duration_ms=10)
+    discovered = DiscoveredContext(
+        receipt.receipt_id,
+        ContextItem("item.one", "private payload", "source.one", "source-r1",
+                    provider, .8, 2,
+                    (ContextCitation(receipt.receipt_id,
+                                     "https://example.test/source"),)))
+    return DiscoveryResult(request=request, candidates=(candidate,),
+                           receipts=(receipt,), context=(discovered,))
+
+
 def test_manifest_is_payload_free_and_independent_of_registration_order():
     value = registry(Provider("z", [item("secret", .5, provider="z")]),
                      Provider("a"), rankers=(Ranker("middle", tuple),))
@@ -61,6 +103,77 @@ def test_duplicate_and_noncanonical_ids_fail_without_replacement():
         value.register_provider(Provider("memory"))
     with pytest.raises(ValueError, match="canonical"):
         value.register_ranker(Ranker(" padded ", tuple))
+
+
+def test_discovery_selection_reuses_portable_authorities_and_is_payload_free():
+    value = registry(Provider("memory"),
+                     rankers=(Ranker("stable", tuple),))
+    result = discovery_result()
+    selection = value.select_discovery_result(
+        result, ranker_ids=("stable",))
+    assert selection.provider_ids == ("memory",)
+    assert selection.ranker_ids == ("stable",)
+    assert selection.result_id == result.result_id
+    assert selection.authorities[0].item_id == "item.one"
+    assert selection.registry_manifest_id == value.manifest_id()
+    assert "private payload" not in repr(selection)
+
+
+@pytest.mark.asyncio
+async def test_discovery_selection_composes_only_against_exact_registry_snapshot():
+    value = registry(Provider("memory", [item("fresh", .9)]))
+    selection = value.select_discovery_result(discovery_result())
+    composed = await value.compose_selection(
+        selection, "query", limit_per_provider=1, budget_tokens=2)
+    assert composed.providers == ("memory",)
+    value.register_provider(Provider("later"))
+    with pytest.raises(ValueError, match="registry changed"):
+        await value.compose_selection(
+            selection, "query", limit_per_provider=1, budget_tokens=2)
+
+
+def test_discovery_selection_policy_is_explicit_and_fail_closed():
+    result = discovery_result("external")
+    value = registry(Provider("memory"))
+    with pytest.raises(ValueError, match="unregistered discovered"):
+        value.select_discovery_result(result)
+    with pytest.raises(ValueError, match="selects no registered"):
+        value.select_discovery_result(
+            result, policy=DiscoveryContextSelectionPolicy(
+                require_all_registered=False))
+    with pytest.raises(ValueError, match="selects no registered"):
+        registry(Provider("external")).select_discovery_result(
+            result, policy=DiscoveryContextSelectionPolicy(
+                allowed_provider_ids=("memory",)))
+
+
+def test_discovery_selection_rejects_unknown_ranker_and_provider_overflow():
+    result = discovery_result()
+    value = registry(Provider("memory"))
+    with pytest.raises(ValueError, match="unknown context ranker"):
+        value.select_discovery_result(result, ranker_ids=("missing",))
+    with pytest.raises(ValueError, match="between one and 256"):
+        DiscoveryContextSelectionPolicy(maximum_providers=0)
+
+
+def test_forged_selection_cannot_cross_provider_or_policy_boundaries():
+    result = discovery_result()
+    value = registry(Provider("memory"))
+    selected = value.select_discovery_result(result)
+    with pytest.raises(ValueError, match="unselected provider"):
+        DiscoveryContextSelection(
+            selected.request_id, selected.result_id,
+            selected.registry_manifest_id, selected.policy,
+            selected.provider_ids, selected.ranker_ids,
+            (DiscoveredContextAuthority("other", "item", "source", "r1"),))
+    with pytest.raises(ValueError, match="allowlist"):
+        DiscoveryContextSelection(
+            selected.request_id, selected.result_id,
+            selected.registry_manifest_id,
+            DiscoveryContextSelectionPolicy(
+                allowed_provider_ids=("other",)),
+            selected.provider_ids, selected.ranker_ids,
+            selected.authorities)
 
 
 @pytest.mark.asyncio

@@ -29,8 +29,16 @@ from Vera.vera.capability_orchestration import (
     capability, emit_event, emit_stream,
     enum_schema,                  # schema= helper: declare multiple-choice arg options
     media_base, media_slot,       # media-node router (STT / TTS / image-gen)
+    vera_origin_header,
     now_iso, ollama_generate, pick_instance, schedule,
 )
+
+
+def _media_origin(service: str, path: str) -> dict:
+    """X-Vera-Origin for a call to a media node, so the Estate activity pane
+    shows it as this Vera's (prod or the sandbox) instead of 'external'."""
+    return vera_origin_header(job_type=service or "media",
+                              cap="media" + str(path or "").replace("/", "."))
 
 from Vera.vera.config import cfg
 from Vera.vera.output_formats import apply_format, list_profiles
@@ -124,7 +132,7 @@ async def stt_transcribe(
     try:
         async with media_slot("stt") as _mn:
             async with httpx.AsyncClient(timeout=60) as c:
-                r = await c.post(f"{_mn['url']}/stt", files=files, data=data)
+                r = await c.post(f"{_mn['url']}/stt", headers=_media_origin(_mn.get('job_type') or '', '/stt'), files=files, data=data)
                 r.raise_for_status()
                 resp = r.json()
         return {
@@ -150,19 +158,21 @@ async def stt_transcribe(
 )
 async def tts_synthesize(
     text:     str,
-    voice:    str   = "af_heart",
-    speed:    float = 1.0,
+    voice:    str   = "",    # "" = the voice set for all of Vera (tts.config.set)
+    speed:    float = 0.0,   # 0 = the configured speed
     engine:   str   = "",    # "kokoro" | "coqui" | "" = server default
     language: str   = "",
     trace_id=None,
 ):
-    body: dict = {"text": text, "voice": voice, "speed": speed}
+    body: dict = {"text": text}
+    if voice:    body["voice"]    = voice
+    if speed:    body["speed"]    = speed
     if engine:   body["engine"]   = engine
     if language: body["language"] = language
     try:
         async with media_slot("tts") as _mn:
             async with httpx.AsyncClient(timeout=60) as c:
-                r = await c.post(f"{_mn['url']}/tts", json=body)
+                r = await c.post(f"{_mn['url']}/tts", headers=_media_origin(_mn.get('job_type') or '', '/tts'), json=body)
                 r.raise_for_status()
                 data = r.json()
         return {
@@ -202,6 +212,105 @@ async def list_tts_voices(trace_id=None):
             {"id": "bm_george",   "name": "George",   "lang": "en-gb", "gender": "M"},
             {"id": "bm_lewis",    "name": "Lewis",    "lang": "en-gb", "gender": "M"},
         ]}
+
+
+# ── Speech defaults across the media nodes ────────────────────────────────────
+
+def _tts_desired_path():
+    from Vera.vera.state_paths import state_dir
+    return state_dir("tts") / "config.json"
+
+
+def _tts_nodes() -> list:
+    """Every online media node that serves TTS: (instance_id, label, url)."""
+    import Vera.vera.capability_orchestration as _o
+    out = []
+    for iid, i in (getattr(_o, "MEDIA_INSTANCES", {}) or {}).items():
+        if i.get("status") == "online" and i.get("enabled", True) and "tts" in (i.get("services") or ["tts"]):
+            out.append((iid, i.get("label") or iid, str(i.get("url") or "").rstrip("/")))
+    return out
+
+
+@capability(
+    "tts.config.get",
+    http_method="GET", http_path="/tts/config/get", http_tags=["gpu", "tts"],
+    memory="off", silent=True,
+    description="The speech defaults Vera wants (voice, language, speed, normaliser) and what each media "
+                "node actually has, so drift shows. Output: {desired, nodes:[{id, label, config, lang_used, "
+                "matches}]}.",
+)
+async def tts_config_get(trace_id=None):
+    try:
+        desired = json.loads(_tts_desired_path().read_text(encoding="utf-8"))
+    except Exception:
+        desired = {}
+    nodes = []
+    async with httpx.AsyncClient(timeout=8) as c:
+        for iid, label, url in _tts_nodes():
+            try:
+                r = await c.get(f"{url}/tts/config")
+                r.raise_for_status()
+                d = r.json()
+                cfg_ = d.get("config") or {}
+                nodes.append({"id": iid, "label": label, "config": cfg_, "lang_used": d.get("lang_used"),
+                              "matches": all(cfg_.get(k) == v for k, v in desired.items())})
+            except Exception as e:
+                nodes.append({"id": iid, "label": label, "error": f"{type(e).__name__}: {e}"[:160]})
+    return {"desired": desired, "nodes": nodes}
+
+
+@capability(
+    "tts.config.set",
+    http_method="POST", http_path="/tts/config/set", http_tags=["gpu", "tts"],
+    memory="on",
+    description="Set the speech defaults for every media node at once - the voice everything speaks with "
+                "unless a caller names its own (see tts.voices; b* voices are British, a* American), the "
+                "accent (blank = from the voice), speed (0.5-2) and number/date normalisation (rules|nemo|off). "
+                "Vera remembers it and pushes it to each node; a node keeps it across restarts. "
+                "Input: voice, lang, speed, normalizer (any subset). Output: {ok, desired, nodes:[{id, ok, error}]}.",
+)
+async def tts_config_set(voice: str = "", lang: Optional[str] = None, speed: Optional[float] = None,
+                         normalizer: str = "", trace_id=None):
+    p = _tts_desired_path()
+    try:
+        desired = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        desired = {}
+    body = {}
+    if voice:
+        body["voice"] = voice.strip()
+    if lang is not None:
+        body["lang"] = lang.strip().lower()
+    if speed is not None:
+        body["speed"] = max(0.5, min(2.0, float(speed)))
+    if normalizer:
+        if normalizer not in ("rules", "nemo", "off"):
+            return {"ok": False, "error": "normalizer must be rules, nemo or off"}
+        body["normalizer"] = normalizer
+    if not body:
+        return {"ok": False, "error": "nothing to set: give voice, lang, speed or normalizer"}
+    results = []
+    async with httpx.AsyncClient(timeout=15) as c:
+        for iid, label, url in _tts_nodes():
+            try:
+                r = await c.post(f"{url}/tts/config", json=body)
+                if r.status_code == 404:
+                    results.append({"id": iid, "label": label, "ok": False,
+                                    "error": "node runs an older media server - redeploy gpu_inference"})
+                    continue
+                r.raise_for_status()
+                results.append({"id": iid, "label": label, "ok": True})
+            except Exception as e:
+                detail = ""
+                try:
+                    detail = r.json().get("detail", "")  # type: ignore[name-defined]
+                except Exception:
+                    pass
+                results.append({"id": iid, "label": label, "ok": False, "error": (detail or str(e))[:200]})
+    if any(x["ok"] for x in results) or not results:
+        desired.update(body)
+        p.write_text(json.dumps(desired), encoding="utf-8")
+    return {"ok": all(x["ok"] for x in results) and bool(results), "desired": desired, "nodes": results}
 
 
 # ── Stable Diffusion ──────────────────────────────────────────────────────────
@@ -280,7 +389,7 @@ async def image_generate(
         async with media_slot("imagegen") as _mn:
             _track_media_job(job_id, _mn["url"])
             async with httpx.AsyncClient(timeout=300) as c:
-                r = await c.post(f"{_mn['url']}/imagine", json=body)
+                r = await c.post(f"{_mn['url']}/imagine", headers=_media_origin(_mn.get('job_type') or '', '/imagine'), json=body)
                 r.raise_for_status()
                 data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -703,7 +812,7 @@ async def sd_lora_install(url: str = "", filename: str = "", token: str = "",
         return {"error": "url or blob_key required"}
     try:
         async with httpx.AsyncClient(timeout=900) as c:
-            r = await c.post(f"{media_base('imagegen')}/sd/loras/download",
+            r = await c.post(f"{media_base('imagegen')}/sd/loras/download", headers=_media_origin('imagegen', '/sd/loras/download'),
                              json={"url": src_url, "filename": filename, "token": token})
             r.raise_for_status()
             res = r.json()
@@ -781,7 +890,7 @@ async def sd_lora_delete(name: str, trace_id=None):
         return {"error": "name required"}
     try:
         async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.post(f"{media_base('imagegen')}/sd/loras/delete", json={"name": name})
+            r = await c.post(f"{media_base('imagegen')}/sd/loras/delete", headers=_media_origin('imagegen', '/sd/loras/delete'), json={"name": name})
             r.raise_for_status()
             return r.json()
     except Exception as e:
@@ -839,7 +948,7 @@ async def image_img2img(
         async with media_slot("imagegen") as _mn:
             _track_media_job(job_id, _mn["url"])
             async with httpx.AsyncClient(timeout=300) as c:
-                r = await c.post(f"{_mn['url']}/img2img", json=body)
+                r = await c.post(f"{_mn['url']}/img2img", headers=_media_origin(_mn.get('job_type') or '', '/img2img'), json=body)
                 r.raise_for_status()
                 data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -898,7 +1007,7 @@ async def image_expression(
             pass
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{media_base('imagegen')}/expression", json=body)
+            r = await c.post(f"{media_base('imagegen')}/expression", headers=_media_origin('imagegen', '/expression'), json=body)
             r.raise_for_status()
             data = r.json()
         return {
@@ -996,7 +1105,7 @@ async def image_rembg(image_b64: str, model: str = "u2net", alpha_matting: bool 
                       post_process: bool = False, trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=180) as c:
-            r = await c.post(f"{media_base('imagegen')}/rembg",
+            r = await c.post(f"{media_base('imagegen')}/rembg", headers=_media_origin('imagegen', '/rembg'),
                              json={"image_b64": image_b64, "model": model,
                                    "alpha_matting": alpha_matting, "fg_threshold": fg_threshold,
                                    "bg_threshold": bg_threshold, "erode": erode,
@@ -1053,7 +1162,7 @@ async def image_pose(
         body["seed"] = seed
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{media_base('imagegen')}/controlnet/pose", json=body)
+            r = await c.post(f"{media_base('imagegen')}/controlnet/pose", headers=_media_origin('imagegen', '/controlnet/pose'), json=body)
             r.raise_for_status()
             data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -1110,7 +1219,7 @@ async def image_ipadapter(
         body["seed"] = seed
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{media_base('imagegen')}/ipadapter", json=body)
+            r = await c.post(f"{media_base('imagegen')}/ipadapter", headers=_media_origin('imagegen', '/ipadapter'), json=body)
             r.raise_for_status()
             data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -1138,7 +1247,7 @@ async def image_ipadapter(
 async def image_upscale(image_b64: str, scale: int = 4, model: str = "", trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{media_base('imagegen')}/upscale",
+            r = await c.post(f"{media_base('imagegen')}/upscale", headers=_media_origin('imagegen', '/upscale'),
                              json={"image_b64": image_b64, "scale": scale, "model": model})
             r.raise_for_status()
             data = r.json()
@@ -1205,7 +1314,7 @@ async def image_thumbnail(
         body["seed"] = seed
     try:
         async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.post(f"{media_base('imagegen')}/thumbnail", json=body)
+            r = await c.post(f"{media_base('imagegen')}/thumbnail", headers=_media_origin('imagegen', '/thumbnail'), json=body)
             r.raise_for_status()
             data = r.json()
         img_b64 = data.get("image_b64", "")
@@ -1282,7 +1391,7 @@ async def gpu_duplex_start(trace_id=None):
         # stateful on the server, so every follow-up call must hit the same one.
         base = media_base("tts")
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.post(f"{base}/duplex/start")
+            r = await c.post(f"{base}/duplex/start", headers=_media_origin('tts', '/duplex/start'))
             r.raise_for_status()
             data = r.json()
         sid = data.get("session_id", "")
@@ -1331,7 +1440,7 @@ async def gpu_duplex_query(
     if audio_b64: body["audio_b64"] = audio_b64
     try:
         async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(f"{_duplex_base(session_id)}/duplex/query", json=body)
+            r = await c.post(f"{_duplex_base(session_id)}/duplex/query", headers=_media_origin('tts', '/duplex/query'), json=body)
             r.raise_for_status()
             return r.json()
     except Exception as e:
@@ -1348,7 +1457,7 @@ async def gpu_duplex_query(
 async def gpu_duplex_interrupt(session_id: str, trace_id=None):
     try:
         async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.post(f"{_duplex_base(session_id)}/duplex/interrupt/{session_id}")
+            r = await c.post(f"{_duplex_base(session_id)}/duplex/interrupt/{session_id}", headers=_media_origin('tts', '/duplex/interrupt/'))
             r.raise_for_status()
             return r.json()
     except Exception as e:
@@ -1844,7 +1953,7 @@ def _normalize_generation_think(value):
                 "read (sandbox-aware) and prepended as context, so you don't paste large text inline. "
                 "Params: prompt (str!), files (str|list — file paths/portions to include as context), "
                 "system (str — optional persona/instructions), model (str — leave blank for default), "
-                "prefer_gpu (bool default True — route to GPU instance), backend (ollama|vllm|auto), "
+                "prefer_gpu (bool default True — route to GPU instance), backend (ollama|vllm|auto — auto follows the routing table; vllm forces a vLLM server), "
                 "output_format (str — optional shared format profile, e.g. markdown|report|audio|json|"
                 "docs|quick|short|long; see llm.formats — appends a format directive to the system prompt), "
                 "job_type (str — optional cluster routing hint: embedding|chat|dream|summarize|vision|code; "
@@ -1943,41 +2052,58 @@ async def llm_generate(
                 pass
 
     # ── Backend routing ────────────────────────────────────────────────────────
-    # Prefer vLLM when: backend="vllm" OR (backend="auto" AND vLLM has online instances)
+    # vLLM directly only when the caller asks for it (backend="vllm"). "auto"
+    # goes through the routing table, whose rules/profiles reach vLLM with a
+    # "vllm:<id>" pin like any other node. "auto" used to send every
+    # prefer_gpu call to ANY online vLLM instance - CPU ones included, with an
+    # Ollama model name the server does not serve - bypassing every rule.
     _use_vllm = False
-    if backend in ("vllm", "auto"):
-        try:
-            from Vera.vera.vllm_capabilities import VLLM_INSTANCES as _VI, vllm_generate as _vg
-            _online_vllm = [i for i in _VI.values() if i.status == "online"]
-            if _online_vllm and (backend == "vllm" or prefer_gpu):
+    if backend == "vllm":
+        # The loader registers vllm/vllm_capabilities.py under its bare name; a
+        # package import would build a second copy whose instances are never
+        # health-polled (so never "online") and would re-register its caps.
+        _vllm_mod = (sys.modules.get("vllm_capabilities")
+                     or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+        if _vllm_mod is not None:
+            _online_vllm = [i for i in getattr(_vllm_mod, "VLLM_INSTANCES", {}).values()
+                            if i.status == "online"]
+            if _online_vllm:
                 _use_vllm = True
-        except ImportError:
-            pass
+        if not _use_vllm:
+            log.warning("llm.generate: backend=vllm asked for but no vLLM server is "
+                        "online in this process - serving it on Ollama")
 
     if _use_vllm:
-        # Route through vllm.generate cap so its own event pipeline fires
-        _cap = _REG.get("vllm.generate")
-        if _cap:
-            kw = dict(prompt=prompt, model=model, prefer_gpu=prefer_gpu,
-                      instance_id=instance_id or None, max_tokens=_want_ctx,
-                      _caller_label=caller or _caller_info["caller_func"])
-            if system:
-                # vLLM /v1/completions doesn't have a system field — prepend it
-                kw["prompt"] = f"{system}\n\n{prompt}"
-            try:
-                result = await _cap["raw"](**{k:v for k,v in kw.items()
-                                              if k in _cap["raw"].__code__.co_varnames},
-                                          trace_id=trace_id)
-                text = result.get("text", "") if isinstance(result, dict) else str(result)
-                used_model = result.get("model", model or "") if isinstance(result, dict) else (model or "")
-                used_inst  = result.get("instance_id", "") if isinstance(result, dict) else ""
-                _fr = str(result.get("finish_reason", "")) if isinstance(result, dict) else ""
-                return {"text": text, "model": used_model, "instance": used_inst,
-                        "backend": "vllm", "has_gpu": True, "tokens": len(tokens_collected),
-                        "truncated": _fr == "length",
-                        **(await _llm_save_output(save_as, text, session_id))}
-            except Exception as _e:
-                log.warning("llm.generate vllm route failed (%s), falling back to ollama", _e)
+        # The routed path, as a routing-table pin takes it: the server's chat
+        # template (system + user turns), the node's slot and cross-process gate
+        # (gate_as), the served model for an Ollama-style alias, token liveness.
+        # max_tokens is left to the server (the rest of its context window): a
+        # CPU server's window is far smaller than the Ollama budget above.
+        _insts = getattr(_vllm_mod, "VLLM_INSTANCES", {})
+        _pin = "vllm:" + (instance_id if instance_id and instance_id in _insts else "")
+        _msgs = ([{"role": "system", "content": system}] if system else []) \
+            + [{"role": "user", "content": prompt}]
+        _vkw = {k: options[k] for k in ("temperature", "top_p")
+                if isinstance(options, dict) and k in options}
+        if think is not None:
+            _vkw["extra"] = {"chat_template_kwargs": {"enable_thinking": bool(think)}}
+        try:
+            _res = await _vllm_mod.routed_call(
+                "chat", {"pin": _pin}, model=model, prefer_gpu=prefer_gpu,
+                job_type=job_type, stream_cb=_tok, messages=_msgs, max_tokens=None, **_vkw)
+        except Exception as _e:
+            _res = {"ok": False, "error": f"{type(_e).__name__}: {_e}"}
+        if _res and _res.get("ok"):
+            _msg = _res.get("result") or {}
+            text = _vllm_mod._route_core.strip_think(str(_msg.get("content") or ""))
+            _vi = _insts.get(_res.get("instance") or "")
+            return {"text": text, "model": _res.get("model") or model or "",
+                    "instance": _res.get("instance") or "", "backend": "vllm",
+                    "has_gpu": bool(getattr(_vi, "has_gpu", False)),
+                    "tokens": len(tokens_collected), "truncated": False,
+                    **(await _llm_save_output(save_as, text, session_id))}
+        log.warning("llm.generate vllm route failed (%s), falling back to ollama",
+                    (_res or {}).get("error"))
 
     # ── Ollama path ─────────────────────────────────────────────────────────────
     # Call ollama_generate with the true caller so logs/events show the real source.
@@ -2528,10 +2654,24 @@ async def ollama_instances_status(trace_id=None):
         return _o._node_threads_core.threads_for(
             has_gpu=bool(i.get("has_gpu")), node_num_thread=i.get("num_thread"),
             default=_o._CPU_NODE_THREADS)
+    # A superset of the orchestrator's registration it replaces (enabled and
+    # num_ctx came from there), so no caller loses a field to the load order.
     return {iid:{"url":i["url"],"label":i["label"],"has_gpu":i["has_gpu"],"status":i["status"],
+                 "enabled":i.get("enabled", True),
                  "latency_ms":i["latency_ms"],"models":i["models"],"in_use":i["in_use"],
-                 "errors":i["errors"],"last_check":i["last_check"],"num_thread":_nt(i)}
+                 "errors":i["errors"],"last_check":i["last_check"],"num_thread":_nt(i),
+                 "num_ctx":i.get("num_ctx", 4096),
+                 # a node switched to vLLM: served by that server (status is its)
+                 "backend":i.get("backend","ollama"),"served_by":i.get("served_by","")}
             for iid,i in OLLAMA_INSTANCES.items()}
+
+
+@APP.get("/ollama/instances", tags=["ollama"], include_in_schema=False)
+async def _ollama_instances_get_alias():
+    """GET /ollama/instances — the path the orchestrator's (replaced)
+    registration declared. Panels still call it, and this registration is
+    mounted at /ollama/cluster, so keep both answering the same thing."""
+    return await ollama_instances_status()
 
 @capability("ollama.generate_raw",
     http_method="POST", http_path="/ollama/generate_raw", http_tags=["ollama", "llm"],

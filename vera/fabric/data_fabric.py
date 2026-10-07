@@ -60,6 +60,10 @@ import httpx
 
 # ── Config (single source of truth) ──────────────────────────────────────────
 from Vera.vera.config import cfg
+try:                                                    # RF-77
+    from Vera.vera.fabric import chroma_bound_core as _chroma_bound
+except ImportError:                                     # pragma: no cover
+    from . import chroma_bound_core as _chroma_bound
 
 # ── Orchestrator integration ──────────────────────────────────────────────────
 # Pure embedding policy (no app import, so tests reach it as
@@ -984,6 +988,33 @@ async def _embed(text: str) -> Optional[List[float]]:
         return None
 
 
+async def _embed_many_vllm(batch: List[str]) -> Optional[List[List[float]]]:
+    """One vLLM /v1/embeddings call for the batch when embeddings are served by
+    vLLM: the "embedding" rule pins it, or the node the picker chooses is
+    switched to vLLM. None when neither (the Ollama batch path then runs)."""
+    import sys as _sys
+    _vm = (_sys.modules.get("vllm_capabilities")
+           or _sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
+    if _vm is None or not hasattr(_vm, "routed_call"):
+        return None
+    try:
+        vr = await _vm.routed_call("embed", _orch._resolve_rule("embedding"),
+                                   model=OLLAMA_EMBED_MODEL, job_type="embedding",
+                                   inputs=batch)
+        if vr is None and hasattr(_vm, "standin_for"):
+            chosen = _orch.pick_instance(model=OLLAMA_EMBED_MODEL, job_type="embedding")
+            sv = _vm.standin_for(chosen or "")
+            if sv:
+                vr = await _vm.routed_call("embed", {"pin": f"vllm:{sv}"},
+                                           model=OLLAMA_EMBED_MODEL, job_type="embedding",
+                                           inputs=batch)
+        res = (vr or {}).get("result") if (vr or {}).get("ok") else None
+        return res if res and len(res) == len(batch) else None
+    except Exception as e:
+        log.debug("fabric batch embed via vLLM: %s", e)
+        return None
+
+
 async def _embed_many(texts: List[str]) -> List[Optional[List[float]]]:
     """Batch-embed via a single Ollama /api/embed call (list input) — one HTTP
     roundtrip per ~64 texts instead of one per record, which is the dominant
@@ -1003,9 +1034,21 @@ async def _embed_many(texts: List[str]) -> List[Optional[List[float]]]:
 
     url = ""
     if getattr(_orch, "EMBED_PROVIDER", "ollama") != "fastembed":
+        embs = await _embed_many_vllm([texts[i][:4096] for i in idx])
+        if embs:
+            for j, e in zip(idx, embs):
+                if HAS_NUMPY:
+                    v = np.asarray(e, dtype="float32")
+                    n = float(np.linalg.norm(v)) or 1.0
+                    out[j] = (v / n).tolist()
+                else:
+                    out[j] = e
+            _embed_failed = False
+            return out
         try:
+            # an Ollama node: a switched one's Ollama URL is stopped
             chosen = _orch.pick_instance(model=OLLAMA_EMBED_MODEL,
-                                         job_type="embedding")
+                                         job_type="embedding", no_standins=True)
             inst = _orch.OLLAMA_INSTANCES.get(chosen or "", {}) or {}
             url = (inst.get("url") or "").rstrip("/")
         except Exception:
@@ -1419,12 +1462,16 @@ class FabricChromaStore:
     def connect(self) -> bool:
         if not HAS_CHROMA: return False
         try:
-            self._client = _chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
-            self._col    = self._client.get_or_create_collection(
-                self.COLLECTION, metadata={"hnsw:space": "cosine"})
-            log.info("✓ FabricChromaStore — %d docs", self._col.count())
+            # a failed attempt must not leave its client's connection open (RF-82)
+            with _chroma_bound.discard_on_failure():
+                self._client = _chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+                _chroma_bound.bound(self._client)      # finite timeout - RF-77
+                self._col    = self._client.get_or_create_collection(
+                    self.COLLECTION, metadata={"hnsw:space": "cosine"})
+                log.info("✓ FabricChromaStore — %d docs", self._col.count())
             return True
         except Exception as e:
+            self._client = self._col = None
             log.warning("FabricChromaStore: %s", e); return False
 
     def upsert(self, record: DataRecord) -> bool:
@@ -1537,6 +1584,10 @@ class FabricPostgres:
         try:
             self._pool = await _asyncpg.create_pool(POSTGRES_URL, min_size=1, max_size=8)
             async with self._pool.acquire() as conn:
+                # start-up schema work never waits on a lock (a restart during the nightly pg_dump queued every read
+                # of fabric_datasets behind a no-op ALTER TABLE, 2026-10-05); a migration that cannot get its lock in
+                # time is skipped and runs at the next start-up
+                await conn.execute("SET lock_timeout = '" + os.environ.get("VERA_PG_STARTUP_LOCK_TIMEOUT", "3s") + "'")
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS fabric_datasets (
                         dataset_id   TEXT PRIMARY KEY,
@@ -1556,8 +1607,11 @@ class FabricPostgres:
                         created_at   TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
-                await conn.execute(
-                    "CREATE INDEX IF NOT EXISTS fd_ds ON fabric_records(dataset_id)")
+                try:
+                    await conn.execute(
+                        "CREATE INDEX IF NOT EXISTS fd_ds ON fabric_records(dataset_id)")
+                except Exception as _ie:
+                    log.debug("PG index skip: %s", _ie)
                 # Migration: add columns to existing tables that predate this schema
                 for _migration in [
                     "ALTER TABLE fabric_datasets ADD COLUMN IF NOT EXISTS record_count INT DEFAULT 0",
@@ -2546,7 +2600,7 @@ class VectorIndexStage(PipelineStage):
             # chroma's HTTP client is synchronous — keep it off the event loop
             # (inline it blocked every other coroutine for the roundtrip).
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, FABRIC_CHROMA.upsert, record)
+            await loop.run_in_executor(_chroma_bound.pool(), FABRIC_CHROMA.upsert, record)
         return record
 
 class Neo4jStoreStage(PipelineStage):
@@ -3125,6 +3179,29 @@ async def execute_query(q: Dict) -> Dict:
     dropped_weak = len(rrf) - len(kept_ids)
     ranked_ids = kept_ids[:top_k]
 
+    # Revision identity is optional for legacy callers, but portable consumers
+    # may only use hits for which canonical revision policy permits an exact
+    # read. Never derive authority from mutable text or timestamps.
+    def _revision_ids(record_ids: List[str]) -> Dict[str, str]:
+        values: Dict[str, str] = {}
+        try:
+            path = _canonical_revision_path()
+            actor = _revision_actor()
+        except Exception:
+            return values
+        for record_id in record_ids:
+            try:
+                revision = path.get(record_id, actor=actor)
+            except Exception:
+                revision = None
+            if revision:
+                values[record_id] = str(revision["revision_id"])
+        return values
+
+    include_revision_authority = bool(q.get("include_revision_authority", False))
+    revision_ids = (await asyncio.to_thread(_revision_ids, ranked_ids)
+                    if ranked_ids and include_revision_authority else {})
+
     records_map = {}
     if FABRIC_PG.available and ranked_ids:
         records_map = await _safe("pg_get_by_ids",
@@ -3137,6 +3214,8 @@ async def execute_query(q: Dict) -> Dict:
         entry = {"id": rid, "score": round(rrf.get(rid, 0.0), 6),
                  "vector_score": round(vec_scores.get(rid, 0.0), 4),
                  "text_score": round(text_scores.get(rid, 0.0), 4)}
+        if rid in revision_ids:
+            entry["revision_id"] = revision_ids[rid]
         if rec:
             entry.update({"dataset_id": rec.dataset_id, "text": rec.text[:300],
                           "created_at": rec.created_at, "tags": rec.tags,
@@ -3177,6 +3256,16 @@ async def execute_query(q: Dict) -> Dict:
             if q.get("include_data"):
                 entry["data"] = data
             results.append(entry)
+
+        missing_revision_ids = [str(entry.get("id") or "") for entry in results
+                                if entry.get("id") and not entry.get("revision_id")]
+        if missing_revision_ids and include_revision_authority:
+            fallback_revisions = await asyncio.to_thread(
+                _revision_ids, missing_revision_ids)
+            for entry in results:
+                revision_id = fallback_revisions.get(str(entry.get("id") or ""))
+                if revision_id:
+                    entry["revision_id"] = revision_id
 
     # Weak-result signal: tell the caller (and the LLM) when the best match is
     # poor, so a genuinely empty topic reads as "no relevant data" instead of
@@ -5071,7 +5160,7 @@ async def _bus_worker():
             while _BUS_ENABLED:
                 try:
                     msgs = await redis.xreadgroup(
-                        group, consumer, {stream: ">"}, count=20, block=5000)
+                        group, consumer, {stream: ">"}, count=20, block=_orch.STREAM_BLOCK_MS)
                 except Exception as e:
                     log.warning("data_fabric: bus read: %s", e)
                     break
@@ -5614,13 +5703,15 @@ async def cap_fabric_ingest(dataset_id: str, records: str = "[]",
                 "retry with a lower min_score to widen. "
                 "Params: text (str), vector (str), dataset_id (str — restrict to one dataset), "
                 "top_k (int default 20), min_score (float 0..1 — similarity floor, default 0.28; lower = wider/noisier), "
-                "include_data (bool default False). "
-                "Output: {results:[{dataset_id, id, score, vector_score, text_score, text, data}], count, "
+                "include_data (bool default False), include_revision_authority (bool default False — attach exact "
+                "authorized canonical revision IDs for portable consumers). "
+                "Output: {results:[{dataset_id, id, revision_id?, score, vector_score, text_score, text, data}], count, "
                 "relevance:{min_score, max_vector_score, dropped_below_floor, weak}, backends, note?}.",
 )
 async def cap_fabric_query(query=None, text: str = "",
                               vector: str = "", dataset_id: str = "",
                               top_k: int = 20, include_data: bool = False,
+                              include_revision_authority: bool = False,
                               min_score: float = -1.0,
                               trace_id=None) -> Dict:
     """Accepts the query as:
@@ -5649,6 +5740,8 @@ async def cap_fabric_query(query=None, text: str = "",
     if text:        q["text"] = text
     if vector:      q["vector"] = vector
     if dataset_id:  q["dataset_id"] = dataset_id
+    if include_revision_authority:
+        q["include_revision_authority"] = True
     if top_k != 20: q["top_k"] = top_k
     try:
         if float(min_score) >= 0:
@@ -6032,7 +6125,7 @@ async def cap_fabric_backfill_vectors(confirm: bool = False, dataset_id: str = "
                            else str(row["created_at"] or ""),
                 embedding=vec, embedding_model=OLLAMA_EMBED_MODEL,
             )
-            if await loop.run_in_executor(None, FABRIC_CHROMA.upsert, rec):
+            if await loop.run_in_executor(_chroma_bound.pool(), FABRIC_CHROMA.upsert, rec):
                 done += 1
                 try:
                     FAISS_STORE.add(rec.id, rec.dataset_id, vec)
@@ -9702,6 +9795,38 @@ async def cap_entity_graph_extract_record(record_id: str, trace_id=None) -> Dict
             "entity_count": len(entities), "persisted": persisted}
 
 
+async def _record_row_any(record_id: str) -> Optional[Dict]:
+    """A fabric record by id wherever it is kept: the local SQLite first (where the record_match/summarise reads always
+    looked), then Postgres - a record fabric.query returns can live in either (measured 2026-09-30: a record the canvas
+    listed was in Postgres only, so its neighbours and details came back 'not found'), and memory.read already looks in
+    both. Returns the row as a dict (id, dataset_id, text, data, source_id, tags, created_at) or None."""
+    loop = asyncio.get_running_loop()
+
+    def _fetch():
+        conn = _sqlite_conn()
+        try:
+            row = conn.execute("SELECT * FROM fabric_records WHERE id=? LIMIT 1", (record_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+    try:
+        rec = await loop.run_in_executor(None, _fetch)
+    except Exception:
+        rec = None
+    if rec:
+        return rec
+    if getattr(FABRIC_PG, "_pool", None) is not None:
+        try:
+            got = await asyncio.wait_for(FABRIC_PG.get_by_ids([record_id]), timeout=6)
+            raw = (got or {}).get(record_id)
+            if raw is not None:
+                return {"id": raw.id, "dataset_id": raw.dataset_id, "text": raw.text or "", "data": raw.data or {},
+                        "source_id": raw.source or "", "tags": raw.tags or [], "created_at": raw.created_at or ""}
+        except Exception as e:
+            log.debug("record row from postgres: %s", e)
+    return None
+
+
 @capability(
     "fabric.loom.record_match",
     http_method="POST", http_path="/fabric/loom/record_match",
@@ -9730,18 +9855,8 @@ async def cap_loom_record_match(
 
     await _emit("loading", message=f"Loading record {record_id[:24]}...")
 
-    # Fetch the source record
-    loop = asyncio.get_running_loop()
-    def _fetch():
-        conn = _sqlite_conn()
-        try:
-            row = conn.execute(
-                "SELECT * FROM fabric_records WHERE id=? LIMIT 1", (record_id,)
-            ).fetchone()
-            return dict(row) if row else None
-        finally:
-            conn.close()
-    rec = await loop.run_in_executor(None, _fetch)
+    # Fetch the source record (SQLite, then Postgres - see _record_row_any)
+    rec = await _record_row_any(record_id)
     if not rec:
         return {"error": f"Record {record_id} not found"}
 
@@ -9796,6 +9911,67 @@ async def cap_loom_record_match(
 
     return {"ok": True, "record_id": record_id,
             "matches": matches, "total": len(matches)}
+
+
+@capability(
+    "fabric.record.get",
+    http_method="POST", http_path="/fabric/record/get",
+    http_tags=["fabric", "record"],
+    memory="off",
+    description="One fabric record by id, as it is stored: its text (in pages - offset, max_chars), its dataset, the "
+                "source it was gathered from (url, label, type), its tags, when it was written, and its structured "
+                "data fields. Read-only. The canvas opens a fabric record through this (memory.read does not know "
+                "fabric records). Input: record_id (str!), offset (int default 0), max_chars (int default 8000). "
+                "Output: {ok, id, dataset_id, text, offset, next_offset, total_chars, source:{id, url, label, type}, "
+                "tags:[str], created_at, data:{field: value}}.",
+)
+async def cap_record_get(record_id: str, offset: int = 0, max_chars: int = 8000, trace_id=None) -> Dict:
+    if not record_id:
+        return {"error": "record_id required"}
+    rec = await _record_row_any(record_id)          # SQLite, then Postgres
+    if not rec:
+        return {"error": f"Record {record_id} not found"}
+    if rec.get("source_id"):
+        def _src():
+            conn = _sqlite_conn()
+            try:
+                s = conn.execute("SELECT id, source_type, url, label FROM fabric_sources WHERE id=? LIMIT 1",
+                                 (rec["source_id"],)).fetchone()
+                return dict(s) if s else None
+            finally:
+                conn.close()
+        try:
+            rec["_source"] = await asyncio.get_running_loop().run_in_executor(None, _src)
+        except Exception:
+            rec["_source"] = None
+
+    def _js(v, dflt):
+        if isinstance(v, (dict, list)):
+            return v
+        try:
+            return json.loads(v) if v else dflt
+        except Exception:
+            return dflt
+    text = rec.get("text") or ""
+    off = max(0, int(offset or 0))
+    n = max(200, min(50_000, int(max_chars or 8000)))
+    part = text[off:off + n]
+    nxt = off + len(part)
+    tags = _js(rec.get("tags"), [])
+    tags = [str(t) for t in tags] if isinstance(tags, list) else ([str(tags)] if tags else [])
+    data = _js(rec.get("data"), {})
+    # the data fields as a person reads them: plain values, a bounded handful, nothing enormous
+    fields = {}
+    if isinstance(data, dict):
+        for k, v in list(data.items())[:40]:
+            fields[str(k)] = v if (v is None or isinstance(v, (int, float, bool))) else str(v)[:300]
+    src = rec.get("_source") or {}
+    return {"ok": True, "id": rec["id"], "dataset_id": rec.get("dataset_id") or "",
+            "text": part, "offset": off, "next_offset": nxt if nxt < len(text) else None,
+            "total_chars": len(text),
+            "source": {"id": rec.get("source_id") or "", "url": src.get("url") or "",
+                       "label": src.get("label") or "", "type": src.get("source_type") or ""},
+            "tags": tags, "created_at": rec.get("created_at") or "", "data": fields}
 
 
 @capability(

@@ -247,7 +247,7 @@ STYLE_PACKS: Dict[str, dict] = {
         "--ui-radius": "10px", "--r-sm": "7px", "--r-pill": "999px", "--row-h": "30px", "--pad": "14px",
         "--label-size": "10.5px", "--label-case": "none", "--label-track": ".01em", "--label-weight": "500",
         "--body": "13px", "--lead": "1.62",
-        "--fill": "color-mix(in srgb,var(--ac) 14%,transparent)",
+        "--fill": "color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 14%,transparent)",
         "--pri-bg": "var(--ac)", "--pri-fg": "var(--on-ac)", "--pri-bd": "transparent",
         "--card": "0 1px 2px rgba(0,0,0,.14),0 0 0 1px var(--bd)",
         "--elev": "0 1px 2px rgba(0,0,0,.20),0 10px 30px -16px rgba(0,0,0,.60),inset 0 1px 0 color-mix(in srgb,var(--t1) 7%,transparent)",
@@ -258,7 +258,7 @@ STYLE_PACKS: Dict[str, dict] = {
         "--ui-radius": "0px", "--r-sm": "0px", "--r-pill": "0px", "--row-h": "29px", "--pad": "15px",
         "--label-size": "9.5px", "--label-case": "uppercase", "--label-track": ".1em", "--label-weight": "600",
         "--body": "14px", "--lead": "1.72",
-        "--fill": "color-mix(in srgb,var(--ac) 8%,transparent)",
+        "--fill": "color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 8%,transparent)",
         "--pri-bg": "var(--ac)", "--pri-fg": "var(--on-ac)", "--pri-bd": "transparent",
         "--card": "0 0 0 1px var(--bd)",
         "--elev": "0 0 0 1px var(--bd),0 8px 26px -16px rgba(0,0,0,.5)", "--elev-lo": "0 0 0 1px var(--bd)"}},
@@ -277,7 +277,7 @@ STYLE_PACKS: Dict[str, dict] = {
         "--ui-radius": "0px", "--r-sm": "0px", "--r-pill": "0px", "--row-h": "32px", "--pad": "12px",
         "--label-size": "11px", "--label-case": "uppercase", "--label-track": ".05em", "--label-weight": "500",
         "--body": "15px", "--lead": "1.55",
-        "--fill": "color-mix(in srgb,var(--ac) 24%,transparent)",
+        "--fill": "color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 24%,transparent)",
         "--pri-bg": "var(--ac)", "--pri-fg": "var(--on-ac)", "--pri-bd": "transparent",
         "--card": "0 0 0 2px var(--bd2),4px 4px 0 0 rgba(0,0,0,.4)",
         "--elev": "0 0 0 2px var(--bd2),5px 5px 0 0 rgba(0,0,0,.45),inset 0 1px 0 color-mix(in srgb,var(--t1) 8%,transparent)",
@@ -305,13 +305,26 @@ DATAVIZ_RAMP: Dict[str, Dict[str, str]] = {
 # Surfaces derived from the theme's colours: the accent tints every surface
 # slightly, so depth comes from the theme rather than from a new palette.
 # Emitted once on :root; a pack overrides --elev/--elev-lo/--card with its own.
+# Each falls back to the panels' older names: a page (or a custom theme) that never set --ac/--s1 made every one of these
+# invalid, and every surface drawn with them - the chat's sheets, the question's ground - painted nothing (2026-10-04).
 DERIVED_VARS: Dict[str, str] = {
-    "--surf":  "color-mix(in srgb,var(--ac) 4%,var(--s1))",
-    "--surf2": "color-mix(in srgb,var(--ac) 6%,var(--s2))",
-    "--surf3": "color-mix(in srgb,var(--ac) 8%,var(--s3))",
-    "--glow":  "0 0 22px -6px color-mix(in srgb,var(--ac) 55%,transparent)",
-    "--ring":  "0 0 0 3px color-mix(in srgb,var(--ac) 26%,transparent)",
+    "--surf":  "color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 4%,var(--s1,var(--bg1,#151719)))",
+    "--surf2": "color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 6%,var(--s2,var(--bg2,#1a1c20)))",
+    "--surf3": "color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 8%,var(--s3,var(--bg3,#22262e)))",
+    "--glow":  "0 0 22px -6px color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 55%,transparent)",
+    "--ring":  "0 0 0 3px color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 26%,transparent)",
 }
+
+
+def flat_theme_vars(vars_) -> Dict[str, str]:
+    """A theme's vars as one flat {--name: value} map. A custom theme saved its vars one level down ({"theme": {...}}) -
+    the active one on 2026-10-04 did - and every page then set no colour at all from it. Unwrap that, drop non-values."""
+    v = vars_ if isinstance(vars_, dict) else {}
+    if v and not any(str(k).startswith("--") for k in v):
+        inner = [x for x in v.values() if isinstance(x, dict) and any(str(k).startswith("--") for k in x)]
+        if len(inner) == 1:
+            v = inner[0]
+    return {str(k): str(x) for k, x in v.items() if str(k).startswith("--") and isinstance(x, (str, int, float))}
 
 
 def with_dataviz(vars_: dict, theme_type: str = "dark") -> dict:
@@ -377,7 +390,7 @@ __all__ = [
     "BUILTIN_THEMES", "DEFAULT_THEME",
     "STYLE_PACKS", "DEFAULT_STYLE", "DENSITY_TIERS", "DEFAULT_DENSITY",
     "DATAVIZ_RAMP", "DERIVED_VARS",
-    "with_dataviz", "style_pack_css", "appearance_css", "normalize_appearance",
+    "with_dataviz", "flat_theme_vars", "style_pack_css", "appearance_css", "normalize_appearance",
     "ensure_contrast", "on_accent_for", "contrast", "luminance",
     "INK_DARK", "INK_LIGHT",
 ]

@@ -79,6 +79,7 @@ HAND: Dict[str, Dict[str, Any]] = {
     "evolve.pipeline.list": {"shape": "items", "refresh_min": "30s"},
     "evolve.git_graph": {"shape": "graph", "refresh_min": "1m"},
     "markets.bars": {"shape": "ohlcv", "refresh_min": "1m"},
+    "markets.chart": {"shape": "ohlcv", "refresh_min": "1m"},   # a symbol's candles (canvas enrichment, slice 5)
     "sched.list": {"shape": "calendar", "refresh_min": "1m"},
     "goals.detail": {"shape": "items", "refresh_min": "1m"},
     "goals.board": {"shape": "items", "refresh_min": "30s"},

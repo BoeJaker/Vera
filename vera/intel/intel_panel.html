@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk" data-style="standard">
+<head>
+<script>/* vera theme boot - paint the cached theme before CSS parses */
+(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var st=S.getItem('vera:ui:style');if(st)d.setAttribute('data-style',st);
+var vf=S.getItem('vera:ui:themeVarsFor');if(t&&vf!==t)return;var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<title>Vera · Intelligence</title>
+<!-- Intelligence: topics Vera follows over time. Overview is a widget board (layouts/intel.json);
+     a topic opens as a workspace composed of live widgets for THAT topic (timeline, signals,
+     entities), so the same pieces can be sent to the canvas or pinned to any dashboard. -->
+<style>
+:root{--int-acc:var(--accent,#7aa2f7)}
+html,body{height:100%;margin:0;background:var(--bg0,#0f1115);color:var(--text,#e6e8ee);font-family:var(--sans,system-ui,sans-serif);font-size:13px}
+body{display:flex;overflow:hidden}
+.content{flex:1;min-width:0;display:flex;flex-direction:column}
+.pane{flex:1;min-height:0;display:none;overflow:auto;padding:14px 16px}
+.pane.active{display:block}
+h2{font-size:15px;margin:0 0 10px}h3{font-size:12px;margin:14px 0 6px;color:var(--muted,#9aa3b2);text-transform:uppercase;letter-spacing:.06em}
+.muted{color:var(--muted,#9aa3b2)}.small{font-size:11.5px}
+.card{background:var(--bg1,#171a21);border:1px solid var(--line,#2a2f3a);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.grow{flex:1}
+.split{display:grid;grid-template-columns:300px 1fr;gap:14px;align-items:start}
+@media (max-width:900px){.split{grid-template-columns:1fr}}
+.tlist .t{padding:8px 10px;border:1px solid var(--line,#2a2f3a);border-radius:8px;margin-bottom:6px;cursor:pointer}
+.tlist .t:hover{border-color:var(--int-acc)}.tlist .t.on{border-color:var(--int-acc);background:color-mix(in srgb,var(--int-acc) 10%,transparent)}
+.tlist .t b{display:block}.tlist .t .hl{font-size:11.5px;color:var(--muted,#9aa3b2);margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.chip{display:inline-block;font-size:10.5px;padding:1px 7px;border:1px solid var(--line,#2a2f3a);border-radius:999px;color:var(--muted,#9aa3b2);margin-right:4px}
+.chip.new{border-color:var(--int-acc);color:var(--int-acc)}
+.ws-head h2{margin:0;font-size:17px}
+.state{border-left:3px solid var(--int-acc);padding:6px 10px;margin:6px 0;white-space:pre-wrap}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media (max-width:1100px){.grid2{grid-template-columns:1fr}}
+.sig{display:grid;grid-template-columns:34px 1fr auto;gap:10px;padding:8px 0;border-top:1px solid var(--line,#2a2f3a)}
+.sig .sc{font-weight:700;text-align:center;border-radius:6px;padding:3px 0;background:var(--bg2,#11141a)}
+.sig .sc.hi{color:var(--green,#9ece6a)}.sig .sc.md{color:var(--yellow,#e0af68)}
+.sig a{color:inherit;font-weight:600;text-decoration:none}.sig a:hover{text-decoration:underline}
+.sig .why{font-style:italic;color:var(--muted,#9aa3b2)}
+.sig .ops{display:flex;flex-direction:column;gap:4px}
+label.f{display:block;margin:8px 0 3px;color:var(--muted,#9aa3b2);font-size:11.5px}
+input[type=text],input[type=number],textarea,select{width:100%;box-sizing:border-box}
+textarea{min-height:60px;resize:vertical}
+.reports{display:grid;grid-template-columns:320px 1fr;gap:14px;height:calc(100% - 10px)}
+.reports iframe{width:100%;height:100%;min-height:520px;border:1px solid var(--line,#2a2f3a);border-radius:10px;background:#fff}
+.rp{padding:8px 10px;border:1px solid var(--line,#2a2f3a);border-radius:8px;margin-bottom:6px;cursor:pointer}
+.rp.on{border-color:var(--int-acc)}
+.act{display:flex;gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--line,#2a2f3a)}
+.msg{min-height:18px;font-size:12px}.msg.ok{color:var(--green,#9ece6a)}.msg.err{color:var(--red,#f7768e)}
+.digest{font:15px/1.7 Georgia,"Iowan Old Style",serif;max-width:70ch;white-space:pre-wrap}
+dialog{border:1px solid var(--line,#2a2f3a);border-radius:12px;background:var(--bg1,#171a21);color:inherit;max-width:min(860px,92vw);max-height:86vh;overflow:auto}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+pre.code{background:var(--bg2,#11141a);padding:10px;border-radius:8px;overflow:auto;font-family:var(--mono,ui-monospace,monospace);font-size:12px}
+vera-widget{display:block}
+</style>
+<link rel="stylesheet" href="/ui/vera-panel.css">
+</head>
+<body>
+<aside id="sidebar" data-vera-lhm>
+  <div id="side-head">
+    <div class="ico">◎</div>
+    <div><h1>Intelligence</h1><div class="sub">Topics followed over time</div></div>
+  </div>
+  <nav id="nav">
+    <button data-label="Overview" data-desc="Intelligence at a glance" data-desc-long="The board: topics followed, new signals, the history rail, reports and what Vera can do next." class="nav-btn active" data-go="overview" onclick="go('overview')"><span class="gl">▦</span>Overview</button>
+    <button data-label="Topics" data-desc="Each topic's workspace" data-desc-long="Topics: each one's assessment, timeline, signals and entities - and its settings." class="nav-btn" data-go="topics" onclick="go('topics')"><span class="gl">◎</span>Topics</button>
+    <button data-label="Timeline" data-desc="Look back through time" data-desc-long="Every topic's history on one rail: stand on any day and see what turned up." class="nav-btn" data-go="timeline" onclick="go('timeline')"><span class="gl">⟷</span>Timeline</button>
+    <button data-label="Reports" data-desc="Briefs and their delivery" data-desc-long="Reports: build a brief, read it, send it to Telegram, chat, email, the canvas and more." class="nav-btn" data-go="reports" onclick="go('reports')"><span class="gl">▤</span>Reports</button>
+    <button data-label="Actions" data-desc="What Vera can do next" data-desc-long="Actions reports offered - fetch a repo, research a question further, track an entity - and what became of them." class="nav-btn" data-go="actions" onclick="go('actions')"><span class="gl">➜</span>Actions</button>
+    <button data-label="Activity" data-desc="What it is doing on its own" data-desc-long="The night batch, sessions, alerts it raised, research waiting, notes from your drop folders and automation proposals - and a command line." class="nav-btn" data-go="activity" onclick="go('activity')"><span class="gl">◷</span>Activity</button>
+    <button data-label="Settings" data-desc="Schedule, delivery, n8n" data-desc-long="When the nightly refresh and the morning brief run, where the brief goes, and moving off the n8n flows." class="nav-btn" data-go="settings" data-vera-settings="#pane-settings" onclick="go('settings')"><span class="gl">⚙</span>Settings</button>
+  </nav>
+  <div id="status-tile">
+    <div class="lbl">Intelligence</div>
+    <div id="tile" class="small muted">loading…</div>
+  </div>
+</aside>
+
+<div class="content">
+
+  <div class="pane active" id="pane-overview">
+    <vera-dashboard layout="intel" title="Intelligence at a glance" no-popout></vera-dashboard>
+  </div>
+
+  <div class="pane" id="pane-topics">
+    <div class="split">
+      <div>
+        <div class="row" style="margin-bottom:8px"><h2 class="grow" style="margin:0">Topics</h2>
+          <button class="btn pri" onclick="editTopic(null)" data-lhm-cta="topics" data-label="New topic" data-desc="Start following a new topic">＋ New topic</button></div>
+        <div class="row" style="margin-bottom:8px">
+          <select id="tStatus" onchange="loadTopics()"><option value="">all</option><option value="active" selected>active</option><option value="paused">paused</option><option value="archived">archived</option></select>
+        </div>
+        <div id="tlist" class="tlist"><div class="muted">loading…</div></div>
+      </div>
+      <div id="ws"><div class="card muted">Pick a topic, or make one - a topic is anything complex you want followed: a market, a technology, a company, a question.</div></div>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-timeline">
+    <h2>All topics through time</h2>
+    <div class="card"><vera-intel-timeline days="365"></vera-intel-timeline></div>
+  </div>
+
+  <div class="pane" id="pane-reports">
+    <div class="reports">
+      <div>
+        <div class="card">
+          <h2>Build a brief</h2>
+          <label class="f">Topics (none ticked = every active topic)</label>
+          <div id="rTopics" class="small"></div>
+          <div class="row"><div class="grow"><label class="f">Covering the last (hours)</label><input type="number" id="rHours" value="24" min="1"></div>
+            <div class="grow"><label class="f">Title</label><input type="text" id="rTitle" placeholder="auto"></div></div>
+          <label class="small"><input type="checkbox" id="rAgain"> include signals already reported</label>
+          <div class="row" style="margin-top:8px"><button class="btn pri" onclick="buildReport()" data-lhm-cta="reports" data-label="Build a brief" data-desc="Build a brief from the topics followed">Build</button><span id="rMsg" class="msg"></span></div>
+        </div>
+        <div id="rlist"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;min-height:0">
+        <div class="card" id="rDeliver" style="display:none">
+          <div class="row"><b class="grow" id="rSel"></b><a id="rOpen" target="_blank" rel="noopener" class="small">open ↗</a>
+            <a href="/intel/app" target="_blank" rel="noopener" class="small" title="the installable mobile app: every brief, readable offline">📱 app ↗</a></div>
+          <div class="row small" style="gap:8px;margin:4px 0"><span id="rAudio" class="muted"></span>
+            <button class="btn" id="rSpeak" onclick="speakReport()" title="make the narration (background, when the box is quiet)">🔊 Read aloud</button></div>
+          <div id="rChans" class="row small" style="margin:6px 0"></div>
+          <div class="row"><input type="text" id="rTarget" class="grow" placeholder="target: chat/canvas session id, or email address" style="width:auto">
+            <button class="btn" id="rCanvasHere" onclick="useSession()">this chat</button>
+            <button class="btn pri" onclick="deliver()">Send</button></div>
+          <div id="dMsg" class="msg"></div>
+          <div id="dLog" class="small muted"></div>
+        </div>
+        <iframe id="rFrame" title="report"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-actions">
+    <div class="row"><h2 class="grow">What Vera can do next</h2>
+      <select id="aStatus" onchange="loadActions()" style="width:auto"><option value="offered">offered</option><option value="">all</option><option value="done">done</option><option value="failed">failed</option><option value="running">running</option></select></div>
+    <div id="alist" class="card"></div>
+  </div>
+
+  <div class="pane" id="pane-activity">
+    <div class="grid2">
+      <div class="card">
+        <h2>Tonight and now</h2>
+        <div id="acNight" class="small"></div>
+        <h3>Session</h3><div id="acSession" class="small"></div>
+        <h3>Alerts raised</h3><div id="acAlerts" class="small"></div>
+        <h3>Research waiting for a session</h3><div id="acWanted" class="small"></div>
+        <h3>Command</h3>
+        <div class="row"><input type="text" id="acCmd" class="grow" placeholder="list | status | add &lt;topic&gt; :: &lt;search&gt; | sweep | brief | save &lt;url&gt; | help" style="width:auto"
+          onkeydown="if(event.key==='Enter')runCmd()"><button class="btn" onclick="runCmd()">Run</button></div>
+        <pre id="acOut" class="code" style="white-space:pre-wrap;min-height:20px"></pre>
+      </div>
+      <div class="card">
+        <h2>From your drop folders</h2>
+        <div class="row"><span class="grow small muted">Notes are diffed - only real edits reach a model; their searches feed the notes topic.</span>
+          <button class="btn" onclick="runFiles()">Read folders now</button></div>
+        <div id="acNotes" class="small"></div>
+        <h2 style="margin-top:14px">How the gates are doing</h2>
+        <div class="small muted">Each gate's decisions, how many you have rated (👍 👎 🔇, opened links, report buttons, alerts acted on) and how often it was right.</div>
+        <div id="acGates" class="small"></div>
+        <h3>Model and NLP time (last 7 days)</h3><div id="acSpend" class="small"></div>
+        <h2 style="margin-top:14px">Automation proposals</h2>
+        <div class="row"><span class="grow small muted">Weekly: ideas from the intelligence, each compiled into an inactive n8n draft.</span>
+          <button class="btn" onclick="runAdvise()">Propose now</button></div>
+        <div id="acProps" class="small"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane" id="pane-settings">
+    <div class="grid2">
+      <div class="card">
+        <h2>Schedule and delivery</h2>
+        <label class="small"><input type="checkbox" id="cEnabled"> nightly refresh and morning brief on</label>
+        <div class="row"><div class="grow"><label class="f">Queue the refresh from (hour)</label><input type="number" id="cSweep" min="0" max="23"></div>
+          <div class="grow"><label class="f">Deliver the brief from (hour)</label><input type="number" id="cBrief" min="0" max="23"></div></div>
+        <div class="row"><div class="grow"><label class="f">Topics per night</label><input type="number" id="cMax" min="1" max="40"></div>
+          <div class="grow"><label class="f">Brief covers (hours)</label><input type="number" id="cPeriod" min="1"></div></div>
+        <label class="f">Timezone</label><input type="text" id="cTz">
+        <label class="f">Link base for Telegram / email (must open off this box)</label><input type="text" id="cBase">
+        <label class="f">Brief goes to</label><div id="cChans" class="row small"></div>
+        <label class="small"><input type="checkbox" id="cIll"> illustrate briefs (image generation)</label>
+        <div class="row" style="margin-top:8px"><button class="btn pri" onclick="saveConfig()">Save</button><span id="cMsg" class="msg"></span></div>
+        <h3>Last runs</h3><div id="cSched" class="small muted"></div>
+        <p class="small muted">The refresh runs through the idle queue: only when the box is quiet, one topic at a time,
+          on the CPU-preferred background route, and it stops the moment someone needs the machine. The brief is
+          built overnight and only delivered in the morning.</p>
+      </div>
+      <div class="card">
+        <h2>How it thinks</h2>
+        <label class="f">Who the analysis is for (system prompt of every model call)</label><textarea id="cPersona" style="min-height:90px"></textarea>
+        <label class="f">Competitors to watch (one per line)</label><textarea id="cComp"></textarea>
+        <div class="row"><div class="grow"><label class="f">A model reads a source from score</label><input type="number" id="cGate" min="0" max="10" step="0.5"></div>
+          <div class="grow"><label class="f">Topic jobs per day outside the night</label><input type="number" id="cDaily" min="0" max="200"></div></div>
+        <label class="small"><input type="checkbox" id="cNlp"> triage with the NLP tier (embeddings, reranker, GLiNER, QA)</label><br>
+        <label class="small"><input type="checkbox" id="cOpp"> use idle time during the day for due topics</label><br>
+        <label class="small"><input type="checkbox" id="cAlerts"> alert me when an assessment changes materially</label><br>
+        <label class="small"><input type="checkbox" id="cAutoR"> research new questions on deep topics inside sessions</label><br>
+        <label class="small"><input type="checkbox" id="cNight"> send a one-line night summary</label>
+        <label class="f">Sessions - windows it may plan work into (JSON: name, days 0=Mon, start, end, budget, mode deepen|refresh|research)</label>
+        <textarea id="cSessions" style="min-height:80px;font-family:var(--mono,monospace)"></textarea>
+        <div class="row"><div class="grow"><label class="f">Phone (HA notify target)</label><input type="text" id="cPhone"></div>
+          <div class="grow"><label class="f">Printer id</label><input type="text" id="cPrinter"></div></div>
+        <label class="f">Drop folders (JSON: kind notes|inbox|print|podcast, path) on host</label><input type="text" id="cHost">
+        <textarea id="cFolders" style="min-height:70px;font-family:var(--mono,monospace)"></textarea>
+        <div class="row" style="margin-top:8px"><button class="btn pri" onclick="saveThinking()">Save</button><span id="tMsg" class="msg"></span></div>
+      </div>
+      <div class="card">
+        <h2>Voice and narration</h2>
+        <label class="f">Voice for all of Vera's speech (chat voice, podcasts, narration) - set on every media node</label>
+        <div class="row"><select id="vVoice" class="grow" style="width:auto"></select>
+          <select id="vNorm" style="width:auto" title="how numbers, money, dates and acronyms are read">
+            <option value="rules">read numbers and dates naturally</option><option value="nemo">NeMo normaliser (if installed)</option><option value="off">read text as written</option></select></div>
+        <div class="row"><div class="grow"><label class="f">Speed</label><input type="number" id="vSpeed" min="0.5" max="2" step="0.05"></div>
+          <div class="grow"><label class="f">Accent (blank = from the voice)</label><input type="text" id="vLang" placeholder="en-gb"></div></div>
+        <div class="row" style="margin-top:6px"><button class="btn pri" onclick="saveVoice()">Apply to every node</button>
+          <button class="btn" onclick="tryVoice()" title="hear a sentence with numbers and dates">▶ Try it</button><span id="vMsg" class="msg"></span></div>
+        <div id="vNodes" class="small muted" style="margin:4px 0"></div><audio id="vAudio" controls style="width:100%;display:none"></audio>
+        <h3>Intelligence reports</h3>
+        <label class="small"><input type="checkbox" id="nSpeak"> read every report aloud (a player on the page, a Listen button per topic)</label><br>
+        <label class="small"><input type="checkbox" id="nTg"> send the narration to Telegram after the brief</label><br>
+        <label class="small"><input type="checkbox" id="nGeo"> map the places sources name (OpenStreetMap)</label>
+        <div class="row"><div class="grow"><label class="f">Voice for reports (blank = Vera's voice)</label><select id="nVoice" style="width:100%"></select></div>
+          <div class="grow"><label class="f">Speed (0 = Vera's)</label><input type="number" id="nSpeed" min="0" max="2" step="0.05"></div></div>
+        <div class="row" style="margin-top:6px"><button class="btn pri" onclick="saveNarration()">Save</button><span id="nMsg" class="msg"></span></div>
+      </div>
+      <div class="card">
+        <h2>Moving off n8n</h2>
+        <p class="small muted">The n8n intelligence flows (intel-night, intel-brief, intel-automations, files-night, the vera-* interest,
+          monitor, report and podcast flows) did collect → enrich → brief on timers. Vera now does all of it - with topics, a timeline,
+          the NLP tier, assessments that track change and reports that act. Import their state, then switch the flows off
+          (only deactivated; notify and the home/estate flows stay on).</p>
+        <div class="row"><button class="btn" onclick="n8nImport(true)">Preview import</button><button class="btn pri" onclick="n8nImport(false)">Import</button></div>
+        <div id="nImp" class="small" style="margin:6px 0"></div>
+        <div class="row"><button class="btn" onclick="n8nRetire(true)">Preview switch-off</button><button class="btn" onclick="n8nRetire(false)">Switch flows off</button></div>
+        <div id="nRet" class="small" style="margin:6px 0"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<dialog id="dlg"><div id="dlgBody"></div><div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" onclick="$('dlg').close()">Close</button></div></dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const safeUrl = (u) => /^https?:\/\//i.test(String(u || '')) ? u : '';
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function call(name, args) {
+  const r = await fetch('/mcp/call', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, arguments: args || {}, caller_kind: 'user'})});
+  const j = await r.json();
+  return (j && j.type === 'tool_result') ? (j.content || {}) : j;
+}
+function msg(el, text, kind) { el = typeof el === 'string' ? $(el) : el; el.textContent = text || ''; el.className = 'msg ' + (kind || ''); }
+function ancestorWith(prop) { let w = window; for (let i = 0; i < 6 && w; i++) { try { if (w[prop]) return w[prop]; } catch (e) { return null; } if (w === w.parent) break; w = w.parent; } return null; }
+const LOADED = {};
+function go(id) {
+  document.querySelectorAll('#nav .nav-btn').forEach(t => t.classList.toggle('active', t.dataset.go === id));
+  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + id));
+  if (id === 'topics') loadTopics();
+  if (id === 'reports') loadReports();
+  if (id === 'actions') loadActions();
+  if (id === 'settings' && !LOADED.settings) { LOADED.settings = 1; loadConfig(); }
+  if (id === 'activity') loadActivity();
+  try { localStorage.setItem('vera.intel.pane', id); } catch (e) {}
+}
+
+async function tile() {
+  try { const s = await call('intel.summary');
+    $('tile').innerHTML = `${s.topics||0} topics · ${s.signals_24h||0} new today<br>${s.actions_open||0} actions open` + (s.enabled ? '' : '<br><b>schedule off</b>');
+  } catch (e) { $('tile').textContent = 'unavailable'; }
+}
+
+// ── topics ──
+let TOPICS = [], CUR = '';
+async function loadTopics() {
+  const r = await call('intel.topic.list', {status: $('tStatus').value});
+  TOPICS = r.rows || [];
+  $('tlist').innerHTML = TOPICS.length ? TOPICS.map(t => `<div class="t ${t.id===CUR?'on':''}" onclick="openTopic('${esc(t.id)}')">
+      <b>${esc(t.name)}</b>
+      <div><span class="chip ${t.signals_24h?'new':''}">${t.signals_24h||0} new</span><span class="chip">${esc(t.depth)}</span><span class="chip">${esc(t.cadence)}</span>${t.status!=='active'?`<span class="chip">${esc(t.status)}</span>`:''}</div>
+      ${t.headline?`<div class="hl">${esc(t.headline)}</div>`:''}</div>`).join('')
+    : '<div class="muted small">No topics yet. Make one, or import the n8n ones in Settings.</div>';
+}
+function widget(rec) { return `<vera-widget size="auto" record='${esc(JSON.stringify(rec))}'></vera-widget>`; }
+async function openTopic(id) {
+  CUR = id; loadTopics();
+  $('ws').innerHTML = '<div class="card muted">loading…</div>';
+  const r = await call('intel.topic.get', {id});
+  if (r.error) { $('ws').innerHTML = `<div class="card">${esc(r.error)}</div>`; return; }
+  const t = r.topic, sn = r.snapshot || {}, st = r.stats || {};
+  const qs = (t.questions||[]).map(q => `<li>${esc(q)}</li>`).join('');
+  $('ws').innerHTML = `
+    <div class="card ws-head">
+      <div class="row"><h2 class="grow">${esc(t.name)}</h2>
+        <button class="btn" onclick="sweep('${esc(id)}')" title="search now - no model">↻ Sweep</button>
+        <button class="btn" onclick="refresh('${esc(id)}')" title="sweep, read, assess - queued for a quiet moment">◆ Reassess</button>
+        <button class="btn" onclick="topicReport('${esc(id)}')">▤ Report</button>
+        <button class="btn" onclick="toCanvas('${esc(id)}')" title="put this topic's timeline and signals on the chat canvas">⧉ Canvas</button>
+        <button class="btn" onclick="editTopic('${esc(id)}')">✎ Edit</button></div>
+      <div class="muted">${esc(t.brief||'')}</div>
+      ${t.why?`<div class="small"><b>Why:</b> ${esc(t.why)}</div>`:''}
+      <div style="margin-top:4px"><span class="chip">${esc(t.depth)}</span><span class="chip">${esc(t.cadence)}</span><span class="chip">${st.signals_total||0} signals</span>${t.dream_loop?'<span class="chip">dream loop</span>':''}<span class="chip">last sweep ${esc((t.last_sweep||'never').slice(0,16).replace('T',' '))}</span></div>
+      <div id="wsMsg" class="msg"></div>
+    </div>
+    <div class="card"><h3 style="margin-top:0">Assessment ${sn.confidence?`<span class="chip">${esc(sn.confidence)} confidence</span>`:''}</h3>
+      ${sn.headline?`<b>${esc(sn.headline)}</b><div class="state">${esc(sn.state||'')}</div>`:'<div class="muted">No assessment yet - Reassess to make one.</div>'}
+      ${(sn.changed||[]).length?'<h3>What changed</h3><ul>'+sn.changed.map(c=>`<li>${esc(c)}</li>`).join('')+'</ul>':''}
+      ${qs?'<h3>Open questions</h3><ul>'+qs+'</ul>':''}
+      ${(sn.watch||[]).length?'<h3>Watch</h3>'+sn.watch.map(w=>`<span class="chip">${esc(w)}</span>`).join(''):''}
+    </div>
+    <div class="card"><vera-intel-timeline topic="${esc(id)}" days="90"></vera-intel-timeline></div>
+    <div class="card"><div class="row"><h3 class="grow" style="margin:0">Numbers this topic watches</h3>
+        <button class="btn" onclick="indSuggest()" title="listed companies its sources name, and prediction markets on it - no model call">✦ Suggest</button>
+        <button class="btn" onclick="checkInd()" title="look for moves now - no model">↻ Check</button></div>
+      <div class="small muted">A price, a macro series or any bar dataset. A spike, a level shift or a new regime joins the timeline and the next assessment, with the stories that landed around it.</div>
+      <div id="indList" class="small"></div>
+      <div class="row" style="margin-top:8px"><select id="indKind" style="width:auto"><option value="price">price</option><option value="macro">macro series</option><option value="probability">prediction market</option><option value="attention">attention (Wikipedia views of a name)</option><option value="count">count (dataset)</option></select>
+        <input type="text" id="indQ" class="grow" placeholder="bitcoin, AAPL, GBP/USD - or a macro id like CPIAUCSL - or mkt.… dataset id" style="width:auto">
+        <button class="btn" onclick="addInd()">Watch</button></div>
+      <div id="pmRows" class="small"></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><div class="row"><h3 class="grow" style="margin:0">Signals</h3>
+        <select id="sOrder" style="width:auto" onchange="loadSignals()"><option value="seen">newest</option><option value="score">strongest</option></select>
+        <select id="sHours" style="width:auto" onchange="loadSignals()"><option value="48">2 days</option><option value="168" selected>week</option><option value="720">month</option><option value="0">all</option></select></div>
+        <div id="slist"></div>
+        <div class="row" style="margin-top:8px"><input type="text" id="addUrl" class="grow" placeholder="add a link or a note by hand" style="width:auto"><button class="btn" onclick="addSignal()">Add</button></div>
+      </div>
+      <div class="card"><h3 style="margin-top:0">Who the sources name</h3>
+        ${widget({form:'minigraph', source:'intel.entities.get', title:'Entities', read:{refresh:'10m', args:{topic_id:id}, map:{nodes:'nodes', links:'links'}}, frame:{size:'l'}})}
+      </div>
+      <div class="card"><h3 style="margin-top:0">Where it is happening</h3>
+        ${widget({form:'globe', source:'intel.places.get', title:'Places', read:{refresh:'30m', args:{topic_id:id, days:90}, map:{points:'points'}}, frame:{size:'l'}})}
+      </div>
+    </div>`;
+  loadSignals(); loadInd();
+}
+async function loadInd() {
+  if (!CUR) return;
+  const r = await call('intel.indicator.list', {topic_id: CUR, days: 90});
+  const ch = r.changes || [];
+  $('indList').innerHTML = (r.indicators || []).map(i => {
+    const mine = ch.filter(c => c.indicator === i.id).slice(0, 3);
+    return `<div class="sig"><div class="sc">${i.kind === 'price' ? '¤' : i.kind === 'macro' ? '∿' : i.kind === 'attention' ? '◉' : '%'}</div><div>
+      <b>${esc(i.label)}</b> <span class="muted">${esc(i.dataset_id)}</span>
+      <div class="muted">${i.last != null ? 'last ' + esc(i.kind === 'probability' ? Math.round(i.last * 100) + '%' : String(+(+i.last).toPrecision(6))) + ' · ' : ''}${esc(i.status || '')}${i.bars ? ' · ' + i.bars + ' bars' : ''}${chgTxt(i)}</div>
+      ${mine.map(c => `<div>${c.direction === 'up' ? '▲' : '▼'} ${esc(c.text)}${(c.stories || []).length ? ' <span class="muted">· around then: ' + c.stories.map(s => esc(s.title)).join(' · ') + '</span>' : ''}</div>`).join('')}</div>
+      <div class="ops"><button class="btn" onclick="rmInd('${esc(i.id)}')">Stop</button></div></div>`;
+  }).join('') || '<div class="muted" style="padding:6px 0">Nothing yet.</div>';
+  const res = r.resolutions || [];
+  if (res.length) $('indList').innerHTML += '<h3 style="margin-top:10px">Settled markets</h3><table style="width:100%"><tr><th align=left>question</th><th>answer</th><th>market a week before</th><th>intel\'s confidence then</th></tr>'
+    + res.map(x => `<tr><td>${esc(x.question || '')}</td><td align=center><b>${esc(String(x.answer || '').toUpperCase())}</b></td>`
+      + `<td align=center>${x.market_week_before == null ? '–' : Math.round(x.market_week_before * 100) + '%'}</td>`
+      + `<td align=center title="${esc((x.assessment || {}).headline || '')}">${esc((x.assessment || {}).confidence || '–')}</td></tr>`).join('') + '</table>'
+    + '<div class="small muted">A record of how the market and the assessment stood before each question was settled - not advice.</div>';
+}
+function chgTxt(i) {
+  const f = (d) => d == null ? '?' : i.kind === 'probability' ? (d >= 0 ? '+' : '') + Math.round(d * 100) + ' pts'
+    : (i.kind === 'price' && i.last - d ? (d >= 0 ? '+' : '') + (d / (i.last - d) * 100).toFixed(1) + '%' : (+d).toPrecision(3));
+  return (i.chg7 != null || i.chg30 != null) ? ` · 7d ${esc(f(i.chg7))} · 30d ${esc(f(i.chg30))}` : '';
+}
+async function addInd() {
+  const q = $('indQ').value.trim(), kind = $('indKind').value;
+  if (!q) return;
+  const args = {topic_id: CUR, kind};
+  if (/^mkt\./.test(q)) args.dataset_id = q; else args.query = q;
+  if (kind === 'probability' && !args.dataset_id) return pmFind(q);
+  const r = await call('intel.indicator.add', args);
+  $('wsMsg').textContent = r.error || r.message || '';
+  if (!r.error) { $('indQ').value = ''; loadInd(); }
+}
+function pmRow(m) {
+  const p = m.prob == null ? '–' : Math.round(m.prob * 100) + '%';
+  return `<div class="sig"><div class="sc">${esc(p)}</div><div>${safeUrl(m.url) ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.question)}</a>` : esc(m.question)}
+    <div class="muted">${esc(m.source)}${m.event && m.event !== m.question ? ' · ' + esc(m.event) : ''}${m.volume ? ' · vol ' + esc(String(Math.round(m.volume))) : ''}${m.end ? ' · ends ' + esc(String(m.end).slice(0, 10)) : ''}</div></div>
+    <div class="ops"><button class="btn" onclick="pmWatch('${esc(m.source)}','${esc(m.id)}',this)">Watch</button></div></div>`;
+}
+async function pmFind(q) {
+  $('pmRows').innerHTML = '<div class="muted">searching…</div>';
+  const r = await call('intel.pm.search', {query: q, limit: 8});
+  $('pmRows').innerHTML = (r.rows || []).map(pmRow).join('') || `<div class="muted">${esc((r.errors || []).join('; ') || r.error || 'no open market found')}</div>`;
+}
+async function indSuggest() {
+  $('pmRows').innerHTML = '<div class="muted">reading what its sources name…</div>';
+  const r = await call('intel.indicator.suggest', {topic_id: CUR});
+  const pr = (r.prices || []).map(p => `<div class="sig"><div class="sc">¤</div><div><b>${esc(p.name)}</b> <span class="muted">${esc(p.symbol)}</span>
+      <div class="muted">${p.followed ? 'you follow ' + esc(p.entity) : 'named in ' + esc(String(p.mentions)) + ' of its sources as ' + esc(p.entity)}</div></div>
+      <div class="ops"><button class="btn" onclick="priceWatch('${esc(p.provider)}','${esc(p.symbol)}','${esc(p.name)}',this)">Watch</button></div></div>`).join('');
+  const mk = (r.markets || []).map(pmRow).join('');
+  const at = (r.attention || []).map(a => `<div class="sig"><div class="sc">◉</div><div><b>${esc(a.label)}</b> <span class="muted">attention</span><div class="muted">${esc(a.description || '')} · daily Wikipedia views of ${esc(a.wiki)}</div></div><div class="ops"><button class="btn" onclick="attWatch('${esc(a.wiki)}','${esc(a.label)}',this)">Watch</button></div></div>`).join('');
+  $('pmRows').innerHTML = (pr ? '<div style="margin-top:6px"><b>Companies its sources name</b></div>' + pr : '')
+    + (mk ? '<div style="margin-top:6px"><b>Prediction markets</b></div>' + mk : '')
+    + (at ? '<div style="margin-top:6px"><b>Attention - when people start reading about them</b></div>' + at : '')
+    || `<div class="muted">${esc((r.errors || []).join('; ') || r.error || 'nothing to suggest yet - it needs a few nights of sources')}</div>`;
+}
+async function attWatch(wiki, name, btn) {
+  const r = await call('intel.indicator.add', {topic_id: CUR, kind: 'attention', wiki_title: wiki, label: name});
+  if (btn) { btn.textContent = r.error ? '✗' : '✓'; btn.disabled = true; btn.title = r.error || ''; }
+  if (!r.error) loadInd();
+}
+async function priceWatch(provider, symbol, name, btn) {
+  const r = await call('intel.indicator.add', {topic_id: CUR, kind: 'price', provider, symbol, label: name});
+  if (btn) { btn.textContent = r.error ? '✗' : '✓'; btn.disabled = true; btn.title = r.error || ''; }
+  if (!r.error) loadInd();
+}
+async function pmSuggest() {
+  $('pmRows').innerHTML = '<div class="muted">matching its questions to markets…</div>';
+  const r = await call('intel.pm.suggest', {topic_id: CUR, per_question: 2});
+  $('pmRows').innerHTML = (r.suggestions || []).map(s => `<div style="margin-top:6px"><b>${esc(s.question)}</b></div>` + s.markets.map(pmRow).join('')).join('')
+    || `<div class="muted">${esc((r.errors || []).join('; ') || r.error || 'no market matches its open questions')}</div>`;
+}
+async function pmWatch(source, id, btn) {
+  const r = await call('intel.indicator.add', {topic_id: CUR, kind: 'probability', market_source: source, market_id: id});
+  if (btn) { btn.textContent = r.error ? '✗' : '✓'; btn.disabled = true; btn.title = r.error || ''; }
+  if (!r.error) loadInd();
+}
+async function rmInd(iid) { await call('intel.indicator.remove', {topic_id: CUR, indicator_id: iid}); loadInd(); }
+async function checkInd() {
+  $('wsMsg').textContent = 'checking…';
+  const r = await call('intel.indicator.check', {topic_id: CUR});
+  $('wsMsg').textContent = r.error || r.message || '';
+  loadInd();
+}
+async function loadSignals() {
+  if (!CUR) return;
+  const r = await call('intel.signal.list', {topic_id: CUR, hours: +$('sHours').value, order: $('sOrder').value, limit: 80});
+  const rows = r.rows || [];
+  $('slist').innerHTML = rows.length ? rows.map(s => {
+    const sc = s.score == null ? '·' : Math.round(s.score), cls = (s.score||0) >= 7 ? 'hi' : (s.score||0) >= 4 ? 'md' : '';
+    return `<div class="sig"><div class="sc ${cls}">${sc}</div><div>
+      ${safeUrl(s.url)?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>`:`<b>${esc(s.title)}</b>`}
+      <div class="small muted">${esc(s.site||'')} · ${esc(s.kind||'')} · ${esc((s.seen||'').slice(0,10))}</div>
+      <div>${esc(s.snippet||'')}</div>${s.so_what?`<div class="why">${esc(s.so_what)}</div>`:''}</div>
+      <div class="ops">${s.chars?`<button class="btn" onclick="readSignal('${esc(s.id)}')">Read</button>`:''}
+        <button class="btn" onclick="researchOn('${esc(s.id)}')" title="research.run on this">Research</button>
+        <span class="row" style="gap:4px"><button class="btn" title="useful - teaches the gates" onclick="fb('${esc(s.id)}','useful',this)">👍</button><button class="btn" title="not useful" onclick="fb('${esc(s.id)}','not_useful',this)">👎</button><button class="btn" title="never show this site again for this topic" onclick="fb('${esc(s.id)}','mute_site',this)">🔇</button></span></div></div>`;
+  }).join('') : '<div class="muted small" style="padding:8px 0">Nothing in this window.</div>';
+}
+async function fb(id, verdict, btn) {
+  const r = await call('intel.feedback', {signal_id: id, verdict});
+  if (btn) { btn.textContent = r.error ? '✗' : '✓'; btn.disabled = true; }
+  if (verdict === 'mute_site' && !r.error) loadSignals();
+}
+async function readSignal(id) {
+  const r = await call('intel.signal.get', {id}); const s = r.signal || {};
+  const d = s.digest || {};
+  $('dlgBody').innerHTML = `<h2>${esc(s.title)}</h2><div class="small muted">${esc(d.site||s.site||'')} ${d.byline?'· '+esc(d.byline):''} ${d.minutes?'· '+d.minutes+' min':''} · ${safeUrl(s.url)?`<a href="${esc(s.url)}" target="_blank" rel="noopener">original ↗</a>`:''}</div>
+    ${s.summary?`<p><b>${esc(s.summary)}</b></p>`:''}${s.so_what?`<p class="muted"><i>${esc(s.so_what)}</i></p>`:''}
+    <div class="digest">${esc(d.text||s.snippet||'')}</div>
+    ${s.code?`<h3>Code${s.code_lang?' · '+esc(s.code_lang):''}</h3><pre class="code">${esc(s.code)}</pre>`:''}`;
+  $('dlg').showModal();
+}
+async function researchOn(id) {
+  const r = await call('intel.signal.get', {id}); const s = r.signal || {};
+  const q = (s.follow_up && s.follow_up[0]) || s.title;
+  const x = await call('research.run', {query: q, mode: 'single', output_mode: 'report'});
+  msg('wsMsg', x.error ? x.error : `research started (job ${x.job_id||'?'}) - "${q}"`, x.error ? 'err' : 'ok');
+}
+async function addSignal() {
+  const v = $('addUrl').value.trim(); if (!v) return;
+  const isUrl = /^https?:\/\//.test(v);
+  const r = await call('intel.signal.add', {topic_id: CUR, url: isUrl ? v : '', note: isUrl ? '' : v});
+  msg('wsMsg', r.error || 'added', r.error ? 'err' : 'ok'); $('addUrl').value = ''; loadSignals();
+}
+async function sweep(id) { msg('wsMsg', 'sweeping…'); const r = await call('intel.sweep', {topic_id: id}); msg('wsMsg', r.error || r.message, r.error ? 'err' : 'ok'); loadSignals(); tile(); }
+async function refresh(id) { const r = await call('intel.refresh', {topic_id: id, queue: true}); msg('wsMsg', r.error || r.message, r.error ? 'err' : 'ok'); }
+async function topicReport(id) {
+  msg('wsMsg', 'building…');
+  const r = await call('intel.report.build', {topic_ids: [id], period_hours: 168, include_reported: true});
+  if (r.error) return msg('wsMsg', r.error, 'err');
+  go('reports'); setTimeout(() => pickReport(r.id), 300);
+}
+async function toCanvas(id) {
+  const sid = ancestorWith('_veraSessionId');
+  if (!sid) return msg('wsMsg', 'open a chat to have a canvas to send it to', 'err');
+  const t = TOPICS.find(x => x.id === id) || {name: id};
+  const recs = [
+    {key: 'widget:intel-tl-' + id, content: {form: 'element', title: t.name + ' · timeline', draw: {tag: 'vera-intel-timeline', attrs: {topic: id, days: 90}}, frame: {size: 'xl'}}},
+    {key: 'widget:intel-sig-' + id, content: {form: 'feed', title: t.name + ' · signals', source: 'intel.signal.list', read: {refresh: '2m', args: {topic_id: id, hours: 168, limit: 30}, map: {events: 'events'}}, frame: {size: 'l'}}},
+  ];
+  let bad = '';
+  for (const r of recs) { const x = await call('canvas.add', {session_id: sid, kind: 'widget', key: r.key, content: r.content, size: 'l', at: 'now'}); if (x.error || x.ok === false) bad = x.error || 'refused'; }
+  msg('wsMsg', bad || 'on the canvas', bad ? 'err' : 'ok');
+}
+
+// topic editor
+function editTopic(id) {
+  const t = id ? (TOPICS.find(x => x.id === id) || {}) : {depth: 'standard', cadence: 'nightly', status: 'active', discovery: true, min_score: 5};
+  const L = (a) => (a || []).join('\n');
+  const opt = (vals, cur) => vals.map(v => `<option ${v===cur?'selected':''}>${v}</option>`).join('');
+  $('dlgBody').innerHTML = `<h2>${id ? 'Edit topic' : 'New topic'}</h2>
+    <label class="f">Name</label><input type="text" id="eName" value="${esc(t.name||'')}" placeholder="e.g. Agentic AI in property valuation">
+    <label class="f">What it is</label><textarea id="eBrief">${esc(t.brief||'')}</textarea>
+    <label class="f">Why it matters to you (assessments are written for this)</label><textarea id="eWhy">${esc(t.why||'')}</textarea>
+    <div class="grid2"><div><label class="f">Open questions (one per line)</label><textarea id="eQs">${esc(L(t.questions))}</textarea></div>
+      <div><label class="f">Searches of your own (one per line)</label><textarea id="eQueries">${esc(L(t.queries))}</textarea></div>
+      <div><label class="f">Entities to follow</label><textarea id="eEnt">${esc(L(t.entities))}</textarea></div>
+      <div><label class="f">Sites to watch (domains)</label><textarea id="eSites">${esc(L(t.sites))}</textarea></div></div>
+    <label class="f">Exclude anything mentioning</label><input type="text" id="eEx" value="${esc((t.exclude||[]).join(', '))}">
+    <div class="row"><div class="grow"><label class="f">Kind (which entity types sources are tagged with)</label><select id="eKind">${opt(['','general','finance','property','osint','tech'], t.kind||'').replace('<option value="">','<option value="">from its words')}</select></div>
+      <div class="grow"><label class="f">Extra entity types (comma separated)</label><input type="text" id="eLabels" value="${esc((t.labels||[]).join(', '))}" placeholder="e.g. data centre operator, grid connection"></div></div>
+    <div class="row"><div class="grow"><label class="f">Depth</label><select id="eDepth">${opt(['scan','standard','deep'], t.depth)}</select></div>
+      <div class="grow"><label class="f">Cadence</label><select id="eCad">${opt(['nightly','twice-daily','weekly','manual'], t.cadence)}</select></div>
+      <div class="grow"><label class="f">Status</label><select id="eStat">${opt(['active','paused','archived'], t.status)}</select></div>
+      <div class="grow"><label class="f">Report from score</label><input type="number" id="eMin" min="0" max="10" value="${esc(t.min_score??5)}"></div></div>
+    <label class="small"><input type="checkbox" id="eDisc" ${t.discovery!==false?'checked':''}> map sources into fabric discovery (entity graph)</label><br>
+    <label class="small"><input type="checkbox" id="eDream" ${t.dream_loop?'checked':''}> also let the dream director think about it (a think-loop)</label>
+    <div class="row" style="margin-top:10px"><button class="btn pri" onclick="saveTopic('${esc(id||'')}')">Save</button>
+      ${id?`<button class="btn danger" onclick="delTopic('${esc(id)}')">Stop tracking</button>`:''}<span id="eMsg" class="msg"></span></div>`;
+  $('dlg').showModal();
+}
+async function saveTopic(id) {
+  const lines = (v) => v.split('\n').map(x => x.trim()).filter(Boolean);
+  const r = await call('intel.topic.save', {id: id || '', name: $('eName').value, brief: $('eBrief').value, why: $('eWhy').value,
+    questions: lines($('eQs').value), queries: lines($('eQueries').value), entities: lines($('eEnt').value), sites: lines($('eSites').value),
+    exclude: $('eEx').value, depth: $('eDepth').value, cadence: $('eCad').value, status: $('eStat').value,
+    min_score: +$('eMin').value, discovery: $('eDisc').checked, dream_loop: $('eDream').checked,
+    kind: $('eKind').value, labels: $('eLabels').value.split(',').map(x => x.trim()).filter(Boolean)});
+  if (r.error) return msg('eMsg', r.error, 'err');
+  $('dlg').close(); await loadTopics(); openTopic(r.topic.id); tile();
+}
+async function delTopic(id) {
+  if (!confirm('Stop tracking this topic? Its history is kept.')) return;
+  await call('intel.topic.delete', {id}); $('dlg').close(); CUR = ''; $('ws').innerHTML = ''; loadTopics(); tile();
+}
+
+// ── reports ──
+let RSEL = '', CHANS = [];
+async function loadReports() {
+  const [tl, rl, ch] = await Promise.all([call('intel.topic.list', {status: 'active'}), call('intel.report.list', {limit: 40}), CHANS.length ? null : call('intel.channel.list')]);
+  if (ch) CHANS = ch.rows || [];
+  $('rTopics').innerHTML = (tl.rows || []).map(t => `<label style="display:inline-block;margin-right:10px"><input type="checkbox" value="${esc(t.id)}"> ${esc(t.name)}</label>`).join('') || '<span class="muted">no active topics</span>';
+  $('rlist').innerHTML = (rl.rows || []).map(r => `<div class="rp ${r.id===RSEL?'on':''}" onclick="pickReport('${esc(r.id)}')"><b>${esc(r.title)}</b>
+     <div class="small muted">${esc((r.ts||'').slice(0,16).replace('T',' '))} · ${r.counts&&r.counts.signals||0} signals ${(r.delivered||[]).length?'· sent: '+esc(r.delivered.join(', ')):''}</div></div>`).join('') || '<div class="muted small">No reports yet.</div>';
+  $('rChans').innerHTML = CHANS.filter(c => c.id !== 'html').map(c => `<label title="${c.available?'':'unavailable here'}" style="${c.available?'':'opacity:.5'}"><input type="checkbox" value="${esc(c.id)}" ${c.available?'':'disabled'}> ${esc(c.label)}${c.needs_target?' *':''}</label>`).join('');
+  if (!ancestorWith('_veraSessionId')) $('rCanvasHere').style.display = 'none';
+}
+async function pickReport(id) {
+  RSEL = id; loadReports();
+  $('rFrame').src = '/intel/report/view/' + id;
+  $('rDeliver').style.display = '';
+  $('rOpen').href = '/intel/report/view/' + id;
+  const r = await call('intel.report.get', {id});
+  $('rSel').textContent = (r.report || {}).title || id;
+  const au = (r.report || {}).audio || {};
+  $('rAudio').textContent = au.url ? `narrated · ${Math.floor((au.seconds || 0) / 60)}:${String(Math.round((au.seconds || 0) % 60)).padStart(2, '0')} · ${(au.chapters || []).length} chapters`
+                                   : 'not narrated yet';
+  $('rSpeak').textContent = au.url ? '🔊 Remake narration' : '🔊 Read aloud';
+  $('dLog').innerHTML = (r.deliveries || []).map(d => `${d.ok?'✓':'✗'} ${esc(d.channel)} ${esc((d.ts||'').slice(11,16))} ${d.ok?'':esc((d.detail||{}).error||'')}`).join(' · ');
+}
+async function speakReport() {
+  if (!RSEL) return;
+  const r = await call('intel.report.speak', {id: RSEL});
+  $('rAudio').textContent = r.error || r.message || 'queued - the player appears on the report when it is ready';
+}
+function useSession() { const s = ancestorWith('_veraSessionId'); if (s) $('rTarget').value = s; }
+async function deliver() {
+  const chans = [...document.querySelectorAll('#rChans input:checked')].map(x => x.value);
+  if (!chans.length) return msg('dMsg', 'tick where it should go', 'err');
+  msg('dMsg', 'sending…');
+  const r = await call('intel.deliver', {report_id: RSEL, channels: chans, target: $('rTarget').value.trim()});
+  const res = r.results || [];
+  msg('dMsg', res.map(x => (x.ok ? '✓ ' : '✗ ') + x.channel + (x.error ? ' (' + x.error + ')' : '')).join('  ') || r.error, res.every(x => x.ok) ? 'ok' : 'err');
+  pickReport(RSEL);
+}
+async function buildReport() {
+  const ids = [...document.querySelectorAll('#rTopics input:checked')].map(x => x.value);
+  msg('rMsg', 'building…');
+  const r = await call('intel.report.build', {topic_ids: ids, period_hours: +$('rHours').value || 24, title: $('rTitle').value, include_reported: $('rAgain').checked});
+  if (r.error) return msg('rMsg', r.error, 'err');
+  msg('rMsg', r.empty ? 'nothing new in that window - try including reported signals' : 'built', r.empty ? 'err' : 'ok');
+  if (!r.empty) pickReport(r.id);
+}
+
+// ── actions ──
+async function loadActions() {
+  const r = await call('intel.action.list', {status: $('aStatus').value, limit: 100});
+  $('alist').innerHTML = (r.rows || []).map(a => `<div class="act"><span style="width:18px;text-align:center">${esc(a.glyph||'')}</span>
+     <div class="grow"><b>${esc(a.label)}</b><div class="small muted">${esc(a.query||a.target||'')} · ${esc(a.status)} ${a.result&&a.result.error?'· '+esc(a.result.error):''}</div></div>
+     ${a.status==='offered'?`<button class="btn pri" onclick="runAction('${esc(a.token)}', this)">Run</button>`:''}</div>`).join('') || '<div class="muted small">Nothing here.</div>';
+}
+async function runAction(token, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  const r = await call('intel.action.run', {token});
+  btn.textContent = r.error ? '✗' : '✓'; btn.title = r.error || r.message || '';
+  setTimeout(loadActions, 900); tile();
+}
+
+// ── settings ──
+async function loadConfig() {
+  const [r, ch] = await Promise.all([call('intel.config.get'), CHANS.length ? null : call('intel.channel.list')]);
+  if (ch) CHANS = ch.rows || [];
+  const c = r.config || {};
+  $('cEnabled').checked = !!c.enabled; $('cSweep').value = c.sweep_hour; $('cBrief').value = c.brief_hour;
+  $('cMax').value = c.max_topics_per_night; $('cPeriod').value = c.report_period_hours; $('cTz').value = c.timezone || '';
+  $('cBase').value = c.public_base || ''; $('cIll').checked = !!c.illustrate;
+  $('cChans').innerHTML = CHANS.filter(x => !x.needs_target).map(x => `<label><input type="checkbox" value="${esc(x.id)}" ${(c.brief_channels||[]).includes(x.id)?'checked':''}> ${esc(x.label)}</label>`).join('');
+  const s = r.schedule || {};
+  const ln = s.last_nightly || {}, lnT = Array.isArray(ln.topics) ? ln.topics.length : (ln.topics || 0);
+  $('cSched').innerHTML = `night queued: ${esc(s.nightly_day||'never')} · brief sent: ${esc(s.brief_day||'never')} · week in review: ${esc(s.weekly_day_done||'never')}<br>last night finished: ${esc(ln.ts||'never')} (${lnT} topics)` + (r.profile ? ' · routing profile <b>intel</b> (Model Routing page)' : '');
+  $('cPersona').value = c.persona || ''; $('cComp').value = (c.competitors || []).join('\n');
+  $('cGate').value = c.llm_gate; $('cDaily').value = c.daily_job_budget; $('cNlp').checked = !!c.nlp; $('cOpp').checked = !!c.opportunistic;
+  $('cAlerts').checked = !!c.alerts; $('cAutoR').checked = !!c.auto_research; $('cNight').checked = !!c.night_summary;
+  $('cSessions').value = JSON.stringify(c.sessions || [], null, 1); $('cPhone').value = c.phone_target || ''; $('cPrinter').value = c.printer_id || '';
+  $('cHost').value = c.files_host || ''; $('cFolders').value = JSON.stringify(c.drop_folders || [], null, 1);
+  $('nSpeak').checked = c.speak !== false; $('nTg').checked = c.telegram_audio !== false; $('nGeo').checked = c.geocode !== false;
+  $('nSpeed').value = c.speak_speed || 0;
+  loadVoice(c.speak_voice || '');
+}
+async function loadVoice(reportVoice) {
+  const [v, g] = await Promise.all([call('tts.voices'), call('tts.config.get')]);
+  const voices = (v.voices || []).map(x => x.id || x).filter(Boolean);
+  const label = (id) => `${id} · ${id.startsWith('b') ? 'British' : id.startsWith('a') ? 'American' : ''} ${id[1] === 'f' ? 'female' : id[1] === 'm' ? 'male' : ''}`;
+  const cur = (g.desired || {}).voice || ((g.nodes || [])[0] || {}).config?.voice || '';
+  $('vVoice').innerHTML = voices.map(id => `<option value="${esc(id)}" ${id === cur ? 'selected' : ''}>${esc(label(id))}</option>`).join('');
+  $('nVoice').innerHTML = '<option value="">Vera\'s voice</option>' + voices.map(id => `<option value="${esc(id)}" ${id === reportVoice ? 'selected' : ''}>${esc(label(id))}</option>`).join('');
+  const n0 = ((g.nodes || [])[0] || {}).config || {};
+  $('vNorm').value = (g.desired || {}).normalizer || n0.normalizer || 'rules';
+  $('vSpeed').value = (g.desired || {}).speed || n0.speed || 1;
+  $('vLang').value = (g.desired || {}).lang ?? n0.lang ?? '';
+  $('vNodes').innerHTML = (g.nodes || []).map(n => n.error ? `✗ ${esc(n.label)}: ${esc(n.error)}`
+    : `${n.matches ? '✓' : '≠'} ${esc(n.label)}: ${esc((n.config || {}).voice || '')} · ${esc(n.lang_used || '')} · ${esc((n.config || {}).normalizer || '')}`).join('<br>') || 'no media node online';
+}
+async function saveVoice() {
+  msg('vMsg', 'applying…');
+  const r = await call('tts.config.set', {voice: $('vVoice').value, normalizer: $('vNorm').value, speed: +$('vSpeed').value || 1, lang: $('vLang').value.trim()});
+  const bad = (r.nodes || []).filter(n => !n.ok);
+  msg('vMsg', r.error || (bad.length ? 'not applied on: ' + bad.map(n => n.label + ' (' + n.error + ')').join(', ') : 'applied on every node'), r.ok ? 'ok' : 'err');
+  loadVoice($('nVoice').value);
+}
+async function tryVoice() {
+  msg('vMsg', 'speaking…');
+  const r = await call('tts.synthesize', {text: 'On the 5th of October 2026 the BoE held rates at 4.25%, and Landsec sold a £1.2bn stake.'});
+  const b64 = r.audio_b64 || (r.content || {}).audio_b64;
+  if (!b64) return msg('vMsg', r.error || 'no audio', 'err');
+  const a = $('vAudio'); a.src = 'data:audio/wav;base64,' + b64; a.style.display = ''; a.play(); msg('vMsg', '');
+}
+async function saveNarration() {
+  const r = await call('intel.config.set', {settings: {speak: $('nSpeak').checked, telegram_audio: $('nTg').checked, geocode: $('nGeo').checked,
+    speak_voice: $('nVoice').value, speak_speed: +$('nSpeed').value || 0}});
+  msg('nMsg', r.error || 'saved', r.error ? 'err' : 'ok');
+}
+async function saveThinking() {
+  let sessions, folders;
+  try { sessions = JSON.parse($('cSessions').value || '[]'); folders = JSON.parse($('cFolders').value || '[]'); }
+  catch (e) { return msg('tMsg', 'sessions / folders must be JSON: ' + e.message, 'err'); }
+  const r = await call('intel.config.set', {settings: {persona: $('cPersona').value, competitors: $('cComp').value.split('\n').map(x => x.trim()).filter(Boolean),
+    llm_gate: +$('cGate').value, daily_job_budget: +$('cDaily').value, nlp: $('cNlp').checked, opportunistic: $('cOpp').checked,
+    alerts: $('cAlerts').checked, auto_research: $('cAutoR').checked, night_summary: $('cNight').checked, sessions,
+    phone_target: $('cPhone').value, printer_id: $('cPrinter').value, files_host: $('cHost').value, drop_folders: folders}});
+  msg('tMsg', r.error || ('saved ' + (r.changed || []).join(', ')), r.error ? 'err' : 'ok');
+  if (!r.error) { LOADED.settings = 0; loadConfig(); }
+}
+
+// ── activity ──
+async function loadActivity() {
+  const [s, n, p] = await Promise.all([call('intel.session.status'), call('intel.notes.list'), call('intel.proposals.list')]);
+  const night = s.night || {}, st = night.stats || {};
+  $('acNight').innerHTML = night.id ? `night <b>${esc(night.id)}</b> started ${esc((night.started||'').slice(0,16).replace('T',' '))} · ${st.topics||0} topics, ${st.new||0} new, ${st.assessed||0} summarised${st.notes?', '+st.notes+' notes':''} · brief: ${night.brief ? (night.brief==='-'?'nothing new':esc(night.brief)) : 'pending'}` : '<span class="muted">no night batch yet</span>';
+  const a = s.active;
+  $('acSession').innerHTML = a ? `<b>${esc(a.name)}</b> open until ${esc(String(a.ends).slice(11,16))} · ${esc(a.mode)} · budget ${a.budget}` :
+    ((s.sessions||[]).length ? (s.sessions||[]).map(x => `<span class="chip">${esc(x.name)} · ${esc(x.start)}-${esc(x.end)}</span>`).join('') : '<span class="muted">none configured - add one in Settings</span>');
+  $('acAlerts').innerHTML = (s.alerts||[]).slice().reverse().map(x => `<div>⚠ <b>${esc(x.topic)}</b> ${esc(x.headline||'')} <span class="muted">(${esc(x.why)} · ${esc((x.ts||'').slice(0,16).replace('T',' '))})</span></div>`).join('') || '<span class="muted">none</span>';
+  $('acWanted').innerHTML = (s.wanted||[]).map(w => `<div>⌕ ${esc(w.query)} <span class="muted">(${esc(w.topic_id)})</span></div>`).join('') || '<span class="muted">none</span>';
+  $('acNotes').innerHTML = (n.rows||[]).slice(0, 30).map(r => `<div class="act"><div class="grow"><b>${esc(r.name)}</b><div class="muted">${esc((r.summary||'').slice(0,220))}</div>`
+    + ((r.action_items||[]).length ? '<ul>' + r.action_items.slice(0,5).map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '') + `</div><span class="muted">${esc(r.meta||'')}</span></div>`).join('') || '<span class="muted">no notes read yet</span>';
+  loadGates();
+  $('acProps').innerHTML = (p.rows||[]).slice(0, 15).map(r => `<div class="act"><div class="grow"><b>${esc(r.title)}</b> <span class="chip">${esc(r.category)}</span><div class="muted">${esc((r.rationale||'').slice(0,200))}</div></div><span class="muted">${r.draft_id ? 'draft '+esc(r.draft_id) : esc(r.error||'')}</span></div>`).join('') || '<span class="muted">none yet</span>';
+}
+async function loadGates() {
+  const g = await call('intel.decisions.stats', {days: 30});
+  const q = g.questions || {};
+  $('acGates').innerHTML = Object.keys(q).length ? '<table style="width:100%"><tr><th align=left>gate</th><th>decisions</th><th>rated</th><th>right</th></tr>'
+    + Object.entries(q).map(([k, v]) => `<tr><td>${esc(k.replace('intel.', ''))}</td><td align=center>${v.decisions}</td><td align=center>${v.with_outcome}</td><td align=center>${v.precision == null ? '–' : Math.round(v.precision * 100) + '%'}</td></tr>`).join('') + '</table>'
+    : '<span class="muted">no decisions yet</span>';
+  const cal = await call('intel.calibration.status');
+  const ct = Object.entries(cal.topics || {});
+  $('acGates').innerHTML += '<h3 style="margin-top:10px">Learned relevance per topic</h3>' + (ct.length
+    ? ct.map(([tid, c]) => `<div>${c.usable ? '✓' : '·'} <b>${esc(tid)}</b> - ${c.n} rated (${c.useful} useful)`
+        + (c.usable ? ` · calibrated (error ${c.ece}) · 50/50 at score ${c.score_at_half}` : ` · ${esc(c.why || '')}`) + '</div>').join('')
+    : '<div class="muted">no ratings yet - 👍 👎 🔇 on signals and report pages teach it</div>')
+    + `<label class="small"><input type="checkbox" ${cal.on ? 'checked' : ''} onchange="setLearned(this.checked)"> let a calibrated curve decide what reaches a report (until then it only watches)</label>`;
+  const sp = g.spend || {};
+  $('acSpend').innerHTML = Object.entries(sp).map(([day, rec]) => `<div><b>${esc(day)}</b> ` + Object.entries(rec).map(([k, v]) =>
+    `<span class="chip">${esc(k)} · ${v.calls} calls · ${Math.round(v.seconds / 60)} min</span>`).join('') + '</div>').join('') || '<span class="muted">nothing yet</span>';
+}
+async function setLearned(on) { await call('intel.config.set', {settings: {calibrated_gate: on}}); }
+async function runCmd() { const t = $('acCmd').value.trim(); if (!t) return; $('acOut').textContent = '…'; const r = await call('intel.command', {text: t}); $('acOut').textContent = r.text || r.error || JSON.stringify(r); tile(); }
+async function runFiles() { const r = await call('intel.files.run', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }
+async function runAdvise() { const r = await call('intel.advise', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }
+async function saveConfig() {
+  const r = await call('intel.config.set', {enabled: $('cEnabled').checked, sweep_hour: +$('cSweep').value, brief_hour: +$('cBrief').value,
+    max_topics_per_night: +$('cMax').value, report_period_hours: +$('cPeriod').value, timezone: $('cTz').value, public_base: $('cBase').value,
+    illustrate: $('cIll').checked, brief_channels: [...document.querySelectorAll('#cChans input:checked')].map(x => x.value)});
+  msg('cMsg', r.error || 'saved', r.error ? 'err' : 'ok'); tile();
+}
+async function n8nImport(dry) {
+  $('nImp').textContent = 'reading the n8n datasets…';
+  const r = await call('intel.import.n8n', {dry_run: dry});
+  if (r.error) { $('nImp').textContent = r.error; return; }
+  $('nImp').innerHTML = (dry ? 'Would import ' : 'Imported ') + `${(r.topics||[]).length} topics, ${r.signals||0} assessed signals, ${r.notes||0} notes and ${(r.competitors||[]).length} competitors:<br>` +
+    (r.topics||[]).map(t => `<span class="chip">${esc(t.name)} · ${t.queries} searches${t.depth==='deep'?' · deep':''}</span>`).join('');
+  if (!dry) { loadTopics(); tile(); }
+}
+async function n8nRetire(dry) {
+  if (!dry && !confirm('Deactivate the n8n intelligence workflows? They are only switched off, never deleted.')) return;
+  $('nRet').textContent = 'asking n8n…';
+  const r = await call('intel.n8n.retire', {dry_run: dry});
+  if (r.error) { $('nRet').textContent = r.error; return; }
+  $('nRet').innerHTML = ((r.workflows||[]).map(w => `${esc(w.name)}: <b>${esc(w.action)}</b>`).join('<br>') || 'no matching workflows')
+    + ((r.missing||[]).length ? `<br><span class="muted">not found: ${esc(r.missing.join(', '))}</span>` : '');
+}
+
+(function init() {
+  tile(); setInterval(tile, 120000);
+  let p = 'overview'; try { p = localStorage.getItem('vera.intel.pane') || 'overview'; } catch (e) {}
+  if (!document.getElementById('pane-' + p)) p = 'overview';
+  go(p);
+})();
+</script>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-panel.js"></script>
+<script src="/ui/vera-settings.js"></script>
+<script src="/ui/widgets/widget_element.js"></script>
+<script src="/ui/vera-dashboard.js"></script>
+<script src="/ui/elements/intel_timeline.js"></script>
+<script src="/ui/vera-panel-bridge.js"></script>
+</body>
+</html>

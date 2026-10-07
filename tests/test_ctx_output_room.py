@@ -90,4 +90,8 @@ def test_the_default_naming_rule_names_a_model_every_node_carries():
     rule = orch.DEFAULT_ROUTING_RULES["naming"]
     assert rule.get("model") == "qwen2.5:0.5b"
     assert rule.get("deny_gpu") is True
-    assert rule.get("prefer") == "cpu-247"       # unchanged: off the embed node
+    # on the GPU node's CPU sibling with the embedder (user, 2026-09-28): the
+    # 0.5b and the embed model are separate runners with two slots there, and a
+    # naming generation takes a gate slot embeddings never use - so it does not
+    # queue behind them; the CPU nodes stay free for the large models
+    assert rule.get("prefer") == "gpu-250-cpu"

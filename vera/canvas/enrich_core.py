@@ -250,11 +250,17 @@ def records_from(cap: str, result: Any, *, kind: str = "") -> List[Dict[str, Any
                 out.append({"id": str(i), "title": _first_line(x), "snippet": x})
             continue
         url = str(x.get("url") or x.get("link") or x.get("href") or "")
-        text = _clean(x.get("text") or x.get("content") or "")
+        raw = html.unescape(str(x.get("text") or x.get("content") or ""))
+        text = _clean(raw)
+        # a record with no title (the fabric's chunks are text alone) is named by its FIRST LINE when it has one - a
+        # board item's "W5-04 retrieval comparison\nDeterministic..." - and by its first sentence otherwise; the list
+        # used to show every fabric record as one run-on line, its name and its body folded together
+        head = _clean(raw.strip().split("\n", 1)[0]) if "\n" in raw.strip()[:160] else ""
         title = (str(x.get("title") or x.get("name") or x.get("label") or x.get("headline") or x.get("symbol") or x.get("key") or "")
-                 or _first_line(text) or url)
+                 or head or _first_line(text) or url)
         title = _clean(title)
-        snippet = _clean(x.get("snippet") or x.get("summary") or x.get("description") or "") or (text if text != title else "")
+        body = text[len(title):].lstrip(" .:-|") if title and text.startswith(title) else text
+        snippet = _clean(x.get("snippet") or x.get("summary") or x.get("description") or "") or (body if body != title else "")
         # the same record twice (a page crawled twice, a chunk indexed twice) is one record; boilerplate is none
         sig = (url.split("#")[0].rstrip("/").lower() if url else "") or re.sub(r"\W+", " ", (title + " " + snippet[:160]).lower()).strip()
         if sig in seen or (not url and _BOILER.search(title)):
@@ -267,11 +273,19 @@ def records_from(cap: str, result: Any, *, kind: str = "") -> List[Dict[str, Any
         when = x.get("published") or x.get("published_at") or x.get("date") or x.get("ts") or x.get("created_at")
         if when:
             rec["when"] = str(when)
-        if x.get("score") is not None:
+        # RELEVANCE, not rank: the fabric's `score` is its rank fusion (~0.016 for the best record), which drew every
+        # bar empty; its vector_score is the similarity (0.65 for the same record), which is what the bar means
+        sc = x.get("vector_score") if x.get("vector_score") is not None else x.get("score")
+        if sc is not None:
             try:
-                rec["score"] = round(float(x.get("score")), 3)
+                rec["score"] = round(float(sc), 3)
             except (TypeError, ValueError):
                 pass
+        tags = x.get("tags")
+        if isinstance(tags, list):
+            tg = [str(t) for t in tags if isinstance(t, (str, int)) and str(t).strip()][:8]
+            if tg:
+                rec["tags"] = tg
         meta = {}
         for k in ("engine", "source", "dataset_id", "via", "author", "symbol", "_group"):
             if x.get(k):
@@ -309,7 +323,7 @@ def overlap(a: Sequence[Dict[str, Any]], b: Sequence[Dict[str, Any]]) -> float:
 
 _USED = {"id", "url", "link", "href", "text", "content", "title", "name", "label", "headline", "snippet", "summary",
          "description", "published", "published_at", "date", "ts", "created_at", "score", "engine", "source",
-         "dataset_id", "via", "author", "symbol", "_group", "domain"}
+         "dataset_id", "via", "author", "symbol", "_group", "domain", "vector_score", "text_score", "tags"}
 
 
 def _fmt(v: Any) -> str:
@@ -361,8 +375,13 @@ def records_item(cap: str, args: Dict[str, Any], result: Any, *, kind: str = "ro
     if not recs:
         return None
     title = title or (_TITLES.get(kind, "Records") + (" · " + query if query else ""))
-    return {"title": title, "source": cap, "args": args, "query": query, "kind": kind, "items": recs,
+    item = {"title": title, "source": cap, "args": args, "query": query, "kind": kind, "items": recs,
             "total": len(recs), "why": why}
+    # the fabric's records open as a GRAPH (the query, the datasets that hold them, the records, the tags they
+    # share) - a list of one-line chunks told nothing about how they relate; the list is one click away
+    if kind == "memory":
+        item["view"] = "graph"
+    return item
 
 
 def item_key(cap: str, args: Dict[str, Any], kind: str) -> str:

@@ -12,6 +12,7 @@
  * Actions: POST /nodes/workers/roles          (nodes.workers.roles.set)
  *          POST /nodes/workers/provision      (nodes.workers.provision)
  *          POST /nodes/workers/sync           (nodes.workers.sync)
+ *          POST /nodes/workers/dispatch       (nodes.workers.dispatch - the rollout stage)
  *
  * A class with no vetted capabilities says so ("0 caps - nothing vetted yet")
  * rather than implying the node will get such work.
@@ -118,6 +119,14 @@
         + '<span class="sp"></span>'
         + '<button data-a="sync-toggle">' + (d.sync_enabled ? 'Pause auto-sync' : 'Resume auto-sync') + '</button>'
         + '<button class="pri" data-a="sync-now"' + (this._busy.sync || d.sandbox ? ' disabled' : '') + '>' + (this._busy.sync ? 'Syncing…' : 'Sync now') + '</button></div>';
+      const dp = d.dispatch || {};
+      if (dp.stages) {
+        const sent = Object.entries(dp.offloaded || {}).map(([k, v]) => k + ' ' + v).join(', ');
+        h += '<div class="row"><span class="sec" style="margin:0">Work sent to nodes</span>'
+          + '<select data-a="stage"' + (d.sandbox ? ' disabled' : '') + '>' + dp.stages.map((s) => '<option value="' + s.id + '"' + (s.id === dp.stage ? ' selected' : '') + ' title="' + esc(s.desc) + '">' + s.id + ' · ' + esc(s.label) + '</option>').join('') + '</select>'
+          + '<span class="muted">' + esc((dp.stages[dp.stage] || {}).desc || '') + ' - only to an idle worker, else it runs on the host'
+          + (sent ? ' · sent so far: ' + esc(sent) : '') + '</span></div>';
+      }
       if (d.sandbox) h += '<div class="note warn">' + esc(d.sandbox_note) + '</div>';
       if (this._msg) h += '<div class="note ' + (this._msg.startsWith('failed') || this._msg.startsWith('could not') ? 'bad' : 'ok') + '">' + esc(this._msg) + '</div>';
 
@@ -167,6 +176,7 @@
       this._root.querySelectorAll('[data-a]').forEach((el) => {
         const a = el.dataset.a, hid = el.dataset.h;
         if (a === 'cls') el.addEventListener('change', () => this._toggle(hid, el.dataset.c, el.checked));
+        else if (a === 'stage') el.addEventListener('change', () => this._act('stage', () => this._call('POST', '/nodes/workers/dispatch', { stage: parseInt(el.value, 10) }), 'stage set'));
         else el.addEventListener('click', () => {
           if (a === 'sync-now') this._act('sync', () => this._call('POST', '/nodes/workers/sync', { limit: 3 }), 'sync ran');
           else if (a === 'sync-toggle') this._act('synccfg', () => this._call('POST', '/nodes/workers/sync', { dry_run: true, enabled: !d.sync_enabled }));

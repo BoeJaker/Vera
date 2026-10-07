@@ -8,15 +8,33 @@ reference guides when you need implementation details.
 > [performance and sizing](00-performance-and-sizing.md), and follow
 > [Getting started](../docs/GETTING_STARTED.md).
 
+## Contents
+
+- [See Vera](#see-vera)
+- [Choose a path](#choose-a-path)
+  - [Learn the platform](#learn-the-platform)
+  - [Run models and distributed work](#run-models-and-distributed-work)
+  - [Build knowledge systems](#build-knowledge-systems)
+  - [Build agents and interfaces](#build-agents-and-interfaces)
+  - [Operate and extend Vera](#operate-and-extend-vera)
+  - [Design notes: decision and world-model tiers](#design-notes-decision-and-world-model-tiers)
+- [Complete guide index](#complete-guide-index)
+- [Status tags](#status-tags)
+- [How every guide is laid out](#how-every-guide-is-laid-out)
+- [Planning and delivery](#planning-and-delivery)
+- [Screenshot maintenance](#screenshot-maintenance)
+
 ## See Vera
 
 These screenshots were captured from the running Vera UI with Operator on
-2026-08-16. They are stored in the repository, so they render on GitHub and in
-offline documentation.
+2026-10-03, at 100% UI scale in the Void theme. They are stored in the
+repository, so they render on GitHub and in offline documentation.
 
 For every currently captured subsystem view, open the
 [generated visual gallery](GALLERY.md). Operator refreshes that replaceable
 gallery without overwriting this authored guide.
+
+[![Chat: a live turn, the agent opening a panel, the Context menu on the left](assets/overview/chat.png)](assets/overview/chat.png)
 
 | Main dashboard | Capability Hub |
 |---|---|
@@ -26,9 +44,9 @@ gallery without overwriting this authored guide.
 |---|---|
 | [![Performance Monitor](assets/overview/perf-monitor.png)](assets/overview/perf-monitor.png) | [![Loop Lab](assets/overview/evolve.png)](assets/overview/evolve.png) |
 
-| Data Fabric | Agent Loop Graph |
+| Data Fabric | Operator Studio |
 |---|---|
-| [![Data Fabric](assets/overview/fabric-panel.png)](assets/overview/fabric-panel.png) | [![Agent Loop Graph](assets/overview/loop-graph.png)](assets/overview/loop-graph.png) |
+| [![Data Fabric](assets/overview/fabric-panel.png)](assets/overview/fabric-panel.png) | [![Operator Studio](assets/overview/operator-studio.png)](assets/overview/operator-studio.png) |
 
 ## Choose a path
 
@@ -60,6 +78,7 @@ gallery without overwriting this authored guide.
 
 ### Build agents and interfaces
 
+- [Chat UI](50-chat-ui.md)
 - [Agents and chat](19-agents-chat.md)
 - [Agent runtimes and providers](36-agent-runtimes-providers.md)
 - [Flow Builder](20-flow-builder.md)
@@ -83,6 +102,17 @@ gallery without overwriting this authored guide.
 - [Frozen evaluation corpus](44-evaluation-corpus.md)
 - [Capability policy boundary](45-capability-policy.md)
 - [Interoperability foundations](46-interoperability-foundations.md)
+- [PWA](47-pwa.md)
+
+### Design notes: decision and world-model tiers
+
+These two pages describe how a fast decision tier and the JEPA world model fit
+into Vera. Most of their content is **🚧 Not live** (design and survey only);
+each section is tagged.
+
+- [System 1 decision models](48-system-one-decision-models.md) — 🚧 not live
+- [Worldview integration](49-worldview-integration.md) — current wiring plus a
+  🚧 not-live opportunity survey
 
 ## Complete guide index
 
@@ -136,6 +166,36 @@ gallery without overwriting this authored guide.
 | 45 | [Capability policy boundary](45-capability-policy.md) | Shadow decisions, effect grants, approvals, and enforcement path |
 | 46 | [Interoperability foundations](46-interoperability-foundations.md) | Common contracts, Runs, adapters, evidence, model packages, Worldview, and A2A boundaries |
 | 47 | [PWA](47-pwa.md) | Installable app: manifest, service worker, offline shell, generated icons |
+| 48 | [System 1 decision models](48-system-one-decision-models.md) | 🚧 **Not live.** Calibrated typed-decision tier: design, ledger, and a survey of 57 decision points |
+| 49 | [Worldview integration](49-worldview-integration.md) | How the JEPA world model is wired in today, known limitations, and a 🚧 not-live opportunity survey |
+| 50 | [Chat UI](50-chat-ui.md) | Every control in the chat: header, rail menus, Context menu, composer, slash commands, messages and reading modes |
+
+## Status tags
+
+Guides mark maturity explicitly so readers never mistake a design for a
+running feature:
+
+| Tag | Meaning |
+|---|---|
+| ✅ **Live** | Runs in the current code and is reachable at runtime |
+| ⚠️ **Opt-in / partial** | Implemented, but off by default, measure-only, or limited |
+| 🧪 **Shadow / offline** | Implemented and tested, but non-authoritative or not wired into runtime |
+| 🚧 **Not live** | Design, proposal or survey only — nothing is implemented |
+
+## How every guide is laid out
+
+Each numbered guide follows the same shape so you can navigate any of them the
+same way:
+
+1. **Overview** — what the subsystem is, where it lives in the source tree, and
+   its maturity.
+2. **Contents** — links to every section.
+3. **Concepts and architecture** — components and data flow, often with a
+   diagram.
+4. **Reference** — capabilities, HTTP routes, UI panels, configuration and
+   events, verified against the source.
+5. **Examples, limits and troubleshooting.**
+6. **Related pages.**
 
 ## Planning and delivery
 
@@ -144,7 +204,7 @@ plans. Loop Lab's board is the operational source of truth. Private supporting
 files shared across main, bleeding-edge, and sandboxes live outside the worktree
 under `<git-common-dir>/vera-work/shared-planning/`; sandbox-local handoff state
 lives in gitignored `.vera-work/work-plan.json`. See
-[Loop Lab](33-evolve.md#repository-shared-private-planning).
+[Loop Lab](33-evolve.md#116-work-plans-and-shared-private-planning).
 
 ## Screenshot maintenance
 

@@ -29,6 +29,7 @@
  *   limit      shorthand for params.limit (default 60 — inline, not exhaustive)
  *   height     px (default 240)
  *   expand     "off" to hide the open-in-full-view affordance
+ *   resize     "off" to leave out the drag grip (a host that sizes the embed itself)
  *   full-url   where the affordance points (default /fabric/panel#graph)
  *
  * Events
@@ -110,6 +111,8 @@
         'width:100%;height:' + height + 'px;border:1px solid var(--border,#2a2622);' +
         'border-radius:var(--radius,4px);overflow:hidden;background:var(--bg0,#12100e)';
       this.appendChild(this._host);
+      this._h = height;
+      if ((this.getAttribute('renderer') || '') === 'struct' && this.getAttribute('resize') !== 'off') this._mkGrip();
 
       this._note = document.createElement('div');
       this._note.style.cssText =
@@ -121,6 +124,26 @@
       run.catch(function (e) {
         this._fail(String(e && e.message || e));
       }.bind(this));
+    }
+
+    // ── a graph the host already has ──────────────────────────────────────
+    // setGraph({nodes, edges}) draws nodes and edges the host built (the canvas's fabric results: the query, the
+    // datasets that hold them, the records, the tags they share) through the same renderer, instead of a snapshot
+    // fetched by layer. Called before the element is connected, it is kept and drawn once the renderer is ready;
+    // called again, the graph is reloaded (positions of nodes that persist are kept by load()).
+    setGraph(data) {
+      this._data = data || { nodes: [], edges: [] };
+      if (this._graph) { try { this._graph.load(this._data); } catch (e) {} this._captionData(); }
+      return this;
+    }
+
+    _captionData() {
+      if (!this._note) return;
+      this._note.textContent = '';
+      var d = this._data || {};
+      var left = document.createElement('span');
+      left.textContent = (d.caption ? d.caption + ' — ' : '') + ((d.nodes || []).length) + ' nodes, ' + ((d.edges || []).length) + ' edges';
+      this._note.appendChild(left);
     }
 
     // ── the structured renderer ───────────────────────────────────────────
@@ -197,7 +220,18 @@
       var left = document.createElement('span');
       var on = (doc.layers || []).filter(function (l) { return l.on && !l.error; }).map(function (l) { return l.label || l.id; });
       left.textContent = 'explode — ' + ((doc.cards || []).length) + ' cards, ' + ((doc.edges || []).length) + ' runs' + (on.length ? ' · ' + on.join(' · ') : '');
+      // the caption WRAPS rather than clips (owner, 2026-10-03: "the text along the bottom of exploded code is cut off")
+      left.style.cssText = 'min-width:0;overflow-wrap:anywhere';
       this._note.appendChild(left);
+      var right = document.createElement('span');
+      right.style.cssText = 'display:flex;gap:10px;align-items:center;flex:0 0 auto';
+      var big = document.createElement('a');
+      big.href = '#'; big.className = 'vge-big';
+      big.textContent = this._ov ? 'back to size ✕' : 'enlarge ⤢';
+      big.title = this._ov ? 'Put the diagram back where it was (Esc)' : 'Open the diagram over the whole window';
+      big.style.cssText = 'color:var(--acc,#5a9e8f);text-decoration:none;white-space:nowrap;cursor:pointer';
+      big.onclick = function (ev) { ev.preventDefault(); this._enlarge(!this._ov); }.bind(this);
+      right.appendChild(big);
       if ((this.getAttribute('expand') || '') !== 'off') {
         var a = document.createElement('a');
         a.href = this.getAttribute('full-url') || '/fabric/panel#graph';
@@ -205,8 +239,78 @@
         a.rel = 'noopener';
         a.textContent = 'open in the inspector ↗';
         a.style.cssText = 'color:var(--acc,#5a9e8f);text-decoration:none;white-space:nowrap';
-        this._note.appendChild(a);
+        right.appendChild(a);
       }
+      this._note.appendChild(right);
+    }
+
+    /* THE DIAGRAM'S SIZE IS THE READER'S (owner, 2026-10-03: "when code is exploded in chat there should be a way to
+       increase the size of the box for viewing the exploded code"). Two ways, wherever the embed is hosted: drag the
+       grip under the diagram for a taller box, or "enlarge" for the whole window (Esc, the backdrop or "back to size"
+       puts it back). The structured renderer refits itself when its box changes (its ResizeObserver). */
+    _setHeight(h) {
+      h = Math.max(160, Math.min(Math.round(h), Math.round((window.innerHeight || 900) * 0.92)));
+      this._h = h; this._host.style.height = h + 'px';
+      if (this._struct) this._struct.style.height = h + 'px';
+    }
+
+    _mkGrip() {
+      var g = document.createElement('div');
+      g.className = 'vge-grip'; g.title = 'Drag to make the diagram taller or shorter';
+      g.style.cssText = 'height:9px;cursor:ns-resize;display:flex;align-items:center;justify-content:center;touch-action:none';
+      g.innerHTML = '<i style="display:block;width:34px;height:3px;border-radius:2px;background:var(--border,#3a352f)"></i>';
+      var self = this, y0 = 0, h0 = 0;
+      g.addEventListener('pointerdown', function (ev) {
+        if (self._ov) return;
+        ev.preventDefault(); y0 = ev.clientY; h0 = self._host.offsetHeight || self._h;
+        try { g.setPointerCapture(ev.pointerId); } catch (e) {}
+        var move = function (e) { self._setHeight(h0 + e.clientY - y0); };
+        var up = function () {
+          g.removeEventListener('pointermove', move); g.removeEventListener('pointerup', up); g.removeEventListener('pointercancel', up);
+          if (self._struct && self._struct.fit) { try { self._struct.fit(); } catch (e) {} }
+        };
+        g.addEventListener('pointermove', move); g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+      });
+      this._grip = g;
+      this.appendChild(g);
+    }
+
+    _enlarge(on) {
+      if (!!on === !!this._ov) return;
+      var self = this;
+      if (on) {
+        var back = document.createElement('div');
+        back.style.cssText = 'position:fixed;inset:0;z-index:2147482990;background:rgba(0,0,0,.5)';
+        back.onclick = function () { self._enlarge(false); };
+        var ov = document.createElement('div');
+        ov.className = 'vge-ov';
+        ov.style.cssText = 'position:fixed;inset:3vh 3vw;z-index:2147482991;display:flex;flex-direction:column;padding:8px;' +
+          'background:var(--bg0,#12100e);border:1px solid var(--border,#2a2622);border-radius:6px;box-shadow:0 18px 60px rgba(0,0,0,.55)';
+        // the embed goes up to the page and a placeholder of its size holds its place, so the reply does not jump
+        this._ph = document.createElement('div');
+        this._ph.style.height = this.offsetHeight + 'px';
+        this.parentNode.insertBefore(this._ph, this);
+        this._css = this.style.cssText;
+        this._ov = ov; this._back = back;
+        document.body.appendChild(back); document.body.appendChild(ov); ov.appendChild(this);
+        this.style.cssText = 'display:flex;flex-direction:column;position:relative;flex:1 1 auto;min-height:0;width:100%';
+        this._host.style.height = ''; this._host.style.flex = '1 1 auto'; this._host.style.minHeight = '0';
+        if (this._struct) this._struct.style.height = '100%';
+        if (this._grip) this._grip.style.display = 'none';
+        this._esc = function (ev) { if (ev.key === 'Escape') { ev.stopPropagation(); self._enlarge(false); } };
+        document.addEventListener('keydown', this._esc, true);
+      } else {
+        document.removeEventListener('keydown', this._esc, true);
+        if (this._ph && this._ph.parentNode) { this._ph.parentNode.insertBefore(this, this._ph); this._ph.remove(); }
+        try { this._ov.remove(); this._back.remove(); } catch (e) {}
+        this._ov = null; this._back = null; this._ph = null;
+        this.style.cssText = this._css || 'display:block;width:100%';
+        this._host.style.flex = ''; this._host.style.minHeight = '';
+        if (this._grip) this._grip.style.display = 'flex';
+        this._setHeight(this._h);
+      }
+      if (this._doc) this._captionStruct(this._doc);
+      if (this._struct && this._struct.fit) { try { this._struct.fit(); } catch (e) {} }
     }
 
     _fail(msg) {
@@ -253,6 +357,12 @@
         },
       });
 
+      // a host that handed its own nodes and edges (setGraph, or renderer="data" with setGraph to follow) draws those
+      if (this._data || (this.getAttribute('renderer') || '') === 'data') {
+        if (this._data) { try { this._graph.load(this._data); } catch (e) { this._fail('load failed'); return; } }
+        this._captionData();
+        return;
+      }
       try {
         await this._graph.fetchSnapshot(layer, params);
       } catch (e) {
@@ -285,6 +395,7 @@
     }
 
     disconnectedCallback() {
+      if (this._ov) return;   // only moving up to (or back from) the enlarged view
       try { if (this._graph && this._graph.destroy) this._graph.destroy(); } catch (e) {}
     }
   }

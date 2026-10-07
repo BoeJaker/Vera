@@ -78,6 +78,40 @@ async def test_completion_stream_maps_chunks_and_usage_without_transport_policy(
 
 
 @pytest.mark.asyncio
+async def test_usage_flattens_bounded_openai_token_details():
+    value = package()
+    result = await consume_inference(
+        provider(value, Transport([{
+            "choices": [{"text": "ok", "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 3,
+                "prompt_tokens_details": {"cached_tokens": 2},
+                "completion_tokens_details": None,
+            },
+        }])), request(value, "prompt", "x"))
+
+    assert result.status == "completed"
+    assert dict(result.usage) == {
+        "prompt_tokens": 3,
+        "prompt_tokens_details.cached_tokens": 2,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detail", [
+    {"cached_tokens": -1}, {"cached_tokens": True}, {"nested": {"x": 1}},
+])
+async def test_usage_rejects_invalid_nested_token_details(detail):
+    value = package()
+    result = await consume_inference(
+        provider(value, Transport([{
+            "choices": [{"text": "ok"}],
+            "usage": {"prompt_tokens_details": detail},
+        }])), request(value, "prompt", "x"))
+    assert (result.status, result.error_code) == ("failed", "invalid_response")
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_accepts_terminal_choice_without_content():
     value = package("chat")
     transport = Transport([

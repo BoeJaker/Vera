@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Tuple
 
 PROFILE = "loop"
-ROLES = ("executor", "coder")
+ROLES = ("executor", "coder", "controller", "planner")
 NODES = ("auto", "gpu", "cpu-247", "cpu-246")
 #: Where `auto` sends a model that does not fit the GPU.
 AUTO_CPU_NODE = "cpu-247"
@@ -55,7 +55,8 @@ def normalise_node(node: Any) -> str:
 
 def build(*, executor_model: str = "", executor_node: str = "auto",
           coder_model: str = "", coder_node: str = "auto", effort: str = "standard",
-          plan_style: str = "auto") -> Tuple[Dict[str, Dict[str, str]], Dict[str, Any]]:
+          plan_style: str = "auto", controller_model: str = "",
+          controller_node: str = "auto") -> Tuple[Dict[str, Dict[str, str]], Dict[str, Any]]:
     """({'loop/executor': {model, node}, ...}, adjustments) for one run.
 
     adjustments may carry `plan_style` (max effort upgrades a stepwise-family
@@ -78,6 +79,14 @@ def build(*, executor_model: str = "", executor_node: str = "auto",
     ex = (executor_model or "").strip()
     if ex:
         out[key("executor")] = {"model": ex, "node": normalise_node(executor_node)}
+    # The loop's DECISIONS - the controller (what next) and the planner (the plan) - on a
+    # chosen model (user, 2026-10-04: "the moe models or specialised large agentic models
+    # vera has to drive the agentic loops"). One choice covers both roles.
+    ctl = (controller_model or "").strip()
+    if ctl:
+        cn = normalise_node(controller_node)
+        out[key("controller")] = {"model": ctl, "node": cn}
+        out[key("planner")] = {"model": ctl, "node": cn}
     if eff == "max":
         style = str(plan_style or "auto").strip().lower()
         if style in MAX_UPGRADES_STYLE:

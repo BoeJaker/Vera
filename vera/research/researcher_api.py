@@ -947,6 +947,7 @@ async def deep_crawl_url(url: str, depth: int, breadth: int, timeout: float,
 async def query_redis(query: str) -> list[Citation]:
     src = next((s for s in sources if s.id == "redis" and s.enabled), None)
     if not src: return []
+    r = None
     try:
         import redis.asyncio as aioredis  # type: ignore
         r = aioredis.Redis(
@@ -977,7 +978,6 @@ async def query_redis(query: str) -> list[Citation]:
                     snippet=val[:300],
                     source_type="redis",
                 ))
-        await r.aclose()
         return citations
     except ImportError:
         log.debug("redis package not installed")
@@ -985,6 +985,12 @@ async def query_redis(query: str) -> list[Citation]:
     except Exception as e:
         log.warning("Redis query failed: %s", e)
         return []
+    finally:                    # a failed scan left its connection open (open-files outage, 2026-10-06)
+        if r is not None:
+            try:
+                await r.aclose()
+            except Exception:
+                pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1697,6 +1703,23 @@ def _find_chroma_stores(root: str) -> list[str]:
     return stores or [root]   # fallback: try root even if no markers found
 
 
+# One chromadb client per server or store for the life of the process (RF-82). Each
+# HttpClient keeps its own pool of keep-alive connections and is never closed, and research
+# built a new one on every query: a mirror running research goals held 518 connections to
+# Chroma after a day, which exhausted Chroma's pool and timed out prod's memory search.
+_CHROMA_CLIENTS: dict = {}
+
+
+def _chroma_client(kind: str, key: str, make):
+    """The cached client for (kind, key), built with make() the first time."""
+    k = (kind, key)
+    c = _CHROMA_CLIENTS.get(k)
+    if c is None:
+        c = make()
+        _CHROMA_CLIENTS[k] = c
+    return c
+
+
 def _chroma_make_clients(src) -> list:
     """
     Return a list of (client, label) tuples to query.
@@ -1737,7 +1760,7 @@ def _chroma_make_clients(src) -> list:
                 continue
             seen_paths.add(real)
             try:
-                client = chromadb.PersistentClient(path=store_path)
+                client = _chroma_client("path", real, lambda: chromadb.PersistentClient(path=store_path))
                 label  = _os.path.basename(store_path.rstrip("/"))
                 clients.append((client, f"local:{label}"))
                 log.debug("chroma: PersistentClient at %s", store_path)
@@ -1745,7 +1768,7 @@ def _chroma_make_clients(src) -> list:
                 log.warning("chroma: cannot open store %s: %s", store_path, e)
     else:
         try:
-            client = chromadb.HttpClient(host=host, port=port)
+            client = _chroma_client("http", f"{host}:{port}", lambda: chromadb.HttpClient(host=host, port=port))
             clients.append((client, f"http:{host}:{port}"))
             log.debug("chroma: HttpClient at %s:%s", host, port)
         except Exception as e:
@@ -2542,7 +2565,7 @@ async def _plan_expansions(
             collect_ollama(thinker, prompt,
                 "You identify research gaps and expansion opportunities in drafts. "
                 "Return only a JSON array.",
-                job_id, timeout_secs=300),
+                job_id, timeout_secs=90),
             timeout=100
         )
         parsed = json.loads(raw[raw.index("["):raw.rindex("]")+1])
@@ -3617,6 +3640,11 @@ async def gather_memory(query: str, top_k: int = 20) -> list[Citation]:
         # Results are MemoryRecord objects or dicts
         cits: list[Citation] = []
         for r in results:
+            # HybridMemoryStore.search returns {"record": {...}, "score": s}; the
+            # record fields live one level down (reading them off the wrapper found
+            # no text, so research never cited memory - RF-80).
+            if isinstance(r, dict) and isinstance(r.get("record"), dict):
+                r = r["record"]
             if hasattr(r, "text"):
                 text = r.text or ""
                 full_text = getattr(r, "full_text", "") or text
@@ -3733,6 +3761,18 @@ async def gather_worldview(query: str, top_k: int = 15) -> list[Citation]:
         if not reg or "func" not in reg:
             log.debug("gather_worldview: worldview.query not registered")
             return []
+        # Only cite the worldview when its health verdict is "ok" (doc 49 §4.1, RF-07):
+        # an overfit or untrained model otherwise feeds research citations.
+        # VERA_RESEARCH_WORLDVIEW_UNGATED=1 restores the old behaviour.
+        if os.environ.get("VERA_RESEARCH_WORLDVIEW_UNGATED", "") != "1":
+            hreg = CAPABILITY_REGISTRY.get("worldview.health")
+            hfn = (hreg.get("raw") or hreg.get("func")) if hreg else None
+            health = await hfn(trace_id=None) if hfn else {"status": "unknown"}
+            if not isinstance(health, dict) or health.get("status") != "ok":
+                log.info("gather_worldview: skipped - worldview health %s (%s)",
+                         (health or {}).get("status") if isinstance(health, dict) else health,
+                         "; ".join((health or {}).get("reasons", [])[:2]) if isinstance(health, dict) else "")
+                return []
         res = await reg["func"](text=query, top_k=top_k, trace_id=None)
         if not isinstance(res, dict) or res.get("error"):
             log.debug("gather_worldview: %s", (res or {}).get("error") if isinstance(res, dict) else res)
@@ -4060,6 +4100,10 @@ def _today_preamble() -> str:
 # model's real window via /api/show → model_info.<arch>.context_length, so we
 # don't have to hand-tune ctx_size per instance.
 _DETECTED_CTX_CACHE: dict[str, int] = {}
+# Last failed detection per key (monotonic time); retried after the cooldown rather
+# than cached as 0 for the life of the process (RF-53).
+_DETECTED_CTX_FAIL: dict[str, float] = {}
+_DETECT_CTX_RETRY_S = 300.0
 # Global ceiling on the auto-detected window (0 = no cap → full model max).
 _MAX_AUTO_CTX = int(os.environ.get("OLLAMA_MAX_AUTO_CTX", "0"))
 
@@ -4073,7 +4117,10 @@ async def _detect_ctx(inst: OllamaInstance) -> int:
     """
     key = f"{inst.base_url}::{inst.model}"
     detected = _DETECTED_CTX_CACHE.get(key)
-    if detected is None:
+    failed_at = _DETECTED_CTX_FAIL.get(key)
+    if detected is None and failed_at is not None and time.monotonic() - failed_at < _DETECT_CTX_RETRY_S:
+        detected = 0
+    elif detected is None:
         detected = 0
         try:
             async with httpx.AsyncClient(timeout=8) as c:
@@ -4089,13 +4136,90 @@ async def _detect_ctx(inst: OllamaInstance) -> int:
                     detected = int(val or 0)
         except Exception as e:
             log.debug("_detect_ctx [%s/%s]: %s", inst.name, inst.model, e)
-        _DETECTED_CTX_CACHE[key] = detected
+        if detected > 0:
+            _DETECTED_CTX_CACHE[key] = detected
+            _DETECTED_CTX_FAIL.pop(key, None)
+        else:
+            _DETECTED_CTX_FAIL[key] = time.monotonic()
     ctx = detected or inst.ctx_size or 8192
     if inst.ctx_size and inst.ctx_size > 0:
         ctx = min(ctx, inst.ctx_size)
     if _MAX_AUTO_CTX > 0:
         ctx = min(ctx, _MAX_AUTO_CTX)
     return ctx
+
+
+def _vera_orch():
+    """The orchestrator module when running inside Vera (None standalone)."""
+    return (sys.modules.get("Vera.vera.capability_orchestration")
+            or sys.modules.get("capability_orchestration"))
+
+
+def _research_origin_headers(job_id: str) -> dict:
+    """X-Vera-Origin for research's node calls, so the node activity tap attributes them."""
+    orch = _vera_orch()
+    fn = getattr(orch, "vera_origin_header", None) if orch else None
+    try:
+        return fn(job_type="research", req_id=str(job_id or ""), cap="research") if fn else {}
+    except Exception:
+        return {}
+
+
+@asynccontextmanager
+async def _research_gate(inst: "OllamaInstance", job_id: str, prompt_chars: int):
+    """Hold the shared generation slot for the node research is about to call.
+
+    Research streamed straight to /api/generate, outside the per-node semaphore and
+    the cross-process GPU gate every other Vera generation goes through, and outside
+    the request log - so it competed for the GPU unseen (RF-50). This takes the same
+    slot (_ollama_slot) for Vera-routed nodes and records one request-log entry.
+    Standalone (no orchestrator) or for a hand-configured node it does nothing.
+    If the slot cannot be had within the timeout the call proceeds, as the gate
+    itself fails open, and the log entry says so.
+    """
+    orch = _vera_orch()
+    iid = getattr(inst, "vera_iid", "") or ""
+    slot_fn = getattr(orch, "_ollama_slot", None) if orch else None
+    log_fn = getattr(orch, "_ollama_log_append", None) if orch else None
+    entry = {
+        "req_id": f"research-{uuid.uuid4().hex[:10]}", "model": getattr(inst, "model", ""),
+        "instance": iid or getattr(inst, "name", ""), "caller_file": "researcher_api.py",
+        "caller_func": "stream_ollama", "prompt_preview": "",
+        "ts": datetime.now(timezone.utc).isoformat(), "status": "running",
+        "session_id": str(job_id or ""), "job_type": "research", "profile": "research",
+        "role": str(getattr(inst, "tier", "") or ""), "request_stage": "research",
+        "prompt_chars": int(prompt_chars or 0),
+    }
+    t0 = time.time()
+    status = "done"
+    try:
+        if slot_fn and iid:
+            try:
+                cm = slot_fn(iid, timeout=_effective_timeout(inst, 300.0))
+                await cm.__aenter__()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # queue timeout: proceed, as the gate fails open
+                log.warning("research: no generation slot on %s (%s) - proceeding", iid, e)
+                entry["gate"] = "timeout_proceeded"
+                cm = None
+            try:
+                yield
+            finally:
+                if cm is not None:
+                    await cm.__aexit__(None, None, None)
+        else:
+            yield
+    except BaseException:
+        status = "error"
+        raise
+    finally:
+        entry.update({"status": status, "elapsed_s": round(time.time() - t0, 2)})
+        if log_fn:
+            try:
+                log_fn(entry)
+            except Exception:
+                pass
 
 
 async def stream_ollama(
@@ -4169,7 +4293,8 @@ async def stream_ollama(
     if _node is not None:
         _node["in_use"] = _node.get("in_use", 0) + 1
 
-    async with httpx.AsyncClient(timeout=to) as client:
+    async with _research_gate(inst, job_id, len(prompt or "") + len(system or "")), \
+               httpx.AsyncClient(timeout=to, headers=_research_origin_headers(job_id)) as client:
         try:
             async with client.stream("POST", inst.generate_url, json=payload) as resp:
                 resp.raise_for_status()
@@ -4699,6 +4824,16 @@ class ResearchDirective:
         return "\n".join(lines) + "\n"
 
 
+_OUTPUT_STYLES = ("report", "newspaper", "guide", "tables", "briefing", "deep_analysis", "comparison")
+_DIRECTIVE_DEPTHS = ("shallow", "standard", "deep")
+
+
+def _directive_enum(value, allowed, default):
+    """The thinker's value if it is one of `allowed` (case/space/hyphen tolerant), else `default`."""
+    v = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return v if v in allowed else default
+
+
 async def build_research_directive(
     query: str,
     thinker: "Optional[OllamaInstance]",
@@ -4749,13 +4884,13 @@ async def build_research_directive(
             raise ValueError("no JSON object in response")
         parsed = json.loads(raw[start:end])
 
-        d.output_style        = parsed.get("output_style", "report")
+        d.output_style        = _directive_enum(parsed.get("output_style"), _OUTPUT_STYLES, "report")
         d.scope_focus         = str(parsed.get("scope_focus", ""))[:300]
         d.scope_exclude       = [str(x)[:80] for x in parsed.get("scope_exclude", [])[:4]]
         d.key_questions       = [str(x)[:150] for x in parsed.get("key_questions", [])[:5]]
         d.table_topics        = [str(x)[:80] for x in parsed.get("table_topics", [])[:4]]
         d.needs_recency       = bool(parsed.get("needs_recency", False))
-        d.depth               = parsed.get("depth", "standard")
+        d.depth               = _directive_enum(parsed.get("depth"), _DIRECTIVE_DEPTHS, "standard")
         d.sub_questions       = [str(x)[:200] for x in parsed.get("sub_questions", [])[:5]]
         d.writer_instructions = str(parsed.get("writer_instructions", ""))[:400]
         d.source_priority     = [str(x)[:60] for x in parsed.get("source_priority", [])[:4]]
@@ -5531,7 +5666,7 @@ async def run_analyst_phase(job: ResearchJob, draft: str,
             timeout=ANALYST_TIMEOUT + 10
         )
         slot_off(slot_a)
-        return result or draft
+        return _merge_analyst_output(draft, result)
     except asyncio.TimeoutError:
         slot_off(slot_a)
         await step_emit(job, "Verify timeout", f"Skipped after {int(ANALYST_TIMEOUT)}s")
@@ -5572,6 +5707,28 @@ class ResearchNode:
     sub_questions: list[str] = field(default_factory=list)
 
 
+def _planning_slots(remaining_after_level: int, per_node: int) -> int:
+    """How many nodes of a level should plan follow-up questions: enough to fill what is left of
+    the question budget after this level, plus one spare (an earlier node may return fewer)."""
+    if remaining_after_level <= 0:
+        return 0
+    per_node = max(1, int(per_node))
+    return -(-int(remaining_after_level) // per_node) + 1
+
+
+def _merge_analyst_output(draft: str, result: str) -> str:
+    """The analyst is asked to APPEND a verification note, not rewrite the report. A reply that is
+    clearly just that note (much shorter than the draft, and without the draft's opening) is
+    appended; a full rewrite is kept as it was. It used to return the reply alone, so a compliant
+    model replaced the whole report with its note."""
+    result = (result or "").strip()
+    if not result:
+        return draft
+    head = " ".join((draft or "").split())[:80]
+    looks_like_note = len(result) < 0.5 * len(draft or "") and (not head or head not in " ".join(result.split()))
+    return (draft.rstrip() + "\n\n" + result) if looks_like_note else result
+
+
 async def research_node(
     node: ResearchNode,
     job: ResearchJob,
@@ -5580,6 +5737,7 @@ async def research_node(
     all_citations: list[Citation],
     knowledge_base: list[str],
     directive: "Optional[ResearchDirective]" = None,
+    plan_children: bool = True,
 ) -> None:
     """
     Research one question node — three instances working in parallel:
@@ -5732,7 +5890,7 @@ async def research_node(
 
     # ── Sub-question planning (THINKER = smart model) ────────────────────────
     # Directive scope guard prevents drift — thinker knows what to stay focused on.
-    if node.depth < MAX_RECURSIVE_DEPTH:
+    if node.depth < MAX_RECURSIVE_DEPTH and plan_children:
         plan_inst = thinker or writer
         sub_sys = "Identify precise follow-up research questions. Return ONLY a JSON array of strings."
 
@@ -5849,10 +6007,14 @@ async def recursive_research(
         await step_emit(job, f"Level {batch[0].depth}",
             f"Investigating {len(batch)} question(s) in parallel…")
 
+        # Only nodes whose follow-up questions can still fit the question budget plan them:
+        # planning for the rest was discarded (with the defaults, 11 of the 16 thinker calls).
+        _planners = _planning_slots(MAX_TOTAL_QUESTIONS - question_count - len(batch),
+                                    MAX_QUESTIONS_PER_LEVEL)
         await asyncio.gather(*[
             research_node(node, job, thinker, writer, all_citations, knowledge_base,
-                          directive=directive)
-            for node in batch
+                          directive=directive, plan_children=_i < _planners)
+            for _i, node in enumerate(batch)
         ])
         all_nodes.extend(batch)
         question_count += len(batch)
@@ -7756,13 +7918,13 @@ async def test_source(req: SourceTestRequest):
                     if real in seen_test: continue
                     seen_test.add(real)
                     try:
-                        c=chromadb.PersistentClient(path=path)
+                        c=_chroma_client("path", real, lambda: chromadb.PersistentClient(path=path))
                         clients_info.append((c, _os.path.basename(path.rstrip("/"))))
                     except Exception as exc:
                         clients_info.append((None, f"{_os.path.basename(path)}: {exc}"))
             else:
                 try:
-                    c=chromadb.HttpClient(host=host,port=port)
+                    c=_chroma_client("http", f"{host}:{port}", lambda: chromadb.HttpClient(host=host,port=port))
                     c.heartbeat()
                     clients_info.append((c, f"http:{host}:{port}"))
                 except Exception as exc:
@@ -9084,7 +9246,7 @@ async def _iter_update_traversal(
         new_summary = await asyncio.wait_for(
             collect_ollama(fast, summ_prompt,
                 "You maintain rolling research summaries. Be concise and dense with facts.",
-                job_id, timeout_secs=300),
+                job_id, timeout_secs=90),
             timeout=100
         )
         if new_summary and new_summary.strip():
@@ -9157,6 +9319,43 @@ def _schedule_iteration_workflow_trigger(it: dict, tm: TraversalMap) -> None:
     ))
     _iter_evidence_tasks.add(task)
     task.add_done_callback(_iter_evidence_tasks.discard)
+
+
+async def _run_scheduled_iteration_job(
+    job: ResearchJob, project_obj: Optional[Project], it: dict,
+    tm: TraversalMap, it_id: str,
+) -> None:
+    """Run one native iteration occurrence with content-free Run observation."""
+    from Vera.vera.execution.schedule_run_projection import (
+        finish_scheduled_run, start_scheduled_run,
+    )
+    try:
+        from Vera.vera.execution.workflow_schedule import research_iteration_schedule
+        schedule_id = research_iteration_schedule(it)["schedule_id"]
+    except Exception:
+        schedule_id = ""
+    projection = start_scheduled_run(
+        source="research_iteration", native_id=it_id,
+        schedule_id=schedule_id, occurrence=tm.iteration_count + 1)
+    try:
+        await run_job_body(job, project_obj)
+    except asyncio.CancelledError:
+        finish_scheduled_run(projection, cancelled=True)
+        raise
+    except Exception as exc:
+        log.warning("Iteration %s: job %s failed: %s", it_id, job.id, exc)
+        job.status = JobStatus.ERROR
+        job.error = str(exc)
+        finish_scheduled_run(projection, error_type=type(exc).__name__)
+    except BaseException as exc:
+        finish_scheduled_run(projection, error_type=type(exc).__name__)
+        raise
+    else:
+        finish_scheduled_run(
+            projection,
+            cancelled=job.status == JobStatus.CANCELLED,
+            error_type=("native_research_failed"
+                        if job.status == JobStatus.ERROR else ""))
 
 
 async def _run_iteration_loop(it_id: str) -> None:
@@ -9294,13 +9493,8 @@ async def _run_iteration_loop(it_id: str) -> None:
         if it.get("target_type") == "project" and it.get("target_id") in projects:
             project_obj = projects[it["target_id"]]
 
-        try:
-            # Run the actual research (single/parallel/deep all work here)
-            await run_job_body(job, project_obj)
-        except Exception as e:
-            log.warning("Iteration %s: job %s failed: %s", it_id, job.id, e)
-            job.status = JobStatus.ERROR
-            job.error  = str(e)
+        # Run the actual research (single/parallel/deep all work here).
+        await _run_scheduled_iteration_job(job, project_obj, it, tm, it_id)
 
         # Persist job
         try:

@@ -77,6 +77,21 @@ try:
     from Vera.vera.operator import operator_run_projection as _run_projection  # noqa: E402
 except ImportError:                                                  # pragma: no cover
     from vera.operator import operator_run_projection as _run_projection       # noqa: E402
+# The discovery read model is OPTIONAL to the operator: when it cannot be imported, its two caps say so and the rest of
+# the operator loads. A plain-'vera' import deep in its chain took every operator.* cap off prod on 2026-09-30.
+DISCOVERY_OPERATOR_LEDGER = None
+_DISCOVERY_IMPORT_ERROR = ''
+try:
+    from vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER       # noqa: E402
+except ImportError:
+    try:
+        from Vera.vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER  # noqa: E402
+    except Exception as _e:                                          # pragma: no cover
+        _DISCOVERY_IMPORT_ERROR = '%s: %s' % (type(_e).__name__, _e)
+        logging.getLogger('vera.operator').warning('operator: discovery read model unavailable (%s) - operator.discovery.* answer unavailable', _DISCOVERY_IMPORT_ERROR)
+except Exception as _e:                                              # pragma: no cover
+    _DISCOVERY_IMPORT_ERROR = '%s: %s' % (type(_e).__name__, _e)
+    logging.getLogger('vera.operator').warning('operator: discovery read model unavailable (%s) - operator.discovery.* answer unavailable', _DISCOVERY_IMPORT_ERROR)
 
 
 def _orch_base_url() -> str:
@@ -433,6 +448,42 @@ async def _open_session(url: str = "", kind: str = "", base_url: str = "",
             return {"error": f"could not load the start page ({resolved['start_url']}): {e}"}
     return {"ok": True, "session_id": sess.session_id, "resolved": resolved,
             "summary": sess.summary()}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  DISCOVERY EVIDENCE — bounded payload-free operator read model
+# ─────────────────────────────────────────────────────────────────────────────
+@capability("operator.discovery.evidence", memory="off", silent=True,
+            http_method="GET", http_path="/operator/discovery/evidence",
+            http_tags=["operator"],
+            contract=_operator_contract(
+                "discovery.evidence.inspect", effects=["read"],
+                trust="bounded_payload_free_evidence", tenant="global_aggregate",
+                pagination="bounded_limit", resources=["cpu", "memory"]),
+            description="Read bounded payload-free discovery route and context benchmark evidence. "
+                        "Inputs: limit (1..50). Output has no query/result payload and no control authority.")
+async def cap_operator_discovery_evidence(limit: int = 20, trace_id=None) -> Dict:
+    if DISCOVERY_OPERATOR_LEDGER is None:
+        return {"ok": False, "error": "discovery read model unavailable", "detail": _DISCOVERY_IMPORT_ERROR}
+    return {"ok": True, **DISCOVERY_OPERATOR_LEDGER.snapshot(int(limit))}
+
+
+@capability("operator.discovery.benchmark.record", memory="off",
+            http_method="POST", http_path="/operator/discovery/benchmark/record",
+            http_tags=["operator"],
+            contract=_operator_contract(
+                "discovery.benchmark.record", effects=["write"],
+                trust="validated_benchmark_evidence", tenant="global_aggregate",
+                resources=["cpu", "memory"]),
+            description="Record an already-computed offline context benchmark comparison in the "
+                        "bounded operator read model. Does not run providers, models, or sources. "
+                        "Inputs: comparison (object from compare_context_benchmark).")
+async def cap_operator_discovery_benchmark_record(
+        comparison: Dict = None, trace_id=None) -> Dict:
+    if DISCOVERY_OPERATOR_LEDGER is None:
+        return {"ok": False, "error": "discovery read model unavailable", "detail": _DISCOVERY_IMPORT_ERROR}
+    value = DISCOVERY_OPERATOR_LEDGER.record_benchmark(comparison or {})
+    return {"ok": True, "benchmark": value}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1102,16 +1153,22 @@ async def cap_mission_run(mission: str = "", target: str = "sandbox",
                         "empty=all), panels (list of panel ids for SELECTIVE "
                         "re-capture — leaves the rest untouched), settle_ms (extra "
                         "wait per panel, default 1400), full_page, base_url, capture, "
-                        "write_docs. Output: {screenshots, domains, capabilities, ...}.")
+                        "write_docs, seed (bool, default true — false captures the "
+                        "target's own data without writing fixtures to it), "
+                        "write_caps (bool, default true — false refreshes only the "
+                        "screenshot blocks and keeps each doc's capability table). "
+                        "Output: {screenshots, domains, capabilities, ...}.")
 async def cap_docs_build(target: str = "sandbox", domains: Optional[List[str]] = None,
                          panels: Optional[List[str]] = None, settle_ms: int = 1400,
                          full_page: bool = False, base_url: str = "",
                          capture: bool = True, write_docs: bool = True,
+                         seed: bool = True, write_caps: bool = True,
                          trace_id=None) -> Dict[str, Any]:
     params = {"target": target, "domains": domains or [], "panels": panels or [],
               "settle_ms": int(settle_ms), "full_page": bool(full_page),
               "base_url": base_url, "capture": bool(capture),
-              "write_docs": bool(write_docs)}
+              "write_docs": bool(write_docs), "seed": bool(seed),
+              "write_caps": bool(write_caps)}
     return await run_mission("documentation", params, _mission_ctx())
 
 

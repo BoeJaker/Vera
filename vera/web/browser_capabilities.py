@@ -7,6 +7,7 @@ Capabilities exposed
 ─────────────────────
   browser.screenshot   — Capture a full-page PNG screenshot of a URL
   browser.content      — Extract text, links, and metadata from a page
+  browser.reader       — Reader mode: the page's article (or a composite of its parts) as markdown
   browser.click        — Click an element by CSS selector and return screenshot
   browser.type         — Type into an input field and return screenshot
   browser.scroll       — Scroll the page and return screenshot
@@ -52,6 +53,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlparse, urlencode, quote_plus
 
@@ -361,6 +363,200 @@ async def browser_content(
             return _err(str(e), url=url, text="", links=[], meta={})
         finally:
             await ctx.close()
+
+
+_READER_JS_PATH = Path(__file__).with_name("reader_extract.js")
+_READER_JS: Optional[str] = None
+
+
+def _reader_js() -> str:
+    """The reader extraction (reader_extract.js), read once: a function expression page.evaluate runs as it is."""
+    global _READER_JS
+    if _READER_JS is None:
+        _READER_JS = _READER_JS_PATH.read_text(encoding="utf-8")
+    return _READER_JS
+
+
+@capability(
+    "browser.reader",
+    http_method="POST", http_path="/browser/reader", http_tags=["browser", "web"],
+    memory="on",
+    description="READER MODE: a page as the article a person reads, not its whole body stripped of tags. Renders "
+                "the page (JavaScript included), drops the chrome (navigation, headers, footers, cookie and share "
+                "blocks, anything hidden), finds the body by where the prose is and how little of it is links, and "
+                "writes it as markdown - headings, paragraphs, lists, quotes, code, tables, links, figures. A page "
+                "whose text is split across several containers comes back as a COMPOSITE of its strongest parts, in "
+                "page order. Input: url (str!), max_chars (int default 60000). Output: {ok, title, byline, site, "
+                "published, image, description, markdown, words, minutes, composite, parts, url, load_ms}.",
+)
+async def browser_reader(url: str, max_chars: int = 60_000, trace_id=None) -> dict:
+    url = _safe_url(url)
+    t0 = time.monotonic()
+    async with _get_semaphore():
+        browser = await _get_browser()
+        ctx, page = await _new_page(browser)
+        try:
+            await page.goto(url, wait_until="domcontentloaded")
+            await asyncio.sleep(0.8)   # let lazy JS render
+            out = await page.evaluate(_reader_js(), int(max_chars or 60_000))
+            out = dict(out or {})
+            out.update(ok=True, url=out.get("url") or page.url, load_ms=round((time.monotonic() - t0) * 1000))
+            return out
+        except Exception as e:
+            log.warning("browser.reader [%s]: %s", url, e)
+            return _err(str(e), url=url, markdown="")
+        finally:
+            await ctx.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ONE PAGE PIPELINE (canvas-enrichment plan, slice 2 - owner, 2026-10-03: "reader mode should be cached as the site is
+# crawled - ideally this is the output the LLM should see to cut out rubbish from its input - the reader mode should not
+# be processed as the user clicks it"). Three cleaners read the web three ways; reader.page is the one way: the page is
+# fetched by the hardened fetch (web_client.fetch_page - fingerprint, rewrites, block detection, reader proxy), the
+# reader extraction (reader_extract.js, the same one browser.reader runs) reads THAT html in a page with the network
+# shut - no second download, no scripts, no wait for the page to render - and only a page that yields no article that
+# way is rendered for real (browser.reader). What it reads is kept (reader_cache: Redis, a week) and its entities are
+# added in the background, so the next ask - the model's, the canvas's reader mode - is instant.
+# ─────────────────────────────────────────────────────────────────────────────
+
+from Vera.vera import capability_orchestration as _orch
+try:
+    from Vera.vera.web import web_client as _wc
+    from Vera.vera.web import reader_cache as _rc
+except ImportError:                                   # pragma: no cover
+    from vera.web import web_client as _wc
+    from vera.web import reader_cache as _rc
+
+READER_MIN_WORDS = 80
+_reader_bg = set()
+
+
+async def _reader_from_html(url: str, html: str, max_chars: int = 200_000) -> dict:
+    """reader_extract.js over html already fetched: the page is served from memory at its own address (so links and
+    the document's location are its own) and every other request - scripts, styles, images, frames - is refused."""
+    async with _get_semaphore():
+        browser = await _get_browser()
+        ctx, page = await _new_page(browser)
+        try:
+            async def serve(route):
+                req = route.request
+                if req.is_navigation_request() and req.frame == page.main_frame:
+                    await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=html)
+                else:
+                    await route.abort()
+            await ctx.route("**/*", serve)
+            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            out = dict(await page.evaluate(_reader_js(), int(max_chars or 200_000)) or {})
+            out.update(ok=True, url=url)
+            return out
+        except Exception as e:
+            return _err(str(e)[:200], url=url, markdown="")
+        finally:
+            await ctx.close()
+
+
+def _cap_fn(name: str):
+    c = _orch.CAPABILITY_REGISTRY.get(name) or {}
+    return c.get("func") or c.get("fn")
+
+
+async def _reader_entities(url: str, markdown: str) -> None:
+    """The page's named things, added to its cache entry when the NLP tier answers (off every caller's path)."""
+    ner = _cap_fn("nlp.ner")
+    if not ner or not markdown:
+        return
+    try:
+        try:
+            from Vera.vera.canvas import turn_core as _tc
+        except ImportError:                           # pragma: no cover
+            from vera.canvas import turn_core as _tc
+        body = _tc.prose(markdown[:8000])
+        tagged = []
+        for off, chunk in _tc.chunks(body)[:6]:
+            r = await asyncio.wait_for(ner(text=chunk), 12.0)
+            tagged.append((off, r if isinstance(r, dict) else {}))
+        ents = _tc.merge(body, tagged)[:40]
+        await _rc.update(_orch.REDIS, url, entities=[{k: e[k] for k in ("text", "type", "count")} for e in ents])
+    except Exception as e:
+        log.debug("reader entities [%s]: %s", url, e)
+
+
+def _spawn_bg(coro):
+    t = asyncio.ensure_future(coro); _reader_bg.add(t); t.add_done_callback(_reader_bg.discard)
+
+
+async def reader_read(url: str, *, max_chars: int = 60_000, fresh: bool = False, mode: str = "auto",
+                      html: str = "") -> dict:
+    """The reader version of a page: the cache first; then the fetched page read in memory; then a real render."""
+    url = _safe_url(url)
+    t0 = time.monotonic()
+    redis = _orch.REDIS
+    if not fresh:
+        hit = await _rc.get(redis, url, _cap_fn("fabric.objects.get"))
+        if hit and (hit.get("markdown") or "").strip():
+            out = _rc.trimmed(hit, max_chars)
+            out.update(ok=True, cached=True, ms=round((time.monotonic() - t0) * 1000))
+            return out
+    if mode == "cache":                        # only what has been read already - never a fetch (the canvas asks this)
+        return _err("not read yet", url=url, markdown="", cached=False, ms=round((time.monotonic() - t0) * 1000))
+    rec, via, why = None, "", ""
+    if mode in ("auto", "fetch"):
+        page_html, title = html, ""
+        if not page_html:
+            fp = await _wc.fetch_page(url, timeout=10.0, max_chars=200_000)
+            if fp.get("error") or fp.get("status") in (404, 410):
+                why = fp.get("error") or "HTTP %s" % fp.get("status")
+            elif fp.get("block_reason"):
+                why = "blocked: " + str(fp.get("block_reason"))
+            page_html, title = fp.get("html") or "", fp.get("title") or ""
+            # the reader proxy's answer is text already - the article, without a document to read it from
+            if not page_html and fp.get("via_reader") and len(str(fp.get("text") or "").split()) >= READER_MIN_WORDS:
+                rec, via = {"ok": True, "url": url, "title": title, "markdown": fp["text"],
+                            "words": len(fp["text"].split())}, "reader-proxy"
+        if page_html and not rec:
+            r = await _reader_from_html(url, page_html)
+            if r.get("ok") and int(r.get("words") or len(str(r.get("markdown") or "").split())) >= READER_MIN_WORDS:
+                rec, via = r, "fetch"
+            elif not why:
+                why = "the fetched page yields no article (rendered by its scripts?)"
+    if not rec and mode in ("auto", "browser"):
+        r = await browser_reader(url=url, max_chars=200_000)
+        if r.get("ok") and str(r.get("markdown") or "").strip():
+            rec, via = r, "browser"
+        elif not why:
+            why = r.get("error") or "no article found"
+    if not rec:
+        return _err(why or "no article found", url=url, markdown="", ms=round((time.monotonic() - t0) * 1000))
+    rec = dict(rec, via=via, read_at=now_iso())
+    rec.pop("load_ms", None)
+    await _rc.put(redis, url, rec, _cap_fn("fabric.objects.put"))
+    _spawn_bg(_reader_entities(url, str(rec.get("markdown") or "")))
+    out = _rc.trimmed(rec, max_chars)
+    out.update(ok=True, cached=False, ms=round((time.monotonic() - t0) * 1000))
+    return out
+
+
+@capability(
+    "reader.page",
+    http_method="POST", http_path="/reader/page", http_tags=["browser", "web", "reader"],
+    memory="off",
+    description="A page as the ARTICLE a person reads (reader mode), from the reader cache when it has been read in the "
+                "last week, else read now and kept: the page is fetched by the hardened fetch and the reader extraction "
+                "runs over it in memory (no render, no second download); only a page that yields no article that way is "
+                "rendered for real (browser.reader). Its named things (people, organisations, places, dates) are added "
+                "in the background. Use this rather than web.fetch when you want to READ a page: less boilerplate, the "
+                "article only. Input: url (str!), max_chars (int default 60000), fresh (bool - skip the cache), mode "
+                "(auto|fetch|browser|cache). Output: {ok, title, byline, site, published, image, description, markdown, words, "
+                "minutes, url, via (fetch|reader-proxy|browser), cached, entities?, read_at, ms}. mode=cache answers only what "
+                "has been read already (never fetches).",
+)
+async def reader_page(url: str, max_chars: int = 60_000, fresh: bool = False, mode: str = "auto", trace_id=None) -> dict:
+    if not str(url or "").strip():
+        return _err("url required")
+    m = str(mode or "auto").lower()
+    return await reader_read(url, max_chars=max(500, int(max_chars or 60_000)), fresh=bool(fresh),
+                             mode=m if m in ("auto", "fetch", "browser", "cache") else "auto")
 
 
 @capability(

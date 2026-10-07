@@ -8,8 +8,10 @@ These encode the hard-won fixes for provisioning a NATIVE Vera worker on a fresh
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import shlex
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional, Tuple
 
 # Hosts that mean "this same box" — a REMOTE worker cannot reach the orchestrator's own
 # localhost, so any backend URL/host pointing here must be re-pointed at a LAN address.
@@ -56,10 +58,40 @@ def worker_backend_env(env: Dict[str, str], cfg: Dict[str, object], backend_host
     return out
 
 
+#: What a node worker needs to train models for the host (node_compute_core):
+#: torch for the worldview JEPA, scikit-learn for the markets models (numpy,
+#: for the ML Lab trainer, comes with requirements.txt). torch from the CPU
+#: index: the default wheel pulls ~2 GB of CUDA libraries a worker never uses.
+WORKER_ML_PIP = (
+    # psutil: the worker's own CPU/RAM metrics (workers.py) - without it the
+    # metrics loop never starts and node scheduling sees no free CPU or memory
+    # on any node (found 2026-10-04: no node had ever published metrics)
+    ("psutil",),
+    ("--index-url", "https://download.pytorch.org/whl/cpu", "torch"),
+    ("scikit-learn", "scipy"),
+)
+#: Printed when a training library did not install (the provision log shows it).
+ML_PIP_FAILED = "VERA_ML_PIP_FAILED"
+
+
+def worker_ml_pip_cmd(venv: str, pins: Optional[Dict[str, str]] = None) -> str:
+    """One pip call per group, each allowed to fail without stopping setup.
+    `pins` ({"torch": "2.7.1", "scikit-learn": "1.7.1"}) pin a package to the
+    host's release, so what a node pickles loads on the host."""
+    pins = pins or {}
+    out = ""
+    for grp in WORKER_ML_PIP:
+        args = [f"{a}=={pins[a]}" if a in pins else a for a in grp]
+        out += (f'"{venv}/bin/pip" install -q ' + " ".join(shlex.quote(a) for a in args)
+                + f' || echo "{ML_PIP_FAILED}: {grp[-1]}"; ')
+    return out
+
+
 def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str, str],
                       port: int = 8990, use_systemd: bool = True, *,
                       bundle: bool = False, extra_env: Optional[Dict[str, str]] = None,
-                      nice: int = 0, cpu_weight: int = 0) -> str:
+                      nice: int = 0, cpu_weight: int = 0, ml_pip: bool = True,
+                      ml_pins: Optional[Dict[str, str]] = None) -> str:
     """Build the shell command that clones Vera, builds a venv, and launches a native
     worker joined to the shared stack. Fixes what the naive launch got wrong:
 
@@ -78,6 +110,10 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
     new commit deleted does not linger; the venv lives outside the tree and
     survives the swap. A re-run restarts the unit, which is how a node picks up
     a new commit.
+
+    ``ml_pip`` adds the training libraries (see :data:`WORKER_ML_PIP`),
+    pinned by ``ml_pins``; a failure there is reported, never fatal - the
+    worker still serves every other class.
 
     ``extra_env`` lands in the unit verbatim (the worker role, thread caps,
     HOME). ``nice``/``cpu_weight`` (when non-zero) lower the worker's claim on
@@ -124,7 +160,14 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
         fetch = (
             f"rm -rf {src}.new; mkdir -p {src}.new; "
             f"base64 -d | tar -xzf - -C {src}.new; "
-            f"rm -rf {src}; mv {src}.new {src}; "
+            # move the old tree aside, never rm it in place: the worker still
+            # running from it can write bytecode into it mid-delete, and `rm`
+            # then fails "Directory not empty" under set -e (cpu-246,
+            # 2026-10-04). A rename cannot fail that way; the old tree goes
+            # best-effort.
+            f"rm -rf {src}.old 2>/dev/null || true; "
+            f"[ -d {src} ] && mv {src} {src}.old; mv {src}.new {src}; "
+            f"rm -rf {src}.old 2>/dev/null || true; "
         )
     else:
         fetch = (
@@ -146,6 +189,7 @@ def native_worker_cmd(root: str, repo: str, redis_url: str, backend_kv: Dict[str
         f"[ -x {venv}/bin/python ] || python3 -m venv {venv} --system-site-packages; "
         f'"{venv}/bin/pip" install -q -U pip wheel; '
         f'"{venv}/bin/pip" install -q -r {src}/requirements.txt; '
+        + (worker_ml_pip_cmd(venv, ml_pins) if ml_pip else "")
     )
     launch_systemd = (
         f"printf %s {shlex.quote(unit_b64)} | base64 -d > /etc/systemd/system/vera-worker.service; "
@@ -225,3 +269,141 @@ def pidfile_lookup_cmd(component: str, candidates=None) -> str:
     return (f'PIDF=""; for d in {dirs}; do '
             f'[ -f "$d/{component}.pid" ] && PIDF="$d/{component}.pid" && break; done; '
             f'PID=$(cat "$PIDF" 2>/dev/null); ')
+
+
+# ── component versions ────────────────────────────────────────────────────────
+# A deployed component had no version: nothing could say whether two nodes run
+# the same NLP server, or whether a node is behind the host. The version is the
+# content of the files a deploy ships, so it needs no release numbering and a
+# node cannot claim a version it does not have. Deploy writes it beside the
+# files as `<component>.version.json`; the component (or an SSH read) reports it.
+
+VERSION_SCHEMA = "vera.component-version/v1"
+
+
+def version_file(component: str) -> str:
+    return f"{component}.version.json"
+
+
+def file_sha256(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def component_version(component: str, files: Iterable[Tuple[str, bytes]]) -> Dict[str, object]:
+    """The version record for a component built from `files` ((dest name,
+    content) pairs, as deployed). Order-independent: the version hashes each
+    file's name and digest in name order."""
+    digests = {str(dest): file_sha256(content) for dest, content in files}
+    h = hashlib.sha256()
+    for dest in sorted(digests):
+        h.update(dest.encode("utf-8") + b"\0" + digests[dest].encode("ascii") + b"\n")
+    return {"schema": VERSION_SCHEMA, "component": component,
+            "version": "code-" + h.hexdigest()[:12], "files": digests}
+
+
+def version_json(record: Dict[str, object]) -> bytes:
+    return json.dumps(record, sort_keys=True, indent=1).encode("utf-8")
+
+
+def version_lookup_cmd(component: str, candidates=None) -> str:
+    """Shell that prints the deployed version record from whichever edge dir
+    the component went to, or nothing when it was deployed before versions."""
+    dirs = " ".join(tuple(candidates or EDGE_DIR_CANDIDATES))
+    name = version_file(component)
+    return (f'for d in {dirs}; do [ -f "$d/{name}" ] && cat "$d/{name}" && break; '
+            f'done; true')
+
+
+def parse_version(stdout: str) -> Dict[str, object]:
+    """The version record an SSH read returned, or {} for none / garbage."""
+    try:
+        rec = json.loads((stdout or "").strip() or "{}")
+    except ValueError:
+        return {}
+    return rec if isinstance(rec, dict) and rec.get("schema") == VERSION_SCHEMA else {}
+
+
+def compare_versions(host: Dict[str, object], node: Dict[str, object]) -> Dict[str, object]:
+    """How a node's deployed component stands against what the host would ship.
+
+    state: `current` (same version), `behind` (a different version),
+    `unversioned` (deployed before versions existed, so unknown), `absent`.
+    `changed` names the files that differ, so "behind" says what by."""
+    if node is None:
+        return {"state": "absent", "changed": []}
+    if not node.get("version"):
+        return {"state": "unversioned", "changed": []}
+    if node.get("version") == host.get("version"):
+        return {"state": "current", "changed": []}
+    hf = host.get("files") or {}
+    nf = node.get("files") or {}
+    changed = sorted(k for k in set(hf) | set(nf) if hf.get(k) != nf.get(k))
+    return {"state": "behind", "changed": changed}
+
+
+#: The version record's entry for what a deploy installs (not a file).
+DEPS_ENTRY = "<deps>"
+
+
+# ── the media server's profile (/etc/default/vera-inference) ──────────────────
+#: Where every node mounts the shared specialist-model store, read-only.
+MODEL_STORE_MOUNT = "/opt/vera-store/models"
+
+
+def media_env_profile(has_gpu: bool, port: int = 8765,
+                      app_dir: str = "/home/Servers/StableDiffustionWhisper",
+                      store: str = MODEL_STORE_MOUNT) -> str:
+    """The media server's environment for one node.
+
+    Every node serves every model (user, 2026-09-28: "all nodes have access to
+    the same non-llm models ... all plumbed in"); a CPU node runs them on CPU.
+    It does not take GPU work away from the GPU node: media routing is
+    GPU-first (resolve_media's prefer_gpu), so a CPU node serves a service only
+    when no GPU node offers it - overflow and failover, not a peer."""
+    dev = "cuda" if has_gpu else "cpu"
+    lines = [
+        "# /etc/default/vera-inference - written by Vera (provision.deploy gpu_inference).",
+        "# Edits here are replaced on the next deploy; change the component instead.",
+        f"# Profile: {'GPU' if has_gpu else 'CPU'} node - every service on, models from the shared store.",
+        f"INFER_APP_DIR={app_dir}",
+        f"SERVER_PORT={int(port)}",
+        f"VERA_MODEL_STORE={store}",
+        "# the node's own cache: only for a model the store does not hold",
+        "HF_HOME=/.cache/huggingface",
+        "ENABLE_WHISPER=1",
+        "ENABLE_TTS=1",
+        "ENABLE_SD=1",
+        f"SD_DEVICE={dev}",
+        "TTS_ENGINE=kokoro",
+        "# Vera calls the media server over HTTP only; its Redis job queues (and the",
+        "# 'Redis unavailable localhost:6379' warning at every start) are unused.",
+        "ENABLE_REDIS=0",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def component_sync_plan(rows) -> list:
+    """What bringing each node to the host's version takes.
+
+    rows: [{host_id, host, state, changed, running}] from a version read and a
+    status read per node. A node already current is left alone; one where the
+    component is neither versioned nor running was never given it, and a sync
+    brings nodes UP TO DATE - it does not spread a component to new nodes.
+    Dependencies are reinstalled only when they changed, or when nothing says
+    what is installed (an unversioned deploy): a pip install of the NLP server
+    is ~2 GB, and a code-only change needs none of it."""
+    plan = []
+    for r in rows:
+        state = r.get("state") or "unversioned"
+        base = {"host_id": r.get("host_id", ""), "host": r.get("host", ""), "state": state}
+        if state == "current":
+            plan.append({**base, "action": "skip", "why": "already on the host's version"})
+        elif state in ("absent", "unversioned") and not r.get("running"):
+            plan.append({**base, "action": "skip", "why": "not deployed on this node"})
+        else:
+            deps = state == "unversioned" or DEPS_ENTRY in (r.get("changed") or [])
+            plan.append({**base, "action": "deploy", "install_deps": deps,
+                         "why": ("files changed: " + ", ".join(r.get("changed") or [])
+                                 if state == "behind" else
+                                 "running a version this host cannot verify")})
+    return plan

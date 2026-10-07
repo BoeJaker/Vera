@@ -124,6 +124,11 @@ tr:hover td{background:rgba(255,255,255,.02)}
           <div class="field" id="dp-model-box" style="display:none;flex:2"><label>vLLM model (HF id)</label><input id="dp-model" placeholder="Qwen/Qwen2.5-7B-Instruct"></div>
           <div class="field" style="max-width:130px"><label>Backend</label><select id="dp-backend"><option value="auto">auto</option><option value="docker">docker</option><option value="proxmox">proxmox</option><option value="ssh">ssh</option></select></div>
         </div>
+        <div class="row" id="dp-vllm-box" style="display:none">
+          <div class="field" style="max-width:150px"><label>vLLM build</label><select id="dp-vmode" title="auto: the CUDA build when an NVIDIA GPU answers on the host, else the CPU build"><option value="auto">auto (detect GPU)</option><option value="gpu">gpu (CUDA, keeps the V100)</option><option value="cpu">cpu</option></select></div>
+          <div class="field" style="max-width:110px"><label>vLLM version</label><input id="dp-vver" placeholder="latest"></div>
+          <div class="field" style="flex:2"><label>vLLM wheel (optional)</label><input id="dp-vwheel" placeholder="auto - CPU: the store's vllm/ wheel (Debian 12, AVX2 int4)" title="An explicit wheel path or URL. The released CPU wheel needs glibc 2.39; the fleet's nodes run Debian 12, so the shared store holds one built for them."></div>
+        </div>
         <div class="row"><button class="btn pri" id="dp-go" onclick="dpApply()" disabled>Provision</button><span id="dp-note" class="hint">pick a target</span></div>
         <div class="hint">One call to <b>provision.apply</b>: components resolve docker → proxmox → ssh (auto-installing Docker over SSH when needed) and register every new endpoint (ollama/vLLM instances, docker hosts, workers) into the cluster. New-CT targets are created + enrolled first. Agents can run the same flow headlessly with the <b>provision.overview</b> / <b>provision.apply</b> caps — their calls appear live in the log below.</div>
         <pre class="mono" id="dp-log"></pre>
@@ -151,6 +156,13 @@ tr:hover td{background:rgba(255,255,255,.02)}
         <div class="row">
           <div class="field" style="max-width:120px"><label>Port</label><input id="port" type="number" placeholder="auto"></div>
           <div class="field" id="modelField" style="display:none;flex:2"><label>vLLM model (HF id or path)</label><input id="model" placeholder="e.g. Qwen/Qwen2.5-7B-Instruct"></div>
+        </div>
+        <div class="row" id="vllmOpts" style="display:none">
+          <div class="field" style="max-width:150px"><label>vLLM build</label><select id="in-vmode" title="auto: the CUDA build when an NVIDIA GPU answers on the host, else the CPU build"><option value="auto">auto (detect GPU)</option><option value="gpu">gpu (CUDA, keeps the V100)</option><option value="cpu">cpu</option></select></div>
+          <div class="field" style="max-width:110px"><label>vLLM version</label><input id="in-vver" placeholder="latest"></div>
+          <div class="field" style="flex:2"><label>vLLM wheel (optional)</label><input id="in-vwheel" placeholder="auto - CPU: the store's vllm/ wheel (Debian 12, AVX2 int4)" title="An explicit wheel path or URL. The released CPU wheel needs glibc 2.39; the fleet's nodes run Debian 12, so the shared store holds one built for them."></div>
+        </div>
+        <div class="row">
           <div style="display:flex;flex-direction:column;gap:6px;justify-content:flex-end;padding-bottom:2px">
             <label class="chk"><input type="checkbox" id="sudo" checked> use sudo</label>
             <label class="chk"><input type="checkbox" id="gpu"> GPU node</label>
@@ -158,7 +170,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
           </div>
         </div>
         <div class="row"><button class="btn pri" id="goBtn" onclick="go()" disabled>Install &amp; Connect</button><span id="goNote" class="hint"></span></div>
-        <div class="hint">Installs run over SSH on the selected host using its stored credentials. Ollama binds to <b>0.0.0.0</b> and registers as a cluster node; Docker registers as an SSH-managed host; vLLM installs into <b>~/.vera/vllm</b>.</div>
+        <div class="hint">Installs run over SSH on the selected host using its stored credentials. Ollama binds to <b>0.0.0.0</b> and registers as a cluster node; Docker registers as an SSH-managed host; vLLM installs into <b>~/.vera/vllm</b> with the build for the host (the CUDA build that keeps the V100, or the CPU build) and a launcher that applies its settings. To add vLLM <i>beside</i> a node's Ollama and switch between them, deploy the <b>vllm_server</b> component below, then <b>Switch backend</b> on the machine (Estate → Machines).</div>
         <pre class="mono" id="log"></pre>
       </div>
 
@@ -181,7 +193,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
           <button class="btn sm" id="cstopBtn" onclick="cstop()" disabled>Stop</button>
           <span id="cgoNote" class="hint"></span>
         </div>
-        <div class="hint">gpu_inference pulls heavy GPU deps (tick <b>install deps</b>; first run is slow). onnx_runtime / mesh_gateway are light. Launches with nohup by default; tick <b>systemd</b> to survive reboots.</div>
+        <div class="hint">gpu_inference pulls heavy GPU deps (tick <b>install deps</b>; first run is slow). onnx_runtime / mesh_gateway are light. Launches with nohup by default; tick <b>systemd</b> to survive reboots. <b>vllm_server</b> installs vLLM beside the node's Ollama (tick <b>install deps</b>) and is never started by a deploy: move the node with <b>Switch backend</b> in Estate → Machines.</div>
         <pre class="mono" id="clog"></pre>
       </div>
 
@@ -226,7 +238,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </div></div>
 
     <!-- (Backends tab removed — ollama ⇄ vLLM switching now lives in
-         Estate → Nodes; the idle-worker policy was retired.) -->
+         Estate → Machines (Switch backend: nodes.backend.switch); the idle-worker policy was retired.) -->
 
     <!-- ══ DOCKER ═════════════════════════════════════════════════════════ -->
     <div class="pane" id="pane-docker"><div class="wrap">
@@ -366,6 +378,7 @@ function pickTarget(k){
   _target=k;
   document.querySelectorAll('.targ').forEach(e=>e.classList.toggle('on',e.dataset.k===k));
   $('modelField').style.display=(k==='vllm')?'':'none';
+  $('vllmOpts').style.display=(k==='vllm')?'':'none';
   $('goBtn').disabled=!curHost()||!k;
   const t=_targets.find(x=>x.key===k)||{};
   $('goBtn').textContent=(t.register?'Install & Connect':'Install');
@@ -389,6 +402,11 @@ async function go(){
   const body={host_id:h.id,target:_target,sudo:$('sudo').checked,has_gpu:$('gpu').checked,connect:$('connect').checked};
   const p=parseInt($('port').value,10); if(p) body.port=p;
   if(_target==='vllm' && $('model').value.trim()) body.serve_model=$('model').value.trim();
+  if(_target==='vllm'){
+    if($('in-vmode').value!=='auto') body.mode=$('in-vmode').value;
+    if($('in-vver').value.trim()) body.vllm_version=$('in-vver').value.trim();
+    if($('in-vwheel').value.trim()) body.pip_spec=$('in-vwheel').value.trim();
+  }
   const log=$('log'); log.style.display='block';
   log.textContent='▶ Installing '+_target+' on '+h.host+' …\n(this can take several minutes)\n';
   $('goBtn').disabled=true;
@@ -609,7 +627,7 @@ async function credLoad(){
 }
 
 // (Backends + idle-worker JS removed — ollama ⇄ vLLM switching lives in
-//  Estate → Nodes now, and the idle-worker policy was retired.)
+//  Estate → Machines now (nodes.backend.switch), and the idle-worker policy was retired.)
 
 // ── DOCKER ───────────────────────────────────────────────────────────────────
 async function dkLoad(){
@@ -810,6 +828,7 @@ function dpTogglePayload(k){
   document.querySelectorAll('#dp-payloads .targ').forEach(e=>e.classList.toggle('on',_dpSel.has(e.dataset.p)));
   $('dp-image-box').style.display=_dpSel.has('image:custom')?'':'none';
   $('dp-model-box').style.display=_dpSel.has('vllm')?'':'none';
+  $('dp-vllm-box').style.display=(_dpSel.has('vllm')||_dpSel.has('vllm_server'))?'':'none';
   dpBtn();
 }
 function dpBtn(){
@@ -841,6 +860,11 @@ async function dpApply(){
     const m=$('dp-model').value.trim();
     if(!m){ toast('vLLM needs a model (HF id)','err'); return; }
     options.model=m;
+  }
+  if(_dpSel.has('vllm')||_dpSel.has('vllm_server')){
+    if($('dp-vmode').value!=='auto') options.vllm_mode=$('dp-vmode').value;
+    if($('dp-vver').value.trim()) options.vllm_version=$('dp-vver').value.trim();
+    if($('dp-vwheel').value.trim()) options.pip_spec=$('dp-vwheel').value.trim();
   }
   if(target.indexOf('new-ct:')===0){
     const node=$('dp-ct-node').value;

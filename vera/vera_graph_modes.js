@@ -14,6 +14,9 @@
  *   ops-iso    Estate > Live ops' own lattice, 3D (ops-2d: the same lattice in 2D, its channel routing) (/ui/iso-lattice.js, window.VeraLattice) - planes (props.plane, else the type,
  *              ordered by how far the graph reaches them from its hub), areas (props.area/domain/host, else the hub's branch),
  *              pipes on channel tracks, iso widgets beside each node; 3D stacked or flat, or 2D
+ *   struct-iso the code / prose explode's structure on Live ops' lattice: a plane per kind of symbol, an area per file,
+ *              class or paragraph (Graph.fromContract loads an explode; any graph works - a node's type is its kind)
+ *   struct     the same structure drawn by the explode renderer (<vera-structgraph>)
  *   mermaid    <vera-mermaid> (/ui/elements/vera_mermaid.js) - the nodes as a flowchart, a subgraph per type, the
  *              edges with their relation as the label (the diagram technique the chat and the canvas draw with)
  * Hover a block: it lights and says what it is. Click: the graph's detail drawer for that node.
@@ -149,7 +152,8 @@
   // branch (props.area / domain / host, else the hub's child the node hangs from), the pipes on their tracks, iso widgets
   // beside every node. Click a node: its routes light; double-click: the graph's detail drawer.
   var BAD = /^(down|fail|failed|error|err|dead|offline|stopped|unreachable|timeout)$/, WARN = /^(warn|warning|degraded|stale|busy|slow)$/;
-  function latticeOf(N, E){
+  function latticeOf(N, E, o){
+    o = o || {};
     var P = function(n){ return (n && n.props) || n || {}; }, byId = {}, adj = {}, deg = {};
     N.forEach(function(n){ byId[n.id] = n; adj[n.id] = []; });
     E.forEach(function(e){ if (!byId[e.from] || !byId[e.to] || e.from === e.to) return; adj[e.from].push(e.to); adj[e.to].push(e.from); deg[e.from] = (deg[e.from] || 0) + 1; deg[e.to] = (deg[e.to] || 0) + 1; });
@@ -166,7 +170,7 @@
     var pd = {}, pc = {}, first = {}, pname = {}; N.forEach(function(n, i){ var k = planeOf(n), p = P(n); pd[k] = (pd[k] || 0) + (depth[n.id] || 0); pc[k] = (pc[k] || 0) + 1; if (first[k] == null) first[k] = i; if (p.plane_name) pname[k] = String(p.plane_name); });
     // nodes that name their own plane keep the source's order (Live ops lists them plane by plane); else by reach from the hub
     var own = N.length && N.every(function(n){ return P(n).plane != null && P(n).plane !== ''; });
-    var planes = Object.keys(pc).sort(function(a, b){ return own ? first[a] - first[b] : (pd[a] / pc[a] - pd[b] / pc[b] || pc[a] - pc[b]); });
+    var planes = Object.keys(pc).sort(function(a, b){ return o.rank ? (o.rank(a) - o.rank(b) || first[a] - first[b]) : own ? first[a] - first[b] : (pd[a] / pc[a] - pd[b] / pc[b] || pc[a] - pc[b]); });
     var areaOf = function(n){ var p = P(n); var a = p.area || p.domain_name || (typeof p.domain === 'string' ? p.domain : '') || p.host; if (a != null && a !== '') return String(a);
       var b = branch[n.id]; return b && kids[b] ? nameOf(byId[b]) : nameOf(byId[rootOf[n.id]]); };   // a leaf straight off the hub (or the hub) stands in the hub's area
     var ac = {}, ai = {}; N.forEach(function(n){ var a = areaOf(n), d = P(n).domain; if (a){ ac[a] = (ac[a] || 0) + 1; if (typeof d === 'number') ai[a] = Math.min(ai[a] == null ? d : ai[a], d); } });
@@ -188,19 +192,19 @@
     var links = E.filter(function(e){ return byId[e.from] && byId[e.to] && e.from !== e.to; }).map(function(e){ return { a: e.from, b: e.to, kind: 'req' }; });
     return { planes: planes.map(function(id){ return { id: id, name: pname[id] || id }; }), areas: keep, nodes: nodes, links: links };
   }
-  function opsLattice(view){ return function(host, graph, api){
+  function opsLattice(view, struct){ return function(host, graph, api){
     var box = document.createElement('div'); box.style.cssText = 'position:absolute;inset:0';
     var note = document.createElement('div'); note.style.cssText = 'position:absolute;left:8px;bottom:6px;z-index:50;pointer-events:none;font:10px var(--mono,monospace);color:var(--dim2,#999)';
     host.appendChild(box); host.appendChild(note);
-    var lv = null, sig = '';
+    var lv = null, sig = '', sig0 = '';
     function draw(){
       need('/ui/iso.js', function(){ return !!window.VeraISO; }).then(function(ok){ return ok && need('/ui/iso-lattice.js', function(){ return !!window.VeraLattice; }); }).then(function(ok){
         if (!ok) { box.textContent = 'the iso lattice (/ui/iso-lattice.js) did not load'; return; }
-        var N = api.nodes().slice(0, 400), E = api.edges(), d = latticeOf(N, E);
+        var N = api.nodes().slice(0, 400), E = api.edges(), d = struct ? structOf(N, E) : latticeOf(N, E);
         var s = N.length + ':' + E.length + ':' + N.slice(0, 60).map(function(n){ return n.id; }).join(','); if (lv && s === sig) return; sig = s;
         if (!lv) lv = window.VeraLattice.mount(box, { view: view, onOpen: function(n){ if (n && n._g) api.open(n._g); } });
-        lv.set(d); lv.fit();
-        note.textContent = 'live ops · ' + (view === '2d' ? '2D' : '3D') + ' · ' + d.nodes.length + ' nodes on ' + d.planes.length + ' planes in ' + d.areas.length + ' areas' + (api.nodes().length > N.length ? ' (first ' + N.length + ')' : '') + ' · double-click: details';
+        var first = !sig0; sig0 = sig; lv.set(d); lv.fit(true); if (first) setTimeout(function(){ if (lv) lv.fit(true); }, 700);   /* and once more when the host has settled */   // a tile shows the whole stack - every plane in view (ctrl+wheel zooms, a drag pans)
+        note.textContent = (struct ? 'structure' : 'live ops') + ' · ' + (view === '2d' ? '2D' : '3D') + ' · ' + d.nodes.length + ' nodes on ' + d.planes.length + ' planes in ' + d.areas.length + ' areas' + (api.nodes().length > N.length ? ' (first ' + N.length + ')' : '') + ' · double-click: details';
       });
     }
     draw();
@@ -208,9 +212,50 @@
   }; }
   G.latticeOf = latticeOf;
 
+  // ── structures: the code and prose explodes (code.explode, nlp.explode.prose - layers, groups, cards, edges) as graphs ──
+  // Graph.fromContract(doc) turns one into nodes and edges any vera-graph can load; the Structure methods draw it back as the
+  // explode renderer draws it (<vera-structgraph>) or as a 3D lattice: a plane per kind of symbol (module, class, function,
+  // method, then what it uses), an area per file, class or paragraph. Any graph can be drawn so: a node's type is its kind.
+  var KORD = ['file', 'module', 'class', 'function', 'async_function', 'method', 'variable', 'import', 'external', 'person', 'org', 'organization', 'location', 'gpe', 'date', 'time', 'event', 'job_title'];
+  var kindRank = function(k){ var i = KORD.indexOf(String(k).toLowerCase()); return i < 0 ? KORD.length : i; };
+  function fromContract(doc){
+    doc = doc || {}; var G0 = {}; (doc.groups || []).forEach(function(g){ if (g && g.id != null) G0[g.id] = g; });
+    var nodes = (doc.cards || []).map(function(c){ var g = G0[c.group] || {};
+      return { id: String(c.id), label: String(c.title || c.id), type: String(c.kind || 'item'),
+        props: Object.assign({}, c, { layer: undefined, xlayer: String(c.layer || ''), group: undefined, xgroup: c.group == null ? '' : String(c.group), kind: String(c.kind || 'item'), plane: String(c.kind || 'item'), area: String(g.label || c.group || ''), _group: c.group != null ? { id: String(c.group), label: String(g.label || c.group), kind: String(g.kind || 'group'), parent: g.parent == null ? null : String(g.parent) } : null, _contract: String(doc.kind || '') }) }; });
+    var have = {}; nodes.forEach(function(n){ have[n.id] = 1; });
+    var edges = (doc.edges || []).filter(function(e){ return have[String(e.from)] && have[String(e.to)]; }).map(function(e){ return { from: String(e.from), to: String(e.to), rel: String(e.kind || e.label || 'RELATES'), xlayer: String(e.layer || ''), label: String(e.label || '') }; });
+    return { nodes: nodes, edges: edges };   /* the explode's own layer list stays on the nodes - handed to the graph it opened a layers popover over the methods */
+  }
+  // and back: a contract from any graph's nodes and edges (a node's own card where it came from one; else its type as its kind)
+  function contractOf(N, E){
+    var groups = {}, cards = N.map(function(n){ var p = (n && n.props) || {}, g = p._group || { id: String(p.xgroup || p.group || typeOf(n)), label: String(p.xgroup || p.group || typeOf(n)), kind: 'group', parent: null };
+      groups[g.id] = groups[g.id] || g;
+      return Object.assign({}, p, { id: n.id, group: g.id, layer: p.xlayer || p.layer || 'graph', kind: String(p.kind || typeOf(n)), title: String(p.title || nameOf(n)), subtitle: String(p.subtitle || p.detail || typeOf(n)) }); });
+    var contractKind = (N[0] && N[0].props && N[0].props._contract) || (cards.some(function(c){ return /function|class|module|method/.test(c.kind); }) ? 'code' : 'prose');
+    return { kind: contractKind, layers: [{ id: 'graph', label: 'the graph', kind: 'symbol', on: true }], groups: Object.keys(groups).map(function(k){ return groups[k]; }),
+      cards: cards, edges: E.map(function(e){ return { from: e.from, to: e.to, layer: e.xlayer || e.layer || 'graph', kind: String(e.rel || 'RELATES').toUpperCase(), label: e.label || '' }; }), assessments: [] };
+  }
+  function structOf(N, E){ return latticeOf(N, E, { rank: kindRank }); }
+  function structure(host, graph, api){
+    var el = null;
+    function draw(){
+      need('/ui/structgraph.js', function(){ return !!(window.customElements && customElements.get('vera-structgraph')); }).then(function(ok){
+        if (!ok) { host.textContent = 'the structure renderer (/ui/structgraph.js) did not load'; return; }
+        if (!el) { el = document.createElement('vera-structgraph'); el.setAttribute('bare', ''); el.style.cssText = 'position:absolute;inset:0;display:flex'; host.appendChild(el); }
+        try { el.setDoc(contractOf(api.nodes().slice(0, 400), api.edges())); } catch(e){}
+      });
+    }
+    draw();
+    return { update: draw, destroy: function(){} };
+  }
+  G.fromContract = fromContract; G.contractOf = contractOf; G.structOf = structOf;
+
   G.registerMode({ id: 'exploded',  label: 'Exploded',     order: 10, mount: exploded });
   G.registerMode({ id: 'ops-iso',   label: 'Live ops · 3D', order: 12, mount: opsLattice('3d') });
   G.registerMode({ id: 'ops-2d',    label: 'Live ops · 2D', order: 13, mount: opsLattice('2d') });
+  G.registerMode({ id: 'struct-iso', label: 'Structure · 3D', order: 14, mount: opsLattice('3d', true) });
+  G.registerMode({ id: 'struct',    label: 'Structure', order: 15, mount: structure });
   G.registerMode({ id: 'estate-3d', label: 'Estate · 3D', order: 20, mount: estate(30) });
   G.registerMode({ id: 'estate-2d', label: 'Estate · 2D', order: 30, mount: estate(90) });
   G.registerMode({ id: 'mermaid',   label: 'Mermaid',      order: 40, mount: mermaid });

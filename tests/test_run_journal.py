@@ -178,6 +178,47 @@ def test_sqlite_rebuild_replays_event_appended_after_last_checkpoint(tmp_path):
     reopened.close()
 
 
+def test_sqlite_retention_deletes_only_old_terminal_runs(tmp_path):
+    journal = SqliteRunJournal(tmp_path / "runs.sqlite3")
+    for name in ("old", "middle", "new"):
+        run = _completed_run(name)
+        journal.register(run)
+        for event in run.events:
+            journal.append(event)
+        journal.checkpoint(run)
+
+    receipt = journal.prune(2)
+
+    assert receipt == {
+        "limit": 2, "observed": 3, "deleted_terminal": 1,
+        "deferred_nonterminal": 0, "retained": 2,
+    }
+    assert journal.run_ids() == ["new", "middle"]
+    journal.close()
+
+
+def test_sqlite_retention_defers_active_runs(tmp_path):
+    journal = SqliteRunJournal(tmp_path / "runs.sqlite3")
+    active = Run(id="active", kind="test")
+    active.transition(RunStatus.RUNNING, event_type="run.started")
+    journal.register(active)
+    journal.append(active.events[0])
+    journal.checkpoint(active)
+
+    later = _completed_run("later")
+    journal.register(later)
+    for event in later.events:
+        journal.append(event)
+    journal.checkpoint(later)
+
+    receipt = journal.prune(1)
+
+    assert receipt["deleted_terminal"] == 0
+    assert receipt["deferred_nonterminal"] == 1
+    assert journal.run_ids() == ["later", "active"]
+    journal.close()
+
+
 def test_controls_record_intent_and_native_acknowledgement_without_execution():
     ledger = RunControlLedger()
     requested = ledger.request(run_id="run-1", action="retry",

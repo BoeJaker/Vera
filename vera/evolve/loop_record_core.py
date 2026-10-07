@@ -24,6 +24,7 @@ Pure: no I/O.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Dict, Optional, Sequence, Tuple
 
@@ -87,6 +88,21 @@ def _final_text(ev: Dict[str, Any]) -> str:
         if isinstance(v, str) and v.strip():
             return v[:FINAL_MAX]
     return ""
+
+
+def delegate_job(run_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The delegated job's facts a loop's run hash carries (field `delegate`,
+    JSON, written by evolve.delegate), or {}."""
+    raw = (run_state or {}).get("delegate")
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        v = json.loads(raw)
+    except Exception:
+        return {}
+    return v if isinstance(v, dict) else {}
 
 
 def run_record_from_events(session_id: str, events: Sequence[Dict[str, Any]], digest: Dict[str, Any], *,
@@ -153,6 +169,12 @@ def run_record_from_events(session_id: str, events: Sequence[Dict[str, Any]], di
         "started_at": started.isoformat() if started else "",
         "ingested_at": str(ingested_at or ""),
     }
+    job = delegate_job(rs)
+    if job:
+        # A delegated job (evolve.delegate): its own facts ride on its loop's record,
+        # and its title - not the composed handover goal - labels the row.
+        compact["delegate"] = job
+        compact["label"] = (str(job.get("title") or "")[:80] or compact["label"])
     detail = dict(compact)
     detail.update({
         "goal": goal,

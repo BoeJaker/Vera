@@ -55,10 +55,9 @@ Architecture
 
 Capabilities registered
 ────────────────────────
-  vllm.status           — cluster health summary
-  vllm.instances.list   — list all configured instances
-  vllm.instances.add    — add a new instance at runtime
-  vllm.instances.remove — remove an instance
+  vllm.status           — cluster health summary (every configured instance)
+  vllm.instances.add    — add a new instance at runtime (persisted in Redis)
+  vllm.instances.remove — remove an instance (persisted in Redis)
   vllm.models           — list models served by all instances
   vllm.generate         — raw /v1/completions call
   vllm.chat             — /v1/chat/completions
@@ -73,6 +72,8 @@ Configuration (env vars)
 ─────────────────────────
   VLLM_INSTANCES        JSON list: [{"id":"gpu0","url":"http://host:8001","has_gpu":true}]
                         OR single URL: "http://192.168.0.250:8001"
+                        Runtime add/remove is stored in Redis (vera:vllm:instances)
+                        and merged over this list at boot (vllm_registry_core).
   VLLM_MODEL            default model name
   VLLM_API_KEY          optional API key (vLLM supports --api-key)
   VLLM_QUANTIZATION     gptq | awq | fp8 | gguf | turbomind (passed at launch)
@@ -93,9 +94,12 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
+import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, asdict
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
@@ -112,6 +116,17 @@ from Vera.vera.capability_orchestration import (
 )
 from Vera.vera.config import cfg
 
+try:
+    from Vera.vera.vllm import vllm_registry_core as _reg_core
+    from Vera.vera.vllm import vllm_route_core as _route_core
+    from Vera.vera.vllm import node_backend_core as _backend_core
+    from Vera.vera.vllm import vllm_install_core as _install_core
+except Exception:                                    # worktree / app-free import
+    from vera.vllm import vllm_registry_core as _reg_core
+    from vera.vllm import vllm_route_core as _route_core
+    from vera.vllm import node_backend_core as _backend_core
+    from vera.vllm import vllm_install_core as _install_core
+
 log = logging.getLogger("vera.vllm")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -126,6 +141,14 @@ class VLLMInstance:
     has_gpu: bool = True
     priority: int = 0
     api_key: str = ""                     # optional bearer token
+    # Ollama node id this server shares hardware with (e.g. vLLM on the V100 of
+    # gpu-250): its calls take THAT node's semaphore + cross-process gate, so a
+    # vLLM and an Ollama generation can never overlap on one device.
+    gate_as: str = ""
+    # thinking for requests that do not choose: "" model default | "on" | "off"
+    think_default: str = ""
+    # model names routed here though this server runs another model (stand-ins)
+    stands_in_for: List[str] = field(default_factory=list)
     # runtime state
     status: str = "unknown"              # unknown | online | offline | degraded
     latency_ms: Optional[float] = None
@@ -161,6 +184,19 @@ _LORA_ID_COUNTER = 1
 # ── Default config ─────────────────────────────────────────────────────────────
 VLLM_MODEL          = os.environ.get("VLLM_MODEL", "")
 VLLM_API_KEY        = os.environ.get("VLLM_API_KEY", "")
+# How long a request waits on the server: between bytes when streaming, for the
+# whole reply when not. A CPU node decodes about a token a second and compiles on
+# its first request - a fixed 180 s cut ordinary replies off (5 Oct 2026).
+VLLM_READ_TIMEOUT_S = float(os.environ.get("VLLM_READ_TIMEOUT_S", "1800") or 1800)
+
+
+def _req_timeout() -> "httpx.Timeout":
+    return httpx.Timeout(VLLM_READ_TIMEOUT_S, connect=10.0)
+
+
+def _err(exc: BaseException) -> str:
+    """An exception as text - a ReadTimeout's own message is empty."""
+    return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
 VLLM_QUANTIZATION   = os.environ.get("VLLM_QUANTIZATION", "")
 VLLM_TENSOR_PAR     = int(os.environ.get("VLLM_TENSOR_PARALLEL", "1"))
 VLLM_GPU_MEM_UTIL   = float(os.environ.get("VLLM_GPU_MEM_UTIL", "0.90"))
@@ -197,11 +233,133 @@ def _init_instances():
             has_gpu=spec.get("has_gpu", True),
             priority=spec.get("priority", len(VLLM_INSTANCES)),
             api_key=spec.get("api_key", VLLM_API_KEY),
+            gate_as=str(spec.get("gate_as") or ""),
         )
         VLLM_INSTANCES[iid] = inst
         log.info("vllm: registered instance %s → %s", iid, inst.url)
 
 _init_instances()
+
+KEY_VLLM_INSTANCES = "vera:vllm:instances"
+_REG_DOC: Dict[str, Any] = _reg_core.empty_doc()
+_REG_LOADED = False
+_REG_LOCK: Optional[asyncio.Lock] = None
+
+
+async def _ensure_registry_loaded() -> None:
+    """Load the stored registry once. add/remove call this first, so an add made
+    while the boot load is still waiting for Redis cannot overwrite the stored
+    document with a one-entry copy."""
+    global _REG_LOCK
+    if _REG_LOADED:
+        return
+    if _REG_LOCK is None:
+        _REG_LOCK = asyncio.Lock()
+    async with _REG_LOCK:
+        if not _REG_LOADED:
+            await _load_registry()
+
+
+def _env_ids() -> List[str]:
+    return [str(s.get("id") or f"vllm-{i}") for i, s in enumerate(_parse_instances_env())]
+
+
+async def _save_registry() -> None:
+    r = getattr(_orch, "REDIS", None)
+    if not r or not _REG_LOADED:
+        return
+    try:
+        await r.set(KEY_VLLM_INSTANCES, json.dumps(_REG_DOC))
+    except Exception as e:
+        log.warning("vllm: save registry: %s", e)
+
+
+async def _load_registry() -> None:
+    """Restore runtime add/remove from Redis once it is connected (boot only)."""
+    global _REG_DOC, _REG_LOADED
+    for _ in range(60):
+        if getattr(_orch, "REDIS", None):
+            break
+        await asyncio.sleep(1)
+    r = getattr(_orch, "REDIS", None)
+    if not r:
+        log.info("vllm: registry persistence unavailable (no Redis)")
+        _REG_LOADED = True       # nothing to restore; saves are no-ops too
+        return
+    try:
+        raw = await r.get(KEY_VLLM_INSTANCES)
+        _REG_DOC = _reg_core.normalise_doc(json.loads(raw) if raw else None)
+    except Exception as e:
+        # Leave _REG_LOADED False: a later add/remove retries the read
+        # rather than saving over a document it could not read.
+        log.warning("vllm: load registry: %s", e)
+        return
+    _REG_LOADED = True
+    _apply_registry()
+    if _REG_DOC["instances"] or _REG_DOC["removed"]:
+        log.info("vllm: registry restored - %d instance(s)", len(VLLM_INSTANCES))
+
+
+def _apply_registry() -> None:
+    """Make VLLM_INSTANCES what the environment plus the stored document say,
+    keeping each live instance's runtime state (status, load, models)."""
+    wanted = {s["id"]: s for s in _reg_core.merge(_parse_instances_env(), _REG_DOC)}
+    for iid in [i for i in VLLM_INSTANCES if i not in wanted]:
+        del VLLM_INSTANCES[iid]
+    for iid, spec in wanted.items():
+        cur = VLLM_INSTANCES.get(iid)
+        if cur is None:
+            VLLM_INSTANCES[iid] = VLLMInstance(
+                id=iid, url=str(spec.get("url", "")).rstrip("/"),
+                label=spec.get("label") or iid, has_gpu=bool(spec.get("has_gpu", True)),
+                priority=int(spec.get("priority") or 0),
+                api_key=spec.get("api_key", VLLM_API_KEY),
+                gate_as=str(spec.get("gate_as") or ""),
+                think_default=_reg_core.think_default(spec.get("think_default")),
+                stands_in_for=_reg_core.names(spec.get("stands_in_for")))
+        else:
+            cur.url = str(spec.get("url", cur.url)).rstrip("/")
+            cur.label = spec.get("label") or cur.label
+            cur.has_gpu = bool(spec.get("has_gpu", cur.has_gpu))
+            cur.priority = int(spec.get("priority", cur.priority) or 0)
+            cur.gate_as = str(spec.get("gate_as", cur.gate_as) or "")
+            cur.think_default = _reg_core.think_default(spec.get("think_default", cur.think_default))
+            cur.stands_in_for = _reg_core.names(spec.get("stands_in_for", cur.stands_in_for))
+
+
+def _reg_lock() -> asyncio.Lock:
+    global _REG_LOCK
+    if _REG_LOCK is None:
+        _REG_LOCK = asyncio.Lock()
+    return _REG_LOCK
+
+
+async def _refresh_registry() -> None:
+    """Re-read the stored registry - every health cycle. A node worker loads it
+    at boot like the host, but an instance added later (a node switched to
+    vLLM) stayed invisible to it until it restarted (5 Oct 2026). On the host
+    its own adds are already in the document, so this changes nothing there."""
+    global _REG_DOC
+    r = getattr(_orch, "REDIS", None)
+    if not r or not _REG_LOADED:
+        return
+    async with _reg_lock():
+        try:
+            raw = await r.get(KEY_VLLM_INSTANCES)
+            doc = _reg_core.normalise_doc(json.loads(raw) if raw else None)
+        except Exception as e:
+            log.debug("vllm: refresh registry: %s", e)
+            return
+        if doc == _REG_DOC:
+            return
+        _REG_DOC = doc
+        before = set(VLLM_INSTANCES)
+        _apply_registry()
+        new = sorted(set(VLLM_INSTANCES) - before)
+        for iid in new:
+            await _ping_vllm(VLLM_INSTANCES[iid])
+        if new or before - set(VLLM_INSTANCES):
+            log.info("vllm: registry refreshed - now %d instance(s)", len(VLLM_INSTANCES))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -261,7 +419,9 @@ async def _scrape_metrics(inst: VLLMInstance) -> None:
 
 
 async def _health_loop(interval: float = 20.0) -> None:
+    await _ensure_registry_loaded()
     while True:
+        await _refresh_registry()
         # Nothing to probe until at least one instance is configured. Idle
         # quietly (long sleep, no event) rather than pinging hosts and emitting
         # an empty vllm.health event every cycle — this is what made the module
@@ -342,6 +502,187 @@ def pick_vllm_instance(
         return status_penalty + queue_penalty + cache_penalty + inst.priority
 
     return min(candidates.values(), key=_score)
+
+
+def standins(model: Optional[str] = None) -> Dict[str, dict]:
+    """Switched nodes the Ollama picker may choose, as Ollama-shaped records
+    (node_backend_core.standins): a node moved to vLLM keeps taking its share
+    of load-balanced work instead of dropping out of routing."""
+    return _backend_core.standins(getattr(_orch, "OLLAMA_INSTANCES", {}) or {},
+                                  VLLM_INSTANCES, model=model, serves=_route_core.serves)
+
+
+def standin_for(node_id: str) -> str:
+    """The vLLM instance a picked node id is served by ('' for an Ollama node)."""
+    if not node_id or node_id not in _backend_core.switched_ids(
+            getattr(_orch, "OLLAMA_INSTANCES", {}) or {}, VLLM_INSTANCES):
+        return ""
+    return _backend_core.vllm_of(node_id, VLLM_INSTANCES)
+
+
+def effective_rule(rule: Optional[dict]) -> Optional[dict]:
+    """The rule as routing applies it: a pin naming a node that is switched to
+    vLLM (nodes.backend.switch) becomes "vllm:<its vLLM instance>", so rules keep
+    naming the node ("cpu-246") whichever backend it serves."""
+    if not rule or not rule.get("pin"):
+        return rule
+    pin = _backend_core.resolve_pin(str(rule["pin"]),
+                                    getattr(_orch, "OLLAMA_INSTANCES", {}) or {},
+                                    VLLM_INSTANCES)
+    return rule if pin == rule["pin"] else dict(rule, pin=pin)
+
+
+async def routed_call(kind: str, rule: Optional[dict], *, model: Optional[str] = None,
+                      prefer_gpu: bool = False, job_type: str = "",
+                      slot_timeout: Optional[float] = None,
+                      stream_cb: Optional[Callable] = None, **kw) -> Optional[dict]:
+    """Serve one routed request on vLLM when the routing-table rule pins it.
+
+    The routing-table counterpart of an Ollama node: target chosen by
+    vllm_route_core (pin / deny_gpu / prefer_gpu / model), the hardware's
+    semaphore + cross-process gate held for generate and chat (embeddings never
+    take it, as on Ollama), route demand recorded, and the server's real model
+    reported. kind: 'generate' (kw: prompt, max_tokens, temperature, top_p,
+    guided_json, caller_override) | 'chat' (kw: messages, max_tokens, ...) |
+    'embed' (kw: inputs).
+
+    Returns None when the rule does not pin vLLM (the caller routes to Ollama).
+    Otherwise {ok, result, instance, model, gate, error}; on ok=False the caller
+    falls back to Ollama routing, exactly as for a failed Ollama node.
+    """
+    rule = effective_rule(rule)
+    pin = _route_core.pin_target(rule)
+    if not pin:
+        return None
+    rule = rule or {}
+    iid = _route_core.choose(VLLM_INSTANCES, pin, model=model,
+                             prefer_gpu=bool(prefer_gpu or rule.get("prefer_gpu")),
+                             deny_gpu=bool(rule.get("deny_gpu")))
+    if not iid:
+        return {"ok": False, "error": f"no vLLM server up for pin vllm:{pin}",
+                "instance": "", "model": model or "", "gate": ""}
+    inst = VLLM_INSTANCES[iid]
+    mdl = _route_core.served_model(inst, model) or ""
+    try:
+        _orch.ROUTE_DEMAND.append((time.time(), str(job_type or "default")))
+    except Exception:
+        pass
+    out: Dict[str, Any] = {"instance": iid, "model": mdl, "gate": "", "error": ""}
+    if kind == "embed":
+        # Never substitute an embedder: another model's vectors (often another
+        # dimension) would land in stores indexed by the requested one.
+        if not _route_core.serves(inst, model):
+            out.update(ok=False, result=[],
+                       error=f"{iid} does not serve embedding model {model!r}")
+            return out
+        vecs = await vllm_embed(kw.get("inputs") or [], model=mdl or None, instance_id=iid)
+        # unit length, as Ollama's /api/embed returns them: the stored vectors
+        # are, and vLLM's are not (norm ~20 for nomic) - the direction matches
+        vecs = [_route_core.unit(v) for v in (vecs or [])]
+        out.update(ok=bool(vecs), result=vecs, error="" if vecs else "empty embedding")
+        return out
+    gid = _route_core.gate_id(inst, iid)
+    out["gate"] = gid
+    async with _orch._ollama_slot(gid, timeout=slot_timeout) as act:
+        # Stream internally so the gate heartbeat sees token liveness, exactly
+        # as for an Ollama generation; forward tokens to the caller's callback.
+        async def _tok(t: str):
+            if isinstance(act, dict):
+                act["t"] = time.monotonic()
+            if stream_cb is not None:
+                r = stream_cb(t)
+                if asyncio.iscoroutine(r):
+                    await r
+
+        if kind == "generate":
+            text = await vllm_generate(model=mdl or None, instance_id=iid,
+                                       prefer_gpu=bool(inst.has_gpu), stream_cb=_tok, **kw)
+            # vllm_generate reports a failure as "" (it logs + emits request_error)
+            out.update(ok=bool(text), result=text,
+                       error="" if text else "empty vLLM generation")
+        elif kind == "chat":
+            msg = await vllm_chat(model=mdl or None, instance_id=iid,
+                                  prefer_gpu=bool(inst.has_gpu), stream_cb=_tok, **kw)
+            err = (msg or {}).get("error") if isinstance(msg, dict) else "no reply"
+            out.update(ok=not err, result=msg, error=str(err or ""))
+        else:
+            raise ValueError(f"routed_call: unknown kind {kind!r}")
+    return out
+
+
+def chat_target(rule: Optional[dict], *, model: Optional[str] = None,
+                prefer_gpu: bool = False) -> Optional[dict]:
+    """Where a routed CHAT goes when its rule pins vLLM (None = Ollama routing).
+
+    {instance, gate, url, model}: `gate` is the semaphore/GPU-gate key the chat
+    path takes (the Ollama node's id for a server on the same hardware).
+    """
+    rule = effective_rule(rule)
+    pin = _route_core.pin_target(rule)
+    if not pin:
+        return None
+    rule = rule or {}
+    iid = _route_core.choose(VLLM_INSTANCES, pin, model=model,
+                             prefer_gpu=bool(prefer_gpu or rule.get("prefer_gpu")),
+                             deny_gpu=bool(rule.get("deny_gpu")))
+    if not iid:
+        log.info("vllm chat pin vllm:%s: no server up - Ollama routing", pin)
+        return None
+    inst = VLLM_INSTANCES[iid]
+    try:
+        _orch.ROUTE_DEMAND.append((time.time(), "chat"))
+    except Exception:
+        pass
+    return {"instance": iid, "gate": _route_core.gate_id(inst, iid), "url": inst.url,
+            "model": _route_core.served_model(inst, model) or (model or "")}
+
+
+async def ollama_chat_once(client: "httpx.AsyncClient", target: dict,
+                           ollama_body: dict) -> dict:
+    """POST an Ollama-shaped chat body to the vLLM target; Ollama-shaped reply."""
+    inst = VLLM_INSTANCES.get(target["instance"])
+    body = _route_core.chat_body(dict(ollama_body, stream=False), target.get("model"))
+    r = await client.post(f"{target['url']}/v1/chat/completions", json=body,
+                          headers=inst.headers() if inst else None)
+    r.raise_for_status()
+    return _route_core.chat_reply(r.json())
+
+
+class _OllamaShapedStream:
+    """The bits of an httpx streaming response Vera's chat loop reads, with
+    vLLM's SSE chat deltas rewritten as Ollama NDJSON lines (one done line)."""
+
+    def __init__(self, resp):
+        self._resp = resp
+        self.status_code = resp.status_code
+        self.headers = resp.headers
+
+    async def aread(self):
+        return await self._resp.aread()
+
+    async def aiter_lines(self):
+        done_sent = False
+        async for line in self._resp.aiter_lines():
+            ch = _route_core.sse_to_ollama_line(line)
+            if ch is None:
+                continue
+            if ch.get("done"):
+                if done_sent:
+                    continue
+                done_sent = True
+            yield json.dumps(ch)
+        if not done_sent:
+            yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True})
+
+
+@asynccontextmanager
+async def ollama_chat_stream(client: "httpx.AsyncClient", target: dict, ollama_body: dict):
+    """`async with` a streaming vLLM chat that reads like an Ollama /api/chat stream."""
+    inst = VLLM_INSTANCES.get(target["instance"])
+    body = _route_core.chat_body(dict(ollama_body, stream=True), target.get("model"))
+    async with client.stream("POST", f"{target['url']}/v1/chat/completions", json=body,
+                             headers=inst.headers() if inst else None) as resp:
+        yield _OllamaShapedStream(resp)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -465,7 +806,7 @@ async def vllm_generate(
 
     inst.in_use += 1
     try:
-        async with httpx.AsyncClient(timeout=180, headers=inst.headers()) as c:
+        async with httpx.AsyncClient(timeout=_req_timeout(), headers=inst.headers()) as c:
             if stream_cb:
                 async with c.stream("POST", f"{inst.url}/v1/completions", json=body) as resp:
                     resp.raise_for_status()
@@ -516,7 +857,7 @@ async def vllm_generate(
     except Exception as exc:
         _elapsed = round(time.time() - _t0, 2)
         log.error("vllm_generate [%s] FAILED %.2fs inst=%s caller=%s:%s err=%s",
-                  _req_id, _elapsed, inst.id, _caller_file, _caller_func, exc)
+                  _req_id, _elapsed, inst.id, _caller_file, _caller_func, _err(exc))
         inst.errors += 1
         try:
             await emit_event({
@@ -533,7 +874,7 @@ async def vllm_generate(
             log.info("vllm_generate: failing over to %s", fallback.id)
             body["stream"] = False
             try:
-                async with httpx.AsyncClient(timeout=180, headers=fallback.headers()) as c:
+                async with httpx.AsyncClient(timeout=_req_timeout(), headers=fallback.headers()) as c:
                     r = await c.post(f"{fallback.url}/v1/completions", json=body)
                     r.raise_for_status()
                     return r.json()["choices"][0]["text"]
@@ -549,7 +890,7 @@ async def vllm_chat(
     model: Optional[str] = None,
     instance_id: Optional[str] = None,
     prefer_gpu: bool = True,
-    max_tokens: int = 512,
+    max_tokens: Optional[int] = 512,
     temperature: float = 0.7,
     top_p: float = 0.9,
     stop: Optional[List[str]] = None,
@@ -579,11 +920,11 @@ async def vllm_chat(
     body: dict = {
         "model": mdl,
         "messages": messages,
-        "max_tokens": max_tokens,
         "temperature": temperature,
         "top_p": top_p,
         "stream": stream_cb is not None,
     }
+    if max_tokens:     body["max_tokens"] = max_tokens   # None = the rest of the window
     if stop:           body["stop"] = stop
     if tools:          body["tools"] = tools
     if tool_choice:    body["tool_choice"] = tool_choice
@@ -597,10 +938,11 @@ async def vllm_chat(
         }
     if extra:
         body.update(extra)
+    body = _route_core.apply_think_default(body, inst.think_default)
 
     inst.in_use += 1
     try:
-        async with httpx.AsyncClient(timeout=180, headers=inst.headers()) as c:
+        async with httpx.AsyncClient(timeout=_req_timeout(), headers=inst.headers()) as c:
             if stream_cb:
                 async with c.stream("POST", f"{inst.url}/v1/chat/completions", json=body) as resp:
                     resp.raise_for_status()
@@ -624,9 +966,9 @@ async def vllm_chat(
                 return r.json()["choices"][0]["message"]
 
     except Exception as exc:
-        log.error("vllm_chat [%s]: %s", inst.id, exc)
+        log.error("vllm_chat [%s]: %s", inst.id, _err(exc))
         inst.errors += 1
-        return {"error": str(exc)}
+        return {"error": _err(exc)}
     finally:
         inst.in_use = max(0, inst.in_use - 1)
 
@@ -676,6 +1018,9 @@ async def vllm_status() -> dict:
             "label": inst.label,
             "status": inst.status,
             "has_gpu": inst.has_gpu,
+            "gate_as": inst.gate_as,
+            "think_default": inst.think_default,
+            "stands_in_for": list(inst.stands_in_for),
             "latency_ms": inst.latency_ms,
             "in_use": inst.in_use,
             "errors": inst.errors,
@@ -707,7 +1052,12 @@ async def vllm_status() -> dict:
 
 @capability(
     name="vllm.instances.add",
-    description="Register a new vLLM server instance at runtime",
+    description="Register a vLLM server instance at runtime (persisted across "
+                "restarts). Inputs: id (str!), url (str!), label, has_gpu (bool="
+                "true — false for a CPU server), priority (int), api_key (str — "
+                "not persisted; env VLLM_API_KEY applies after a restart), "
+                "gate_as (str — the Ollama node id this server shares hardware "
+                "with; its calls then take that node's GPU gate).",
     http_method="POST",
     http_path="/vllm/instances",
     schema={
@@ -718,26 +1068,98 @@ async def vllm_status() -> dict:
             "has_gpu":  {"type": "boolean"},
             "priority": {"type": "integer"},
             "api_key":  {"type": "string"},
+            "gate_as":  {"type": "string"},
         },
         "required": ["id", "url"],
     },
 )
 async def vllm_instances_add(
     id: str, url: str, label: str = "", has_gpu: bool = True,
-    priority: int = None, api_key: str = "",
+    priority: int = None, api_key: str = "", gate_as: str = "",
 ) -> dict:
-    if id in VLLM_INSTANCES:
-        return {"ok": False, "error": f"Instance '{id}' already exists. Remove it first."}
-    inst = VLLMInstance(
-        id=id, url=url.rstrip("/"), label=label or id,
-        has_gpu=has_gpu,
-        priority=priority if priority is not None else len(VLLM_INSTANCES),
-        api_key=api_key or VLLM_API_KEY,
-    )
-    VLLM_INSTANCES[id] = inst
+    await _ensure_registry_loaded()
+    global _REG_DOC
+    async with _reg_lock():          # a health-cycle refresh must not land mid-change
+        if id in VLLM_INSTANCES:
+            return {"ok": False, "error": f"Instance '{id}' already exists. Remove it first."}
+        inst = VLLMInstance(
+            id=id, url=url.rstrip("/"), label=label or id,
+            has_gpu=has_gpu,
+            priority=priority if priority is not None else len(VLLM_INSTANCES),
+            api_key=api_key or VLLM_API_KEY,
+            gate_as=str(gate_as or ""),
+        )
+        VLLM_INSTANCES[id] = inst
+        _REG_DOC = _reg_core.note_added(_REG_DOC, id, {
+            "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
+            "priority": inst.priority, "gate_as": inst.gate_as,
+            "think_default": inst.think_default, "stands_in_for": list(inst.stands_in_for)})
+        await _save_registry()
     await _ping_vllm(inst)
-    await emit_event({"type": "vllm.instance.added", "id": id, "url": url})
+    await emit_event({"type": "vllm.instance.added", "id": id, "url": url,
+                      "has_gpu": inst.has_gpu})
     return {"ok": True, "id": id, "status": inst.status, "models": inst.models}
+
+
+@capability(
+    name="vllm.instances.think",
+    description="Set a vLLM server's thinking default for requests that do not choose: "
+                "'default' (the model's own), 'on' or 'off'. A request that chooses "
+                "(an agent's Think, llm.generate think=) still wins. Persisted with the "
+                "registry. Inputs: instance_id (str!), think ('default'|'on'|'off').",
+    http_method="POST",
+    http_path="/vllm/instances/think",
+    schema={"properties": {"instance_id": {"type": "string"},
+                           "think": {"enum": ["default", "on", "off"]}},
+            "required": ["instance_id", "think"]},
+)
+async def vllm_instances_think(instance_id: str, think: str = "default") -> dict:
+    await _ensure_registry_loaded()
+    global _REG_DOC
+    async with _reg_lock():
+        inst = VLLM_INSTANCES.get(instance_id)
+        if inst is None:
+            return {"ok": False, "error": f"Instance '{instance_id}' not found"}
+        inst.think_default = _reg_core.think_default("" if think == "default" else think)
+        _REG_DOC = _reg_core.note_added(_REG_DOC, instance_id, {
+            "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
+            "priority": inst.priority, "gate_as": inst.gate_as,
+            "think_default": inst.think_default, "stands_in_for": list(inst.stands_in_for)})
+        await _save_registry()
+    await emit_event({"type": "vllm.instance.think", "id": instance_id,
+                      "think_default": inst.think_default or "default"})
+    return {"ok": True, "id": instance_id, "think_default": inst.think_default or "default"}
+
+
+@capability(
+    name="vllm.instances.stand_in",
+    description="Set the model names a vLLM server stands in for: Vera routes requests "
+                "for those names to it (sending the server's own model), e.g. when no "
+                "server can run the requested model. Visible on the vLLM page; an empty "
+                "list removes them. Persisted with the registry. Inputs: instance_id "
+                "(str!), names (list[str] or comma string).",
+    http_method="POST",
+    http_path="/vllm/instances/stand_in",
+    schema={"properties": {"instance_id": {"type": "string"},
+                           "names": {"type": "array", "items": {"type": "string"}}},
+            "required": ["instance_id"]},
+)
+async def vllm_instances_stand_in(instance_id: str, names=None) -> dict:
+    await _ensure_registry_loaded()
+    global _REG_DOC
+    async with _reg_lock():
+        inst = VLLM_INSTANCES.get(instance_id)
+        if inst is None:
+            return {"ok": False, "error": f"Instance '{instance_id}' not found"}
+        inst.stands_in_for = [n for n in _reg_core.names(names) if n not in inst.models]
+        _REG_DOC = _reg_core.note_added(_REG_DOC, instance_id, {
+            "url": inst.url, "label": inst.label, "has_gpu": inst.has_gpu,
+            "priority": inst.priority, "gate_as": inst.gate_as,
+            "think_default": inst.think_default, "stands_in_for": list(inst.stands_in_for)})
+        await _save_registry()
+    await emit_event({"type": "vllm.instance.stand_in", "id": instance_id,
+                      "stands_in_for": list(inst.stands_in_for)})
+    return {"ok": True, "id": instance_id, "stands_in_for": list(inst.stands_in_for)}
 
 
 @capability(
@@ -748,9 +1170,14 @@ async def vllm_instances_add(
     schema={"properties": {"instance_id": {"type": "string"}}, "required": ["instance_id"]},
 )
 async def vllm_instances_remove(instance_id: str) -> dict:
-    if instance_id not in VLLM_INSTANCES:
-        return {"ok": False, "error": f"Instance '{instance_id}' not found"}
-    del VLLM_INSTANCES[instance_id]
+    await _ensure_registry_loaded()
+    global _REG_DOC
+    async with _reg_lock():
+        if instance_id not in VLLM_INSTANCES:
+            return {"ok": False, "error": f"Instance '{instance_id}' not found"}
+        del VLLM_INSTANCES[instance_id]
+        _REG_DOC = _reg_core.note_removed(_REG_DOC, instance_id, _env_ids())
+        await _save_registry()
     await emit_event({"type": "vllm.instance.removed", "id": instance_id})
     return {"ok": True, "id": instance_id}
 
@@ -1008,7 +1435,7 @@ _MANAGED_PROCS: Dict[str, subprocess.Popen] = {}
             "tensor_parallel_size": {"type": "integer", "default": 1},
             "gpu_memory_utilization":{"type": "number", "default": 0.90},
             "cpu_offload_gb":       {"type": "number", "default": 0},
-            "quantization":         {"type": "string", "description": "gptq | awq | fp8 | gguf | turbomind"},
+            "quantization":         {"type": "string", "description": "blank = from the model's config | awq | gptq | compressed-tensors | fp8 | bitsandbytes | gguf"},
             "dtype":                {"type": "string", "default": "auto"},
             "max_model_len":        {"type": "integer"},
             "spec_model":           {"type": "string", "description": "Draft model for speculative decoding"},
@@ -1048,60 +1475,34 @@ async def vllm_server_start(
     extra_args: list = None,
 ) -> dict:
     iid = instance_id or f"vllm-managed-{port}"
-
-    cmd = [
-        "python", "-m", "vllm.entrypoints.openai.api_server",
-        "--model", model,
-        "--host", host,
-        "--port", str(port),
-        "--tensor-parallel-size", str(tensor_parallel_size or VLLM_TENSOR_PAR),
-        "--gpu-memory-utilization", str(gpu_memory_utilization or VLLM_GPU_MEM_UTIL),
-        "--dtype", dtype or VLLM_DTYPE,
-    ]
-
-    _cpu_off = cpu_offload_gb if cpu_offload_gb is not None else VLLM_CPU_OFFLOAD_GB
-    if _cpu_off > 0:
-        cmd += ["--cpu-offload-gb", str(_cpu_off)]
-
-    _quant = quantization or VLLM_QUANTIZATION
-    if _quant:
-        cmd += ["--quantization", _quant]
-
-    _mml = max_model_len or VLLM_MAX_MODEL_LEN
-    if _mml:
-        cmd += ["--max-model-len", str(_mml)]
-
-    _spec = spec_model or VLLM_SPEC_MODEL
-    if _spec:
-        cmd += [
-            "--speculative-model", _spec,
-            "--num-speculative-tokens", str(spec_num_speculative_tokens),
-        ]
-
-    _lora = enable_lora if enable_lora is not None else VLLM_ENABLE_LORA
-    if _lora:
-        cmd += ["--enable-lora", "--max-loras", str(max_loras or VLLM_MAX_LORAS)]
-
-    if enable_prefix_caching:
-        cmd += ["--enable-prefix-caching"]
-
-    if enable_chunked_prefill:
-        cmd += ["--enable-chunked-prefill"]
-
-    if max_num_batched_tokens:
-        cmd += ["--max-num-batched-tokens", str(max_num_batched_tokens)]
-
+    # The vllm CLI of this process's environment (VLLM_BIN overrides): the bare
+    # "python" this used to run had no vllm on most hosts. Nodes are launched
+    # through provisioning instead (nodes.backend.switch).
+    _bin = (os.environ.get("VLLM_BIN") or shutil.which("vllm")
+            or os.path.join(os.path.dirname(sys.executable), "vllm"))
+    if not os.path.exists(_bin):
+        return {"ok": False, "error": "no vllm CLI on this host (set VLLM_BIN) - to run vLLM "
+                                      "on a node use Launch on a node (nodes.backend.switch)"}
     _key = api_key or VLLM_API_KEY
-    if _key:
-        cmd += ["--api-key", _key]
+    _cpu_off = cpu_offload_gb if cpu_offload_gb is not None else VLLM_CPU_OFFLOAD_GB
+    _lora = enable_lora if enable_lora is not None else VLLM_ENABLE_LORA
+    cmd = _install_core.local_serve_argv(
+        model, vllm_bin=_bin, port=port, host=host,
+        tensor_parallel_size=tensor_parallel_size or VLLM_TENSOR_PAR,
+        gpu_memory_utilization=gpu_memory_utilization or VLLM_GPU_MEM_UTIL,
+        dtype=dtype or VLLM_DTYPE, cpu_offload_gb=_cpu_off or 0,
+        quantization=quantization or VLLM_QUANTIZATION,
+        max_model_len=max_model_len or VLLM_MAX_MODEL_LEN or 0,
+        spec_model=spec_model or VLLM_SPEC_MODEL, spec_tokens=spec_num_speculative_tokens,
+        enable_lora=bool(_lora), max_loras=max_loras or VLLM_MAX_LORAS,
+        enable_prefix_caching=enable_prefix_caching,
+        enable_chunked_prefill=enable_chunked_prefill,
+        max_num_batched_tokens=max_num_batched_tokens or 0,
+        api_key=_key or "", served_model_name=served_model_name or "",
+        extra_args=extra_args)
+    _shown = _install_core.redact_argv(cmd)
 
-    if served_model_name:
-        cmd += ["--served-model-name", served_model_name]
-
-    if extra_args:
-        cmd.extend(str(a) for a in extra_args)
-
-    log.info("vllm: launching server: %s", " ".join(cmd))
+    log.info("vllm: launching server: %s", _shown)
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         _MANAGED_PROCS[iid] = proc
@@ -1113,13 +1514,13 @@ async def vllm_server_start(
         inst.pid = proc.pid
         VLLM_INSTANCES[iid] = inst
 
-        await emit_event({"type": "vllm.server.started", "id": iid, "pid": proc.pid, "cmd": " ".join(cmd)})
+        await emit_event({"type": "vllm.server.started", "id": iid, "pid": proc.pid, "cmd": _shown})
         return {
             "ok": True,
             "instance_id": iid,
             "pid": proc.pid,
             "url": url,
-            "cmd": " ".join(cmd),
+            "cmd": _shown,
             "note": "Server starting. Health checks will begin in ~15s.",
         }
     except FileNotFoundError:
@@ -1172,7 +1573,11 @@ async def _vllm_proxy(instance_id: str, path: str, request: _Req):
 
     body = await request.body()
     headers = dict(inst.headers())
-    headers.pop("Content-Type", None)   # let httpx set it
+    headers.pop("Content-Type", None)
+    # httpx sets no Content-Type for raw `content=`, and vLLM refuses a body
+    # without application/json (every proxied POST failed with 400, 5 Oct 2026).
+    if body:
+        headers["Content-Type"] = request.headers.get("content-type") or "application/json"
 
     url = f"{inst.url}/{path}"
     if request.query_params:
@@ -1191,7 +1596,7 @@ async def _vllm_proxy(instance_id: str, path: str, request: _Req):
         if is_stream:
             async def _gen():
                 try:
-                    async with httpx.AsyncClient(timeout=180) as c:
+                    async with httpx.AsyncClient(timeout=_req_timeout()) as c:
                         async with c.stream(request.method, url, content=body, headers=headers) as r:
                             async for chunk in r.aiter_bytes():
                                 yield chunk
@@ -1200,7 +1605,7 @@ async def _vllm_proxy(instance_id: str, path: str, request: _Req):
 
             return _SR(_gen(), media_type="text/event-stream")
         else:
-            async with httpx.AsyncClient(timeout=180) as c:
+            async with httpx.AsyncClient(timeout=_req_timeout()) as c:
                 r = await c.request(request.method, url, content=body, headers=headers)
             inst.in_use = max(0, inst.in_use - 1)
             return _JR(r.json(), status_code=r.status_code)
@@ -1238,5 +1643,8 @@ async def _vllm_panel_html():
                      status_code=404)
 
 # ── Start health loop ──────────────────────────────────────────────────────────
-schedule(_health_loop, interval=0)
+# A one-time startup (the loop runs forever) under a name node workers run too:
+# it is also what loads the registry from Redis, so a worker that skipped it
+# knew no vLLM server and sent every offloaded vLLM call to Ollama instead.
+schedule(_health_loop, interval=999999, name="vllm_health")
 log.info("vllm: module loaded — %d instance(s) configured", len(VLLM_INSTANCES))

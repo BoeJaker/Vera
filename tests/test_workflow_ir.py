@@ -315,11 +315,14 @@ def test_migration_refuses_unknown_source_and_target_versions():
     assert source["supported_versions"] == target["supported_versions"] == ["1.0"]
 
 
-def test_adapter_profiles_distinguish_offline_compilers_from_uninstalled_runtimes():
+def test_adapter_profiles_distinguish_offline_compilers_from_executable_native_bridge(
+        monkeypatch):
+    monkeypatch.delenv("VERA_WORKFLOW_IR_NATIVE_BRIDGE", raising=False)
     profiles = adapter_profiles()
     assert profiles["executes"] is False
     assert profiles["profiles"]["portable.core"]["available"] is True
     assert profiles["profiles"]["portable.core"]["executable"] is False
+    assert profiles["profiles"]["vera.native_dag"]["executable"] is True
     assert profiles["profiles"]["langgraph"]["available"] is True
     assert profiles["profiles"]["langgraph"]["executable"] is False
     assert profiles["profiles"]["langgraph"]["supports"] == [
@@ -328,6 +331,11 @@ def test_adapter_profiles_distinguish_offline_compilers_from_uninstalled_runtime
     assert profiles["profiles"]["temporal"]["executable"] is False
     assert profiles["profiles"]["temporal"]["supports"] == [
         "tasks", "parallel", "conditions"]
+
+    monkeypatch.setenv("VERA_WORKFLOW_IR_NATIVE_BRIDGE", "0")
+    disabled = adapter_profiles()
+    assert disabled["profiles"]["vera.native_dag"]["available"] is True
+    assert disabled["profiles"]["vera.native_dag"]["executable"] is False
 
 
 def test_langgraph_adapter_analysis_uses_offline_compiler_without_runtime_import():

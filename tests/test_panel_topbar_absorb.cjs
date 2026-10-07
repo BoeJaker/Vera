@@ -12,7 +12,7 @@ t('a usual name counts only when it is the page\'s top bar', /if\(r\.width < 1 \
 t('buttons, selects, fields and toggles go up', ["kind: 'select'", "kind: 'input'", "kind: 'btn', label: (_hdrText(lb)", "kind: 'btn', label: _hdrLabel(el, t)"].every((s) => BR.includes(s)));
 t('the bar folds away while the harness holds it', /html\.vpb-hdr-absorbed \[data-vpb-hdr-bar\]\{display:none!important\}/.test(BR) && /classList\.toggle\('vpb-hdr-absorbed', !!d\.on\)/.test(BR));
 t('a press on a proxy is a press on the panel\'s control', /d\.type !== 'vera:hdr:act' \|\| !_hdrBar/.test(BR) && /else el\.click\(\);/.test(BR));
-t('a bar in a tab not yet shown is looked for again', /setInterval\(_hdrCheck, 2500\);/.test(BR) && /if\(_hdrBar && _hdrBarShown\(_hdrBar\)\)\{ _hdrOffer\(\); return; \}/.test(BR));
+t('a bar in a tab not yet shown is looked for again', /setInterval\(_hdrCheck, 2500\);/.test(BR) && /if\(_hdrBar && _hdrBarShown\(_hdrBar\)\)\{ _hdrOffer\(!_hdrHeard\); return; \}/.test(BR)   /* 2026-09-29: re-sent until the harness answers */);
 t('the harness draws a field proxy, keeping the caret through a re-offer', /\} else if\(it\.kind === 'input'\)\{/.test(HAR) && /el\.value = \(_foc && _foc\.hid === it\.hid\) \? _foc\.v : \(it\.value \|\| ''\);/.test(HAR) && /if\(_foc\)\{ const n = host\.querySelector/.test(HAR));
 t('Enter in a field proxy is Enter in the panel', /_hdrAct\(pid, it\.hid, \{ value: el\.value, enter: true \}\)/.test(HAR) && /v\.enter\) \['keydown', 'keypress', 'keyup'\]/.test(BR));
 

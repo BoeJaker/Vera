@@ -244,6 +244,7 @@
       d.setAttribute('data-blocks', a.blocks ? 'on' : 'off');
       d.style.removeProperty('--ui-radius');
     }catch(e){}
+    if(!a.blocks && document.getElementById('vera-design-css') && document.body){ setTimeout(function(){ try{ _markFloats(document.body); }catch(e){} }, 60); }
     return a;
   }
   // Set + persist + broadcast. Takes a partial ({style} | {den} | {blocks}).
@@ -276,13 +277,34 @@
   // exactly what was there. CONTRAST re-derives the faint text tokens from the theme's own text colour, on <body>, so it
   // follows any theme, light or dark. Same storage and broadcast as the rest of the appearance.
   var TEXT_KEY = 'vera:ui:text', CONTRAST_KEY = 'vera:ui:contrast';
-  var TEXT_STEPS = { compact:{ floor:0, factor:1 }, 'default':{ floor:10, factor:1 }, large:{ floor:11, factor:1.1 }, larger:{ floor:12, factor:1.22 } };
-  var TEXT_NAMES = [['compact','Compact','As designed - the smallest text is not raised'], ['default','Default','Small text raised to a readable floor'], ['large','Large','Larger small text'], ['larger','Larger','The largest']];
+  // stepped up (owner, 2026-09-28: "the configurable text sizes need to be larger - step them up a notch or two"): each
+  // step is what the one above it was, and more, and Largest goes past the old top
+  // SCALE is the step for text at 13 px and over (owner, 2026-09-28: "allot of the ui text size isnt scaling up per the
+  // user selection ... the chat ui chat area or the loop lab"): the floor only ever reached the small text, so the chat's
+  // transcript and every body-sized line stayed as they were at any setting. Above Default everything now grows; the
+  // small text is floored and scaled but never past body text at the same step, so the hierarchy holds.
+  var TEXT_STEPS = { compact:{ floor:0, factor:1, scale:1 }, 'default':{ floor:11, factor:1.08, scale:1 }, large:{ floor:12, factor:1.2, scale:1.08 }, larger:{ floor:13, factor:1.32, scale:1.16 }, largest:{ floor:14, factor:1.45, scale:1.25 } };
+  var TEXT_NAMES = [['compact','Compact','As designed - the smallest text is not raised'], ['default','Default','Small text raised to a readable floor'], ['large','Large','Larger small text'], ['larger','Larger','Larger still'], ['largest','Largest','The largest']];
   var CONTRASTS = [['theme','Theme','The theme\'s own faint text'], ['clear','Clear','Faint text made clearer'], ['high','High','The most contrast']];
   function _readText(){ try{ var v = localStorage.getItem(TEXT_KEY); return TEXT_STEPS[v] ? v : 'default'; }catch(e){ return 'default'; } }
   function _readContrast(){ try{ var v = localStorage.getItem(CONTRAST_KEY); return (v === 'theme' || v === 'high') ? v : 'clear'; }catch(e){ return 'clear'; } }
   var _textStep = TEXT_STEPS['default'], _textName = 'default';
   var _fsOrig = new WeakMap();
+  function _textSize(px){
+    var s = _textStep, big = s.scale || 1;
+    var n = px >= 13 ? px * big : Math.min(13 * big, Math.max(s.floor, px * s.factor));
+    return Math.round(n * 10) / 10;
+  }
+  // the style pack's own type sizes (theme_defs STYLE_PACKS: --body for the transcript, --label-size for labels) are
+  // variables, which no stylesheet rewrite can see: they are scaled where they are read, on <body>, from the pack's value
+  var TEXT_VARS = ['--body', '--label-size'];
+  function _textVars(){
+    var b = document.body; if(!b) return;
+    TEXT_VARS.forEach(function(v){
+      try{ b.style.removeProperty(v);   // read the pack's value, not ours
+        var m = /^([\d.]+)px$/.exec(getComputedStyle(b).getPropertyValue(v).trim()); if(!m) return;
+        var n = _textSize(parseFloat(m[1])); if(n !== parseFloat(m[1])) b.style.setProperty(v, n + 'px'); }catch(e){} });
+  }
   function _fsAdjust(decl){
     if(!decl) return;
     var o = _fsOrig.get(decl);
@@ -295,8 +317,7 @@
       _fsOrig.set(decl, o); }
     if(o == null) return;
     var px = typeof o === 'object' ? o.px : o;
-    var n = px >= 13 ? px : Math.max(_textStep.floor, px * _textStep.factor);
-    n = Math.round(n * 10) / 10;
+    var n = _textSize(px);
     if(typeof o === 'object'){ var nv = o.font.replace(/(^|\s)([\d.]+)px/, '$1' + n + 'px');
       try{ if(decl.getPropertyValue('font') !== nv) decl.setProperty('font', nv, decl.getPropertyPriority('font')); }catch(e){} return; }
     if(parseFloat(decl.fontSize) !== n){ try{ decl.setProperty('font-size', n + 'px', decl.getPropertyPriority('font-size')); }catch(e){} }
@@ -311,6 +332,7 @@
   var _shadowRoots = [];
   try{ var _as = Element.prototype.attachShadow; if(_as && !_as.__veraText){ Element.prototype.attachShadow = function(){ var r = _as.apply(this, arguments); try{ _shadowRoots.push(r); if(_textMO) _textObserveRoot(r); setTimeout(function(){ _textRoot(r); }, 0); setTimeout(function(){ _textRoot(r); }, 600); }catch(e){} return r; }; Element.prototype.attachShadow.__veraText = true; } }catch(e){}
   function _textAll(){
+    _textVars();
     _textRoot(document);
     try{ Array.prototype.forEach.call(document.querySelectorAll('*'), function(el){ if(el.shadowRoot && _shadowRoots.indexOf(el.shadowRoot) < 0){ _shadowRoots.push(el.shadowRoot); if(_textMO) _textObserveRoot(el.shadowRoot); } }); }catch(e){}
     _shadowRoots.forEach(_textRoot);
@@ -321,14 +343,16 @@
     Array.prototype.push.apply(_textQ, nodes); if(_textT) return;
     _textT = setTimeout(function(){ _textT = 0; var q = _textQ; _textQ = []; var sheets = false;
       q.forEach(function(n){ if(!n || n.nodeType !== 1) return;
-        if(n.tagName === 'STYLE' || n.tagName === 'LINK'){ var rt = n.getRootNode ? n.getRootNode() : document; if(rt && rt !== document){ _textRoot(rt); return; } sheets = true; if(n.tagName === 'LINK') n.addEventListener('load', function(){ _textRoot(document); }, { once:true }); return; }
+        if(n.tagName === 'STYLE' || n.tagName === 'LINK'){ var rt = n.getRootNode ? n.getRootNode() : document; if(rt && rt !== document){ _textRoot(rt); return; } sheets = true; if(n.tagName === 'LINK') n.addEventListener('load', function(){ _textVars(); _textRoot(document); }, { once:true }); return; }
         if(n.style && n.getAttribute && /font/.test(n.getAttribute('style') || '')) _fsAdjust(n.style);
         try{ Array.prototype.forEach.call(n.querySelectorAll('[style*="font"]'), function(el){ _fsAdjust(el.style); }); }catch(e){}
         try{ if(n.shadowRoot){ if(_shadowRoots.indexOf(n.shadowRoot) < 0) _shadowRoots.push(n.shadowRoot); _textObserveRoot(n.shadowRoot); _textRoot(n.shadowRoot); } }catch(e){} });
-      if(sheets) _textRoot(document); }, 120);
+      if(sheets){ _textVars(); _textRoot(document); } }, 120);
   }
   var _textMO = null;
-  function _textWatch(){ if(_textMO || !window.MutationObserver) return; try{ _textMO = new MutationObserver(function(ms){ var add = []; ms.forEach(function(m){ if(m.addedNodes) Array.prototype.push.apply(add, m.addedNodes); }); if(add.length) _textQueue(add); }); _textMO.observe(document.documentElement, { childList:true, subtree:true }); _shadowRoots.forEach(_textObserveRoot); }catch(e){} }
+  function _textWatch(){ if(_textMO || !window.MutationObserver) return; try{ _textMO = new MutationObserver(function(ms){ var add = []; ms.forEach(function(m){ if(m.addedNodes) Array.prototype.push.apply(add, m.addedNodes); }); if(add.length) _textQueue(add); }); _textMO.observe(document.documentElement, { childList:true, subtree:true }); _shadowRoots.forEach(_textObserveRoot);
+      // a new style pack brings its own --body / --label-size: scale those afresh
+      new MutationObserver(function(){ _textVars(); }).observe(document.documentElement, { attributes:true, attributeFilter:['data-style'] }); }catch(e){} }
   // a shadow root's own redraws (an element that rebuilds its <style> and markup every render - the commit graph, the
   // task matrix, the loop output) arrive inside it, where the document's observer cannot see them: each root is
   // watched too, once
@@ -442,6 +466,65 @@
   if(!document.getElementById('vera-design-css') && !document.documentElement.hasAttribute('data-design-own')){
     var dl = document.createElement('link'); dl.id = 'vera-design-css'; dl.rel = 'stylesheet'; dl.href = BASE + '/ui/design.css';
     document.head.appendChild(dl);
+    _floatsWatch();
+  }
+  /* WHAT FLOATS keeps its ground (owner, 2026-10-04: blocks off "should not remove backgrounds from settings menus ... or
+     menus that appear over the top of other elements"). design.css strips grounds by the ROLE a name says; a menu named
+     like a panel (#x-panel, .y-bar) lost its ground and its text sat on the page beneath. What is drawn fixed or absolute
+     over the page, above it (a z-index), and is not a page column or a page bar, is marked data-vera-float - design.css
+     leaves those alone. Checked on the parts that change (a menu shown, a sheet added), never in a loop. */
+  function _isFloat(el){
+    try{
+      var c = getComputedStyle(el); if(c.position !== 'fixed' && c.position !== 'absolute') return false;
+      var z = parseInt(c.zIndex, 10); if(!(z >= 1)) return false;
+      var r = el.getBoundingClientRect(); if(r.width < 60 || r.height < 24) return false;
+      var W = window.innerWidth, H = window.innerHeight;
+      /* a full-height column that is FIXED over the page is a drawer (the widget details drawer, 2026-10-04: it read as a page
+         column and lost its ground with blocks off); only an absolute one inside the page's own box can be its column */
+      if(c.position === 'absolute' && r.height >= H * .9 && r.width < W * .9) return false;
+      if(r.top <= 1 && r.width >= W * .9 && r.height < 120) return false;      /* a page bar */
+      return true;
+    }catch(e){ return false; }
+  }
+  /* A PAGE GROUND, by measure (owner, 2026-10-04: "make the blocks off system work across the ui - all panels"; "everything
+     should use the same glow background like the chat UI"). A sweep of every panel with blocks off found the grounds no
+     name gives away - a side column drawn as a bare div, a list pane, a graph's wrapper - each opaque, each hiding the glow.
+     A part that is opaque, large (a twentieth of the page or more), in the page's flow, and not a field, code or a picture,
+     is marked data-vera-ground; with blocks off design.css takes its ground away. What floats over the page is never one. */
+  var _NOT_GROUND = { INPUT:1, TEXTAREA:1, SELECT:1, BUTTON:1, OPTION:1, PRE:1, CODE:1, IMG:1, VIDEO:1, SVG:1, svg:1, HTML:1, BODY:1 };
+  function _alphaOf(c){ var m = /rgba?\(([^)]+)\)/.exec(c || ''); if(!m) return /color\(/.test(c || '') ? 1 : 0; var p = m[1].split(/[\s,\/]+/).filter(Boolean); return p.length > 3 ? parseFloat(p[3]) : 1; }
+  function _isGround(el){
+    try{
+      if(_NOT_GROUND[el.tagName] || el.hasAttribute('data-vera-float') || el.closest('[data-vera-float]')) return false;
+      /* the content itself - a receipt's paper, an image's preview, a drawing surface - is never the page's ground */
+      if(el.matches('[class*="paper"], [class*="preview"], [class*="receipt"], [class*="canvas"], [data-vera-keep-ground], canvas, iframe[data-vera-keep-ground]')) return false;
+      var r = el.getBoundingClientRect(); var W = window.innerWidth, H = window.innerHeight;
+      if(r.width < 80 || r.height < 40 || r.width * r.height < W * H * .05) return false;
+      /* in the page's flow only: anything drawn fixed or absolute over it is not its ground (the details drawer was taken for one) */
+      var c = getComputedStyle(el); if(c.position === 'fixed' || c.position === 'absolute') return false;
+      return _alphaOf(c.backgroundColor) >= .6;
+    }catch(e){ return false; }
+  }
+  function _markFloats(root){
+    if(!root || root.nodeType !== 1) return;
+    var list = [root].concat(Array.prototype.slice.call(root.querySelectorAll('*'), 0, 1500));
+    for(var i = 0; i < list.length; i++){ var e = list[i]; if(_isFloat(e)) e.setAttribute('data-vera-float', ''); }
+    if(document.documentElement.getAttribute('data-blocks') !== 'off') return;   /* measured while the grounds are there */
+    for(var j = 0; j < list.length; j++){ var g = list[j]; if(!g.hasAttribute('data-vera-ground') && _isGround(g)) g.setAttribute('data-vera-ground', ''); }
+  }
+  function _floatsWatch(){
+    var pend = [], t = 0;
+    function flush(){ t = 0; var p = pend; pend = []; p.forEach(_markFloats); }
+    function run(){ try{ _markFloats(document.body); }catch(e){} }
+    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(run, 300); }); else setTimeout(run, 300);
+    try{
+      new MutationObserver(function(recs){
+        for(var i = 0; i < recs.length; i++){ var r = recs[i];
+          if(r.type === 'attributes'){ if(r.target.nodeType === 1 && !r.target.hasAttribute('data-vera-float')) pend.push(r.target); }
+          else for(var j = 0; j < r.addedNodes.length; j++){ if(r.addedNodes[j].nodeType === 1) pend.push(r.addedNodes[j]); } }
+        if(pend.length && !t) t = setTimeout(flush, 120);
+      }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open'] });
+    }catch(e){}
   }
 
   // ── 1b. Load the configurable loading animation ────────────────────────────
@@ -476,6 +559,12 @@
   }
   function applyVars(vars){
     if(!vars || typeof vars !== 'object') return null;
+    /* a custom theme saved one level down ({theme:{--bg:..}}) set no colour at all - every surface drawn from --ac/--s1
+       painted nothing (2026-10-04, the active theme); read the one map inside */
+    if(!Object.keys(vars).some(function(k){ return k.indexOf('--') === 0; })){
+      var inner = Object.keys(vars).map(function(k){ return vars[k]; }).filter(function(x){ return x && typeof x === 'object' && Object.keys(x).some(function(k){ return k.indexOf('--') === 0; }); });
+      if(inner.length === 1) vars = inner[0];
+    }
     var root = document.documentElement;
     var out = {};
     function set(key, val){ root.style.setProperty(key, val); out[key] = val; _inlineThemeKeys[key] = 1; }
@@ -902,9 +991,9 @@
   function injectFloatingPicker(){
     try{ if(window.self !== window.top) return; }catch(e){ return; } // embedded
     if(window.__veraNoFloatingPicker) return;
+    /* a page with only a theme list of its own (the UI builder's) still gets it: the level of detail and blocks are not there */
     if(document.getElementById('themeBtn') ||
-       document.getElementById('themeButtons') ||
-       document.getElementById('themePicker') ||
+       document.getElementById('hdrAa') ||
        document.getElementById('veraFloatTheme')) return;
 
     var wrap = document.createElement('div');
@@ -954,14 +1043,77 @@
         });
       }).catch(function(){});
     }
+    /* the same appearance menu as the chat's and the harness's Aa - style, level of detail (Full · Hover · Zen), blocks,
+       zoom, text, the themes (owner, 2026-10-04: "the appearance options are available in the panels if opened standalone") */
+    btn.title = 'Appearance - theme, style, level of detail, blocks';
     btn.onclick = function(e){
       e.stopPropagation();
-      if(menu.style.display === 'block'){ menu.style.display='none'; return; }
-      renderMenu(); menu.style.display='block';
+      menu.style.display = 'none';
+      openAppearance({ currentTarget: btn, stopPropagation: function(){} });
     };
     document.addEventListener('click', function(){ menu.style.display='none'; });
 
     (document.body || document.documentElement).appendChild(wrap);
+  }
+
+  /* THE APPEARANCE MENU, ON ANY PAGE (owner, 2026-10-03: "sometimes in the chat ui the appearance menu doesnt open ... it
+     opens the full settings panel for the chat instead of the appearance modal"). The chat's Aa asked for this and,
+     finding nothing (only the harness had its own), opened Settings. The same rows the harness's Aa has - style, level
+     of detail, blocks, zoom, text, the themes - anchored under the button that was pressed; a second press closes it. */
+  function openAppearance(ev){
+    if(ev && ev.stopPropagation) ev.stopPropagation();
+    var old = document.getElementById('veraAppearance'); if(old){ old.remove(); return; }
+    if(Date.now() - (openAppearance._shut || 0) < 350) return;   // the press that closed it (outside-click) is the same press
+    var btn = ev && ev.currentTarget && ev.currentTarget.getBoundingClientRect ? ev.currentTarget : null;
+    var menu = document.createElement('div'); menu.id = 'veraAppearance'; menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Appearance');
+    menu.style.cssText = 'position:fixed;z-index:2147483000;min-width:230px;max-height:78vh;overflow-y:auto;padding:6px;'+
+      'background:var(--s1,var(--bg2,#16181d));border:1px solid var(--bd2,var(--border2,rgba(128,128,128,.4)));border-radius:8px;'+
+      'box-shadow:0 12px 34px rgba(0,0,0,.5);font:11px var(--f-ui,var(--sans,system-ui,sans-serif));color:var(--t1,var(--text,#ddd))';
+    var root = document.documentElement;
+    var rows = document.createElement('div');
+    rows.style.cssText = 'display:flex;flex-direction:column;gap:5px;padding:5px 6px 8px;margin-bottom:5px;border-bottom:1px solid var(--bd2,var(--border2,rgba(128,128,128,.3)))';
+    function row(label, opts, get, set){
+      var r = document.createElement('div'); r.style.cssText = 'display:flex;align-items:center;gap:3px';
+      var lab = document.createElement('span'); lab.textContent = label; lab.style.cssText = 'font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3,var(--dim2,#888));min-width:52px'; r.appendChild(lab);
+      function paint(){ Array.prototype.forEach.call(r.querySelectorAll('button'), function(b){ var on = b.dataset.v === get(); b.style.background = on ? 'var(--ac,var(--acc,#5a9e8f))' : 'var(--s3,var(--bg3,rgba(128,128,128,.12)))'; b.style.color = on ? 'var(--on-acc,#fff)' : 'var(--t2,var(--dim2,#aaa))'; }); }
+      opts.forEach(function(o){ var b = document.createElement('button'); b.type = 'button'; b.dataset.v = o[0]; b.textContent = o[1]; b.title = o[2] || '';
+        b.style.cssText = 'font:inherit;font-size:10px;padding:3px 8px;border:1px solid var(--bd2,var(--border2,rgba(128,128,128,.3)));border-radius:4px;cursor:pointer';
+        b.onclick = function(e){ e.stopPropagation(); set(o[0]); paint(); }; r.appendChild(b); });
+      paint(); return r;
+    }
+    rows.appendChild(row('Style', [['standard', 'Standard'], ['newspaper', 'News'], ['terminal', 'Term'], ['pixel', 'Pixel']], function(){ return root.getAttribute('data-style') || 'standard'; }, function(v){ setAppearance({style:v}); }));
+    rows.appendChild(row('Detail', [['full', 'Full', 'Every control shown'], ['hover', 'Hover', 'Controls appear on hover'], ['zen', 'Zen', 'The page alone']], function(){ return root.getAttribute('data-den') || 'full'; }, function(v){ setAppearance({den:v}); }));
+    rows.appendChild(row('Blocks', [['on', 'On'], ['off', 'Off']], function(){ return root.getAttribute('data-blocks') || 'on'; }, function(v){ setAppearance({blocks:v === 'on'}); }));
+    menu.appendChild(rows);
+    try{ menu.appendChild(_makeScaleControl()); }catch(e){}
+    try{ menu.appendChild(_makeTextControl()); }catch(e){}
+    var list = document.createElement('div'); list.innerHTML = '<div style="padding:6px 8px;color:var(--t3,#888)">themes…</div>'; menu.appendChild(list);
+    fetch(BASE + '/ui/themes').then(function(r){ return r.json(); }).then(function(data){
+      var themes = (data && data.themes) || {}; list.innerHTML = '';
+      Object.keys(themes).forEach(function(tid){
+        var t = themes[tid], active = tid === _current;
+        var it = document.createElement('div');
+        it.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer;white-space:nowrap;'+(active ? 'background:var(--bd,rgba(128,128,128,.14))' : '');
+        it.onmouseover = function(){ if(!active) it.style.background = 'var(--s3,var(--bg3,rgba(128,128,128,.1)))'; };
+        it.onmouseout = function(){ if(!active) it.style.background = ''; };
+        it.onclick = function(e){ e.stopPropagation(); window.veraUI.setTheme(tid); menu.remove(); };
+        it.innerHTML = '<span style="width:12px;height:12px;border-radius:50%;flex-shrink:0;background:'+(t.accent||'#888')+';border:1.5px solid '+(active?'var(--t1,#fff)':'transparent')+'"></span>'+
+          '<span style="color:'+(active?'var(--t1,var(--text,#fff))':'var(--t2,var(--dim,#999))')+'">'+String(t.label||tid).replace(/</g,'&lt;')+'</span>';
+        list.appendChild(it);
+      });
+    }).catch(function(){ list.innerHTML = ''; });
+    (document.body || document.documentElement).appendChild(menu);
+    var r = btn ? btn.getBoundingClientRect() : { bottom: 48, right: window.innerWidth - 12 };
+    menu.style.top = Math.round(r.bottom + 5) + 'px';
+    menu.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
+    /* a button low on the page (the standalone one sits bottom-right) opens it upwards */
+    try{ if(r.bottom + 5 + menu.offsetHeight > window.innerHeight && r.top > window.innerHeight / 2){ menu.style.top = ''; menu.style.bottom = Math.round(window.innerHeight - r.top + 5) + 'px'; } }catch(e){}
+    setTimeout(function(){
+      function close(e){ if(menu.contains(e.target)) return; if(btn && btn.contains(e.target)) openAppearance._shut = Date.now(); menu.remove(); document.removeEventListener('click', close, true); document.removeEventListener('keydown', esc, true); }
+      function esc(e){ if(e.key === 'Escape'){ menu.remove(); document.removeEventListener('click', close, true); document.removeEventListener('keydown', esc, true); } }
+      document.addEventListener('click', close, true); document.addEventListener('keydown', esc, true);
+    }, 0);
+    return menu;
   }
 
   // ── Shared read states ─────────────────────────────────────────────────────
@@ -983,6 +1135,22 @@
       label: label.slice(0, 500),
       retryable: kind === 'error' && input.retryable !== false
     });
+  }
+
+  /* A THEME COLOUR FOR A CANVAS (the UI bootstrap, 2026-10-04): a canvas, a chart library or an SVG built in script cannot
+     read var(). veraUI.color('--acc') is the theme's colour now; veraUI.color('--acc', .3) the same at 30% - resolved
+     through a hidden element, so the theme's own names, fallbacks and color-mix all work - cached until the theme, the
+     style or the appearance changes. Redraw on the 'vera:theme' message to follow a switch. Never a hex in a canvas. */
+  var _colCache = {}, _colEl = null;
+  try{ new MutationObserver(function(){ _colCache = {}; }).observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'data-theme', 'data-style', 'class'] }); }catch(e){}
+  function themeColor(name, alpha){
+    var v = String(name || '--acc'); if(v.indexOf('--') !== 0) v = '--' + v;
+    var k = v + '|' + (alpha == null ? 1 : alpha); if(_colCache[k]) return _colCache[k];
+    try{
+      if(!_colEl){ _colEl = document.createElement('i'); _colEl.style.display = 'none'; document.documentElement.appendChild(_colEl); }
+      _colEl.style.color = (alpha == null || alpha >= 1) ? 'var(' + v + ')' : 'color-mix(in srgb, var(' + v + ') ' + Math.round(alpha * 100) + '%, transparent)';
+      return (_colCache[k] = getComputedStyle(_colEl).color);
+    }catch(e){ return ''; }
   }
 
   function _ensureReadStateStyles(){
@@ -1081,6 +1249,7 @@
     applyVars: applyVars,
     injectPicker: injectPicker,
     injectFloatingPicker: injectFloatingPicker,
+    openAppearance: openAppearance,
     onAccent: _deriveOnAccent,
     // Appearance: style pack · density tier · blocks
     setAppearance: setAppearance,
@@ -1107,6 +1276,7 @@
     // uses this instead of rolling its own CSS animation loop.
     pulseOnce: pulseOnce,
     readState: readState,
+    color: themeColor,
     renderReadState: renderReadState,
   };
 

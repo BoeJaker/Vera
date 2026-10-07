@@ -1,8 +1,8 @@
 """Runtime-neutral Workflow IR and loss-aware adapters for Vera's native DAG.
 
-This module only describes workflows.  It deliberately has no execution entry
-point: native engines remain authoritative until a later, separately gated
-integration chooses an adapter and authorizes its effects.
+This module describes workflows and analyzes adapters. Exact native-DAG subsets
+may be handed to the separately gated execution bridge; this module itself does
+not execute a task, authorize an effect, or own retries and cancellation.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
 from typing import Any
 
@@ -28,12 +29,12 @@ _ADAPTER_PROFILES = {
     "portable.core": {"available": True, "executable": False,
                       "supports": list(_IR_FEATURES),
                       "detail": "Validation and serialization only; cannot execute workflows."},
-    "vera.native_dag": {"available": True, "executable": False,
+    "vera.native_dag": {"available": True, "executable": True,
                         "supports": ["tasks", "parallel", "conditions"],
-                        "detail": "Loss-aware conversion only; native DAG remains authoritative."},
+                        "detail": "Exact subsets execute through workflow.ir.run_native; the native DAG engine remains the execution authority."},
     "langgraph": {"available": True, "executable": False,
                   "supports": ["tasks", "parallel", "conditions"],
-                  "detail": "Offline compiler and injected conformance boundary; no operational runner is registered or invoked."},
+                  "detail": "Offline compiler plus an opt-in operational runner; no policy executor is bound or default route registered."},
     "temporal": {"available": True, "executable": False,
                  "supports": ["tasks", "parallel", "conditions"],
                  "detail": "Offline compiler and injected conformance boundary; no operational worker is registered or invoked."},
@@ -599,7 +600,15 @@ def migrate_workflow(workflow: Any, *, target_version: str = IR_VERSION) -> dict
 
 def adapter_profiles() -> dict[str, Any]:
     """Return detached, non-executing adapter capability declarations."""
-    return {"profiles": copy.deepcopy(_ADAPTER_PROFILES), "executes": False}
+    profiles = copy.deepcopy(_ADAPTER_PROFILES)
+    profiles["vera.native_dag"]["executable"] = str(
+        os.getenv("VERA_WORKFLOW_IR_NATIVE_BRIDGE", "1")
+    ).strip().lower() not in {"0", "false", "no", "off"}
+    if not profiles["vera.native_dag"]["executable"]:
+        profiles["vera.native_dag"]["detail"] = (
+            "The exact native bridge is installed but disabled by configuration."
+        )
+    return {"profiles": profiles, "executes": False}
 
 
 def analyze_adapter(workflow: Any, *, adapter: str = "vera.native_dag") -> dict[str, Any]:

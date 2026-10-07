@@ -85,6 +85,8 @@ from Vera.vera.capability_orchestration import (
 )
 # A guest's exec login: its pve:<vmid>@ label, else its guest tag (one SSH store).
 from Vera.vera.provisioning import ssh_store_merge_core as _ssh_store
+from Vera.vera.vllm import vllm_install_core as _vllm_install_core
+from Vera.vera.vllm import node_backend_core as _node_backend_core
 from Vera.vera.proxmox import pool_core as _pool
 from Vera.vera.proxmox.pxstore_attach_core import (
     DEFAULT_CT_PATH as _ATTACH_CT_PATH,
@@ -1987,25 +1989,40 @@ async def cap_backend_status(cluster_id: str = "", node: str = "",
     http_tags=["pxstore"],
     description="Install vLLM inside an LXC container (venv at /opt/vera-vllm + "
                 "a 'vera-vllm' systemd unit, NOT started) so the CT can be "
-                "switched between ollama and vLLM. NOTE: the stock 'vllm' wheel "
-                "needs CUDA — for the CPU nodes pass pip_spec pointing at a CPU "
-                "build. Point hf_home at the central store mount to share "
-                "weights. This downloads torch — expect several GB / minutes. "
-                "Inputs: cluster_id (str!), node (str!), vmid (int!), model "
-                "(str! — HF id, e.g. 'Qwen/Qwen2.5-7B-Instruct'), port "
-                "(int=8000), hf_home (str='/models/hf'), pip_spec (str='vllm'), "
-                "extra_args (str — appended to `vllm serve`). Output: {ok, log}.",
+                "switched between ollama and vLLM. mode 'gpu' installs vLLM's "
+                "+cu129 release wheel with torch cu126 (keeps sm_70 / V100); "
+                "'cpu' the +cpu wheel (needs glibc >= 2.39 — Debian 13) with "
+                "nobind OpenMP threads and fp32; 'auto' picks gpu when an NVIDIA "
+                "device answers in the CT. Point hf_home at the central store "
+                "mount to share weights. Downloads several GB. Inputs: "
+                "cluster_id (str!), node (str!), vmid (int!), model (str! — HF id "
+                "or a path), port (int=8000), mode ('auto'|'gpu'|'cpu'), "
+                "vllm_version (str — release, blank = latest), hf_home "
+                "(str='/models/hf'), pip_spec (str — explicit wheel/requirement, "
+                "overrides the release lookup), extra_args (str — appended to "
+                "`vllm serve`). Output: {ok, mode, log}.",
+    schema={"properties": {"mode": {"enum": ["auto", "gpu", "cpu"]}}},
 )
 async def cap_backend_provision_vllm(cluster_id: str = "", node: str = "",
                                      vmid: int = 0, model: str = "",
                                      port: int = 8000,
                                      hf_home: str = "/models/hf",
-                                     pip_spec: str = "vllm",
-                                     extra_args: str = "", trace_id=None) -> Dict:
+                                     pip_spec: str = "",
+                                     extra_args: str = "", mode: str = "auto",
+                                     vllm_version: str = "",
+                                     trace_id=None) -> Dict:
     if not (cluster_id and node and vmid and model):
         return {"error": "cluster_id, node, vmid, model required"}
-    if not re.match(r"^[A-Za-z0-9._/-]+$", model):
+    if not re.match(r"^[A-Za-z0-9._/:-]+$", model):
         return {"error": "invalid model id"}
+    if pip_spec.strip() == "vllm":
+        pip_spec = ""            # the stock wheel has no sm_70 kernels / no CPU build
+    try:
+        recipe = _vllm_install_core.install_script(
+            "/opt/vera-vllm", mode=mode, version=vllm_version, pip_spec=pip_spec,
+            done_marker="VLLM_PROVISION_OK")
+    except ValueError as e:
+        return {"error": str(e)}
     await emit_event({"type": "pxstore.progress", "stage": "backend.provision",
                       "message": f"installing vLLM in CT {vmid} (this can take "
                                  "several minutes — torch download)"})
@@ -2015,32 +2032,32 @@ After=network.target
 
 [Service]
 Environment=HF_HOME={hf_home}
-ExecStart=/opt/vera-vllm/bin/vllm serve {model} --host 0.0.0.0 --port {int(port)} {extra_args}
+ExecStart={_vllm_install_core.serve_command("/opt/vera-vllm", model, int(port), extra_args)}
 Restart=on-failure
-RestartSec=5
+RestartSec=60
+TimeoutStartSec=900
 
 [Install]
 WantedBy=multi-user.target
 """
     inner = f"""set -e
 export DEBIAN_FRONTEND=noninteractive
-command -v python3 >/dev/null 2>&1 || (apt-get -qq update && apt-get -qq -y install python3)
-python3 -m venv -h >/dev/null 2>&1 || apt-get -qq -y install python3-venv
-[ -d /opt/vera-vllm ] || python3 -m venv /opt/vera-vllm
-/opt/vera-vllm/bin/pip install -q -U {shlex.quote(pip_spec)}
+{_vllm_install_core.system_deps_cmd()}
 mkdir -p {shlex.quote(hf_home)}
 cat > /etc/systemd/system/vera-vllm.service <<'VLLMUNIT'
 {unit}
 VLLMUNIT
 systemctl daemon-reload
-echo VLLM_PROVISION_OK"""
+{recipe}"""
     r = await _node_ssh(cluster_id, node, _sh(_pct_exec(vmid, inner)),
                         timeout=3600)
     if r.get("rc") != 0 or "VLLM_PROVISION_OK" not in r.get("stdout", ""):
         return {"error": (r.get("error") or r.get("stderr", ""))[:800]
                          or "provision failed",
                 "log": r.get("stdout", "")[-1500:]}
+    _m = re.search(r"vllm install mode=(\w+)", r.get("stdout", ""))
     return {"ok": True, "vmid": int(vmid), "model": model, "port": int(port),
+            "mode": _m.group(1) if _m else mode,
             "log": r.get("stdout", "")[-800:],
             "note": "unit installed but not started — use pxstore.backend.switch"}
 
@@ -2067,15 +2084,24 @@ async def cap_backend_switch(cluster_id: str = "", node: str = "", vmid: int = 0
         return {"error": "backend must be 'vllm' or 'ollama'"}
     if not (cluster_id and node and vmid):
         return {"error": "cluster_id, node, vmid required"}
+    # The fleet's Ollama unit is ollama-vera (stock installs: ollama), fronted by
+    # its activity tap on the public port; both go down / come back together.
+    # (nodes.backend.switch is the node-level switch for the vllm_server
+    # component; this one serves CTs provisioned with provision_vllm.)
+    _u = _node_backend_core.OLLAMA_UNIT_EXPR
+    _tap = "vera-ollama-tap@11435"
     if backend == "vllm":
-        inner = ("systemctl stop ollama 2>/dev/null || true; "
+        inner = (f"U={_u}; systemctl disable --now {_tap} 2>/dev/null || true; "
+                 "systemctl disable --now $U 2>/dev/null || true; "
+                 "[ -e /dev/nvidia0 ] && echo VERA_GPU=1; "
                  "systemctl enable --now vera-vllm && "
                  "sleep 2 && systemctl is-active vera-vllm")
     else:
         inner = ("systemctl stop vera-vllm 2>/dev/null || true; "
                  "systemctl disable vera-vllm 2>/dev/null || true; "
-                 "systemctl enable --now ollama && "
-                 "sleep 2 && systemctl is-active ollama")
+                 f"U={_u}; systemctl enable --now $U && "
+                 f"{{ systemctl cat {_tap} >/dev/null 2>&1 && systemctl enable --now {_tap} || true; }} && "
+                 "sleep 2 && systemctl is-active $U")
     r = await _node_ssh(cluster_id, node, _sh(_pct_exec(vmid, inner)), timeout=90)
     active = r.get("stdout", "").strip().splitlines()[-1:] or [""]
     if r.get("rc") != 0 or active[0] != "active":
@@ -2087,6 +2113,7 @@ async def cap_backend_switch(cluster_id: str = "", node: str = "", vmid: int = 0
     vadd = _rawcap("vllm.instances.add")
     vdel = _rawcap("vllm.instances.remove")
     vid = f"vllm-{ollama_instance_id or vmid}"
+    _ct_gpu = "VERA_GPU=1" in r.get("stdout", "")
     if backend == "vllm":
         if ollama_instance_id and ollama_instance_id in insts:
             insts[ollama_instance_id]["enabled"] = False
@@ -2097,7 +2124,9 @@ async def cap_backend_switch(cluster_id: str = "", node: str = "", vmid: int = 0
             ip = await pm._guest_ip(rec, node, "lxc", int(vmid)) if (rec and pm) else ""
             vllm_url = f"http://{ip}:{int(vllm_port)}" if ip else ""
         if vadd and vllm_url:
-            vr = await vadd(id=vid, url=vllm_url, label=f"vllm@{vmid}")
+            # has_gpu from the CT itself (it used to default to True).
+            vr = await vadd(id=vid, url=vllm_url, label=f"vllm@{vmid}",
+                            has_gpu=_ct_gpu)
             registry["vllm_added"] = {"id": vid, "url": vllm_url,
                                       "ok": bool(vr.get("ok")),
                                       "error": vr.get("error", "")}
@@ -2111,12 +2140,17 @@ async def cap_backend_switch(cluster_id: str = "", node: str = "", vmid: int = 0
         if vdel:
             vr = await vdel(instance_id=vid)
             registry["vllm_removed"] = {"id": vid, "ok": bool(vr.get("ok"))}
+    _save = getattr(_orch, "_save_nodes", None)
+    if ollama_instance_id and ollama_instance_id in insts and _save:
+        try:
+            await _save()            # the enable/disable survives a restart
+            registry["persisted"] = True
+        except Exception as e:
+            registry["persisted"] = f"failed: {e}"
     await emit_event({"type": "pxstore.backend.switched", "vmid": int(vmid),
                       "backend": backend, "registry": registry})
     return {"ok": True, "backend": backend, "service": "active",
-            "registry": registry,
-            "note": "OLLAMA_INSTANCES enable/disable is in-process; persisted "
-                    "routing profiles may re-enable it on restart"}
+            "registry": registry}
 
 
 # (The idle-worker policy — spawning Vera workers on idle ollama nodes — was

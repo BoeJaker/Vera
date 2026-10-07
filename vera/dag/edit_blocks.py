@@ -177,6 +177,42 @@ def _unfence(lines: List[str]) -> List[str]:
     return lines
 
 
+#: Every delimiter, for the two guards below.
+_MARKERS = (EDIT, FIND, REPLACE, END, NOTE)
+
+
+def _split_marker_runs(lines: List[str]) -> List[str]:
+    """A line made ONLY of markers is several marker lines.
+
+    Live 2026-09-30 (fix check, author-then-edit): the editor closed one block
+    and opened the next on ONE line - `<<<END>>> <<<EDIT>>>` - and closed the
+    last with `<<<END>>> <<<NOTE>>>`. A line that merely CONTAINS a marker is
+    content, so both were copied into the replacement: the second edit and the
+    note were written into the file's <script> and html-parse still passed.
+    A line whose every token is a marker cannot be source; split it.
+    """
+    out: List[str] = []
+    for raw in lines:
+        toks = raw.split()
+        if len(toks) > 1 and all(tok in _MARKERS for tok in toks):
+            out.extend(toks)
+        else:
+            out.append(raw)
+    return out
+
+
+def _has_marker(text: str) -> bool:
+    """A marker glued to the START or END of a line (`x = 2; <<<END>>>`) - the
+    shape of a delimiter the model ran into its text. A marker in the MIDDLE
+    of a line (`x = '<<<END>>> inside a string'`) stays content, as it always
+    has: source may legitimately contain the marker text."""
+    for ln in str(text or "").splitlines():
+        s = ln.strip()
+        if any(s.startswith(m) or s.endswith(m) for m in _MARKERS):
+            return True
+    return False
+
+
 def parse(text: str) -> Dict[str, Any]:
     """Parse delimited edit blocks. Returns ``{edits, note, error}``.
 
@@ -189,9 +225,10 @@ def parse(text: str) -> Dict[str, Any]:
     EMPTY replace is legitimate - it is how a deletion is expressed - so
     "absent" is tracked separately from "empty".
     """
-    lines = _strip_fence_lines(str(text or "").splitlines())
+    lines = _split_marker_runs(_strip_fence_lines(str(text or "").splitlines()))
     edits: List[Dict[str, str]] = []
     note_lines: List[str] = []
+    leaked = 0          # edits dropped because a delimiter was inside their text
 
     section = None
     find_buf: List[str] = []
@@ -199,12 +236,19 @@ def parse(text: str) -> Dict[str, Any]:
     saw_replace = False
 
     def flush():
-        nonlocal find_buf, repl_buf, saw_replace
+        nonlocal find_buf, repl_buf, saw_replace, leaked
         find_text = "\n".join(_strip_gutter(_unfence(find_buf)))
         repl_text = "\n".join(_strip_gutter(_unfence(repl_buf)))
         if (find_text.strip() and saw_replace
                 and not _is_placeholder(find_text) and not _is_placeholder(repl_text)):
-            edits.append({"find": find_text, "replace": repl_text})
+            if _has_marker(find_text) or _has_marker(repl_text):
+                # A delimiter inside the text means the blocks were not read the
+                # way they were written: applying it would write the protocol
+                # into the file. Refuse - a failed edit is retried, a corrupted
+                # file passes every syntax check and ships.
+                leaked += 1
+            else:
+                edits.append({"find": find_text, "replace": repl_text})
         find_buf, repl_buf, saw_replace = [], [], False
 
     for raw in lines:
@@ -244,6 +288,10 @@ def parse(text: str) -> Dict[str, Any]:
     flush()                                # a reply that omitted its final END
 
     note = "\n".join(note_lines).strip()
+    if not edits and leaked:
+        return {"edits": [], "note": note,
+                "error": ("an edit block's text contained a delimiter line (" + END + ", "
+                          + EDIT + "...) - put every marker on a line of its own")}
     if not edits:
         if note:
             # An explicit note and no edits is the editor declining in the shape

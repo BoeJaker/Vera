@@ -177,17 +177,17 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   t('and so is a cited one', (card.match(/vera:research:source/g) || []).length >= 2);
   t('the card asks rather than writing to a canvas it does not own', !/canvas\.add/.test(card));
   t('the chat listens and lands it', /document\.addEventListener\('vera:research:source'/.test(src));
-  t('keyed by url so a re-run updates rather than doubles', /const key='source:'\+url\.replace/.test(src));
-  t('and it lands WITHOUT the page body or picture', /content:\{ url, title:String\(d\.title\|\|''\), domain, chars:\+d\.chars\|\|0, failed:!!d\.failed \}/.test(src));
-  /* ...but not as a bare headline. The crawl knows how much it read and passes on none of it, so the card was an
-     address and a title until pressed - a reading list of headlines is a bibliography. The first few get a
-     snippet; the rest wait to be asked, which is the bargain the screenshot makes too. */
-  t('the first few sources arrive with something to read', /if\(!d\.failed\) _cvSnippet\(key, url\);/.test(src));
-  t('bounded, because a deep run reads dozens', /if\(_cvSnipN>=3\) return; _cvSnipN\+\+;/.test(src));
-  t('and short, because it is a preview and not the page', /max_chars:600/.test(src) && /txt\.slice\(0,400\)/.test(src));
-  t('a page that would not load is not fetched for a preview of nothing', /if\(!d\.failed\)/.test(src));
-  t('and one that already has a snippet is left alone', /if\(!b\|\|!b\.content\|\|b\.content\.snippet\) return;/.test(src));
-}
+  /* ONE READING LIST PER RUN (owner, 2026-09-28: "research caps need better outputs to the canvas"): the pages a run
+     reads gather into one records item for the turn - each landed as its own card before, dozens of them, and the
+     report itself never reached the canvas */
+  t('keyed by url so a page announced twice is one row', /const id=url\.split\('#'\)\[0\]/.test(src) && /let rec=g\.seen\[id\];/.test(src));
+  t('one records item per turn, keyed by it', /key:'research-sources:'\+\(mid\|\|'session'\)/.test(src) && /kind:'records', key:g\.key/.test(src));
+  t('and it lands WITHOUT the page body or picture', /rec=\{ id, url, domain:domain\.replace\(\/\^www\\\.\/,''\), title:String\(d\.title\|\|''\)\|\|domain\|\|url, snippet:'', meta:\{\} \}/.test(src));
+  t('batched, so a page is not a write', /clearTimeout\(g\.t\); g\.t=setTimeout\(\(\)=>\{ _cvFlushSources\(mid\); \}, 700\);/.test(src));
+  t('updated in place as the run reads on', /else await _capCall\('canvas\.update',\{ session_id:SID, key:g\.key, content \}\)/.test(src));
+  t('the pages the report cited come first, and say so', /\(b\.cited\?1:0\)-\(a\.cited\?1:0\)/.test(src) && /rec\.meta\.cited='cited in the report'/.test(src));
+  t('a page that would not load says so', /if\(d\.failed\) rec\.meta\.status='did not load';/.test(src));
+  t('and the finished report lands as a document, its citations as its Sources', /async function _cvLandReport\(text, mid, jobId, cits\)/.test(src) && /kind:'markdown', key:'research-report:'/.test(src) && /try\{ _cvLandReport\(fullText, _cvRelMid\|\|'', jobId, cits\); \}catch\(_\)\{\}/.test(src));}
 
 // ---- the item fetches the page only when it is opened ----------------------------------------------------------
 {
@@ -200,7 +200,7 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
      the press did nothing, silently, which is the worst way for it to fail. Measured against the live cap. */
   t('the screenshot is read from the field the cap answers with', /r\.image_b64 \|\| r\.image/.test(cv));
   t('and the data url names the format the bytes actually are', /\/\^\\\/9j\\\/\/\.test\(shot\) \? 'image\/jpeg'/.test(cv));
-  t('browser.content is asked with max_chars, which is its parameter', /browser\.content', \{ url: String\(c\.url\), max_chars: 40000 \}/.test(cv));
+  t('a page is read in READER MODE first, its bare text when the reader finds no body', /this\.callResult\('browser\.reader', \{ url, max_chars: 40000 \}\)/.test(cv) && /this\.callResult\('browser\.content', \{ url, max_chars: 40000 \}\)/.test(cv));
   /* the add bar is STICKY, so with no background the canvas scrolls under the buttons and they become
      unreadable. "blocks off" is a preference about ITEMS; it cannot be allowed to take the floor out from
      under a toolbar - and it bit because the server's appearance seed has blocks off for every new device. */
@@ -209,8 +209,8 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   t('the add bar has a ground by default, and a blur rather than one when blocks are off',
     /\.addbar\{position:sticky;[^}]*background:var\(--bg1/.test(cv) &&
     /:host\(\[blocks="off"\]\) \.addbar\{background:none;backdrop-filter:blur/.test(cv));
-  t('what comes back is written into the item, so the second look is free', /canvas\.update', \{ key, content: Object\.assign\(\{\}, c, \{ text:/.test(cv));
-  t('a second press is only the fold, not a second fetch', /if \(c\.text\) \{ this\._srcOpen\[key\] = !this\._srcOpen\[key\]/.test(cv));
+  t('what comes back is written into the item, so the second look is free', /canvas\.update', \{ key, content: Object\.assign\(\{\}, c, rd\.reader \? \{ reader: rd\.reader \} : \{ text: rd\.text\.slice\(0, 40000\) \}\) \}\)/.test(cv));
+  t('a second press is only the fold, not a second fetch', /if \(c\.text \|\| c\.reader\) \{ this\._srcOpen\[key\] = !this\._srcOpen\[key\]/.test(cv));
   t('a source that would not load says so rather than being tidied away', /c\.failed \? `<span class="vc-src-n bad">did not load<\/span>`/.test(cv));
   t('the buttons reach the handler', /\[data-src-act\]/.test(cv));
   const py = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_capabilities.py'), 'utf8');

@@ -26,7 +26,7 @@ t('the harness draws a tab proxy as a tab', /\(it\.tab \? ' hp-tab' : ''\)/.test
 t('a bar whose pane is hidden is let go and the shown pane\'s found', /function _hdrBarShown\(b\)\{/.test(BR) && /var had = !!_hdrBar; _hdrDrop\(\); _hdrFind\(\);/.test(BR));
 t('...looked at again after every click, not only on the interval', /document\.addEventListener\('click', function\(\)\{ clearTimeout\(_hdrCT\); _hdrCT = setTimeout\(_hdrCheck, 220\); \}, true\);/.test(BR));
 t('no bar left: the harness is told the bar is empty, and a shown child\'s bar is relayed instead', /groups: \[\] \}, '\*'\); \}catch\(e\)\{\} _hdrKid = null; if\(typeof _hdrRelay === 'function'\) _hdrRelay\(\);/.test(BR));
-t('the harness drops an empty offer rather than holding a stale bar', /if\(!Array\.isArray\(d\.groups\) \|\| !d\.groups\.length\)\{ if\(_hdrOffers\[pid\]\)\{ delete _hdrOffers\[pid\]; _hdrSync\(\); \} return; \}/.test(HAR));
+t('the harness drops an empty offer rather than holding a stale bar', /if\(!Array\.isArray\(d\.groups\) \|\| !d\.groups\.length\)\{ if\(_hdrOffers\[pid\]\)\{ if\(_hdrOffers\[pid\]\.absorbed\)\{ try\{ e\.source\.postMessage\(\{ type: 'vera:hdr:absorbed', on: false \}, '\*'\); \}catch\(_\)\{\} \} delete _hdrOffers\[pid\]; _hdrSync\(\); \} return; \}/.test(HAR)   /* 2026-09-29: and the panel is told it is no longer held */);
 
 // ── 3. what does not fit the header is still one press away ──
 t('groups that do not fit go into a harness-drawn ⋯ when the panel has no ⋯ of its own',
@@ -45,12 +45,12 @@ if (wt) {
   const flat = [{ id: 'system' }, { id: 'calendar' }, { id: 'c:layers', depth: 1 }, { id: 'c:events', depth: 1 }, { id: 'email' }];
   t('a child section under a plain item', _wayTo(flat, 3) === 'calendar>c:events', _wayTo(flat, 3));
 }
-t('a docked menu\'s entry opens beside along that way', /opts\.onSplit\(cur\.id \+ '\/' \+ way\)/.test(LHM) && /if\(opts\.onSplit\) _beside\(e, function\(\)\{ opts\.onSplit\(cur\.id \+ '\/' \+ way\); \}\);/.test(LHM));
+t('a docked menu\'s entry opens beside along that way', /opts\.onSplit\(owner\.id \+ '\/' \+ way\)/.test(LHM) && /if\(opts\.onSplit\) _beside\(e, function\(\)\{ opts\.onSplit\(owner\.id \+ '\/' \+ way\); \}\);/.test(LHM));
 t('the bridge walks the way a step at a time, each once its level is there', /steps\.slice\(1\)\.every\(function\(x\)\{ return \/\^\[cs\]:\/\.test\(x\); \}\)/.test(BR) && /function _navChain\(steps, tok, n\)\{/.test(BR) && /if\(n < 60\) _navChain\(steps, tok, n \+ 1\);/.test(BR));
 t('a nested pick asked for before its level loaded is tried again; a newer pick cancels it', /_navPend\+\+;/.test(BR) && /if\(!steps\.length \|\| tok !== _navPend\) return;/.test(BR));
 t('the harness nav_select walks the way (each step is still one _navSelect)', /nav_select: _navPick,/.test(BR) && /var r = _navSelect\(\{id: steps\[0\]\}\);/.test(BR));
 t('a child section is sent only to a shown child that has it', /the shown nested panel has no /.test(BR));
-t('the rail\'s icons say Ctrl/middle-click opens beside', /ico\.title = m\.label \+ \(opts\.onSplit \?/.test(LHM));
+t('the rail\'s icons say Ctrl/middle-click opens beside', /ico\.title = _tip\(m\.label, m\.desc\) \+ \(opts\.onSplit \?/.test(LHM));
 t('the strips (tabs mode) open beside by Ctrl/middle-click', /if\(_splitKey\(ev\) && cfg\.onBeside\) cfg\.onBeside\(t\); else if\(cfg\.onTab\) cfg\.onTab\(t\);/.test(LHM) && /onBeside: _localLhm\[pid\] \? null : \(tab\) => \{ _lhmOpenBeside\(/.test(HAR));
 t('the tab bar\'s hover list: Ctrl/middle-click and a ⧉ on every row', /bs\.className = 'tdd-bs'/.test(HAR) && /if\(beside && \(ev\.ctrlKey \|\| ev\.metaKey\)\)\{ beside\(\); return; \}/.test(HAR));
 t('a panel\'s own menu in its frame asks the harness to open it beside (vera:lhm:tab)',

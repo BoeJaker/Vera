@@ -6,9 +6,11 @@ import hashlib
 import json
 import os
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ..state_paths import guard_out_of_tree, state_dir
 from .run_journal import JournalCorruption, MemoryRunJournal, SqliteRunJournal
 from .run_protocol import ArtifactRef, PROTOCOL_VERSION, Run, RunError, RunEvent, RunStatus
 
@@ -38,8 +40,10 @@ def _result_artifact(run_id: str, result: Any, *, partial: bool = False) -> Arti
 class ShadowRunRegistry:
     """Bounded process-local projection registry; explicitly non-authoritative."""
 
-    def __init__(self, max_runs: int = 200, journal=None) -> None:
+    def __init__(self, max_runs: int = 200, journal=None,
+                 durable_max_runs: int = 5000) -> None:
         self.max_runs = max(1, int(max_runs))
+        self.durable_max_runs = max(1, int(durable_max_runs))
         self.runs: OrderedDict[str, Run] = OrderedDict()
         self.journal = journal or MemoryRunJournal()
         self.recovery = {"attempted": False, "recovered": 0, "failed": 0,
@@ -66,6 +70,9 @@ class ShadowRunRegistry:
                 "error_type": str(item.get("error_type") or "recovery_error"),
             } for item in failures[:20]],
             "bounded_limit": self.max_runs,
+            "durable_retention_runs": (self.durable_max_runs
+                                        if isinstance(self.journal, SqliteRunJournal)
+                                        else None),
             "read_only": True,
         }
 
@@ -75,6 +82,11 @@ class ShadowRunRegistry:
         self.runs.move_to_end(run.id)
         self.journal.append(event)
         self.journal.checkpoint(run)
+        if (isinstance(self.journal, SqliteRunJournal) and not run.parent_run_id
+                and run.status in {
+                RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED,
+                RunStatus.TIMED_OUT, RunStatus.SKIPPED}):
+            self.journal.prune(self.durable_max_runs)
         if _AUTO_TELEMETRY_ENABLED and not run.parent_run_id and run.status in {
                 RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED,
                 RunStatus.TIMED_OUT, RunStatus.SKIPPED}:
@@ -174,9 +186,42 @@ class ShadowRunRegistry:
                 "recovery": self.recovery_status()}
 
 
-_journal_path = os.getenv("VERA_RUN_JOURNAL_PATH", "").strip()
+def _positive_int(value: str, *, default: int, maximum: int = 100_000) -> int:
+    try:
+        parsed = int(str(value or "").strip() or default)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Run journal retention must be an integer") from exc
+    if parsed < 1 or parsed > maximum:
+        raise ValueError(f"Run journal retention must be between 1 and {maximum}")
+    return parsed
+
+
+def _journal_from_environment() -> tuple[MemoryRunJournal | SqliteRunJournal, int]:
+    """Resolve persistence explicitly while preserving standalone compatibility.
+
+    Existing installations that set VERA_RUN_JOURNAL_PATH stay durable. A
+    deployment may instead select durable mode and receive the standard
+    out-of-tree state path. `memory` is the immediate rollback switch. Unknown
+    modes and in-repository paths fail at startup rather than silently writing
+    somewhere unsafe or pretending persistence is active.
+    """
+    configured = os.getenv("VERA_RUN_JOURNAL_PATH", "").strip()
+    raw_mode = os.getenv("VERA_RUN_JOURNAL_MODE", "").strip().lower()
+    mode = raw_mode or ("durable" if configured else "memory")
+    if mode not in {"memory", "durable", "sqlite"}:
+        raise ValueError("VERA_RUN_JOURNAL_MODE must be memory, durable, or sqlite")
+    retention = _positive_int(
+        os.getenv("VERA_RUN_JOURNAL_RETENTION_RUNS", ""), default=5000)
+    if mode == "memory":
+        return MemoryRunJournal(), retention
+    path = Path(configured).expanduser() if configured else (
+        state_dir("execution") / "runs.sqlite3")
+    return SqliteRunJournal(guard_out_of_tree(path)), retention
+
+
+_journal, _durable_max_runs = _journal_from_environment()
 SHADOW_RUNS = ShadowRunRegistry(
-    journal=SqliteRunJournal(_journal_path) if _journal_path else MemoryRunJournal())
+    journal=_journal, durable_max_runs=_durable_max_runs)
 
 
 class DagRunObserver:

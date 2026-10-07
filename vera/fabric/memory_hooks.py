@@ -62,12 +62,36 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
-    CAPABILITY_REGISTRY, capability, emit_event, now_iso,
+    CAPABILITY_REGISTRY, capability, emit_event, now_iso, schedule,
 )
+try:                                    # who a recalled record came from; one hit per repeated text
+    from Vera.vera.fabric import recall_core as _recall_core
+except ImportError:                     # pragma: no cover
+    from . import recall_core as _recall_core
+try:                                    # was a recalled memory used in the reply (CU-M.2)
+    from Vera.vera.fabric import memory_usage_core as _usage_core
+except ImportError:                     # pragma: no cover
+    from . import memory_usage_core as _usage_core
+try:                                    # Chroma calls on their own small pool, with a finite timeout (RF-77)
+    from Vera.vera.fabric import chroma_bound_core as _chroma_bound
+except ImportError:                     # pragma: no cover
+    from . import chroma_bound_core as _chroma_bound
+try:                                    # how strong a memory still is: half-life per class, renewed by use (CU-M.3)
+    from Vera.vera.fabric import memory_strength_core as _strength_core
+except ImportError:                     # pragma: no cover
+    from . import memory_strength_core as _strength_core
+try:                                    # which memories are noise: kept, ranked last (CU-M.8)
+    from Vera.vera.fabric import memory_noise_core as _noise_core
+except ImportError:                     # pragma: no cover
+    from . import memory_noise_core as _noise_core
+try:                                    # one canonical record per repeated text (CU-M.5)
+    from Vera.vera.fabric import memory_canonical_core as _canon_core
+except ImportError:                     # pragma: no cover
+    from . import memory_canonical_core as _canon_core
 
 log = logging.getLogger("vera.memory_hooks")
 
@@ -367,6 +391,9 @@ async def record_agent_turn(
     if not MEMORY or not MemoryRecord:
         return
 
+    # Only what the user typed: the page appends recalled context and capability instructions to the message it
+    # sends, and storing those made every later search match them (1,191 such records by 2026-10-06, E29).
+    human_text = _noise_core.user_said(human_text)
     base_tags = (tags or []) + ["agent_turn", agent_name]
     keywords  = _extract_keywords(human_text + " " + ai_text, f"agent.{agent_name}")
 
@@ -563,6 +590,7 @@ async def record_dag_execution(
         MEMORY, MemoryRecord = _memory()
         if MEMORY and MemoryRecord:
             try:
+                trigger_text = _noise_core.user_said(trigger_text)
                 trigger_id  = str(uuid.uuid4())
                 trigger_rec = MemoryRecord(
                     id          = trigger_id,
@@ -696,40 +724,8 @@ async def get_agent_memory_context(
     if not results:
         return ""
 
-    lines = ["=== Relevant memories from past conversations ==="]
-    for item in results:
-        # HybridMemory.search returns List[Dict] with {"record": ..., "score": ...}
-        # but individual backends return List[Tuple[MemoryRecord, float]].
-        # Handle both shapes defensively.
-        if isinstance(item, dict):
-            rec_data = item.get("record") or item
-            score = item.get("score", 0.0)
-            # rec_data may be a dict (from to_dict()) or a MemoryRecord
-            if isinstance(rec_data, dict):
-                created_at = rec_data.get("created_at") or ""
-                human_text = rec_data.get("human_text", True)
-                text       = (rec_data.get("text") or "")[:200]
-            else:
-                created_at = getattr(rec_data, "created_at", "") or ""
-                human_text = getattr(rec_data, "human_text", True)
-                text       = (getattr(rec_data, "text", "") or "")[:200]
-        else:
-            # Tuple (MemoryRecord, float)
-            try:
-                rec, score = item
-            except (TypeError, ValueError):
-                continue
-            created_at = getattr(rec, "created_at", "") or ""
-            human_text = getattr(rec, "human_text", True)
-            text       = (getattr(rec, "text", "") or "")[:200]
-
-        text = _sanitize_recalled_text(text)
-        ts = created_at[:16].replace("T", " ") if created_at else ""
-        role = "User" if human_text else "Assistant"
-        if text:
-            lines.append(f"[{ts}] {role}: {text}")
-
-    return "\n".join(lines) if len(lines) > 1 else ""
+    items = [f for f in (_extract_record_fields(it) for it in results) if f]
+    return _chatmem_format(items)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -779,33 +775,31 @@ def _extract_record_fields(item: Any) -> Optional[Dict[str, Any]]:
     shape this module stores/formats. Mirrors get_agent_memory_context's own
     inline handling of both shapes; extracted so the two-tier path can share
     it instead of re-deriving the same logic a second time."""
+    repeats = 1
     if isinstance(item, dict):
-        rec_data = item.get("record") or item
+        rec = item.get("record") or item
         score = item.get("score", 0.0)
-        if isinstance(rec_data, dict):
-            rid        = rec_data.get("id") or ""
-            created_at = rec_data.get("created_at") or ""
-            human_text = rec_data.get("human_text", True)
-            text       = (rec_data.get("text") or "")[:200]
-        else:
-            rid        = getattr(rec_data, "id", "") or ""
-            created_at = getattr(rec_data, "created_at", "") or ""
-            human_text = getattr(rec_data, "human_text", True)
-            text       = (getattr(rec_data, "text", "") or "")[:200]
+        repeats = int(item.get("repeats", 1) or 1)       # set by the search's one-hit-per-text pass
     else:
         try:
             rec, score = item
         except (TypeError, ValueError):
             return None
-        rid        = getattr(rec, "id", "") or ""
-        created_at = getattr(rec, "created_at", "") or ""
-        human_text = getattr(rec, "human_text", True)
-        text       = (getattr(rec, "text", "") or "")[:200]
-    text = _sanitize_recalled_text(text)
+    get = (lambda k, d=None: rec.get(k, d)) if isinstance(rec, dict) else (lambda k, d=None: getattr(rec, k, d))
+    rid        = get("id", "") or ""
+    created_at = get("created_at", "") or ""
+    human_text = get("human_text", True)
+    # The speaker is read from what the record IS. `human_text` defaults to True, so judging by it alone showed
+    # every tool call, dream and event to the model as something the user had said.
+    role       = _recall_core.role_label(rec)
+    text       = _sanitize_recalled_text((get("text", "") or "")[:200])
     if not text or not rid:
         return None
-    return {"id": rid, "created_at": created_at, "human_text": bool(human_text),
-            "text": text, "score": float(score or 0.0)}
+    out = {"id": rid, "created_at": created_at, "human_text": bool(human_text), "role": role,
+           "text": text, "score": float(score or 0.0)}
+    if repeats > 1:
+        out["repeats"] = repeats
+    return out
 
 
 async def _chatmem_load_active(session_id: str) -> Dict[str, Dict[str, Any]]:
@@ -890,12 +884,16 @@ def _chatmem_format(items: List[Dict[str, Any]]) -> str:
     if not items:
         return ""
     lines = ["=== Relevant memories from past conversations ==="]
-    for it in items:
+    # One line per distinct text: the active set is keyed by record id, so two records carrying the same sentence
+    # (a line repeated across turns) would otherwise take two of the block's few lines.
+    for it in _recall_core.collapse_repeats(list(items)):
         ts = (it.get("created_at") or "")[:16].replace("T", " ")
-        role = "User" if it.get("human_text", True) else "Assistant"
+        # Entries saved before "role" was stored carry only the flag; read them as before.
+        role = it.get("role") or ("User" if it.get("human_text", True) else "Assistant")
         text = it.get("text", "")
         if text:
-            lines.append(f"[{ts}] {role}: {text}")
+            rep = int(it.get("repeats", 1) or 1)
+            lines.append(f"[{ts}] {role}: {text}" + (f" (x{rep})" if rep > 1 else ""))
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
@@ -938,6 +936,9 @@ async def get_agent_memory_context_v2(
     Falls back to the plain single-tier path if Redis or the two-tier
     method aren't available, so this degrades to the old (correct, just
     slower) behaviour rather than ever failing outright."""
+    # search for what the user typed: the page appends recalled context and capability instructions to the message,
+    # and searching with them found the last turn's recalled text again (the write side strips them too)
+    query = _noise_core.user_said(query)
     MEMORY, _ = _memory()
     if not MEMORY:
         return ""
@@ -987,7 +988,185 @@ async def get_agent_memory_context_v2(
         asyncio.create_task(_chatmem_deliver_slow(session_id, slow_task))
 
     ranked = sorted(active.values(), key=lambda it: it.get("score", 0.0), reverse=True)
+    _note_injected(session_id, ranked[:limit])
     return _chatmem_format(ranked[:limit])
+
+
+async def get_agent_memory_context_fast(
+    session_id:  str,
+    query:       str,
+    agent_name:  str  = "",
+    limit:       int  = 5,
+    tags:        Optional[List[str]] = None,
+) -> str:
+    """What a chat turn would be given right now, read without changing anything.
+
+    The fast tier (Postgres + Neo4j, no embedding) for `query`, merged with the session's current two-tier active
+    set as it stands. Unlike get_agent_memory_context_v2 it does not age the active set, take the pending slow-tier
+    delivery or start an embed - so a live preview can call it on every keystroke without decaying the session's
+    memory or loading the shared embed nodes. The full blocking search stays available as depth="full"."""
+    MEMORY, _ = _memory()
+    if not MEMORY:
+        return ""
+    if not hasattr(MEMORY, "search_fast"):
+        return await get_agent_memory_context(session_id=session_id, query=query,
+                                              agent_name=agent_name, limit=limit, tags=tags)
+    filters: Dict = {}
+    if agent_name:
+        filters["tags"] = [agent_name]
+    elif tags:
+        filters["tags"] = tags
+    try:
+        hits = await MEMORY.search_fast(query=query, limit=limit, filters=filters or None,
+                                        timeout=_CHATMEM_FAST_TIMEOUT_S)
+    except Exception as e:
+        log.debug("get_agent_memory_context_fast: %s", e)
+        hits = []
+    merged: Dict[str, Dict[str, Any]] = {}
+    if session_id and _redis() is not None:
+        merged.update(await _chatmem_load_active(session_id))      # read only - never saved back from here
+    for f in (_extract_record_fields(it) for it in hits):
+        if f and (f["id"] not in merged or merged[f["id"]].get("score", 0.0) < f["score"]):
+            merged[f["id"]] = f
+    ranked = sorted(merged.values(), key=lambda it: it.get("score", 0.0), reverse=True)
+    return _chatmem_format(ranked[:limit])
+
+
+# ── Usage signals (context-and-ui CU-M.2; owner 2026-10-04: useless memories fade, useful ones stay) ──────────────
+# What each chat turn put in front of the model, and whether the reply drew on it. The half-life (CU-M.3) reads the
+# counts. Kept per session until the turn ends; one upsert per record into vera_memory_usage.
+_INJECTED: Dict[str, Dict[str, str]] = {}      # session_id -> {record_id: text}
+_USAGE_TABLE_READY = False
+_USAGE_DDL = """
+    CREATE TABLE IF NOT EXISTS vera_memory_usage (
+        record_id      TEXT PRIMARY KEY,
+        injected_n     INT NOT NULL DEFAULT 0,
+        used_n         INT NOT NULL DEFAULT 0,
+        last_injected  TIMESTAMPTZ,
+        last_used      TIMESTAMPTZ
+    )"""
+
+
+def _note_injected(session_id: str, items: List[Dict[str, Any]]) -> None:
+    """Remember what this session's turn was given (the agent's own memory block, the deep search, the page's)."""
+    if not session_id:
+        return
+    slot = _INJECTED.setdefault(session_id, {})
+    for it in items or []:
+        rid = str((it or {}).get("id") or "")
+        if rid and rid not in slot:
+            slot[rid] = str((it or {}).get("text") or "")
+    if len(_INJECTED) > 500:                     # a session whose turn never ended does not hold memory forever
+        for k in list(_INJECTED)[:100]:
+            _INJECTED.pop(k, None)
+
+
+async def _usage_pool():
+    MEMORY, _ = _memory()
+    pg = (getattr(MEMORY, "_backends", {}) or {}).get("postgres") if MEMORY else None
+    return getattr(pg, "_pool", None)
+
+
+async def record_turn_usage(session_id: str, reply: str, page_ids: Optional[List[str]] = None,
+                            extra: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """After a turn: judge every memory it was given against the reply and count it in vera_memory_usage. Never raises;
+    a census, probe or empty turn is not counted (memory_usage_core.counts_toward_use)."""
+    global _USAGE_TABLE_READY
+    given = _INJECTED.pop(session_id or "", {})
+    out: Dict[str, Any] = {"injected": 0, "used": 0}
+    try:
+        if not _usage_core.counts_toward_use(session_id, reply):
+            return out
+        for it in extra or []:
+            rid = str((it or {}).get("id") or "")
+            if rid and rid not in given:
+                given[rid] = str((it or {}).get("text") or "")
+        pool = await _usage_pool()
+        if pool is None:
+            return out
+        ids = [str(i) for i in (page_ids or []) if i and str(i) not in given][:40]
+        async with pool.acquire() as conn:
+            if ids:
+                for row in await conn.fetch("SELECT id, text FROM vera_memories WHERE id = ANY($1::text[])", ids):
+                    given[row["id"]] = row["text"] or ""
+            if not given:
+                return out
+            verdicts = _usage_core.judge_all(reply, [{"id": k, "text": v} for k, v in given.items()])
+            if not _USAGE_TABLE_READY:
+                await conn.execute("SET lock_timeout = '3s'")
+                await conn.execute(_USAGE_DDL)
+                _USAGE_TABLE_READY = True
+            await conn.executemany(
+                """INSERT INTO vera_memory_usage (record_id, injected_n, used_n, last_injected, last_used)
+                   VALUES ($1, 1, $2, NOW(), CASE WHEN $2 = 1 THEN NOW() ELSE NULL END)
+                   ON CONFLICT (record_id) DO UPDATE SET
+                       injected_n = vera_memory_usage.injected_n + 1,
+                       used_n = vera_memory_usage.used_n + EXCLUDED.used_n,
+                       last_injected = NOW(),
+                       last_used = COALESCE(EXCLUDED.last_used, vera_memory_usage.last_used)""",
+                [(v["id"], 1 if v["used"] else 0) for v in verdicts])
+            # a faded memory the reply drew on is revived: back in the live store, its fade marker cleared (owner,
+            # 2026-10-05: a useful memory must never be locked out for good)
+            used_ids = [v["id"] for v in verdicts if v["used"]]
+            revived = []
+            if used_ids:
+                try:
+                    revived = [r["id"] for r in await conn.fetch(
+                        """UPDATE vera_memories SET archived = FALSE,
+                               metadata = (COALESCE(metadata, '{}'::jsonb) - 'faded_at' - 'fade_reason')
+                                          || jsonb_build_object('revived_at', NOW()::text)
+                           WHERE id = ANY($1::text[]) AND archived AND metadata ? 'faded_at'
+                           RETURNING id""", used_ids)]
+                except Exception as e:
+                    log.debug("revive faded: %s", e)
+        for rid in revived:
+            try:
+                MEMORY, _ = _memory()
+                neo = (getattr(MEMORY, "_backends", {}) or {}).get("neo4j") if MEMORY else None
+                if neo is not None:
+                    await neo.update(rid, {"archived": False})
+            except Exception:
+                pass
+        out = {"injected": len(verdicts), "used": sum(1 for v in verdicts if v["used"]), "revived": len(revived)}
+        try:
+            await emit_event({"type": "memory.feedback", "session_id": session_id, **out,
+                              "used_ids": [v["id"] for v in verdicts if v["used"]][:20]})
+        except Exception:
+            pass
+    except Exception as e:
+        log.debug("record_turn_usage: %s", e)
+    return out
+
+
+_DEEP_HEADING = "=== Earlier conversations (deep memory search, all sessions) ==="
+
+
+async def get_memory_context_deep(query: str, limit: int = 8, budget_s: float = 1.5) -> Dict[str, Any]:
+    """Deep memory for a turn that refers back ("last time", "what did we decide"): every session and agent, the
+    vector leg included when it answers inside the budget (the owner's 1.5 s, 2026-10-04).
+
+    The fast tier (Postgres + Neo4j) is always used; the vector leg replaces it with the merged result only if it
+    lands in what is left of the budget. A vector result that misses the budget is cancelled, not stashed - the
+    session's pending slot belongs to the agent's own two-tier memory. Never raises.
+    Returns {text, hits, vector (bool: the vector leg made it), ms, fast_ms, fast_hits (the text tier's own time and
+    hits), found (hits before they were read as memories)}."""
+    out: Dict[str, Any] = {"text": "", "hits": 0, "vector": False, "ms": 0.0}
+    MEMORY, _ = _memory()
+    if not MEMORY or not hasattr(MEMORY, "search_fast_and_slow") or not str(query or "").strip():
+        return out
+    t0 = time.monotonic()
+    info: Dict[str, Any] = {}
+    hits, out["vector"] = await _recall_core.fast_then_vector(
+        lambda fast_timeout: MEMORY.search_fast_and_slow(query=query, limit=limit, fast_timeout=fast_timeout),
+        budget_s, info=info)
+    items = [f for f in (_extract_record_fields(it) for it in (hits or [])) if f][:limit]
+    out["items"] = [{"id": it.get("id"), "text": it.get("text", "")} for it in items if it.get("id")]   # for usage (CU-M.2)
+    out.update(text=_recall_core.retitle_block(_chatmem_format(items), _DEEP_HEADING), hits=len(items),
+               ms=round((time.monotonic() - t0) * 1000, 1), found=len(hits or []),
+               fast_ms=info.get("fast_ms"), fast_hits=info.get("fast_hits"))
+    if info.get("error"):
+        out["error"] = info["error"]
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1047,7 +1226,11 @@ async def memory_record_turn(
     "memory.agent_context",
     http_method="POST", http_path="/memory/agent/context", http_tags=["memory"],
     memory="off",
-    description="Retrieve relevant past memories for injection into an agent's context.",
+    description="Retrieve relevant past memories for injection into an agent's context, each line naming who or "
+                "what it came from (User, Assistant, Tool call, Dream, ...) and repeated texts shown once. "
+                "depth='fast' (default): keyword and graph search without an embedding, plus what the session's "
+                "chat memory currently holds - quick, and it changes nothing. depth='full': the complete hybrid "
+                "search including vector similarity (slower: it waits for an embedding).",
 )
 async def memory_agent_context(
     session_id:  str,
@@ -1055,17 +1238,832 @@ async def memory_agent_context(
     agent_name:  str  = "",
     limit:       int  = 5,
     tags:        str  = "",
+    depth:       str  = "fast",
     trace_id=None,
 ):
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-    context = await get_agent_memory_context(
+    full = str(depth or "").strip().lower() == "full"
+    getter = get_agent_memory_context if full else get_agent_memory_context_fast
+    context = await getter(
         session_id  = session_id,
         query       = query,
         agent_name  = agent_name,
         limit       = limit,
         tags        = tag_list,
     )
-    return {"context": context, "found": bool(context)}
+    return {"context": context, "found": bool(context), "depth": "full" if full else "fast"}
+
+
+@capability(
+    "memory.usage.top",
+    http_method="GET", http_path="/memory/usage/top", http_tags=["memory"],
+    memory="off", silent=True,
+    description="Which memories chat turns draw on, and which they are given but ignore (counted after every chat "
+                "turn: each memory put in front of the model is judged used or not against the reply). Read-only. "
+                "Inputs: order ('used' | 'ignored', default used), limit (int=20). Output: {rows:[{record_id, text, "
+                "record_type, injected_n, used_n, use_rate, last_injected, last_used}], count}.",
+)
+async def memory_usage_top(order: str = "used", limit: int = 20, trace_id=None):
+    try:
+        lim = max(1, min(int(limit or 20), 200))
+    except (TypeError, ValueError):
+        lim = 20
+    by = ("u.used_n DESC, u.injected_n DESC" if str(order or "used").lower() != "ignored"
+          else "(u.injected_n - u.used_n) DESC, u.injected_n DESC")
+    pool = await _usage_pool()
+    if pool is None:
+        return {"rows": [], "count": 0, "error": "memory postgres not connected"}
+    try:
+        async with pool.acquire() as conn:
+            exists = await conn.fetchval("SELECT to_regclass('vera_memory_usage') IS NOT NULL")
+            if not exists:
+                return {"rows": [], "count": 0, "note": "no turn has been counted yet"}
+            rows = await conn.fetch(
+                "SELECT u.record_id, left(coalesce(m.text, ''), 200) AS text, m.record_type, u.injected_n, u.used_n, "
+                "u.last_injected, u.last_used FROM vera_memory_usage u LEFT JOIN vera_memories m ON m.id = u.record_id "
+                "ORDER BY " + by + " LIMIT $1", lim)
+    except Exception as e:
+        return {"rows": [], "count": 0, "error": str(e)[:200]}
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["use_rate"] = round(d["used_n"] / d["injected_n"], 2) if d.get("injected_n") else 0.0
+        for k in ("last_injected", "last_used"):
+            d[k] = d[k].isoformat() if d.get(k) else ""
+        out.append(d)
+    return {"rows": out, "count": len(out)}
+
+
+_FADE_REPORT_KEY = "vera:memory:fade:report"
+_FADE_POLICY_KEY = "vera:memory:fade:policy"
+
+
+async def _fade_auto_on() -> bool:
+    """Is nightly fading switched on? Off unless the user turns it on."""
+    r = _redis()
+    if r is None:
+        return False
+    try:
+        raw = await r.get(_FADE_POLICY_KEY)
+        d = json.loads(raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else raw) if raw else {}
+        return bool(isinstance(d, dict) and d.get("auto"))
+    except Exception:
+        return False
+
+
+async def _fade_overrides() -> Dict[str, Any]:
+    """The user's fading settings (owner, 2026-10-05: choose what gets forgotten and how quickly)."""
+    r = _redis()
+    if r is None:
+        return {}
+    try:
+        raw = await r.get(_FADE_POLICY_KEY)
+        if not raw:
+            return {}
+        d = json.loads(raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else raw)
+        return d.get("overrides") or {} if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+@capability(
+    "memory.fade.policy",
+    http_method="POST", http_path="/memory/fade/policy", http_tags=["memory"],
+    memory="off",
+    description="The user's controls over memory fading (owner, 2026-10-05: 'select what gets forgotten and how "
+                "quickly'). Per class of memory (conversation, session, observation, research, dream, transcript, "
+                "tool, estate, fact, preference): enabled (may it be forgotten at all), half_life_days (how quickly; "
+                "null = never decays) and floor (the strength below which it fades). Without 'set' it reads. Inputs: "
+                "set (dict {class: {enabled?, half_life_days?, floor?}} - merged over the current settings), reset "
+                "(bool - back to the defaults), auto (bool - fade every night at about 04:00; off by default), by "
+                "(str). Output: {policy (in force), overrides, defaults, ranges, version, updated_at, by, auto}.",
+)
+async def memory_fade_policy(set: Optional[Dict[str, Any]] = None, reset: bool = False, by: str = "",
+                             auto: Optional[bool] = None, trace_id=None):
+    r = _redis()
+    current = await _fade_overrides()
+    stored: Dict[str, Any] = {}
+    auto_now = await _fade_auto_on()
+    if auto is not None:
+        auto_now = str(auto).strip().lower() in ("1", "true", "yes", "on")
+    if reset or set or auto is not None:
+        overrides = {} if reset else dict(current)
+        for cls, o in (set or {}).items() if isinstance(set, dict) else []:
+            if cls in _strength_core.HALF_LIFE and isinstance(o, dict):
+                merged = dict(overrides.get(cls) or {})
+                merged.update({k: v for k, v in o.items() if k in ("enabled", "half_life_days", "floor")})
+                overrides[cls] = merged
+        stored = {"overrides": overrides, "auto": auto_now, "updated_at": now_iso(), "by": str(by or "")[:80]}
+        if r is None:
+            return {"error": "redis not connected - the settings cannot be kept"}
+        await r.set(_FADE_POLICY_KEY, json.dumps(stored))
+        current = overrides
+        try:
+            await emit_event({"type": "memory.fade.policy", "by": stored["by"], "classes": sorted(set or {})})
+        except Exception:
+            pass
+    else:
+        try:
+            raw = await r.get(_FADE_POLICY_KEY) if r is not None else None
+            stored = json.loads(raw) if raw else {}
+        except Exception:
+            stored = {}
+    return {"policy": _strength_core.policy_from(current), "overrides": current,
+            "defaults": _strength_core.policy_from({}),
+            "ranges": {"half_life_days": list(_strength_core.HALF_LIFE_RANGE), "floor": list(_strength_core.FLOOR_RANGE)},
+            "version": _strength_core.POLICY_VERSION, "updated_at": stored.get("updated_at", ""),
+            "by": stored.get("by", ""), "auto": auto_now}
+
+
+@capability(
+    "memory.fade.report",
+    http_method="POST", http_path="/memory/fade/report", http_tags=["memory"],
+    memory="off", silent=True,
+    description="DRY RUN ONLY - what the memory fading job would archive today, and why. Every live memory record is "
+                "scored with its class's half-life, renewed by use (memory_strength_core + the usage counts chat turns "
+                "write); a record below its class's floor would fade (a soft archive, revived on use). Nothing is "
+                "changed: the owner reads this before any fading is switched on. The scan of the whole store runs in "
+                "the background (one at a time) and keeps its result at " + _FADE_REPORT_KEY + "; this answers at "
+                "once with the last report. Inputs: refresh (bool - start a new scan; one starts anyway when none is "
+                "kept), samples (int=5 per class), batch (int=5000). Output: {report: {policy, total, fading, "
+                "by_class:{cls:{total, fading, mean_strength, samples:[{id, text, strength, record_type}]}}, ms, at} "
+                "| null, computing (bool)}.",
+)
+async def memory_fade_report(refresh: bool = False, samples: int = 5, batch: int = 5000, trace_id=None):
+    global _FADE_TASK
+    stored = None
+    r = _redis()
+    if r is not None:
+        try:
+            raw = await r.get(_FADE_REPORT_KEY)
+            if raw:
+                stored = json.loads(raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else raw)
+        except Exception:
+            stored = None
+    running = _FADE_TASK is not None and not _FADE_TASK.done()
+    want = str(refresh).strip().lower() in ("1", "true", "yes", "on")
+    if (want or stored is None) and not running:
+        _FADE_TASK = asyncio.create_task(_fade_compute(samples, batch))
+        running = True
+    return {"report": stored, "computing": running}
+
+
+_FADE_TASK = None
+
+
+async def _fade_compute(samples: int = 5, batch: int = 5000) -> Dict[str, Any]:
+    """The scan behind memory.fade.report - a background task, never inside a request's 60 s."""
+    t0 = time.monotonic()
+    try:
+        n_samples = max(0, min(int(samples or 5), 20))
+        size = max(500, min(int(batch or 5000), 20000))
+    except (TypeError, ValueError):
+        n_samples, size = 5, 5000
+    pool = await _usage_pool()
+    if pool is None:
+        return {"error": "memory postgres not connected"}
+    now = time.time()
+    policy = _strength_core.policy_from(await _fade_overrides())
+    usage: Dict[str, Dict[str, Any]] = {}
+    by: Dict[str, Dict[str, Any]] = {}
+    total = fading = 0
+    try:
+        async with pool.acquire() as conn:
+            if await conn.fetchval("SELECT to_regclass('vera_memory_usage') IS NOT NULL"):
+                for r in await conn.fetch("SELECT record_id, injected_n, used_n, last_used FROM vera_memory_usage"):
+                    usage[r["record_id"]] = {"injected_n": r["injected_n"], "used_n": r["used_n"], "last_used": r["last_used"]}
+            last = ""
+            while True:      # keyset pages, the loop handed back between them - never one long hold
+                rows = await conn.fetch(
+                    "SELECT id, record_type, source_type, category, importance, created_at, "
+                    "left(coalesce(text, ''), 24) AS head FROM vera_memories "
+                    "WHERE NOT archived AND id > $1 ORDER BY id LIMIT $2", last, size)
+                if not rows:
+                    break
+                for r in rows:
+                    rec = dict(r)
+                    rec["text"] = rec.pop("head") or ""
+                    cls = _strength_core.class_of(rec)
+                    s = _strength_core.strength(rec, usage.get(rec["id"]), now, policy)
+                    b = by.setdefault(cls, {"total": 0, "fading": 0, "sum": 0.0, "samples": []})
+                    b["total"] += 1
+                    b["sum"] += s
+                    total += 1
+                    if _strength_core.fades(rec, usage.get(rec["id"]), now, policy):
+                        b["fading"] += 1
+                        fading += 1
+                        if len(b["samples"]) < n_samples:
+                            b["samples"].append({"id": rec["id"], "record_type": rec.get("record_type") or "",
+                                                 "strength": round(s, 4)})
+                last = rows[-1]["id"]
+                await asyncio.sleep(0)
+            ids = [x["id"] for b in by.values() for x in b["samples"]]
+            if ids:
+                texts = {r["id"]: r["t"] for r in await conn.fetch(
+                    "SELECT id, left(coalesce(text, ''), 160) AS t FROM vera_memories WHERE id = ANY($1::text[])", ids)}
+                for b in by.values():
+                    for x in b["samples"]:
+                        x["text"] = texts.get(x["id"], "")
+    except Exception as e:
+        return {"error": str(e)[:200], "total": total}
+    out = {"policy": _strength_core.POLICY_VERSION, "policy_in_force": policy, "dry_run": True, "total": total, "fading": fading,
+           "by_class": {k: {"total": v["total"], "fading": v["fading"],
+                            "mean_strength": round(v["sum"] / v["total"], 4) if v["total"] else 0.0,
+                            "samples": v["samples"]} for k, v in sorted(by.items(), key=lambda kv: -kv[1]["total"])},
+           "usage_rows": len(usage), "ms": round((time.monotonic() - t0) * 1000)}
+    r = _redis()
+    if r is not None:
+        try:
+            await r.set(_FADE_REPORT_KEY, json.dumps(dict(out, at=now_iso())))
+        except Exception:
+            pass
+    return out
+
+
+# ── the fading job itself (owner, 2026-10-05: "apply the policy as is", with controls and resurfacing in place) ──
+_FADE_RUN_KEY = "vera:memory:fade:last_run"
+_FADE_RUN_TASK = None
+_FADE_BATCH = 1000                 # Postgres / Neo4j rows per statement
+_FADE_CHROMA_BATCH = 40            # a Chroma write holds its database ~60 ms per id (E13): small, paced
+_FADE_CHROMA_PAUSE_S = 1.0
+
+
+def _in_backup_window(t: Optional[time.struct_time] = None) -> bool:
+    """01:00-03:30 local: the nightly pg_dump holds every table (E24) - no bulk writes then."""
+    t = t or time.localtime()
+    m = t.tm_hour * 60 + t.tm_min
+    return 60 <= m < 210
+
+
+async def _fade_candidates(pool, policy: Dict[str, Any], limit: int, classes: Optional[List[str]] = None
+                           ) -> List[Tuple[str, str, float, float]]:
+    """(id, class, strength, floor) of live records that fade under `policy`, up to `limit`."""
+    now = time.time()
+    usage: Dict[str, Dict[str, Any]] = {}
+    out: List[Tuple[str, str, float, float]] = []
+    want = set(classes or [])
+    async with pool.acquire() as conn:
+        if await conn.fetchval("SELECT to_regclass('vera_memory_usage') IS NOT NULL"):
+            for r in await conn.fetch("SELECT record_id, injected_n, used_n, last_used FROM vera_memory_usage"):
+                usage[r["record_id"]] = {"injected_n": r["injected_n"], "used_n": r["used_n"], "last_used": r["last_used"]}
+        last = ""
+        while len(out) < limit:
+            rows = await conn.fetch(
+                "SELECT id, record_type, source_type, category, importance, created_at, "
+                "left(coalesce(text, ''), 24) AS head FROM vera_memories "
+                "WHERE NOT archived AND id > $1 ORDER BY id LIMIT 5000", last)
+            if not rows:
+                break
+            for r in rows:
+                rec = dict(r)
+                rec["text"] = rec.pop("head") or ""
+                cls = _strength_core.class_of(rec)
+                if want and cls not in want:
+                    continue
+                if _strength_core.fades(rec, usage.get(rec["id"]), now, policy):
+                    out.append((rec["id"], cls, _strength_core.strength(rec, usage.get(rec["id"]), now, policy),
+                                float(policy.get(cls, {}).get("floor") or 0.0)))
+                    if len(out) >= limit:
+                        break
+            last = rows[-1]["id"]
+            await asyncio.sleep(0)
+    return out
+
+
+def _fade_stores():
+    """(neo4j backend or None, chroma collection or None, memory class or None) of the live memory store."""
+    MEMORY, _ = _memory()
+    backs = (getattr(MEMORY, "_backends", {}) or {}) if MEMORY else {}
+    neo = backs.get("neo4j")
+    neo = neo if neo is not None and getattr(neo, "_driver", None) else None
+    cb = backs.get("chroma")
+    return neo, (getattr(cb, "_collection", None) if cb else None), (type(MEMORY) if MEMORY else None)
+
+
+async def _fade_mark_neo4j(neo, ids: List[str], out: Dict[str, Any], key: str = "neo4j") -> None:
+    """Set archived on the Memory nodes of `ids`; counts only the nodes that changed."""
+    try:
+        async with neo._driver.session() as ses:
+            res = await ses.run("UNWIND $ids AS id MATCH (m:Memory {id: id}) WHERE coalesce(m.archived, false) = false "
+                                "SET m.archived = true RETURN count(m) AS n", {"ids": ids})
+            row = await res.single()
+            out[key] = out.get(key, 0) + int((row or {}).get("n", 0) or 0)
+    except Exception as e:
+        out.setdefault("errors", []).append("neo4j: %s" % str(e)[:120])
+
+
+async def _fade_mark_chroma(coll, ids: List[str], out: Dict[str, Any], key: str = "chroma") -> None:
+    """Set archived on the vectors of `ids` that exist, keeping the rest of their metadata; paced (E13)."""
+    for i in range(0, len(ids), _FADE_CHROMA_BATCH):
+        part = ids[i:i + _FADE_CHROMA_BATCH]
+        try:
+            got = await _chroma_bound.run(lambda: coll.get(ids=part, include=["metadatas"]))
+            have = got.get("ids") or []
+            if have:
+                metas = [dict(m or {}, archived=True) for m in (got.get("metadatas") or [{}] * len(have))]
+                await _chroma_bound.run(lambda: coll.update(ids=have, metadatas=metas))
+                out[key] = out.get(key, 0) + len(have)
+                await asyncio.sleep(_FADE_CHROMA_PAUSE_S)
+        except Exception as e:
+            out.setdefault("errors", []).append("chroma: %s" % str(e)[:120])
+            await asyncio.sleep(_FADE_CHROMA_PAUSE_S * 5)
+
+
+async def _fade_reconcile(pool, neo, coll, out: Dict[str, Any]) -> None:
+    """Postgres is the record of what has faded (archived with faded_at; a revive clears both). A run cut short - a
+    restart mid-run, 2026-10-06 - leaves Neo4j and Chroma behind it: bring them level before fading more."""
+    faded: set = set()
+    last = ""
+    async with pool.acquire() as conn:
+        while True:
+            rows = await conn.fetch("SELECT id FROM vera_memories WHERE archived AND metadata ? 'faded_at' "
+                                    "AND id > $1 ORDER BY id LIMIT 20000", last)
+            if not rows:
+                break
+            faded.update(r["id"] for r in rows)
+            last = rows[-1]["id"]
+            await asyncio.sleep(0)
+    out["reconciled"] = {"faded_in_postgres": len(faded), "neo4j": 0, "chroma": 0}
+    if not faded:
+        return
+    if neo is not None:
+        ids = sorted(faded)
+        for i in range(0, len(ids), _FADE_BATCH):
+            await _fade_mark_neo4j(neo, ids[i:i + _FADE_BATCH], out["reconciled"])
+            await asyncio.sleep(0)
+    if coll is not None:                # the vector store is far smaller than the faded set: walk it, not the ids
+        behind: List[str] = []
+        off = 0
+        while True:
+            try:
+                got = await _chroma_bound.run(lambda: coll.get(include=["metadatas"], limit=500, offset=off))
+            except Exception as e:
+                out.setdefault("errors", []).append("chroma: %s" % str(e)[:120])
+                break
+            ids = got.get("ids") or []
+            if not ids:
+                break
+            for vid, meta in zip(ids, got.get("metadatas") or [{}] * len(ids)):
+                if vid in faded and not (meta or {}).get("archived"):
+                    behind.append(vid)
+            off += len(ids)
+            await asyncio.sleep(0)
+        if behind:
+            await _fade_mark_chroma(coll, behind, out["reconciled"])
+
+
+async def _fade_apply(limit: int = 20000, classes: Optional[List[str]] = None, by: str = "") -> Dict[str, Any]:
+    """Soft-archive what fades: archived in Postgres (with faded_at and the reason), Neo4j and - where a vector is
+    left - Chroma, a batch at a time in all three, so a run cut short leaves at most one batch behind and the next run
+    levels it first. Stops at the nightly backup. Revived on use; a strong match still finds it (resurfacing). Never
+    raises; progress is recorded after every batch."""
+    t0 = time.monotonic()
+    out: Dict[str, Any] = {"by": by, "started_at": now_iso(), "policy": _strength_core.POLICY_VERSION,
+                           "faded": 0, "neo4j": 0, "chroma": 0, "by_class": {}, "running": True}
+    r = _redis()
+
+    async def _record():
+        if r is not None:
+            try:
+                await r.set(_FADE_RUN_KEY, json.dumps(out))
+            except Exception:
+                pass
+
+    MEMORY_CLS = None
+    try:
+        pool = await _usage_pool()
+        if pool is None:
+            out["error"] = "memory postgres not connected"
+            out["running"] = False
+            return out
+        neo, coll, MEMORY_CLS = _fade_stores()
+        await _fade_reconcile(pool, neo, coll, out)
+        await _record()
+        policy = _strength_core.policy_from(await _fade_overrides())
+        picked = await _fade_candidates(pool, policy, limit, classes)
+        out["picked"] = len(picked)
+        for i in range(0, len(picked), _FADE_BATCH):
+            if _in_backup_window():
+                out["stopped"] = "the nightly backup window began - the rest waits for the next run"
+                break
+            chunk = picked[i:i + _FADE_BATCH]
+            ids = [c[0] for c in chunk]
+            reasons = ["%s: strength %.4f below floor %.3f (policy %s)" % (c[1], c[2], c[3], _strength_core.POLICY_VERSION)
+                       for c in chunk]
+            async with pool.acquire() as conn:
+                done = await conn.fetch(
+                    """UPDATE vera_memories m SET archived = TRUE,
+                           metadata = COALESCE(m.metadata, '{}'::jsonb)
+                                      || jsonb_build_object('faded_at', NOW()::text, 'fade_reason', r.reason)
+                       FROM unnest($1::text[], $2::text[]) AS r(id, reason)
+                       WHERE m.id = r.id AND NOT m.archived
+                       RETURNING m.id""", ids, reasons)
+            done_ids = [d["id"] for d in done]
+            cls_of = {c[0]: c[1] for c in chunk}
+            for d in done_ids:
+                out["by_class"][cls_of[d]] = out["by_class"].get(cls_of[d], 0) + 1
+            out["faded"] += len(done_ids)
+            if done_ids and neo is not None:
+                await _fade_mark_neo4j(neo, done_ids, out)
+            if done_ids and coll is not None:
+                await _fade_mark_chroma(coll, done_ids, out)
+            await _record()
+            await asyncio.sleep(0)
+    except Exception as e:
+        out["error"] = str(e)[:200]
+    finally:
+        try:   # recall asks for faded matches from now on, not in ten minutes
+            if MEMORY_CLS is not None:
+                MEMORY_CLS._FADED_SEEN["t"] = 0.0
+        except Exception:
+            pass
+    out["running"] = False
+    out["ms"] = round((time.monotonic() - t0) * 1000)
+    out["finished_at"] = now_iso()
+    await _record()
+    try:
+        await emit_event({"type": "memory.faded", **{k: out[k] for k in ("faded", "neo4j", "chroma", "by_class", "by")}})
+    except Exception:
+        pass
+    return out
+
+
+@capability(
+    "memory.fade.run",
+    http_method="POST", http_path="/memory/fade/run", http_tags=["memory"],
+    memory="off",
+    description="Apply the fading policy: soft-archive the memories that have faded under the policy in force "
+                "(memory.fade.policy) - archived and marked with when and why, never deleted; a strong match still "
+                "brings one back and using it revives it. Without confirm=true it only says how many would fade. "
+                "Runs in the background, one at a time, never 01:00-03:30 (the nightly backup). Inputs: confirm "
+                "(bool), limit (int=20000 per run), classes (csv - only these), by (str). Output: {started | dry, "
+                "would_fade, last_run}.",
+)
+async def memory_fade_run(confirm: bool = False, limit: int = 20000, classes: str = "", by: str = "", trace_id=None):
+    global _FADE_RUN_TASK
+    r = _redis()
+    last = None
+    if r is not None:
+        try:
+            raw = await r.get(_FADE_RUN_KEY)
+            last = json.loads(raw) if raw else None
+        except Exception:
+            last = None
+    running = _FADE_RUN_TASK is not None and not _FADE_RUN_TASK.done()
+    if isinstance(last, dict) and last.get("running") and not running:
+        last["interrupted"] = "the run stopped part-way (a restart); the next run levels the stores first"
+    try:
+        lim = max(1, min(int(limit or 20000), 200000))
+    except (TypeError, ValueError):
+        lim = 20000
+    cls = [c.strip() for c in str(classes or "").split(",") if c.strip() in _strength_core.HALF_LIFE]
+    if running:
+        return {"running": True, "last_run": last}
+    if str(confirm).strip().lower() not in ("1", "true", "yes", "on"):
+        rep = None
+        if r is not None:
+            try:
+                raw = await r.get(_FADE_REPORT_KEY)
+                rep = json.loads(raw) if raw else None
+            except Exception:
+                rep = None
+        return {"dry": True, "would_fade": (rep or {}).get("fading"), "report_at": (rep or {}).get("at", ""),
+                "last_run": last, "note": "nothing changed - pass confirm=true to fade (memory.fade.report refresh=true "
+                                          "recounts first)"}
+    if _in_backup_window():
+        return {"refused": "the nightly backup runs 01:00-03:30 - fading waits", "last_run": last}
+    _FADE_RUN_TASK = asyncio.create_task(_fade_apply(lim, cls or None, str(by or "")[:80]))
+    return {"started": True, "limit": lim, "classes": cls, "last_run": last}
+
+
+# ── noise marks for the records already stored (new ones are marked as they are written) ──
+_NOISE_RUN_KEY = "vera:memory:noise:last_run"
+_NOISE_RUN_TASK = None
+
+
+async def _noise_scan(pool) -> Tuple[Dict[str, List[str]], List[str], Dict[str, int], int]:
+    """Over the live records recall can return (not archived, not a tool call, not an imported transcript line):
+    ({id: reasons} to mark, [ids] whose mark no longer holds, {reason: count}, records scanned)."""
+    mark: Dict[str, List[str]] = {}
+    unmark: List[str] = []
+    by: Dict[str, int] = {}
+    seen = 0
+    last = ""
+    async with pool.acquire() as conn:
+        while True:
+            rows = await conn.fetch(
+                "SELECT id, record_type, left(coalesce(text, ''), 2000) AS text, metadata ? 'noise' AS marked "
+                "FROM vera_memories WHERE NOT archived AND id > $1 "
+                "AND record_type <> ALL($2::text[]) AND NOT (text LIKE '[Claude Code%' OR text LIKE '[Codex%') "
+                "ORDER BY id LIMIT 5000", last, list(_recall_core.ACTIVITY_TYPES))
+            if not rows:
+                break
+            for r in rows:
+                seen += 1
+                why = _noise_core.noise_reasons({"record_type": r["record_type"], "text": r["text"]})
+                for w in why:
+                    by[w] = by.get(w, 0) + 1
+                if why and not r["marked"]:
+                    mark[r["id"]] = why
+                elif r["marked"] and not why:
+                    unmark.append(r["id"])
+            last = rows[-1]["id"]
+            await asyncio.sleep(0)
+    return mark, unmark, by, seen
+
+
+async def _noise_apply() -> Dict[str, Any]:
+    """Mark noise in Postgres (metadata.noise = reasons) and Neo4j (m.noise), clear marks the rules no longer give.
+    Never raises; the run is recorded."""
+    t0 = time.monotonic()
+    out: Dict[str, Any] = {"started_at": now_iso(), "marked": 0, "unmarked": 0, "neo4j": 0}
+    try:
+        pool = await _usage_pool()
+        if pool is None:
+            out["error"] = "memory postgres not connected"
+            return out
+        mark, unmark, out["by_reason"], out["scanned"] = await _noise_scan(pool)
+        items = list(mark.items())
+        for i in range(0, len(items), _FADE_BATCH):
+            chunk = items[i:i + _FADE_BATCH]
+            async with pool.acquire() as conn:
+                done = await conn.fetch(
+                    """UPDATE vera_memories m SET metadata = COALESCE(m.metadata, '{}'::jsonb)
+                                                         || jsonb_build_object('noise', r.why::jsonb)
+                       FROM unnest($1::text[], $2::text[]) AS r(id, why)
+                       WHERE m.id = r.id RETURNING m.id""",
+                    [c[0] for c in chunk], [json.dumps(c[1]) for c in chunk])
+            out["marked"] += len(done)
+            await asyncio.sleep(0)
+        for i in range(0, len(unmark), _FADE_BATCH):
+            async with pool.acquire() as conn:
+                done = await conn.fetch("UPDATE vera_memories SET metadata = metadata - 'noise' "
+                                        "WHERE id = ANY($1::text[]) RETURNING id", unmark[i:i + _FADE_BATCH])
+            out["unmarked"] += len(done)
+            await asyncio.sleep(0)
+        neo, _coll, _cls = _fade_stores()
+        if neo is not None:
+            for flag, ids in ((True, [c[0] for c in items]), (False, unmark)):
+                for i in range(0, len(ids), _FADE_BATCH):
+                    try:
+                        async with neo._driver.session() as ses:
+                            res = await ses.run("UNWIND $ids AS id MATCH (m:Memory {id: id}) SET m.noise = $flag "
+                                                "RETURN count(m) AS n", {"ids": ids[i:i + _FADE_BATCH], "flag": flag})
+                            row = await res.single()
+                            out["neo4j"] += int((row or {}).get("n", 0) or 0)
+                    except Exception as e:
+                        out.setdefault("errors", []).append("neo4j: %s" % str(e)[:120])
+                    await asyncio.sleep(0)
+    except Exception as e:
+        out["error"] = str(e)[:200]
+    out["ms"] = round((time.monotonic() - t0) * 1000)
+    out["finished_at"] = now_iso()
+    r = _redis()
+    if r is not None:
+        try:
+            await r.set(_NOISE_RUN_KEY, json.dumps(out))
+        except Exception:
+            pass
+    return out
+
+
+@capability(
+    "memory.noise.mark",
+    http_method="POST", http_path="/memory/noise/mark", http_tags=["memory"],
+    memory="off",
+    description="Mark the stored memories that are noise - status lines, prompt text stored as a message, context "
+                "injected into a message, raw tool JSON, empty reports, one-word lines - so recall ranks them after "
+                "every real memory. Nothing is deleted or archived; new memories are marked as they are written. "
+                "Without confirm=true it only counts. Runs in the background, never 01:00-03:30. Inputs: confirm "
+                "(bool). Output: {dry, would_mark, would_unmark, by_reason | started | running, last_run}.",
+)
+async def memory_noise_mark(confirm: Any = False, trace_id=None) -> Dict[str, Any]:
+    global _NOISE_RUN_TASK
+    r = _redis()
+    last = None
+    if r is not None:
+        try:
+            raw = await r.get(_NOISE_RUN_KEY)
+            last = json.loads(raw) if raw else None
+        except Exception:
+            last = None
+    if _NOISE_RUN_TASK is not None and not _NOISE_RUN_TASK.done():
+        return {"running": True, "last_run": last}
+    if str(confirm).strip().lower() not in ("1", "true", "yes", "on"):
+        pool = await _usage_pool()
+        if pool is None:
+            return {"error": "memory postgres not connected", "last_run": last}
+        mark, unmark, by, seen = await _noise_scan(pool)
+        return {"dry": True, "scanned": seen, "would_mark": len(mark), "would_unmark": len(unmark), "by_reason": by,
+                "last_run": last}
+    if _in_backup_window():
+        return {"refused": "the nightly backup runs 01:00-03:30 - marking waits", "last_run": last}
+    _NOISE_RUN_TASK = asyncio.create_task(_noise_apply())
+    return {"started": True, "last_run": last}
+
+
+# ── canonical records for the copies already stored (new ones are folded in as they are written) ──
+_CANON_RUN_KEY = "vera:memory:canonical:last_run"
+_CANON_RUN_TASK = None
+
+
+async def _canon_scan(pool) -> Dict[str, Any]:
+    """Over the live records recall can return: the text keys still to store, {occurrence: canonical} to set, the
+    canonical marks to clear, and counts."""
+    rows: List[Dict[str, Any]] = []
+    keys: Dict[str, str] = {}
+    last = ""
+    async with pool.acquire() as conn:
+        while True:
+            batch = await conn.fetch(
+                "SELECT id, record_type, created_at, left(coalesce(text, ''), 4000) AS text, "
+                "metadata->>'text_key' AS text_key, metadata->>'canonical_id' AS canonical_id "
+                "FROM vera_memories WHERE NOT archived AND id > $1 AND record_type <> ALL($2::text[]) "
+                "AND NOT (text LIKE '[Claude Code%' OR text LIKE '[Codex%') ORDER BY id LIMIT 5000",
+                last, list(_canon_core.SKIP_TYPES))
+            if not batch:
+                break
+            for r in batch:
+                d = dict(r)
+                if not _canon_core.eligible(d):
+                    continue
+                if not d.get("text_key"):
+                    d["text_key"] = _canon_core.text_key(d["text"])
+                    if d["text_key"]:
+                        keys[d["id"]] = d["text_key"]
+                d["created_at"] = str(d.get("created_at") or "")
+                d.pop("text", None)
+                rows.append(d)
+            last = batch[-1]["id"]
+            await asyncio.sleep(0)
+    point = _canon_core.plan(rows)
+    clear = _canon_core.unmark(rows)
+    return {"rows": len(rows), "keys": keys, "point": point, "clear": clear,
+            "canonicals": len(set(point.values()))}
+
+
+async def _canon_apply() -> Dict[str, Any]:
+    """Store text keys, point every copy at its canonical (Postgres metadata, Neo4j property, an OCCURRENCE_OF edge
+    in both), clear marks that no longer hold. Never raises; the run is recorded."""
+    t0 = time.monotonic()
+    out: Dict[str, Any] = {"started_at": now_iso(), "keys": 0, "pointed": 0, "cleared": 0, "neo4j": 0, "edges": 0}
+    try:
+        pool = await _usage_pool()
+        if pool is None:
+            out["error"] = "memory postgres not connected"
+            return out
+        scan = await _canon_scan(pool)
+        out["scanned"] = scan["rows"]
+        kitems = list(scan["keys"].items())
+        for i in range(0, len(kitems), _FADE_BATCH):
+            chunk = kitems[i:i + _FADE_BATCH]
+            async with pool.acquire() as conn:
+                done = await conn.fetch(
+                    """UPDATE vera_memories m SET metadata = COALESCE(m.metadata, '{}'::jsonb)
+                                                         || jsonb_build_object('text_key', r.k)
+                       FROM unnest($1::text[], $2::text[]) AS r(id, k) WHERE m.id = r.id RETURNING m.id""",
+                    [c[0] for c in chunk], [c[1] for c in chunk])
+            out["keys"] += len(done)
+            await asyncio.sleep(0)
+        pitems = list(scan["point"].items())
+        for i in range(0, len(pitems), _FADE_BATCH):
+            chunk = pitems[i:i + _FADE_BATCH]
+            ids, canons = [c[0] for c in chunk], [c[1] for c in chunk]
+            async with pool.acquire() as conn:
+                done = await conn.fetch(
+                    """UPDATE vera_memories m SET metadata = COALESCE(m.metadata, '{}'::jsonb)
+                                                         || jsonb_build_object('canonical_id', r.c)
+                       FROM unnest($1::text[], $2::text[]) AS r(id, c) WHERE m.id = r.id RETURNING m.id""",
+                    ids, canons)
+                out["pointed"] += len(done)
+                res = await conn.execute(
+                    """INSERT INTO vera_memory_edges (from_id, to_id, relation, properties, session_id, created_at)
+                       SELECT r.id, r.c, 'OCCURRENCE_OF', '{}'::jsonb, '', NOW()
+                       FROM unnest($1::text[], $2::text[]) AS r(id, c)
+                       ON CONFLICT (from_id, to_id, relation) DO NOTHING""", ids, canons)
+                try:
+                    out["edges"] += int(str(res).split()[-1])
+                except Exception:
+                    pass
+            await asyncio.sleep(0)
+        for i in range(0, len(scan["clear"]), _FADE_BATCH):
+            async with pool.acquire() as conn:
+                done = await conn.fetch("UPDATE vera_memories SET metadata = metadata - 'canonical_id' "
+                                        "WHERE id = ANY($1::text[]) RETURNING id", scan["clear"][i:i + _FADE_BATCH])
+            out["cleared"] += len(done)
+        neo, _coll, _cls = _fade_stores()
+        if neo is not None:
+            for i in range(0, len(pitems), _FADE_BATCH):
+                rows = [{"id": a, "c": b} for a, b in pitems[i:i + _FADE_BATCH]]
+                try:
+                    async with neo._driver.session() as ses:
+                        res = await ses.run(
+                            "UNWIND $rows AS r MATCH (m:Memory {id: r.id}) SET m.canonical_id = r.c "
+                            "WITH m, r MATCH (c:Memory {id: r.c}) MERGE (m)-[:OCCURRENCE_OF]->(c) "
+                            "RETURN count(m) AS n", {"rows": rows})
+                        row = await res.single()
+                        out["neo4j"] += int((row or {}).get("n", 0) or 0)
+                except Exception as e:
+                    out.setdefault("errors", []).append("neo4j: %s" % str(e)[:120])
+                await asyncio.sleep(0)
+            if scan["clear"]:
+                try:
+                    async with neo._driver.session() as ses:
+                        await ses.run("UNWIND $ids AS id MATCH (m:Memory {id: id}) REMOVE m.canonical_id",
+                                      {"ids": scan["clear"]})
+                except Exception as e:
+                    out.setdefault("errors", []).append("neo4j: %s" % str(e)[:120])
+    except Exception as e:
+        out["error"] = str(e)[:200]
+    out["ms"] = round((time.monotonic() - t0) * 1000)
+    out["finished_at"] = now_iso()
+    r = _redis()
+    if r is not None:
+        try:
+            await r.set(_CANON_RUN_KEY, json.dumps(out))
+        except Exception:
+            pass
+    return out
+
+
+@capability(
+    "memory.canonical.mark",
+    http_method="POST", http_path="/memory/canonical/mark", http_tags=["memory"],
+    memory="off",
+    description="Fold the stored copies of one text into one canonical record: the oldest record of each text (per "
+                "record type) is the canonical one, every other copy is kept as its occurrence (linked "
+                "OCCURRENCE_OF) and recall returns the canonical record once. Nothing is deleted or archived; new "
+                "copies are folded in as they are written. Without confirm=true it only counts. Runs in the "
+                "background, never 01:00-03:30. Inputs: confirm (bool). Output: {dry, scanned, would_point, "
+                "canonicals, would_clear | started | running, last_run}.",
+)
+async def memory_canonical_mark(confirm: Any = False, trace_id=None) -> Dict[str, Any]:
+    global _CANON_RUN_TASK
+    r = _redis()
+    last = None
+    if r is not None:
+        try:
+            raw = await r.get(_CANON_RUN_KEY)
+            last = json.loads(raw) if raw else None
+        except Exception:
+            last = None
+    if _CANON_RUN_TASK is not None and not _CANON_RUN_TASK.done():
+        return {"running": True, "last_run": last}
+    if str(confirm).strip().lower() not in ("1", "true", "yes", "on"):
+        pool = await _usage_pool()
+        if pool is None:
+            return {"error": "memory postgres not connected", "last_run": last}
+        scan = await _canon_scan(pool)
+        return {"dry": True, "scanned": scan["rows"], "would_key": len(scan["keys"]),
+                "would_point": len(scan["point"]), "canonicals": scan["canonicals"],
+                "would_clear": len(scan["clear"]), "last_run": last}
+    if _in_backup_window():
+        return {"refused": "the nightly backup runs 01:00-03:30 - folding waits", "last_run": last}
+    _CANON_RUN_TASK = asyncio.create_task(_canon_apply())
+    return {"started": True, "last_run": last}
+
+
+_FADE_NIGHT = {"day": ""}
+
+
+async def _fade_nightly_tick() -> None:
+    """Once a day at about 04:00 local - after the nightly backup - when the user has switched nightly fading on."""
+    global _FADE_RUN_TASK
+    try:
+        t = time.localtime()
+        if t.tm_hour != 4:
+            return
+        day = time.strftime("%Y-%m-%d", t)
+        if _FADE_NIGHT["day"] == day or not await _fade_auto_on():
+            return
+        if _FADE_RUN_TASK is not None and not _FADE_RUN_TASK.done():
+            return
+        _FADE_NIGHT["day"] = day
+        _FADE_RUN_TASK = asyncio.create_task(_fade_apply(50000, None, "nightly"))
+    except Exception as e:
+        log.debug("fade nightly tick: %s", e)
+
+
+schedule(_fade_nightly_tick, 1200, name="memory_fade_nightly", skip_in_sandbox=True, singleton=True)
+
+
+@capability(
+    "memory.context.deep",
+    http_method="POST", http_path="/memory/context/deep", http_tags=["memory"],
+    memory="off",
+    description="The deep memory search a chat turn gets when it refers back ('last time', 'what did we decide'): "
+                "every session and agent, the keyword and graph tier always and the vector tier only if it answers "
+                "inside the budget. Read-only. Inputs: query, limit (int=8), budget_s (float=1.5). Output: {text, "
+                "hits, vector, ms, fast_ms, fast_hits, found, items} - the block a turn would be given, how long each "
+                "tier took, and the records in it.",
+)
+async def memory_context_deep(query: str, limit: int = 8, budget_s: float = 1.5, trace_id=None):
+    try:
+        limit = max(1, min(int(limit or 8), 30))
+        budget_s = max(0.2, min(float(budget_s or 1.5), 10.0))
+    except (TypeError, ValueError):
+        limit, budget_s = 8, 1.5
+    return await get_memory_context_deep(query, limit=limit, budget_s=budget_s)
 
 
 @capability(

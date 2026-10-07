@@ -72,7 +72,7 @@ t('a kind you read wants a reading width; a kind you glance at wants a share of 
 t('an item folded to its header line is a chip, whatever kind it is', V.unitsOf({ type: 'code', folded: true }) === 1 / 3);
 t('an item you opened in place or dragged takes the stage', V.unitsOf({ type: 'table', open: true }) === 4 && V.unitsOf({ size: 'xl' }) === 4);
 t('one classifier, read by both the chooser and the placer — the count and the widths cannot disagree',
-  /const u = unitsOf\(descOf\(c\)\); return u > 1 \? Math\.max\(1, Math\.min\(cols, Math\.round\(u\)\)\) : u;/.test(SRC)
+  /const u = unitsOf\(descOf\(c\), w\); return u > 1 \? Math\.max\(1, Math\.min\(cols, Math\.round\(u\)\)\) : u;/.test(SRC)
   && /const area = list\.reduce\(\(a, d\) => a \+ Math\.min\(2, unitsOf\(d\)\), 0\);/.test(SRC));
 
 /* ── the element and the banner ──────────────────────────────────────────────────────────────────────────────── */

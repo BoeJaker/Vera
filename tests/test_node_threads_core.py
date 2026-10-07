@@ -108,13 +108,20 @@ def test_the_embed_body_shape():
     tree = ast.parse(src)
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_embed_body")
     from typing import Optional
-    ns = {"_node_threads_core": T, "_CPU_NODE_THREADS": 6, "Optional": Optional}
+    from vera.workers import warm_models_core as WM
+    ns = {"_node_threads_core": T, "_CPU_NODE_THREADS": 6, "Optional": Optional,
+          "WARM_STATE": {}, "_warm_core": WM}
     exec(compile(ast.Module(body=[fn], type_ignores=[]), "x", "exec"), ns)
     cpu = ns["_embed_body"]("nomic-embed-text", "hello", {"has_gpu": False})
     gpu = ns["_embed_body"]("nomic-embed-text", "hello", {"has_gpu": True})
     assert cpu == {"model": "nomic-embed-text", "input": "hello", "options": {"num_thread": 6}}
     assert gpu == {"model": "nomic-embed-text", "input": "hello"}
     assert ns["_embed_body"]("m", "x" * 5000, None)["input"] == "x" * 4096
+    # an embedder the warm plan keeps on this node stays loaded (a NUMBER: "-1" is a 400)
+    ns["WARM_STATE"] = {"embed_urls": {"http://n:11436": "nomic-embed-text:latest"}}
+    warm = ns["_embed_body"]("nomic-embed-text", "hi", {"has_gpu": False, "url": "http://n:11436"})
+    assert warm["keep_alive"] == -1
+    assert "keep_alive" not in ns["_embed_body"]("nomic-embed-text", "hi", {"url": "http://other"})
 
 
 def test_the_mimic_proxy_refits_proxied_bodies_too():

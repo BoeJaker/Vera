@@ -20,7 +20,7 @@ t('the states that MEAN something still draw: waiting, opened, pinned, a suggest
 /* and the one that does NOT: "now" is the band every live item is in, so a ring on it was a box around everything */
 t('being in the NOW band draws no ring — that was the border on every item',
   !/\.it\.now\{box-shadow/.test(SRC) && !/:host\(\[blocks="off"\]\) \.it\.now\{box-shadow/.test(SRC));
-t('the item you are pointing at lifts, so the surface is still readable', /\.it:hover\{background:color-mix/.test(SRC));
+t('the item you are pointing at lifts, so the surface is still readable', /\.it:is\(:hover,\.hov\)\{background:color-mix/.test(SRC));
 t('the live slot is a hole, not a plate — no ground behind a widget or a graph',
   /\.vc-live\{flex:1 1 auto;min-height:40px;height:110px;border-radius:0;background:none;/.test(SRC) &&
   /#live \.lv\{position:absolute;box-sizing:border-box;border-radius:0;overflow:hidden;background:none\}/.test(SRC));
@@ -59,13 +59,13 @@ t('an item that asks for nothing takes the column, exactly as before',
 t('and one you opened or dragged takes the stage, whatever its size record says',
   /if \(d\.open\) return 4;/.test(SRC) &&
   /open: c\.classList\.contains\('openin'\) \|\| c\.classList\.contains\('sized'\)/.test(SRC) &&
-  /const u = unitsOf\(descOf\(c\)\); return u > 1 \? Math\.max\(1, Math\.min\(cols, Math\.round\(u\)\)\) : u;/.test(SRC));
-t('an item folded to its header line is a chip, and chips sit three to a row',
-  /if \(d\.folded\) return 1 \/ 3;/.test(SRC) &&
+  /const u = unitsOf\(descOf\(c\), w\); return u > 1 \? Math\.max\(1, Math\.min\(cols, Math\.round\(u\)\)\) : u;/.test(SRC));
+t('an item folded to its header line is a chip: three to a row where a third still reads its title, fewer where not',
+  /if \(d\.folded\) return colW \? \(\[1 \/ 3, 0\.5, 1\]\.find\(\(s\) => s \* colW - 10 >= 170\) \|\| 1\) : 1 \/ 3;/.test(SRC) && (() => { const U = require(require('node:path').join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js')).unitsOf; return U({ folded: true }) === 1 / 3 && U({ folded: true }, 600) === 1 / 3 && U({ folded: true }, 375) === 0.5 && U({ folded: true }, 300) === 1; })() &&
   /folded: c\.classList\.contains\('compact'\) \|\| c\.classList\.contains\('overfold'\)/.test(SRC));
-t('a kind you READ rather than glance at spans columns when there are columns to span',
+t('a kind you READ spans columns only where one column is too narrow to read; code keeps its width',
   /const WIDE = \{ code: 1, html: 1, explode: 1, markdown: 1, panel: 1, session: 1, table: 1 \};/.test(SRC) &&
-  /if \(WIDE\[ty\] \|\| sz === 'l'\) return 2;/.test(SRC));
+  /if \(WIDE\[ty\] \|\| sz === 'l'\) return colW >= 340 && !CODEISH\[ty\] \? 1 : 2;/.test(SRC) && (() => { const U = require(require('node:path').join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js')).unitsOf; return U({ type: 'markdown' }) === 2 && U({ type: 'markdown' }, 375) === 1 && U({ size: 'l' }, 375) === 1 && U({ type: 'code' }, 375) === 2 && U({ size: 'l' }, 300) === 2; })());
 t('the width is applied before the height is measured, or every height is a different item\'s',
   /WIDTH BEFORE HEIGHT/.test(SRC) && /cards\.forEach\(\(c, i\) => \{ const ww = wants\[i\];/.test(SRC) &&
   /c\.style\.width = \(ww < 1 \? Math\.round\(ww \* w\) - gap : span \* w \+ \(span - 1\) \* gap\) \+ 'px'/.test(SRC));

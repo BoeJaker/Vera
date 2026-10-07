@@ -14,6 +14,8 @@ pytestmark = pytest.mark.critical
 
 
 EXPECTED_TASKS = {
+    "operator.discovery.evidence": "discovery.evidence.inspect",
+    "operator.discovery.benchmark.record": "discovery.benchmark.record",
     "operator.session.start": "browser.session.start",
     "operator.session.status": "browser.session.inspect",
     "operator.session.close": "browser.session.close",
@@ -96,6 +98,7 @@ def test_read_only_operator_caps_do_not_claim_external_side_effects():
         "operator.session.status", "operator.connect.list", "operator.read",
         "operator.mission.list", "docs.assets", "operator.capture.status",
         "operator.tour.list", "operator.trace", "operator.runs",
+        "operator.discovery.evidence",
     ):
         effects = runtime_orchestration.CAPABILITY_REGISTRY[name]["contract"]["effects"]
         assert "external_side_effect" not in effects

@@ -88,6 +88,7 @@ PLACES: Dict[str, Dict[str, str]] = {
     "gallery":                   {"panel": "gallery"},
     "image-studio":              {"panel": "image-studio"},
     "canvas":                    {"panel": "canvas"},
+    "intel":                     {"panel": "intel"},
     # the Automations tab hosts the flow builder, n8n, OpenClaw, the Operator and Home Assistant
     "automations":               {"panel": "automations", "nav": "overview"},
     "automations/actions":       {"panel": "automations", "nav": "actions"},
@@ -168,6 +169,7 @@ SOURCE_RULES: List[Tuple[str, str]] = [
     ("cal.",                "elements/calendar"),
     ("tg.",                 "elements/telegram"),
     ("research.",           "research"),
+    ("intel.",              "intel"),
     ("markets.",            "markets"),
     ("cap.",                "capabilities"),
 ]

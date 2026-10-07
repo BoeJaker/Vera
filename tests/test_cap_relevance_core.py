@@ -96,3 +96,27 @@ def test_cached_vectors_load_even_when_startup_embedding_is_off():
     assert src.index('hgetall("vera:cap_embeddings")') < src.index("if not do_embed:")
     assert "embed_missing=True" in inspect.getsource(S.caps_embed_run)
     assert "_cap_rel.score(" in inspect.getsource(S.CapabilityIndex.relevance_search)
+
+
+# Short names (2026-09-28): every query word under three letters used to be
+# dropped, so the 16 ha.* (Home Assistant) and 16 tg.* (Telegram) caps could
+# never be found by name.
+def test_two_letter_namespaces_score_and_english_does_not():
+    toks = C.query_tokens("turn on the lights via ha, then tell me on tg")
+    assert {"ha", "tg"} <= toks
+    assert not ({"on", "me", "up", "do", "go", "no", "if", "so"} & C.query_tokens(
+        "go up if so, do me no harm"))
+    assert C.score("ha.health", query="check the ha connection") > 0
+    assert C.score("sandbox.up", query="bring it up") == 0.0
+
+
+def test_a_thing_named_in_full_finds_its_short_code():
+    assert "ha" in C.query_tokens("Turn off the kitchen light in Home Assistant")
+    assert "tg" in C.query_tokens("Send the report to Telegram")
+    assert "sd" in C.query_tokens("Generate an image with Stable Diffusion")
+    assert "kb" in C.query_tokens("search the knowledge base for Redis")
+    assert C.score("ha.config.get", query="Is Home Assistant connected?") > 0
+    # the tail earns a domain the goal names in full
+    tail = C.select_tail(["web.research", "http.get", "code.author", "ha.health", "tg.bot.start"],
+                         "Turn off the lights in Home Assistant", always_top=1)
+    assert "ha.health" in tail and "tg.bot.start" not in tail

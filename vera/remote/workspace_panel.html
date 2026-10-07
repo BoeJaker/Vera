@@ -112,19 +112,25 @@
 </head>
 <body>
 <div id="wrap">
+  <!-- THE PANEL'S VIEWS ARE ITS MENU (owner, 2026-10-03: a sub-UI - a top-bar option that replaces the page with other
+       HTML - belongs in the LHM). Integrations loads the integrations hub in place of the grid. Docked, this nav is the
+       panel's LHM menu; standalone it is its own column (outside #side, which Integrations mode hides). -->
+  <nav id="wsViews" class="vp-menu" data-vera-lhm aria-label="Workspace views">
+    <button class="nav-btn on" id="segWs" data-view="ws" data-icon="▦" data-label="Workspaces" data-desc="Your workspaces and their widgets" data-desc-long="Workspaces: saved grids of terminal, file-explorer, app and panel widgets bound to a container or VM. Pick one in the list beside it; Edit, + Widget and Save are in the header." onclick="setView('ws')"><span class="gl">▦</span>Workspaces</button>
+    <button class="nav-btn" id="segInt" data-view="int" data-icon="⇄" data-label="Integrations" data-desc="The integrations hub" data-desc-long="The integrations hub (/integrations/panel) in place of the workspace grid: the external apps and services Vera connects to, which app widgets can mount." onclick="setView('int')"><span class="gl">⇄</span>Integrations</button>
+  </nav>
   <div id="side">
     <header><span class="ttl">▦ Workspaces</span><span class="spacer"></span>
       <button class="btn sm" onclick="loadWorkspaces()">↻</button></header>
     <div class="list" id="wslist"></div>
     <div style="padding:8px;border-top:1px solid var(--line)">
-      <button class="btn pri" style="width:100%" onclick="newWorkspace()">+ New workspace</button>
+      <button data-lhm-cta="" data-label="New workspace" data-desc="Create a remote workspace" class="btn pri" style="width:100%" onclick="newWorkspace()">+ New workspace</button>
     </div>
   </div>
 
   <div id="main">
     <header>
-      <span class="seg"><button class="segb on" id="segWs" onclick="setView('ws')">▦ Workspaces</button><button class="segb" id="segInt" onclick="setView('int')">🧩 Integrations</button></span>
-      <span class="ttl" id="wsTitle" style="margin-left:10px">—</span>
+      <span class="ttl" id="wsTitle">—</span>
       <span class="spacer"></span>
       <span id="wsRightBtns">
       <button class="btn sm" onclick="openApps()" title="Mount / manage web apps for the app widget">🌐 Apps</button>
@@ -559,5 +565,9 @@ function setView(v){ const isInt = v==='int';
 
 loadWorkspaces();
 </script>
+<script src="/ui/vera-panel.js"></script>
+<!-- the bridge, in the page itself: nested in a host panel (an IDE view, an Estate pane) the harness does not inject it,
+     and without it the host never hears this page - its primary action (data-lhm-cta) or its menu -->
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

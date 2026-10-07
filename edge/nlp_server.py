@@ -124,6 +124,44 @@ _PIPELINE_TASK = {
     "question-answering":       "question-answering",
 }
 
+_COMPONENT = None
+
+
+def component_record() -> Dict[str, Any]:
+    """This server's deployed version, from the `nlp_server.version.json` the
+    deploy wrote beside it, with each recorded file re-hashed so a hand edit on
+    the node shows as `intact: false` rather than passing for the version.
+    Read once: a redeploy restarts the service."""
+    global _COMPONENT
+    if _COMPONENT is None:
+        import hashlib
+        here = os.path.dirname(os.path.abspath(__file__))
+        try:
+            with open(os.path.join(here, "nlp_server.version.json"), encoding="utf-8") as fh:
+                rec = json.load(fh)
+        except (OSError, ValueError):
+            rec = {}
+        if not isinstance(rec, dict) or not rec.get("version"):
+            _COMPONENT = {"version": "", "intact": None,
+                          "note": "deployed before component versions"}
+        else:
+            changed = []
+            for name, digest in (rec.get("files") or {}).items():
+                if name.startswith("<"):        # the deps spec, not a file
+                    continue
+                try:
+                    with open(os.path.join(here, name), "rb") as fh:
+                        ok = hashlib.sha256(fh.read()).hexdigest() == digest
+                except OSError:
+                    ok = False
+                if not ok:
+                    changed.append(name)
+            _COMPONENT = {"version": rec["version"], "intact": not changed,
+                          "changed": changed, "files": rec.get("files") or {},
+                          "deps_installed": rec.get("deps_installed")}
+    return _COMPONENT
+
+
 _PIPES: Dict[str, Any] = {}
 _RAW: Dict[str, Any] = {}          # task -> (model, tokenizer) for embeddings
 _ENCODER = None
@@ -281,6 +319,51 @@ def get_gliner():
                 log.info("nlp_server: loading gliner from %s", model_path_for("gliner"))
                 _RAW["gliner"] = GLiNER.from_pretrained(model_path_for("gliner"), local_files_only=True)
     return _RAW["gliner"]
+
+
+def load_task(task: str) -> Dict[str, Any]:
+    """Load one task's model now: {ok, s} or {ok: False, error}."""
+    t0 = time.monotonic()
+    try:
+        kind = TASK_KIND.get(task)
+        if task == "rerank":
+            get_encoder()
+        elif task == "embed":
+            get_raw(task)
+        elif kind == "gliner":
+            get_gliner()
+        elif kind == "spacy":
+            get_spacy()
+        else:
+            get_pipe(task)
+        return {"ok": True, "s": round(time.monotonic() - t0, 1)}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+#: The startup preload (VERA_NLP_PRELOAD: "all" - every task whose model is in
+#: the store - a comma list, or "" for lazy loading). The models are small
+#: (the lot is a few GB) and the first call to a cold one waited 10-15 s
+#: (GLiNER, 2026-09-30), so every node keeps them all loaded.
+PRELOAD: Dict[str, Any] = {"state": "idle", "loaded": {}, "failed": {}}
+
+
+def preload() -> None:
+    want = os.getenv("VERA_NLP_PRELOAD", "").strip()
+    if not want:
+        PRELOAD["state"] = "off"
+        return
+    tasks = (list(DEFAULT_MODELS) if want == "all"
+             else [t.strip() for t in want.split(",") if t.strip()])
+    PRELOAD["state"] = "loading"
+    for t in tasks:
+        if not model_present(t):
+            continue                      # not in the store: nothing to warm
+        r = load_task(t)
+        (PRELOAD["loaded"] if r.get("ok") else PRELOAD["failed"])[t] = r.get("s", r.get("error"))
+    PRELOAD["state"] = "done"
+    log.info("nlp_server: preloaded %s%s", sorted(PRELOAD["loaded"]),
+             f", failed {PRELOAD['failed']}" if PRELOAD["failed"] else "")
 
 
 def get_spacy():
@@ -458,6 +541,15 @@ def build_app():
     from pydantic import BaseModel
 
     app = FastAPI(title="Vera edge NLP")
+    # Every call reported to the Estate Activity pane (edge/activity_record.py):
+    # a pure-ASGI tee, bytes untouched. Absent module = old behaviour.
+    try:
+        import activity_record
+        activity_record.install(app, "nlp", ("/ner", "/classify", "/zeroshot", "/qa",
+                                             "/langid", "/embed", "/rerank"),
+                                port=int(os.getenv("VERA_NLP_PORT", "8771") or 8771))
+    except Exception as e:                    # never let reporting stop the server
+        log.warning("activity reporting off: %s", e)
 
     class NerReq(BaseModel):
         text: str = ""
@@ -506,14 +598,17 @@ def build_app():
         # one and routes away from it for minutes.
         return {"ok": True, "service": "vera-nlp", "threads": NLP_THREADS,
                 "providers": _providers(), "model_root": MODEL_ROOT,
-                "core": HAS_CORE,
+                "core": HAS_CORE, "component": component_record(),
                 "chunk": {"chars": CHUNK_CHARS, "overlap": CHUNK_OVERLAP},
+                "preload": {"state": PRELOAD["state"], "loaded": sorted(PRELOAD["loaded"]),
+                            "failed": PRELOAD["failed"]},
                 "tasks": {t: task_inventory(t) for t in DEFAULT_MODELS}}
 
     @app.get("/models")
     async def models():
         return {"model_root": MODEL_ROOT,
                 "schema": "vera.nlp-node-models/v2",
+                "component": component_record(),
                 "models": {t: task_inventory(t) for t in DEFAULT_MODELS},
                 "providers": _providers()}
 
@@ -604,25 +699,14 @@ def _main():
     if args.cmd == "warm":
         tasks = (list(DEFAULT_MODELS) if args.tasks == "all"
                  else [t.strip() for t in args.tasks.split(",") if t.strip()])
-        out = {}
-        for t in tasks:
-            t0 = time.monotonic()
-            try:
-                if t == "rerank":
-                    get_encoder()
-                elif t == "embed":
-                    get_raw(t)
-                else:
-                    get_pipe(t)
-                out[t] = {"ok": True, "s": round(time.monotonic() - t0, 1)}
-            except Exception as e:
-                out[t] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        out = {t: load_task(t) for t in tasks}
         print(json.dumps({"threads": NLP_THREADS, "warmed": out}, indent=2))
         return 0 if all(v.get("ok") for v in out.values()) else 1
 
     import uvicorn
     log.info("vera-nlp serving on %s:%d (threads=%d, models=%s)",
              args.host, args.port, NLP_THREADS, MODEL_ROOT)
+    threading.Thread(target=preload, name="nlp-preload", daemon=True).start()
     uvicorn.run(build_app(), host=args.host, port=args.port)
     return 0
 

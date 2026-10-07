@@ -355,7 +355,7 @@ function renderInstances(){
         <button class="btn" data-act="status">Check status</button>
         ${i.host_id&&i.kind==='code-server'?`<button class="btn" data-act="start">Start</button><button class="btn" data-act="stop">Stop</button>`:''}
         ${i.host_id?`<button class="btn" data-act="bridge">Install bridge</button>`:''}
-        <button class="btn" data-act="run">Run task ▶</button>
+        <button data-lhm-cta="" data-label="Run a task" data-desc="Send a task to the remote IDE agent" class="btn" data-act="run">Run task ▶</button>
         <button class="btn danger" data-act="delete">Delete</button>
       </div>
       <div class="meta" data-status style="margin-top:8px"></div>
@@ -562,5 +562,8 @@ setInterval(()=>{ if($('#v-instances').classList.contains('active')) loadInstanc
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-entity-drawer.js"></script>
+<!-- the bridge, in the page itself: nested in a host panel (an IDE view, an Estate pane) the harness does not inject it,
+     and without it the host never hears this page - its primary action (data-lhm-cta) or its menu -->
+<script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>

@@ -42,6 +42,10 @@ except ImportError:  # pragma: no cover - test/standalone import path
     )
 
 log = logging.getLogger("vera.nlp.dispatch")
+try:
+    from Vera.vera.http_tls_core import shared_ssl_context as _tls   # one TLS context for every client (not one per call)
+except ImportError:                                                 # pragma: no cover
+    from vera.http_tls_core import shared_ssl_context as _tls         # type: ignore
 
 try:
     from Vera.vera import capability_orchestration as _orch
@@ -121,7 +125,7 @@ def _nlp_url(inst: Dict) -> str:
 async def _get_json(url: str, path: str, timeout: float = 5.0) -> Optional[Dict]:
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout, verify=_tls()) as c:
             r = await c.get(f"{url}{path}")
             return r.json() if r.status_code == 200 else None
     except Exception as e:
@@ -129,12 +133,22 @@ async def _get_json(url: str, path: str, timeout: float = 5.0) -> Optional[Dict]
         return None
 
 
+def _origin(path: str) -> Dict[str, str]:
+    """X-Vera-Origin for an NLP call (the node's activity recorder files it
+    under this Vera instead of 'external'). Empty outside the app."""
+    try:
+        from Vera.vera.capability_orchestration import vera_origin_header
+    except Exception:                                    # pragma: no cover - tests
+        return {}
+    return vera_origin_header(job_type="nlp", cap="nlp" + str(path or "").replace("/", "."))
+
+
 async def _post_json(url: str, path: str, body: Dict,
                      timeout: float) -> Dict[str, Any]:
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=timeout) as c:
-            r = await c.post(f"{url}{path}", json=body)
+        async with httpx.AsyncClient(timeout=timeout, verify=_tls()) as c:
+            r = await c.post(f"{url}{path}", json=body, headers=_origin(path))
             try:
                 payload = r.json()
             except Exception:
@@ -183,6 +197,10 @@ async def discover(force: bool = False) -> List[Dict[str, Any]]:
         # compatibility summaries used by older routing/UI readers.
         facts.update({"node_id": str(nid), "nlp_url": url,
                       "threads": health.get("threads"),
+                      # the deployed nlp_server version (provision.component.version)
+                      "component": health.get("component") or {},
+                      # which models the node has loaded (nlp_server preload)
+                      "preload": health.get("preload") or {},
                       **inventory})
         found.append(facts)
 

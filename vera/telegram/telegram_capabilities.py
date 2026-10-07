@@ -1159,6 +1159,131 @@ async def tg_notify(text: str, idempotency_key: str = "",
     return {"ok": bool(res.get("ok")), "result": res, "effect_shadow": shadow}
 
 
+def _parse_buttons(buttons: Any) -> List[List[Dict[str, str]]]:
+    """Rows of URL buttons from a list or its JSON; anything but http(s) is dropped."""
+    if isinstance(buttons, str):
+        try:
+            buttons = json.loads(buttons) if buttons.strip() else []
+        except ValueError:
+            buttons = []
+    rows: List[List[Dict[str, str]]] = []
+    for row in buttons or []:
+        row = row if isinstance(row, list) else [row]
+        keep = [{"text": str(b.get("text") or "")[:64], "url": str(b.get("url") or "")}
+                for b in row if isinstance(b, dict)
+                and str(b.get("url") or "").startswith(("http://", "https://")) and b.get("text")]
+        if keep:
+            rows.append(keep[:3])
+    return rows[:8]
+
+
+@capability(
+    "tg.send_rich", memory="off", redact_args=["text"], redact_result=True,
+    http_method="POST", http_path="/tg/send_rich", http_tags=["telegram"],
+    description="Send a rich message to the admin chat (or chat_id): an optional photo, then the text with rows "
+                "of link buttons under it. If Telegram refuses the buttons (e.g. a link it will not accept), the "
+                "links are appended to the text instead. Input: text (str!), buttons ([[{text,url}]] or its JSON), "
+                "photo_url, parse_mode (HTML|Markdown|''), chat_id. Output: {ok, buttons, photo}.",
+)
+async def tg_send_rich(text: str = "", buttons: Any = None, photo_url: str = "", parse_mode: str = "HTML",
+                       chat_id: str = "", trace_id=None):
+    cfg_data = await _get_config()
+    target = str(chat_id or cfg_data.get("admin_chat_id", "") or "")
+    if not target:
+        return {"ok": False, "error": "no chat_id and no admin_chat_id configured"}
+    bots = _bots.normalise_bots(cfg_data)
+    token = (_bots.default_bot(bots) or {}).get("token", "")
+    if not token:
+        return {"ok": False, "error": "no token"}
+    _observe_send_effect(target, mode="notification")
+    rows = _parse_buttons(buttons)
+    photo_ok = False
+    if str(photo_url or "").startswith(("http://", "https://")):
+        r = await _tg_api(token, "sendPhoto", {"chat_id": target, "photo": photo_url})
+        photo_ok = bool(r.get("ok"))
+    limit = int(cfg_data.get("max_reply_chars", 3800))
+    chunks = _split_long(text or "", limit)
+    last: Dict[str, Any] = {"ok": True}
+    buttons_ok = False
+    for i, chunk in enumerate(chunks):
+        params: Dict[str, Any] = {"chat_id": target, "text": chunk, "disable_web_page_preview": True}
+        if parse_mode:
+            params["parse_mode"] = parse_mode
+        if rows and i == len(chunks) - 1:
+            params["reply_markup"] = {"inline_keyboard": rows}
+        last = await _tg_api(token, "sendMessage", params)
+        if not last.get("ok") and "reply_markup" in params:
+            # the buttons were refused - keep the links, as text
+            params.pop("reply_markup")
+            links = "\n".join(f"{b['text']}: {b['url']}" for row in rows for b in row)
+            params["text"] = chunk + "\n\n" + links
+            last = await _tg_api(token, "sendMessage", params)
+        elif "reply_markup" in params:
+            buttons_ok = bool(last.get("ok"))
+        if not last.get("ok") and parse_mode:
+            params.pop("parse_mode", None)
+            last = await _tg_api(token, "sendMessage", params)
+        if not last.get("ok"):
+            break
+    return {"ok": bool(last.get("ok")), "buttons": buttons_ok, "photo": photo_ok,
+            "error": "" if last.get("ok") else str(last.get("description") or last.get("error") or "")}
+
+
+_AUDIO_MAX_BYTES = 49 * 1024 * 1024          # the Bot API's upload limit is 50 MB
+
+
+def _audio_path_ok(path: str) -> Optional[str]:
+    """The file to upload, only when it is an audio file inside Vera's own state
+    directory - a caller must not be able to post any file on the box to Telegram."""
+    try:
+        from Vera.vera.state_paths import state_root
+        root = Path(state_root()).resolve()
+        p = Path(path).resolve()
+        if root not in p.parents or p.suffix.lower() not in (".mp3", ".m4a", ".ogg", ".oga", ".wav"):
+            return None
+        return str(p) if p.is_file() else None
+    except Exception:
+        return None
+
+
+@capability(
+    "tg.send_audio", memory="off", redact_result=True,
+    http_method="POST", http_path="/tg/send_audio", http_tags=["telegram"],
+    description="Send an audio file (a report's narration, a podcast) to the admin chat (or chat_id) as a "
+                "playable track. The file must be an mp3/m4a/ogg/wav inside Vera's state directory. Input: path "
+                "(str!), title, performer, caption, chat_id. Output: {ok, error}.",
+)
+async def tg_send_audio(path: str = "", title: str = "", performer: str = "", caption: str = "",
+                        chat_id: str = "", trace_id=None):
+    p = _audio_path_ok(path)
+    if not p:
+        return {"ok": False, "error": "path must be an audio file inside Vera's state directory"}
+    if os.path.getsize(p) > _AUDIO_MAX_BYTES:
+        return {"ok": False, "error": "file is over Telegram's 50 MB upload limit"}
+    cfg_data = await _get_config()
+    target = str(chat_id or cfg_data.get("admin_chat_id", "") or "")
+    if not target:
+        return {"ok": False, "error": "no chat_id and no admin_chat_id configured"}
+    bots = _bots.normalise_bots(cfg_data)
+    token = (_bots.default_bot(bots) or {}).get("token", "")
+    if not token:
+        return {"ok": False, "error": "no token"}
+    _observe_send_effect(target, mode="notification")
+    data = {"chat_id": target}
+    for k, v in (("title", title[:64]), ("performer", performer[:64]), ("caption", caption[:1000])):
+        if v:
+            data[k] = v
+    try:
+        async with httpx.AsyncClient(timeout=180) as c:
+            with open(p, "rb") as fh:
+                r = await c.post(f"{TG_API_BASE}/bot{token}/sendAudio", data=data,
+                                 files={"audio": (os.path.basename(p), fh)})
+        d = r.json()
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:200]}
+    return {"ok": bool(d.get("ok")), "error": "" if d.get("ok") else str(d.get("description") or "")[:200]}
+
+
 @capability(
     "tg.broadcast", memory="off", redact_args=["text", "idempotency_key",
                                                  "approval_receipt_ref"], redact_result=True,

@@ -80,6 +80,13 @@ from Vera.vera.dream.dream_workflow_ir import (
     compile_generic_dream_workflow,
     materialize_generic_dream_stage_plan,
 )
+from Vera.vera.execution.dream_run_projection import (
+    configure_dream_run,
+    enter_dream_run_boundary,
+    exit_dream_run_boundary,
+    finish_dream_stage,
+    start_dream_stage,
+)
 
 log = logging.getLogger("vera.dream")
 
@@ -9520,7 +9527,7 @@ async def _collate_stage_outputs(cycle_id: str, short: str, state: Dict[str, Any
         log.debug("dream collate %s/%s: %s", cycle_id, short, e)
 
 
-async def _run_cycle(
+async def _run_cycle_native(
     trig: Dict[str, Any],
     force: bool = False,
     seed: Optional[Dict[str, Any]] = None,
@@ -9608,6 +9615,15 @@ async def _run_cycle(
     }
     if workflow_plan:
         state["workflow_ir"] = dict(workflow_plan)
+    _scheduled_id = ""
+    if not force:
+        try:
+            _scheduled_id = str(_dream_schedule_contract(trig).get("schedule_id") or "")
+        except Exception:
+            _scheduled_id = ""
+    configure_dream_run(
+        stages=list(pipeline_seed), workflow_plan=workflow_plan,
+        schedule_id=_scheduled_id)
 
     # Journal id: each TRIGGER keeps a persistent journal so its "train of
     # thought" accrues across cycles (the unit of continuation). Project dreams
@@ -9802,6 +9818,10 @@ async def _run_cycle(
         _sbxm = _sbx_mod()
         _own_tok = _sbxm.set_run_owner(_sbx_owner, kind=_sbx_kind,
                                        label=_sbx_label) if _sbxm else None
+        _run_handle = start_dream_stage(
+            stage=stage_name, index=_idx,
+            iteration=state.get("iteration_index"))
+        _run_ok = False
         try:
             result = await cap["func"](state=state)
             # Stages return the SAME state dict (mutation pattern). Only rebind
@@ -9810,9 +9830,14 @@ async def _run_cycle(
             # a fresh dict).
             if isinstance(result, dict) and result is not state:
                 state = result
+            _run_ok = True
+        except asyncio.CancelledError:
+            finish_dream_stage(_run_handle, ok=False, cancelled=True)
+            raise
         except Exception as e:
             state[stage_name] = {"error": str(e)}
         finally:
+            finish_dream_stage(_run_handle, ok=_run_ok)
             _LLM_CTX.reset(_ctx_tok)
             try:
                 if _bg_tok is not None:
@@ -10296,6 +10321,36 @@ async def _run_cycle(
 
     _CYCLE_TASK = None
     return record
+
+
+async def _run_cycle(
+    trig: Dict[str, Any],
+    force: bool = False,
+    seed: Optional[Dict[str, Any]] = None,
+    preview_only: bool = False,
+) -> Dict[str, Any]:
+    """Run Dream natively while projecting one failure-isolated shared Run."""
+    boundary_seed = dict(seed or {})
+    boundary_seed.setdefault("cycle_id", uuid.uuid4().hex[:8])
+    projection, token = enter_dream_run_boundary(
+        cycle_id=str(boundary_seed["cycle_id"]))
+    result = None
+    try:
+        result = await _run_cycle_native(
+            trig, force=force, seed=boundary_seed, preview_only=preview_only)
+        return result
+    except asyncio.CancelledError:
+        exit_dream_run_boundary(
+            projection, token, result=result, cancelled=True)
+        projection = token = None
+        raise
+    except BaseException as exc:
+        exit_dream_run_boundary(
+            projection, token, result=result, error_type=type(exc).__name__)
+        projection = token = None
+        raise
+    finally:
+        exit_dream_run_boundary(projection, token, result=result)
 
 
 async def _eval_trigger_sensors(trig: Dict[str, Any]) -> Dict[str, Any]:
@@ -11015,6 +11070,7 @@ async def _director_briefing() -> Dict[str, str]:
     out["loop_programs"] = v8_txt
     # Business snapshot.
     out["business"] = await _director_cap_json("business.brief", 900)
+    out["intel"] = await _director_cap_json("intel.brief", 900)
     return out
 
 
@@ -11228,6 +11284,7 @@ async def _director_think_once(cfg: Optional[Dict[str, Any]] = None,
         + _sect("DREAM SCHEDULE / YOUR QUEUE", briefing.get("dream_schedule", ""))
         + _sect("LOOP PROGRAMS IN FLIGHT (V8)", briefing.get("loop_programs", ""))
         + _sect("BUSINESS SNAPSHOT", briefing.get("business", ""))
+        + _sect("TOPICS INTELLIGENCE FOLLOWS", briefing.get("intel", ""))
         # What the user is doing RIGHT NOW — recent capability activity and the
         # live agentic-loop run — so the director's thought interleaves with the
         # foreground work instead of running on a separate track.

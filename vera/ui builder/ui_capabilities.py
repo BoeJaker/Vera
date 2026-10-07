@@ -49,7 +49,7 @@ def _redis():
 # chat/chat_panels_capabilities.py). This module serves /ui/themes.css from the
 # same table, so the stylesheet and the JSON theme API stay in lockstep.
 from Vera.vera.theme_defs import (
-    BUILTIN_THEMES, DEFAULT_THEME, ensure_contrast, with_dataviz,
+    BUILTIN_THEMES, DEFAULT_THEME, ensure_contrast, flat_theme_vars, with_dataviz,
     STYLE_PACKS, DENSITY_TIERS, DEFAULT_STYLE, DEFAULT_DENSITY,
     appearance_css, normalize_appearance,
 )
@@ -167,6 +167,7 @@ async def cap_theme_create(id: str, label: str = "", type: str = "dark",
                             trace_id=None):
     try:
         var_dict = json.loads(vars) if isinstance(vars, str) else vars
+        var_dict = flat_theme_vars(var_dict)
     except Exception:
         return {"error": "vars must be valid JSON object"}
     if not id or not id.isalnum():
@@ -533,6 +534,24 @@ async def _serve_vera_markdown_js():
                         headers={"Cache-Control": "no-cache"})
     return Response(
         content="console.warn('vera_markdown element JS not found');",
+        media_type="application/javascript"
+    )
+
+
+# Serve vera_output.js — window.VeraOut: ONE way output is drawn (2026-10-03). The code card (Copy · Edit · Explode ·
+# Preview · Pop out · Run · Save · Canvas), the highlighter, the linter and the preview document, for the chat, the
+# agent loop and the canvas alike; markdown itself stays <vera-markdown>'s.
+@APP.get("/ui/elements/vera_output.js", include_in_schema=False)
+async def _serve_vera_output_js():
+    from fastapi.responses import Response
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "vera_output_element.js"
+    if p.exists():
+        return Response(content=p.read_text(encoding="utf-8"),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+    return Response(
+        content="console.warn('vera_output element JS not found');",
         media_type="application/javascript"
     )
 
@@ -1071,7 +1090,10 @@ async def _startup():
                 raw = await r.get(key)
                 if raw:
                     tid = (key.decode() if isinstance(key, bytes) else key).split(":")[-1]
-                    CUSTOM_THEMES[tid] = json.loads(raw)
+                    _ct = json.loads(raw)
+                    if isinstance(_ct, dict):
+                        _ct["vars"] = flat_theme_vars(_ct.get("vars"))
+                    CUSTOM_THEMES[tid] = _ct
             except Exception:
                 pass
     except Exception:

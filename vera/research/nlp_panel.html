@@ -1445,7 +1445,22 @@ async function checkHealth() {
 function showSettings() {
   const currentNlp  = localStorage.getItem('vera-nlp-url')  || ('http://'+(window.__VERA_DOMAIN__||location.hostname)+':8766');
   const currentVera = localStorage.getItem('cfg-url') || (typeof VERA_API === 'string' ? VERA_API : window.location.origin);
-  const nlp  = prompt('NLP engine URL:', currentNlp);
+  /* the shared Settings page, as every panel's settings open (the LHM audit, point 5) - two fields and Save, made for it */
+  if (window.VeraSettings && VeraSettings.openSection) {
+    const box = document.createElement('div'); box.hidden = true; document.body.appendChild(box);
+    const field = (title, lbl, val, hint) => { const c = document.createElement('div'); c.innerHTML = '<h3>' + esc(title) + '</h3><label>' + esc(lbl) + '</label><input type="text" style="width:100%"><div class="hint">' + esc(hint) + '</div>'; c.querySelector('input').value = val; box.appendChild(c); return c.querySelector('input'); };
+    const nlpIn = field('NLP engine', 'NLP engine URL', currentNlp, 'The NLP server this panel calls (tokenise, entities, embeddings).');
+    const veraIn = field('Vera API', 'Vera API URL', currentVera, 'The Vera orchestrator this panel reads from.');
+    const act = document.createElement('div'); act.innerHTML = '<h3>Apply</h3><button type="button" class="tbtn">Save and reload</button>'; box.appendChild(act);
+    act.querySelector('button').addEventListener('click', () => {
+      localStorage.setItem('vera-nlp-url', nlpIn.value.trim().replace(/\/$/, ''));
+      localStorage.setItem('cfg-url', veraIn.value.trim().replace(/\/$/, ''));
+      try { VeraSettings.close(); } catch (e) {}
+      toast('Settings saved \u2014 reloading\u2026'); setTimeout(() => location.reload(), 800);
+    });
+    VeraSettings.openSection(box, { label: 'Endpoints', onClose: () => box.remove() });
+    return;
+  }  const nlp  = prompt('NLP engine URL:', currentNlp);
   if (nlp === null) return;
   const vera = prompt('Vera API URL:', currentVera);
   if (vera === null) return;
@@ -1467,6 +1482,7 @@ function esc(s) {
 }
 </script>
 <script src="/ui/vera-ui.js"></script>
+<script src="/ui/vera-settings.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>
