@@ -393,6 +393,21 @@ native store or synchronous revision transaction, avoiding cancellation that
 could report a timeout while an irreversible write continues. The switch is
 not enabled by this code change and grants no authority-switch permission.
 
+Split receipts now have a restart-safe reconciliation executor, but it remains
+an injected offline boundary rather than a live repair worker. An attempt is
+journalled as `started` before any repair callback runs. Each exact target
+(`revision`, `postgres`, `chroma`, or `neo4j`) receives a stable
+`<attempt>:<target>` idempotency key, because a process may stop after the
+external effect and before recording completion. Restarting with the same
+attempt resumes those exact targets; replaying a completed attempt performs no
+effects. Only one started attempt may own an operation, successful target
+outcomes are sticky across later attempts, and a converged operation leaves the
+bounded reconciliation queue. Failures retain classifications rather than
+exception text; cancellation is recorded when possible and always propagates.
+Neither an attempt nor convergence permits an authority switch. Concrete
+backend repair callbacks and live scheduling remain subsequent, separately
+reviewed work.
+
 ---
 
 ## 5. Graph model: nodes and edges
