@@ -149,3 +149,70 @@ def test_headings_and_list_items_end_as_statements():
     exec(compile(ast.Module(body=[fn], type_ignores=[]), "x", "exec"), ns)
     out = ns["_clean_for_tts"]("## Key points\n- **Mortgage approvals** up\n- 5-year fixes\n1. Third item\nProse line.")
     assert out == "Key points.\nMortgage approvals up.\n5-year fixes.\nThird item.\nProse line.", out
+
+
+# ── speech markup (SSML subset) ──────────────────────────────────────────────
+
+def test_speech_markup_says_what_the_writer_meant():
+    r = tn.resolve_speech_markup
+    assert r('Rates of <sub alias="one hundred and eight to three hundred">108-300</sub> bps') == \
+        "Rates of one hundred and eight to three hundred bps"
+    assert r('The <say-as interpret-as="characters">FOMC</say-as> met') == "The F O M C met"
+    assert r('Call <say-as interpret-as="telephone">0800 123</say-as>') == "Call oh eight oh oh, one two three"
+    assert r('the <say-as interpret-as="ordinal">3</say-as> time') == "the third time"
+    assert r("<sub alias='Bank of England'>BoE</sub> &amp; co") == "Bank of England & co"
+    assert r('<phoneme alphabet="ipa" ph="x">Kokoro</phoneme> speaks') == "Kokoro speaks"
+
+
+def test_speech_markup_never_reaches_the_voice_broken():
+    r = tn.resolve_speech_markup
+    assert r('An <emphasis level="strong">unknown</emphasis> tag') == "An unknown tag"
+    assert r('Left open <sub alias="x">108') == "Left open 108"
+    assert r("Cut off at the end <say-as interpret") == "Cut off at the end "
+    assert r("maths: a < b and c > d") == "maths: a < b and c > d"       # not markup
+    assert r("") == "" and r("plain text") == "plain text"
+
+
+def test_breaks_become_exact_pauses_in_the_plan():
+    t = tn.resolve_speech_markup('Well <break time="800ms"/> maybe. Then <break strength="weak"/> go.')
+    assert t.count(tn.PAUSE_MARK) == 8 + 2
+    plan = tn.speech_plan(tn.normalize(t))
+    assert [p for p, _ in plan] == ["Well", "maybe.", "Then", "go."]
+    assert plan[0][1] == 0.8 and plan[2][1] == 0.2
+
+
+def test_the_written_form_drops_the_markup():
+    s = tn.strip_speech_markup
+    assert s('Rates of <sub alias="one hundred and eight to three hundred">108-300</sub>.<break time="1s"/>') == \
+        "Rates of 108-300."
+    assert s('The <say-as interpret-as="characters">FOMC</say-as> met') == "The FOMC met"
+
+
+def _sentence_helpers():
+    src = _gpu_src()
+    names = {"_sentence_cuts", "_cut", "_extract_sentences", "_split_sentences"}
+    fns = [n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name in names]
+    sent_end = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign)
+                    and getattr(n.targets[0], "id", "") == "_SENT_END")
+    ns = {"re": __import__("re"), "_tn": tn}
+    flags = __import__("__future__").annotations.compiler_flag    # list[int] on older Pythons
+    exec(compile(ast.Module(body=[sent_end] + fns, type_ignores=[]), "x", "exec", flags=flags), ns)
+    return ns
+
+
+def test_streaming_never_cuts_a_sentence_inside_markup():
+    ns = _sentence_helpers()
+    done, rest = ns["_extract_sentences"]('First one. Then <sub alias="U.S. rates. Up">US')
+    assert done == ["First one."] and rest == 'Then <sub alias="U.S. rates. Up">US'
+    done, rest = ns["_extract_sentences"](rest + ' rates</sub> rose. Next')
+    assert done == ['Then <sub alias="U.S. rates. Up">US rates</sub> rose.'] and rest == "Next"
+    done, rest = ns["_extract_sentences"]("Held here. Partial <say-a")
+    assert done == ["Held here."] and rest == "Partial <say-a"
+    assert ns["_split_sentences"]('A <sub alias="x. y">z</sub> b. C.') == ['A <sub alias="x. y">z</sub> b.', "C."]
+
+
+def test_the_speech_server_resolves_markup_before_cleaning():
+    src = _gpu_src()
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "_tts_synthesize")
+    body = ast.get_source_segment(src, fn)
+    assert body.index("resolve_speech_markup") < body.index("_clean_for_tts(")
