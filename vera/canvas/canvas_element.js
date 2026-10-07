@@ -1213,6 +1213,20 @@
   :host([align="desk"]) .stage .it.desk-icon{padding:0!important;border-radius:9px;justify-content:center}
   :host([align="desk"]) .stage .it.desk-icon > .it-hd{justify-content:center;gap:0}
   :host([align="desk"]) .stage .it.desk-icon > .it-hd > :not(.ic){display:none!important}
+  /* a panel item sent behind the desk or brought in front: it fills its region the way a maximised item fills the column */
+  :host([align="desk"]) .stage .it[data-desk-face^="layer-"]{display:flex!important;flex-direction:column;border-radius:10px;background:var(--bg1,#15181d)!important}
+  :host([align="desk"]) .stage .it[data-desk-face="layer-front"]{box-shadow:0 18px 48px rgba(0,0,0,.45)}
+  /* on the desk a live element stacks WITH its card (each .lv carries its card's z-index): the live layer as one plane
+     at z 4 put a panel sent behind over the items, and hid a panel brought in front under its own card's ground */
+  :host([align="desk"]) #live{z-index:auto}
+  /* a panel behind the items: they keep a ground over it, or their text runs into the panel's */
+  :host([align="desk"][layered]) .stage .it:not([data-desk-face^="layer-"]){background:var(--bg1,#15181d)!important;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  /* an older item fades by opacity, which let the panel show through it: over a panel it dims instead */
+  :host([align="desk"][layered]) .stage .it.aged:not(:hover){opacity:1;filter:brightness(.62) saturate(.7)}
+  :host([align="desk"]) .stage .it[data-desk-face^="layer-"] > .it-bd{display:flex!important;flex-direction:column;flex:1 1 auto;min-height:0;max-height:none!important;overflow:hidden}
+  :host([align="desk"]) .stage .it[data-desk-face^="layer-"] > .it-bd > *{flex:1 1 auto;min-height:0}
+  :host([align="desk"]) .stage .it[data-desk-face^="layer-"] .vc-panel{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+  :host([align="desk"]) .stage .it[data-desk-face^="layer-"] .vc-live{flex:1 1 auto;height:auto!important;min-height:120px}
   @media (prefers-reduced-motion: reduce){:host([align="desk"]) .stage .it{transition:none}}
   /* THE BACK LAYER (the desk's graph, owner-approved 2026-10-06): whatever the page puts in the "back" slot is drawn
      under the cards, dimmed until the pointer is on it. The desk's own ground goes so the layer shows through, and
@@ -1220,25 +1234,6 @@
   .back{display:none}
   :host([align="desk"][back="behind"]) .wrap{position:relative}
   :host([align="desk"][back="behind"]) .back{display:block;position:absolute;inset:0;z-index:0;opacity:.38;transition:opacity .25s}
-  /* THE PANEL LAYER (owner, 2026-10-06: the UI panel "penultimate to last - it covers the graph", and "bring the ui
-     panel to the top so it covers the desk"): the page's UI panel in the "panel" slot, over the graph and under the
-     items, from below the head down; panel-front lifts it over the items. */
-  .mid{display:none}
-  :host([align="desk"][panel]) .wrap{position:relative}
-  :host([align="desk"][panel]) .mid{display:flex;position:absolute;left:0;right:0;bottom:0;top:var(--vc-head,34px);z-index:1}
-  :host([align="desk"][panel]) .mid ::slotted(*){flex:1;min-width:0;min-height:0}
-  :host([align="desk"][panel]) .head,
-  :host([align="desk"][panel]) .body{position:relative;z-index:2}
-  :host([align="desk"][panel][panel-front]) .mid{z-index:3;box-shadow:0 18px 48px rgba(0,0,0,.45)}
-  :host([align="desk"][panel]) .body,
-  :host([align="desk"][panel]) .body .stage,
-  :host([align="desk"][panel]) .body .band{background:transparent;pointer-events:none}
-  :host([align="desk"][panel]) .body .it,
-  :host([align="desk"][panel]) .body .band-h > *,
-  :host([align="desk"][panel]) .body .chips > *,
-  :host([align="desk"][panel]) .body .addbar,
-  :host([align="desk"][panel]) .body :is(button,a,input,select,textarea){pointer-events:auto}
-  :host([align="desk"][panel]) .stage .it{background:color-mix(in srgb, var(--bg1,#15181d) 90%, transparent)!important;border-radius:8px}
   /* a card over the layer keeps a ground in every blocks tier, or its text runs into the graph's */
   :host([align="desk"][back="behind"]) .stage .it{background:color-mix(in srgb, var(--bg1,#15181d) 90%, transparent)!important;border-radius:8px}
   :host([align="desk"][back="behind"]) .back:hover{opacity:.9}
@@ -2240,6 +2235,7 @@
       this._px = {};              // a dragged height per item, within its size record
       this._pw = {};              // and a dragged WIDTH: pixels, not a share of a column (owner, 2026-09-25)
       this._editKey = null;       // the item whose text is being edited
+      this._layer = {};           // a desk panel item sent behind the others or brought in front: key -> 'behind'|'front'
       this._rzT = 0;
     }
 
@@ -2247,9 +2243,7 @@
       this.shadowRoot.innerHTML = `<style>${CSS}</style>
         <div class="shell"><aside class="rail" id="rail" data-w="canvas.rail" hidden></aside>
         <div class="wrap">
-          <div class="back" part="back"><slot name="back"></slot></div>
-          <div class="mid" part="panel"><slot name="panel"></slot></div>
-          <div class="head">
+          <div class="back" part="back"><slot name="back"></slot></div>          <div class="head">
             <span class="live" title="live — it follows the document"></span>
             <span class="title" id="title">Canvas</span>
             <span class="pill" id="mode" hidden></span>
@@ -2367,6 +2361,17 @@
        .arrange 'orbit' with a docked chat) - this turn's items first, then pinned ones, then the newest. A width you
        dragged (data-pw) is your size and holds until ~93% out; a pinned item with a size of yours holds it anywhere.
        Closer to the chat stacks higher. Nothing here runs unless align is "desk". */
+    /* A PANEL ITEM AS A DESK LAYER (owner, 2026-10-07: "open panels as canvas items and have them behind / at the front
+       in full screen - dynamically sized, not actually full"). Behind: the panel fills the largest part of the desk the
+       chat leaves free, under every other item; front: the same, over them; '' puts it back among them. The card never
+       leaves the stage, so its frame is never reloaded. */
+    setLayer(key, mode) {
+      key = String(key || ''); if (!key) return;
+      if (mode === 'behind' || mode === 'front') this._layer[key] = mode; else delete this._layer[key];
+      const card = this.shadowRoot && [...this.shadowRoot.querySelectorAll('.stage .it')].find((c) => c.dataset.key === key);
+      if (card) card.querySelectorAll('[data-act^="layer-"]').forEach((bt) => bt.classList.toggle('on', bt.dataset.act === 'layer-' + this._layer[key]));
+      try { this._placeNow(); } catch (e) { /* placed on the next paint */ }
+    }
     _placeDesk(st, cards) {
       const D = root.VeraDesk, body = this.shadowRoot.getElementById('body');
       const W = st.clientWidth || 300;
@@ -2374,10 +2379,7 @@
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);
       const H = Math.max(360, (body ? body.clientHeight : 600) - pad - 8);
       const f = Math.max(0.8, Math.min(1.6, W / 1000));          // a wide column gets proportionally larger faces
-      const desk = { W: W, H: H, m: 8, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22, scale: f };
-      /* the panel layer starts under the head */
-      const hd = this.shadowRoot.querySelector('.head'); if (hd) this.style.setProperty('--vc-head', hd.offsetHeight + 'px');
-      // the chat beside the column: on its left edge (the default), or on its right when the page puts the chat there
+      const desk = { W: W, H: H, m: 8, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22, scale: f };      // the chat beside the column: on its left edge (the default), or on its right when the page puts the chat there
       const side = String(this.getAttribute('chat-side') || 'left').toLowerCase();
       const cr = String(this.getAttribute('chat-rect') || '').split(',').map(Number);
       // floating: the chat is over the stage, where the page says (chat-rect, stage pixels); else beside the column
@@ -2385,6 +2387,8 @@
         ? { l: cr[0], t: cr[1], r: cr[0] + cr[2], b: cr[1] + cr[3] }
         : side === 'right' ? { l: W, t: 0, r: W + 440, b: H } : { l: -440, t: 0, r: 0, b: H };
       const fm = this._focusMid || '';
+      const layered = cards.filter((c) => this._layer[c.dataset.key || '']);
+      cards = cards.filter((c) => !this._layer[c.dataset.key || '']);
       const ranked = cards.map((c, i) => ({ c, i })).sort((a, b) => {
         const fa = fm && a.c.dataset.mid === fm ? 1 : 0, fb = fm && b.c.dataset.mid === fm ? 1 : 0;
         if (fa !== fb) return fb - fa;
@@ -2417,6 +2421,19 @@
         c.style.left = left + 'px'; c.style.top = top + 'px'; c.style.setProperty('width', w + 'px', 'important'); c.style.setProperty('height', h + 'px', 'important'); c.style.setProperty('min-height', '0px', 'important');
         c.style.zIndex = String(D.stackOrder(s.nd));
         out.push({ key: key, x: left, y: top, w: w, h: h, face: s.face });
+      });
+      /* the layered panels: the largest part of the desk the chat leaves free, under (behind) or over (front) the rest */
+      const g = D.fullRegion(R, { W: W, H: H, m: 8, top: 4 });
+      const behindNow = layered.some((c) => this._layer[c.dataset.key] === 'behind');
+      if (this.hasAttribute('layered') !== behindNow) this.toggleAttribute('layered', behindNow);
+      layered.forEach((c) => {
+        const mode = this._layer[c.dataset.key], left = Math.max(0, Math.round(g.l)), top = Math.max(0, Math.round(g.t));
+        const w = Math.max(120, Math.round(Math.min(W, g.r) - left)), h = Math.max(120, Math.round(Math.min(H, g.b) - top));
+        c.classList.remove('overfold', 'capped', 'desk-chip', 'desk-icon', 'compact'); c.style.maxHeight = ''; c.removeAttribute('title');
+        c.dataset.deskFace = 'layer-' + mode;
+        c.style.left = left + 'px'; c.style.top = top + 'px'; c.style.setProperty('width', w + 'px', 'important'); c.style.setProperty('height', h + 'px', 'important'); c.style.setProperty('min-height', '0px', 'important');
+        c.style.zIndex = mode === 'front' ? String(D.stackOrder(0, { full: true })) : '1';
+        out.push({ key: c.dataset.key, x: left, y: top, w: w, h: h, face: 'layer-' + mode });
       });
       st.style.height = H + 'px';
       this._placed = { mode: 'desk', placements: out, height: H, folded: [] };
@@ -2807,6 +2824,7 @@
               ${plainDoc ? '<button data-act="up" title="Move it up — canvas.move">↑</button><button data-act="down" title="Move it down — canvas.move">↓</button>' : ''}
               ${bid ? '' : `<button data-act="pin" class="${b.state === 'pinned' ? 'on' : ''}" title="${b.state === 'pinned' ? 'Unpin — back into the flow' : 'Pin above the flow'}">${b.state === 'pinned' ? 'unpin' : 'pin'}</button>
               <button data-act="park" title="Park it below the flow">park</button>`}
+              ${b.type === 'panel' && this.getAttribute('align') === 'desk' ? `<button data-act="layer-behind" class="${this._layer[String(b.key)] === 'behind' ? 'on' : ''}" title="Behind the desk: the panel fills the free part of the desk, under the other items - click again to put it back among them">behind</button><button data-act="layer-front" class="${this._layer[String(b.key)] === 'front' ? 'on' : ''}" title="In front: the panel fills the free part of the desk, over the other items (never over the chat) - click again to put it back among them">front</button>` : ''}
               <button data-act="size" title="Size: ${size} — click for the next">${size}</button>
               <button data-act="remove" title="Take it off the canvas">drop</button>
               ${bid ? '' : `<button data-act="ctx" class="ctx ${inF && (F || b.state === 'pinned') ? 'on' : ''}" title="${b.state === 'pinned' ? 'Pinned — always in context; click to release it' : inF && F ? 'In focus now — pin it to keep it in context' : 'Put it in context — pins it, so it never leaves focus'}">${inF && (F || b.state === 'pinned') ? '✓ In context' : 'In context'}</button>`}
@@ -3231,6 +3249,7 @@
       if (act === 'fold') return this._setFold(key, !(it && it.classList.contains('ufold')));
       if (act === 'open') return this._toggleOpen(key);
       if (act === 'max') return this._toggleMax(key);
+      if (act === 'layer-behind' || act === 'layer-front') return this.setLayer(key, this._layer[key] === act.slice(6) ? '' : act.slice(6));
       if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026'; return this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }); }
       // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
       // these are the shelves those items went to, so they carry their own act rather than sharing one.
