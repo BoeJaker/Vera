@@ -254,6 +254,15 @@ changed evidence for one operation conflicts; stored evidence is digest-checked
 after restart; reconciliation queries are bounded. These components are not
 imported by the live Memory path and therefore do not activate dual writing.
 
+The public `memory.store` capability now has a narrow integration point, still
+off by default. Disabled operation creates no Fabric or receipt state. Enabled
+operation constructs an immutable `memory.native` revision, submits it through
+the existing revision policy and authority store after the native write, and
+records the paired outcome. Internal Memory writers are outside this canary.
+No deployment configuration is changed, so this is wiring rather than an
+authority cutover; removing or setting `VERA_MEMORY_REVISION_CANARY=0` is the
+one-step rollback.
+
 ### Caller policy
 
 Revision and artifact capabilities share `CallerPolicy`

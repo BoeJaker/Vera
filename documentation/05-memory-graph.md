@@ -380,6 +380,19 @@ does not advance Fabric heads or projection receipts, and supplies no runtime
 activation switch. Wiring one narrow writer to this seam and proving recovery
 remain subsequent work.
 
+The public `memory.store` ingress is now connected to this seam behind
+`VERA_MEMORY_REVISION_CANARY=1`; the default remains `0`. With the switch off,
+the capability directly awaits the existing native store and does not construct
+a revision, policy, database or receipt sink. The switch affects only that
+public ingress: promoter, hook and internal `HybridMemoryStore` callers retain
+their existing path. When enabled, the native result remains the caller result,
+the canonical write is policy-checked using `FABRIC_REVISION_POLICY`, and
+revision and evidence journals use `FABRIC_REVISION_SQLITE` and
+`VERA_MEMORY_DUAL_WRITE_RECEIPTS`. The adapter adds no outer timeout around the
+native store or synchronous revision transaction, avoiding cancellation that
+could report a timeout while an irreversible write continues. The switch is
+not enabled by this code change and grants no authority-switch permission.
+
 ---
 
 ## 5. Graph model: nodes and edges

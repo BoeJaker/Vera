@@ -119,6 +119,10 @@ try:                                                    # noisy records rank aft
     from Vera.vera.fabric import memory_noise_core as _noise_core
 except ImportError:                                     # pragma: no cover
     from . import memory_noise_core as _noise_core
+try:                                                    # default-off public-ingress revision canary
+    from Vera.vera.fabric import memory_dual_write_runtime as _revision_canary
+except ImportError:                                     # pragma: no cover
+    from . import memory_dual_write_runtime as _revision_canary
 try:                                                    # the time a question asks about (CU-M.9)
     from Vera.vera.fabric import recall_scope_core as _scope_core
 except ImportError:                                     # pragma: no cover
@@ -2468,7 +2472,14 @@ async def memory_store(
         importance  = importance,
         parent_id   = parent_id,
     )
-    result = await MEMORY.store(rec)
+    async def _native_store():
+        return await MEMORY.store(rec)
+
+    actor = str(_orch.CALLER_KIND.get("") or "user").strip().lower()
+    actor = {"mcp": "claude_code"}.get(actor, actor)
+    result = await _revision_canary.store_public_memory_with_revision_canary(
+        rec.to_dict(), native_write=_native_store, actor=actor,
+        observed_at=now_iso())
     return {"id": rec.id, "backends": result, "keywords": rec.keywords,
             "content_hash": rec.content_hash}
 
