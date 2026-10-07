@@ -263,6 +263,15 @@ No deployment configuration is changed, so this is wiring rather than an
 authority cutover; removing or setting `VERA_MEMORY_REVISION_CANARY=0` is the
 one-step rollback.
 
+Reconciliation of split native/canonical outcomes now has a durable execution
+contract. The evidence journal records exact started and completed attempts,
+prevents concurrent attempts for one operation, resumes unfinished work after
+restart, and folds committed repairs into an effective status without changing
+the immutable source receipt. Repair implementations are injected and must
+honour target-specific idempotency keys. The executor contains no Memory,
+Postgres, Chroma, Neo4j or Fabric repair implementation itself, performs no
+automatic scheduling, and always reports `authority_switch_allowed: false`.
+
 ### Caller policy
 
 Revision and artifact capabilities share `CallerPolicy`

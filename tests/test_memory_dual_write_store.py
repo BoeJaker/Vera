@@ -79,3 +79,86 @@ def test_store_rejects_non_receipt(tmp_path):
     store = MemoryDualWriteReceiptStore(tmp_path / "receipts.sqlite3")
     with pytest.raises(TypeError, match="MemoryDualWriteReceipt"):
         store.append({})
+
+
+def test_reconciliation_attempt_restarts_replays_and_converges(tmp_path):
+    path = tmp_path / "receipts.sqlite3"
+    store = MemoryDualWriteReceiptStore(path)
+    store.append(receipt("op-1", neo4j="failed"))
+    assert store.reconciliation_status("op-1")["unresolved_targets"] == ["neo4j"]
+    started = store.start_reconciliation(
+        operation_id="op-1", attempt_id="attempt-1", targets=["neo4j"],
+        started_at=NOW)
+    assert started["state"] == "started"
+    assert MemoryDualWriteReceiptStore(path).pending_reconciliations() == [started]
+    replay = MemoryDualWriteReceiptStore(path).start_reconciliation(
+        operation_id="op-1", attempt_id="attempt-1", targets=["neo4j"],
+        started_at=NOW)
+    assert replay == started
+    completed = store.complete_reconciliation(
+        attempt_id="attempt-1", outcomes={"neo4j": "committed"},
+        error_codes={}, completed_at="2026-01-01T00:00:01Z")
+    assert completed["state"] == "completed"
+    assert store.pending_reconciliations() == []
+    status = MemoryDualWriteReceiptStore(path).reconciliation_status("op-1")
+    assert status["converged"] is True
+    assert status["authority_switch_allowed"] is False
+    assert MemoryDualWriteReceiptStore(path).reconciliation() == []
+
+
+def test_reconciliation_attempt_conflicts_and_validates_exact_targets(tmp_path):
+    store = MemoryDualWriteReceiptStore(tmp_path / "receipts.sqlite3")
+    store.append(receipt("op-1", neo4j="failed"))
+    with pytest.raises(ValueError, match="exactly match"):
+        store.start_reconciliation(
+            operation_id="op-1", attempt_id="attempt-1", targets=["postgres"],
+            started_at=NOW)
+    store.start_reconciliation(
+        operation_id="op-1", attempt_id="attempt-1", targets=["neo4j"],
+        started_at=NOW)
+    with pytest.raises(MemoryReceiptConflict, match="replay differs"):
+        store.start_reconciliation(
+            operation_id="op-1", attempt_id="attempt-1", targets=["neo4j"],
+            started_at="2026-01-01T00:00:01Z")
+    with pytest.raises(ValueError, match="every reconciliation target"):
+        store.complete_reconciliation(
+            attempt_id="attempt-1", outcomes={}, error_codes={},
+            completed_at="2026-01-01T00:00:02Z")
+    with pytest.raises(ValueError, match="cannot precede"):
+        store.complete_reconciliation(
+            attempt_id="attempt-1", outcomes={"neo4j": "failed"},
+            error_codes={"neo4j": "repair_failed"},
+            completed_at="2025-12-31T23:59:59Z")
+    with pytest.raises(ValueError, match="bounded error"):
+        store.complete_reconciliation(
+            attempt_id="attempt-1", outcomes={"neo4j": "failed"},
+            error_codes={"neo4j": "private path leaked"},
+            completed_at="2026-01-01T00:00:02Z")
+
+
+def test_only_one_started_attempt_can_own_an_operation(tmp_path):
+    store = MemoryDualWriteReceiptStore(tmp_path / "receipts.sqlite3")
+    store.append(receipt("op-1", neo4j="failed"))
+    store.start_reconciliation(
+        operation_id="op-1", attempt_id="attempt-1", targets=["neo4j"],
+        started_at=NOW)
+    with pytest.raises(MemoryReceiptConflict, match="already owns"):
+        store.start_reconciliation(
+            operation_id="op-1", attempt_id="attempt-2", targets=["neo4j"],
+            started_at="2026-01-01T00:00:01Z")
+
+
+def test_reconciliation_success_is_sticky_across_later_failed_attempts(tmp_path):
+    store = MemoryDualWriteReceiptStore(tmp_path / "receipts.sqlite3")
+    store.append(receipt("op-1", neo4j="failed"))
+    store.start_reconciliation(
+        operation_id="op-1", attempt_id="attempt-1", targets=["neo4j"],
+        started_at=NOW)
+    store.complete_reconciliation(
+        attempt_id="attempt-1", outcomes={"neo4j": "committed"},
+        error_codes={}, completed_at="2026-01-01T00:00:01Z")
+    assert store.reconciliation_status("op-1")["converged"] is True
+    with pytest.raises(ValueError, match="no unresolved"):
+        store.start_reconciliation(
+            operation_id="op-1", attempt_id="attempt-2", targets=["neo4j"],
+            started_at="2026-01-01T00:00:02Z")
