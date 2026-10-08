@@ -127,6 +127,10 @@ try:                                                    # default-off manual spl
     from Vera.vera.fabric import memory_dual_write_repair_runtime as _revision_repair
 except ImportError:                                     # pragma: no cover
     from . import memory_dual_write_repair_runtime as _revision_repair
+try:                                                    # deterministic rollback rehearsal
+    from Vera.vera.fabric import memory_dual_write_rollback as _revision_rollback
+except ImportError:                                     # pragma: no cover
+    from . import memory_dual_write_rollback as _revision_rollback
 try:                                                    # the time a question asks about (CU-M.9)
     from Vera.vera.fabric import recall_scope_core as _scope_core
 except ImportError:                                     # pragma: no cover
@@ -2585,6 +2589,31 @@ async def memory_dual_write_readiness(
         limit=limit, min_receipts=min_receipts,
         max_evidence_age_seconds=max_evidence_age_seconds,
         expected_source_commit=source_commit)
+
+
+@capability(
+    "memory.dual_write.rollback_rehearse", memory="off",
+    http_method="POST", http_path="/memory/dual-write/rollback-rehearse",
+    http_tags=["memory"],
+    description="Run a deterministic rollback rehearsal against the real disabled "
+                "dual-write and reconciliation gates using local sentinels only, "
+                "then persist a payload-free receipt bound to the running source "
+                "commit. It invokes no Memory backend, cannot enable either gate "
+                "and never moves authority. Input: rehearsal_id (stable opaque "
+                "operation ID). Output: created and exact rehearsal receipt.",
+)
+async def memory_dual_write_rollback_rehearse(
+    rehearsal_id: str, trace_id=None,
+):
+    try:
+        from Vera.vera.provenance import get_provenance
+    except ImportError:                              # pragma: no cover
+        from ..provenance import get_provenance
+    source_commit = str(get_provenance().get("git_sha") or "")
+    if not source_commit:
+        raise RuntimeError("running source identity is unavailable")
+    return await _revision_rollback.run_memory_rollback_rehearsal(
+        rehearsal_id=rehearsal_id, source_commit=source_commit)
 
 
 @capability(

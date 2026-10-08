@@ -295,6 +295,15 @@ capability currently moves Memory authority. Rollback evidence must bind the
 exact commit reported by the running process's provenance; missing or
 mismatched source identity blocks review.
 
+`memory.dual_write.rollback_rehearse` creates that receipt by exercising the
+deployed canary and reconciliation functions with each gate explicitly off,
+deliberately unusable state configuration and local sentinels. The native
+sentinel must remain callable exactly once, while canonical construction and
+all reconciliation callbacks must remain unreachable. Exact rehearsal replay
+performs no probe; changing the source commit under the same rehearsal identity
+conflicts. The operation writes only payload-free evidence and does not test or
+contact Postgres, Chroma or Neo4j.
+
 No scheduler enumerates or starts these attempts, and disabled operation
 constructs no journal, revision store or backend request. Every result still
 reports `authority_switch_allowed: false`; automatic repair, live canary
