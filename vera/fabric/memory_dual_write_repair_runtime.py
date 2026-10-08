@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
 from .memory_dual_write_reconciliation import reconcile_memory_dual_write
+from .memory_dual_write_readiness import assess_memory_authority_readiness
 from .memory_dual_write_repairs import MemoryDualWriteRepairAdapter, NATIVE_TARGETS
 from .memory_dual_write_runtime import native_memory_content_hash
 from .memory_dual_write_store import MemoryDualWriteReceiptStore
@@ -33,6 +34,35 @@ def _enabled(environ: Mapping[str, str]) -> bool:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def read_memory_authority_readiness(
+    *, limit: int = 100, min_receipts: int = 25,
+    max_evidence_age_seconds: int = 86_400,
+    environ: Mapping[str, str] | None = None, assessed_at: str = "",
+) -> dict[str, Any]:
+    """Read bounded journal evidence; never repair or switch authority."""
+    env = os.environ if environ is None else environ
+    receipt_file = Path(str(env.get(RECEIPT_PATH_ENV) or Path(__file__).with_name(
+        "memory_dual_write_receipts.db")))
+    if receipt_file.exists():
+        store = MemoryDualWriteReceiptStore(receipt_file)
+        evidence = store.readiness_evidence(limit=limit)
+        rollback = store.latest_rollback_rehearsal()
+    else:
+        evidence = {
+            "total_receipts": 0, "returned_receipts": 0,
+            "truncated": False, "unresolved_operations": 0,
+            "pending_attempts": 0, "failed_attempts": 0,
+            "latest_observed_at": "", "retains_payload": False,
+            "executes": False, "authority_switch_allowed": False,
+        }
+        rollback = None
+    result = assess_memory_authority_readiness(
+        evidence, assessed_at=assessed_at or _now(),
+        rollback_receipt=rollback, min_receipts=min_receipts,
+        max_evidence_age_seconds=max_evidence_age_seconds)
+    return result.to_dict()
 
 
 async def run_manual_memory_reconciliation(

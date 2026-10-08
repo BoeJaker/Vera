@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from .memory_dual_write_receipt import MemoryDualWriteReceipt
+from .memory_dual_write_readiness import MemoryRollbackRehearsalReceipt
 
 
 class MemoryReceiptConflict(ValueError):
@@ -108,6 +109,12 @@ class MemoryDualWriteReceiptStore:
                     attempt_id TEXT NOT NULL,
                     resolved_at TEXT NOT NULL,
                     FOREIGN KEY(operation_id) REFERENCES memory_dual_write_receipts(operation_id)
+                );
+                CREATE TABLE IF NOT EXISTS memory_canary_rollback_rehearsals (
+                    rehearsal_id TEXT PRIMARY KEY,
+                    receipt_id TEXT NOT NULL UNIQUE,
+                    evidence_json TEXT NOT NULL,
+                    completed_at TEXT NOT NULL
                 );
             """)
 
@@ -344,6 +351,88 @@ class MemoryDualWriteReceiptStore:
                 "ORDER BY observed_at,operation_id LIMIT ?", (limit,),
             ).fetchall()
         return [_verify(json.loads(row["evidence_json"])) for row in rows]
+
+    def append_rollback_rehearsal(
+        self, receipt: MemoryRollbackRehearsalReceipt,
+    ) -> dict[str, Any]:
+        """Persist one payload-free rollback proof with replay protection."""
+        if not isinstance(receipt, MemoryRollbackRehearsalReceipt):
+            raise TypeError("receipt must be a MemoryRollbackRehearsalReceipt")
+        payload = receipt.to_dict()
+        encoded = _canonical(payload)
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT receipt_id,evidence_json FROM memory_canary_rollback_rehearsals "
+                "WHERE rehearsal_id=?", (receipt.rehearsal_id,)).fetchone()
+            if row:
+                if row["receipt_id"] != receipt.receipt_id or row["evidence_json"] != encoded:
+                    raise MemoryReceiptConflict("rollback rehearsal replay differs")
+                conn.commit()
+                return {"created": False, "receipt": payload}
+            conn.execute(
+                "INSERT INTO memory_canary_rollback_rehearsals VALUES (?,?,?,?)",
+                (receipt.rehearsal_id, receipt.receipt_id, encoded,
+                 receipt.completed_at))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return {"created": True, "receipt": payload}
+
+    def latest_rollback_rehearsal(self) -> MemoryRollbackRehearsalReceipt | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT evidence_json FROM memory_canary_rollback_rehearsals "
+                "ORDER BY completed_at DESC,rehearsal_id DESC LIMIT 1").fetchone()
+        if not row:
+            return None
+        return MemoryRollbackRehearsalReceipt.from_dict(json.loads(row["evidence_json"]))
+
+    def readiness_evidence(self, *, limit: int = 100) -> dict[str, Any]:
+        """Return bounded metadata only; never expose stored receipt payloads."""
+        limit = int(limit)
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._connect() as conn:
+            total = int(conn.execute(
+                "SELECT COUNT(*) FROM memory_dual_write_receipts").fetchone()[0])
+            rows = conn.execute(
+                "SELECT operation_id,observed_at FROM memory_dual_write_receipts "
+                "ORDER BY observed_at DESC,operation_id DESC LIMIT ?", (limit,)
+            ).fetchall()
+            unresolved = int(conn.execute(
+                "SELECT COUNT(*) FROM memory_dual_write_receipts d "
+                "WHERE d.requires_reconciliation=1 AND NOT EXISTS ("
+                "SELECT 1 FROM memory_dual_write_reconciliation_resolutions r "
+                "WHERE r.operation_id=d.operation_id)").fetchone()[0])
+            pending = int(conn.execute(
+                "SELECT COUNT(*) FROM memory_dual_write_reconciliation_attempts "
+                "WHERE state='started'").fetchone()[0])
+            completed = conn.execute(
+                "SELECT a.outcomes_json FROM memory_dual_write_reconciliation_attempts a "
+                "WHERE a.state='completed' AND NOT EXISTS ("
+                "SELECT 1 FROM memory_dual_write_reconciliation_resolutions r "
+                "WHERE r.operation_id=a.operation_id)").fetchall()
+        failed_attempts = sum(
+            any(outcome != "committed" for outcome in json.loads(row["outcomes_json"]).values())
+            for row in completed
+        )
+        return {
+            "total_receipts": total,
+            "returned_receipts": len(rows),
+            "truncated": total > len(rows),
+            "unresolved_operations": unresolved,
+            "pending_attempts": pending,
+            "failed_attempts": failed_attempts,
+            "latest_observed_at": rows[0]["observed_at"] if rows else "",
+            "retains_payload": False,
+            "executes": False,
+            "authority_switch_allowed": False,
+        }
 
     def count(self) -> int:
         with self._connect() as conn:

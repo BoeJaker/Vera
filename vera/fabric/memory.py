@@ -2560,6 +2560,28 @@ async def memory_dual_write_reconcile(
 
 
 @capability(
+    "memory.dual_write.readiness", memory="off",
+    http_method="GET", http_path="/memory/dual-write/readiness",
+    http_tags=["memory"],
+    description="Assess bounded, payload-free Memory dual-write evidence for a "
+                "future activation review. Reads receipt and reconciliation "
+                "metadata plus the latest rollback-rehearsal receipt; performs "
+                "no repair and never grants or moves authority. Input: limit "
+                "(1..1000), min_receipts (1..1000), max_evidence_age_seconds "
+                "(60..31536000). Output: metrics, fail-closed reasons and "
+                "ready_for_activation_review; authority_switch_allowed is always false.",
+)
+async def memory_dual_write_readiness(
+    limit: int = 100, min_receipts: int = 25,
+    max_evidence_age_seconds: int = 86_400, trace_id=None,
+):
+    return await asyncio.to_thread(
+        _revision_repair.read_memory_authority_readiness,
+        limit=limit, min_receipts=min_receipts,
+        max_evidence_age_seconds=max_evidence_age_seconds)
+
+
+@capability(
     "memory.search", memory="off",
     http_method="POST", http_path="/memory/search", http_tags=["memory"],
     description="Search long-term memory using hybrid semantic + keyword matching. "
