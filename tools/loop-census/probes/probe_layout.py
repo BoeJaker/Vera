@@ -128,7 +128,7 @@ while not RESCORE and time.time() - t0 < budget:
             pass
         break
 # Redis says done -> not capped, whatever the (slow) HTTP list says.
-capped = not _rev.finished(sid) and sid in (running() or [sid])
+capped = not RESCORE and not _rev.finished(sid) and sid in (running() or [sid])
 if capped:
     log("%s over budget - cancelling" % sid)
 if not RESCORE:
@@ -136,7 +136,7 @@ if not RESCORE:
 wall = time.time() - t0
 # A loop still listed as running after stop() is an orphan that blocks every later
 # probe AND the census scheduler (4 Oct, 67d0975e): set its cancel flag.
-if not _rev.finished(sid) and sid in (running() or [sid]):
+if not RESCORE and not _rev.finished(sid) and sid in (running() or [sid]):
     http("POST", "/workshop/agent_loop/cancel", {"session_id": sid}, timeout=30)
     log("%s still running after stop - cancel flag set" % sid)
 ev = events(sid)
