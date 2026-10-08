@@ -181,3 +181,38 @@ def test_prestep_rows_and_one_sided_outcome():
     rl.finish({})
     outs = [o for o in rows if o["schema"] == LC.OUTCOME_SCHEMA and o["source"] == "run.first_attempt_met"]
     assert [o["decision_id"] for o in outs] == [ds[0]["decision_id"]]
+
+
+def test_intent_outcome_by_the_kind_of_work_done():
+    def d(i, mode="llm_only"):
+        x = LD.intent_decision("s", i, {})
+        x["mode"] = mode
+        return x
+    ok, miss = {"complete": True, "missing": []}, {"complete": False, "missing": ["the report"]}
+    fam = lambda r, b: {"research": r, "build": b}
+    assert LD.intent_outcome(d("build"), fam(2, 0), ok)["label"] == "wrong"
+    assert LD.intent_outcome(d("build"), fam(0, 2), ok)["label"] == "correct"
+    assert LD.intent_outcome(d("build"), fam(0, 2), miss) is None          # quality unknown: no verdict
+    assert LD.intent_outcome(d("build"), fam(1, 1), ok) is None            # mixed evidence
+    assert LD.intent_outcome(d("research"), fam(0, 1), ok)["label"] == "wrong"
+    assert LD.intent_outcome(d("research"), fam(3, 1), ok)["label"] == "correct"
+    assert LD.intent_outcome(d("mixed"), fam(2, 0), ok)["label"] == "wrong"
+    assert LD.intent_outcome(d("mixed"), fam(1, 1), ok)["label"] == "correct"
+    assert LD.intent_outcome(d("action"), fam(0, 1), ok) is None
+    assert LD.intent_outcome(d("build", "shadow"), fam(2, 0), ok) is None  # a shadow is not judged here
+    assert LD.intent_outcome(d("build"), fam(0, 0), ok) is None
+    assert LD.intent_outcome(d("build"), None, ok) is None
+    o = LD.intent_outcome(d("build"), fam(0, 2), ok)
+    assert o["strength"] == "weak" and o["source"] == "run.cap_families"
+
+
+def test_the_run_end_passes_the_kinds_of_work():
+    rows = []
+    rl = _run(rows.append)
+    rl.intent("research", {"heuristic": "research", "llm": ""})
+    rl.finish({"complete": True, "missing": []}, steps_run=2, families={"research": 2, "build": 0})
+    outs = [r for r in rows if r["schema"] == LC.OUTCOME_SCHEMA]
+    assert [(o["source"], o["label"]) for o in outs] == [("run.cap_families", "correct")]
+    src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
+    assert "fast_path=(False if (enable_fast_path and tier == \"single\") else None), families=_fam)" in src
+    assert "& _V5_RESEARCH_CAPS)" in src and "& _V5_AUTHORING_CAPS)}" in src

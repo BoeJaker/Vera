@@ -26496,8 +26496,11 @@ async def cap_dag_agent_loop_v6(
     if _dl is not None and _zs_rec:
         _dl.intent_shadow(_zs_rec, inputs={"goal": goal})
     if _dl is not None:
+        # the kind of work the run did, for the intent's outcome (steps that researched / authored)
+        _fam = {"research": sum(1 for r in results if set(r.get("actual_caps") or []) & _V5_RESEARCH_CAPS),
+                "build": sum(1 for r in results if set(r.get("actual_caps") or []) & _V5_AUTHORING_CAPS)}
         _dl.finish(_gate_last, steps_run=len(results),
-                   fast_path=(False if (enable_fast_path and tier == "single") else None))
+                   fast_path=(False if (enable_fast_path and tier == "single") else None), families=_fam)
     await emit_event({"type": "agent_loop_v6.done", "stream_id": stream_id, "session_id": sid,
                       "summary": final, "cycles": gcycle, "steps_run": len(results),
                       "reason": _gate_finish_core.reason(_unmet), "unmet": _unmet})

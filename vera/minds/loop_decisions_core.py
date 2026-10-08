@@ -15,6 +15,11 @@ calibration reports how often each fires):
 - a `continue` was right when the next step to be verified was met, wrong when it was not: medium;
 - a `stop` was right when the final gate found nothing missing, wrong when it named gaps: strong;
 - a rule's `end` (step_done) was right when that attempt was then verified met, wrong when not: medium;
+- an intent was right or wrong by the KIND of work the run then did (`families`: how many executed
+  steps used a research cap, how many authored something), weak, as the roadmap rates intent: build is
+  wrong when only research ran and nothing was authored, right when something was authored with no
+  research and the gate found nothing missing; research mirrors it; mixed is right when both kinds ran
+  (and the gate passed), wrong when only one did. action, and a shadow intent, get none here;
 - a `not_needed` prestep was right when the step's first attempt was verified met: medium. One-sided:
   a failed first attempt cannot be pinned on a missing gap, and `needed` has no outcome here.
 Nothing else gets an outcome here; the ledger's sweeper (a later slice) marks runs that never
@@ -201,13 +206,45 @@ def tier_outcome(decision: Dict[str, Any], steps_run: Optional[int], fast_path: 
                            detail={"steps": int(steps_run), "band": list(band), "missing": len(missing)})
 
 
+def intent_outcome(decision: Dict[str, Any], families: Optional[Dict[str, Any]],
+                   gate: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Judge a live intent by the kind of work the run did (see the module notes). None when the
+    run said too little, for action, and for a shadow (the run's shape followed the live intent,
+    so judging the shadow on it would be biased)."""
+    if not families or decision.get("mode") == "shadow":
+        return None
+    try:
+        res, bld = int(families.get("research") or 0), int(families.get("build") or 0)
+    except (TypeError, ValueError):
+        return None
+    if res == 0 and bld == 0:
+        return None
+    passed = not [m for m in ((gate or {}).get("missing") or []) if str(m).strip()] and bool(gate)
+    intent, label = decision["answer"], None
+    if intent == "build":
+        label = "wrong" if (res and not bld) else ("correct" if (bld and not res and passed) else None)
+    elif intent == "research":
+        label = "wrong" if (bld and not res) else ("correct" if (res and passed) else None)
+    elif intent == "mixed":
+        label = "wrong" if not (res and bld) else ("correct" if passed else None)
+    if label is None:
+        return None
+    return LC.make_outcome(decision["decision_id"], label, "run.cap_families", "weak",
+                           detail={"research_steps": res, "build_steps": bld, "gate_passed": passed})
+
+
 def run_outcomes(decisions: List[Dict[str, Any]], gate: Optional[Dict[str, Any]],
-                 steps_run: Optional[int] = None, fast_path: Optional[bool] = None) -> List[Dict[str, Any]]:
+                 steps_run: Optional[int] = None, fast_path: Optional[bool] = None,
+                 families: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Outcome v0 rows for the decisions of one run, in the order they were made."""
     out: List[Dict[str, Any]] = []
     for d in decisions:
         if d["question_id"] == TIER_Q:
             o = tier_outcome(d, steps_run, fast_path, gate)
+            if o is not None:
+                out.append(o)
+        elif d["question_id"] == INTENT_Q:
+            o = intent_outcome(d, families, gate)
             if o is not None:
                 out.append(o)
     verifies = [(i, d) for i, d in enumerate(decisions) if d["question_id"] == VERIFY_Q]
