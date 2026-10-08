@@ -93,6 +93,7 @@ def test_rev_never_crashes_finding_redis_and_honours_the_override(monkeypatch):
     monkeypatch.setenv("CENSUS_REDIS_URL", "redis://example:6379/3")
     assert rev._redis_url() == "redis://example:6379/3"
     monkeypatch.delenv("CENSUS_REDIS_URL")
+    monkeypatch.delenv("REDIS_URL", raising=False)        # our own env is read first (8 Oct)
     monkeypatch.setattr(rev.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("pgrep")))
     assert rev._redis_url() == "redis://localhost:6379/0"
 
@@ -137,8 +138,8 @@ def test_probes_never_cancel_a_finished_run():
     stop = p[p.index("def stop(sid, proc):"):p.index("def start(")]
     assert stop.index("_rev.finished(sid)") < stop.index("/workshop/agent_loop/cancel")
     lay = (D / "probes" / "probe_layout.py").read_text(encoding="utf-8")
-    assert "capped = not _rev.finished(sid)" in lay
-    assert 'if not _rev.finished(sid) and sid in (running() or [sid]):\n    http("POST", "/workshop/agent_loop/cancel"' in lay
+    assert "capped = not RESCORE and not _rev.finished(sid)" in lay
+    assert 'if not RESCORE and not _rev.finished(sid) and sid in (running() or [sid]):\n    http("POST", "/workshop/agent_loop/cancel"' in lay
     assert "tasks?match=agent_loop" not in lay and "/sys/debug/tasks?limit=200" in lay
 
 
@@ -230,3 +231,21 @@ def test_rescore_runs_nothing():
     assert "proc = _Finished() if RESCORE else start(" in t
     assert "while not RESCORE and time.time() - t0 < budget:" in t
     assert "if not RESCORE:\n    stop(sid, proc)" in t
+
+
+def test_rev_prefers_its_own_redis_url(monkeypatch):
+    """8 Oct 2026: prod loads the Redis credential at runtime, so its /proc environ has none."""
+    sys.path.insert(0, str(D / "probes"))
+    import rev
+    monkeypatch.delenv("CENSUS_REDIS_URL", raising=False)
+    monkeypatch.setenv("REDIS_URL", "redis://:pw@localhost:6379/0")
+    monkeypatch.setattr(rev.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no scan")))
+    assert rev._redis_url() == "redis://:pw@localhost:6379/0"
+    monkeypatch.setenv("CENSUS_REDIS_URL", "redis://census:6379/3")
+    assert rev._redis_url() == "redis://census:6379/3"
+
+
+def test_rescore_never_cancels():
+    t = (D / "probes" / "probe_layout.py").read_text(encoding="utf-8")
+    assert "capped = not RESCORE and" in t
+    assert "if not RESCORE and not _rev.finished(sid)" in t
