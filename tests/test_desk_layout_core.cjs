@@ -162,4 +162,24 @@ t('the desk exploded: its layers are the lattice planes, every item keeps its ke
   assert.ok(!/more/.test(M.planes.find((p) => p.id === 'items').name));
 });
 
+t('every arrangement lays its cards in bands: none overlap, docked or floating, before any separation', () => {
+  const d = { W: 900, H: 700, m: 8, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22 };
+  const items = Array.from({ length: 20 }, (_, i) => ({ id: 'n' + i, kind: ['widget', 'records', 'note', 'table'][i % 4], age: i % 5 }));
+  [['left', { l: -440, t: 0, r: 0, b: 700 }], ['float', { l: 260, t: 60, r: 640, b: 560 }]].forEach(([side, R]) => {
+    ['orbit', 'kind', 'timeline', 'stack'].forEach((mode) => {
+      const pos = D.arrange(mode, R, items, d);
+      assert.strictEqual(Object.keys(pos).length, items.length, mode + ' ' + side + ' places every item');
+      const big = Object.keys(pos).map((id) => ({ id, p: pos[id], s: D.sizeAt(R, pos[id][0], pos[id][1], { icon: pos[id][2] === 'icon' }, d) }))
+        .filter((x) => x.s.face === 'max' || x.s.face === 'card');
+      let ov = 0;
+      for (let i = 0; i < big.length; i++) for (let j = i + 1; j < big.length; j++) {
+        const a = big[i], b = big[j];
+        if (Math.abs(a.p[0] - b.p[0]) < (a.s.w + b.s.w) / 2 - 2 && Math.abs(a.p[1] - b.p[1]) < (a.s.h + b.s.h) / 2 - 2) ov++;
+      }
+      assert.strictEqual(ov, 0, mode + ' ' + side + ': ' + ov + ' overlapping cards');
+      big.forEach((x) => assert.ok(x.p[0] + x.s.w / 2 <= R.l + 2 || x.p[0] - x.s.w / 2 >= R.r - 2 || x.p[1] + x.s.h / 2 <= R.t + 2 || x.p[1] - x.s.h / 2 >= R.b - 2, mode + ' ' + side + ': a card under the chat'));
+    });
+  });
+});
+
 console.log(n + ' passed');

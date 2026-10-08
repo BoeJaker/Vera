@@ -120,6 +120,46 @@
     return far.length >= Math.min(4, need || 4) ? far : clear;
   }
 
+  /* groups -> bands, one after another away from the chat on each side it has (docked: one; below: rows above it;
+     floating: both, the roomier first, alternating). A group fills one band; with spill its overflow takes the next
+     band, otherwise it goes to the border. Returns {pos: {id: [x, y]}, chips: [items]}. */
+  function bandRun(R, d, groups, spill) {
+    var W = d.W, H = d.H, gapB = 14, pos = {}, chips = [];
+    var dockedLeft = R.l < 200, dockedRight = R.r > W - 200, below = R.t > H * 0.55;
+    var sides = dockedLeft ? [1] : dockedRight ? [-1] : below ? [0] : (W - R.r >= R.l ? [1, -1] : [-1, 1]);
+    var cur = {}, open = {};
+    sides.forEach(function (s) { cur[s] = s === 0 ? R.t - gapB : (s > 0 ? R.r + gapB : R.l - gapB); open[s] = true; });
+    var along = function (s) { return s === 0 ? W - 2 * d.m : H - 2 * d.m; };
+    function band(s, want) {
+      var vertical = s === 0, dir = s, c = cur[s], rs = vertical ? SIZE.chip.h + 30 : SIZE.chip.w + 20;
+      var probe = vertical ? sizeAt(R, W / 2, c - 60, {}, d) : sizeAt(R, c + dir * 80, H / 2, {}, d);
+      var depth = vertical ? probe.h : probe.w, centre = vertical ? c - depth / 2 : c + dir * depth / 2;
+      var real = vertical ? sizeAt(R, W / 2, centre, {}, d) : sizeAt(R, centre, H / 2, {}, d);
+      if (real.face === 'chip') return null;                     /* past the cards: the rest are border chips */
+      depth = vertical ? real.h : real.w; centre = vertical ? c - depth / 2 : c + dir * depth / 2;
+      var far = vertical ? centre - depth / 2 : centre + dir * depth / 2;
+      if (vertical ? far < d.edgeTop + rs : (dir > 0 ? far > W - rs : far < rs)) return null;
+      var cross = vertical ? real.w : real.h;
+      cur[s] = vertical ? far - gapB : far + dir * gapB;
+      return { centre: centre, vertical: vertical, count: Math.max(1, Math.min(want, Math.floor(along(s) / (cross + gapB)))) };
+    }
+    var si = 0;
+    groups.forEach(function (g) {
+      var rest = g.slice();
+      while (rest.length) {
+        var s = null;
+        for (var t = 0; t < sides.length; t++) { var cs = sides[(si + t) % sides.length]; if (open[cs]) { s = cs; si = (si + t + 1) % sides.length; break; } }
+        if (s === null) { chips = chips.concat(rest); return; }
+        var b = band(s, rest.length);
+        if (!b) { open[s] = false; continue; }
+        var L = along(s);
+        for (var q = 0; q < b.count && rest.length; q++) { var it = rest.shift(), at = (q + 0.5) / b.count; pos[it.id] = b.vertical ? [d.m + at * L, b.centre] : [b.centre, d.m + at * L]; }
+        if (!spill) { chips = chips.concat(rest); return; }
+      }
+    });
+    return { pos: pos, chips: chips };
+  }
+
   function arrange(mode, R, items, d) {
     d = desk(d);
     var W = d.W, H = d.H, cx = (R.l + R.r) / 2, cy = (R.t + R.b) / 2, hw = (R.r - R.l) / 2, hh = (R.b - R.t) / 2;
@@ -127,7 +167,20 @@
     var dockedLeft = R.l < 200, dockedRight = R.r > W - 200, below = R.t > H * 0.55;
     var sides = dockedLeft ? [1] : dockedRight ? [-1] : [1, -1];
     function cl(x, y) { return [clamp(x, Math.min(90, W / 2), Math.max(W / 2, W - 90)), clamp(y, Math.min(60, H / 2), Math.max(H / 2, H - 40))]; }
-    if (mode === 'orbit' && (dockedLeft || dockedRight || below)) {
+    /* EVERY ARRANGEMENT IS BANDS (2026-10-08). By kind, by time and stack used fixed pixel offsets from the 1600 px
+       board and overlapped on a real desk (5-46 pairs); they now share orbit's bands: a band per group, as deep as its
+       items are at that distance from the chat and holding as many as its length fits, none reaching the border's chip
+       strip. A floating chat has bands on both sides, the roomier first; the rest are border chips. */
+    if (mode === 'kind' || mode === 'timeline' || mode === 'stack' || (mode === 'orbit' && !(dockedLeft || dockedRight || below))) {
+      var groups = [], spill = false;
+      if (mode === 'kind') { var ks = []; items.forEach(function (it) { if (ks.indexOf(it.kind) < 0) ks.push(it.kind); }); groups = ks.map(function (kd) { return items.filter(function (it) { return it.kind === kd; }); }); }
+      else if (mode === 'timeline') { for (var ag = 0; ag < 4; ag++) groups.push(items.filter(function (it) { return it.age === ag; })); items.forEach(function (it) { if (it.age == null || it.age < 0 || it.age > 3) chips.push(it); }); }
+      else if (mode === 'stack') groups = [items.slice()];
+      else { spill = true; for (var gi0 = 0, take = 3; gi0 < items.length; gi0 += take, take = 4) groups.push(items.slice(gi0, gi0 + take)); }
+      var B = bandRun(R, d, groups, spill);
+      Object.keys(B.pos).forEach(function (id) { pos[id] = cl(B.pos[id][0], B.pos[id][1]); });
+      chips = chips.concat(B.chips);
+    } else if (mode === 'orbit') {
       /* BANDS, ONE AFTER ANOTHER away from the chat, each as deep as the items it holds are at that distance (sizeAt
          there), each holding as many as its length fits at that size, and none reaching into the border's chip strip.
          Fractions of the free side overlapped in a narrow desk (the canvas column, 2026-10-06: 21 overlapping pairs). */
@@ -155,47 +208,6 @@
         cursor = vertical ? farEdge - gapB : farEdge + dir * gapB;
       }
       chips = items.slice(k);
-    } else if (mode === 'orbit') {
-      var ring = function (off, n, start) {
-        var out = [];
-        for (var i = 0; i < n; i++) {
-          var a = start + i * 2 * Math.PI / n, x = cx + (hw + off) * Math.cos(a), y = cy + (hh + off) * Math.sin(a);
-          if (x > 170 && x < W - 170 && y > 120 && y < H - 110) out.push([x, y]);
-        }
-        return out;
-      };
-      var near = ring(180, 8, 0.05), mid = ring(400, 14, 0.3), n = 0, m2 = 0;
-      items.forEach(function (it, i) {
-        if (i < 2 && n < near.length) pos[it.id] = near[n++];
-        else if (i < 6 && m2 < mid.length) pos[it.id] = mid[m2++];
-        else chips.push(it);
-      });
-    } else if (mode === 'kind') {
-      var kinds = [];
-      items.forEach(function (it) { if (kinds.indexOf(it.kind) < 0) kinds.push(it.kind); });
-      kinds.forEach(function (kd, ki) {
-        var side = sides[ki % sides.length], col = Math.floor(ki / sides.length);
-        items.filter(function (it) { return it.kind === kd; }).forEach(function (it, mi) {
-          if (below) { var x = 200 + ki * 200, y = R.t - 180 - mi * 120; if (y < 80 || x > W - 100) chips.push(it); else pos[it.id] = cl(x, y); return; }
-          var x2 = side > 0 ? R.r + 170 + col * 230 : R.l - 170 - col * 230, y2 = 150 + mi * 130 + (ki % 2) * 40;
-          if (x2 < 120 || x2 > W - 120 || col > 2) chips.push(it); else pos[it.id] = cl(x2, y2);
-        });
-      });
-    } else if (mode === 'timeline') {
-      var per = {};
-      items.forEach(function (it) {
-        var age = it.age == null ? 9 : it.age;
-        if (age < 0 || age > 3) { chips.push(it); return; }
-        var kk = per[age] = (per[age] || 0) + 1;
-        if (below) pos[it.id] = cl(220 + (kk - 1) * 260, R.t - 170 - age * 140);
-        else pos[it.id] = cl(sides[0] > 0 ? R.r + 180 + age * 210 : R.l - 180 - age * 210, 170 + (kk - 1) * 150);
-      });
-    } else {                                               /* stack */
-      items.forEach(function (it, i) {
-        if (i < 3) pos[it.id] = below ? cl(R.l + 140 + i * 250, R.t - 120) : cl(sides[0] > 0 ? R.r + 175 : R.l - 175, 170 + i * 205);
-        else if (i < 7) pos[it.id] = below ? cl(R.l + 40 + (i - 3) * 230, R.t - 400) : cl(sides[0] > 0 ? R.r + 420 : R.l - 420, 140 + (i - 3) * 150);
-        else chips.push(it);
-      });
     }
     var cells = iconCells(R, d, edgeSlots(R, d, chips.length), chips.length);
     chips.forEach(function (it, i) { if (cells.length) pos[it.id] = cells[i % cells.length]; });
