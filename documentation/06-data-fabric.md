@@ -284,6 +284,17 @@ re-reads it to verify the native ID and content hash before accepting the
 backend's success. Revision reads and writes retain the caller policy used by
 the normal Fabric authority path.
 
+The separate `memory.dual_write.readiness` read path aggregates only bounded
+journal metadata: sample size, truncation, unresolved operations, pending or
+failed repair attempts, latest evidence time and the most recent exact
+rollback-rehearsal receipt. It discloses a truncated sample and fails closed on
+insufficient, stale or partial evidence. A passing result permits only a later
+activation review; it always returns `authority_switch_allowed: false`,
+performs no repair or backend read and does not create an absent journal. No
+capability currently moves Memory authority. Rollback evidence must bind the
+exact commit reported by the running process's provenance; missing or
+mismatched source identity blocks review.
+
 No scheduler enumerates or starts these attempts, and disabled operation
 constructs no journal, revision store or backend request. Every result still
 reports `authority_switch_allowed: false`; automatic repair, live canary
