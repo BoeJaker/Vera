@@ -11,11 +11,11 @@ from typing import Any, Mapping
 from .admission import ModelAdmissionReceipt
 from .inference_contracts import InferenceContractConflict
 from .inference_deployment import InferenceDeployment, InferenceDeploymentObservation
-from .inference_dispatch import InferenceDispatchPlan
+from .inference_dispatch import InferenceDispatchPlan, InferenceDispatchPolicy
 from .model_package import _identifier
 from .model_package_store import ModelActivationReceipt
 
-INFERENCE_ALIAS_ROUTE_SCHEMA = "vera.inference-alias-route/v1"
+INFERENCE_ALIAS_ROUTE_SCHEMA = "vera.inference-alias-route/v2"
 
 
 def _hash(value: Mapping[str, Any]) -> str:
@@ -36,8 +36,8 @@ class InferenceAliasRoute:
     provider_id: str
     provider_revision: int
     health_evidence_id: str
-    dispatch_plan_id: str
-    dispatch_policy_id: str
+    sample_dispatch_plan_id: str
+    dispatch_policy: InferenceDispatchPolicy
     retry_owner: str
     route_id: str = field(init=False)
     schema: str = INFERENCE_ALIAS_ROUTE_SCHEMA
@@ -48,9 +48,11 @@ class InferenceAliasRoute:
         for name in (
                 "alias", "package_id", "activation_operation_id", "admission_id",
                 "deployment_id", "observation_id", "provider_id",
-                "health_evidence_id", "dispatch_plan_id", "dispatch_policy_id",
+                "health_evidence_id", "sample_dispatch_plan_id",
                 "retry_owner"):
             object.__setattr__(self, name, _identifier(getattr(self, name), name))
+        if not isinstance(self.dispatch_policy, InferenceDispatchPolicy):
+            raise TypeError("dispatch_policy must be InferenceDispatchPolicy")
         for name in ("deployment_revision", "provider_revision"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -69,8 +71,8 @@ class InferenceAliasRoute:
             "provider_id": self.provider_id,
             "provider_revision": self.provider_revision,
             "health_evidence_id": self.health_evidence_id,
-            "dispatch_plan_id": self.dispatch_plan_id,
-            "dispatch_policy_id": self.dispatch_policy_id,
+            "sample_dispatch_plan_id": self.sample_dispatch_plan_id,
+            "dispatch_policy": self.dispatch_policy.to_dict(),
             "retry_owner": self.retry_owner,
         }
 
@@ -122,19 +124,22 @@ def define_inference_alias_route(
         deployment.deployment_id, observation.revision,
         observation.observation_id, dispatch.provider_id,
         dispatch.provider_revision, health.evidence_id, dispatch.plan_id,
-        dispatch.policy.policy_id, dispatch.retry_owner)
+        dispatch.policy, dispatch.retry_owner)
 
 
 def inference_alias_route_from_dict(value: Mapping[str, Any]) -> InferenceAliasRoute:
     if not isinstance(value, Mapping) or value.get("schema") != INFERENCE_ALIAS_ROUTE_SCHEMA:
         raise ValueError("unsupported inference alias route schema")
     try:
-        route = InferenceAliasRoute(**{
+        values = {
             key: value[key] for key in (
                 "alias", "package_id", "activation_operation_id", "admission_id",
                 "deployment_id", "deployment_revision", "observation_id",
                 "provider_id", "provider_revision", "health_evidence_id",
-                "dispatch_plan_id", "dispatch_policy_id", "retry_owner")})
+                "sample_dispatch_plan_id", "retry_owner")}
+        values["dispatch_policy"] = InferenceDispatchPolicy(
+            **dict(value["dispatch_policy"]))
+        route = InferenceAliasRoute(**values)
     except (KeyError, TypeError) as exc:
         raise ValueError("malformed inference alias route") from exc
     if value.get("route_id") != route.route_id:
