@@ -1199,7 +1199,7 @@
      its OWN body. It used to run off the end of a stage nobody could scroll, so the part of it you wanted — the
      bottom of the last turn's item — could not be reached at all. */
   /* the desk (align="desk", owner approved 2026-10-06): sized by the distance to the chat on the column's left edge */
-  :host([align="desk"]) .stage .it{transition:left .45s cubic-bezier(.2,.8,.2,1), top .45s cubic-bezier(.2,.8,.2,1), width .35s, height .35s; overflow:hidden!important; contain:paint; box-sizing:border-box; min-height:0}
+  :host([align="desk"]) .stage .it{transition:left .45s cubic-bezier(.2,.8,.2,1), top .45s cubic-bezier(.2,.8,.2,1), width .35s, height .35s, opacity .3s; overflow:hidden!important; contain:paint; box-sizing:border-box; min-height:0}
   /* on the desk the distance is the fold: a card or full-size face shows its body even if it was folded in held */
   :host([align="desk"]) .stage .it.compact:not(.desk-chip) > .it-bd{display:block}
   :host([align="desk"]) .stage .it.desk-chip{border-radius:17px;padding:0 10px!important;display:flex!important;flex-direction:row!important;align-items:center;justify-content:flex-start}
@@ -1255,7 +1255,9 @@
   :host([align="desk"]) .stage .it.desk-dragging *{cursor:grabbing!important;user-select:none}
   @keyframes vcDeskFlash{0%,100%{box-shadow:0 0 0 0 transparent}40%{box-shadow:0 0 0 3px var(--acc,#5a9e8f),0 0 26px color-mix(in srgb,var(--acc,#5a9e8f) 55%,transparent)}}
   :host([align="desk"]) .stage .it.desk-flash{animation:vcDeskFlash .8s ease-in-out 2}
-  @media (prefers-reduced-motion: reduce){:host([align="desk"]) .stage .it{transition:none}}
+  /* a redrawn card held at its last place (no animation), and a new one unseen until the desk has placed it */
+  :host([align="desk"]) .stage .it.desk-hold{transition:none!important}
+  :host([align="desk"]) .stage .it.desk-new{opacity:0;transition:none!important}  @media (prefers-reduced-motion: reduce){:host([align="desk"]) .stage .it{transition:none}}
   /* THE BACK LAYER (the desk's graph, owner-approved 2026-10-06): whatever the page puts in the "back" slot is drawn
      under the cards, dimmed until the pointer is on it. The desk's own ground goes so the layer shows through, and
      the empty desk lets the pointer reach the layer; the cards and the head still take it. */
@@ -2598,6 +2600,9 @@
         st.appendChild(pill);
       });
       st.style.height = H + 'px';
+      /* a new card is in its place now: it fades in there (it was unseen, not sliding in from a default spot) */
+      const news = [...st.querySelectorAll('.it.desk-new')];
+      if (news.length) requestAnimationFrame(() => requestAnimationFrame(() => news.forEach((c) => c.classList.remove('desk-new'))));
       this._placed = { mode: 'desk', placements: out, height: H, folded: [] };
       try { this._liveLayout(); } catch (e) { /* the live layout readers are optional */ }
       // the cards slide to their places (.45s): the live layer follows once they have arrived
@@ -2616,6 +2621,9 @@
           if (ww && ww !== this._stageW) this._placeNow();
         }); this._stageRO.observe(st); } catch (e) { /* no observer: the host still drives placement */ } }
       this._stageW = W;
+      /* a card being dragged on the desk is the person's: nothing places the desk under it (a focus change, a refresh, the
+         chat moving all re-placed it mid-drag and pulled the card back); the drop places it once */
+      if (this._dg && this._dg.moved && this.deskAlign()) return;
       const maxCard = this._max ? st.querySelector('.it.maxed') : null;   // placed on its own, below
       const cards = [...st.querySelectorAll('.it')].filter((c) => c !== maxCard);
       if (this.deskAlign()) {
@@ -2641,7 +2649,10 @@
           let moved = false;
           entries.forEach((e) => { if (e.target.classList.contains('peek')) return;   // a preview opening is not a card growing
             const h = Math.round(e.contentRect.height); if (this._cardH.get(e.target) !== h) { if (this._cardH.has(e.target)) moved = true; this._cardH.set(e.target, h); } });
-          if (moved && !this._cardRaf) this._cardRaf = requestAnimationFrame(() => { this._cardRaf = 0; this._placeNow(); });
+          /* not on the desk: the desk sets every card's size itself (and animates it), so a size change there is the desk's
+             own - re-placing on it re-placed the desk every frame of every move, and fought a card being dragged (owner,
+             2026-10-08: "its flickering a bit if elements are moved on the desk and if new elements join") */
+          if (moved && !this._cardRaf && !this.deskAlign()) this._cardRaf = requestAnimationFrame(() => { this._cardRaf = 0; this._placeNow(); });
         });
       }
       if (this._cardRO) cards.forEach((c) => { if (!c._roOn) { c._roOn = true; this._cardRO.observe(c); } });
@@ -3073,6 +3084,22 @@
         });
         this._html = mark;
         layers.items.innerHTML = html;
+        /* ON THE DESK THE REDRAWN CARDS START WHERE THEY WERE: fresh markup has no place, so every card showed at a default
+           spot and slid back - the flicker when an item joined. Each card that was on the desk takes its last place and
+           size at once (no animation), so only a card the desk really moves animates, from where it was; a card that is
+           new starts unseen and fades in where the desk puts it. */
+        if (stage && this.deskAlign() && this._placed && this._placed.mode === 'desk') {
+          const prev = {}; (this._placed.placements || []).forEach((p) => { prev[p.key] = p; });
+          const fresh = [...layers.items.querySelectorAll('.it[data-key]')];
+          fresh.forEach((it) => { const p = prev[it.dataset.key];
+            if (!p) { it.classList.add('desk-new'); return; }
+            it.classList.add('desk-hold');
+            it.style.left = p.x + 'px'; it.style.top = p.y + 'px';
+            it.style.setProperty('width', p.w + 'px', 'important'); it.style.setProperty('height', p.h + 'px', 'important'); it.style.setProperty('min-height', '0px', 'important');
+            it.dataset.deskFace = p.face || ''; it.classList.toggle('desk-chip', p.face === 'chip' || p.face === 'icon'); it.classList.toggle('desk-icon', p.face === 'icon'); });
+          void layers.items.offsetWidth;                       /* the held places are drawn before the desk moves anything */
+          fresh.forEach((it) => it.classList.remove('desk-hold'));
+        }
         if (!stage) body.scrollTop = keepTop;
         layers.items.querySelectorAll('.it[data-key]').forEach((it) => {
           const k = it.dataset.key; it.querySelectorAll('.it-bd, pre, .vc-out').forEach((el, j) => {
