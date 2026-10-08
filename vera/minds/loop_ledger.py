@@ -206,10 +206,11 @@ class RunLedger:
         self._send(d, inputs)
 
     def finish(self, gate: Optional[Dict[str, Any]], steps_run: Optional[int] = None,
-               fast_path: Optional[bool] = None) -> int:
+               fast_path: Optional[bool] = None, families: Optional[Dict[str, Any]] = None) -> int:
         """Send the outcomes this run can judge. Returns how many."""
         try:
-            outs = LD.run_outcomes(self.decisions, gate or {}, steps_run=steps_run, fast_path=fast_path)
+            outs = LD.run_outcomes(self.decisions, gate or {}, steps_run=steps_run, fast_path=fast_path,
+                                   families=families)
         except Exception as e:
             log.debug("loop ledger outcomes: %s", e)
             return 0
