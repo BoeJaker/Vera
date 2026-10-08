@@ -2241,6 +2241,10 @@
   const EDITABLE = ['note', 'markdown', 'code', 'html'];
   /* the kinds whose drawer already draws a head — name, state and the controls that belong to that kind. The card
      does not draw a second one over them; see "ONE HEADER PER ITEM" where the card is built. */
+  /* the person's behind / front / among pick per panel item, kept in this browser for every canvas and frame */
+  const LAYER_KEY = 'vera:canvas:layers';
+  function layersLoad() { try { const m = JSON.parse(localStorage.getItem(LAYER_KEY) || '{}'); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; } }
+  function layersSave(m) { try { localStorage.setItem(LAYER_KEY, JSON.stringify(m)); } catch (e) { /* kept for this page */ } }
   const OWN_HEAD = new Set(['code', 'html', 'explode', 'session', 'diagram', 'notebook', 'panel']);
 
   class VeraCanvas extends (typeof HTMLElement !== 'undefined' ? HTMLElement : class {}) {
@@ -2309,7 +2313,7 @@
       if (name === 'session-id' && this._railTimer) this._railRefresh();
       // a setting changed: preview and the explode offer are drawn, alignment is placed
       if ((name === 'preview' || name === 'explode-offer' || name === 'fuse') && this._doc) this.render(this._doc);
-      if (name === 'align' && this.hasAttribute('stage')) { this._view = null; this._placeNow(); }
+      if (name === 'align' && this.hasAttribute('stage')) { this._view = null; this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); }
       if ((name === 'chat-side' || name === 'desk-arrange') && this.deskAlign() && this.hasAttribute('stage')) this._placeNow();
       if (name === 'panel-room') { try { this._panelRoom(); } catch (e) { /* optional */ } }
       // a floating chat moved: place again on the next frame (a drag sends many)
@@ -2476,6 +2480,7 @@
     setLayer(key, mode) {
       key = String(key || ''); if (!key) return;
       if (mode === 'behind' || mode === 'front') this._layer[key] = mode; else delete this._layer[key];
+      const picks = layersLoad(); picks[key] = (mode === 'behind' || mode === 'front') ? mode : 'among'; layersSave(picks);
       const card = this.shadowRoot && [...this.shadowRoot.querySelectorAll('.stage .it')].find((c) => c.dataset.key === key);
       if (card) card.querySelectorAll('[data-act^="layer-"]').forEach((bt) => bt.classList.toggle('on', bt.dataset.act === 'layer-' + this._layer[key]));
       try { this._placeNow(); } catch (e) { /* placed on the next paint */ }
@@ -2800,6 +2805,9 @@
       // what the host is streaming into an item outranks whatever an older revision says it holds (liveUpdate)
       if (this._liveOv) blocks.forEach((b) => { const ov = b && b.key != null && this._liveOv[String(b.key)]; if (ov) b.content = Object.assign({}, b.content || {}, ov); });
       try { this._srcPrefetch(blocks); } catch (e) {}
+      /* each panel item's layer: the person's pick, else the layer it was landed with ("UI panel: on the desk" lands behind) */
+      try { const picks = layersLoad(); blocks.forEach((b) => { if (!b || b.type !== 'panel' || b.key == null) return; const k = String(b.key), pk = picks[k], cl = b.content && b.content.layer;
+        if (pk === 'behind' || pk === 'front') this._layer[k] = pk; else if (pk === 'among') delete this._layer[k]; else if (cl === 'behind' || cl === 'front') this._layer[k] = cl; }); } catch (e) {}
       root.getElementById('title').textContent = doc.title || 'Canvas';
       root.getElementById('count').textContent =
         blocks.length + (blocks.length === 1 ? ' block' : ' blocks');
@@ -4259,7 +4267,7 @@
     }
     _panelAdd(id, label) {
       id = String(id || '').trim(); if (!id) return; const key = 'panel:' + id; const focusMid = this.dataset.focusMid || '';
-      const args = { kind: 'panel', key, content: { panel: id, title: label || id }, at: 'now', size: 'l' }; args.anchor = { origin: 'you', beside: focusMid };   // picked by hand: beside the turn in view, related to no turn
+      const args = { kind: 'panel', key, content: Object.assign({ panel: id, title: label || id }, this.deskAlign() && this.getAttribute('panel-layer') === 'desk' ? { layer: 'behind' } : {}), at: 'now', size: 'l' }; args.anchor = { origin: 'you', beside: focusMid };   // picked by hand: beside the turn in view, related to no turn
       this._open.add(key);
       // the item first, then the host is asked for the panel's page (its registered page, alias or route) — the
       // update it answers with needs the item to exist

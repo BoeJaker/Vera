@@ -6206,6 +6206,9 @@ IMPORTANT:
     try{ document.body.dataset.chatSide=_cvCfg('cfgCvSide'); }catch(_){}
   }
   _restoreCanvasCfg();
+  /* the harness runs the chat and its menu in two frames: a setting changed in one is followed by the other (the menu kept
+     'Held / Beside the chat' after the chat was set to the desk, so a panel opened from the menu never reached the desk) */
+  window.addEventListener('storage', ev=>{ if(ev.key!==_CV_CFG_KEY) return; try{ _restoreCanvasCfg(); _cvApplyCfg(); }catch(_){} });
 
   /* ── THE CHAT ON THE DESK: dragged by its grip (WS-U U-D3, owner approved the desk 2026-10-06) ──────────────────────
      Pulled 80px away from its edge, a docked chat floats; dropped within 60px of the left or right edge, it docks there;
@@ -7064,7 +7067,7 @@ IMPORTANT:
          already there. The page beside the chat still opens: this adds the canvas, it does not replace anything. */
       case 'panel.open': { const ok=await panelOpen(String(a.id||''), who);
         { const sec=String(a.section||a.nav||''); if(ok&&sec){ (async()=>{ try{ if(typeof _awaitPanelReady==='function') await _awaitPanelReady(); }catch(_){} const fr=document.getElementById('chatPanelFrame'); try{ fr&&fr.contentWindow&&fr.contentWindow.postMessage({ type:'vera:panel:action', action:'nav_select', action_id:'sec-'+Date.now(), payload:{ id:sec } }, '*'); }catch(_){} })(); } }
-        if(ok) try{ _cvLandPanel(String(a.id||''), a.title||a.label||'', _cvRelMid||''); }catch(_){}
+        if(ok&&!_deskPanelOn()) try{ _cvLandPanel(String(a.id||''), a.title||a.label||'', _cvRelMid||''); }catch(_){}
         return ok?done(_deskPanelOn()?'put on the desk, behind the items':'opened beside the chat'):{ok:false,outcome:'failed',note:'no panel '+a.id}; }
       case 'panel.close': {
         if(!a.id||a.id===_activePanelId){ panelClose(); return done('closed beside the chat'); }
@@ -7400,13 +7403,13 @@ IMPORTANT:
   /* A PANEL ON THE CANVAS. The canvas already draws one - live in its frame, with query and dispatch over the
      bridge - and nothing ever put one there; the block type existed and had no way in. Keyed by the panel, so
      opening the calendar twice keeps one item and brings it back rather than stacking copies. */
-  async function _cvLandPanel(id, title, mid){
+  async function _cvLandPanel(id, title, mid, layer){
     if(!SID||!id) return 0;
     /* the panel's own address, as the page beside the chat opens it: the canvas's /ui/panels/<id> guess answered
        {"detail":"Not Found"} for a panel served elsewhere (the system monitor's /sysmon/panel, 2026-10-07) */
     let src=''; try{ const p=_resolvePanel(id); if(p) src=await _panelSrcAsync(p)||''; }catch(_){}
     try{ const r=await _capCall('canvas.add',{ session_id:SID, kind:'panel', key:'panel:'+id, at:'now', size:'l',
-      content:src?{ panel:id, title:String(title||id), src }:{ panel:id, title:String(title||id) },
+      content:Object.assign({ panel:id, title:String(title||id) }, src?{ src }:{}, layer?{ layer }:{}),
       anchor:mid?{ mid, turn:mid }:undefined });
       return (r&&r.ok)?1:0; }catch(_){ return 0; }
   }
@@ -8529,12 +8532,14 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      them behind / at the front"). With "UI panel: on the desk" and a Desk canvas, opening a panel - from the chat, the
      menu or a command - lands it as a canvas item, sent behind the other items, instead of halving the chat column.
      Its card's behind / front buttons move it from there; the item stays an item, so its frame is never reloaded. */
-  function _deskPanelOn(){ return _cvCfg('cfgCvPanel')==='desk' && _cvCfg('cfgCvAlign')==='desk' && _pages.has('canvas') && !!document.querySelector('#canvasColumnBody vera-canvas'); }
+  function _deskPanelOn(){ return _cvCfg('cfgCvPanel')==='desk' && _cvCfg('cfgCvAlign')==='desk'; }
   async function _deskPanelLand(p){
-    const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv) return false;
-    try{ if(typeof cv.setLayer==='function') cv.setLayer('panel:'+p.id, 'behind'); }catch(_){}
-    const ok=await _cvLandPanel(p.id, p.label||p.id, '');
-    try{ cv.refresh&&cv.refresh(); }catch(_){}
+    /* the panel becomes a canvas item that is BEHIND the other items (the layer rides on the item, so whichever frame
+       draws the canvas places it so); the chat's canvas is opened if it is closed - from the menu frame, by asking the chat */
+    const ok=await _cvLandPanel(p.id, p.label||p.id, '', 'behind');
+    if(_EMBED.only==='menu'){ _lhmPost('pageOpen',{ name:'canvas' }); _lhmPost('canvasRefresh',{}); return !!ok; }
+    if(!_pages.has('canvas')) openPage('canvas');
+    setTimeout(()=>{ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} }, 300);
     return !!ok;
   }
   function _ctxGraphHost(){ if(_ctxGrown&&_deskBehind()) return _deskBackHost(); return document.getElementById('ctxGrown') || document.getElementById('graphColumnBody'); }
@@ -16318,7 +16323,7 @@ function _embedMount(){
   }
   if(_EMBED.only==='chat'){
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from!=='menu') return; const a=m.args||{};
-      try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on); else if(m.act==='lanes'){ _ctxRemote.lanes=Array.isArray(a.lanes)?a.lanes:[]; _ctxRunsDraw(); } else if(m.act==='runs'){ _runsApply(a.which, a.off); } else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
+      try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on); else if(m.act==='lanes'){ _ctxRemote.lanes=Array.isArray(a.lanes)?a.lanes:[]; _ctxRunsDraw(); } else if(m.act==='runs'){ _runsApply(a.which, a.off); } else if(m.act==='page') togglePage(a.name); else if(m.act==='pageOpen') openPage(a.name); else if(m.act==='canvasRefresh'){ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } } else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
   }
   /* The transcript's scroll listener is bound HERE, for any instance that has a transcript.
      It was bound only from the rail's quick menu and from mounting the graph column — and the chat instance on
