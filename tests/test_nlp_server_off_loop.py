@@ -24,23 +24,23 @@ from fastapi.testclient import TestClient      # noqa: E402
 
 def test_health_answers_while_a_model_is_working(monkeypatch):
     ns = pytest.importorskip("nlp_server")
-    started = threading.Event()
+    started, finished = threading.Event(), threading.Event()
 
     def slow_classify(text, task):
         started.set()
-        time.sleep(1.5)
+        time.sleep(3)
+        finished.set()
         return {"label": "ok"}
     monkeypatch.setattr(ns, "run_classify", slow_classify)
     with TestClient(ns.build_app()) as c:
         out = {}
         t = threading.Thread(target=lambda: out.setdefault("r", c.post("/classify", json={"text": "hi"})))
         t.start()
-        assert started.wait(5), "the inference never started"
-        t0 = time.monotonic()
+        assert started.wait(10), "the inference never started"
         h = c.get("/health")
-        took = time.monotonic() - t0
-        t.join(10)
-    assert h.status_code == 200 and took < 1.0, f"/health waited {took:.2f}s behind an inference"
+        answered_during = not finished.is_set()     # no wall-clock threshold: only the order matters
+        t.join(15)
+    assert h.status_code == 200 and answered_during, "/health waited for the inference to finish"
     body = h.json()
     assert body["workers"] == ns.NLP_WORKERS and body["inflight"] == 1
     assert out["r"].json() == {"label": "ok"}
