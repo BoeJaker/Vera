@@ -137,4 +137,29 @@ t('a narrow desk never puts two border chips on one slot (more chips than border
   assert.strictEqual(tc, 0);
 });
 
+t('the desk exploded: its layers are the lattice planes, every item keeps its key, the graph is at the back', () => {
+  const items = [
+    { key: 'a', label: 'A', face: 'max', type: 'widget', mid: 'm2' },
+    { key: 'b', label: 'B', face: 'card', type: 'records', mid: 'm1' },
+    { key: 'c', label: 'C', face: 'chip', type: 'note' },
+    { key: 'panel:sys', label: 'Monitor', face: 'layer-behind', layer: 'behind', type: 'panel' },
+  ];
+  const L = D.latticeOf({ items, turns: [{ mid: 'm1', label: 'hi' }, { mid: 'm2', label: 'more' }], graph: [{ id: 'g1', label: 'rec' }] });
+  assert.deepStrictEqual(L.planes.map((p) => p.id), ['chat', 'items', 'panel', 'graph']);   // front first, the graph at the back
+  const byId = {}; L.nodes.forEach((x) => { byId[x.id] = x; });
+  items.forEach((it) => assert.ok(byId[it.key] && byId[it.key].desk.key === it.key, 'item ' + it.key + ' keeps its key'));
+  assert.strictEqual(byId['panel:sys'].plane, 'panel');
+  assert.strictEqual(byId.a.area, 'beside the chat'); assert.strictEqual(byId.b.area, 'at a glance'); assert.strictEqual(byId.c.area, 'at the border');
+  assert.strictEqual(byId['ctx:g1'].plane, 'graph');
+  assert.ok(L.links.some((l) => l.a === 'a' && l.b === 'turn:m2'), 'an item is piped to its turn');
+  assert.ok(L.links.some((l) => l.a === 'ctx:g1' && l.b === 'turn:m2'), 'the context is piped to the turn in focus (the newest)');
+  // a full cell spills into a neighbour area: every item is drawn, nine at most to a cell
+  const many = Array.from({ length: 12 }, (_, i) => ({ key: 'k' + i, face: 'chip' }));
+  const M = D.latticeOf({ items: many });
+  assert.strictEqual(M.nodes.filter((x) => x.plane === 'items').length, 12);
+  assert.ok(M.areas.indexOf('at the border · 2') === M.areas.indexOf('at the border') + 1, 'the spill area sits beside its own');
+  assert.strictEqual(M.nodes.filter((x) => x.area === 'at the border').length, 9);
+  assert.ok(!/more/.test(M.planes.find((p) => p.id === 'items').name));
+});
+
 console.log(n + ' passed');

@@ -1253,6 +1253,8 @@
   :host([align="desk"]) .stage .it:not([data-desk-face^="layer-"]) > :is(.it-hd,.it-bd > .vc-panel > .vc-th){cursor:grab}
   :host([align="desk"]) .stage .it.desk-dragging{transition:width .12s,height .12s!important;cursor:grabbing;box-shadow:0 18px 40px rgba(0,0,0,.5);outline:1px solid var(--acc,#5a9e8f)}
   :host([align="desk"]) .stage .it.desk-dragging *{cursor:grabbing!important;user-select:none}
+  @keyframes vcDeskFlash{0%,100%{box-shadow:0 0 0 0 transparent}40%{box-shadow:0 0 0 3px var(--acc,#5a9e8f),0 0 26px color-mix(in srgb,var(--acc,#5a9e8f) 55%,transparent)}}
+  :host([align="desk"]) .stage .it.desk-flash{animation:vcDeskFlash .8s ease-in-out 2}
   @media (prefers-reduced-motion: reduce){:host([align="desk"]) .stage .it{transition:none}}
   /* THE BACK LAYER (the desk's graph, owner-approved 2026-10-06): whatever the page puts in the "back" slot is drawn
      under the cards, dimmed until the pointer is on it. The desk's own ground goes so the layer shows through, and
@@ -2391,6 +2393,25 @@
        in full screen - dynamically sized, not actually full"). Behind: the panel fills the largest part of the desk the
        chat leaves free, under every other item; front: the same, over them; '' puts it back among them. The card never
        leaves the stage, so its frame is never reloaded. */
+    /* the desk as it stands, for the exploded view: every item's key, title, face, layer, kind and turn (read off the
+       cards the desk placed - nothing is changed) */
+    deskSnapshot() {
+      const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!st) return [];
+      return [...st.querySelectorAll('.it[data-key]')].map((c) => {
+        const t = c.querySelector(':scope > .it-hd > .t') || c.querySelector('.vc-th > b');
+        return { key: c.dataset.key, label: (t && t.textContent || c.dataset.key).trim(), face: c.dataset.deskFace || '', layer: this._layer[c.dataset.key] || '',
+                 type: c.dataset.type || '', mid: c.dataset.mid || '' };
+      });
+    }
+    /* point one item out on the desk (the exploded view's double click): it rides on top and pulses for a moment */
+    flash(key) {
+      const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!st) return false;
+      const c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)); if (!c) return false;
+      c.classList.remove('desk-flash'); void c.offsetWidth; c.classList.add('desk-flash');
+      const z = c.style.zIndex; c.style.zIndex = '180';
+      clearTimeout(c._flT); c._flT = setTimeout(() => { c.classList.remove('desk-flash'); c.style.zIndex = z; }, 1600);
+      return true;
+    }
     /* WHERE THE PERSON PUT THE CARDS on the desk: {key: {fx, fy}}, shares of the desk, per canvas, kept in this browser */
     _deskPosGet() {
       if (this._deskPos) return this._deskPos;
