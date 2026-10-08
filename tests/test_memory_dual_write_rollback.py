@@ -56,6 +56,27 @@ def test_exact_replay_runs_no_probe_and_source_retarget_conflicts(tmp_path):
             canary_runner=must_not_run, reconciliation_runner=must_not_run))
 
 
+def test_concurrent_winner_with_same_source_is_accepted(tmp_path, monkeypatch):
+    store = MemoryDualWriteReceiptStore(tmp_path / "receipts.sqlite3")
+    original = store.append_rollback_rehearsal
+    raced = False
+
+    def concurrent_append(receipt):
+        nonlocal raced
+        if not raced:
+            raced = True
+            original(receipt)
+            raise MemoryReceiptConflict("simulated concurrent winner")
+        return original(receipt)
+
+    monkeypatch.setattr(store, "append_rollback_rehearsal", concurrent_append)
+    result = run(produce_memory_rollback_rehearsal(
+        store=store, rehearsal_id="rollback-1", source_commit="abcdef12",
+        completed_at=DONE))
+    assert result["created"] is False
+    assert result["receipt"]["source_commit"] == "abcdef12"
+
+
 def test_false_canary_proof_writes_no_receipt(tmp_path):
     store = MemoryDualWriteReceiptStore(tmp_path / "receipts.sqlite3")
 

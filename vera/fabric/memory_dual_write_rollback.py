@@ -119,4 +119,14 @@ async def produce_memory_rollback_rehearsal(
     )
     if not receipt.passed:
         raise RuntimeError("rollback rehearsal did not prove every disabled-path invariant")
-    return store.append_rollback_rehearsal(receipt)
+    try:
+        return store.append_rollback_rehearsal(receipt)
+    except MemoryReceiptConflict:
+        # A concurrent caller can finish the same harmless local probe first.
+        # Accept only its passing receipt for this exact operation and source;
+        # changed intent remains a conflict.
+        winner = store.rollback_rehearsal(rehearsal_id)
+        if (winner is not None and winner.passed
+                and winner.source_commit == receipt.source_commit):
+            return {"created": False, "receipt": winner.to_dict()}
+        raise
