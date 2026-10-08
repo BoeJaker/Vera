@@ -241,9 +241,8 @@ traffic:
 
 The receipt describes evidence, not a transaction: it performs no write,
 cannot advance a head, cannot mark a projection receipt and never grants
-authority-switch permission. The next canary slice must coordinate the real
-writes, durably store this evidence, reconcile split outcomes and prove
-rollback while keeping legacy records intact.
+authority-switch permission. Coordination, storage and repair remain separate
+boundaries so evidence construction cannot accidentally perform an effect.
 
 The injected coordinator and SQLite evidence journal now implement that
 offline seam. Disabled operation calls only the native writer. Enabled
@@ -263,14 +262,23 @@ No deployment configuration is changed, so this is wiring rather than an
 authority cutover; removing or setting `VERA_MEMORY_REVISION_CANARY=0` is the
 one-step rollback.
 
-Reconciliation of split native/canonical outcomes now has a durable execution
+Reconciliation of split native/canonical outcomes has a durable execution
 contract. The evidence journal records exact started and completed attempts,
 prevents concurrent attempts for one operation, resumes unfinished work after
 restart, and folds committed repairs into an effective status without changing
-the immutable source receipt. Repair implementations are injected and must
-honour target-specific idempotency keys. The executor contains no Memory,
-Postgres, Chroma, Neo4j or Fabric repair implementation itself, performs no
-automatic scheduling, and always reports `authority_switch_allowed: false`.
+the immutable source receipt. The repair adapter reconstructs a canonical
+revision only from a native snapshot that matches the receipt's ID and content
+hash, and reconstructs a native backend input only from the receipt's exact
+canonical revision. Rehydrated revision envelopes must reproduce their full
+identity. Each injected target writer must echo its target, native ID,
+record/revision IDs and stable idempotency key before the attempt can be marked
+committed. Writer mappings are immutable and a requested backend cannot invoke
+another backend's callback.
+
+The executor and adapter contain no live Memory, Postgres, Chroma, Neo4j or
+Fabric repair implementation and perform no automatic scheduling. They always
+report `authority_switch_allowed: false`; live activation, legacy migration,
+read-authority movement and deletion remain unavailable.
 
 ### Caller policy
 

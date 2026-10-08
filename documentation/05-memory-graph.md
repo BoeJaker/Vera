@@ -137,6 +137,7 @@ The system has four layers:
 | `vera/fabric/memory_dual_write_receipt.py` | Payload-free observation binding one native write attempt to an exact `RecordRevision` and per-backend outcomes |
 | `vera/fabric/memory_dual_write_canary.py` | Injected default-off native-first coordinator; isolates canonical shadow/evidence failure and propagates cancellation |
 | `vera/fabric/memory_dual_write_store.py` | Durable idempotent receipt journal and bounded reconciliation query |
+| `vera/fabric/memory_dual_write_repairs.py` | Content-verified reconstruction and injected, target-isolated repair adapters |
 
 ---
 
@@ -359,8 +360,8 @@ contain no memory payload or exception text and always report
 persist them around the real writes, then prove recovery and rollback before
 authority can move.
 
-The next offline slice supplies that coordinator and journal without wiring
-them into the production write path. `execute_memory_dual_write_canary` is
+The coordinator and journal are available without enabling the production
+write path. `execute_memory_dual_write_canary` is
 default-off and calls the injected native writer exactly once; while disabled
 it never calls the revision writer or receipt sink. When explicitly enabled,
 it runs the native write first, observes an exact revision write under a
@@ -378,7 +379,7 @@ Reads recheck the receipt digest, restart from the same database, and expose a
 bounded list of attempts requiring reconciliation. It stores no memory text,
 does not advance Fabric heads or projection receipts, and supplies no runtime
 activation switch. Wiring one narrow writer to this seam and proving recovery
-remain subsequent work.
+remain outside the enabled path.
 
 The public `memory.store` ingress is now connected to this seam behind
 `VERA_MEMORY_REVISION_CANARY=1`; the default remains `0`. With the switch off,
@@ -393,8 +394,8 @@ native store or synchronous revision transaction, avoiding cancellation that
 could report a timeout while an irreversible write continues. The switch is
 not enabled by this code change and grants no authority-switch permission.
 
-Split receipts now have a restart-safe reconciliation executor, but it remains
-an injected offline boundary rather than a live repair worker. An attempt is
+Split receipts have a restart-safe reconciliation executor, but it remains an
+injected boundary rather than a live repair worker. An attempt is
 journalled as `started` before any repair callback runs. Each exact target
 (`revision`, `postgres`, `chroma`, or `neo4j`) receives a stable
 `<attempt>:<target>` idempotency key, because a process may stop after the
@@ -404,9 +405,24 @@ effects. Only one started attempt may own an operation, successful target
 outcomes are sticky across later attempts, and a converged operation leaves the
 bounded reconciliation queue. Failures retain classifications rather than
 exception text; cancellation is recorded when possible and always propagates.
-Neither an attempt nor convergence permits an authority switch. Concrete
-backend repair callbacks and live scheduling remain subsequent, separately
-reviewed work.
+Neither an attempt nor convergence permits an authority switch.
+
+`MemoryDualWriteRepairAdapter` supplies the deterministic repair boundary used
+by that executor. A missing canonical revision is reconstructed only from a
+native snapshot whose ID and native content hash match the immutable receipt.
+A missing native backend copy is reconstructed only from the exact
+`record_id`/`revision_id`/content-hash tuple in that receipt. Serialized
+revisions must round-trip to the same canonical envelope before they can be
+used. Postgres, Chroma and Neo4j writers are injected separately, so one repair
+cannot silently fan out to unrequested backends. Every effect must acknowledge
+the target, native and canonical identities, and the executor's stable
+idempotency key before it is recorded as committed. The adapter retains the
+public ingress fields needed to reproduce native semantics, but stores none of
+their payloads in reconciliation evidence.
+
+No scheduler or live backend implementation is connected yet. These adapters
+make exact, restart-safe repair testable; they do not turn repair on, migrate
+legacy records, change read authority or grant deletion permission.
 
 ---
 

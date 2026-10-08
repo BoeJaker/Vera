@@ -5,6 +5,7 @@ import pytest
 from vera.fabric.record_revision import (
     RECORD_REVISION_SCHEMA,
     create_record_revision,
+    record_revision_from_dict,
 )
 
 
@@ -145,3 +146,29 @@ def test_content_metadata_and_lineage_are_structurally_bounded():
 def test_parent_revision_requires_full_canonical_digest():
     with pytest.raises(ValueError, match="invalid parent revision"):
         revision(parents=["rev_short"])
+
+
+def test_serialized_revision_rehydrates_only_when_identity_is_exact():
+    original = revision(metadata={"source": "test"})
+    rebuilt = record_revision_from_dict(original.to_dict())
+    assert rebuilt == original
+
+
+@pytest.mark.parametrize("field,value", [
+    ("schema", "vera.fabric-record-revision/v999"),
+    ("revision_id", "rev_" + "0" * 64),
+    ("content_hash", "sha256:" + "0" * 64),
+    ("tombstone", 0),
+])
+def test_serialized_revision_rejects_forged_or_loosely_typed_identity(field, value):
+    envelope = revision().to_dict()
+    envelope[field] = value
+    with pytest.raises(ValueError):
+        record_revision_from_dict(envelope)
+
+
+def test_serialized_revision_rejects_extra_fields():
+    envelope = revision().to_dict()
+    envelope["unbound"] = "data"
+    with pytest.raises(ValueError, match="round trip"):
+        record_revision_from_dict(envelope)
