@@ -2252,7 +2252,7 @@
          preview="on|off"           whether an HTML item, and a code block that is a whole page, DRAW by default or
                                     show their source. Either way the drawing is a sandboxed frame.
          explode-offer="both|code|never"  whether the canvas offers to explode a code item, a prose item, or neither. */
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect', 'desk-arrange']; }
 
     constructor() {
       super();
@@ -2310,7 +2310,7 @@
       // a setting changed: preview and the explode offer are drawn, alignment is placed
       if ((name === 'preview' || name === 'explode-offer' || name === 'fuse') && this._doc) this.render(this._doc);
       if (name === 'align' && this.hasAttribute('stage')) { this._view = null; this._placeNow(); }
-      if (name === 'chat-side' && this.deskAlign() && this.hasAttribute('stage')) this._placeNow();
+      if ((name === 'chat-side' || name === 'desk-arrange') && this.deskAlign() && this.hasAttribute('stage')) this._placeNow();
       // a floating chat moved: place again on the next frame (a drag sends many)
       if (name === 'chat-rect' && this.deskAlign() && this.hasAttribute('stage') && !this._chatRaf) {
         this._chatRaf = requestAnimationFrame(() => { this._chatRaf = 0; this._placeNow(); });
@@ -2502,7 +2502,12 @@
       if (!kept || nowOrder.length !== kept.length || nowOrder.some((k, i) => kept[i] !== k)) this._deskOrderSet(nowOrder);
       /* the arrangement deals its places in the kept order (it was dealt before the order was applied, so a turn's items
          were "brought in" without moving) */
-      const pos = D.arrange('orbit', R, ranked.map((x) => ({ id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '' })), desk);
+      /* the arrangement the person chose (owner, 2026-10-06: "automatically organised but let the user configure it"):
+         orbit (bands out from the chat), by kind, by time (turns ago), or a stack; each item says its kind and its age */
+      const mode = ['orbit', 'kind', 'timeline', 'stack'].indexOf(this.getAttribute('desk-arrange')) >= 0 ? this.getAttribute('desk-arrange') : 'orbit';
+      const mids = [...new Set(cards.map((c) => c.dataset.mid || '').filter(Boolean))].sort((a, b) => (parseInt(b.replace(/\D/g, ''), 10) || 0) - (parseInt(a.replace(/\D/g, ''), 10) || 0));
+      const pos = D.arrange(mode, R, ranked.map((x) => ({ id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '',
+        age: x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null })), desk);
       ranked.sort((a, b) => (userAt(b.c.dataset.key || '') ? 1 : 0) - (userAt(a.c.dataset.key || '') ? 1 : 0));
       const plan = ranked.map((x) => {
         const c = x.c, key = c.dataset.key || String(x.i), p = userAt(key) || pos[key] || [W - 90, H - 30];
