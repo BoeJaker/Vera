@@ -25090,7 +25090,89 @@ async def cap_dag_agent_loop_v6(
             _plan_style_why = ("broad: %s - planned as auto"
                                % (_style_detail["broad"].get("error") or "no steps"))
             _plan_style_eff = "auto"
-    if (_pstyle.get("run_planner", True) and not _pstyle.get("broad")) or _broad_fell_back:
+    async def _persist_master(long_form: str, done_when_: str, slug: str) -> str:
+        """A STRATEGIC (multi-day) goal persists its documented plan as a dream project so it
+        continues a portion at a time over sessions; this session still executes the first
+        portion inline. A dream cycle re-running an existing goal does NOT create a second
+        project - it already knows its slug and only records progress. Returns the slug."""
+        if enable_dream_persistence and tier == "strategic" and not _is_dream_exec:
+            slug = await _v7_persist_strategic(goal, long_form, done_when_, session_id=sid)
+            if slug:
+                await emit_event({"type": "agent_loop_v6.strategic_persisted",
+                                  "session_id": sid, "stream_id": stream_id,
+                                  "slug": slug,
+                                  "note": "documented plan persisted as a dream project — "
+                                          "the dream system will continue it over days"})
+                # Freeze the escalation moment: agent notes + an artifact
+                # snapshot + a per-goal background thought loop that RAGs
+                # the goal's accumulating output.
+                try:
+                    snap = await _v7_escalation_snapshot(
+                        slug, session_id=sid, goal=goal,
+                        done_when=done_when_, master_plan=long_form,
+                        artifact_dir_path=(await _artifact_dir_ready()))
+                    await emit_event({"type": "agent_loop_v6.strategic_escalated",
+                                      "session_id": sid, "stream_id": stream_id,
+                                      "slug": slug, **snap})
+                except Exception as _e:
+                    log.debug("v7 escalation snapshot failed: %s", _e)
+        elif _is_dream_exec and slug:
+            # Keep the existing goal-project's documented plan fresh.
+            await _v7_persist_strategic(goal, long_form, done_when_, existing_slug=slug)
+        return slug
+
+    async def _emit_sectioned(plan2_: Dict[str, Any], slug: str) -> None:
+        _deferred = plan2_.get("deferred_pieces") or []
+        if _deferred:
+            await emit_event({
+                "type": "agent_loop_v6.strategic_sectioned", "session_id": sid,
+                "stream_id": stream_id, "slug": slug,
+                "running_section": (plan2_.get("exec_pieces") or [{}])[0].get("title", ""),
+                "deferred_sections": [{"id": d["id"], "title": d["title"],
+                                       "timescale": d.get("timescale", "")}
+                                      for d in _deferred],
+                "note": "running one section to a deliverable this session; the dream "
+                        "system continues the remaining sections over later cycles"})
+
+    # A goal the TIER already marks strategic gets the master plan whatever the structured
+    # planner would say, so with a planning style it is written FIRST and the structured plan
+    # runs only as the fallback when it yields no steps (four-minds Q2 #4: the structured plan
+    # used to be made first and then replaced, a whole planning call per strategic run thrown
+    # away). A goal the planner self-labels 'extreme' still needs the structured plan to know.
+    _master_ran = False
+    _master_ok = enable_master_planner and bool(_pstyle.get("master_plan", True))
+    _mp_first: Optional[Dict[str, Any]] = None
+    _plan2_first: Dict[str, Any] = {}
+    if (_master_ok and tier_wants_master
+            and ((_pstyle.get("run_planner", True) and not _pstyle.get("broad")) or _broad_fell_back)):
+        try:
+            catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
+            mp = await _v5_master_plan(goal, catalog_brief, model=model,
+                                       instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                       sid=sid, stream_id=stream_id)
+            await emit_event({"type": "agent_loop_v6.master_plan", "session_id": sid,
+                              "stream_id": stream_id, "persona": mp.get("persona", ""),
+                              "long_form": mp.get("long_form", ""),
+                              "note": "strategic goal: the master plan is written first; the "
+                                      "structured plan runs only if it yields no steps"})
+            if mp.get("long_form"):
+                _mp_first = mp
+                _master_ran = True
+                # STRATEGIC (multi-day) goals expand and run only the FIRST section this
+                # session; the rest stays persisted for the dream system (see _persist_master).
+                _plan2_first = await _v5_plan_master_piecewise(
+                    plan_goal, catalog_names, skills, cap_skill_map,
+                    long_form=mp["long_form"], model=model, instance_id=instance_id,
+                    prefer_gpu=prefer_gpu, max_steps=max_steps, want_success=True,
+                    max_pieces=(1 if tier == "strategic" else None),
+                    max_caps_per_piece=max_caps_per_piece, cap_override_mode=cap_override_mode,
+                    max_split_pieces=max_plan_pieces, phase_policy=phase_policy,
+                    sid=sid, stream_id=stream_id, ev_prefix="agent_loop_v6") or {}
+        except Exception as e:
+            log.debug("v6 master-plan-first stage failed: %s", e)
+    if _plan2_first.get("steps"):
+        plan = _plan2_first
+    elif (_pstyle.get("run_planner", True) and not _pstyle.get("broad")) or _broad_fell_back:
         plan = await _v5_orchestrate_plan(
             plan_goal, catalog_names, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
@@ -25127,9 +25209,8 @@ async def cap_dag_agent_loop_v6(
     # steps — escalate to a long-form master plan and re-break it into steps (a
     # weak planner decomposes a concrete document far more reliably than an
     # abstract goal). Distinct from the complexity=="extreme" opt-in below.
-    _master_ran = False
-    _master_ok = enable_master_planner and bool(_pstyle.get("master_plan", True))
-    if not plan.get("steps") and _master_ok:
+    # (not again when the master plan was already written first above)
+    if not plan.get("steps") and _master_ok and not _master_ran:
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
             mp = await _v5_master_plan(goal, catalog_brief, model=model,
@@ -25158,6 +25239,14 @@ async def cap_dag_agent_loop_v6(
     # Preserve any slug passed in by a dream cycle (executing an existing goal);
     # otherwise this is set when a NEW strategic goal is persisted below.
     strategic_slug = (strategic_slug or "").strip()
+    if _mp_first is not None:
+        # written first above: persisted now, with the done_when of the plan that will run
+        try:
+            strategic_slug = await _persist_master(_mp_first["long_form"], done_when, strategic_slug)
+            if plan is _plan2_first:
+                await _emit_sectioned(_plan2_first, strategic_slug)
+        except Exception as e:
+            log.debug("v6 master-plan-first persist failed: %s", e)
 
     # Strategic master planner fires when EITHER the tier classifier says the goal
     # is complex/strategic OR the planner self-labelled it 'extreme'. (v6 only had
@@ -25175,37 +25264,7 @@ async def cap_dag_agent_loop_v6(
                               "stream_id": stream_id, "persona": mp.get("persona", ""),
                               "long_form": mp.get("long_form", "")})
             if mp.get("long_form"):
-                # A STRATEGIC (multi-day) goal persists its documented plan as a
-                # dream project so it continues a portion at a time over sessions.
-                # This session still executes the first portion inline below. A
-                # dream cycle re-running an existing goal does NOT create a second
-                # project — it already knows its slug and only records progress.
-                if enable_dream_persistence and tier == "strategic" and not _is_dream_exec:
-                    strategic_slug = await _v7_persist_strategic(
-                        goal, mp["long_form"], done_when, session_id=sid)
-                    if strategic_slug:
-                        await emit_event({"type": "agent_loop_v6.strategic_persisted",
-                                          "session_id": sid, "stream_id": stream_id,
-                                          "slug": strategic_slug,
-                                          "note": "documented plan persisted as a dream project — "
-                                                  "the dream system will continue it over days"})
-                        # Freeze the escalation moment: agent notes + an artifact
-                        # snapshot + a per-goal background thought loop that RAGs
-                        # the goal's accumulating output.
-                        try:
-                            snap = await _v7_escalation_snapshot(
-                                strategic_slug, session_id=sid, goal=goal,
-                                done_when=done_when, master_plan=mp["long_form"],
-                                artifact_dir_path=(await _artifact_dir_ready()))
-                            await emit_event({"type": "agent_loop_v6.strategic_escalated",
-                                              "session_id": sid, "stream_id": stream_id,
-                                              "slug": strategic_slug, **snap})
-                        except Exception as _e:
-                            log.debug("v7 escalation snapshot failed: %s", _e)
-                elif _is_dream_exec and strategic_slug:
-                    # Keep the existing goal-project's documented plan fresh.
-                    await _v7_persist_strategic(goal, mp["long_form"], done_when,
-                                                existing_slug=strategic_slug)
+                strategic_slug = await _persist_master(mp["long_form"], done_when, strategic_slug)
                 # STRATEGIC (multi-day) goals expand and run only the FIRST
                 # section this session (until its deliverable); the rest of the
                 # documented plan stays persisted for the dream system to continue
@@ -25223,17 +25282,7 @@ async def cap_dag_agent_loop_v6(
                 if plan2.get("steps"):
                     plan = plan2
                     done_when = str(plan2.get("done_when") or done_when)
-                    _deferred = plan2.get("deferred_pieces") or []
-                    if _deferred:
-                        await emit_event({
-                            "type": "agent_loop_v6.strategic_sectioned", "session_id": sid,
-                            "stream_id": stream_id, "slug": strategic_slug,
-                            "running_section": (plan2.get("exec_pieces") or [{}])[0].get("title", ""),
-                            "deferred_sections": [{"id": d["id"], "title": d["title"],
-                                                   "timescale": d.get("timescale", "")}
-                                                  for d in _deferred],
-                            "note": "running one section to a deliverable this session; the dream "
-                                    "system continues the remaining sections over later cycles"})
+                    await _emit_sectioned(plan2, strategic_slug)
         except Exception as e:
             log.debug("v6 master-planner stage failed: %s", e)
 
