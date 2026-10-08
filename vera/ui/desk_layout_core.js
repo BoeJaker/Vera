@@ -316,6 +316,11 @@
       return true;
     }
     function take(map, c, r, w, h) { for (var i = 0; i < w; i++) for (var j = 0; j < h; j++) map[(c + i) + ',' + (r + j)] = 1; }
+    /* a widget may say where it sits now (c, r): that is its home, so a widget nothing covers never moves - a dense flow
+       worked out here did not quite match a real dashboard's, and every tile shifted (the panel make-room probe, 11/11) */
+    widgets.forEach(function (wg) {
+      if (wg.c != null && wg.r != null && free(homeTaken, wg.c, wg.r, wg.w, wg.h)) { home[wg.id] = [wg.c, wg.r]; take(homeTaken, wg.c, wg.r, wg.w, wg.h); }
+    });
     widgets.forEach(function (wg) {
       for (var r = 0; r < grid.rows && !home[wg.id]; r++) for (var c = 0; c < grid.cols && !home[wg.id]; c++)
         if (free(homeTaken, c, r, wg.w, wg.h)) { home[wg.id] = [c, r]; take(homeTaken, c, r, wg.w, wg.h); }
@@ -329,17 +334,24 @@
       }
       return best;
     }
-    var out = [];
+    var out = [], kept = {};
+    /* first every widget nothing covers keeps its home: a covered one that moved first took the next one's home, and
+       every tile below it shifted down in turn (a real dashboard: 11 of 11 moved for one covered tile) */
+    if (mr) widgets.forEach(function (wg) { var hm = home[wg.id]; if (!hm) return;
+      if (!hits(rectOf(hm[0], hm[1], wg.w, wg.h)) && free(taken, hm[0], hm[1], wg.w, wg.h)) { take(taken, hm[0], hm[1], wg.w, wg.h); kept[wg.id] = 1; } });
     widgets.forEach(function (wg) {
       var hm = home[wg.id] || [0, 0], w = wg.w, h = wg.h, spot = null, compact = false;
-      if (mr) {
-        spot = nearest(w, h, hm);
-        if (!spot && (w > 1 || h > 1)) { spot = nearest(1, 1, hm); if (spot) { compact = true; w = 1; h = 1; } }
+      if (kept[wg.id]) spot = hm;
+      else {
+        if (mr) {
+          spot = nearest(w, h, hm);
+          if (!spot && (w > 1 || h > 1)) { spot = nearest(1, 1, hm); if (spot) { compact = true; w = 1; h = 1; } }
+        }
+        if (!spot && free(taken, hm[0], hm[1], w, h)) spot = hm;
+        for (var r = 0; r < grid.rows && !spot; r++) for (var c = 0; c < grid.cols && !spot; c++) if (free(taken, c, r, w, h)) spot = [c, r];
+        if (!spot) return;
+        take(taken, spot[0], spot[1], w, h);
       }
-      if (!spot && free(taken, hm[0], hm[1], w, h)) spot = hm;
-      for (var r = 0; r < grid.rows && !spot; r++) for (var c = 0; c < grid.cols && !spot; c++) if (free(taken, c, r, w, h)) spot = [c, r];
-      if (!spot) return;
-      take(taken, spot[0], spot[1], w, h);
       var rect = rectOf(spot[0], spot[1], w, h);
       out.push({ id: wg.id, c: spot[0], r: spot[1], w: w, h: h, compact: compact,
                  moved: spot[0] !== hm[0] || spot[1] !== hm[1], covered: hits(rect), rect: rect });
