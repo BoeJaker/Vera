@@ -2412,6 +2412,30 @@
       clearTimeout(c._flT); c._flT = setTimeout(() => { c.classList.remove('desk-flash'); c.style.zIndex = z; }, 1600);
       return true;
     }
+    /* the desk's kept order (keys, nearest the chat first), per canvas, in this browser */
+    _deskOrderGet() {
+      if (this._deskOrder !== undefined) return this._deskOrder;
+      try { const v = JSON.parse(localStorage.getItem('vera:canvas:deskorder:' + this.canvasId) || 'null'); this._deskOrder = Array.isArray(v) ? v.map(String) : null; } catch (e) { this._deskOrder = null; }
+      return this._deskOrder;
+    }
+    _deskOrderSet(keys) {
+      this._deskOrder = keys ? keys.map(String) : null;
+      try { if (keys) localStorage.setItem('vera:canvas:deskorder:' + this.canvasId, JSON.stringify(this._deskOrder)); else localStorage.removeItem('vera:canvas:deskorder:' + this.canvasId); } catch (e) { /* kept for this page */ }
+    }
+    /* A TURN BRINGS ITS ITEMS IN: the keys given (the turn's focus set, best first) go to the front of the desk's order -
+       beside the chat - and the rest keep theirs. A card the person placed by hand stays where they put it. Returns
+       how many of the keys are on the desk. */
+    bringIn(keys) {
+      const want = (keys || []).map(String); if (!want.length) return 0;
+      const st = this.shadowRoot && this.shadowRoot.getElementById('stage');
+      const have = new Set(st ? [...st.querySelectorAll('.it[data-key]')].map((c) => c.dataset.key) : []);
+      const front = want.filter((k) => have.has(k)); if (!front.length) return 0;
+      const cur = this._deskOrderGet() || [...have];
+      this._deskOrderSet(front.concat(cur.filter((k) => front.indexOf(k) < 0)));
+      try { this._placeNow(); } catch (e) { /* placed on the next paint */ }
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:brought', { bubbles: true, detail: { keys: front } })); } catch (e) { /* no listener */ }
+      return front.length;
+    }
     /* WHERE THE PERSON PUT THE CARDS on the desk: {key: {fx, fy}}, shares of the desk, per canvas, kept in this browser */
     _deskPosGet() {
       if (this._deskPos) return this._deskPos;
@@ -2458,11 +2482,27 @@
         if (pa !== pb) return pb - pa;
         return b.i - a.i;
       });
-      const pos = D.arrange('orbit', R, ranked.map((x) => ({ id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '' })), desk);
       // one: where each card goes and its size there (out of the chat's path); two: separate any that overlap; three: write
       /* a card the person dragged stays where it was put (a share of the desk, so it holds when the desk resizes) and
          goes first, so the others move round it */
       const userAt = (key) => { const u = up[key]; return u && isFinite(u.fx) && isFinite(u.fy) ? [u.fx * W, u.fy * H] : null; };
+      /* THE DESK'S ORDER IS KEPT (owner, 2026-10-06: the desk organised automatically; plan U-D6: "nothing moves without
+         the person's say"). The order above - the turn in focus, pinned, newest - is taken once and kept per canvas; after
+         that a placement follows the kept order, and a scroll, a focus change or a refresh moves nothing. A new item
+         joins at the end (the border). Only bringIn() - a turn bringing its items in, when that is on - or the person
+         changes it. */
+      const kept = this._deskOrderGet();
+      if (kept) {
+        const at = {}; kept.forEach((k, i) => { at[k] = i; });
+        const nat = new Map(ranked.map((x, i) => [x, i]));
+        ranked.sort((a, b) => { const ka = a.c.dataset.key || '', kb = b.c.dataset.key || '';
+          return (at[ka] != null ? at[ka] : 1e6 + nat.get(a)) - (at[kb] != null ? at[kb] : 1e6 + nat.get(b)); });
+      }
+      const nowOrder = ranked.map((x) => x.c.dataset.key || '').filter(Boolean);
+      if (!kept || nowOrder.length !== kept.length || nowOrder.some((k, i) => kept[i] !== k)) this._deskOrderSet(nowOrder);
+      /* the arrangement deals its places in the kept order (it was dealt before the order was applied, so a turn's items
+         were "brought in" without moving) */
+      const pos = D.arrange('orbit', R, ranked.map((x) => ({ id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '' })), desk);
       ranked.sort((a, b) => (userAt(b.c.dataset.key || '') ? 1 : 0) - (userAt(a.c.dataset.key || '') ? 1 : 0));
       const plan = ranked.map((x) => {
         const c = x.c, key = c.dataset.key || String(x.i), p = userAt(key) || pos[key] || [W - 90, H - 30];
