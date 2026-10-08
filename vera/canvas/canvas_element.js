@@ -2252,7 +2252,7 @@
          preview="on|off"           whether an HTML item, and a code block that is a whole page, DRAW by default or
                                     show their source. Either way the drawing is a sandboxed frame.
          explode-offer="both|code|never"  whether the canvas offers to explode a code item, a prose item, or neither. */
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect', 'desk-arrange']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect', 'desk-arrange', 'panel-room']; }
 
     constructor() {
       super();
@@ -2311,6 +2311,7 @@
       if ((name === 'preview' || name === 'explode-offer' || name === 'fuse') && this._doc) this.render(this._doc);
       if (name === 'align' && this.hasAttribute('stage')) { this._view = null; this._placeNow(); }
       if ((name === 'chat-side' || name === 'desk-arrange') && this.deskAlign() && this.hasAttribute('stage')) this._placeNow();
+      if (name === 'panel-room') { try { this._panelRoom(); } catch (e) { /* optional */ } }
       // a floating chat moved: place again on the next frame (a drag sends many)
       if (name === 'chat-rect' && this.deskAlign() && this.hasAttribute('stage') && !this._chatRaf) {
         this._chatRaf = requestAnimationFrame(() => { this._chatRaf = 0; this._placeNow(); });
@@ -2411,6 +2412,32 @@
       const z = c.style.zIndex; c.style.zIndex = '180';
       clearTimeout(c._flT); c._flT = setTimeout(() => { c.classList.remove('desk-flash'); c.style.zIndex = z; }, 1600);
       return true;
+    }
+    /* A PANEL BEHIND THE ITEMS MAKES ROOM (owner, 2026-10-06: "could it automatically move the widgets out of the way
+       (optionally)"): each panel item sent behind is told where the other cards cover its frame, as shares of the frame's
+       view (the frame has its own scale); its dashboard moves its widgets out from under them. Any other panel item is
+       told nothing covers it, which hands its widgets back. Off with panel-room="off". */
+    _panelRoom() {
+      const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!st || !this._live) return;
+      const on = this.getAttribute('panel-room') !== 'off' && this.deskAlign();
+      const cards = [...st.querySelectorAll('.it[data-key]')];
+      Object.keys(this._live).forEach((key) => {
+        const lv = this._live[key], fr = lv && lv.querySelector && lv.querySelector('iframe'); if (!fr || !fr.contentWindow) return;
+        /* a frame that (re)loads has forgotten: tell it again once its dashboard is up */
+        if (!fr._roomBound) { fr._roomBound = true; fr.addEventListener('load', () => { lv._roomSig = null; setTimeout(() => { try { this._panelRoom(); } catch (e) { /* optional */ } }, 900); }); }
+        const card = cards.find((c) => c.dataset.key === key);
+        let shares = [];
+        if (on && card && this._layer[key] === 'behind' && lv.style.display !== 'none') {
+          const F = fr.getBoundingClientRect();
+          if (F.width > 20 && F.height > 20) shares = cards.filter((c) => c !== card && c.getClientRects().length).map((c) => c.getBoundingClientRect())
+            .filter((r) => r.left < F.right && r.right > F.left && r.top < F.bottom && r.bottom > F.top)
+            .map((r) => ({ l: +Math.max(0, (r.left - F.left) / F.width).toFixed(4), t: +Math.max(0, (r.top - F.top) / F.height).toFixed(4),
+                           r: +Math.min(1, (r.right - F.left) / F.width).toFixed(4), b: +Math.min(1, (r.bottom - F.top) / F.height).toFixed(4) }));
+        }
+        const sig = JSON.stringify(shares) + (on ? '' : ':off');
+        if (lv._roomSig === sig) return; lv._roomSig = sig;
+        try { fr.contentWindow.postMessage({ type: 'vera:desk:obstacles', rects: shares, makeRoom: on }, '*'); } catch (e) { /* a frame that cannot be told keeps its layout */ }
+      });
     }
     /* the desk's kept order (keys, nearest the chat first), per canvas, in this browser */
     _deskOrderGet() {
@@ -2570,7 +2597,7 @@
       try { this._liveLayout(); } catch (e) { /* the live layout readers are optional */ }
       // the cards slide to their places (.45s): the live layer follows once they have arrived
       clearTimeout(this._deskLiveT);
-      this._deskLiveT = setTimeout(() => { try { this._liveLayout(); } catch (e) { /* optional */ } }, 520);
+      this._deskLiveT = setTimeout(() => { try { this._liveLayout(); } catch (e) { /* optional */ } try { this._panelRoom(); } catch (e) { /* optional */ } }, 520);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:placed', { bubbles: true, detail: { n: out.length, mode: 'desk', height: H,
         faces: out.reduce((m, o) => { m[o.face] = (m[o.face] || 0) + 1; return m; }, {}) } })); } catch (e) { /* no listener */ }
     }

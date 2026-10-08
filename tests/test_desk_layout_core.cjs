@@ -182,4 +182,20 @@ t('every arrangement lays its cards in bands: none overlap, docked or floating, 
   });
 });
 
+t('a widget that says where it sits keeps that home: only the covered one moves', () => {
+  const grid = { ox: 0, oy: 0, cols: 6, rows: 6, cw: 100, ch: 100, gap: 0 };
+  /* homes a dense flow would not give: a at (3,0), b at (0,2) */
+  const W = [{ id: 'a', w: 2, h: 1, c: 3, r: 0 }, { id: 'b', w: 1, h: 1, c: 0, r: 2 }, { id: 'c', w: 1, h: 1, c: 5, r: 5 }];
+  const res = D.makeRoom(grid, [{ l: 0, t: 200, r: 100, b: 300 }], W);
+  const by = {}; res.forEach((x) => { by[x.id] = x; });
+  assert.deepStrictEqual([by.a.c, by.a.r, by.a.moved], [3, 0, false]);
+  assert.deepStrictEqual([by.c.c, by.c.r, by.c.moved], [5, 5, false]);
+  assert.ok(by.b.moved && !by.b.covered, 'the covered one moves out');
+  /* a column of tiles, the top one covered: only it moves - the rest never shift down to make way */
+  const col = [0, 1, 2, 3].map((i) => ({ id: 't' + i, w: 2, h: 1, c: 0, r: i }));
+  const cr = D.makeRoom({ ox: 0, oy: 0, cols: 6, rows: 8, cw: 100, ch: 100, gap: 0 }, [{ l: 0, t: 0, r: 200, b: 100 }], col);
+  assert.deepStrictEqual(cr.filter((x) => x.moved).map((x) => x.id), ['t0']);
+  assert.ok(!cr.find((x) => x.id === 't0').covered);
+});
+
 console.log(n + ' passed');
