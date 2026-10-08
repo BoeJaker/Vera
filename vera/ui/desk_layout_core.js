@@ -347,8 +347,49 @@
     return L;
   }
 
+  /* THE DESK EXPLODED (owner-approved desk, 2026-10-06: "exploded mode integrated in the Live ops iso style"; "the graph
+     at the back and visible in exploded mode"). The desk's layers become the iso lattice's planes, front first - the chat,
+     the items, the UI panel, the context graph - and each thing on them a node that keeps its own id, so Explode and back
+     is the same desk. Areas are the desk's own distances: beside the chat, at a glance, at the border.
+       d = { items:[{key, label, face, layer, type, mid}], turns:[{mid, label}], graph:[{id, label}], focusMid }
+       -> { planes:[{id, name}], areas:[...], nodes:[{id, label, plane, area, kind, detail, desk}], links:[{a, b, kind}] }
+     A plane-area cell holds nine at most (the lattice stacks no more without overlap): a fuller cell spills into a
+     neighbour area of the same name ("at the border · 2"), as Live ops splits its areas - every item is drawn. */
+  var AREAS = ['beside the chat', 'at a glance', 'at the border'];
+  function latticeOf(d) {
+    d = d || {};
+    var CELL = 9, nodes = [], links = [], cells = {}, cut = {}, areas = AREAS.slice();
+    var areaOfFace = function (f) { return f === 'max' || f === 'layer-front' || f === 'layer-behind' ? 0 : f === 'card' ? 1 : 2; };
+    var put = function (n) {
+      var base = n.area, a = base, k2 = 1;
+      while ((cells[n.plane + ':' + a] || 0) >= CELL && k2 < 8) { k2++; a = base + ' · ' + k2; }
+      if ((cells[n.plane + ':' + a] || 0) >= CELL) { cut[n.plane] = (cut[n.plane] || 0) + 1; return false; }
+      if (areas.indexOf(a) < 0) areas.splice(areas.indexOf(base) + k2 - 1, 0, a);
+      n.area = a; cells[n.plane + ':' + a] = (cells[n.plane + ':' + a] || 0) + 1; nodes.push(n); return true;
+    };
+    var turnId = function (mid) { return 'turn:' + mid; };
+    var turns = (d.turns || []).slice(-CELL), haveTurn = {};
+    turns.forEach(function (t) { if (put({ id: turnId(t.mid), label: String(t.label || t.mid).slice(0, 40), plane: 'chat', area: AREAS[0], kind: 'client', detail: 'turn ' + t.mid, desk: { turn: t.mid } })) haveTurn[t.mid] = 1; });
+    (d.items || []).forEach(function (it) {
+      var layered = it.layer === 'behind' || it.layer === 'front';
+      var n = { id: String(it.key), label: String(it.label || it.key).slice(0, 40), plane: layered ? 'panel' : 'items', area: AREAS[areaOfFace(it.face)],
+                kind: it.type === 'panel' ? 'client' : /records|table|fabric/.test(String(it.type || '')) ? 'store' : 'core',
+                detail: String(it.type || 'item') + (it.face ? ' · ' + it.face : ''), desk: { key: String(it.key), face: it.face || '', layer: it.layer || '' } };
+      if (put(n) && it.mid && haveTurn[it.mid]) links.push({ a: n.id, b: turnId(it.mid), kind: 'req' });
+    });
+    var focus = d.focusMid && haveTurn[d.focusMid] ? turnId(d.focusMid) : (turns.length ? turnId(turns[turns.length - 1].mid) : null);
+    (d.graph || []).forEach(function (g, i) {
+      var n = { id: 'ctx:' + g.id, label: String(g.label || g.id).slice(0, 40), plane: 'graph', area: AREAS[Math.min(2, Math.floor(i / CELL))], kind: 'store', detail: 'in the context', desk: { ctx: g.id } };
+      if (put(n) && focus) links.push({ a: n.id, b: focus, kind: 'mem' });
+    });
+    var name = { chat: 'Chat', items: 'Desk items', panel: 'UI panel', graph: 'Context graph' };
+    var planes = ['chat', 'items', 'panel', 'graph'].map(function (id) { return { id: id, name: name[id] + (cut[id] ? ' (+' + cut[id] + ' more)' : '') }; });
+    return { planes: planes, areas: areas, nodes: nodes, links: links };
+  }
+
   var api = { DESK: DESK, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
-              arrange: arrange, pushOut: pushOut, separate: separate, stackOrder: stackOrder, fullRegion: fullRegion, makeRoom: makeRoom };
+              arrange: arrange, pushOut: pushOut, separate: separate, stackOrder: stackOrder, fullRegion: fullRegion, makeRoom: makeRoom,
+              latticeOf: latticeOf };
   root.VeraDesk = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
