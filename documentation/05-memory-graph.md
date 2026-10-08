@@ -442,8 +442,8 @@ removes the concrete effect path while leaving its evidence intact.
 bounded receipt counts, unresolved operations, unfinished attempts, failed
 attempts, evidence age and the latest payload-free rollback-rehearsal receipt.
 The assessment discloses when the bounded sample is truncated and fails closed
-when that sample is too small or stale, reconciliation is unfinished, a repair failed, or a
-recent passing rollback rehearsal is absent. Passing means only
+when that sample is too small or stale, reconciliation is unfinished, a repair
+failed, or a recent passing rollback rehearsal is absent. Passing means only
 `ready_for_activation_review`; `authority_switch_allowed` remains false. The
 read does not invoke repair, query a Memory backend or create a missing journal.
 Actual authority activation remains unavailable.
