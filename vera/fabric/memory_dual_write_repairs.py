@@ -22,7 +22,9 @@ BackendWriter = Callable[[Mapping[str, Any], str], Awaitable[Mapping[str, Any]]]
 NATIVE_TARGETS = ("postgres", "chroma", "neo4j")
 
 
-def _repair_evidence(evidence: Mapping[str, Any], idempotency_key: str) -> None:
+def _repair_evidence(
+    target: str, evidence: Mapping[str, Any], idempotency_key: str,
+) -> None:
     if not isinstance(evidence, Mapping):
         raise TypeError("reconciliation evidence must be a mapping")
     if evidence.get("schema") != RECEIPT_SCHEMA:
@@ -37,6 +39,11 @@ def _repair_evidence(evidence: Mapping[str, Any], idempotency_key: str) -> None:
             raise ValueError(f"repair evidence requires {field}")
     if not isinstance(idempotency_key, str) or not idempotency_key:
         raise ValueError("repair requires a stable idempotency key")
+    if target == "revision":
+        native = evidence.get("native_outcomes")
+        if not isinstance(native, Mapping) or native.get("postgres") != "committed":
+            raise ValueError(
+                "canonical repair requires committed native Postgres authority")
 
 
 def _exact_commit_result(
@@ -158,7 +165,7 @@ class MemoryDualWriteRepairAdapter:
     async def __call__(
         self, target: str, evidence: Mapping[str, Any], idempotency_key: str,
     ) -> str:
-        _repair_evidence(evidence, idempotency_key)
+        _repair_evidence(target, evidence, idempotency_key)
         native_id = str(evidence.get("native_memory_id") or "")
         if target == "revision":
             snapshot = await self.native_snapshot_loader(native_id)

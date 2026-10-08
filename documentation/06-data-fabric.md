@@ -275,10 +275,20 @@ record/revision IDs and stable idempotency key before the attempt can be marked
 committed. Writer mappings are immutable and a requested backend cannot invoke
 another backend's callback.
 
-The executor and adapter contain no live Memory, Postgres, Chroma, Neo4j or
-Fabric repair implementation and perform no automatic scheduling. They always
-report `authority_switch_allowed: false`; live activation, legacy migration,
-read-authority movement and deletion remain unavailable.
+The manual `memory.dual_write.reconcile` entry point connects the adapter to
+the existing policy-gated `RevisionPath` and to one exact native backend at a
+time. It remains unavailable unless `VERA_MEMORY_RECONCILIATION_ENABLED=1`.
+Canonical repair reads only receipt-confirmed Postgres authority. Native repair
+loads the exact canonical envelope, writes only the unresolved target, and
+re-reads it to verify the native ID and content hash before accepting the
+backend's success. Revision reads and writes retain the caller policy used by
+the normal Fabric authority path.
+
+No scheduler enumerates or starts these attempts, and disabled operation
+constructs no journal, revision store or backend request. Every result still
+reports `authority_switch_allowed: false`; automatic repair, live canary
+activation, legacy migration, read-authority movement and deletion remain
+unavailable.
 
 ### Caller policy
 

@@ -149,3 +149,23 @@ def test_cancellation_is_durable_then_propagates_and_leaves_remaining_unresolved
     assert calls == 1
     assert store.reconciliation_status("op-1")["unresolved_targets"] == [
         "revision", "chroma"]
+
+
+def test_completion_timestamp_callback_runs_after_repair(tmp_path):
+    store = MemoryDualWriteReceiptStore(tmp_path / "receipts.sqlite3")
+    add_split(store, revision_outcome="committed")
+    order = []
+
+    async def repair(target, evidence, key):
+        order.append("repair")
+        return "committed"
+
+    def completed():
+        order.append("completed-at")
+        return DONE
+
+    result = run(reconcile_memory_dual_write(
+        store, operation_id="op-1", attempt_id="attempt-1",
+        started_at=NOW, completed_at=completed, repair=repair))
+    assert result.converged is True
+    assert order == ["repair", "completed-at"]

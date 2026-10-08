@@ -177,3 +177,78 @@ def test_public_memory_store_uses_the_narrow_canary_seam(monkeypatch):
     assert seen["snapshot"]["session_id"] == "session-1"
     assert seen["actor"] == "user"
     assert seen["observed_at"]
+
+
+def test_exact_backend_repair_does_not_fan_out(monkeypatch):
+    from vera.fabric import memory
+
+    calls = []
+
+    class Backend:
+        def __init__(self, name):
+            self.name = name
+
+        async def get(self, record_id):
+            calls.append(("get", self.name, record_id))
+            return memory.MemoryRecord(id=record_id, full_text="memory")
+
+        async def store(self, record):
+            calls.append(("store", self.name, record.id))
+            return True
+
+    value = memory.HybridMemoryStore()
+    value.register(Backend("postgres"))
+    value.register(Backend("neo4j"))
+    monkeypatch.setattr(memory, "_sbx_write_blocked", lambda: False)
+    loaded = run(value.repair_get("postgres", "native-1"))
+    assert loaded.id == "native-1"
+    loaded.content_hash = loaded.compute_hash()
+    assert run(value.repair_store("neo4j", loaded)) is True
+    assert calls == [
+        ("get", "postgres", "native-1"),
+        ("store", "neo4j", "native-1"),
+    ]
+
+
+def test_exact_backend_repair_rejects_content_drift_before_effect(monkeypatch):
+    from vera.fabric import memory
+
+    calls = []
+
+    class Backend:
+        name = "postgres"
+
+        async def store(self, record):
+            calls.append(record.id)
+            return True
+
+    value = memory.HybridMemoryStore()
+    value.register(Backend())
+    monkeypatch.setattr(memory, "_sbx_write_blocked", lambda: False)
+    record = memory.MemoryRecord(
+        id="native-1", full_text="memory", content_hash="tampered")
+    with pytest.raises(ValueError, match="content hash"):
+        run(value.repair_store("postgres", record))
+    assert calls == []
+
+
+def test_manual_reconcile_capability_delegates_with_exact_backend_seams(monkeypatch):
+    from vera.fabric import memory
+
+    seen = {}
+
+    async def runtime(**kwargs):
+        seen.update(kwargs)
+        return {"converged": False, "authority_switch_allowed": False}
+
+    monkeypatch.setattr(
+        memory._revision_repair, "run_manual_memory_reconciliation", runtime)
+    result = run(memory.memory_dual_write_reconcile(
+        operation_id="memory.store:native-1", attempt_id="attempt-1",
+        timeout_s=12.0))
+    assert result == {"converged": False, "authority_switch_allowed": False}
+    assert seen["operation_id"] == "memory.store:native-1"
+    assert seen["attempt_id"] == "attempt-1"
+    assert seen["timeout_s"] == 12.0
+    assert callable(seen["native_loader"])
+    assert callable(seen["native_writer"])

@@ -138,6 +138,7 @@ The system has four layers:
 | `vera/fabric/memory_dual_write_canary.py` | Injected default-off native-first coordinator; isolates canonical shadow/evidence failure and propagates cancellation |
 | `vera/fabric/memory_dual_write_store.py` | Durable idempotent receipt journal and bounded reconciliation query |
 | `vera/fabric/memory_dual_write_repairs.py` | Content-verified reconstruction and injected, target-isolated repair adapters |
+| `vera/fabric/memory_dual_write_repair_runtime.py` | Disabled-by-default policy/store binding for one explicitly requested reconciliation attempt |
 
 ---
 
@@ -420,9 +421,21 @@ idempotency key before it is recorded as committed. The adapter retains the
 public ingress fields needed to reproduce native semantics, but stores none of
 their payloads in reconciliation evidence.
 
-No scheduler or live backend implementation is connected yet. These adapters
-make exact, restart-safe repair testable; they do not turn repair on, migrate
-legacy records, change read authority or grant deletion permission.
+The `memory.dual_write.reconcile` capability binds these contracts to the
+existing revision authority and native backends for one explicitly named
+journalled operation and attempt. It is disabled unless
+`VERA_MEMORY_RECONCILIATION_ENABLED=1`. Canonical reconstruction can source a
+snapshot only from Postgres when the receipt says that native authority
+committed. Native repair reads the exact policy-authorised revision, writes
+only the unresolved Postgres, Chroma or Neo4j target, then re-reads that target
+and verifies its ID and content hash before recording success. Chroma repair
+creates an embedding through the existing Memory path only when that target is
+selected and embedding is enabled.
+
+There is no automatic scheduler, scan or retry loop. The capability does not
+turn on the dual-write canary, migrate legacy records, change read authority or
+grant deletion permission. Setting the reconciliation switch back to `0`
+removes the concrete effect path while leaving its evidence intact.
 
 ---
 
@@ -864,6 +877,7 @@ routes. All are declared `memory="off"` so retrieval never records itself.
 | Capability | HTTP | Purpose |
 |---|---|---|
 | `memory.store` | `POST /memory/store` | Persist a record (`text`!, `session_id`, `record_type`, `source_type`, `category`, `tags` csv, `summary`, `full_text`, `human_text`, `ai_output`, `model`, `capability_src`, `importance`, `parent_id`) |
+| `memory.dual_write.reconcile` | `POST /memory/dual-write/reconcile` | When explicitly enabled, retry one exact journalled split write by operation and attempt ID; never scans or schedules work |
 | `memory.get` | `GET /memory/get` | One record by id |
 | `memory.forget` | `POST /memory/forget` | Soft delete (`archived=true`); emits `memory.forgotten` |
 | `memory.promote` | `POST /memory/promote` | Promote an event JSON or raw text |
@@ -952,6 +966,9 @@ node and edge routes.
 | `VERA_CHATMEM_DECAY_FACTOR` / `_DECAY_MIN` / `_DECAY_MAX_TURNS` | `0.65` / `0.05` / `6` | Per-turn decay of injected memories |
 | `VERA_CHATMEM_PENDING_TTL_S` / `_ACTIVE_TTL_S` | `300` / `3600` | Redis TTLs for slow-tier delivery and the active set |
 | `VERA_MEMORY_TOOLING` | `canonical` | Fallback tooling mode when none is persisted |
+| `VERA_MEMORY_REVISION_CANARY` | `0` | `1` shadows new public `memory.store` writes into immutable revisions and records paired outcomes |
+| `VERA_MEMORY_RECONCILIATION_ENABLED` | `0` | `1` permits explicitly requested `memory.dual_write.reconcile` attempts; it does not schedule them |
+| `VERA_MEMORY_DUAL_WRITE_RECEIPTS` | `vera/fabric/memory_dual_write_receipts.db` | Dual-write and reconciliation evidence journal |
 | `MEMORY_SEEK_EMBED_WAIT_S` | `10` | `memory.seek` query-vector wait |
 | `FABRIC_SEEK_MIN_SCORE` | `0.28` | `memory.seek` cosine floor |
 | `VERA_SANDBOX_WRITE_GUARD` | `1` (in dev sandboxes) | `0` lets a dev sandbox write to shared stores |
@@ -1135,6 +1152,7 @@ line, so an empty session landing view cannot be mistaken for a useful graph.
 | `memory.map` | — | Browse the fabric's dataset namespaces ONE LEVEL at a time — there are thousands of datasets, never try to list them all. prefix='' shows the top-level namespaces with aggregate counts; prefix='cap… |
 | `memory.neo4j_diag` | — | Diagnose Neo4j connectivity, node and edge counts. |
 | `memory.promote` | — | Manually promote a Redis event or raw dict payload to persistent memory. |
+| `memory.dual_write.reconcile` | — | Manually retry one exact journalled split Memory write when reconciliation is explicitly enabled. Repairs only unresolved receipt targets and never moves read authority. |
 | `memory.read` | — | Read ONE full record verbatim by id (ids come from memory.seek / fabric.query results). Checks the fabric first, then the session-memory store. Params: record_id (str!), offset (int 0 — character o… |
 | `memory.recall` | — | Smart recall: semantic search + automatic graph-neighbour expansion for rich context. WHEN TO USE: the best general-purpose memory retrieval — use this before answering questions that might benefit… |
 | `memory.recall_2nd_order` | — | Second-order recall: similar past USER questions → paired ASSISTANT answers → graph-neighbour knowledge attached to those answers. Inputs: query (str!), limit (int 5), graph_depth (int 1), neighbou… |

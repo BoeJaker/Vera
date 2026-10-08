@@ -12,6 +12,7 @@ from .memory_dual_write_store import MemoryDualWriteReceiptStore
 
 
 Repair = Callable[[str, Mapping[str, object], str], Awaitable[str]]
+CompletionTime = str | Callable[[], str]
 _ERROR = re.compile(r"[^a-z0-9._-]+")
 
 
@@ -37,7 +38,7 @@ def _error_code(exc: BaseException) -> str:
 
 async def reconcile_memory_dual_write(
     store: MemoryDualWriteReceiptStore, *, operation_id: str,
-    attempt_id: str, started_at: str, completed_at: str, repair: Repair,
+    attempt_id: str, started_at: str, completed_at: CompletionTime, repair: Repair,
     timeout_s: float | None = None,
 ) -> MemoryReconciliationResult:
     """Resume or execute one exact, idempotent reconciliation attempt.
@@ -52,6 +53,11 @@ async def reconcile_memory_dual_write(
         raise TypeError("repair must be callable")
     if timeout_s is not None and timeout_s <= 0:
         raise ValueError("timeout_s must be positive")
+    if not isinstance(completed_at, str) and not callable(completed_at):
+        raise TypeError("completed_at must be a timestamp or callback")
+
+    def completion_time() -> str:
+        return completed_at() if callable(completed_at) else completed_at
     prior = store.attempt(attempt_id)
     if prior and prior["state"] == "completed":
         status = store.reconciliation_status(prior["operation_id"])
@@ -87,7 +93,7 @@ async def reconcile_memory_dual_write(
             try:
                 store.complete_reconciliation(
                     attempt_id=attempt_id, outcomes=outcomes,
-                    error_codes=errors, completed_at=completed_at)
+                    error_codes=errors, completed_at=completion_time())
             except Exception:
                 # Cancellation ownership is never transferred to evidence I/O.
                 # The durable started attempt remains discoverable for restart.
@@ -101,7 +107,7 @@ async def reconcile_memory_dual_write(
             errors[target] = _error_code(exc)
     completed = store.complete_reconciliation(
         attempt_id=attempt_id, outcomes=outcomes,
-        error_codes=errors, completed_at=completed_at)
+        error_codes=errors, completed_at=completion_time())
     final = store.reconciliation_status(operation_id)
     return MemoryReconciliationResult(
         attempt_id=attempt_id, operation_id=operation_id,
