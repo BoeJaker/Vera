@@ -192,3 +192,17 @@ def test_every_other_style_leaves_the_controller_prompt_byte_identical(monkeypat
     before = _controller_system(monkeypatch)
     empty = _controller_system(monkeypatch, style_note="")
     assert before == empty and "STEPWISE MODE" not in before
+
+
+def test_a_strategic_goal_writes_its_master_plan_first():
+    """Q2 #4: the tier already says strategic, so the master plan is written before any
+    structured plan, which runs only as the fallback; nothing is persisted twice."""
+    b = _body("cap_dag_agent_loop_v6")
+    first_master = b.index("_v5_master_plan(goal")
+    first_structured = b.index("_v5_orchestrate_plan(")
+    assert first_master < first_structured
+    assert "if _plan2_first.get(\"steps\"):\n        plan = _plan2_first" in b
+    assert "if not plan.get(\"steps\") and _master_ok and not _master_ran:" in b
+    assert b.count("await _persist_master(") == 2          # master-first, and the 'extreme' replacement
+    assert b.count("await _emit_sectioned(") == 2
+    assert "and (tier_wants_master or complexity == \"extreme\")" in b   # the replacement stays for 'extreme'
