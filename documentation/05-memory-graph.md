@@ -446,7 +446,9 @@ when that sample is too small or stale, reconciliation is unfinished, a repair
 failed, or a recent passing rollback rehearsal is absent. Passing means only
 `ready_for_activation_review`; `authority_switch_allowed` remains false. The
 read does not invoke repair, query a Memory backend or create a missing journal.
-Actual authority activation remains unavailable.
+The rehearsal must name the exact commit reported by the running process's
+provenance; a missing identity or stale-code receipt fails closed. Actual
+authority activation remains unavailable.
 
 ---
 

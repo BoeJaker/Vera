@@ -55,6 +55,7 @@ def test_exact_bounded_evidence_and_passing_rollback_allow_review_only(tmp_path)
     result = assess_memory_authority_readiness(
         evidence, assessed_at=NOW,
         rollback_receipt=restarted.latest_rollback_rehearsal(),
+        expected_source_commit="abcdef12",
         min_receipts=2, max_evidence_age_seconds=7200)
 
     assert result.ready_for_activation_review is True
@@ -99,11 +100,13 @@ def test_failed_attempt_and_stale_or_failed_rollback_are_visible(tmp_path):
         completed_at="2026-01-01T00:03:00Z", native_write_available=False)
     result = assess_memory_authority_readiness(
         store.readiness_evidence(), assessed_at=NOW,
-        rollback_receipt=failed_rollback, min_receipts=1,
+        rollback_receipt=failed_rollback, expected_source_commit="different",
+        min_receipts=1,
         max_evidence_age_seconds=3600)
     assert set(result.reasons) == {
         "unresolved_operations", "failed_attempts", "evidence_stale",
-        "rollback_rehearsal_failed", "rollback_rehearsal_stale",
+        "rollback_rehearsal_failed", "rollback_rehearsal_source_mismatch",
+        "rollback_rehearsal_stale",
     }
 
 
@@ -168,3 +171,23 @@ def test_readiness_thresholds_are_bounded():
         assess_memory_authority_readiness(
             evidence, assessed_at=NOW, rollback_receipt=None,
             max_evidence_age_seconds=1)
+
+
+def test_evidence_shape_and_runtime_source_identity_fail_closed():
+    evidence = {
+        "total_receipts": 1, "returned_receipts": 1, "truncated": False,
+        "unresolved_operations": 0, "pending_attempts": 0,
+        "failed_attempts": 0, "latest_observed_at": "2026-01-01T23:00:00Z",
+    }
+    result = assess_memory_authority_readiness(
+        evidence, assessed_at=NOW, rollback_receipt=rollback(),
+        min_receipts=1, max_evidence_age_seconds=7200)
+    assert result.reasons == ("runtime_source_identity_missing",)
+    with pytest.raises(ValueError, match="truncated flag"):
+        assess_memory_authority_readiness(
+            {**evidence, "truncated": True}, assessed_at=NOW,
+            rollback_receipt=None, min_receipts=1)
+    with pytest.raises(ValueError, match="non-negative integers"):
+        assess_memory_authority_readiness(
+            {**evidence, "pending_attempts": -1}, assessed_at=NOW,
+            rollback_receipt=None, min_receipts=1)

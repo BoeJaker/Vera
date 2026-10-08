@@ -291,7 +291,9 @@ rollback-rehearsal receipt. It discloses a truncated sample and fails closed on
 insufficient, stale or partial evidence. A passing result permits only a later
 activation review; it always returns `authority_switch_allowed: false`,
 performs no repair or backend read and does not create an absent journal. No
-capability currently moves Memory authority.
+capability currently moves Memory authority. Rollback evidence must bind the
+exact commit reported by the running process's provenance; missing or
+mismatched source identity blocks review.
 
 No scheduler enumerates or starts these attempts, and disabled operation
 constructs no journal, revision store or backend request. Every result still

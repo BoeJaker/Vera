@@ -40,6 +40,7 @@ def read_memory_authority_readiness(
     *, limit: int = 100, min_receipts: int = 25,
     max_evidence_age_seconds: int = 86_400,
     environ: Mapping[str, str] | None = None, assessed_at: str = "",
+    expected_source_commit: str = "",
 ) -> dict[str, Any]:
     """Read bounded journal evidence; never repair or switch authority."""
     env = os.environ if environ is None else environ
@@ -60,7 +61,9 @@ def read_memory_authority_readiness(
         rollback = None
     result = assess_memory_authority_readiness(
         evidence, assessed_at=assessed_at or _now(),
-        rollback_receipt=rollback, min_receipts=min_receipts,
+        rollback_receipt=rollback,
+        expected_source_commit=expected_source_commit,
+        min_receipts=min_receipts,
         max_evidence_age_seconds=max_evidence_age_seconds)
     return result.to_dict()
 

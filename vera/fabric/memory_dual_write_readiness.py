@@ -57,6 +57,8 @@ class MemoryRollbackRehearsalReceipt:
     receipt_id: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if self.schema != ROLLBACK_SCHEMA:
+            raise ValueError("unsupported rollback rehearsal schema")
         rehearsal_id = _token(self.rehearsal_id, "rehearsal_id")
         source_commit = _token(self.source_commit, "source_commit")
         completed_at = _timestamp(self.completed_at, "completed_at").isoformat()
@@ -137,6 +139,7 @@ class MemoryAuthorityReadiness:
 def assess_memory_authority_readiness(
     evidence: Mapping[str, Any], *, assessed_at: str,
     rollback_receipt: MemoryRollbackRehearsalReceipt | None,
+    expected_source_commit: str = "",
     min_receipts: int = 25, max_evidence_age_seconds: int = 86_400,
 ) -> MemoryAuthorityReadiness:
     """Classify bounded evidence without activating or executing anything."""
@@ -154,13 +157,27 @@ def assess_memory_authority_readiness(
     }
     if not required.issubset(evidence):
         raise ValueError("readiness evidence is incomplete")
+    count_fields = (
+        "total_receipts", "returned_receipts", "unresolved_operations",
+        "pending_attempts", "failed_attempts",
+    )
+    if any(isinstance(evidence[name], bool) or not isinstance(evidence[name], int)
+           or evidence[name] < 0 for name in count_fields):
+        raise ValueError("readiness evidence counts must be non-negative integers")
+    if not isinstance(evidence["truncated"], bool):
+        raise ValueError("readiness evidence truncated must be boolean")
+    if evidence["returned_receipts"] > evidence["total_receipts"]:
+        raise ValueError("returned receipts cannot exceed total receipts")
+    if evidence["truncated"] != (
+            evidence["total_receipts"] > evidence["returned_receipts"]):
+        raise ValueError("truncated flag does not match the evidence window")
     metrics = {
-        "total_receipts": int(evidence["total_receipts"]),
-        "returned_receipts": int(evidence["returned_receipts"]),
-        "truncated": bool(evidence["truncated"]),
-        "unresolved_operations": int(evidence["unresolved_operations"]),
-        "pending_attempts": int(evidence["pending_attempts"]),
-        "failed_attempts": int(evidence["failed_attempts"]),
+        "total_receipts": evidence["total_receipts"],
+        "returned_receipts": evidence["returned_receipts"],
+        "truncated": evidence["truncated"],
+        "unresolved_operations": evidence["unresolved_operations"],
+        "pending_attempts": evidence["pending_attempts"],
+        "failed_attempts": evidence["failed_attempts"],
         "latest_observed_at": str(evidence["latest_observed_at"] or ""),
     }
     reasons: list[str] = []
@@ -190,6 +207,11 @@ def assess_memory_authority_readiness(
             rollback_receipt.completed_at, "rollback.completed_at")).total_seconds()
         if not rollback_receipt.passed:
             reasons.append("rollback_rehearsal_failed")
+        expected_commit = str(expected_source_commit or "").strip()
+        if not expected_commit:
+            reasons.append("runtime_source_identity_missing")
+        elif rollback_receipt.source_commit != expected_commit:
+            reasons.append("rollback_rehearsal_source_mismatch")
         if rollback_age < 0:
             reasons.append("rollback_rehearsal_from_future")
         elif rollback_age > int(max_evidence_age_seconds):

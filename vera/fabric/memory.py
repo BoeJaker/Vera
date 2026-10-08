@@ -2575,10 +2575,16 @@ async def memory_dual_write_readiness(
     limit: int = 100, min_receipts: int = 25,
     max_evidence_age_seconds: int = 86_400, trace_id=None,
 ):
+    try:
+        from Vera.vera.provenance import get_provenance
+    except ImportError:                              # pragma: no cover
+        from ..provenance import get_provenance
+    source_commit = str(get_provenance().get("git_sha") or "")
     return await asyncio.to_thread(
         _revision_repair.read_memory_authority_readiness,
         limit=limit, min_receipts=min_receipts,
-        max_evidence_age_seconds=max_evidence_age_seconds)
+        max_evidence_age_seconds=max_evidence_age_seconds,
+        expected_source_commit=source_commit)
 
 
 @capability(
