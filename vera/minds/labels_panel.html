@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vera — Decision labels</title>
+<script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+(function(){try{var d=document.documentElement,S=window.localStorage;
+var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<style>
+:root{
+  --bg0:#181614;--bg1:#1f1d1a;--bg2:#272421;--bg3:#302c29;
+  --border:#3a3530;--border2:#4a4540;
+  --acc:#5a9e8f;--acc2:#8fb87a;--acc3:#c9955a;--acc4:#b98adf;
+  --ok:#6db87a;--err:#c96b6b;--warn:#c9a35a;
+  --text:#ddd5c8;--fg2:#b8ad9e;--dim:#6a6058;--dim2:#8a7e70;
+  --mono:'JetBrains Mono','Fira Mono',monospace;--sans:'Inter',system-ui,sans-serif;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans);font-size:12px}
+body{display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--bg1);flex-wrap:wrap}
+header h1{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:2px;color:var(--acc)}
+header .sub{font-size:10px;color:var(--dim2)}
+.flex{flex:1}
+select,button{font:inherit;color:var(--text);background:var(--bg2);border:1px solid var(--border2);border-radius:6px;padding:5px 9px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+main{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;max-width:980px;width:100%;margin:0 auto}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:9px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.q{font-family:var(--mono);color:var(--acc);font-size:11px}
+.meta{font-size:10px;color:var(--dim2)}
+.ans{font-family:var(--mono);font-size:13px;padding:2px 8px;border-radius:5px;background:var(--bg3)}
+.shadow{font-size:11px;color:var(--fg2)}
+.dis{color:var(--warn);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+.state{display:grid;grid-template-columns:max-content 1fr;gap:4px 10px;font-size:11.5px}
+.state .k{color:var(--dim2);font-family:var(--mono);font-size:10.5px;padding-top:1px}
+.state .v{white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
+.ok{border-color:var(--ok)!important;color:var(--ok)}
+.bad{border-color:var(--err)!important;color:var(--err)}
+.outs{font-size:10px;color:var(--dim2)}
+.empty{color:var(--dim2);text-align:center;padding:40px}
+.toast{position:fixed;bottom:14px;right:14px;background:var(--bg2);border:1px solid var(--border2);border-radius:6px;padding:7px 11px;font-size:11px;display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>DECISION LABELS</h1>
+  <span class="sub">Mark what Vera decided as right or wrong. Your label is the strongest signal its decision models learn from.</span>
+  <span class="flex"></span>
+  <select id="qsel" title="Question"></select>
+  <button id="reload" title="Reload (r)">Reload</button>
+</header>
+<main id="list"><div class="empty">Loading…</div></main>
+<div class="toast" id="toast"></div>
+<script src="/ui/vera-ui.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let items = [], q = '';
+try { q = localStorage.getItem('vera:labels:q') || ''; } catch (e) {}
+
+function toast(t) { const el = $('#toast'); el.textContent = t; el.style.display = 'block';
+  clearTimeout(toast._t); toast._t = setTimeout(() => el.style.display = 'none', 2200); }
+
+function fmt(v) { return typeof v === 'string' ? v : JSON.stringify(v, null, 1); }
+
+function card(it, i) {
+  const st = Object.entries(it.state || {}).map(([k, v]) =>
+    `<div class="k">${esc(k)}</div><div class="v">${esc(fmt(v))}</div>`).join('');
+  const sh = (it.shadows || []).map(s => `${esc(s.implementation)} said <b>${esc(s.answer)}</b>` +
+    (s.p != null ? ` (${Number(s.p).toFixed(2)})` : '')).join(' · ');
+  const outs = (it.outcomes || []).map(o => `${esc(o.source)}: ${esc(o.label)} (${esc(o.strength)})`).join(' · ');
+  const opts = (it.labels || []).map(l => `<option value="${esc(l)}"${l === String(it.answer) ? ' selected' : ''}>${esc(l)}</option>`).join('');
+  return `<div class="card" data-i="${i}">
+    <div class="row"><span class="q">${esc(it.question_id)}</span>
+      <span class="meta">${esc(it.decider)} · ${esc(it.implementation)} · ${esc(it.origin)} · ${esc((it.ts || '').slice(0, 16).replace('T', ' '))}</span>
+      ${it.disagreement ? '<span class="dis">labellers disagree</span>' : ''}</div>
+    <div class="row">Vera decided <span class="ans">${esc(fmt(it.answer))}</span>
+      ${sh ? `<span class="shadow">· ${sh}</span>` : ''}</div>
+    <div class="state">${st || '<div class="k">input</div><div class="v">(not kept)</div>'}</div>
+    ${outs ? `<div class="outs">automatic outcomes: ${outs}</div>` : ''}
+    <div class="row">
+      <button class="ok" data-act="correct" title="Right (1)">Right</button>
+      <button class="bad" data-act="wrong" title="Wrong (2)">Wrong</button>
+      ${opts ? `<span class="meta">should have been</span><select data-ra>${opts}</select><button data-act="answer">Save answer</button>` : ''}
+      <span class="flex"></span><button data-act="skip" title="Skip (s)">Skip</button>
+    </div></div>`;
+}
+
+function render() {
+  $('#list').innerHTML = items.length ? items.map(card).join('')
+    : '<div class="empty">Nothing waiting. New decisions appear here as loops run.</div>';
+}
+
+async function load() {
+  try {
+    const r = await fetch('/decide/label/queue?limit=20&question_id=' + encodeURIComponent(q));
+    const d = await r.json();
+    items = d.items || [];
+    const qs = d.questions || [];
+    $('#qsel').innerHTML = `<option value="">all questions</option>` + qs.map(x =>
+      `<option value="${esc(x.question_id)}"${x.question_id === q ? ' selected' : ''}>${esc(x.question_id)} (${x.waiting})</option>`).join('');
+    render();
+  } catch (e) { $('#list').innerHTML = `<div class="empty">Could not load: ${esc(e)}</div>`; }
+}
+
+async function label(i, body) {
+  const it = items[i];
+  try {
+    const r = await fetch('/decide/label', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({decision_id: it.decision_id}, body))});
+    const d = await r.json();
+    if (d.ok === false || d.error) { toast('Not saved: ' + (d.error || 'unknown error')); return; }
+    toast('Saved: ' + (d.label || ''));
+    items.splice(i, 1); render();
+  } catch (e) { toast('Not saved: ' + e); }
+}
+
+$('#list').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-act]'); if (!b) return;
+  const c = b.closest('.card'); const i = +c.dataset.i; const act = b.dataset.act;
+  if (act === 'skip') { items.splice(i, 1); render(); return; }
+  if (act === 'answer') { label(i, {right_answer: c.querySelector('[data-ra]').value}); return; }
+  label(i, {verdict: act});
+});
+$('#qsel').addEventListener('change', e => { q = e.target.value; try { localStorage.setItem('vera:labels:q', q); } catch (x) {} load(); });
+$('#reload').addEventListener('click', load);
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT' || !items.length) return;
+  if (e.key === '1') label(0, {verdict: 'correct'});
+  else if (e.key === '2') label(0, {verdict: 'wrong'});
+  else if (e.key === 's') { items.splice(0, 1); render(); }
+  else if (e.key === 'r') load();
+});
+load();
+</script>
+</body>
+</html>

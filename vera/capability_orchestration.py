@@ -12176,6 +12176,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "minds/switchboard_capabilities.py"),
         os.path.join(_here, "minds/ledger_capabilities.py"),
         os.path.join(_here, "minds/training_state.py"),
+        os.path.join(_here, "minds/label_capabilities.py"),
         os.path.join(_here, "minds/baseline_capabilities.py"),
         # The widget registry (UI redesign): every part of the UI as a record -
         # templates, instances, the registry panel. Beside the agent registry
