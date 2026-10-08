@@ -1209,7 +1209,11 @@
   :host([align="desk"]) .stage .it.desk-chip > .it-hd > .t *{animation:none!important;transform:none!important}
   :host([align="desk"]) .stage .it.desk-chip > .it-hd > .fd,
   :host([align="desk"]) .stage .it.desk-chip > .it-hd > .src,
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd > :not(.ic):not(.t):not(.ly){display:none}
+  :host([align="desk"]) .stage .it.desk-chip > .it-hd > :not(.ic):not(.t):not(.ly):not(.dp){display:none}
+  /* a card placed by hand carries its way back to the arrangement (the double click is redrawn away by the first click) */
+  .dp{display:none}
+  :host([align="desk"]) .stage .it.desk-placed > .it-hd > .dp{display:inline-flex;flex:0 0 auto;cursor:pointer;color:var(--acc,#5a9e8f);font-size:11px;padding:0 3px}
+  :host([align="desk"]) .stage .it.desk-placed > .dp.solo{display:block;position:absolute;right:36px;top:3px;z-index:3;cursor:pointer;color:var(--acc,#5a9e8f);font-size:11px;opacity:.85}
   /* a chip IS its header line: the hover and zen tiers' hidden, unclickable header left a chip blank until hovered */
   :host([align="desk"]) .stage .it.desk-chip > .it-hd{opacity:1!important;pointer-events:auto!important;background:none}
   /* a panel's chip keeps its two layer controls: a chip has no body to hold them */
@@ -1243,6 +1247,12 @@
   :host([align="desk"]) .stage .it[data-desk-face^="layer-"] > .it-bd > *{flex:1 1 auto;min-height:0}
   :host([align="desk"]) .stage .it[data-desk-face^="layer-"] .vc-panel{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
   :host([align="desk"]) .stage .it[data-desk-face^="layer-"] .vc-live{flex:1 1 auto;height:auto!important;min-height:120px}
+  /* a desk card that is not a chip keeps its corner grip: a compact card's rule hid it, so no desk card could be resized */
+  :host([align="desk"]) .stage .it:not(.desk-chip):not([data-desk-face^="layer-"]) > .rz{display:block}
+  /* a card is moved by its header on the desk; while it moves it follows the pointer exactly and rides above the rest */
+  :host([align="desk"]) .stage .it:not([data-desk-face^="layer-"]) > :is(.it-hd,.it-bd > .vc-panel > .vc-th){cursor:grab}
+  :host([align="desk"]) .stage .it.desk-dragging{transition:width .12s,height .12s!important;cursor:grabbing;box-shadow:0 18px 40px rgba(0,0,0,.5);outline:1px solid var(--acc,#5a9e8f)}
+  :host([align="desk"]) .stage .it.desk-dragging *{cursor:grabbing!important;user-select:none}
   @media (prefers-reduced-motion: reduce){:host([align="desk"]) .stage .it{transition:none}}
   /* THE BACK LAYER (the desk's graph, owner-approved 2026-10-06): whatever the page puts in the "back" slot is drawn
      under the cards, dimmed until the pointer is on it. The desk's own ground goes so the layer shows through, and
@@ -2381,6 +2391,16 @@
        in full screen - dynamically sized, not actually full"). Behind: the panel fills the largest part of the desk the
        chat leaves free, under every other item; front: the same, over them; '' puts it back among them. The card never
        leaves the stage, so its frame is never reloaded. */
+    /* WHERE THE PERSON PUT THE CARDS on the desk: {key: {fx, fy}}, shares of the desk, per canvas, kept in this browser */
+    _deskPosGet() {
+      if (this._deskPos) return this._deskPos;
+      try { this._deskPos = JSON.parse(localStorage.getItem('vera:canvas:deskpos:' + this.canvasId) || '{}') || {}; } catch (e) { this._deskPos = {}; }
+      return this._deskPos;
+    }
+    _deskPosSet(key, at) {
+      const m = this._deskPosGet(); if (at) m[key] = at; else delete m[key];
+      try { localStorage.setItem('vera:canvas:deskpos:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ }
+    }
     setLayer(key, mode) {
       key = String(key || ''); if (!key) return;
       if (mode === 'behind' || mode === 'front') this._layer[key] = mode; else delete this._layer[key];
@@ -2403,8 +2423,13 @@
         ? { l: cr[0], t: cr[1], r: cr[0] + cr[2], b: cr[1] + cr[3] }
         : side === 'right' ? { l: W, t: 0, r: W + 440, b: H } : { l: -440, t: 0, r: 0, b: H };
       const fm = this._focusMid || '';
-      const layered = cards.filter((c) => this._layer[c.dataset.key || '']);
-      cards = cards.filter((c) => !this._layer[c.dataset.key || '']);
+      /* a maximised item on the desk is a front layer: the free part of the desk, never over the chat (owner, 2026-10-06:
+         "fullscreen (not including the chat area)") */
+      const layOf = (c) => (this._max && this._max === c.dataset.key) ? 'front' : this._layer[c.dataset.key || ''];
+      const layered = cards.filter((c) => layOf(c));
+      cards = cards.filter((c) => !layOf(c));
+      this._deskGeo = { R, desk, W, H };   /* a drag sizes the card it moves with the same rules, live */
+      const up = this._deskPosGet();
       const ranked = cards.map((c, i) => ({ c, i })).sort((a, b) => {
         const fa = fm && a.c.dataset.mid === fm ? 1 : 0, fb = fm && b.c.dataset.mid === fm ? 1 : 0;
         if (fa !== fb) return fb - fa;
@@ -2414,10 +2439,20 @@
       });
       const pos = D.arrange('orbit', R, ranked.map((x) => ({ id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '' })), desk);
       // one: where each card goes and its size there (out of the chat's path); two: separate any that overlap; three: write
+      /* a card the person dragged stays where it was put (a share of the desk, so it holds when the desk resizes) and
+         goes first, so the others move round it */
+      const userAt = (key) => { const u = up[key]; return u && isFinite(u.fx) && isFinite(u.fy) ? [u.fx * W, u.fy * H] : null; };
+      ranked.sort((a, b) => (userAt(b.c.dataset.key || '') ? 1 : 0) - (userAt(a.c.dataset.key || '') ? 1 : 0));
       const plan = ranked.map((x) => {
-        const c = x.c, key = c.dataset.key || String(x.i), p = pos[key] || [W - 90, H - 30];
-        const pw = (this._rz && this._rz.el === c ? this._rz.w : 0) || parseInt(c.dataset.pw || '0', 10) || 0;
-        const user = pw > 0 ? { w: pw, h: c.classList.contains('sized') ? c.offsetHeight : Math.round(pw * 0.66) } : null;
+        const c = x.c, key = c.dataset.key || String(x.i), p = userAt(key) || pos[key] || [W - 90, H - 30];
+        c.classList.toggle('desk-placed', !!userAt(key));
+        /* the person's size: the drag in progress, else what the canvas remembers for the item (this._pw / this._px) -
+           not only the card's data-pw, which a compact card's markup leaves out, so a resized desk card lost its size
+           on the redraw that followed the resize */
+        const live = this._rz && this._rz.el === c ? this._rz : null;
+        const pw = (live ? live.w : 0) || this._pw[key] || parseInt(c.dataset.pw || '0', 10) || 0;
+        const ph = (live ? live.h : 0) || this._px[key] || 0;
+        const user = pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null;
         const so = { size: user, pinned: !!user && c.classList.contains('pinned'), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
         return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h) };
@@ -2440,10 +2475,10 @@
       });
       /* the layered panels: the largest part of the desk the chat leaves free, under (behind) or over (front) the rest */
       const g = D.fullRegion(R, { W: W, H: H, m: 8, top: 4 });
-      const behindNow = layered.some((c) => this._layer[c.dataset.key] === 'behind');
+      const behindNow = layered.some((c) => layOf(c) === 'behind');
       if (this.hasAttribute('layered') !== behindNow) this.toggleAttribute('layered', behindNow);
       layered.forEach((c) => {
-        const mode = this._layer[c.dataset.key], left = Math.max(0, Math.round(g.l)), top = Math.max(0, Math.round(g.t));
+        const mode = layOf(c), left = Math.max(0, Math.round(g.l)), top = Math.max(0, Math.round(g.t));
         const w = Math.max(120, Math.round(Math.min(W, g.r) - left)), h = Math.max(120, Math.round(Math.min(H, g.b) - top));
         c.classList.remove('overfold', 'capped', 'desk-chip', 'desk-icon', 'compact'); c.style.maxHeight = ''; c.removeAttribute('title');
         c.dataset.deskFace = 'layer-' + mode;
@@ -2454,7 +2489,7 @@
       /* each layered panel's PILL, over every item at the panel's corner: a panel sent behind has its own head under the
          items, so its controls are here as well - always in reach (owner, 2026-10-07: "i dont see the behind or front") */
       st.querySelectorAll(':scope > .lay-pill').forEach((p) => p.remove());
-      layered.forEach((c) => {
+      layered.filter((c) => this._layer[c.dataset.key]).forEach((c) => {
         const mode = this._layer[c.dataset.key], k = esc(c.dataset.key), other = mode === 'front' ? 'behind' : 'front';
         const t = ((c.querySelector('.vc-th b') || c.querySelector('.it-hd .t') || {}).textContent || c.dataset.key).trim();
         const pill = document.createElement('div'); pill.className = 'lay-pill'; pill.dataset.w = 'canvas.panel.layer';
@@ -2487,7 +2522,9 @@
       const cards = [...st.querySelectorAll('.it')].filter((c) => c !== maxCard);
       if (this.deskAlign()) {
         // the rules live in one library; it is fetched the first time desk is chosen, then the stage is placed again
-        if (root.VeraDesk) { this._placeDesk(st, cards); return; }
+        /* the maximised card too: the desk places it over the free part of the desk (it was set aside for a placement
+           the desk never reached, and drew 0 px wide) */
+        if (root.VeraDesk) { this._placeDesk(st, maxCard ? cards.concat(maxCard) : cards); return; }
         if (!root.__veraDeskLoading) {
           root.__veraDeskLoading = true;
           const s = document.createElement('script'); s.src = '/ui/desk-layout.js';
@@ -2839,13 +2876,13 @@
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
         const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
-          ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>` : ''}${
+          ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="dp solo" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span><span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>` : ''}${
             /* the header line is drawn for EVERY item. An item whose drawer has its own head shows it only when the COLUMN
                folds it (its body, and that head inside it, hidden): it used to be nothing but three hover-only icons,
                0 px tall (owner, 2026-10-04: "if collapsed some canvas elements are only appearing on hover") */ ''}${
               `<div class="it-hd${ownHead && !compact ? ' own-fold' : ''}">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${b.type === 'panel' && this.getAttribute('align') === 'desk' ? '<span class="ly" data-act="layer-behind" title="Send it behind the other items, filling the free desk">⇣</span><span class="ly" data-act="layer-front" title="Bring it over the other items, filling the free desk">⇡</span>' : ''}${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
-            ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
+            ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="dp" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span><span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
           <div class="it-ft" data-w="canvas.item.rail"><span class="it-a">
               ${xplodable ? `<button data-act="explode" class="${xploded ? 'on' : ''}" title="${xploded ? 'Back to the source alone — the diagram goes' : 'See it as a structured diagram, bound to this item by span'}">${xploded ? 'source' : 'graph'}</button>` : ''}
@@ -3033,15 +3070,63 @@
            the stage, that was every column of it. So an item you resized went full width and no amount of dragging
            left brought it back (owner, 2026-09-25: "if i resize an element in the canvas it takes the full width and
            cant be shrunk in width"). The width is now a pixel fact of the item, like its height. */
-        this._rz = { key: it.dataset.key, el: it, y0: ev.clientY, h0, h: h0, x0: ev.clientX, w0, w: w0 }; });
+        /* the pointer moves in screen pixels and the card is sized in layout pixels: under the UI scale (zoom 1.4) a drag
+           grew it 1.4 times as far as the hand moved */
+        const Z = it.offsetWidth ? (it.getBoundingClientRect().width / it.offsetWidth) || 1 : 1;
+        this._rz = { key: it.dataset.key, el: it, y0: ev.clientY, h0, h: h0, x0: ev.clientX, w0, w: w0, Z }; });
+      /* MOVING A CARD ON THE DESK (owner-approved desk, 2026-10-06: "as you drag them in they become big enough to glance
+         at"). Its header is the handle; past 4 px it follows the pointer, sized live by its distance from the chat and
+         stacked on top; let go, it stays there (a share of the desk, per canvas). A double click on the header gives it
+         back to the arrangement. A control in the header (data-act, a field) is never a handle. */
+      const deskHandle = (ev) => { if (this.getAttribute('align') !== 'desk' || ev.button !== 0) return null; const t = ev.target; if (!t || !t.closest) return null;
+        if (t.closest('[data-act],.rz,input,textarea,select,button,a,.lay-pill')) return null;
+        const hd = t.closest('.it-hd,.vc-th'); const it = hd && hd.closest('.stage .it[data-key]');
+        if (!it || it.dataset.deskFace === 'layer-behind' || it.dataset.deskFace === 'layer-front') return null; return it; };
+      body.addEventListener('mousedown', (ev) => { const it = deskHandle(ev); if (!it) return;
+        const st = this.shadowRoot.getElementById('stage'); if (!st) return;
+        const Z = st.offsetWidth ? (st.getBoundingClientRect().width / st.offsetWidth) || 1 : 1;
+        this._dg = { el: it, key: it.dataset.key, x0: ev.clientX, y0: ev.clientY, Z,
+          cx0: (parseFloat(it.style.left) || 0) + it.offsetWidth / 2, cy0: (parseFloat(it.style.top) || 0) + it.offsetHeight / 2, moved: false }; });
+      body.addEventListener('dblclick', (ev) => { const it = deskHandle(ev); if (!it) return;
+        if (!this._deskPosGet()[it.dataset.key]) return; ev.preventDefault();
+        this._deskPosSet(it.dataset.key, null); this._placeNow(); });
+      /* a click that ends a drag is not a click on what was under it */
+      body.addEventListener('click', (ev) => { if (Date.now() - (this._dgEnd || 0) < 250) { ev.stopPropagation(); ev.preventDefault(); } }, true);
       const doc = this.ownerDocument || document;
+      doc.addEventListener('mousemove', (ev) => { const d = this._dg; if (!d) return;
+        const dx = (ev.clientX - d.x0) / d.Z, dy = (ev.clientY - d.y0) / d.Z;
+        if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+        if (!d.moved) { d.moved = true; d.el.classList.add('desk-dragging'); d.el.style.zIndex = String(root.VeraDesk ? root.VeraDesk.stackOrder(0, { dragging: true }) : 200); }
+        ev.preventDefault();
+        const g = this._deskGeo, D = root.VeraDesk; if (!g || !D) return;
+        const cx = Math.max(10, Math.min(g.W - 10, d.cx0 + dx)), cy = Math.max(10, Math.min(g.H - 10, d.cy0 + dy));
+        const pw = this._pw[d.key] || parseInt(d.el.dataset.pw || '0', 10) || 0, ph = this._px[d.key] || 0;
+        const so = { size: pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null, pinned: pw > 0 && d.el.classList.contains('pinned') };
+        const s = D.sizeAt(g.R, cx, cy, so, g.desk), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
+        d.cx = cx; d.cy = cy;
+        d.el.classList.toggle('desk-chip', s.face === 'chip'); d.el.classList.remove('desk-icon'); d.el.dataset.deskFace = s.face;
+        d.el.style.left = Math.round(cx - w / 2) + 'px'; d.el.style.top = Math.round(cy - h / 2) + 'px';
+        d.el.style.setProperty('width', w + 'px', 'important'); d.el.style.setProperty('height', h + 'px', 'important');
+        if (!d.raf) d.raf = requestAnimationFrame(() => { d.raf = 0; try { this._liveLayout(); } catch (e) { /* optional */ } }); });
+      doc.addEventListener('mouseup', () => { const d = this._dg; if (!d) return; this._dg = null;
+        if (!d.moved) return;
+        this._dgEnd = Date.now(); d.el.classList.remove('desk-dragging');
+        const g = this._deskGeo; if (g && d.cx != null) this._deskPosSet(d.key, { fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) });
+        this._placeNow(); });
       doc.addEventListener('mousemove', (ev) => { const r = this._rz; if (!r) return;
-        const h = Math.max(40, r.h0 + (ev.clientY - r.y0)); r.h = h; r.el.style.height = h + 'px';
-        const w = Math.max(120, r.w0 + (ev.clientX - r.x0)); r.w = w; r.el.style.width = w + 'px';
+        const h = Math.max(40, r.h0 + (ev.clientY - r.y0) / (r.Z || 1)); r.h = h; r.el.style.height = h + 'px';
+        const w = Math.max(120, r.w0 + (ev.clientX - r.x0) / (r.Z || 1)); r.w = w; r.el.style.width = w + 'px';
         r.el.classList.add('openin');
         if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
+        /* on the desk a card you sized stays where it is: grown, it was separated outward into the chip zone and came back
+           a chip. Its place is pinned as a drag pins it; the others move round it. */
+        const g = this._deskGeo;
+        if (g && this.getAttribute('align') === 'desk') {
+          const cx = (parseFloat(r.el.style.left) || 0) + r.w / 2, cy = (parseFloat(r.el.style.top) || 0) + r.h / 2;
+          this._deskPosSet(key, { fx: +(Math.max(0, Math.min(g.W, cx)) / g.W).toFixed(4), fy: +(Math.max(0, Math.min(g.H, cy)) / g.H).toFixed(4) });
+        }
         /* ...and onto the card NOW: the placer reads the card's data-pw, which only a redraw rewrites - a drag that kept
            the size class placed the card at the width of the drag before and it snapped back (owner, 2026-10-04: "i
            also cannot resize an element on the canvas to span more columns than it has") */
@@ -3277,6 +3362,7 @@
       if (act === 'fold') return this._setFold(key, !(it && it.classList.contains('ufold')));
       if (act === 'open') return this._toggleOpen(key);
       if (act === 'max') return this._toggleMax(key);
+      if (act === 'desk-auto') { this._deskPosSet(key, null); return this._placeNow(); }
       if (act === 'layer-behind' || act === 'layer-front') return this.setLayer(key, this._layer[key] === act.slice(6) ? '' : act.slice(6));
       if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026'; return this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }); }
       // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
@@ -3652,7 +3738,16 @@
           const c = card.getBoundingClientRect();
           const ct = Math.max(0, Math.round((c.top - r.top) / Z)), cl = Math.max(0, Math.round((c.left - r.left) / Z));
           const cr = Math.max(0, Math.round((r.right - c.right) / Z)), cb = Math.max(0, Math.round((r.bottom - c.bottom) / Z));
-          const clip = (ct || cl || cr || cb) ? 'inset(' + ct + 'px ' + cr + 'px ' + cb + 'px ' + cl + 'px)' : '';
+          let clip = (ct || cl || cr || cb) ? 'inset(' + ct + 'px ' + cr + 'px ' + cb + 'px ' + cl + 'px)' : '';
+          /* on the desk the card's corner grip stays reachable: the live element is drawn over the card, so its corner
+             is cut away (a widget covered the grip and no widget card could be resized) */
+          const grip = this.getAttribute('align') === 'desk' && card.querySelector(':scope > .rz');
+          if (grip && grip.getClientRects().length) {
+            const L0 = cl, T0 = ct, R0 = w - cr, B0 = ht - cb;
+            const x1 = Math.min(R0, Math.round((c.right - r.left) / Z)) - 20, y1 = Math.min(B0, Math.round((c.bottom - r.top) / Z)) - 20;
+            if (x1 > L0 && y1 > T0 && x1 < R0 + 20 && y1 < B0 + 20)
+              clip = 'polygon(' + [[L0, T0], [R0, T0], [R0, y1], [x1, y1], [x1, B0], [L0, B0]].map((p) => p[0] + 'px ' + p[1] + 'px').join(',') + ')';
+          }
           if (el.style.clipPath !== clip) el.style.clipPath = clip;
           const z = card.style.zIndex || '';
           if (el.style.zIndex !== z) el.style.zIndex = z;
