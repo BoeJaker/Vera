@@ -1,10 +1,12 @@
 """Run ONE census goal (by template + id) on prod and score it with the template's own
-file checks. python3 probe_goal.py <template> <goal_id> [budget]. Out: /tmp/probe4/<id>.json"""
+file checks. python3 probe_goal.py <template> <goal_id> [budget]. Out: ~/loop-census/probe4/<id>.json"""
 import json, os, re, sys, uuid
 P = os.path.join(os.path.dirname(os.path.abspath(__file__)), "probe.py")
 src = open(P).read()
-exec(src.split("# ── Set A goals")[0].replace('OUT = "/tmp/probe"', 'OUT = "/tmp/probe4"')
+exec(src.split("# ── Set A goals")[0]
      .replace("return (n.hour, n.minute) >= (23, 15)", "return False"))
+OUT = os.environ.get("CENSUS_PROBE_GOAL_OUT", "").strip() or os.path.expanduser("~/loop-census/probe4")
+os.makedirs(OUT + "/ev", exist_ok=True)
 # Score with the census's own evaluator (vera/census/quality.py, pure), loaded by path:
 # a hand copy here lacked all_of/contains/min_bytes and scored those checks None
 # (4 Oct 2026: build-multifile read 0.667 in every layout with all three functions present).

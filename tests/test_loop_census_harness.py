@@ -194,3 +194,39 @@ def test_the_goal_loop_acts_on_a_dead_restart():
     assert "restart_check(code_start, code_snapshot" in loop
     dead = loop[loop.index('if _restart.get("dead"):'):]
     assert dead.index("cancel_loop(sid)") < dead.index('status = "interrupted"') < dead.index("break")
+
+
+def test_probe_results_never_live_in_tmp():
+    """8 Oct 2026: a host reboot wiped /tmp and two nights of probe results with it."""
+    for name in ("probe.py", "probe_layout.py", "probe_goal.py", "probe_batch.sh"):
+        t = (D / "probes" / name).read_text(encoding="utf-8")
+        assert '"/tmp/' not in t and "'/tmp/" not in t and " /tmp/probe" not in t, name
+    assert 'expanduser("~/loop-census/probe")' in (D / "probes" / "probe.py").read_text(encoding="utf-8")
+    assert 'expanduser("~/loop-census/probe_layout")' in (D / "probes" / "probe_layout.py").read_text(encoding="utf-8")
+
+
+def _probe_layout_fn(name):
+    import ast as _ast
+    src = (D / "probes" / "probe_layout.py").read_text(encoding="utf-8")
+    fn = next(n for n in _ast.parse(src).body if isinstance(n, _ast.FunctionDef) and n.name == name)
+    ns = {}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "probe_layout.py", "exec"), ns)
+    return ns[name]
+
+
+def test_loop_seconds_is_first_event_to_done():
+    ls = _probe_layout_fn("loop_seconds")
+    ev = [{"type": "agent_loop_v6.triage_start", "ts": "2026-10-08T00:31:00Z"},
+          {"type": "agent_loop_v6.step_start", "ts": "2026-10-08T00:33:00Z"},
+          {"type": "agent_loop_v6.done", "ts": "2026-10-08T00:38:20Z"}]
+    assert ls(ev) == 440
+    assert ls(ev[:2]) is None and ls([]) is None
+
+
+def test_rescore_runs_nothing():
+    t = (D / "probes" / "probe_layout.py").read_text(encoding="utf-8")
+    assert 'sys.argv[1] == "--rescore"' in t
+    assert "if not RESCORE and not box_free():" in t
+    assert "proc = _Finished() if RESCORE else start(" in t
+    assert "while not RESCORE and time.time() - t0 < budget:" in t
+    assert "if not RESCORE:\n    stop(sid, proc)" in t
