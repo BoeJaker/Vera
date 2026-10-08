@@ -2290,6 +2290,8 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       <select id="cfgCvBack" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="column">In the grown menu</option><option value="behind">Behind the desk</option></select></div>
     <div class="row"><label style="min-width:70px" title="Where an open UI panel is drawn. Beside the chat: half the chat column, as before. On the desk: with a Desk canvas, a panel you open lands on the canvas as an item, sent behind the other items and filling the part of the desk the chat leaves free; its card's front button brings it over them, and pressing behind or front again puts it back among them.">UI panel</label>
       <select id="cfgCvPanel" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="beside">Beside the chat</option><option value="desk">On the desk</option></select></div>
+    <div class="row"><label style="min-width:70px" title="On a Desk canvas: when a reply lands, the items the turn is about (the canvas's relevance for that turn, best first) come in beside the chat. Off: the desk keeps its order - nothing moves unless you move it; new items join at the border.">Turn brings</label>
+      <select id="cfgCvBring" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Its items in, beside the chat</option><option value="off">Nothing - only I move things</option></select></div>
     <div class="row"><label style="min-width:70px" title="Whether an HTML item, and a code block that is a whole page, draw themselves or show their source. Drawing happens in a sandboxed frame — no network, no cookies, no reach into this page — and each item keeps its own switch either way.">HTML items</label>
       <select id="cfgCvPreview" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Draw them</option><option value="off">Show the source</option></select></div>
     <div class="row"><label style="min-width:70px" title="Where a thing that can live on the canvas is drawn while the canvas is open. On the canvas: the reply keeps a line saying where it went, and a click brings it into view there. In both: it is drawn in the reply as well. Close the canvas and everything comes back inline either way — nothing is ever removed from the reply.">Draw them</label>
@@ -6165,7 +6167,7 @@ IMPORTANT:
      canvas reads its own behaviour off itself rather than the page reaching inside it. Defaults are what the canvas
      does today: held alignment, HTML drawn, explode offered on code and prose. */
   const _CV_CFG_KEY='vera_canvas_cfg';
-  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'], cfgCvPanel:['panel-layer','beside'] };
+  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'], cfgCvPanel:['panel-layer','beside'], cfgCvBring:['bring-in','on'] };
   function _cvCfg(id){ const el=document.getElementById(id); const v=el&&el.value?String(el.value):''; return v||_CV_CFG[id][1]; }
   function _cvApplyCfg(){
     const el=document.querySelector('#canvasColumnBody vera-canvas');
@@ -7270,6 +7272,13 @@ IMPORTANT:
       // kept, then weighted by what is on screen - a message's relevance only holds while the message does
       _cvRelServer={ keys:(r.focus||[]).map(String), scores:r.scores||{} }; _cvFocusSig=''; _cvScreenFocus();
       if(o.apply!==false){ recalled=await _cvRecall(cv, r.focus||[], mid); if(recalled){ cv._rev=null; cv.refresh(); } } } }catch(_){}
+    /* THE TURN BRINGS ITS ITEMS IN (WS-U U-D6): a reply landed (the apply path - never a scroll or a focus change), the
+       canvas is a desk and the person has it on: the turn's focus set, best score first, comes in beside the chat */
+    try{ const cv=document.querySelector('#canvasColumnBody vera-canvas');
+      if(o.apply!==false&&r&&r.ok&&cv&&typeof cv.bringIn==='function'&&_cvCfg('cfgCvAlign')==='desk'&&_cvCfg('cfgCvBring')==='on'){
+        const sc=r.scores||{}, val=k=>{ const v=sc[k]; return v&&typeof v.score==='number'?v.score:0; };
+        const keys=(r.focus||[]).map(String).sort((a,b)=>val(b)-val(a));
+        if(keys.length){ const run=()=>{ try{ r.broughtIn=cv.bringIn(keys); }catch(_){} }; if(recalled) setTimeout(run, 400); else run(); } } }catch(_){}
     if(r&&typeof r==='object') r.recalledByChat=recalled;
     return r;
   }
@@ -21680,7 +21689,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _cmpChip,_cmpSync,_paOpen,_paCopy,
     _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvTellToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
-    _persistMediaCfg,_persistCanvasCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
+    _persistMediaCfg,_persistCanvasCfg,_cvRelevance,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
     setBase:url=>{BASE=url;},
