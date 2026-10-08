@@ -285,6 +285,7 @@ The `vera/models/` package defines provider-neutral, mostly non-executing contra
 | `inference_deployment.py` | `SQLiteInferenceDeploymentRegistry`: deployment lifecycle records and observations |
 | `inference_health.py` | Bounded, externally observed health evidence |
 | `inference_dispatch.py` | `plan_inference_dispatch`: validate one explicit route; never choose, execute, retry or fail over |
+| `inference_alias_route.py` | Durable, reversible per-alias binding of activation, admission, deployment observation and dispatch-plan evidence; never executes inference |
 | `inference_conformance.py` | Offline conformance checks for inference transcripts |
 | `onnx_inference_adapter.py`, `legacy_prediction_adapter.py`, `ml_workshop_inference_adapter.py` | Legacy ONNX / ML Workshop prediction adapters |
 | `ollama_inference_adapter.py`, `openai_inference_adapter.py`, `native_tensor_inference_adapter.py`, `native_tensor_runtime.py` | Runtime adapters (see [04](./04-ollama-cluster.md#17-portable-inference-compatibility), [21](./21-vllm.md#14-portable-inference-boundary)) |
@@ -328,6 +329,14 @@ An `InferenceProvider` emits a contiguous asynchronous event stream tied to the 
 The legacy ONNX adapter binds exactly one ONNX ModelPackage and legacy artifact identity to that contract. It accepts only the package's declared task and contracts, one inline JSON `X` input, no portable parameters, and non-streaming execution. The legacy runner is injected, so importing it does not import ONNX Runtime or load a model. Successful `{predictions, shape, provider}` results become one bounded portable output and a terminal event; malformed responses and backend failures become stable error codes, and cancellation remains cancellation. Request and result validation is shared with ML Workshop batch inference through `legacy_prediction_adapter.py`. `ml.onnx.run` and the dynamic capabilities do not route through this adapter yet.
 
 `plan_inference_dispatch(request, provider_id, deployment_id, as_of_ms, policy, providers, deployments)` validates one *explicitly named* route. It refuses when the deployment is unregistered, belongs to another provider or package, the provider is not eligible for the request and placement, the deployment is not `active`/`ready`, health evidence is absent, stale or mismatched between provider and deployment, no slot is available (when `require_available_slot`), or the queue is deeper than `max_queue_depth`. The returned plan records a bounded retry limit (0–3) and the retry owner. It never chooses among providers, executes, retries or fails over; selection stays with the caller.
+
+`InferenceAliasRoute` joins that plan to one exact admitted alias activation and
+active/ready deployment observation. Its SQLite registry applies compare-and-set
+binding, exact replay and revision-safe rollback, so an audit can answer which
+package, admission, provider health, policy and retry owner a canary alias was
+prepared to use. This remains control-plane evidence: creating or binding a route
+does not invoke a provider, change the ModelPackage alias, or redirect an existing
+ONNX, NLP, Ollama, vLLM, PyTorch or TensorFlow call.
 
 ### Deployed NLP and model inventory
 
