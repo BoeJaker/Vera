@@ -48,6 +48,7 @@ class RunLedger:
         self.on = enabled()
         self._opened = False
         self._marker = marker                  # tests pass one; the loop uses ledger_capabilities
+        self.states: List[Any] = []            # (decision_id, inputs) kept, when a test sink is used
 
     def _bg(self, coro) -> None:
         try:
@@ -78,7 +79,7 @@ class RunLedger:
         except Exception as e:
             log.debug("loop ledger mark: %s", e)
 
-    def _send(self, row: Dict[str, Any]) -> None:
+    def _send(self, row: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> None:
         if not self.on or row is None:
             return
         if not self._opened:
@@ -94,6 +95,23 @@ class RunLedger:
             self.sent += 1
         except Exception as e:
             log.debug("loop ledger: %s", e)
+            return
+        if inputs:
+            self._keep(row, inputs)
+
+    def _keep(self, row: Dict[str, Any], inputs: Dict[str, Any]) -> None:
+        """What the decision saw, to the training store (training_state); never raises or waits."""
+        try:
+            if self._sink is not None:
+                self.states.append((row.get("decision_id"), inputs))
+                return
+            try:
+                from Vera.vera.minds import training_state as TSR
+            except Exception:
+                from vera.minds import training_state as TSR  # type: ignore
+            TSR.put(row, inputs)
+        except Exception as e:
+            log.debug("loop ledger inputs: %s", e)
 
     @staticmethod
     async def _safe(row: Dict[str, Any]) -> None:
@@ -110,7 +128,8 @@ class RunLedger:
         except Exception:
             return "default"
 
-    def controller(self, step_id: Any, action: str, ctrl: Dict[str, Any], model: str = "") -> None:
+    def controller(self, step_id: Any, action: str, ctrl: Dict[str, Any], model: str = "",
+                   inputs: Optional[Dict[str, Any]] = None) -> None:
         try:
             d = LD.controller_decision(self.sid, step_id, action, ctrl or {}, model=model,
                                        minds_digest=self._digest_now(), origin=self.origin)
@@ -118,9 +137,10 @@ class RunLedger:
             log.debug("loop ledger controller: %s", e)
             return
         self.decisions.append(d)
-        self._send(d)
+        self._send(d, inputs)
 
-    def verify(self, step_id: Any, met: Any, attempt: int, model: str = "") -> None:
+    def verify(self, step_id: Any, met: Any, attempt: int, model: str = "",
+               inputs: Optional[Dict[str, Any]] = None) -> None:
         try:
             d = LD.verify_decision(self.sid, step_id, met, attempt, model=model,
                                    minds_digest=self._digest_now(), origin=self.origin)
@@ -130,9 +150,10 @@ class RunLedger:
         if d is None:
             return
         self.decisions.append(d)
-        self._send(d)
+        self._send(d, inputs)
 
-    def step_done(self, step_id: Any, done_by: str, attempt: int) -> None:
+    def step_done(self, step_id: Any, done_by: str, attempt: int,
+                  inputs: Optional[Dict[str, Any]] = None) -> None:
         try:
             d = LD.step_done_decision(self.sid, step_id, done_by, attempt,
                                       minds_digest=self._digest_now(), origin=self.origin)
@@ -142,9 +163,10 @@ class RunLedger:
         if d is None:
             return
         self.decisions.append(d)
-        self._send(d)
+        self._send(d, inputs)
 
-    def prestep(self, step_id: Any, gaps: List[Any], known_steps: int, model: str = "") -> None:
+    def prestep(self, step_id: Any, gaps: List[Any], known_steps: int, model: str = "",
+                inputs: Optional[Dict[str, Any]] = None) -> None:
         try:
             d = LD.prestep_decision(self.sid, step_id, gaps or [], known_steps, model=model,
                                     minds_digest=self._digest_now(), origin=self.origin)
@@ -152,22 +174,36 @@ class RunLedger:
             log.debug("loop ledger prestep: %s", e)
             return
         self.decisions.append(d)
-        self._send(d)
+        self._send(d, inputs)
 
-    def tier(self, tier: str, info: Dict[str, Any], model: str = "") -> None:
-        self._decide(LD.tier_decision, tier, info or {}, model)
+    def tier(self, tier: str, info: Dict[str, Any], model: str = "",
+             inputs: Optional[Dict[str, Any]] = None) -> None:
+        self._decide(LD.tier_decision, tier, info or {}, model, inputs)
 
-    def intent(self, intent: str, info: Dict[str, Any], model: str = "") -> None:
-        self._decide(LD.intent_decision, intent, info or {}, model)
+    def intent(self, intent: str, info: Dict[str, Any], model: str = "",
+               inputs: Optional[Dict[str, Any]] = None) -> None:
+        self._decide(LD.intent_decision, intent, info or {}, model, inputs)
 
-    def _decide(self, build, answer, info, model) -> None:
+    def intent_shadow(self, rec: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> None:
+        """The zero-shot intent beside the live one (mode=shadow); never judged by run_outcomes."""
+        try:
+            d = LD.intent_shadow_decision(self.sid, rec or {}, minds_digest=self._digest_now(), origin=self.origin)
+        except Exception as e:
+            log.debug("loop ledger intent shadow: %s", e)
+            return
+        if d is None:
+            return
+        self.decisions.append(d)
+        self._send(d, inputs)
+
+    def _decide(self, build, answer, info, model, inputs: Optional[Dict[str, Any]] = None) -> None:
         try:
             d = build(self.sid, answer, info, model=model, minds_digest=self._digest_now(), origin=self.origin)
         except Exception as e:
             log.debug("loop ledger %s: %s", getattr(build, "__name__", "decision"), e)
             return
         self.decisions.append(d)
-        self._send(d)
+        self._send(d, inputs)
 
     def finish(self, gate: Optional[Dict[str, Any]], steps_run: Optional[int] = None,
                fast_path: Optional[bool] = None) -> int:
