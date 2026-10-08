@@ -116,3 +116,47 @@ def test_a_read_in_another_process_is_credited_once(monkeypatch):
     asyncio.run(RE._credit("b"))
     asyncio.run(RE._credit("b"))                               # second read: no second credit
     assert [(o["decision_id"], o["detail"]["rank"]) for o in sent] == [("dec_x", 2)]
+
+
+def test_a_chat_recall_is_a_ranking_decision_and_used_memories_score_at_their_rank():
+    d = REC.chat_recall_decision("where did we get to with the lan scanner", ["a", "b", "c"], session_id="s1")
+    assert LC.check_decision(d) == [] and d["question_id"] == REC.CHAT_Q and d["answer"] == ["a", "b", "c"]
+    assert "scanner" not in str(d)
+    outs = REC.chat_used_outcomes(d["decision_id"], ["a", "b", "c"], ["c", "zz", "a", "a"])
+    assert [(o["source"], o["detail"]["rank"]) for o in outs] == [("chat.reply", 1), ("chat.reply", 3)]
+    assert REC.chat_used_outcomes(d["decision_id"], ["a"], []) == []
+
+
+def test_chat_turns_record_only_when_their_use_is_judged(monkeypatch):
+    from vera.fabric import retrieval_eval as RE
+    sent = []
+
+    async def fake_append(row):
+        sent.append(row)
+
+    async def fake_store(h, q):
+        return None
+    monkeypatch.setattr(RE, "_append", fake_append)
+    monkeypatch.setattr(RE, "_store_query", fake_store)
+    monkeypatch.setattr(RE, "_CHAT", {})
+
+    async def go():
+        RE.on_chat_recall("s1", "what is the proxmox layout", ["r1", "r2"])
+        assert sent == []                                  # nothing until the turn is judged
+        RE.on_chat_used("s1", RE.take_chat("s1"), ["r2"])
+        RE.on_chat_used("s1", RE.take_chat("s1"), ["r2"])  # already taken: nothing more
+        RE.on_chat_recall("s2", "q", ["x"])
+        RE.take_chat("s2")                                 # a turn that did not count: dropped
+        await asyncio.sleep(0.05)
+    asyncio.run(go())
+    assert [r["schema"] for r in sent] == [LC.DECISION_SCHEMA, LC.OUTCOME_SCHEMA]
+    assert sent[0]["question_id"] == REC.CHAT_Q and sent[1]["source"] == "chat.reply"
+    assert sent[1]["detail"]["rank"] == 2 and sent[1]["decision_id"] == sent[0]["decision_id"]
+    assert RE._CHAT == {}
+
+
+def test_memory_hooks_wire_the_chat_eval():
+    src = open(os.path.join(ROOT, "vera", "fabric", "memory_hooks.py"), encoding="utf-8").read()
+    assert "_reval.on_chat_recall(session_id, query," in src
+    assert "_chat_pending = _reval.take_chat(session_id)" in src
+    assert "_reval.on_chat_used(session_id, _chat_pending, used_ids)" in src

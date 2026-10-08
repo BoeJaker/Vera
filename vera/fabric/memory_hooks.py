@@ -72,6 +72,13 @@ try:                                    # who a recalled record came from; one h
     from Vera.vera.fabric import recall_core as _recall_core
 except ImportError:                     # pragma: no cover
     from . import recall_core as _recall_core
+try:                                    # chat turns into the retrieval eval set (FM-7.0 b)
+    from Vera.vera.fabric import retrieval_eval as _reval
+except Exception:                       # pragma: no cover
+    try:
+        from . import retrieval_eval as _reval
+    except Exception:
+        _reval = None
 try:                                    # was a recalled memory used in the reply (CU-M.2)
     from Vera.vera.fabric import memory_usage_core as _usage_core
 except ImportError:                     # pragma: no cover
@@ -989,6 +996,8 @@ async def get_agent_memory_context_v2(
 
     ranked = sorted(active.values(), key=lambda it: it.get("score", 0.0), reverse=True)
     _note_injected(session_id, ranked[:limit])
+    if _reval is not None:
+        _reval.on_chat_recall(session_id, query, [it.get("id") for it in ranked[:limit] if it.get("id")])
     return _chatmem_format(ranked[:limit])
 
 
@@ -1073,6 +1082,7 @@ async def record_turn_usage(session_id: str, reply: str, page_ids: Optional[List
     a census, probe or empty turn is not counted (memory_usage_core.counts_toward_use)."""
     global _USAGE_TABLE_READY
     given = _INJECTED.pop(session_id or "", {})
+    _chat_pending = _reval.take_chat(session_id) if _reval is not None else None   # recorded only if counted
     out: Dict[str, Any] = {"injected": 0, "used": 0}
     try:
         if not _usage_core.counts_toward_use(session_id, reply):
@@ -1108,6 +1118,8 @@ async def record_turn_usage(session_id: str, reply: str, page_ids: Optional[List
             # a faded memory the reply drew on is revived: back in the live store, its fade marker cleared (owner,
             # 2026-10-05: a useful memory must never be locked out for good)
             used_ids = [v["id"] for v in verdicts if v["used"]]
+            if _reval is not None:
+                _reval.on_chat_used(session_id, _chat_pending, used_ids)
             revived = []
             if used_ids:
                 try:
