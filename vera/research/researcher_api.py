@@ -5716,6 +5716,17 @@ def _planning_slots(remaining_after_level: int, per_node: int) -> int:
     return -(-int(remaining_after_level) // per_node) + 1
 
 
+def _curate_scored(scored: list, floor: int = 2, min_keep: int = 4) -> list:
+    """The sources to keep from (score, source) pairs sorted best first: every one scoring at
+    least `floor`, topped up with the best of the rest to `min_keep`. When few sources score
+    well the scores still rank them (four-minds Q2 #7: they used to be thrown away, keeping
+    every source unranked exactly when most were irrelevant)."""
+    good = [c for s, c in scored if s >= floor]
+    if len(good) < min_keep:
+        good = [c for _s, c in scored[:min_keep]]
+    return good
+
+
 def _merge_analyst_output(draft: str, result: str) -> str:
     """The analyst is asked to APPEND a verification note, not rewrite the report. A reply that is
     clearly just that note (much shorter than the draft, and without the draft's opening) is
@@ -5792,9 +5803,9 @@ async def research_node(
             if start >= 0 and end > start:
                 scores = json.loads(raw_scores[start:end])
                 scored = sorted(zip(scores[:len(cit_list)], cit_list), key=lambda x: -x[0])
-                # Keep score ≥ 2, always at least 4 results
-                good = [c for s, c in scored if s >= 2]
-                if len(good) >= 4:
+                # Keep score ≥ 2, always at least 4 results (_curate_scored)
+                good = _curate_scored(scored)
+                if good:
                     # Post-scoring: penalise low-scoring arXiv on non-academic nodes
                     # and replace them with fresh web searches
                     _dir_is_academic = (
