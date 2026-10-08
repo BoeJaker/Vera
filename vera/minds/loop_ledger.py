@@ -184,6 +184,18 @@ class RunLedger:
                inputs: Optional[Dict[str, Any]] = None) -> None:
         self._decide(LD.intent_decision, intent, info or {}, model, inputs)
 
+    def intent_shadow(self, rec: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> None:
+        """The zero-shot intent beside the live one (mode=shadow); never judged by run_outcomes."""
+        try:
+            d = LD.intent_shadow_decision(self.sid, rec or {}, minds_digest=self._digest_now(), origin=self.origin)
+        except Exception as e:
+            log.debug("loop ledger intent shadow: %s", e)
+            return
+        if d is None:
+            return
+        self.decisions.append(d)
+        self._send(d, inputs)
+
     def _decide(self, build, answer, info, model, inputs: Optional[Dict[str, Any]] = None) -> None:
         try:
             d = build(self.sid, answer, info, model=model, minds_digest=self._digest_now(), origin=self.origin)

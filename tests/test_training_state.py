@@ -70,3 +70,31 @@ def test_every_loop_decision_site_passes_its_inputs():
 def test_the_store_is_registered():
     src = open(os.path.join(ROOT, "vera", "capability_orchestration.py"), encoding="utf-8").read()
     assert 'os.path.join(_here, "minds/training_state.py"),' in src
+
+
+def test_the_zero_shot_intent_is_a_shadow_of_the_live_one():
+    from vera.minds import loop_decisions_core as LD
+    rows = []
+    rl = loop_ledger.RunLedger("sess-2", origin="user", sink=rows.append)
+    rl.intent("build", {"heuristic": "build", "llm": ""}, inputs={"goal": "make a timer app"})
+    rec = {"zeroshot": "build", "scores": {"build": 0.91, "research": 0.2, "action": 0.05}, "margin": 0.71,
+           "confidence": 0.91, "used": "build", "heuristic": "build", "llm": "", "agrees_used": True,
+           "agrees_llm": None}
+    rl.intent_shadow(rec, inputs={"goal": "make a timer app"})
+    rl.intent_shadow({"zeroshot": None}, inputs={"goal": "x"})          # no answer: nothing
+    live, shadow = rows
+    assert LC.check_decision(shadow) == []
+    assert shadow["question_id"] == live["question_id"] == LD.INTENT_Q
+    assert shadow["mode"] == "shadow" and shadow["implementation"] == "nlp.zeroshot" and shadow["p"] == 0.91
+    assert shadow["state_hash"] == live["state_hash"] and shadow["state_ref"] == live["state_ref"]
+    assert shadow["detail"]["agrees_used"] is True
+    assert len(rl.states) == 2
+    rl.finish({"complete": True, "missing": []})
+    assert not [r for r in rows if r.get("schema") == LC.OUTCOME_SCHEMA
+                and r["decision_id"] == shadow["decision_id"]]                # a shadow is never judged here
+
+
+def test_the_runner_records_the_intent_shadow():
+    src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
+    assert "_zs_rec = await _v6_intent_measure(_intent_zs_task" in src
+    assert '_dl.intent_shadow(_zs_rec, inputs={"goal": goal})' in src

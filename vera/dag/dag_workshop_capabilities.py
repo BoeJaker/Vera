@@ -14508,18 +14508,19 @@ async def _v6_zeroshot_intent(goal: str) -> Tuple[Optional[str], Dict[str, float
 
 
 async def _v6_intent_measure(task: Any, info: Dict[str, Any], used: str, *,
-                             sid: str, stream_id: str) -> None:
-    """Emit agent_loop_v6.intent_zeroshot beside the intent the run used. Best effort."""
+                             sid: str, stream_id: str) -> Optional[Dict[str, Any]]:
+    """Emit agent_loop_v6.intent_zeroshot beside the intent the run used, and return the record
+    (the runner keeps it as the shadow loop.intent decision). Best effort."""
     if task is None or _intent_zs is None:
-        return
+        return None
     try:
         zs, scores = await asyncio.wait_for(asyncio.shield(task), timeout=_ENTITY_NER_TIMEOUT_S)
     except Exception:
         if not task.done():
             task.cancel()
-        return
+        return None
     if not zs:
-        return
+        return None
     rec = _intent_zs.compare(zs, scores, used=used, heuristic=str(info.get("heuristic") or ""),
                              llm=str(info.get("llm") or ""))
     try:
@@ -14527,6 +14528,7 @@ async def _v6_intent_measure(task: Any, info: Dict[str, Any], used: str, *,
                           "stream_id": stream_id, **rec})
     except Exception:
         pass
+    return rec
 
 
 class _V6StepCritic:
@@ -26404,8 +26406,10 @@ async def cap_dag_agent_loop_v6(
     # Before .done, so the trace digest and the Loop Lab record include it.
     await _v6_entity_coverage(_goal_ents_task, deliverable or final, sid=sid,
                               stream_id=stream_id)
-    await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
-                             stream_id=stream_id)
+    _zs_rec = await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
+                                       stream_id=stream_id)
+    if _dl is not None and _zs_rec:
+        _dl.intent_shadow(_zs_rec, inputs={"goal": goal})
     if _dl is not None:
         _dl.finish(_gate_last, steps_run=len(results),
                    fast_path=(False if (enable_fast_path and tier == "single") else None))
