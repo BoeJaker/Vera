@@ -69,7 +69,7 @@ import re
 import time
 import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -84,7 +84,7 @@ def _to_dt(s) -> datetime:
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
         return datetime.now(timezone.utc)
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import httpx
 
@@ -123,6 +123,10 @@ try:                                                    # default-off public-ing
     from Vera.vera.fabric import memory_dual_write_runtime as _revision_canary
 except ImportError:                                     # pragma: no cover
     from . import memory_dual_write_runtime as _revision_canary
+try:                                                    # default-off manual split-write repair
+    from Vera.vera.fabric import memory_dual_write_repair_runtime as _revision_repair
+except ImportError:                                     # pragma: no cover
+    from . import memory_dual_write_repair_runtime as _revision_repair
 try:                                                    # the time a question asks about (CU-M.9)
     from Vera.vera.fabric import recall_scope_core as _scope_core
 except ImportError:                                     # pragma: no cover
@@ -1726,6 +1730,43 @@ class HybridMemoryStore:
     def backends(self) -> List[str]:
         return list(self._backends.keys())
 
+    async def repair_get(self, backend_name: str, record_id: str) -> Optional[MemoryRecord]:
+        """Read one exact backend for content-verified reconciliation."""
+        backend = self._backends.get(str(backend_name or ""))
+        if backend is None:
+            raise ValueError("unknown memory backend")
+        return await asyncio.wait_for(
+            backend.get(str(record_id or "")), _BACKEND_OP_TIMEOUT_S)
+
+    async def repair_store(self, backend_name: str, record: MemoryRecord) -> bool:
+        """Rebuild one exact backend without invoking the normal fan-out path."""
+        backend_name = str(backend_name or "")
+        backend = self._backends.get(backend_name)
+        if backend is None:
+            raise ValueError("unknown memory backend")
+        if _sbx_write_blocked():
+            _sbx_note("memory")
+            return False
+        expected_hash = record.compute_hash()
+        if record.content_hash and record.content_hash != expected_hash:
+            raise ValueError("memory repair content hash mismatch")
+        record.content_hash = expected_hash
+        if not record.keywords:
+            record.keywords = _extract_keywords(record.full_text or record.text)
+        if not record.text and record.full_text:
+            record.text = record.full_text[:500]
+        if backend_name == "chroma" and not record.embedding:
+            if not MEMORY_AUTO_EMBED:
+                return False
+            embedding = await embed_text(record.text or record.summary)
+            if not embedding:
+                return False
+            record.embedding = embedding
+            record.embedding_model = OLLAMA_EMBED_MODEL
+        result = await asyncio.wait_for(
+            backend.store(record), _BACKEND_OP_TIMEOUT_S)
+        return result is True
+
     async def store(self, record: MemoryRecord) -> Dict:
         """Store a record across all backends. Returns per-backend success map."""
         # Dev-sandbox write guard: the memory backends (Postgres/Chroma/Neo4j)
@@ -2482,6 +2523,40 @@ async def memory_store(
         observed_at=now_iso())
     return {"id": rec.id, "backends": result, "keywords": rec.keywords,
             "content_hash": rec.content_hash}
+
+
+@capability(
+    "memory.dual_write.reconcile", memory="off",
+    http_method="POST", http_path="/memory/dual-write/reconcile",
+    http_tags=["memory"],
+    description="Manually reconcile one previously journalled split Memory write. "
+                "Disabled unless VERA_MEMORY_RECONCILIATION_ENABLED=1. Repairs only "
+                "the receipt's exact unresolved revision or Postgres/Chroma/Neo4j "
+                "target, verifies canonical and native content identities, and never "
+                "moves read authority. Input: operation_id, attempt_id, timeout_s "
+                "(0..300). Output: classified target outcomes and convergence.",
+)
+async def memory_dual_write_reconcile(
+    operation_id: str, attempt_id: str, timeout_s: float = 30.0,
+    trace_id=None,
+):
+    async def load_native(backend_name: str, native_id: str):
+        record = await MEMORY.repair_get(backend_name, native_id)
+        return record.to_dict() if record is not None else None
+
+    async def write_native(backend_name: str, snapshot: Mapping[str, Any]):
+        allowed = {item.name for item in fields(MemoryRecord)}
+        record = MemoryRecord(**{
+            key: value for key, value in dict(snapshot).items() if key in allowed
+        })
+        return await MEMORY.repair_store(backend_name, record)
+
+    actor = str(_orch.CALLER_KIND.get("") or "user").strip().lower()
+    actor = {"mcp": "claude_code"}.get(actor, actor)
+    return await _revision_repair.run_manual_memory_reconciliation(
+        operation_id=operation_id, attempt_id=attempt_id, actor=actor,
+        native_loader=load_native, native_writer=write_native,
+        timeout_s=timeout_s)
 
 
 @capability(

@@ -162,6 +162,17 @@ def test_snapshot_tamper_is_rejected_before_revision_commit():
     assert calls == [("load-native", "native-1")]
 
 
+def test_revision_repair_requires_committed_postgres_authority():
+    evidence, revision = receipt(revision_outcome="failed", target=None)
+    raw = evidence.to_dict()
+    raw["native_outcomes"]["postgres"] = "failed"
+    calls = []
+    adapter = adapter_for(snapshot(), revision, calls)
+    with pytest.raises(ValueError, match="Postgres authority"):
+        run(adapter("revision", raw, "attempt-1:revision"))
+    assert calls == []
+
+
 def test_revision_tamper_is_rejected_before_backend_write():
     evidence, revision = receipt(target="chroma")
     different = revision_from_native_memory_snapshot({**snapshot(), "id": "native-2"})
