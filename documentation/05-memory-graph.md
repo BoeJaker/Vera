@@ -140,6 +140,7 @@ The system has four layers:
 | `vera/fabric/memory_dual_write_repairs.py` | Content-verified reconstruction and injected, target-isolated repair adapters |
 | `vera/fabric/memory_dual_write_repair_runtime.py` | Disabled-by-default policy/store binding for one explicitly requested reconciliation attempt |
 | `vera/fabric/memory_dual_write_readiness.py` | Payload-free rollback-rehearsal receipt and fail-closed activation-review assessment |
+| `vera/fabric/memory_dual_write_rollback.py` | Deterministic disabled-gate rehearsal and provenance-bound receipt producer |
 
 ---
 
@@ -449,6 +450,17 @@ read does not invoke repair, query a Memory backend or create a missing journal.
 The rehearsal must name the exact commit reported by the running process's
 provenance; a missing identity or stale-code receipt fails closed. Actual
 authority activation remains unavailable.
+
+`memory.dual_write.rollback_rehearse` produces the rollback evidence without
+calling a live Memory backend. It invokes the real canary with the canary forced
+off, an injected native sentinel and deliberately unusable canonical state; it
+then invokes the real reconciliation entry point with reconciliation forced off
+and injected callbacks that must remain untouched. Only when the native path is
+still available and both disabled gates return before canonical state or repair
+effects does it persist a provenance-bound receipt. A stable `rehearsal_id`
+makes exact replay effect-free, while reuse against another source commit
+conflicts. This proves the deployed disabled-path contract, not live backend
+health, traffic parity or permission to activate authority.
 
 ---
 
@@ -892,6 +904,7 @@ routes. All are declared `memory="off"` so retrieval never records itself.
 | `memory.store` | `POST /memory/store` | Persist a record (`text`!, `session_id`, `record_type`, `source_type`, `category`, `tags` csv, `summary`, `full_text`, `human_text`, `ai_output`, `model`, `capability_src`, `importance`, `parent_id`) |
 | `memory.dual_write.reconcile` | `POST /memory/dual-write/reconcile` | When explicitly enabled, retry one exact journalled split write by operation and attempt ID; never scans or schedules work |
 | `memory.dual_write.readiness` | `GET /memory/dual-write/readiness` | Read bounded, payload-free activation-review evidence; never repairs or moves authority |
+| `memory.dual_write.rollback_rehearse` | `POST /memory/dual-write/rollback-rehearse` | Run local disabled-gate sentinels and persist provenance-bound rollback evidence; invokes no Memory backend |
 | `memory.get` | `GET /memory/get` | One record by id |
 | `memory.forget` | `POST /memory/forget` | Soft delete (`archived=true`); emits `memory.forgotten` |
 | `memory.promote` | `POST /memory/promote` | Promote an event JSON or raw text |
@@ -1168,6 +1181,7 @@ line, so an empty session landing view cannot be mistaken for a useful graph.
 | `memory.promote` | — | Manually promote a Redis event or raw dict payload to persistent memory. |
 | `memory.dual_write.reconcile` | — | Manually retry one exact journalled split Memory write when reconciliation is explicitly enabled. Repairs only unresolved receipt targets and never moves read authority. |
 | `memory.dual_write.readiness` | — | Assess bounded payload-free dual-write, reconciliation and rollback evidence for a future activation review. Performs no repair and never grants authority. |
+| `memory.dual_write.rollback_rehearse` | — | Exercise the deployed disabled gates using local sentinels and persist a payload-free provenance-bound rollback receipt. Invokes no Memory backend. |
 | `memory.read` | — | Read ONE full record verbatim by id (ids come from memory.seek / fabric.query results). Checks the fabric first, then the session-memory store. Params: record_id (str!), offset (int 0 — character o… |
 | `memory.recall` | — | Smart recall: semantic search + automatic graph-neighbour expansion for rich context. WHEN TO USE: the best general-purpose memory retrieval — use this before answering questions that might benefit… |
 | `memory.recall_2nd_order` | — | Second-order recall: similar past USER questions → paired ASSISTANT answers → graph-neighbour knowledge attached to those answers. Inputs: query (str!), limit (int 5), graph_depth (int 1), neighbou… |

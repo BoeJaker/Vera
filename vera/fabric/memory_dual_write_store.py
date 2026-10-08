@@ -392,6 +392,17 @@ class MemoryDualWriteReceiptStore:
             return None
         return MemoryRollbackRehearsalReceipt.from_dict(json.loads(row["evidence_json"]))
 
+    def rollback_rehearsal(
+        self, rehearsal_id: str,
+    ) -> MemoryRollbackRehearsalReceipt | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT evidence_json FROM memory_canary_rollback_rehearsals "
+                "WHERE rehearsal_id=?", (str(rehearsal_id),)).fetchone()
+        if not row:
+            return None
+        return MemoryRollbackRehearsalReceipt.from_dict(json.loads(row["evidence_json"]))
+
     def readiness_evidence(self, *, limit: int = 100) -> dict[str, Any]:
         """Return bounded metadata only; never expose stored receipt payloads."""
         limit = int(limit)
