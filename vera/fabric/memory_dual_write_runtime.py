@@ -49,7 +49,14 @@ def _bounded_text(value: Any, limit: int) -> str:
     return str(value or "")[:limit]
 
 
-def _revision(snapshot: Mapping[str, Any]):
+def native_memory_content_hash(snapshot: Mapping[str, Any]) -> str:
+    """Return the exact hash used by ``MemoryRecord.compute_hash``."""
+    text = str(snapshot.get("full_text") or snapshot.get("text") or "")
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def revision_from_native_memory_snapshot(snapshot: Mapping[str, Any]):
+    """Build the canonical revision for one public ``memory.store`` input."""
     native_id = _bounded_text(snapshot.get("id"), 256).strip()
     if not native_id:
         raise ValueError("native memory snapshot requires an id")
@@ -76,8 +83,17 @@ def _revision(snapshot: Mapping[str, Any]):
         "tags": [_bounded_text(item, 256) for item in tags[:256]],
         "importance": importance,
         "parent_id": _bounded_text(snapshot.get("parent_id"), 256),
+        "session_id": _bounded_text(snapshot.get("session_id"), 256),
+        "trace_id": _bounded_text(snapshot.get("trace_id"), 256),
+        "updated_at": _bounded_text(snapshot.get("updated_at"), 64),
+        "ttl_seconds": int(snapshot.get("ttl_seconds") or 0),
+        "archived": bool(snapshot.get("archived", False)),
+        "language": _bounded_text(snapshot.get("language"), 64),
         "human_text": bool(snapshot.get("human_text", False)),
         "ai_output": bool(snapshot.get("ai_output", False)),
+        "model": _bounded_text(snapshot.get("model"), 512),
+        "capability": _bounded_text(snapshot.get("capability"), 512),
+        "source_url": _bounded_text(snapshot.get("source_url"), 4096),
     }
     return create_record_revision(
         namespace="memory.native", record_type="memory", logical_key=native_id,
@@ -101,7 +117,7 @@ async def store_public_memory_with_revision_canary(
     if not memory_revision_canary_enabled(env):
         return await native_write()
 
-    revision = _revision(snapshot)
+    revision = revision_from_native_memory_snapshot(snapshot)
     native_id = str(snapshot["id"])
     native_hash = _bounded_text(snapshot.get("content_hash"), 256).strip()
     if not native_hash:
@@ -109,8 +125,7 @@ async def store_public_memory_with_revision_canary(
         # The canary snapshot is intentionally captured before that native
         # call, so derive the same value without mutating the record or forcing
         # different behavior on the disabled path.
-        text = str(snapshot.get("full_text") or snapshot.get("text") or "")
-        native_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+        native_hash = native_memory_content_hash(snapshot)
     policy = RevisionPolicy.from_json(str(env.get(POLICY_ENV, "")))
     path = RevisionPath(
         RevisionStore(str(env.get(REVISION_PATH_ENV) or _default_revision_path())),
