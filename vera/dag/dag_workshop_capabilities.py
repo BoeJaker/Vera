@@ -22057,9 +22057,24 @@ _V6_FINALIZE_MIN_RAW = 400      # skip distillation below this — nothing to tr
 _V6_FINALIZE_OUT_MAX = 2500     # cap on a step's distilled output
 
 
+# The journal's fields, asked for in the same pass as the finalised result when the run keeps a
+# journal (four-minds Q2 #6: finalize and journal extraction used to read the same step output in
+# two model calls). _v6_journal_extract uses them instead of its own call.
+_V6_JOURNAL_FIELDS_SPEC = (
+    "  • key_outputs — the specific results/values/decisions this step produced that matter "
+    "for the GOAL (short strings; exact numbers/IDs/URLs verbatim; [] if none)\n"
+    "  • files — file or artifact PATHS it produced or wrote ([] if none)\n"
+    "  • entities — the key named things it touched: apps, services, hosts, tools, datasets, "
+    "people, domains ([] if none)\n"
+    "  • schema — if the output contains STRUCTURED data (parsed JSON, API response, CSV/DB "
+    "rows, a list of records), the exact field names AND one verbatim sample record/row "
+    "copied from the real output. \"\" if the output has no structured data.\n"
+    "  • note — ONE short line on what this step contributes to the goal\n")
+
+
 async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str, *,
                             model: str, instance_id: str, prefer_gpu: bool,
-                            session_id: str = "") -> None:
+                            session_id: str = "", with_journal: bool = False) -> None:
     """Distil ONE finished step's cycles into a finalised, RELEVANT-ONLY output.
 
     A step's raw `summary` is whatever the specialist last emitted (its `done`
@@ -22128,11 +22143,24 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
               + (f"\nSTRUCTURED OUTPUTS PRODUCED:\n{outs}\n" if outs else "")
               + f"\nRAW STEP OUTPUT:\n{raw[:_V5_DONE_SUMMARY]}\n\n"
                 "Write the finalised, relevant-only result for this step.")
+    _jx: Optional[Dict[str, Any]] = None
+    if with_journal:
+        sys = (sys.split(" Output the finalised result as plain text")[0]
+               + " ALSO extract the step's JOURNAL record - ONLY what a LATER step or the final answer "
+               "would reuse:\n" + _V6_JOURNAL_FIELDS_SPEC
+               + 'Respond ONLY with JSON: {"result":"<the finalised result>","key_outputs":[],"files":[],'
+               '"entities":[],"schema":"","note":""}')
     try:
         out = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False, timeout=_V5_UTILITY_TIMEOUT)
+            prefer_gpu=prefer_gpu, json_mode=bool(with_journal), timeout=_V5_UTILITY_TIMEOUT)
         out = _strip_think(out or "")[0].strip()
+        if with_journal:
+            obj = _extract_json(out) or {}
+            if not isinstance(obj, dict) or not str(obj.get("result") or "").strip():
+                return            # unreadable: raw summary kept, the journal makes its own call
+            out = str(obj["result"]).strip()
+            _jx = {k: obj.get(k) for k in ("key_outputs", "files", "entities", "schema", "note")}
     except Exception as e:
         log.debug("v6 step finalize failed: %s", e)
         return
@@ -22167,6 +22195,8 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     res["raw_summary"] = raw
     res["summary"] = out[:_V6_FINALIZE_OUT_MAX]
     res["finalized"] = True
+    if _jx is not None:
+        res["journal_extract"] = _jx      # accepted with the result; a rejected pass leaves none
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -22465,7 +22495,10 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
         rec["source"] = "authored"
         return rec
     summary = str(res.get("summary") or res.get("raw_summary") or "")
-    if len(summary) < 40:
+    _pre = res.get("journal_extract")
+    if isinstance(_pre, dict):
+        rec["source"] = "finalize"        # extracted in finalize's pass (Q2 #6): no second call
+    elif len(summary) < 40:
         return rec
     sys = (
         "You maintain a STRUCTURED JOURNAL of an agentic run. From ONE finished step's output, "
@@ -22491,14 +22524,17 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
               f"STEP GOAL: {str(step.get('goal',''))[:400]}\n\n"
               f"STEP OUTPUT:\n{summary[:_V5_DONE_SUMMARY]}\n\n"
               "Extract the journal record.")
-    try:
-        raw = await _safe_ollama_generate_dw(
-            prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
-        obj = _extract_json(_strip_think(raw or "")[0]) or {}
-    except Exception as e:
-        log.debug("v6 journal extract failed: %s", e)
-        obj = {}
+    if isinstance(_pre, dict):
+        obj = _pre
+    else:
+        try:
+            raw = await _safe_ollama_generate_dw(
+                prompt, system=sys, model=model, instance_id=instance_id,
+                prefer_gpu=prefer_gpu, json_mode=True)
+            obj = _extract_json(_strip_think(raw or "")[0]) or {}
+        except Exception as e:
+            log.debug("v6 journal extract failed: %s", e)
+            obj = {}
     if isinstance(obj, dict):
         def _strs(x, n, cap):
             if isinstance(x, str):
@@ -25696,7 +25732,7 @@ async def cap_dag_agent_loop_v6(
             return
         await _v6_finalize_step(step, res, goal, model=model,
                                 instance_id=instance_id, prefer_gpu=prefer_gpu,
-                                session_id=sid)
+                                session_id=sid, with_journal=journal_on)
         if res.get("finalized"):
             await emit_event({"type": "agent_loop_v6.step_finalized", "session_id": sid,
                               "stream_id": stream_id, "step_id": step["id"],
