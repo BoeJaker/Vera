@@ -338,6 +338,12 @@ prepared to use. This remains control-plane evidence: creating or binding a rout
 does not invoke a provider, change the ModelPackage alias, or redirect an existing
 ONNX, NLP, Ollama, vLLM, PyTorch or TensorFlow call.
 
+The default-off runtime resolver re-reads the current package alias, latest admitted
+activation, route receipt, deployment observation and provider health before creating
+a fresh request-specific dispatch plan. Disabled resolution touches none of those
+stores. Enabled resolution still does not execute inference; any changed identity or
+revision fails closed instead of silently reusing the earlier sample plan.
+
 ### Deployed NLP and model inventory
 
 NLP nodes publish a task-shaped inventory in their `/health` (`tasks: {task: {model, present, loaded, model_package?}}`), which discovery keeps intact when it enters placement. `nlp.models` projects those deployments through `nlp_inventory.project_nlp_inventory`: a content-verified export manifest supplies a strict `ModelPackage` (artifact relative store URIs, SHA-256 and size, task contracts, ORT provenance), and identical packages from several nodes are de-duplicated by `package_id`. Older deployments stay visible as unresolved candidates with the nodes on which they are present or loaded, marked `missing_content_verified_manifest`; they are never promoted from a model name into a package. Re-running the export process creates the richer manifest without changing request-time behaviour. Discovery never loads, downloads, executes, activates or hashes artifacts.
