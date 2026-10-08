@@ -58,6 +58,11 @@ import os
 # ── Thread cap — MUST be set before onnxruntime/torch import anything ────────
 # Sized for a 12-core LXC container shared with an ollama runner.
 NLP_THREADS = int(os.getenv("VERA_NLP_THREADS", "4") or 4)
+# How many inferences run at once. Each takes up to NLP_THREADS cores, so the default of one keeps the
+# cap above; inference still runs OFF the event loop, so /health and request intake answer while a model
+# works (RF-03: run synchronously inside async handlers, one long call blocked the whole server and the
+# router read a busy node as a dead one). Raise it only on a node with cores to spare.
+NLP_WORKERS = max(1, int(os.getenv("VERA_NLP_WORKERS", "1") or 1))
 for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
     # A CAP, not a default: setdefault() would let an environment that already
     # exported a larger value blow straight through the limit this server
@@ -591,12 +596,27 @@ def build_app():
             return {"error": f"{getattr(fn, '__name__', 'op')} failed: "
                              f"{type(e).__name__}: {e}"}
 
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    _infer = ThreadPoolExecutor(max_workers=NLP_WORKERS, thread_name_prefix="nlp-infer")
+    _load = {"inflight": 0, "served": 0}
+
+    async def _run(fn, *a):
+        """One model call in the inference pool (NLP_WORKERS at a time), never on the event loop."""
+        _load["inflight"] += 1
+        try:
+            return await asyncio.get_running_loop().run_in_executor(_infer, lambda: _guard(fn, *a))
+        finally:
+            _load["inflight"] -= 1
+            _load["served"] += 1
+
     @app.get("/health")
     async def health():
         # Deliberately does NOT load a model: health must answer while a cold
         # model is still loading, or the router reads a loading node as a dead
         # one and routes away from it for minutes.
         return {"ok": True, "service": "vera-nlp", "threads": NLP_THREADS,
+                "workers": NLP_WORKERS, "inflight": _load["inflight"], "served": _load["served"],
                 "providers": _providers(), "model_root": MODEL_ROOT,
                 "core": HAS_CORE, "component": component_record(),
                 "chunk": {"chars": CHUNK_CHARS, "overlap": CHUNK_OVERLAP},
@@ -617,7 +637,7 @@ def build_app():
         if not req.text:
             return {"error": "text is required"}
         t0 = time.monotonic()
-        out = _guard(run_ner, req.text, req.task, req.max_chars, req.overlap, req.labels, req.threshold)
+        out = await _run(run_ner, req.text, req.task, req.max_chars, req.overlap, req.labels, req.threshold)
         if isinstance(out, dict):
             out["elapsed_ms"] = round((time.monotonic() - t0) * 1000)
         return out
@@ -626,7 +646,7 @@ def build_app():
     async def classify(req: ClassifyReq):
         if not req.text:
             return {"error": "text is required"}
-        return _guard(run_classify, req.text, req.task)
+        return await _run(run_classify, req.text, req.task)
 
     @app.post("/zeroshot")
     async def zeroshot(req: ZeroShotReq):
@@ -634,7 +654,7 @@ def build_app():
             return {"error": "text is required"}
         if not req.labels:
             return {"error": "labels is required (a list of candidate labels)"}
-        return _guard(run_zeroshot, req.text, req.labels, req.multi_label)
+        return await _run(run_zeroshot, req.text, req.labels, req.multi_label)
 
     @app.post("/qa")
     async def qa(req: QaReq):
@@ -642,19 +662,19 @@ def build_app():
             return {"error": "question is required"}
         if not req.context:
             return {"error": "context is required"}
-        return _guard(run_qa, req.question, req.context)
+        return await _run(run_qa, req.question, req.context)
 
     @app.post("/langid")
     async def langid(req: TextReq):
         if not req.text:
             return {"error": "text is required"}
-        return _guard(run_langid, req.text)
+        return await _run(run_langid, req.text)
 
     @app.post("/embed")
     async def embed(req: EmbedReq):
         if not req.texts:
             return {"error": "texts is required (a list of strings)"}
-        return _guard(run_embed, req.texts)
+        return await _run(run_embed, req.texts)
 
     @app.post("/rerank")
     async def rerank(req: RerankReq):
@@ -662,7 +682,7 @@ def build_app():
             return {"error": "query is required"}
         if not req.documents:
             return {"error": "documents is required"}
-        return _guard(run_rerank, req.query, list(req.documents), req.top_k)
+        return await _run(run_rerank, req.query, list(req.documents), req.top_k)
 
     return app
 
