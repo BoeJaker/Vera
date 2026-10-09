@@ -67,3 +67,12 @@ def test_the_loop_records_each_finished_step():
     assert src.count("_tool_shortlist_step(sid, step, res, _dl.origin)") == 2
     orch = open(os.path.join(ROOT, "vera", "capability_orchestration.py"), encoding="utf-8").read()
     assert 'os.path.join(_here, "minds/tool_shortlist.py"),' in orch
+
+
+def test_capabilities_are_called_by_keyword():
+    """A @capability wrapper takes keyword arguments only: the positional call made every live shortlist record fail
+    silently (2026-10-09)."""
+    import re
+    for rel in (("vera", "minds", "tool_shortlist.py"), ("vera", "minds", "judge.py")):
+        src = open(os.path.join(ROOT, *rel), encoding="utf-8").read()
+        assert not re.findall(r"await cap_\w+\((?!\)|\w+=)", src), rel

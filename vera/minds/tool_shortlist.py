@@ -190,7 +190,7 @@ def on_step(run_id: str, step_id: Any, title: str, used: List[str], origin: str 
 
 async def _record(run_id: str, step_id: Any, title: str, used: List[str], origin: str) -> None:
     try:
-        res = await cap_caps_shortlist(title, k=TC.K, exclude_run=run_id)
+        res = await cap_caps_shortlist(text=title, k=TC.K, exclude_run=run_id)   # keyword only: a @capability wrapper
         names = [t["name"] for t in res.get("tools") or []]
         if not names or res.get("degraded"):
             return
