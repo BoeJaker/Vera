@@ -344,6 +344,14 @@ a fresh request-specific dispatch plan. Disabled resolution touches none of thos
 stores. Enabled resolution still does not execute inference; any changed identity or
 revision fails closed instead of silently reusing the earlier sample plan.
 
+The injected execution seam composes that resolver with the existing provider
+registry and `consume_inference`. It remains default-off and requires the caller
+to name the deployment's existing retry owner. It resolves the exact provider
+under the same placement and current-health checks, then performs one validated
+attempt. Streaming, cancellation, terminal usage and stable outage errors retain
+the portable contract; retry and fallback are deliberately not reimplemented.
+No production capability imports this seam yet.
+
 ### Deployed NLP and model inventory
 
 NLP nodes publish a task-shaped inventory in their `/health` (`tasks: {task: {model, present, loaded, model_package?}}`), which discovery keeps intact when it enters placement. `nlp.models` projects those deployments through `nlp_inventory.project_nlp_inventory`: a content-verified export manifest supplies a strict `ModelPackage` (artifact relative store URIs, SHA-256 and size, task contracts, ORT provenance), and identical packages from several nodes are de-duplicated by `package_id`. Older deployments stay visible as unresolved candidates with the nodes on which they are present or loaded, marked `missing_content_verified_manifest`; they are never promoted from a model name into a package. Re-running the export process creates the richer manifest without changing request-time behaviour. Discovery never loads, downloads, executes, activates or hashes artifacts.
