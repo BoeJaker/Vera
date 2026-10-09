@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from .inference_alias_route import SQLiteInferenceAliasRouteRegistry
-from .inference_contracts import InferenceContractConflict, InferenceRequest
+from .inference_contracts import (
+    InferenceCancellation, InferenceContractConflict, InferenceRequest,
+    InferenceTranscript, consume_inference)
 from .inference_deployment import SQLiteInferenceDeploymentRegistry
 from .inference_dispatch import InferenceDispatchPlan, plan_inference_dispatch
 from .inference_registry import InferenceProviderRegistry
@@ -66,3 +68,34 @@ def resolve_inference_alias_dispatch(
             or plan.health_evidence_id != route.health_evidence_id:
         raise InferenceContractConflict("portable alias dispatch evidence has changed")
     return plan
+
+
+async def execute_inference_alias_dispatch(
+        alias: str, request: InferenceRequest, *, enabled: bool,
+        retry_owner: str,
+        packages: SQLiteModelPackageRegistry,
+        routes: SQLiteInferenceAliasRouteRegistry,
+        providers: InferenceProviderRegistry,
+        deployments: SQLiteInferenceDeploymentRegistry,
+        as_of_ms: int,
+        cancellation: InferenceCancellation | None = None,
+        ) -> InferenceTranscript | None:
+    """Resolve and consume one injected provider attempt without retry/fallback."""
+    plan = resolve_inference_alias_dispatch(
+        alias, request, enabled=enabled, packages=packages, routes=routes,
+        providers=providers, deployments=deployments, as_of_ms=as_of_ms)
+    if plan is None:
+        return None
+    retry_owner = _identifier(retry_owner, "retry owner")
+    if retry_owner != plan.retry_owner:
+        raise InferenceContractConflict(
+            "portable alias execution caller does not own retries")
+    deployment = deployments.get(plan.deployment_id)
+    if deployment is None:
+        raise InferenceContractConflict("portable alias deployment disappeared")
+    provider = providers.resolve(
+        request, plan.provider_id, placements=deployment.placements,
+        require_ready=True, as_of_ms=as_of_ms)
+    # Exactly one call. Retry/fallback remains with the declared native owner.
+    return await consume_inference(
+        provider, request, cancellation=cancellation)

@@ -79,7 +79,8 @@ from .inference_dispatch import (
 from .inference_alias_route import (
     InferenceAliasRoute, SQLiteInferenceAliasRouteRegistry,
     define_inference_alias_route, inference_alias_route_from_dict)
-from .inference_alias_runtime import resolve_inference_alias_dispatch
+from .inference_alias_runtime import (
+    execute_inference_alias_dispatch, resolve_inference_alias_dispatch)
 
 __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActivationReceipt",
            "ModelAdmissionReceipt", "ModelDeploymentTarget",
@@ -116,6 +117,7 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "InferenceAliasRoute", "SQLiteInferenceAliasRouteRegistry",
            "define_inference_alias_route", "inference_alias_route_from_dict",
            "resolve_inference_alias_dispatch",
+           "execute_inference_alias_dispatch",
            "OpenAICompatibleInferenceProvider", "OpenAICompatibleTransport",
            "PromptMessage", "PromptPackage", "ProviderProfile", "TrainingRequest",
            "TrainingRun", "TrainingRuntime",
