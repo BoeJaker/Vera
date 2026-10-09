@@ -89,6 +89,12 @@ import json          # noqa: E402  (after the thread cap, deliberately)
 import logging       # noqa: E402
 import threading     # noqa: E402
 import time          # noqa: E402
+# Imported here, at module load, never inside build_app(): serve() starts the preload thread (which
+# imports onnxruntime/transformers, which import these) and then calls build_app(). An import inside
+# build_app() raced the preload thread for the per-module import locks and deadlocked startup
+# (cpu-246, 2026-10-09: the unit logged 'serving' but never bound 8771).
+import asyncio      # noqa: E402
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from typing import Any, Dict, List  # noqa: E402
 
 try:
@@ -603,8 +609,6 @@ def build_app():
             return {"error": f"{getattr(fn, '__name__', 'op')} failed: "
                              f"{type(e).__name__}: {e}"}
 
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor
     _infer = ThreadPoolExecutor(max_workers=NLP_WORKERS, thread_name_prefix="nlp-infer")
     _fast = (ThreadPoolExecutor(max_workers=1, thread_name_prefix="nlp-fast") if NLP_FAST_LANE else _infer)
     _load = {"inflight": 0, "served": 0, "fast_inflight": 0}
@@ -738,8 +742,11 @@ def _main():
     import uvicorn
     log.info("vera-nlp serving on %s:%d (threads=%d, models=%s)",
              args.host, args.port, NLP_THREADS, MODEL_ROOT)
+    # build the app BEFORE the preload thread starts, so none of its imports race the thread's (a deadlock
+    # on the per-module import locks left the unit 'serving' but never bound, 2026-10-09)
+    app = build_app()
     threading.Thread(target=preload, name="nlp-preload", daemon=True).start()
-    uvicorn.run(build_app(), host=args.host, port=args.port)
+    uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 
