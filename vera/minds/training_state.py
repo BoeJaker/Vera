@@ -52,6 +52,41 @@ def surfaces():
     return TS.enabled_surfaces(os.environ.get("VERA_TRAINING_STATE_SURFACES"))
 
 
+# Decisions about a whole goal also keep the goal's Frame (sense.frame: domains, patterns), the features an
+# intent/tier student learns from (four-minds FM-1.3 -> student state). Fetched in the background.
+FRAME_QUESTIONS = ("loop.intent", "loop.tier")
+FRAME_TIMEOUT_S = 5.0
+FRAME_KEYS = ("domain", "domains", "patterns", "degraded", "cards")
+
+
+def put_framed(decision: Optional[Dict[str, Any]], inputs: Optional[Dict[str, Any]]) -> None:
+    """put(), with the goal's Frame added to the inputs first, all in the background. Never raises."""
+    try:
+        if not decision or not inputs or not TS.wanted(decision, surfaces()):
+            put(decision, inputs)
+            return
+        task = asyncio.get_running_loop().create_task(_framed(decision, dict(inputs)))
+        _PENDING.add(task)
+        task.add_done_callback(_PENDING.discard)
+    except Exception as e:
+        log.debug("training state frame: %s", e)
+
+
+async def _framed(decision: Dict[str, Any], inputs: Dict[str, Any]) -> None:
+    fr = None
+    try:
+        from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
+        cap = CAPABILITY_REGISTRY.get("sense.frame") or {}
+        fn = cap.get("raw") or cap.get("func")
+        if fn and str(inputs.get("goal") or "").strip():
+            out = await asyncio.wait_for(fn(text=str(inputs["goal"]), kind="goal"), FRAME_TIMEOUT_S)
+            if isinstance(out, dict) and not out.get("error"):
+                fr = {k: out.get(k) for k in FRAME_KEYS}
+    except Exception as e:
+        log.debug("training state frame fetch: %s", e)
+    put(decision, dict(inputs, frame=fr) if fr else inputs)
+
+
 def put(decision: Optional[Dict[str, Any]], inputs: Optional[Dict[str, Any]]) -> None:
     """Keep what this decision saw, in the background. Never raises."""
     try:

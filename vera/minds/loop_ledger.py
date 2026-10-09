@@ -109,7 +109,10 @@ class RunLedger:
                 from Vera.vera.minds import training_state as TSR
             except Exception:
                 from vera.minds import training_state as TSR  # type: ignore
-            TSR.put(row, inputs)
+            if row.get("question_id") in getattr(TSR, "FRAME_QUESTIONS", ()) and inputs.get("goal"):
+                TSR.put_framed(row, inputs)       # + the goal's Frame (sense.frame), in the background
+            else:
+                TSR.put(row, inputs)
         except Exception as e:
             log.debug("loop ledger inputs: %s", e)
 

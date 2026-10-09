@@ -98,3 +98,35 @@ def test_the_runner_records_the_intent_shadow():
     src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
     assert "_zs_rec = await _v6_intent_measure(_intent_zs_task" in src
     assert '_dl.intent_shadow(_zs_rec, inputs={"goal": goal})' in src
+
+
+def test_goal_decisions_keep_the_goal_frame(monkeypatch):
+    TSR = pytest.importorskip("Vera.vera.minds.training_state", reason="needs the app")
+    import asyncio as _aio
+    seen = []
+
+    async def fake_frame(text="", kind="", **kw):
+        return {"domain": "build", "domains": [{"domain": "build", "score": 0.6}], "patterns": {"paths": []},
+                "degraded": False, "cards": "v1", "vector": [0.1]}
+    reg = {"sense.frame": {"raw": fake_frame}}
+    import Vera.vera.capability_orchestration as orch
+    monkeypatch.setattr(orch, "CAPABILITY_REGISTRY", reg)
+    monkeypatch.setattr(TSR, "put", lambda d, i: seen.append((d["decision_id"], i)))
+    monkeypatch.setattr(TSR, "surfaces", lambda: {"loop"})
+    d = {"decision_id": "dec_" + "1" * 32, "surface": "loop", "question_id": "loop.intent"}
+
+    async def go():
+        TSR.put_framed(d, {"goal": "write a timer app"})
+        for _ in range(5):
+            await _aio.sleep(0)
+    _aio.run(go())
+    (did, inputs), = seen
+    assert inputs["goal"] == "write a timer app" and inputs["frame"]["domain"] == "build"
+    assert "vector" not in inputs["frame"]                      # the 384-d vector is not stored
+
+
+def test_the_ledger_routes_goal_questions_through_the_frame():
+    src = open(os.path.join(ROOT, "vera", "minds", "loop_ledger.py"), encoding="utf-8").read()
+    assert 'TSR.put_framed(row, inputs)' in src
+    ts = open(os.path.join(ROOT, "vera", "minds", "training_state.py"), encoding="utf-8").read()
+    assert 'FRAME_QUESTIONS = ("loop.intent", "loop.tier")' in ts
