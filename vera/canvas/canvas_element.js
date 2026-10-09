@@ -2185,10 +2185,26 @@
   }
   /* what an item can be turned into, where the item itself can offer it: code with enough of it to have a shape, a
      passage long enough to have structure. The reader's setting narrows it; "never" leaves every other way in. */
+  const PROSE_LANGS = new Set(['text', 'txt', 'plain', 'plaintext', 'markdown', 'md', 'prose', 'none']);
+  function proseLike(t, lang) {
+    lang = String(lang || '').toLowerCase().trim();
+    if (PROSE_LANGS.has(lang)) return true;
+    if (lang) return false;
+    const s = String(t || ''); const lines = Math.max(1, s.split('\n').filter((l) => l.trim()).length);
+    const sym = (s.match(/[{}();=<>\[\]$#|&]/g) || []).length / Math.max(1, s.length);
+    const words = s.split(/\s+/).filter(Boolean).length / lines;
+    return sym < 0.015 && words >= 6 && /[.!?]["')\]]?(\s|$)/.test(s);
+  }
   function canExplode(b, offer) {
     offer = String(offer || 'both').toLowerCase(); if (offer === 'never' || !b || !b.key) return '';
     const c = b.content || {};
-    if (b.type === 'code' && typeof c.code === 'string' && c.code.split('\n').length >= 12) return 'code';
+    /* PROSE IN A FENCE IS PROSE (owner, 2026-10-09: "text output to the desk from the chat ... explode opens a code explode
+       area not prose and the text is prose"): the chat lands every fenced block as a code item, so a passage fenced as
+       text / markdown - or with no language that reads as sentences - is offered the prose explode, not the code one */
+    if (b.type === 'code' && typeof c.code === 'string') {
+      if (proseLike(c.code, c.lang || c.language)) return (offer === 'both' && c.code.length >= 400) ? 'prose' : '';
+      if (c.code.split('\n').length >= 12) return 'code';
+    }
     if (offer !== 'both') return '';
     const prose = (b.type === 'markdown' && typeof c.md === 'string') ? c.md
                 : (b.type === 'note' && typeof c.text === 'string') ? c.text : '';
@@ -3496,11 +3512,11 @@
       if (act === 'explode') {
         const b = this._blockOf(key); if (!b) return;
         const bound = ((this._doc && this._doc.blocks) || []).find((x) => x && x.type === 'explode' && x.content && String(x.content.binds || '') === key);
-        if (bound) return this.call('canvas.remove', bound.key ? { key: String(bound.key) } : { block_id: String(bound.id) });
+        if (bound) { if (this.deskAlign() && this._max === key) this._toggleMax(key); return this.call('canvas.remove', bound.key ? { key: String(bound.key) } : { block_id: String(bound.id) }); }
         const c = b.content || {}; const what = canExplode(b, this.explodeOffer());
         const content = what === 'code'
           ? { binds: key, title: String(c.filename || c.title || 'code') + ' — exploded' }
-          : { binds: key, text: String(c.md || c.text || '').slice(0, 20000), title: String(c.title || 'passage') + ' — exploded' };
+          : { binds: key, text: String(c.md || c.text || c.code || '').slice(0, 20000), title: String(c.title || c.filename || 'passage') + ' — exploded' };
         /* in the source's band and at the source's turn (owner, 2026-10-04: the explode "opens very far away from the
            other elements"): fusing is per band, so a diagram of a PINNED item - added to 'now', with no turn - was a card
            of its own placed where nothing anchors it, far from its code; fusing switched off did the same */
@@ -3509,6 +3525,9 @@
            it - the weakest first - to its header line, diagram and all. An item you opened is never folded by the column;
            once it is placed it is brought into view. */
         this._open.add(key); this._revealSoon(key);
+        /* on the desk the card grows to show its exploded view: it fills the free part of the desk, over the rest, until the
+           explode is closed (owner, 2026-10-09: "the element doesnt expand to display the explode viewer") */
+        if (this.deskAlign() && this._max !== key) this._toggleMax(key);
         return this.call('canvas.add', Object.assign({ kind: 'explode', key: 'explode:' + key, content, at: b.state === 'pinned' ? 'pinned' : 'now', size: 'l' },
           b.anchor && typeof b.anchor === 'object' ? { anchor: b.anchor } : {}));
       }
