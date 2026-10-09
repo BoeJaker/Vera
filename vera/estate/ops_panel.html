@@ -332,6 +332,15 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 [data-style="pixel"] polyline,[data-style="pixel"] polygon{stroke-width:3!important;stroke-linejoin:miter!important;stroke-linecap:butt!important;shape-rendering:crispEdges}
 [data-style="terminal"] .nd,[data-style="terminal"] .ndw,[data-style="terminal"] .abtn,[data-style="terminal"] .seg{border-radius:0}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+/* embedded in a graph tile (?embed=1): the controls, the plot and its cards; the rails behind the header's two buttons */
+.embtn{display:none}
+.embed .rt{height:100vh;min-height:0}
+.embed .hd{height:auto;min-height:38px;flex-wrap:wrap;row-gap:4px;padding:4px 8px}
+.embed .hd .wm,.embed .hd h1,.embed .axes,.embed .stage-hd{display:none}
+.embed .bd{padding:0 4px 4px;gap:6px}
+.embed .lstack,.embed .insp{display:none}
+.embed.show-l .lstack,.embed.show-i .insp{display:flex}
+.embed .embtn{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:24px;border:0;border-radius:6px;background:var(--s3);color:var(--t1);cursor:pointer;font:inherit}
 </style>
 </head>
 <body>
@@ -342,6 +351,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     <h1>Live operations</h1>
     <span class="live" id="liveChip"><i></i><span id="liveN">—</span> in flight</span>
     <span class="lbl mono" id="estateLine">reading the estate…</span>
+    <button class="embtn" id="bRail" title="The planes, the widgets, the pipes and the sources">&#9776;</button><button class="embtn" id="bInsp" title="The selected node, in full">&#9432;</button>
     <div class="sp"></div>
     <div class="seg"><button id="b2d" class="on">2D</button><button id="b3d">3D</button></div>
     <div class="seg" id="segLayout"><button id="bStack" class="on" title="The planes as a stack, one above the other">Stacked</button><button id="bFlat" title="Every plane laid flat, side by side">All flat</button><button id="bOne" title="One layer at a time: the selected node's plane">One layer</button></div>
@@ -407,6 +417,11 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const px = (v) => v.toFixed(1) + 'px';
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+// embedded (a graph tile hosts the page: ?embed=1): the controls, the plot, its cards, the menu and the keys; the two rails
+// stand behind two buttons in the header and the view's settings are kept apart from the page's. ?ext=1: the host hands the
+// snapshot over (setSnapshot) instead of the page reading /ops/snapshot
+const Q = (() => { try { return new URLSearchParams(location.search); } catch (_) { return new URLSearchParams(''); } })(), EMBED = Q.get('embed') === '1', EXT = Q.get('ext') === '1', VKEY = EMBED ? 'vera:ops:view:embed' : 'vera:ops:view';
+if (EMBED) document.documentElement.classList.add('embed');
 const PCOL = { client: 'var(--dv5)', work: 'var(--ac)', core: 'var(--dv1)', service: 'var(--dv6)', runtime: 'var(--dv3)', host: 'var(--dv4)', edge: 'var(--dv2)' };
 const KCOL = { 'llm.generate': 'var(--dv1)', 'embed': 'var(--dv6)', 'cap call': 'var(--dv3)', 'fabric write': 'var(--dv2)', 'git op': 'var(--dv4)', 'background': 'var(--dv7)' };
 const LCOL = { req: 'var(--dv3)', data: 'var(--dv6)', runs: 'var(--dv1)', repo: 'var(--dv4)', mesh: 'var(--dv2)' };
@@ -424,9 +439,10 @@ const S = { view: '2d', layout3d: 'stack', focus: null, pipes: true, widgets: tr
   snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '', seenN: {}, seenW: {}, enterKey: '', rt: null, moved: false, active: false };
 // the widget overrides: {node: {off, items:[{k, s}]}} (an older {k, s, off} is read as one item)
 try { const w = JSON.parse(localStorage.getItem('vera:ops:widgets') || 'null'); if (w && typeof w === 'object') Object.keys(w).forEach((id) => { const o = w[id] || {}; S.wl[id] = Array.isArray(o.items) ? { off: !!o.off, items: o.items } : { off: !!o.off, items: o.k ? [{ k: o.k, s: o.s || 1 }] : null }; }); } catch (_) {}
-try { const v = JSON.parse(localStorage.getItem('vera:ops:view') || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (S.wsz === 1.3) S.wsz = 1.35; if (S.wsz === 1.6) S.wsz = 1.8; if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; if (['all', 'net', 'sec'].indexOf(v.lens) >= 0) S.lens = v.lens; S.active = !!v.active; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
+try { const v = JSON.parse(localStorage.getItem(VKEY) || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (S.wsz === 1.3) S.wsz = 1.35; if (S.wsz === 1.6) S.wsz = 1.8; if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; if (['all', 'net', 'sec'].indexOf(v.lens) >= 0) S.lens = v.lens; S.active = !!v.active; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
+if (Q.get('view') === '2d' || Q.get('view') === '3d') S.view = Q.get('view');   // a host opens the view it was asked for
 const saveW = () => { try { localStorage.setItem('vera:ops:widgets', JSON.stringify(S.wl)); } catch (_) {} };
-const saveV = () => { try { localStorage.setItem('vera:ops:view', JSON.stringify({ zgap: S.zgap, spread: S.spread, wsz: S.wsz, lbl: S.lbl, lens: S.lens, active: S.active })); } catch (_) {} };
+const saveV = () => { try { localStorage.setItem(VKEY, JSON.stringify({ zgap: S.zgap, spread: S.spread, wsz: S.wsz, lbl: S.lbl, lens: S.lens, active: S.active })); } catch (_) {} };
 const byId = () => { const m = {}; ((S.snap && S.snap.nodes) || []).forEach((n) => { m[n.id] = n; }); return m; };
 // the drawing engine (/ui/iso-lattice.js): the layout, the pipes, the iso widgets and the view; this page keeps its chrome and hands it hooks
 const LAT = window.VeraLattice.engine({ S, byId, PCOL, LCOL, KCOL, SC, wspec: (n) => wspec(n), lensCol: (n) => lensCol(n), lensDim: (n) => lensDim(n), lensTag: (n) => lensTag(n),
@@ -442,7 +458,7 @@ function staleCheck(v){ if (!v || PAGE_VER.indexOf('__') === 0 || v === PAGE_VER
   location.reload(); }
 // ── the snapshot ──
 async function load(refresh){
-  if (S.busy) return; S.busy = true;
+  if (S.busy || S.ext) return; S.busy = true;   // a host that hands the estate over keeps it
   try {
     const r = await fetch(BASE + '/ops/snapshot' + (refresh ? '?refresh=true' : ''), { cache: 'no-store' });
     const j = await r.json(); const c = j && j.content !== undefined ? j.content : j;
@@ -465,6 +481,15 @@ async function load(refresh){
 }
 
 // ── the widgets on a node: what it is, then its readings; the rail overrides the list ──
+// a host hands the estate over (?ext=1, a graph tile's own data): planes the page does not know take colours of their own
+// and stand switched on
+function setSnapshot(c){ if (!c || !Array.isArray(c.nodes)) return; S.ext = true;
+  const PAL = ['var(--dv1)', 'var(--dv3)', 'var(--dv6)', 'var(--dv4)', 'var(--dv2)', 'var(--dv5)', 'var(--dv7)', 'var(--ac)'];
+  (c.planes || []).forEach((pl, i) => { if (!PCOL[pl.id]) PCOL[pl.id] = PAL[i % PAL.length]; if (S.on[pl.id] == null) S.on[pl.id] = true; });
+  c.inflight = c.inflight || []; c.series = c.series || {}; c.links = c.links || []; c.domains = (c.domains && c.domains.length) ? c.domains : ['all'];
+  S.snap = c; S.err = ''; S.fp = '';
+  if (S.sel && !byId()[S.sel]) S.sel = null; if (!S.sel) S.sel = (c.nodes[0] || {}).id || null;
+  render(); S.fresh = false; }
 function wspec(n){ const o = S.wl[n.id]; if (o && o.off) return []; if (o && Array.isArray(o.items)) return o.items; return wdefaults(n); }
 // ── render ──
 function render(opts){
@@ -918,6 +943,29 @@ function clearRoute(){ if (!S.rt) return false; S.rt = null; lightRefresh(); ret
 document.addEventListener('dblclick', (e) => { const f = e.target.closest && e.target.closest('[data-floor]'); if (!f || S.view !== '3d') return; e.preventDefault(); S.focus = S.focus === f.dataset.floor ? null : f.dataset.floor; render(); });
 // Esc clears a lit route, else closes the node's card
 document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || S.cm || (e.target.matches && e.target.matches('input,textarea'))) return; if (clearRoute()) return; if (S.exp){ S.exp = null; render(); } });
+// THE KEYBOARD: arrows pan (shift + arrows turn the 3D view), + / - zoom, 0 fits everything, 2 / 3 the view, s / f / o stacked,
+// flat, one layer, w the widget size, l what stands on the planes, p pipes or chords, a active routes, n the lens, r reads again
+document.addEventListener('keydown', (e) => { if (e.ctrlKey || e.metaKey || e.altKey || S.cm) return; const t = e.target; if (t && t.matches && t.matches('input,textarea,select,[contenteditable],[contenteditable] *')) return;
+  const k = e.key, PAN = 60, act = (fn) => { e.preventDefault(); fn(); }, cyc = (sel, attr, L, cur) => { const b = document.querySelector('[' + attr + '="' + L[(L.indexOf(cur) + 1) % L.length] + '"]'); if (b) b.click(); };
+  if (k.indexOf('Arrow') === 0){
+    if (e.shiftKey && S.view === '3d') return act(() => { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 26) : S.tilt, A = S.azim == null ? 45 : S.azim;
+      if (k === 'ArrowLeft') S.azim = clamp(A - 4, 26, 64); else if (k === 'ArrowRight') S.azim = clamp(A + 4, 26, 64); else if (k === 'ArrowUp') S.tilt = clamp(T + 3, 4, 60); else S.tilt = clamp(T - 3, 4, 60); rafRot(); });
+    return act(() => { if (k === 'ArrowLeft') S.vx += PAN; else if (k === 'ArrowRight') S.vx -= PAN; else if (k === 'ArrowUp') S.vy += PAN; else S.vy -= PAN; applyZoom(); }); }
+  if (k === '+' || k === '=' || k === '-' || k === '_') return act(() => { const r = $('plot').getBoundingClientRect(); zoomAt(k === '+' || k === '=' ? 1.2 : 1 / 1.2, r.width / 2, r.height / 2); applyZoom(); });
+  if (k === '0') return act(() => { S.tilt = null; S.azim = null; render(); fitView(true); });
+  if (k === '2') return act(() => $('b2d').click()); if (k === '3') return act(() => $('b3d').click());
+  if (k === 's') return act(() => $('bStack').click()); if (k === 'f') return act(() => $('bFlat').click()); if (k === 'o') return act(() => $('bOne').click());
+  if (k === 'w') return act(() => cyc('', 'data-wsz', ['0.75', '1', '1.35', '1.8'], String(S.wsz)));
+  if (k === 'l') return act(() => cyc('', 'data-lbl', ['labels', 'both', 'widgets'], S.lbl));
+  if (k === 'n') return act(() => cyc('', 'data-lens', ['all', 'net', 'sec'], S.lens));
+  if (k === 'p') return act(() => $(S.pipes ? 'bDirect' : 'bPipes').click());
+  if (k === 'a') return act(() => $('bActive').click());
+  if (k === 'r') return act(() => $('bRefresh').click()); });
+// embedded: the plot's own mousedown keeps the focus where it was (it starts a drag), so a press anywhere in the page takes it -
+// the keys then reach the page inside its tile
+if (EMBED) document.addEventListener('pointerdown', () => { try { window.focus(); } catch (_) {} }, true);
+// embedded: the two rails behind the header's two buttons
+$('bRail').onclick = () => { document.documentElement.classList.toggle('show-l'); render(); }; $('bInsp').onclick = () => { document.documentElement.classList.toggle('show-i'); render(); };
 const v = $('pzv');
 v.addEventListener('mousedown', (e) => { if (e.button || e.target.closest((e.ctrlKey || e.metaKey) ? '.ndw,.wpk,button,input,textarea' : '.nd,.ndw,.wpk,button,input,textarea')) return;   // ctrl + drag rotates from anywhere on the plot, a chip included
   const rot = (e.ctrlKey || e.metaKey) && S.view === '3d';
@@ -940,10 +988,10 @@ window.addEventListener('message', (e) => { const d = e && e.data; if (!d || typ
   if (d.type === 'vera:style' && d.style){ document.documentElement.setAttribute('data-style', d.style); } });
 try { const q = new URLSearchParams(location.search).get('node'); if (q) S.sel = q; } catch (_) {}
 // the estate as this tab last saw it draws at once; the live one replaces it when it lands
-try { const last = JSON.parse(sessionStorage.getItem('vera:ops:last') || 'null'); if (last && Array.isArray(last.nodes)){ S.snap = last; S.err = ''; S.sel = S.sel || ((last.nodes.find((n) => n.status === 'run') || last.nodes[0] || {}).id || null); render(); S.fresh = false; } } catch (_) {}
-load(false);
+if (!EXT) try { const last = JSON.parse(sessionStorage.getItem('vera:ops:last') || 'null'); if (last && Array.isArray(last.nodes)){ S.snap = last; S.err = ''; S.sel = S.sel || ((last.nodes.find((n) => n.status === 'run') || last.nodes[0] || {}).id || null); render(); S.fresh = false; } } catch (_) {}
+if (EXT) S.ext = true; else load(false);
 setInterval(() => { if (!document.hidden && !S.drag && !(document.activeElement && document.activeElement.matches && document.activeElement.matches('input,textarea'))) load(false); }, 10000);
-window.VeraOps = { state: S, load, render, layout, setWidget, wspec, wdefaults, uiScale, applyZoom, routesFrom, termRoute, lensCol, capArgs };
+window.VeraOps = { state: S, load, setSnapshot, render, layout, setWidget, wspec, wdefaults, uiScale, applyZoom, routesFrom, termRoute, lensCol, capArgs };
 })();
 </script>
 </body>
