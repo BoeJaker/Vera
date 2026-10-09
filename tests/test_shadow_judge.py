@@ -146,3 +146,9 @@ def test_knn_vote_weights_neighbours_and_skips_its_own_run():
 def test_the_night_job_also_queues_the_knn_judge():
     src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
     assert 'name="decide.shadow.knn"' in src and "cap_decide_shadow_knn(question_id=q," in src
+
+
+def test_the_nightly_judge_runs_each_configured_model():
+    src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
+    assert 'DEFAULT_MODELS = "qwen3:4b-instruct-2507-q4_K_M,qwen3:0.6b"' in src
+    assert "for model in _models():" in src and '"model": model' in src
