@@ -78,11 +78,14 @@ ran = []          # (runner, file)
 node_free_at = time.time() + 0.3          # every node busy for the first 0.3 s
 calls = {"node_fail_once": True}
 
-async def host_shard(wtree, files, markers, timeout):
+async def host_shard(wtree, files, markers, timeout, **kw):
+    seen_host_kw.update(kw)
     await REAL_SLEEP(0.15)
     ran.extend(("host", f) for f in files)
     out = junit(files)
     return {"parsed": ut.parse_pytest_output(out), "out": out}
+seen_host_kw = {}
+real_host_shard = trc._host_shard
 trc._host_shard = host_shard
 async def archive(w): return b"tgz"
 trc._archive = archive
@@ -126,6 +129,43 @@ async def main():
     assert {"host", "n1", "n2", "n3"} <= runners, runners
     assert res["passed"] == len(FILES) and res["ok"], res["summary"]
     assert any(s.get("requeued") for s in res["pool"]["shards"]), "a failed chunk is requeued"
+    assert seen_host_kw.get("parallel") == 3, seen_host_kw     # host_parallel default
+
+    # a host chunk runs as `parallel` containers side by side, one combined result
+    started = []
+    ev._ut_sanitize = lambda paths, markers, extra: (paths.split(), "")
+    ev._ut_inner = lambda tokens: " ".join(tokens)
+    ev._ut_argv = lambda image, w, inner: ["docker", inner]
+    async def sh(argv, timeout=0):
+        started.append(time.time())
+        files = argv[1].split()
+        await REAL_SLEEP(0.1)
+        return {"out": junit(files, fail=("tests/test_007.py",)), "err": ""}
+    ev._sh = sh
+    nine = [f"tests/test_{i:03d}.py" for i in range(9)]
+    r = await real_host_shard("/wt", nine, "critical", 60, parallel=3,
+                              durations={"tests/test_000.py": 5.0})
+    assert len(started) == 3 and max(started) - min(started) < 0.08, "3 containers side by side"
+    p = r["parsed"]
+    assert (p["total"], p["failed"], p["rc"]) == (9, 1, 1), p
+    assert r["out"].count("__VERA_RC=") == 1
+    started.clear()
+    r1 = await real_host_shard("/wt", nine[:2], "critical", 60, parallel=1)
+    assert len(started) == 1 and r1["parsed"]["total"] == 2
+
+    # evolve.unittest.run through the pool: no pipeline record is written,
+    # the run is still recorded under the caller's pipeline id
+    ran.clear()
+    recorded = []
+    async def record(parsed, **kw): recorded.append(kw)
+    ev._record_unittest_run = record
+    saved = []
+    async def save(rec): saved.append(rec)
+    ev._save_pipeline = save
+    res2 = await trc.run_for_unittest("b", markers="critical", timeout=60, pipeline_id="pX")
+    assert res2 is not None and res2["passed"] == len(FILES), res2 and res2.get("summary")
+    assert saved == [], "no pipeline record touched"
+    assert recorded and recorded[-1]["pipeline_id"] == "pX", recorded
     print("ok", sorted(runners), len(res["pool"]["shards"]))
 asyncio.run(main())
 '''

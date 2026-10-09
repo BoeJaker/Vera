@@ -269,23 +269,38 @@ async def _node_slots(max_nodes: int) -> List[str]:
     return picked
 
 
-async def _host_shard(wt: str, files: List[str], markers: str, timeout: int) -> Dict[str, Any]:
+async def _host_shard(wt: str, files: List[str], markers: str, timeout: int,
+                      parallel: int = 1, durations: Optional[Dict[str, float]] = None
+                      ) -> Dict[str, Any]:
+    """A chunk on the host: `parallel` test containers side by side (split by
+    the recorded durations, each file in exactly one), one combined result. One
+    process per chunk made the host the slowest runner (2026-10-05 parity: nodes
+    88-99 s, host 133 s)."""
     ev = _ev()
-    tokens, err = ev._ut_sanitize(" ".join(files), markers, "")
-    if err:
-        return {"error": err}
-    argv = ev._ut_argv(ev.DEV_IMAGE, os.path.realpath(wt), ev._ut_inner(tokens))
-    res = await ev._sh(argv, timeout=timeout)
-    combined = ((res.get("out") or "") + "\n" + (res.get("err") or "")).strip()
-    if "__VERA_RC=" not in combined:
+    groups = core.shard(files, durations or {}, max(1, min(int(parallel or 1), len(files))))
+
+    async def one(g):
+        tokens, err = ev._ut_sanitize(" ".join(g), markers, "")
+        if err:
+            raise ValueError(err)
+        argv = ev._ut_argv(ev.DEV_IMAGE, os.path.realpath(wt), ev._ut_inner(tokens))
+        res = await ev._sh(argv, timeout=timeout)
+        return ((res.get("out") or "") + "\n" + (res.get("err") or "")).strip()
+    try:
+        outs = await asyncio.gather(*(one(g) for g in groups))
+    except ValueError as e:
+        return {"error": str(e)}
+    bad = [o for o in outs if "__VERA_RC=" not in o]
+    if bad:
         return {"error": "the host's test container did not run pytest",
-                "detail": combined[-800:]}
+                "detail": bad[0][-800:]}
+    combined = outs[0] if len(outs) == 1 else core.combine_outputs(outs)
     return {"parsed": ev._ut_parse(combined), "out": combined}
 
 
 async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critical",
                      timeout: int = 900, force: bool = False,
-                     keep_outputs: bool = False) -> Optional[Dict[str, Any]]:
+                     keep_outputs: bool = False, pipeline_id: str = "") -> Optional[Dict[str, Any]]:
     """The gate's run, sharded over the host's container and the nodes with
     room. Returns evolve.unittest.run's result shape, or None when the pool is
     off or does not apply (the caller then runs the tier as before)."""
@@ -359,7 +374,8 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
 
     async def on_host(c):
         t = time.time()
-        res = await _host_shard(wt, c["files"], markers, timeout)
+        res = await _host_shard(wt, c["files"], markers, timeout,
+                                parallel=cfg["host_parallel"], durations=durations)
         if res.get("error"):
             raise RuntimeError(res["error"] + " " + res.get("detail", ""))
         return {"parsed": res["parsed"], "out": res["out"], "runner": "host",
@@ -437,7 +453,7 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
     label = branch or "primary"
     await ev._audit("unittest.run", f"[{label}] {merged['summary']} (pool)", ok=merged["ok"])
     await ev._record_unittest_run(merged, branch=branch, markers=markers, paths="tests",
-                                  label=label, pipeline_id=rec.get("id", ""))
+                                  label=label, pipeline_id=rec.get("id", "") or pipeline_id)
     await emit_event({"type": "evolve.unittest.done", "branch": label, "ok": merged["ok"],
                       "passed": merged["passed"], "failed": merged["failed"],
                       "errors": merged["errors"], "pool": True})
@@ -450,7 +466,22 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
     return res
 
 
+async def run_for_unittest(branch: str, *, markers: str, timeout: int,
+                           pipeline_id: str = "") -> Optional[Dict[str, Any]]:
+    """evolve.unittest.run's whole-suite runs through the pool too: they were a
+    third of all runs and went to the host alone, beside the gates' host chunks
+    and without its lease (2026-10-09). No pipeline record is touched (an empty
+    rec); the run is still recorded under pipeline_id. None: run it as before."""
+    try:
+        return await run_pooled({}, branch, markers=markers, timeout=timeout,
+                                pipeline_id=pipeline_id)
+    except Exception as e:
+        log.warning("test pool failed for unittest.run, host run instead: %s", e)
+        return None
+
+
 _orch.TEST_POOL = run_pooled
+_orch.TEST_POOL_UNITTEST = run_for_unittest
 _orch.TEST_DURATIONS = record_durations
 
 
@@ -483,16 +514,22 @@ async def cap_test_pool_status(trace_id=None) -> Dict:
     memory="off",
     description="Configure the gate test pool. Inputs: enabled (bool - shard gate test "
                 "runs over the host's container and the nodes with room), max_nodes (int, "
-                "default 3), min_files (int - below this a run is not split, default 40). "
-                "Output: {ok, config}.",
+                "default 3), min_files (int - below this a run is not split, default 40), "
+                "chunks (int - chunks a run is split into, default 12), node_parallel / "
+                "host_parallel (int 1-8 - pytest processes per chunk on a node / on the "
+                "host, defaults 4 / 3). Output: {ok, config}.",
 )
 async def cap_test_pool_config_set(enabled: Optional[bool] = None, max_nodes: Optional[int] = None,
-                                   min_files: Optional[int] = None, trace_id=None) -> Dict:
+                                   min_files: Optional[int] = None, chunks: Optional[int] = None,
+                                   node_parallel: Optional[int] = None,
+                                   host_parallel: Optional[int] = None, trace_id=None) -> Dict:
     r = _orch.REDIS
     if r is None:
         return {"ok": False, "error": "no Redis"}
     cfg = await _pool_config()
-    for k, v in (("enabled", enabled), ("max_nodes", max_nodes), ("min_files", min_files)):
+    for k, v in (("enabled", enabled), ("max_nodes", max_nodes), ("min_files", min_files),
+                 ("chunks", chunks), ("node_parallel", node_parallel),
+                 ("host_parallel", host_parallel)):
         if v is not None:
             cfg[k] = v
     cfg = core.merge_pool_config(cfg)
