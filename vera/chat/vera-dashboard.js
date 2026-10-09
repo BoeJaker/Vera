@@ -2045,6 +2045,7 @@
       state: function () { return { name: state.name, order: state.order.slice(), hidden: Array.from(state.hidden), sizes: state.sizes, grid: state.grid }; }
     };
     grid._veraDash = ctl;
+    ROOM_GRIDS.push(grid); roomLate(grid);
     grid.dataset.vd = '1'; gridVars(); window.addEventListener('resize', gridVars);
     /* the grid's own width decides the tiles' sizes: follow it (a pane opening, the window, the LHM pushing it) */
     try { if (window.ResizeObserver) { var _lastW = 0; new ResizeObserver(function () { var gw = grid.clientWidth || 0; if (Math.abs(gw - _lastW) < 24) return; _lastW = gw; try { widgets().forEach(syncSize); } catch (e) {} }).observe(grid); } } catch (e) {}
@@ -2053,8 +2054,75 @@
     return ctl;
   }
 
+  /* ── THE DESK'S ITEMS OVER A PANEL (WS-U; owner-approved desk 2026-10-06: "if ui panels are made of widgets - could it
+     automatically move the widgets out of the way (optionally)"). A panel sent behind the desk's items is told where
+     they cover it - {type:'vera:desk:obstacles', rects:[{l,t,r,b}] as shares of this frame's view, makeRoom} - and
+     each grid gives its tiles explicit cells from VeraDesk.makeRoom: a covered tile moves to the free cell nearest its
+     place, takes a 1x1 compact face before it is ever left covered, and the rest stay put. An empty list, or makeRoom
+     off, hands every tile back to the flow exactly as it was. Nothing is saved: it is where the desk is, not a layout. */
+  var ROOM_GRIDS = [], ROOM_LAST = null;
+  /* a grid built after the desk spoke (the frame loads, then the dashboard draws its tiles) applies the last word */
+  function roomLate(grid) { setTimeout(function () { var L = ROOM_LAST; if (L && L.on && L.shares.length && grid.isConnected) roomNeed(function () { try { roomFor(grid, L.shares, true); } catch (e) {} }); }, 1200); }
+  function roomNeed(cb) {
+    if (window.VeraDesk && window.VeraDesk.makeRoom) return cb();
+    if (roomNeed.q) { roomNeed.q.push(cb); return; } roomNeed.q = [cb];
+    var s = document.createElement('script'); s.src = '/ui/desk-layout.js';
+    s.onload = function () { var q = roomNeed.q || []; roomNeed.q = null; q.forEach(function (f) { try { f(); } catch (e) {} }); };
+    s.onerror = function () { roomNeed.q = null; };
+    document.head.appendChild(s);
+  }
+  function roomClear(grid) {
+    Array.prototype.slice.call(grid.querySelectorAll(':scope > .widget[data-room]')).forEach(function (w) {
+      w.style.gridColumn = w.dataset.roomCol || ''; w.style.gridRow = w.dataset.roomRow || '';
+      delete w.dataset.room; delete w.dataset.roomCol; delete w.dataset.roomRow; w.classList.remove('vd-room-compact', 'vd-room-moved');
+    });
+    grid.removeAttribute('data-room');
+  }
+  function roomFor(grid, shares, on) {
+    roomClear(grid);                                            /* every tile measured where the flow puts it */
+    if (!on || !shares || !shares.length) return;
+    var tiles = Array.prototype.slice.call(grid.querySelectorAll(':scope > .widget')).filter(function (w) { return !w.classList.contains('hidden') && w.getClientRects().length; });
+    if (!tiles.length) return;
+    var cs = getComputedStyle(grid), cols = (cs.gridTemplateColumns || '').split(' ').filter(Boolean).length || GRID.cols;
+    var gap = parseFloat(cs.columnGap) || GRID.gap, g = grid.getBoundingClientRect();
+    /* the frame's view in the coordinates getBoundingClientRect uses here (a UI scale on <html> changes them) */
+    var dr = document.documentElement.getBoundingClientRect(), sc = window.innerWidth ? (dr.width / window.innerWidth) || 1 : 1;
+    var vw = window.innerWidth * sc, vh = window.innerHeight * sc;
+    var cw = (g.width - gap * (cols - 1)) / cols, rowH = parseFloat(cs.gridAutoRows) || GRID.row;
+    if (!(rowH > 4)) { var t0 = tiles[0].getBoundingClientRect(); rowH = t0.height || GRID.row; }
+    var list = tiles.map(function (w) { var r = w.getBoundingClientRect();
+      return { id: w.dataset.wid || ('t' + Math.round(r.left) + ':' + Math.round(r.top)), el: w,
+               w: Math.max(1, Math.min(cols, Math.round((r.width + gap) / (cw + gap)))), h: Math.max(1, Math.round((r.height + gap) / (rowH + gap))),
+               /* where it sits now - its home: a tile nothing covers stays exactly there */
+               c: Math.max(0, Math.round((r.left - g.left) / (cw + gap))), r: Math.max(0, Math.round((r.top - g.top) / (rowH + gap))) }; });
+    var obs = shares.map(function (b) { return { l: b.l * vw - g.left, t: b.t * vh - g.top, r: b.r * vw - g.left, b: b.b * vh - g.top }; });
+    var res = window.VeraDesk.makeRoom({ ox: 0, oy: 0, cols: cols, rows: 120, cw: cw, ch: rowH, gap: gap }, obs, list.map(function (x) { return { id: x.id, w: x.w, h: x.h, c: x.c, r: x.r }; }), { makeRoom: true });
+    /* tiles the dashboard draws later (its layout file, a refresh) are placed again with the same word */
+    if (!grid._roomMo && window.MutationObserver) { grid._roomMo = new MutationObserver(function () { clearTimeout(grid._roomT); grid._roomT = setTimeout(function () { var L = ROOM_LAST; if (L && L.on && L.shares.length) roomFor(grid, L.shares, true); }, 350); }); grid._roomMo.observe(grid, { childList: true }); }
+    var by = {}; res.forEach(function (x) { by[x.id] = x; });
+    var moved = 0;
+    list.forEach(function (x) { var p = by[x.id], w = x.el; if (!p) return;
+      w.dataset.roomCol = w.style.gridColumn || ''; w.dataset.roomRow = w.style.gridRow || ''; w.dataset.room = '1';
+      w.style.gridColumn = (p.c + 1) + ' / span ' + p.w; w.style.gridRow = (p.r + 1) + ' / span ' + p.h;
+      w.classList.toggle('vd-room-compact', !!p.compact); w.classList.toggle('vd-room-moved', !!p.moved); if (p.moved) moved++;
+      w.dataset.roomAt = x.c + ',' + x.r + ' ' + x.w + 'x' + x.h + ' -> ' + p.c + ',' + p.r; });   /* where it was and where it went */
+    grid.dataset.roomGrid = cols + ' cols · cell ' + Math.round(cw) + 'x' + Math.round(rowH) + ' · gap ' + gap;
+    grid.setAttribute('data-room', String(moved));
+  }
+  window.addEventListener('message', function (ev) {
+    var d = ev.data; if (!d || d.type !== 'vera:desk:obstacles' || ev.source !== window.parent) return;
+    var shares = Array.isArray(d.rects) ? d.rects : [], on = d.makeRoom !== false;
+    ROOM_LAST = { shares: shares, on: on };                     /* a grid that is built later applies it too */
+    var run = function () { ROOM_GRIDS.forEach(function (g) { try { if (g.isConnected) roomFor(g, shares, on); } catch (e) {} }); };
+    if (shares.length && on) roomNeed(run); else ROOM_GRIDS.forEach(function (g) { try { roomClear(g); } catch (e) {} });
+  });
+  (function () { try { var st = document.createElement('style');
+    st.textContent = '.widget.vd-room-compact{overflow:hidden!important;outline:1px dashed color-mix(in srgb,var(--acc,#5a9e8f) 60%,transparent);outline-offset:-1px}'
+      + '.widget.vd-room-moved{box-shadow:0 0 0 1px color-mix(in srgb,var(--acc,#5a9e8f) 45%,transparent)}';
+    (document.head || document.documentElement).appendChild(st); } catch (e) {} })();
+
   window.VeraDash = { init: init, migrate: migrate, flow: flow, arrange: arrange, sizeForSpan: sizeForSpan, spanFor: spanFor, panelRecord: panelRecord, GRID: GRID,
-    sizeLadder: sizeLadder, ladderSizes: ladderSizes, sample: sampleFor, withSample: withSample, slotAt: slotAt };
+    sizeLadder: sizeLadder, ladderSizes: ladderSizes, sample: sampleFor, withSample: withSample, slotAt: slotAt, roomFor: roomFor };
 
   /* ── <vera-dashboard layout="key"> (owner, 2026-09-27: "a lot of the uis need improving and bringing up to the standard of
      the chat ui, everything should be widgetised and highly polished, and configurable and reusable"). A page drops in a
