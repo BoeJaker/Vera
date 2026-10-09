@@ -2340,6 +2340,7 @@ async function loadInstancesFromAPI() {
         model:     (inst.models || [])[0] || '',
         available: inst.models || [],
         status:    inst.status === 'online' ? 'ok' : 'err',
+        backend:   inst.backend || 'ollama',
       };
     }
 
@@ -2353,7 +2354,9 @@ async function loadInstancesFromAPI() {
         opt.value = url;
         // Show name + tier + reachability
         const reach = info.status === 'ok' ? '' : ' ✗';
-        opt.textContent = `${info.label} · ${info.tier}${reach}`;
+        /* a node switched to vLLM: generation still routes through Vera; its Ollama is stopped */
+        const be = info.backend === 'vllm' ? ' · vLLM' : '';
+        opt.textContent = `${info.label} · ${info.tier}${be}${reach}`;
         if (info.status !== 'ok') opt.style.color = 'var(--accent5)';
         sel.appendChild(opt);
       }

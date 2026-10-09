@@ -595,8 +595,12 @@ if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
 <style>:root{--bg:#0d0f12;--bg1:#14181d;--bg2:#1a1f26;--border:#232a33;--border2:#2e3742;--fg:#d8dde3;
 --dim:#5f6975;--acc:#4a9eff;--acc2:#28c28a;--warn:#f5b341;--err:#ef5b5b}
 html,body{margin:0;background:var(--bg0,var(--bg));color:var(--fg);min-height:100%}</style></head>
-<body><vera-node-models section="__SECTION__"></vera-node-models>
-<script src="/ui/vera-ui.js"></script><script src="/ui/elements/node_models.js"></script></body></html>""").replace("__SECTION__", sec))
+<body>__BACKEND__<vera-node-models section="__SECTION__"></vera-node-models>
+<script src="/ui/vera-ui.js"></script><script src="/ui/elements/node_models.js"></script>
+<script src="/ui/elements/backend_switch.js"></script></body></html>""").replace("__SECTION__", sec)
+        # Node settings opens with each node's LLM backend and the switch (owner, 9 Oct 2026)
+        .replace("__BACKEND__", '<div style="padding:10px 10px 0"><vera-backend-switch></vera-backend-switch></div>'
+                 if sec == "settings" else ""))
 
 
 register_ui(

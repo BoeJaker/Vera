@@ -96,6 +96,19 @@ def _instance_url(instance_id: str) -> str:
     return (_instance(instance_id) or {}).get("url", "") or ""
 
 
+def _switched(instance_id: str) -> bool:
+    """Switched to vLLM (nodes.backend.switch): its Ollama is stopped on purpose."""
+    return (_instance(instance_id) or {}).get("backend") == "vllm"
+
+
+def _switched_error(instance_id: str) -> Optional[dict]:
+    """Ollama benchmarks must not target a node switched to vLLM."""
+    if _switched(instance_id):
+        return {"error": f"{instance_id} is switched to vLLM - Ollama benchmarks do not "
+                         "apply (Switch backend moves it back)"}
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PASSIVE OBSERVATION  — read the router's rolling per-request statistics, which
 # every real ollama_generate call already feeds. This is "benchmarking" from
@@ -653,6 +666,9 @@ async def _benchmark(instance_id: str, model: str, role: str = "all",
     url = _instance_url(instance_id)
     if not url:
         return {"error": f"unknown or URL-less Ollama node: {instance_id}"}
+    sw = _switched_error(instance_id)
+    if sw:
+        return sw
     if not (model or "").strip():
         return {"error": "model required"}
     roles = _roles_for(role)
@@ -825,6 +841,9 @@ async def cap_bench_run_start(instance_id: str = "", model: str = "", role: str 
                               trace_id=None):
     if not _instance_url(instance_id):
         return {"error": f"unknown Ollama node: {instance_id}"}
+    sw = _switched_error(instance_id)
+    if sw:
+        return sw
     if not (model or "").strip():
         return {"error": "model required"}
     rid = f"bench-{uuid.uuid4().hex[:8]}"
@@ -1159,7 +1178,14 @@ async def _build_node_perf() -> List[dict]:
 
     async def _one(iid: str, inst: dict) -> dict:
         url = inst.get("url", "")
-        ping, ps = await asyncio.gather(_ping_node(url), _ps_node(url))
+        vllm = inst.get("backend") == "vllm"
+        if vllm:
+            # switched to vLLM: its Ollama is stopped on purpose - do not probe it
+            ping = {"reachable": inst.get("status") == "online", "ping_ms": None,
+                    "version": ""}
+            ps = {"loaded": [], "loaded_vram_gb": 0.0}
+        else:
+            ping, ps = await asyncio.gather(_ping_node(url), _ps_node(url))
         h = hw.get(iid, {})
         vram = h.get("vram_gb")
         disk_free = h.get("models_disk_free_gb")
@@ -1170,6 +1196,7 @@ async def _build_node_perf() -> List[dict]:
             disk_total = h.get("disk_total_gb")
         return {
             "id": iid, "label": inst.get("label", iid), "url": url,
+            "backend": "vllm" if vllm else "ollama", "served_by": inst.get("served_by", ""),
             "enabled": inst.get("enabled", True), "has_gpu": inst.get("has_gpu", False),
             "priority": inst.get("priority", 0), "status": inst.get("status", ""),
             "hw": {"vram_gb": vram, "ram_gb": h.get("ram_gb"),
@@ -1374,6 +1401,9 @@ async def cap_bench_node_trace(instance_id: str = "", model: str = "",
     url = _instance_url(instance_id)
     if not url:
         return {"error": "unknown instance_id %r" % instance_id}
+    sw = _switched_error(instance_id)
+    if sw:
+        return sw
     host = await _ssh_host_for(instance_id)
     if not host:
         return {"error": "no SSH host mapped for this node — map one in the "
@@ -1573,6 +1603,9 @@ async def cap_bench_matrix_variants(instance_id: str = "", trace_id=None):
     url = _instance_url(instance_id)
     if not url:
         return {"error": "unknown or URL-less Ollama node: %s" % instance_id}
+    sw = _switched_error(instance_id)
+    if sw:
+        return sw
     try:
         async with httpx.AsyncClient(timeout=10, verify=_ssl()) as c:
             r = await c.get(url.rstrip("/") + "/api/tags")
@@ -1914,6 +1947,9 @@ async def cap_bench_matrix_start(instance_id: str = "", models: Any = None, ctxs
                                  trace_id=None):
     if not _instance_url(instance_id):
         return {"error": "unknown Ollama node: %s" % instance_id}
+    sw = _switched_error(instance_id)
+    if sw:
+        return sw
     ms = _matrix.normalise_models(models)
     if not ms:
         return {"error": "models required — one or more tags installed on the node"}

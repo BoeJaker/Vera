@@ -58,12 +58,13 @@ import shlex
 import httpx
 import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
-    capability, emit_event, now_iso, schedule,
+    APP, capability, emit_event, now_iso, schedule,
 )
 
 log = logging.getLogger("vera.nodes")
@@ -2971,7 +2972,9 @@ async def cap_nodes_ollama_settings(instance_ids: Optional[List[str]] = None, tr
             "has_gpu": bool(inst.get("has_gpu")), "enabled": inst.get("enabled", True),
             "priority": inst.get("priority"), "status": inst.get("status"),
             "num_thread": None if inst.get("has_gpu") else _node_threads(inst),
-            "num_thread_set": inst.get("num_thread")}
+            "num_thread_set": inst.get("num_thread"),
+            # serves vLLM now: its Ollama unit is stopped on purpose
+            "switched": iid in _switched_now()}
         hid = by_addr.get(addr)
         if not hid:
             row["error"] = "no stored SSH login for this address"
@@ -3017,6 +3020,10 @@ async def cap_nodes_ollama_settings_set(instance_id: str = "", num_thread: Optio
         return {"ok": False, "error": f"unknown instance {instance_id!r}", "known": sorted(insts)}
     if not dry_run and _orch.is_dev_sandbox():
         return {"ok": False, "error": "this is a dev sandbox: the Ollama nodes are prod's"}
+    if instance_id in _switched_now():
+        # applying restarts the Ollama unit - beside the vLLM server serving the node
+        return {"ok": False, "error": f"{instance_id} serves vLLM now; its Ollama settings "
+                                      "apply after it switches back to Ollama"}
     plan: Dict[str, Any] = {}
     errors: List[str] = []
     if num_thread is not None:
@@ -3164,8 +3171,182 @@ async def cap_nodes_backend_config(instance_id: str = "", trace_id=None) -> Dict
                                            if _backend_core.suggest_alias(model) else []),
         "extra_args": last.get("extra_args") if last.get("model") else
         _backend_core.suggest_extra(model, has_gpu),
-        "stands_in_for": last.get("stands_in_for") or []}
+        "stands_in_for": last.get("stands_in_for") or [],
+        "think_default": last.get("think_default", "") or ""}
     return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  nodes.backend.overview / embeddings / config.set - the Backend controls
+# ═════════════════════════════════════════════════════════════════════════════
+EMBED_PREFIX = "vllm-embed-"
+
+
+def _embed_servers() -> Dict[str, Any]:
+    return {k: v for k, v in _vllm_registry().items() if str(k).startswith(EMBED_PREFIX)}
+
+
+def _embedding_backend() -> str:
+    try:
+        pin = str((_orch._resolve_rule("embedding") or {}).get("pin") or "")
+    except Exception:
+        pin = ""
+    return "vllm" if pin.startswith("vllm:") else "ollama"
+
+
+async def _set_embedding_pin(pin: str) -> None:
+    """Only the embedding rule's pin, in the active profile (the rest untouched)."""
+    R = _orch.ROUTING
+    prof = R.setdefault("profiles", {}).setdefault(R.get("active_profile", "default"), {"rules": {}})
+    rules = prof.setdefault("rules", {})
+    rule = dict(rules.get("embedding") or _orch._resolve_rule("embedding") or {})
+    rule["pin"] = pin
+    rules["embedding"] = rule
+    await _orch._save_routing()
+
+
+@capability(
+    "nodes.backend.overview", memory="off", silent=True,
+    http_method="GET", http_path="/nodes/backend/overview", http_tags=["nodes"],
+    description="The Backend controls' data, without touching the nodes: each Ollama instance "
+                "(node) - what serves it now (ollama | vllm), its live status, its vLLM server's "
+                "model, thinking default and stand-in names, the vLLM setup it would switch with "
+                "- plus where embeddings run and the bulk switch job.",
+)
+async def cap_nodes_backend_overview(trace_id=None) -> Dict[str, Any]:
+    insts = getattr(_orch, "OLLAMA_INSTANCES", {}) or {}
+    vreg = _vllm_registry()
+    sw = set(_switched_now())
+    nodes = []
+    for iid in sorted(insts):
+        inst = insts[iid]
+        vid = _backend_core.vllm_of(iid, vreg) if iid in sw else ""
+        v = vreg.get(vid) if vid else None
+        g = (lambda o, k, d=None: o.get(k, d) if isinstance(o, dict) else getattr(o, k, d))
+        last = await _switch_config_load(iid)
+        nodes.append({
+            "instance": iid, "label": inst.get("label", iid), "url": inst.get("url"),
+            "has_gpu": bool(inst.get("has_gpu")),
+            "backend": "vllm" if iid in sw else "ollama",
+            "status": inst.get("status"), "served_by": vid,
+            "vllm": ({"status": g(v, "status"), "models": list(g(v, "models", []) or []),
+                      "think_default": g(v, "think_default", ""),
+                      "stands_in_for": list(g(v, "stands_in_for", []) or [])} if v else None),
+            "setup": last})
+    emb = _embed_servers()
+    return {"ok": True, "nodes": nodes,
+            "embeddings": {"backend": _embedding_backend(),
+                           "servers": [{"id": k, "status": (v.get("status") if isinstance(v, dict)
+                                                            else getattr(v, "status", ""))}
+                                       for k, v in emb.items()]},
+            "job": dict(_SWITCH_JOB) if _SWITCH_JOB else None}
+
+
+@capability(
+    "nodes.backend.embeddings", memory="off",
+    http_method="POST", http_path="/nodes/backend/embeddings", http_tags=["nodes"],
+    description="Move Vera's embeddings between Ollama and the vLLM embedding server(s) "
+                "(component vllm_embed, registered vllm-embed-<host>). To vLLM: starts each "
+                "embedding server, waits until it answers, then pins the embedding routing rule "
+                "to vLLM. To Ollama: unpins the rule first (traffic moves at once), then stops "
+                "the servers. Dry-run by default. Inputs: backend ('ollama'|'vllm'), dry_run.",
+    schema={"properties": {"backend": {"enum": ["vllm", "ollama"]}}},
+)
+async def cap_nodes_backend_embeddings(backend: str = "ollama", dry_run: bool = True,
+                                       trace_id=None) -> Dict[str, Any]:
+    if backend not in ("vllm", "ollama"):
+        return {"ok": False, "error": "backend must be vllm or ollama"}
+    servers = _embed_servers()
+    now = _embedding_backend()
+    plan = {"action": "noop" if now == backend else "switch", "to": backend,
+            "why": f"embeddings already on {backend}" if now == backend else "",
+            "servers": sorted(servers)}
+    # on Ollama already, but an embedding server still runs idle: Ollama stops it
+    _idle = [k for k, v in servers.items()
+             if (v.get("status") if isinstance(v, dict) else getattr(v, "status", "")) == "online"]
+    if backend == "ollama" and now == "ollama" and _idle:
+        plan.update(action="switch", why="stop the idle vLLM embedding server(s): " + ", ".join(sorted(_idle)))
+    if backend == "vllm" and not servers:
+        return {"ok": False, "plan": dict(plan, action="refuse",
+                                          why="no vLLM embedding server - install vllm_embed on a node"),
+                "error": "no vLLM embedding server"}
+    if dry_run:
+        return {"ok": True, "plan": plan, "dry_run": True}
+    if _orch.is_dev_sandbox():
+        return {"ok": False, "error": "refused in a dev sandbox - nodes belong to prod"}
+    run, lst = _rawcap("exec.ssh.run"), _rawcap("exec.ssh.hosts.list")
+    by_addr = ({h.get("host"): h.get("id") for h in ((await lst()) or {}).get("hosts", [])
+                if h.get("host") and h.get("id")} if lst else {})
+    out: Dict[str, Any] = {"ok": True, "plan": plan, "servers": {}}
+    if backend == "ollama":
+        await _set_embedding_pin("")
+    for vid, v in servers.items():
+        url = v.get("url") if isinstance(v, dict) else getattr(v, "url", "")
+        addr = urlparse(str(url or "")).hostname or ""
+        hid = by_addr.get(addr)
+        if not (run and hid):
+            out["servers"][vid] = {"ok": False, "error": "no SSH login for " + addr}
+            continue
+        if backend == "vllm":
+            cmd = ("systemctl enable --now vera-vllm_embed && for i in $(seq 1 90); do "
+                   "curl -sf -m 4 http://127.0.0.1:8002/v1/models >/dev/null && "
+                   "{ echo VERA_EMBED_UP; exit 0; }; sleep 4; done; echo 'not up'; exit 5")
+        else:
+            cmd = "systemctl disable --now vera-vllm_embed && echo VERA_EMBED_DOWN"
+        res = await run(command=f"bash -c {shlex.quote(cmd)}", host_id=hid, timeout=420) or {}
+        ok = ("VERA_EMBED_UP" if backend == "vllm" else "VERA_EMBED_DOWN") in (res.get("stdout") or "")
+        out["servers"][vid] = {"ok": ok, "error": "" if ok else (res.get("stderr") or res.get("stdout") or "")[-300:]}
+    if backend == "vllm":
+        if any(x.get("ok") for x in out["servers"].values()):
+            await _set_embedding_pin("vllm:*")
+        else:
+            out.update(ok=False, error="no embedding server came up - embeddings stay on Ollama")
+    out["embeddings"] = _embedding_backend()
+    await emit_event({"type": "nodes.backend.embeddings", "backend": out["embeddings"]})
+    return out
+
+
+@capability(
+    "nodes.backend.config.set", memory="off",
+    http_method="POST", http_path="/nodes/backend/config/set", http_tags=["nodes"],
+    description="Save the vLLM setup a node switches with (it does not switch): model, aliases, "
+                "extra_args, stands_in_for, think_default ('', 'on', 'off'). On a node serving "
+                "vLLM now, the stand-in names and thinking default apply at once. Inputs: "
+                "instance_id (str!) and those fields.",
+)
+async def cap_nodes_backend_config_set(instance_id: str = "", model: str = "",
+                                       aliases: Optional[List[str]] = None, extra_args: str = "",
+                                       stands_in_for: Optional[List[str]] = None,
+                                       think_default: str = "", trace_id=None) -> Dict[str, Any]:
+    insts = getattr(_orch, "OLLAMA_INSTANCES", {}) or {}
+    if instance_id not in insts:
+        return {"ok": False, "error": f"unknown node {instance_id!r}"}
+    cfg = {"model": (model or "").strip(), "aliases": list(aliases or []),
+           "extra_args": extra_args or "", "stands_in_for": list(stands_in_for or []),
+           "think_default": think_default if think_default in ("on", "off") else ""}
+    await _switch_config_save(instance_id, cfg)
+    applied: Dict[str, Any] = {}
+    if instance_id in _switched_now():
+        vid = _backend_core.vllm_of(instance_id, _vllm_registry())
+        si, th = _rawcap("vllm.instances.stand_in"), _rawcap("vllm.instances.think")
+        if vid and si:
+            applied["stands_in_for"] = await si(instance_id=vid, names=cfg["stands_in_for"])
+        if vid and th:
+            applied["think_default"] = await th(instance_id=vid, think=cfg["think_default"] or "default")
+    return {"ok": True, "instance": instance_id, "setup": cfg, "applied": applied}
+
+
+_BSW_EL = Path(__file__).resolve().parent / "backend_switch_element.js"
+
+
+@APP.get("/ui/elements/backend_switch.js", include_in_schema=False)
+async def _backend_switch_js():
+    from fastapi.responses import Response as _Resp
+    try:
+        body = _BSW_EL.read_text(encoding="utf-8")
+    except Exception:
+        body = "console.error('backend_switch_element.js not found')"
+    return _Resp(body, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -3195,7 +3376,8 @@ async def _switch_one_planned(iid: str, backend: str, *, force: bool, wait_s: in
     args = dict(instance_id=iid, backend=backend, force=force, wait_s=wait_s,
                 model=sug.get("model", ""), aliases=sug.get("aliases") or [],
                 extra_args=sug.get("extra_args", "") or "",
-                stands_in_for=sug.get("stands_in_for") or [])
+                stands_in_for=sug.get("stands_in_for") or [],
+                think_default=sug.get("think_default", "") or "")
     if backend == "vllm" and not args["model"]:
         return {"instance": iid, "ok": False, "error": "no model: none remembered and none in the store"}
     pre = await cap_nodes_backend_switch(**dict(args, dry_run=True))
@@ -3269,9 +3451,15 @@ async def cap_nodes_backend_switch_many(backend: str = "vllm",
     lst = _rawcap("exec.ssh.hosts.list")
     if lst:
         _SSH_HOSTS_CACHE[:] = ((await lst()) or {}).get("hosts", [])
+    # "All" means the whole LLM backend: embeddings follow the nodes (owner, 9 Oct
+    # 2026 - turning every node back to Ollama left the vLLM embedder serving)
+    with_embed = not instance_ids
     if dry_run:
         rows = [await _switch_one_planned(i, backend, force=force, wait_s=wait_s,
                                           install=install, dry_run=True) for i in ids]
+        if with_embed:
+            rows.append(dict(await cap_nodes_backend_embeddings(backend=backend, dry_run=True),
+                             instance="embeddings"))
         return {"ok": True, "dry_run": True, "backend": backend, "nodes": rows}
     if _SWITCH_JOB.get("state") == "running":
         return {"ok": False, "error": "a bulk switch is already running", "job": _SWITCH_JOB}
@@ -3279,7 +3467,8 @@ async def cap_nodes_backend_switch_many(backend: str = "vllm",
         return {"ok": False, "error": "refused in a dev sandbox - nodes belong to prod"}
     _SWITCH_JOB.clear()
     _SWITCH_JOB.update({"id": _orch.new_id()[:8], "backend": backend, "state": "running",
-                        "started_at": _orch.now_iso(), "queue": list(ids), "done": [],
+                        "started_at": _orch.now_iso(),
+                        "queue": list(ids) + (["embeddings"] if with_embed else []), "done": [],
                         "current": "", "finished_at": ""})
     await _switch_job_save()
 
@@ -3299,6 +3488,15 @@ async def cap_nodes_backend_switch_many(backend: str = "vllm",
                 await _switch_job_save()
                 await emit_event({"type": "nodes.backend.switch_many", "job": _SWITCH_JOB["id"],
                                   "instance": iid, "stage": "done", "ok": row.get("ok")})
+            if with_embed:
+                _SWITCH_JOB["current"] = "embeddings"
+                await _switch_job_save()
+                try:
+                    er = await cap_nodes_backend_embeddings(backend=backend, dry_run=False)
+                except Exception as e:
+                    er = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+                _SWITCH_JOB["done"].append(dict(er, instance="embeddings"))
+                await _switch_job_save()
         finally:
             _SWITCH_JOB.update(state="done", current="", finished_at=_orch.now_iso())
             await _switch_job_save()
@@ -3354,6 +3552,7 @@ async def cap_nodes_backend_switch(instance_id: str = "", backend: str = "vllm",
                                    extra_args: str = "", dry_run: bool = True,
                                    force: bool = False, wait_s: int = 900,
                                    stands_in_for: Optional[List[str]] = None,
+                                   think_default: str = "",
                                    trace_id=None) -> Dict[str, Any]:
     from Vera.vera.provisioning.components_capabilities import vllm_slot
     insts = getattr(_orch, "OLLAMA_INSTANCES", {}) or {}
@@ -3439,10 +3638,13 @@ async def cap_nodes_backend_switch(instance_id: str = "", backend: str = "vllm",
         # remembered, so switching back later is one click with the same settings
         await _switch_config_save(instance_id, {
             "model": model.strip(), "aliases": list(aliases or []), "extra_args": extra_args,
-            "stands_in_for": list(stands_in_for or [])})
+            "stands_in_for": list(stands_in_for or []), "think_default": think_default or ""})
         si = _rawcap("vllm.instances.stand_in")
         if si and stands_in_for:
             reg["stands_in_for"] = await si(instance_id=vid, names=list(stands_in_for))
+        th = _rawcap("vllm.instances.think")
+        if th and think_default in ("on", "off"):
+            reg["think_default"] = await th(instance_id=vid, think=think_default)
     out["registry"] = reg
     out["ok"] = True
     await emit_event({"type": "nodes.backend.switched", "instance": instance_id,

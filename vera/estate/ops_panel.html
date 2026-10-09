@@ -695,6 +695,7 @@ function metricsHtml(n){ const col = PCOL[n.plane], ser = (S.snap.series || {})[
   if (n.temp != null) bars.push(bar('temp', n.temp / 90 * 100, tempCol(n.temp), Math.round(n.temp) + '° of 83°'));
   const rg = regOf(n); if (rg) bars.push(bar('registered', rg.of ? rg.yes / rg.of * 100 : 0, regCol(rg), rg.yes + ' of ' + rg.of));
   const kv = [['status', n.status], ['in flight', n.inflight || 0], ['findings', n.errors || 0], ['pipes', degOf(n.id)]];
+  if (n.backend === 'vllm') kv.unshift(['backend', 'vLLM' + (n.served_by ? ' (' + n.served_by + ')' : '')]);
   if (n.conns != null) kv.push(['connections', n.conns]); if ((n.caps || []).length) kv.push([n.kind === 'ollama' ? 'models' : 'capabilities', n.caps.length]);
   if (n.p95_ms != null) kv.push(['p95', Math.round(n.p95_ms) + ' ms']);
   const key = ser.tps ? 'tps' : ser.cpu ? 'cpu' : ser.ping ? 'ping' : null, vals = key ? ser[key] : null, unit = key === 'tps' ? ' tok/s' : key === 'cpu' ? '%' : key === 'ping' ? ' ms' : '';

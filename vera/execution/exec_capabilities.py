@@ -4507,7 +4507,9 @@ async def cap_netscan_fabric_load_web(
     memory="off", silent=True,
     description="List LLM models available across all online Ollama instances. "
                 "Output: {models: [{name, instance_id, instance_label, has_gpu, "
-                "size_bytes, parameter_size}], instances: [...], default_model}.",
+                "size_bytes, parameter_size, backend}], instances: [...], default_model}. "
+                "A node switched to vLLM (backend='vllm') reports its vLLM server's "
+                "models instead of querying its stopped Ollama.",
 )
 async def cap_llm_models(trace_id=None) -> Dict:
     from Vera.vera import capability_orchestration as _co
@@ -4524,8 +4526,29 @@ async def cap_llm_models(trace_id=None) -> Dict:
             "status":   inst.get("status", "unknown"),
             "has_gpu":  bool(inst.get("has_gpu")),
             "latency_ms": inst.get("latency_ms", 0),
+            "backend":  inst.get("backend", "ollama"),
+            "served_by": inst.get("served_by", ""),
         })
         if inst.get("status") != "online":
+            continue
+        if inst.get("backend") == "vllm":
+            # switched to vLLM: its Ollama is stopped on purpose; the health
+            # cycle already holds the vLLM server's model list
+            for name in inst.get("models") or []:
+                if not name or (iid, name) in seen:
+                    continue
+                seen.add((iid, name))
+                models.append({
+                    "name":           name,
+                    "instance_id":    iid,
+                    "instance_label": inst.get("label", iid),
+                    "has_gpu":        bool(inst.get("has_gpu")),
+                    "size_bytes":     0,
+                    "parameter_size": "",
+                    "family":         "",
+                    "quantization":   "",
+                    "backend":        "vllm",
+                })
             continue
         try:
             async with httpx.AsyncClient(timeout=6) as c:
@@ -4550,6 +4573,7 @@ async def cap_llm_models(trace_id=None) -> Dict:
                     "parameter_size": details.get("parameter_size", ""),
                     "family":         details.get("family", ""),
                     "quantization":   details.get("quantization_level", ""),
+                    "backend":        "ollama",
                 })
         except Exception as e:
             log.debug("ollama tags fetch failed (%s): %s", iid, e)

@@ -1526,7 +1526,7 @@
     (d.nodes || []).forEach((n) => { if (!n) return; const m = n.machine || {}, key = n.ip || n.id;
       if (seen[key]) { seen[key].label += ' + ' + (n.label || n.id); return; }
       const on = m.label ? (m.label + (m.vmid != null ? ' (CT ' + m.vmid + ')' : '') + (n.host ? ' on ' + n.host.label : '')) : (n.ip || '');
-      seen[key] = one(n, String(n.label || n.id), on); rows.push(seen[key]); });
+      seen[key] = one(n, String(n.label || n.id) + (n.backend === 'vllm' ? ' · vLLM' : ''), on); rows.push(seen[key]); });
     (d.hosts || []).forEach((h) => { if (h) rows.push(one(h, String(h.label || h.ref) + ' · whole host', 'Proxmox host ' + (h.pve_node || ''))); });
     return rows; }
   function cellmapOf(d, want, allow) {
