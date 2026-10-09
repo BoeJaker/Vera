@@ -1603,8 +1603,12 @@ async def embed_text_outcome(text: str) -> Tuple[Optional[List[float]], str]:
     — records piled up in Postgres with no Chroma vector.
     """
     global _EMBED_FAILED_AT, _EMBED_SLOW_UNTIL
-    if not MEMORY_AUTO_EMBED or not text.strip():
+    if not MEMORY_AUTO_EMBED:
         return None, "skipped:off"
+    if not text.strip():
+        # an empty query is a listing (newest records), not a search: nothing to embed. Labelled apart from
+        # "off" so retrieval.timing does not read listings as the vector leg being disabled (FM-0.4, 2026-10-09)
+        return None, "skipped:empty"
     if _EMBED_FAILED_AT and (time.monotonic() - _EMBED_FAILED_AT) < _EMBED_RETRY_SECS:
         return None, "skipped:breaker"
     if _EMBED_SLOW_UNTIL and time.monotonic() < _EMBED_SLOW_UNTIL:
@@ -1648,7 +1652,7 @@ async def embed_text_outcome(text: str) -> Tuple[Optional[List[float]], str]:
 
 async def embed_text(text: str) -> Optional[List[float]]:
     """The query/record vector, or None. embed_text_outcome also says why there is none
-    (skipped:off|breaker|cooldown, timeout, unavailable, error) - the timing envelopes
+    (skipped:off|empty|breaker|cooldown, timeout, unavailable, error) - the timing envelopes
     need that to tell "no vector" apart from "nothing found"."""
     vec, _ = await embed_text_outcome(text)
     return vec
