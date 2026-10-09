@@ -1260,6 +1260,13 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-flash{animation:vcDeskFlash .8s ease-in-out 2}
   /* the end of a chat run on the desk: the run stops at the desk's edge and its item carries the theme's mark */
   :host([align="desk"]:not([desk-narrow])) .stage .it.run-target{box-shadow:inset 3px 0 0 var(--acc,#9b8dfa), 0 0 0 1px color-mix(in srgb, var(--acc,#9b8dfa) 45%, transparent)}
+  /* EVERY DESK CARD SHOWS ITS NAME (owner, 2026-10-09: "some elements added by the chat are not draggable on the desk"):
+     the Hover and Zen tiers hide a card's header until it is hovered and make it unclickable - on the desk that left
+     widget and table cards nameless, with nothing to take hold of. On the desk the header is always there, in the card's
+     flow, and it is the handle. */
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip):not(.ownhead) > .it-hd{position:relative!important;inset:auto!important;opacity:1!important;pointer-events:auto!important;visibility:visible!important}
+  /* resizing follows the hand: no size animation while the grip is held */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.resizing{transition:none!important}
   /* a redrawn card held at its last place (no animation), and a new one unseen until the desk has placed it */
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-hold{transition:none!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-new{opacity:0;transition:none!important}  @media (prefers-reduced-motion: reduce){:host([align="desk"]:not([desk-narrow])) .stage .it{transition:none}}
@@ -3270,7 +3277,9 @@
         const h = Math.max(40, r.h0 + (ev.clientY - r.y0) / (r.Z || 1)); r.h = h; r.el.style.height = h + 'px';
         const w = Math.max(120, r.w0 + (ev.clientX - r.x0) / (r.Z || 1)); r.w = w; r.el.style.width = w + 'px';
         r.el.classList.add('openin');
-        if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
+        /* on the desk only the card being resized moves while the grip is held (its widget follows it); the desk is
+           placed once, on the drop - re-placing every card on every move made the resize jitter and lag */
+        if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.deskAlign()) { try { this._liveLayout(); } catch (e) { /* optional */ } } else if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
         /* on the desk a card you sized stays where it is: grown, it was separated outward into the chip zone and came back
