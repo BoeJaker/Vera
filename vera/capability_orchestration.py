@@ -3624,7 +3624,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                            profile: Optional[str] = None,
                            role: Optional[str] = None,
                            request_stage: Optional[str] = None,
-                           meta_out: Optional[dict] = None) -> str:
+                           meta_out: Optional[dict] = None,
+                           logprobs: int = 0) -> str:
     # ── Identify caller and log the request ──────────────────────────────────
     # caller_override lets an intermediary cap (e.g. llm.generate) pass
     # through the true upstream caller rather than appearing as the caller.
@@ -3897,6 +3898,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         meta_out.update({"model": mdl, "instance": chosen})
     body   = {"model":mdl,"prompt":prompt,"stream":stream_cb is not None}
     if system:    body["system"]  = system
+    # Label scoring (four-minds FM-2): the top-N logprobs of each generated token come back in
+    # meta_out["logprobs"] (Ollama >= 0.12.11; the vLLM route does not return them).
+    if logprobs and int(logprobs) > 0:
+        body["logprobs"] = True
+        body["top_logprobs"] = max(1, min(20, int(logprobs)))
     if json_mode: body["format"]  = "json"
     # keep_alive keeps the model resident between calls (avoids cold-reload
     # latency that dominates slow single-call planning). Per-call override wins.
@@ -4192,7 +4198,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                             async for chunk in resp.aiter_bytes():
                                 err_body += chunk.decode("utf-8", errors="replace")
                             raise Exception(f"ollama returned {resp.status_code}: {err_body[:500]}")
-                        buf=[]; tbuf=[]; meta={}
+                        buf=[]; tbuf=[]; meta={}; lpbuf=[]
                         _last_beat = time.time()
                         # No-progress stall cap (see OLLAMA_STALL_TIMEOUT) — polls
                         # for the next line with a short timeout instead of a
@@ -4229,6 +4235,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                                     tbuf.append(d["thinking"])
                                     _last_progress = time.time()
                                     _gate_act["t"] = time.monotonic(); _gate_act["beats"] += 1
+                                if logprobs and d.get("logprobs"):
+                                    lpbuf.extend(d["logprobs"])
                                 if d.get("done"): meta = d
                             except Exception: pass
                             # A long but actively-progressing generation emits no
@@ -4272,6 +4280,8 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                         # believes it is complete.
                         if meta_out is not None:
                             _dr = str(meta.get("done_reason") or "")
+                            if logprobs:
+                                meta_out["logprobs"] = lpbuf
                             meta_out.update({"done_reason": _dr,
                                              "eval_count": eval_count,
                                              "truncated": _dr == "length",
@@ -12176,6 +12186,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "minds/switchboard_capabilities.py"),
         os.path.join(_here, "minds/ledger_capabilities.py"),
         os.path.join(_here, "minds/training_state.py"),
+        os.path.join(_here, "minds/judge.py"),
         os.path.join(_here, "minds/label_capabilities.py"),
         os.path.join(_here, "minds/sense_capabilities.py"),
         os.path.join(_here, "minds/baseline_capabilities.py"),
