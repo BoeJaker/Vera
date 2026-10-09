@@ -192,3 +192,44 @@ def agreement(pairs: List[Tuple[str, str, Optional[float]]], positive: Optional[
     auc = (sum((x > y) + 0.5 * (x == y) for x in pos for y in neg) / (len(pos) * len(neg))) if pos and neg else None
     return {"n": n, "agreement": round(agree, 3), "auc": None if auc is None else round(auc, 3),
             "live_positive": len(pos), "live_negative": len(neg)}
+
+
+def true_label(question_id: str, live_answer: Any, outcome_label: Any) -> Optional[str]:
+    """The right answer of a binary question, from the live decision's outcome: the live answer when the
+    outcome says it was correct, the other label when it says wrong; None otherwise (no outcome, a choice
+    question, or an outcome that is not a verdict)."""
+    q = QUESTIONS.get(question_id) or {}
+    if q.get("kind") != "binary":
+        return None
+    labels = list((q.get("labels") or {}).values())
+    if live_answer not in labels or outcome_label not in ("correct", "wrong"):
+        return None
+    if outcome_label == "correct":
+        return live_answer
+    return next(l for l in labels if l != live_answer)
+
+
+def calibration(rows: List[Tuple[Optional[float], str]], positive: str, bins: int = 10,
+                thresholds: Iterable[float] = (0.5, 0.7, 0.8, 0.9)) -> Dict[str, Any]:
+    """rows: (shadow p(positive), true label). Accuracy at 0.5, expected calibration error, and precision /
+    coverage when the shadow answers only above each confidence threshold (the FM-2.5 promotion test)."""
+    rows = [(float(p), y) for p, y in rows if p is not None and y is not None]
+    n = len(rows)
+    if not n:
+        return {"n": 0}
+    acc = sum(1 for p, y in rows if (p >= 0.5) == (y == positive)) / n
+    ece = 0.0
+    for b in range(bins):
+        lo, hi = b / bins, (b + 1) / bins
+        inb = [(p, y) for p, y in rows if lo <= p < hi or (b == bins - 1 and p == 1.0)]
+        if inb:
+            conf = sum(p for p, _ in inb) / len(inb)
+            freq = sum(1 for _, y in inb if y == positive) / len(inb)
+            ece += len(inb) / n * abs(conf - freq)
+    at = {}
+    for t in thresholds:
+        sure = [(p, y) for p, y in rows if max(p, 1 - p) >= t]
+        right = sum(1 for p, y in sure if (p >= 0.5) == (y == positive))
+        at[str(t)] = {"coverage": round(len(sure) / n, 3),
+                      "precision": round(right / len(sure), 3) if sure else None}
+    return {"n": n, "accuracy": round(acc, 3), "ece": round(ece, 3), "at_confidence": at}

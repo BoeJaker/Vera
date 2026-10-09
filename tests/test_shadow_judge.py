@@ -111,3 +111,21 @@ def test_the_all_report_calls_the_capability_by_keyword():
     src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
     assert "cap_decide_shadow_report(question_id=qid, days=days)" in src
     assert "cap_decide_shadow_report(qid," not in src
+
+
+def test_true_label_from_the_outcome():
+    assert JC.true_label("loop.step_verify", "met", "correct") == "met"
+    assert JC.true_label("loop.step_verify", "met", "wrong") == "not_met"
+    assert JC.true_label("loop.step_verify", "met", "interrupted") is None
+    assert JC.true_label("loop.intent", "build", "correct") is None          # choice questions: no inversion
+    assert JC.true_label("loop.step_verify", "maybe", "correct") is None
+
+
+def test_calibration_precision_at_confidence():
+    rows = [(0.95, "met"), (0.9, "met"), (0.85, "not_met"), (0.2, "not_met"), (0.05, "not_met"), (0.6, "met")]
+    c = JC.calibration(rows, "met", thresholds=(0.5, 0.9))
+    assert c["n"] == 6 and c["accuracy"] == round(5 / 6, 3)
+    assert c["at_confidence"]["0.9"] == {"coverage": round(3 / 6, 3), "precision": 1.0}
+    assert c["at_confidence"]["0.5"]["coverage"] == 1.0
+    assert 0 <= c["ece"] <= 1
+    assert JC.calibration([], "met") == {"n": 0}
