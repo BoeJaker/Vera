@@ -623,6 +623,20 @@ function mount(host, o){
     if (S.moved) return;
     const nd = t.closest && t.closest('[data-node],[data-wnode]'); if (nd){ const n = ID()[nd.dataset.node || nd.dataset.wnode]; S.sel = n ? n.id : null; S.rt = S.sel; render(); if (n && o.onPick) o.onPick(n); return; }
     if (S.rt){ S.rt = null; render(); } });
+  // the keyboard, as on Live ops: arrows pan (shift + arrows turn the 3D view), + / - zoom, 0 fits, 2 / 3 the view, s / f
+  // stacked or flat, Esc lets go of a route or a focused plane
+  const cl = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  if (!(host.tabIndex >= 0)) host.tabIndex = 0;
+  host.addEventListener('keydown', (e) => { if (e.ctrlKey || e.metaKey || e.altKey) return; const k = e.key, PAN = 60, R = plot.getBoundingClientRect(); let done = true;
+    if (k.indexOf('Arrow') === 0 && e.shiftKey && S.view === '3d'){ const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 26) : S.tilt, A = S.azim == null ? 45 : S.azim;
+      if (k === 'ArrowLeft') S.azim = cl(A - 4, 26, 64); else if (k === 'ArrowRight') S.azim = cl(A + 4, 26, 64); else if (k === 'ArrowUp') S.tilt = cl(T + 3, 4, 60); else S.tilt = cl(T - 3, 4, 60); E.keepPivot(() => E.draw({ plotOnly: true })); }
+    else if (k === 'ArrowLeft'){ S.vx += PAN; E.applyZoom(); } else if (k === 'ArrowRight'){ S.vx -= PAN; E.applyZoom(); } else if (k === 'ArrowUp'){ S.vy += PAN; E.applyZoom(); } else if (k === 'ArrowDown'){ S.vy -= PAN; E.applyZoom(); }
+    else if (k === '+' || k === '=' || k === '-' || k === '_'){ E.zoomAt(k === '+' || k === '=' ? 1.2 : 1 / 1.2, R.width / 2, R.height / 2); E.applyZoom(); }
+    else if (k === '0'){ S.tilt = null; S.azim = null; render(); fit(true); } else if (k === '2' || k === '3'){ S.view = k + 'd'; render(); fit(); }
+    else if (k === 's' || k === 'f'){ S.layout3d = k === 's' ? 'stack' : 'flat'; S.focus = null; render(); fit(); }
+    else if (k === 'Escape'){ if (S.rt){ S.rt = null; render(); } else if (S.focus){ S.focus = null; render(); } else done = false; } else done = false;
+    if (done) e.preventDefault(); });
+  plot.addEventListener('mousedown', () => { try { host.focus({ preventScroll: true }); } catch (_) {} });
   root.addEventListener('dblclick', (e) => { const fl = e.target.closest && e.target.closest('[data-floor]'); if (fl && S.view === '3d'){ S.focus = S.focus === fl.dataset.floor ? null : fl.dataset.floor; render(); return; }
     const nd = e.target.closest && e.target.closest('[data-node],[data-wnode]'); if (nd && o.onOpen){ const n = ID()[nd.dataset.node || nd.dataset.wnode]; if (n) o.onOpen(n); } });
   // a fit wants a host with a size: until it has one the fit waits, and the first size it gets fits the view
