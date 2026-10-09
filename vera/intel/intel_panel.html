@@ -172,6 +172,9 @@ details.card>summary{cursor:pointer;font-weight:600}
         <h3>Session</h3><div id="acSession" class="small"></div>
         <h3>Alerts raised</h3><div id="acAlerts" class="small"></div>
         <h3>Research waiting for a session</h3><div id="acWanted" class="small"></div>
+        <h3>On Vera's activity timeline</h3>
+        <div class="small muted">Nights, assessments, alerts, briefs and actions - the same events the Activity page shows under Intelligence.</div>
+        <div style="height:540px;display:flex;flex-direction:column"><vera-activity-timeline scope="intel" style="flex:1;min-height:0"></vera-activity-timeline></div>
         <h3>Command</h3>
         <div class="row"><input type="text" id="acCmd" class="grow" placeholder="list | status | add &lt;topic&gt; :: &lt;search&gt; | sweep | brief | save &lt;url&gt; | help" style="width:auto"
           onkeydown="if(event.key==='Enter')runCmd()"><button class="btn" onclick="runCmd()">Run</button></div>
@@ -913,6 +916,7 @@ async function n8nRetire(dry) {
 <script src="/ui/widgets/widget_element.js"></script>
 <script src="/ui/vera-dashboard.js"></script>
 <script src="/ui/elements/intel_timeline.js"></script>
+<script src="/ui/elements/activity_timeline.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
 </body>
 </html>
