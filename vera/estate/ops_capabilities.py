@@ -39,8 +39,14 @@ READERS: Dict[str, float] = {
     "evolve.errors.list": 8.0, "bench.node_perf.history": 6.0, "estate.registration": 12.0,
     "activity.sessions": 6.0, "ide.remote.instances": 6.0, "vfs.peer.list": 8.0,
 }
+# a reader's arguments, when its defaults are not what the page needs: the event ring's last 500 (a few minutes of a
+# busy estate - the default 100 is under a minute) give each node its calls by the minute
+READER_ARGS: Dict[str, Dict[str, Any]] = {"obs.events": {"limit": 500}}
 CACHE_S = 5.0
-_cache: Dict[str, Any] = {"at": 0.0, "out": None, "inflight": None}
+DEGRADED_SHARE = 0.34       # a gather where a third of the readers failed is degraded: it does not replace a good one
+DEGRADED_KEEP_S = 120.0     # ... unless the good one is older than this, when the estate as it is now beats the past
+GATHER_MAX_S = 45.0         # a gather still running after this is abandoned, and the next poll starts another
+_cache: Dict[str, Any] = {"at": 0.0, "out": None, "inflight": None, "started": 0.0}
 
 
 _timing: Dict[str, int] = {}
@@ -117,7 +123,7 @@ def _connections() -> Dict[str, Any]:
 
 async def _gather() -> Dict[str, Any]:
     names = list(READERS)
-    answers = await asyncio.gather(*(_read(n, READERS[n]) for n in names))
+    answers = await asyncio.gather(*(_read(n, READERS[n], **READER_ARGS.get(n, {})) for n in names))
     src = dict(zip(names, answers))
     t0 = time.monotonic()
     src["ops.connections"] = await asyncio.to_thread(_connections)
@@ -130,16 +136,27 @@ async def _gather() -> Dict[str, Any]:
 
 
 def _start_gather() -> "asyncio.Future":
-    if _cache["inflight"] is None:
+    fut = _cache["inflight"]
+    if fut is not None and time.monotonic() - _cache["started"] > GATHER_MAX_S:
+        fut.cancel()            # stuck: let the next one start
+        _cache["inflight"] = fut = None
+    if fut is None:
         fut = asyncio.ensure_future(_gather())
         def _done(f: "asyncio.Future") -> None:
-            _cache["inflight"] = None
-            if not f.cancelled() and f.exception() is None:
-                _cache["out"] = f.result()
+            if _cache["inflight"] is f:
+                _cache["inflight"] = None
+            if f.cancelled() or f.exception() is not None:
+                return
+            out = f.result()
+            if core.keep_snapshot(out, _cache["out"], time.monotonic() - _cache["at"], DEGRADED_SHARE, DEGRADED_KEEP_S):
+                _cache["out"] = out
                 _cache["at"] = time.monotonic()
+            else:
+                _cache["out"] = dict(_cache["out"], held_over=f"the last gather lost {round(core.failed_share(out) * 100)}% of its readers; this is the one before")
         fut.add_done_callback(_done)
         _cache["inflight"] = fut
-    return _cache["inflight"]
+        _cache["started"] = time.monotonic()
+    return fut
 
 
 @capability(

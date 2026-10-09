@@ -491,24 +491,147 @@ def _requests(src: Mapping[str, Any], now: Optional[datetime], nodes: Dict[str, 
     return inflight, through, lat
 
 
-def _events(src: Mapping[str, Any], now: Optional[datetime]) -> Tuple[List[Dict[str, Any]], int]:
+ACTIVITY_MIN = 10           # a node's calls are counted over the last ten minutes of the event ring, or as much of it as the ring holds
+ACTIVITY_SLICES = 10        # ... in this many columns, oldest first: a busy estate fills 500 events in seconds, a quiet one in minutes
+CAP_OPEN_S = 300            # a call with no answer after five minutes was lost, not open
+FLOWS_SHOWN = 16            # open calls drawn as their own flows; the rest are a count
+_DONE = ("cap.ok", "cap.error", "cap.done", "cap.fail")
+_FAILED = ("cap.error", "cap.fail")
+# a capability's group -> the core node that carries it, when its arguments name no machine
+_GROUP_NODE: List[Tuple[str, str]] = [
+    (r"^(fabric|memory|knowledge|entity|vector|embed)", "core:fabric"),
+    (r"^background", "core:background"),
+    (r"^(evolve|sandbox|loops?|workshop|census|ci)$", "core:looplab"),
+    (r"^dream", "core:dream"),
+    (r"^mesh", "core:mesh"),
+    (r"^(sched|cron)", "core:scheduler"),
+    (r"^(ollama|llm|bench|models?|vllm)$", "core:router"),
+]
+_ARG = re.compile(r"\b(host_id|instance_id|instance|vmid|node_id)=([^,\s]+)")
+
+
+def _cap_target(e: Mapping[str, Any], M: Mapping[str, Any], nodes: Mapping[str, Any]) -> str:
+    """The node a capability call ran against: the machine, instance or guest its arguments name, else the core node
+    that carries its group, else the capability bus."""
+    group = str(e.get("group") or "")
+    for k, v in _ARG.findall(str(e.get("args_preview") or "")):
+        v = v.strip("'\"")
+        if k == "host_id":
+            for nid in (("docker:" + v) if group == "docker" else "", M.get("by_ssh", {}).get(v) or "", "dockerhost:" + v, "docker:" + v):
+                if nid and nid in nodes:
+                    return nid
+        elif k in ("instance", "instance_id") and "ollama:" + v in nodes:
+            return "ollama:" + v
+        elif k == "vmid" and "guest:" + v in nodes:
+            return "guest:" + v
+        elif k == "node_id" and "mesh:" + v in nodes:
+            return "mesh:" + v
+    for pat, nid in _GROUP_NODE:
+        if re.search(pat, group) and nid in nodes:
+            return nid
+    return "core:cap-bus" if "core:cap-bus" in nodes else ""
+
+
+def _activity(src: Mapping[str, Any], M: Mapping[str, Any], now: Optional[datetime], nodes: Dict[str, Dict[str, Any]],
+              links: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, List[float]], Dict[str, str]]:
+    """What each node did lately, from the event ring: the capability calls that ran against it (column by column, the
+    ones that failed, the ones it answers most, how long they took), the model requests sent to an instance, the jobs
+    the workers ran. A call still waiting for its answer is a flow in flight from the capability bus to its node.
+    The window is what the ring holds, up to ACTIVITY_MIN minutes, cut into ACTIVITY_SLICES columns.
+    Returns (the open calls as flows, {node: calls per column, oldest first}, {trace: node} for the event log)."""
+    ev = _ok(src, "obs.events")
+    if not isinstance(ev, list):
+        return [], {}, {}
+    rows = [e for e in ev if isinstance(e, Mapping)]
+    ages = [a for a in (_age_s(e.get("ts"), now) for e in rows) if a is not None and a < ACTIVITY_MIN * 60]
+    span = max([1.0] + ages)
+    width = span / ACTIVITY_SLICES
+    done = {str(e.get("trace_id") or ""): str(e.get("type") or "") for e in rows if str(e.get("type") or "") in _DONE and e.get("trace_id")}
+    ms_of = {str(e.get("trace_id") or ""): _num(e.get("elapsed_ms")) for e in rows if str(e.get("type") or "") in _DONE and e.get("trace_id")}
+    bus = "core:cap-bus" if "core:cap-bus" in nodes else ""
+    acc: Dict[str, Dict[str, Any]] = {}
+    target_of: Dict[str, str] = {}
+    flows: List[Dict[str, Any]] = []
+
+    def hit(nid: str, name: str, age: Optional[float], failed: bool = False, ms: Optional[float] = None) -> None:
+        a = acc.setdefault(nid, {"calls": 0, "errors": 0, "caps": {}, "ms": [], "pm": [0.0] * ACTIVITY_SLICES})
+        a["calls"] += 1
+        a["errors"] += 1 if failed else 0
+        a["caps"][name] = a["caps"].get(name, 0) + 1
+        if ms is not None:
+            a["ms"].append(ms)
+        if age is not None and age < ACTIVITY_MIN * 60:
+            a["pm"][max(0, ACTIVITY_SLICES - 1 - int(age // width))] += 1
+
+    for e in rows:
+        t = str(e.get("type") or "")
+        age = _age_s(e.get("ts"), now)
+        if age is not None and age >= ACTIVITY_MIN * 60:
+            continue
+        if t == "cap.call":
+            tid, name = str(e.get("trace_id") or ""), str(e.get("name") or "")
+            nid = _cap_target(e, M, nodes)
+            if not nid:
+                continue
+            target_of[tid] = nid
+            fin = done.get(tid)
+            hit(nid, name, age, fin in _FAILED, ms_of.get(tid))
+            if bus and nid != bus:
+                hit(bus, name, age, fin in _FAILED, None)
+            if not fin and tid and (age is None or age < CAP_OPEN_S):
+                nodes[nid]["open_calls"] = int(nodes[nid].get("open_calls") or 0) + 1
+                flows.append({"kind": "cap call", "a": bus if bus and nid != bus else ("core:router" if "core:router" in nodes else nid), "b": nid,
+                              "age": age, "label": name})
+        elif t == "ollama.request":
+            nid = "ollama:" + str(e.get("instance_id") or "")
+            if nid in nodes:
+                hit(nid, str(e.get("model") or "model"), age)
+        elif t in ("worker.start", "worker.error") and "core:workers" in nodes:
+            hit("core:workers", str(e.get("capability") or e.get("task") or "job"), age, t == "worker.error")
+    pm: Dict[str, List[float]] = {}
+    for nid, a in acc.items():
+        n = nodes[nid]
+        top = sorted(a["caps"].items(), key=lambda kv: -kv[1])[:4]
+        n["activity"] = {"calls": a["calls"], "errors": a["errors"], "top": [[k, c] for k, c in top],
+                         "ms": round(sum(a["ms"]) / len(a["ms"]), 1) if a["ms"] else None,
+                         "window_s": round(span), "per_min": round(a["calls"] * 60.0 / span, 1)}
+        pm[nid] = a["pm"]
+        if n.get("open_calls"):
+            n["inflight"] = max(int(n.get("inflight") or 0), int(n["open_calls"]))
+            if n["status"] == "ok":
+                n["status"] = "run"
+        # a machine the bus called is joined to it, so its calls have a pipe to run on
+        if bus and nid != bus and n["plane"] in ("runtime", "host", "service", "edge"):
+            links.append({"a": bus, "b": nid, "kind": "req", "live": True})
+    flows.sort(key=lambda f: f["age"] if f["age"] is not None else 0)
+    return flows, pm, target_of
+
+
+def _events(src: Mapping[str, Any], now: Optional[datetime], target_of: Optional[Mapping[str, str]] = None) -> Tuple[List[Dict[str, Any]], int]:
+    """The last events, trimmed, each naming the node its call ran against; and the calls still waiting for an answer.
+    The ring is newest first, so a call's answer is read before the call itself: a call is open only when no answer
+    for its trace is anywhere in the ring."""
     ev = _ok(src, "obs.events")
     if not isinstance(ev, list):
         return [], 0
+    target_of = target_of or {}
     out = []
-    open_calls: Dict[str, str] = {}
+    answered = {str(e.get("trace_id") or "") for e in ev if isinstance(e, Mapping) and str(e.get("type") or "") in _DONE}
+    open_calls = 0
     for e in ev:
         if not isinstance(e, Mapping):
             continue
         t = str(e.get("type") or "")
         tid = str(e.get("trace_id") or "")
-        if t == "cap.call" and tid:
-            open_calls[tid] = str(e.get("name") or "")
-        elif t in ("cap.ok", "cap.error", "cap.done") and tid:
-            open_calls.pop(tid, None)
-        out.append({"ts": str(e.get("ts") or "")[11:19], "type": t, "name": str(e.get("name") or e.get("node_id") or e.get("model") or ""),
-                    "group": str(e.get("group") or ""), "trace": tid[:8], "text": str(e.get("args_preview") or e.get("detail") or e.get("error") or "")[:80]})
-    return out[:100], len(open_calls)
+        if t == "cap.call" and tid and tid not in answered:
+            age = _age_s(e.get("ts"), now)
+            if age is None or age < CAP_OPEN_S:
+                open_calls += 1
+        if len(out) < 100:
+            out.append({"ts": str(e.get("ts") or "")[11:19], "type": t, "name": str(e.get("name") or e.get("node_id") or e.get("model") or e.get("capability") or ""),
+                        "group": str(e.get("group") or ""), "trace": tid[:8], "node": target_of.get(tid, ""),
+                        "text": str(e.get("args_preview") or e.get("detail") or e.get("error") or "")[:80]})
+    return out, open_calls
 
 
 def _errors(src: Mapping[str, Any], nodes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -669,6 +792,21 @@ def _registration(src: Mapping[str, Any], nodes: Dict[str, Dict[str, Any]]) -> N
         n["reg"] = {"complete": bool(r.get("complete")), "planes": planes}
 
 
+def failed_share(out: Any) -> float:
+    """The share of a snapshot's readers that failed (timed out, raised, not loaded)."""
+    srcs = ((out or {}).get("sources") or {}) if isinstance(out, Mapping) else {}
+    return sum(1 for v in srcs.values() if v != "ok") / len(srcs) if srcs else 1.0
+
+
+def keep_snapshot(new: Mapping[str, Any], old: Any, old_age: float, share: float = 0.34, keep_s: float = 120.0) -> bool:
+    """Whether a finished gather replaces the cached snapshot. A degraded one - a busy moment where a third of the
+    readers timed out, which once left the page showing two core nodes for eight minutes - does not replace a good
+    one younger than keep_s; the cache stays due, so the next poll gathers again."""
+    if old is None or failed_share(new) < share:
+        return True
+    return failed_share(old) >= share or old_age >= keep_s
+
+
 def build(src: Mapping[str, Any], own_ips: Iterable[str] = (), now: Optional[datetime] = None) -> Dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     nodes: Dict[str, Dict[str, Any]] = {}
@@ -683,9 +821,12 @@ def build(src: Mapping[str, Any], own_ips: Iterable[str] = (), now: Optional[dat
     _registration(src, nodes)
     _clients(src, M, now, nodes, links)
     inflight, through, lat = _requests(src, now, nodes)
-    events, open_calls = _events(src, now)
+    flows, calls_pm, target_of = _activity(src, M, now, nodes, links)
+    events, open_calls = _events(src, now, target_of)
     errors = _errors(src, nodes)
     series = _series(src, M)
+    for nid, pm in calls_pm.items():
+        series.setdefault(nid, {})["calls"] = pm
     # keep only the links whose ends exist, once each
     seen = set()
     kept = []
@@ -703,8 +844,11 @@ def build(src: Mapping[str, Any], own_ips: Iterable[str] = (), now: Optional[dat
     kinds["fabric write"] = int(_num(fh.get("write_queue_size"), 0) or 0)
     kinds["git op"] = sum(1 for n in nodes.values() if n["id"].startswith("pipe:"))
     kinds["background"] = 1 if "work:bg" in nodes else 0
-    if open_calls:
-        inflight.append({"kind": "cap call", "a": "core:router", "b": "core:cap-bus", "age": None, "label": f"{open_calls} open"})
+    # each open call runs from the bus to the node it was made against; past FLOWS_SHOWN, the rest are one count
+    inflight += [f for f in flows[:FLOWS_SHOWN] if f["a"] in nodes and f["b"] in nodes and f["a"] != f["b"]]
+    rest = open_calls - min(len(flows), FLOWS_SHOWN)
+    if rest > 0:
+        inflight.append({"kind": "cap call", "a": "core:router", "b": "core:cap-bus", "age": None, "label": f"{rest} more open"})
     if kinds["fabric write"]:
         inflight.append({"kind": "fabric write", "a": "core:fabric", "b": "svc:chroma", "age": None, "label": f"queue {kinds['fabric write']}"})
     for n in nodes.values():

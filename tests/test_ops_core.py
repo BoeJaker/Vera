@@ -224,3 +224,45 @@ def test_connections_parse_from_the_kernel_table():
     v6 = ("  sl  local_address                         remote_address                        st\n"
           "   0: 0000000000000000FFFF00008A00A8C0:2327 0000000000000000FFFF0000BE00A8C0:ACDA 01 0\n")
     assert oc.proc_tcp_peers(v6, 8999, v6=True) == {"192.168.0.190": 1}
+
+
+def test_activity_lands_on_the_nodes_calls_were_made_against():
+    src = _src()
+    # the ring is newest first: a call's answer comes before the call
+    src["obs.events"] = [
+        {"type": "cap.ok", "name": "docker.ps", "trace_id": "d1", "ts": "2026-09-21T23:29:50Z", "group": "docker", "elapsed_ms": 40},
+        {"type": "cap.call", "name": "docker.ps", "trace_id": "d1", "ts": "2026-09-21T23:29:49Z", "group": "docker", "args_preview": "host_id=local"},
+        {"type": "cap.call", "name": "exec.ssh.run", "trace_id": "e1", "ts": "2026-09-21T23:29:30Z", "group": "exec", "args_preview": "command=uptime, host_id=ssh-pve, timeout=19"},
+        {"type": "worker.start", "worker": "w1", "capability": "fabric.ingest", "task": "k1", "ts": "2026-09-21T23:29:00Z"},
+        {"type": "cap.error", "name": "ollama.pull", "trace_id": "o1", "ts": "2026-09-21T23:27:12Z", "group": "ollama"},
+        {"type": "cap.call", "name": "ollama.pull", "trace_id": "o1", "ts": "2026-09-21T23:27:10Z", "group": "ollama", "args_preview": "instance=gpu-250, model=a"},
+        {"type": "cap.call", "name": "fabric.search", "trace_id": "f1", "ts": "2026-09-21T23:10:00Z", "group": "fabric"},   # 20 min ago: lost, not open
+    ]
+    s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
+    ids = {n["id"]: n for n in s["nodes"]}
+    dk = ids["docker:local"]["activity"]
+    assert dk["calls"] == 1 and dk["ms"] == 40.0 and dk["top"] == [["docker.ps", 1]]
+    assert dk["window_s"] == 170 and dk["per_min"] == round(60 / 170, 1)               # the window is what the ring holds: 170 s back
+    assert s["series"]["docker:local"]["calls"] == [0.0] * 9 + [1.0]                   # ten columns of 17 s, oldest first
+    assert ids["ollama:gpu-250"]["activity"]["errors"] == 1                               # named by its instance; it failed
+    assert s["series"]["ollama:gpu-250"]["calls"][0] == 1.0                             # the oldest call: the first column
+    assert ids["core:cap-bus"]["activity"]["calls"] == 3                                  # the bus carried every call
+    # the one call still waiting runs as a flow from the bus to the machine it was made against, on a pipe of its own
+    assert ids["pve:corp"]["open_calls"] == 1 and ids["pve:corp"]["inflight"] >= 1
+    assert {"kind": "cap call", "a": "core:cap-bus", "b": "pve:corp", "age": 30.0, "label": "exec.ssh.run"} in s["inflight"]
+    assert ("core:cap-bus", "pve:corp", "req") in {(l["a"], l["b"], l["kind"]) for l in s["links"]}
+    assert s["inflight_kinds"]["cap call"] == 1                                          # answered and lost calls are not open
+    assert next(e for e in s["events"] if e["trace"] == "e1")["node"] == "pve:corp"
+    if "core:workers" in ids:
+        assert ids["core:workers"]["activity"]["top"] == [["fabric.ingest", 1]]
+
+
+def test_a_degraded_gather_does_not_replace_a_good_snapshot():
+    good = {"sources": {"a": "ok", "b": "ok", "c": "ok"}}
+    bad = {"sources": {"a": "a took longer than 6 s", "b": "b took longer than 6 s", "c": "ok"}}
+    assert oc.failed_share(bad) == pytest.approx(2 / 3) and oc.failed_share({}) == 1.0
+    assert oc.keep_snapshot(good, None, 0) and oc.keep_snapshot(good, bad, 1)
+    assert oc.keep_snapshot(bad, None, 0)                                 # nothing better to show
+    assert not oc.keep_snapshot(bad, good, 30)                            # a busy moment does not wipe a good picture
+    assert oc.keep_snapshot(bad, good, 600)                               # ... for long: the estate now beats the past
+    assert oc.keep_snapshot(bad, bad, 1)

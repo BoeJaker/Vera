@@ -198,6 +198,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .owf-n{position:absolute;height:2.5px;transform-origin:0 50%;background:var(--t1);border-radius:2px;z-index:8;box-shadow:0 0 6px 1px color-mix(in srgb,var(--ac3) 60%,transparent)}
 .owf-l{position:absolute;transform:translate(-50%,0) scale(var(--ui,1));transform-origin:50% 0;font-family:var(--f-mono);font-size:9px;line-height:1.3;z-index:8;white-space:nowrap;pointer-events:none;padding:1px 5px;border-radius:3px;background:color-mix(in srgb,var(--bg) 82%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,currentColor 28%,transparent)}
 .owf-hit{position:absolute;z-index:9;border-radius:6px;cursor:pointer}
+.owf-l i{display:block;font-style:normal;font-size:8px;opacity:.72}
 .pivot{position:absolute;width:0;height:0;pointer-events:none}
 .owf-svg .pipe{fill:none;stroke:var(--lc,var(--bd2));stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
 .owf-svg .pipe.q{opacity:.42}.owf-svg .pipe.q2{opacity:.12}.owf-svg .pipe.q3,.link.q3{opacity:.06;box-shadow:none}
@@ -706,9 +707,13 @@ function metricsHtml(n){ const col = PCOL[n.plane], ser = (S.snap.series || {})[
   if (n.latency && n.latency.length){ const s = n.latency.slice().sort((a, b) => a - b), q = (pp) => s[Math.min(s.length - 1, Math.floor(s.length * pp))];
     lat = '<div class="sub2">request latency · ' + s.length + ' requests</div>' + histBars(n.latency, col) + '<div class="mxs"><span>p50 <b>' + Math.round(q(.5)) + ' ms</b></span><span>p95 <b>' + Math.round(q(.95)) + ' ms</b></span><span>max <b>' + Math.round(s[s.length - 1]) + ' ms</b></span></div>'; }
   const th = n.through || [], thr = th.length ? '<div class="sub2">requests through · ' + th.length + '</div>' + th.slice(0, 5).map((x) => '<span class="frow"><i style="background:' + KCOL[x.kind] + '"></i><span class="n">' + esc(x.n) + '</span><span class="ms">' + esc(x.ms || x.status) + '</span></span>').join('') : '';
+  // what the node did lately: the capability calls made against it, column by column, the ones it answers most
+  const ac = n.activity, cpm = ser.calls, calls = ac && ac.calls ? '<div class="sub2">capability calls · last ' + (ac.window_s >= 90 ? Math.round(ac.window_s / 60) + ' min' : ac.window_s + ' s') + '</div>' + (cpm && cpm.length > 1 ? '<div class="sp2">' + sparkSvg(cpm, 290, 34, col) + '</div>' : '')
+    + '<div class="mxs"><span>calls <b>' + ac.calls + '</b></span><span>rate <b>' + ac.per_min + '/min</b></span>' + (ac.errors ? '<span>failed <b style="color:var(--ac4)">' + ac.errors + '</b></span>' : '') + (ac.ms != null ? '<span>avg <b>' + Math.round(ac.ms) + ' ms</b></span>' : '') + (n.open_calls ? '<span>open <b>' + n.open_calls + '</b></span>' : '') + '</div>'
+    + (ac.top || []).map((x) => '<span class="frow"><i style="background:' + KCOL['cap call'] + '"></i><span class="n">' + esc(x[0]) + '</span><span class="ms">×' + x[1] + '</span></span>').join('') : '';
   const ws = wspec(n), wv = ws.length ? '<div class="sub2">its widgets</div><div class="mxw">' + ws.map((w) => '<span><i>' + esc(WNAME[w.k] || w.k) + '</i>' + esc(wcaption(n, w.k)) + '</span>').join('') + '</div>' : '';
   return '<div class="mx"><div class="mxk">' + kv.map((x) => '<span><i>' + esc(x[0]) + '</i><b style="' + (x[0] === 'status' ? 'color:' + SC[n.status] : x[0] === 'findings' && n.errors ? 'color:var(--ac4)' : '') + '">' + esc(String(x[1])) + '</b></span>').join('') + '</div>'
-    + (bars.length ? '<div class="mxb">' + bars.join('') + '</div>' : '') + '<div class="sub2">' + (key === 'tps' ? 'throughput' : key === 'cpu' ? 'cpu · last 40 min' : key === 'ping' ? 'ping' : 'history') + '</div>' + hist + lat + thr + wv + '</div>'; }
+    + (bars.length ? '<div class="mxb">' + bars.join('') + '</div>' : '') + '<div class="sub2">' + (key === 'tps' ? 'throughput' : key === 'cpu' ? 'cpu · last 40 min' : key === 'ping' ? 'ping' : 'history') + '</div>' + hist + lat + thr + calls + wv + '</div>'; }
 function actionsHtml(n, act, where){
   const list = (where === 'w' ? ['overview', 'metrics'] : ['metrics']).concat(actionsFor(n)); const cur = list.indexOf(act) >= 0 ? act : list[0];
   const btns = '<div class="acts">' + list.map((a) => '<button class="abtn ' + (a === cur ? 'on ' : '') + (a === 'restart' ? 'danger' : '') + '" data-act="' + a + '" data-where="' + where + '">' + ALABEL[a] + '</button>').join('') + '</div>';
