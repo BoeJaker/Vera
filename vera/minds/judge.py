@@ -136,7 +136,9 @@ async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: 
     description="How a shadow judge compares with the live decisions it shadows (four-minds FM-2): agreement "
                 "rate and the AUC of its probability against the live answer, per implementation. Input: "
                 "question_id (default loop.step_verify), days (int, default 30). Output: {question_id, "
-                "by_implementation: {impl: {n, agreement, auc (binary questions), live_positive, live_negative}}}. "
+                "by_implementation: {impl: {n, agreement, auc (binary questions), live_positive, live_negative, "
+                "vs_outcomes: {n, accuracy, ece, at_confidence: {threshold: {coverage, precision}}} (binary questions, "
+                "against the true label from the live decision's strong/medium outcome)}}}. "
                 "With question_id 'all': one entry per judged question.",
 )
 async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: int = 30,
@@ -150,16 +152,30 @@ async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: 
     positive = JC.positive_label(question_id)
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """SELECT x.row->>'implementation' AS impl, x.row->'answer' AS sa, x.p AS sp, l.row->'answer' AS la
+            """SELECT x.row->>'implementation' AS impl, x.row->'answer' AS sa, x.p AS sp, l.row->'answer' AS la,
+                      (SELECT o.label FROM decision_outcomes o WHERE o.decision_id = l.decision_id
+                         AND o.strength IN ('strong', 'medium') ORDER BY (o.strength = 'strong') DESC, o.ts DESC
+                         LIMIT 1) AS ol
                FROM decision_ledger x JOIN decision_ledger l ON l.decision_id = x.row->'detail'->>'for'
                WHERE x.mode = 'shadow' AND x.question_id = $1 AND x.ts >= NOW() - make_interval(days => $2)""",
             question_id, max(1, min(365, int(days or 30))))
     by: Dict[str, List] = {}
+    truth: Dict[str, List] = {}
     for r in rows:
         la = json.loads(r["la"]) if isinstance(r["la"], str) else r["la"]
         sa = json.loads(r["sa"]) if isinstance(r["sa"], str) else r["sa"]
-        by.setdefault(r["impl"] or "?", []).append((la, sa, r["sp"]))
-    return {"question_id": question_id, "by_implementation": {k: JC.agreement(v, positive) for k, v in by.items()}}
+        ol = json.loads(r["ol"]) if isinstance(r["ol"], str) else r["ol"]
+        impl = r["impl"] or "?"
+        by.setdefault(impl, []).append((la, sa, r["sp"]))
+        y = JC.true_label(question_id, la, ol)
+        if y is not None:
+            truth.setdefault(impl, []).append((r["sp"], y))
+    out = {}
+    for impl, pairs in by.items():
+        out[impl] = JC.agreement(pairs, positive)
+        if positive is not None:
+            out[impl]["vs_outcomes"] = JC.calibration(truth.get(impl, []), positive)
+    return {"question_id": question_id, "by_implementation": out}
 
 
 async def _night_job() -> None:
