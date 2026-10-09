@@ -63,6 +63,13 @@ NLP_THREADS = int(os.getenv("VERA_NLP_THREADS", "4") or 4)
 # works (RF-03: run synchronously inside async handlers, one long call blocked the whole server and the
 # router read a busy node as a dead one). Raise it only on a node with cores to spare.
 NLP_WORKERS = max(1, int(os.getenv("VERA_NLP_WORKERS", "1") or 1))
+# The FAST lane: embed and langid run in their own one-worker pool, so a latency-critical call (the
+# decision-space vector a chat turn waits for, ≈ 9 ms) never queues behind a rerank, NER or QA call.
+# Measured 2026-10-09 with one shared worker, 4 embed + 1 rerank clients: embed p95 ≈ 115 ms against a
+# 40 ms budget, all of it queueing. A fast call holds its threads for milliseconds, so the CPU cap barely
+# moves. VERA_NLP_FAST_LANE=0 puts them back in the shared pool.
+NLP_FAST_LANE = str(os.getenv("VERA_NLP_FAST_LANE", "1")).strip().lower() not in ("0", "false", "no", "off")
+FAST_TASKS = ("embed", "langid")
 for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
     # A CAP, not a default: setdefault() would let an environment that already
     # exported a larger value blow straight through the limit this server
@@ -599,15 +606,19 @@ def build_app():
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
     _infer = ThreadPoolExecutor(max_workers=NLP_WORKERS, thread_name_prefix="nlp-infer")
-    _load = {"inflight": 0, "served": 0}
+    _fast = (ThreadPoolExecutor(max_workers=1, thread_name_prefix="nlp-fast") if NLP_FAST_LANE else _infer)
+    _load = {"inflight": 0, "served": 0, "fast_inflight": 0}
 
-    async def _run(fn, *a):
-        """One model call in the inference pool (NLP_WORKERS at a time), never on the event loop."""
-        _load["inflight"] += 1
+    async def _run(fn, *a, fast: bool = False):
+        """One model call in a pool, never on the event loop: the fast lane for embed/langid, the shared
+        pool (NLP_WORKERS at a time) for everything else."""
+        key = "fast_inflight" if fast else "inflight"
+        _load[key] += 1
         try:
-            return await asyncio.get_running_loop().run_in_executor(_infer, lambda: _guard(fn, *a))
+            return await asyncio.get_running_loop().run_in_executor(_fast if fast else _infer,
+                                                                    lambda: _guard(fn, *a))
         finally:
-            _load["inflight"] -= 1
+            _load[key] -= 1
             _load["served"] += 1
 
     @app.get("/health")
@@ -617,6 +628,7 @@ def build_app():
         # one and routes away from it for minutes.
         return {"ok": True, "service": "vera-nlp", "threads": NLP_THREADS,
                 "workers": NLP_WORKERS, "inflight": _load["inflight"], "served": _load["served"],
+                "fast_lane": list(FAST_TASKS) if NLP_FAST_LANE else [], "fast_inflight": _load["fast_inflight"],
                 "providers": _providers(), "model_root": MODEL_ROOT,
                 "core": HAS_CORE, "component": component_record(),
                 "chunk": {"chars": CHUNK_CHARS, "overlap": CHUNK_OVERLAP},
@@ -668,13 +680,13 @@ def build_app():
     async def langid(req: TextReq):
         if not req.text:
             return {"error": "text is required"}
-        return await _run(run_langid, req.text)
+        return await _run(run_langid, req.text, fast=True)
 
     @app.post("/embed")
     async def embed(req: EmbedReq):
         if not req.texts:
             return {"error": "texts is required (a list of strings)"}
-        return await _run(run_embed, req.texts)
+        return await _run(run_embed, req.texts, fast=True)
 
     @app.post("/rerank")
     async def rerank(req: RerankReq):
