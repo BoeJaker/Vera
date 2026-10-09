@@ -357,7 +357,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     <div class="seg" id="segLayout"><button id="bStack" class="on" title="The planes as a stack, one above the other">Stacked</button><button id="bFlat" title="Every plane laid flat, side by side">All flat</button><button id="bOne" title="One layer at a time: the selected node's plane">One layer</button></div>
     <div class="seg" id="segGap" title="How far apart the floors stand (3D)"><span class="cap">gap</span><input type="range" id="rGap" min="0.5" max="3" step="0.1" value="1"><span class="z" id="rGapV">1.0</span></div>
     <div class="seg" id="segSpread" title="How far apart the lanes and rows stand"><span class="cap">spread</span><input type="range" id="rSpread" min="0.8" max="2.2" step="0.1" value="1"><span class="z" id="rSpreadV">1.0</span></div>
-    <div class="seg wsz" id="segWsz" title="The size of the iso widgets on the planes (they keep it while the view zooms)"><span class="cap">▣</span><button data-wsz="0.75">S</button><button data-wsz="1" class="on">M</button><button data-wsz="1.35">L</button><button data-wsz="1.8">XL</button></div>
+    <div class="seg wsz" id="segWsz" title="The size of the iso widgets on the planes (they keep it while the view zooms)"><span class="cap">▣</span><button data-wsz="1">S</button><button data-wsz="1.8" class="on">M</button><button data-wsz="2.4">L</button><button data-wsz="3">XL</button></div>
     <div class="seg"><button id="bPipes" class="on" title="Runs follow the lanes of their plane, then go straight up or down">Pipes</button><button id="bDirect" title="Each edge as a straight chord">Direct</button><button id="bActive" title="Light only the routes carrying requests right now; everything else fades">Active</button></div>
     <div class="seg" id="segLbl" title="What stands on the planes in 3D"><button data-lbl="labels" title="Billboard labels only">Labels</button><button data-lbl="both" class="on" title="Billboards and the iso widgets">Both</button><button data-lbl="widgets" title="The iso widgets alone - no billboards; a widget names its node">Widgets</button></div>
     <div class="seg" id="segLens" title="Look at the estate through one concern"><span class="cap">lens</span><button data-lens="all" class="on" title="Every plane in its own colour">All</button><button data-lens="net" title="Machines by subnet with their addresses; requests and mesh radio stay lit">Network</button><button data-lens="sec" title="Machines by how much of their registration is in place: SSH login, directory, mesh door, certificate, backup">Security</button></div>
@@ -435,14 +435,14 @@ const subnetOf = (n) => { const ip = ipOf(n); return ip ? ip.split('.').slice(0,
 // ── state ──
 const S = { view: '2d', layout3d: 'stack', focus: null, pipes: true, widgets: true, sel: null, exp: null, act: 'metrics', wact: 'overview',
   on: { client: true, work: true, core: true, service: true, runtime: true, host: true, edge: true },
-  vz: 1, vx: 0, vy: 0, tilt: null, azim: null, zgap: 1, spread: 1, wsz: 1, lbl: 'both', wl: {}, wpick: null, wadd: null, wsec: true, lens: 'all', term: {},
+  vz: 1, vx: 0, vy: 0, tilt: null, azim: null, zgap: 1, spread: 1, wsz: 1.8, lbl: 'both', wl: {}, wpick: null, wadd: null, wsec: true, lens: 'all', term: {},
   snap: null, err: '', cm: null, logs: {}, req: {}, dive: {}, drag: null, fresh: true, busy: false, fp: '', seenN: {}, seenW: {}, enterKey: '', rt: null, moved: false, active: false };
 // the widget overrides: {node: {off, items:[{k, s}]}} (an older {k, s, off} is read as one item)
 try { const w = JSON.parse(localStorage.getItem('vera:ops:widgets') || 'null'); if (w && typeof w === 'object') Object.keys(w).forEach((id) => { const o = w[id] || {}; S.wl[id] = Array.isArray(o.items) ? { off: !!o.off, items: o.items } : { off: !!o.off, items: o.k ? [{ k: o.k, s: o.s || 1 }] : null }; }); } catch (_) {}
-try { const v = JSON.parse(localStorage.getItem(VKEY) || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (S.wsz === 1.3) S.wsz = 1.35; if (S.wsz === 1.6) S.wsz = 1.8; if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; if (['all', 'net', 'sec'].indexOf(v.lens) >= 0) S.lens = v.lens; S.active = !!v.active; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
+try { const v = JSON.parse(localStorage.getItem(VKEY) || 'null'); if (v) { ['zgap', 'spread', 'wsz'].forEach((k) => { if (typeof v[k] === 'number') S[k] = v[k]; }); if (S.wsz === 1.3) S.wsz = 1.35; if (S.wsz === 1.6) S.wsz = 1.8; if (v.wv !== 2) S.wsz = 1.8;   /* the sizes stepped up: the old XL is the new M */ if (['labels', 'both', 'widgets'].indexOf(v.lbl) >= 0) S.lbl = v.lbl; if (['all', 'net', 'sec'].indexOf(v.lens) >= 0) S.lens = v.lens; S.active = !!v.active; S.widgets = S.lbl !== 'labels'; } } catch (_) {}
 if (Q.get('view') === '2d' || Q.get('view') === '3d') S.view = Q.get('view');   // a host opens the view it was asked for
 const saveW = () => { try { localStorage.setItem('vera:ops:widgets', JSON.stringify(S.wl)); } catch (_) {} };
-const saveV = () => { try { localStorage.setItem(VKEY, JSON.stringify({ zgap: S.zgap, spread: S.spread, wsz: S.wsz, lbl: S.lbl, lens: S.lens, active: S.active })); } catch (_) {} };
+const saveV = () => { try { localStorage.setItem(VKEY, JSON.stringify({ wv: 2, zgap: S.zgap, spread: S.spread, wsz: S.wsz, lbl: S.lbl, lens: S.lens, active: S.active })); } catch (_) {} };
 const byId = () => { const m = {}; ((S.snap && S.snap.nodes) || []).forEach((n) => { m[n.id] = n; }); return m; };
 // the drawing engine (/ui/iso-lattice.js): the layout, the pipes, the iso widgets and the view; this page keeps its chrome and hands it hooks
 const LAT = window.VeraLattice.engine({ S, byId, PCOL, LCOL, KCOL, SC, wspec: (n) => wspec(n), lensCol: (n) => lensCol(n), lensDim: (n) => lensDim(n), lensTag: (n) => lensTag(n),
@@ -930,7 +930,7 @@ document.addEventListener('keydown', (e) => { const t = e.target; if (!t.dataset
 document.addEventListener('contextmenu', (e) => { const nd = e.target.closest('[data-node],[data-wnode]'); if (nd){ openMenu(e, byId()[nd.dataset.node || nd.dataset.wnode]); return; } if (e.target.closest('#plot')) openMenu(e, null); });
 $('b2d').onclick = () => { S.view = '2d'; S.wpick = null; render(); }; $('b3d').onclick = () => { S.view = '3d'; render(); };
 $('bStack').onclick = () => { S.layout3d = 'stack'; S.focus = null; render(); }; $('bFlat').onclick = () => { S.layout3d = 'flat'; S.focus = null; render(); };
-$('bOne').onclick = () => { if (S.focus){ S.focus = null; } else { const n = byId()[S.sel]; S.focus = n ? n.plane : 'work'; } render(); };
+$('bOne').onclick = () => { if (S.focus){ S.focus = null; } else { const n = byId()[S.sel]; S.focus = n ? n.plane : 'work'; } render({ replay: true }); };
 $('bActive').onclick = () => { S.active = !S.active; saveV(); applyRoute(); };
 $('bPipes').onclick = () => { S.pipes = true; render(); }; $('bDirect').onclick = () => { S.pipes = false; render(); };
 document.querySelectorAll('[data-lbl]').forEach((b) => { b.onclick = () => { S.lbl = b.dataset.lbl; S.widgets = S.lbl !== 'labels'; saveV(); render(); }; });
@@ -940,22 +940,26 @@ let rafId = 0; const rafRender = () => { if (rafId) return; rafId = requestAnima
 const rafRot = () => { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; keepPivot(() => render({ plotOnly: true })); }); };
 function clearRoute(){ if (!S.rt) return false; S.rt = null; lightRefresh(); return true; }
 // a double click on a floor looks at that layer on its own (again: every layer)
-document.addEventListener('dblclick', (e) => { const f = e.target.closest && e.target.closest('[data-floor]'); if (!f || S.view !== '3d') return; e.preventDefault(); S.focus = S.focus === f.dataset.floor ? null : f.dataset.floor; render(); });
+document.addEventListener('dblclick', (e) => { const f = e.target.closest && e.target.closest('[data-floor]'); if (!f || S.view !== '3d') return; e.preventDefault(); S.focus = S.focus === f.dataset.floor ? null : f.dataset.floor; render({ replay: true }); });
 // Esc clears a lit route, else closes the node's card
 document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || S.cm || (e.target.matches && e.target.matches('input,textarea'))) return; if (clearRoute()) return; if (S.exp){ S.exp = null; render(); } });
 // THE KEYBOARD: arrows pan (shift + arrows turn the 3D view), + / - zoom, 0 fits everything, 2 / 3 the view, s / f / o stacked,
 // flat, one layer, w the widget size, l what stands on the planes, p pipes or chords, a active routes, n the lens, r reads again
 document.addEventListener('keydown', (e) => { if (e.ctrlKey || e.metaKey || e.altKey || S.cm) return; const t = e.target; if (t && t.matches && t.matches('input,textarea,select,[contenteditable],[contenteditable] *')) return;
-  const k = e.key, PAN = 60, act = (fn) => { e.preventDefault(); fn(); }, cyc = (sel, attr, L, cur) => { const b = document.querySelector('[' + attr + '="' + L[(L.indexOf(cur) + 1) % L.length] + '"]'); if (b) b.click(); };
+  const k = e.key, PAN = 28, act = (fn) => { e.preventDefault(); fn(); }, cyc = (sel, attr, L, cur) => { const b = document.querySelector('[' + attr + '="' + L[(L.indexOf(cur) + 1) % L.length] + '"]'); if (b) b.click(); };
   if (k.indexOf('Arrow') === 0){
     if (e.shiftKey && S.view === '3d') return act(() => { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 26) : S.tilt, A = S.azim == null ? 45 : S.azim;
-      if (k === 'ArrowLeft') S.azim = clamp(A - 4, 26, 64); else if (k === 'ArrowRight') S.azim = clamp(A + 4, 26, 64); else if (k === 'ArrowUp') S.tilt = clamp(T + 3, 4, 60); else S.tilt = clamp(T - 3, 4, 60); rafRot(); });
-    return act(() => { if (k === 'ArrowLeft') S.vx += PAN; else if (k === 'ArrowRight') S.vx -= PAN; else if (k === 'ArrowUp') S.vy += PAN; else S.vy -= PAN; applyZoom(); }); }
-  if (k === '+' || k === '=' || k === '-' || k === '_') return act(() => { const r = $('plot').getBoundingClientRect(); zoomAt(k === '+' || k === '=' ? 1.2 : 1 / 1.2, r.width / 2, r.height / 2); applyZoom(); });
+      if (k === 'ArrowLeft') S.azim = clamp(A - 2, 26, 64); else if (k === 'ArrowRight') S.azim = clamp(A + 2, 26, 64); else if (k === 'ArrowUp') S.tilt = clamp(T + 1.5, 4, 60); else S.tilt = clamp(T - 1.5, 4, 60); rafRot(); });
+    return act(() => { if (k === 'ArrowLeft') LAT.glide(PAN, 0); else if (k === 'ArrowRight') LAT.glide(-PAN, 0); else if (k === 'ArrowUp') LAT.glide(0, PAN); else LAT.glide(0, -PAN); }); }   // eased, a step at a time
+  if (k === '+' || k === '=' || k === '-' || k === '_') return act(() => LAT.glide(0, 0, k === '+' || k === '=' ? 1.1 : 1 / 1.1));
+  // the layers: [ ] (PageUp PageDown) fly the camera from floor to floor; in One layer the next layer swaps in
+  if ((k === '[' || k === ']' || k === 'PageUp' || k === 'PageDown') && S.snap) return act(() => { const ids = S.snap.planes.filter((pl) => S.on[pl.id]).map((pl) => pl.id); if (!ids.length) return; const up = k === '[' || k === 'PageUp';
+    if (S.focus){ const i = ids.indexOf(S.focus); S.focus = ids[(i + (up ? -1 : 1) + ids.length) % ids.length]; render({ replay: true }); return; }
+    const i = ids.indexOf(S.ptz); S.ptz = ids[i < 0 ? (up ? ids.length - 1 : 0) : (i + (up ? -1 : 1) + ids.length) % ids.length]; if (S.view !== '3d'){ S.view = '3d'; render(); } LAT.flyToPlane(S.ptz); });
   if (k === '0') return act(() => { S.tilt = null; S.azim = null; render(); fitView(true); });
   if (k === '2') return act(() => $('b2d').click()); if (k === '3') return act(() => $('b3d').click());
   if (k === 's') return act(() => $('bStack').click()); if (k === 'f') return act(() => $('bFlat').click()); if (k === 'o') return act(() => $('bOne').click());
-  if (k === 'w') return act(() => cyc('', 'data-wsz', ['0.75', '1', '1.35', '1.8'], String(S.wsz)));
+  if (k === 'w') return act(() => cyc('', 'data-wsz', ['1', '1.8', '2.4', '3'], String(S.wsz)));
   if (k === 'l') return act(() => cyc('', 'data-lbl', ['labels', 'both', 'widgets'], S.lbl));
   if (k === 'n') return act(() => cyc('', 'data-lens', ['all', 'net', 'sec'], S.lens));
   if (k === 'p') return act(() => $(S.pipes ? 'bDirect' : 'bPipes').click());
