@@ -9,7 +9,9 @@ reads agreement and AUC against the live answers.
 The background-inference rule applies: the scorer is queued once a night (23:00-06:00 local) through
 background.cap.enqueue, capped (VERA_DECIDE_SHADOW_NIGHT_CAP, default 40 per question), and never runs
 intraday on its own. VERA_DECIDE_SHADOW=0 turns the nightly run off; the model is
-VERA_DECIDE_SHADOW_MODEL (default qwen3.5:2b).
+VERA_DECIDE_SHADOW_MODEL (a comma list; default qwen3:4b-instruct-2507-q4_K_M,qwen3:0.6b - offline on 39
+stored step_verify decisions the 4b ranked the live verdicts at AUC 0.91 and the 0.6b was confident on half of them
+with 90% agreement, so they are judged side by side as the two tiers of the cascade).
 """
 from __future__ import annotations
 
@@ -33,8 +35,17 @@ JOB_TYPE = "idle_decide"
 KEY_NIGHT = "vera:decide:shadow:night:"
 
 
+DEFAULT_MODELS = "qwen3:4b-instruct-2507-q4_K_M,qwen3:0.6b"
+
+
+def _models() -> List[str]:
+    raw = os.environ.get("VERA_DECIDE_SHADOW_MODEL", DEFAULT_MODELS) or DEFAULT_MODELS
+    return [m.strip() for m in raw.split(",") if m.strip()] or [m for m in DEFAULT_MODELS.split(",")]
+
+
 def _model() -> str:
-    return os.environ.get("VERA_DECIDE_SHADOW_MODEL", "qwen3.5:2b").strip() or "qwen3.5:2b"
+    """The first (judge) model, for a call that names none."""
+    return _models()[0]
 
 
 def _impl(model: str) -> str:
@@ -281,10 +292,11 @@ async def _night_job() -> None:
         if r is None or not await r.set(KEY_NIGHT + night, "1", nx=True, ex=86400):
             return
         cap = int(os.environ.get("VERA_DECIDE_SHADOW_NIGHT_CAP", "40") or 40)
-        for qid in JC.QUESTIONS:
-            await _raw("background.cap.enqueue", name="decide.shadow.score", title=f"shadow judge: {qid}",
-                       arguments={"question_id": qid, "limit": cap, "since_hours": 48},
-                       timeout_s=1800, submitted_by="decide.shadow")
+        for model in _models():
+            for qid in JC.QUESTIONS:
+                await _raw("background.cap.enqueue", name="decide.shadow.score", title=f"shadow judge: {qid} ({model})",
+                           arguments={"question_id": qid, "model": model, "limit": cap, "since_hours": 48},
+                           timeout_s=1800, submitted_by="decide.shadow")
         # the kNN judge: embeddings only, every question, beside the LLM judge
         await _raw("background.cap.enqueue", name="decide.shadow.knn", title="shadow judge: kNN, all questions",
                    arguments={"question_id": "all", "limit": 400, "since_hours": 48},
