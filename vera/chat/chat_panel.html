@@ -6183,7 +6183,8 @@ IMPORTANT:
     /* the chat's grip (drag it to float or dock) belongs to the desk: in Held or Strict it was a stray handle that floated the chat */
     try{ const dk=_cvCfg('cfgCvAlign')==='desk'?'1':''; if((document.body.dataset.desk||'')!==dk) document.body.dataset.desk=dk; }catch(_){}
     setTimeout(()=>{ try{ _chatRectToCanvas(); }catch(_){} }, 60);
-    try{ _ctxBackSync(); }catch(_){}   // the graph follows the "behind the desk" choice, both ways    try{ _cvOneplaceSync(); }catch(_){}   // "draw them" is the page's own, not the element's: it is about the REPLY
+    try{ _ctxBackSync(); }catch(_){}   /* the graph follows the "behind the desk" choice, both ways */
+    try{ _cvOneplaceSync(); }catch(_){}   // "draw them" is the page's own, not the element's: it is about the REPLY
   }
   /* THE BLOCKS TIER, FOLLOWED RATHER THAN SAMPLED ONCE. The canvas is in a shadow root, so a rule on <html> cannot
      reach it and the element carries the tier as an attribute (defect 85). That attribute was set once, at mount,
@@ -8410,7 +8411,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      a hand-added item has none and gets no run. Exploded, a run leaves the item's station instead of the block. */
   function _cvRunsDraw(){
     const svg=document.getElementById('cvRunsOverlay'); if(!svg) return;
-    if(_runsOff.cv||_runsBlocked()){ svg.innerHTML=''; _cvLastCheck=null; return; }
+    if(_runsOff.cv||_runsBlocked()){ svg.innerHTML=''; _cvLastCheck=null; try{ const c0=document.querySelector('#canvasColumnBody vera-canvas'); c0&&c0.runTargets&&c0.runTargets([]); }catch(_){} return; }
     const cv=document.querySelector('#canvasColumnBody vera-canvas'); const col=document.getElementById('chatColumn'), ccol=document.getElementById('canvasColumn'), msgs=document.getElementById('msgs');
     if(!_pages.has('canvas')||!cv||!cv.itemRects||!col||!ccol||!msgs){ svg.innerHTML=''; _cvLastCheck=null; return; }
     const den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase();
@@ -8425,6 +8426,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const R=col.getBoundingClientRect(), C=ccol.getBoundingClientRect(), MB=msgs.getBoundingClientRect();
     svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
     const all=cv.itemRects(); const wanted=pick(all);
+    const cvDesk=typeof cv.deskAlign==='function'&&cv.deskAlign();
     const rects=all.map(it=>({key:it.key, x0:it.rect.left, y0:it.rect.top, x1:it.rect.right, y1:it.rect.bottom}));
     const routes=[];
     wanted.forEach(it=>{ const M=_cvRunsSource(_srcMid(it), msgs); if(M) routes.push({it, M}); });
@@ -8438,6 +8440,11 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       g.forEach((r,j)=>{ r.my=M.top+th/2+(j-(k-1)/2)*fan; r.iy=Math.max(r.it.rect.top+2, Math.min(r.it.rect.bottom-2, r.it.rect.top+14));
         // where this run leaves: the block's clipped right edge — on a station, the plate's own edge at that height
         r.M=Object.assign({}, M, {right:M.rightAt?Math.min(M.right, M.rightAt(r.my)):M.right}); }); });
+    /* FROM THE PLACEHOLDER (owner, 2026-10-09: "draw a line from where they would be in the chat response"): an item the
+       reply moved to the canvas left a chip there; the run leaves that chip, level with it, when it is on screen */
+    routes.forEach(r=>{ try{ const ph=msgs.querySelector('.cv-moved[data-cv-key="'+(window.CSS&&CSS.escape?CSS.escape(r.it.key):r.it.key)+'"]'); if(!ph) return;
+      const q=ph.getBoundingClientRect(); if(!(q.height>0)||q.bottom<MB.top||q.top>MB.bottom) return;
+      r.M={left:q.left, top:q.top, right:Math.min(q.right, MB.right-1), bottom:q.bottom}; r.my=q.top+q.height/2; r.fromChip=true; }catch(_){} });
     // the channel: from the transcript's (or the scene's) edge to the first card; the lanes spread about its middle,
     // 9 px a side per run
     const edge0=(_xpl.on&&_xplEl&&document.body.classList.contains('exploded'))?document.getElementById('xplHost').getBoundingClientRect().right:MB.right;
@@ -8455,10 +8462,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
         if(it.col>0){ const col0=rects.filter(rc=>{ const o=all.find(x=>x.key===rc.key); return o&&o.col===0&&o.state==='now'; });
           const free=y=>!col0.some(rc=>y>rc.y0+1&&y<rc.y1-1); const cands=[iy, it.rect.top-6].concat(col0.flatMap(rc=>[rc.y0-4, rc.y1+4])).filter(y=>y>=it.rect.top-60&&y<=it.rect.bottom&&free(y));
           const gapX=it.rect.left-5+u; if(cands.length){ const fy=cands.sort((a,b)=>Math.abs(a-iy)-Math.abs(b-iy))[0]; pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:fy},{x:gapX, y:fy},{x:gapX, y:iy},{x:it.rect.left, y:iy}]; } }
+        if(cvDesk){ const ex=C.left+2, ey=Math.max(C.top+4, Math.min(C.bottom-4, iy)); pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:ey},{x:ex, y:ey}]; }
         const cls='run'+(it.inFocus?'':' dim');
         out+='<polyline class="'+cls+'" data-key="'+esc(it.key)+'" data-mid="'+esc(mid)+'" data-lane="'+r.lane+'" points="'+pts.map(p=>(p.x-R.left).toFixed(1)+','+(p.y-R.top).toFixed(1)).join(' ')+'"><title>'+esc(it.key)+' · turn '+esc(mid)+'</title></polyline>';
         drawn.push({key:it.key, pts, from:{key:'turn:'+mid, x0:M.left, y0:M.top, x1:M.right, y1:M.bottom}, to:{key:it.key, x0:it.rect.left, y0:it.rect.top, x1:it.rect.right, y1:it.rect.bottom}}); });
-    svg.innerHTML='<g fill="none" stroke="var(--acc3,#e09a55)" stroke-width="1.5" stroke-opacity=".85" stroke-linecap="round" stroke-linejoin="round">'+out+'</g>';
+    try{ if(typeof cv.runTargets==='function') cv.runTargets(cvDesk?routes.map(r=>r.it.key):[]); }catch(_){}
+    svg.innerHTML='<g fill="none" stroke="var(--acc,#9b8dfa)" stroke-width="1.5" stroke-opacity=".85" stroke-linecap="round" stroke-linejoin="round">'+out+'</g>';
     try{ _cvLastCheck=Object.assign(window.VeraCanvas.checkRoutes(drawn, rects), {tier:den, lanes:routes.map(r=>r.lane)}); }catch(_){ _cvLastCheck=null; }
   }
   // the graph column: the design's context graph — the Context menu grown into the full graph, beside the transcript.
@@ -8764,7 +8773,13 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   /* the runs stand down while a menu is over the surface they cross (defect 67). The page's own ☰ swaps the detail
      column the graph sits in for the TOP-LEVEL LIST, and the graph's node positions outlive the graph: routed across it
      anyway, the runs read as if the MENU were what the turn had read. The same for the tools sheet and a context menu. */
-  function _runsBlocked(){ try{ if(document.querySelector('#toolsSheet.on')) return true; if(document.querySelector('.cmw')) return true; if(document.querySelector('#rightRail .lhm-rail .lhm-ico.top.on')) return true; }catch(_){} return false; }
+  /* THE RUNS' COLOUR IS THE THEME'S (owner, 2026-10-09): a run to the canvas is the accent; a run from a context source
+     keeps its source's hue but leans into the accent, so the lines read as one family with the theme */
+  function _runCol(c){ return 'color-mix(in srgb, var(--acc,#9b8dfa) 55%, '+(c||'var(--acc,#9b8dfa)')+')'; }
+  function _runsBlocked(){ try{ if(document.querySelector('#toolsSheet.on')) return true;
+      /* a UI panel open - beside the chat, or a panel layer on the desk - takes the runs away entirely (owner, 2026-10-09) */
+      if(document.body.classList.contains('has-panel')) return true;
+      { const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&cv.shadowRoot&&cv.shadowRoot.querySelector('.stage .it[data-desk-face^="layer-"]')) return true; } if(document.querySelector('.cmw')) return true; if(document.querySelector('#rightRail .lhm-rail .lhm-ico.top.on')) return true; }catch(_){} return false; }
   // …and the graph has to BE there: on screen, not swapped out from under its own positions
   function _runsGraphVisible(){ const el=_ctxCol; if(!el||!el.isConnected) return false; const r=el.getBoundingClientRect(); return r.width>2&&r.height>2; }
   // the menu instance posts its lanes to the chat instance; when it draws none it says so, or the chat keeps the last set
@@ -8846,7 +8861,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       // the channel is the column's gutter at the frame's edge (the lanes it holds), never the whole margin
       const col0=document.getElementById('chatColumn').getBoundingClientRect().left; const chan0=col0, chan1=Math.min(T.content, col0+gut), G0=(chan0+chan1)/2, HWG=Math.max(1, Math.abs(chan1-chan0)/2-4); const edgeAt=(y,side)=>{ const Tq=(side==='a'&&TT.a)?TT.a:T; return (Tq.edgeAt?Tq.edgeAt(y):Tq.content)-2; };
       let out=''; lanes.forEach((l,i)=>{ const ye=l.ye-ft, ty=l.ty-ft; const u=rn>1?(l.lane-(rn-1)/2)/((rn-1)/2):0; const lx=G0+u*Math.min(HWG, 9*(rn-1));
-        const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(l.src)+'" data-lane="'+l.lane+'" x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'" stroke="'+l.col+'"><title>'+esc(l.src)+'</title></line>';
+        const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(l.src)+'" data-lane="'+l.lane+'" x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'" stroke="'+_runCol(l.col)+'"><title>'+esc(l.src)+'</title></line>';
         out+=L(0, ye, lx, ye, 'tr'); if(Math.abs(ty-ye)>0.5) out+=L(lx, ye, lx, ty, 'tr'); out+=L(lx, ty, edgeAt(ty, l.side), ty, 'tr'); });
       svg.innerHTML='<g fill="none" stroke-linecap="round">'+out+'</g>'; svg.dataset.target=T.kind; return;
     }
@@ -8898,7 +8913,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     let out='';
     G.forEach(g=>{
       const u=rn>1?(g.lane-(rn-1)/2)/((rn-1)/2):0; const lx=G0+(leftSide?1:-1)*u*Math.min(HWG, 9*(rn-1)); const c=g.col;
-      const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(g.src)+'" data-side="'+g.side+'" data-lane="'+g.lane+'" x1="'+(x1-R.left).toFixed(1)+'" y1="'+(y1-R.top).toFixed(1)+'" x2="'+(x2-R.left).toFixed(1)+'" y2="'+(y2-R.top).toFixed(1)+'" stroke="'+c+'"><title>'+esc(g.src)+' · '+g.nodes.length+(g.side==='a'?' read by the response':' in this prompt')+'</title></line>';
+      const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(g.src)+'" data-side="'+g.side+'" data-lane="'+g.lane+'" x1="'+(x1-R.left).toFixed(1)+'" y1="'+(y1-R.top).toFixed(1)+'" x2="'+(x2-R.left).toFixed(1)+'" y2="'+(y2-R.top).toFixed(1)+'" stroke="'+_runCol(c)+'"><title>'+esc(g.src)+' · '+g.nodes.length+(g.side==='a'?' read by the response':' in this prompt')+'</title></line>';
       // the type's COLLECTOR: a short vertical just past its cluster where the branches meet; from it ONE connector
       // crosses the rest of the plot to the channel, so a type crosses the plot once, not once per record
       const cx=leftSide?Math.min(gc.right-4, Math.max.apply(null, g.nodes.map(q=>q.x+q.rim))+12):Math.max(gc.left+4, Math.min.apply(null, g.nodes.map(q=>q.x-q.rim))-12);
