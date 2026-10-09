@@ -1248,6 +1248,26 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face^="layer-"] > .it-bd > *{flex:1 1 auto;min-height:0}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face^="layer-"] .vc-panel{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face^="layer-"] .vc-live{flex:1 1 auto;height:auto!important;min-height:120px}
+  /* A DESK CARD IS FILLED BY WHAT IT HOLDS (owner, 2026-10-09: "the vera graphs displayed on the desk flicker", "news feeds
+     dont take up the entire space in its frame"). The desk gives every card a box, but the rules that let a drawing take
+     its box were only for a sized, opened or maximised card: on the desk a records card's graph kept its 320 px slot
+     under its toolbar inside a 171 px card - drawn below the card and cut away whole, showing only as the card moved -
+     and a widget or a list filled 60% of its card. A desk card with a body is a column whose working part grows. */
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd{display:flex!important;flex-direction:column;flex:1 1 auto;min-height:0;max-height:none!important;overflow:hidden}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-rbx,.vc-filewrap,.vc-codewrap,.vc-diag,.vc-xp,.vc-term,.vc-tablewrap){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > .vc-tablewrap{display:block;overflow:auto}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-diag,.vc-xp,.vc-term) > .vc-live{flex:1 1 auto;height:auto!important;min-height:60px}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > .vc-live{flex:1 1 auto;height:auto!important;min-height:60px}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) .vc-pre{flex:1 1 auto;min-height:0;max-height:none}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > .vc-rbx > :is(.vc-rbx-list,.vc-rbx-cards,.vc-tablewrap){flex:1 1 auto;min-height:0;overflow:auto}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > .vc-rbx > .vc-rbx-graph{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > .vc-rbx > .vc-rbx-graph > .vc-live{flex:1 1 auto;height:auto!important;min-height:60px}
+  /* ...and a small card is its content, not its controls: a records card's tool row (views, search, filters) wraps to 84 px
+     at a desk card's width and, with its title and foot, took the whole of a 171 px card - its graph got 0 px. Under 380 px
+     tall the tool row, the title line (the card's header already names it), a graph's pager and its caption go; a taller
+     card, or the card maximised, has them. */
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd{container:deskcard / size}
+  @container deskcard (max-height: 380px) { .vc-rbx > :is(.vc-rbx-top,.vc-rbx-tools), .vc-rbx:has(> .vc-rbx-graph) > .vc-rbx-foot, .vc-rbx-gnote { display:none!important } }
   /* a desk card that is not a chip keeps its corner grip: a compact card's rule hid it, so no desk card could be resized */
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip):not([data-desk-face^="layer-"]) > .rz{display:block}
   /* a card is moved by its header on the desk; while it moves it follows the pointer exactly and rides above the rest */
