@@ -2283,7 +2283,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
          canvas offers to explode what is on it. Each is a preference of YOURS, kept per browser like this sheet. -->
     <div class="sec" style="margin-top:5px">Session canvas</div>
     <div class="row"><label style="min-width:70px" title="Held: an item is kept inside the canvas column, level with its turn while there is room — it never scrolls away with the turn, and a tall item can always be reached. Strict: the column is the transcript's own frame, so an item is always exactly level with its turn and moves with it, off the bottom included.">Alignment</label>
-      <select id="cfgCvAlign" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="held">Held in view</option><option value="strict">Strict — level with the turn</option><option value="desk">Desk — sized by distance from the chat</option></select></div>
+      <select id="cfgCvAlign" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="desk">Desk — sized by distance from the chat</option><option value="held">Held in view</option><option value="strict">Strict — level with the turn</option></select></div>
     <div class="row"><label style="min-width:70px" title="Which side of the page the chat sits on when the canvas, the graph or a panel is open beside it. The other columns move to the other side; a Desk canvas sizes its items by their distance from the chat, wherever it is.">Chat side</label>
       <select id="cfgCvSide" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="left">Left</option><option value="right">Right</option><option value="float">Float over the desk</option></select></div>
     <div class="row"><label style="min-width:70px" title="Where the context graph is drawn when it is open. In the grown menu: beside the chat, as before. Behind the desk: with a Desk canvas, the graph is the desk's back layer - the cards sit over it and the empty desk between them reaches it.">Graph</label>
@@ -6171,7 +6171,9 @@ IMPORTANT:
      canvas reads its own behaviour off itself rather than the page reaching inside it. Defaults are what the canvas
      does today: held alignment, HTML drawn, explode offered on code and prose. */
   const _CV_CFG_KEY='vera_canvas_cfg';
-  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'], cfgCvPanel:['panel-layer','beside'], cfgCvBring:['bring-in','on'], cfgCvArrange:['desk-arrange','orbit'], cfgCvRoom:['panel-room','on'] };
+  /* the desk is the chat's canvas (owner, 2026-10-08: "the desk is the replacement for the chat canvas"): it is the
+     default alignment; Held and Strict stay for whoever chose them (a saved choice is kept) */
+  const _CV_CFG={ cfgCvAlign:['align','desk'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'], cfgCvPanel:['panel-layer','beside'], cfgCvBring:['bring-in','on'], cfgCvArrange:['desk-arrange','orbit'], cfgCvRoom:['panel-room','on'] };
   function _cvCfg(id){ const el=document.getElementById(id); const v=el&&el.value?String(el.value):''; return v||_CV_CFG[id][1]; }
   function _cvApplyCfg(){
     const el=document.querySelector('#canvasColumnBody vera-canvas');
