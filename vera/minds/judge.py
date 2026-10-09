@@ -178,6 +178,96 @@ async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: 
     return {"question_id": question_id, "by_implementation": out}
 
 
+_DDL_VEC = ("""CREATE TABLE IF NOT EXISTS decision_vectors (
+                 decision_id TEXT PRIMARY KEY, question_id TEXT NOT NULL, vec JSONB NOT NULL,
+                 ts TIMESTAMPTZ NOT NULL DEFAULT NOW())""",)
+
+
+async def _embed(texts: List[str]) -> List[Optional[List[float]]]:
+    out: List[Optional[List[float]]] = []
+    for i in range(0, len(texts), 64):
+        r = await _raw("nlp.embed", texts=texts[i:i + 64])
+        vecs = r.get("embeddings") if isinstance(r.get("embeddings"), list) else []
+        out += vecs if len(vecs) == len(texts[i:i + 64]) else [None] * len(texts[i:i + 64])
+    return out
+
+
+@capability(
+    "decide.shadow.knn", http_method="POST", http_path="/decide/shadow/knn", http_tags=["minds"],
+    memory="off",
+    description="A kNN shadow judge (four-minds FM-2, tier 2 of the cascade): each stored loop decision of the "
+                "question is answered by the similarity-weighted vote of the live answers of its 7 nearest past "
+                "decisions (MiniLM over the same text the LLM judge sees; decisions of the same run excluded) and "
+                "recorded as a shadow decision (implementation knn:minilm) linked to the live one. Embeddings only, "
+                "no LLM; runs nightly beside decide.shadow.score. Input: question_id (default loop.step_verify; "
+                "'all' for every judged question), limit (int, default 200), since_hours (int, default 72). "
+                "Output: {ok, scored, skipped, pool}.",
+)
+async def cap_decide_shadow_knn(question_id: str = "loop.step_verify", limit: int = 200, since_hours: int = 72,
+                                trace_id=None) -> Dict[str, Any]:
+    if question_id == "all":
+        return {"ok": True, "questions": {q: await cap_decide_shadow_knn(question_id=q, limit=limit,
+                                                                          since_hours=since_hours)
+                                          for q in JC.QUESTIONS}}
+    if question_id not in JC.QUESTIONS:
+        return {"ok": False, "error": f"no shadow judge for {question_id!r}"}
+    pool_db = getattr(_orch, "PG_POOL", None)
+    if pool_db is None:
+        return {"ok": False, "error": "postgres unavailable"}
+    async with pool_db.acquire() as conn:
+        for s in _DDL_VEC:
+            await conn.execute(s)
+        rows = await conn.fetch(
+            """SELECT s.decision_id, s.state, l.row, v.vec FROM decision_states s
+               JOIN decision_ledger l ON l.decision_id = s.decision_id
+               LEFT JOIN decision_vectors v ON v.decision_id = s.decision_id
+               WHERE s.question_id = $1 AND COALESCE(l.mode, '') <> 'shadow'
+               ORDER BY s.ts DESC LIMIT 3000""", question_id)
+        done = {r["f"] for r in await conn.fetch(
+            """SELECT x.row->'detail'->>'for' AS f FROM decision_ledger x
+               WHERE x.mode = 'shadow' AND x.question_id = $1 AND x.row->>'implementation' = $2""",
+            question_id, JC.KNN_IMPL)}
+        recent = {r["decision_id"] for r in await conn.fetch(
+            "SELECT decision_id FROM decision_states WHERE question_id = $1 AND ts >= NOW() - make_interval(hours => $2)",
+            question_id, int(since_hours or 72))}
+    items = []
+    for r in rows:
+        state = json.loads(r["state"]) if isinstance(r["state"], str) else (r["state"] or {})
+        live = json.loads(r["row"]) if isinstance(r["row"], str) else (r["row"] or {})
+        vec = json.loads(r["vec"]) if isinstance(r["vec"], str) else r["vec"]
+        items.append({"id": r["decision_id"], "live": live, "text": JC.user_message(question_id, state), "vec": vec})
+    missing = [it for it in items if it["vec"] is None and it["text"]]
+    if missing:
+        vecs = await _embed([it["text"][:2000] for it in missing])
+        async with pool_db.acquire() as conn:
+            for it, v in zip(missing, vecs):
+                if v:
+                    it["vec"] = JC._unit(v)
+                    await conn.execute(
+                        "INSERT INTO decision_vectors (decision_id, question_id, vec) VALUES ($1, $2, $3::jsonb) "
+                        "ON CONFLICT (decision_id) DO NOTHING", it["id"], question_id,
+                        json.dumps([round(x, 5) for x in it["vec"]]))
+    pool = [{"vec": it["vec"], "answer": it["live"].get("answer"), "run": it["live"].get("run_id")}
+            for it in items if it["vec"]]
+    try:
+        from Vera.vera.minds import ledger_capabilities as L
+    except Exception:                    # pragma: no cover
+        from vera.minds import ledger_capabilities as L  # type: ignore
+    scored = skipped = 0
+    for it in items:
+        if scored >= int(limit or 200):
+            break
+        if it["id"] in done or it["id"] not in recent or not it["vec"]:
+            continue
+        answer, p, n = JC.knn_vote(question_id, it["vec"], pool, exclude_run=it["live"].get("run_id") or "")
+        if not answer:
+            skipped += 1
+            continue
+        res = await L.append(JC.shadow_decision(it["live"], answer, p, JC.KNN_IMPL, mass=1.0))
+        scored += 1 if res.get("ok") else 0
+    return {"ok": True, "question_id": question_id, "scored": scored, "skipped": skipped, "pool": len(pool)}
+
+
 async def _night_job() -> None:
     """Queue tonight's scoring once, through the background queue (the background-inference rule)."""
     try:
@@ -195,6 +285,10 @@ async def _night_job() -> None:
             await _raw("background.cap.enqueue", name="decide.shadow.score", title=f"shadow judge: {qid}",
                        arguments={"question_id": qid, "limit": cap, "since_hours": 48},
                        timeout_s=1800, submitted_by="decide.shadow")
+        # the kNN judge: embeddings only, every question, beside the LLM judge
+        await _raw("background.cap.enqueue", name="decide.shadow.knn", title="shadow judge: kNN, all questions",
+                   arguments={"question_id": "all", "limit": 400, "since_hours": 48},
+                   timeout_s=1800, submitted_by="decide.shadow")
     except Exception as e:
         log.debug("shadow night job: %s", e)
 

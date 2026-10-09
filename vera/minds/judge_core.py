@@ -233,3 +233,42 @@ def calibration(rows: List[Tuple[Optional[float], str]], positive: str, bins: in
         at[str(t)] = {"coverage": round(len(sure) / n, 3),
                       "precision": round(right / len(sure), 3) if sure else None}
     return {"n": n, "accuracy": round(acc, 3), "ece": round(ece, 3), "at_confidence": at}
+
+
+KNN_IMPL = "knn:minilm"
+KNN_K = 7
+KNN_MIN_NEIGHBOURS = 5
+
+
+def _unit(v: Iterable[float]) -> List[float]:
+    v = [float(x) for x in v]
+    n = math.sqrt(sum(x * x for x in v)) or 1.0
+    return [x / n for x in v]
+
+
+def knn_vote(question_id: str, qvec: Iterable[float], pool: Iterable[Dict[str, Any]], exclude_run: str = "",
+             k: int = KNN_K, min_neighbours: int = KNN_MIN_NEIGHBOURS) -> Tuple[Optional[str], Optional[float], int]:
+    """The live answers of the k most similar past decisions, weighted by similarity: (answer, p, neighbours).
+    p is the vote share of the positive label for binary questions, of the chosen label for choice ones.
+    Pool rows: {vec (unit), answer, run}. Rows of the same run are skipped (no copying itself); (None, None, n)
+    when fewer than min_neighbours remain or nothing votes."""
+    q = QUESTIONS.get(question_id) or {}
+    labels = list((q.get("labels") or {}).values())
+    qv = _unit(qvec or [])
+    rows = [r for r in pool if r.get("run") != exclude_run and r.get("vec") and len(r["vec"]) == len(qv)
+            and r.get("answer") in labels]
+    if not qv or len(rows) < max(1, int(min_neighbours)):
+        return None, None, len(rows)
+    near = sorted(((sum(a * b for a, b in zip(qv, r["vec"])), r) for r in rows), key=lambda x: -x[0])[:max(1, int(k))]
+    vote: Dict[str, float] = {}
+    for s, r in near:
+        vote[r["answer"]] = vote.get(r["answer"], 0.0) + max(0.0, s)
+    total = sum(vote.values())
+    if total <= 0:
+        return None, None, len(rows)
+    answer = max(vote, key=vote.get)
+    if q.get("kind") == "binary":
+        p = vote.get(labels[0], 0.0) / total
+    else:
+        p = vote[answer] / total
+    return answer, round(p, 4), len(rows)
