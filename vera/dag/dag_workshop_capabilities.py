@@ -14507,6 +14507,21 @@ async def _v6_zeroshot_intent(goal: str) -> Tuple[Optional[str], Dict[str, float
     return _intent_zs.parse(res)
 
 
+def _tool_shortlist_step(sid: str, step: Dict[str, Any], res: Dict[str, Any], origin: str) -> None:
+    """A finished step into the caps.shortlist shadow (four-minds FM-3): its title and the tools it called
+    successfully. Background, never raises, never waits."""
+    try:
+        try:
+            from Vera.vera.minds import tool_shortlist as _ts
+        except Exception:
+            from vera.minds import tool_shortlist as _ts   # type: ignore
+        used = sorted({h.get("tool") for h in (res.get("history") or [])
+                       if isinstance(h, dict) and h.get("tool") and h.get("ok") is not False})
+        _ts.on_step(sid, step.get("id"), str(step.get("title") or ""), used, origin=origin)
+    except Exception as e:
+        log.debug("tool shortlist step: %s", e)
+
+
 async def _v6_intent_measure(task: Any, info: Dict[str, Any], used: str, *,
                              sid: str, stream_id: str) -> Optional[Dict[str, Any]]:
     """Emit agent_loop_v6.intent_zeroshot beside the intent the run used, and return the record
@@ -26144,6 +26159,8 @@ async def cap_dag_agent_loop_v6(
         flat_history.extend(res.get("history") or [])
         max_id = max(max_id, step["id"])
         await _journal_step(step, res)
+        if _dl is not None:
+            _tool_shortlist_step(sid, step, res, _dl.origin)
         if _critic is not None:
             _critic.submit(step, res, results, done_when)
 
@@ -26379,6 +26396,8 @@ async def cap_dag_agent_loop_v6(
             flat_history.extend(res.get("history") or [])
             max_id = max(max_id, step["id"])
             await _journal_step(step, res)
+            if _dl is not None:
+                _tool_shortlist_step(sid, step, res, _dl.origin)
 
     # ── Synthesize final ──────────────────────────────────────────────────────
     # A run that spent its whole step budget never entered the gate loop above (it
