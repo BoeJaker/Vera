@@ -97,8 +97,9 @@
       const gpu = ag.gpu || {};
       let h = '<div class="card' + (run.length ? ' busy' : '') + '"><div class="row"><span class="name">' + esc(n) + '</span>'
         + '<span class="badge ' + (inst.has_gpu ? 'gpu">GPU' : 'cpu">CPU') + '</span>'
+        + (inst.backend === 'vllm' ? '<span class="badge cpu" title="Ollama stopped on purpose: served by vLLM ' + esc(inst.served_by || '') + '">vLLM</span>' : '')
         + (s.tapped ? '<span class="badge ok" title="the node-side tap reports every request">tapped</span>' : '<span class="badge warn" title="no tap on this node yet: only Vera-side stats">untapped</span>')
-        + '<span class="sp"></span>' + (inst.status === 'online' ? '<b class="ok">online</b>' : '<b class="bad">' + esc(inst.status || '?') + '</b>') + '</div>';
+        + '<span class="sp"></span>' + (inst.status === 'online' ? '<b class="ok">' + (inst.backend === 'vllm' ? 'vLLM' : 'online') + '</b>' : '<b class="bad">' + esc(inst.status || '?') + '</b>') + '</div>';
       // LXC load average is the HOST's, not this container's - shown for scale only
       h += '<div class="muted">' + (ag.cores ? ag.cores + ' cores · ' : '') + 'host load ' + esc((ag.load || [])[0] ?? '?') + ' · mem ' + mb(memUsed) + '/' + mb(ag.mem_total_mb)
         + (gpu.util_pct != null ? ' · GPU ' + gpu.util_pct + '% ' + mb(gpu.used_mb) + '/' + mb(gpu.total_mb) : '')

@@ -181,6 +181,7 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
       <div class="tab" data-tab="launch"     onclick="showTab('launch')">Launch Server</div>
       <div class="tab" data-tab="lora"       onclick="showTab('lora')">LoRA</div>
       <div class="tab" data-tab="metrics"    onclick="showTab('metrics')">Metrics</div>
+      <div class="tab" data-tab="nodes"      onclick="showTab('nodes')">Nodes</div>
     </div>
 
     <!-- PLAYGROUND -->
@@ -446,6 +447,7 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
 
         <div class="sec">Nodes serving vLLM</div>
         <div id="lnch-node-list" style="padding:0 14px 12px;font-size:10.5px;color:var(--dim)">None</div>
+        <div style="padding:0 14px 12px;font-size:10px;color:var(--dim, #6a7080)">Switch nodes between Ollama and vLLM - one, ticked or all, with embeddings - in the <a href="#" onclick="showTab('nodes');return false">Nodes</a> tab.</div>
 
         <div class="sec">Running Managed Servers (this host)</div>
         <div id="managed-servers" style="padding:0 14px 12px;font-size:10.5px;color:var(--dim)">None</div>
@@ -477,6 +479,13 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
 
         <div class="sec">Loaded Adapters</div>
         <div id="lora-list" style="padding:0 14px 12px"></div>
+      </div>
+    </div>
+
+    <!-- NODES: which backend serves each node, and the switch -->
+    <div class="panel" id="panel-nodes" data-panel="nodes">
+      <div class="launch-section" style="padding:12px 14px">
+        <vera-backend-switch id="vllm-backend"></vera-backend-switch>
       </div>
     </div>
 
@@ -586,6 +595,7 @@ function renderSidebar(){
       <div class="inst-badges">
         ${inst.has_gpu?'<span class="badge gpu">GPU</span>':'<span class="badge cpu">CPU</span>'}
         ${inst.gate_as?`<span class="badge" title="Shares hardware with Ollama node ${inst.gate_as}: queues on its GPU gate" style="color:var(--dim2, #8a90a0)">⇄ ${inst.gate_as}</span>`:''}
+        ${inst.gate_as&&inst.id==='vllm-'+inst.gate_as?`<button class="btn xs" title="Switch node ${esc(inst.gate_as)} back to Ollama" onclick="event.stopPropagation();backendSwitch(['${esc(inst.gate_as)}'],'ollama')">→ Ollama</button>`:''}
         ${(inst.loaded_loras||[]).length?`<span class="badge lora">${inst.loaded_loras.length} LoRA</span>`:''}
         ${inst.status==='degraded'?'<span class="badge" style="background:rgba(201,163,90,.15);border:1px solid var(--warn);color:var(--warn)">degraded</span>':''}
       </div>
@@ -896,6 +906,11 @@ async function addInstance(){
     st.style.color='var(--err)';
     st.textContent='Error: ' + (r.error||'unknown');
   }
+}
+
+function backendSwitch(ids, backend){
+  const el = document.getElementById('vllm-backend');
+  if(el && el.switchNodes){ showTab('nodes'); return el.switchNodes(ids, backend); }
 }
 
 async function setStandIn(id){
@@ -1232,5 +1247,6 @@ function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').rep
 </script>
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-panel-bridge.js"></script>
+<script src="/ui/elements/backend_switch.js"></script>
 </body>
 </html>

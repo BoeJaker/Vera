@@ -427,7 +427,9 @@ function renderNodes(){
       <div class="nm">${esc(n.label||iid)}
         ${n.has_gpu?'<span class="badge gpu">GPU</span>':''}
         <span class="badge ${n.status==='online'?'on':'off'}">${esc(n.status||'?')}</span>
-        ${n.enabled===false?'<span class="badge off">disabled</span>':''}</div>
+        ${n.backend==='vllm'
+          ?`<span class="badge user" title="Ollama stopped; served by vLLM ${esc(n.served_by||'')}">vLLM${n.served_by?' · '+esc(n.served_by):''}</span>`
+          :(n.enabled===false?'<span class="badge off">disabled</span>':'')}</div>
       <div class="meta">${esc(iid)} · in-use ${n.in_use||0} · prio ${n.priority||0}<br>
         ${(n.models||[]).length} models</div>
     </div>`;

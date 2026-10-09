@@ -700,6 +700,7 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
         <!-- Node cards -->
         <div class="widget w-w12 w-h4" data-wid="ol-nodes">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Nodes <span id="ol-node-cnt" style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0"></span></span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-nodes')">×</button></span></div>
+          <div style="padding:6px 10px 0"><vera-backend-switch id="ol-backend" compact></vera-backend-switch></div>
           <div class="w-body" id="ol-nodes-body"><span style="color:var(--dim);font-size:10px">Loading…</span></div>
           <span class="w-resize" data-resize></span>
         </div>
@@ -1756,7 +1757,10 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
     <!-- Sandbox pane — shared exec-sandbox policy editor (gates exec.*, IDE Run, docker.* CLI) -->
     <!-- Models & NLP: the <vera-node-models> element (ollama.warm.*, nlp.*, specialist.*) -->
     <div class="pane" id="pane-warmmodels" style="padding:0;overflow:hidden">
-      <iframe id="warmmodels-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+      <div style="display:flex;flex-direction:column;height:100%">
+        <div id="warm-vllm-note" style="display:none;flex-shrink:0;padding:6px 10px;font-size:9.5px;color:var(--dim2, #8a90a0);border-bottom:1px solid var(--border, #2a2f3a)"></div>
+        <iframe id="warmmodels-frame" src="about:blank" style="width:100%;flex:1;min-height:0;border:none;background:var(--bg0)"></iframe>
+      </div>
     </div>
     <div class="pane" id="pane-nodesettings" style="padding:0;overflow:hidden">
       <iframe id="nodesettings-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
@@ -2798,11 +2802,14 @@ function renderOllama(){
     const blank=sid==='ol-pin'?'<option value="">None (strategy)</option>'
       :sid==='emb-pin'?'<option value="">Auto (strategy)</option>'
       :'<option value="">Auto</option>';
-    el.innerHTML=blank+ids.map(id=>{
+    /* a node switched to vLLM is marked; it can never be the embedding pin
+       (embeddings go to an Ollama daemon, and its Ollama is stopped) */
+    const opts=ids.filter(id=>sid!=='emb-pin'||((_cluster.ollama||{})[id]||{}).backend!=='vllm');
+    el.innerHTML=blank+opts.map(id=>{
       const n=(_cluster.ollama||{})[id]||{};
-      return '<option value="'+id+'">'+esc(n.label||id)+(n.has_gpu?' ⚡':'')+(n.status!=='online'?' ✗':'')+'</option>';
+      return '<option value="'+id+'">'+esc(n.label||id)+(n.has_gpu?' ⚡':'')+(n.backend==='vllm'?' (vLLM)':'')+(n.status!=='online'?' ✗':'')+'</option>';
     }).join('');
-    if(prev&&ids.includes(prev)) el.value=prev;
+    if(prev&&opts.includes(prev)) el.value=prev;
   });
   // Models select for test
   const tmEl=$('ol-test-model');
@@ -2813,60 +2820,32 @@ function renderOllama(){
   }
 
   renderOllamaNodes(nodes);
+  olWarmVllmNote();
 }
 
-/* Backend buttons: each node switches with the settings it last ran on vLLM
-   (else the store model suggested for it), one after another in the background
-   (nodes.backend.switch_many). A confirm says what will happen first. */
-const _olSel=new Set();
-let _olBulkTimer=null;
-function olSelToggle(id,on){ on?_olSel.add(id):_olSel.delete(id); }
-function _olRow(r){
-  const p=r.plan||{};
-  const what=r.skipped||r.error||(p.action==='switch'?('→ '+p.to+(r.model?'  '+String(r.model).split('/').pop():'')+(r.install?' (installs vLLM first)':'')):(p.why||''));
-  return (r.ok===false?'✗ ':'')+r.instance+': '+what;
+/* Warm models pane: the warm plan never touches a node switched to vLLM, so it
+   drops out of the element below - say so above it instead of leaving it missing. */
+function olWarmVllmNote(){
+  const el=$('warm-vllm-note'); if(!el) return;
+  const sw=Object.entries((_cluster&&_cluster.ollama)||{}).filter(([,n])=>n.backend==='vllm');
+  el.style.display=sw.length?'':'none';
+  el.innerHTML=sw.map(([id,n])=>'<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px">'
+    +'<b style="color:var(--text, #d0d4dc)">'+esc(n.label||id)+'</b><span class="ol-badge" style="background:color-mix(in srgb, var(--acc, #8a7cf0) 15%, transparent);color:var(--acc, #8a7cf0);border:1px solid color-mix(in srgb, var(--acc, #8a7cf0) 35%, transparent)">vLLM</span>'
+    +'<span>on vLLM'+(n.served_by?' ('+esc(n.served_by)+')':'')+' — not managed here</span></span>').join('');
 }
-let _olStatusText='';
-function _olStatus(t){ _olStatusText=t; const e=$('ol-bulk-status'); if(e) e.textContent=t; }
-async function olBulk(backend,scope){
-  const ids=scope==='all'?[]:(Array.isArray(scope)?scope:[..._olSel]);
-  if(scope==='sel'&&!ids.length){ _olStatus('Tick the nodes first.'); return; }
-  _olStatus('Checking…');
-  const r=await api('/nodes/backend/switch_many','POST',{backend,instance_ids:ids,dry_run:true});
-  if(!r||!r.ok){ _olStatus('✗ '+((r&&r.error)||'no response')); return; }
-  const rows=r.nodes||[];
-  const todo=rows.filter(x=>x.ok!==false&&!x.skipped&&((x.plan||{}).action==='switch'||x.install));
-  if(!todo.length){ _olStatus(rows.map(_olRow).join(' · ')||'Nothing to switch.'); return; }
-  if(!confirm('Switch to '+(backend==='vllm'?'vLLM':'Ollama')+':\n\n'+rows.map(_olRow).join('\n')
-    +'\n\nNodes switch one after another; a CPU node takes a few minutes to load.')){ _olStatus(''); return; }
-  const g=await api('/nodes/backend/switch_many','POST',{backend,instance_ids:todo.map(x=>x.instance),dry_run:false});
-  if(!g||!g.ok){ _olStatus('✗ '+((g&&g.error)||'no response')); return; }
-  _olBulkPoll();
-}
-function olSwitchOne(iid,backend){ return olBulk(backend,[iid]); }
-async function _olBulkPoll(){
-  clearTimeout(_olBulkTimer);
-  const r=await api('/nodes/backend/switch_status');
-  const j=r&&r.job; if(!j) return;
-  const done=(j.done||[]).map(x=>(x.ok?'✓ ':'✗ ')+x.instance+(x.ok?'':' ('+(x.error||'failed')+')'));
-  _olStatus(done.concat(j.current?['switching '+j.current+'…']:[]).join(' · ')+(j.state==='running'?'':' - done'));
-  if(j.state==='running') _olBulkTimer=setTimeout(_olBulkPoll,5000);
-  else if(typeof refresh==='function') refresh();
+
+/* A card's backend button hands off to the LLM backend component above the
+   cards (<vera-backend-switch>): dry run, confirm, background switch, progress. */
+function olSwitchOne(iid,backend){
+  const el=document.getElementById('ol-backend');
+  if(el&&el.switchNodes) return el.switchNodes([iid],backend);
 }
 
 function renderOllamaNodes(nodes){
   const el=$('ol-nodes-body');if(!el) return;
   if(!nodes.length){el.innerHTML='<span style="color:var(--dim);font-size:10px">No Ollama instances configured</span>';return;}
 
-  const bulk=`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;font-size:10px;color:var(--dim2, #8a90a0)">
-    <span style="font-weight:700;color:var(--acc2, #7aa2f7)">Backend</span>
-    <button class="btn sm" onclick="P.olBulk('vllm','all')">All → vLLM</button>
-    <button class="btn sm" onclick="P.olBulk('ollama','all')">All → Ollama</button>
-    <button class="btn sm" onclick="P.olBulk('vllm','sel')">Ticked → vLLM</button>
-    <button class="btn sm" onclick="P.olBulk('ollama','sel')">Ticked → Ollama</button>
-    <span id="ol-bulk-status" style="font-family:var(--mono);font-size:9.5px">${esc(_olStatusText)}</span>
-  </div>`;
-  el.innerHTML=bulk+'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px">'+nodes.map(([id,n])=>{
+  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px">'+nodes.map(([id,n])=>{
     const online = n.status==='online';
     /* switched to vLLM: the Ollama instance is disabled on purpose and the
        status is its vLLM server's - not "OFF", and no Enable (that would route
@@ -2919,12 +2898,11 @@ function renderOllamaNodes(nodes){
       ?`<div style="margin-top:4px"><span style="font-size:8px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px">Running:</span><div class="ol-models" style="margin-top:3px">${(n.running||[]).map(m=>'<span class="ol-model running">'+esc(m.split(':')[0])+'</span>').join('')}</div></div>`:'';
 
     // Available models
-    const models = (n.models||[]).slice(0,12).map(m=>'<span class="ol-model" title="Click to delete" onclick="event.stopPropagation();P.openDeleteModel('+sq(id)+','+sq(m)+')">'+esc(m.split(':')[0])+'<span style="font-size:6px;margin-left:2px;color:var(--err);opacity:.5">×</span></span>').join('');
+    const models = (n.models||[]).slice(0,12).map(m=>vllm?'<span class="ol-model" title="'+esc(m)+' - served by vLLM">'+esc(m.split(':')[0])+'</span>':'<span class="ol-model" title="Click to delete" onclick="event.stopPropagation();P.openDeleteModel('+sq(id)+','+sq(m)+')">'+esc(m.split(':')[0])+'<span style="font-size:6px;margin-left:2px;color:var(--err);opacity:.5">×</span></span>').join('');
 
     return `<div class="ol-card ${online?'online':'offline'}" style="cursor:pointer${disabled?';opacity:.45;filter:grayscale(.6)':''}" onclick="P.openOlDetail(${sq(id)})">
       <div class="ol-head">
         <div style="width:7px;height:7px;border-radius:50%;background:${disabled?'var(--dim)':statusCol};flex-shrink:0"></div>
-        <input type="checkbox" ${_olSel.has(id)?'checked':''} title="Tick for Ticked → vLLM / Ollama" onclick="event.stopPropagation();P.olSelToggle(${sq(id)},this.checked)">
         <span class="ol-label">${esc(n.label||id)}</span>
         ${n.has_gpu?'<span class="ol-badge gpu">GPU</span>':'<span class="ol-badge cpu">CPU</span>'}
         ${pinned?'<span class="ol-badge pin">PINNED</span>':''}
@@ -2965,6 +2943,7 @@ function openOlDetail(id){
   if(!modal) return;
   const online=n.status==='online';
   const statusCol=online?'var(--ok)':'var(--err)';
+  const vllm=n.backend==='vllm';
   title.textContent=(n.label||id)+' — Detail';
   // Build full detail view
   const row=(k,v,col)=>`<div class="det-row"><span class="det-k">${esc(k)}</span><span class="det-v" style="${col?'color:'+col:''}">${esc(String(v??'—'))}</span></div>`;
@@ -2973,6 +2952,7 @@ function openOlDetail(id){
   let html='';
   html+=section('Connection',
     row('URL',n.url)+
+    (vllm?row('Serving','vLLM ('+(n.served_by||'its vLLM server')+')','var(--acc, #8a7cf0)'):'')+
     row('Status',online?'ONLINE':'OFFLINE',statusCol)+
     row('Version',n.version||'—')+
     row('Last Check',(n.last_check||'').replace('T',' ').slice(0,19))
@@ -3002,8 +2982,9 @@ function openOlDetail(id){
     ).join(''));
   }
   if((n.models||[]).length){
-    html+=section(`Models (${n.models.length})`,n.models.map(m=>
-      `<div class="det-row" style="cursor:pointer" onclick="P.openDeleteModel(${sq(id)},${sq(m)})"><span class="det-k" style="color:var(--dim2)">'+esc(m)+'</span><span class="det-v" style="color:var(--err);font-size:8px">delete</span></div>`
+    html+=section(`Models (${n.models.length})`,n.models.map(m=>vllm
+      ?`<div class="det-row"><span class="det-k" style="color:var(--dim2)">${esc(m)}</span><span class="det-v" style="color:var(--dim2);font-size:8px">vLLM</span></div>`
+      :`<div class="det-row" style="cursor:pointer" onclick="P.openDeleteModel(${sq(id)},${sq(m)})"><span class="det-k" style="color:var(--dim2)">${esc(m)}</span><span class="det-v" style="color:var(--err);font-size:8px">delete</span></div>`
     ).join(''));
   }
   // Raw data for debugging
@@ -4722,7 +4703,8 @@ function openPullModal(instanceId){
   // Populate instance select
   const sel = $('pull-target-inst');
   if(sel && _cluster){
-    const nodes = Object.entries(_cluster.ollama||{});
+    /* a node switched to vLLM has no running Ollama to pull into */
+    const nodes = Object.entries(_cluster.ollama||{}).filter(([,n])=>n.backend!=='vllm');
     sel.innerHTML = nodes.map(([id,n])=>{
       const selected = id===_pullTargetInst ? ' selected' : '';
       return '<option value="'+id+'"'+selected+'>'+esc(n.label||id)+(n.has_gpu?' ⚡':'')+(n.status!=='online'?' ✗':'')+'</option>';
@@ -6463,7 +6445,7 @@ function showPane(name, el){
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
   if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
   if(name==='activity'){ _mountFrame('activity-frame', BASE+'/nodes/activity/panel'); }
-  if(name==='warmmodels'){ _mountFrame('warmmodels-frame', BASE+'/nodes/models/panel?section=warm'); }
+  if(name==='warmmodels'){ olWarmVllmNote(); _mountFrame('warmmodels-frame', BASE+'/nodes/models/panel?section=warm'); }
   if(name==='nodesettings'){ _mountFrame('nodesettings-frame', BASE+'/nodes/models/panel?section=settings'); }
   if(name==='nlpnodes'){ _mountFrame('nlpnodes-frame', BASE+'/nodes/models/panel?section=nlp'); }
   if(name==='trainnodes'){ _mountFrame('trainnodes-frame', BASE+'/nodes/models/panel?section=training'); }
@@ -7135,7 +7117,7 @@ async function catOpen(id){
   $('cat-results').style.display='none';
   const d=$('cat-detail'); d.style.display='';
   const tgt=($('cat-target-node')||{}).value||'';
-  const nodeOpts=_catNodes.map(n=>`<option value="${esc(n.id)}"${n.id===tgt?' selected':''}>${esc(n.id)} · ${esc(n.backend)}${n.vram_gb?` ${n.vram_gb}G`:''}${_catFreeGb(n)!=null?` · ${Math.round(_catFreeGb(n))}G free`:''}</option>`).join('');
+  const nodeOpts=_catNodes.filter(n=>!n.switched).map(n=>`<option value="${esc(n.id)}"${n.id===tgt?' selected':''}>${esc(n.id)} · ${esc(n.backend)}${n.vram_gb?` ${n.vram_gb}G`:''}${_catFreeGb(n)!=null?` · ${Math.round(_catFreeGb(n))}G free`:''}</option>`).join('');
   const variants=(r.gguf_variants||[]).map(v=>{ const req=v.requirement||{};
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:3px 6px"><b>${esc(v.quant)}</b></td><td>${v.size_gb}G</td>
@@ -7296,11 +7278,12 @@ function catInstalledRender(){
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span style="width:7px;height:7px;border-radius:50%;background:${n.status==='online'?'var(--ok)':'var(--err)'}"></span>
         <b style="color:var(--text)">${esc(n.label||n.id)}</b>
-        <span style="font-size:8px;padding:1px 5px;border:1px solid var(--border2);border-radius:8px;color:var(--dim2)">${esc(n.backend)}</span>
+        ${n.switched?`<span class="ol-badge" style="background:color-mix(in srgb, var(--acc, #8a7cf0) 15%, transparent);color:var(--acc, #8a7cf0);border:1px solid color-mix(in srgb, var(--acc, #8a7cf0) 35%, transparent)">vLLM</span><span style="font-size:8.5px;color:var(--dim2)">on vLLM${n.served_by?' ('+esc(n.served_by)+')':''} - its Ollama store is not queried</span>`
+          :`<span style="font-size:8px;padding:1px 5px;border:1px solid var(--border2);border-radius:8px;color:var(--dim2)">${esc(n.backend)}</span>`}
         ${n.has_gpu?`<span style="font-size:8px;color:var(--gpu)">GPU${n.vram_gb?' '+n.vram_gb+'G':''}</span>`:'<span style="font-size:8px;color:var(--dim2)">CPU</span>'}
         <span style="font-size:9px;color:var(--dim2)">${n.count||0} model${(n.count||0)===1?'':'s'} · ${(n.size_gb||0).toFixed(1)}G</span>
         <span style="flex:1"></span>
-        <button class="btn sm gpu-btn" style="font-size:8px" onclick="P.catPullTo(${sq(n.id)})">⇩ Pull to this node</button>
+        ${n.switched?'':`<button class="btn sm gpu-btn" style="font-size:8px" onclick="P.catPullTo(${sq(n.id)})">⇩ Pull to this node</button>`}
       </div>
       ${disk}${err}
       ${rows?`<table style="width:100%;border-collapse:collapse;margin-top:6px">
@@ -7805,7 +7788,7 @@ async function benchInit(force){
   _benchInited=true;
   // Ollama nodes + their installed models (reuse the catalog's per-node view).
   const r=await api('/catalog/installed');
-  _benchNodes=((r&&r.nodes)||[]).filter(n=>n.backend==='ollama');
+  _benchNodes=((r&&r.nodes)||[]).filter(n=>n.backend==='ollama'&&!n.switched);
   const nsel=$('bench-node');
   if(nsel){
     const cur=nsel.value;
@@ -8113,11 +8096,12 @@ function benchMonRender(nodes, series){
   if(!nodes.length){ el.innerHTML='<span style="color:var(--dim);font-size:10px">No Ollama nodes.</span>'; return; }
   el.innerHTML=nodes.map(n=>{
     const hw=n.hw||{}, wl=n.workload||{};
+    const vllm=n.backend==='vllm';
     const dot=n.reachable?'#6fd68b':'#e0603a';
     const vramTxt=hw.vram_gb?`${(n.loaded_vram_gb||0).toFixed(1)}/${hw.vram_gb}G`:(n.loaded_vram_gb!=null?`${(n.loaded_vram_gb||0).toFixed(1)}G`:'—');
     const vpct=n.vram_used_pct!=null?n.vram_used_pct:0;
     const diskTxt=(hw.disk_free_gb!=null)?`${Math.round(hw.disk_free_gb)}G free${hw.disk_total_gb?(' / '+Math.round(hw.disk_total_gb)+'G'):''}`:'';
-    const loaded=(n.loaded||[]).map(m=>`<span class="chip" style="cursor:default;font-size:8px;border-color:var(--gpu)" title="${esc(m.model)} · ${m.vram_gb}G VRAM">${esc(_benchTrunc(m.model,20))} ${m.vram_gb}G</span>`).join(' ')||'<span style="color:var(--dim);font-size:9px">idle — no model resident</span>';
+    const loaded=vllm?'<span style="color:var(--dim2, #8a90a0);font-size:9px">on vLLM'+(n.served_by?' ('+esc(n.served_by)+')':'')+' - Ollama benchmarks do not apply</span>':(n.loaded||[]).map(m=>`<span class="chip" style="cursor:default;font-size:8px;border-color:var(--gpu)" title="${esc(m.model)} · ${m.vram_gb}G VRAM">${esc(_benchTrunc(m.model,20))} ${m.vram_gb}G</span>`).join(' ')||'<span style="color:var(--dim);font-size:9px">idle — no model resident</span>';
     const hwbits=[];
     if(hw.gpu_name) hwbits.push('⚡ '+esc(hw.gpu_name)); else if(!n.has_gpu) hwbits.push('CPU');
     if(hw.ram_gb) hwbits.push(hw.ram_gb+'G RAM');
@@ -8130,7 +8114,7 @@ function benchMonRender(nodes, series){
         <span style="width:8px;height:8px;border-radius:50%;background:${dot};display:inline-block" title="${n.reachable?'online':'unreachable'}"></span>
         <b style="font-size:11px">${esc(n.label||n.id)}</b>
         ${n.has_gpu?'<span style="color:var(--gpu);font-size:8px">GPU</span>':''}
-        ${!n.enabled?'<span class="chip" style="cursor:default;font-size:8px;border-color:#e0603a;color:#e0603a">disabled</span>':''}
+        ${vllm?'<span class="ol-badge" style="background:color-mix(in srgb, var(--acc, #8a7cf0) 15%, transparent);color:var(--acc, #8a7cf0);border:1px solid color-mix(in srgb, var(--acc, #8a7cf0) 35%, transparent)">vLLM</span>':(!n.enabled?'<span class="chip" style="cursor:default;font-size:8px;border-color:#e0603a;color:#e0603a">disabled</span>':'')}
         <span style="flex:1"></span>
         <span style="font-size:8.5px;color:var(--dim);font-family:var(--mono)">${n.ping_ms!=null?n.ping_ms+'ms':'—'}${n.version?(' · v'+esc(n.version)):''}</span>
       </div>
@@ -8153,7 +8137,7 @@ function benchMonRender(nodes, series){
       ${tops?`<div style="margin-top:4px">${tops}</div>`:''}
       <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">
         ${n.has_gpu?`<button class="btn sm" onclick="P.benchNodeGpu(${sq(n.id)})" title="Sample live GPU utilisation over SSH (nvidia-smi)">GPU util</button>`:''}
-        <button class="btn sm" onclick="P.benchNodeTrace(${sq(n.id)})" title="Run a real generation and sample ${n.has_gpu?'GPU clocks, temperature and throttling':'CPU and memory'} while it runs">Trace load</button>
+        ${vllm?'':`<button class="btn sm" onclick="P.benchNodeTrace(${sq(n.id)})" title="Run a real generation and sample ${n.has_gpu?'GPU clocks, temperature and throttling':'CPU and memory'} while it runs">Trace load</button>`}
         <button class="btn sm" onclick="P.trafficOpen(${sq(n.id)})" title="Who is calling this node, and what else is running on it">Traffic</button>
         <span id="bench-gpu-${_benchIdSafe(n.id)}" style="font-size:8.5px;color:var(--dim2);font-family:var(--mono)"></span>
         <div id="bench-trace-${_benchIdSafe(n.id)}" style="flex-basis:100%;font-size:9px"></div>
@@ -8439,7 +8423,7 @@ return {
   ndLoad, ndDetect, ndDetectAll, ndProv, ndProvClose, ndCompToggle,
   ndModelSearch, ndModelPick, ndPlan, ndRun, ndSwitch,
   ndSwitchClose, ndSwitchBackendChanged, ndSwitchGo,
-  olSelToggle, olSwitchOne, olBulk,
+  olSwitchOne,
 };
 })();
 </script>
@@ -8449,5 +8433,6 @@ return {
 <script src="/ui/vera-entity-drawer.js"></script>
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>
+<script src="/ui/elements/backend_switch.js"></script>
 </body>
 </html>

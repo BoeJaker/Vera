@@ -10314,7 +10314,8 @@ async def cap_ollama_instances(trace_id=None):
                  "enabled":i.get("enabled", True),
                  "status":i["status"],"latency_ms":i["latency_ms"],"models":i["models"],
                  "in_use":i["in_use"],"errors":i["errors"],"last_check":i["last_check"],
-                 "num_ctx":i.get("num_ctx", 4096)}
+                 "num_ctx":i.get("num_ctx", 4096),
+                 "backend":i.get("backend", "ollama"),"served_by":i.get("served_by", "")}
             for iid,i in OLLAMA_INSTANCES.items()}
 
 @capability("ollama.add_instance", memory="off",
@@ -10458,7 +10459,8 @@ async def cap_ollama_routing_get(trace_id=None):
         "job_types":      OLLAMA_JOB_TYPES,
         "nodes": {iid: {"label": i.get("label", iid), "has_gpu": i.get("has_gpu", False),
                         "enabled": i.get("enabled", True), "priority": i.get("priority", 0),
-                        "status": i.get("status", ""), "models": i.get("models", [])}
+                        "status": i.get("status", ""), "models": i.get("models", []),
+                        "backend": i.get("backend", "ollama"), "served_by": i.get("served_by", "")}
                   for iid, i in OLLAMA_INSTANCES.items()},
     }
 
@@ -10690,7 +10692,8 @@ async def cap_ollama_role_profiles_get(trace_id=None):
         "nodes": {iid: {"label": i.get("label", iid), "has_gpu": i.get("has_gpu", False),
                         "enabled": i.get("enabled", True), "status": i.get("status", ""),
                         "priority": i.get("priority", 0), "in_use": i.get("in_use", 0),
-                        "models": i.get("models", [])}
+                        "models": i.get("models", []),
+                        "backend": i.get("backend", "ollama"), "served_by": i.get("served_by", "")}
                   for iid, i in OLLAMA_INSTANCES.items()},
     }
 

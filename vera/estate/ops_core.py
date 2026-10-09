@@ -263,9 +263,12 @@ def _services(src: Mapping[str, Any], M: Mapping[str, Any], stack_host: str, nod
         models = q.get("models") or []
         st_ = str(q.get("status") or "")
         busy = int(_num(q.get("in_use"), 0) or 0) + int(_num(g.get("held"), 0) or 0)
+        # switched to vLLM: its Ollama is stopped on purpose, status/models are the vLLM server's
+        be = str(q.get("backend") or "ollama")
         n = _node(nid, str(q.get("label") or iid), "service", COMPUTE, kind="ollama",
+                  backend=be, served_by=str(q.get("served_by") or ""),
                   status="down" if st_ in ("offline", "error", "down") else ("run" if busy else "ok"),
-                  detail=f"{len(models)} models · {int(_num(q.get('latency_ms'), 0) or 0)} ms" + (" · gpu" if q.get("has_gpu") else ""),
+                  detail=("vLLM · " if be == "vllm" else "") + f"{len(models)} models · {int(_num(q.get('latency_ms'), 0) or 0)} ms" + (" · gpu" if q.get("has_gpu") else ""),
                   inflight=busy, load=(100.0 * _num(g.get("held"), 0) / _num(g.get("capacity"), 1)) if g.get("gated") and _num(g.get("capacity"), 0) else None,
                   errors=int(_num(q.get("errors"), 0) or 0), caps=[str(x) for x in models][:12],
                   req={"name": "ollama.instances", "arguments": {}}, url=str(q.get("url") or ""), gate=g or None)

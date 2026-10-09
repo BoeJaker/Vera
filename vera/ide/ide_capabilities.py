@@ -810,7 +810,10 @@ async def ide_agent_chat(
     memory="off",
     description="List Ollama instances available to the IDE with tier labels, "
                 "status, latency and available models. "
-                "Output: {instances: [{id, label, tier, url, status, latency_ms, models, has_gpu}]}",
+                "A node switched to vLLM (its Ollama stopped on purpose) has backend='vllm' "
+                "and served_by=<vllm id>; its status/models are the vLLM server's. "
+                "Output: {instances: [{id, label, tier, url, status, latency_ms, models, has_gpu, "
+                "backend, served_by}]}",
 )
 async def ide_instances(trace_id=None):
     result = []
@@ -835,6 +838,8 @@ async def ide_instances(trace_id=None):
             "models":     inst.get("models", []),
             "has_gpu":    inst.get("has_gpu", False),
             "in_use":     inst.get("in_use", 0),
+            "backend":    inst.get("backend", "ollama"),
+            "served_by":  inst.get("served_by", ""),
         })
     return {"instances": result}
 

@@ -224,8 +224,17 @@
         h += '<div class="card" style="margin-top:6px"><div class="row"><span class="name">' + esc(n.instance) + '</span>'
           + '<span class="badge ' + (cpu ? 'cpu">CPU' : 'gpu">GPU') + '</span><span class="muted mono">' + esc(n.unit || '') + '</span>'
           + (bad.length ? '<span class="badge bad" title="runners started without -t run llama.cpp\'s default - 24 threads on 12 CPUs">' + bad.length + ' runner(s) on the 24-thread default</span>' : '')
+          + (n.switched ? '<span class="badge ok" title="Switched to vLLM - see LLM backend above">serving vLLM</span>' : '')
           + (n.error ? '<span class="bad">' + esc(n.error) + '</span>' : '') + '</div>';
         if (n.error) { h += '</div>'; continue; }
+        if (n.switched) {
+          /* its Ollama unit is stopped on purpose: applying a setting would restart
+             it beside the vLLM server, so these are read-only until it switches back */
+          h += '<div class="muted">This node serves vLLM now (LLM backend, above). Its Ollama settings below are kept and apply again when it switches back to Ollama.</div>'
+            + (cpu ? '<div class="muted">num_thread: <b>' + esc(n.num_thread) + '</b></div>' : '')
+            + '<div class="muted">custom flags: ' + (Object.entries(n.custom || {}).map(([k, v]) => '<span class="mono">' + esc(k) + '=' + esc(v) + '</span>').join(' &middot; ') || 'none') + '</div></div>';
+          continue;
+        }
         if (cpu) {
           h += '<div class="row"><label title="sent with every routed call, and written as the unit\'s runner default so every caller gets it">num_thread '
             + '<input id="nt-' + esc(n.instance) + '" type="number" min="1" max="64" style="width:56px" value="' + esc(n.num_thread) + '"></label>'
