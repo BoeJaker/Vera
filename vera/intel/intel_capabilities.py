@@ -693,17 +693,11 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
                 twin = batch.get(sid)
                 if twin is not None:        # ...a story that arrived earlier in this same sweep
                     if c.get("url") and c["url"] not in twin.setdefault("also", []):
-                        _confirmed = ledger.first_confirmation(twin.get("url"), twin["also"], c["url"])
                         twin.update(story.add_join(twin, c["url"], core.now_iso()))   # also + when it joined
-                        if _confirmed:
-                            _outcome("signal", sid, "story.confirmed", questions=ledger.CONFIRM_QUESTIONS)
                 else:
                     old = st.get_signal(sid)
                     if old and c.get("url") and c["url"] not in (old.get("also") or []):
-                        _confirmed = ledger.first_confirmation(old.get("url"), old.get("also") or [], c["url"])
                         st.put_signal(dict(old, **story.add_join(old, c["url"], core.now_iso())))
-                        if _confirmed:
-                            _outcome("signal", sid, "story.confirmed", questions=ledger.CONFIRM_QUESTIONS)
                 stats["joined"] = stats.get("joined", 0) + 1
                 continue
             nv = round(1.0 - max(0.0, cos), 3)
@@ -3733,39 +3727,6 @@ async def _go_signal(signal_id: str):
     _outcome("signal", sid, "link.opened", questions=["intel.signal_relevant", "intel.enrich_worth",
                                                       "intel.page_genre"])
     return RedirectResponse(s["url"], status_code=302)
-
-
-@capability("intel.outcomes.backfill", http_method="POST", http_path="/intel/outcomes/backfill",
-            http_tags=["intel"], memory="off",
-            description="Give stored signals that another site has already confirmed (a later item from a "
-                        "different site joined the same story) their story.confirmed outcome - the outcome "
-                        "intake now records as it happens, applied to the signals seen before it did. Skips "
-                        "decisions that already have one. Input: days (int, default 14), dry_run (bool, "
-                        "default true: count only). Output: {ok, signals, confirmed, outcomes, dry_run}.")
-async def cap_outcomes_backfill(days: int = 14, dry_run: bool = True, trace_id=None):
-    if isinstance(dry_run, str):
-        dry_run = dry_run.strip().lower() not in ("0", "false", "no")
-    st = store()
-    since = _since(24 * max(1, min(90, int(days or 14))))
-    done = {o.get("decision_id") for o in st.outcomes_since(since="", limit=100000)
-            if o.get("source") == "story.confirmed"}
-    n_sig = n_conf = n_out = 0
-    for t in st.topics():
-        for s in st.signals(t["id"], since=since, limit=5000):
-            n_sig += 1
-            if not ledger.confirmed_by_other_site(s.get("url"), s.get("also") or []):
-                continue
-            n_conf += 1
-            for d in st.decisions_for("signal", s["id"]):
-                if d.get("question_id") not in ledger.CONFIRM_QUESTIONS or d.get("decision_id") in done:
-                    continue
-                n_out += 1
-                if not dry_run:
-                    o = ledger.make_outcome(d, "story.confirmed", detail={"backfill": True})
-                    if o:
-                        st.put_outcome(o)
-                        _to_ledger(o)
-    return {"ok": True, "signals": n_sig, "confirmed": n_conf, "outcomes": n_out, "dry_run": bool(dry_run)}
 
 
 @capability("intel.feedback", http_method="POST", http_path="/intel/feedback", http_tags=["intel"],

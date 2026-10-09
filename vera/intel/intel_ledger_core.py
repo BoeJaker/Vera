@@ -45,9 +45,6 @@ EVENTS = {
     "report.button": (True, "medium"),
     "alert.acted": (True, "strong"),
     "alert.ignored": (False, "weak"),
-    # a later item from ANOTHER site joined this story (same story, cosine >= 0.92): other sources
-    # covering it is independent evidence it mattered. Positive only - silence is not evidence.
-    "story.confirmed": (True, "weak"),
 }
 
 #: the answer of each question that means "this item is worth attention"
@@ -161,28 +158,7 @@ def agreement(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     return out
 
 
-CONFIRM_QUESTIONS = ["intel.signal_relevant", "intel.enrich_worth"]
-
-
-def _site(url: Any) -> str:
-    from urllib.parse import urlsplit
-    try:
-        h = (urlsplit(str(url or "")).hostname or "").lower()
-    except ValueError:
-        return ""
-    return h[4:] if h.startswith("www.") else h
-
-
-def first_confirmation(signal_url: Any, also_before: Iterable[Any], new_url: Any) -> bool:
-    """True when `new_url` is the first url from a site other than the signal's own to join its
-    story (so a story earns one `story.confirmed` outcome, not one per joining url)."""
-    own, new = _site(signal_url), _site(new_url)
-    if not new or new == own:
-        return False
-    return not any(_site(u) and _site(u) != own for u in (also_before or []))
-
-
-def confirmed_by_other_site(signal_url: Any, also: Iterable[Any]) -> bool:
-    """Whether any url that joined the story is from a site other than the signal's own."""
-    own = _site(signal_url)
-    return any(_site(u) and _site(u) != own for u in (also or []))
+# NOT an outcome: "another site joined the story" (2026-10-09, removed the same day). The cross-site joins
+# were mostly syndicated evergreen/SEO pages (IBM "What is AIOps", marketplace listings, PDFs) that the
+# relevance gate had rightly scored 0.8-2.0 against a threshold of 5, so it marked correct `not_relevant`
+# decisions wrong. Cross-site duplication is not evidence of relevance.
