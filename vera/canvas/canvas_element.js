@@ -892,6 +892,12 @@
   :host{display:block;margin:6px 0;
     font:12.5px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     color:var(--fg,#dce1e8)}
+  /* the UI's own scrollbars (design.css) stop at a shadow root: the canvas's items scrolled with the browser's wide grey
+     ones (owner, 2026-10-09: "minimalist in-theme scrollbars like the rest of the ui"). The same rules, in here. */
+  *{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--text,#d8dce4) 22%,transparent) transparent}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--text,#d8dce4) 18%,transparent);border-radius:99px;border:2px solid transparent;background-clip:padding-box}
+  ::-webkit-scrollbar-track{background:transparent}
   .wrap{border:1px solid var(--border,#2a2f37);border-radius:10px;
     background:var(--bg1,#15181d);overflow:hidden}
   /* Blocks off: the whole chat drops its surfaces and the session canvas has to go with it - the board turns the
@@ -1240,6 +1246,10 @@
   /* on the desk a live element stacks WITH its card (each .lv carries its card's z-index): the live layer as one plane
      at z 4 put a panel sent behind over the items, and hid a panel brought in front under its own card's ground */
   :host([align="desk"]:not([desk-narrow])) #live{z-index:auto}
+  /* NO GROUND ON A BARE DESK (owner, 2026-10-09: "id like the elements to have no background (if there is no panel behind
+     them, else keep the background)"): with nothing behind them the items sit on the desk itself. One that rides over the
+     others - dragged, peeking open, maximised - keeps its ground, or its text would run into theirs. */
+  :host([align="desk"]:not([desk-narrow]):not([layered])) .stage .it:not([data-desk-face^="layer-"]):not(.desk-dragging):not(.peek):not(.hovopen):not(.maxed){background:transparent!important;border-color:transparent!important}   /* its marks (waiting, pinned, a run's end) are rings, kept */
   /* a panel behind the items: they keep a ground over it, or their text runs into the panel's */
   :host([align="desk"]:not([desk-narrow])[layered]) .stage .it:not([data-desk-face^="layer-"]){background:var(--bg1,#15181d)!important;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
   /* an older item fades by opacity, which let the panel show through it: over a panel it dims instead */
@@ -1285,6 +1295,41 @@
      widget and table cards nameless, with nothing to take hold of. On the desk the header is always there, in the card's
      flow, and it is the handle. */
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip):not(.ownhead) > .it-hd{position:relative!important;inset:auto!important;opacity:1!important;pointer-events:auto!important;visibility:visible!important}
+  /* ONE ROW OF CONTROLS, AT THE TOP (see the render's .hda): on the desk the footer rail, the header's own corner icons,
+     the item's key and turn label, and a panel's second bar (its title again and six buttons) are not drawn. A panel
+     card shows the shared header like every other card; the bands the hover tier keeps for a header and a rail that
+     float over the body are given back to the body. */
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > :is(.it-ft,.solo){display:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd > :is(.dp,.mx,.xp,.k,.src,.fdn){display:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-bd > .vc-panel > .vc-th{display:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead[data-type="panel"]:not(.desk-chip) > .it-hd.own-fold{display:flex!important;position:relative!important;inset:auto!important;opacity:1!important;pointer-events:auto!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip){padding-top:0!important;padding-bottom:0!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd,
+  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > :first-child > :is(.vc-codehead,.vc-th,.code-bar):first-child,
+  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:156px!important}
+  @container (max-width: 320px) {
+    :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda > .hb:is([data-act="ctx"],[data-act="explode"],[data-act="edit"]){display:none}
+    :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd,
+    :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > :first-child > :is(.vc-codehead,.vc-th,.code-bar):first-child,
+    :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:92px!important} }
+  .hda{display:none}
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
+  :host([align="desk"]:not([desk-narrow])) .stage .it:is(:hover,.hov,:focus-within) > .hda{opacity:1}
+  .hda > .hb{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;cursor:pointer;color:var(--dim,#8b93a1)}
+  .hda > .hb:hover{color:var(--fg,#dce1e8);background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  .hda > .hb.on{color:var(--acc,#5a9e8f)}
+  .hda > .hb[data-act="remove"]:hover{color:var(--err,#e06c6c)}
+  /* locked: no grip, no handle; its lock shows lit */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .rz{display:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > :is(.it-hd,.it-bd > .vc-panel > .vc-th){cursor:default!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .hda > .hb[data-act="lock"]{opacity:1}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .hda{opacity:1}
+  .stage > .hd-pop{position:absolute;z-index:230;display:flex;flex-direction:column;min-width:170px;padding:4px;border-radius:9px;
+    background:var(--bg2,#1d2128);border:1px solid var(--border2,#3a3f48);box-shadow:0 10px 28px rgba(0,0,0,.45)}
+  .stage > .hd-pop > .ib{display:block;width:100%;text-align:left;border:0;background:none;color:var(--fg,#dce1e8);padding:5px 9px;border-radius:6px;font:inherit;font-size:11.5px;cursor:pointer}
+  .stage > .hd-pop > .ib:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  .stage > .hd-pop > .ib.on{color:var(--acc,#5a9e8f)}
+  .stage > .hd-pop > hr{border:0;border-top:1px solid var(--border,#2a2f37);margin:4px 2px}
   /* resizing follows the hand: no size animation while the grip is held */
   :host([align="desk"]:not([desk-narrow])) .stage .it.resizing{transition:none!important}
   /* a redrawn card held at its last place (no animation), and a new one unseen until the desk has placed it */
@@ -2289,6 +2334,19 @@
     return String(b && b.key ? String(b.key).split(':').slice(1).join(':') : '') || String((b && b.type) || 'block');
   }
   const EDITABLE = ['note', 'markdown', 'code', 'html'];
+  /* the desk card's controls, as icons (vera-design: an icon, never a letter), each in the theme's own colour */
+  const HDI = ((s) => { const o = {}; Object.keys(s).forEach((k) => { o[k] = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + s[k] + '</svg>'; }); return o; })({
+    lock: '<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+    unlock: '<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.8-.9"/>',
+    explode: '<circle cx="4" cy="4" r="1.6"/><circle cx="12" cy="5" r="1.6"/><circle cx="7" cy="12" r="1.6"/><path d="M5.5 4.2l5 .6M4.6 5.5l1.8 5M11 6.4l-3.1 4.4"/>',
+    source: '<path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12"/>',
+    edit: '<path d="M3 13l.8-3.2L10.4 3.2l2.4 2.4-6.6 6.6z"/>',
+    ctx: '<circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.6" fill="currentColor"/>',
+    max: '<path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3"/>',
+    restore: '<path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3"/>',
+    drop: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>',
+    more: '<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>',
+  });
   /* the kinds whose drawer already draws a head — name, state and the controls that belong to that kind. The card
      does not draw a second one over them; see "ONE HEADER PER ITEM" where the card is built. */
   /* the person's behind / front / among pick per panel item, kept in this browser for every canvas and frame */
@@ -2537,6 +2595,56 @@
       const m = this._deskPosGet(); if (at) m[key] = at; else delete m[key];
       try { localStorage.setItem('vera:canvas:deskpos:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ }
     }
+    /* A LOCKED CARD DOES NOT MOVE (owner, 2026-10-09: "users need the ability to pin items so they cant move"): its place
+       (a share of the desk), its size and its face are kept as they were when it was locked. The arrangement, a turn
+       bringing its items in, the topic changing and the separation of overlaps all go round it; it cannot be dragged
+       or resized until it is freed. Freed, it stays where it is as a card placed by hand. Kept per canvas. */
+    _lockGet() {
+      if (this._locks) return this._locks;
+      try { this._locks = JSON.parse(localStorage.getItem('vera:canvas:desklock:' + this.canvasId) || '{}') || {}; } catch (e) { this._locks = {}; }
+      return this._locks;
+    }
+    _lockSet(key, at) {
+      const m = this._lockGet(); if (at) m[key] = at; else delete m[key];
+      try { localStorage.setItem('vera:canvas:desklock:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ }
+    }
+    /* the ⋯ menu of a desk card: what is not worth a place in its one row of controls. On the stage (a card clips what is
+       inside it), under the button, closed by its own use, a second ⋯ or a press anywhere else. */
+    _hdMenu(key, btn) {
+      const st = this.shadowRoot.getElementById('stage'); if (!st || !key) return;
+      const had = st.querySelector(':scope > .hd-pop'); if (had) { had.remove(); if (had.dataset.key === key) return; }
+      const c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); if (!c) return;
+      const b = this._blockOf(key) || {}; const k = esc(key); const L = (this._layer || {})[key] || '';
+      const row = (act, label, title, on) => `<button class="ib${on ? ' on' : ''}" data-act="${act}" data-layer-key="${k}" title="${esc(title || label)}">${esc(label)}</button>`;
+      /* a narrow card's row keeps lock, fill, ⋯ and drop: its other icons are here instead (never in both) */
+      const narrow = c.offsetWidth <= 320; const hd = (a) => c.querySelector(':scope > .hda > .hb[data-act="' + a + '"]');
+      let h = (narrow && hd('explode') ? row('explode', hd('explode').classList.contains('on') ? 'Back to the source' : 'Explode', hd('explode').title) : '')
+        + (narrow && hd('edit') ? row('edit', 'Edit', hd('edit').title) : '')
+        + (narrow && hd('ctx') ? row('ctx', hd('ctx').classList.contains('on') ? '✓ In context' : 'Put in context', hd('ctx').title, hd('ctx').classList.contains('on')) : '')
+        + row('park', 'Park', 'Park it below the flow') + row('size', 'Size: ' + (c.dataset.size || 'm'), 'The next size')
+        + (this._deskPosGet()[key] ? row('desk-auto', 'Back to the arrangement', 'Placed by hand - give it back to the arrangement') : '')
+        + row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line');
+      if (b.type === 'panel') h += '<hr>' + row('layer-behind', 'Behind the items', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'In front', 'Fill the free desk, over the other items', L === 'front')
+        + row('pquery', 'Query', 'panel.query - what the panel holds') + row('pdispatch', 'Dispatch…', 'panel.dispatch - drive it') + row('prefresh', 'Refresh', 'Reload the panel') + row('pstand', 'Open standalone ↗', 'Open it in a tab of its own');
+      const pop = document.createElement('div'); pop.className = 'hd-pop'; pop.dataset.key = key; pop.dataset.w = 'canvas.item.menu'; pop.innerHTML = h;
+      const S = st.getBoundingClientRect(), r = (btn || c).getBoundingClientRect(), Z = st.offsetWidth ? (S.width / st.offsetWidth) || 1 : 1;
+      st.appendChild(pop);
+      const pw = pop.offsetWidth || 180; let left = Math.round((r.right - S.left) / Z - pw), top = Math.round((r.bottom - S.top) / Z + 4);
+      left = Math.max(4, Math.min(st.clientWidth - pw - 4, left)); pop.style.left = left + 'px'; pop.style.top = top + 'px';
+      const doc = this.ownerDocument || document;
+      const off = (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(pop) || (btn && p.includes(btn))) return; pop.remove(); doc.removeEventListener('mousedown', off, true); };
+      setTimeout(() => doc.addEventListener('mousedown', off, true), 0);
+    }
+    toggleLock(key) {
+      key = String(key || ''); const g = this._deskGeo; if (!key || !g) return false;
+      const c = [...this.shadowRoot.querySelectorAll('.stage .it[data-key]')].find((x) => x.dataset.key === key); if (!c) return false;
+      const w = c.offsetWidth, h = c.offsetHeight, cx = (parseFloat(c.style.left) || 0) + w / 2, cy = (parseFloat(c.style.top) || 0) + h / 2;
+      if (this._lockGet()[key]) { this._lockSet(key, null); this._deskPosSet(key, { fx: +(cx / g.W).toFixed(4), fy: +(cy / g.H).toFixed(4) }); }
+      else this._lockSet(key, { fx: +(cx / g.W).toFixed(4), fy: +(cy / g.H).toFixed(4), w, h, face: c.dataset.deskFace || 'card' });
+      c.classList.toggle('desk-locked', !!this._lockGet()[key]);
+      this._html = null; if (this._doc) this.render(this._doc); else this._placeNow();
+      return !!this._lockGet()[key];
+    }
     setLayer(key, mode) {
       key = String(key || ''); if (!key) return;
       if (mode === 'behind' || mode === 'front') this._layer[key] = mode; else delete this._layer[key];
@@ -2601,9 +2709,15 @@
       const mids = [...new Set(cards.map((c) => c.dataset.mid || '').filter(Boolean))].sort((a, b) => (parseInt(b.replace(/\D/g, ''), 10) || 0) - (parseInt(a.replace(/\D/g, ''), 10) || 0));
       const pos = D.arrange(mode, R, ranked.map((x) => ({ id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '',
         age: x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null })), desk);
-      ranked.sort((a, b) => (userAt(b.c.dataset.key || '') ? 1 : 0) - (userAt(a.c.dataset.key || '') ? 1 : 0));
+      const locks = this._lockGet();
+      const lockOf = (key) => { const l = locks[key]; return l && isFinite(l.fx) && isFinite(l.fy) && l.w > 0 && l.h > 0 ? l : null; };
+      ranked.sort((a, b) => ((lockOf(b.c.dataset.key || '') ? 2 : 0) + (userAt(b.c.dataset.key || '') ? 1 : 0)) - ((lockOf(a.c.dataset.key || '') ? 2 : 0) + (userAt(a.c.dataset.key || '') ? 1 : 0)));
       const plan = ranked.map((x) => {
-        const c = x.c, key = c.dataset.key || String(x.i), p = userAt(key) || pos[key] || [W - 90, H - 30];
+        const c = x.c, key = c.dataset.key || String(x.i);
+        const lk = lockOf(key); c.classList.toggle('desk-locked', !!lk);
+        if (lk) { const lw = Math.min(W - 16, lk.w), lh = Math.min(H - 8, lk.h);
+          return { c, id: key, so: {}, fixed: true, lock: lk, x: Math.max(lw / 2, Math.min(W - lw / 2, lk.fx * W)), y: Math.max(lh / 2, Math.min(H - lh / 2, lk.fy * H)), w: lw, h: lh }; }
+        const p = userAt(key) || pos[key] || [W - 90, H - 30];
         c.classList.toggle('desk-placed', !!userAt(key));
         /* the person's size: the drag in progress, else what the canvas remembers for the item (this._pw / this._px) -
            not only the card's data-pw, which a compact card's markup leaves out, so a resized desk card lost its size
@@ -2619,7 +2733,7 @@
       D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h) }; }, { W: W, H: H });
       const out = [];
       plan.forEach((it) => {
-        const c = it.c, key = it.id, s = D.sizeAt(R, it.x, it.y, it.so, desk);
+        const c = it.c, key = it.id, s = it.lock ? { w: it.w, h: it.h, face: it.lock.face || 'card', nd: 0.5 } : D.sizeAt(R, it.x, it.y, it.so, desk);
         const w = Math.min(W - 16, s.w), h = Math.min(H - 8, s.h);
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
         c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
@@ -3049,7 +3163,7 @@
         // what is fused INTO this one: drawn as panes of its body, so the two read as one thing
         const g = groupOf(b);
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
-        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '');
+        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '') + (this.deskAlign() && this._lockGet()[key] ? ' desk-locked' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
           ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="dp solo" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span><span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>` : ''}${
             /* the header line is drawn for EVERY item. An item whose drawer has its own head shows it only when the COLUMN
@@ -3058,6 +3172,22 @@
               `<div class="it-hd${ownHead && !compact ? ' own-fold' : ''}">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${b.type === 'panel' && this.deskAlign() ? '<span class="ly" data-act="layer-behind" title="Send it behind the other items, filling the free desk">⇣</span><span class="ly" data-act="layer-front" title="Bring it over the other items, filling the free desk">⇡</span>' : ''}${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
             ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="dp" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span><span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
+          ${this.deskAlign() ? (() => {
+            /* THE DESK CARD'S ONE ROW OF CONTROLS (owner, 2026-10-09: "the controls should mostly be at the top and some like
+               panels have multiple layer of controls and duplicated ones"): a panel card carried its header, the panel's own
+               bar with the title again and six buttons, and a footer rail of five more. On the desk: the few that matter,
+               as icons at the top right; everything else in the ⋯ menu. The footer and the panel's bar are not drawn. */
+            const locked = !!this._lockGet()[key]; const ctxOn = inF && (F || b.state === 'pinned');
+            const hb = (act, ic, title, on) => `<span class="hb${on ? ' on' : ''}" data-act="${act}" role="button" tabindex="0" title="${esc(title)}">${HDI[ic]}</span>`;
+            return `<div class="hda" data-w="canvas.item.controls">`
+              + hb('lock', locked ? 'lock' : 'unlock', locked ? 'Locked where it is - nothing moves or resizes it; click to free it' : 'Lock it where it is: the desk will not move or resize it', locked)
+              + (xplodable ? hb('explode', xploded ? 'source' : 'explode', xploded ? 'Back to the source alone' : 'See it as a structured diagram', xploded) : '')
+              + (editable ? hb('edit', 'edit', editing ? 'Editing' : 'Edit its text', editing) : '')
+              + (bid ? '' : hb('ctx', 'ctx', ctxOn ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ctxOn))
+              + hb('max', maxed ? 'restore' : 'max', maxed ? 'Restore it' : 'Fill the free desk with it', maxed)
+              + hb('hdmore', 'more', 'More: park, size, back to the arrangement' + (b.type === 'panel' ? ', behind / front, query, refresh, standalone' : ''))
+              + hb('remove', 'drop', 'Take it off the desk')
+              + `</div>`; })() : ''}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
           <div class="it-ft" data-w="canvas.item.rail"><span class="it-a">
               ${xplodable ? `<button data-act="explode" class="${xploded ? 'on' : ''}" title="${xploded ? 'Back to the source alone — the diagram goes' : 'See it as a structured diagram, bound to this item by span'}">${xploded ? 'source' : 'graph'}</button>` : ''}
@@ -3272,7 +3402,7 @@
       const deskHandle = (ev) => { if (!this.deskAlign() || ev.button !== 0) return null; const t = ev.target; if (!t || !t.closest) return null;
         if (t.closest('[data-act],.rz,input,textarea,select,button,a,.lay-pill')) return null;
         const hd = t.closest('.it-hd,.vc-th'); const it = hd && hd.closest('.stage .it[data-key]');
-        if (!it || it.dataset.deskFace === 'layer-behind' || it.dataset.deskFace === 'layer-front') return null; return it; };
+        if (!it || it.dataset.deskFace === 'layer-behind' || it.dataset.deskFace === 'layer-front' || it.classList.contains('desk-locked')) return null; return it; };
       body.addEventListener('mousedown', (ev) => { const it = deskHandle(ev); if (!it) return;
         const st = this.shadowRoot.getElementById('stage'); if (!st) return;
         const Z = st.offsetWidth ? (st.getBoundingClientRect().width / st.offsetWidth) || 1 : 1;
@@ -3514,11 +3644,16 @@
     /* every action on the column — the old per-item controls (pin · park · size · remove) and the board's new ones
        (add · open · edit · answer · take · in context) — one dispatcher */
     _act(btn, ev) {
-      const act = btn.dataset.act; const it = btn.closest('.it[data-key]');
+      const act = btn.dataset.act; let it = btn.closest('.it[data-key]');
       /* WHOSE BUTTON IT IS. A fused member is drawn inside its lead's card, so a control its own drawer put there
          (a code item's preview switch, say) would otherwise act on the LEAD's key. The nearest pane wins. */
       const pane = btn.closest('.fu-p[data-key]');
       const key = btn.dataset.layerKey || (pane ? pane.dataset.key : it ? it.dataset.key : '');   /* a layered panel's pill is outside its card */
+      /* the desk's ⋯ menu sits on the stage, outside its card: it acts on its card, and goes once one of its entries is used */
+      const pop = btn.closest('.hd-pop'); if (pop) pop.remove();
+      if (!it && key) it = [...this.shadowRoot.querySelectorAll('.stage .it[data-key]')].find((x) => x.dataset.key === key) || null;
+      if (act === 'lock') return this.toggleLock(key);
+      if (act === 'hdmore') return this._hdMenu(key, btn);
       const focusMid = this.dataset.focusMid || '';
       /* a fused pane's own control: take THIS item out of the group it was drawn into and give it its card back.
          A reader's choice about how the canvas is drawn, so it is kept here and written nowhere. */
