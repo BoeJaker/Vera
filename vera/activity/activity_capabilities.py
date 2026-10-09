@@ -877,6 +877,22 @@ async def _narrator_events(limit: int = 30) -> List[Dict[str, Any]]:
     return out
 
 
+async def _intel_events(topic_id: str = "", limit: int = 40) -> List[Dict[str, Any]]:
+    """Intel's nights, assessments, alerts, briefs and actions - built by intel itself
+    (intel.activity), only composed here, so neither module imports the other."""
+    cap = CAPABILITY_REGISTRY.get("intel.activity")
+    if not cap or not cap.get("func"):
+        return []
+    try:
+        res = await cap["func"](topic_id=topic_id, limit=limit)
+    except Exception as e:
+        log.debug("activity: intel events: %s", e)
+        return []
+    if isinstance(res, dict) and res.get("type") == "tool_result":
+        res = res.get("content") or {}
+    return [e for e in (res or {}).get("events", []) if isinstance(e, dict)]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  THE CAPABILITY
 # ─────────────────────────────────────────────────────────────────────────────
@@ -887,10 +903,10 @@ async def _narrator_events(limit: int = 30) -> List[Dict[str, Any]]:
                 "SCOPE, composed from dream cycles, agentic loop runs, V8 loop "
                 "programs, live background loop sessions, cap activity (each mapped "
                 "to the panel/element that renders it), Run projections, narrator "
-                "takes and artifacts. Inputs: scope "
+                "takes, intelligence (nights, assessments, alerts, briefs) and artifacts. Inputs: scope "
                 "(str — 'all' | 'project:<slug>' | 'goal:<slug>' | 'dream[:<trig>]' "
                 "| 'program:<pid>' | 'run:<run_id>' | 'chat:<session_id>' | "
-                "'narrator'; default 'all'), limit "
+                "'narrator' | 'intel[:<topic_id>]'; default 'all'), limit "
                 "(int=120), kinds (str — comma-filter of event kinds). Output: "
                 "{scope, events:[{kind, ts, title, summary, status, session_id, "
                 "cap, ui:{...}, extra}], count}.",
@@ -935,6 +951,8 @@ async def cap_activity_timeline(scope: str = "all", limit: int = 120,
             events += await _run_events(session_id=ref, limit=lim)
         elif kind == "narrator":
             events += await _narrator_events(limit=lim)
+        elif kind == "intel":
+            events += await _intel_events(topic_id=ref, limit=lim)
         else:  # all — the master timeline (agentic work only, no cap chatter)
             events += await _dream_events(limit=min(lim, 40))
             events += await _program_events(limit=min(lim, 30))
@@ -942,6 +960,7 @@ async def cap_activity_timeline(scope: str = "all", limit: int = 120,
             events += await _narrator_events(limit=min(lim, 25))
             events += await _run_events(limit=min(lim, 40))
             events += await _narrator_events(limit=min(lim, 25))
+            events += await _intel_events(limit=min(lim, 25))
     except Exception as e:
         log.warning("activity.timeline compose (%s): %s", scope, e)
 
@@ -973,6 +992,8 @@ async def cap_activity_pipelines(trace_id=None) -> Dict:
     r = _redis()
     out: List[Dict[str, Any]] = [{"scope": "all", "label": "Everything",
                                   "kind": "all", "status": "", "ref": ""}]
+    if CAPABILITY_REGISTRY.get("intel.activity"):
+        out.append({"scope": "intel", "label": "Intelligence", "kind": "intel", "status": "", "ref": ""})
     if not r:
         return {"pipelines": out}
     # projects / goals

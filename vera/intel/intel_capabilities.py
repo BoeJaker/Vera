@@ -70,6 +70,7 @@ try:
     from Vera.vera.intel import intel_resolve_core as rsv
     from Vera.vera.intel import intel_sources_core as srcs
     from Vera.vera.intel import intel_story_core as story
+    from Vera.vera.intel import intel_activity_core as act
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -82,6 +83,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_resolve_core as rsv
     from vera.intel import intel_sources_core as srcs
     from vera.intel import intel_story_core as story
+    from vera.intel import intel_activity_core as act
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -543,6 +545,25 @@ async def cap_timeline_get(topic_id: str = "", days: int = 90, trace_id=None):
             e["url"] = _report_url(e["id"])
     tl["topic_id"] = topic_id
     return tl
+
+
+@capability("intel.activity", http_method="GET", http_path="/intel/activity", http_tags=["intel"],
+            memory="off", silent=True,
+            description="Intel's own events for Vera's activity timeline: assessments, alerts, briefs built and where "
+                        "they went, actions people ran, the last night batch. Input: topic_id (blank = all topics), "
+                        "days (default 14), limit (default 60). Output: {events:[{kind, ts, title, summary, status, "
+                        "ref, source, ui, extra}]}.")
+async def cap_activity(topic_id: str = "", days: int = 14, limit: int = 60, trace_id=None):
+    st = store()
+    since = _since(24 * max(1, int(days)))
+    reps = st.reports(since=since, limit=100)
+    names = {t["id"]: t.get("name", t["id"]) for t in st.topics()}
+    dels = [d for d in st.deliveries(limit=400) if str(d.get("ts") or "") >= since]
+    evs = act.events(snapshots=st.snapshots(topic_id, since=since, limit=200), reports=reps, deliveries=dels,
+                     alerts=[a for a in (st.get_kv("alerts", []) or []) if str(a.get("ts") or "") >= since],
+                     actions=[a for a in st.actions(limit=200) if str(a.get("created") or "") >= since],
+                     night=st.get_kv("last_nightly"), names=names, topic_id=topic_id, limit=limit)
+    return {"events": evs}
 
 
 @capability("intel.stories.get", http_method="GET", http_path="/intel/stories/get", http_tags=["intel"],
