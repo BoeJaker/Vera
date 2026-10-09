@@ -84,3 +84,21 @@ def test_embed_and_langid_take_the_fast_lane():
     src = open(os.path.join(_ROOT, "edge", "nlp_server.py"), encoding="utf-8").read()
     assert "await _run(run_embed, req.texts, fast=True)" in src
     assert "await _run(run_langid, req.text, fast=True)" in src
+
+
+def test_build_app_imports_nothing():
+    """serve() starts the preload thread before build_app(); an import inside build_app() can deadlock
+    against the thread's imports (2026-10-09: the unit logged 'serving' and never bound its port)."""
+    import ast
+    src = open(os.path.join(_ROOT, "edge", "nlp_server.py"), encoding="utf-8").read()
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "build_app")
+    nested = [n for n in ast.walk(fn) if isinstance(n, (ast.Import, ast.ImportFrom))]
+    names = sorted({a.name for n in nested for a in n.names})
+    assert not [x for x in names if x in ("asyncio", "ThreadPoolExecutor", "concurrent.futures")], names
+
+
+def test_the_app_is_built_before_the_preload_thread_starts():
+    src = open(os.path.join(_ROOT, "edge", "nlp_server.py"), encoding="utf-8").read()
+    main = src[src.index("def _main("):]
+    assert main.index("app = build_app()") < main.index('threading.Thread(target=preload, name="nlp-preload"')
+    assert "uvicorn.run(app, host=args.host, port=args.port)" in main
