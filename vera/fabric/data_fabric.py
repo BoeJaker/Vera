@@ -3389,6 +3389,12 @@ async def _pull_rss(src: dict) -> List[dict]:
                       "feedparser",
         "Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8",
     }
+    try:                                          # the source's own headers win (a declared contact, a key)
+        extra = json.loads(src.get("headers") or "{}") if isinstance(src.get("headers"), str) else (src.get("headers") or {})
+        if isinstance(extra, dict):
+            headers.update({str(k): str(v) for k, v in extra.items() if v not in (None, "")})
+    except (TypeError, ValueError):
+        pass
     body: bytes = b""
     final_url = url
     try:
@@ -3470,6 +3476,22 @@ async def _pull_api(src: dict) -> List[dict]:
             text = str(item)[:4000]
         results.append({"text": text, "data": item if isinstance(item, dict) else {"value": item}})
     return results
+
+
+async def _pull_telegram(src: dict) -> List[dict]:
+    """A PUBLIC Telegram channel through its web preview (https://t.me/s/<channel>): no
+    account, no key, the posts anyone can read in a browser. Newest ~20 per pull."""
+    cfg = _src_config(src)
+    name = _srcmap.telegram_channel(cfg.get("channel") or src.get("url", ""))
+    if not name:
+        log.warning("telegram source %s: no public channel name", src.get("id"))
+        return []
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True,
+                                 headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
+        r = await c.get(f"https://t.me/s/{name}")
+        r.raise_for_status()
+    posts = _srcmap.telegram_posts(r.text, name)
+    return posts[-int(src.get("lim", src.get("limit", 50))):]
 
 
 async def _pull_wiki(src: dict) -> List[dict]:
@@ -4367,6 +4389,10 @@ SOURCE_TYPES: Dict[str, Dict] = {
                 "auth_fields":   [{"name":"headers","label":"Headers (JSON)",
                                     "type":"textarea"}],
                 "needs_url": True},
+    "telegram": {"description": "Public Telegram channel (its web preview; no account)",
+                 "config_fields": [{"name": "channel", "label": "Channel", "required": True,
+                                    "help": "@name, t.me/name or https://t.me/s/name"}],
+                 "auth_fields": [], "needs_url": False},
     "wiki":    {"description": "MediaWiki API",
                 "config_fields": [], "auth_fields": [], "needs_url": True},
     "scrape":  {"description": "HTML scrape",
@@ -4860,6 +4886,8 @@ async def _pull_source(src: dict) -> int:
             items = await _pull_api(src)
         elif stype == "wiki":
             items = await _pull_wiki(src)
+        elif stype == "telegram":
+            items = await _pull_telegram(src)
         elif stype == "scrape":
             items = await _pull_scrape(src)
         elif stype == "recon":
@@ -6559,7 +6587,7 @@ async def fabric_sources_discover_feed(url: str = "", kind: str = "", trace_id=N
     if _srcmap.looks_like_feed(body, r.headers.get("content-type", "")):
         return {"feeds": [{"url": str(r.url), "title": "", "type": r.headers.get("content-type", "")}], "url": value}
     feeds = _srcmap.feed_links(body, str(r.url))
-    out = {"feeds": feeds, "url": value}
+    out = {"feeds": feeds, "url": value, "site": _srcmap.page_title(body)}
     if not feeds:
         out["note"] = "the page advertises no RSS/Atom feed; try its /feed, /rss or /atom.xml, or an api source"
     return out

@@ -444,14 +444,20 @@ async def cap_topic_save(name: str = "", id: str = "", brief: str = None, why: s
 
 
 @capability("intel.topic.delete", http_method="POST", http_path="/intel/topic/delete", http_tags=["intel"],
-            description="Stop tracking a topic. Input: id, purge (also drop its signals and snapshots; "
+            description="Stop tracking a topic. Input: id, purge (also drop its signals, snapshots and their copies "
+                        "in the fabric's signals dataset; "
                         "default false keeps the history). Output: {ok}.")
 async def cap_topic_delete(id: str = "", purge: bool = False, trace_id=None):
     if not id:
         return {"error": "id required"}
+    gone = [s["id"] for s in store().signals(id, limit=100000)] if purge else []
     ok = store().delete_topic(id, purge=purge)
+    removed = 0
+    for sid in gone:                              # and their copies in the fabric's signals dataset
+        r = await _call("fabric.delete_record", record_id=_fabric_signal_id(sid), dataset_id=SIGNALS_DATASET)
+        removed += 0 if r.get("error") else 1
     await _event("topic.deleted", topic=id, purge=purge)
-    return {"ok": ok}
+    return {"ok": ok, **({"fabric_records_removed": removed} if purge else {})}
 
 
 async def _ensure_think_loop(t: Dict[str, Any]) -> None:
@@ -859,6 +865,10 @@ async def _research_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+def _fabric_signal_id(signal_id: str) -> str:
+    return f"intel-sig-{signal_id}"
+
+
 async def _to_fabric(sigs: List[Dict[str, Any]]) -> None:
     """Signals also live in the fabric (one dataset), so search, the worldview and
     discovery see them; embedding is deferred to the backfill, off the hot path."""
@@ -871,6 +881,8 @@ async def _to_fabric(sigs: List[Dict[str, Any]]) -> None:
         return
     rows = [{k: s.get(k) for k in ("id", "topic_id", "title", "url", "snippet", "summary", "so_what", "kind",
                                    "site", "seen", "score", "tags", "entities", "competitors")} for s in sigs]
+    for row in rows:                             # one fabric record per signal, found again by its id
+        row["_id"] = _fabric_signal_id(row["id"])
     try:
         await ingest(dataset_id=SIGNALS_DATASET, data=rows, source="intel", tags=["intel"],
                      source_id="intel", defer_embedding=True)
@@ -1288,8 +1300,9 @@ async def cap_source_add(topic_id: str = "", kind: str = "feed", value: str = ""
         if not feeds:
             return {"error": d.get("error") or d.get("note") or "no feed found there", "kind": kind, "value": value}
         plan.update(url=feeds[0]["url"], source_type="rss")
-        if feeds[0].get("title") and not label:
-            plan["label"] = f"{srcs.KINDS[kind]['label']}: {feeds[0]['title']}"[:80]
+        name = srcs.srcmap.feed_label(feeds[0].get("title", ""), str(d.get("site") or ""))
+        if name and not label:                      # the site's name, not a feed link's "Atom"
+            plan["label"] = f"{srcs.KINDS[kind]['label']}: {name}"[:80]
     if kind == "api" and mapping:
         try:
             plan["config"] = mapping if isinstance(mapping, dict) else json.loads(str(mapping))
