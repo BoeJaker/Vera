@@ -2547,6 +2547,7 @@
     }
     _placeDesk(st, cards) {
       const D = root.VeraDesk, body = this.shadowRoot.getElementById('body');
+      this._liveFollow(650);   /* every card it places may glide (.45 s): what is drawn over them follows each frame */
       const W = st.clientWidth || 300;
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);
@@ -2690,7 +2691,9 @@
         // the rules live in one library; it is fetched the first time desk is chosen, then the stage is placed again
         /* the maximised card too: the desk places it over the free part of the desk (it was set aside for a placement
            the desk never reached, and drew 0 px wide) */
-        if (root.VeraDesk) { this._placeDesk(st, maxCard ? cards.concat(maxCard) : cards); return; }
+        if (root.VeraDesk) { this._placeDesk(st, maxCard ? cards.concat(maxCard) : cards);
+          try { this._liveLayout(); } catch (e) { /* optional */ }   /* in the same frame: a graph starts its glide WITH its card */
+          return; }
         if (!root.__veraDeskLoading) {
           root.__veraDeskLoading = true;
           const s = document.createElement('script'); s.src = '/ui/desk-layout.js';
@@ -3303,7 +3306,7 @@
         if (face !== cur || !d.el.dataset.deskFace) { d.el.classList.toggle('desk-chip', face === 'chip'); d.el.classList.remove('desk-icon'); d.el.dataset.deskFace = face; }
         d.el.style.left = Math.round(cx - w / 2) + 'px'; d.el.style.top = Math.round(cy - h / 2) + 'px';
         d.el.style.setProperty('width', w + 'px', 'important'); d.el.style.setProperty('height', h + 'px', 'important');
-        if (!d.raf) d.raf = requestAnimationFrame(() => { d.raf = 0; try { this._liveLayout(); } catch (e) { /* optional */ } }); });
+        try { this._liveLayout(); } catch (e) { /* optional */ } this._liveFollow(500); });
       doc.addEventListener('mouseup', () => { const d = this._dg; if (!d) return; this._dg = null;
         if (!d.moved) return;
         this._dgEnd = Date.now(); d.el.classList.remove('desk-dragging');
@@ -3315,7 +3318,8 @@
         r.el.classList.add('openin');
         /* on the desk only the card being resized moves while the grip is held (its widget follows it); the desk is
            placed once, on the drop - re-placing every card on every move made the resize jitter and lag */
-        if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.deskAlign()) { try { this._liveLayout(); } catch (e) { /* optional */ } } else if (this.hasAttribute('stage')) this._placeNow(); }); });
+        if (this.deskAlign()) { try { this._liveLayout(); } catch (e) { /* optional */ } this._liveFollow(400); }
+        else if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
         /* on the desk a card you sized stays where it is: grown, it was separated outward into the chip zone and came back
@@ -3918,23 +3922,54 @@
       };
       go();
     }
+    /* THE LIVE LAYER FOLLOWS A MOVING CARD EVERY FRAME (owner, 2026-10-09: "the graph element still flicker - especially if
+       moved"). A graph, a widget or a frame is drawn over its card, not in it, and was placed once per mouse move, on a
+       resize, or by the half-second tick: a card gliding to its place (left/top/size transitions, .35-.45 s) or growing
+       while dragged left its graph behind - measured in the harness, 30 of 162 drag frames off by up to 11 px and a glide
+       back 202 px behind. While anything moves, the layer is placed on every frame until it has settled. */
+    _liveFollow(ms) {
+      this._followTo = Math.max(this._followTo || 0, performance.now() + (ms || 500));
+      if (this._followRaf) return;
+      const step = () => { this._followRaf = 0; try { this._liveLayout(); } catch (e) { /* optional */ }
+        if (performance.now() < this._followTo) this._followRaf = requestAnimationFrame(step); };
+      this._followRaf = requestAnimationFrame(step);
+    }
     _liveLayout() {
       const L = this._live; if (!L) return; const body = this.shadowRoot.getElementById('body'); if (!body) return;
+      if (!this._followBound) { this._followBound = true;
+        /* a card that starts to glide or grow (its placement, a face change) is followed for as long as it moves */
+        body.addEventListener('transitionrun', (ev) => { const t = ev.target; if (!t || !t.classList || !t.classList.contains('it')) return;
+          if (/^(left|top|width|height)$/.test(ev.propertyName)) this._liveFollow(520); }); }
       const B = body.getBoundingClientRect();
       /* SCREEN PIXELS ARE NOT LAYOUT PIXELS under a UI scale (zoom 1.4 on the panel): the rects below are measured on
          screen and the live layer is placed in layout pixels, so every offset was multiplied by the scale and a widget
          drew far from its card (2026-10-07: a slot at 569,1044 drew its widget at 773,1489). Divide by the scale. */
       const k0 = body.offsetWidth ? (B.width / body.offsetWidth) : 1, Z = k0 > 0.2 && k0 < 5 ? k0 : 1;
       Object.keys(L).forEach((k) => {
-        if (this._max && k !== this._max) { L[k].style.display = 'none'; return; }   // a maximised item covers the column
+        if (this._max && k !== this._max) { L[k].style.display = 'none'; L[k]._at = false; return; }   // a maximised item covers the column
         const el = L[k]; const h = body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]');
-        if (!h || !h.getClientRects().length) { el.style.display = 'none'; return; }
+        if (!h || !h.getClientRects().length) { el.style.display = 'none'; el._at = false; return; }   // back, it appears in place
         const r = h.getBoundingClientRect(); const w = Math.max(0, Math.round(r.width / Z)), ht = Math.max(0, Math.round(r.height / Z));
-        el.style.display = ''; el.style.left = Math.round((r.left - B.left) / Z + body.scrollLeft) + 'px'; el.style.top = Math.round((r.top - B.top) / Z + body.scrollTop) + 'px';
+        const card = h.closest('.it');
+        let lx = Math.round((r.left - B.left) / Z + body.scrollLeft), ly = Math.round((r.top - B.top) / Z + body.scrollTop), tr = 'none';
+        /* ON THE DESK IT GLIDES WITH ITS CARD, it does not chase it: placed each frame at where the card WAS, it trailed a
+           card on the fast start of its glide by up to 150 px (measured). It is placed at the card's destination (the
+           card's own left/top, plus where its slot sits in the card) with the card's own transition, so both move as one. */
+        if (card && this.deskAlign() && card.style.left && !card.classList.contains('desk-dragging') && !card.classList.contains('resizing')) {
+          const stg = card.parentElement; const S = stg.getBoundingClientRect(); const c0 = card.getBoundingClientRect();
+          lx = Math.round((S.left - B.left) / Z + body.scrollLeft + stg.clientLeft + parseFloat(card.style.left) + (r.left - c0.left) / Z);
+          ly = Math.round((S.top - B.top) / Z + body.scrollTop + stg.clientTop + (parseFloat(card.style.top) || 0) + (r.top - c0.top) / Z);
+          if (el._at) { const cs = getComputedStyle(card); const sp = (s) => String(s || '').split(/,(?![^(]*\))/).map((x) => x.trim());
+            const P = sp(cs.transitionProperty), Du = sp(cs.transitionDuration), Tf = sp(cs.transitionTimingFunction), De = sp(cs.transitionDelay);
+            const of = (p) => { let i = P.indexOf(p); if (i < 0) i = P.indexOf('all'); if (i < 0) return ''; const d = Du[i % Du.length]; return parseFloat(d) > 0 ? p + ' ' + d + ' ' + Tf[i % Tf.length] + ' ' + De[i % De.length] : ''; };
+            tr = [of('left'), of('top')].filter(Boolean).join(', ') || 'none'; }
+        }
+        el._at = true;
+        if (el.style.transition !== tr) el.style.transition = tr;
+        el.style.display = ''; el.style.left = lx + 'px'; el.style.top = ly + 'px';
         /* THE LIVE LAYER IS NOT INSIDE THE CARD, so the card's own clipping never reached it: a widget whose slot ran
            past a smaller card (a desk face, a capped item) drew over its neighbours (2026-10-07, a checks widget on the
            desk). Each live element is cut to its card's box and stacks with its card. */
-        const card = h.closest('.it');
         if (card) {
           const c = card.getBoundingClientRect();
           const ct = Math.max(0, Math.round((c.top - r.top) / Z)), cl = Math.max(0, Math.round((c.left - r.left) / Z));
@@ -3957,9 +3992,13 @@
           /* a records item's graph takes its slot's height (owner, 2026-10-04: "elements on the canvas still dont resize on
              the y axis ... im trying to expand the graph elements"): the embed's box was fixed at the height it was made
              with, so the slot grew under a graph that stayed put. Its caption line sits under the box. */
-          if (el.dataset.kind === 'rgraph') { const g = el.firstChild; try { if (g && typeof g._setHeight === 'function' && Math.abs((g._h || 0) - (ht - 16)) > 3) g._setHeight(Math.max(160, ht - 16)); } catch (e) {}
-            // ...and fits its nodes to the new box once it has settled (they were laid out for the old one)
-            clearTimeout(el._fitT); el._fitT = setTimeout(() => { try { const gg = g && g._graph; if (gg && typeof gg.fit === 'function') gg.fit(); } catch (e) {} }, 350); } }
+          /* ...once the box has SETTLED: a card growing as it is dragged or glides changes its slot every frame, and
+             redrawing the graph at each size (36 times in one drag, measured) made its nodes jump; the box clips it meanwhile */
+          if (el.dataset.kind === 'rgraph') { const g = el.firstChild; clearTimeout(el._fitT);
+            el._fitT = setTimeout(() => { const hh = parseInt(el.style.height, 10) || 0;
+              try { if (g && typeof g._setHeight === 'function' && hh && Math.abs((g._h || 0) - (hh - 16)) > 3) g._setHeight(Math.max(this.deskAlign() ? 60 : 160, hh - 16)); } catch (e) {}
+              // ...and fits its nodes to the new box (they were laid out for the old one)
+              setTimeout(() => { try { const gg = g && g._graph; if (gg && typeof gg.fit === 'function') gg.fit(); } catch (e) {} }, 120); }, 260); } }
       });
     }
     /* the diagram rendered: its slot takes the diagram's height at the slot's width (the size's ceiling is the CSS's);
