@@ -1258,6 +1258,8 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging > :is(.it-ft,.rz,.mx,.xp,.dp){display:none!important}
   @keyframes vcDeskFlash{0%,100%{box-shadow:0 0 0 0 transparent}40%{box-shadow:0 0 0 3px var(--acc,#5a9e8f),0 0 26px color-mix(in srgb,var(--acc,#5a9e8f) 55%,transparent)}}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-flash{animation:vcDeskFlash .8s ease-in-out 2}
+  /* the end of a chat run on the desk: the run stops at the desk's edge and its item carries the theme's mark */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.run-target{box-shadow:inset 3px 0 0 var(--acc,#9b8dfa), 0 0 0 1px color-mix(in srgb, var(--acc,#9b8dfa) 45%, transparent)}
   /* a redrawn card held at its last place (no animation), and a new one unseen until the desk has placed it */
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-hold{transition:none!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-new{opacity:0;transition:none!important}  @media (prefers-reduced-motion: reduce){:host([align="desk"]:not([desk-narrow])) .stage .it{transition:none}}
@@ -2416,6 +2418,12 @@
         return { key: c.dataset.key, label: (t && t.textContent || c.dataset.key).trim(), face: c.dataset.deskFace || '', layer: this._layer[c.dataset.key] || '',
                  type: c.dataset.type || '', mid: c.dataset.mid || '' };
       });
+    }
+    /* the desk's ends of the chat's runs: on the desk a run stops at its edge, and the items it runs to carry a mark */
+    runTargets(keys) {
+      const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!st) return;
+      const set = new Set((keys || []).map(String));
+      st.querySelectorAll('.it[data-key]').forEach((c) => { const on = set.has(c.dataset.key); if (c.classList.contains('run-target') !== on) c.classList.toggle('run-target', on); });
     }
     /* point one item out on the desk (the exploded view's double click): it rides on top and pulses for a moment */
     flash(key) {
