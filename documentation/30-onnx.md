@@ -352,6 +352,14 @@ attempt. Streaming, cancellation, terminal usage and stable outage errors retain
 the portable contract; retry and fallback are deliberately not reimplemented.
 No production capability imports this seam yet.
 
+Parity evidence is persisted separately from routing state. Each payload-free
+record binds the exact route, full source commit, observation time and one of the
+required non-stream, stream, cancellation, outage or rollback scenarios. The
+readiness classifier requires a current passing record for every scenario from
+the same commit, fails closed on missing, stale, future or failed evidence, and
+can only report readiness for an activation review. It always reports
+`traffic_activation_allowed: false`; recording tests never moves traffic.
+
 ### Deployed NLP and model inventory
 
 NLP nodes publish a task-shaped inventory in their `/health` (`tasks: {task: {model, present, loaded, model_package?}}`), which discovery keeps intact when it enters placement. `nlp.models` projects those deployments through `nlp_inventory.project_nlp_inventory`: a content-verified export manifest supplies a strict `ModelPackage` (artifact relative store URIs, SHA-256 and size, task contracts, ORT provenance), and identical packages from several nodes are de-duplicated by `package_id`. Older deployments stay visible as unresolved candidates with the nodes on which they are present or loaded, marked `missing_content_verified_manifest`; they are never promoted from a model name into a package. Re-running the export process creates the richer manifest without changing request-time behaviour. Discovery never loads, downloads, executes, activates or hashes artifacts.
