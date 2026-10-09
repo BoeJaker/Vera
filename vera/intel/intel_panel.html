@@ -53,6 +53,12 @@ dialog{border:1px solid var(--line,#2a2f3a);border-radius:12px;background:var(--
 dialog::backdrop{background:rgba(0,0,0,.5)}
 pre.code{background:var(--bg2,#11141a);padding:10px;border-radius:8px;overflow:auto;font-family:var(--mono,ui-monospace,monospace);font-size:12px}
 vera-widget{display:block}
+.sess{padding:8px 0;border-top:1px solid var(--line,#2a2f3a)}
+.sess-a{display:flex;gap:6px;align-items:center}.sess-a input{flex:1}
+.sess-b{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin-top:6px;font-size:11.5px;color:var(--muted,#9aa3b2)}
+.sess-b input[type=time]{width:auto}.sess-b input[type=number]{width:64px}.sess-b select{width:auto}
+.sess .days{display:flex;gap:3px}.sess .days label{font-size:10.5px;display:flex;flex-direction:column;align-items:center}
+details.card>summary{cursor:pointer;font-weight:600}
 </style>
 <link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
@@ -69,7 +75,7 @@ vera-widget{display:block}
     <button data-label="Reports" data-desc="Briefs and their delivery" data-desc-long="Reports: build a brief, read it, send it to Telegram, chat, email, the canvas and more." class="nav-btn" data-go="reports" onclick="go('reports')"><span class="gl">▤</span>Reports</button>
     <button data-label="Actions" data-desc="What Vera can do next" data-desc-long="Actions reports offered - fetch a repo, research a question further, track an entity - and what became of them." class="nav-btn" data-go="actions" onclick="go('actions')"><span class="gl">➜</span>Actions</button>
     <button data-label="Activity" data-desc="What it is doing on its own" data-desc-long="The night batch, sessions, alerts it raised, research waiting, notes from your drop folders and automation proposals - and a command line." class="nav-btn" data-go="activity" onclick="go('activity')"><span class="gl">◷</span>Activity</button>
-    <button data-label="Settings" data-desc="Schedule, delivery, n8n" data-desc-long="When the nightly refresh and the morning brief run, where the brief goes, and moving off the n8n flows." class="nav-btn" data-go="settings" data-vera-settings="#pane-settings" onclick="go('settings')"><span class="gl">⚙</span>Settings</button>
+    <button data-label="Settings" data-desc="Schedule, delivery, thinking, voice" data-desc-long="When the nightly refresh, the morning brief, the week in review and the proposals run; where briefs and alerts go; how it thinks, the sessions it may plan work into; voice and narration." class="nav-btn" data-go="settings" data-vera-settings="#pane-settings" onclick="go('settings')"><span class="gl">⚙</span>Settings</button>
   </nav>
   <div id="status-tile">
     <div class="lbl">Intelligence</div>
@@ -100,6 +106,13 @@ vera-widget{display:block}
   <div class="pane" id="pane-timeline">
     <h2>All topics through time</h2>
     <div class="card"><vera-intel-timeline days="365"></vera-intel-timeline></div>
+    <div class="card">
+      <h2>As of a date</h2>
+      <div class="small muted">What a topic's assessment said on a day, and what turned up that day - the record as it stood then.</div>
+      <div class="row" style="margin-top:6px"><select id="aoTopic" class="grow" style="width:auto"></select>
+        <input type="date" id="aoDate" style="width:auto"><button class="btn" onclick="asOf()">Show</button></div>
+      <div id="aoOut" class="small" style="margin-top:8px"></div>
+    </div>
   </div>
 
   <div class="pane" id="pane-reports">
@@ -182,6 +195,11 @@ vera-widget{display:block}
         <label class="f">Timezone</label><input type="text" id="cTz">
         <label class="f">Link base for Telegram / email (must open off this box)</label><input type="text" id="cBase">
         <label class="f">Brief goes to</label><div id="cChans" class="row small"></div>
+        <label class="f">Alerts go to (an assessment that changed materially)</label><div id="cAlertChans" class="row small"></div>
+        <div class="row"><div class="grow"><label class="f">Week in review on</label><select id="cWeekDay"></select></div>
+          <div class="grow"><label class="f">at (hour)</label><input type="number" id="cWeekHour" min="0" max="23"></div></div>
+        <div class="row"><div class="grow"><label class="f">Automation proposals on</label><select id="cAdvDay"></select></div>
+          <div class="grow"><label class="f">at (hour)</label><input type="number" id="cAdvHour" min="0" max="23"></div></div>
         <label class="small"><input type="checkbox" id="cIll"> illustrate briefs (image generation)</label>
         <div class="row" style="margin-top:8px"><button class="btn pri" onclick="saveConfig()">Save</button><span id="cMsg" class="msg"></span></div>
         <h3>Last runs</h3><div id="cSched" class="small muted"></div>
@@ -199,9 +217,14 @@ vera-widget{display:block}
         <label class="small"><input type="checkbox" id="cOpp"> use idle time during the day for due topics</label><br>
         <label class="small"><input type="checkbox" id="cAlerts"> alert me when an assessment changes materially</label><br>
         <label class="small"><input type="checkbox" id="cAutoR"> research new questions on deep topics inside sessions</label><br>
-        <label class="small"><input type="checkbox" id="cNight"> send a one-line night summary</label>
-        <label class="f">Sessions - windows it may plan work into (JSON: name, days 0=Mon, start, end, budget, mode deepen|refresh|research)</label>
-        <textarea id="cSessions" style="min-height:80px;font-family:var(--mono,monospace)"></textarea>
+        <label class="small"><input type="checkbox" id="cNight"> send a one-line night summary</label><br>
+        <label class="small"><input type="checkbox" id="cResolve"> give the organisations sources name a stable identity (Wikidata, nightly, cached)</label><br>
+        <label class="small"><input type="checkbox" id="cWorld"> wake a topic when the worldview sees its mix of concepts drift (only while the worldview is healthy)</label>
+        <div class="row"><div class="grow"><label class="f">Model calls per night for notes and inbox</label><input type="number" id="cFilesBudget" min="0" max="100"></div><div class="grow"></div></div>
+        <label class="f">Sessions - windows it may plan work into: deepen = reassess stale topics and research open questions,
+          refresh = only topics that are due, research = only open questions. Budget = jobs per window.</label>
+        <div id="cSessRows"></div>
+        <button class="btn" onclick="addSessionRow()" style="margin-top:6px">＋ Add a session</button>
         <div class="row"><div class="grow"><label class="f">Phone (HA notify target)</label><input type="text" id="cPhone"></div>
           <div class="grow"><label class="f">Printer id</label><input type="text" id="cPrinter"></div></div>
         <label class="f">Drop folders (JSON: kind notes|inbox|print|podcast, path) on host</label><input type="text" id="cHost">
@@ -227,8 +250,8 @@ vera-widget{display:block}
           <div class="grow"><label class="f">Speed (0 = Vera's)</label><input type="number" id="nSpeed" min="0" max="2" step="0.05"></div></div>
         <div class="row" style="margin-top:6px"><button class="btn pri" onclick="saveNarration()">Save</button><span id="nMsg" class="msg"></span></div>
       </div>
-      <div class="card">
-        <h2>Moving off n8n</h2>
+      <details class="card">
+        <summary>History: moving off n8n (done 4 Oct 2026)</summary>
         <p class="small muted">The n8n intelligence flows (intel-night, intel-brief, intel-automations, files-night, the vera-* interest,
           monitor, report and podcast flows) did collect → enrich → brief on timers. Vera now does all of it - with topics, a timeline,
           the NLP tier, assessments that track change and reports that act. Import their state, then switch the flows off
@@ -237,7 +260,7 @@ vera-widget{display:block}
         <div id="nImp" class="small" style="margin:6px 0"></div>
         <div class="row"><button class="btn" onclick="n8nRetire(true)">Preview switch-off</button><button class="btn" onclick="n8nRetire(false)">Switch flows off</button></div>
         <div id="nRet" class="small" style="margin:6px 0"></div>
-      </div>
+      </details>
     </div>
   </div>
 </div>
@@ -265,6 +288,7 @@ function go(id) {
   if (id === 'actions') loadActions();
   if (id === 'settings' && !LOADED.settings) { LOADED.settings = 1; loadConfig(); }
   if (id === 'activity') loadActivity();
+  if (id === 'timeline') loadAsOfTopics();
   try { localStorage.setItem('vera.intel.pane', id); } catch (e) {}
 }
 
@@ -323,6 +347,18 @@ async function openTopic(id) {
         <button class="btn" onclick="addInd()">Watch</button></div>
       <div id="pmRows" class="small"></div>
     </div>
+    <div class="card"><div class="row"><h3 class="grow" style="margin:0">Sources besides search</h3>
+        <button class="btn" onclick="pullSources()" title="ask the data fabric to fetch them now - no model">↻ Pull</button></div>
+      <div class="small muted">Feeds, arXiv, YouTube channels, GitHub releases, earthquakes or any JSON API, read through the data fabric's sources.
+        Each sweep triages what is new there like a search result; a source several topics read is fetched once.</div>
+      <div id="srcList" class="small"></div>
+      <div class="row" style="margin-top:8px"><select id="srcKind" style="width:auto" onchange="srcKindHint()"></select>
+        <input type="text" id="srcVal" class="grow" style="width:auto" onkeydown="if(event.key==='Enter')addSource()">
+        <button class="btn" onclick="addSource()">Read it</button></div>
+      <div id="srcGeo" class="row small" style="display:none;margin-top:6px"><input type="text" id="srcBox" class="grow" placeholder="only inside a box (optional): min_lon,min_lat,max_lon,max_lat - e.g. -11,49,2,61 for the UK"></div>
+      <div id="srcMap" style="display:none;margin-top:6px"><textarea id="srcMapping" placeholder='field mapping (JSON): {"item_path": "items", "title_field": "name", "url_field": "url", "time_field": "updated_at", "text_fields": "summary"}'></textarea></div>
+      <div id="srcMsg" class="msg"></div>
+    </div>
     <div class="grid2">
       <div class="card"><div class="row"><h3 class="grow" style="margin:0">Signals</h3>
         <select id="sOrder" style="width:auto" onchange="loadSignals()"><option value="seen">newest</option><option value="score">strongest</option></select>
@@ -337,7 +373,80 @@ async function openTopic(id) {
         ${widget({form:'globe', source:'intel.places.get', title:'Places', read:{refresh:'30m', args:{topic_id:id, days:90}, map:{points:'points'}}, frame:{size:'l'}})}
       </div>
     </div>`;
-  loadSignals(); loadInd();
+  loadSignals(); loadInd(); loadSources();
+}
+
+/* ── a topic's sources (data-fabric subscriptions) ── */
+let SRC_KINDS = [];
+async function loadSources() {
+  if (!CUR) return;
+  const r = await call('intel.source.list', {topic_id: CUR});
+  if (r.error) { $('srcList').innerHTML = `<div class="muted">${esc(r.error)}</div>`; return; }
+  if (!SRC_KINDS.length && (r.kinds || []).length) {
+    SRC_KINDS = r.kinds;
+    $('srcKind').innerHTML = SRC_KINDS.map(k => `<option value="${esc(k.kind)}">${esc(k.label)}</option>`).join('');
+  }
+  srcKindHint();
+  const glyph = {feed: '◉', arxiv: '∂', youtube: '▶', github_releases: '⑂', usgs: '≋', api: '{}'};
+  $('srcList').innerHTML = (r.sources || []).map(x => `<div class="sig"><div class="sc">${glyph[x.kind] || '•'}</div><div>
+      <b>${esc(x.label)}</b>${x.bbox ? ` <span class="chip">inside ${esc(x.bbox.join(', '))}</span>` : ''}
+      <div class="muted">${x.missing ? '<b>missing from the fabric</b> · ' : ''}${x.last_pulled ? 'fetched ' + esc(String(x.last_pulled).slice(0, 16).replace('T', ' ')) : 'not fetched yet'}
+        · ${x.pulls || 0} pulls · every ${Math.round((x.interval || 0) / 3600 * 10) / 10} h${x.url ? ` · <a href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener">${esc(x.url.length > 60 ? x.url.slice(0, 60) + '…' : x.url)}</a>` : ''}</div></div>
+      <div class="ops"><button class="btn" onclick="rmSource('${esc(x.id)}')">Stop</button></div></div>`).join('')
+    || '<div class="muted" style="padding:6px 0">Only web search so far.</div>';
+}
+function srcKindHint() {
+  const k = SRC_KINDS.find(x => x.kind === $('srcKind').value) || {};
+  $('srcVal').placeholder = k.value || '';
+  $('srcGeo').style.display = k.geo ? '' : 'none';
+  $('srcMap').style.display = k.mapping ? '' : 'none';
+}
+async function addSource() {
+  const kind = $('srcKind').value, value = $('srcVal').value.trim();
+  if (!value) return msg('srcMsg', 'say what to read', 'err');
+  msg('srcMsg', 'registering with the data fabric and fetching…');
+  const args = {topic_id: CUR, kind, value};
+  if ($('srcGeo').style.display !== 'none' && $('srcBox').value.trim()) args.bbox = $('srcBox').value.trim();
+  if ($('srcMap').style.display !== 'none' && $('srcMapping').value.trim()) args.mapping = $('srcMapping').value.trim();
+  const r = await call('intel.source.add', args);
+  if (r.error) return msg('srcMsg', r.error, 'err');
+  msg('srcMsg', `reading ${r.source.label} - ${r.pulled} items fetched${r.pull_error ? ' (fetch: ' + r.pull_error + ')' : ''}; the next sweep triages them`, r.pull_error ? 'err' : 'ok');
+  $('srcVal').value = ''; loadSources();
+}
+async function rmSource(sid) {
+  const r = await call('intel.source.remove', {topic_id: CUR, source_id: sid});
+  msg('srcMsg', r.error || (r.removed_from_fabric ? 'stopped; the fabric source is gone (its records stay)'
+    : (r.still_read_by || []).length ? 'stopped; still read by ' + r.still_read_by.join(', ') : 'stopped'), r.error ? 'err' : 'ok');
+  loadSources();
+}
+async function pullSources() {
+  msg('srcMsg', 'fetching…');
+  const r = await call('intel.source.pull', {topic_id: CUR});
+  if (r.error) return msg('srcMsg', r.error, 'err');
+  const bad = (r.pulled || []).filter(x => x.error);
+  msg('srcMsg', (r.pulled || []).map(x => `${x.label}: ${x.ingested}`).join(' · ') + (bad.length ? ' - failed: ' + bad.map(x => x.label).join(', ') : ''), bad.length ? 'err' : 'ok');
+  loadSources();
+}
+
+/* ── the record as it stood on a date ── */
+async function loadAsOfTopics() {
+  if ($('aoTopic').options.length) return;
+  const r = await call('intel.topic.list', {status: ''});
+  $('aoTopic').innerHTML = (r.rows || []).map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
+  if (!$('aoDate').value) $('aoDate').value = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+}
+async function asOf() {
+  const tid = $('aoTopic').value, when = $('aoDate').value;
+  if (!tid || !when) return;
+  $('aoOut').textContent = '…';
+  const r = await call('intel.asof.get', {topic_id: tid, when});
+  if (r.error) { $('aoOut').textContent = r.error; return; }
+  const sn = r.snapshot || {};
+  $('aoOut').innerHTML = (sn.headline ? `<b>${esc(sn.headline)}</b> <span class="chip">${esc(sn.confidence || '')}</span>
+      <span class="muted">assessed ${esc(String(sn.ts || '').slice(0, 16).replace('T', ' '))}</span><div class="state">${esc(sn.state || '')}</div>`
+      : '<div class="muted">No assessment yet on that date.</div>')
+    + '<h3>Turned up that day</h3>' + ((r.signals || []).map(x => `<div>• ${x.url ? `<a href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title)}
+      <span class="muted">${esc(x.site || '')}${x.score != null ? ' · ' + (+x.score).toFixed(1) : ''}</span></div>`).join('') || '<div class="muted">nothing</div>');
 }
 async function loadInd() {
   if (!CUR) return;
@@ -599,13 +708,22 @@ async function loadConfig() {
   $('cMax').value = c.max_topics_per_night; $('cPeriod').value = c.report_period_hours; $('cTz').value = c.timezone || '';
   $('cBase').value = c.public_base || ''; $('cIll').checked = !!c.illustrate;
   $('cChans').innerHTML = CHANS.filter(x => !x.needs_target).map(x => `<label><input type="checkbox" value="${esc(x.id)}" ${(c.brief_channels||[]).includes(x.id)?'checked':''}> ${esc(x.label)}</label>`).join('');
+  $('cAlertChans').innerHTML = CHANS.filter(x => !x.needs_target).map(x => `<label><input type="checkbox" value="${esc(x.id)}" ${(c.alert_channels||[]).includes(x.id)?'checked':''}> ${esc(x.label)}</label>`).join('');
+  const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  for (const [id, v] of [['cWeekDay', c.weekly_day], ['cAdvDay', c.advise_day]])
+    $(id).innerHTML = DAYS.map((d, i) => `<option value="${i}" ${i === +v ? 'selected' : ''}>${d}</option>`).join('');
+  $('cWeekHour').value = c.weekly_hour ?? 8; $('cAdvHour').value = c.advise_hour ?? 3;
   const s = r.schedule || {};
   const ln = s.last_nightly || {}, lnT = Array.isArray(ln.topics) ? ln.topics.length : (ln.topics || 0);
   $('cSched').innerHTML = `night queued: ${esc(s.nightly_day||'never')} · brief sent: ${esc(s.brief_day||'never')} · week in review: ${esc(s.weekly_day_done||'never')}<br>last night finished: ${esc(ln.ts||'never')} (${lnT} topics)` + (r.profile ? ' · routing profile <b>intel</b> (Model Routing page)' : '');
   $('cPersona').value = c.persona || ''; $('cComp').value = (c.competitors || []).join('\n');
   $('cGate').value = c.llm_gate; $('cDaily').value = c.daily_job_budget; $('cNlp').checked = !!c.nlp; $('cOpp').checked = !!c.opportunistic;
   $('cAlerts').checked = !!c.alerts; $('cAutoR').checked = !!c.auto_research; $('cNight').checked = !!c.night_summary;
-  $('cSessions').value = JSON.stringify(c.sessions || [], null, 1); $('cPhone').value = c.phone_target || ''; $('cPrinter').value = c.printer_id || '';
+  $('cSessRows').innerHTML = ''; (c.sessions || []).forEach(addSessionRow);
+  if (!(c.sessions || []).length) $('cSessRows').innerHTML = '<div class="small muted" id="cSessNone">None - it only works at night and, if allowed, in idle time.</div>';
+  $('cResolve').checked = c.resolve_entities !== false; $('cWorld').checked = c.worldview_wake !== false;
+  $('cFilesBudget').value = c.files_model_budget ?? 8;
+  $('cPhone').value = c.phone_target || ''; $('cPrinter').value = c.printer_id || '';
   $('cHost').value = c.files_host || ''; $('cFolders').value = JSON.stringify(c.drop_folders || [], null, 1);
   $('nSpeak').checked = c.speak !== false; $('nTg').checked = c.telegram_audio !== false; $('nGeo').checked = c.geocode !== false;
   $('nSpeed').value = c.speak_speed || 0;
@@ -644,13 +762,42 @@ async function saveNarration() {
     speak_voice: $('nVoice').value, speak_speed: +$('nSpeed').value || 0}});
   msg('nMsg', r.error || 'saved', r.error ? 'err' : 'ok');
 }
+const DAY_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+function addSessionRow(x) {
+  x = x && x.name !== undefined ? x : {name: '', days: [5], start: '09:00', end: '13:00', budget: 6, mode: 'deepen'};
+  const none = $('cSessNone'); if (none) none.remove();
+  const row = document.createElement('div'); row.className = 'sess';
+  row.innerHTML = `<div class="sess-a"><input type="text" class="sName" placeholder="name, e.g. Saturday research" value="${esc(x.name || '')}">
+      <button class="btn" title="remove this session" onclick="this.closest('.sess').remove()">✕</button></div>
+    <div class="sess-b"><div class="days">${DAY_SHORT.map((d, i) => `<label>${d}<input type="checkbox" value="${i}" ${(x.days || []).includes(i) ? 'checked' : ''}></label>`).join('')}</div>
+      <span>from <input type="time" class="sStart" value="${esc(x.start || '09:00')}"></span>
+      <span>to <input type="time" class="sEnd" value="${esc(x.end || '13:00')}"></span>
+      <span><input type="number" class="sBudget" min="1" max="60" value="${+x.budget || 6}"> jobs</span>
+      <select class="sMode">${['deepen', 'refresh', 'research'].map(m => `<option ${m === (x.mode || 'deepen') ? 'selected' : ''}>${m}</option>`).join('')}</select></div>`;
+  $('cSessRows').appendChild(row);
+}
+function readSessions() {
+  const out = [];
+  for (const r of document.querySelectorAll('#cSessRows .sess')) {
+    const s = {name: r.querySelector('.sName').value.trim(), days: [...r.querySelectorAll('.days input:checked')].map(i => +i.value),
+      start: r.querySelector('.sStart').value, end: r.querySelector('.sEnd').value, budget: +r.querySelector('.sBudget').value || 6,
+      mode: r.querySelector('.sMode').value};
+    if (!s.name) throw new Error('every session needs a name');
+    if (!s.days.length) throw new Error(`"${s.name}" needs at least one day`);
+    if (!s.start || !s.end || s.start === s.end) throw new Error(`"${s.name}" needs a start and an end`);
+    out.push(s);
+  }
+  return out;
+}
 async function saveThinking() {
   let sessions, folders;
-  try { sessions = JSON.parse($('cSessions').value || '[]'); folders = JSON.parse($('cFolders').value || '[]'); }
-  catch (e) { return msg('tMsg', 'sessions / folders must be JSON: ' + e.message, 'err'); }
+  try { sessions = readSessions(); } catch (e) { return msg('tMsg', e.message, 'err'); }
+  try { folders = JSON.parse($('cFolders').value || '[]'); }
+  catch (e) { return msg('tMsg', 'drop folders must be JSON: ' + e.message, 'err'); }
   const r = await call('intel.config.set', {settings: {persona: $('cPersona').value, competitors: $('cComp').value.split('\n').map(x => x.trim()).filter(Boolean),
     llm_gate: +$('cGate').value, daily_job_budget: +$('cDaily').value, nlp: $('cNlp').checked, opportunistic: $('cOpp').checked,
     alerts: $('cAlerts').checked, auto_research: $('cAutoR').checked, night_summary: $('cNight').checked, sessions,
+    resolve_entities: $('cResolve').checked, worldview_wake: $('cWorld').checked, files_model_budget: +$('cFilesBudget').value,
     phone_target: $('cPhone').value, printer_id: $('cPrinter').value, files_host: $('cHost').value, drop_folders: folders}});
   msg('tMsg', r.error || ('saved ' + (r.changed || []).join(', ')), r.error ? 'err' : 'ok');
   if (!r.error) { LOADED.settings = 0; loadConfig(); }
@@ -696,7 +843,10 @@ async function saveConfig() {
   const r = await call('intel.config.set', {enabled: $('cEnabled').checked, sweep_hour: +$('cSweep').value, brief_hour: +$('cBrief').value,
     max_topics_per_night: +$('cMax').value, report_period_hours: +$('cPeriod').value, timezone: $('cTz').value, public_base: $('cBase').value,
     illustrate: $('cIll').checked, brief_channels: [...document.querySelectorAll('#cChans input:checked')].map(x => x.value)});
-  msg('cMsg', r.error || 'saved', r.error ? 'err' : 'ok'); tile();
+  const r2 = r.error ? {} : await call('intel.config.set', {settings: {
+    alert_channels: [...document.querySelectorAll('#cAlertChans input:checked')].map(x => x.value),
+    weekly_day: +$('cWeekDay').value, weekly_hour: +$('cWeekHour').value, advise_day: +$('cAdvDay').value, advise_hour: +$('cAdvHour').value}});
+  msg('cMsg', r.error || r2.error || 'saved', (r.error || r2.error) ? 'err' : 'ok'); tile();
 }
 async function n8nImport(dry) {
   $('nImp').textContent = 'reading the n8n datasets…';
