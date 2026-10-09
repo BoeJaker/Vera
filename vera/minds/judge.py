@@ -136,15 +136,18 @@ async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: 
     description="How a shadow judge compares with the live decisions it shadows (four-minds FM-2): agreement "
                 "rate and the AUC of its probability against the live answer, per implementation. Input: "
                 "question_id (default loop.step_verify), days (int, default 30). Output: {question_id, "
-                "by_implementation: {impl: {n, agreement, auc, live_positive, live_negative}}}.",
+                "by_implementation: {impl: {n, agreement, auc (binary questions), live_positive, live_negative}}}. "
+                "With question_id 'all': one entry per judged question.",
 )
 async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: int = 30,
                                    trace_id=None) -> Dict[str, Any]:
     pool = getattr(_orch, "PG_POOL", None)
     if pool is None:
         return {"error": "postgres unavailable"}
-    q = JC.QUESTIONS.get(question_id) or {}
-    positive = next(iter((q.get("labels") or {}).values()), "met")
+    if question_id == "all":
+        return {"questions": {qid: (await cap_decide_shadow_report(qid, days=days)).get("by_implementation", {})
+                              for qid in JC.QUESTIONS}}
+    positive = JC.positive_label(question_id)
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT x.row->>'implementation' AS impl, x.row->'answer' AS sa, x.p AS sp, l.row->'answer' AS la

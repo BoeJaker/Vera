@@ -34,7 +34,7 @@ def test_the_question_needs_its_inputs():
     m = JC.user_message("loop.step_verify", {"success": "timer.html exists", "result": "wrote timer.html"})
     assert "timer.html exists" in m and "wrote timer.html" in m
     assert JC.user_message("loop.step_verify", {"success": "x"}) is None
-    assert JC.user_message("loop.controller_action", {"goal": "g"}) is None
+    assert JC.user_message("intel.signal_relevant", {"goal": "g"}) is None      # no judge for it
 
 
 def test_the_shadow_row_is_valid_and_linked():
@@ -69,3 +69,38 @@ def test_the_judge_is_background_work_queued_nightly():
     src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
     assert 'JOB_TYPE = "idle_decide"' in src and "background.cap.enqueue" in src
     assert "if await _gate_busy():" in src
+
+
+STATES = {
+    "loop.step_done": {"step": "fetch", "step_goal": "get the page", "result": "got 3 pages"},
+    "loop.prestep_needed": {"goal": "g", "step": "s", "step_goal": "find prices", "known": "none"},
+    "loop.intent": {"goal": "write a timer app"},
+    "loop.tier": {"goal": "write a timer app"},
+    "loop.controller_action": {"goal": "g", "done_when": "x", "after_step": "s1", "result": "r",
+                               "done": [{"title": "s1", "ok": True, "met": True}], "queue": ["s2"], "steps_left": 4},
+}
+
+
+def test_every_loop_question_has_a_judge_prompt():
+    for qid, st in STATES.items():
+        assert qid in JC.QUESTIONS, qid
+        m = JC.user_message(qid, st)
+        assert m and len(m) < 6000, qid
+    assert JC.user_message("loop.intent", {}) is None and JC.user_message("loop.controller_action", {}) is None
+    assert "s1 (met)" in JC.user_message("loop.controller_action", STATES["loop.controller_action"])
+
+
+def test_choice_questions_answer_with_letters():
+    probs, mass = JC.label_probs(_tops(A=0.1, B=0.7, C=0.1, D=0.05), ["a", "b", "c", "d"])
+    assert JC.verdict("loop.intent", probs) == ("research", round(0.7 / 0.95, 4))
+    assert JC.verdict("loop.tier", probs)[0] == "simple" and JC.verdict("loop.controller_action", probs)[0] == "replan"
+    assert JC.positive_label("loop.intent") is None and JC.positive_label("loop.step_done") == "end"
+    assert JC.agreement([("build", "build", 0.9), ("build", "mixed", 0.6)], None) == {"n": 2, "agreement": 0.5, "auc": None}
+
+
+def test_live_answers_are_labels_the_judge_can_give():
+    assert set(JC.QUESTIONS["loop.intent"]["labels"].values()) == set(LD.INTENT_LABELS)
+    assert set(JC.QUESTIONS["loop.tier"]["labels"].values()) == set(LD.TIER_LABELS)
+    assert set(JC.QUESTIONS["loop.controller_action"]["labels"].values()) == set(LD.CONTROLLER_LABELS)
+    assert set(JC.QUESTIONS["loop.prestep_needed"]["labels"].values()) == set(LD.PRESTEP_LABELS)
+    assert set(JC.QUESTIONS["loop.step_done"]["labels"].values()) == set(LD.STEP_DONE_LABELS)

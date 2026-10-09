@@ -20,18 +20,64 @@ try:
 except Exception:                       # worktree / app-free import
     from vera.minds import ledger_core as LC  # type: ignore
 
-#: per question: the system prompt, how to build the user message from stored inputs, the label each
-#: answer token means
+MAX_INPUT_CHARS = 3000
+MAX_INPUT_CHARS_FIELD = 1500
+
+#: per question: the system prompt, the label each answer token means (binary questions: the first
+#: token is the positive label; choice questions answer with one letter)
 QUESTIONS: Dict[str, Dict[str, Any]] = {
     "loop.step_verify": {
         "system": ("You check whether one step of an agent's work met its success criterion. You get the "
                    "criterion and the step's result. Answer with one word: yes if the result shows the "
                    "criterion was met, no if it does not."),
-        "fields": ("success", "result"),
-        "labels": {"yes": "met", "no": "not_met"},
+        "labels": {"yes": "met", "no": "not_met"}, "kind": "binary",
+    },
+    "loop.step_done": {
+        "system": ("An agent is working on one step. You get the step's goal and what its tool calls have produced "
+                   "so far. Answer with one word: yes if what it has is enough to finish the step now, no if it "
+                   "must keep working."),
+        "labels": {"yes": "end", "no": "continue"}, "kind": "binary",
+    },
+    "loop.prestep_needed": {
+        "system": ("Before an agent runs one step of a larger goal, decide whether it must first gather facts it "
+                   "does not have (data, parameters, decisions it cannot derive). Answer with one word: yes if it "
+                   "must gather something first, no if what is already known is enough to start."),
+        "labels": {"yes": "needed", "no": "not_needed"}, "kind": "binary",
+    },
+    "loop.intent": {
+        "system": ("Classify the KIND of work a goal asks an agent to do. Answer with one letter: A = build "
+                   "(create or write something: code, an app, a document), B = research (look up external or "
+                   "current information), C = action (operate, configure or fix a live system), D = mixed "
+                   "(look things up, then build with them)."),
+        "labels": {"a": "build", "b": "research", "c": "action", "d": "mixed"}, "kind": "choice",
+    },
+    "loop.tier": {
+        "system": ("Estimate how much work a goal is for an agent. Answer with one letter: A = single (one tool "
+                   "call answers it), B = simple (1-3 steps), C = complex (several steps, maybe a plan), "
+                   "D = strategic (a multi-day project)."),
+        "labels": {"a": "single", "b": "simple", "c": "complex", "d": "strategic"}, "kind": "choice",
+    },
+    "loop.controller_action": {
+        "system": ("You steer an agent after each step of a goal. You get the goal, what is done, the last "
+                   "result and the steps still queued. Answer with one letter: A = continue with the queue, "
+                   "B = replan the remaining steps, C = insert a step before continuing, D = stop (the goal "
+                   "is met or cannot progress)."),
+        "labels": {"a": "continue", "b": "replan", "c": "insert", "d": "stop"}, "kind": "choice",
     },
 }
-MAX_INPUT_CHARS = 3000
+
+
+def _s(v: Any, n: int = MAX_INPUT_CHARS_FIELD) -> str:
+    return str(v or "").strip()[:n]
+
+
+def _done_lines(done: Any) -> str:
+    out = []
+    for d in (done or [])[:20]:
+        if isinstance(d, dict):
+            ok = "met" if d.get("met") else ("done" if d.get("ok") else "failed")
+            out.append(f"- {_s(d.get('title'), 120)} ({ok})")
+    return "\n".join(out) or "(nothing yet)"
 
 
 def user_message(question_id: str, state: Dict[str, Any]) -> Optional[str]:
@@ -44,6 +90,30 @@ def user_message(question_id: str, state: Dict[str, Any]) -> Optional[str]:
         if not crit or not res:
             return None
         return f"Success criterion: {crit}\n\nStep result: {res[:MAX_INPUT_CHARS]}\n\nWas the criterion met?"
+    if question_id == "loop.step_done":
+        res = _s(state.get("result"), MAX_INPUT_CHARS)
+        if not res:
+            return None
+        return (f"Step: {_s(state.get('step'), 200)}\nStep goal: {_s(state.get('step_goal'))}\n\n"
+                f"Produced so far: {res}\n\nIs this enough to finish the step now?")
+    if question_id == "loop.prestep_needed":
+        if not _s(state.get("step_goal")) and not _s(state.get("step")):
+            return None
+        return (f"Overall goal: {_s(state.get('goal'), 600)}\nStep: {_s(state.get('step'), 200)}\n"
+                f"Step goal: {_s(state.get('step_goal'))}\n\nAlready known:\n{_s(state.get('known')) or '(nothing yet)'}"
+                "\n\nMust the step gather something first?")
+    if question_id in ("loop.intent", "loop.tier"):
+        goal = _s(state.get("goal"), MAX_INPUT_CHARS)
+        return f"Goal: {goal}\n\nAnswer with one letter." if goal else None
+    if question_id == "loop.controller_action":
+        goal = _s(state.get("goal"), 800)
+        if not goal:
+            return None
+        queue = [_s(q, 120) for q in (state.get("queue") or [])[:12]]
+        return (f"Goal: {goal}\nDone when: {_s(state.get('done_when'), 300) or '(not stated)'}\n\n"
+                f"Steps so far:\n{_done_lines(state.get('done'))}\n\nLast step: {_s(state.get('after_step'), 200)}\n"
+                f"Its result: {_s(state.get('result'))}\n\nStill queued: {', '.join(queue) or '(nothing)'}"
+                f"\nSteps left in the budget: {state.get('steps_left')}\n\nAnswer with one letter.")
     return None
 
 
@@ -66,14 +136,25 @@ def label_probs(first_token_tops: Iterable[Dict[str, Any]], words: Iterable[str]
 
 
 def verdict(question_id: str, probs: Dict[str, float]) -> Tuple[Optional[str], Optional[float]]:
-    """(answer label, probability of the positive label) from label-word probabilities."""
+    """(answer label, p). Binary: p is the probability of the positive label (the first). Choice: p is the
+    probability of the chosen label."""
     q = QUESTIONS.get(question_id) or {}
     labels = q.get("labels") or {}
     if not probs or not labels:
         return None, None
     word = max(probs, key=probs.get)
+    if q.get("kind") == "choice":
+        return labels.get(word), round(probs.get(word, 0.0), 4)
     pos = next(iter(labels))                       # the first word is the positive label ("yes")
     return labels.get(word), round(probs.get(pos, 0.0), 4)
+
+
+def positive_label(question_id: str) -> Optional[str]:
+    """The positive label of a binary question (for AUC); None for choice questions."""
+    q = QUESTIONS.get(question_id) or {}
+    if q.get("kind") != "binary":
+        return None
+    return next(iter((q.get("labels") or {}).values()), None)
 
 
 def shadow_decision(live: Dict[str, Any], answer: str, p: Optional[float], implementation: str,
@@ -97,13 +178,15 @@ def in_window(hour: int, start: int = 23, end: int = 6) -> bool:
     return start <= hour < end if start < end else (hour >= start or hour < end)
 
 
-def agreement(pairs: List[Tuple[str, str, Optional[float]]], positive: str) -> Dict[str, Any]:
+def agreement(pairs: List[Tuple[str, str, Optional[float]]], positive: Optional[str]) -> Dict[str, Any]:
     """pairs: (live answer, shadow answer, shadow p(positive)). Agreement rate and the AUC of p
     against the live answer."""
     n = len(pairs)
     if not n:
         return {"n": 0}
     agree = sum(1 for a, b, _ in pairs if a == b) / n
+    if positive is None:                           # a choice question: agreement only
+        return {"n": n, "agreement": round(agree, 3), "auc": None}
     pos = [p for a, _, p in pairs if a == positive and p is not None]
     neg = [p for a, _, p in pairs if a != positive and p is not None]
     auc = (sum((x > y) + 0.5 * (x == y) for x in pos for y in neg) / (len(pos) * len(neg))) if pos and neg else None
