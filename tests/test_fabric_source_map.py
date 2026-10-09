@@ -87,3 +87,43 @@ def test_the_fabric_uses_the_mapping_and_offers_discovery():
     assert "_srcmap.has_mapping(cfg)" in api and "_srcmap.map_item" in api
     assert '"name":"geo_field"' in src[src.index("SOURCE_TYPES: Dict"):]
     assert '"fabric.sources.discover_feed"' in src
+
+
+# the shape of https://t.me/s/<channel> (trimmed from a real page, 9 Oct 2026)
+TG = ('<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message text_not_supported_wrap '
+      'js-widget_message" data-post="durov/528" data-view="x"><div class="tgme_widget_message_bubble">'
+      '<div class="tgme_widget_message_text js-message_text" dir="auto"><tg-emoji><i class="emoji"><b>⛔️</b></i></tg-emoji>'
+      ' The UK government wants to ban social media for children under 16.<br/><br/>But banning it only puts them in '
+      'greater danger &amp; more.</div><div class="tgme_widget_message_footer"><a class="tgme_widget_message_date" '
+      'href="https://t.me/durov/528"><time datetime="2026-10-08T14:01:23+00:00" class="time">14:01</time></a></div></div></div>'
+      '<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message js-widget_message" '
+      'data-post="durov/529"><div class="tgme_widget_message_photo_wrap"></div><time datetime="2026-10-08T15:00:00+00:00"></time></div></div>')
+
+
+def test_public_telegram_channels_become_records():
+    posts = sm.telegram_posts(TG, "durov")
+    assert len(posts) == 1                                     # a photo with no words is not a record
+    d = posts[0]["data"]
+    assert d["link"] == "https://t.me/durov/528" and d["published"] == "2026-10-08T14:01:23Z"
+    assert d["title"].startswith("⛔️ The UK government wants to ban social media")
+    assert "\n\nBut banning it only puts them in greater danger & more." in posts[0]["text"]
+    assert sm.record_view(d)["link"] == "https://t.me/durov/528"
+    for v, name in (("@durov", "durov"), ("t.me/durov", "durov"), ("https://t.me/s/durov", "durov"),
+                    ("https://telegram.me/durov/", "durov"), ("not a channel!", ""), ("@ab", "")):
+        assert sm.telegram_channel(v) == name, v
+
+
+def test_a_feed_is_named_after_its_site():
+    page = '<head><title>Simon Willison’s Weblog</title><meta property="og:site_name" content="Simon Willison&#39;s Weblog"></head>'
+    assert sm.page_title(page) == "Simon Willison's Weblog"
+    assert sm.page_title("<title> A  page </title>") == "A page" and sm.page_title("") == ""
+    assert sm.feed_label("Atom", "Simon Willison's Weblog") == "Simon Willison's Weblog"
+    assert sm.feed_label("Engineering blog", "Example") == "Engineering blog" and sm.feed_label("", "Example") == "Example"
+
+
+def test_the_fabric_reads_telegram_and_passes_rss_headers():
+    src = open(os.path.join(ROOT, "vera", "fabric", "data_fabric.py"), encoding="utf-8").read()
+    assert 'elif stype == "telegram":' in src and "_srcmap.telegram_posts" in src
+    rss = src[src.index("async def _pull_rss"):src.index("async def _pull_api")]
+    assert 'headers.update(' in rss
+    assert '"site": _srcmap.page_title(body)' in src

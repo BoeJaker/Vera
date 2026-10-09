@@ -17,6 +17,7 @@ Kinds a person can add (the panel's form is built from KINDS):
                    optionally inside a bounding box
   api              any JSON API, with dot-path field mapping (see the fabric's
                    source_map_core)
+  telegram         a PUBLIC Telegram channel (its t.me/s/ web preview; no account)
 """
 from __future__ import annotations
 
@@ -25,10 +26,13 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-try:
-    from Vera.vera.fabric import source_map_core as srcmap
-except Exception:  # noqa: BLE001 - worktree / app-free import
-    from vera.fabric import source_map_core as srcmap
+try:                       # relative first: the sibling package of whichever tree loaded us (Vera.vera or vera)
+    from ..fabric import source_map_core as srcmap
+except ImportError:  # loaded outside a package
+    try:
+        from Vera.vera.fabric import source_map_core as srcmap
+    except ImportError:
+        from vera.fabric import source_map_core as srcmap
 
 KINDS: Dict[str, Dict[str, Any]] = {
     "feed": {"label": "Website or feed", "value": "Page, site or RSS/Atom URL", "signal_kind": "page",
@@ -42,6 +46,8 @@ KINDS: Dict[str, Dict[str, Any]] = {
              "signal_kind": "page", "interval_h": 1, "geo": True},
     "api": {"label": "JSON API", "value": "URL returning JSON", "signal_kind": "page", "interval_h": 6,
             "mapping": True},
+    "telegram": {"label": "Telegram channel", "value": "Public channel: @name or t.me/name", "signal_kind": "note",
+                 "interval_h": 3},
 }
 USGS_LEVELS = ("significant", "4.5", "2.5", "1.0", "all")
 USGS_MAPPING = {"item_path": "features", "title_field": "properties.title", "url_field": "properties.url",
@@ -103,6 +109,11 @@ def plan_source(kind: str, value: str, *, label: str = "", interval_h: float = 0
             return {"error": "magnitude must be one of " + ", ".join(USGS_LEVELS)}
         url = f"https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/{level}_day.geojson"
         return {**base, "url": url, "source_type": "api", "config": dict(USGS_MAPPING)}
+    if kind == "telegram":
+        name = srcmap.telegram_channel(value)
+        if not name:
+            return {"error": "a public channel: @name, t.me/name or https://t.me/s/name"}
+        return {**base, "url": f"https://t.me/s/{name}", "source_type": "telegram", "config": {"channel": name}}
     if kind == "api":
         if not value.startswith(("http://", "https://")):
             return {"error": "the API URL must start with http:// or https://"}

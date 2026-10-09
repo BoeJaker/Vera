@@ -245,3 +245,56 @@ def youtube_page(value: str) -> str:
         return f"https://www.youtube.com/{v}"
     host = urlparse(v if "://" in v else "https://" + v).hostname or ""
     return v if host.endswith("youtube.com") else ""
+
+
+# ── page titles, public Telegram channels ────────────────────────────────────
+
+_GENERIC_FEED_TITLES = {"", "rss", "atom", "feed", "rss feed", "atom feed", "rss 2.0", "posts", "all posts", "entries"}
+
+
+def page_title(page_html: str) -> str:
+    """The page's own name: og:site_name, else <title> (unescaped, trimmed)."""
+    m = re.search(r"""<meta[^>]+property=["']og:site_name["'][^>]*content=["']([^"']+)""", page_html or "", re.I) \
+        or re.search(r"""<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:site_name""", page_html or "", re.I)
+    if m:
+        return _html.unescape(m.group(1)).strip()[:120]
+    m = re.search(r"<title[^>]*>(.*?)</title>", page_html or "", re.I | re.S)
+    return re.sub(r"\s+", " ", _html.unescape(m.group(1))).strip()[:120] if m else ""
+
+
+def feed_label(feed_title: str, page_name: str) -> str:
+    """A feed's own title unless it is a generic one ('Atom', 'RSS'), then the page's name."""
+    t = (feed_title or "").strip()
+    return page_name.strip() if t.lower() in _GENERIC_FEED_TITLES and page_name.strip() else (t or page_name.strip())
+
+
+def telegram_channel(value: str) -> str:
+    """'@name', 't.me/name', 'https://t.me/s/name' -> 'name' ('' when it is not a public channel name)."""
+    v = (value or "").strip()
+    m = re.search(r"(?:t(?:elegram)?\.me/(?:s/)?|^@?)([A-Za-z][A-Za-z0-9_]{3,31})/?$", v)
+    return m.group(1) if m else ""
+
+
+def telegram_posts(page_html: str, channel: str) -> List[Dict[str, Any]]:
+    """Posts on a public channel's web preview (https://t.me/s/<channel>) as fabric items."""
+    out = []
+    for chunk in (page_html or "").split('class="tgme_widget_message_wrap')[1:]:
+        post = re.search(r'data-post="([^"]+)"', chunk)
+        if not post:
+            continue
+        body = re.search(r'class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', chunk, re.S)
+        when = re.search(r'<time[^>]*datetime="([^"]+)"', chunk)
+        text = ""
+        if body:
+            text = re.sub(r"<br\s*/?>", "\n", body.group(1))
+            text = _html.unescape(re.sub(r"<[^>]+>", "", text))
+            text = re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", text)).strip()
+        if not text:
+            continue                                   # a photo or a sticker with no words
+        first = text.split("\n", 1)[0].strip()
+        out.append({"text": text[:4000],
+                    "data": {"title": (first[:140] + ("…" if len(first) > 140 else "")),
+                             "link": f"https://t.me/{post.group(1)}",
+                             "published": to_iso(when.group(1)) if when else "",
+                             "summary": text[:1000], "channel": channel}})
+    return out

@@ -180,3 +180,46 @@ def test_bad_input_is_refused_before_the_fabric_sees_it(tmp_path):
     assert ok["ok"] and ok["source"]["bbox"] == [-11.0, 49.0, 2.0, 61.0]
     cfg = [kw for n, kw in orch.CALLS if n == "fabric.sources.add"][-1]["config"]
     assert '"geo_field": "geometry.coordinates"' in cfg
+
+
+def test_telegram_channels_and_site_names(tmp_path):
+    import asyncio
+    p = srcs.plan_source("telegram", "https://t.me/s/durov")
+    assert p["source_type"] == "telegram" and p["url"] == "https://t.me/s/durov" and p["config"] == {"channel": "durov"}
+    assert "error" in srcs.plan_source("telegram", "not a channel!")
+    mod, orch, fab = _with_fabric(tmp_path)
+
+    async def discover(url="", kind="", trace_id=None):          # a page whose feed link is titled "Atom"
+        return {"feeds": [{"url": "https://feed.test/atom.xml", "title": "Atom"}], "site": "Feed Test Weblog"}
+    orch.CAPABILITY_REGISTRY["fabric.sources.discover_feed"] = {"func": discover, "raw": discover}
+    R = lambda n, **kw: asyncio.run(orch.CAPABILITY_REGISTRY[n]["func"](**kw))   # noqa: E731
+    t = R("intel.topic.save", name="Agents")["topic"]
+    assert R("intel.source.add", topic_id=t["id"], kind="feed", value="https://feed.test/")["source"]["label"] == \
+        "Website or feed: Feed Test Weblog"
+
+
+def test_purge_also_removes_the_fabric_copies(tmp_path):
+    import asyncio, types
+    mod, orch, fab = _with_fabric(tmp_path)
+    ingested, deleted = [], []
+
+    async def ingest_dataset(dataset_id="", data=None, source="", tags=None, source_id="", defer_embedding=False):
+        ingested.extend(data or [])
+    sys.modules["data_fabric"] = types.SimpleNamespace(ingest_dataset=ingest_dataset)
+
+    async def delete_record(record_id="", dataset_id="", trace_id=None):
+        deleted.append((record_id, dataset_id))
+        return {"ok": True}
+    orch.CAPABILITY_REGISTRY["fabric.delete_record"] = {"func": delete_record, "raw": delete_record}
+    try:
+        R = lambda n, **kw: asyncio.run(orch.CAPABILITY_REGISTRY[n]["func"](**kw))   # noqa: E731
+        t = R("intel.topic.save", name="AI property valuation", brief="AI valuation pilots")["topic"]
+        R("intel.sweep", topic_id=t["id"])
+        ids = {s["id"] for s in mod.store().signals(t["id"])}
+        assert ids and {row["_id"] for row in ingested} >= {f"intel-sig-{i}" for i in ids}   # stable fabric ids
+        r = R("intel.topic.delete", id=t["id"], purge=True)
+        assert r["ok"] and r["fabric_records_removed"] == len(ids)
+        assert {rid for rid, _ in deleted} == {f"intel-sig-{i}" for i in ids} and {d for _, d in deleted} == {mod.SIGNALS_DATASET}
+        assert "fabric_records_removed" not in R("intel.topic.delete", id="nope")    # no purge, no fabric work
+    finally:
+        sys.modules.pop("data_fabric", None)
