@@ -69,6 +69,7 @@ try:
     from Vera.vera.intel import intel_calib_core as calib
     from Vera.vera.intel import intel_resolve_core as rsv
     from Vera.vera.intel import intel_sources_core as srcs
+    from Vera.vera.intel import intel_story_core as story
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -80,6 +81,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_calib_core as calib
     from vera.intel import intel_resolve_core as rsv
     from vera.intel import intel_sources_core as srcs
+    from vera.intel import intel_story_core as story
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -543,6 +545,27 @@ async def cap_timeline_get(topic_id: str = "", days: int = 90, trace_id=None):
     return tl
 
 
+@capability("intel.stories.get", http_method="GET", http_path="/intel/stories/get", http_tags=["intel"],
+            memory="off", silent=True,
+            description="Stories: the same news carried by several sources, as one item - first seen, how many sources "
+                        "and distinct sites carry it, when the last joined and momentum (sources joined in the last 48 h). "
+                        "Input: topic_id (blank = every active topic), days (default 14), min_sources (default 2), "
+                        "limit (default 30). Output: {stories:[{id, topic_id, title, url, first_seen, sources, sites, "
+                        "last_join, momentum, score, summary}], window_days}.")
+async def cap_stories_get(topic_id: str = "", days: int = 14, min_sources: int = 2, limit: int = 30, trace_id=None):
+    st = store()
+    tids = [topic_id] if topic_id else [t["id"] for t in st.topics("active")]
+    sigs: List[Dict[str, Any]] = []
+    for tid in tids:
+        sigs += st.signals(tid, since=_since(24 * max(1, int(days))), limit=1000)
+    rows = story.stories(sigs, min_sources=min_sources, limit=limit)
+    if not topic_id:
+        names = {t["id"]: t.get("name", t["id"]) for t in st.topics()}
+        for r in rows:
+            r["topic"] = names.get(r["topic_id"], r["topic_id"])
+    return {"stories": rows, "window_days": int(days)}
+
+
 @capability("intel.asof.get", http_method="GET", http_path="/intel/asof/get", http_tags=["intel"],
             memory="off", silent=True,
             description="Stand at a moment in a topic's history: the assessment in force then and the signals "
@@ -650,14 +673,14 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
                 if twin is not None:        # ...a story that arrived earlier in this same sweep
                     if c.get("url") and c["url"] not in twin.setdefault("also", []):
                         _confirmed = ledger.first_confirmation(twin.get("url"), twin["also"], c["url"])
-                        twin["also"] = (twin["also"] + [c["url"]])[-12:]
+                        twin.update(story.add_join(twin, c["url"], core.now_iso()))   # also + when it joined
                         if _confirmed:
                             _outcome("signal", sid, "story.confirmed", questions=ledger.CONFIRM_QUESTIONS)
                 else:
                     old = st.get_signal(sid)
                     if old and c.get("url") and c["url"] not in (old.get("also") or []):
                         _confirmed = ledger.first_confirmation(old.get("url"), old.get("also") or [], c["url"])
-                        st.put_signal(dict(old, also=((old.get("also") or []) + [c["url"]])[-12:]))
+                        st.put_signal(dict(old, **story.add_join(old, c["url"], core.now_iso())))
                         if _confirmed:
                             _outcome("signal", sid, "story.confirmed", questions=ledger.CONFIRM_QUESTIONS)
                 stats["joined"] = stats.get("joined", 0) + 1

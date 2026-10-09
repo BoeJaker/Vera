@@ -59,6 +59,11 @@ vera-widget{display:block}
 .sess-b input[type=time]{width:auto}.sess-b input[type=number]{width:64px}.sess-b select{width:auto}
 .sess .days{display:flex;gap:3px}.sess .days label{font-size:10.5px;display:flex;flex-direction:column;align-items:center}
 details.card>summary{cursor:pointer;font-weight:600}
+.story{display:grid;grid-template-columns:44px 1fr auto;gap:10px;padding:8px 0;border-top:1px solid var(--line,#2a2f3a);align-items:start}
+.story .n{font-weight:700;text-align:center;border-radius:6px;padding:3px 0;background:var(--bg2,#11141a)}
+.story .n small{display:block;font-weight:400;font-size:9.5px;color:var(--muted,#9aa3b2)}
+.story a{color:inherit;font-weight:600;text-decoration:none}.story a:hover{text-decoration:underline}
+.story .up{color:var(--green,#9ece6a);white-space:nowrap}
 </style>
 <link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
@@ -106,6 +111,12 @@ details.card>summary{cursor:pointer;font-weight:600}
   <div class="pane" id="pane-timeline">
     <h2>All topics through time</h2>
     <div class="card"><vera-intel-timeline days="365"></vera-intel-timeline></div>
+    <div class="card">
+      <div class="row"><h2 class="grow" style="margin:0">Stories building</h2>
+        <select id="stDays" style="width:auto" onchange="loadAllStories()"><option value="3">3 days</option><option value="7">week</option><option value="14" selected>2 weeks</option><option value="30">month</option></select></div>
+      <div class="small muted">The same news carried by several sources, across every topic - most momentum first (sources joined in the last 48 h).</div>
+      <div id="stAll" class="small"></div>
+    </div>
     <div class="card">
       <h2>As of a date</h2>
       <div class="small muted">What a topic's assessment said on a day, and what turned up that day - the record as it stood then.</div>
@@ -288,7 +299,7 @@ function go(id) {
   if (id === 'actions') loadActions();
   if (id === 'settings' && !LOADED.settings) { LOADED.settings = 1; loadConfig(); }
   if (id === 'activity') loadActivity();
-  if (id === 'timeline') loadAsOfTopics();
+  if (id === 'timeline') { loadAsOfTopics(); loadAllStories(); }
   try { localStorage.setItem('vera.intel.pane', id); } catch (e) {}
 }
 
@@ -359,6 +370,9 @@ async function openTopic(id) {
       <div id="srcMap" style="display:none;margin-top:6px"><textarea id="srcMapping" placeholder='field mapping (JSON): {"item_path": "items", "title_field": "name", "url_field": "url", "time_field": "updated_at", "text_fields": "summary"}'></textarea></div>
       <div id="srcMsg" class="msg"></div>
     </div>
+    <div class="card"><div class="row"><h3 class="grow" style="margin:0">Stories</h3>
+        <span class="small muted">carried by two or more sources, last 2 weeks</span></div>
+      <div id="stList" class="small"></div></div>
     <div class="grid2">
       <div class="card"><div class="row"><h3 class="grow" style="margin:0">Signals</h3>
         <select id="sOrder" style="width:auto" onchange="loadSignals()"><option value="seen">newest</option><option value="score">strongest</option></select>
@@ -373,7 +387,28 @@ async function openTopic(id) {
         ${widget({form:'globe', source:'intel.places.get', title:'Places', read:{refresh:'30m', args:{topic_id:id, days:90}, map:{points:'points'}}, frame:{size:'l'}})}
       </div>
     </div>`;
-  loadSignals(); loadInd(); loadSources();
+  loadSignals(); loadInd(); loadSources(); loadStories();
+}
+
+/* ── stories: the same news from several sources ── */
+function storyRow(x, withTopic) {
+  const ago = (iso) => { if (!iso) return ''; const h = (Date.now() - Date.parse(iso)) / 3600000; return h < 1 ? 'just now' : h < 48 ? Math.round(h) + ' h ago' : Math.round(h / 24) + ' days ago'; };
+  return `<div class="story"><div class="n">${x.sources}<small>sources</small></div><div>
+      ${x.url ? `<a href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener">${esc(x.title)}</a>` : `<b>${esc(x.title)}</b>`}
+      <div class="muted">${withTopic ? esc(x.topic || x.topic_id) + ' · ' : ''}${(x.sites || []).slice(0, 5).map(esc).join(', ')}${(x.sites || []).length > 5 ? ' +' + (x.sites.length - 5) : ''}
+        · first seen ${esc(ago(x.first_seen))}${x.last_join ? ' · last joined ' + esc(ago(x.last_join)) : ''}</div></div>
+      <div>${x.momentum ? `<span class="up" title="sources that joined in the last 48 hours">▲ ${x.momentum}</span>` : ''}</div></div>`;
+}
+async function loadStories() {
+  if (!CUR) return;
+  const r = await call('intel.stories.get', {topic_id: CUR, days: 14});
+  $('stList').innerHTML = r.error ? `<div class="muted">${esc(r.error)}</div>`
+    : (r.stories || []).map(x => storyRow(x, false)).join('') || '<div class="muted" style="padding:6px 0">No story has reached a second source yet.</div>';
+}
+async function loadAllStories() {
+  const r = await call('intel.stories.get', {days: +$('stDays').value || 14, limit: 25});
+  $('stAll').innerHTML = r.error ? `<div class="muted">${esc(r.error)}</div>`
+    : (r.stories || []).map(x => storyRow(x, true)).join('') || '<div class="muted" style="padding:6px 0">No story has reached a second source in this window.</div>';
 }
 
 /* ── a topic's sources (data-fabric subscriptions) ── */
