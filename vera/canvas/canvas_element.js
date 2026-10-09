@@ -1254,6 +1254,8 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it:not([data-desk-face^="layer-"]) > :is(.it-hd,.it-bd > .vc-panel > .vc-th){cursor:grab}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging{transition:width .12s,height .12s!important;cursor:grabbing;box-shadow:0 18px 40px rgba(0,0,0,.5);outline:1px solid var(--acc,#5a9e8f)}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging *{cursor:grabbing!important;user-select:none}
+  /* while it moves, a card shows what it is, not its controls: the footer rail and the grip popped in under the pointer */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging > :is(.it-ft,.rz,.mx,.xp,.dp){display:none!important}
   @keyframes vcDeskFlash{0%,100%{box-shadow:0 0 0 0 transparent}40%{box-shadow:0 0 0 3px var(--acc,#5a9e8f),0 0 26px color-mix(in srgb,var(--acc,#5a9e8f) 55%,transparent)}}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-flash{animation:vcDeskFlash .8s ease-in-out 2}
   /* a redrawn card held at its last place (no animation), and a new one unseen until the desk has placed it */
@@ -3239,7 +3241,15 @@
         const so = { size: pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null, pinned: pw > 0 && d.el.classList.contains('pinned') };
         const s = D.sizeAt(g.R, cx, cy, so, g.desk), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
         d.cx = cx; d.cy = cy;
-        d.el.classList.toggle('desk-chip', s.face === 'chip'); d.el.classList.remove('desk-icon'); d.el.dataset.deskFace = s.face;
+        /* the face changes with a margin: a card held near a boundary (chip | card | full) flipped its contents back and
+           forth as the hand trembled - the flicker while moving (owner, 2026-10-08). The size still follows smoothly. */
+        const TH = { chip: 0.25, card: 0.6 }, M = 0.05, cur = d.el.dataset.deskFace || s.face;
+        let face = s.face;
+        if (cur === 'chip' && face !== 'chip' && s.t < TH.chip + M) face = 'chip';
+        else if (cur === 'card' && face === 'chip' && s.t > TH.chip - M) face = 'card';
+        else if (cur === 'card' && face === 'max' && s.t < TH.card + M) face = 'card';
+        else if (cur === 'max' && face === 'card' && s.t > TH.card - M) face = 'max';
+        if (face !== cur || !d.el.dataset.deskFace) { d.el.classList.toggle('desk-chip', face === 'chip'); d.el.classList.remove('desk-icon'); d.el.dataset.deskFace = face; }
         d.el.style.left = Math.round(cx - w / 2) + 'px'; d.el.style.top = Math.round(cy - h / 2) + 'px';
         d.el.style.setProperty('width', w + 'px', 'important'); d.el.style.setProperty('height', h + 'px', 'important');
         if (!d.raf) d.raf = requestAnimationFrame(() => { d.raf = 0; try { this._liveLayout(); } catch (e) { /* optional */ } }); });
