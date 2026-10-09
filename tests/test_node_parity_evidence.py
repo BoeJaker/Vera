@@ -178,7 +178,25 @@ def test_static_audit_follows_calls_across_modules(tmp_path):
         "if True:\n    _SWEEPS = {}\n\n"
         "    @capability('demo.sweep.start')\n    async def sweep_start(i=''):\n        _SWEEPS[i] = {'done': 0}\n\n"
         "    @capability('demo.sweep.status')\n    async def sweep_status(i=''):\n        return _SWEEPS.get(i)\n")
+    # gaps found reviewing vet batch 3 (2026-10-09): a Response object cannot
+    # cross the worker wire; a path in the host's home directory; state built
+    # behind `getattr(...) or {...}`
+    (v / "gaps.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "from Vera.vera.capability_orchestration import capability\n"
+        "from fastapi.responses import HTMLResponse\n"
+        "_POLICY = Path(os.path.join(os.path.expanduser('~'), '.x.json'))\n"
+        "_STATE = getattr(object, '_X', None) or {'fired': 0}\n\n"
+        "def _load():\n    return _POLICY.exists()\n\n"
+        "async def _tick():\n    _STATE['fired'] += 1\n\n"
+        "@capability('demo.panel')\nasync def panel():\n    return HTMLResponse('<h1>x</h1>')\n\n"
+        "@capability('demo.policy')\nasync def policy():\n    return {'p': _load(), 'path': str(_POLICY)}\n\n"
+        "@capability('demo.fired')\nasync def fired():\n    return _STATE['fired']\n")
     rows = audit.audit(str(tmp_path))
+    assert "http_response" in rows["demo.panel"]["markers"], rows["demo.panel"]
+    assert "home_fs" in rows["demo.policy"]["markers"], rows["demo.policy"]
+    assert "reads_state" in rows["demo.fired"]["markers"], rows["demo.fired"]
+    assert fc.verdict({"runs": 50, "runs_tracked": 50, "kinds": {}}, rows["demo.policy"]["markers"])[0] == "host"
     assert "reads_state" in rows["demo.scale.get"]["markers"], rows["demo.scale.get"]
     assert "reads_state" in rows["demo.model.stats"]["markers"], rows["demo.model.stats"]
     # emitting an event is fine on a node: the host relays workers' events to

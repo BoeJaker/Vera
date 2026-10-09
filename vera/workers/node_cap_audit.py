@@ -42,7 +42,27 @@ MARKERS = {
     # another module's in-process state, fetched through sys.modules (skills'
     # SKILLS / ONTOLOGIES, filled by a host startup hook a worker never runs)
     "foreign_state": re.compile(r"\bsys\.modules\b"),
+    # returns a Response object: a worker's result crosses as JSON
+    # (capability_orchestration _post_result), a Response cannot (2026-10-09:
+    # canvas.panel.html / intel.panel.html)
+    "http_response": re.compile(r"\b(?:HTML|Streaming|File|PlainText|Redirect|JSON)?Response\("),
+    # the host's home directory (~/.something config): a node has its own,
+    # without the host's file in it (2026-10-09: exec.sandbox.get)
+    "home_fs": re.compile(r"expanduser\(|Path\.home\(\)"),
 }
+
+
+def _builds_container(v):
+    """A module-level value that is a dict / list / set / built object - also
+    behind `getattr(...) or {...}` / `x if c else {...}` (2026-10-09:
+    ui.scripts' _STATE escaped the state rule that way)."""
+    if isinstance(v, (ast.Dict, ast.List, ast.Set, ast.Call)):
+        return True
+    if isinstance(v, ast.BoolOp):
+        return any(_builds_container(x) for x in v.values)
+    if isinstance(v, ast.IfExp):
+        return _builds_container(v.body) or _builds_container(v.orelse)
+    return False
 
 
 def _module_level(body):
@@ -135,14 +155,18 @@ def audit(root):
                         if mk is not None:
                             aliases[a.asname or a.name.split(".")[0]] = mk
             classes = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
-            instances = set()
+            instances, home = set(), set()
             for node in _module_level(tree.body):
                 if isinstance(node, (ast.Assign, ast.AnnAssign)):
                     tgts = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    if isinstance(node.value, (ast.Dict, ast.List, ast.Set, ast.Call)):
+                    if node.value is not None and _builds_container(node.value):
                         for t in tgts:
                             if isinstance(t, ast.Name):
                                 mutable.add(t.id)
+                    # a path under the host's home directory, kept in a name
+                    if node.value is not None and MARKERS["home_fs"].search(
+                            ast.get_source_segment(src, node.value) or ""):
+                        home |= {t.id for t in tgts if isinstance(t, ast.Name)}
                     # an object built from a class at load time (MODEL =
                     # WorldView()): the host's instance carries its runtime
                     # state in attributes, which no write rule sees
@@ -157,7 +181,7 @@ def audit(root):
                                     instances.add(t.id)
             MODS[modkey(path, VROOT)] = {"src": src, "funcs": funcs, "mutable": mutable, "imports": imports,
                                   "aliases": aliases, "caps": caps, "path": os.path.relpath(path, ROOT),
-                                  "instances": instances}
+                                  "instances": instances, "home": home}
 
 
     def writes_state(n, mutable):
@@ -214,6 +238,9 @@ def audit(root):
                 w = w - ORCH_LOAD_TIME
             if any(isinstance(c, ast.Name) and c.id in w for c in ast.walk(node)):
                 hits.add("reads_state")
+            if m.get("home") and any(isinstance(c, ast.Name) and c.id in m["home"]
+                                     for c in ast.walk(node)):
+                hits.add("home_fs")
             if orch_reads(m, node):
                 hits.add("orch_state")
             INFO[k] = (hits, set(CALL_CAP.findall(seg)), writes_state(node, m["mutable"]))
