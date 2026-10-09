@@ -761,7 +761,7 @@
       const q = el && el._pq && el._pq[key];
       /* behind / front live in the panel's own head, always drawn: in the item's footer rail they were hidden until hover
          and, on a panel sent behind, under the other items (owner, 2026-10-07: "i dont see the behind or front buttons") */
-      const lay = el && el.getAttribute && el.getAttribute('align') === 'desk' ? ((el._layer || {})[String(key)] || '') : null;
+      const lay = el && el.deskAlign && el.deskAlign() ? ((el._layer || {})[String(key)] || '') : null;
       const layBtns = lay === null ? '' : `<button class="ib${lay === 'behind' ? ' on' : ''}" data-act="layer-behind" title="Behind the desk: the panel fills the free part of the desk, under the other items - press again to put it back among them">behind</button><button class="ib${lay === 'front' ? ' on' : ''}" data-act="layer-front" title="In front: the panel fills the free part of the desk, over the other items (never over the chat) - press again to put it back among them">front</button>`;
       return `<div class="vc-panel" data-w="canvas.panel"><div class="vc-th"><i class="dot on"></i><b>${esc(c.title || c.label || id || 'panel')}</b><span class="mono">${esc(id)} · over the bridge</span><span class="sp"></span>`
         + layBtns + `<button class="ib" data-act="pquery" title="panel.query — what the panel holds">query</button><button class="ib" data-act="pdispatch" title="panel.dispatch — drive it">dispatch</button><button class="ib" data-act="prefresh" title="Reload the panel">refresh</button><button class="ib" data-act="pstand" title="Open it standalone">standalone ↗</button></div>`
@@ -1199,84 +1199,85 @@
      its OWN body. It used to run off the end of a stage nobody could scroll, so the part of it you wanted — the
      bottom of the last turn's item — could not be reached at all. */
   /* the desk (align="desk", owner approved 2026-10-06): sized by the distance to the chat on the column's left edge */
-  :host([align="desk"]) .stage .it{transition:left .45s cubic-bezier(.2,.8,.2,1), top .45s cubic-bezier(.2,.8,.2,1), width .35s, height .35s, opacity .3s; overflow:hidden!important; contain:paint; box-sizing:border-box; min-height:0}
+  :host([align="desk"]:not([desk-narrow])) .stage .it{transition:left .45s cubic-bezier(.2,.8,.2,1), top .45s cubic-bezier(.2,.8,.2,1), width .35s, height .35s, opacity .3s; overflow:hidden!important; contain:paint; box-sizing:border-box; min-height:0}
   /* on the desk the distance is the fold: a card or full-size face shows its body even if it was folded in held */
-  :host([align="desk"]) .stage .it.compact:not(.desk-chip) > .it-bd{display:block}
-  :host([align="desk"]) .stage .it.desk-chip{border-radius:17px;padding:0 10px!important;display:flex!important;flex-direction:row!important;align-items:center;justify-content:flex-start}
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd{position:static!important;margin:0!important;flex:1 1 0;width:100%;max-width:100%;min-width:0;display:flex;align-items:center;justify-content:flex-start;gap:6px;overflow:hidden}
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd > *{flex:0 0 auto}
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd > .t{flex:1 1 auto;min-width:0;display:block;direction:ltr;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:none!important;transform:none!important}
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd > .t *{animation:none!important;transform:none!important}
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd > .fd,
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd > .src,
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd > :not(.ic):not(.t):not(.ly):not(.dp){display:none}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.compact:not(.desk-chip) > .it-bd{display:block}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip{border-radius:17px;padding:0 10px!important;display:flex!important;flex-direction:row!important;align-items:center;justify-content:flex-start}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd{position:static!important;margin:0!important;flex:1 1 0;width:100%;max-width:100%;min-width:0;display:flex;align-items:center;justify-content:flex-start;gap:6px;overflow:hidden}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd > *{flex:0 0 auto}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd > .t{flex:1 1 auto;min-width:0;display:block;direction:ltr;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:none!important;transform:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd > .t *{animation:none!important;transform:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd > .fd,
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd > .src,
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd > :not(.ic):not(.t):not(.ly):not(.dp){display:none}
   /* a card placed by hand carries its way back to the arrangement (the double click is redrawn away by the first click) */
   .dp{display:none}
-  :host([align="desk"]) .stage .it.desk-placed > .it-hd > .dp{display:inline-flex;flex:0 0 auto;cursor:pointer;color:var(--acc,#5a9e8f);font-size:11px;padding:0 3px}
-  :host([align="desk"]) .stage .it.desk-placed > .dp.solo{display:block;position:absolute;right:36px;top:3px;z-index:3;cursor:pointer;color:var(--acc,#5a9e8f);font-size:11px;opacity:.85}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-placed > .it-hd > .dp{display:inline-flex;flex:0 0 auto;cursor:pointer;color:var(--acc,#5a9e8f);font-size:11px;padding:0 3px}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-placed > .dp.solo{display:block;position:absolute;right:36px;top:3px;z-index:3;cursor:pointer;color:var(--acc,#5a9e8f);font-size:11px;opacity:.85}
   /* a chip IS its header line: the hover and zen tiers' hidden, unclickable header left a chip blank until hovered */
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd{opacity:1!important;pointer-events:auto!important;background:none}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd{opacity:1!important;pointer-events:auto!important;background:none}
   /* a panel's chip keeps its two layer controls: a chip has no body to hold them */
   .it-hd > .ly{display:none}
-  :host([align="desk"]) .stage .it.desk-chip:not(.desk-icon) > .it-hd > .ly{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:18px;height:18px;border-radius:5px;cursor:pointer;color:var(--dim,#8b93a1);border:1px solid var(--border,#2a2f37)}
-  :host([align="desk"]) .stage .it.desk-chip > .it-hd > .ly:hover{color:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f)}
-  :host([align="desk"]) .stage .it.desk-chip > :not(.it-hd){display:none}
-  :host([align="desk"]) .stage .it.desk-chip .it-hd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-wrap:nowrap}
-  :host([align="desk"]) .stage .it.desk-chip .it-hd *{white-space:nowrap}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip:not(.desk-icon) > .it-hd > .ly{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:18px;height:18px;border-radius:5px;cursor:pointer;color:var(--dim,#8b93a1);border:1px solid var(--border,#2a2f37)}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd > .ly:hover{color:var(--acc,#5a9e8f);border-color:var(--acc,#5a9e8f)}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > :not(.it-hd){display:none}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip .it-hd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-wrap:nowrap}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip .it-hd *{white-space:nowrap}
   /* an icon: a chip the border had no room for - its icon alone, its title on hover */
-  :host([align="desk"]) .stage .it.desk-icon{padding:0!important;border-radius:9px;justify-content:center}
-  :host([align="desk"]) .stage .it.desk-icon > .it-hd{justify-content:center;gap:0}
-  :host([align="desk"]) .stage .it.desk-icon > .it-hd > :not(.ic){display:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-icon{padding:0!important;border-radius:9px;justify-content:center}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-icon > .it-hd{justify-content:center;gap:0}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-icon > .it-hd > :not(.ic){display:none!important}
   /* a panel item sent behind the desk or brought in front: it fills its region the way a maximised item fills the column */
-  :host([align="desk"]) .stage .it[data-desk-face^="layer-"]{display:flex!important;flex-direction:column;border-radius:10px;background:var(--bg1,#15181d)!important}
-  :host([align="desk"]) .stage .it[data-desk-face="layer-front"]{box-shadow:0 18px 48px rgba(0,0,0,.45)}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face^="layer-"]{display:flex!important;flex-direction:column;border-radius:10px;background:var(--bg1,#15181d)!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face="layer-front"]{box-shadow:0 18px 48px rgba(0,0,0,.45)}
   .stage > .lay-pill{position:absolute;z-index:190;display:flex;align-items:center;gap:6px;max-width:60%;padding:3px 4px 3px 9px;border-radius:14px;font-size:11px;
     background:var(--bg2,#1d2128);border:1px solid var(--border2,#3a3f48);box-shadow:0 6px 18px rgba(0,0,0,.4);pointer-events:auto}
   .stage > .lay-pill > b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   .stage > .lay-pill > .m{color:var(--dim,#8b93a1);white-space:nowrap}
   .stage > .lay-pill > .ic{color:var(--acc,#5a9e8f)}
   :host(:not([align="desk"])) .stage > .lay-pill{display:none}
+  :host([desk-narrow]) .stage > .lay-pill{display:none}
   /* on the desk a live element stacks WITH its card (each .lv carries its card's z-index): the live layer as one plane
      at z 4 put a panel sent behind over the items, and hid a panel brought in front under its own card's ground */
-  :host([align="desk"]) #live{z-index:auto}
+  :host([align="desk"]:not([desk-narrow])) #live{z-index:auto}
   /* a panel behind the items: they keep a ground over it, or their text runs into the panel's */
-  :host([align="desk"][layered]) .stage .it:not([data-desk-face^="layer-"]){background:var(--bg1,#15181d)!important;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  :host([align="desk"]:not([desk-narrow])[layered]) .stage .it:not([data-desk-face^="layer-"]){background:var(--bg1,#15181d)!important;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
   /* an older item fades by opacity, which let the panel show through it: over a panel it dims instead */
-  :host([align="desk"][layered]) .stage .it.aged:not(:hover){opacity:1;filter:brightness(.62) saturate(.7)}
-  :host([align="desk"]) .stage .it[data-desk-face^="layer-"] > .it-bd{display:flex!important;flex-direction:column;flex:1 1 auto;min-height:0;max-height:none!important;overflow:hidden}
-  :host([align="desk"]) .stage .it[data-desk-face^="layer-"] > .it-bd > *{flex:1 1 auto;min-height:0}
-  :host([align="desk"]) .stage .it[data-desk-face^="layer-"] .vc-panel{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
-  :host([align="desk"]) .stage .it[data-desk-face^="layer-"] .vc-live{flex:1 1 auto;height:auto!important;min-height:120px}
+  :host([align="desk"]:not([desk-narrow])[layered]) .stage .it.aged:not(:hover){opacity:1;filter:brightness(.62) saturate(.7)}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face^="layer-"] > .it-bd{display:flex!important;flex-direction:column;flex:1 1 auto;min-height:0;max-height:none!important;overflow:hidden}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face^="layer-"] > .it-bd > *{flex:1 1 auto;min-height:0}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face^="layer-"] .vc-panel{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face^="layer-"] .vc-live{flex:1 1 auto;height:auto!important;min-height:120px}
   /* a desk card that is not a chip keeps its corner grip: a compact card's rule hid it, so no desk card could be resized */
-  :host([align="desk"]) .stage .it:not(.desk-chip):not([data-desk-face^="layer-"]) > .rz{display:block}
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip):not([data-desk-face^="layer-"]) > .rz{display:block}
   /* a card is moved by its header on the desk; while it moves it follows the pointer exactly and rides above the rest */
-  :host([align="desk"]) .stage .it:not([data-desk-face^="layer-"]) > :is(.it-hd,.it-bd > .vc-panel > .vc-th){cursor:grab}
-  :host([align="desk"]) .stage .it.desk-dragging{transition:width .12s,height .12s!important;cursor:grabbing;box-shadow:0 18px 40px rgba(0,0,0,.5);outline:1px solid var(--acc,#5a9e8f)}
-  :host([align="desk"]) .stage .it.desk-dragging *{cursor:grabbing!important;user-select:none}
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not([data-desk-face^="layer-"]) > :is(.it-hd,.it-bd > .vc-panel > .vc-th){cursor:grab}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging{transition:width .12s,height .12s!important;cursor:grabbing;box-shadow:0 18px 40px rgba(0,0,0,.5);outline:1px solid var(--acc,#5a9e8f)}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging *{cursor:grabbing!important;user-select:none}
   @keyframes vcDeskFlash{0%,100%{box-shadow:0 0 0 0 transparent}40%{box-shadow:0 0 0 3px var(--acc,#5a9e8f),0 0 26px color-mix(in srgb,var(--acc,#5a9e8f) 55%,transparent)}}
-  :host([align="desk"]) .stage .it.desk-flash{animation:vcDeskFlash .8s ease-in-out 2}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-flash{animation:vcDeskFlash .8s ease-in-out 2}
   /* a redrawn card held at its last place (no animation), and a new one unseen until the desk has placed it */
-  :host([align="desk"]) .stage .it.desk-hold{transition:none!important}
-  :host([align="desk"]) .stage .it.desk-new{opacity:0;transition:none!important}  @media (prefers-reduced-motion: reduce){:host([align="desk"]) .stage .it{transition:none}}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-hold{transition:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-new{opacity:0;transition:none!important}  @media (prefers-reduced-motion: reduce){:host([align="desk"]:not([desk-narrow])) .stage .it{transition:none}}
   /* THE BACK LAYER (the desk's graph, owner-approved 2026-10-06): whatever the page puts in the "back" slot is drawn
      under the cards, dimmed until the pointer is on it. The desk's own ground goes so the layer shows through, and
      the empty desk lets the pointer reach the layer; the cards and the head still take it. */
   .back{display:none}
-  :host([align="desk"][back="behind"]) .wrap{position:relative}
-  :host([align="desk"][back="behind"]) .back{display:block;position:absolute;inset:0;z-index:0;opacity:.38;transition:opacity .25s}
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .wrap{position:relative}
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .back{display:block;position:absolute;inset:0;z-index:0;opacity:.38;transition:opacity .25s}
   /* a card over the layer keeps a ground in every blocks tier, or its text runs into the graph's */
-  :host([align="desk"][back="behind"]) .stage .it{background:color-mix(in srgb, var(--bg1,#15181d) 90%, transparent)!important;border-radius:8px}
-  :host([align="desk"][back="behind"]) .back:hover{opacity:.9}
-  :host([align="desk"][back="behind"]) .head,
-  :host([align="desk"][back="behind"]) .body{position:relative;z-index:1}
-  :host([align="desk"][back="behind"]) .body,
-  :host([align="desk"][back="behind"]) .body .stage,
-  :host([align="desk"][back="behind"]) .body .band{background:transparent;pointer-events:none}
-  :host([align="desk"][back="behind"]) .body .it,
-  :host([align="desk"][back="behind"]) .body .band-h > *,
-  :host([align="desk"][back="behind"]) .body .chips > *,
-  :host([align="desk"][back="behind"]) .body .addbar,
-  :host([align="desk"][back="behind"]) .body :is(button,a,input,select,textarea){pointer-events:auto}
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .stage .it{background:color-mix(in srgb, var(--bg1,#15181d) 90%, transparent)!important;border-radius:8px}
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .back:hover{opacity:.9}
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .head,
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body{position:relative;z-index:1}
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body,
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .stage,
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .band{background:transparent;pointer-events:none}
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .it,
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .band-h > *,
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .chips > *,
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .addbar,
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body :is(button,a,input,select,textarea){pointer-events:auto}
   .stage .it.capped{overflow:hidden}
   .stage .it.capped .it-bd{max-height:none;overflow:auto}
   /* folded because the COLUMN ran out of room, not because the tier folds it: the header line alone, and it opens
@@ -2244,6 +2245,7 @@
   /* the kinds whose drawer already draws a head — name, state and the controls that belong to that kind. The card
      does not draw a second one over them; see "ONE HEADER PER ITEM" where the card is built. */
   /* the person's behind / front / among pick per panel item, kept in this browser for every canvas and frame */
+  const DESK_MIN_W = 520;   /* layout px of stage: below it a Desk canvas lays out as Held (deskAlign) */
   const LAYER_KEY = 'vera:canvas:layers';
   function layersLoad() { try { const m = JSON.parse(localStorage.getItem(LAYER_KEY) || '{}'); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; } }
   function layersSave(m) { try { localStorage.setItem(LAYER_KEY, JSON.stringify(m)); } catch (e) { /* kept for this page */ } }
@@ -2326,7 +2328,10 @@
     /* held (the default) or strict: the one place the two regimes are named, so nothing else has to ask twice */
     strictAlign() { return String(this.getAttribute('align') || 'held').toLowerCase() === 'strict'; }
     /* desk: the approved desk's rules (/ui/desk-layout.js, window.VeraDesk) with the chat docked on the column's left */
-    deskAlign() { return String(this.getAttribute('align') || '').toLowerCase() === 'desk'; }
+    /* the desk needs room: on a stage narrower than DESK_MIN_W (narrow and compact screens) "sized by distance from the
+       chat" has nowhere to go - every card came out full size and piled up (the verification matrix: 171-190 overlapping
+       pairs) - so the canvas lays out as Held until it has room again; desk-narrow says so */
+    deskAlign() { return String(this.getAttribute('align') || '').toLowerCase() === 'desk' && !this.hasAttribute('desk-narrow'); }
     previewOn() { return String(this.getAttribute('preview') || 'on').toLowerCase() !== 'off'; }
     explodeOffer() { const v = String(this.getAttribute('explode-offer') || 'both').toLowerCase(); return ['both', 'code', 'never'].indexOf(v) >= 0 ? v : 'both'; }
     /* ── the stage (the column's split projection): the host hands the transcript's turn tops ({mid:{top,height}} in
@@ -2624,6 +2629,8 @@
       /* a card being dragged on the desk is the person's: nothing places the desk under it (a focus change, a refresh, the
          chat moving all re-placed it mid-drag and pulled the card back); the drop places it once */
       if (this._dg && this._dg.moved && this.deskAlign()) return;
+      { const wantDesk = String(this.getAttribute('align') || '').toLowerCase() === 'desk', narrow = wantDesk && W < DESK_MIN_W;
+        if (this.hasAttribute('desk-narrow') !== narrow) { this.toggleAttribute('desk-narrow', narrow); this._html = null; if (this._doc) { this.render(this._doc); return; } } }
       const maxCard = this._max ? st.querySelector('.it.maxed') : null;   // placed on its own, below
       const cards = [...st.querySelectorAll('.it')].filter((c) => c !== maxCard);
       if (this.deskAlign()) {
@@ -2992,7 +2999,7 @@
             /* the header line is drawn for EVERY item. An item whose drawer has its own head shows it only when the COLUMN
                folds it (its body, and that head inside it, hidden): it used to be nothing but three hover-only icons,
                0 px tall (owner, 2026-10-04: "if collapsed some canvas elements are only appearing on hover") */ ''}${
-              `<div class="it-hd${ownHead && !compact ? ' own-fold' : ''}">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${b.type === 'panel' && this.getAttribute('align') === 'desk' ? '<span class="ly" data-act="layer-behind" title="Send it behind the other items, filling the free desk">⇣</span><span class="ly" data-act="layer-front" title="Bring it over the other items, filling the free desk">⇡</span>' : ''}${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
+              `<div class="it-hd${ownHead && !compact ? ' own-fold' : ''}">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${b.type === 'panel' && this.deskAlign() ? '<span class="ly" data-act="layer-behind" title="Send it behind the other items, filling the free desk">⇣</span><span class="ly" data-act="layer-front" title="Bring it over the other items, filling the free desk">⇡</span>' : ''}${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
             ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
             ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="dp" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span><span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
@@ -3206,7 +3213,7 @@
          at"). Its header is the handle; past 4 px it follows the pointer, sized live by its distance from the chat and
          stacked on top; let go, it stays there (a share of the desk, per canvas). A double click on the header gives it
          back to the arrangement. A control in the header (data-act, a field) is never a handle. */
-      const deskHandle = (ev) => { if (this.getAttribute('align') !== 'desk' || ev.button !== 0) return null; const t = ev.target; if (!t || !t.closest) return null;
+      const deskHandle = (ev) => { if (!this.deskAlign() || ev.button !== 0) return null; const t = ev.target; if (!t || !t.closest) return null;
         if (t.closest('[data-act],.rz,input,textarea,select,button,a,.lay-pill')) return null;
         const hd = t.closest('.it-hd,.vc-th'); const it = hd && hd.closest('.stage .it[data-key]');
         if (!it || it.dataset.deskFace === 'layer-behind' || it.dataset.deskFace === 'layer-front') return null; return it; };
@@ -3251,7 +3258,7 @@
         /* on the desk a card you sized stays where it is: grown, it was separated outward into the chip zone and came back
            a chip. Its place is pinned as a drag pins it; the others move round it. */
         const g = this._deskGeo;
-        if (g && this.getAttribute('align') === 'desk') {
+        if (g && this.deskAlign()) {
           const cx = (parseFloat(r.el.style.left) || 0) + r.w / 2, cy = (parseFloat(r.el.style.top) || 0) + r.h / 2;
           this._deskPosSet(key, { fx: +(Math.max(0, Math.min(g.W, cx)) / g.W).toFixed(4), fy: +(Math.max(0, Math.min(g.H, cy)) / g.H).toFixed(4) });
         }
@@ -3869,7 +3876,7 @@
           let clip = (ct || cl || cr || cb) ? 'inset(' + ct + 'px ' + cr + 'px ' + cb + 'px ' + cl + 'px)' : '';
           /* on the desk the card's corner grip stays reachable: the live element is drawn over the card, so its corner
              is cut away (a widget covered the grip and no widget card could be resized) */
-          const grip = this.getAttribute('align') === 'desk' && card.querySelector(':scope > .rz');
+          const grip = this.deskAlign() && card.querySelector(':scope > .rz');
           if (grip && grip.getClientRects().length) {
             const L0 = cl, T0 = ct, R0 = w - cr, B0 = ht - cb;
             const x1 = Math.min(R0, Math.round((c.right - r.left) / Z)) - 20, y1 = Math.min(B0, Math.round((c.bottom - r.top) / Z)) - 20;

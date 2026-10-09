@@ -883,7 +883,7 @@ body[data-chat-side="right"] #chatStack{order:99}
 /* THE CHAT ON THE DESK (WS-U, owner approved 2026-10-06): a grip at its top drags it - to an edge to dock it, anywhere
    else to float it over the canvas, which then takes the whole width behind it */
 #chatGrip{display:none}
-body.has-cols #chatGrip{display:flex;position:absolute;top:0;left:50%;transform:translateX(-50%);width:72px;height:14px;z-index:30;cursor:grab;align-items:center;justify-content:center}
+body.has-cols[data-desk="1"] #chatGrip{display:flex;position:absolute;top:0;left:50%;transform:translateX(-50%);width:72px;height:14px;z-index:30;cursor:grab;align-items:center;justify-content:center}
 #chatGrip span{width:38px;height:4px;border-radius:2px;background:var(--border2,#4a4540)}
 body.has-cols #chatGrip:hover span,body.chat-dragging #chatGrip span{background:var(--acc,#5a9e8f)}
 body.chat-dragging,body.chat-dragging *{cursor:grabbing!important;user-select:none}
@@ -6178,6 +6178,8 @@ IMPORTANT:
     if(el) Object.keys(_CV_CFG).forEach(id=>{ const a=_CV_CFG[id][0]; if(!a) return; const v=_cvCfg(id); if(el.getAttribute(a)!==v) el.setAttribute(a,v); });
     // which side of the page the chat sits on (the desk, owner-approved 2026-10-06): the columns swap round it
     try{ const side=_cvCfg('cfgCvSide'); if(document.body.dataset.chatSide!==side) document.body.dataset.chatSide=side; }catch(_){}
+    /* the chat's grip (drag it to float or dock) belongs to the desk: in Held or Strict it was a stray handle that floated the chat */
+    try{ const dk=_cvCfg('cfgCvAlign')==='desk'?'1':''; if((document.body.dataset.desk||'')!==dk) document.body.dataset.desk=dk; }catch(_){}
     setTimeout(()=>{ try{ _chatRectToCanvas(); }catch(_){} }, 60);
     try{ _ctxBackSync(); }catch(_){}   // the graph follows the "behind the desk" choice, both ways    try{ _cvOneplaceSync(); }catch(_){}   // "draw them" is the page's own, not the element's: it is about the REPLY
   }
