@@ -66,6 +66,16 @@ t('an item in the chat’s path moves to the nearest side and takes the size it 
   assert.strictEqual(D.pushOut(FLOAT, 1300, 450, (x, y) => D.sizeAt(FLOAT, x, y)).pushed, false);
 });
 
+t('overlapping items are separated - the first keeps its place, none lands in the chat or off the desk', () => {
+  const R = { l: 600, t: 200, r: 1000, b: 700 };
+  const items = [{ id: 'a', x: 300, y: 300, w: 260, h: 160 }, { id: 'b', x: 320, y: 320, w: 260, h: 160 }, { id: 'c', x: 340, y: 340, w: 200, h: 100 }];
+  D.separate(items, R, null, { W: 1600, H: 900 });
+  assert.deepStrictEqual([items[0].x, items[0].y], [300, 300]);
+  const ov = (p, q) => p.x - p.w / 2 < q.x + q.w / 2 && q.x - q.w / 2 < p.x + p.w / 2 && p.y - p.h / 2 < q.y + q.h / 2 && q.y - q.h / 2 < p.y + p.h / 2;
+  assert.ok(!ov(items[0], items[1]) && !ov(items[0], items[2]) && !ov(items[1], items[2]));
+  items.forEach((it) => assert.ok(!(it.x + it.w / 2 > R.l && it.x - it.w / 2 < R.r && it.y + it.h / 2 > R.t && it.y - it.h / 2 < R.b)));
+});
+
 t('closer to the chat stacks higher; dragged and fullscreen on top', () => {
   assert.ok(D.stackOrder(0.1) > D.stackOrder(0.8));
   assert.strictEqual(D.stackOrder(0.5, { dragging: true }), 200);
@@ -95,6 +105,99 @@ t('panel widgets move to the free space nearest home, compact before covered, st
   assert.ok(tight[0].compact && !tight[0].covered);
   const kept = D.makeRoom(grid, [{ l: 0, t: 0, r: 150, b: 150 }], W, { makeRoom: false });
   assert.ok(kept[0].covered && !kept[0].moved);
+});
+
+t('a narrow desk never puts two border chips on one slot (more chips than border slots)', () => {
+  /* the canvas column beside a docked chat at 1366 px: the chat is off the desk's left edge */
+  const d = { W: 560, H: 640, top: 40, edgeX: 80, edgeTop: 60, edgeBottom: 34 };
+  const R = { l: -460, t: 40, r: -16, b: 624 };
+  const items = Array.from({ length: 20 }, (_, i) => ({ id: 'n' + i, kind: 'note', age: i }));
+  const pos = D.arrange('orbit', R, items, d);
+  const small = Object.keys(pos).map((id) => ({ p: pos[id], s: D.sizeAt(R, pos[id][0], pos[id][1], { icon: pos[id][2] === 'icon' }, d) }))
+    .filter((x) => x.s.face === 'chip' || x.s.face === 'icon');
+  let clash = 0;
+  for (let i = 0; i < small.length; i++) for (let j = i + 1; j < small.length; j++) {
+    const a = small[i], b = small[j];
+    if (Math.abs(a.p[0] - b.p[0]) < (a.s.w + b.s.w) / 2 && Math.abs(a.p[1] - b.p[1]) < (a.s.h + b.s.h) / 2) clash++;
+  }
+  assert.ok(small.length >= 10, 'small: ' + small.length);
+  assert.strictEqual(clash, 0);
+  /* a tiny desk: the border cannot hold them all, the rest are icons - and still none on another */
+  const tiny = { W: 423, H: 407, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22 };
+  const tp = D.arrange('orbit', { l: -440, t: 0, r: 0, b: 407 }, items, tiny);
+  const ic = Object.keys(tp).filter((id) => tp[id][2] === 'icon');
+  assert.ok(ic.length > 0, 'icons on a tiny desk');
+  const tr = { l: -440, t: 0, r: 0, b: 407 };
+  const ts = Object.keys(tp).map((id) => ({ p: tp[id], s: D.sizeAt(tr, tp[id][0], tp[id][1], { icon: tp[id][2] === 'icon' }, tiny) })).filter((x) => x.s.face !== 'max' && x.s.face !== 'card');
+  let tc = 0;
+  for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++) {
+    const a = ts[i], b = ts[j];
+    if (Math.abs(a.p[0] - b.p[0]) < (a.s.w + b.s.w) / 2 && Math.abs(a.p[1] - b.p[1]) < (a.s.h + b.s.h) / 2) tc++;
+  }
+  assert.strictEqual(tc, 0);
+});
+
+t('the desk exploded: its layers are the lattice planes, every item keeps its key, the graph is at the back', () => {
+  const items = [
+    { key: 'a', label: 'A', face: 'max', type: 'widget', mid: 'm2' },
+    { key: 'b', label: 'B', face: 'card', type: 'records', mid: 'm1' },
+    { key: 'c', label: 'C', face: 'chip', type: 'note' },
+    { key: 'panel:sys', label: 'Monitor', face: 'layer-behind', layer: 'behind', type: 'panel' },
+  ];
+  const L = D.latticeOf({ items, turns: [{ mid: 'm1', label: 'hi' }, { mid: 'm2', label: 'more' }], graph: [{ id: 'g1', label: 'rec' }] });
+  assert.deepStrictEqual(L.planes.map((p) => p.id), ['chat', 'items', 'panel', 'graph']);   // front first, the graph at the back
+  const byId = {}; L.nodes.forEach((x) => { byId[x.id] = x; });
+  items.forEach((it) => assert.ok(byId[it.key] && byId[it.key].desk.key === it.key, 'item ' + it.key + ' keeps its key'));
+  assert.strictEqual(byId['panel:sys'].plane, 'panel');
+  assert.strictEqual(byId.a.area, 'beside the chat'); assert.strictEqual(byId.b.area, 'at a glance'); assert.strictEqual(byId.c.area, 'at the border');
+  assert.strictEqual(byId['ctx:g1'].plane, 'graph');
+  assert.ok(L.links.some((l) => l.a === 'a' && l.b === 'turn:m2'), 'an item is piped to its turn');
+  assert.ok(L.links.some((l) => l.a === 'ctx:g1' && l.b === 'turn:m2'), 'the context is piped to the turn in focus (the newest)');
+  // a full cell spills into a neighbour area: every item is drawn, nine at most to a cell
+  const many = Array.from({ length: 12 }, (_, i) => ({ key: 'k' + i, face: 'chip' }));
+  const M = D.latticeOf({ items: many });
+  assert.strictEqual(M.nodes.filter((x) => x.plane === 'items').length, 12);
+  assert.ok(M.areas.indexOf('at the border · 2') === M.areas.indexOf('at the border') + 1, 'the spill area sits beside its own');
+  assert.strictEqual(M.nodes.filter((x) => x.area === 'at the border').length, 9);
+  assert.ok(!/more/.test(M.planes.find((p) => p.id === 'items').name));
+  const crowded = D.latticeOf({ items: Array.from({ length: 100 }, (_, i) => ({ key: 'crowded-' + i, face: 'chip' })) });
+  assert.strictEqual(crowded.nodes.filter((x) => x.plane === 'items').length, 100, 'large desks never silently drop items');
+});
+
+t('every arrangement lays its cards in bands: none overlap, docked or floating, before any separation', () => {
+  const d = { W: 900, H: 700, m: 8, top: 4, edgeX: 24, edgeTop: 24, edgeBottom: 22 };
+  const items = Array.from({ length: 20 }, (_, i) => ({ id: 'n' + i, kind: ['widget', 'records', 'note', 'table'][i % 4], age: i % 5 }));
+  [['left', { l: -440, t: 0, r: 0, b: 700 }], ['float', { l: 260, t: 60, r: 640, b: 560 }]].forEach(([side, R]) => {
+    ['orbit', 'kind', 'timeline', 'stack'].forEach((mode) => {
+      const pos = D.arrange(mode, R, items, d);
+      assert.strictEqual(Object.keys(pos).length, items.length, mode + ' ' + side + ' places every item');
+      const big = Object.keys(pos).map((id) => ({ id, p: pos[id], s: D.sizeAt(R, pos[id][0], pos[id][1], { icon: pos[id][2] === 'icon' }, d) }))
+        .filter((x) => x.s.face === 'max' || x.s.face === 'card');
+      let ov = 0;
+      for (let i = 0; i < big.length; i++) for (let j = i + 1; j < big.length; j++) {
+        const a = big[i], b = big[j];
+        if (Math.abs(a.p[0] - b.p[0]) < (a.s.w + b.s.w) / 2 - 2 && Math.abs(a.p[1] - b.p[1]) < (a.s.h + b.s.h) / 2 - 2) ov++;
+      }
+      assert.strictEqual(ov, 0, mode + ' ' + side + ': ' + ov + ' overlapping cards');
+      big.forEach((x) => assert.ok(x.p[0] + x.s.w / 2 <= R.l + 2 || x.p[0] - x.s.w / 2 >= R.r - 2 || x.p[1] + x.s.h / 2 <= R.t + 2 || x.p[1] - x.s.h / 2 >= R.b - 2, mode + ' ' + side + ': a card under the chat'));
+    });
+  });
+});
+
+t('a widget that says where it sits keeps that home: only the covered one moves', () => {
+  const grid = { ox: 0, oy: 0, cols: 6, rows: 6, cw: 100, ch: 100, gap: 0 };
+  /* homes a dense flow would not give: a at (3,0), b at (0,2) */
+  const W = [{ id: 'a', w: 2, h: 1, c: 3, r: 0 }, { id: 'b', w: 1, h: 1, c: 0, r: 2 }, { id: 'c', w: 1, h: 1, c: 5, r: 5 }];
+  const res = D.makeRoom(grid, [{ l: 0, t: 200, r: 100, b: 300 }], W);
+  const by = {}; res.forEach((x) => { by[x.id] = x; });
+  assert.deepStrictEqual([by.a.c, by.a.r, by.a.moved], [3, 0, false]);
+  assert.deepStrictEqual([by.c.c, by.c.r, by.c.moved], [5, 5, false]);
+  assert.ok(by.b.moved && !by.b.covered, 'the covered one moves out');
+  /* a column of tiles, the top one covered: only it moves - the rest never shift down to make way */
+  const col = [0, 1, 2, 3].map((i) => ({ id: 't' + i, w: 2, h: 1, c: 0, r: i }));
+  const cr = D.makeRoom({ ox: 0, oy: 0, cols: 6, rows: 8, cw: 100, ch: 100, gap: 0 }, [{ l: 0, t: 0, r: 200, b: 100 }], col);
+  assert.deepStrictEqual(cr.filter((x) => x.moved).map((x) => x.id), ['t0']);
+  assert.ok(!cr.find((x) => x.id === 't0').covered);
 });
 
 console.log(n + ' passed');
