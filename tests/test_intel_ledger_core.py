@@ -52,29 +52,9 @@ def test_strongest_and_agreement():
     assert a == {"decisions": 3, "with_outcome": 2, "correct": 1, "precision": 0.5}
 
 
-def test_a_story_is_confirmed_once_by_another_site():
-    own = "https://www.bbc.co.uk/news/a"
-    assert L.first_confirmation(own, [], "https://reuters.com/x")
-    assert not L.first_confirmation(own, [], "https://bbc.co.uk/news/b")              # the same site
-    assert not L.first_confirmation(own, ["https://reuters.com/x"], "https://ft.com/y")  # already confirmed
-    assert L.first_confirmation(own, ["https://bbc.co.uk/other"], "https://ft.com/y")
-    assert not L.first_confirmation(own, [], "")
-
-
-def test_confirmation_is_a_weak_positive_outcome():
-    rel, notrel = L.make_decision("intel.signal_relevant", "relevant", state={}, state_ref={"kind": "signal", "id": "s"}), \
-        L.make_decision("intel.signal_relevant", "not_relevant", state={}, state_ref={"kind": "signal", "id": "s"})
-    a, b = L.make_outcome(rel, "story.confirmed"), L.make_outcome(notrel, "story.confirmed")
-    assert (a["label"], a["strength"]) == ("correct", "weak") and b["label"] == "wrong"
-
-
-def test_intake_records_confirmations_at_both_join_sites():
+def test_cross_site_duplication_is_not_an_outcome():
+    """Syndicated generic pages are copied across sites; that is not evidence the item was relevant."""
+    assert "story.confirmed" not in L.EVENTS
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "vera", "intel", "intel_capabilities.py"), encoding="utf-8").read()
-    assert src.count('_outcome("signal", sid, "story.confirmed", questions=ledger.CONFIRM_QUESTIONS)') == 2
-
-
-def test_confirmed_by_other_site():
-    own = "https://www.bbc.co.uk/news/a"
-    assert L.confirmed_by_other_site(own, ["https://bbc.co.uk/b", "https://reuters.com/x"])
-    assert not L.confirmed_by_other_site(own, ["https://bbc.co.uk/b"]) and not L.confirmed_by_other_site(own, [])
+    assert "story.confirmed" not in src and "intel.outcomes.backfill" not in src
