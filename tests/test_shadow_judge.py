@@ -129,3 +129,20 @@ def test_calibration_precision_at_confidence():
     assert c["at_confidence"]["0.5"]["coverage"] == 1.0
     assert 0 <= c["ece"] <= 1
     assert JC.calibration([], "met") == {"n": 0}
+
+
+def test_knn_vote_weights_neighbours_and_skips_its_own_run():
+    pool = [{"vec": [1.0, 0.0], "answer": "met", "run": "a"}, {"vec": [0.9, 0.1], "answer": "met", "run": "b"},
+            {"vec": [0.8, 0.2], "answer": "not_met", "run": "c"}, {"vec": [0.0, 1.0], "answer": "not_met", "run": "d"},
+            {"vec": [0.1, 0.9], "answer": "not_met", "run": "e"}, {"vec": [0.95, 0.05], "answer": "met", "run": "self"}]
+    ans, p, n = JC.knn_vote("loop.step_verify", [1.0, 0.0], pool, exclude_run="self", k=3, min_neighbours=5)
+    assert ans == "met" and n == 5 and 0.5 < p < 1.0
+    assert JC.knn_vote("loop.step_verify", [1.0, 0.0], pool[:3], min_neighbours=5)[0] is None
+    ans, p, _ = JC.knn_vote("loop.intent", [1.0, 0.0],
+                            [{"vec": [1.0, 0.0], "answer": "build", "run": str(i)} for i in range(5)], min_neighbours=5)
+    assert ans == "build" and p == 1.0
+
+
+def test_the_night_job_also_queues_the_knn_judge():
+    src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
+    assert 'name="decide.shadow.knn"' in src and "cap_decide_shadow_knn(question_id=q," in src
