@@ -49,6 +49,38 @@ def test_health_answers_while_a_model_is_working(monkeypatch):
 def test_every_model_call_goes_through_the_pool():
     src = open(os.path.join(_ROOT, "edge", "nlp_server.py"), encoding="utf-8").read()
     assert "_guard(run_" not in src
-    for fn in ("run_ner", "run_classify", "run_zeroshot", "run_qa", "run_langid", "run_embed", "run_rerank"):
+    for fn in ("run_ner", "run_classify", "run_zeroshot", "run_qa", "run_rerank"):
         assert f"await _run({fn}," in src, fn
     assert 'NLP_WORKERS = max(1, int(os.getenv("VERA_NLP_WORKERS", "1") or 1))' in src
+
+
+def test_an_embed_does_not_wait_behind_a_rerank(monkeypatch):
+    """The fast lane: with one shared worker busy on a slow rerank, an embed still answers."""
+    ns = pytest.importorskip("nlp_server")
+    if not ns.NLP_FAST_LANE:
+        pytest.skip("fast lane switched off")
+    started, finished = threading.Event(), threading.Event()
+
+    def slow_rerank(query, documents, top_k):
+        started.set()
+        time.sleep(3)
+        finished.set()
+        return {"ranked": []}
+    monkeypatch.setattr(ns, "run_rerank", slow_rerank)
+    monkeypatch.setattr(ns, "run_embed", lambda texts: {"embeddings": [[0.1, 0.2]]})
+    with TestClient(ns.build_app()) as c:
+        t = threading.Thread(target=lambda: c.post("/rerank", json={"query": "q", "documents": ["a"]}))
+        t.start()
+        assert started.wait(10), "the rerank never started"
+        e = c.post("/embed", json={"texts": ["hi"]})
+        answered_during = not finished.is_set()
+        h = c.get("/health").json()
+        t.join(15)
+    assert e.json() == {"embeddings": [[0.1, 0.2]]} and answered_during, "the embed waited for the rerank"
+    assert h["fast_lane"] == ["embed", "langid"]
+
+
+def test_embed_and_langid_take_the_fast_lane():
+    src = open(os.path.join(_ROOT, "edge", "nlp_server.py"), encoding="utf-8").read()
+    assert "await _run(run_embed, req.texts, fast=True)" in src
+    assert "await _run(run_langid, req.text, fast=True)" in src
