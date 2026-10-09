@@ -145,7 +145,7 @@ async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: 
     if pool is None:
         return {"error": "postgres unavailable"}
     if question_id == "all":
-        return {"questions": {qid: (await cap_decide_shadow_report(qid, days=days)).get("by_implementation", {})
+        return {"questions": {qid: (await cap_decide_shadow_report(question_id=qid, days=days)).get("by_implementation", {})
                               for qid in JC.QUESTIONS}}
     positive = JC.positive_label(question_id)
     async with pool.acquire() as conn:

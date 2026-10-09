@@ -104,3 +104,10 @@ def test_live_answers_are_labels_the_judge_can_give():
     assert set(JC.QUESTIONS["loop.controller_action"]["labels"].values()) == set(LD.CONTROLLER_LABELS)
     assert set(JC.QUESTIONS["loop.prestep_needed"]["labels"].values()) == set(LD.PRESTEP_LABELS)
     assert set(JC.QUESTIONS["loop.step_done"]["labels"].values()) == set(LD.STEP_DONE_LABELS)
+
+
+def test_the_all_report_calls_the_capability_by_keyword():
+    """A @capability wrapper takes keyword arguments only (a positional call 500'd, 2026-10-09)."""
+    src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
+    assert "cap_decide_shadow_report(question_id=qid, days=days)" in src
+    assert "cap_decide_shadow_report(qid," not in src
