@@ -68,6 +68,7 @@ try:
     from Vera.vera.intel import intel_geo_core as geo
     from Vera.vera.intel import intel_calib_core as calib
     from Vera.vera.intel import intel_resolve_core as rsv
+    from Vera.vera.intel import intel_sources_core as srcs
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -78,6 +79,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_geo_core as geo
     from vera.intel import intel_calib_core as calib
     from vera.intel import intel_resolve_core as rsv
+    from vera.intel import intel_sources_core as srcs
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -733,6 +735,10 @@ async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
             if s and s["id"] not in ids and not st.has_signal(s["id"]):
                 ids.add(s["id"])
                 cands.append(s)
+    # what the topic's data-fabric sources (feeds, arXiv, channels, releases, geo feeds) brought in
+    from_sources, src_errors = await _source_candidates(t, ids)
+    cands += from_sources
+    errors += src_errors
     stats: Dict[str, Any] = {}
     new = await _triage(t, cands, stats=stats)
     for s in new:
@@ -744,7 +750,63 @@ async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
     for s in new[:20]:
         await _event("signal.new", topic=t["id"], id=s["id"], title=s["title"], score=s.get("score"))
     return {"topic": t["id"], "queries": queries, "new": len(new), "joined": stats.get("joined", 0),
-            "demoted": stats.get("demoted", 0), "nlp": stats.get("nlp", False), "errors": errors}
+            "demoted": stats.get("demoted", 0), "nlp": stats.get("nlp", False), "errors": errors,
+            "from_sources": len(from_sources)}
+
+
+async def _fabric_sources_by_id() -> Dict[str, Dict[str, Any]]:
+    r = await _call("fabric.sources")
+    return {str(s.get("id")): s for s in (r.get("sources") or []) if isinstance(s, dict)}
+
+
+async def _source_candidates(t: Dict[str, Any], seen_ids: set) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """New items from the fabric sources a topic reads, as signal candidates for the
+    same triage as web results. The fabric pulls on its own schedule; a source that
+    has not been pulled for 1.5 of its intervals is pulled first. Old items (dated
+    more than srcs.MAX_AGE_DAYS ago) and items outside a geo source's box are skipped."""
+    subs = [s for s in (t.get("sources") or []) if s.get("id") and s.get("dataset_id")]
+    if not subs:
+        return [], []
+    st = store()
+    muted = set(t.get("mute_sites") or [])
+    fab = await _fabric_sources_by_id()
+    out: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    cursors: Dict[str, str] = {}
+    for sub in subs:
+        meta = fab.get(sub["id"]) or {}
+        if srcs.stale(str(meta.get("last_pulled") or ""), int(sub.get("interval") or meta.get("interval") or 0)):
+            pr = await _call("fabric.sources.pull", source_id=sub["id"])
+            if pr.get("error"):
+                errors.append(f"{sub.get('label', sub['id'])}: {pr['error']}")
+        r = await _call("fabric.browse", dataset_id=sub["dataset_id"], limit=srcs.PER_SOURCE)
+        if r.get("error"):
+            errors.append(f"{sub.get('label', sub['id'])}: {r['error']}")
+            continue
+        box = srcs.parse_bbox(sub.get("bbox")) if sub.get("bbox") else None
+        # only records the fabric stored since the last sweep read this source: an item triage
+        # joined to another story, or found off-topic, is not offered (and scored) again
+        cursor = str(sub.get("cursor") or "")
+        recs = [rec for rec in r.get("records") or [] if str(rec.get("created_at") or "") > cursor or not cursor]
+        newest = max([str(rec.get("created_at") or "") for rec in recs] + [cursor])
+        if newest and newest != cursor:
+            cursors[sub["id"]] = newest
+        for rec in recs:
+            hit = srcs.record_hit(rec, kind=str(sub.get("kind") or ""), bbox=box)
+            if not hit or not srcs.fresh(hit.get("published", "")):
+                continue
+            s = core.normalise_signal(t["id"], hit, source=f"fabric:{sub['id']}")
+            if not s or s.get("site") in muted or s["id"] in seen_ids or st.has_signal(s["id"]):
+                continue
+            if hit.get("places"):
+                s["places"] = hit["places"]
+            seen_ids.add(s["id"])
+            out.append(s)
+    if cursors:                                  # re-read: an edit made during the sweep is kept
+        cur = st.get_topic(t["id"]) or {}
+        st.patch_topic(t["id"], {"sources": [dict(x, cursor=cursors[x["id"]]) if x.get("id") in cursors else x
+                                             for x in cur.get("sources") or []]})
+    return out, errors
 
 
 async def _dream_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1191,6 +1253,125 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
             await _event("indicator.change", topic=t["id"], indicator=c["indicator"], text=c["text"],
                          corroborated=len(c["stories"]))
     return new
+
+
+# ── sources beyond search: a topic subscribes to data-fabric sources ──────────
+
+@capability("intel.source.add", http_method="POST", http_path="/intel/source/add", http_tags=["intel"],
+            schema=enum_schema(kind=list(srcs.KINDS)),
+            description="Have a topic read a source besides web search, through the data fabric's sources system "
+                        "(the fabric pulls it on its schedule; each sweep triages what is new). Input: topic_id (str!), "
+                        "kind (feed|arxiv|youtube|github_releases|usgs|api), value (str! - a site/page/feed URL; an "
+                        "arXiv category like cs.AI; a YouTube channel URL, id or @handle; owner/repo; a USGS magnitude "
+                        "significant|4.5|2.5|1.0|all; a JSON API URL), label, interval_h (hours between pulls), "
+                        "bbox (min_lon,min_lat,max_lon,max_lat - only items inside, for geo sources), mapping (JSON "
+                        "field mapping for kind=api: item_path, title_field, url_field, time_field, text_fields, "
+                        "geo_field). Output: {ok, source, pulled}.")
+async def cap_source_add(topic_id: str = "", kind: str = "feed", value: str = "", label: str = "",
+                         interval_h: float = 0, bbox: str = "", mapping: Any = None, trace_id=None):
+    st = store()
+    t = st.get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    box = None
+    if bbox:
+        box = srcs.parse_bbox(bbox)
+        if not box:
+            return {"error": "bbox must be min_lon,min_lat,max_lon,max_lat"}
+    plan = srcs.plan_source(kind, value, label=label, interval_h=interval_h)
+    if plan.get("error"):
+        return plan
+    if plan.get("discover"):
+        d = await _call("fabric.sources.discover_feed", url=plan.pop("discover"),
+                        kind="youtube" if kind == "youtube" else "")
+        feeds = d.get("feeds") or []
+        if not feeds:
+            return {"error": d.get("error") or d.get("note") or "no feed found there", "kind": kind, "value": value}
+        plan.update(url=feeds[0]["url"], source_type="rss")
+        if feeds[0].get("title") and not label:
+            plan["label"] = f"{srcs.KINDS[kind]['label']}: {feeds[0]['title']}"[:80]
+    if kind == "api" and mapping:
+        try:
+            plan["config"] = mapping if isinstance(mapping, dict) else json.loads(str(mapping))
+        except ValueError:
+            return {"error": "mapping must be a JSON object"}
+        if not isinstance(plan["config"], dict):
+            return {"error": "mapping must be a JSON object"}
+    args = {k: plan[k] for k in ("id", "url", "source_type", "label", "dataset_id", "interval", "tags")}
+    if plan.get("config"):
+        args["config"] = json.dumps(plan["config"])
+    r = await _call("fabric.sources.add", **args)
+    if r.get("error"):
+        return {"error": f"fabric: {r['error']}"}
+    plan["dataset_id"] = r.get("dataset_id") or plan["dataset_id"]
+    sub = srcs.subscription(plan, kind, value, bbox=box, now_iso=core.now_iso())
+    subs = [s for s in (t.get("sources") or []) if s.get("id") != sub["id"]] + [sub]
+    st.patch_topic(t["id"], {"sources": subs})
+    pulled = await _call("fabric.sources.pull", source_id=sub["id"])
+    await _event("source.added", topic=t["id"], source=sub["id"], kind=kind, label=sub["label"])
+    out = {"ok": True, "source": sub, "pulled": int(pulled.get("ingested") or 0)}
+    if pulled.get("error"):
+        out["pull_error"] = pulled["error"]
+    return out
+
+
+@capability("intel.source.list", http_method="GET", http_path="/intel/source/list", http_tags=["intel"],
+            memory="off", silent=True,
+            description="The sources a topic reads besides web search, with the fabric's pull state, and the kinds "
+                        "that can be added. Input: topic_id (str!). Output: {topic_id, sources:[{id, kind, value, "
+                        "label, url, dataset_id, interval, bbox?, last_pulled, pulls, missing}], kinds:[...]}.")
+async def cap_source_list(topic_id: str = "", trace_id=None):
+    t = store().get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    fab = await _fabric_sources_by_id()
+    rows = []
+    for s in t.get("sources") or []:
+        meta = fab.get(s.get("id")) or {}
+        rows.append(dict(s, last_pulled=str(meta.get("last_pulled") or ""),
+                         pulls=int(meta.get("pull_count") or 0), missing=not meta))
+    return {"topic_id": t["id"], "sources": rows,
+            "kinds": [{"kind": k, "label": v["label"], "value": v["value"], "mapping": bool(v.get("mapping")),
+                       "geo": bool(v.get("geo"))} for k, v in srcs.KINDS.items()]}
+
+
+@capability("intel.source.remove", http_method="POST", http_path="/intel/source/remove", http_tags=["intel"],
+            description="Stop a topic reading a source. The fabric source itself is removed only when intel made it "
+                        "and no other topic reads it; its records stay. Input: topic_id (str!), source_id (str!). "
+                        "Output: {ok, removed_from_fabric, still_read_by}.")
+async def cap_source_remove(topic_id: str = "", source_id: str = "", trace_id=None):
+    st = store()
+    t = st.get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    subs = t.get("sources") or []
+    if not any(s.get("id") == source_id for s in subs):
+        return {"error": f"{topic_id} does not read {source_id}"}
+    st.patch_topic(t["id"], {"sources": [s for s in subs if s.get("id") != source_id]})
+    others = srcs.users_of(st.topics(), source_id, except_topic=t["id"])
+    removed = False
+    if not others and source_id.startswith("intel-src-"):
+        r = await _call("fabric.sources.delete", source_id=source_id)
+        removed = not r.get("error")
+    await _event("source.removed", topic=t["id"], source=source_id)
+    return {"ok": True, "removed_from_fabric": removed, "still_read_by": others}
+
+
+@capability("intel.source.pull", http_method="POST", http_path="/intel/source/pull", http_tags=["intel"],
+            description="Ask the fabric to pull a topic's sources now (the next sweep triages what came in). "
+                        "Input: topic_id (str!). Output: {ok, pulled:[{id, label, ingested, error?}]}.")
+async def cap_source_pull(topic_id: str = "", trace_id=None):
+    t = store().get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    out = []
+    for s in t.get("sources") or []:
+        r = await _call("fabric.sources.pull", source_id=s["id"])
+        row = {"id": s["id"], "label": s.get("label", ""), "ingested": int(r.get("ingested") or 0)}
+        if r.get("error"):
+            row["error"] = r["error"]
+        out.append(row)
+    return {"ok": True, "pulled": out}
 
 
 @capability("intel.indicator.add", http_method="POST", http_path="/intel/indicator/add", http_tags=["intel"],
