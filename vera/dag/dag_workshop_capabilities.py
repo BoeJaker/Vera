@@ -14511,13 +14511,14 @@ def _tool_shortlist_step(sid: str, step: Dict[str, Any], res: Dict[str, Any], or
     """A finished step into the caps.shortlist shadow (four-minds FM-3): its title and the tools it called
     successfully. Background, never raises, never waits."""
     try:
+        import importlib
         try:
-            from Vera.vera.minds import tool_shortlist as _ts
+            _tsm = importlib.import_module("Vera.vera.minds.tool_shortlist")
         except Exception:
-            from vera.minds import tool_shortlist as _ts   # type: ignore
+            _tsm = importlib.import_module("vera.minds.tool_shortlist")
         used = sorted({h.get("tool") for h in (res.get("history") or [])
                        if isinstance(h, dict) and h.get("tool") and h.get("ok") is not False})
-        _ts.on_step(sid, step.get("id"), str(step.get("title") or ""), used, origin=origin)
+        _tsm.on_step(sid, step.get("id"), str(step.get("title") or ""), used, origin=origin)
     except Exception as e:
         log.debug("tool shortlist step: %s", e)
 
