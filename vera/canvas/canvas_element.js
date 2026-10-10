@@ -1308,6 +1308,15 @@
      under its toolbar inside a 171 px card - drawn below the card and cut away whole, showing only as the card moved -
      and a widget or a list filled 60% of its card. A desk card with a body is a column whose working part grows. */
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd{display:flex!important;flex-direction:column;flex:1 1 auto;min-height:0;max-height:none!important;overflow:hidden}
+  /* ...but a card that holds several things side by side (a code item and its exploded diagram, fused "beside") keeps its
+     row: the column above stacked the diagram under the code, past the card's foot, and Explode showed nothing (owner,
+     2026-10-10: "pressing explode on a piece of code on the desk ... cant see the exploded view") - each pane scrolls on its
+     own and the diagram's slot takes the pane's height. Wherever the card is (a desk face or filling the desk). */
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside{flex-direction:row!important;display:flex!important;flex:1 1 auto;min-height:0;overflow:hidden}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside > *{flex:1 1 0;min-width:0;min-height:0;overflow:auto;display:flex;flex-direction:column}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside > .fu-p > .fu-b{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside .vc-live[data-live="explode"]{flex:1 1 auto;height:auto!important;min-height:160px}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-over{flex-direction:column!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-rbx,.vc-filewrap,.vc-codewrap,.vc-diag,.vc-xp,.vc-term,.vc-tablewrap,.vc-act){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > .vc-tablewrap{display:block;overflow:auto}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-diag,.vc-xp,.vc-term) > .vc-live{flex:1 1 auto;height:auto!important;min-height:60px}
@@ -1346,7 +1355,15 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > :is(.it-ft,.solo){display:none!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd > :is(.dp,.mx,.xp,.k,.src,.fdn){display:none!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-bd > .vc-panel > .vc-th{display:none!important}
-  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead[data-type="panel"]:not(.desk-chip) > .it-hd.own-fold{display:flex!important;position:relative!important;inset:auto!important;opacity:1!important;pointer-events:auto!important}
+  /* ONE CONTAINER FOR EVERY DESK CARD (owner, 2026-10-10: "code on the desk doesnt act like the other elements and cant be
+     dragged its menu options need integrating into the canonical element container"). Kinds that draw a head of their own
+     (code, a page, a terminal, a notebook cell, a diagram, an explode, a panel) showed only that head on the desk - in the
+     hover tier unseen until hovered, never a handle, with its own buttons: on the desk they take the shared header (the
+     handle, the title, the one row of controls) and their own head is not drawn; its buttons are in the card's ⋯ menu. */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-hd.own-fold{display:flex!important;position:relative!important;inset:auto!important;opacity:1!important;pointer-events:auto!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar,
+  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .vc-codehead,
+  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel,.vc-diag) > :is(.vc-codehead,.vc-th):first-child{display:none!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip){padding-top:0!important;padding-bottom:0!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd,
   :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > :first-child > :is(.vc-codehead,.vc-th,.code-bar):first-child,
@@ -2745,6 +2762,15 @@
         + row('park', 'Park', 'Park it below the flow') + row('size', 'Size: ' + (c.dataset.size || 'm'), 'The next size')
         + (this._deskPosGet()[key] ? row('desk-auto', 'Back to the arrangement', 'Placed by hand - give it back to the arrangement') : '')
         + row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line');
+      /* the card's own head's buttons (a code item's copy · preview · edit · run, a terminal's, a diagram's): that head is not
+         drawn on the desk, so its buttons are listed here and a row presses the original - one container, nothing lost */
+      /* the head's own buttons only - not the entries of a dropdown inside it (Send to's targets), and not one the header row
+         already has (explode) */
+      const inMenu = (x) => { for (let e = x.parentElement; e && !(e.classList && e.classList.contains('it-bd')); e = e.parentElement) { const cl = String(e.className || ''); if (/(^|[\s_-])(menu|pop|popup|dropdown|drop|list)([\s_-]|$)/i.test(cl) || e.getAttribute('role') === 'menu' || e.tagName === 'DETAILS') return true; } return false; };
+      const rowHas = new Set([...c.querySelectorAll(':scope > .hda > .hb')].map((x) => x.dataset.act));
+      const own = [...c.querySelectorAll(':scope > .it-bd :is(.code-bar,.vc-codehead,.vc-th) :is(button,[role=button],a.btn)')].filter((x) => !x.closest('.hda') && !inMenu(x) && (x.textContent || x.title || '').trim()
+        && !(rowHas.has('explode') && /^explode$/i.test((x.textContent || '').trim())));
+      if (own.length && b.type !== 'panel') { c._ownBtns = own; h += '<hr>' + own.slice(0, 10).map((x, i) => `<button class="ib" data-act="ownbtn" data-own="${i}" data-layer-key="${k}" title="${esc(x.title || '')}">${esc(((x.textContent || '').trim() || x.title || 'action').slice(0, 40))}</button>`).join(''); }
       if (b.type === 'panel') h += '<hr>' + row('layer-behind', 'Behind the items', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'In front', 'Fill the free desk, over the other items', L === 'front')
         + row('pquery', 'Query', 'panel.query - what the panel holds') + row('pdispatch', 'Dispatch…', 'panel.dispatch - drive it') + row('prefresh', 'Refresh', 'Reload the panel') + row('pstand', 'Open standalone ↗', 'Open it in a tab of its own');
       const pop = document.createElement('div'); pop.className = 'hd-pop'; pop.dataset.key = key; pop.dataset.w = 'canvas.item.menu'; pop.innerHTML = h;
@@ -3917,6 +3943,7 @@
       if (act === 'lock') return this.toggleLock(key);
       if (act === 'hdmore') return this._hdMenu(key, btn);
       if (act === 'hdview') return this._viewMenu(key, btn);
+      if (act === 'ownbtn') { const o = it && it._ownBtns && it._ownBtns[+btn.dataset.own]; if (o) { try { o.click(); } catch (e) { /* its own handler */ } } return; }   /* a card's own head's button, from its ⋯ menu */
       /* a view chosen (see VIEWS): a records item keeps it with its browsing state, any other kind in the view store */
       if (act === 'setview') { const v = btn.dataset.view; const b = this._blockOf(key); if (!v || !b) return;
         if (b.type === 'records') { const st = recState(this, key); st.view = v; st.page = 0; } else viewSet(this, key, v);
@@ -4354,8 +4381,10 @@
          drew far from its card (2026-10-07: a slot at 569,1044 drew its widget at 773,1489). Divide by the scale. */
       const k0 = body.offsetWidth ? (B.width / body.offsetWidth) : 1, Z = k0 > 0.2 && k0 < 5 ? k0 : 1;
       Object.keys(L).forEach((k) => {
-        if (this._max && k !== this._max) { L[k].style.display = 'none'; L[k]._at = false; return; }   // a maximised item covers the column
         const el = L[k]; const h = body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]');
+        /* a maximised item covers the column - but what is drawn INSIDE it stays: a code item's exploded diagram is a pane of
+           the code's card (fused beside it) under its own key, and was hidden with everything else */
+        if (this._max && k !== this._max && !(h && h.closest('.it') && h.closest('.it').dataset.key === this._max)) { el.style.display = 'none'; el._at = false; return; }
         if (!h || !h.getClientRects().length) { el.style.display = 'none'; el._at = false; return; }   // back, it appears in place
         const r = h.getBoundingClientRect(); const w = Math.max(0, Math.round(r.width / Z)), ht = Math.max(0, Math.round(r.height / Z));
         const card = h.closest('.it');
