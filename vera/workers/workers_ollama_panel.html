@@ -416,6 +416,7 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
       <button data-label="Node settings" data-desc="Threads, flags and runners per node" data-desc-long="Threads, flags and drop-ins tuned on each Ollama node, and the runners loaded now." type="button" class="nav-btn" data-pane="nodesettings" data-view="models" title="Threads, flags and drop-ins tuned on each Ollama node, and the runners loaded now" onclick="P.show('nodesettings',this)"><span class="gl">⚙</span>Node settings</button>
       <button data-label="NLP" data-desc="Where NLP runs" data-desc-long="Where NLP runs, the models each node has loaded, and its switches." type="button" class="nav-btn" data-pane="nlpnodes" data-view="models" title="Where NLP runs, the models each node has loaded, and its switches" onclick="P.show('nlpnodes',this)"><span class="gl">◇</span>NLP</button>
       <button data-label="Node jobs" data-desc="Training and test shards on the nodes" data-desc-long="Training and gate test shards on the node workers: each node's free CPU and memory, where each job runs and why, recent jobs." type="button" class="nav-btn" data-pane="trainnodes" data-view="models" title="Training and gate test shards on the node workers: each node's free CPU and memory, where each job runs and why, recent jobs" onclick="P.show('trainnodes',this)"><span class="gl">∿</span>Node jobs</button>
+      <button data-label="Callable models" data-desc="Every model Vera can call, and what each is for" data-desc-long="Every model Vera can call - NLP, NER, GLiNER, spaCy, speech, images, vision, decision models and the LLMs - what each is for and not for, where it is loaded, what calls to it took; and which model fits a task described in words." type="button" class="nav-btn" data-pane="callmodels" data-view="models" title="Every model Vera can call, what each is for, and which fits a task" onclick="P.show('callmodels',this)"><span class="gl">⌘</span>Callable models</button>
       <button data-label="Ollama" data-desc="The Ollama cluster" data-desc-long="The Ollama cluster: its nodes, jobs, model catalog, benchmark and traffic (the sections under this item)." type="button" class="nav-btn" data-pane="ollama" data-view="models" title="Ollama" onclick="P.show('ollama',this)"><span class="gl">◍</span>Ollama</button>
       <button data-label="Model Routing" data-desc="Which model serves what" data-desc-long="Model routing (/ui/panels/model-routing): which model and node serve each role and capability - the routing rules and their overrides." type="button" class="nav-btn" data-pane="modelrouting" data-view="models" title="Model Routing" onclick="P.show('modelrouting',this)"><span class="gl">⇉</span>Model Routing</button>
       <div class="nav-div" data-view="models"></div>
@@ -1768,6 +1769,10 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
     </div>
     <div class="pane" id="pane-trainnodes" style="padding:0;overflow:hidden">
       <iframe id="trainnodes-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
+    </div>
+    <!-- Callable models: <vera-node-models section="callable"> (model.callable / model.pick) -->
+    <div class="pane" id="pane-callmodels" style="padding:0;overflow:hidden">
+      <iframe id="callmodels-frame" src="about:blank" style="width:100%;height:100%;border:none;background:var(--bg0)"></iframe>
     </div>
     <!-- Activity: the <vera-node-activity> element (nodes.activity) -->
     <div class="pane" id="pane-activity" style="padding:0;overflow:hidden">
@@ -6429,6 +6434,7 @@ function showPane(name, el){
   if(name==='nodesettings'){ _mountFrame('nodesettings-frame', BASE+'/nodes/models/panel?section=settings'); }
   if(name==='nlpnodes'){ _mountFrame('nlpnodes-frame', BASE+'/nodes/models/panel?section=nlp'); }
   if(name==='trainnodes'){ _mountFrame('trainnodes-frame', BASE+'/nodes/models/panel?section=training'); }
+  if(name==='callmodels'){ _mountFrame('callmodels-frame', BASE+'/nodes/models/panel?section=callable'); }
   if(name==='modelrouting'){ _mountFrame('modelrouting-frame', BASE+'/ui/panels/model-routing'); }
   if(name==='mimic'){ _mountFrame('mimic-frame', BASE+'/cluster/mimic/panel'); }
   if(name==='vllm'){ _mountFrame('vllm-frame', BASE+'/vllm/panel'); }

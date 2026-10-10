@@ -248,3 +248,11 @@ def test_placement_follows_the_model_but_never_grants_a_node():
         assert wp.placement("demo.knn", host_only=["demo"])[0] == "host"
     finally:
         wp.MODEL_PLACEMENT.clear(); wp.MODEL_PLACEMENT.update(saved[0]); wp.set_vetted(saved[1])
+
+
+def test_an_embedder_is_not_picked_to_produce_text():
+    stt = {"id": "stt", "uses": "Transcribe speech audio to text.", "io": {"in": "audio", "out": "text"}}
+    emb = {"id": "emb", "uses": "Text embeddings.", "io": {"in": "text", "out": "vector"}}
+    zs = {"id": "zs", "uses": "Classify text against labels.", "io": {"in": "text+labels", "out": "labels"}}
+    ranked = [r["id"] for r in mb.pick([emb, zs, stt], "turn this voice memo into text")]
+    assert ranked[0] == "stt" and ranked.index("emb") > ranked.index("zs")
