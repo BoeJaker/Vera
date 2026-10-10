@@ -51,7 +51,9 @@ def text(surface: str = "chat") -> str:
 
 # ── check: does an answer stay inside its evidence ─────────────────────────────────────────────────────────────
 
-_CITE = re.compile(r"\[(\d{1,3})\]")
+# [3], [E3], and lists: [1, 3] / [E1; E2]. Loops number a run's evidence E1..En across packs (compute-roles, 10 Oct);
+# a single info.seek pack numbers its items 1..n.
+_CITE = re.compile(r"\[\s*([Ee]?\d{1,4}(?:\s*[,;]\s*[Ee]?\d{1,4})*)\s*\]")
 # figures worth checking: percentages, money, decimals, multi-digit numbers and years; not list markers or [n]
 _NUM = re.compile(r"(?<![\w.\[])(?:[£$€]\s?)?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?|(?<![\w.\[])(?:[£$€]\s?)?\d+(?:\.\d+)?\s?%"
                   r"|(?<![\w.\[])(?:[£$€]\s?)?\d+\.\d+(?:\s?(?:bn|m|k|billion|million))?|(?<![\w.\[])[£$€]\s?\d+"
@@ -76,13 +78,34 @@ def _numbers(text: str) -> List[str]:
     return [m.group(0).strip() for m in _NUM.finditer(stripped)]
 
 
-def check(answer: str, items: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+def _cited(text: str) -> List[str]:
+    """The ids an answer cites, upper-cased as written: "[1, E3]" -> ["1", "E3"]."""
+    out: List[str] = []
+    for m in _CITE.finditer(text or ""):
+        out += [t.strip().upper() for t in re.split(r"[,;]", m.group(1)) if t.strip()]
+    return out
+
+
+def check(answer: str, items: Sequence[Dict[str, Any]], id_key: str = "n") -> Dict[str, Any]:
     """{ok, bad_citations, uncited_numbers, unsupported}: citations to items that do not exist, figures and dates in
     the answer that no item's title or text contains, and the sentences carrying them. A number counts as supported
     when its digits appear in any item (formatting - commas, currency, %, "bn" - ignored). Deterministic; a model
-    judge can sit on top of it, never under it."""
-    ns = {int(it.get("n")) for it in items or [] if str(it.get("n", "")).isdigit()}
-    bad = sorted({int(n) for n in _CITE.findall(answer or "") if int(n) not in ns})
+    judge can sit on top of it, never under it.
+
+    `id_key` names the item field the answer's citations refer to: "n" (an info.seek pack's own numbers, cited
+    [3]) or a run-wide one such as "e" / "E" (cited [E3]; a bare number in that field also answers to [E<n>])."""
+    valid = set()
+    for it in items or []:
+        v = it.get(id_key)
+        if v is None or str(v).strip() == "":
+            continue
+        s = str(v).strip().upper()
+        valid.add(s)
+        if id_key != "n" and s.isdigit():
+            valid.add("E" + s)
+    cited = _cited(answer)
+    bad_ids = sorted({c for c in cited if c not in valid}, key=lambda x: (len(x), x))
+    bad = [int(c) if c.isdigit() else c for c in bad_ids]
     corpus = " ".join(f"{it.get('title') or ''} {it.get('text') or it.get('snippet') or ''} {it.get('published') or ''}"
                       for it in items or [])
     hay = {_norm_num(t) for t in _numbers(corpus)} | set(re.findall(r"\d+(?:\.\d+)?", corpus.replace(",", "")))
