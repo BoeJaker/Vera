@@ -723,6 +723,8 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
             genre_budget -= 1         # only plausible hits are classified: a few dozen ~100 ms node calls per sweep
             if ops.index_hint(c.get("url", ""), c.get("title", "")):
                 g, gp = "index", 0.9         # a headline hub or section front: no node call needed
+            elif ops.report_seller_hint(c.get("title", ""), c.get("snippet", "")):
+                g, gp = "marketing", 0.9     # a page selling a market-research report
             else:
                 g, gp = ops.genre_of(await _nlp("nlp.zeroshot", text=texts[i][:600],
                                                 labels=list(ops.GENRE_LABELS.values()), multi_label=False))
