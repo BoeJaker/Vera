@@ -160,9 +160,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .floor.dim{display:none}.floor.focus{filter:brightness(1.25)}
 .band{position:absolute;left:0;right:0;pointer-events:none;background:color-mix(in srgb,var(--pc) 5%,transparent);border-top:1px solid color-mix(in srgb,var(--pc) 22%,transparent)}
 /* labels, pins and lines hold a screen size while the view zooms (--ui = the counter-scale) */
-.plabel{position:absolute;font-size:9px;letter-spacing:.13em;text-transform:uppercase;font-weight:600;color:var(--pc);pointer-events:none;opacity:.9;white-space:nowrap;transform:scale(var(--ui,1));transform-origin:0 0}
+.plabel{position:absolute;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:var(--pc);pointer-events:none;white-space:nowrap;transform:scale(var(--ui,1));transform-origin:0 0;padding:3px 9px 3px 7px;border-radius:999px;background:color-mix(in srgb,currentColor 16%,var(--bg));box-shadow:0 0 0 1px color-mix(in srgb,currentColor 55%,transparent),0 1px 4px rgba(0,0,0,.25);display:flex;align-items:center;gap:6px}
+.plabel::before{content:'';width:8px;height:8px;border-radius:2px;background:currentColor;flex:none}
 .plabel.dim{display:none}
-.dlabel{position:absolute;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);pointer-events:none;transform:translateX(-50%) scale(var(--ui,1));transform-origin:50% 0}
+.dlabel{position:absolute;font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--t2);pointer-events:none;transform:translateX(-50%) scale(var(--ui,1));transform-origin:50% 0}
 .link{position:absolute;height:calc(2px * var(--ui,1));border-radius:2px;transform-origin:0 50%;background:var(--lc,var(--bd2));pointer-events:none;opacity:.85;box-shadow:0 0 7px -1px var(--lc,transparent)}
 .link.q{opacity:.42;box-shadow:none}.plot:hover .link.q{opacity:.55}
 .flow{position:absolute;transform-origin:0 50%;height:0;pointer-events:none;z-index:8}
@@ -194,8 +195,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .nd.bb{transform-origin:50% 100%;transform:translate(-50%,-100%) translateY(calc(var(--r,20) * var(--ui,1) * -1px)) scale(calc(var(--nsc,1) * var(--ui,1)));z-index:11}
 .floors-svg polygon.rail{opacity:.5}
 .floors-svg{position:absolute;left:0;top:0;overflow:visible;z-index:0}
-.floors-svg polygon{fill:color-mix(in srgb,var(--pc) 6%,transparent);stroke:color-mix(in srgb,var(--pc) 26%,transparent);stroke-width:1;cursor:pointer;pointer-events:visiblePainted}
-.floors-svg polygon.focus{fill:color-mix(in srgb,var(--pc) 11%,transparent)}.floors-svg polygon.dim{display:none}
+.floors-svg polygon{fill:color-mix(in srgb,var(--pc) 17%,transparent);stroke:color-mix(in srgb,var(--pc) 62%,transparent);stroke-width:1.5;cursor:pointer;pointer-events:visiblePainted}
+.floors-svg polygon.focus{fill:color-mix(in srgb,var(--pc) 24%,transparent);stroke-width:2}.floors-svg polygon.dim{display:none}
 .bus{position:absolute;width:calc(7px * var(--ui,1));height:calc(7px * var(--ui,1));border-radius:2px;transform:translate(-50%,-50%) rotate(45deg);background:var(--bg);box-shadow:0 0 0 calc(1.5px * var(--ui,1)) var(--pc);z-index:4;pointer-events:none}
 .wedge{position:absolute;height:calc(1.5px * var(--ui,1));transform-origin:0 50%;pointer-events:none;z-index:1;opacity:.9;background:repeating-linear-gradient(90deg,var(--pc) 0 4px,transparent 4px 7px)}
 .pin.dim,.stem.dim{display:none}
@@ -1021,13 +1022,14 @@ function focusLayer(id){ const on = S.focus !== id; S.focus = on ? id : null; re
 document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || S.cm || (e.target.matches && e.target.matches('input,textarea'))) return; if (clearRoute()) return; if (S.exp){ S.exp = null; render(); } });
 // THE KEYBOARD: arrows pan (shift + arrows turn the 3D view), + / - zoom, 0 fits everything, 2 / 3 the view, s / f / o stacked,
 // flat, one layer, w the widget size, l what stands on the planes, p pipes or chords, a active routes, n the lens, r reads again
+document.addEventListener('keyup', (e) => { LAT.keyMove(e.key, false); });
 document.addEventListener('keydown', (e) => { if (e.ctrlKey || e.metaKey || e.altKey || S.cm) return; const t = e.target; if (t && t.matches && t.matches('input,textarea,select,[contenteditable],[contenteditable] *')) return;
   const k = e.key, PAN = 28, act = (fn) => { e.preventDefault(); fn(); }, cyc = (sel, attr, L, cur) => { const b = document.querySelector('[' + attr + '="' + L[(L.indexOf(cur) + 1) % L.length] + '"]'); if (b) b.click(); };
   if (k.indexOf('Arrow') === 0){
     if (e.shiftKey && S.view === '3d') return act(() => { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 26) : S.tilt, A = S.azim == null ? 45 : S.azim;
       if (k === 'ArrowLeft') S.azim = clamp(A - 2, 26, 64); else if (k === 'ArrowRight') S.azim = clamp(A + 2, 26, 64); else if (k === 'ArrowUp') S.tilt = clamp(T + 1.5, 4, 60); else S.tilt = clamp(T - 1.5, 4, 60); rafRot(); });
-    return act(() => { if (k === 'ArrowLeft') LAT.glide(-PAN, 0); else if (k === 'ArrowRight') LAT.glide(PAN, 0); else if (k === 'ArrowUp') LAT.glide(0, -PAN); else LAT.glide(0, PAN); }); }   // the picture moves the way the arrow points; a held key builds on the glide under way
-  if (k === '+' || k === '=' || k === '-' || k === '_') return act(() => LAT.glide(0, 0, k === '+' || k === '=' ? 1.1 : 1 / 1.1));
+    return act(() => LAT.keyMove(k, true)); }   // held: a steady glide, eased in; let go: a short drift. Up shows what is above
+  if (k === '+' || k === '=' || k === '-' || k === '_') return act(() => LAT.keyMove(k, true));
   // the layers: [ ] (PageUp PageDown) fly the camera from floor to floor; in One layer the next layer swaps in
   if ((k === '[' || k === ']' || k === 'PageUp' || k === 'PageDown') && S.snap) return act(() => { const ids = S.snap.planes.filter((pl) => S.on[pl.id]).map((pl) => pl.id); if (!ids.length) return; const up = k === '[' || k === 'PageUp';
     if (S.focus){ const i = ids.indexOf(S.focus); const nx = ids[(i + (up ? -1 : 1) + ids.length) % ids.length]; S.focus = null; focusLayer(nx); return; }
