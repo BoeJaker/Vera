@@ -156,3 +156,9 @@ def agreement(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     for q in out.values():
         q["precision"] = round(q["correct"] / q["with_outcome"], 3) if q["with_outcome"] else None
     return out
+
+
+# NOT an outcome: "another site joined the story" (2026-10-09, removed the same day). The cross-site joins
+# were mostly syndicated evergreen/SEO pages (IBM "What is AIOps", marketplace listings, PDFs) that the
+# relevance gate had rightly scored 0.8-2.0 against a threshold of 5, so it marked correct `not_relevant`
+# decisions wrong. Cross-site duplication is not evidence of relevance.

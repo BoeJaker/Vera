@@ -3486,11 +3486,15 @@ class AgentRunner:
                         agent.name, _pre_s)
         _og_preview = (message or "")[:120].replace("\n", " ")
         _og_entry = {
-            "req_id": _og_req_id, "model": model, "instance": chosen,
+            "req_id": _og_req_id, "model": (_vt.get("model") or model) if _vt else model,
+            "instance": _vt["instance"] if _vt else chosen,
+            "backend": "vllm" if _vt else "ollama",
             "caller_file": "agents.py", "caller_func": "run_stream",
             "prompt_preview": _og_preview, "ts": now_iso(),
             "status": "running", "job_type": "chat",
         }
+        if _vt:
+            _og_entry["node"] = chosen
         try:
             await emit_event({
                 "type":           "ollama.request",
@@ -4044,15 +4048,26 @@ AIDE_PROMPT = (
     "line, emit the marker, and confirm success ONLY after the tool result comes back. "
     "If you have not seen a result, you have not done it — say so.\n\n"
     "GROUNDING — never guess where you can look\n"
-    "• Anything external, current or online → web.research (the fast broad "
-    "'search + read the top pages' cap; it returns page text inline so you can "
-    "quote and cite it). Use web.fetch for one known URL, http.get/http.post for "
-    "APIs, research.run for a deep synthesised report with citations.\n"
+    "• Anything external, current or online — a fact, 'what is X', 'the latest / "
+    "news / updates on Y', a price, anything that may have changed since your "
+    "training → info.seek FIRST: it checks what Vera already tracks (intel), "
+    "searches the web fresh, reads the top pages and returns numbered, dated "
+    "evidence (latest: newest first). Cite what you use as [n] with its date and "
+    "report its gaps rather than guessing. web.research is the lighter single "
+    "search-and-read; intel.lookup answers 'what has Vera's tracking found on X' "
+    "in milliseconds. Use web.fetch for one known URL, http.get/http.post for APIs. "
+    "research.run is a BACKGROUND report job (5-30 minutes) — only when the user "
+    "asks for a report or deep dive (info.seek need=deep starts it for you).\n"
     "• What Vera already knows about the user → memory.recall / memory.search / "
     "memory.session_history and context.assemble / context.recall. Persist a "
     "durable fact with memory.store.\n"
+    "• Memories and session notes are dated records of what was said or seen, not "
+    "proof the world is still that way. Use them for the user's own preferences and "
+    "history; for an outside fact that could have changed, check the web and give "
+    "the date of what you found.\n"
     "• Never answer an external factual question from your own training memory — "
-    "look it up. Never invent commitments, numbers, message contents or sources.\n\n"
+    "look it up. Never fill a gap with a plausible guess. Never invent "
+    "commitments, numbers, message contents or sources.\n\n"
     "ACTION AREAS (reach for the right toolkit)\n"
     "• Diary/scheduling → ground with cal.assistant.briefing first, then the cal.* "
     "caps (cal.event.upsert, cal.todo.upsert, cal.note.upsert, cal.braindump). "
@@ -4062,7 +4077,10 @@ AIDE_PROMPT = (
     "mail.draft / mail.reply / mail.send to write.\n"
     "• Telegram & notifications → tg.send / tg.notify (tg.history, tg.chats.list "
     "to read).\n"
-    "• Web & research → web.research, web.fetch, research.run/quick_search.\n"
+    "• Finding things out → info.seek (answers, latest news, overviews), "
+    "intel.lookup (tracked topics), web.research, web.fetch (one URL), research.run "
+    "(a background report the user asked for); intel.topic.save to start following "
+    "a subject.\n"
     "• Markets → markets.fetch / markets.symbols / markets.indicators / "
     "markets.sentiment.analyze / markets.watchlist.list.\n"
     "• Business ops → business.stream.list / business.account.list / "
@@ -4097,6 +4115,14 @@ AIDE_PROMPT = (
     "guessing."
 )
 
+# sha1 of earlier AIDE_PROMPT defaults: a stored aide whose prompt is one of these was never customised and is upgraded
+# to the current default at boot (_seed_defaults). Add the old hash here whenever AIDE_PROMPT changes.
+_AIDE_PRIOR_PROMPTS = {
+    "7a9ac80b6a8c4023d1cca601ae12610412a31fb3",   # to 2026-10-10 (before the info-seeking grounding rules)
+    "68b6c2325f754d4be4b354004fbb02956eab2088",   # 2026-10-10 evening (web.research first, before info.seek)
+}
+_AIDE_RETIRED_CAPS = ("research.quick_search",)
+
 DEFAULT_AGENTS = [
     AgentRecord(
         name="aide", label="Aide", avatar="✦",
@@ -4110,10 +4136,11 @@ DEFAULT_AGENTS = [
         domain_caps=[
             # Time & grounding
             "system.timestamp",
-            # Unified fast web research + targeted fetch / raw HTTP
+            # Finding information: the front door, tracked topics, then the web primitives
+            "info.seek", "intel.lookup", "intel.topic.save",
             "web.research", "web.search", "web.fetch", "http.get", "http.post",
-            # Deeper research pipeline
-            "research.quick_search", "research.run",
+            # Background report pipeline (a report the user asked for; not for answers)
+            "research.run",
             # Calendar / diary
             "cal.assistant.briefing", "cal.assistant.handover",
             "cal.events.list", "cal.event.upsert", "cal.event.delete",
@@ -5503,6 +5530,18 @@ async def _seed_defaults():
             existing.temperature        = agent.temperature
             await AGENT_REGISTRY.save(existing)
             log.info("Upgraded default 'assistant' agent to the Jarvis-grade prompt")
+        elif (agent.name == "aide"
+              and hashlib.sha1((existing.system_prompt or "").encode()).hexdigest() in _AIDE_PRIOR_PROMPTS):
+            # Upgrade an untouched aide to the current default prompt (info-seeking plan SK-0.6: look things up,
+            # research.run only for reports, memories are dated records). Fires only while the stored prompt is
+            # byte-identical to an earlier default - a customised record never matches. The one cap the new prompt
+            # retires (research.quick_search: a slow report job sold as a search) leaves its toolkit in the same step.
+            existing.system_prompt = agent.system_prompt
+            existing.domain_caps = [c for c in (existing.domain_caps or []) if c not in _AIDE_RETIRED_CAPS]
+            have = set(existing.domain_caps)
+            existing.domain_caps += [c for c in (agent.domain_caps or []) if c not in have]
+            await AGENT_REGISTRY.save(existing)
+            log.info("Upgraded default 'aide' agent to the current prompt")
         else:
             # ADDITIVELY keep a default agent's toolkit current: union in any
             # domain_caps the code now grants that the stored record lacks (e.g. a

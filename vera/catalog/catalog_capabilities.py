@@ -679,14 +679,22 @@ def _vllm_instances() -> dict:
 
 
 def _all_nodes() -> Dict[str, dict]:
-    """Unified {iid: {backend,label,url,has_gpu,status,models[]}} across Ollama+vLLM."""
+    """Unified {iid: {backend,label,url,has_gpu,status,models[]}} across Ollama+vLLM.
+
+    An Ollama node switched to vLLM (nodes.backend.switch) reports backend "vllm",
+    switched=True and served_by: its Ollama is stopped on purpose and its models are
+    the vLLM server's, so Ollama-only operations (inventory, pull, delete, install)
+    must leave it alone."""
     out: Dict[str, dict] = {}
     for iid, i in getattr(_orch, "OLLAMA_INSTANCES", {}).items():
-        out[iid] = {"backend": "ollama", "label": i.get("label", iid),
+        switched = i.get("backend") == "vllm"
+        out[iid] = {"backend": "vllm" if switched else "ollama", "label": i.get("label", iid),
                     "url": i.get("url", ""), "has_gpu": i.get("has_gpu", False),
                     "enabled": i.get("enabled", True), "status": i.get("status", ""),
                     "priority": i.get("priority", 0), "models": i.get("models", []),
                     "num_ctx": i.get("num_ctx", 4096)}
+        if switched:
+            out[iid].update({"switched": True, "served_by": i.get("served_by", "")})
     for iid, inst in _vllm_instances().items():
         out[iid] = {"backend": "vllm",
                     "label": getattr(inst, "label", iid),
@@ -1052,6 +1060,7 @@ async def cap_catalog_installed(instance_id: str = "", trace_id=None):
             total = node.get("disk_total_gb")
         return {
             "id": iid, "backend": base.get("backend", ""),
+            "switched": bool(base.get("switched")), "served_by": base.get("served_by", ""),
             "label": base.get("label", iid), "url": base.get("url", ""),
             "status": base.get("status", ""), "has_gpu": base.get("has_gpu", False),
             "enabled": base.get("enabled", True),
@@ -1073,6 +1082,8 @@ async def cap_catalog_installed(instance_id: str = "", trace_id=None):
     for (iid, base), res in zip(targets.items(), done):
         if isinstance(res, BaseException):
             rows.append({"id": iid, "backend": base.get("backend", ""),
+                         "switched": bool(base.get("switched")),
+                         "served_by": base.get("served_by", ""),
                          "label": base.get("label", iid), "url": base.get("url", ""),
                          "status": base.get("status", ""), "models": [], "running": [],
                          "count": 0, "size_gb": 0.0, "error": str(res)[:200]})
@@ -1932,6 +1943,10 @@ async def cap_catalog_install_plan(id: str, instance_id: str, backend: str = "ol
     if detail.get("error"):
         return detail
     node = _node_view(instance_id, _all_nodes().get(instance_id, {}))
+    if node.get("switched"):
+        return {"error": f"{instance_id} is switched to vLLM (served by "
+                         f"{node.get('served_by') or 'its vLLM server'}) - not an install "
+                         "target; Switch backend moves it back to Ollama"}
     if backend == "ollama":
         v = _pick_gguf_variant(detail.get("gguf_variants", []), instance_id, quant)
         if not v:

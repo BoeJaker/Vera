@@ -67,6 +67,15 @@ try:
     _CAP_AVAILABLE = True
 except ImportError:
     _CAP_AVAILABLE = False
+try:
+    from Vera.vera.research.nlp_models_core import NLP_SERVES
+    from Vera.vera.model_binding_core import selector_values as _selector_values
+except ImportError:  # standalone/test import path
+    from vera.research.nlp_models_core import NLP_SERVES
+    from vera.model_binding_core import selector_values as _selector_values
+#: What each multi-model cap accepts for `task` = what it declares it serves.
+_CLASSIFY_TASKS = tuple(_selector_values(NLP_SERVES["nlp.classify"], "task"))
+_NER_TASKS = tuple(_selector_values(NLP_SERVES["nlp.ner"], "task"))
 
 # ── Off-host dispatch ─────────────────────────────────────────────────────────
 # These caps are CPU-bound and the Vera host is a 2-core VM whose event loop
@@ -208,7 +217,7 @@ if _CAP_AVAILABLE:
     @capability(
         "nlp.rerank",
         http_method="POST", http_path="/nlp/rerank", http_tags=["nlp", "onnx"],
-        memory="on",
+        memory="on", serves=NLP_SERVES["nlp.rerank"],
         description=(
             "Re-rank documents against a query with an ONNX cross-encoder (ORT "
             "CPU). Input: query (str!), documents (JSON array of strings or "
@@ -250,7 +259,7 @@ if _CAP_AVAILABLE:
     @capability(
         "nlp.classify",
         http_method="POST", http_path="/nlp/classify", http_tags=["nlp", "onnx"],
-        memory="on",
+        memory="on", serves=NLP_SERVES["nlp.classify"],
         description=("Sequence / sentiment classification with an ONNX model (ORT "
                      "CPU). Input: text (str!). Output: {top, labels:[{label, score}]}."),
     )
@@ -258,7 +267,7 @@ if _CAP_AVAILABLE:
                                trace_id=None):
         if not text:
             return {"error": "text is required"}
-        if task not in ("classify", "sentiment3"):
+        if task not in _CLASSIFY_TASKS:
             return {"error": "task must be 'classify' (binary SST-2) or "
                              "'sentiment3' (negative/neutral/positive)"}
         handled, out = await _offload("/classify", {"text": text, "task": task})
@@ -283,7 +292,7 @@ if _CAP_AVAILABLE:
     @capability(
         "nlp.ner",
         http_method="POST", http_path="/nlp/ner", http_tags=["nlp", "onnx"],
-        memory="on",
+        memory="on", serves=NLP_SERVES["nlp.ner"],
         description=("Named-entity recognition on the node tier. task: 'ner' (OntoNotes "
                      "v5, English, has DATE) | 'ner_multi' (PER/ORG/LOC, ten languages) | "
                      "'gliner' (zero-shot over `labels` — the fabric's 37 when none are given, "
@@ -296,7 +305,7 @@ if _CAP_AVAILABLE:
                           threshold: float = 0.4, trace_id=None):
         if not text:
             return {"error": "text is required"}
-        if task not in ("ner", "ner_multi", "gliner", "spacy"):
+        if task not in _NER_TASKS:
             return {"error": "task must be 'ner' (OntoNotes, English), 'ner_multi' "
                              "(multilingual), 'gliner' (zero-shot) or 'spacy'"}
         if isinstance(labels, str):
@@ -350,7 +359,7 @@ if _CAP_AVAILABLE:
     @capability(
         "nlp.zeroshot",
         http_method="POST", http_path="/nlp/zeroshot", http_tags=["nlp", "onnx"],
-        memory="on",
+        memory="on", serves=NLP_SERVES["nlp.zeroshot"],
         description=("Classify text against labels supplied at call time — no "
                      "training and no LLM call. Input: text (str!), labels "
                      "(JSON array of candidate labels!), multi_label (bool, "
@@ -371,7 +380,7 @@ if _CAP_AVAILABLE:
     @capability(
         "nlp.qa",
         http_method="POST", http_path="/nlp/qa", http_tags=["nlp", "onnx"],
-        memory="on",
+        memory="on", serves=NLP_SERVES["nlp.qa"],
         description=("Extractive question answering: find the answer span in a "
                      "passage. Input: question (str!), context (str!). Output: "
                      "{answer, score, start, end}. Extractive — it quotes the "
@@ -388,7 +397,7 @@ if _CAP_AVAILABLE:
     @capability(
         "nlp.langid",
         http_method="POST", http_path="/nlp/langid", http_tags=["nlp", "onnx"],
-        memory="on",
+        memory="on", serves=NLP_SERVES["nlp.langid"],
         description=("Identify the language of a text (20 languages). Input: "
                      "text (str!). Output: {lang, langs:[{lang, score}]}."),
     )
@@ -400,7 +409,7 @@ if _CAP_AVAILABLE:
     @capability(
         "nlp.embed",
         http_method="POST", http_path="/nlp/embed", http_tags=["nlp", "onnx"],
-        memory="off",
+        memory="off", serves=NLP_SERVES["nlp.embed"],
         description=("Sentence embeddings on a node's CPU (mean-pooled, "
                      "L2-normalised). Input: texts (JSON array of strings!). "
                      "Output: {embeddings:[[float]], dim, count}."),

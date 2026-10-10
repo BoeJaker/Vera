@@ -225,7 +225,7 @@ button.danger:hover{border-color:var(--err);color:var(--err)}
   <h2>Routing activity <span class="status" id="act-status"></span></h2>
   <div class="hint">Recent LLM requests with the routing decision that placed them (auto-refreshes).</div>
   <div class="scroll-x"><table id="activity">
-    <thead><tr><th>When</th><th>Caller</th><th>Job type</th><th>Rule</th><th>Node</th><th>Model</th><th>Status</th><th>⏱</th><th class="reason">Why</th></tr></thead>
+    <thead><tr><th>When</th><th>Caller</th><th>Job type</th><th>Rule</th><th>Node</th><th>Backend</th><th>Model</th><th>Status</th><th>⏱</th><th class="reason">Why</th></tr></thead>
     <tbody id="act-body"><tr><td class="dim">Loading…</td></tr></tbody>
   </table></div>
 </div>
@@ -427,7 +427,9 @@ function renderNodes(){
       <div class="nm">${esc(n.label||iid)}
         ${n.has_gpu?'<span class="badge gpu">GPU</span>':''}
         <span class="badge ${n.status==='online'?'on':'off'}">${esc(n.status||'?')}</span>
-        ${n.enabled===false?'<span class="badge off">disabled</span>':''}</div>
+        ${n.backend==='vllm'
+          ?`<span class="badge user" title="Ollama stopped; served by vLLM ${esc(n.served_by||'')}">vLLM${n.served_by?' · '+esc(n.served_by):''}</span>`
+          :(n.enabled===false?'<span class="badge off">disabled</span>':'')}</div>
       <div class="meta">${esc(iid)} · in-use ${n.in_use||0} · prio ${n.priority||0}<br>
         ${(n.models||[]).length} models</div>
     </div>`;
@@ -820,6 +822,13 @@ async function deleteCapRule(pat){
 }
 
 // ── Activity ─────────────────────────────────────────────────────────────────
+function _logBackend(e){
+  e=e||{};let b=String(e.backend||'');const i=String(e.instance||'');const pv=String(e.provider||'');
+  if(!b)b=i.indexOf('provider:')===0?'api':(i.indexOf('vllm')===0?'vllm':'ollama');
+  if(b==='api')return 'API '+(pv||i.split(':').slice(1).join(':'));
+  if(b==='other')return 'other'+(pv?(' '+pv):'');
+  return b==='vllm'?'vLLM':'Ollama';
+}
 async function loadActivity(){
   const r=await api('/ollama/request_log?limit=40');
   if(!r||!r.entries){$('act-body').innerHTML='<tr><td class="dim">Unavailable.</td></tr>';return;}
@@ -830,13 +839,14 @@ async function loadActivity(){
       <td title="${esc(e.caller_file||'')}">${esc(e.caller_file?e.caller_file.replace('.py',''):'')}: ${esc(e.caller_func||'')}</td>
       <td>${esc(e.job_type||'—')}</td>
       <td>${esc(e.rule_source||'—')}${e.escalated?' ⚡':''}</td>
-      <td><b>${esc(e.instance||'—')}</b></td>
+      <td><b>${esc(e.instance||'—')}</b>${e.node&&e.node!==e.instance?` <span class="dim">(${esc(e.node)})</span>`:''}</td>
+      <td>${esc(_logBackend(e))}</td>
       <td>${esc(e.model||'')}</td>
       <td><span class="pill ${esc(st)}">${esc(st)}</span></td>
       <td>${e.elapsed_s!=null?e.elapsed_s+'s':(e.est_seconds!=null?'~'+e.est_seconds+'s':'—')}</td>
       <td class="reason">${esc(e.route_reason||'')}</td>
     </tr>`;
-  }).join('')||'<tr><td class="dim" colspan="9">No requests yet.</td></tr>';
+  }).join('')||'<tr><td class="dim" colspan="10">No requests yet.</td></tr>';
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────

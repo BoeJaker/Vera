@@ -288,6 +288,61 @@ async def _gather_sources(sources: List[dict], topic: str,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Speech markup: the writer marks what only it knows how to say
+# ─────────────────────────────────────────────────────────────────────────────
+
+# For a model whose words are written to be spoken. Sparingly: the media server
+# reads plain text well; this is for what a reader could get wrong.
+SPEECH_MARKUP_GUIDE = (
+    "Where a number, symbol or name could be read more than one way, you may mark how it is said, "
+    "using only these tags: <sub alias=\"one hundred and eight to three hundred\">108-300</sub> "
+    "(say the alias); <say-as interpret-as=\"characters\">FOMC</say-as> (spell it out); "
+    "<break time=\"500ms\"/> (a deliberate pause). Use them only where a reader could get it wrong - "
+    "a score, a year versus a count, a ticker, an unusual name - never on plain words."
+)
+
+_MARKUP: List[Any] = []
+
+
+def _markup_reader():
+    """The media server's own reader of speech markup (edge/tts_text_core.py), so the
+    written form kept here is exactly the text the voice was not told to say."""
+    if not _MARKUP:
+        try:
+            import importlib.util
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "edge", "tts_text_core.py")
+            spec = importlib.util.spec_from_file_location("vera_tts_text_core", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _MARKUP.append(mod if hasattr(mod, "strip_speech_markup") else None)
+        except Exception as e:  # noqa: BLE001 - the transcript then keeps a plain tag strip
+            log.warning("podcast: speech markup reader unavailable (%s)", e)
+            _MARKUP.append(None)
+    return _MARKUP[0]
+
+
+def written_form(text: str) -> str:
+    """Speech markup -> the text as written (for transcripts, metadata, the UI)."""
+    if "<" not in (text or ""):
+        return text or ""
+    mod = _markup_reader()
+    if mod is not None:
+        return mod.strip_speech_markup(text).strip()
+    return re.sub(r"[ \t]{2,}", " ", re.sub(r"</?[A-Za-z][^<>]*>", "", text)).strip()
+
+
+def split_spoken(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """A segment with markup keeps it under `spoken` (what the voice reads) and shows
+    the written form under `text`; a segment already split is left as it is."""
+    for seg in segments:
+        t = str(seg.get("text") or "")
+        if "<" in t and not seg.get("spoken"):
+            seg["spoken"] = t
+            seg["text"] = written_form(t)
+    return segments
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Script generation
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -347,7 +402,8 @@ async def _generate_script(topic: str, blocks: List[Dict[str, str]],
         "You are a professional podcast script writer. You write tight, natural spoken "
         "dialogue — contractions, rhythm, no stage directions, no markdown, no emojis, "
         "nothing that cannot be read aloud verbatim by a TTS engine. Numbers and "
-        "abbreviations written out the way a person says them."
+        "abbreviations written out the way a person says them. "
+        + SPEECH_MARKUP_GUIDE
     )
     # No topic given — this is a "just hand it the material" call (a file, a
     # prior cap's output, a report). Point the writer at the source material
@@ -522,7 +578,8 @@ async def _run_pipeline(job_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
                                             minutes, show_name, intro, extra)
             if script.get("error"):
                 raise RuntimeError(script["error"])
-        segs = script["segments"]
+        # what the voice reads (`spoken`, with any speech markup) vs what is shown (`text`)
+        segs = split_spoken(script["segments"])
         _job_update(job_id, script=script)
         await _emit(job_id, "script", f"script ready — {len(segs)} segments", 30,
                     title=script.get("title", ""))
@@ -535,7 +592,7 @@ async def _run_pipeline(job_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
             pct = 30 + int(55 * (i + 1) / len(segs))
             await _emit(job_id, "voice",
                         f"synthesizing {i + 1}/{len(segs)} ({seg['speaker']} · {sp.get('voice')})", pct)
-            parts.append(await _tts_segment(seg["text"], sp.get("voice") or "af_heart",
+            parts.append(await _tts_segment(seg.get("spoken") or seg["text"], sp.get("voice") or "af_heart",
                                             float(sp.get("speed") or 1.0), engine))
 
         # 4) stitch + encode
@@ -723,6 +780,7 @@ async def cap_podcast_script(topic: str = "", sources=None, speakers=None,
                                     a["minutes"], a["show_name"], a["intro"], instructions)
     if script.get("error"):
         return script
+    split_spoken(script.get("segments") or [])
     script["speakers"] = a["speakers"]
     script["sources"] = [b["label"] for b in blocks]
     return script

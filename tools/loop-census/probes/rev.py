@@ -11,6 +11,13 @@ def _redis_url():
     has no /usr/sbin, and pgrep also matches other users' containers (4 Oct: EACCES)."""
     if os.environ.get("CENSUS_REDIS_URL"):
         return os.environ["CENSUS_REDIS_URL"]
+    # Our own REDIS_URL first: the harness and the probes are started by prod (the scheduler,
+    # exec) and inherit the credential it loads at startup. Since 8 Oct 2026 prod fills that
+    # in at runtime (vera/config.py, sealed copy), so its /proc environ no longer carries it
+    # and the scan below found a password-less URL - every event read failed with
+    # "Authentication required" (the census stall/restart watchdogs went blind).
+    if os.environ.get("REDIS_URL"):
+        return os.environ["REDIS_URL"]
     cands=[]
     try:
         cands+=subprocess.run("(/usr/bin/ss -ltnp 'sport = :8999' 2>/dev/null || /usr/sbin/ss -ltnp 'sport = :8999' 2>/dev/null) | grep -o 'pid=[0-9]*' | cut -d= -f2",shell=True,capture_output=True,text=True).stdout.split()

@@ -48,7 +48,7 @@ DEFAULT_FILE_S = 1.0
 #: Pool config (json): {"enabled": bool, "max_nodes": int, "min_files": int}.
 POOL_KEY = "vera:evolve:test_pool"
 POOL_DEFAULTS = {"enabled": False, "max_nodes": 3, "min_files": 40, "chunks": 12,
-                 "node_parallel": 4}
+                 "node_parallel": 4, "host_parallel": 3}
 #: Per-runner lease for the host's container runner (replaces the one-gate lease).
 HOST_RUNNER_LEASE = "vera:evolve:runner:host"
 
@@ -65,7 +65,7 @@ def merge_pool_config(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
                 cfg[k] = max(1, int(v))
             elif k == "chunks":
                 cfg[k] = max(1, min(64, int(v)))
-            elif k == "node_parallel":
+            elif k in ("node_parallel", "host_parallel"):
                 cfg[k] = max(1, min(8, int(v)))
         except (TypeError, ValueError):
             pass
@@ -293,6 +293,20 @@ def combine_rc(rcs: Sequence[int]) -> int:
     if real:
         return real[0]
     return 5 if rcs and all(rc == 5 for rc in rcs) else 0
+
+
+def combine_outputs(outs: Sequence[str]) -> str:
+    """Several runs' outputs (each text + __VERA_JUNIT__ xml + __VERA_RC=n__) as
+    ONE in the same format: the texts' tails, the JUnit reports merged into one
+    suite, and the combined exit code."""
+    rcs, xmls, texts = [], [], []
+    for out in outs:
+        m = re.search(r"__VERA_RC=(-?\d+)__", out or "")
+        rcs.append(int(m.group(1)) if m else -1)
+        xmls.append(junit_of(out or ""))
+        texts.append((out or "").split("__VERA_JUNIT__")[0][-6000:])
+    return ("\n".join(texts)[-20000:] + "\n__VERA_JUNIT__\n" + merge_junit(xmls)
+            + "\n__VERA_RC=" + str(combine_rc(rcs)) + "__")
 
 
 def merge_junit(xmls: Sequence[str]) -> str:

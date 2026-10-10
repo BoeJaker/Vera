@@ -45,9 +45,9 @@ const COL = { columns: 3, gap: 10, colWidth: 300, viewport: 600, pad: 0 };
 
 /* ── the element: the drag reads both axes, and the placer stops fighting the mouse ──────────────────────────── */
 t('the grip records where the pointer started in BOTH axes, and how wide the card was',
-  /x0: ev\.clientX, w0, w: w0 \}/.test(SRC) && /const h0 = it\.offsetHeight, w0 = it\.offsetWidth;/.test(SRC));
+  /x0: ev\.clientX, w0, w: w0, Z \}/.test(SRC) && /const h0 = it\.offsetHeight, w0 = it\.offsetWidth;/.test(SRC));
 t('a drag sets the width as well as the height',
-  /const w = Math\.max\(120, r\.w0 \+ \(ev\.clientX - r\.x0\)\); r\.w = w; r\.el\.style\.width = w \+ 'px';/.test(SRC));
+  /const w = Math\.max\(120, r\.w0 \+ \(ev\.clientX - r\.x0\) \/ \(r\.Z \|\| 1\)\); r\.w = w; r\.el\.style\.width = w \+ 'px';/.test(SRC));
 t('the drop remembers it', /this\._px\[key\] = r\.h; this\._pw\[key\] = r\.w;/.test(SRC) && /this\._pw = \{\};/.test(SRC));
 t('THE DRAG IN PROGRESS COUNTS TOO, or the placer sets the card back on the next frame and the mouse does nothing',
   /const live = this\._rz && this\._rz\.el === c \? this\._rz\.w : 0;/.test(SRC));

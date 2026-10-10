@@ -69,6 +69,25 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "and then search memory deeply before the model answers - every session and agent, the vector leg when it "
        "answers in time - announced in the throbber, waited on at most 1.5 s. 'off' (default) = the agent's own "
        "memory only; 'rules' = the rules decide (turn_needs_core).", owner="context-and-ui"),
+    _f("decide.student.step_verify", ("off", "shadow", "first", "first_met", "first_not_met"), "loop", "FM-2.5",
+       "A pre-trained student (Qwen3-4B, one token over the live verifier's own evidence and rules) on every step "
+       "verdict the big model would give. 'off' (default) = the big model only; 'shadow' = the student runs beside "
+       "it and is recorded as a shadow; 'first' = the student answers first and its verdict stands when it is an "
+       "allowed label (VERA_DECIDE_STUDENT_VERIFY_LABELS, default met) at confidence >= "
+       "VERA_DECIDE_STUDENT_TAU (default 0.95), else the big model decides; 'first_met' / 'first_not_met' = "
+       "the same with only that label allowed (the owner, 2026-10-10: run both as census arms and measure the "
+       "difference - the plan's FM-2.5 says not_met only; met skips the big call on the common pass). Under "
+       "any first mode a random VERA_DECIDE_STUDENT_COSIGN share (default 0.1) of the answers that would stand "
+       "go to the big model instead, the student recorded beside it (detail.would_take) - the plan's 'sampled' "
+       "co-sign, the precision of the student's takes. Deterministic verdicts (parsed files, test runs, missing "
+       "files) never reach either."),
+    _f("decide.student.controller_action", ("off", "shadow", "first"), "loop", "FM-2.5",
+       "A pre-trained student (Qwen3-4B, one letter over the live controller's own ledger, prompt and rules) on "
+       "every next-move decision after a step. 'off' (default) = the big model only; 'shadow' = the student runs "
+       "beside it and is recorded as a shadow; 'first' = the student answers first and its move stands when it is "
+       "an allowed label (VERA_DECIDE_STUDENT_CONTROLLER_LABELS, default continue) at confidence >= "
+       "VERA_DECIDE_STUDENT_TAU (default 0.95), else the big model decides. A student's continue carries no "
+       "findings or steer for the next step - turn 'first' on only when shadow shows that costs nothing."),
 )}
 
 

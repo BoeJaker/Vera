@@ -8864,6 +8864,16 @@ async def evolve_unittest_run(branch: str = "", paths: str = "tests", markers: s
     tokens, err = _ut_sanitize(paths, markers, extra)
     if err:
         return {"error": err}
+    # 2b. a whole-suite run (paths=tests, no extra flags) goes through the test
+    #     pool when it is on - the host's container and the nodes with room
+    #     (test_runner_capabilities.run_for_unittest); None means run it here.
+    pool = getattr(_orch, "TEST_POOL_UNITTEST", None)
+    if pool is not None and paths.strip().rstrip("/") == "tests" and not extra.strip():
+        pooled = await pool(branch, markers=markers, timeout=max(30, min(1800, int(timeout))),
+                            pipeline_id=pipeline_id)
+        if pooled is not None:
+            return {**pooled, "out": (pooled.get("out") or "")[-8000:],
+                    "shared_execution": False}
     # 3. run the ephemeral test container. `docker` runs on THIS host (the managing
     #    instance) — a sandbox container has no docker socket, prod-native does.
     inner = _ut_inner(tokens)

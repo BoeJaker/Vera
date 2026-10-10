@@ -8,6 +8,8 @@ from vera.models.live_inference_validation import (
     HTTPXOpenAICompatibleTransport,
     LIVE_INFERENCE_REPORT_SCHEMA,
     discover_openai_artifact,
+    ollama_validation_binding,
+    ollama_validation_request,
     require_shared_gate,
     validate_ollama_provider,
     validate_openai_provider,
@@ -29,6 +31,23 @@ class Runner:
             await callback("OK")
         kwargs["meta_out"].update({"eval_count": 2})
         return "VERA_OK"
+
+
+def test_ollama_validation_helpers_expose_exact_portable_identity():
+    runner = Runner()
+    package, provider = ollama_validation_binding(
+        model="qwen3:0.6b", instance_id="cpu-247",
+        artifact_sha256="a" * 64, artifact_size=42, runner=runner)
+    request = ollama_validation_request(
+        package, prompt="bounded", stream=True, content_mode="exact_text")
+
+    assert provider.profile().provider_id == "ollama:cpu-247"
+    assert package.package_id == request.model_package_id
+    assert package.compatibility.tasks == ("generate",)
+    assert request.task == "generate"
+    assert request.input_contract == "prompt/v1"
+    assert request.output_contract == "text/v1"
+    assert request.stream is True
 
 
 @pytest.mark.asyncio

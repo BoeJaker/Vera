@@ -68,6 +68,9 @@ try:
     from Vera.vera.intel import intel_geo_core as geo
     from Vera.vera.intel import intel_calib_core as calib
     from Vera.vera.intel import intel_resolve_core as rsv
+    from Vera.vera.intel import intel_sources_core as srcs
+    from Vera.vera.intel import intel_story_core as story
+    from Vera.vera.intel import intel_activity_core as act
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -78,6 +81,9 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_geo_core as geo
     from vera.intel import intel_calib_core as calib
     from vera.intel import intel_resolve_core as rsv
+    from vera.intel import intel_sources_core as srcs
+    from vera.intel import intel_story_core as story
+    from vera.intel import intel_activity_core as act
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -89,6 +95,7 @@ _TIMELINE_JS = _HERE / "intel_timeline_element.js"
 
 KIND_INTEL = "intel"
 SIGNALS_DATASET = "intel.signals"
+MAX_INDICATORS = 12                      # per topic; intel.indicator.add refuses the thirteenth
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "enabled": True,              # the nightly refresh + morning brief
@@ -402,6 +409,35 @@ async def cap_topic_get(id: str = "", trace_id=None):
             "queries": core.topic_queries(t)}
 
 
+@capability("intel.lookup", http_method="GET", http_path="/intel/lookup", http_tags=["intel"],
+            description="What Vera's own tracking has found on a subject, in one call and sized for a chat answer. "
+                        "WHEN TO USE: 'what's new on X', 'latest on X', 'anything on X' when X may be a topic Vera "
+                        "already follows - it answers in milliseconds from what the nightly sweeps and feeds "
+                        "gathered, with dates. Takes a name or a question (no topic id needed). Not tracked -> "
+                        "tracked:false and the near matches; then use info.seek / web.research, and offer to "
+                        "follow it with intel.topic.save. Input: query (str - a subject or question), topic_id "
+                        "(optional exact id), since (ISO date; default 14 days ago), limit (int, default 8). "
+                        "Output: {tracked, topic, snapshot {headline, ts, age_days}, signals [{title, url, site, "
+                        "published, seen, score, summary}], since, matches}.")
+async def cap_lookup(query: str = "", topic_id: str = "", since: str = "", limit: int = 8, trace_id=None):
+    st = store()
+    topics = st.topics()
+    matches = ([(1.0, st.get_topic(topic_id))] if topic_id and st.get_topic(topic_id)
+               else core.match_topics(query, [t for t in topics if t.get("status") != "deleted"]))
+    near = [{"id": t["id"], "name": t.get("name"), "score": sc} for sc, t in matches[:3]]
+    if not matches:
+        return {"tracked": False, "matches": [], "query": query,
+                "message": "Vera does not track this subject; look it up with info.seek or web.research, and offer "
+                           "to follow it (intel.topic.save name=...)"}
+    t = matches[0][1]
+    lim = max(1, min(20, int(limit or 8)))
+    since = since or (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sigs = st.signals(t["id"], since=since, limit=lim * 3, order="score")
+    out = core.lookup_view(t, st.latest_snapshot(t["id"]), sigs, since=since, limit=lim)
+    out["matches"] = near
+    return out
+
+
 @capability("intel.topic.save", http_method="POST", http_path="/intel/topic/save", http_tags=["intel"],
             schema=enum_schema(depth=list(core.DEPTHS), cadence=list(core.CADENCES), status=list(core.STATUSES),
                                kind=[""] + list(ops.TOPIC_KINDS)),
@@ -442,14 +478,20 @@ async def cap_topic_save(name: str = "", id: str = "", brief: str = None, why: s
 
 
 @capability("intel.topic.delete", http_method="POST", http_path="/intel/topic/delete", http_tags=["intel"],
-            description="Stop tracking a topic. Input: id, purge (also drop its signals and snapshots; "
+            description="Stop tracking a topic. Input: id, purge (also drop its signals, snapshots and their copies "
+                        "in the fabric's signals dataset; "
                         "default false keeps the history). Output: {ok}.")
 async def cap_topic_delete(id: str = "", purge: bool = False, trace_id=None):
     if not id:
         return {"error": "id required"}
+    gone = [s["id"] for s in store().signals(id, limit=100000)] if purge else []
     ok = store().delete_topic(id, purge=purge)
+    removed = 0
+    for sid in gone:                              # and their copies in the fabric's signals dataset
+        r = await _call("fabric.delete_record", record_id=_fabric_signal_id(sid), dataset_id=SIGNALS_DATASET)
+        removed += 0 if r.get("error") else 1
     await _event("topic.deleted", topic=id, purge=purge)
-    return {"ok": ok}
+    return {"ok": ok, **({"fabric_records_removed": removed} if purge else {})}
 
 
 async def _ensure_think_loop(t: Dict[str, Any]) -> None:
@@ -533,6 +575,46 @@ async def cap_timeline_get(topic_id: str = "", days: int = 90, trace_id=None):
             e["url"] = _report_url(e["id"])
     tl["topic_id"] = topic_id
     return tl
+
+
+@capability("intel.activity", http_method="GET", http_path="/intel/activity", http_tags=["intel"],
+            memory="off", silent=True,
+            description="Intel's own events for Vera's activity timeline: assessments, alerts, briefs built and where "
+                        "they went, actions people ran, the last night batch. Input: topic_id (blank = all topics), "
+                        "days (default 14), limit (default 60). Output: {events:[{kind, ts, title, summary, status, "
+                        "ref, source, ui, extra}]}.")
+async def cap_activity(topic_id: str = "", days: int = 14, limit: int = 60, trace_id=None):
+    st = store()
+    since = _since(24 * max(1, int(days)))
+    reps = st.reports(since=since, limit=100)
+    names = {t["id"]: t.get("name", t["id"]) for t in st.topics()}
+    dels = [d for d in st.deliveries(limit=400) if str(d.get("ts") or "") >= since]
+    evs = act.events(snapshots=st.snapshots(topic_id, since=since, limit=200), reports=reps, deliveries=dels,
+                     alerts=[a for a in (st.get_kv("alerts", []) or []) if str(a.get("ts") or "") >= since],
+                     actions=[a for a in st.actions(limit=200) if str(a.get("created") or "") >= since],
+                     night=st.get_kv("last_nightly"), names=names, topic_id=topic_id, limit=limit)
+    return {"events": evs}
+
+
+@capability("intel.stories.get", http_method="GET", http_path="/intel/stories/get", http_tags=["intel"],
+            memory="off", silent=True,
+            description="Stories: the same news carried by several sources, as one item - first seen, how many sources "
+                        "and distinct sites carry it, when the last joined and momentum (sources joined in the last 48 h). "
+                        "Input: topic_id (blank = every active topic), days (default 14), min_sources (default 2), "
+                        "limit (default 30). Output: {stories:[{id, topic_id, title, url, first_seen, sources, sites, "
+                        "last_join, momentum, score, summary}], window_days}.")
+async def cap_stories_get(topic_id: str = "", days: int = 14, min_sources: int = 2, limit: int = 30, trace_id=None):
+    st = store()
+    tids = [topic_id] if topic_id else [t["id"] for t in st.topics("active")]
+    sigs: List[Dict[str, Any]] = []
+    for tid in tids:
+        sigs += st.signals(tid, since=_since(24 * max(1, int(days))), limit=1000)
+    rows = story.stories(sigs, min_sources=min_sources, limit=limit)
+    if not topic_id:
+        names = {t["id"]: t.get("name", t["id"]) for t in st.topics()}
+        for r in rows:
+            r["topic"] = names.get(r["topic_id"], r["topic_id"])
+    return {"stories": rows, "window_days": int(days)}
 
 
 @capability("intel.asof.get", http_method="GET", http_path="/intel/asof/get", http_tags=["intel"],
@@ -623,13 +705,18 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
     held = [(s["id"], s["vec"]) for s in recent if isinstance(s.get("vec"), list) and s.get("vec")][:200]
     emb = await _nlp("nlp.embed", texts=texts)
     vecs = emb.get("embeddings") if isinstance(emb.get("embeddings"), list) else []
-    rr = await _nlp("nlp.rerank", query=ops.profile_text(t), documents=texts, top_k=len(texts))
     rel: Dict[int, float] = {}
-    for x in rr.get("ranked") or []:
-        try:
-            rel[int(x.get("index"))] = ops.squash(x.get("score"))
-        except (TypeError, ValueError):
+    # relevance to the topic itself, or to one of its open questions - whichever is higher
+    for query in (ops.profile_text(t), ops.question_profile(t)):
+        if not query:
             continue
+        rr = await _nlp("nlp.rerank", query=query, documents=texts, top_k=len(texts))
+        for x in rr.get("ranked") or []:
+            try:
+                i, v = int(x.get("index")), ops.squash(x.get("score"))
+            except (TypeError, ValueError):
+                continue
+            rel[i] = max(rel.get(i, v), v)
     out: List[Dict[str, Any]] = []
     batch: Dict[str, Dict[str, Any]] = {}
     genre_budget = 40
@@ -641,11 +728,11 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
                 twin = batch.get(sid)
                 if twin is not None:        # ...a story that arrived earlier in this same sweep
                     if c.get("url") and c["url"] not in twin.setdefault("also", []):
-                        twin["also"] = (twin["also"] + [c["url"]])[-12:]
+                        twin.update(story.add_join(twin, c["url"], core.now_iso()))   # also + when it joined
                 else:
                     old = st.get_signal(sid)
                     if old and c.get("url") and c["url"] not in (old.get("also") or []):
-                        st.put_signal(dict(old, also=((old.get("also") or []) + [c["url"]])[-12:]))
+                        st.put_signal(dict(old, **story.add_join(old, c["url"], core.now_iso())))
                 stats["joined"] = stats.get("joined", 0) + 1
                 continue
             nv = round(1.0 - max(0.0, cos), 3)
@@ -666,6 +753,8 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
             genre_budget -= 1         # only plausible hits are classified: a few dozen ~100 ms node calls per sweep
             if ops.index_hint(c.get("url", ""), c.get("title", "")):
                 g, gp = "index", 0.9         # a headline hub or section front: no node call needed
+            elif ops.report_seller_hint(c.get("title", ""), c.get("snippet", "")):
+                g, gp = "marketing", 0.9     # a page selling a market-research report
             else:
                 g, gp = ops.genre_of(await _nlp("nlp.zeroshot", text=texts[i][:600],
                                                 labels=list(ops.GENRE_LABELS.values()), multi_label=False))
@@ -727,6 +816,10 @@ async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
             if s and s["id"] not in ids and not st.has_signal(s["id"]):
                 ids.add(s["id"])
                 cands.append(s)
+    # what the topic's data-fabric sources (feeds, arXiv, channels, releases, geo feeds) brought in
+    from_sources, src_errors = await _source_candidates(t, ids)
+    cands += from_sources
+    errors += src_errors
     stats: Dict[str, Any] = {}
     new = await _triage(t, cands, stats=stats)
     for s in new:
@@ -738,7 +831,63 @@ async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
     for s in new[:20]:
         await _event("signal.new", topic=t["id"], id=s["id"], title=s["title"], score=s.get("score"))
     return {"topic": t["id"], "queries": queries, "new": len(new), "joined": stats.get("joined", 0),
-            "demoted": stats.get("demoted", 0), "nlp": stats.get("nlp", False), "errors": errors}
+            "demoted": stats.get("demoted", 0), "nlp": stats.get("nlp", False), "errors": errors,
+            "from_sources": len(from_sources)}
+
+
+async def _fabric_sources_by_id() -> Dict[str, Dict[str, Any]]:
+    r = await _call("fabric.sources")
+    return {str(s.get("id")): s for s in (r.get("sources") or []) if isinstance(s, dict)}
+
+
+async def _source_candidates(t: Dict[str, Any], seen_ids: set) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """New items from the fabric sources a topic reads, as signal candidates for the
+    same triage as web results. The fabric pulls on its own schedule; a source that
+    has not been pulled for 1.5 of its intervals is pulled first. Old items (dated
+    more than srcs.MAX_AGE_DAYS ago) and items outside a geo source's box are skipped."""
+    subs = [s for s in (t.get("sources") or []) if s.get("id") and s.get("dataset_id")]
+    if not subs:
+        return [], []
+    st = store()
+    muted = set(t.get("mute_sites") or [])
+    fab = await _fabric_sources_by_id()
+    out: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    cursors: Dict[str, str] = {}
+    for sub in subs:
+        meta = fab.get(sub["id"]) or {}
+        if srcs.stale(str(meta.get("last_pulled") or ""), int(sub.get("interval") or meta.get("interval") or 0)):
+            pr = await _call("fabric.sources.pull", source_id=sub["id"])
+            if pr.get("error"):
+                errors.append(f"{sub.get('label', sub['id'])}: {pr['error']}")
+        r = await _call("fabric.browse", dataset_id=sub["dataset_id"], limit=srcs.PER_SOURCE)
+        if r.get("error"):
+            errors.append(f"{sub.get('label', sub['id'])}: {r['error']}")
+            continue
+        box = srcs.parse_bbox(sub.get("bbox")) if sub.get("bbox") else None
+        # only records the fabric stored since the last sweep read this source: an item triage
+        # joined to another story, or found off-topic, is not offered (and scored) again
+        cursor = str(sub.get("cursor") or "")
+        recs = [rec for rec in r.get("records") or [] if str(rec.get("created_at") or "") > cursor or not cursor]
+        newest = max([str(rec.get("created_at") or "") for rec in recs] + [cursor])
+        if newest and newest != cursor:
+            cursors[sub["id"]] = newest
+        for rec in recs:
+            hit = srcs.record_hit(rec, kind=str(sub.get("kind") or ""), bbox=box)
+            if not hit or not srcs.fresh(hit.get("published", "")):
+                continue
+            s = core.normalise_signal(t["id"], hit, source=f"fabric:{sub['id']}")
+            if not s or s.get("site") in muted or s["id"] in seen_ids or st.has_signal(s["id"]):
+                continue
+            if hit.get("places"):
+                s["places"] = hit["places"]
+            seen_ids.add(s["id"])
+            out.append(s)
+    if cursors:                                  # re-read: an edit made during the sweep is kept
+        cur = st.get_topic(t["id"]) or {}
+        st.patch_topic(t["id"], {"sources": [dict(x, cursor=cursors[x["id"]]) if x.get("id") in cursors else x
+                                             for x in cur.get("sources") or []]})
+    return out, errors
 
 
 async def _dream_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -791,6 +940,10 @@ async def _research_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+def _fabric_signal_id(signal_id: str) -> str:
+    return f"intel-sig-{signal_id}"
+
+
 async def _to_fabric(sigs: List[Dict[str, Any]]) -> None:
     """Signals also live in the fabric (one dataset), so search, the worldview and
     discovery see them; embedding is deferred to the backfill, off the hot path."""
@@ -803,6 +956,8 @@ async def _to_fabric(sigs: List[Dict[str, Any]]) -> None:
         return
     rows = [{k: s.get(k) for k in ("id", "topic_id", "title", "url", "snippet", "summary", "so_what", "kind",
                                    "site", "seen", "score", "tags", "entities", "competitors")} for s in sigs]
+    for row in rows:                             # one fabric record per signal, found again by its id
+        row["_id"] = _fabric_signal_id(row["id"])
     try:
         await ingest(dataset_id=SIGNALS_DATASET, data=rows, source="intel", tags=["intel"],
                      source_id="intel", defer_embedding=True)
@@ -980,8 +1135,8 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
         await _alert(fresh, snap, why)
     if fresh.get("depth") == "deep" and config().get("auto_research") and snap["new_questions"]:
         pend = st.get_kv("research_wanted", []) or []
-        for q in snap["new_questions"][:2]:
-            if not any(p.get("query") == q for p in pend):
+        for q in [ops.question_text(x) for x in snap["new_questions"][:2]]:
+            if q and not any(p.get("query") == q for p in pend):
                 pend.append({"topic_id": t["id"], "query": q, "added": core.now_iso()})
         st.set_kv("research_wanted", pend[-40:])
     return {"topic": t["id"], "snapshot": snap, "alert": why if alert else ""}
@@ -1063,9 +1218,10 @@ async def cap_sweep(topic_id: str = "", depth: str = "", trace_id=None):
 
 @capability("intel.refresh", http_method="POST", http_path="/intel/refresh", http_tags=["intel"],
             description="The full cycle for one topic: sweep, read and tag with the NLP tier, have a model summarise "
-                        "the strongest, update the assessment. Input: topic_id (str!), queue (true = hand it to the "
-                        "idle queue instead of running now). Output: {sweep, enrich, snapshot}.")
-async def cap_refresh(topic_id: str = "", queue: bool = False, trace_id=None):
+                        "the strongest, update the assessment. Input: topic_id (str!), queue (default true = hand it to "
+                        "the idle queue, which runs it when the box is quiet; false runs it now and can take many "
+                        "minutes). Output: {queued} or {sweep, enrich, snapshot}.")
+async def cap_refresh(topic_id: str = "", queue: bool = True, trace_id=None):
     t = store().get_topic(topic_id)
     if not t:
         return {"error": f"unknown topic: {topic_id}"}
@@ -1187,6 +1343,126 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
     return new
 
 
+# ── sources beyond search: a topic subscribes to data-fabric sources ──────────
+
+@capability("intel.source.add", http_method="POST", http_path="/intel/source/add", http_tags=["intel"],
+            schema=enum_schema(kind=list(srcs.KINDS)),
+            description="Have a topic read a source besides web search, through the data fabric's sources system "
+                        "(the fabric pulls it on its schedule; each sweep triages what is new). Input: topic_id (str!), "
+                        "kind (feed|arxiv|youtube|github_releases|usgs|api), value (str! - a site/page/feed URL; an "
+                        "arXiv category like cs.AI; a YouTube channel URL, id or @handle; owner/repo; a USGS magnitude "
+                        "significant|4.5|2.5|1.0|all; a JSON API URL), label, interval_h (hours between pulls), "
+                        "bbox (min_lon,min_lat,max_lon,max_lat - only items inside, for geo sources), mapping (JSON "
+                        "field mapping for kind=api: item_path, title_field, url_field, time_field, text_fields, "
+                        "geo_field). Output: {ok, source, pulled}.")
+async def cap_source_add(topic_id: str = "", kind: str = "feed", value: str = "", label: str = "",
+                         interval_h: float = 0, bbox: str = "", mapping: Any = None, trace_id=None):
+    st = store()
+    t = st.get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    box = None
+    if bbox:
+        box = srcs.parse_bbox(bbox)
+        if not box:
+            return {"error": "bbox must be min_lon,min_lat,max_lon,max_lat"}
+    plan = srcs.plan_source(kind, value, label=label, interval_h=interval_h)
+    if plan.get("error"):
+        return plan
+    if plan.get("discover"):
+        d = await _call("fabric.sources.discover_feed", url=plan.pop("discover"),
+                        kind="youtube" if kind == "youtube" else "")
+        feeds = d.get("feeds") or []
+        if not feeds:
+            return {"error": d.get("error") or d.get("note") or "no feed found there", "kind": kind, "value": value}
+        plan.update(url=feeds[0]["url"], source_type="rss")
+        name = srcs.srcmap.feed_label(feeds[0].get("title", ""), str(d.get("site") or ""))
+        if name and not label:                      # the site's name, not a feed link's "Atom"
+            plan["label"] = f"{srcs.KINDS[kind]['label']}: {name}"[:80]
+    if kind == "api" and mapping:
+        try:
+            plan["config"] = mapping if isinstance(mapping, dict) else json.loads(str(mapping))
+        except ValueError:
+            return {"error": "mapping must be a JSON object"}
+        if not isinstance(plan["config"], dict):
+            return {"error": "mapping must be a JSON object"}
+    args = {k: plan[k] for k in ("id", "url", "source_type", "label", "dataset_id", "interval", "tags")}
+    if plan.get("config"):
+        args["config"] = json.dumps(plan["config"])
+    r = await _call("fabric.sources.add", **args)
+    if r.get("error"):
+        return {"error": f"fabric: {r['error']}"}
+    plan["dataset_id"] = r.get("dataset_id") or plan["dataset_id"]
+    sub = srcs.subscription(plan, kind, value, bbox=box, now_iso=core.now_iso())
+    subs = [s for s in (t.get("sources") or []) if s.get("id") != sub["id"]] + [sub]
+    st.patch_topic(t["id"], {"sources": subs})
+    pulled = await _call("fabric.sources.pull", source_id=sub["id"])
+    await _event("source.added", topic=t["id"], source=sub["id"], kind=kind, label=sub["label"])
+    out = {"ok": True, "source": sub, "pulled": int(pulled.get("ingested") or 0)}
+    if pulled.get("error"):
+        out["pull_error"] = pulled["error"]
+    return out
+
+
+@capability("intel.source.list", http_method="GET", http_path="/intel/source/list", http_tags=["intel"],
+            memory="off", silent=True,
+            description="The sources a topic reads besides web search, with the fabric's pull state, and the kinds "
+                        "that can be added. Input: topic_id (str!). Output: {topic_id, sources:[{id, kind, value, "
+                        "label, url, dataset_id, interval, bbox?, last_pulled, pulls, missing}], kinds:[...]}.")
+async def cap_source_list(topic_id: str = "", trace_id=None):
+    t = store().get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    fab = await _fabric_sources_by_id()
+    rows = []
+    for s in t.get("sources") or []:
+        meta = fab.get(s.get("id")) or {}
+        rows.append(dict(s, last_pulled=str(meta.get("last_pulled") or ""),
+                         pulls=int(meta.get("pull_count") or 0), missing=not meta))
+    return {"topic_id": t["id"], "sources": rows,
+            "kinds": [{"kind": k, "label": v["label"], "value": v["value"], "mapping": bool(v.get("mapping")),
+                       "geo": bool(v.get("geo"))} for k, v in srcs.KINDS.items()]}
+
+
+@capability("intel.source.remove", http_method="POST", http_path="/intel/source/remove", http_tags=["intel"],
+            description="Stop a topic reading a source. The fabric source itself is removed only when intel made it "
+                        "and no other topic reads it; its records stay. Input: topic_id (str!), source_id (str!). "
+                        "Output: {ok, removed_from_fabric, still_read_by}.")
+async def cap_source_remove(topic_id: str = "", source_id: str = "", trace_id=None):
+    st = store()
+    t = st.get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    subs = t.get("sources") or []
+    if not any(s.get("id") == source_id for s in subs):
+        return {"error": f"{topic_id} does not read {source_id}"}
+    st.patch_topic(t["id"], {"sources": [s for s in subs if s.get("id") != source_id]})
+    others = srcs.users_of(st.topics(), source_id, except_topic=t["id"])
+    removed = False
+    if not others and source_id.startswith("intel-src-"):
+        r = await _call("fabric.sources.delete", source_id=source_id)
+        removed = not r.get("error")
+    await _event("source.removed", topic=t["id"], source=source_id)
+    return {"ok": True, "removed_from_fabric": removed, "still_read_by": others}
+
+
+@capability("intel.source.pull", http_method="POST", http_path="/intel/source/pull", http_tags=["intel"],
+            description="Ask the fabric to pull a topic's sources now (the next sweep triages what came in). "
+                        "Input: topic_id (str!). Output: {ok, pulled:[{id, label, ingested, error?}]}.")
+async def cap_source_pull(topic_id: str = "", trace_id=None):
+    t = store().get_topic(topic_id)
+    if not t:
+        return {"error": f"unknown topic: {topic_id}"}
+    out = []
+    for s in t.get("sources") or []:
+        r = await _call("fabric.sources.pull", source_id=s["id"])
+        row = {"id": s["id"], "label": s.get("label", ""), "ingested": int(r.get("ingested") or 0)}
+        if r.get("error"):
+            row["error"] = r["error"]
+        out.append(row)
+    return {"ok": True, "pulled": out}
+
+
 @capability("intel.indicator.add", http_method="POST", http_path="/intel/indicator/add", http_tags=["intel"],
             description="Have a topic watch a number: a price (stock, crypto, FX, index - looked up and tracked "
                         "daily by the markets subsystem), a macro series, or any stored bar dataset. Its changes "
@@ -1268,7 +1544,11 @@ async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str 
     if market:
         ind["market"] = market
     inds = [i for i in inds if i["id"] != ind_id] + [ind]
-    _save_indicators(topic_id, inds[:12])
+    if len(inds) > MAX_INDICATORS:
+        # refuse rather than keep the first twelve: the new one would be cut off while the reply said it was added
+        return {"error": f"{t['name']} already watches {MAX_INDICATORS} indicators; remove one first "
+                         "(intel.indicator.remove)"}
+    _save_indicators(topic_id, inds)
     await _event("indicator.added", topic=topic_id, indicator=ind_id, label=ind["label"])
     return {"ok": True, "indicator": ind,
             "message": f"{t['name']} now watches {ind['label']} ({ds}); a new price fills in over the next minutes"}
@@ -1801,7 +2081,8 @@ async def cap_indicator_check(topic_id: str = "", trace_id=None):
 # ── reports ──────────────────────────────────────────────────────────────────
 
 async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: str = "",
-                       only_new: bool = True, synthesize: bool = False, note: str = "") -> Dict[str, Any]:
+                       only_new: bool = True, synthesize: bool = False, note: str = "",
+                       mark: Optional[bool] = None) -> Dict[str, Any]:
     """Build (and store) a report from what is gathered. `synthesize` lets the MoE
     write the cross-topic top line and follow-ups - only ever from background work
     (the nightly batch), never at delivery time."""
@@ -1874,7 +2155,7 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
             st.put_action(dict(a, report_id=doc["id"]), report_id=doc["id"])
     html = core.render_html(doc, base_url="")
     st.put_report(doc, html)
-    if only_new:                      # a look-back report must not eat the next brief
+    if only_new if mark is None else (mark and only_new):   # a look-back or ad-hoc report must not eat the brief
         st.mark_reported(s["id"] for d in per.values() for s in d["signals"])
     if only_new and (doc["sections"] or notes):
         sent = [d["snapshot"]["id"] for d in per.values() if d.get("snapshot")]
@@ -1896,12 +2177,14 @@ def _has_content(doc: Dict[str, Any]) -> bool:
             description="Build an intelligence report now from what is already gathered (no new collection). "
                         "Input: topic_ids (list/csv, blank = all active), period_hours (default 24), title, "
                         "include_reported (re-use signals already in an earlier report), deliver (channels to send "
-                        "it to, e.g. telegram,chat), target (session id / email for channels that need one). "
+                        "it to, e.g. telegram,chat), target (session id / email for channels that need one), "
+                        "mark_reported (default false: an ad-hoc report leaves its signals for the next brief). "
                         "Output: {id, url, title, counts, delivered}.")
 async def cap_report_build(topic_ids: Any = None, period_hours: int = 24, title: str = "",
-                           include_reported: bool = False, deliver: Any = None, target: str = "", trace_id=None):
+                           include_reported: bool = False, deliver: Any = None, target: str = "",
+                           mark_reported: bool = False, trace_id=None):
     doc = await build_report(_list_arg(topic_ids), period_hours=int(period_hours or 24), title=title,
-                             only_new=not include_reported)
+                             only_new=not include_reported, mark=bool(mark_reported))
     out = {"id": doc["id"], "url": _report_url(doc["id"]), "title": doc["title"], "counts": doc["counts"],
            "empty": not _has_content(doc)}
     chans = _list_arg(deliver)
@@ -2253,9 +2536,11 @@ async def _send_audio(rid: str) -> bool:
 @capability("intel.deliver", http_method="POST", http_path="/intel/deliver", http_tags=["intel"],
             description="Send a built report to channels. Input: report_id (str!), channels (list/csv: html, "
                         "telegram, chat, email, canvas, notebook, memory, fabric, podcast, print), target "
-                        "(session id for chat/canvas, address for email). Output: {results:[{channel, ok, error}]}.")
+                        "(session id for chat/canvas, address for email); none given = html only (the morning brief uses the "
+                        "configured brief channels itself, so a bare call never prints or sends a podcast). "
+                        "Output: {results:[{channel, ok, error}]}.")
 async def cap_deliver(report_id: str = "", channels: Any = None, target: str = "", trace_id=None):
-    chans = _list_arg(channels) or list(config().get("brief_channels") or ["html"])
+    chans = _list_arg(channels) or ["html"]
     return await deliver_report(report_id, chans, target=target)
 
 

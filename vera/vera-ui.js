@@ -735,6 +735,8 @@
   // The appearance first (its attributes decide which layout vars the theme
   // may set inline), then the theme.
   (function applyCachedAppearance(){ _paintAppearance(_readAppearance()); })();
+  var _standalone = (function(){ try{ return window.self === window.top; }catch(e){ return false; } })();
+  try{ document.documentElement.setAttribute('data-vera-frame', _standalone ? 'standalone' : 'framed'); }catch(e){}
   (function applyCachedTheme(){
     var c = _readCache();
     if(c && c.theme){
@@ -980,6 +982,29 @@
     row.appendChild(lbl); row.appendChild(minus); row.appendChild(val);
     row.appendChild(plus); row.appendChild(reset);
     return row;
+  }
+
+  // ── 6b. The Vera wordmark, standalone only ──
+  // owner, 2026-10-10: "remove the vera from the top left of the live operations ui - its doubled up with the harness
+  // vera title - perhaps the vera could only display if the ui is standalone - this could be added to the universal lhm
+  // and top bar system so vera is added to the titlebar if in standalone". A page opts out with window.__veraNoWordmark
+  // or by carrying its own .vera-wm.
+  function injectWordmark(){
+    if(!_standalone || window.__veraNoWordmark || document.querySelector('.vera-wm')) return;
+    if(document.getElementById('themeBtn')) return;   // the main shell: its own title is Vera's
+    var h = document.querySelector('#side-head h1') || document.querySelector('header h1, .topbar h1, #topbar h1, .hd h1') || document.querySelector('h1');
+    if(h && h.parentNode){
+      if(!document.getElementById('veraWmStyle')){
+        var st = document.createElement('style'); st.id = 'veraWmStyle';
+        st.textContent = '.vera-wm{font-family:var(--f-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;font-weight:700;letter-spacing:3.4px;'
+          + 'color:var(--ac,var(--acc,#5a9e8f));align-self:center;flex:none;white-space:nowrap;margin-right:10px}'
+          + '#side-head .vera-wm{display:block;margin:0 0 3px;font-size:10px}';
+        (document.head || document.documentElement).appendChild(st);
+      }
+      var wm = document.createElement('span'); wm.className = 'vera-wm'; wm.textContent = 'VERA'; wm.setAttribute('aria-hidden', 'true');
+      h.parentNode.insertBefore(wm, h);
+    }
+    try{ if(document.title && !/^vera\b/i.test(document.title)) document.title = 'Vera · ' + document.title; }catch(e){}
   }
 
   // ── 7. Standalone floating theme picker ─────────────────────────────────────
@@ -1287,6 +1312,7 @@
     fetchAndApply();
     fetchAndApplyScale();
     injectFloatingPicker();
+    injectWordmark();
   }
 
   // Seed the UI scale from the server ONLY when this browser has no explicit

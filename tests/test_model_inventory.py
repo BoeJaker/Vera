@@ -2,7 +2,20 @@ from pathlib import Path
 
 import pytest
 
-from vera.models.model_inventory import project_model_inventory
+from vera.models.inference_deployment import (
+    SQLiteInferenceDeploymentRegistry,
+    define_inference_deployment,
+)
+from vera.models.inference_health import InferenceProviderHealth
+from vera.models.model_inventory import (
+    project_model_inventory,
+    project_persisted_inference_providers,
+)
+from vera.models.admission import (
+    ModelDeploymentTarget,
+    ModelTrustPolicy,
+    evaluate_model_admission,
+)
 from vera.models.model_package import ModelArtifact, ModelCompatibility, ModelPackage
 from vera.models.model_package_store import SQLiteModelPackageRegistry
 
@@ -155,3 +168,49 @@ def test_inventory_capability_loads_after_nlp_discovery():
     nlp = source.index('"research/nlp_capabilities.py"')
     inventory = source.index('"models/model_inventory_capabilities.py"')
     assert dispatch < nlp < inventory
+
+
+def test_provider_inventory_is_derived_from_persisted_deployment_health(tmp_path):
+    package = _package()
+    admission = evaluate_model_admission(
+        package, ModelTrustPolicy("inventory"), ModelDeploymentTarget(
+            "cpu-a", "ner", "vera.nlp.text/v1", "vera.nlp.ner/v1",
+            1_000_000, accelerators=("cpu",),
+            frameworks=("onnxruntime",)))
+    deployment = define_inference_deployment(
+        package, admission, provider_id="onnx:cpu-a",
+        runtime_kind="onnxruntime", runtime_version="1",
+        placements=("cpu", "local"), retry_owner="nlp-router")
+    store = SQLiteInferenceDeploymentRegistry(tmp_path / "deployments.sqlite")
+    store.register(deployment)
+    health = InferenceProviderHealth(
+        "onnx:cpu-a", "ready", 100, 1_000, "runtime-probe",
+        (package.package_id,), concurrency_limit=2, revision=3)
+    observation = store.observe(
+        deployment.deployment_id, expected_revision=0,
+        desired_state="active", health=health)
+
+    providers = project_persisted_inference_providers(
+        store.list(), (observation,))
+    assert len(providers) == 1
+    assert providers[0]["provider_id"] == "onnx:cpu-a"
+    assert providers[0]["package_ids"] == [package.package_id]
+    assert providers[0]["placements"] == ["cpu", "local"]
+    assert providers[0]["health"] == health.to_dict()
+
+    inventory = project_model_inventory(
+        packages=(package,), deployments=store.list(),
+        observations=(observation,), providers=providers)
+    assert inventory["counts"]["providers"] == 1
+    assert inventory["packages"][0]["providers"][0]["state"] == "ready"
+
+
+def test_provider_inventory_rejects_orphaned_health_evidence():
+    with pytest.raises(ValueError, match="no deployment"):
+        project_persisted_inference_providers((), ({
+            "deployment_id": "missing",
+            "health": {
+                "provider_id": "onnx:cpu-a", "observed_at_ms": 1,
+                "revision": 1, "evidence_id": "evidence",
+            },
+        },))

@@ -18,7 +18,7 @@ t('each is read in ONE place, and defaults to today\'s behaviour',
   /explodeOffer\(\) \{ const v = String\(this\.getAttribute\('explode-offer'\) \|\| 'both'\)/.test(SRC));
 t('a changed setting is acted on: preview, the offer and fusing redraw, alignment re-places',
   /\(name === 'preview' \|\| name === 'explode-offer' \|\| name === 'fuse'\) && this\._doc\) this\.render/.test(SRC) &&
-  /name === 'align' && this\.hasAttribute\('stage'\)\) \{ this\._view = null; this\._placeNow\(\); \}/.test(SRC));
+  /name === 'align' && this\.hasAttribute\('stage'\)\) \{ this\._view = null; this\._html = null; if \(this\._doc\) this\.render\(this\._doc\); else this\._placeNow\(\); \}/.test(SRC));
 t('the page offers them in Settings, each with its own persisted value',
   /id="cfgCvAlign"[\s\S]*?value="held"[\s\S]*?value="strict"/.test(CHAT) &&
   /id="cfgCvPreview"[\s\S]*?value="on"[\s\S]*?value="off"/.test(CHAT) &&

@@ -267,6 +267,9 @@ assert m2.train_steps["gnn"] == 2 and m2.train_steps["codebook"] == 2, m2.train_
 assert len(m2.record_concepts) == N
 stages = [e["stage"] for e in events]
 assert "gnn_epoch" in stages and "codebook_epoch" in stages and "dynamics_epoch" in stages, stages
+# FM-8.2: the held-out evaluation ran on the node and travels back in the checkpoint
+assert "dynamics_held_out" in stages, stages
+assert m2.held_out.get("test_walks", 0) > 0 and "beats_baseline" in m2.held_out, m2.held_out
 assert any(e.get("_hist") for e in events)
 print("ok", out["walks"])
 '''

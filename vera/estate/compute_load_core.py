@@ -261,6 +261,7 @@ def build(src: Mapping[str, Any], now: Optional[datetime] = None) -> Dict[str, A
         nodes.append({
             "id": iid, "label": str(q.get("label") or iid), "url": str(q.get("url") or ""), "ip": ip,
             "has_gpu": bool(q.get("has_gpu")), "status": str(q.get("status") or ""),
+            "backend": str(q.get("backend") or "ollama"),       # "vllm": switched, served by its vLLM server
             "machine": machine, "host": host,
             "cores": cores, "summary": summary(cores), "cores_at": probe["at"],
             "pinning": pinning, "sharers": sharers,

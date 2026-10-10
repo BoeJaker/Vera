@@ -76,6 +76,16 @@ from .native_tensor_runtime import (
 from .inference_dispatch import (
     InferenceDispatchPlan, InferenceDispatchPolicy,
     inference_dispatch_plan_from_dict, plan_inference_dispatch)
+from .inference_alias_route import (
+    InferenceAliasRoute, SQLiteInferenceAliasRouteRegistry,
+    define_inference_alias_route, inference_alias_route_from_dict)
+from .inference_alias_runtime import (
+    execute_inference_alias_dispatch, resolve_inference_alias_dispatch)
+from .inference_alias_readiness import (
+    InferenceAliasParityEvidence, InferenceAliasReadiness,
+    REQUIRED_ALIAS_PARITY_SCENARIOS, SQLiteInferenceAliasParityStore,
+    evaluate_inference_alias_readiness,
+    inference_alias_parity_evidence_from_dict)
 
 __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActivationReceipt",
            "ModelAdmissionReceipt", "ModelDeploymentTarget",
@@ -109,6 +119,14 @@ __all__ = ["AdmittedModelActivation", "LegacyModelCapabilityBinding", "ModelActi
            "load_tensorflow_provider", "verify_native_artifact",
            "InferenceDispatchPlan", "InferenceDispatchPolicy",
            "inference_dispatch_plan_from_dict", "plan_inference_dispatch",
+           "InferenceAliasRoute", "SQLiteInferenceAliasRouteRegistry",
+           "define_inference_alias_route", "inference_alias_route_from_dict",
+           "resolve_inference_alias_dispatch",
+           "execute_inference_alias_dispatch",
+           "InferenceAliasParityEvidence", "InferenceAliasReadiness",
+           "REQUIRED_ALIAS_PARITY_SCENARIOS", "SQLiteInferenceAliasParityStore",
+           "evaluate_inference_alias_readiness",
+           "inference_alias_parity_evidence_from_dict",
            "OpenAICompatibleInferenceProvider", "OpenAICompatibleTransport",
            "PromptMessage", "PromptPackage", "ProviderProfile", "TrainingRequest",
            "TrainingRun", "TrainingRuntime",

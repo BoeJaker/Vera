@@ -85,7 +85,10 @@
     }
     async load(auto) {
       const sec = this.section;
-      if (sec === 'warm') this._warm = await this._get('/ollama/warm/status');
+      if (sec === 'warm') {
+        const [w, bo] = await Promise.all([this._get('/ollama/warm/status'), this._get('/nodes/backend/overview')]);
+        this._warm = w; this._onVllm = ((bo && bo.nodes) || []).filter((n) => n.backend === 'vllm');
+      }
       else if (sec === 'nlp') {
         const [n, c, l] = await Promise.all([this._get('/nlp/nodes'), this._get('/nlp/config'), this._get('/fabric/nlp/config')]);
         this._nlp = n; this._ncfg = c; this._llmnlp = l;
@@ -142,8 +145,11 @@
     }
 
     _nodesHtml(w) {
-      const nodes = w.nodes || [];
-      if (!nodes.length) return '<div class="muted">no nodes</div>';
+      /* nodes serving vLLM: their Ollama is stopped, so the warm plan leaves them out */
+      const vl = (this._onVllm || []).map((n) => esc(n.instance) + (n.served_by ? ' (' + esc(n.served_by) + ')' : '')).join(', ');
+      const vnote = vl ? '<div class="muted" style="margin:2px 0 6px"><span class="badge ok">vLLM</span> ' + vl + ' - on vLLM now; warm slots belong to Ollama, so the plan leaves ' + ((this._onVllm || []).length > 1 ? 'them' : 'it') + ' out.</div>' : '';
+      const nodes = (w.nodes || []).filter((n) => !(this._onVllm || []).some((v) => v.instance === n.node));
+      if (!nodes.length) return vnote + '<div class="muted">no nodes</div>';
       const cards = nodes.map((n) => {
         const res = n.resident || [];
         const isRes = (m) => res.find((r) => String(r.model).replace(/:latest$/, '') === String(m).replace(/:latest$/, ''));
@@ -172,7 +178,7 @@
       }).join('');
       const acts = (w.actions || []).length ? '<div class="muted">next: ' + w.actions.map((a) => esc(a.action + ' ' + a.model + ' on ' + a.node)).join(' &middot; ') + '</div>' : '';
       const last = ((w.last || {}).results || []).length ? '<div class="muted">last: ' + w.last.results.map((r) => '<span class="' + (r.ok ? 'ok' : 'bad') + '">' + esc(r.action + ' ' + r.model + ' on ' + r.node + ' ' + (r.ok ? r.s + 's' : (r.error || 'failed'))) + '</span>').join(' &middot; ') + '</div>' : '';
-      return '<div class="sec">Warm slots</div><div class="grid">' + cards + '</div>' + acts + last;
+      return '<div class="sec">Warm slots</div>' + vnote + '<div class="grid">' + cards + '</div>' + acts + last;
     }
 
     _scenariosHtml(w) {
@@ -224,8 +230,17 @@
         h += '<div class="card" style="margin-top:6px"><div class="row"><span class="name">' + esc(n.instance) + '</span>'
           + '<span class="badge ' + (cpu ? 'cpu">CPU' : 'gpu">GPU') + '</span><span class="muted mono">' + esc(n.unit || '') + '</span>'
           + (bad.length ? '<span class="badge bad" title="runners started without -t run llama.cpp\'s default - 24 threads on 12 CPUs">' + bad.length + ' runner(s) on the 24-thread default</span>' : '')
+          + (n.switched ? '<span class="badge ok" title="Switched to vLLM - see LLM backend above">serving vLLM</span>' : '')
           + (n.error ? '<span class="bad">' + esc(n.error) + '</span>' : '') + '</div>';
         if (n.error) { h += '</div>'; continue; }
+        if (n.switched) {
+          /* its Ollama unit is stopped on purpose: applying a setting would restart
+             it beside the vLLM server, so these are read-only until it switches back */
+          h += '<div class="muted">This node serves vLLM now (LLM backend, above). Its Ollama settings below are kept and apply again when it switches back to Ollama.</div>'
+            + (cpu ? '<div class="muted">num_thread: <b>' + esc(n.num_thread) + '</b></div>' : '')
+            + '<div class="muted">custom flags: ' + (Object.entries(n.custom || {}).map(([k, v]) => '<span class="mono">' + esc(k) + '=' + esc(v) + '</span>').join(' &middot; ') || 'none') + '</div></div>';
+          continue;
+        }
         if (cpu) {
           h += '<div class="row"><label title="sent with every routed call, and written as the unit\'s runner default so every caller gets it">num_thread '
             + '<input id="nt-' + esc(n.instance) + '" type="number" min="1" max="64" style="width:56px" value="' + esc(n.num_thread) + '"></label>'

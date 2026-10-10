@@ -2,13 +2,14 @@
 """Targeted loop probes (user 2026-10-01: tests, not a census, to rank the action items).
 Set A: plan-only - start a v7 loop, cancel as soon as it has planned; keep its events.
 Set B: short full loops with exact, checkable content requirements.
-One loop at a time; nothing starts after 23:15 Europe/London. Out: /tmp/probe/."""
+One loop at a time; nothing starts after 23:15 Europe/London. Out: ~/loop-census/probe/
+(CENSUS_PROBE_OUT) - never /tmp: the 8 Oct 2026 host reboot wiped two nights of results."""
 import datetime, glob, json, os, subprocess, time
 from zoneinfo import ZoneInfo
 
 BASE = os.environ.get("CENSUS_BASE", "").strip().rstrip("/") or "https://127.0.0.1:8999"
 LON = ZoneInfo("Europe/London")
-OUT = "/tmp/probe"
+OUT = os.environ.get("CENSUS_PROBE_OUT", "").strip() or os.path.expanduser("~/loop-census/probe")
 os.makedirs(OUT + "/ev", exist_ok=True)
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))

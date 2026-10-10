@@ -49,9 +49,41 @@ def test_switch_many_is_one_after_another_in_the_background():
     assert "await _switch_config_save(instance_id, {" in nc
 
 
-def test_the_models_page_has_the_buttons():
-    ui = _src("vera/workers/workers_ollama_panel.html")
+def test_one_backend_control_on_every_page_that_lists_nodes():
+    el = _src("vera/workers/backend_switch_element.js")
     for label in ("All → vLLM", "All → Ollama", "Ticked → vLLM", "Ticked → Ollama"):
-        assert label in ui
-    assert "P.olSwitchOne(${sq(id)}" in ui
-    assert "'/nodes/backend/switch_many'" in ui and "dry_run:true" in ui and "confirm(" in ui
+        assert label in el
+    assert "customElements.define('vera-backend-switch'" in el
+    assert "'/nodes/backend/switch_many'" in el and "dry_run: true" in el and "confirm(" in el
+    assert "'/nodes/backend/embeddings'" in el and "'/nodes/backend/config/set'" in el
+    assert "prompt(" not in el
+    # Node settings and the vLLM page's Nodes tab mount it
+    assert "<vera-backend-switch></vera-backend-switch>" in _src("vera/workers/warm_models_capabilities.py")
+    vl = _src("vera/vllm/vllm_panel.html")
+    assert '<vera-backend-switch id="vllm-backend">' in vl and 'data-tab="nodes"' in vl
+    assert "backendSwitch([" in vl and '/ui/elements/backend_switch.js' in vl
+    # NOT the Ollama page's node cards: that widget shows the nodes, it is not
+    # the place for the backend controls (owner, 10 Oct 2026)
+    ol = _src("vera/workers/workers_ollama_panel.html")
+    for gone in ("vera-backend-switch", "olSwitchOne", "_olSel", "backend_switch.js"):
+        assert gone not in ol
+
+
+def test_all_moves_embeddings_too():
+    nc = _src("vera/workers/nodes_capabilities.py")
+    many = nc[nc.index("async def cap_nodes_backend_switch_many("):]
+    many = many[:many.index("@capability(")]
+    assert "with_embed = not instance_ids" in many
+    assert "cap_nodes_backend_embeddings(backend=backend, dry_run=False)" in many
+    emb = nc[nc.index("async def cap_nodes_backend_embeddings("):]
+    emb = emb[:emb.index("@capability(")]
+    # to Ollama: unpin first, then stop; to vLLM: start, then pin
+    assert emb.index('await _set_embedding_pin("")') < emb.index("disable --now vera-vllm_embed")
+    assert emb.index("enable --now vera-vllm_embed") < emb.index('await _set_embedding_pin("vllm:*")')
+    assert "stop the idle vLLM embedding server" in emb
+
+
+def test_ollama_settings_wait_while_a_node_serves_vllm():
+    nc = _src("vera/workers/nodes_capabilities.py")
+    assert "serves vLLM now; its Ollama settings" in nc
+    assert '"switched": iid in _switched_now()' in nc

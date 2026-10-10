@@ -249,7 +249,9 @@ class IntelStore:
 
     def finish_action(self, token: str, status: str, result: Dict[str, Any]) -> None:
         a = self.get_action(token) or {"token": token}
-        a.update({"status": status, "result": result})
+        from datetime import datetime, timezone
+        a.update({"status": status, "result": result,
+                  "finished": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
         with self._lock, self._conn() as c:
             c.execute("UPDATE actions SET status=?, rec=? WHERE token=?", (status, json.dumps(a), token))
 

@@ -13,13 +13,15 @@ to one node for its log.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import socket
 import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi.responses import HTMLResponse
+from fastapi import Request
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability
@@ -39,8 +41,14 @@ READERS: Dict[str, float] = {
     "evolve.errors.list": 8.0, "bench.node_perf.history": 6.0, "estate.registration": 12.0,
     "activity.sessions": 6.0, "ide.remote.instances": 6.0, "vfs.peer.list": 8.0,
 }
+# a reader's arguments, when its defaults are not what the page needs: the event ring's last 500 (a few minutes of a
+# busy estate - the default 100 is under a minute) give each node its calls by the minute
+READER_ARGS: Dict[str, Dict[str, Any]] = {"obs.events": {"limit": 500}}
 CACHE_S = 5.0
-_cache: Dict[str, Any] = {"at": 0.0, "out": None, "inflight": None}
+DEGRADED_SHARE = 0.34       # a gather where a third of the readers failed is degraded: it does not replace a good one
+DEGRADED_KEEP_S = 120.0     # ... unless the good one is older than this, when the estate as it is now beats the past
+GATHER_MAX_S = 45.0         # a gather still running after this is abandoned, and the next poll starts another
+_cache: Dict[str, Any] = {"at": 0.0, "out": None, "inflight": None, "started": 0.0}
 
 
 _timing: Dict[str, int] = {}
@@ -117,9 +125,11 @@ def _connections() -> Dict[str, Any]:
 
 async def _gather() -> Dict[str, Any]:
     names = list(READERS)
-    answers = await asyncio.gather(*(_read(n, READERS[n]) for n in names))
+    answers = await asyncio.gather(*(_read(n, READERS[n], **READER_ARGS.get(n, {})) for n in names))
     src = dict(zip(names, answers))
     t0 = time.monotonic()
+    if isinstance(src.get("obs.workers"), dict) and not src["obs.workers"].get("error"):
+        _live["workers"] = src["obs.workers"]          # which machine each worker runs on, for the live stream's attribution
     src["ops.connections"] = await asyncio.to_thread(_connections)
     _timing["ops.connections"] = int((time.monotonic() - t0) * 1000)
     names.append("ops.connections")
@@ -130,16 +140,27 @@ async def _gather() -> Dict[str, Any]:
 
 
 def _start_gather() -> "asyncio.Future":
-    if _cache["inflight"] is None:
+    fut = _cache["inflight"]
+    if fut is not None and time.monotonic() - _cache["started"] > GATHER_MAX_S:
+        fut.cancel()            # stuck: let the next one start
+        _cache["inflight"] = fut = None
+    if fut is None:
         fut = asyncio.ensure_future(_gather())
         def _done(f: "asyncio.Future") -> None:
-            _cache["inflight"] = None
-            if not f.cancelled() and f.exception() is None:
-                _cache["out"] = f.result()
+            if _cache["inflight"] is f:
+                _cache["inflight"] = None
+            if f.cancelled() or f.exception() is not None:
+                return
+            out = f.result()
+            if core.keep_snapshot(out, _cache["out"], time.monotonic() - _cache["at"], DEGRADED_SHARE, DEGRADED_KEEP_S):
+                _cache["out"] = out
                 _cache["at"] = time.monotonic()
+            else:
+                _cache["out"] = dict(_cache["out"], held_over=f"the last gather lost {round(core.failed_share(out) * 100)}% of its readers; this is the one before")
         fut.add_done_callback(_done)
         _cache["inflight"] = fut
-    return _cache["inflight"]
+        _cache["started"] = time.monotonic()
+    return fut
 
 
 @capability(
@@ -179,23 +200,119 @@ async def ops_snapshot(refresh: bool = False, trace_id=None) -> Dict[str, Any]:
                 "limit (default 60). Output: {node, events:[{ts, type, name, group, trace, text}]}.",
 )
 async def ops_node_events(node: str = "", limit: int = 60, trace_id=None) -> Dict[str, Any]:
-    ev = await _read("obs.events", 6.0)
+    ev = await _read("obs.events", 6.0, limit=500)
     if not isinstance(ev, list):
         return {"node": node, "events": [], "error": (ev or {}).get("error") if isinstance(ev, dict) else "no events"}
     key = str(node or "").lower()
     keys = {key, key.split(":", 1)[-1], core._norm(key)} - {""}
+    rows = [e for e in ev if isinstance(e, dict)]
+    # the events attributed to the node the way the map counts them (its calls, its jobs, its writes); a page with no
+    # snapshot yet falls back to the node's name in the event's text
+    snap, hits = _cache["out"], None
+    if snap and key:
+        nid = next((str(n["id"]) for n in snap.get("nodes") or [] if str(n.get("id", "")).lower() == key or str(n.get("label", "")).lower() == key), "")
+        if nid:
+            parts = core.attribute(rows, core.context_from_snapshot(snap, _live.get("workers")))
+            hits = [nid in [h[0] for h in r["hits"]] for r in parts]
     out = []
-    for e in ev:
-        if not isinstance(e, dict):
-            continue
-        hay = " ".join(str(e.get(k) or "") for k in ("name", "group", "node_id", "instance", "instance_id", "model", "args_preview", "host", "detail")).lower()
-        if key and not any(k in hay for k in keys):
-            continue
-        out.append({"ts": str(e.get("ts") or "")[11:19], "type": str(e.get("type") or ""), "name": str(e.get("name") or e.get("node_id") or e.get("model") or ""),
-                    "group": str(e.get("group") or ""), "trace": str(e.get("trace_id") or "")[:8], "text": str(e.get("args_preview") or e.get("detail") or e.get("error") or "")[:120]})
+    for i, e in enumerate(rows):
+        if hits is not None:
+            if not hits[i]:
+                continue
+        elif key:
+            hay = " ".join(str(e.get(k) or "") for k in ("name", "group", "node_id", "instance", "instance_id", "model", "args_preview", "host", "detail")).lower()
+            if not any(k in hay for k in keys):
+                continue
+        out.append({"ts": str(e.get("ts") or "")[11:19], "type": str(e.get("type") or ""), "name": str(e.get("name") or e.get("node_id") or e.get("model") or e.get("capability") or e.get("tool") or ""),
+                    "group": str(e.get("group") or ""), "trace": str(e.get("trace_id") or e.get("task") or "")[:8], "text": str(e.get("args_preview") or e.get("detail") or e.get("error") or e.get("preview") or "")[:120]})
         if len(out) >= int(limit or 60):
             break
     return {"node": node, "events": out}
+
+
+# ── the live stream: one reader of the event stream however many pages listen, each event attributed to its nodes ──
+LIVE_POLL_S = 1.0           # the ring is read this often while anyone listens; its new events go out as one batch
+LIVE_IDLE_S = 30.0          # the reader stops this long after the last listener leaves
+_live: Dict[str, Any] = {"subs": set(), "task": None, "ctx": None, "ctx_of": None, "workers": None}
+
+
+def _live_ctx():
+    """The attribution context for the snapshot now cached; the pairing maps carry over when the snapshot changes."""
+    snap = _cache["out"]
+    if snap is None:
+        return None
+    if _live["ctx_of"] is not snap:
+        ctx, old = core.context_from_snapshot(snap, _live.get("workers")), _live["ctx"]
+        if old:
+            for k in ("trace", "task", "stream"):
+                ctx[k] = old[k]
+        _live["ctx"], _live["ctx_of"] = ctx, snap
+    return _live["ctx"]
+
+
+def _ev_key(e: Dict[str, Any]) -> tuple:
+    return (str(e.get("ts") or ""), str(e.get("type") or ""), str(e.get("trace_id") or e.get("task") or e.get("req_id") or e.get("name") or e.get("node_id") or ""))
+
+
+async def _live_pump() -> None:
+    """One reader for every listener: the ring through obs.events (the capability that is sure to hold the server's
+    Redis client - the orchestrator module this one imports may be a copy that never connected), once a second, the
+    events not seen at the last read handed on oldest first."""
+    seen, idle = None, None
+    try:
+        while True:
+            if not _live["subs"]:
+                idle = idle or time.monotonic()
+                if time.monotonic() - idle > LIVE_IDLE_S:
+                    return
+                await asyncio.sleep(1.0)
+                continue
+            idle = None
+            ev = await _read("obs.events", 4.0, limit=300)
+            if not isinstance(ev, list):
+                await asyncio.sleep(2.0)
+                continue
+            rows = [e for e in ev if isinstance(e, dict)]
+            keys = {_ev_key(e) for e in rows}
+            new = [] if seen is None else [e for e in rows if _ev_key(e) not in seen]
+            seen = keys
+            ctx = _live_ctx()
+            if new and ctx is not None:
+                recs = core.live_records(list(reversed(new)), ctx)
+                if recs:
+                    msg = json.dumps(recs, separators=(",", ":"), default=str)
+                    for q in list(_live["subs"]):
+                        if q.qsize() < 40:      # a listener that stopped reading loses batches, not memory
+                            q.put_nowait(msg)
+            await asyncio.sleep(LIVE_POLL_S)
+    finally:
+        _live["task"] = None
+
+
+@_orch.APP.get("/ops/live", include_in_schema=False)
+async def _ops_live(request: Request):
+    """Live operations as it happens: server-sent batches of the new events, each naming the nodes it lands on
+    ([{ts, type, name, nodes, client, trace, phase, failed, ms, count}]). A browser holds one of these for all its
+    Live ops views (they share it); the server holds one reader of the event stream for all its listeners."""
+    q: "asyncio.Queue[str]" = asyncio.Queue()
+    _live["subs"].add(q)
+    if _cache["out"] is None:
+        _start_gather()
+    if _live["task"] is None:
+        _live["task"] = asyncio.ensure_future(_live_pump())
+
+    async def gen():
+        try:
+            yield b"retry: 3000\n\n"
+            while not await request.is_disconnected():
+                try:
+                    msg = await asyncio.wait_for(q.get(), 15.0)
+                    yield ("data: " + msg + "\n\n").encode()
+                except asyncio.TimeoutError:
+                    yield b": keepalive\n\n"
+        finally:
+            _live["subs"].discard(q)
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # reader -> timeout (s) for estate.compute.load

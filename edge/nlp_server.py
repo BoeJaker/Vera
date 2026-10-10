@@ -58,6 +58,18 @@ import os
 # ── Thread cap — MUST be set before onnxruntime/torch import anything ────────
 # Sized for a 12-core LXC container shared with an ollama runner.
 NLP_THREADS = int(os.getenv("VERA_NLP_THREADS", "4") or 4)
+# How many inferences run at once. Each takes up to NLP_THREADS cores, so the default of one keeps the
+# cap above; inference still runs OFF the event loop, so /health and request intake answer while a model
+# works (RF-03: run synchronously inside async handlers, one long call blocked the whole server and the
+# router read a busy node as a dead one). Raise it only on a node with cores to spare.
+NLP_WORKERS = max(1, int(os.getenv("VERA_NLP_WORKERS", "1") or 1))
+# The FAST lane: embed and langid run in their own one-worker pool, so a latency-critical call (the
+# decision-space vector a chat turn waits for, ≈ 9 ms) never queues behind a rerank, NER or QA call.
+# Measured 2026-10-09 with one shared worker, 4 embed + 1 rerank clients: embed p95 ≈ 115 ms against a
+# 40 ms budget, all of it queueing. A fast call holds its threads for milliseconds, so the CPU cap barely
+# moves. VERA_NLP_FAST_LANE=0 puts them back in the shared pool.
+NLP_FAST_LANE = str(os.getenv("VERA_NLP_FAST_LANE", "1")).strip().lower() not in ("0", "false", "no", "off")
+FAST_TASKS = ("embed", "langid")
 for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
     # A CAP, not a default: setdefault() would let an environment that already
     # exported a larger value blow straight through the limit this server
@@ -77,6 +89,12 @@ import json          # noqa: E402  (after the thread cap, deliberately)
 import logging       # noqa: E402
 import threading     # noqa: E402
 import time          # noqa: E402
+# Imported here, at module load, never inside build_app(): serve() starts the preload thread (which
+# imports onnxruntime/transformers, which import these) and then calls build_app(). An import inside
+# build_app() raced the preload thread for the per-module import locks and deadlocked startup
+# (cpu-246, 2026-10-09: the unit logged 'serving' but never bound 8771).
+import asyncio      # noqa: E402
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from typing import Any, Dict, List  # noqa: E402
 
 try:
@@ -536,6 +554,82 @@ def run_rerank(query, documents, top_k=0):
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
 
+# ── /decide: System 1 decisions on the node (four-minds FM-9.1) ─────────────
+# The worker nodes are the compute pool: a decision that needs real compute
+# runs here, not in the Vera host process. v1 is nearest-neighbour search
+# (the kNN judge, the tool shortlist): the host pushes an index once
+# (POST /decide/index, kept in memory as a normalised float32 matrix) and
+# asks for the k nearest rows (POST /decide). /health advertises the methods
+# and the indexes held, and a missing or stale index answers "index_missing"
+# so the host pushes it and asks again.
+DECIDE_SCHEMA = "vera.decide/v1"
+DECIDE_METHODS = ("knn",)
+DECIDE_MAX_INDEXES = int(os.getenv("VERA_DECIDE_MAX_INDEXES", "8") or 8)
+DECIDE_MAX_ROWS = int(os.getenv("VERA_DECIDE_MAX_ROWS", "50000") or 50000)
+_DECIDE: Dict[str, Dict[str, Any]] = {}
+_DECIDE_LOCK = threading.Lock()
+
+
+def decide_index_put(index_id, version, rows):
+    """Keep an index: rows [{id, vec, run, payload}]. The newest index wins its id; the oldest index is
+    dropped past DECIDE_MAX_INDEXES."""
+    import numpy as np
+    index_id, version = str(index_id or "").strip(), str(version or "").strip()
+    if not index_id or not version:
+        return {"error": "index_id and version are required"}
+    rows = [r for r in (rows or []) if isinstance(r, dict) and r.get("vec")]
+    if not rows:
+        return {"error": "rows is required (each with a vec)"}
+    if len(rows) > DECIDE_MAX_ROWS:
+        return {"error": f"too many rows ({len(rows)} > {DECIDE_MAX_ROWS})"}
+    dim = len(rows[0]["vec"])
+    rows = [r for r in rows if len(r["vec"]) == dim]
+    mat = np.asarray([r["vec"] for r in rows], dtype=np.float32)
+    mat /= np.clip(np.linalg.norm(mat, axis=1, keepdims=True), 1e-12, None)
+    entry = {"version": version, "mat": mat, "dim": dim,
+             "ids": [str(r.get("id", i)) for i, r in enumerate(rows)],
+             "runs": np.asarray([str(r.get("run") or "") for r in rows], dtype=object),
+             "payloads": [r.get("payload") for r in rows], "at": time.time()}
+    with _DECIDE_LOCK:
+        _DECIDE[index_id] = entry
+        while len(_DECIDE) > DECIDE_MAX_INDEXES:
+            del _DECIDE[min(_DECIDE, key=lambda k: _DECIDE[k]["at"])]
+    return {"ok": True, "index_id": index_id, "version": version, "rows": len(rows), "dim": dim}
+
+
+def decide_inventory():
+    with _DECIDE_LOCK:
+        return {k: {"version": v["version"], "rows": int(v["mat"].shape[0]), "dim": v["dim"]}
+                for k, v in _DECIDE.items()}
+
+
+def decide_knn(index_id, version, vector, k=15, exclude_run=""):
+    """The k nearest rows to `vector` (cosine), best first; rows of `exclude_run` never count."""
+    import numpy as np
+    with _DECIDE_LOCK:
+        e = _DECIDE.get(str(index_id or ""))
+    if e is None or (version and e["version"] != str(version)):
+        return {"error": "index_missing", "index_id": index_id, "have": e["version"] if e else None}
+    q = np.asarray(vector or [], dtype=np.float32)
+    if q.shape != (e["dim"],):
+        return {"error": f"vector has {q.shape[0] if q.ndim else 0} dims, the index {e['dim']}"}
+    t0 = time.perf_counter()
+    q /= max(float(np.linalg.norm(q)), 1e-12)
+    sims = e["mat"] @ q
+    eligible = int(sims.shape[0])
+    if exclude_run:
+        mask = e["runs"] == str(exclude_run)
+        sims = np.where(mask, -np.inf, sims)
+        eligible -= int(mask.sum())
+    k = max(0, min(int(k or 15), eligible))
+    idx = np.argpartition(-sims, k - 1)[:k] if k else np.asarray([], dtype=int)
+    idx = idx[np.argsort(-sims[idx])] if k else idx
+    out = [{"id": e["ids"][i], "score": round(float(sims[i]), 5), "run": str(e["runs"][i]),
+            "payload": e["payloads"][i]} for i in idx]
+    return {"ok": True, "neighbours": out, "eligible": eligible, "rows": int(e["mat"].shape[0]),
+            "ms": round((time.perf_counter() - t0) * 1000, 3)}
+
+
 def build_app():
     from fastapi import FastAPI
     from pydantic import BaseModel
@@ -546,7 +640,8 @@ def build_app():
     try:
         import activity_record
         activity_record.install(app, "nlp", ("/ner", "/classify", "/zeroshot", "/qa",
-                                             "/langid", "/embed", "/rerank"),
+                                             "/langid", "/embed", "/rerank", "/decide",
+                                             "/decide/index"),
                                 port=int(os.getenv("VERA_NLP_PORT", "8771") or 8771))
     except Exception as e:                    # never let reporting stop the server
         log.warning("activity reporting off: %s", e)
@@ -583,6 +678,20 @@ def build_app():
         documents: List[str] = []
         top_k: int = 0
 
+    class DecideIndexReq(BaseModel):
+        index_id: str = ""
+        version: str = ""
+        rows: List[Dict[str, Any]] = []
+
+    class DecideReq(BaseModel):
+        method: str = "knn"
+        index_id: str = ""
+        version: str = ""
+        text: str = ""
+        vector: List[float] = []
+        k: int = 15
+        exclude_run: str = ""
+
     def _guard(fn, *a, **kw):
         try:
             return fn(*a, **kw)
@@ -591,17 +700,37 @@ def build_app():
             return {"error": f"{getattr(fn, '__name__', 'op')} failed: "
                              f"{type(e).__name__}: {e}"}
 
+    _infer = ThreadPoolExecutor(max_workers=NLP_WORKERS, thread_name_prefix="nlp-infer")
+    _fast = (ThreadPoolExecutor(max_workers=1, thread_name_prefix="nlp-fast") if NLP_FAST_LANE else _infer)
+    _load = {"inflight": 0, "served": 0, "fast_inflight": 0}
+
+    async def _run(fn, *a, fast: bool = False):
+        """One model call in a pool, never on the event loop: the fast lane for embed/langid, the shared
+        pool (NLP_WORKERS at a time) for everything else."""
+        key = "fast_inflight" if fast else "inflight"
+        _load[key] += 1
+        try:
+            return await asyncio.get_running_loop().run_in_executor(_fast if fast else _infer,
+                                                                    lambda: _guard(fn, *a))
+        finally:
+            _load[key] -= 1
+            _load["served"] += 1
+
     @app.get("/health")
     async def health():
         # Deliberately does NOT load a model: health must answer while a cold
         # model is still loading, or the router reads a loading node as a dead
         # one and routes away from it for minutes.
         return {"ok": True, "service": "vera-nlp", "threads": NLP_THREADS,
+                "workers": NLP_WORKERS, "inflight": _load["inflight"], "served": _load["served"],
+                "fast_lane": list(FAST_TASKS) if NLP_FAST_LANE else [], "fast_inflight": _load["fast_inflight"],
                 "providers": _providers(), "model_root": MODEL_ROOT,
                 "core": HAS_CORE, "component": component_record(),
                 "chunk": {"chars": CHUNK_CHARS, "overlap": CHUNK_OVERLAP},
                 "preload": {"state": PRELOAD["state"], "loaded": sorted(PRELOAD["loaded"]),
                             "failed": PRELOAD["failed"]},
+                "decide": {"schema": DECIDE_SCHEMA, "methods": list(DECIDE_METHODS),
+                           "indexes": decide_inventory()},
                 "tasks": {t: task_inventory(t) for t in DEFAULT_MODELS}}
 
     @app.get("/models")
@@ -617,7 +746,7 @@ def build_app():
         if not req.text:
             return {"error": "text is required"}
         t0 = time.monotonic()
-        out = _guard(run_ner, req.text, req.task, req.max_chars, req.overlap, req.labels, req.threshold)
+        out = await _run(run_ner, req.text, req.task, req.max_chars, req.overlap, req.labels, req.threshold)
         if isinstance(out, dict):
             out["elapsed_ms"] = round((time.monotonic() - t0) * 1000)
         return out
@@ -626,7 +755,7 @@ def build_app():
     async def classify(req: ClassifyReq):
         if not req.text:
             return {"error": "text is required"}
-        return _guard(run_classify, req.text, req.task)
+        return await _run(run_classify, req.text, req.task)
 
     @app.post("/zeroshot")
     async def zeroshot(req: ZeroShotReq):
@@ -634,7 +763,7 @@ def build_app():
             return {"error": "text is required"}
         if not req.labels:
             return {"error": "labels is required (a list of candidate labels)"}
-        return _guard(run_zeroshot, req.text, req.labels, req.multi_label)
+        return await _run(run_zeroshot, req.text, req.labels, req.multi_label)
 
     @app.post("/qa")
     async def qa(req: QaReq):
@@ -642,19 +771,19 @@ def build_app():
             return {"error": "question is required"}
         if not req.context:
             return {"error": "context is required"}
-        return _guard(run_qa, req.question, req.context)
+        return await _run(run_qa, req.question, req.context)
 
     @app.post("/langid")
     async def langid(req: TextReq):
         if not req.text:
             return {"error": "text is required"}
-        return _guard(run_langid, req.text)
+        return await _run(run_langid, req.text, fast=True)
 
     @app.post("/embed")
     async def embed(req: EmbedReq):
         if not req.texts:
             return {"error": "texts is required (a list of strings)"}
-        return _guard(run_embed, req.texts)
+        return await _run(run_embed, req.texts, fast=True)
 
     @app.post("/rerank")
     async def rerank(req: RerankReq):
@@ -662,7 +791,28 @@ def build_app():
             return {"error": "query is required"}
         if not req.documents:
             return {"error": "documents is required"}
-        return _guard(run_rerank, req.query, list(req.documents), req.top_k)
+        return await _run(run_rerank, req.query, list(req.documents), req.top_k)
+
+    @app.post("/decide/index")
+    async def decide_index(req: DecideIndexReq):
+        return await _run(decide_index_put, req.index_id, req.version, list(req.rows))
+
+    @app.post("/decide")
+    async def decide(req: DecideReq):
+        if req.method not in DECIDE_METHODS:
+            return {"error": f"method must be one of {list(DECIDE_METHODS)}"}
+        vector, embed_model = list(req.vector), None
+        if not vector:
+            if not req.text.strip():
+                return {"error": "text or vector is required"}
+            emb = await _run(run_embed, [req.text], fast=True)
+            if not isinstance(emb, dict) or emb.get("error") or not emb.get("embeddings"):
+                return {"error": "embed failed: " + str((emb or {}).get("error"))[:200]}
+            vector, embed_model = emb["embeddings"][0], emb.get("model")
+        out = await _run(decide_knn, req.index_id, req.version, vector, req.k, req.exclude_run)
+        if isinstance(out, dict) and embed_model:
+            out["embed_model"] = embed_model
+        return out
 
     return app
 
@@ -706,8 +856,11 @@ def _main():
     import uvicorn
     log.info("vera-nlp serving on %s:%d (threads=%d, models=%s)",
              args.host, args.port, NLP_THREADS, MODEL_ROOT)
+    # build the app BEFORE the preload thread starts, so none of its imports race the thread's (a deadlock
+    # on the per-module import locks left the unit 'serving' but never bound, 2026-10-09)
+    app = build_app()
     threading.Thread(target=preload, name="nlp-preload", daemon=True).start()
-    uvicorn.run(build_app(), host=args.host, port=args.port)
+    uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 

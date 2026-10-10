@@ -162,7 +162,9 @@ def test_the_wiring():
     assert '_mh_u.record_turn_usage(session_id, "".join(_resp_head), _page_ids, _deep_items))' in a
     assert "return asyncio.create_task(\n                    _mh_u.record_turn_usage(" in a
     assert "ctx_ids:(ctxInj?_ctxInjIds(msg):[])," in c and "function _ctxInjIds(forMsg){" in c
-    assert "    _note_injected(session_id, ranked[:limit])\n    return _chatmem_format(ranked[:limit])" in h
+    assert ("    _note_injected(session_id, ranked[:limit])\n    if _reval is not None:\n"
+            "        _reval.on_chat_recall(session_id, query, [it.get(\"id\") for it in ranked[:limit] if it.get(\"id\")])\n"
+            "    return _chatmem_format(ranked[:limit])") in h
     assert 'out["items"] = [{"id": it.get("id"), "text": it.get("text", "")} for it in items if it.get("id")]' in h
     w = _src("vera/widgets/widget_registry.py")
     assert '"id": "memory:usage-used"' in w and '"id": "memory:usage-ignored"' in w

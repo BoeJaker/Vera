@@ -2110,7 +2110,7 @@
     grid.setAttribute('data-room', String(moved));
   }
   window.addEventListener('message', function (ev) {
-    var d = ev.data; if (!d || d.type !== 'vera:desk:obstacles' || (ev.source && ev.source !== window.parent)) return;
+    var d = ev.data; if (!d || d.type !== 'vera:desk:obstacles' || ev.source !== window.parent) return;
     var shares = Array.isArray(d.rects) ? d.rects : [], on = d.makeRoom !== false;
     ROOM_LAST = { shares: shares, on: on };                     /* a grid that is built later applies it too */
     var run = function () { ROOM_GRIDS.forEach(function (g) { try { if (g.isConnected) roomFor(g, shares, on); } catch (e) {} }); };

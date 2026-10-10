@@ -1035,13 +1035,21 @@ async def _searxng_once(host: str, query: str, limit: int) -> list[dict]:
         async with httpx.AsyncClient(timeout=10.0) as c:
 
             async def _fetch(pageno: int):
-                r = await _request_with_web_policy(
-                    lambda: c.get(f"{host}/search",
-                                  params=_engines.searxng_params(
-                                      query, web_cfg.safe_search, pageno)),
-                    domain=urlparse(host).netloc,
-                )
-                return r.json().get("results", []) or []
+                try:
+                    r = await _request_with_web_policy(
+                        lambda: c.get(f"{host}/search",
+                                      params=_engines.searxng_params(
+                                          query, web_cfg.safe_search, pageno)),
+                        domain=urlparse(host).netloc,
+                    )
+                    body = r.json()
+                except Exception as e:
+                    if pageno == 1:                     # /health: SearXNG unreachable (info-seeking SK-0.1)
+                        _engines.note_searxng_answer(None, error=str(e))
+                    raise
+                if pageno == 1:                         # /health: empty answers and suspended engines
+                    _engines.note_searxng_answer(body)
+                return body.get("results", []) or []
 
             results = await _engines.walk_pages(_fetch, limit)
             if not results:
@@ -1100,18 +1108,17 @@ async def search_ddg(query: str, limit: int) -> list[dict]:
                               params={"q":query}, headers=_hdrs),
                 domain="html.duckduckgo.com",
             )
-        links    = re.findall(r'class="result__a"[^>]+href="([^"]+)"[^>]*>([^<]+)<', r.text)
-        snippets = re.findall(r'class="result__snippet"[^>]*>([^<]+)<', r.text)
+        # one parser, shared: the old regex cut every snippet at DDG's <b> around the search words
         results = []
-        for i, (raw_url, title) in enumerate(links[:limit]):
-            clean = _clean_search_url(raw_url)
+        for it in _engines.parse_ddg_html(r.text)[:limit]:
+            clean = _clean_search_url(it["raw_url"])
             # Skip DDG internal pages and empty URLs
             if not clean or "duckduckgo.com" in clean:
                 continue
             results.append({
                 "url":     clean,
-                "title":   title.strip(),
-                "content": snippets[i] if i < len(snippets) else ""
+                "title":   it["title"],
+                "content": it["snippet"],
             })
         return results
     except Exception as e:
@@ -5716,6 +5723,17 @@ def _planning_slots(remaining_after_level: int, per_node: int) -> int:
     return -(-int(remaining_after_level) // per_node) + 1
 
 
+def _curate_scored(scored: list, floor: int = 2, min_keep: int = 4) -> list:
+    """The sources to keep from (score, source) pairs sorted best first: every one scoring at
+    least `floor`, topped up with the best of the rest to `min_keep`. When few sources score
+    well the scores still rank them (four-minds Q2 #7: they used to be thrown away, keeping
+    every source unranked exactly when most were irrelevant)."""
+    good = [c for s, c in scored if s >= floor]
+    if len(good) < min_keep:
+        good = [c for _s, c in scored[:min_keep]]
+    return good
+
+
 def _merge_analyst_output(draft: str, result: str) -> str:
     """The analyst is asked to APPEND a verification note, not rewrite the report. A reply that is
     clearly just that note (much shorter than the draft, and without the draft's opening) is
@@ -5792,9 +5810,9 @@ async def research_node(
             if start >= 0 and end > start:
                 scores = json.loads(raw_scores[start:end])
                 scored = sorted(zip(scores[:len(cit_list)], cit_list), key=lambda x: -x[0])
-                # Keep score ≥ 2, always at least 4 results
-                good = [c for s, c in scored if s >= 2]
-                if len(good) >= 4:
+                # Keep score ≥ 2, always at least 4 results (_curate_scored)
+                good = _curate_scored(scored)
+                if good:
                     # Post-scoring: penalise low-scoring arXiv on non-academic nodes
                     # and replace them with fresh web searches
                     _dir_is_academic = (
@@ -7023,6 +7041,21 @@ async def persist_research_to_fabric(job: ResearchJob) -> dict:
     return out
 
 
+def _error_where(e: BaseException) -> str:
+    """' (at file.py:123 in fn)' for the innermost frame of e's traceback. The job record outlives the log: eight
+    research jobs failed with 'sequence item 2: expected str instance, list found' and by the time anyone looked the
+    rotated log no longer held the traceback (info-seeking plan SK-0.5)."""
+    try:
+        import traceback as _tb
+        fr = _tb.extract_tb(e.__traceback__)
+        if not fr:
+            return ""
+        f = fr[-1]
+        return f" (at {os.path.basename(f.filename)}:{f.lineno} in {f.name})"
+    except Exception:
+        return ""
+
+
 async def run_job(job: ResearchJob):
     project: Optional[Project] = None
     if job.project_id and job.project_id in projects:
@@ -7053,7 +7086,7 @@ async def run_job(job: ResearchJob):
 
     except Exception as e:
         log.exception("Job %s failed", job.id)
-        job.status = JobStatus.ERROR; job.error = str(e)
+        job.status = JobStatus.ERROR; job.error = str(e) + _error_where(e)
     finally:
         job.finished_at = time.time()
         job.token_count = sum(s.tokens for s in agent_slots)
@@ -10532,9 +10565,10 @@ if _VERA_MODE:
         "research.run",
         http_method="POST", http_path="/research/run",
         http_tags=["research", "pipeline"], memory="on",
-        description="Submit a web research job that searches and synthesises information from the internet. "
-                    "WHEN TO USE: when you need to find, investigate, or compile information about a topic from the web; "
-                    "for 'research X', 'find out about Y', 'what is Z', 'trending topics', 'latest news on'. "
+        description="Start a BACKGROUND research job that writes a full report (typically 5-30 minutes). "
+                    "WHEN TO USE: only when the user asks for a report, a deep dive or a write-up they will read "
+                    "later. NOT for answering a question now, a quick fact, or 'latest news / updates on X' - use "
+                    "web.research for those (one search, pages read inline, seconds). "
                     "This is a LONG-RUNNING tool — it returns {job_id, status} immediately; "
                     "the agent loop polls research.job.status until done, then reads research.job.result. "
                     "HOW TO USE: research.run(query='your question or topic', mode='single') — single is fast, "
@@ -10576,9 +10610,20 @@ if _VERA_MODE:
         if not src_list:
             src_list = [src.id for src in globals()["sources"] if src.enabled]
         log.info("cap_research_run: query=%r sources=%s", query[:60], src_list)
+        # a model's guess at a mode ("fast", "quick", "report") used to raise and lose the request; the defaults run
+        # instead and the reply says so (info-seeking plan SK-0.5)
+        _note = []
+        try:
+            _mode = AgentMode(str(mode or "single").strip().lower())
+        except ValueError:
+            _mode = AgentMode("single"); _note.append(f"unknown mode {mode!r}: ran 'single'")
+        try:
+            _omode = OutputMode(str(output_mode or "report").strip().lower())
+        except ValueError:
+            _omode = OutputMode("report"); _note.append(f"unknown output_mode {output_mode!r}: ran 'report'")
         job = ResearchJob(
             id=str(uuid.uuid4()), query=query,
-            mode=AgentMode(mode), output_mode=OutputMode(output_mode),
+            mode=_mode, output_mode=_omode,
             sources=src_list, status=JobStatus.QUEUED,
             created_at=time.time(), project_id=project_id or None,
             prior_context=context or "", context_mode=context_mode or "fresh",
@@ -10587,7 +10632,10 @@ if _VERA_MODE:
         try: await DB.save_job(job)
         except Exception: pass
         asyncio.create_task(run_job(job))
-        return {"job_id": job.id, "status": "queued"}
+        out = {"job_id": job.id, "status": "queued"}
+        if _note:
+            out["note"] = "; ".join(_note)
+        return out
 
     # ── Convenience aliases (backwards compat with old research_capabilities.py) ──
     # These wrap research.run with preset mode/output_mode combinations.
@@ -10610,9 +10658,9 @@ if _VERA_MODE:
     @capability("research.report", http_method="POST", http_path="/research/report",
                 compatibility_alias_for="research.run",
                 http_tags=["research", "pipeline"], memory="on",
-                description="Fast web research that produces a markdown report. "
-                            "WHEN TO USE: 'research X', 'find out about Y', 'write a report on Z', "
-                            "'what is the latest on' — faster than research.parallel/deep (single agent). "
+                description="Background job that writes a markdown report (single agent; minutes, not seconds). "
+                            "WHEN TO USE: 'write a report on Z' when the user wants a document. NOT for a quick "
+                            "answer or 'the latest on X' - use web.research. "
                             "LONG-RUNNING: returns {job_id, status} immediately; "
                             "poll research.job.status until status='done', then call research.job.result. "
                             "Input: query (str!), project_id (str), context (str — background info), context_mode (str). "
@@ -10702,9 +10750,9 @@ if _VERA_MODE:
     @capability("research.quick_search", http_method="POST", http_path="/research/quick_search",
                 compatibility_alias_for="research.report",
                 http_tags=["research", "pipeline"], memory="on",
-                description="Compatibility name for a single-agent synthesized research report. "
-                            "It has the same long-running job behavior as research.report; use web.search "
-                            "for direct search results without report synthesis. "
+                description="Compatibility name for research.report: despite the name it is NOT a quick search - "
+                            "it starts a background report job that takes minutes. For a quick answer use "
+                            "web.research; for raw result links use web.search. "
                             "LONG-RUNNING: returns {job_id, status}; poll research.job.status until done, then read research.job.result. "
                             "Input: query (str!), project_id, context, context_mode.",
                 schema=_ALIAS_SCHEMA)

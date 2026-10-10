@@ -160,6 +160,8 @@ t('the desk exploded: its layers are the lattice planes, every item keeps its ke
   assert.ok(M.areas.indexOf('at the border · 2') === M.areas.indexOf('at the border') + 1, 'the spill area sits beside its own');
   assert.strictEqual(M.nodes.filter((x) => x.area === 'at the border').length, 9);
   assert.ok(!/more/.test(M.planes.find((p) => p.id === 'items').name));
+  const crowded = D.latticeOf({ items: Array.from({ length: 100 }, (_, i) => ({ key: 'crowded-' + i, face: 'chip' })) });
+  assert.strictEqual(crowded.nodes.filter((x) => x.plane === 'items').length, 100, 'large desks never silently drop items');
 });
 
 t('every arrangement lays its cards in bands: none overlap, docked or floating, before any separation', () => {

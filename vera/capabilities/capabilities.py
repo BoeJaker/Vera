@@ -265,12 +265,13 @@ async def tts_config_get(trace_id=None):
     memory="on",
     description="Set the speech defaults for every media node at once - the voice everything speaks with "
                 "unless a caller names its own (see tts.voices; b* voices are British, a* American), the "
-                "accent (blank = from the voice), speed (0.5-2) and number/date normalisation (rules|nemo|off). "
+                "accent (blank = from the voice), speed (0.5-2), number/date normalisation (rules|nemo|off) and "
+                "pacing - how long the pauses between sentences, lines and paragraphs are (0 none, 1 natural, 2 slow). "
                 "Vera remembers it and pushes it to each node; a node keeps it across restarts. "
-                "Input: voice, lang, speed, normalizer (any subset). Output: {ok, desired, nodes:[{id, ok, error}]}.",
+                "Input: voice, lang, speed, normalizer, pacing (any subset). Output: {ok, desired, nodes:[{id, ok, error}]}.",
 )
 async def tts_config_set(voice: str = "", lang: Optional[str] = None, speed: Optional[float] = None,
-                         normalizer: str = "", trace_id=None):
+                         normalizer: str = "", pacing: Optional[float] = None, trace_id=None):
     p = _tts_desired_path()
     try:
         desired = json.loads(p.read_text(encoding="utf-8"))
@@ -287,8 +288,10 @@ async def tts_config_set(voice: str = "", lang: Optional[str] = None, speed: Opt
         if normalizer not in ("rules", "nemo", "off"):
             return {"ok": False, "error": "normalizer must be rules, nemo or off"}
         body["normalizer"] = normalizer
+    if pacing is not None:
+        body["pacing"] = max(0.0, min(2.0, float(pacing)))
     if not body:
-        return {"ok": False, "error": "nothing to set: give voice, lang, speed or normalizer"}
+        return {"ok": False, "error": "nothing to set: give voice, lang, speed, normalizer or pacing"}
     results = []
     async with httpx.AsyncClient(timeout=15) as c:
         for iid, label, url in _tts_nodes():
@@ -2087,12 +2090,24 @@ async def llm_generate(
                 if isinstance(options, dict) and k in options}
         if think is not None:
             _vkw["extra"] = {"chat_template_kwargs": {"enable_thinking": bool(think)}}
+        import time as _tlv
+        _t_lv = _tlv.time()
+        _ts_lv = now_iso()
         try:
             _res = await _vllm_mod.routed_call(
                 "chat", {"pin": _pin}, model=model, prefer_gpu=prefer_gpu,
                 job_type=job_type, stream_cb=_tok, messages=_msgs, max_tokens=None, **_vkw)
         except Exception as _e:
             _res = {"ok": False, "error": f"{type(_e).__name__}: {_e}"}
+        try:
+            from Vera.vera.capability_orchestration import _log_served_elsewhere as _lse
+            _lse("vllm", instance=(_res or {}).get("instance") or _pin, model=(_res or {}).get("model") or model or "",
+                 ts=_ts_lv, t0=_t_lv, caller={"caller_file": "capabilities.py", "caller_func": "llm_generate"},
+                 status="done" if (_res or {}).get("ok") else "error",
+                 error="" if (_res or {}).get("ok") else f"{(_res or {}).get('error')} - fell back to Ollama",
+                 job_type=job_type)
+        except Exception:
+            pass
         if _res and _res.get("ok"):
             _msg = _res.get("result") or {}
             text = _vllm_mod._route_core.strip_think(str(_msg.get("content") or ""))

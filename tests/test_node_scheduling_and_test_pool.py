@@ -300,3 +300,20 @@ def test_parallel_processes_combine_into_one_report():
     s = suites[0]
     assert (s.get("tests"), s.get("failures"), s.get("errors"), s.get("time")) == ("3", "1", "1", "2.000")
     assert len(s.findall("testcase")) == 3
+
+
+def test_several_outputs_combine_into_one_in_the_gate_format():
+    def out(rc, tests, failures):
+        return ("text\n__VERA_JUNIT__\n<testsuites><testsuite tests=\"%d\" failures=\"%d\" errors=\"0\" "
+                "skipped=\"0\">%s</testsuite></testsuites>\n__VERA_RC=%d__"
+                % (tests, failures, "<testcase classname=\"a\" name=\"t\"/>" * tests, rc))
+    one = tr.combine_outputs([out(0, 2, 0), out(1, 3, 1), out(5, 0, 0)])
+    p = ut.parse_pytest_output(one)
+    assert (p["total"], p["failed"], p["rc"]) == (5, 1, 1), p
+    assert one.count("__VERA_JUNIT__") == 1 and one.count("__VERA_RC=") == 1
+    assert ut.parse_pytest_output(tr.combine_outputs([out(0, 1, 0), out(5, 0, 0)]))["rc"] == 0
+
+
+def test_pool_config_takes_host_parallel():
+    assert tr.merge_pool_config({})["host_parallel"] == 3
+    assert tr.merge_pool_config({"host_parallel": 99})["host_parallel"] == 8

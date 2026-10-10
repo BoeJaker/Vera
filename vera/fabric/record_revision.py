@@ -210,3 +210,41 @@ def create_record_revision(
         metadata_json=metadata_json, valid_from=valid_from, valid_to=valid_to,
         tombstone=tombstone,
     )
+
+
+def record_revision_from_dict(value: Mapping[str, Any]) -> RecordRevision:
+    """Rehydrate and identity-check a serialized revision envelope."""
+    if not isinstance(value, Mapping):
+        raise TypeError("revision envelope must be a mapping")
+    raw = dict(value)
+    if raw.get("schema") != RECORD_REVISION_SCHEMA:
+        raise ValueError("revision envelope has an unsupported schema")
+    content = raw.get("content")
+    valid = raw.get("valid_time") or {}
+    provenance_value = raw.get("provenance") or {}
+    if (not isinstance(content, Mapping) or not isinstance(valid, Mapping)
+            or not isinstance(provenance_value, Mapping)):
+        raise ValueError(
+            "revision envelope has invalid content, provenance or valid_time")
+    if not isinstance(raw.get("tombstone"), bool):
+        raise ValueError("revision envelope tombstone must be boolean")
+    provenance = dict(provenance_value)
+    parents = provenance.pop("parents", [])
+    rebuilt = create_record_revision(
+        namespace=raw.get("namespace", ""),
+        record_type=raw.get("record_type", ""),
+        created_at=raw.get("created_at", ""),
+        record_id=raw.get("record_id", ""),
+        logical_key=raw.get("logical_key", ""),
+        snapshot_id=raw.get("snapshot_id", ""),
+        content=content.get("inline"),
+        media_type=content.get("media_type", "application/json"),
+        artifact=content.get("artifact"),
+        content_schema=content.get("schema"),
+        source=raw.get("source"), provenance=provenance,
+        policy=raw.get("policy"), metadata=raw.get("metadata"),
+        parents=parents, valid_from=valid.get("from") or "",
+        valid_to=valid.get("to") or "", tombstone=raw["tombstone"])
+    if rebuilt.to_dict() != raw:
+        raise ValueError("revision envelope identity does not round trip")
+    return rebuilt

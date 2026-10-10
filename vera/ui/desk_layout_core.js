@@ -403,12 +403,11 @@
   var AREAS = ['beside the chat', 'at a glance', 'at the border'];
   function latticeOf(d) {
     d = d || {};
-    var CELL = 9, nodes = [], links = [], cells = {}, cut = {}, areas = AREAS.slice();
+    var CELL = 9, nodes = [], links = [], cells = {}, areas = AREAS.slice();
     var areaOfFace = function (f) { return f === 'max' || f === 'layer-front' || f === 'layer-behind' ? 0 : f === 'card' ? 1 : 2; };
     var put = function (n) {
       var base = n.area, a = base, k2 = 1;
-      while ((cells[n.plane + ':' + a] || 0) >= CELL && k2 < 8) { k2++; a = base + ' · ' + k2; }
-      if ((cells[n.plane + ':' + a] || 0) >= CELL) { cut[n.plane] = (cut[n.plane] || 0) + 1; return false; }
+      while ((cells[n.plane + ':' + a] || 0) >= CELL) { k2++; a = base + ' · ' + k2; }
       if (areas.indexOf(a) < 0) areas.splice(areas.indexOf(base) + k2 - 1, 0, a);
       n.area = a; cells[n.plane + ':' + a] = (cells[n.plane + ':' + a] || 0) + 1; nodes.push(n); return true;
     };
@@ -428,7 +427,7 @@
       if (put(n) && focus) links.push({ a: n.id, b: focus, kind: 'mem' });
     });
     var name = { chat: 'Chat', items: 'Desk items', panel: 'UI panel', graph: 'Context graph' };
-    var planes = ['chat', 'items', 'panel', 'graph'].map(function (id) { return { id: id, name: name[id] + (cut[id] ? ' (+' + cut[id] + ' more)' : '') }; });
+    var planes = ['chat', 'items', 'panel', 'graph'].map(function (id) { return { id: id, name: name[id] }; });
     return { planes: planes, areas: areas, nodes: nodes, links: links };
   }
 

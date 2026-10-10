@@ -212,12 +212,35 @@ their source by default is a setting; each item keeps its own switch.
 
 ## 10. Beside the chat: the canvas, the graph and panels
 
-**+ Canvas** and **+ Graph** open columns beside the transcript. The canvas is a
-live document chat and loops render into; **✦ enrich** brings forward what else
-is relevant after each reply — dashboard reads, news, web results, fabric
-records — as widgets beside it, without calling a model. **COLS** pins the
-number of columns on the stage, or **auto** reads the width. **Runs** draws the
-runs between the turns and the items they made or read.
+**+ Canvas** and **+ Graph** open the working desk beside the transcript. The
+canvas is a live document chat and loops render into; **✦ enrich** brings
+forward what else is relevant after each reply — dashboard reads, news, web
+results and fabric records — as widgets beside it, without calling a model.
+**COLS** pins the number of columns on the stage, or **auto** reads the width.
+**Runs** draws the runs between the turns and the items they made or read.
+
+The default **Desk** alignment treats the chat and canvas as one workspace.
+Items form collision-free bands around the chat and change size with their
+distance from it. Drag the grip above the chat to dock it left or right, or to
+float it over the desk; positions are stored as proportions, so the layout
+survives a different window size. A narrow window automatically falls back to
+a readable linear stack. **Held** and **Strict** remain available for sessions
+that need the older column behaviour.
+
+The Session canvas settings control the desk without changing its data:
+
+| Setting | Effect |
+|---|---|
+| **Chat side** | Dock left or right, or float the chat over the desk. |
+| **Graph** | Keep the context graph in its menu, or use it as the desk's back layer. |
+| **UI panel** | Open a panel beside the chat, or place its live frame behind the desk items. |
+| **Arrangement** | Orbit by distance, group by kind, group by turn, or stack beside the chat. |
+| **Panel widgets** | Let a dashboard temporarily move widgets out from under desk items; their authored positions return when the obstruction moves. |
+| **Turn brings** | Bring the items most relevant to a completed reply beside the chat, or leave placement entirely manual. |
+
+Manual item positions and chat placement are stable. Opening, closing or
+resizing a panel does not rewrite the panel's own layout, and an item is never
+dropped just because the visible lattice is full.
 
 Any panel can be opened beside the chat from **Workspace → Panels**, `/panel`,
 or the command palette; **Drag to resize** moves the split.
@@ -271,6 +294,16 @@ chat. Open a specific session with `/chat_panel?session_id=<id>`.
 | `/` | Slash commands in the composer |
 
 ## Screenshots
+
+#### The adaptive desk
+
+![The chat and a session canvas sharing the adaptive desk at desktop width.](assets/chat-ui/adaptive-desk-desktop.png)
+
+*Desk alignment at desktop width: mixed canvas items occupy the free space around the chat without overlap.*
+
+![The same desk at compact width, where the canvas becomes a readable linear stack.](assets/chat-ui/adaptive-desk-compact.png)
+
+*The compact fallback keeps every item reachable and avoids horizontal overflow.*
 
 <!-- VERA:AUTO:screenshots START -->
 #### A canvas

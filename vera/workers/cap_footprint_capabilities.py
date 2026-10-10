@@ -386,16 +386,12 @@ async def cap_parity_vet(dry_run: bool = True, namespace: str = "",
     v, meta = await _verdicts()
     if not meta["static_at"]:
         return {"ok": False, "error": "no static audit yet - run nodes.parity.audit"}
-    # `only`: a list a person reviewed - the evidence still has to clear each one
-    keep = set(only or ())
-    want = {c: w for c, (k, w) in v.items() if k == "vetted"
-            and (not namespace or c.split(".", 1)[0] == namespace)
-            and (not keep or c in keep)}
-    not_cleared = sorted(c for c in keep if v.get(c, ("?",))[0] != "vetted")
+    # `only`: a list a person reviewed - it scopes the adds AND the drops, and
+    # the evidence still has to clear each one (core.plan_vet)
     cur = {_s(k): json.loads(x) for k, x in (await r.hgetall(core.VETTED_KEY)).items()}
-    drop = sorted(c for c in cur if (not namespace or c.split(".", 1)[0] == namespace)
-                  and v.get(c, ("host",))[0] not in ("vetted",))
-    add = sorted(c for c in want if c not in cur)
+    plan = core.plan_vet(v, cur, namespace=namespace, only=only or ())
+    add, drop, not_cleared = plan["add"], plan["drop"], plan["not_cleared"]
+    want = {c: w for c, (_k, w) in v.items()}
     if dry_run:
         return {"ok": True, "dry_run": True, "would_vet": add, "would_drop": drop,
                 "count": len(add), "not_cleared": not_cleared}

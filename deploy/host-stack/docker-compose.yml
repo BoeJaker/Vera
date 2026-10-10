@@ -172,7 +172,9 @@ services:
 
   # Web search backend for research.
   searxng:
-    image: "searxng/searxng@sha256:511fa3f34c1d119c47f88c9a1e7eda1340f346543e980c17e5f14b27dac6a1ed"   # searxng/searxng:latest
+    # 2026.10.9 (pulled 2026-10-10): the 2025.9.5 image's google/yahoo/qwant engines were broken; its settings.yml
+    # is now `use_default_settings: true` + overrides, so newer images keep a current engine list
+    image: "searxng/searxng@sha256:85492ba800a861e3e8ff6014c430e81369fe6ca766a9990595f616d1ce95b272"   # searxng/searxng:latest
     container_name: "searxng"
     restart: always
     ports:

@@ -592,7 +592,7 @@ Workers cross-referenced with their Ollama node, the enriched node snapshot, ONN
 | Per-node status, `num_thread` that requests carry | `ollama.instances` (`GET /ollama/cluster`) |
 | Models per node with sizes | `ollama.list_models` (`GET /ollama/models`) |
 | Why a request would go where | `llm.route.resolve` |
-| Recent requests: caller, model, node, timing, status | `ollama.request_log` (in-process ring buffer) |
+| Recent requests: caller, model, node, timing, status, and the backend that processed each (`backend`: `ollama`, `vllm`, `api` with `provider`, or `other`; `node` when a vLLM server stood in for a node) - vLLM, API-provider and in-process embedding calls log an entry too | `ollama.request_log` (in-process ring buffer) |
 | Rolling `(model, node, job_type)` stats: count, EMA elapsed, tokens/s, chars/token, context shifts, duration estimate | `ollama.route_stats` |
 | Gate occupancy | `ollama.gate.status` |
 | Warm plan, residency, scenarios | `ollama.warm.status` |
@@ -865,6 +865,8 @@ A pipeline gate's critical-tier pytest run can be split into shards over the hos
 - **What a shard runs:** `pytest <its files> -m critical` in the node's pinned test venv (`/opt/vera/testenv`), with the gate container's layout and environment.
 - **Chunks, pulled as runners free up:** the tier is split into chunks (`chunks`, default 12) balanced by per-file durations recorded from every run (`vera:evolve:test_durations`). Every free runner - the host's container, each node with room - takes the next chunk until none are left, so a gate that starts while others hold the runners picks up more as they free up instead of running the whole tier on one. The branch's code archive is stored in Redis once per gate and fetched by each node chunk.
 - **Several processes per node chunk:** a node runs its chunk as `node_parallel` (default 4) pytest processes, split by the same recorded durations, and merges their JUnit reports into one. Each file still runs exactly once in one process. A chunk asks the scheduler for 4 cores and 6 GB, so only a node with that much free takes one.
+- **Several containers per host chunk:** the host runs its chunk the same way, as `host_parallel` (default 3) test containers side by side, merged into one result.
+- **Agents' own runs too:** `evolve.unittest.run` over the whole suite (`paths=tests`, no extra flags) goes through the pool as well, falling back to the host's container when the pool is off or does not apply. It does not touch a pipeline record; the run is recorded under the `pipeline_id` passed in. `evolve.test_pool.config.set` takes `chunks`, `node_parallel` and `host_parallel`.
 - **Merging:** results merge into the same summary, history row and failure details as a single run.
 - **Collection errors:** every test file is collected by some shard, so a file that fails to import still fails the gate.
 - **Failed chunks:** a chunk a node could not run goes back on the queue; one a node failed twice runs on the host, so a missing chunk is never a pass.

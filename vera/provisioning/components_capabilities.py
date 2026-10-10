@@ -163,6 +163,8 @@ _COMPONENTS: Dict[str, Dict[str, Any]] = {
                   ("edge/media_store_core.py", "media_store_core.py"),
                   # written forms -> spoken words before TTS (money, dates, times, acronyms)
                   ("edge/tts_text_core.py", "tts_text_core.py"),
+                  # its house vocabulary (BoE, tickers, which capitals are spelled out), as data
+                  ("edge/tts_lexicon.json", "tts_lexicon.json"),
                   # reports every call to the Estate Activity pane
                   ("edge/activity_record.py", "activity_record.py"),
                   ("edge/gpu_inference_start.sh", "start.sh", "755")],
