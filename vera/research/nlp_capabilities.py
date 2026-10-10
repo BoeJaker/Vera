@@ -69,8 +69,13 @@ except ImportError:
     _CAP_AVAILABLE = False
 try:
     from Vera.vera.research.nlp_models_core import NLP_SERVES
+    from Vera.vera.model_binding_core import selector_values as _selector_values
 except ImportError:  # standalone/test import path
     from vera.research.nlp_models_core import NLP_SERVES
+    from vera.model_binding_core import selector_values as _selector_values
+#: What each multi-model cap accepts for `task` = what it declares it serves.
+_CLASSIFY_TASKS = tuple(_selector_values(NLP_SERVES["nlp.classify"], "task"))
+_NER_TASKS = tuple(_selector_values(NLP_SERVES["nlp.ner"], "task"))
 
 # ── Off-host dispatch ─────────────────────────────────────────────────────────
 # These caps are CPU-bound and the Vera host is a 2-core VM whose event loop
@@ -262,7 +267,7 @@ if _CAP_AVAILABLE:
                                trace_id=None):
         if not text:
             return {"error": "text is required"}
-        if task not in ("classify", "sentiment3"):
+        if task not in _CLASSIFY_TASKS:
             return {"error": "task must be 'classify' (binary SST-2) or "
                              "'sentiment3' (negative/neutral/positive)"}
         handled, out = await _offload("/classify", {"text": text, "task": task})
@@ -300,7 +305,7 @@ if _CAP_AVAILABLE:
                           threshold: float = 0.4, trace_id=None):
         if not text:
             return {"error": "text is required"}
-        if task not in ("ner", "ner_multi", "gliner", "spacy"):
+        if task not in _NER_TASKS:
             return {"error": "task must be 'ner' (OntoNotes, English), 'ner_multi' "
                              "(multilingual), 'gliner' (zero-shot) or 'spacy'"}
         if isinstance(labels, str):
