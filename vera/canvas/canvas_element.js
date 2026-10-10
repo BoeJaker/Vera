@@ -1249,7 +1249,10 @@
   /* NO GROUND ON A BARE DESK (owner, 2026-10-09: "id like the elements to have no background (if there is no panel behind
      them, else keep the background)"): with nothing behind them the items sit on the desk itself. One that rides over the
      others - dragged, peeking open, maximised - keeps its ground, or its text would run into theirs. */
-  :host([align="desk"]:not([desk-narrow]):not([layered])) .stage .it:not([data-desk-face^="layer-"]):not(.desk-dragging):not(.resizing):not(.peek):not(.hovopen):not(.maxed){background:transparent!important;border-color:transparent!important}   /* its marks (waiting, pinned, a run's end) are rings, kept */
+  :host([align="desk"]:not([desk-narrow]):not([layered])) .stage .it:not([data-desk-face^="layer-"]):not(.desk-dragging):not(.resizing):not(.peek):not(.hovopen):not(.maxed):not(.chip-peek){background:transparent!important;border-color:transparent!important}   /* its marks (waiting, pinned, a run's end) are rings, kept */
+  /* a pill opened to its whole title under the pointer: over its neighbours, with a ground, its title unclipped */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip.chip-peek{background:var(--bg2,#1d2128)!important;box-shadow:0 6px 18px rgba(0,0,0,.4);border-radius:17px}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip.chip-peek > .it-hd > .t{overflow:visible;text-overflow:clip}
   /* a card being carried or sized rides over the others with its ground, so it never mixes with what it passes over */
   :host([align="desk"]:not([desk-narrow])) .stage .it:is(.desk-dragging,.resizing){background:var(--bg1,#15181d)!important;border-radius:8px}
   /* a panel behind the items: they keep a ground over it, or their text runs into the panel's */
@@ -2658,6 +2661,7 @@
     _placeDesk(st, cards) {
       const D = root.VeraDesk, body = this.shadowRoot.getElementById('body');
       this._liveFollow(650);   /* every card it places may glide (.45 s): what is drawn over them follows each frame */
+      this._placeSeq = (this._placeSeq || 0) + 1;
       const W = st.clientWidth || 300;
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);
@@ -3516,9 +3520,34 @@
       const body = this.shadowRoot && this.shadowRoot.getElementById('body'); if (!body) return;
       const find = (x) => x ? body.querySelector('#items .it[data-key="' + String(x).replace(/"/g, '\\"') + '"]') : null;
       const prev = find(this._hovKey); if (prev) prev.classList.remove('hov');
+      this._chipPeek(prev, false);
       this._hovKey = k; const it = find(k); if (it) it.classList.add('hov');
+      this._chipPeek(it, true);
       this._hoverOpen(it);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:hover', { bubbles: true, detail: { key: k } })); } catch (e) {}
+    }
+    /* A PILL SAYS WHAT IT IS UNDER THE POINTER (owner, 2026-10-10: "if they are minimised to a pill its often too small to
+       read what they are, could expand to display the entire title on mouse over"): a chip or an icon on the desk widens
+       in place to its whole title, over its neighbours and with a ground, toward the desk if it would run off its edge;
+       it goes back when the pointer leaves. Nothing else moves; if the desk was placed meanwhile it is placed again. */
+    _chipPeek(it, on) {
+      if (!it || !this.deskAlign()) return;
+      if (!on) { const s = it._cpw; if (!s) return; it._cpw = null; it.classList.remove('chip-peek'); if (s.icon) it.classList.add('desk-icon');
+        if (s.seq !== this._placeSeq) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
+        else { it.style.setProperty('width', s.w, 'important'); it.style.left = s.l; it.style.zIndex = s.z; }
+        requestAnimationFrame(() => { it.style.transition = ''; }); return; }
+      if (it._cpw || !it.classList.contains('desk-chip')) return;
+      const icon = it.classList.contains('desk-icon');
+      const s = { w: it.style.getPropertyValue('width'), l: it.style.left, z: it.style.zIndex, icon, seq: this._placeSeq };
+      it.style.transition = 'none'; if (icon) it.classList.remove('desk-icon');
+      const t = it.querySelector(':scope > .it-hd > .t'); if (!t) { if (icon) it.classList.add('desk-icon'); it.style.transition = ''; return; }
+      const short = t.scrollWidth - t.clientWidth;
+      if (short <= 1 && !icon) { it.style.transition = ''; return; }   // its whole title already shows
+      it._cpw = s; it.classList.add('chip-peek');
+      const W = (it.parentElement && it.parentElement.clientWidth) || 1000;
+      const w = Math.min(W - 8, it.offsetWidth + Math.max(0, t.scrollWidth - t.clientWidth) + 8);
+      let left = parseFloat(it.style.left) || 0; if (left + w > W - 4) left = Math.max(4, W - 4 - w);
+      it.style.setProperty('width', w + 'px', 'important'); it.style.left = left + 'px'; it.style.zIndex = '210';
     }
     /* A FOLDED ITEM, PREVIEWED IN PLACE (owner, 2026-10-04: "hovering over lots of collapsed canvas items makes the
        previews flicker in and out as it doesnt stay in-place under the mouse. sometime hovering them doesnt open the
