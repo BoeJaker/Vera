@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 
 import pytest
@@ -66,6 +67,8 @@ def test_enabled_path_commits_revision_and_receipt_after_native(tmp_path):
         snapshot(), native_write=native, actor="codex", observed_at=NOW,
         environ=paths(tmp_path)))
     assert result == {"postgres": True, "chroma": True, "neo4j": True}
+    assert type(result) is dict
+    assert json.loads(json.dumps(result)) == result
     assert order == ["native"]
     with sqlite3.connect(tmp_path / "revisions.sqlite3") as conn:
         assert conn.execute("SELECT COUNT(*) FROM fabric_record_revisions").fetchone()[0] == 1
