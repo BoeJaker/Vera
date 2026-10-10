@@ -96,6 +96,29 @@ def latest_queries(subject: str, question: str = "", now: Optional[datetime] = N
     return uniq[:limit]
 
 
+def fact_queries(subject: str, question: str = "", limit: int = 2) -> List[str]:
+    """The subject's keywords first - measured on prod 10 Oct: "what is the Bank of England base rate" returned bank
+    home pages (Bank of America, Barclays, HSBC), "Bank of England base rate" the Bank's rate page, MSE and the BBC -
+    then the question itself for what the keywords miss."""
+    out = []
+    for x in (subject, question):
+        x = " ".join(str(x or "").split()).strip(" ?")
+        if x and x.lower() not in [o.lower() for o in out]:
+            out.append(x)
+    return out[:limit]
+
+
+def overview_queries(subject: str, question: str = "", now: Optional[datetime] = None, limit: int = 3) -> List[str]:
+    """Several angles for a wider picture: the subject, an explainer, and the question."""
+    now = now or datetime.now(timezone.utc)
+    out = []
+    for x in (subject, f"{subject} explained overview {now.year}", question):
+        x = " ".join(str(x or "").split()).strip(" ?")
+        if x and x.lower() not in [o.lower() for o in out]:
+            out.append(x)
+    return out[:limit]
+
+
 _TRACK = re.compile(r"^(utm_|fbclid$|gclid$|mc_cid$|mc_eid$|ref$|ref_src$|igshid$|si$)", re.I)
 
 

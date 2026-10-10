@@ -150,3 +150,23 @@ def test_the_researcher_ddg_uses_the_shared_parser():
     src = (Path(__file__).resolve().parents[1] / "vera" / "research" / "researcher_api.py").read_text(encoding="utf-8")
     body = src[src.index("async def search_ddg"):src.index("async def search_ddg") + 2500]
     assert "_engines.parse_ddg_html(r.text)" in body and "result__snippet" not in body
+
+
+def test_fact_and_overview_queries_lead_with_the_subjects_keywords():
+    # prod 10 Oct: the question form returned bank home pages, the keyword form the Bank's rate page and the BBC
+    assert C.fact_queries("Bank of England base rate", "what is the Bank of England base rate?") == [
+        "Bank of England base rate", "what is the Bank of England base rate"]
+    assert C.fact_queries("x", "x?") == ["x"]
+    assert C.overview_queries("RAG rerankers", "compare RAG rerankers", NOW) == [
+        "RAG rerankers", "RAG rerankers explained overview 2026", "compare RAG rerankers"]
+
+
+def test_the_cap_reads_the_newest_first_and_ranks_facts_against_the_question():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    body = src[src.index("async def cap_info_seek"):]
+    latest = body[body.index('if need == "latest":'):body.index("    else:\n        # fact")]
+    assert latest.index("items = _seek.order_latest(items, since, now)") < latest.index("got = await _seek_read(")
+    other = body[body.index("    else:\n        # fact"):body.index("intel = await intel_task")]
+    assert "_seek.fact_queries(subject, question)" in other and "await _seek_rerank(question, hits)" in other
+    assert "web.research" not in other                    # one question-shaped search was the bank-homepage failure
