@@ -1242,6 +1242,50 @@ def _report_seller(title: str, snippet: str) -> bool:
         return False
 
 
+def _searxng_host() -> str:
+    """The SearXNG the operator configured (the research subsystem's source), else the env/default one."""
+    ra = _researcher_api()
+    try:
+        src = next((s for s in (getattr(ra, "sources", None) or []) if getattr(s, "id", "") == "searxng"), None)
+        conf = src.config if src is not None else {}
+        if isinstance(conf, str):
+            conf = json.loads(conf or "{}")
+        host = (conf or {}).get("host") if isinstance(conf, dict) else ""
+        if host:
+            return str(host).rstrip("/")
+    except Exception:
+        pass
+    return DEFAULT_SEARXNG
+
+
+async def _searxng_news(query: str, limit: int = 10, time_range: str = "month") -> List[Dict[str, Any]]:
+    """SearXNG's NEWS category (bing/google/yahoo/qwant news...) inside a time range: current headlines with the
+    age each engine states ("14 hours ago | Source"). The general search behind web.search has no notion of time,
+    so 'latest' questions got evergreen explainers ranked first. Empty when SearXNG cannot be reached."""
+    host = _searxng_host()
+    params = _engines.searxng_params(query, 0, 1, categories="news", time_range=time_range)
+    for cand in _engines.host_candidates(host) or [host]:
+        try:
+            async with httpx.AsyncClient(timeout=12.0, headers=_engines.SEARXNG_HEADERS) as c:
+                r = await c.get(f"{cand}/search", params=params)
+                r.raise_for_status()
+                body = r.json()
+        except Exception as e:
+            log.debug("searxng news [%s] %s: %s", query[:40], cand, e)
+            continue
+        out = []
+        for it in body.get("results") or []:
+            if not it.get("url"):
+                continue
+            pub = it.get("publishedDate")
+            out.append({"url": _decode_redirect(it.get("url", "")), "title": it.get("title", ""),
+                        "snippet": it.get("content", "") or "", "engine": it.get("engine", "searxng-news"),
+                        "published": "" if pub in (None, "None") else str(pub),
+                        "age_text": str(it.get("metadata") or "")})
+        return out[:limit]
+    return []
+
+
 async def _seek_read(items: List[Dict[str, Any]], n: int, chars: int) -> int:
     """Read the first `n` unread items through the reader (article text, cached), in parallel. Returns how many
     yielded text. A page's own published date fills one the search did not give."""
@@ -1333,10 +1377,19 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
     if need == "latest":
         since = since or _seek.default_since(now)
         queries = _seek.latest_queries(subject, question, now)
+        span = "week" if (now - (_seek.parse_date(since) or now)).days <= 8 else "month"
+        news_task = asyncio.create_task(_searxng_news(subject, 12, span))
         res = await asyncio.gather(*[_seek_call("web.search", 25, query=q, limit=8, discover="off") for q in queries])
-        hits = _seek.merge_hits([r.get("results") or [] for r in res])
+        try:
+            news = await asyncio.wait_for(news_task, 20)
+        except Exception:
+            news = []
+        # news first: it is what is current; the general results add depth and the explainers
+        hits = _seek.merge_hits([news] + [r.get("results") or [] for r in res])
         engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
+        checked.append(f"news: {len(news)} headlines from the past {span}")
         checked.append(f"web: {len(queries)} searches ({', '.join(engines) or 'no engine answered'}), {len(hits)} results")
+        _seek.fill_dates(hits, now)
         dropped = [h for h in hits if _report_seller(h.get("title"), h.get("snippet"))]
         hits = [h for h in hits if h not in dropped]
         if dropped:

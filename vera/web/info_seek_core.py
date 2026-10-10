@@ -10,6 +10,7 @@ it is pure and tested on its own.
 """
 from __future__ import annotations
 
+import html as _html
 import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -171,6 +172,44 @@ def parse_date(s: Any) -> Optional[datetime]:
     return None
 
 
+_AGO = re.compile(r"\b(\d{1,3})\s*(min(?:ute)?s?|h(?:ou)?rs?|hours?|days?|d|weeks?|w|months?|mo|years?|y)\s+ago\b", re.I)
+_LEAD_DATE = re.compile(r"^\s*([A-Z][a-z]{2,8}\.? \d{1,2}, 20\d\d|\d{1,2} [A-Z][a-z]{2,8}\.? 20\d\d|20\d\d-\d\d-\d\d)\b")
+
+
+def date_from_text(text: Any, now: Optional[datetime] = None) -> Optional[datetime]:
+    """A date a result states about itself in its snippet or byline: "14 hours ago | Watford Observer",
+    "yesterday", or a leading "Sep 17, 2026 - ..." (how search engines prefix a snippet). Not a date somewhere
+    in the text: "what changed on 2 August 2026" is an event, not when the page was written."""
+    now = now or datetime.now(timezone.utc)
+    t = str(text or "")
+    m = _AGO.search(t[:80])
+    if m:
+        n, u = int(m.group(1)), m.group(2).lower()
+        days = (n / 1440.0 if u.startswith("min") else n / 24.0 if u.startswith("h") else
+                n * 7.0 if u.startswith("w") else n * 30.0 if u.startswith("mo") else
+                n * 365.0 if u.startswith("y") else float(n))
+        return now - timedelta(days=days)
+    if re.match(r"^\s*yesterday\b", t, re.I):
+        return now - timedelta(days=1)
+    if re.match(r"^\s*today\b", t, re.I):
+        return now
+    m = _LEAD_DATE.match(t)
+    return parse_date(m.group(1).replace(".", "")) if m else None
+
+
+def fill_dates(items: Sequence[Dict[str, Any]], now: Optional[datetime] = None) -> int:
+    """Give undated items the date their own byline or snippet states; returns how many got one."""
+    n = 0
+    for it in items:
+        if it.get("published") and parse_date(it.get("published")):
+            continue
+        d = date_from_text(it.get("age_text"), now) or date_from_text(it.get("snippet"), now)
+        if d:
+            it["published"] = d.strftime("%Y-%m-%d")
+            n += 1
+    return n
+
+
 def default_since(now: Optional[datetime] = None, days: int = 14) -> str:
     return ((now or datetime.now(timezone.utc)) - timedelta(days=days)).strftime("%Y-%m-%d")
 
@@ -240,7 +279,7 @@ def build_pack(need: str, question: str, subject: str, items: Sequence[Dict[str,
             d = None
         rows.append({
             "n": len(rows) + 1,
-            "title": str(it.get("title") or it.get("url") or "")[:180],
+            "title": _html.unescape(str(it.get("title") or it.get("url") or ""))[:180],
             "url": it.get("url") or "",
             "site": site_of(it.get("url") or ""),
             "published": d.strftime("%Y-%m-%d") if d else "",
