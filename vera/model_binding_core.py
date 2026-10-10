@@ -537,7 +537,8 @@ _MEDIA_WORDS = {
     "image": ("image", "photo", "picture", "screenshot", "png", "jpg", "drawing", "diagram", "chart"),
     "text": ("text", "transcript", "words", "caption", "summary", "label", "labels", "answer"),
 }
-_IO_MEDIUM = {"audio": "audio", "image": "image", "image+text": "image", "text+image": "image"}
+_IO_MEDIUM = {"audio": "audio", "image": "image", "image+text": "image", "text+image": "image",
+              "vector": "vector", "vectors": "vector"}     # an embedding is not text
 _LANGS = ("german", "french", "spanish", "italian", "dutch", "portuguese", "russian", "chinese",
           "japanese", "arabic", "polish", "swedish", "turkish", "korean", "hindi", "welsh")
 
@@ -586,6 +587,8 @@ def pick(rows: Sequence[Mapping[str, Any]], need: str, *, top_k: int = 5,
         direction = 0.0
         if want_out and m_out == want_out:
             direction += 0.15
+        elif want_out:
+            direction -= 0.1                       # gives something else
         if src and m_in in src:
             direction += 0.1
         if want_out and m_in == want_out and m_out in src:

@@ -85,8 +85,20 @@ async def _cards() -> Dict[str, List[float]]:
         return cards
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.model_binding_core import binding as _bind
+except Exception:                        # worktree / app-free import
+    from vera.model_binding_core import binding as _bind   # type: ignore
+
+_SERVES_FRAME = _bind(
+    "frame", "nlp", io_in="text", io_out="labels", tier=1, placement="nlp",
+    uses="Frame a text before anything else runs: patterns (urls, paths, tickers, nodes, capability "
+         "names), the nearest domains by MiniLM against domain cards, optionally entities and language.",
+    limits="understanding meaning beyond domains and patterns (it routes, it does not answer).")
+
+
 @capability(
-    "sense.frame", http_method="POST", http_path="/sense/frame", http_tags=["minds"],
+    "sense.frame", serves=_SERVES_FRAME, http_method="POST", http_path="/sense/frame", http_tags=["minds"],
     memory="off", silent=True,
     description="One Frame per text (four-minds FM-1.1): regex patterns (urls, paths, tickers, nodes, "
                 "sessions, capability names), the nearest domains by the decision-space vector (MiniLM "

@@ -3061,6 +3061,26 @@ async def _chroma_existing_ids(dataset_id: str = "") -> set:
         return set()
 
 
+async def _pin_corpus(graph: Dict, curated: bool) -> Dict[str, Any]:
+    """A DatasetSnapshot of the records this training uses (references: id + dataset), written with its id list
+    under the state root (datasets/worldview/<snapshot_id>.json). Returns {snapshot_id, snapshot_path}."""
+    from Vera.vera.state_paths import state_dir
+    recs = _wv_corpus.snapshot_records(graph.get("rids") or [], graph.get("records") or {})
+    snap, _ = DatasetSnapshot.create(
+        dataset_id=_wv_corpus.SNAPSHOT_DATASET, created_at=now_iso(), records=recs,
+        schema=_wv_corpus.SNAPSHOT_SCHEMA,
+        provenance={"curated": bool(curated), "key": WV_BLOB_KEY,
+                    "family_cap": _WV_CONFIG.get("corpus_family_cap"),
+                    "exclude": list(_WV_CONFIG.get("corpus_exclude") or _wv_corpus.SELF_TELEMETRY)})
+
+    def _write():
+        path = state_dir("datasets", "worldview") / f"{snap.snapshot_id}.json"
+        path.write_text(json.dumps({"snapshot": snap.to_dict(), "records": recs}), encoding="utf-8")
+        return str(path)
+    path = await asyncio.get_running_loop().run_in_executor(None, _write)
+    return {"snapshot_id": snap.snapshot_id, "snapshot_path": path}
+
+
 async def _curated_corpus_ids(limit: int) -> Dict[str, Any]:
     """FM-8.3: record ids for training, stratified by collector family (worldview_corpus_core.plan), from the
     fabric's SQLite - never a filtered Chroma scan (a where-filter scans the whole collection). Each family's
@@ -3908,6 +3928,12 @@ async def cap_worldview_train(
     if graph.get("rids"):
         MODEL.corpus = _wv_corpus.mix((graph.get("records") or {}).get(r, {}).get("dataset_id", "")
                                       for r in graph["rids"])
+        # FM-8.3: the corpus is pinned - a DatasetSnapshot of the record references, kept off the repo, so the
+        # model's health and the next training can name exactly what it learnt from
+        try:
+            MODEL.corpus.update(await _pin_corpus(graph, curated=bool(resolved_node_ids and not node_ids)))
+        except Exception as e:
+            log.warning("worldview: corpus snapshot not pinned: %s", e)
     if not graph.get("rids"):
         diag = await _diagnose_no_records(dataset_id)
         return {"error": "No records with embeddings found",

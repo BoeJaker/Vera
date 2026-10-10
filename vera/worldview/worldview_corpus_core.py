@@ -96,3 +96,14 @@ def plan(dataset_counts: Dict[str, int], target: int, exclude: Sequence[str] = S
         sizes[f] += int(n)
     return {"quotas": quotas(dict(sizes), target, cap), "datasets": by_family,
             "excluded": sorted(dropped), "eligible": int(sum(sizes.values()))}
+
+
+SNAPSHOT_DATASET = "vera.worldview.corpus"
+SNAPSHOT_SCHEMA = {"record": "fabric_record_ref/v1", "fields": ["id", "dataset_id"]}
+
+
+def snapshot_records(rids, records) -> List[Dict[str, str]]:
+    """The records a training used, as references (id + dataset), ordered by id: the same corpus always gives the
+    same DatasetSnapshot id, whatever order the graph held them in."""
+    return [{"id": str(r), "dataset_id": str(((records or {}).get(r) or {}).get("dataset_id") or "")}
+            for r in sorted(set(str(x) for x in (rids or [])))]

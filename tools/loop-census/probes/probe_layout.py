@@ -14,6 +14,9 @@ Layouts are per-run loop overrides (no config change):
   L8  L7 + the warm CPU coder
   I1  info-first: info.seek leads the catalogue for a goal that needs the web
   I2  I1 + answer check (the CPU MoE checks the final answer against the files)
+  C1  verifier + final gate on the CPU MoE (qwen3.6:35b-a3b, cpu-246) - stronger checks, off the GPU
+  C2  journal/finalize/adjust/strategist on the 9B on gpu-250-cpu - same model, off the GPU slot
+  C3  C1 + C2
 Out: ~/loop-census/probe_layout/<layout>-<goal_id>.json (+ ev/<sid>.jsonl; CENSUS_PROBE_LAYOUT_OUT).
     python3 probe_layout.py --rescore <sid> <template> <goal_id> [layout]
 rebuilds a probe's result from its records (Redis events + sandbox files) without running
@@ -60,6 +63,17 @@ LAYOUTS = {
     # info-first (compute-roles P1a, 10 Oct 2026)
     "I1": {"info_first": True},
     "I2": {"info_first": True, "answer_check": True},
+    # the loop's role-less stages placed on CPU nodes (stage_models, 10 Oct 2026)
+    "C1": {"stage_models": "verifier=qwen3.6:35b-a3b@cpu-246,gate=qwen3.6:35b-a3b@cpu-246"},
+    "C2": {"stage_models": "journal=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "finalize=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "adjust=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "strategist=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu"},
+    "C3": {"stage_models": "verifier=qwen3.6:35b-a3b@cpu-246,gate=qwen3.6:35b-a3b@cpu-246,"
+                           "journal=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "finalize=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "adjust=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "strategist=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu"},
 }
 RESCORE = ""
 if len(sys.argv) > 2 and sys.argv[1] == "--rescore":
