@@ -514,9 +514,17 @@ def _register_model_cap(slug: str, module_id: str, live_mount: bool = False) -> 
     cap_name = f"ml.onnx.model.{slug}"
     path = f"/ml/onnx/model/{slug}"
     if cap_name not in CAPABILITY_REGISTRY:
+        try:
+            from Vera.vera.model_binding_core import binding as _bind
+        except ImportError:  # standalone/test import path
+            from vera.model_binding_core import binding as _bind
         capability(
             cap_name, http_method="POST", http_path=path,
             http_tags=["ml", "onnx", "model"], memory="on",
+            serves=_bind("predict", "onnx", io_in="vectors", io_out="scores", placement="any",
+                         uses=f"Predictions from the ML Workshop model {module_id!r} exported to "
+                              f"ONNX: give it feature rows (X, a JSON list), get its outputs back.",
+                         limits="inputs with a different feature layout than it was trained on."),
             description=(f"Run the exported ONNX model {module_id!r} via ONNX "
                          f"Runtime. Input: X (JSON list). Output: {{predictions}}."),
         )(_make_runner(slug))

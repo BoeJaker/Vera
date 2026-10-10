@@ -398,6 +398,40 @@ the argument against the same list (`model_binding_core.selector_values`). So
 the tool form, the LLM-facing signature and the check cannot drift from what
 the capability declares.
 
+Each row also carries `measured`, worked out from the last 24 hours of node activity: calls,
+`p50_s` / `p95_s`, `error_rate` and the nodes that served it.
+- **LLMs** are matched by model name.
+- **Node NLP and media calls** are recorded per endpoint without the model, so the bindings
+  behind one endpoint (`nlp.ner`'s ner / gliner / spacy) share a figure. Their `scope` says
+  `endpoint 'ner' (shared)`.
+
+The `Models:` section in a description keeps only the first sentence of each
+model's uses and limits, because it rides in every tool listing. The full
+text is in `model.callable`.
+
+`model.pick` (`POST /models/pick`) answers "which model fits this task?". It takes `need`, a
+task in words, and ranks every callable model by:
+- **meaning:** the cosine of the need's MiniLM vector (`nlp.embed`) against each model's
+  `uses`, cached per text;
+- **shared words**, with the words a model's `limits` add counting against it;
+- **direction:** the media the need starts from and wants out ("turn this voice memo into
+  text" is audio in, text out), with a model facing the reverse direction marked down;
+- **language:** a need naming a non-English language favours multilingual models;
+- **state:** models loaded now come first, and measured errors cost.
+
+Each pick says how to call the model (cap + selector) and `why` it ranked. With no NLP node it
+ranks by words alone, and says so in `ranked_by`.
+
+Bound today:
+- **NLP:** `nlp.*` (11 models).
+- **Speech:** `stt.transcribe` (Whisper), `tts.synthesize` (Kokoro / Coqui by `engine`).
+- **Images:** `image.generate` (Stable Diffusion), `image.pose` (ControlNet), `image.rembg`,
+  `image.upscale` (Real-ESRGAN).
+- **Vision and worldview:** `vision.describe`, `worldview.encode` / `predict`.
+- **ONNX:** every `ml.onnx.model.<slug>`.
+
+The decision models (`decide.*`) are the four-minds plan's to bind.
+
 ### Duplicate names
 
 The decorator does not guard against re-registration: a later

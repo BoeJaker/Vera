@@ -4072,8 +4072,24 @@ async def cap_worldview_rebuild_index(
     return {"ok": True, "indexed": indexed, "duration_s": duration}
 
 
+try:
+    from Vera.vera.model_binding_core import binding as _bind
+except ImportError:  # standalone/test import path
+    from vera.model_binding_core import binding as _bind
+
+_SERVES_WV_ENCODE = _bind(
+    "encode", "jepa", io_in="text", io_out="label", placement="host",
+    uses="Place a text or stored record in the worldview's latent space and name the concept "
+         "cluster it belongs to.",
+    limits="anything the worldview has not been trained on yet (check worldview.health).")
+_SERVES_WV_PREDICT = _bind(
+    "predict", "jepa", io_in="text", io_out="labels", placement="host",
+    uses="Predict which concepts tend to follow a record, concept or text, with probabilities - "
+         "what usually comes next.",
+    limits="facts or reasoning; concepts are clusters, not answers.")
+
 @capability(
-    "worldview.encode",
+    "worldview.encode", serves=_SERVES_WV_ENCODE,
     http_method="POST", http_path="/worldview/encode",
     http_tags=["worldview"], memory="off",
     description="Encode text or record into latent + concept. "
@@ -4123,7 +4139,7 @@ async def cap_worldview_encode(
 
 
 @capability(
-    "worldview.predict",
+    "worldview.predict", serves=_SERVES_WV_PREDICT,
     http_method="POST", http_path="/worldview/predict",
     http_tags=["worldview"], memory="off",
     description="Predict the next concept after a record/concept/text. "

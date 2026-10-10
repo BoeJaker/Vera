@@ -440,8 +440,20 @@ async def _resolve_image_b64(image_b64: str, image_url: str) -> str:
     return ""
 
 
+try:
+    from Vera.vera.model_binding_core import binding as _bind
+except ImportError:  # standalone/test import path
+    from vera.model_binding_core import binding as _bind
+
+_SERVES_VISION = _bind(
+    "image-to-text", "ollama", io_in="image+text", io_out="text", placement="any",
+    uses="Answer a question about an image in text - describe a photo or screenshot, read text or a "
+         "chart out of it, check a generated image against its prompt. Picks the best multimodal "
+         "model available; model= forces one.",
+    limits="precise measurements or pixel-exact positions; very small text.")
+
 @capability(
-    "vision.describe",
+    "vision.describe", serves=_SERVES_VISION,
     http_method="POST", http_path="/vision/describe", http_tags=["media", "vision"],
     description="Look at an image and answer in text — the EYES for text-only agents "
                 "(qwen3.5 etc.): routes the image to the best available multimodal "
