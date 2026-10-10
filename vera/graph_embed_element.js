@@ -249,7 +249,9 @@
        grip under the diagram for a taller box, or "enlarge" for the whole window (Esc, the backdrop or "back to size"
        puts it back). The structured renderer refits itself when its box changes (its ResizeObserver). */
     _setHeight(h) {
-      h = Math.max(160, Math.min(Math.round(h), Math.round((window.innerHeight || 900) * 0.92)));
+      /* min-h: a host whose box is smaller (a desk card) says how small; the box is never taller than what holds it */
+      var mn = parseInt(this.getAttribute('min-h'), 10); if (!(mn >= 40)) mn = 160;
+      h = Math.max(mn, Math.min(Math.round(h), Math.round((window.innerHeight || 900) * 0.92)));
       this._h = h; this._host.style.height = h + 'px';
       if (this._struct) this._struct.style.height = h + 'px';
     }
@@ -343,6 +345,7 @@
         actionsEnabled: false,
         memoryLayer: false,
         memoryStore: false,
+        calm: this.hasAttribute('calm'),   /* settled before it is shown, still after: a graph among other things */
         defaultLayer: layer,
         layerOpts: params,
         onNodeClick: function (node) {

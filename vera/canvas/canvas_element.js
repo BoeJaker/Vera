@@ -1249,7 +1249,9 @@
   /* NO GROUND ON A BARE DESK (owner, 2026-10-09: "id like the elements to have no background (if there is no panel behind
      them, else keep the background)"): with nothing behind them the items sit on the desk itself. One that rides over the
      others - dragged, peeking open, maximised - keeps its ground, or its text would run into theirs. */
-  :host([align="desk"]:not([desk-narrow]):not([layered])) .stage .it:not([data-desk-face^="layer-"]):not(.desk-dragging):not(.peek):not(.hovopen):not(.maxed){background:transparent!important;border-color:transparent!important}   /* its marks (waiting, pinned, a run's end) are rings, kept */
+  :host([align="desk"]:not([desk-narrow]):not([layered])) .stage .it:not([data-desk-face^="layer-"]):not(.desk-dragging):not(.resizing):not(.peek):not(.hovopen):not(.maxed){background:transparent!important;border-color:transparent!important}   /* its marks (waiting, pinned, a run's end) are rings, kept */
+  /* a card being carried or sized rides over the others with its ground, so it never mixes with what it passes over */
+  :host([align="desk"]:not([desk-narrow])) .stage .it:is(.desk-dragging,.resizing){background:var(--bg1,#15181d)!important;border-radius:8px}
   /* a panel behind the items: they keep a ground over it, or their text runs into the panel's */
   :host([align="desk"]:not([desk-narrow])[layered]) .stage .it:not([data-desk-face^="layer-"]){background:var(--bg1,#15181d)!important;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
   /* an older item fades by opacity, which let the panel show through it: over a panel it dims instead */
@@ -2711,12 +2713,20 @@
         age: x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null })), desk);
       const locks = this._lockGet();
       const lockOf = (key) => { const l = locks[key]; return l && isFinite(l.fx) && isFinite(l.fy) && l.w > 0 && l.h > 0 ? l : null; };
-      ranked.sort((a, b) => ((lockOf(b.c.dataset.key || '') ? 2 : 0) + (userAt(b.c.dataset.key || '') ? 1 : 0)) - ((lockOf(a.c.dataset.key || '') ? 2 : 0) + (userAt(a.c.dataset.key || '') ? 1 : 0)));
+      const sized = (k) => !!(up[k] && up[k].w > 0 && up[k].h > 0);
+      const firm = (x) => (this._rz && this._rz.el === x.c ? 8 : 0) + (lockOf(x.c.dataset.key || '') ? 4 : 0) + (sized(x.c.dataset.key || '') ? 2 : 0) + (userAt(x.c.dataset.key || '') ? 1 : 0);
+      ranked.sort((a, b) => firm(b) - firm(a));   /* the card being sized, then locked, then placed by hand: the others go round them */
       const plan = ranked.map((x) => {
         const c = x.c, key = c.dataset.key || String(x.i);
+        /* the card under the hand's resize: its top-left where it was, its size the hand's; the others go round it */
+        if (this._rz && this._rz.el === c) { const r = this._rz, rw = Math.min(W - 16, r.w), rh = Math.min(H - 8, r.h);
+          return { c, id: key, so: {}, fixed: true, sizing: true, x: r.l0 + rw / 2, y: r.t0 + rh / 2, w: rw, h: rh }; }
         const lk = lockOf(key); c.classList.toggle('desk-locked', !!lk);
-        if (lk) { const lw = Math.min(W - 16, lk.w), lh = Math.min(H - 8, lk.h);
-          return { c, id: key, so: {}, fixed: true, lock: lk, x: Math.max(lw / 2, Math.min(W - lw / 2, lk.fx * W)), y: Math.max(lh / 2, Math.min(H - lh / 2, lk.fy * H)), w: lw, h: lh }; }
+        /* locked, or sized by the person (its rectangle kept with its place): fixed at exactly that, the others go round */
+        const us = !lk && up[key] && up[key].w > 0 && up[key].h > 0 && isFinite(up[key].fx) && isFinite(up[key].fy) ? up[key] : null;
+        const fx = lk || us;
+        if (fx) { const lw = Math.min(W - 16, fx.w), lh = Math.min(H - 8, fx.h); if (us) c.classList.add('desk-placed');
+          return { c, id: key, so: {}, fixed: true, lock: fx, x: Math.max(lw / 2, Math.min(W - lw / 2, fx.fx * W)), y: Math.max(lh / 2, Math.min(H - lh / 2, fx.fy * H)), w: lw, h: lh }; }
         const p = userAt(key) || pos[key] || [W - 90, H - 30];
         c.classList.toggle('desk-placed', !!userAt(key));
         /* the person's size: the drag in progress, else what the canvas remembers for the item (this._pw / this._px) -
@@ -2728,12 +2738,15 @@
         const user = pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null;
         const so = { size: user, pinned: !!user && c.classList.contains('pinned'), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
-        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h) };
+        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h), face0: po.size.face };
       });
       D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h) }; }, { W: W, H: H });
       const out = [];
       plan.forEach((it) => {
-        const c = it.c, key = it.id, s = it.lock ? { w: it.w, h: it.h, face: it.lock.face || 'card', nd: 0.5 } : D.sizeAt(R, it.x, it.y, it.so, desk);
+        const c = it.c, key = it.id, s = it.lock ? { w: it.w, h: it.h, face: it.lock.face || 'card', nd: 0.5 }
+          : it.sizing ? { w: it.w, h: it.h, face: c.dataset.deskFace || 'max', nd: 0 }
+          /* moved where only its present size fits: it keeps that size and its face there, or it would grow over its neighbours */
+          : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: it.face0 || 'chip' }) : D.sizeAt(R, it.x, it.y, it.so, desk);
         const w = Math.min(W - 16, s.w), h = Math.min(H - 8, s.h);
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
         c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
@@ -2743,7 +2756,7 @@
         if (s.face === 'icon') { const t = c.querySelector('.it-hd > .t'); c.title = t ? t.textContent.trim() : ''; } else if (c.title) c.removeAttribute('title');
         // the desk owns the size here: a compact card's own height rule must not grow a chip under its neighbours
         c.style.left = left + 'px'; c.style.top = top + 'px'; c.style.setProperty('width', w + 'px', 'important'); c.style.setProperty('height', h + 'px', 'important'); c.style.setProperty('min-height', '0px', 'important');
-        c.style.zIndex = String(D.stackOrder(s.nd));
+        c.style.zIndex = String(it.sizing ? D.stackOrder(0, { dragging: true }) : D.stackOrder(s.nd));
         out.push({ key: key, x: left, y: top, w: w, h: h, face: s.face });
       });
       /* the layered panels: the largest part of the desk the chat leaves free, under (behind) or over (front) the rest */
@@ -3394,7 +3407,11 @@
         /* the pointer moves in screen pixels and the card is sized in layout pixels: under the UI scale (zoom 1.4) a drag
            grew it 1.4 times as far as the hand moved */
         const Z = it.offsetWidth ? (it.getBoundingClientRect().width / it.offsetWidth) || 1 : 1;
-        this._rz = { key: it.dataset.key, el: it, y0: ev.clientY, h0, h: h0, x0: ev.clientX, w0, w: w0, Z }; });
+        this._rz = { key: it.dataset.key, el: it, y0: ev.clientY, h0, h: h0, x0: ev.clientX, w0, w: w0, Z,
+          l0: parseFloat(it.style.left) || 0, t0: parseFloat(it.style.top) || 0 };
+        /* on the desk the card you are sizing rides over the rest (owner, 2026-10-10: grown by its corner, "other panels
+           can move partially behind it"): it and its graph are on top, with their ground, until it is let go */
+        if (this.deskAlign() && root.VeraDesk) { it.style.zIndex = String(root.VeraDesk.stackOrder(0, { dragging: true })); try { this._liveLayout(); } catch (e) { /* optional */ } } });
       /* MOVING A CARD ON THE DESK (owner-approved desk, 2026-10-06: "as you drag them in they become big enough to glance
          at"). Its header is the handle; past 4 px it follows the pointer, sized live by its distance from the chat and
          stacked on top; let go, it stays there (a share of the desk, per canvas). A double click on the header gives it
@@ -3405,6 +3422,7 @@
         if (!it || it.dataset.deskFace === 'layer-behind' || it.dataset.deskFace === 'layer-front' || it.classList.contains('desk-locked')) return null; return it; };
       body.addEventListener('mousedown', (ev) => { const it = deskHandle(ev); if (!it) return;
         const st = this.shadowRoot.getElementById('stage'); if (!st) return;
+        ev.preventDefault();   /* a card carried by its header does not select the text it passes over */
         const Z = st.offsetWidth ? (st.getBoundingClientRect().width / st.offsetWidth) || 1 : 1;
         this._dg = { el: it, key: it.dataset.key, x0: ev.clientX, y0: ev.clientY, Z,
           cx0: (parseFloat(it.style.left) || 0) + it.offsetWidth / 2, cy0: (parseFloat(it.style.top) || 0) + it.offsetHeight / 2, moved: false }; });
@@ -3423,8 +3441,10 @@
         const cx = Math.max(10, Math.min(g.W - 10, d.cx0 + dx)), cy = Math.max(10, Math.min(g.H - 10, d.cy0 + dy));
         const pw = this._pw[d.key] || parseInt(d.el.dataset.pw || '0', 10) || 0, ph = this._px[d.key] || 0;
         const so = { size: pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null, pinned: pw > 0 && d.el.classList.contains('pinned') };
-        const s = D.sizeAt(g.R, cx, cy, so, g.desk), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
-        d.cx = cx; d.cy = cy;
+        /* a card sized by the person keeps its size as it is carried; any other is sized by where it is */
+        const kept = this._deskPosGet()[d.key]; const own = kept && kept.w > 0 && kept.h > 0 ? kept : null;
+        const s = own ? { w: own.w, h: own.h, face: own.face || 'max', t: 1 } : D.sizeAt(g.R, cx, cy, so, g.desk), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
+        d.cx = cx; d.cy = cy; d.own = own;
         /* the face changes with a margin: a card held near a boundary (chip | card | full) flipped its contents back and
            forth as the hand trembled - the flicker while moving (owner, 2026-10-08). The size still follows smoothly. */
         const TH = { chip: 0.25, card: 0.6 }, M = 0.05, cur = d.el.dataset.deskFace || s.face;
@@ -3440,7 +3460,8 @@
       doc.addEventListener('mouseup', () => { const d = this._dg; if (!d) return; this._dg = null;
         if (!d.moved) return;
         this._dgEnd = Date.now(); d.el.classList.remove('desk-dragging');
-        const g = this._deskGeo; if (g && d.cx != null) this._deskPosSet(d.key, { fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) });
+        const g = this._deskGeo; if (g && d.cx != null) this._deskPosSet(d.key, Object.assign({ fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) },
+          d.own ? { w: d.own.w, h: d.own.h, face: d.own.face } : {}));
         this._placeNow(); });
       doc.addEventListener('mousemove', (ev) => { const r = this._rz; if (!r) return;
         const h = Math.max(40, r.h0 + (ev.clientY - r.y0) / (r.Z || 1)); r.h = h; r.el.style.height = h + 'px';
@@ -3448,7 +3469,10 @@
         r.el.classList.add('openin');
         /* on the desk only the card being resized moves while the grip is held (its widget follows it); the desk is
            placed once, on the drop - re-placing every card on every move made the resize jitter and lag */
-        if (this.deskAlign()) { try { this._liveLayout(); } catch (e) { /* optional */ } this._liveFollow(400); }
+        if (this.deskAlign()) { try { this._liveLayout(); } catch (e) { /* optional */ } this._liveFollow(400);
+          /* ...and when the hand rests a moment the others move out of its way (the card being sized stays put, its
+             corner under the hand) - not on every move, which made the resize jitter */
+          clearTimeout(this._rzPlaceT); this._rzPlaceT = setTimeout(() => { if (this._rz === r) { try { this._placeNow(); } catch (e) { /* optional */ } } }, 220); }
         else if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
@@ -3457,7 +3481,12 @@
         const g = this._deskGeo;
         if (g && this.deskAlign()) {
           const cx = (parseFloat(r.el.style.left) || 0) + r.w / 2, cy = (parseFloat(r.el.style.top) || 0) + r.h / 2;
-          this._deskPosSet(key, { fx: +(Math.max(0, Math.min(g.W, cx)) / g.W).toFixed(4), fy: +(Math.max(0, Math.min(g.H, cy)) / g.H).toFixed(4) });
+          /* ...AT THE SIZE YOU GAVE IT (owner, 2026-10-10: "i adjust the size of a graph element and another element can
+             fall inside it from the right edge"): the placer re-sized a sized card by its distance from the chat - grown
+             towards the border it came back smaller, or a chip, and the rest were placed for a size it did not have. Its
+             rectangle is the person's now: kept exactly, and everything else goes round it. */
+          const face = (r.el.dataset.deskFace && r.el.dataset.deskFace !== 'chip' && r.el.dataset.deskFace !== 'icon') ? r.el.dataset.deskFace : 'max';
+          this._deskPosSet(key, { fx: +(Math.max(0, Math.min(g.W, cx)) / g.W).toFixed(4), fy: +(Math.max(0, Math.min(g.H, cy)) / g.H).toFixed(4), w: Math.round(r.w), h: Math.round(r.h), face });
         }
         /* ...and onto the card NOW: the placer reads the card's data-pw, which only a redraw rewrites - a drag that kept
            the size class placed the card at the width of the drag before and it snapped back (owner, 2026-10-04: "i
@@ -3499,6 +3528,10 @@
       clearTimeout(this._peekT);
       const key = it && it.dataset ? it.dataset.key : null;
       if (this._peekKey && this._peekKey !== key) this._peekClose();
+      /* not on the desk: a desk card shows its body by its distance from the chat, a chip by being brought in. The peek
+         re-flowed every card the pointer crossed (compact off, peek and hovopen on, back again) and with it the graph
+         drawn over the card - resized 34-53 times in one pass of the mouse, the graphs' flicker under the hand */
+      if (this.deskAlign()) return;
       if (!key || this._peekKey === key || this._rz || it.classList.contains('ghost') || !(it.classList.contains('compact') || it.classList.contains('overfold'))) return;
       this._peekT = setTimeout(() => { if (this._hovKey === key) this._peekOpen(key); }, 220);
     }
@@ -3861,7 +3894,10 @@
             inner.addEventListener('vera-graph-node', (ev) => this._explodeToSource(key, (ev.detail || {}).node)); }
           // a records item's GRAPH view (the fabric's answer): the same chrome-less Vera graph, fed the item's records
           else if (kind === 'rgraph') { inner = document.createElement('vera-graph-embed'); h.textContent = '';
-            inner.setAttribute('renderer', 'data'); inner.setAttribute('expand', 'off'); inner.setAttribute('height', String(Math.max(160, (h.clientHeight || 300) - 16)));
+            inner.setAttribute('renderer', 'data'); inner.setAttribute('expand', 'off'); inner.setAttribute('height', String(Math.max(60, (h.clientHeight || 300) - 16)));
+            /* calm: settled before it is shown and still after, a resize only re-frames it (the desk's graphs flickered
+               while nobody touched them: each one re-ran its layout for 20 s after every load and every resize) */
+            inner.setAttribute('calm', ''); inner.setAttribute('min-h', '60');
             ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
             this._rgFeed(inner, key);
             inner.addEventListener('vera-graph-node', (ev) => this._rgNode(key, (ev.detail || {}).node)); }
