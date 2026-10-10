@@ -66,7 +66,9 @@
     var face = t > 0.6 ? 'max' : t > 0.25 ? 'card' : 'chip';
     /* d.scale grows or shrinks the larger faces with the desk (a narrow canvas column, a wide screen); a chip keeps its
        size so its title stays readable */
-    var sc = (d && d.scale) || 1, mw = SIZE.max.w * sc, mh = SIZE.max.h * sc;
+    /* d.scaleY, when given, grows the faces' height apart from their width: a tall desk beside a docked chat fills its
+       bands' length with taller cards rather than leaving half of it empty */
+    var sc = (d && d.scale) || 1, mw = SIZE.max.w * sc, mh = SIZE.max.h * ((d && d.scaleY) || sc);
     var w = Math.round(SIZE.chip.w + t * (mw - SIZE.chip.w)), h = Math.round(SIZE.chip.h + t * (mh - SIZE.chip.h));
     var why = '';
     if (o.size && o.pinned) { w = o.size.w; h = o.size.h; face = faceOf(w, h); t = 1; why = 'pinned'; }

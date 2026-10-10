@@ -2810,6 +2810,22 @@
         const rest = ranked.filter((x) => !inT(x)); rest.forEach((x) => outside.add(x.c.dataset.key || ''));
         ranked.length = 0; lead.concat(rest).forEach((x) => ranked.push(x));
       }
+      /* THE CARDS TAKE THE ROOM THERE IS (owner, 2026-10-09: "a really good automatic layout and sizing system"; 2026-10-10:
+         "the auto sizing of elements is also not done"): the largest face was 300 x 196 grown only with the desk's width,
+         so two cards beside the chat were as small as ten. The faces now share about half the free desk among the cards
+         beside the chat (the topic's, or the first nine), up to 2.4 times; never smaller than the width alone made them.
+         Chips keep their size; the bands take their depth from the face, so the arrangement follows. */
+      const nNear = Math.max(1, Math.min(9, ranked.filter((x) => !outside.has(x.c.dataset.key || '')).length));
+      desk.scale = Math.max(f, Math.min(2.4, Math.sqrt((W * H * 0.5) / (nNear * 300 * 196)))); desk.scaleY = 0;
+      /* beside a docked chat the bands are columns: the cards are as wide as the columns the border's chips leave, and as
+         tall as the first band's share of the desk's height (it holds up to three) - a tall desk had 3 cards of 196 px in
+         1150 px of band. Never taller than 1.3 times their width. */
+      if (R.r <= 0 || R.l >= W) {
+        const bands = nNear > 3 ? 2 : 1, per = Math.min(3, nNear);
+        const sx = Math.max(f, Math.min(2.6, ((W - 170 - 14 * (bands + 1)) / bands) / 300));
+        const sy = Math.max(f, Math.min(2.6, ((H - 16) / per - 14) / 196));
+        desk.scale = sx; desk.scaleY = Math.min(sy, (sx * 300 * 1.3) / 196);
+      }
       /* the arrangement deals its places in the kept order (it was dealt before the order was applied, so a turn's items
          were "brought in" without moving) */
       /* the arrangement the person chose (owner, 2026-10-06: "automatically organised but let the user configure it"):
