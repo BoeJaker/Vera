@@ -5138,6 +5138,10 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
   const _INFO_CORE_CAPS=['web.research','web.fetch'];
   /* short questions count ("latest on MCP?" is under the trivial-chat length); greetings and thanks never do */
   const _INFO_ASK_RE=/\?|\b(latest|news|updates?|price|current|today|who|what|when|where|which|why|how)\b/i;
+  /* the caps whose result is outside evidence to cite */
+  function _isLookupCap(name){
+    return /^(web\.(research|search|fetch|search_and_crawl)|reader\.page|info\.seek|intel\.lookup|fabric\.discover\.query|research\.db\.search)$/.test(String(name||''));
+  }
   function _wantsInfoCore(text){
     const t=(text||'').trim();
     if(!t || _TRIVIAL_CHAT_RE.test(t)) return false;
@@ -10968,7 +10972,15 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
               + `not already say: point at the part that answers their question, flag a gap or `
               + `caveat, or ask what they want next. If nothing useful can be added, say only `
               + `that the report is above.\n\nFor your reference, the report was:\n\n${resultTrunc}`
-            : `The capability ${capName} ran and returned:\n\n${resultTrunc}\n\nAnswer the user's question using this result. Be concise and complete.`;
+            : `The capability ${capName} ran and returned:\n\n${resultTrunc}\n\nAnswer the user's question using this result. Be concise and complete.`
+              + (_isLookupCap(capName)
+                 /* info-seeking plan SK-2.3: a lookup's answer cites what it used, with dates, and says what it did not
+                    find - the follow-up used to ask only for "concise and complete", and gaps got filled from memory */
+                 ? ` Number the sources you use and cite them as [n] with their date (published date when the page `
+                   + `gives one); end with the sources as "[n] title - url". Use only what the result says: if it does `
+                   + `not answer part of the question, say so plainly (or search again with a sharper query) - do not `
+                   + `fill the gap from memory or a guess.`
+                 : '');
           await continueConversation(agentName,followUp,null,true);
         }
       }else{
@@ -11887,6 +11899,15 @@ Your task: decide what to do next to advance toward the goal.
     return CTX_SRCS.has('web') && !!document.getElementById('cfgWebInteractive')?.checked;
   }
 
+  /* Memory went in as bare "[memory] text": no date, inside the user's message, so a model read an old note as the
+     user's word and as how things are now, and filled gaps from it (owner 2026-10-10; info-seeking plan SK-2.1). Each
+     line now carries the record's date when it has one, and the block says what it is. */
+  const _CTX_INJ_NOTE='(Added by Vera, not typed by the user: stored records that may help, dated where known. They '
+    +'are what was said or seen at that date, not proof of how things are now - check anything current before stating it.)';
+  function _ctxDateTag(n){
+    const d=String(n.created_at||n.updated_at||'').slice(0,10);
+    return /^\d{4}-\d\d-\d\d$/.test(d)?' · '+d:'';
+  }
   function buildCtxInj(forMsg){
     if(!document.getElementById('ctxInject')?.checked)return'';
     // In live-context mode CTX_NODES is query-driven: never inject context that
@@ -11906,10 +11927,12 @@ Your task: decide what to do next to advance toward the goal.
       .slice(0,k)
       .map(n=>{
         const src=n.source==='web'||n.source==='news'?`${n.source} "${n.label}"${n.url?' '+n.url:''}`:n.source;
-        return`[${src}] ${(n.text||n.label||'').slice(0,300)}`;
+        return`[${src}${_ctxDateTag(n)}] ${(n.text||n.label||'').slice(0,300)}`;
       });
     if(!items.length)return'';
-    return'\n\n[Retrieved Context]\n'+items.join('\n');
+    // "[Retrieved Context]" stays the first line on its own: memory_noise_core strips everything from it onward when
+    // the message is stored, so the user's own words are kept apart from what the page added
+    return'\n\n[Retrieved Context]\n'+_CTX_INJ_NOTE+'\n'+items.join('\n');
   }
   // the memory records buildCtxInj put in this turn's prompt (the same filters), so the server can count whether the
   // reply drew on them (context-and-ui CU-M.2 usage signals); only real memory ids - not web, fabric or synthetic rows

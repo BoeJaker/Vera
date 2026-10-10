@@ -269,10 +269,19 @@ def build_notes_context(pairs: List[tuple], include_instructions: bool = True) -
         if first_pair is None:
             first_pair = (scope, ref_id)
         label = f"{scope}:{ref_id}" if scope != "chat" else "this chat session"
-        blocks.append(f"### Memory ({label})\n{content}")
+        try:
+            upd = str((_db_get(scope, ref_id) or {}).get("updated_at") or "")[:10]
+        except Exception:
+            upd = ""
+        blocks.append(f"### Memory ({label}{', updated ' + upd if upd else ''})\n{content}")
     if not blocks:
         return ""
-    frag = "## Session memory (agent-maintained — trust and follow it)\n" + "\n\n".join(blocks)
+    # the old heading told the model to trust the notes outright, so a note about the world read as current fact; the
+    # user's preferences and decisions
+    # in it are still to be followed (info-seeking plan SK-2.2, 2026-10-10)
+    frag = ("## Session memory (agent-maintained notes: follow the user's preferences, instructions and decisions "
+            "in them; facts about the outside world in them are as of the date shown - check anything current)\n"
+            + "\n\n".join(blocks))
     if include_instructions and first_pair:
         frag += "\n\n" + _EDIT_INSTRUCTIONS.format(scope=first_pair[0], ref_id=first_pair[1])
     return frag
