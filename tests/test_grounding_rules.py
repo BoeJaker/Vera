@@ -46,3 +46,27 @@ def test_formatting_is_ignored_and_list_markers_and_small_numbers_are_not_figure
 def test_a_year_the_sources_never_mention_is_unsupported():
     r = G.check("The rule takes effect in 2027 [1].", ITEMS)
     assert r["uncited_numbers"] == ["2027"] and not r["ok"]
+
+
+# loops number a run's evidence across packs (E1..En; compute-roles fix/loop-evidence-numbering, 10 Oct)
+RUN = [dict(ITEMS[0], e="E1", n=1), dict(ITEMS[1], e="E2", n=1)]       # two packs: both items are their pack's [1]
+
+
+def test_run_wide_ids():
+    ok = G.check("Bank Rate is 3.75% [E1]; prices rose 2.4% [E2].", RUN, id_key="e")
+    assert ok["ok"] and ok["bad_citations"] == []
+    bad = G.check("Bank Rate is 3.75% [E1] [E7].", RUN, id_key="e")
+    assert bad["bad_citations"] == ["E7"] and not bad["ok"]
+    assert G.check("x [E1, E2] and [E1; E9]", RUN, id_key="e")["bad_citations"] == ["E9"]
+
+
+def test_a_bare_number_in_the_id_field_answers_to_its_e_form():
+    run = [dict(ITEMS[0], e=1), dict(ITEMS[1], e=2)]
+    assert G.check("3.75% [E1] and 2.4% [2]", run, id_key="e")["bad_citations"] == []
+
+
+def test_lists_of_pack_numbers_and_the_default_key():
+    assert G.check("3.75% [1, 2]", ITEMS)["bad_citations"] == []
+    assert G.check("3.75% [1, 4]", ITEMS)["bad_citations"] == [4]
+    assert G.check("3.75% [E1]", ITEMS)["bad_citations"] == ["E1"]       # no E ids in a single pack
+    assert G.check("3.75% [E1, E2] 2.4%", RUN, id_key="e")["uncited_numbers"] == []   # ids are not figures
