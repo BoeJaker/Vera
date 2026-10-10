@@ -164,3 +164,16 @@ def test_the_controller_asks_the_student_before_the_big_model_and_a_student_writ
     assert body.count('"by": "fallback"') == 2 and '"by": "llm", "student": await _stu_hook.result()' in body
     assert 'by=ctrl.get("by") or "llm", student=ctrl.get("student"))' in src
     assert '"evidence": ctrl.get("evidence"), "evidence_system": ctrl.get("evidence_system")' in src
+
+
+def test_the_student_and_its_judge_can_run_on_a_named_node(monkeypatch):
+    monkeypatch.delenv("VERA_DECIDE_STUDENT_INSTANCE", raising=False)
+    assert ST.instance() == ""
+    monkeypatch.setenv("VERA_DECIDE_STUDENT_INSTANCE", "cpu-247")
+    assert ST.instance() == "cpu-247"
+    src = open(os.path.join(ROOT, "vera", "minds", "student.py"), encoding="utf-8").read()
+    assert "instance_id=node or None, prefer_gpu=not node" in src and 'f"@{node}" if node else ""' in src
+    judge = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
+    assert 'impl = _impl(model) + (f"@{instance}" if instance else "")' in judge
+    assert "instance_id=instance or None, prefer_gpu=not instance" in judge
+    assert JC.latency([900, 100, 300, 0]) == {"ms_p50": 300, "ms_p90": 900} and JC.latency([]) == {}

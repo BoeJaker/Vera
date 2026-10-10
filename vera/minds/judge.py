@@ -82,11 +82,14 @@ async def _gate_busy() -> bool:
                 "answer is recorded as a shadow decision linked to the live one (detail.for). Background work "
                 "(job_type idle_decide); stops when the Ollama gate is held. Queued nightly; run by hand only "
                 "for a small check. Input: question_id (default loop.step_verify), model (default "
-                "VERA_DECIDE_SHADOW_MODEL), limit (int, default 20, max 200), since_hours (int, default 72). "
+                "VERA_DECIDE_SHADOW_MODEL), limit (int, default 20, max 200), since_hours (int, default 72), "
+                "instance (str, optional - an Ollama node id such as cpu-247: the call goes to that node and the "
+                "implementation is tagged llm:<model>@<node>, so one model can be compared across nodes on "
+                "latency; each answer records its ms). "
                 "Output: {ok, scored, skipped, stopped, answers: [{for, answer, p, live}]}.",
 )
 async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: str = "", limit: int = 20,
-                                  since_hours: int = 72, trace_id=None) -> Dict[str, Any]:
+                                  since_hours: int = 72, instance: str = "", trace_id=None) -> Dict[str, Any]:
     q = JC.QUESTIONS.get(question_id)
     if not q:
         return {"ok": False, "error": f"no shadow judge for {question_id!r}", "questions": list(JC.QUESTIONS)}
@@ -94,7 +97,8 @@ async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: 
     if pool is None:
         return {"ok": False, "error": "postgres unavailable"}
     model = (model or _model()).strip()
-    impl = _impl(model)
+    instance = str(instance or "").strip()
+    impl = _impl(model) + (f"@{instance}" if instance else "")
     limit = max(1, min(200, int(limit or 20)))
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -124,7 +128,8 @@ async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: 
         meta: Dict[str, Any] = {}
         t0 = time.monotonic()
         try:
-            await _orch.ollama_generate(msg, system=JC.system_for(question_id, state), model=model, job_type=JOB_TYPE, prefer_gpu=True,
+            await _orch.ollama_generate(msg, system=JC.system_for(question_id, state), model=model, job_type=JOB_TYPE,
+                                        instance_id=instance or None, prefer_gpu=not instance,
                                         think=False, options={"num_predict": 1, "temperature": 0},
                                         logprobs=10, meta_out=meta, timeout=180)
         except Exception as e:
@@ -155,7 +160,7 @@ async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: 
                 "{question_id, live_vs_outcomes: {n, accuracy} (the live model against gold - the bar a student "
                 "has to clear), by_implementation: {impl: {n, agreement, auc (binary questions), live_positive, "
                 "live_negative, vs_outcomes: {n, accuracy, ece, at_confidence: {threshold: {coverage, "
-                "precision}}}}}}. Gold is decide.export's: the strongest strong/medium outcome that settles the "
+                "precision}}}, ms_p50, ms_p90}}}. Gold is decide.export's: the strongest strong/medium outcome that settles the "
                 "answer (a named right answer, e.g. a human label; correct = the live answer; wrong = the other "
                 "label of a two-label question). A choice question's 'wrong' verdict gives no gold but rules the "
                 "live answer out: it counts as a live miss, and vs_outcomes.avoids_known_wrong {n, rate} says how "
@@ -175,6 +180,7 @@ async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT x.row->>'implementation' AS impl, x.row->'answer' AS sa, x.p AS sp, l.decision_id AS lid,
+                      (x.row->>'ms')::int AS ms,
                       l.row AS live,
                       (SELECT json_agg(o.row) FROM decision_outcomes o WHERE o.decision_id = l.decision_id) AS outs
                FROM decision_ledger x JOIN decision_ledger l ON l.decision_id = x.row->'detail'->>'for'
@@ -184,6 +190,7 @@ async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: 
     truth: Dict[str, List] = {}
     lives: Dict[str, Any] = {}
     known_wrong: Dict[str, List] = {}
+    ms: Dict[str, List[int]] = {}
     for r in rows:
         live = (json.loads(r["live"]) if isinstance(r["live"], str) else r["live"]) or {}
         outs = (json.loads(r["outs"]) if isinstance(r["outs"], str) else r["outs"]) or []
@@ -192,6 +199,8 @@ async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: 
         la = live.get("answer")
         impl = r["impl"] or "?"
         by.setdefault(impl, []).append((la, sa, r["sp"]))
+        if r["ms"]:
+            ms.setdefault(impl, []).append(int(r["ms"]))
         s = EX.settle(live, outs, "medium") or {}
         gold, not_label = s.get("label"), s.get("not_label")
         lives[r["lid"]] = (la, gold, not_label)
@@ -207,6 +216,7 @@ async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: 
         else:
             out[impl]["vs_outcomes"] = JC.choice_calibration(truth.get(impl, []))
             out[impl]["vs_outcomes"]["avoids_known_wrong"] = JC.avoids_known_wrong(known_wrong.get(impl, []))
+        out[impl].update(JC.latency(ms.get(impl, [])))
     return {"question_id": question_id, "live_vs_outcomes": JC.live_accuracy(lives.values()),
             "by_implementation": out}
 

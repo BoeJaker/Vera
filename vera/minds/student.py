@@ -13,7 +13,9 @@ Settings: VERA_DECIDE_STUDENT_MODEL (default the shadow judge's first model, Qwe
 VERA_DECIDE_STUDENT_TAU (default 0.95), VERA_DECIDE_STUDENT_VERIFY_LABELS (default "met": a "not met" verdict
 needs the big model's reason, which the retry that follows is built from), VERA_DECIDE_STUDENT_CONTROLLER_LABELS
 (default "continue": the others need the big model's new steps; a student's continue carries no steer for the
-next step), VERA_DECIDE_STUDENT_TIMEOUT_S (default 20). Never raises: any failure is None and the big model decides.
+next step), VERA_DECIDE_STUDENT_TIMEOUT_S (default 20), VERA_DECIDE_STUDENT_INSTANCE (an Ollama node id; blank =
+routing with the GPU preferred). On gpu-250 the student must sit IN the warm plan (a second slot), or each call
+evicts the 9B - measured 2026-10-10, the next big call took 36.5 s against 18.3 s. Never raises: any failure is None and the big model decides.
 """
 from __future__ import annotations
 
@@ -35,6 +37,11 @@ FEATURE = {"loop.step_verify": "decide.student.step_verify",
 
 def model() -> str:
     return (os.environ.get("VERA_DECIDE_STUDENT_MODEL") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+
+
+def instance() -> str:
+    """The node the student runs on ('' = routing, GPU preferred)."""
+    return (os.environ.get("VERA_DECIDE_STUDENT_INSTANCE") or "").strip()
 
 
 def tau() -> float:
@@ -79,11 +86,13 @@ async def ask(question_id: str, system: str, user: str, *, model_name: str = "",
     if not q or not user:
         return None
     m = (model_name or model()).strip()
+    node = instance()
     meta: Dict[str, Any] = {}
     t0 = time.monotonic()
     try:
         import Vera.vera.capability_orchestration as _orch
-        await _orch.ollama_generate(user, system=system, model=m, prefer_gpu=True, think=False,
+        await _orch.ollama_generate(user, system=system, model=m, instance_id=node or None, prefer_gpu=not node,
+                                    think=False,
                                     options={"num_predict": 1, "temperature": 0}, logprobs=10, meta_out=meta,
                                     timeout=timeout or timeout_s(), request_stage="student")
     except Exception as e:
@@ -95,7 +104,8 @@ async def ask(question_id: str, system: str, user: str, *, model_name: str = "",
     if not answer:
         return None
     return {"answer": answer, "p": p, "confidence": JC.confidence(question_id, answer, p), "mass": round(mass, 4),
-            "ms": int((time.monotonic() - t0) * 1000), "impl": f"llm:{m}", "model": m}
+            "ms": int((time.monotonic() - t0) * 1000), "impl": f"llm:{m}" + (f"@{node}" if node else ""),
+            "model": m}
 
 
 def decides(question_id: str, result: Optional[Dict[str, Any]]) -> bool:
