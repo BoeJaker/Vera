@@ -117,7 +117,7 @@ def test_several_packs_drop_ambiguous_citations_but_keep_figures(monkeypatch):
     E.add("s-mp", PACK2)
     out = asyncio.run(M._v6_answer_check("g", [], [], "Valkey 8 shipped in 2019 [5].", [], "s-mp"))
     if M._grounding_rules is not None:
-        assert out["grounding"]["bad_citations"] == []
+        assert out["grounding"]["bad_citations"] == [] and out["grounding"]["citations_unchecked"] == 2
         assert "2019" in out["grounding"]["uncited_numbers"] and out["grounding"]["ok"] is False
     E.forget("s-mp")
 

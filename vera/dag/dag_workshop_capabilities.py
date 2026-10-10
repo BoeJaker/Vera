@@ -14845,6 +14845,7 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
             if any(i.get("n") is None for i in _ci):
                 # several packs: an [n] is ambiguous, so only figures/dates count (vera-03 review)
                 grounding["bad_citations"] = []
+                grounding["citations_unchecked"] = len(ev_packs)   # not "clean": unchecked (N packs)
                 grounding["ok"] = not grounding.get("uncited_numbers")
         except Exception as e:
             log.debug("grounding check failed: %s", e)
@@ -14867,7 +14868,8 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
         err = f"{type(e).__name__}: {e}"[:160]
     return {"answer": answer, "fixes": fixes[:1200], "files": [p for p, _ in files],
             "findings": findings, "evidence_items": len(evidence),
-            "grounding": ({k: grounding.get(k) for k in ("ok", "bad_citations", "uncited_numbers")}
+            "grounding": ({k: grounding.get(k) for k in ("ok", "bad_citations", "uncited_numbers",
+                                                          "citations_unchecked")}
                           if grounding else {}),
             "elapsed_s": round(time.monotonic() - t1, 1), "error": err}
 
