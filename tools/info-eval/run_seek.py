@@ -4,7 +4,7 @@ evidence packs (score.py). No model call, so it does not need the GPU; it does h
 are spaced (--gap) and it should not run beside a census or someone's evening work (plan: SK-4.1/4.2).
 
     python3 tools/info-eval/run_seek.py [--kinds latest,fact,overview] [--limit N] [--gap 20]
-                                        [--target https://localhost:8999] [--out ~/info-eval]
+                                        [--target https://127.0.0.1:8999] [--out ~/info-eval]
 
 Writes <out>/<timestamp>/{results.json, summary.md} and prints the summary.
 """
@@ -43,7 +43,8 @@ def main(argv=None) -> int:
     ap.add_argument("--kinds", default="latest,fact,overview")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--gap", type=float, default=20.0)
-    ap.add_argument("--target", default=os.environ.get("VERA_URL", "https://localhost:8999"))
+    # 127.0.0.1, not localhost: Python resolves localhost to ::1 first and prod listens on IPv4 only - every call hung
+    ap.add_argument("--target", default=os.environ.get("VERA_URL", "https://127.0.0.1:8999"))
     ap.add_argument("--out", default=os.path.expanduser("~/info-eval"))
     a = ap.parse_args(argv)
     qs = json.loads((Path(__file__).resolve().parent / "questions.json").read_text(encoding="utf-8"))["questions"]
