@@ -3,7 +3,7 @@
 The student gets exactly the prompt the big model gets (for loop.step_verify: the live verifier's evidence and
 rules, asked for one word) and answers with one token; the label probabilities come from that token's logprobs
 (see judge_core). The loop decides what to do with the answer, per the switchboard
-(`decide.student.step_verify`):
+(`decide.student.step_verify`, `decide.student.controller_action`):
 
 - shadow: the student runs beside the big model and is recorded as a shadow of the live decision;
 - first: the student answers first; its answer stands when it is an allowed label at confidence >= tau,
@@ -11,8 +11,9 @@ rules, asked for one word) and answers with one token; the label probabilities c
 
 Settings: VERA_DECIDE_STUDENT_MODEL (default the shadow judge's first model, Qwen3-4B-Instruct),
 VERA_DECIDE_STUDENT_TAU (default 0.95), VERA_DECIDE_STUDENT_VERIFY_LABELS (default "met": a "not met" verdict
-needs the big model's reason, which the retry that follows is built from), VERA_DECIDE_STUDENT_TIMEOUT_S
-(default 20). Never raises: any failure is None and the big model decides.
+needs the big model's reason, which the retry that follows is built from), VERA_DECIDE_STUDENT_CONTROLLER_LABELS
+(default "continue": the others need the big model's new steps; a student's continue carries no steer for the
+next step), VERA_DECIDE_STUDENT_TIMEOUT_S (default 20). Never raises: any failure is None and the big model decides.
 """
 from __future__ import annotations
 
@@ -28,7 +29,8 @@ except Exception:                       # worktree / app-free import
 
 log = logging.getLogger("vera.minds.student")
 DEFAULT_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
-FEATURE = {"loop.step_verify": "decide.student.step_verify"}
+FEATURE = {"loop.step_verify": "decide.student.step_verify",
+           "loop.controller_action": "decide.student.controller_action"}
 
 
 def model() -> str:
@@ -45,6 +47,9 @@ def tau() -> float:
 def allowed(question_id: str) -> List[str]:
     if question_id == "loop.step_verify":
         raw = os.environ.get("VERA_DECIDE_STUDENT_VERIFY_LABELS", "met")
+        return [x.strip() for x in raw.split(",") if x.strip()]
+    if question_id == "loop.controller_action":
+        raw = os.environ.get("VERA_DECIDE_STUDENT_CONTROLLER_LABELS", "continue")
         return [x.strip() for x in raw.split(",") if x.strip()]
     return []
 

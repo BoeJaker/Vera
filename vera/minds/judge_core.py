@@ -28,6 +28,11 @@ MAX_EVIDENCE_CHARS = 14000
 #: the live verifier ends its rules asking for JSON; a student answers the same rules in one word instead
 STUDENT_VERIFY_ANSWER = ("Answer with ONE word: yes if the evidence shows the success criterion was met, "
                          "no if it does not.")
+STUDENT_CONTROLLER_ANSWER = ("Answer with ONE letter: A = continue with the queue, B = replan the remaining "
+                             "steps, C = insert a step before continuing, D = stop (the goal is met or cannot "
+                             "progress).")
+#: how a student ends the live model's own instructions, per question it can stand in for
+STUDENT_ANSWERS = {"loop.step_verify": STUDENT_VERIFY_ANSWER, "loop.controller_action": STUDENT_CONTROLLER_ANSWER}
 
 #: per question: the system prompt, the label each answer token means (binary questions: the first
 #: token is the positive label; choice questions answer with one letter)
@@ -115,6 +120,9 @@ def user_message(question_id: str, state: Dict[str, Any]) -> Optional[str]:
         goal = _s(state.get("goal"), MAX_INPUT_CHARS)
         return f"Goal: {goal}\n\nAnswer with one letter." if goal else None
     if question_id == "loop.controller_action":
+        ev = str(state.get("evidence") or "").strip()
+        if ev:                                    # the live controller's own prompt: the same input
+            return ev[:MAX_EVIDENCE_CHARS]
         goal = _s(state.get("goal"), 800)
         if not goal:
             return None
@@ -144,17 +152,17 @@ def label_probs(first_token_tops: Iterable[Dict[str, Any]], words: Iterable[str]
     return {w: v / mass for w, v in raw.items()}, mass
 
 
-def student_system(live_system: str) -> str:
-    """The live verifier's rules, asking for one word instead of JSON."""
+def student_system(live_system: str, question_id: str = "loop.step_verify") -> str:
+    """The live model's own instructions, asking for one word or letter instead of JSON."""
     s = str(live_system or "").strip()
     cut = s.rfind("Respond ONLY with JSON")
-    return ((s[:cut] if cut >= 0 else s).rstrip() + "\n" + STUDENT_VERIFY_ANSWER).strip()
+    return ((s[:cut] if cut >= 0 else s).rstrip() + "\n" + STUDENT_ANSWERS[question_id]).strip()
 
 
 def system_for(question_id: str, state: Optional[Dict[str, Any]] = None) -> str:
     """The system prompt for a question: the live rules when the stored inputs carry them, else the generic one."""
-    if question_id == "loop.step_verify" and isinstance(state, dict) and state.get("evidence_system"):
-        return student_system(state["evidence_system"])
+    if question_id in STUDENT_ANSWERS and isinstance(state, dict) and state.get("evidence_system"):
+        return student_system(state["evidence_system"], question_id)
     return (QUESTIONS.get(question_id) or {}).get("system", "")
 
 

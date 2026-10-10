@@ -101,12 +101,66 @@ def test_the_whole_evidence_is_kept_for_the_student():
 def test_the_verifier_asks_the_student_before_the_big_model_and_tells_the_ledger():
     src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
     body = src[src.index("async def _v6_verify_step"):src.index("_V6_FINALIZE_MIN_RAW =")]
-    assert body.index('_student.mode("loop.step_verify")') < body.index("await _safe_ollama_generate_dw(")
-    assert '_judge_core.student_system(sys), prompt)' in body              # the same evidence, the live rules
+    assert body.index('_StudentHook.start("loop.step_verify", sys, prompt)') < body.index(
+        "await _safe_ollama_generate_dw(")                                  # the same evidence, the live rules
     assert '"by": "student"' in body and '"by": "llm"' in body and '"by": "fallback"' in body
-    assert body.index("_settled = _verify_evidence.settle_test_criterion") < body.index('_student.mode(')
+    assert body.index("_settled = _verify_evidence.settle_test_criterion") < body.index("_StudentHook.start(")
     assert 'by=v.get("by") or "rule", student=v.get("student"))' in src
     assert '"evidence": v.get("evidence"), "evidence_system": v.get("evidence_system")' in src
     judge = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
     assert "system=JC.system_for(question_id, state)" in judge
     assert "COALESCE(l.row->>'decider', 'llm') <> 'rule'" in judge
+
+
+CTRL_SYS = ("You steer an agentic run after each step.\nAVAILABLE CAPABILITIES (name - description):\n- a.b - x\n"
+            'Respond ONLY with JSON:\n{"findings":"...","action":"continue|insert|replan|stop"}')
+
+
+def test_the_controller_student_gets_the_live_ledger_and_rules_in_one_letter():
+    s = JC.student_system(CTRL_SYS, "loop.controller_action")
+    assert "AVAILABLE CAPABILITIES" in s and "JSON" not in s and s.endswith(JC.STUDENT_CONTROLLER_ANSWER)
+    state = {"evidence": "LEDGER: ...", "evidence_system": CTRL_SYS, "goal": "g"}
+    assert JC.user_message("loop.controller_action", state) == "LEDGER: ..."
+    assert JC.system_for("loop.controller_action", state) == s
+    assert "Answer with one letter." in JC.user_message("loop.controller_action", {"goal": "g"})
+    assert JC.student_system(LIVE_SYS) == JC.student_system(LIVE_SYS, "loop.step_verify")
+
+
+def test_the_controller_switch_and_its_allowed_moves(monkeypatch):
+    f = SB.REGISTRY["decide.student.controller_action"]
+    assert f.modes == ("off", "shadow", "first") and f.default == "off" and "steer" in f.description
+    assert ST.FEATURE["loop.controller_action"] == "decide.student.controller_action"
+    assert ST.allowed("loop.controller_action") == ["continue"]
+    assert ST.decides("loop.controller_action", {"answer": "continue", "p": 0.97})
+    assert not ST.decides("loop.controller_action", {"answer": "stop", "p": 0.99})
+    monkeypatch.setenv("VERA_DECIDE_STUDENT_CONTROLLER_LABELS", "continue,stop")
+    assert ST.decides("loop.controller_action", {"answer": "stop", "p": 0.99})
+
+
+def test_every_controller_move_says_who_decided_and_keeps_the_student():
+    stu = {"answer": "continue", "p": 0.98, "impl": "llm:qwen3:4b"}
+    d = LD.controller_decision("s", 3, "continue", {}, model="big", by="student", student=stu)
+    assert (d["decider"], d["mode"], d["p"], d["detail"]["by"]) == ("student", "student_first", 0.98, "student")
+    f = LD.controller_decision("s", 3, "continue", {}, model="big", by="fallback")
+    assert (f["decider"], f["implementation"]) == ("rule", "fallback:ok_flag")
+    assert LD.controller_decision("s", 3, "stop", {}, model="big")["decider"] == "llm"
+    rows = []
+    rl = loop_ledger.RunLedger("sess", origin="census", sink=rows.append)
+    rl.controller(3, "replan", {"steps": [{}]}, model="big", inputs={"evidence": "E"}, by="llm",
+                  student=dict(stu, answer="continue", p=0.6))
+    assert [r["mode"] for r in rows] == ["llm_only", "shadow"] and rows[1]["detail"]["for"] == rows[0]["decision_id"]
+    rows.clear()
+    rl.controller(4, "continue", {}, model="big", by="student", student=stu)
+    assert [r["mode"] for r in rows] == ["student_first"]
+
+
+def test_the_controller_asks_the_student_before_the_big_model_and_a_student_writes_no_steps():
+    src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
+    assert "class _StudentHook:" in src
+    body = src[src.index("async def _v6_control("):src.index("async def _v6_final_gate(")]
+    assert body.index('_StudentHook.start("loop.controller_action", sys, prompt)') < body.index(
+        "await _safe_ollama_generate_dw(")
+    assert '_stu_hook.decided["answer"] in ("continue", "stop")' in body
+    assert body.count('"by": "fallback"') == 2 and '"by": "llm", "student": await _stu_hook.result()' in body
+    assert 'by=ctrl.get("by") or "llm", student=ctrl.get("student"))' in src
+    assert '"evidence": ctrl.get("evidence"), "evidence_system": ctrl.get("evidence_system")' in src

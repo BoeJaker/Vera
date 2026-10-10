@@ -75,8 +75,11 @@ def _short(x: Any, n: int = 120) -> str:
 
 def controller_decision(sid: str, step_id: Any, action: str, ctrl: Dict[str, Any], *,
                         model: str = "", minds_digest: str = "default",
-                        origin: str = "user") -> Dict[str, Any]:
+                        origin: str = "user", by: str = "llm",
+                        student: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """`by` says who decided (see verify_by; "fallback" = the call failed and the run continued)."""
     action = action if action in CONTROLLER_LABELS else "continue"
+    decider, impl, mode = verify_by(by, model or "controller", student)
     steps = ctrl.get("steps") or []
     state = {"after_step": step_id, "goal_met": bool(ctrl.get("goal_met")),
              "alignment": _short(ctrl.get("goal_alignment"), 60), "new_steps": len(steps)}
@@ -84,9 +87,11 @@ def controller_decision(sid: str, step_id: Any, action: str, ctrl: Dict[str, Any
         CONTROLLER_Q, action, origin=origin, surface="loop", qtype="choice",
         labels=CONTROLLER_LABELS, state=state,
         state_ref={"kind": "loop_step", "id": f"{_short(sid, 80)}:{step_id}"},
-        decider="llm", implementation=_short(model, 80) or "controller", mode="llm_only",
+        decider=decider, implementation=impl, mode=mode,
+        p=(student or {}).get("p") if decider == "student" else None,
         minds_digest=minds_digest or "default", run_id=_short(sid, 80), session_id=_short(sid, 80),
-        detail={"after_step": step_id, "goal_met": state["goal_met"], "new_steps": len(steps)})
+        detail={"after_step": step_id, "goal_met": state["goal_met"], "new_steps": len(steps),
+                "by": _short(by, 80)})
 
 
 def verify_by(by: Any, model: str = "", student: Optional[Dict[str, Any]] = None) -> Tuple[str, str, str]:
