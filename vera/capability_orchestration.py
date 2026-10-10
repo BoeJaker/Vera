@@ -12321,11 +12321,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "minds/tool_shortlist.py"),
         os.path.join(_here, "minds/label_capabilities.py"),
         os.path.join(_here, "minds/export.py"),
-<<<<<<< HEAD
-        os.path.join(_here, "minds/precedent.py"),
-=======
         os.path.join(_here, "minds/calibration.py"),
->>>>>>> bleeding-edge
+        os.path.join(_here, "minds/precedent.py"),
         os.path.join(_here, "minds/sense_capabilities.py"),
         os.path.join(_here, "minds/baseline_capabilities.py"),
         # The widget registry (UI redesign): every part of the UI as a record -
