@@ -1377,13 +1377,15 @@ async def _seek_rerank(subject: str, items: List[Dict[str, Any]]) -> List[Dict[s
                 "overview now plus research.run started in the background for a full report (job_id returned). "
                 "Input: question (str!), need (auto|fact|latest|overview|deep, default auto), since (ISO date: "
                 "what counts as new for latest; default 14 days), topic (the subject when the question is long), "
-                "pages (int, pages to read, default 5, max 8), excerpt_chars (int, per page, default 900). "
+                "pages (int, pages to read, default 5, max 8), excerpt_chars (int, per page, default 900), "
+                "start_report (bool, default true: need=deep starts research.run; loops pass false). "
                 "Output: {need, subject, since, answerable, items:[{n, title, url, site, published, age_days, "
                 "kind (web|intel), read, text}], checked, gaps, guide, tracked?, job_id?, elapsed_ms}. Cite items "
                 "as [n] with their dates; report the gaps instead of guessing.",
 )
 async def cap_info_seek(question: str = "", need: str = "auto", since: str = "", topic: str = "",
-                        pages: int = 5, excerpt_chars: int = 900, trace_id=None) -> Dict[str, Any]:
+                        pages: int = 5, excerpt_chars: int = 900, start_report: bool = True,
+                        trace_id=None) -> Dict[str, Any]:
     question = " ".join(str(question or "").split())
     if not question:
         return {"error": "question required"}
@@ -1460,7 +1462,9 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
             checked.append(f"second round '{q3}': {len(more)} results, read {got2}")
         # what was read leads: an unread result is only its snippet
         items = [it for it in items if it.get("text")] + [it for it in items if not it.get("text")]
-        if need == "deep":
+        if need == "deep" and not start_report:
+            checked.append("deep: the overview only - start_report=false (the caller runs no background jobs)")
+        elif need == "deep":
             job = await _seek_call("research.run", 20, query=question, mode="parallel", output_mode="report")
             if job.get("job_id"):
                 extra["job_id"] = job["job_id"]

@@ -88,6 +88,26 @@ VETTED: Dict[str, Tuple[str, str]] = {}
 #: operator enables it there (Workers > roles).
 VETTED_CLASS = "extended"
 
+#: Where a capability's model runs, from its `serves=` bindings (cap ->
+#: nlp | media | gpu | cpu_compute | host), filled by the decorator in every
+#: process. It never makes a cap node-eligible - only evidence or a reviewed
+#: list does that - but it keeps a cap whose model lives in the host process
+#: on the host, and sends an eligible model cap to the class of nodes that
+#: serve that kind of work instead of the catch-all vetted class.
+MODEL_PLACEMENT: Dict[str, str] = {}
+#: binding placement -> worker class (gpu media servers are the media class)
+_MODEL_CLASS = {"nlp": "nlp", "media": "media", "gpu": "media"}
+
+
+def set_model_placement(cap_name: str, placements: Iterable[str]) -> None:
+    """Record a capability's model placement: one value when all its bindings
+    agree (ignoring 'any'), else nothing."""
+    ps = {str(p) for p in (placements or ()) if p and p != "any"}
+    if len(ps) == 1:
+        MODEL_PLACEMENT[str(cap_name)] = ps.pop()
+    else:
+        MODEL_PLACEMENT.pop(str(cap_name), None)
+
 
 def set_vetted(mapping: Optional[Dict[str, object]]) -> bool:
     """Replace the vetted set; True when it changed. Values: (class, why) or
@@ -176,6 +196,8 @@ def placement(cap_name: str, *, node_ok: Iterable[str] = (),
         return "host", "listed in VERA_WORKER_HOST_ONLY"
     if name in HOST_BOUND_CAPS:
         return "host", HOST_BOUND_CAPS[name]
+    if MODEL_PLACEMENT.get(name) == "host":
+        return "host", "its model runs in the host process (serves=)"
     ok = set(_names(node_ok))
     if name in ok:
         return "any", "admitted by VERA_WORKER_NODE_OK"
@@ -265,6 +287,10 @@ def class_of(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
         return ""
     if cap_name in NODE_SAFE_CAPS:
         return NODE_SAFE_CAPS[cap_name][0]
+    # an eligible model cap goes where its kind of model is served
+    mcls = _MODEL_CLASS.get(MODEL_PLACEMENT.get(cap_name, ""))
+    if mcls and mcls in CLASSES:
+        return mcls
     if cap_name in VETTED:
         return VETTED[cap_name][0]
     ns = namespace(cap_name)

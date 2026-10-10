@@ -219,3 +219,40 @@ def test_pick_reads_the_direction_and_the_language_of_the_need():
     multi = {"id": "multi", "uses": "Named entities in ten languages.", "io": {"in": "text", "out": "spans"}}
     assert mb.pick([en, multi], "named entities in a german article")[0]["id"] == "multi"
     assert mb.pick([multi, en], "named entities in an english article")[0]["id"] == "en"
+
+
+def test_placement_follows_the_model_but_never_grants_a_node():
+    from vera.workers import worker_placement_core as wp
+    saved = dict(wp.MODEL_PLACEMENT), dict(wp.VETTED)
+    try:
+        wp.MODEL_PLACEMENT.clear()
+        wp.set_vetted({})
+        # a model in the host process keeps its cap on the host, even when vetted
+        wp.set_model_placement("demo.encode", ["host"])
+        wp.set_vetted({"demo.encode": ("extended", "evidence")})
+        assert wp.placement("demo.encode") == ("host", "its model runs in the host process (serves=)")
+        # a binding alone does not make a cap node-eligible
+        wp.set_model_placement("demo.knn", ["nlp"])
+        assert wp.placement("demo.knn")[0] == "host" and wp.class_of("demo.knn", env={}) == ""
+        # once vetted, an NLP-node model goes to the nlp class, not the catch-all
+        wp.set_vetted({"demo.knn": ("extended", "evidence")})
+        assert wp.class_of("demo.knn", env={}) == "nlp"
+        wp.set_model_placement("demo.img", ["gpu"])
+        wp.set_vetted({"demo.knn": ("extended", "e"), "demo.img": ("extended", "e")})
+        assert wp.class_of("demo.img", env={}) == "media"
+        # bindings that disagree (or say 'any') record nothing
+        wp.set_model_placement("demo.mixed", ["nlp", "gpu"])
+        wp.set_model_placement("demo.any", ["any"])
+        assert "demo.mixed" not in wp.MODEL_PLACEMENT and "demo.any" not in wp.MODEL_PLACEMENT
+        # the operator's brake still wins
+        assert wp.placement("demo.knn", host_only=["demo"])[0] == "host"
+    finally:
+        wp.MODEL_PLACEMENT.clear(); wp.MODEL_PLACEMENT.update(saved[0]); wp.set_vetted(saved[1])
+
+
+def test_an_embedder_is_not_picked_to_produce_text():
+    stt = {"id": "stt", "uses": "Transcribe speech audio to text.", "io": {"in": "audio", "out": "text"}}
+    emb = {"id": "emb", "uses": "Text embeddings.", "io": {"in": "text", "out": "vector"}}
+    zs = {"id": "zs", "uses": "Classify text against labels.", "io": {"in": "text+labels", "out": "labels"}}
+    ranked = [r["id"] for r in mb.pick([emb, zs, stt], "turn this voice memo into text")]
+    assert ranked[0] == "stt" and ranked.index("emb") > ranked.index("zs")
