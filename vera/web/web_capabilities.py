@@ -218,16 +218,10 @@ async def _search_searxng(query: str, limit: int, host: str = "") -> List[Dict[s
     return []
 
 
-# What the last SearXNG answers looked like (search_engines.searxng_note), for /health via web.engines.health.
-_SEARXNG_HEALTH: Dict[str, Any] = {}
-
-
+# What the last SearXNG answers looked like, for /health via web.engines.health. The record lives in search_engines
+# so researcher_api's copy (the one that runs when it imports) reports to the same place.
 def _note_searxng(body: Optional[Dict[str, Any]], error: str = "") -> None:
-    try:
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        _SEARXNG_HEALTH.update(_engines.searxng_note(_SEARXNG_HEALTH, body, now, error=error))
-    except Exception as e:                      # bookkeeping never breaks a search
-        log.debug("searxng health note: %s", e)
+    _engines.note_searxng_answer(body, error=error)
 
 
 @capability(
@@ -240,7 +234,7 @@ def _note_searxng(body: Optional[Dict[str, Any]], error: str = "") -> None:
                 "Shown under `search` in /health.",
 )
 async def cap_web_engines_health(trace_id=None) -> Dict[str, Any]:
-    return _engines.searxng_status(_SEARXNG_HEALTH)
+    return _engines.searxng_status(_engines.SEARXNG_STATE)
 
 
 async def _searxng_pages(host: str, query: str, limit: int) -> List[Dict[str, Any]]:

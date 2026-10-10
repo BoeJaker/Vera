@@ -51,3 +51,23 @@ def test_the_web_module_notes_page_one_and_health_reports_it():
     assert '"web.engines.health"' in src
     orch = (Path(__file__).resolve().parents[1] / "vera" / "capability_orchestration.py").read_text(encoding="utf-8")
     assert '"search":await _health_search(),' in orch
+
+
+def test_both_searxng_copies_report_to_the_one_record():
+    # prod 10 Oct after release: /health said "no search since start" after a search had run - researcher_api's
+    # copy (the one that runs when it imports) did not report, only web_capabilities' did
+    root = Path(__file__).resolve().parents[1] / "vera"
+    research = (root / "research" / "researcher_api.py").read_text(encoding="utf-8")
+    assert "_engines.note_searxng_answer(body)" in research and "_engines.note_searxng_answer(None, error=str(e))" in research
+    web = (root / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    assert "_engines.note_searxng_answer(body, error=error)" in web and "searxng_status(_engines.SEARXNG_STATE)" in web
+
+
+def test_note_searxng_answer_updates_the_shared_state_and_never_raises():
+    SE.SEARXNG_STATE.clear()
+    SE.note_searxng_answer(GOOD)
+    assert SE.searxng_status(SE.SEARXNG_STATE)["state"] == "degraded"       # startpage CAPTCHA
+    SE.note_searxng_answer({"results": "not-a-list-but-truthy", "unresponsive_engines": None})
+    SE.note_searxng_answer(None, error="x" * 500)
+    assert len(SE.SEARXNG_STATE["last_error"]) == 160
+    SE.SEARXNG_STATE.clear()
