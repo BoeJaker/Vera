@@ -4,7 +4,7 @@
   "description": "Panel with a text box that automates input: simulate typing into the editor, send text to the terminal, or run VS Code commands - with delays, repeats, and saved snippets.",
   "version": "0.1.0",
   "publisher": "vera",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "engines": {
     "vscode": "^1.85.0"
   },

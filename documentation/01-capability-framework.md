@@ -381,9 +381,22 @@ implementation id.
 the call that reaches it, its uses and limits, the model id, the nodes it is
 loaded or present on (node `/models`), and its specialist-catalog id if it can
 be installed. It also lists the LLMs the routing system can pick (`llm.generate`
-with `model=<name>`), whose uses come from the operator's purpose tags
-(`ollama.model_tags.*`); an untagged LLM says so. Filters: `task`, `family`,
-`question`, `search`. Binding problems are listed under `errors`.
+with `model=<name>`). Their `uses` / `limits` are written from facts:
+- **Model facts:** size, quantisation, context window and abilities (tools, thinking, vision, embedding),
+  from Ollama `/api/show`. These are cached in Redis `vera:models:llm_facts`, and up to 12 missing
+  models are fetched per call (`refresh_facts=true` re-reads them all).
+- **Speed:** tokens/s per node, measured by the router's rolling stats.
+- **Purpose tags:** the operator's tags (`ollama.model_tags.*`), which lead when set.
+
+An embedding-only model is listed with `task: "embed"` and a limit saying it cannot generate.
+Filters: `task`, `family`, `question`, `search`. Binding problems are listed under `errors`.
+
+A selector argument gets its options from the bindings: `nlp.ner`'s `task`
+schema carries `enum: [ner, ner_multi, gliner, spacy]` and a description of
+what each picks, unless `schema=` already declared one. The capability checks
+the argument against the same list (`model_binding_core.selector_values`). So
+the tool form, the LLM-facing signature and the check cannot drift from what
+the capability declares.
 
 ### Duplicate names
 
