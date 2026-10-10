@@ -14402,9 +14402,10 @@ except ImportError:                                   # pragma: no cover
 
 
 class _StudentHook:
-    """The student around one live model call. start() runs it per the switchboard: 'first' asks it before the
-    model (`decided` is its answer when that answer may stand); 'shadow' runs it beside the model. result()
-    is what it said, for the ledger (waited on at most 5 s more; never raises)."""
+    """The student around one live model call. start() runs it per the switchboard: a first mode ('first',
+    'first_met', 'first_not_met') asks it before the model (`decided` is its answer when that answer may stand,
+    except for the co-sign sample, which goes to the model with would_take set); 'shadow' runs it beside the
+    model. result() is what it said, for the ledger (waited on at most 5 s more; never raises)."""
 
     def __init__(self):
         self.decided: Optional[Dict[str, Any]] = None
@@ -14416,13 +14417,16 @@ class _StudentHook:
         h = cls()
         try:
             mode = _student.mode(question_id) if _student is not None else "off"
-            if mode not in ("first", "shadow"):
+            if mode != "shadow" and not _student.is_first(mode):
                 return h
             call = _student.ask(question_id, _judge_core.student_system(system, question_id), prompt)
-            if mode == "first":
+            if _student.is_first(mode):
                 h._answer = await call
-                if _student.decides(question_id, h._answer):
-                    h.decided = h._answer
+                if _student.decides(question_id, h._answer, mode):
+                    if _student.cosigned():            # the plan's `sampled`: the big model decides this one
+                        h._answer = dict(h._answer, would_take=True)
+                    else:
+                        h.decided = h._answer
             else:
                 h._task = asyncio.ensure_future(call)
         except Exception as e:                        # pragma: no cover - never alters the decision

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import time
 from typing import Any, Dict, List, Optional
 
@@ -51,7 +52,25 @@ def tau() -> float:
         return 0.95
 
 
-def allowed(question_id: str) -> List[str]:
+#: a first mode that allows exactly one label, whatever the environment says
+FIRST_MODES = {"first_met": ["met"], "first_not_met": ["not_met"]}
+
+
+def is_first(mode_name: str) -> bool:
+    return mode_name == "first" or mode_name in FIRST_MODES
+
+
+def cosign_rate() -> float:
+    """The share of a first mode's standing answers the big model decides instead, the student beside it."""
+    try:
+        return max(0.0, min(1.0, float(os.environ.get("VERA_DECIDE_STUDENT_COSIGN") or 0.1)))
+    except ValueError:
+        return 0.1
+
+
+def allowed(question_id: str, mode_name: str = "") -> List[str]:
+    if mode_name in FIRST_MODES and question_id == "loop.step_verify":
+        return list(FIRST_MODES[mode_name])
     if question_id == "loop.step_verify":
         raw = os.environ.get("VERA_DECIDE_STUDENT_VERIFY_LABELS", "met")
         return [x.strip() for x in raw.split(",") if x.strip()]
@@ -108,6 +127,12 @@ async def ask(question_id: str, system: str, user: str, *, model_name: str = "",
             "model": m}
 
 
-def decides(question_id: str, result: Optional[Dict[str, Any]]) -> bool:
-    """Under `first`: may this answer stand without the big model?"""
-    return bool(result) and JC.takes(question_id, result.get("answer"), result.get("p"), tau(), allowed(question_id))
+def decides(question_id: str, result: Optional[Dict[str, Any]], mode_name: str = "") -> bool:
+    """Under a first mode: may this answer stand without the big model?"""
+    return bool(result) and JC.takes(question_id, result.get("answer"), result.get("p"), tau(),
+                                     allowed(question_id, mode_name))
+
+
+def cosigned(rng=random.random) -> bool:
+    """Draw for the co-sign sample: True = the big model decides this one, the student beside it."""
+    return rng() < cosign_rate()

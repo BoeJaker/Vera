@@ -206,9 +206,13 @@ def positive_label(question_id: str) -> Optional[str]:
 
 
 def shadow_decision(live: Dict[str, Any], answer: str, p: Optional[float], implementation: str,
-                    mass: float = 0.0, ms: int = 0) -> Dict[str, Any]:
+                    mass: float = 0.0, ms: int = 0, would_take: Optional[bool] = None) -> Dict[str, Any]:
     """The shadow row for a live decision: same question, labels, state reference and run; the small
-    model as the implementation; linked by detail.for."""
+    model as the implementation; linked by detail.for. would_take (a co-signed answer that would have stood
+    under first) is kept in the detail - the precision of the student's takes is read from those rows."""
+    detail = {"for": live["decision_id"], "label_mass": round(float(mass), 4)}
+    if would_take is not None:
+        detail["would_take"] = bool(would_take)
     return LC.make_decision(
         live["question_id"], answer, origin=live.get("origin") or "user", surface=live.get("surface") or "loop",
         qtype=live.get("qtype") or "binary", labels=list(live.get("labels") or []),
@@ -216,7 +220,7 @@ def shadow_decision(live: Dict[str, Any], answer: str, p: Optional[float], imple
         decider="student", implementation=str(implementation)[:80], mode="shadow", p=p, ms=int(ms),
         minds_digest=live.get("minds_digest") or "default", run_id=live.get("run_id"),
         session_id=live.get("session_id"),
-        detail={"for": live["decision_id"], "label_mass": round(float(mass), 4)})
+        detail=detail)
 
 
 def in_window(hour: int, start: int = 23, end: int = 6) -> bool:

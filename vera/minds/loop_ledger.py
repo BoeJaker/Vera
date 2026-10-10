@@ -171,7 +171,8 @@ class RunLedger:
             return
         try:
             s = JC.shadow_decision(d, student["answer"], student.get("p"), student.get("impl") or "student",
-                                   mass=float(student.get("mass") or 0.0), ms=int(student.get("ms") or 0))
+                                   mass=float(student.get("mass") or 0.0), ms=int(student.get("ms") or 0),
+                                   would_take=student.get("would_take"))
         except Exception as e:
             log.debug("loop ledger student shadow: %s", e)
             return
