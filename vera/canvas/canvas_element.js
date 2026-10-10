@@ -1038,6 +1038,11 @@
         the items level with their turns, parked as a chip line at the bottom ── */
   .addbar{position:sticky;top:0;z-index:6;display:flex;align-items:center;gap:5px;flex-wrap:wrap;
     padding:6px 0 6px;margin-bottom:2px;background:var(--bg1,#15181d);border-bottom:1px solid var(--border,#2a2f37)}
+  /* THE ADD BAR'S MENUS OVER THE DESK (owner, 2026-10-10: "the canvas panel menu appears behind the desk elements and the
+     note and terminal menus are see through"): a desk card stacks at 10-200 and the graph drawn over it with it, and the
+     bar - its menus inside it - at 6, so cards covered the panel and terminal menus and a graph showed through the note
+     menu. On the desk the bar, and so its menus, are over every card. */
+  :host([align="desk"]:not([desk-narrow])) .addbar{z-index:240}
   .addbar .lbl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);margin-right:2px}
   /* THE ONE BANNER (§4.2): what this canvas is, the kinds you can add, then the host's own controls at the far end.
      The host's nodes are slotted, so they are styled by the host's stylesheet - only their PLACE is ours. */
@@ -3382,6 +3387,15 @@
     /* ── the column's one set of listeners, bound once to the body (its markup is replaced on every render) ── */
     _bind(body) {
       if (this._bound) return; this._bound = true;
+      /* AN OPEN ADD MENU CLOSES ON A PRESS ANYWHERE ELSE, OR ON ESCAPE (owner, 2026-10-10: "the menus dont close if clicked
+         away from"). A press on the add bar itself is the bar's own (its buttons open, switch or close a menu). */
+      { const od = this.ownerDocument || document;
+        const closeAdd = () => { const p = this.shadowRoot && this.shadowRoot.querySelector('.addbar .addpop'); if (p) { p.remove(); return true; } return false; };
+        od.addEventListener('mousedown', (ev) => { const p = this.shadowRoot && this.shadowRoot.querySelector('.addbar .addpop'); if (!p) return;
+          const path = ev.composedPath ? ev.composedPath() : []; if (path.some((n) => n && n.classList && n.classList.contains('addbar'))) return; closeAdd(); }, true);
+        od.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && closeAdd()) ev.stopPropagation(); }, true);
+        /* a press in another frame (the harness, the chat's menu) never reaches this document: the window losing focus is it */
+        try { (od.defaultView || window).addEventListener('blur', () => { closeAdd(); }); } catch (e) { /* no window */ } }
       body.addEventListener('click', (ev) => {
         const t = ev.target; if (!t || !t.closest) return;
         if (t.closest('textarea')) return;
