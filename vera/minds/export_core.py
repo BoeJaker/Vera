@@ -10,6 +10,8 @@ Gold is the outcome-consistent label, from the strongest outcome that says what 
 - a "correct" verdict gives the live answer;
 - a "wrong" verdict gives the other label of a two-label question (unknown when there are more labels);
 - anything else (interrupted, used, ...) is not a verdict and gives no gold.
+A "wrong" verdict on a question with more labels still says which answer was NOT right: the example records it as
+not_label (a negative label for training, and an answer a student must avoid).
 Weak outcomes count only when asked for (min_strength="weak").
 
 The split holds out whole groups. A census reruns the same goals, so a run's group is its goal text
@@ -41,9 +43,12 @@ def _strength_rank(s: Any) -> int:
     return LC.STRENGTHS.index(s) if s in LC.STRENGTHS else -1
 
 
-def gold(live: Dict[str, Any], outcomes: Iterable[Dict[str, Any]], min_strength: str = "medium"
-         ) -> Optional[Dict[str, Any]]:
-    """{label, source, strength} from the strongest outcome that settles the answer, or None."""
+def settle(live: Dict[str, Any], outcomes: Iterable[Dict[str, Any]], min_strength: str = "medium"
+           ) -> Optional[Dict[str, Any]]:
+    """What the strongest settling outcome says: {label, not_label, source, strength}. label is the gold answer when
+    it is known; not_label is the live answer when the outcome says only that it was wrong (a question with more than
+    two labels and no named right answer) - a student repeating it is wrong, any other answer is unknown. None when
+    no outcome settles the decision."""
     labels = [str(x) for x in (live.get("labels") or [])]
     answer = live.get("answer")
     floor = _strength_rank(min_strength if min_strength in LC.STRENGTHS else "medium")
@@ -51,16 +56,28 @@ def gold(live: Dict[str, Any], outcomes: Iterable[Dict[str, Any]], min_strength:
                     key=lambda o: (_strength_rank(o.get("strength")), str(o.get("ts") or "")), reverse=True)
     for o in ranked:
         right = (o.get("detail") or {}).get("right_answer")
+        label = not_label = None
         if right not in (None, "") and (not labels or str(right) in labels):
             label = str(right)
         elif o.get("label") == "correct" and answer not in (None, ""):
             label = answer
         elif o.get("label") == "wrong" and len(labels) == 2 and str(answer) in labels:
             label = next(x for x in labels if x != str(answer))
+        elif o.get("label") == "wrong" and answer not in (None, ""):
+            not_label = answer
         else:
             continue
-        return {"label": label, "source": o.get("source"), "strength": o.get("strength")}
+        return {"label": label, "not_label": not_label, "source": o.get("source"), "strength": o.get("strength")}
     return None
+
+
+def gold(live: Dict[str, Any], outcomes: Iterable[Dict[str, Any]], min_strength: str = "medium"
+         ) -> Optional[Dict[str, Any]]:
+    """{label, source, strength} when the settling outcome gives the right answer, else None."""
+    s = settle(live, outcomes, min_strength)
+    if not s or s["label"] is None:
+        return None
+    return {"label": s["label"], "source": s["source"], "strength": s["strength"]}
 
 
 def normalise_goal(goal: Any) -> str:
@@ -98,12 +115,14 @@ def question(live: Dict[str, Any]) -> Dict[str, Any]:
 
 def example(live: Dict[str, Any], state: Dict[str, Any], outcomes: Iterable[Dict[str, Any]], goal: Any = "",
             min_strength: str = "medium", holdout: float = HOLDOUT) -> Dict[str, Any]:
+    s = settle(live, outcomes, min_strength)
     g = gold(live, outcomes, min_strength)
     grp = group_key(goal, live.get("run_id"), live.get("decision_id"))
     return {"schema": EXAMPLE_SCHEMA, "id": live.get("decision_id"), "question": question(live),
             "state": state or {}, "gold": g["label"] if g else None,
             "gold_source": g["source"] if g else None, "gold_strength": g["strength"] if g else None,
             "weight": WEIGHTS.get(g["strength"], 0.0) if g else 0.0,
+            "not_label": s["not_label"] if s else None,
             "live_answer": live.get("answer"), "origin": live.get("origin"), "run_id": live.get("run_id"),
             "ts": live.get("ts"), "group": grp, "split": split(grp, holdout)}
 
@@ -119,13 +138,16 @@ def run_goals(states: Iterable[Dict[str, Any]]) -> Dict[str, str]:
 
 
 def counts(examples: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Per question: examples, gold, by split (gold only), by gold source, by origin; and the gold label mix."""
+    """Per question: examples, gold, known_wrong (not_label only), by split (gold only), by gold source, by origin;
+    and the gold label mix."""
     out: Dict[str, Any] = {}
     for e in examples:
-        q = out.setdefault(e["question"]["id"], {"examples": 0, "gold": 0, "train": 0, "test": 0,
+        q = out.setdefault(e["question"]["id"], {"examples": 0, "gold": 0, "known_wrong": 0, "train": 0, "test": 0,
                                                  "by_source": {}, "by_origin": {}, "labels": {}})
         q["examples"] += 1
         q["by_origin"][e["origin"]] = q["by_origin"].get(e["origin"], 0) + 1
+        if e.get("not_label") is not None:
+            q["known_wrong"] += 1
         if e["gold"] is not None:
             q["gold"] += 1
             q[e["split"]] += 1

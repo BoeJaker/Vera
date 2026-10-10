@@ -74,7 +74,7 @@ def test_run_goals_origin_filter_counts_and_stable_bytes():
     ex = [EX.example(VERIFY, {}, [_o("correct")]), EX.example(TIER, {}, [])]
     c = EX.counts(ex)
     assert c["loop.step_verify"]["gold"] == 1 and c["loop.step_verify"]["labels"] == {"not_met": 1}
-    assert c["loop.tier"] == {"examples": 1, "gold": 0, "train": 0, "test": 0, "by_source": {},
+    assert c["loop.tier"] == {"examples": 1, "gold": 0, "known_wrong": 0, "train": 0, "test": 0, "by_source": {},
                               "by_origin": {"census": 1}, "labels": {}}
     body = EX.to_jsonl(reversed(ex))
     assert body == EX.to_jsonl(ex) and [json.loads(l)["id"] for l in body.splitlines()] == ["d1", "d2"]
@@ -92,3 +92,16 @@ def test_the_snapshot_is_a_dataset_snapshot_and_the_module_loads():
     src = open(os.path.join(ROOT, "vera", "minds", "export.py"), encoding="utf-8").read()
     assert '"decide.export"' in src and "state_dir(\"datasets\", \"decide\")" in src
     assert "Rows are never returned" in src and '"rows"' not in src
+
+
+def test_a_wrong_verdict_on_a_many_label_question_rules_the_live_answer_out():
+    s = EX.settle(TIER, [_o("wrong", "medium", "run.tier_band")])
+    assert s == {"label": None, "not_label": "simple", "source": "run.tier_band", "strength": "medium"}
+    assert EX.gold(TIER, [_o("wrong")]) is None
+    e = EX.example(TIER, {}, [_o("wrong")])
+    assert e["gold"] is None and e["not_label"] == "simple" and e["weight"] == 0.0
+    assert EX.counts([e])["loop.tier"]["known_wrong"] == 1
+    assert EX.settle(VERIFY, [_o("wrong")])["not_label"] is None     # two labels: the other one is gold
+    assert EX.settle(TIER, [_o("interrupted", "medium")]) is None
+    src = open(os.path.join(ROOT, "vera", "minds", "export.py"), encoding="utf-8").read()
+    assert 'e["not_label"] is not None or include_unlabelled' in src

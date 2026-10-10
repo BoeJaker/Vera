@@ -173,3 +173,35 @@ def test_the_raw_helper_never_collides_with_a_capability_argument():
         src = open(os.path.join(ROOT, *rel), encoding="utf-8").read()
         line = next(l for l in src.splitlines() if l.startswith("async def _raw("))
         assert ", /" in line, (rel, line)
+
+
+def test_choice_questions_are_scored_against_gold():
+    rows = [("continue", 0.95, "continue"), ("stop", 0.92, "continue"), ("stop", 0.6, "stop"),
+            ("replan", 0.4, "stop"), ("stop", None, "stop"), ("stop", 0.9, None)]
+    c = JC.choice_calibration(rows)
+    assert c["n"] == 4 and c["accuracy"] == 0.5                        # rows without p or gold drop out
+    assert c["at_confidence"]["0.9"] == {"coverage": 0.5, "precision": 0.5}
+    assert c["at_confidence"]["0.5"] == {"coverage": 0.75, "precision": 0.667}
+    assert 0.0 <= c["ece"] <= 1.0 and JC.choice_calibration([]) == {"n": 0}
+
+
+def test_the_live_baseline_is_the_bar():
+    assert JC.live_accuracy([("end", "end"), ("end", "continue"), ("end", None), ("continue", "continue")]) == {
+        "n": 3, "accuracy": 0.667}
+    assert JC.live_accuracy([("a", None)]) == {"n": 0}
+
+
+def test_the_report_takes_gold_from_the_export_rule_for_every_question():
+    src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
+    body = src[src.index("async def cap_decide_shadow_report"):src.index("_DDL_VEC = (")]
+    assert 'EX.settle(live, outs, "medium")' in body and "JC.choice_calibration(" in body
+    assert "JC.avoids_known_wrong(" in body
+    assert '"live_vs_outcomes": JC.live_accuracy(' in body and '"live": {qid:' in body
+
+
+def test_known_wrong_answers_count_against_the_live_model_and_for_a_shadow_that_avoids_them():
+    assert JC.live_accuracy([("stop", "stop"), ("continue", None, "continue"), ("stop", None, None)]) == {
+        "n": 2, "accuracy": 0.5}
+    assert JC.avoids_known_wrong([("replan", "continue"), ("continue", "continue"), ("x", None)]) == {
+        "n": 2, "rate": 0.5}
+    assert JC.avoids_known_wrong([]) == {"n": 0}
