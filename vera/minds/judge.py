@@ -52,7 +52,7 @@ def _impl(model: str) -> str:
     return f"llm:{model}"
 
 
-async def _raw(name: str, **kw) -> Dict[str, Any]:
+async def _raw(name: str, /, **kw) -> Dict[str, Any]:
     cap = CAPABILITY_REGISTRY.get(name) or {}
     fn = cap.get("raw") or cap.get("func")
     if not fn:

@@ -37,7 +37,7 @@ _STATS: Dict[str, int] = {"calls": 0, "cached": 0, "degraded": 0}
 _CARD_LOCK = asyncio.Lock()
 
 
-async def _raw(name: str, timeout: float, **kw) -> Dict[str, Any]:
+async def _raw(name: str, /, timeout: float, **kw) -> Dict[str, Any]:
     cap = CAPABILITY_REGISTRY.get(name) or {}
     fn = cap.get("raw") or cap.get("func")
     if not fn:

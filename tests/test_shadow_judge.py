@@ -164,3 +164,12 @@ def test_night_triggers_run_on_prod_only_and_mark_the_night_after_success():
         assert body.index("await r.get(KEY_NIGHT + night)") < body.index("await r.set(KEY_NIGHT + night"), rel
     judge = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
     assert "if not failed:" in judge and "id=jid" in judge
+
+
+def test_the_raw_helper_never_collides_with_a_capability_argument():
+    """background.cap.enqueue takes name=...: with _raw(name, **kw) the night trigger raised 'got multiple values for
+    argument name' on every run (2026-10-09, swallowed until logged). The helper's capability name is positional-only."""
+    for rel in (("vera", "minds", "judge.py"), ("vera", "minds", "tool_shortlist.py"), ("vera", "minds", "sense_capabilities.py")):
+        src = open(os.path.join(ROOT, *rel), encoding="utf-8").read()
+        line = next(l for l in src.splitlines() if l.startswith("async def _raw("))
+        assert ", /" in line, (rel, line)
