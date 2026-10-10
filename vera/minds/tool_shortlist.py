@@ -206,18 +206,24 @@ async def _record(run_id: str, step_id: Any, title: str, used: List[str], origin
 
 
 async def _night_job() -> None:
+    """Rebuild the step index once a night. Prod only (a node worker keeps local time and has no business indexing);
+    the night key is set only after the build succeeded, so a failure retries on the next tick."""
     try:
+        if getattr(_orch, "_IS_WORKER", False):
+            return
         now = datetime.now()
         if not JC.in_window(now.hour):
             return
         night = now.date().isoformat() if now.hour >= 12 else datetime.fromordinal(now.toordinal() - 1).date().isoformat()
         r = getattr(_orch, "REDIS", None)
-        if r is None or not await r.set(KEY_NIGHT + night, "1", nx=True, ex=86400):
+        if r is None or await r.get(KEY_NIGHT + night):
             return
         out = await build_index()
-        log.info("caps.shortlist nightly index: %s", out)
+        if out.get("ok"):
+            await r.set(KEY_NIGHT + night, "1", ex=86400)
+        log.info("caps.shortlist nightly index %s: %s", night, out)
     except Exception as e:
-        log.debug("tool shortlist night job: %s", e)
+        log.warning("tool shortlist night job: %s", e)
 
 
 schedule(_night_job, interval=900, name="caps_shortlist_index_night", singleton=True, skip_in_sandbox=True)
