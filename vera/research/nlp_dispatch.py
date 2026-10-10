@@ -201,6 +201,9 @@ async def discover(force: bool = False) -> List[Dict[str, Any]]:
                       "component": health.get("component") or {},
                       # which models the node has loaded (nlp_server preload)
                       "preload": health.get("preload") or {},
+                      # FM-9.1: which decide methods and indexes the node serves - a decide call only
+                      # goes to a node that advertises its method (decide_dispatch.capable)
+                      "decide": health.get("decide") or {},
                       **inventory})
         found.append(facts)
 

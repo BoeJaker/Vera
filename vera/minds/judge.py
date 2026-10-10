@@ -15,6 +15,7 @@ with 90% agreement, so they are judged side by side as the two tiers of the casc
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -29,6 +30,10 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import judge_core as JC
 except Exception:                        # worktree / app-free import
     from vera.minds import judge_core as JC   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import decide_dispatch as DD
+except Exception:                        # worktree / app-free import
+    from vera.minds import decide_dispatch as DD   # type: ignore
 try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import export_core as EX
 except Exception:                        # worktree / app-free import
@@ -290,8 +295,14 @@ async def cap_decide_shadow_knn(question_id: str = "loop.step_verify", limit: in
                         "INSERT INTO decision_vectors (decision_id, question_id, vec) VALUES ($1, $2, $3::jsonb) "
                         "ON CONFLICT (decision_id) DO NOTHING", it["id"], question_id,
                         json.dumps([round(x, 5) for x in it["vec"]]))
-    pool = [{"vec": it["vec"], "answer": it["live"].get("answer"), "run": it["live"].get("run_id")}
-            for it in items if it["vec"]]
+    pool = [{"vec": it["vec"], "answer": it["live"].get("answer"), "run": it["live"].get("run_id"), "id": it["id"]}
+            for it in items if it["vec"] and it["live"].get("answer") in (JC.QUESTIONS[question_id]["labels"].values())]
+    # FM-9.1: the neighbours are found on an NLP node; the index is this question's labelled decisions
+    index_id, version = f"decisions:{question_id}", DD.index_version([r["id"] for r in pool])
+
+    async def _push_rows():
+        return [{"id": r["id"], "vec": r["vec"], "run": r["run"] or "", "payload": r["answer"]} for r in pool]
+    local = None if pool else False
     try:
         from Vera.vera.minds import ledger_capabilities as L
     except Exception:                    # pragma: no cover
@@ -302,7 +313,18 @@ async def cap_decide_shadow_knn(question_id: str = "loop.step_verify", limit: in
             break
         if it["id"] in done or it["id"] not in recent or not it["vec"]:
             continue
-        answer, p, n = JC.knn_vote(question_id, it["vec"], pool, exclude_run=it["live"].get("run_id") or "")
+        run = it["live"].get("run_id") or ""
+        res = await DD.knn(index_id, version, _push_rows, vector=it["vec"], k=JC.KNN_K, exclude_run=run)
+        if res.get("ok"):
+            answer, p, n = JC.vote_from_neighbours(
+                question_id, [(x["score"], x.get("payload")) for x in res.get("neighbours") or []],
+                int(res.get("eligible") or 0))
+        else:
+            if local is None:
+                local = await DD.local_allowed()
+            if not local:                       # no node, and the host may not compute it: stop for tonight
+                return {"ok": False, "error": res.get("error"), "question_id": question_id, "scored": scored}
+            answer, p, n = await asyncio.to_thread(JC.knn_vote, question_id, it["vec"], pool, run)
         if not answer:
             skipped += 1
             continue
