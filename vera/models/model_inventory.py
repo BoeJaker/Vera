@@ -15,6 +15,7 @@ from .model_package import ModelPackage, model_package_from_dict
 
 MODEL_INVENTORY_SCHEMA = "vera.model-inventory/v1"
 _EXTERNAL_SCHEMAS = {"vera.nlp-model-inventory/v1"}
+PROVIDER_INVENTORY_SCHEMA = "vera.inference-provider-inventory/v1"
 
 
 def _as_dict(value: Any, label: str) -> dict[str, Any]:
@@ -32,6 +33,69 @@ def _package_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, ModelPackage):
         return value.to_dict()
     return model_package_from_dict(_as_dict(value, "package")).to_dict()
+
+
+def project_persisted_inference_providers(
+    deployments: Iterable[Any], observations: Iterable[Any],
+) -> tuple[dict[str, Any], ...]:
+    """Project latest provider facts from durable deployment observations.
+
+    Provider implementations remain process-local. Their identity, placement
+    and latest externally observed health are already bound by deployment
+    records, so inventory derives a read model instead of creating a second
+    persistence authority.
+    """
+    deployment_values = tuple(
+        _as_dict(value, "deployment") for value in deployments)
+    by_id = {
+        str(value.get("deployment_id") or ""): value
+        for value in deployment_values
+        if value.get("deployment_id")
+    }
+    placements: dict[str, set[str]] = defaultdict(set)
+    deployment_ids: dict[str, set[str]] = defaultdict(set)
+    for deployment_id, value in by_id.items():
+        provider_id = str(value.get("provider_id") or "")
+        if not provider_id:
+            raise ValueError("deployment omits provider identity")
+        placements[provider_id].update(
+            str(item) for item in value.get("placements") or ())
+        deployment_ids[provider_id].add(deployment_id)
+
+    latest: dict[str, tuple[tuple[int, int, str], dict[str, Any]]] = {}
+    for raw in observations:
+        observation = _as_dict(raw, "observation")
+        health = observation.get("health")
+        if health is None:
+            continue
+        if not isinstance(health, Mapping):
+            raise ValueError("deployment observation health is malformed")
+        deployment_id = str(observation.get("deployment_id") or "")
+        deployment = by_id.get(deployment_id)
+        if deployment is None:
+            raise ValueError("provider observation has no deployment")
+        provider_id = str(health.get("provider_id") or "")
+        if provider_id != deployment.get("provider_id"):
+            raise ValueError("provider observation identity conflicts with deployment")
+        key = (
+            int(health.get("observed_at_ms") or 0),
+            int(health.get("revision") or 0),
+            str(health.get("evidence_id") or ""),
+        )
+        current = latest.get(provider_id)
+        if current is None or key > current[0]:
+            latest[provider_id] = (key, dict(health))
+
+    return tuple({
+        "schema": PROVIDER_INVENTORY_SCHEMA,
+        "provider_id": provider_id,
+        "package_ids": list(health.get("available_package_ids") or ()),
+        "placements": sorted(placements[provider_id]),
+        "deployment_ids": sorted(deployment_ids[provider_id]),
+        "state": str(health.get("state") or "unknown"),
+        "revision": int(health.get("revision") or 0),
+        "health": health,
+    } for provider_id, (_, health) in sorted(latest.items()))
 
 
 def project_model_inventory(
