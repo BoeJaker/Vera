@@ -218,6 +218,31 @@ async def _search_searxng(query: str, limit: int, host: str = "") -> List[Dict[s
     return []
 
 
+# What the last SearXNG answers looked like (search_engines.searxng_note), for /health via web.engines.health.
+_SEARXNG_HEALTH: Dict[str, Any] = {}
+
+
+def _note_searxng(body: Optional[Dict[str, Any]], error: str = "") -> None:
+    try:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        _SEARXNG_HEALTH.update(_engines.searxng_note(_SEARXNG_HEALTH, body, now, error=error))
+    except Exception as e:                      # bookkeeping never breaks a search
+        log.debug("searxng health note: %s", e)
+
+
+@capability(
+    "web.engines.health",
+    http_method="GET", http_path="/web/engines/health",
+    http_tags=["web"], memory="off", silent=True,
+    description="Is web search getting real results? What the last SearXNG answers looked like: state "
+                "(ok|degraded|down|unknown), message, empty_streak, unresponsive engines with their reason, "
+                "ok_at (last answer with results). No network call - it reports what searches saw. "
+                "Shown under `search` in /health.",
+)
+async def cap_web_engines_health(trace_id=None) -> Dict[str, Any]:
+    return _engines.searxng_status(_SEARXNG_HEALTH)
+
+
 async def _searxng_pages(host: str, query: str, limit: int) -> List[Dict[str, Any]]:
     """Walk SearXNG's pages for one host. Returns [] if it cannot be reached.
 
@@ -242,16 +267,21 @@ async def _searxng_pages(host: str, query: str, limit: int) -> List[Dict[str, An
                         domain=urlparse(host).netloc,
                     )
                     r.raise_for_status()
+                    body = r.json()
                 except Exception as e:
                     log.debug("_search_searxng [%s] page %d: %s", query[:40], pageno, e)
+                    if pageno == 1:
+                        _note_searxng(None, error=str(e))
                     # None ends the walk but KEEPS earlier pages.
                     return None
+                if pageno == 1:
+                    _note_searxng(body)
                 return [{
                     "url":     _decode_redirect(item.get("url", "")),
                     "title":   item.get("title", ""),
                     "snippet": item.get("content", "") or item.get("snippet", ""),
                     "engine":  "searxng",
-                } for item in (r.json().get("results") or [])]
+                } for item in (body.get("results") or [])]
 
             return await _engines.walk_pages(_fetch, limit)
     except Exception as e:

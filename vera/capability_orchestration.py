@@ -9567,7 +9567,21 @@ async def obs_health(trace_id=None):
             "census":await _health_census(),
             "activity":await _health_activity(),
             "files":_health_files(),
+            "search":await _health_search(),
             "mode":"distributed" if REDIS else "local"}
+
+
+async def _health_search() -> Dict[str, Any]:
+    """Whether web search gets real results (web.engines.health: what the last SearXNG answers looked like, no
+    network call). 8-10 Oct 2026 every SearXNG engine timed out for days and nothing said so."""
+    cap = (CAPABILITY_REGISTRY.get("web.engines.health") or {}).get("func")
+    if not cap:
+        return {"state": "unknown", "message": "web module not loaded"}
+    try:
+        r = await asyncio.wait_for(cap(), 2)
+        return {k: r.get(k) for k in ("state", "message", "empty_streak", "unresponsive", "ok_at", "checked_at")}
+    except Exception as e:
+        return {"state": "unknown", "error": str(e)[:120]}
 
 
 @capability("obs.neo4j_diag", memory="off", silent=True,
