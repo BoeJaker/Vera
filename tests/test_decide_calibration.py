@@ -70,3 +70,14 @@ def test_the_whole_report():
     assert 'getattr(_orch, "_IS_WORKER", False)' in src and "lpush(KEY_HISTORY" in src
     assert 'os.path.join(_here, "minds/calibration.py"),' in open(
         os.path.join(ROOT, "vera", "capability_orchestration.py"), encoding="utf-8").read()
+
+
+def test_the_zero_shot_intent_shadow_names_its_live_decision():
+    from vera.minds import loop_ledger, loop_decisions_core as LD
+    rows = []
+    rl = loop_ledger.RunLedger("sess", origin="census", sink=rows.append)
+    rl.intent("build", {"heuristic": "build", "llm": "build"}, model="big")
+    rl.intent_shadow({"zeroshot": "research", "used": "build", "scores": {"research": 0.9}})
+    live, shadow = rows[0], rows[-1]
+    assert shadow["mode"] == "shadow" and shadow["detail"]["for"] == live["decision_id"]
+    assert "for" not in LD.intent_shadow_decision("s", {"zeroshot": "build"})["detail"]       # no live: no link

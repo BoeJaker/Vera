@@ -212,8 +212,11 @@ class RunLedger:
 
     def intent_shadow(self, rec: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> None:
         """The zero-shot intent beside the live one (mode=shadow); never judged by run_outcomes."""
+        live = next((x for x in reversed(self.decisions)
+                     if x.get("question_id") == "loop.intent" and x.get("mode") != "shadow"), None)
         try:
-            d = LD.intent_shadow_decision(self.sid, rec or {}, minds_digest=self._digest_now(), origin=self.origin)
+            d = LD.intent_shadow_decision(self.sid, rec or {}, minds_digest=self._digest_now(), origin=self.origin,
+                                          for_id=(live or {}).get("decision_id") or "")
         except Exception as e:
             log.debug("loop ledger intent shadow: %s", e)
             return
