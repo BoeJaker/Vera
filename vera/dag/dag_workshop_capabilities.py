@@ -2591,7 +2591,7 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
                                      model="", instance_id="", prefer_gpu=True,
                                      stream_cb=None, options=None, think=False,
                                      profile="", role="", job_type="", timeout=0,
-                                     request_stage=""):
+                                     request_stage="", stage_role=""):
     """Thinking-model-aware ollama_generate wrapper for dag_workshop callers.
 
     Lazily resolves ollama_generate via the context module so we don't have
@@ -2626,6 +2626,15 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
     _lsid = _LOOP_SESSION_CV.get()
     if _lsid and await _loop_run_cancelled(_lsid):
         raise asyncio.CancelledError(f"loop {_lsid} cancelled — aborting generation")
+    # A stage with no routing role of its own (gate, verifier, journal, ...) takes the
+    # loop/<stage> role only when THIS run placed it (stage_models -> RUN_ROLE_OVERRIDES),
+    # so an unplaced stage routes exactly as before (role_override_core.STAGE_ROLES).
+    if stage_role and not (profile or role):
+        try:
+            if "%s/%s" % (LOOP_ROUTING_PROFILE, stage_role) in (_orch.RUN_ROLE_OVERRIDES.get() or {}):
+                profile, role = LOOP_ROUTING_PROFILE, stage_role
+        except Exception:
+            pass
     system = _now_context_line() + ("\n\n" + system if system else "")
     import importlib
     try:
@@ -5053,7 +5062,7 @@ async def _attempt_arg_recovery(*, cap_name: str, failed_args: Dict[str, Any],
                 prompt, system=_RECOVERY_SYSTEM_PROMPT,
                 model=model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, json_mode=True,
-            )
+            stage_role="argfix")
         except Exception as e:
             last_error = f"recovery LLM call failed: {e}"
             attempts.append({"args": last_args, "error": last_error})
@@ -9648,7 +9657,7 @@ async def _v5_condense_output(raw_text: str, tool: str, step_goal: str, *,
         # is the documented precedence.
         out = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False, job_type="summarize")
+            prefer_gpu=prefer_gpu, json_mode=False, job_type="summarize", stage_role="condense")
         clean = _strip_think(out or "")[0].strip()
         if clean:
             clean = clean[:max_out]
@@ -20290,7 +20299,7 @@ async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, stage_role="synth")
         out = _strip_think(raw or "")[0].strip()
         if out:
             return out[:8000]
@@ -21373,7 +21382,7 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
             log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True, request_stage="gate")
+            prefer_gpu=prefer_gpu, json_mode=True, request_stage="gate", stage_role="gate")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 final gate failed: %s", e)
@@ -22126,7 +22135,7 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
-            request_stage="critic")
+            request_stage="critic", stage_role="verifier")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         if isinstance(obj, dict) and "met" in obj:
             _reason = str(obj.get("reason") or "")
@@ -22257,7 +22266,7 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     try:
         out = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=bool(with_journal), timeout=_V5_UTILITY_TIMEOUT)
+            prefer_gpu=prefer_gpu, json_mode=bool(with_journal), timeout=_V5_UTILITY_TIMEOUT, stage_role="finalize")
         out = _strip_think(out or "")[0].strip()
         if with_journal:
             obj = _extract_json(out) or {}
@@ -22470,7 +22479,7 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
             log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="adjust")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 adjust step failed: %s", e)
@@ -22634,7 +22643,7 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
         try:
             raw = await _safe_ollama_generate_dw(
                 prompt, system=sys, model=model, instance_id=instance_id,
-                prefer_gpu=prefer_gpu, json_mode=True)
+                prefer_gpu=prefer_gpu, json_mode=True, stage_role="journal")
             obj = _extract_json(_strip_think(raw or "")[0]) or {}
         except Exception as e:
             log.debug("v6 journal extract failed: %s", e)
@@ -22839,7 +22848,7 @@ async def _v6_branch_strategist(goal: str, failed_step: Dict[str, Any],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="strategist")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 branch strategist failed: %s", e)
@@ -23566,7 +23575,7 @@ async def _v7_single_cap_shortcut(goal: str, catalog_names: List[str], *, call_t
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="fastpath")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v7 single-cap pick failed: %s", e)
@@ -23618,7 +23627,7 @@ async def _v7_generate_clarifications(goal: str, done_when: str, tier: str, *, m
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="prestep")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         qs = obj.get("questions") if isinstance(obj, dict) else None
         if isinstance(qs, list):
@@ -23829,7 +23838,7 @@ async def _v7_assume_answers(goal: str, questions: List[str], tier: str, *,
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, stage_role="prestep")
         return _strip_think(raw or "")[0].strip()[:1600]
     except Exception as e:
         log.debug("v7 assume answers failed: %s", e)
@@ -24074,7 +24083,7 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT)
+            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT, stage_role="prestep")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         gaps = obj.get("gaps") if isinstance(obj, dict) else None
         gaps = [str(g).strip() for g in gaps if str(g).strip()][:5] if isinstance(gaps, list) else []
@@ -24257,7 +24266,7 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, stage_role="deliver")
         md = _strip_think(raw or "")[0].strip()[:_V6_DELIVER_OUT_MAX]
         if md and _deliverable is not None:
             md, _notes = _deliverable.finish(
@@ -24466,6 +24475,10 @@ async def cap_dag_agent_loop_v6(
     # or a specialised agentic model driving the loop. CPU-slow - chosen, never defaulted.
     controller_model:   str  = "",
     controller_node:    str  = "auto",
+    # The loop's other LLM stages on chosen models/nodes, e.g. the CPU MoE for the verifier
+    # and the final gate: "verifier=qwen3.6:35b-a3b@cpu-246,gate=..." or a dict
+    # (role_override_core.parse_stage_models / STAGE_ROLES). Unplaced stages are unchanged.
+    stage_models:       Any  = "",
     effort:             str  = "standard",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
@@ -24589,7 +24602,7 @@ async def cap_dag_agent_loop_v6(
             executor_model=executor_model, executor_node=executor_node,
             coder_model=coder_model, coder_node=coder_node, effort=effort,
             plan_style=plan_style, controller_model=controller_model,
-            controller_node=controller_node)
+            controller_node=controller_node, stage_models=stage_models)
         if _effort_adj.get("plan_style"):
             plan_style = _effort_adj["plan_style"]
         if _effort_adj.get("critic_route"):
@@ -26958,6 +26971,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_coder_node        = (body.get("coder_node", "auto") or "auto").strip().lower()
     v6_controller_model  = (body.get("controller_model", "") or "").strip()
     v6_controller_node   = (body.get("controller_node", "auto") or "auto").strip().lower()
+    v6_stage_models      = body.get("stage_models", "") or ""
     v6_effort            = (body.get("effort", "standard") or "standard").strip().lower()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
@@ -27117,6 +27131,7 @@ async def workshop_agent_loop_stream(request: Request):
             executor_model=v6_executor_model, executor_node=v6_executor_node,
             coder_model=v6_coder_model, coder_node=v6_coder_node, effort=v6_effort,
             controller_model=v6_controller_model, controller_node=v6_controller_node,
+            stage_models=v6_stage_models,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,
