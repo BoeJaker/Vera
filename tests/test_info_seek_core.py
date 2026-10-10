@@ -246,3 +246,27 @@ def test_deep_without_a_background_job_for_loops():
     assert "start_report: bool = True" in body
     i, j = body.index('if need == "deep" and not start_report:'), body.index('elif need == "deep":')
     assert i < j and "research.run" not in body[i:j] and "research.run" in body[j:j + 300]
+
+
+# baseline run 10 Oct (tools/info-eval): L19 "updates on the ... white paper" was taken as a report request and
+# started research.run; F04 "When does ... apply?" searched the question and got dictionary pages for "does"
+@pytest.mark.parametrize("q,need", [
+    ("Any updates on the UK AI regulation white paper or AI bill?", "latest"),
+    ("what does the research report say about rates", "fact"),
+    ("write a white paper on AI in valuation", "deep"), ("give me a detailed report on n8n", "deep"),
+])
+def test_a_named_document_is_not_a_report_request(q, need):
+    assert C.classify_need(q)["need"] == need
+
+
+def test_wh_questions_search_their_keywords_first():
+    assert C.keywords_of("When does the EU AI Act's high-risk obligation apply?") == "EU AI Act's high-risk obligation apply"
+    q = "When does the EU AI Act's high-risk obligation apply?"
+    assert C.fact_queries(C.subject_of(q), q)[0] == "EU AI Act's high-risk obligation apply"
+    assert C.fact_queries("Bank of England base rate", "What is the Bank of England base rate?")[0] == "Bank of England base rate"
+
+
+def test_no_control_characters_in_the_core():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "info_seek_core.py").read_text(encoding="utf-8")
+    assert not any(ord(ch) < 9 for ch in src)          # a patch once wrote \b as a backspace byte
