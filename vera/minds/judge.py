@@ -280,8 +280,15 @@ async def cap_decide_shadow_knn(question_id: str = "loop.step_verify", limit: in
 
 
 async def _night_job() -> None:
-    """Queue tonight's scoring once, through the background queue (the background-inference rule)."""
+    """Queue tonight's scoring through the background queue (the background-inference rule), once a night.
+
+    Prod only: a node worker shares the Redis lock but not prod's background queue, and keeps local time while
+    prod keeps UTC - on 2026-10-09 a worker took the night key an hour before prod's window and queued nothing
+    anywhere. The night key is set only once every job is queued, so a failure retries on the next tick; the
+    job ids are fixed per night, model and question, so a retry replaces rather than duplicates."""
     try:
+        if getattr(_orch, "_IS_WORKER", False):
+            return
         if str(os.environ.get("VERA_DECIDE_SHADOW", "1")).strip().lower() in ("0", "false", "no", "off"):
             return
         now = datetime.now()
@@ -289,20 +296,30 @@ async def _night_job() -> None:
             return
         night = (now.date() if now.hour >= 12 else now.date().fromordinal(now.date().toordinal() - 1)).isoformat()
         r = getattr(_orch, "REDIS", None)
-        if r is None or not await r.set(KEY_NIGHT + night, "1", nx=True, ex=86400):
+        if r is None or await r.get(KEY_NIGHT + night):
             return
         cap = int(os.environ.get("VERA_DECIDE_SHADOW_NIGHT_CAP", "40") or 40)
-        for model in _models():
-            for qid in JC.QUESTIONS:
-                await _raw("background.cap.enqueue", name="decide.shadow.score", title=f"shadow judge: {qid} ({model})",
-                           arguments={"question_id": qid, "model": model, "limit": cap, "since_hours": 48},
-                           timeout_s=1800, submitted_by="decide.shadow")
+        jobs = [("decide.shadow.score", f"shadow judge: {qid} ({model})",
+                 {"question_id": qid, "model": model, "limit": cap, "since_hours": 48}, f"{qid}|{model}")
+                for model in _models() for qid in JC.QUESTIONS]
         # the kNN judge: embeddings only, every question, beside the LLM judge
-        await _raw("background.cap.enqueue", name="decide.shadow.knn", title="shadow judge: kNN, all questions",
-                   arguments={"question_id": "all", "limit": 400, "since_hours": 48},
-                   timeout_s=1800, submitted_by="decide.shadow")
+        jobs.append(("decide.shadow.knn", "shadow judge: kNN, all questions",
+                     {"question_id": "all", "limit": 400, "since_hours": 48}, "knn"))
+        queued, failed = 0, []
+        for name, title, args, key in jobs:
+            jid = "shadow-" + night + "-" + "".join(c if c.isalnum() else "-" for c in key)[:60]
+            res = await _raw("background.cap.enqueue", name=name, title=title, arguments=args, timeout_s=1800,
+                             id=jid, submitted_by="decide.shadow")
+            if res.get("ok"):
+                queued += 1
+            else:
+                failed.append(f"{key}: {str(res.get('error') or res.get('reason') or res)[:80]}")
+        if not failed:
+            await r.set(KEY_NIGHT + night, "1", ex=86400)
+        log.info("shadow judge night %s: queued %d of %d%s", night, queued, len(jobs),
+                 f"; failed {failed[:3]} (retrying next tick)" if failed else "")
     except Exception as e:
-        log.debug("shadow night job: %s", e)
+        log.warning("shadow night job: %s", e)
 
 
 schedule(_night_job, interval=900, name="decide_shadow_night", singleton=True, skip_in_sandbox=True)
