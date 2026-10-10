@@ -310,5 +310,5 @@ def test_live_records_pair_answers_across_batches():
 
 def test_the_live_stream_finds_the_connected_redis_whatever_name_the_orchestrator_loaded_under():
     src = open(os.path.join(ROOT, "vera", "estate", "ops_capabilities.py"), encoding="utf-8").read()
-    assert "def _live_redis():" in src and '"capability_orchestration", "__main__"' in src and "R = _live_redis()" in src
-    assert 'getattr(_orch, "REDIS", None)' not in src      # the imported copy may never have connected (seen on the mirror)
+    assert "def _live_redis():" in src and 'CAPABILITY_REGISTRY.get("obs.events")' in src and "R, stream, block = _live_redis()" in src
+    assert 'R = getattr(_orch, "REDIS", None)' not in src  # the imported copy may never have connected (seen on the mirror)

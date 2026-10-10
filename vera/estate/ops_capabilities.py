@@ -237,15 +237,14 @@ _live: Dict[str, Any] = {"subs": set(), "task": None, "ctx": None, "ctx_of": Non
 
 
 def _live_redis():
-    """The connected Redis client. The orchestrator's module body can run under more than one name (the Vera.vera.*
-    import trap): the copy this module imported may never have connected, so the client is taken from whichever
-    loaded copy holds one."""
-    import sys
-    for name in ("Vera.vera.capability_orchestration", "vera.capability_orchestration", "capability_orchestration", "__main__"):
-        r = getattr(sys.modules.get(name), "REDIS", None)
-        if r is not None:
-            return r
-    return None
+    """The connected Redis client and its event stream's key, from obs.events' own module - the capability that reads
+    the ring is the one place sure to see the client the server connected. (The orchestrator's module body can run
+    under more than one name; the copy this module imports never connected on the mirror.)"""
+    import inspect
+    fn = (_orch.CAPABILITY_REGISTRY.get("obs.events") or {}).get("func")
+    g = getattr(inspect.unwrap(fn), "__globals__", {}) if fn else {}
+    r = g.get("REDIS") or getattr(_orch, "REDIS", None)
+    return r, g.get("EVENT_STREAM") or _orch.EVENT_STREAM, g.get("STREAM_BLOCK_MS") or _orch.STREAM_BLOCK_MS
 
 
 def _live_ctx():
@@ -273,12 +272,12 @@ async def _live_pump() -> None:
                 await asyncio.sleep(1.0)
                 continue
             idle = None
-            R = _live_redis()
+            R, stream, block = _live_redis()
             if R is None:
                 await asyncio.sleep(5.0)
                 continue
             try:
-                res = await R.xread({_orch.EVENT_STREAM: last}, count=500, block=_orch.STREAM_BLOCK_MS)   # under the shared client's socket timeout
+                res = await R.xread({stream: last}, count=500, block=block)   # under the shared client's socket timeout
             except Exception as e:  # noqa: BLE001 - redis away for a moment: wait, then read on
                 log.debug("ops live: %s", e)
                 await asyncio.sleep(2.0)
