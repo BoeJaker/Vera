@@ -866,6 +866,71 @@
           + (x.args ? `<div class="ar">${esc(String(x.args).slice(0, 120))}</div>` : '') + (x.peek ? `<div class="pk">${esc(String(x.peek).slice(0, 200))}</div>` : '') + `</div></li>`).join('')}</ol></div>`;
     },
 
+    /* A RESEARCH RUN, WHOLE (owner, 2026-10-10: "research.run on the desk is missing all of the detail it has in chat").
+       The chat's research card shows how a run stands, its method (depth, style, the questions it will answer, its
+       writing brief), every page it reads, the sources it cites and the report as it is written; the desk got a list of
+       the pages and, at the very end, the report as a separate document. One item now holds the run: a status line with
+       its step, then Report · Method · Pages · Sources. On a wide card the report is the main pane and the others sit
+       beside it. The pages are the records browser (reader mode, the picture, explode, the sites and names it read).
+       Written by the chat from the card's own state as the run streams, and kept, so a reload shows the run as it ended. */
+    research: (c, size, key, el) => {
+      const st = recState(el, key);
+      const items = Array.isArray(c.items) ? c.items.filter((r) => r && typeof r === 'object') : [];
+      const cites = (Array.isArray(c.cites) ? c.cites : []).filter((x) => x && x.url);
+      const plan = c.plan && typeof c.plan === 'object' ? c.plan : null;
+      const state = c.status === 'done' ? 'done' : c.status === 'error' ? 'error' : 'running';
+      const K = esc(key || '');
+      const secs = +c.secs || (c.started ? Math.max(0, Math.round((Date.now() - +c.started) / 1000)) : 0);
+      const dur = secs ? (secs < 90 ? secs + ' s' : Math.floor(secs / 60) + ' min' + (secs % 60 ? ' ' + (secs % 60) + ' s' : '')) : '';
+      const read = items.filter((r) => !(r.meta && r.meta.status)).length, failed = items.length - read;
+      const report = String(c.report || ''), live = String(c.live || '');
+      /* what it is doing, in words: the step it is on while it runs; how it ended once it has */
+      const head = state === 'done' ? 'Research complete' : state === 'error' ? 'Research failed' : (c.writing ? 'Writing the report' : 'Researching');
+      const VO = root.VeraOut; const draw = (s) => (VO && typeof VO.render === 'function' ? VO.render(s, { canvas: false }) : mdx(s));
+      const chip = (k, v) => `<span class="vc-rr-chip"><i>${esc(k)}</i>${esc(v)}</span>`;
+      const methodHtml = () => {
+        if (!plan) return `<div class="vc-rr-wait">${state === 'running' ? 'planning the research…' : 'The run gave no method.'}</div>`;
+        const qs = plan.sub_questions || plan.key_questions || [];
+        let h = '<div class="vc-rr-chips">';
+        if (plan.depth) h += chip('depth', plan.depth);
+        if (plan.style || plan.output_style) h += chip('style', plan.style || plan.output_style);
+        if (plan.focus || plan.scope_focus) h += chip('focus', plan.focus || plan.scope_focus);
+        if (plan.needs_recency != null) h += chip('recency', plan.needs_recency ? 'required' : 'not required');
+        (plan.source_priority || []).slice(0, 6).forEach((s) => { h += chip('source', s); });
+        (plan.nlp_tools || []).slice(0, 8).forEach((s) => { h += chip('nlp', s); });
+        h += '</div>';
+        if (qs.length) h += `<h5>Questions it answers</h5><ol class="vc-rr-qs">${qs.slice(0, 16).map((q) => `<li>${esc(q)}</li>`).join('')}</ol>`;
+        if (plan.writer_instructions) h += `<h5>Writing brief</h5><div class="vc-rr-brief">${esc(plan.writer_instructions)}</div>`;
+        if ((plan.table_topics || []).length) h += `<h5>Tables</h5><div class="vc-rr-brief">${plan.table_topics.map(esc).join(' · ')}</div>`;
+        return h;
+      };
+      const reportHtml = () => report ? `<div class="vc-rr-doc">${draw(report)}</div>`
+        : live ? `<div class="vc-rr-doc vc-rr-live">${mdx(live)}</div>`
+        : `<div class="vc-rr-wait">${state === 'error' ? esc(c.error || 'The run stopped before it wrote a report.') : c.writing ? 'writing the report…' : 'gathering - the report is written once the pages are read'}</div>`;
+      const sourcesHtml = () => cites.length
+        ? `<ol class="vc-rr-src">${cites.map((s) => { let host = ''; try { host = new URL(s.url).host.replace(/^www\./, ''); } catch (e) { host = ''; }
+            return `<li><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || host || s.url)}</a><small>${esc(host || s.url)}</small></li>`; }).join('')}</ol>`
+        : `<div class="vc-rr-wait">${state === 'running' ? 'the sources are named once the report cites them' : 'The report cites no sources.'}</div>`;
+      const pagesHtml = () => items.length ? BLOCK.records(Object.assign({}, c, { kind: 'research', items }), size, key, el)
+        : `<div class="vc-rr-wait">${state === 'running' ? 'no page read yet' : 'No page was read.'}</div>`;
+      /* narrow: one pane at a time, by its tab. Wide (the container rule): the report is the main pane and the chosen one
+         of the others sits beside it - the method while it runs, its pages once it is done */
+      const tab = st.tab || 'report'; const side = st.side || (state === 'running' ? 'method' : 'pages');
+      const T = [['report', 'Report'], ['method', 'Method'], ['pages', 'Pages', items.length], ['sources', 'Sources', cites.length]];
+      const tabs = `<div class="vc-rr-tabs">${T.map(([id, label, n]) => `<button class="vc-rr-tab${tab === id ? ' on' : ''}${side === id ? ' side' : ''}" data-rr-tab="${id}" data-rec-act="rrtab" data-rec-key="${K}" data-rec-arg="${id}">${label}${n != null ? `<i>${n}</i>` : ''}</button>`).join('')}</div>`;
+      const pane = (id, html) => `<div class="vc-rr-p${tab === id ? ' on' : ''}${id === 'report' ? ' main' : side === id ? ' side' : ''}" data-p="${id}">${html}</div>`;
+      return `<div class="vc-rr st-${state}" data-w="canvas.research">`
+        + `<div class="vc-rr-hd"><span class="vc-rr-dot"></span><b>${head}</b>`
+        + (state === 'running' && c.step ? `<span class="vc-rr-step">${esc(String(c.step).slice(0, 90))}</span>` : '')
+        + `<span class="vc-rr-n">${items.length ? read + ' page' + (read === 1 ? '' : 's') + ' read' + (failed ? ' · ' + failed + ' failed' : '') : ''}${cites.length ? ' · ' + cites.length + ' cited' : ''}${dur ? ' · ' + dur : ''}</span></div>`
+        + (state === 'running' ? '<div class="vc-rr-bar"><i></i></div>' : '')
+        + (c.query ? `<div class="vc-rr-q">${esc(String(c.query).slice(0, 240))}</div>` : '')
+        + tabs
+        + `<div class="vc-rr-body">${pane('report', reportHtml())}${pane('method', methodHtml())}${pane('pages', pagesHtml())}${pane('sources', sourcesHtml())}</div>`
+        + (c.job ? `<div class="vc-rr-ft">job ${esc(String(c.job))}</div>` : '')
+        + `</div>`;
+    },
+
 
     /* WHAT A TURN NAMES (canvas-enrichment slice 1 - owner, 2026-10-03: "the nlp enrichment is still few and far
        between"). turn.understand's answer: the people, organisations, places, products, tickers, money and dates
@@ -1375,7 +1440,13 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside > .fu-p > .fu-b{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside .vc-live[data-live="explode"]{flex:1 1 auto;height:auto!important;min-height:160px}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-over{flex-direction:column!important}
-  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-rbx,.vc-filewrap,.vc-codewrap,.vc-diag,.vc-xp,.vc-term,.vc-tablewrap,.vc-act){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-rbx,.vc-filewrap,.vc-codewrap,.vc-diag,.vc-xp,.vc-term,.vc-tablewrap,.vc-act,.vc-rr){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  /* a research run fills its card: its panes take the height there is and scroll inside it, not the 60vh cap */
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd > .vc-rr .vc-rr-p{max-height:none}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd > .vc-rr .vc-rr-body{flex:1 1 0;min-height:0}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd > .vc-rr .vc-rr-p.on,
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd > .vc-rr .vc-rr-p.main,
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd > .vc-rr .vc-rr-p.side{height:100%}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > .vc-tablewrap{display:block;overflow:auto}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-diag,.vc-xp,.vc-term) > .vc-live{flex:1 1 auto;height:auto!important;min-height:60px}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > .vc-live{flex:1 1 auto;height:auto!important;min-height:60px}
@@ -1612,6 +1683,55 @@
   .vc-act-l .ar{font-family:var(--mono,monospace);font-size:10px;color:var(--dim,#8b93a1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .vc-act-l .pk{font-size:11px;line-height:1.45;color:color-mix(in srgb,var(--fg,#dce1e8) 72%,transparent);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
   @media (prefers-reduced-motion: reduce){ .vc-act-l li.running .ic,.vc-act.st-running .vc-act-dot{animation:none} }
+  /* a research run (see the renderer): status, the question, the tabs, then the panes - one at a time, or on a wide card
+     the report with one other beside it. Each pane scrolls on its own. */
+  .vc-rr{display:flex;flex-direction:column;gap:6px;min-width:0;container:vcrr / inline-size}
+  .vc-rr-hd{display:flex;align-items:center;gap:8px;min-width:0}
+  .vc-rr-hd b{font-size:12.5px;font-weight:600;white-space:nowrap}
+  .vc-rr-step{font-size:11px;color:var(--dim,#8b93a1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .vc-rr-n{margin-left:auto;font-size:10.5px;color:var(--dim,#8b93a1);white-space:nowrap}
+  .vc-rr-dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--ok,#5fb98a)}
+  .vc-rr.st-running .vc-rr-dot{background:var(--acc,#5a9e8f);animation:vcActPulse 1.2s ease-in-out infinite}
+  .vc-rr.st-error .vc-rr-dot{background:var(--err,#e06c6c)}
+  .vc-rr-bar{height:2px;border-radius:2px;overflow:hidden;background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  .vc-rr-bar > i{display:block;width:30%;height:100%;background:var(--acc,#5a9e8f);animation:vcRrSlide 1.6s ease-in-out infinite}
+  @keyframes vcRrSlide{0%{transform:translateX(-100%)}100%{transform:translateX(340%)}}
+  .vc-rr-q{font-size:12px;line-height:1.45;color:color-mix(in srgb,var(--fg,#dce1e8) 80%,transparent);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .vc-rr-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border,#2a2f37);flex:none}
+  .vc-rr-tab{border:0;background:none;color:var(--dim,#8b93a1);font:inherit;font-size:11.5px;padding:5px 10px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
+  .vc-rr-tab i{font-style:normal;font-size:10px;padding:0 6px;border-radius:8px;background:color-mix(in srgb,var(--fg,#dce1e8) 8%,transparent)}
+  .vc-rr-tab:hover{color:var(--fg,#dce1e8)}
+  .vc-rr-tab.on{color:var(--fg,#dce1e8);border-bottom-color:var(--acc,#5a9e8f)}
+  .vc-rr-body{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+  .vc-rr-p{display:none;min-width:0;min-height:0;overflow:auto;max-height:60vh}
+  .vc-rr-p.on{display:block}
+  .vc-rr-p > .vc-rbx{max-height:none}
+  .vc-rr-doc{font-size:13px;line-height:1.6}
+  .vc-rr-live{color:color-mix(in srgb,var(--fg,#dce1e8) 82%,transparent)}
+  .vc-rr-wait{font-size:12px;color:var(--dim,#8b93a1);font-style:italic;padding:10px 2px}
+  .vc-rr-chips{display:flex;flex-wrap:wrap;gap:4px}
+  .vc-rr-chip{font-size:11px;border:1px solid var(--border,#2a2f37);border-radius:10px;padding:2px 8px;color:var(--fg,#dce1e8)}
+  .vc-rr-chip i{font-style:normal;color:var(--dim,#8b93a1);margin-right:5px}
+  .vc-rr-p h5{margin:12px 0 4px;font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dim,#8b93a1)}
+  .vc-rr-qs{margin:0;padding-left:20px;font-size:12.5px;line-height:1.55}
+  .vc-rr-qs li{margin:3px 0}
+  .vc-rr-brief{font-size:12px;line-height:1.5;color:color-mix(in srgb,var(--fg,#dce1e8) 78%,transparent)}
+  .vc-rr-src{margin:0;padding-left:22px;font-size:12.5px;line-height:1.45}
+  .vc-rr-src li{margin:5px 0;overflow-wrap:anywhere}
+  .vc-rr-src a{color:var(--acc,#5a9e8f);text-decoration:none}.vc-rr-src a:hover{text-decoration:underline}
+  .vc-rr-src small{display:block;font-family:var(--mono,monospace);font-size:10px;color:var(--dim,#8b93a1)}
+  .vc-rr-ft{font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim,#8b93a1);flex:none}
+  /* wide: the report beside one other pane; its own tab is not needed there */
+  @container vcrr (min-width: 760px) {
+    .vc-rr-body{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(250px,1fr);gap:14px}
+    .vc-rr-p{display:none}
+    .vc-rr-p.main,.vc-rr-p.side{display:block}
+    .vc-rr-p.main{grid-column:1;grid-row:1}.vc-rr-p.side{grid-column:2;grid-row:1;border-left:1px solid var(--border,#2a2f37);padding-left:12px}
+    .vc-rr-tab[data-rr-tab="report"]{display:none}
+    .vc-rr-tab.on:not(.side){color:var(--dim,#8b93a1);border-bottom-color:transparent}
+    .vc-rr-tab.side{color:var(--fg,#dce1e8);border-bottom-color:var(--acc,#5a9e8f)}
+  }
+  @media (prefers-reduced-motion: reduce){ .vc-rr.st-running .vc-rr-dot,.vc-rr-bar > i{animation:none} }
   /* another kind seen as a graph (graphOf): the records graph's slot, filling what it is given */
   .vc-tv-graph{display:flex;flex-direction:column;gap:3px;min-height:0}
   .vc-tv-graph > .vc-live{height:300px}
@@ -4595,6 +4715,8 @@
       if (act === 'page') { st.page = arg === 'prev' ? Math.max(0, (st.page | 0) - 1) : arg === 'next' ? (st.page | 0) + 1 : (+arg || 0); return redraw(); }
       if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0; return redraw(); }
       if (act === 'dom') { st.dom = st.dom === arg ? '' : arg; st.page = 0; return redraw(); }
+      /* a research run's pane: shown alone on a narrow card; beside the report on a wide one (the report never leaves) */
+      if (act === 'rrtab') { st.tab = arg; if (arg !== 'report') st.side = arg; return redraw(); }
       if (act === 'ent') { st.ent = st.ent === arg ? '' : arg; st.page = 0; return redraw(); }
       if (act === 'goto') return this._rgNode(key, { id: 'r:' + arg });   // a timeline dot: its page, opened, wherever it sits
       if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key);

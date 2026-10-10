@@ -149,6 +149,13 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
                          "progress rather than only its results afterwards.",
                  "content": "{title?:str, mid?:str, status:'running'|'done'|'error', calls:[{cap:str, args?:str, "
                             "status:'running'|'ok'|'error', started?:num, ms?:int, peek?:str}]}"},
+    "research": {"desc": "A research run as one item: how it stands and its step, its method (depth, style, the "
+                         "questions it answers, its writing brief), every page it read (a records browser: reader "
+                         "mode, the picture, explode), the sources it cited and its report - written as it streams. "
+                         "Written by the chat from the run's own card (one item per job, updated in place).",
+                 "content": "{title?:str, query?:str, job?:str, status:'running'|'done'|'error', step?:str, "
+                            "writing?:bool, started?:num, secs?:int, plan?:{}, items:[{id:str, url:str, domain?:str, "
+                            "title?:str, meta?:{}}], cites?:[{url:str, title?:str}], live?:str, report?:str, error?:str}"},
 }
 CANVAS_MODES = ("dynamic", "static")
 
