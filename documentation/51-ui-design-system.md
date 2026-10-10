@@ -18,6 +18,7 @@ same layers, so a change to the look is made once and reaches everything. The ve
 | Settings | `vera/chat/vera-settings.js` | `/ui/vera-settings.js` | The chat's Settings page over any panel's settings section. |
 | Widgets | `vera/widgets/widget_element.js` | `/ui/widgets/widget_element.js` | `<vera-widget>`, the widget sheet (`VeraWidgetConfig`). |
 | Graphs | `vera/vera_graph.js`, `vera/graph_embed_element.js` | `/ui/vera-graph.js`, `/ui/vera-graph-embed.js` | `veraUI.Graph.create()`, `<vera-graph-embed>`. |
+| Adaptive layout | `vera/ui/desk_layout_core.js`, `vera/canvas/canvas_element.js`, `vera/chat/vera-dashboard.js` | loaded by the chat/canvas/dashboard hosts | Pure placement geometry, the canvas desk projection, and obstacle-aware dashboard reflow. |
 
 ## Starting something: the templates
 
@@ -118,6 +119,34 @@ One renderer. The full graph: `veraUI.Graph.create(host, {height:'fill', …}).l
 edges:[{from,to,rel}]})`. The bare graph: `<vera-graph-embed layer="entity" limit="60" height="240">` (and
 `renderer="struct"` for one record as a structured diagram). Both follow the theme and blocks off.
 
+## Adaptive desk and embedded panels
+
+The chat's session canvas uses one adaptive layout contract across three
+layers:
+
+1. `desk_layout_core.js` is the DOM-free geometry kernel. It assigns stable
+   homes, obstacle-free slots and an unbounded spill sequence; it never drops
+   an item because a fixed grid is full.
+2. `<vera-canvas align="desk">` projects those placements onto the visible
+   stage. It accepts the chat rectangle in stage coordinates, preserves manual
+   normalized positions, scales live frames and switches to a linear compact
+   layout when there is not enough width for a useful desk.
+3. `<vera-dashboard>` accepts normalized obstacle rectangles from its exact
+   parent frame. It temporarily moves or compacts covered widgets into the
+   nearest free cells and restores their authored inline layout when the
+   obstacle disappears.
+
+The frame boundary carries geometry only: rectangle shares and layout mode,
+not item content, prompts or capability results. A child must accept obstacle
+messages only from its exact `window.parent`; a null or unrelated source is
+not trusted. Embedded panels therefore remain responsible for their own data
+and settings while the host owns spatial orchestration.
+
+When adding another desk arrangement, add it to the pure kernel first and
+prove determinism, uniqueness and no-drop behaviour there. The canvas and
+dashboard integrations should translate coordinates and lifecycle events, not
+invent a second placement algorithm.
+
 ## Checks
 
 The node tests guard these contracts (`node tests/<name>.cjs`):
@@ -128,5 +157,9 @@ The node tests guard these contracts (`node tests/<name>.cjs`):
 - `test_lhm_chat_anatomy.cjs`: strip menus, primary actions, per-item widgets.
 - `test_lhm_menu_widgets_store.cjs`: menu widgets on the server.
 - `test_lhm_menu_descriptions.cjs`: every menu item described.
+- `test_desk_layout_core.cjs`: stable homes, obstacle separation, deterministic arrangements and unbounded no-drop spill.
+- `test_canvas_adaptive_desk.cjs`: canvas desk projection, manual positions, compact fallback and panel layers.
+- `test_dashboard_desk_room.cjs`: exact-parent frame obstacles, transient dashboard movement and exact restoration.
+- `test_chat_adaptive_desk.cjs`: chat controls, persistence, graph/panel layers and apply-path bring-in.
 
 Inline `<script>` blocks in panel HTML are not checked by the gate: parse them yourself before landing.
