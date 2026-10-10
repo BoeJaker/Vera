@@ -61,3 +61,24 @@ def test_a_double_extension_is_not_truncated_to_the_wrong_file():
     """config.yaml.bak is not config.yaml. Extracting the latter names a file
     that was never asked for."""
     assert "config.yaml" not in W._v6_extract_paths("see config.yaml.bak for the old one")
+
+
+# The student-verify census arm (2026-10-10): the verifier's filesystem check called these "MISSING (was NOT
+# written)", and the System 1 student failed the steps on it.
+def test_a_name_inside_a_percent_escaped_link_is_not_a_file():
+    s = "see https://upload.wikimedia.org/x/WebGPU%20White.svg and %2BWebGPU_SIGGRAPH_2025.pdf"
+    assert "20White.svg" not in W._v6_extract_paths(s)
+    assert "2BWebGPU_SIGGRAPH_2025.pdf" not in W._v6_extract_paths(s)
+
+
+def test_a_json_escaped_newline_does_not_join_the_name():
+    out = W._v6_extract_paths('{"stdout": "collected 3 items\\ntest_stats.py::test_mean PASSED"}')
+    assert "ntest_stats.py" not in out and "test_stats.py" in out
+
+
+def test_the_verifier_does_not_probe_the_hosts_own_absolute_paths():
+    src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "dag", "dag_workshop_capabilities.py"),
+               encoding="utf-8").read()
+    assert 'claim_paths = [p for p in claim_paths if not (p.startswith("/") and not p.startswith("/workspace"))]' in src
+    assert W._v6_extract_paths("wrote /workspace/out/report.md") == ["/workspace/out/report.md"]
+
