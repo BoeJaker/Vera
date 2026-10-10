@@ -266,7 +266,7 @@ async def _live_pump() -> None:
                 await asyncio.sleep(5.0)
                 continue
             try:
-                res = await R.xread({_orch.EVENT_STREAM: last}, count=500, block=1000)
+                res = await R.xread({_orch.EVENT_STREAM: last}, count=500, block=_orch.STREAM_BLOCK_MS)   # under the shared client's socket timeout
             except Exception as e:  # noqa: BLE001 - redis away for a moment: wait, then read on
                 log.debug("ops live: %s", e)
                 await asyncio.sleep(2.0)
