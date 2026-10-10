@@ -42,7 +42,7 @@ def test_confidence_and_when_a_student_answer_stands():
 
 def test_student_settings_and_the_switch(monkeypatch):
     f = SB.REGISTRY["decide.student.step_verify"]
-    assert f.modes == ("off", "shadow", "first") and f.default == "off"
+    assert f.modes[:3] == ("off", "shadow", "first") and f.default == "off"
     assert ST.mode("loop.step_verify") == "off" and ST.mode("loop.tier") == "off"
     eff = ST.SB.resolve(call={"decide.student.step_verify": "shadow"})
     token = ST.SB.RUN_MINDS.set(eff)                  # the switchboard module the student reads
@@ -177,3 +177,34 @@ def test_the_student_and_its_judge_can_run_on_a_named_node(monkeypatch):
     assert 'impl = _impl(model) + (f"@{instance}" if instance else "")' in judge
     assert "instance_id=instance or None, prefer_gpu=not instance" in judge
     assert JC.latency([900, 100, 300, 0]) == {"ms_p50": 300, "ms_p90": 900} and JC.latency([]) == {}
+
+
+def test_each_verify_label_is_its_own_mode_for_a_census_arm(monkeypatch):
+    f = SB.REGISTRY["decide.student.step_verify"]
+    assert f.modes == ("off", "shadow", "first", "first_met", "first_not_met") and f.default == "off"
+    assert SB.validate({"decide.student.step_verify": "first_not_met"}, census=True)["ok"]
+    monkeypatch.setenv("VERA_DECIDE_STUDENT_VERIFY_LABELS", "met")
+    assert ST.allowed("loop.step_verify", "first_not_met") == ["not_met"]
+    assert ST.allowed("loop.step_verify", "first_met") == ["met"] and ST.allowed("loop.step_verify", "first") == ["met"]
+    assert ST.decides("loop.step_verify", {"answer": "not_met", "p": 0.01}, "first_not_met")
+    assert not ST.decides("loop.step_verify", {"answer": "met", "p": 0.99}, "first_not_met")
+    assert all(ST.is_first(m) for m in ("first", "first_met", "first_not_met")) and not ST.is_first("shadow")
+
+
+def test_the_cosign_sample_and_its_mark(monkeypatch):
+    monkeypatch.setenv("VERA_DECIDE_STUDENT_COSIGN", "0.1")
+    assert ST.cosigned(lambda: 0.05) and not ST.cosigned(lambda: 0.5)
+    monkeypatch.setenv("VERA_DECIDE_STUDENT_COSIGN", "x")
+    assert ST.cosign_rate() == 0.1
+    rows = []
+    rl = loop_ledger.RunLedger("sess", origin="census", sink=rows.append)
+    rl.verify("s1", True, 1, model="big", by="llm",
+              student={"answer": "met", "p": 0.99, "impl": "llm:qwen3:4b", "would_take": True})
+    assert rows[1]["mode"] == "shadow" and rows[1]["detail"]["would_take"] is True
+    rows.clear()
+    rl.verify("s2", True, 1, model="big", by="llm", student={"answer": "not_met", "p": 0.2, "impl": "x"})
+    assert "would_take" not in rows[1]["detail"]
+    src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
+    hook = src[src.index("class _StudentHook:"):src.index("async def result(self)")]
+    assert "_student.decides(question_id, h._answer, mode)" in hook and "_student.cosigned()" in hook
+    assert "would_take=True" in hook
