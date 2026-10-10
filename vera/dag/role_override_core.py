@@ -26,7 +26,13 @@ from typing import Any, Dict, Optional, Tuple
 
 PROFILE = "loop"
 ROLES = ("executor", "coder", "controller", "planner")
-NODES = ("auto", "gpu", "cpu-247", "cpu-246")
+#: The loop's other LLM stages (owner 10 Oct 2026: "the agentic loops need to make much better
+#: use of the cpu nodes for llm work"). They carry no routing role by default - every one of
+#: them queued on the single GPU slot - and take one only when a run places them
+#: (stage_models), so the default path is unchanged.
+STAGE_ROLES = ("gate", "verifier", "finalize", "adjust", "journal", "strategist", "synth",
+               "deliver", "prestep", "fastpath", "argfix", "condense")
+NODES = ("auto", "gpu", "cpu-247", "cpu-246", "gpu-250-cpu")
 #: Where `auto` sends a model that does not fit the GPU.
 AUTO_CPU_NODE = "cpu-247"
 #: A model counts as fitting the GPU when its weights take at most this share of
@@ -53,10 +59,38 @@ def normalise_node(node: Any) -> str:
     return n if n in NODES else "auto"
 
 
+def parse_stage_models(spec: Any) -> Dict[str, Dict[str, str]]:
+    """{'loop/<role>': {model, node}} from `role=model@node,...` or a dict
+    {role: 'model@node' | {model, node}}. Unknown roles and empty models are dropped;
+    a missing node is 'auto'. Any loop role may be named (stage roles and the four
+    decision roles); explicit build() arguments still win over this spec."""
+    items: Dict[str, Any] = {}
+    if isinstance(spec, dict):
+        items = dict(spec)
+    elif isinstance(spec, str) and spec.strip():
+        for part in spec.split(","):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                items[k.strip()] = v.strip()
+    out: Dict[str, Dict[str, str]] = {}
+    for role, v in items.items():
+        role = str(role or "").strip().lower()
+        if role not in ROLES + STAGE_ROLES:
+            continue
+        if isinstance(v, dict):
+            mdl, node = str(v.get("model") or "").strip(), v.get("node")
+        else:
+            mdl, _, node = str(v or "").strip().rpartition("@") if "@" in str(v) else (str(v or "").strip(), "", "")
+        if mdl:
+            out[key(role)] = {"model": mdl, "node": normalise_node(node)}
+    return out
+
+
 def build(*, executor_model: str = "", executor_node: str = "auto",
           coder_model: str = "", coder_node: str = "auto", effort: str = "standard",
           plan_style: str = "auto", controller_model: str = "",
-          controller_node: str = "auto") -> Tuple[Dict[str, Dict[str, str]], Dict[str, Any]]:
+          controller_node: str = "auto",
+          stage_models: Any = None) -> Tuple[Dict[str, Dict[str, str]], Dict[str, Any]]:
     """({'loop/executor': {model, node}, ...}, adjustments) for one run.
 
     adjustments may carry `plan_style` (max effort upgrades a stepwise-family
@@ -87,6 +121,9 @@ def build(*, executor_model: str = "", executor_node: str = "auto",
         cn = normalise_node(controller_node)
         out[key("controller")] = {"model": ctl, "node": cn}
         out[key("planner")] = {"model": ctl, "node": cn}
+    # Stage placements (stage_models): never over an explicit choice above.
+    for k, v in parse_stage_models(stage_models).items():
+        out.setdefault(k, v)
     if eff == "max":
         style = str(plan_style or "auto").strip().lower()
         if style in MAX_UPGRADES_STYLE:
