@@ -458,7 +458,7 @@ def _model_record(src: Sources, tag: str) -> Dict[str, Any]:
             return {"found": False}
         return {"found": False, "error": f"no inference node serves {tag!r}"}
     online = [k for k, v in holders if v.get("status") == "online"]
-    facts = [_fact("Served by", ", ".join(f"{k} ({v.get('label') or k})" for k, v in holders) or "no node"),
+    facts = [_fact("Served by", ", ".join(f"{k} ({v.get('label') or k}{', vLLM' if v.get('backend') == 'vllm' else ''})" for k, v in holders) or "no node"),
              _fact("Online now", ", ".join(online) or "none"),
              _fact("On the GPU", ", ".join(k for k, v in holders if v.get("has_gpu")) or "no")]
     related = []

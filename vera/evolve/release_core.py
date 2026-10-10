@@ -196,6 +196,25 @@ def new_node_sync(*, release_id: str, commit: str, now: datetime,
             "resume_census": bool(resume_census)}
 
 
+def goal_yield_needed(census: Dict[str, Any]) -> bool:
+    """A census=goal release parks the census only when one is actually in flight. A yield
+    written over an idle census is never lifted by anyone - the release resumes only a
+    census it parked - and it blocks every later census slot (6 Oct 2026: release
+    8061bbc5 yielded an idle census, nothing ran for two days)."""
+    return str((census or {}).get("state") or "none") in BUSY_STATES
+
+
+def carry_census_resume(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -> Dict[str, Any]:
+    """A new node-sync record replacing one that still owes a census resume inherits that
+    duty: back-to-back releases replaced the record and the parked census was never let
+    go (6-7 Oct 2026)."""
+    if old and old.get("resume_census") and not new.get("resume_census"):
+        new = dict(new)
+        new["resume_census"] = True
+        new["resume_inherited_from"] = str(old.get("release_id") or "")
+    return new
+
+
 def hold_census_for_sync(pending: Dict[str, Any]) -> bool:
     """Whether the release keeps the census it parked parked until the node
     sync has run (2026-10-05). Resuming it first meant the sync then found a

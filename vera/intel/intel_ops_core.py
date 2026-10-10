@@ -169,11 +169,23 @@ def question_text(q: Any) -> str:
 
 
 def profile_text(topic: Dict[str, Any]) -> str:
-    """What a reranker compares a signal with: the topic, why it matters, what is open."""
+    """What a reranker compares a signal with: the topic itself - name, what it is,
+    why it matters, who it follows. Its open questions are scored separately
+    (question_profile): written by the model about whatever it last read, they are
+    narrow ("hydrology tools in flood-risk zones"), and mixed into one query they
+    drowned the topic - 9 Oct 2026, "UK house prices fall" scored -4.1 against the
+    mixed profile and +5.3 against the topic's name, and every signal fell below
+    the model gate."""
     parts = [topic.get("name", ""), topic.get("brief", ""), topic.get("why", "")]
-    parts += [question_text(q) for q in (topic.get("questions") or [])[:5]]
     parts += (topic.get("entities") or [])[:6]
     return ". ".join(p for p in parts if p)[:1200]
+
+
+def question_profile(topic: Dict[str, Any]) -> str:
+    """The topic's open questions as one rerank query ('' when it has none): a source
+    that answers one of them is relevant even when it reads off the topic's centre."""
+    qs = [question_text(q) for q in (topic.get("questions") or [])[:5]]
+    return " ".join(q for q in qs if q)[:1200]
 
 
 #: tokens that come from page chrome or are too generic to be an entity: browser
@@ -351,8 +363,8 @@ def qa_answer(question: str, result: Dict[str, Any], threshold: float = 0.35) ->
 #: sentences far better than bare words (intent_zeroshot_core)
 GENRE_LABELS = {
     "news": "a news report or an analysis article about developments",
-    "research": "a research paper, report or technical documentation",
-    "marketing": "a vendor's product, service or marketing page selling something",
+    "research": "an academic research paper or technical documentation",
+    "marketing": "a page selling a product, service or paid market research report",
     "listing": "a listing, directory, rental or job advert page",
     "repo": "a software repository or code project page",
     "index": "a news index, section front or aggregator page listing many headlines or links",
@@ -379,6 +391,24 @@ def index_hint(url: str, title: str) -> bool:
     t = str(title or "")
     by_path = bool(_INDEX_PATH.match(path)) or path in ("", "/")
     return bool(_INDEX_TITLE.search(t)) and (by_path or "newsnow" in str(url).lower())
+
+
+# Pages that sell market-research reports ("UK Commercial Real Estate Market Size &
+# Trends 2031", "Industry Analysis, Size, Share, Growth ... Forecast 2025-2032"): on-topic
+# by every word, worth nothing as intelligence, and the classifier read them as research
+# because they call themselves reports (10 Oct 2026: five of the ten items that passed
+# one sweep). Their titles have one shape, so a pattern decides, as for index pages.
+_REPORT_SELLER = re.compile(
+    r"\bmarket\s+(?:size|share|report|outlook\s*&\s*report|research\s+report)\b.*\b20\d\d\b"
+    r"|\b(?:industry\s+analysis|size,?\s+share|share,?\s+growth|growth,?\s+trends)\b"
+    r"|\bcagr\b|\brequest\s+(?:a\s+)?(?:free\s+)?sample\b|\bforecast\s+(?:to\s+|20\d\d\s*[-–]\s*)20\d\d\b"
+    r"|\bmarket\s+size\b",
+    re.I)
+
+
+def report_seller_hint(title: str, snippet: str = "") -> bool:
+    """A page selling a market-research report (see _REPORT_SELLER) - genre marketing."""
+    return bool(_REPORT_SELLER.search(f"{title or ''} {snippet or ''}"))
 
 
 def genre_of(result: Dict[str, Any], threshold: float = 0.5) -> Tuple[str, float]:

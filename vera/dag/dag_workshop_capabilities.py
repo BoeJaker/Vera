@@ -14390,6 +14390,57 @@ except ImportError:                                   # pragma: no cover
     except ImportError:
         _minds_core = None
 
+# The System 1 student (four-minds FM-2.5): a pre-trained small model answering a live decision
+# in-band, per the switchboard (decide.student.step_verify) - see vera/minds/student.py.
+try:
+    from Vera.vera.minds import student as _student, judge_core as _judge_core
+except ImportError:                                   # pragma: no cover
+    try:
+        from vera.minds import student as _student, judge_core as _judge_core
+    except ImportError:
+        _student = _judge_core = None
+
+
+class _StudentHook:
+    """The student around one live model call. start() runs it per the switchboard: a first mode ('first',
+    'first_met', 'first_not_met') asks it before the model (`decided` is its answer when that answer may stand,
+    except for the co-sign sample, which goes to the model with would_take set); 'shadow' runs it beside the
+    model. result() is what it said, for the ledger (waited on at most 5 s more; never raises)."""
+
+    def __init__(self):
+        self.decided: Optional[Dict[str, Any]] = None
+        self._answer: Optional[Dict[str, Any]] = None
+        self._task = None
+
+    @classmethod
+    async def start(cls, question_id: str, system: str, prompt: str) -> "_StudentHook":
+        h = cls()
+        try:
+            mode = _student.mode(question_id) if _student is not None else "off"
+            if mode != "shadow" and not _student.is_first(mode):
+                return h
+            call = _student.ask(question_id, _judge_core.student_system(system, question_id), prompt)
+            if _student.is_first(mode):
+                h._answer = await call
+                if _student.decides(question_id, h._answer, mode):
+                    if _student.cosigned():            # the plan's `sampled`: the big model decides this one
+                        h._answer = dict(h._answer, would_take=True)
+                    else:
+                        h.decided = h._answer
+            else:
+                h._task = asyncio.ensure_future(call)
+        except Exception as e:                        # pragma: no cover - never alters the decision
+            log.debug("student %s: %s", question_id, e)
+        return h
+
+    async def result(self) -> Optional[Dict[str, Any]]:
+        if self._task is None:
+            return self._answer
+        try:
+            return await asyncio.wait_for(self._task, timeout=5)
+        except Exception:
+            return None
+
 # Decision ledger (four-minds FM-0.2a): the controller's and the verifier's answers as
 # Decision v0 rows, sent in the background - the run never waits on them.
 try:
@@ -14507,19 +14558,36 @@ async def _v6_zeroshot_intent(goal: str) -> Tuple[Optional[str], Dict[str, float
     return _intent_zs.parse(res)
 
 
+def _tool_shortlist_step(sid: str, step: Dict[str, Any], res: Dict[str, Any], origin: str) -> None:
+    """A finished step into the caps.shortlist shadow (four-minds FM-3): its title and the tools it called
+    successfully. Background, never raises, never waits."""
+    try:
+        import importlib
+        try:
+            _tsm = importlib.import_module("Vera.vera.minds.tool_shortlist")
+        except Exception:
+            _tsm = importlib.import_module("vera.minds.tool_shortlist")
+        used = sorted({h.get("tool") for h in (res.get("history") or [])
+                       if isinstance(h, dict) and h.get("tool") and h.get("ok") is not False})
+        _tsm.on_step(sid, step.get("id"), str(step.get("title") or ""), used, origin=origin)
+    except Exception as e:
+        log.debug("tool shortlist step: %s", e)
+
+
 async def _v6_intent_measure(task: Any, info: Dict[str, Any], used: str, *,
-                             sid: str, stream_id: str) -> None:
-    """Emit agent_loop_v6.intent_zeroshot beside the intent the run used. Best effort."""
+                             sid: str, stream_id: str) -> Optional[Dict[str, Any]]:
+    """Emit agent_loop_v6.intent_zeroshot beside the intent the run used, and return the record
+    (the runner keeps it as the shadow loop.intent decision). Best effort."""
     if task is None or _intent_zs is None:
-        return
+        return None
     try:
         zs, scores = await asyncio.wait_for(asyncio.shield(task), timeout=_ENTITY_NER_TIMEOUT_S)
     except Exception:
         if not task.done():
             task.cancel()
-        return
+        return None
     if not zs:
-        return
+        return None
     rec = _intent_zs.compare(zs, scores, used=used, heuristic=str(info.get("heuristic") or ""),
                              llm=str(info.get("llm") or ""))
     try:
@@ -14527,6 +14595,7 @@ async def _v6_intent_measure(task: Any, info: Dict[str, Any], used: str, *,
                           "stream_id": stream_id, **rec})
     except Exception:
         pass
+    return rec
 
 
 class _V6StepCritic:
@@ -21123,6 +21192,16 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
                 runtime={"goal_chars": len(goal or ""), "ledger_steps": len(results or []), "pending_steps": len(queue or []), "caps_count": len(catalog_names or [])})
         except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
             log.debug("stage-context emit skipped: %s", _ae)
+        # The System 1 student (switchboard decide.student.controller_action): this prompt and these rules,
+        # asked for one letter. Under 'first' an allowed move (continue) at confidence >= tau stands - with no
+        # findings or steer, which only the big model writes.
+        _evidence = {"evidence": prompt, "evidence_system": sys}
+        _stu_hook = await _StudentHook.start("loop.controller_action", sys, prompt)
+        # a student writes no steps, so only a move that needs none may stand
+        if _stu_hook.decided is not None and _stu_hook.decided["answer"] in ("continue", "stop"):
+            return {"assessment": "", "findings": "", "goal_alignment": "", "direction": "",
+                    "goal_met": False, "action": _stu_hook.decided["answer"], "steps": [],
+                    "by": "student", "student": _stu_hook.decided, **_evidence}
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
@@ -21132,10 +21211,11 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
     except Exception as e:
         log.debug("v6 control call failed: %s", e)
         return {"assessment": "", "findings": "", "goal_alignment": "",
-                "direction": "", "goal_met": False, "action": "continue", "steps": []}
+                "direction": "", "goal_met": False, "action": "continue", "steps": [], "by": "fallback"}
     if not isinstance(obj, dict):
         return {"assessment": "", "findings": "", "goal_alignment": "",
-                "direction": "", "goal_met": False, "action": "continue", "steps": []}
+                "direction": "", "goal_met": False, "action": "continue", "steps": [], "by": "fallback",
+                "student": await _stu_hook.result(), **_evidence}
     action = str(obj.get("action") or "continue").strip().lower()
     if action not in _V6_CONTROL_ACTIONS:
         action = "continue"
@@ -21182,7 +21262,8 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
             "findings": str(obj.get("findings") or "")[:800],
             "goal_alignment": _align,
             "direction": str(obj.get("direction") or "")[:400],
-            "goal_met": goal_met, "action": action, "steps": steps}
+            "goal_met": goal_met, "action": action, "steps": steps,
+            "by": "llm", "student": await _stu_hook.result(), **_evidence}
 
 
 # _PLAN_DRIFT_STOP / _plan_words / _plan_drifted now live in planner_core
@@ -21536,7 +21617,10 @@ _V6_SLASHPATH_RE = re.compile(r"((?:\.{0,2}/)?(?:[\w.\-]+/)+[\w.\-]+\." + _V6_AR
 # and 44, a whole remediation step each time chasing a file that was never
 # a file. Also drops `config.yaml.bak` -> `config.yaml`, which was the
 # wrong name for a real file rather than a missing one.
-_V6_BAREFILE_RE  = re.compile(r"(?<![\w/.\-])([\w\-]{1,80}\." + _V6_ARTIFACT_EXT + r")(?!\.\w)\b", re.I)
+# `(?<![...%\\])` - a name right after a percent-escape or a backslash is the tail of a link
+# (`%20White.svg` read as `20White.svg`) or of an escape; the student-verify census arm
+# (2026-10-10) was told such files were "MISSING (was NOT written)".
+_V6_BAREFILE_RE  = re.compile(r"(?<![\w/.\-%\\])([\w\-]{1,80}\." + _V6_ARTIFACT_EXT + r")(?!\.\w)\b", re.I)
 # A criterion that is genuinely about a file EXISTING/being produced (gates the
 # hard auto-fail so merely naming a filename in passing never fails a step).
 _V6_FILE_CRIT_RE = re.compile(
@@ -21567,7 +21651,9 @@ def _v6_extract_paths(text: str, *, include_bare: bool = True) -> List[str]:
     existence probe decides truth."""
     if not text:
         return []
-    s = str(text)
+    # a JSON-encoded tool result carries its newlines and tabs as two characters (`\ntest.py`):
+    # read them as text, or the name comes out as `ntest.py`
+    s = str(text).replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
     out: List[str] = []
 
     def _add(p: str) -> None:
@@ -21698,9 +21784,8 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # prints "Error: …" and exits 0 is the common case, and it reads to the judge
     # as a clean success. Flag it deterministically so it cannot.
     def _soft_failed(h) -> str:
-        pv = str(h.get("preview") or "")
-        m = re.search(r'(?im)^[^\n]*\b(?:error|traceback|exception|failed|fatal)\b[^\n]*$', pv)
-        return (m.group(0).strip()[:160] if m else "")
+        # an empty "error" field of a JSON result is not a report (verify_evidence_core.soft_failure)
+        return _verify_evidence.soft_failure(h.get("preview"))
 
     # Exclude meta/no-op entries — "(empty exec.python.run)", "(denied X)",
     # "(invented path X)", "(skipped X)" — from being judged as real evidence.
@@ -21848,6 +21933,10 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     crit_paths = _v6_extract_paths(crit)
     claim_paths = _v6_extract_paths(str(res.get("summary") or "")) + _v6_extract_paths(
         " ".join(str(v) for v in list((res.get("outputs") or {}).values())[:8]))
+    # A tool's own absolute path outside the workspace (an operator screenshot under the host's
+    # artifacts dir) is the host's file, not a claim about the sandbox: probing it there reported it
+    # "MISSING (was NOT written)" (census arm 2026-10-10). The criterion's own paths are still checked.
+    claim_paths = [p for p in claim_paths if not (p.startswith("/") and not p.startswith("/workspace"))]
     all_paths = list(dict.fromkeys(crit_paths + claim_paths))
     exist = await _v6_check_paths_exist(session_id, all_paths) if all_paths else {}
     # A criterion path from ANOTHER environment (/tmp/x.md) the loop cannot write to: the
@@ -22013,6 +22102,19 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
               + f"RESULT SUMMARY (last cycle only - the executor's OWN ACCOUNT, not evidence; the tool "
                 f"results above win where they disagree):\n{(res.get('summary') or '')[:2000]}\n\n"
                 "Was the criterion met?")
+    # ── The System 1 student (switchboard decide.student.step_verify). It sees exactly this prompt and
+    # these rules, asked for one word. 'first': its verdict stands when it is an allowed label at confidence
+    # >= tau, else the big model decides below; 'shadow': it runs beside the big model, recorded only.
+    _evidence = {"evidence": prompt, "evidence_system": sys}
+    _stu_hook = await _StudentHook.start("loop.step_verify", sys, prompt)
+    _stu = _stu_hook.decided
+    if _stu is not None:
+        _met = _stu["answer"] == "met"
+        return {"met": _met, "by": "student", "student": _stu, **_evidence,
+                "reason": (f"the student ({_stu['model']}) judged the evidence "
+                           f"{'met' if _met else 'not met'} at confidence {_stu['confidence']:.3f}")}
+    _student_done = _stu_hook.result
+
     try:
         try:
             await _emit_stage_context(
@@ -22041,25 +22143,42 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
                             _ce.update(await _v6_check_paths_exist(session_id, _al))
                         _gone = _verify_paths_core.missing_after_alias(_cited, _ce)
                         if _gone:
-                            return {"met": False,
+                            return {"met": False, "by": "rule:cited_path_missing",
+                                    "student": await _student_done(), **_evidence,
                                     "reason": ("the verdict relies on %s, which does NOT exist in "
                                                "the sandbox - nothing was written there."
                                                % ", ".join(_gone[:3]))[:300]}
                 except Exception as _ve:
                     log.debug("verdict path check skipped: %s", _ve)
-            return {"met": bool(obj.get("met")), "reason": _reason[:300]}
+            return {"met": bool(obj.get("met")), "reason": _reason[:300], "by": "llm",
+                    "student": await _student_done(), **_evidence}
     except Exception as e:
         log.debug("v6 step verify failed: %s", e)
-    return {"met": bool(res.get("ok")), "reason": ""}
+    return {"met": bool(res.get("ok")), "reason": "", "by": "fallback", "student": await _student_done()}
 
 
 _V6_FINALIZE_MIN_RAW = 400      # skip distillation below this — nothing to trim
 _V6_FINALIZE_OUT_MAX = 2500     # cap on a step's distilled output
 
 
+# The journal's fields, asked for in the same pass as the finalised result when the run keeps a
+# journal (four-minds Q2 #6: finalize and journal extraction used to read the same step output in
+# two model calls). _v6_journal_extract uses them instead of its own call.
+_V6_JOURNAL_FIELDS_SPEC = (
+    "  • key_outputs — the specific results/values/decisions this step produced that matter "
+    "for the GOAL (short strings; exact numbers/IDs/URLs verbatim; [] if none)\n"
+    "  • files — file or artifact PATHS it produced or wrote ([] if none)\n"
+    "  • entities — the key named things it touched: apps, services, hosts, tools, datasets, "
+    "people, domains ([] if none)\n"
+    "  • schema — if the output contains STRUCTURED data (parsed JSON, API response, CSV/DB "
+    "rows, a list of records), the exact field names AND one verbatim sample record/row "
+    "copied from the real output. \"\" if the output has no structured data.\n"
+    "  • note — ONE short line on what this step contributes to the goal\n")
+
+
 async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str, *,
                             model: str, instance_id: str, prefer_gpu: bool,
-                            session_id: str = "") -> None:
+                            session_id: str = "", with_journal: bool = False) -> None:
     """Distil ONE finished step's cycles into a finalised, RELEVANT-ONLY output.
 
     A step's raw `summary` is whatever the specialist last emitted (its `done`
@@ -22128,11 +22247,24 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
               + (f"\nSTRUCTURED OUTPUTS PRODUCED:\n{outs}\n" if outs else "")
               + f"\nRAW STEP OUTPUT:\n{raw[:_V5_DONE_SUMMARY]}\n\n"
                 "Write the finalised, relevant-only result for this step.")
+    _jx: Optional[Dict[str, Any]] = None
+    if with_journal:
+        sys = (sys.split(" Output the finalised result as plain text")[0]
+               + " ALSO extract the step's JOURNAL record - ONLY what a LATER step or the final answer "
+               "would reuse:\n" + _V6_JOURNAL_FIELDS_SPEC
+               + 'Respond ONLY with JSON: {"result":"<the finalised result>","key_outputs":[],"files":[],'
+               '"entities":[],"schema":"","note":""}')
     try:
         out = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False, timeout=_V5_UTILITY_TIMEOUT)
+            prefer_gpu=prefer_gpu, json_mode=bool(with_journal), timeout=_V5_UTILITY_TIMEOUT)
         out = _strip_think(out or "")[0].strip()
+        if with_journal:
+            obj = _extract_json(out) or {}
+            if not isinstance(obj, dict) or not str(obj.get("result") or "").strip():
+                return            # unreadable: raw summary kept, the journal makes its own call
+            out = str(obj["result"]).strip()
+            _jx = {k: obj.get(k) for k in ("key_outputs", "files", "entities", "schema", "note")}
     except Exception as e:
         log.debug("v6 step finalize failed: %s", e)
         return
@@ -22167,6 +22299,8 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     res["raw_summary"] = raw
     res["summary"] = out[:_V6_FINALIZE_OUT_MAX]
     res["finalized"] = True
+    if _jx is not None:
+        res["journal_extract"] = _jx      # accepted with the result; a rejected pass leaves none
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -22465,7 +22599,10 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
         rec["source"] = "authored"
         return rec
     summary = str(res.get("summary") or res.get("raw_summary") or "")
-    if len(summary) < 40:
+    _pre = res.get("journal_extract")
+    if isinstance(_pre, dict):
+        rec["source"] = "finalize"        # extracted in finalize's pass (Q2 #6): no second call
+    elif len(summary) < 40:
         return rec
     sys = (
         "You maintain a STRUCTURED JOURNAL of an agentic run. From ONE finished step's output, "
@@ -22491,14 +22628,17 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
               f"STEP GOAL: {str(step.get('goal',''))[:400]}\n\n"
               f"STEP OUTPUT:\n{summary[:_V5_DONE_SUMMARY]}\n\n"
               "Extract the journal record.")
-    try:
-        raw = await _safe_ollama_generate_dw(
-            prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
-        obj = _extract_json(_strip_think(raw or "")[0]) or {}
-    except Exception as e:
-        log.debug("v6 journal extract failed: %s", e)
-        obj = {}
+    if isinstance(_pre, dict):
+        obj = _pre
+    else:
+        try:
+            raw = await _safe_ollama_generate_dw(
+                prompt, system=sys, model=model, instance_id=instance_id,
+                prefer_gpu=prefer_gpu, json_mode=True)
+            obj = _extract_json(_strip_think(raw or "")[0]) or {}
+        except Exception as e:
+            log.debug("v6 journal extract failed: %s", e)
+            obj = {}
     if isinstance(obj, dict):
         def _strs(x, n, cap):
             if isinstance(x, str):
@@ -24853,7 +24993,7 @@ async def cap_dag_agent_loop_v6(
                           "reason": tier_info.get("reason", ""),
                           "escalation_suppressed": tier_info.get("escalation_suppressed", False)})
         if _dl is not None:
-            _dl.tier(tier, tier_info, model=str(model or ""))
+            _dl.tier(tier, tier_info, model=str(model or ""), inputs={"goal": goal})
         # GOAL INTENT (build/research/action/mixed) — the KIND of work, which
         # drives the plan SHAPE (direct-authoring vs research-first) and the
         # phase/HITL tuning below. Same cheap LLM budget as the tier pass.
@@ -24869,7 +25009,7 @@ async def cap_dag_agent_loop_v6(
                           "llm": _intent_info.get("llm", ""),
                           "reason": _intent_info.get("reason", "")})
         if _dl is not None:
-            _dl.intent(intent, _intent_info, model=str(model or ""))
+            _dl.intent(intent, _intent_info, model=str(model or ""), inputs={"goal": goal})
     # ── INTENT CORE (opt-in): the intent is known now, so the caps it uses move
     #    to the front. Stages that read a prefix see them: fast path 16, master
     #    planner 24, broad 40. Nothing is removed; the cap-guard still applies. ──
@@ -25090,7 +25230,89 @@ async def cap_dag_agent_loop_v6(
             _plan_style_why = ("broad: %s - planned as auto"
                                % (_style_detail["broad"].get("error") or "no steps"))
             _plan_style_eff = "auto"
-    if (_pstyle.get("run_planner", True) and not _pstyle.get("broad")) or _broad_fell_back:
+    async def _persist_master(long_form: str, done_when_: str, slug: str) -> str:
+        """A STRATEGIC (multi-day) goal persists its documented plan as a dream project so it
+        continues a portion at a time over sessions; this session still executes the first
+        portion inline. A dream cycle re-running an existing goal does NOT create a second
+        project - it already knows its slug and only records progress. Returns the slug."""
+        if enable_dream_persistence and tier == "strategic" and not _is_dream_exec:
+            slug = await _v7_persist_strategic(goal, long_form, done_when_, session_id=sid)
+            if slug:
+                await emit_event({"type": "agent_loop_v6.strategic_persisted",
+                                  "session_id": sid, "stream_id": stream_id,
+                                  "slug": slug,
+                                  "note": "documented plan persisted as a dream project — "
+                                          "the dream system will continue it over days"})
+                # Freeze the escalation moment: agent notes + an artifact
+                # snapshot + a per-goal background thought loop that RAGs
+                # the goal's accumulating output.
+                try:
+                    snap = await _v7_escalation_snapshot(
+                        slug, session_id=sid, goal=goal,
+                        done_when=done_when_, master_plan=long_form,
+                        artifact_dir_path=(await _artifact_dir_ready()))
+                    await emit_event({"type": "agent_loop_v6.strategic_escalated",
+                                      "session_id": sid, "stream_id": stream_id,
+                                      "slug": slug, **snap})
+                except Exception as _e:
+                    log.debug("v7 escalation snapshot failed: %s", _e)
+        elif _is_dream_exec and slug:
+            # Keep the existing goal-project's documented plan fresh.
+            await _v7_persist_strategic(goal, long_form, done_when_, existing_slug=slug)
+        return slug
+
+    async def _emit_sectioned(plan2_: Dict[str, Any], slug: str) -> None:
+        _deferred = plan2_.get("deferred_pieces") or []
+        if _deferred:
+            await emit_event({
+                "type": "agent_loop_v6.strategic_sectioned", "session_id": sid,
+                "stream_id": stream_id, "slug": slug,
+                "running_section": (plan2_.get("exec_pieces") or [{}])[0].get("title", ""),
+                "deferred_sections": [{"id": d["id"], "title": d["title"],
+                                       "timescale": d.get("timescale", "")}
+                                      for d in _deferred],
+                "note": "running one section to a deliverable this session; the dream "
+                        "system continues the remaining sections over later cycles"})
+
+    # A goal the TIER already marks strategic gets the master plan whatever the structured
+    # planner would say, so with a planning style it is written FIRST and the structured plan
+    # runs only as the fallback when it yields no steps (four-minds Q2 #4: the structured plan
+    # used to be made first and then replaced, a whole planning call per strategic run thrown
+    # away). A goal the planner self-labels 'extreme' still needs the structured plan to know.
+    _master_ran = False
+    _master_ok = enable_master_planner and bool(_pstyle.get("master_plan", True))
+    _mp_first: Optional[Dict[str, Any]] = None
+    _plan2_first: Dict[str, Any] = {}
+    if (_master_ok and tier_wants_master
+            and ((_pstyle.get("run_planner", True) and not _pstyle.get("broad")) or _broad_fell_back)):
+        try:
+            catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
+            mp = await _v5_master_plan(goal, catalog_brief, model=model,
+                                       instance_id=instance_id, prefer_gpu=prefer_gpu,
+                                       sid=sid, stream_id=stream_id)
+            await emit_event({"type": "agent_loop_v6.master_plan", "session_id": sid,
+                              "stream_id": stream_id, "persona": mp.get("persona", ""),
+                              "long_form": mp.get("long_form", ""),
+                              "note": "strategic goal: the master plan is written first; the "
+                                      "structured plan runs only if it yields no steps"})
+            if mp.get("long_form"):
+                _mp_first = mp
+                _master_ran = True
+                # STRATEGIC (multi-day) goals expand and run only the FIRST section this
+                # session; the rest stays persisted for the dream system (see _persist_master).
+                _plan2_first = await _v5_plan_master_piecewise(
+                    plan_goal, catalog_names, skills, cap_skill_map,
+                    long_form=mp["long_form"], model=model, instance_id=instance_id,
+                    prefer_gpu=prefer_gpu, max_steps=max_steps, want_success=True,
+                    max_pieces=(1 if tier == "strategic" else None),
+                    max_caps_per_piece=max_caps_per_piece, cap_override_mode=cap_override_mode,
+                    max_split_pieces=max_plan_pieces, phase_policy=phase_policy,
+                    sid=sid, stream_id=stream_id, ev_prefix="agent_loop_v6") or {}
+        except Exception as e:
+            log.debug("v6 master-plan-first stage failed: %s", e)
+    if _plan2_first.get("steps"):
+        plan = _plan2_first
+    elif (_pstyle.get("run_planner", True) and not _pstyle.get("broad")) or _broad_fell_back:
         plan = await _v5_orchestrate_plan(
             plan_goal, catalog_names, skills, cap_skill_map,
             model=model, instance_id=instance_id, prefer_gpu=prefer_gpu,
@@ -25127,9 +25349,8 @@ async def cap_dag_agent_loop_v6(
     # steps — escalate to a long-form master plan and re-break it into steps (a
     # weak planner decomposes a concrete document far more reliably than an
     # abstract goal). Distinct from the complexity=="extreme" opt-in below.
-    _master_ran = False
-    _master_ok = enable_master_planner and bool(_pstyle.get("master_plan", True))
-    if not plan.get("steps") and _master_ok:
+    # (not again when the master plan was already written first above)
+    if not plan.get("steps") and _master_ok and not _master_ran:
         try:
             catalog_brief = "\n".join("  " + _v5_brief_cap_line(n) for n in catalog_names[:24])
             mp = await _v5_master_plan(goal, catalog_brief, model=model,
@@ -25158,6 +25379,14 @@ async def cap_dag_agent_loop_v6(
     # Preserve any slug passed in by a dream cycle (executing an existing goal);
     # otherwise this is set when a NEW strategic goal is persisted below.
     strategic_slug = (strategic_slug or "").strip()
+    if _mp_first is not None:
+        # written first above: persisted now, with the done_when of the plan that will run
+        try:
+            strategic_slug = await _persist_master(_mp_first["long_form"], done_when, strategic_slug)
+            if plan is _plan2_first:
+                await _emit_sectioned(_plan2_first, strategic_slug)
+        except Exception as e:
+            log.debug("v6 master-plan-first persist failed: %s", e)
 
     # Strategic master planner fires when EITHER the tier classifier says the goal
     # is complex/strategic OR the planner self-labelled it 'extreme'. (v6 only had
@@ -25175,37 +25404,7 @@ async def cap_dag_agent_loop_v6(
                               "stream_id": stream_id, "persona": mp.get("persona", ""),
                               "long_form": mp.get("long_form", "")})
             if mp.get("long_form"):
-                # A STRATEGIC (multi-day) goal persists its documented plan as a
-                # dream project so it continues a portion at a time over sessions.
-                # This session still executes the first portion inline below. A
-                # dream cycle re-running an existing goal does NOT create a second
-                # project — it already knows its slug and only records progress.
-                if enable_dream_persistence and tier == "strategic" and not _is_dream_exec:
-                    strategic_slug = await _v7_persist_strategic(
-                        goal, mp["long_form"], done_when, session_id=sid)
-                    if strategic_slug:
-                        await emit_event({"type": "agent_loop_v6.strategic_persisted",
-                                          "session_id": sid, "stream_id": stream_id,
-                                          "slug": strategic_slug,
-                                          "note": "documented plan persisted as a dream project — "
-                                                  "the dream system will continue it over days"})
-                        # Freeze the escalation moment: agent notes + an artifact
-                        # snapshot + a per-goal background thought loop that RAGs
-                        # the goal's accumulating output.
-                        try:
-                            snap = await _v7_escalation_snapshot(
-                                strategic_slug, session_id=sid, goal=goal,
-                                done_when=done_when, master_plan=mp["long_form"],
-                                artifact_dir_path=(await _artifact_dir_ready()))
-                            await emit_event({"type": "agent_loop_v6.strategic_escalated",
-                                              "session_id": sid, "stream_id": stream_id,
-                                              "slug": strategic_slug, **snap})
-                        except Exception as _e:
-                            log.debug("v7 escalation snapshot failed: %s", _e)
-                elif _is_dream_exec and strategic_slug:
-                    # Keep the existing goal-project's documented plan fresh.
-                    await _v7_persist_strategic(goal, mp["long_form"], done_when,
-                                                existing_slug=strategic_slug)
+                strategic_slug = await _persist_master(mp["long_form"], done_when, strategic_slug)
                 # STRATEGIC (multi-day) goals expand and run only the FIRST
                 # section this session (until its deliverable); the rest of the
                 # documented plan stays persisted for the dream system to continue
@@ -25223,17 +25422,7 @@ async def cap_dag_agent_loop_v6(
                 if plan2.get("steps"):
                     plan = plan2
                     done_when = str(plan2.get("done_when") or done_when)
-                    _deferred = plan2.get("deferred_pieces") or []
-                    if _deferred:
-                        await emit_event({
-                            "type": "agent_loop_v6.strategic_sectioned", "session_id": sid,
-                            "stream_id": stream_id, "slug": strategic_slug,
-                            "running_section": (plan2.get("exec_pieces") or [{}])[0].get("title", ""),
-                            "deferred_sections": [{"id": d["id"], "title": d["title"],
-                                                   "timescale": d.get("timescale", "")}
-                                                  for d in _deferred],
-                            "note": "running one section to a deliverable this session; the dream "
-                                    "system continues the remaining sections over later cycles"})
+                    await _emit_sectioned(plan2, strategic_slug)
         except Exception as e:
             log.debug("v6 master-planner stage failed: %s", e)
 
@@ -25647,7 +25836,7 @@ async def cap_dag_agent_loop_v6(
             return
         await _v6_finalize_step(step, res, goal, model=model,
                                 instance_id=instance_id, prefer_gpu=prefer_gpu,
-                                session_id=sid)
+                                session_id=sid, with_journal=journal_on)
         if res.get("finalized"):
             await emit_event({"type": "agent_loop_v6.step_finalized", "session_id": sid,
                               "stream_id": stream_id, "step_id": step["id"],
@@ -25659,7 +25848,9 @@ async def cap_dag_agent_loop_v6(
         if _dl is not None and res.get("done_by"):
             # a rule ended this attempt early; this attempt's verdict judges it (loop.step_done)
             _dl.step_done(step.get("id"), res["done_by"],
-                          len(verify_reasons_by_step.get(str(step.get("id")), [])) + 1)
+                          len(verify_reasons_by_step.get(str(step.get("id")), [])) + 1,
+                          inputs={"step": step.get("title"), "step_goal": step.get("goal"),
+                                  "result": res.get("summary"), "caps": res.get("actual_caps")})
         if not (enable_step_verify and str(step.get("success") or "").strip()):
             res["met"] = None
             return
@@ -25677,7 +25868,11 @@ async def cap_dag_agent_loop_v6(
         _vr.append(str(v.get("reason") or ""))
         res["verify_reasons"] = list(_vr)
         if _dl is not None:
-            _dl.verify(step.get("id"), v["met"], len(_vr), model=str(model or ""))
+            _dl.verify(step.get("id"), v["met"], len(_vr), model=str(model or ""),
+                       inputs={"goal": goal, "step": step.get("title"), "step_goal": step.get("goal"),
+                               "success": step.get("success"), "result": res.get("summary"),
+                               "evidence": v.get("evidence"), "evidence_system": v.get("evidence_system")},
+                       by=v.get("by") or "rule", student=v.get("student"))
         # `ok` on a VERIFY event must be the VERDICT, not the step's own flag.
         # Emitting res["ok"] made the trace read "verify ok=True" beside a reason
         # saying the deliverable was never created — so a run that was correctly
@@ -25965,7 +26160,9 @@ async def cap_dag_agent_loop_v6(
                     step, results, goal, model=model,
                     instance_id=instance_id, prefer_gpu=prefer_gpu)
                 if _dl is not None:
-                    _dl.prestep(step["id"], pinfo.get("gaps") or [], len(results), model=str(model or ""))
+                    _dl.prestep(step["id"], pinfo.get("gaps") or [], len(results), model=str(model or ""),
+                                inputs={"goal": goal, "step": step.get("title"), "step_goal": step.get("goal"),
+                                        "known": pinfo.get("known_digest")})
                 if pinfo.get("gaps"):
                     step["goal"] = (
                         str(step.get("goal", "")) +
@@ -26051,6 +26248,8 @@ async def cap_dag_agent_loop_v6(
         flat_history.extend(res.get("history") or [])
         max_id = max(max_id, step["id"])
         await _journal_step(step, res)
+        if _dl is not None:
+            _tool_shortlist_step(sid, step, res, _dl.origin)
         if _critic is not None:
             _critic.submit(step, res, results, done_when)
 
@@ -26103,7 +26302,15 @@ async def cap_dag_agent_loop_v6(
             action = ctrl.get("action", "continue")
             new_steps = ctrl.get("steps", [])
             if _dl is not None:
-                _dl.controller(step["id"], action, ctrl, model=str(model or ""))
+                _dl.controller(step["id"], action, ctrl, model=str(model or ""),
+                               inputs={"goal": _ctrl_goal, "done_when": done_when,
+                                       "after_step": step.get("title"), "result": res.get("summary"),
+                                       "done": [{"title": r.get("title"), "ok": r.get("ok"), "met": r.get("met")}
+                                                for r in results],
+                                       "queue": [q.get("title") for q in queue if isinstance(q, dict)],
+                                       "steps_left": steps_left,
+                                       "evidence": ctrl.get("evidence"), "evidence_system": ctrl.get("evidence_system")},
+                               by=ctrl.get("by") or "llm", student=ctrl.get("student"))
             if action == "stop":
                 break
             elif action == "replan" and new_steps:
@@ -26280,6 +26487,8 @@ async def cap_dag_agent_loop_v6(
             flat_history.extend(res.get("history") or [])
             max_id = max(max_id, step["id"])
             await _journal_step(step, res)
+            if _dl is not None:
+                _tool_shortlist_step(sid, step, res, _dl.origin)
 
     # ── Synthesize final ──────────────────────────────────────────────────────
     # A run that spent its whole step budget never entered the gate loop above (it
@@ -26392,11 +26601,16 @@ async def cap_dag_agent_loop_v6(
     # Before .done, so the trace digest and the Loop Lab record include it.
     await _v6_entity_coverage(_goal_ents_task, deliverable or final, sid=sid,
                               stream_id=stream_id)
-    await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
-                             stream_id=stream_id)
+    _zs_rec = await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
+                                       stream_id=stream_id)
+    if _dl is not None and _zs_rec:
+        _dl.intent_shadow(_zs_rec, inputs={"goal": goal})
     if _dl is not None:
+        # the kind of work the run did, for the intent's outcome (steps that researched / authored)
+        _fam = {"research": sum(1 for r in results if set(r.get("actual_caps") or []) & _V5_RESEARCH_CAPS),
+                "build": sum(1 for r in results if set(r.get("actual_caps") or []) & _V5_AUTHORING_CAPS)}
         _dl.finish(_gate_last, steps_run=len(results),
-                   fast_path=(False if (enable_fast_path and tier == "single") else None))
+                   fast_path=(False if (enable_fast_path and tier == "single") else None), families=_fam)
     await emit_event({"type": "agent_loop_v6.done", "stream_id": stream_id, "session_id": sid,
                       "summary": final, "cycles": gcycle, "steps_run": len(results),
                       "reason": _gate_finish_core.reason(_unmet), "unmet": _unmet})

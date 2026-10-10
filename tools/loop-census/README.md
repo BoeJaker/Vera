@@ -23,6 +23,7 @@ unchanged. `templates/` stays a data folder because sessions edit it.
 | `VERA_CENSUS_DIR` | `~/loop-census` | the data folder (see above) |
 | `CENSUS_BASE` | `https://localhost:8999` | the Vera to measure (`https://localhost:8981` = the bleeding-edge mirror) |
 | `CENSUS_TEMPLATE`, `CENSUS_MODEL`, `CENSUS_PLAN_STYLE`, `CENSUS_INTENT_CORE` | | what to run; see `run_census.py --help` |
+| `CENSUS_MINDS`, `CENSUS_MINDS_LABEL` | | a census arm: a switchboard set `{"feature": "mode"}` sent as `minds` on every goal, validated with `minds.validate` before goal 1 (refused = exit 2, no goal run); its own series `<template>[-style-s][-core-m]-<label>-runN`; set by the scheduler from a schedule's `target.minds` / `minds_label` (four-minds CENSUS_MINDS contract) |
 | `CENSUS_STALL_DUMP_S` | `600` | no loop event for this long, then dump stacks and await chains to `census_stalls/` |
 | `CENSUS_REDIS_URL` | from the prod process | probes only: where loop events are read |
 | `CENSUS_PY` | `~/langchain/bin/python3` | probes only: a Python with redis-py |

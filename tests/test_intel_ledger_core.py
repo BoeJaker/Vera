@@ -50,3 +50,11 @@ def test_strongest_and_agreement():
             dict(_dec(), outcomes=[L.make_outcome(_dec(), "user.feedback.useful")])]
     a = L.agreement(rows)["intel.signal_relevant"]
     assert a == {"decisions": 3, "with_outcome": 2, "correct": 1, "precision": 0.5}
+
+
+def test_cross_site_duplication_is_not_an_outcome():
+    """Syndicated generic pages are copied across sites; that is not evidence the item was relevant."""
+    assert "story.confirmed" not in L.EVENTS
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "vera", "intel", "intel_capabilities.py"), encoding="utf-8").read()
+    assert "story.confirmed" not in src and "intel.outcomes.backfill" not in src

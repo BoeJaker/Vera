@@ -212,6 +212,29 @@
   }; }
   G.latticeOf = latticeOf;
 
+  // ── Live ops: Estate > Live ops itself, embedded (/ops/panel?embed=1) - every control, the node cards, the right-click menu
+  // and the keys, as on the page. A graph of the Live ops snapshot (the Live operations tile) lets the page read the estate
+  // live; any other graph hands its lattice over (?ext=1): a plane per type, an area per branch, as latticeOf reads it.
+  var OPS_PLANES = ['client', 'work', 'core', 'service', 'runtime', 'host', 'edge'];
+  function opsSnapshot(d){
+    var ax = {}; d.areas.forEach(function(a, i){ ax[a] = i; });
+    return { planes: d.planes.map(function(pl){ return { id: pl.id, name: pl.name, count: d.nodes.filter(function(n){ return n.plane === pl.id; }).length }; }), domains: d.areas,
+      nodes: d.nodes.map(function(n){ var o = {}; Object.keys(n).forEach(function(k){ if (k !== '_g') o[k] = n[k]; }); o.domain = ax[n.area] != null ? ax[n.area] : 0; o.inflight = o.inflight || 0; o.errors = o.errors || 0; return o; }),
+      links: d.links, inflight: [], series: {} };
+  }
+  function opsPage(view){ return function(host, graph, api){
+    var N0 = api.nodes(), own = N0.length > 0 && N0.every(function(n){ var p = (n && n.props) || {}; return OPS_PLANES.indexOf(String(p.plane)) >= 0 && typeof p.domain === 'number'; });
+    var f = document.createElement('iframe'); f.title = 'Live ops'; f.src = '/ops/panel?embed=1&view=' + view + (own ? '' : '&ext=1');
+    f.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:var(--bg0,#0e0f12)'; host.appendChild(f);
+    var sig = '';
+    function push(){ if (own) return; try { var w = f.contentWindow; if (!w || !w.VeraOps || !w.VeraOps.setSnapshot) return;
+      var N = api.nodes().slice(0, 400), E = api.edges(), s = N.length + ':' + E.length + ':' + N.slice(0, 80).map(function(n){ return n.id + ':' + ((n.props && n.props.status) || ''); }).join(',');
+      if (s === sig) return; sig = s; w.VeraOps.setSnapshot(opsSnapshot(latticeOf(N, E))); } catch (e) {} }
+    f.addEventListener('load', function(){ sig = ''; var n = 0; (function wait(){ try { if (f.contentWindow.VeraOps && f.contentWindow.VeraOps.setSnapshot){ push(); return; } } catch (e) {} if (++n < 60) setTimeout(wait, 200); })(); });
+    return { update: push, destroy: function(){ try { f.remove(); } catch (e) {} } };
+  }; }
+  G.opsSnapshot = opsSnapshot;
+
   // ── structures: the code and prose explodes (code.explode, nlp.explode.prose - layers, groups, cards, edges) as graphs ──
   // Graph.fromContract(doc) turns one into nodes and edges any vera-graph can load; the Structure methods draw it back as the
   // explode renderer draws it (<vera-structgraph>) or as a 3D lattice: a plane per kind of symbol (module, class, function,
@@ -252,8 +275,8 @@
   G.fromContract = fromContract; G.contractOf = contractOf; G.structOf = structOf;
 
   G.registerMode({ id: 'exploded',  label: 'Exploded',     order: 10, mount: exploded });
-  G.registerMode({ id: 'ops-iso',   label: 'Live ops · 3D', order: 12, mount: opsLattice('3d') });
-  G.registerMode({ id: 'ops-2d',    label: 'Live ops · 2D', order: 13, mount: opsLattice('2d') });
+  G.registerMode({ id: 'ops-iso',   label: 'Live ops · 3D', order: 12, mount: opsPage('3d') });
+  G.registerMode({ id: 'ops-2d',    label: 'Live ops · 2D', order: 13, mount: opsPage('2d') });
   G.registerMode({ id: 'struct-iso', label: 'Structure · 3D', order: 14, mount: opsLattice('3d', true) });
   G.registerMode({ id: 'struct',    label: 'Structure', order: 15, mount: structure });
   G.registerMode({ id: 'estate-3d', label: 'Estate · 3D', order: 20, mount: estate(30) });

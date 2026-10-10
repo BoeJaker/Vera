@@ -224,6 +224,92 @@ projection failure does not erase the authoritative revision. `fabric.ingest`
 behaviour is unchanged, and this path does not write FAISS, Chroma, Postgres
 or Neo4j.
 
+### Memory authority canary boundary
+
+The native Memory runtime still owns live writes and reads. Two offline
+contracts make its eventual migration auditable without silently redirecting
+traffic:
+
+- `memory_authority_inventory.py` identifies the bound in-repository writers,
+  mutators, readers, stored `memory_ids` references and the identity used by
+  every native/canonical/projection surface. It does not infer dynamic or
+  external consumers and never reads stored records.
+- `memory_dual_write_receipt.py` binds a caller-supplied operation and native
+  memory ID to one exact `RecordRevision`, the revision-write outcome and the
+  Postgres/Chroma/Neo4j outcomes. Only bounded classifications are accepted;
+  content and backend exception text are excluded.
+
+The receipt describes evidence, not a transaction: it performs no write,
+cannot advance a head, cannot mark a projection receipt and never grants
+authority-switch permission. Coordination, storage and repair remain separate
+boundaries so evidence construction cannot accidentally perform an effect.
+
+The injected coordinator and SQLite evidence journal now implement that
+offline seam. Disabled operation calls only the native writer. Enabled
+operation remains native-first, bounds the revision shadow write separately,
+records success/split/error/timeout/cancellation evidence, and preserves caller
+semantics when the shadow or its journal fails. Exact replay is idempotent;
+changed evidence for one operation conflicts; stored evidence is digest-checked
+after restart; reconciliation queries are bounded. These components are not
+imported by the live Memory path and therefore do not activate dual writing.
+
+The public `memory.store` capability now has a narrow integration point, still
+off by default. Disabled operation creates no Fabric or receipt state. Enabled
+operation constructs an immutable `memory.native` revision, submits it through
+the existing revision policy and authority store after the native write, and
+records the paired outcome. Internal Memory writers are outside this canary.
+No deployment configuration is changed, so this is wiring rather than an
+authority cutover; removing or setting `VERA_MEMORY_REVISION_CANARY=0` is the
+one-step rollback.
+
+Reconciliation of split native/canonical outcomes has a durable execution
+contract. The evidence journal records exact started and completed attempts,
+prevents concurrent attempts for one operation, resumes unfinished work after
+restart, and folds committed repairs into an effective status without changing
+the immutable source receipt. The repair adapter reconstructs a canonical
+revision only from a native snapshot that matches the receipt's ID and content
+hash, and reconstructs a native backend input only from the receipt's exact
+canonical revision. Rehydrated revision envelopes must reproduce their full
+identity. Each injected target writer must echo its target, native ID,
+record/revision IDs and stable idempotency key before the attempt can be marked
+committed. Writer mappings are immutable and a requested backend cannot invoke
+another backend's callback.
+
+The manual `memory.dual_write.reconcile` entry point connects the adapter to
+the existing policy-gated `RevisionPath` and to one exact native backend at a
+time. It remains unavailable unless `VERA_MEMORY_RECONCILIATION_ENABLED=1`.
+Canonical repair reads only receipt-confirmed Postgres authority. Native repair
+loads the exact canonical envelope, writes only the unresolved target, and
+re-reads it to verify the native ID and content hash before accepting the
+backend's success. Revision reads and writes retain the caller policy used by
+the normal Fabric authority path.
+
+The separate `memory.dual_write.readiness` read path aggregates only bounded
+journal metadata: sample size, truncation, unresolved operations, pending or
+failed repair attempts, latest evidence time and the most recent exact
+rollback-rehearsal receipt. It discloses a truncated sample and fails closed on
+insufficient, stale or partial evidence. A passing result permits only a later
+activation review; it always returns `authority_switch_allowed: false`,
+performs no repair or backend read and does not create an absent journal. No
+capability currently moves Memory authority. Rollback evidence must bind the
+exact commit reported by the running process's provenance; missing or
+mismatched source identity blocks review.
+
+`memory.dual_write.rollback_rehearse` creates that receipt by exercising the
+deployed canary and reconciliation functions with each gate explicitly off,
+deliberately unusable state configuration and local sentinels. The native
+sentinel must remain callable exactly once, while canonical construction and
+all reconciliation callbacks must remain unreachable. Exact rehearsal replay
+performs no probe; changing the source commit under the same rehearsal identity
+conflicts. The operation writes only payload-free evidence and does not test or
+contact Postgres, Chroma or Neo4j.
+
+No scheduler enumerates or starts these attempts, and disabled operation
+constructs no journal, revision store or backend request. Every result still
+reports `authority_switch_allowed: false`; automatic repair, live canary
+activation, legacy migration, read-authority movement and deletion remain
+unavailable.
+
 ### Caller policy
 
 Revision and artifact capabilities share `CallerPolicy`

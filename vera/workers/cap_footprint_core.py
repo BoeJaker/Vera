@@ -231,3 +231,23 @@ def verdict(fp: Optional[Dict[str, Any]], static_markers: Iterable[str],
         return "vetted", (f"source reads files, but {runs} runs read only the code tree "
                           f"(which a node has) and touched {touched}")
     return "vetted", f"source clean; {runs} runs touched only {touched}"
+
+
+def plan_vet(verdicts: Dict[str, Tuple[str, str]], current: Iterable[str],
+             namespace: str = "", only: Iterable[str] = ()) -> Dict[str, list]:
+    """What nodes.parity.vet would change: {add, drop, not_cleared}.
+
+    `only` (a list a person reviewed) scopes BOTH sides - it used to limit only
+    the adds, so applying a reviewed list also dropped every other applied cap
+    the evidence no longer clears (2026-10-10: ui.room nearly went with batch 4).
+    The evidence still has to clear each name in `only`."""
+    keep = set(only or ())
+
+    def scoped(c):
+        return (not namespace or c.split(".", 1)[0] == namespace) and (not keep or c in keep)
+    cur = set(current or ())
+    want = {c for c, (k, _w) in verdicts.items() if k == "vetted" and scoped(c)}
+    return {"add": sorted(want - cur),
+            "drop": sorted(c for c in cur if scoped(c)
+                           and verdicts.get(c, ("host",))[0] != "vetted"),
+            "not_cleared": sorted(c for c in keep if verdicts.get(c, ("?",))[0] != "vetted")}

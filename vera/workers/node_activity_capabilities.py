@@ -139,7 +139,10 @@ async def _agent_names() -> Dict[str, str]:
 def _instances() -> Dict[str, Dict[str, Any]]:
     return {iid: {"url": i.get("url"), "has_gpu": bool(i.get("has_gpu")),
                   "status": i.get("status"), "in_use": i.get("in_use", 0),
-                  "label": i.get("label", iid)}
+                  "label": i.get("label", iid),
+                  # switched to vLLM: status/models are its vLLM server's
+                  "backend": i.get("backend", "ollama"),
+                  "served_by": i.get("served_by", "")}
             for iid, i in (getattr(_orch, "OLLAMA_INSTANCES", {}) or {}).items()}
 
 

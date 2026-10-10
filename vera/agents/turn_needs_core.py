@@ -23,7 +23,9 @@ _ASK = re.compile(r"\b(search (the )?(web|internet|online)|search for|look (it |
 _FRESH = re.compile(r"\b(latest|newest|today'?s?|tonight|right now|currently|current|at the moment|this (morning|week|"
                     r"month|year)|breaking|news|headlines?|price|prices|stock|shares?|exchange rate|weather|forecast|"
                     r"what'?s the score|final score|score of|who won|results? of the|release notes|released|"
-                    r"just (announced|released|launched)|is .{1,40} down)\b", re.I)   # an outage counts with "today/now"
+                    r"just (announced|released|launched)|is .{1,40} down|updates? (on|about|for)|"
+                    r"what'?s new (with|in|on|about)|any news|recent (news|developments|changes)|developments in)\b",
+                    re.I)   # an outage counts with "today/now"
 _MARKET = re.compile(r"\b(btc|eth|bitcoin|ethereum|nasdaq|s&p|ftse|dow jones|usd|gbp|eur)\b", re.I)
 # Vera's own world - a freshness word about these is a memory question, not a web one
 _INTERNAL = re.compile(r"\b(vera|census|loop ?lab|pipeline|sandbox|worktree|board item|bleeding.edge|the canvas|lhm|"
@@ -90,7 +92,9 @@ def needs(text: Any, *, today: Optional[date] = None, knowledge_year: int = 0) -
         out["web"] = _need(True, 0.95, "asked to search", search_query(t))
         return out
     yr = [int(y) for y in _YEAR.findall(t)]
-    ky = int(knowledge_year or 0)
+    # the answering model's training year when known; unknown -> last year, so a question about this year (or later)
+    # counts as past what the model can know (info-seeking plan SK-0.5)
+    ky = int(knowledge_year or 0) or ((today or date.today()).year - 1)
     if ky and any(y > ky for y in yr) and not internal:
         out["web"] = _need(True, 0.8, "a year past the model's knowledge", search_query(t))
         return out

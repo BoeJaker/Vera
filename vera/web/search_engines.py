@@ -247,16 +247,23 @@ def page_plan(limit: int, per_page: int = DEFAULT_PER_PAGE,
 
 
 def searxng_params(query: str, safesearch: Any = 0, pageno: int = 1,
-                   language: str = DEFAULT_LANGUAGE) -> Dict[str, Any]:
+                   language: str = DEFAULT_LANGUAGE, *, categories: str = "",
+                   time_range: str = "") -> Dict[str, Any]:
     """Query parameters for one SearXNG page.
 
     ``pageno`` is OMITTED for page 1 so the first request is byte-identical to
     the one sent before pagination existed; SearXNG defaults to page 1 anyway.
+    ``categories`` ("news") and ``time_range`` (day|week|month|year) are sent
+    only when given, for the same reason.
     """
     params: Dict[str, Any] = {"q": query, "format": "json",
                               "language": language, "safesearch": safesearch}
     if int(pageno or 1) > 1:
         params["pageno"] = int(pageno)
+    if categories:
+        params["categories"] = categories
+    if time_range in ("day", "week", "month", "year"):
+        params["time_range"] = time_range
     return params
 
 
@@ -345,3 +352,91 @@ def enough(collected: int, limit: int) -> bool:
     except (TypeError, ValueError):
         return False
     return want > 0 and int(collected) >= want
+
+
+# ── SearXNG health (info-seeking plan SK-0.1) ────────────────────────────────
+# 8-10 Oct 2026 the searxng container lost its network after a host restart: every upstream engine was "Suspended:
+# timeout", each search came back empty, web.search fell through to DDG snippets for days and nothing said so. The
+# web module notes what each SearXNG answer looked like; /health reports it.
+
+DOWN_AFTER = 3          # empty answers in a row with every engine unresponsive = down
+
+# The process's one record. Both SearXNG copies (web_capabilities and researcher_api - the latter is the one that runs
+# whenever it imports) report here, so /health sees every search whichever path it took.
+SEARXNG_STATE: Dict[str, Any] = {}
+
+
+def note_searxng_answer(body: Optional[Mapping[str, Any]], *, error: str = "") -> None:
+    """Record one SearXNG page-one answer in SEARXNG_STATE. Never raises: bookkeeping must not break a search."""
+    try:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        SEARXNG_STATE.update(searxng_note(SEARXNG_STATE, body, now, error=error))
+    except Exception:
+        pass
+
+
+def searxng_note(state: Dict[str, Any], body: Optional[Mapping[str, Any]], now: str, *,
+                 error: str = "") -> Dict[str, Any]:
+    """Fold one SearXNG answer (its JSON body, or None with `error` when it could not be reached) into `state`."""
+    st = dict(state or {})
+    st["checked_at"] = now
+    if body is None:
+        st.update(empty_streak=int(st.get("empty_streak") or 0) + 1, last_error=str(error)[:160],
+                  unresponsive=list(st.get("unresponsive") or []), reachable=False)
+        return st
+    results = body.get("results") or []
+    unresp = [f"{e[0]}: {e[1]}" if isinstance(e, (list, tuple)) and len(e) > 1 else str(e)
+              for e in (body.get("unresponsive_engines") or [])][:12]
+    st.update(reachable=True, unresponsive=unresp, last_count=len(results))
+    if results:
+        st.update(empty_streak=0, ok_at=now)
+    else:
+        st["empty_streak"] = int(st.get("empty_streak") or 0) + 1
+    return st
+
+
+def searxng_status(state: Mapping[str, Any]) -> Dict[str, Any]:
+    """{state: ok|degraded|down|unknown, message} for /health from what searxng_note gathered."""
+    st = dict(state or {})
+    if not st.get("checked_at"):
+        return {"state": "unknown", "message": "no search since start", **st}
+    streak = int(st.get("empty_streak") or 0)
+    unresp = st.get("unresponsive") or []
+    if not st.get("reachable", True) and streak >= DOWN_AFTER:
+        return {"state": "down", "message": "SearXNG cannot be reached; web search falls back to DDG snippets", **st}
+    if streak >= DOWN_AFTER and unresp and all("timeout" in u.lower() for u in unresp):
+        return {"state": "down", "message": "every SearXNG engine times out (check the container's network); "
+                                            "web search falls back to DDG snippets", **st}
+    if unresp or streak:
+        return {"state": "degraded", "message": f"{len(unresp)} engine(s) unresponsive; {streak} empty answer(s) "
+                                                "in a row", **st}
+    return {"state": "ok", "message": "", **st}
+
+
+# ── DuckDuckGo HTML results (info-seeking plan, 10 Oct) ──────────────────────
+# The old regex captured a snippet up to its first "<" - DDG bolds the search words, so "A running guide to where
+# the <b>EU AI Act</b> stands" came back as "A running guide to where the " on every fallback search.
+
+def _ddg_text(fragment: str) -> str:
+    import re as _re
+    t = _re.sub(r"<[^>]+>", "", fragment or "")
+    return " ".join(_html.unescape(t).split())
+
+
+def parse_ddg_html(text: str) -> List[Dict[str, str]]:
+    """[{raw_url, title, snippet}] from html.duckduckgo.com, each snippet taken from its own result block (so a
+    result without one never borrows the next result's), with the bolded words kept."""
+    import re as _re
+    out: List[Dict[str, str]] = []
+    for part in _re.split(r'(?=<a\b[^>]*class="result__a")', text or "")[1:]:
+        tag = _re.match(r"<a\b([^>]*)>(.*?)</a>", part, _re.S)
+        if not tag:
+            continue
+        href = _re.search(r'href="([^"]+)"', tag.group(1))
+        if not href:
+            continue
+        snip = _re.search(r'class="result__snippet"[^>]*>(.*?)</(?:a|td|div|span)>', part, _re.S)
+        out.append({"raw_url": _html.unescape(href.group(1)), "title": _ddg_text(tag.group(2)),
+                    "snippet": _ddg_text(snip.group(1)) if snip else ""})
+    return out

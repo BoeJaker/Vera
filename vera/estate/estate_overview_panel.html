@@ -340,7 +340,7 @@ function renderInference(g,sm){
     const m=window.veraEstate&&veraEstate.find({addr}); const ref=m?veraEstate.ref(m):'';
     const gn=(g.nodes||[]).find(x=>x.node===n.id||x.node===n.label)||{};
     const owners=(gn.owners||[]).map(w=>typeof w==='string'?w:(w.owner||w.id||'')).filter(Boolean);
-    return `<div class="row"><span class="k">${chip(ref,n.label||n.id)}${n.has_gpu?' <span class="tag acc">gpu</span>':''}</span>`
+    return `<div class="row"><span class="k">${chip(ref,n.label||n.id)}${n.has_gpu?' <span class="tag acc">gpu</span>':''}${n.backend==='vllm'?' <span class="tag acc" title="Ollama stopped on purpose: served by vLLM '+esc(n.served_by||'')+'">vLLM</span>':''}</span>`
       +`<span class="v">${n.status==='online'?(n.models||0)+' models'+(n.in_use?' · busy':''):'<span class="tag err">'+esc(n.status||'offline')+'</span>'}${owners.length?' · held by '+esc(owners.join(', ')):''}</span></div>`;
   }).join('')||'<div class="empty">No inference nodes configured.</div>';
 }

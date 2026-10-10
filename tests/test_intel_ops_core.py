@@ -259,5 +259,5 @@ def test_questions_written_as_objects_become_text():
     assert ops.question_text({"question": "Who is next?", "answer": "?"}) == "Who is next?"
     assert ops.question_text("{'question': 'What drives the drop?', 'answer': 'No explanation'}") == "What drives the drop?"
     assert ops.question_text("Plain question?") == "Plain question?"
-    prof = ops.profile_text({"name": "T", "questions": ["{'question': 'Why now?', 'answer': 'x'}"]})
+    prof = ops.question_profile({"name": "T", "questions": ["{'question': 'Why now?', 'answer': 'x'}"]})
     assert "Why now?" in prof and "answer" not in prof

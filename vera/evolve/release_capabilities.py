@@ -265,6 +265,10 @@ async def _queue_node_sync(p: Dict[str, Any]) -> None:
         return
     rec = core.new_node_sync(release_id=p["id"], commit=str((p.get("merge") or {}).get("commit") or ""),
                              now=_now(), resume_census=core.hold_census_for_sync(p))
+    try:
+        rec = core.carry_census_resume(await _node_sync_rec(), rec)
+    except Exception as e:
+        log.debug("node sync: could not read the previous record: %s", e)
     await _node_sync_save(rec)
     await emit_event({"type": "evolve.release.node_sync", "release_id": p["id"], "status": "pending"})
 
@@ -476,7 +480,7 @@ async def cap_release_prod(confirm: bool = False, edge: str = "", census: str = 
         p["last_why"] = why
         await _save(p)
         await _drain(core.waiting_on_gates(why))
-        if mode == "goal":
+        if mode == "goal" and core.goal_yield_needed(summary):
             if await _write_yield(f"release {p['id']}: let the goal in flight finish, then park"):
                 p["yield_written"] = True
                 await _save(p)

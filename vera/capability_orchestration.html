@@ -3651,9 +3651,11 @@ function renderHdrPills(){
   el.innerHTML=Object.entries(instances).map(([iid,i])=>{
     const col=i.status==='online'?'var(--ok)':i.status==='offline'?'var(--err)':'var(--dim)';
     const lat=i.latency_ms!=null?`${i.latency_ms}ms`:'?';
-    return `<div class="hdr-pill" title="${i.url}">
+    /* a node switched to vLLM: its vLLM server answers for it */
+    const vl=i.backend==='vllm'?` <span style="color:var(--acc, #4a9eff)">vLLM</span>`:'';
+    return `<div class="hdr-pill" title="${i.url}${i.backend==='vllm'?' - served by '+(i.served_by||'vLLM'):''}">
       <span class="pill-dot" style="background:${col}"></span>
-      ${i.has_gpu?'⚡':''}${iid} <span style="color:${col}">${lat}</span>
+      ${i.has_gpu?'⚡':''}${iid}${vl} <span style="color:${col}">${lat}</span>
     </div>`;
   }).join('');
   renderOllamaLoad();   // keep the top-strip load meter in sync with the pills
@@ -4346,7 +4348,9 @@ async function loadSysmonSplit(){
     else if(!oll.total) ollRows.innerHTML = '<div style="color:var(--dim2);font-size:10px;padding:6px 0">No Ollama nodes configured.</div>';
     else ollRows.innerHTML = (oll.nodes||[]).map(n=>{
       const on = n.status==='online';
-      const tag = !n.enabled ? '<span class="sm-tag dim">disabled</span>' : (on?'<span class="sm-tag ok">online</span>':'<span class="sm-tag err">offline</span>');
+      const isV = n.backend==='vllm';
+      const vtag = isV ? `<span class="sm-tag dim" style="color:var(--acc,#5ab0ff)" title="served by vLLM ${esc(n.served_by||'')}">vLLM</span>` : '';
+      const tag = vtag + ((!n.enabled && !isV) ? '<span class="sm-tag dim">disabled</span>' : (on?'<span class="sm-tag ok">online</span>':'<span class="sm-tag err">offline</span>'));
       const gpu = n.has_gpu ? '<span class="sm-tag gpu">gpu</span>' : '';
       const lat = (on && n.latency_ms!=null) ? Math.round(n.latency_ms)+'ms · ' : '';
       const meta = on ? `${lat}${n.models} model${n.models===1?'':'s'}${n.in_use?' · '+n.in_use+' busy':''}` : '';
@@ -4861,12 +4865,14 @@ function renderInstCards(){
     const st=i.status||'unknown',online=st==='online',offline=st==='offline';
     const latCol=online?(i.latency_ms<100?'var(--ok)':i.latency_ms<500?'var(--warn)':'var(--err)'):'var(--dim)';
     const pinned=routing.pinned===iid;
+    const isV=i.backend==='vllm';
     return `<div class="inst-card ${st}">
       <div class="inst-head">
         <div class="dot ${online?'live':offline?'':'warn'}"></div>
         <span style="font-family:var(--mono);font-weight:700;font-size:11px">${esc(iid)}</span>
         ${i.has_gpu?'<span class="badge gpu-b">⚡ GPU</span>':'<span class="badge local">CPU</span>'}
         ${pinned?'<span class="badge ok">PINNED</span>':''}
+        ${isV?`<span class="badge proxy" title="Ollama stopped; served by vLLM ${esc(i.served_by||'')}">vLLM</span>`:''}
         <span style="color:var(--dim2);font-size:9.5px">${esc(i.label||'')}</span>
         <div style="margin-left:auto;display:flex;gap:5px">
           <button class="btn sm" onclick="pingOne(${sq(iid)})">Ping</button>
@@ -4890,7 +4896,7 @@ function renderInstCards(){
           :(i.models||[]).map(m=>`<span class="model-chip" onclick="selectModel(${sq(iid)},${sq(m)})" title="Click to set as default">${esc(m)}</span>`).join('')
         }
       </div>
-      <div style="display:flex;gap:6px;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.05)">
+      ${isV?'':`<div style="display:flex;gap:6px;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.05)">
         <label style="font-size:9.5px;color:var(--dim2);white-space:nowrap">Default ctx</label>
         <input type="number" id="instCtx_${iid}" value="${i.num_ctx||4096}"
           min="512" max="131072" step="512"
@@ -4898,7 +4904,7 @@ function renderInstCards(){
           title="Context window tokens — set to match model maximum">
         <button class="btn sm" style="font-size:9px" onclick="setInstCtx(${sq(iid)})">Set</button>
         ${i.num_ctx?`<span style="font-size:9px;color:var(--dim2)">(${(i.num_ctx/1000).toFixed(0)}k tokens)</span>`:''}
-      </div>
+      </div>`}
     </div>`;
   }).join('');
 }
@@ -4918,7 +4924,8 @@ function syncInstSelects(){
       const label=i.label||iid;
       const gpu=i.has_gpu?' ⚡':'';
       const status=i.status==='online'?'':'  ✗';
-      return `<option value="${iid}">${label}${gpu}${status}</option>`;
+      const vl=i.backend==='vllm'?' (vLLM)':'';
+      return `<option value="${iid}">${label}${vl}${gpu}${status}</option>`;
     }).join('');
     if(prev&&ids.includes(prev)) el.value=prev;
   });
@@ -4987,7 +4994,7 @@ function selectModel(iid,model){
   // Fetch model info to show context limit
   const instData = instances[iid]||{};
   const instUrl  = instData.url||'http://localhost:11435';
-  fetch(instUrl+'/api/show', {method:'POST',headers:{'Content-Type':'application/json'},
+  if(instData.backend!=='vllm') fetch(instUrl+'/api/show', {method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:model})})
     .then(r=>r.json())
     .then(d=>{
@@ -6955,6 +6962,7 @@ function _renderOllamaCard(n){
       <div class="dot ${dotCls}"></div>
       <span style="font-family:var(--mono);font-size:11px;font-weight:600;flex:1">${esc(n.label||n.id)}</span>
       ${n.has_gpu?'<span class="badge dist">⚡ GPU</span>':''}
+      ${n.backend==='vllm'?`<span class="badge proxy" title="Ollama stopped; served by vLLM ${esc(n.served_by||'')}">vLLM</span>`:''}
       <span style="font-size:9px;color:${statusCol};font-weight:500">${esc(n.status)}</span>
     </div>
     <div style="display:flex;gap:12px;font-size:10px;color:var(--dim2);flex-wrap:wrap;margin-bottom:4px">

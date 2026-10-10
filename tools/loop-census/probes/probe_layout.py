@@ -12,13 +12,17 @@ Layouts are per-run loop overrides (no config change):
   L6  the agentic MoE (Qwen-AgentWorld-35B-A3B, cpu-246) drives AND executes
   L7  L3 + answer check - the CPU MoE also checks the FINAL answer against the files
   L8  L7 + the warm CPU coder
-Out: /tmp/probe_layout/<layout>-<goal_id>.json (+ ev/<sid>.jsonl). Added 4 Oct 2026."""
+Out: ~/loop-census/probe_layout/<layout>-<goal_id>.json (+ ev/<sid>.jsonl; CENSUS_PROBE_LAYOUT_OUT).
+    python3 probe_layout.py --rescore <sid> <template> <goal_id> [layout]
+rebuilds a probe's result from its records (Redis events + sandbox files) without running
+anything - for results lost with their output dir (8 Oct 2026). Added 4 Oct 2026."""
 import collections, json, os, re, subprocess, sys, time, uuid
 
 P = os.path.join(os.path.dirname(os.path.abspath(__file__)), "probe.py")
 src = open(P).read()
-exec(src.split("# ── Set A goals")[0].replace('OUT = "/tmp/probe"', 'OUT = "/tmp/probe_layout"')
+exec(src.split("# ── Set A goals")[0]
      .replace("return (n.hour, n.minute) >= (23, 15)", "return False"))
+OUT = os.environ.get("CENSUS_PROBE_LAYOUT_OUT", "").strip() or os.path.expanduser("~/loop-census/probe_layout")
 os.makedirs(OUT + "/ev", exist_ok=True)
 # Events from Redis (vera:loop:events:<sid>), not the SSE reattach - that returned
 # NOTHING for a 24-min session (4 Oct). rev.py sits beside this file.
@@ -52,14 +56,37 @@ LAYOUTS = {
     "L8": {"deliverable_review": True, "answer_check": True,
            "coder_model": "qwen3-coder:30b", "coder_node": "cpu-246"},
 }
+RESCORE = ""
+if len(sys.argv) > 2 and sys.argv[1] == "--rescore":
+    RESCORE, sys.argv = sys.argv[2], [sys.argv[0]] + sys.argv[3:]
+
+
+class _Finished:
+    """Stands in for the curl process when rescoring: nothing is running."""
+    def poll(self):
+        return 0
+
+
+def loop_seconds(ev):
+    """First event -> v6.done, from the events (the probe's own wall includes its tail)."""
+    import datetime as _dt
+    ts = [str(e.get("ts") or "") for e in ev if e.get("ts")]
+    done = [str(e.get("ts") or "") for e in ev if str(e.get("type", "")).endswith("v6.done") and e.get("ts")]
+    try:
+        p = lambda s: _dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return round((p(done[-1]) - p(ts[0])).total_seconds()) if ts and done else None
+    except Exception:
+        return None
+
+
 tpl, gid = sys.argv[1], sys.argv[2]
 layout = sys.argv[3] if len(sys.argv) > 3 else "L0"
 budget = int(sys.argv[4]) if len(sys.argv) > 4 else 1800
 g = next(x for x in json.load(open(os.path.expanduser("~/loop-census/templates/%s.json" % tpl)))["goals"]
          if x["id"] == gid)
-if not box_free():
+if not RESCORE and not box_free():
     log("box busy - not starting"); sys.exit(1)
-sid = str(uuid.uuid4())
+sid = RESCORE or str(uuid.uuid4())
 log("start %s %s %s" % (layout, gid, sid))
 # Say so on /health (activity.declared) for everyone else on the box; cleared at the end.
 ACT_ID = "probe-" + sid[:8]
@@ -70,12 +97,13 @@ def _declare(ttl):
             "by": "claude:0c68dd8c compute-roles", "ttl_s": ttl, "session_ids": sid}}, timeout=20)
     except Exception:
         pass
-_declare(budget + 600)
-proc = start(sid, dict({"goal": g["goal"]}, **LAYOUTS[layout]), budget)
+if not RESCORE:
+    _declare(budget + 600)
+proc = _Finished() if RESCORE else start(sid, dict({"goal": g["goal"]}, **LAYOUTS[layout]), budget)
 t0 = time.time()
 done_seen_at = None
 post_done_dump = None
-while time.time() - t0 < budget:
+while not RESCORE and time.time() - t0 < budget:
     time.sleep(10)
     if proc.poll() is not None and sid not in (running() or [sid]):
         break
@@ -100,14 +128,15 @@ while time.time() - t0 < budget:
             pass
         break
 # Redis says done -> not capped, whatever the (slow) HTTP list says.
-capped = not _rev.finished(sid) and sid in (running() or [sid])
+capped = not RESCORE and not _rev.finished(sid) and sid in (running() or [sid])
 if capped:
     log("%s over budget - cancelling" % sid)
-stop(sid, proc)
+if not RESCORE:
+    stop(sid, proc)
 wall = time.time() - t0
 # A loop still listed as running after stop() is an orphan that blocks every later
 # probe AND the census scheduler (4 Oct, 67d0975e): set its cancel flag.
-if not _rev.finished(sid) and sid in (running() or [sid]):
+if not RESCORE and not _rev.finished(sid) and sid in (running() or [sid]):
     http("POST", "/workshop/agent_loop/cancel", {"session_id": sid}, timeout=30)
     log("%s still running after stop - cancel flag set" % sid)
 ev = events(sid)
@@ -162,6 +191,10 @@ res["checks"] = [(r.get("ok"), r.get("label") or r.get("detail") or "") for r in
 res["score"] = _q["score"]
 res["files"] = {k: v[:1500] for k, v in files.items()}
 res["final"] = final[:1500]
+res["loop_s"] = loop_seconds(ev)
+if RESCORE:
+    res["rescored"] = True
+    res["wall"] = res["loop_s"] if res["loop_s"] is not None else res["wall"]
 json.dump(res, open("%s/%s-%s.json" % (OUT, layout, gid), "w"), indent=1)
 try:
     http("POST", "/mcp/call", {"name": "sys.activity.clear", "arguments": {"id": ACT_ID}}, timeout=20)

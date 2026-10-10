@@ -73,6 +73,11 @@ try:
 except Exception:                       # worktree / app-free import
     from vera.fabric import embed_policy_core as _embed_policy
 embedding_excluded = _embed_policy.embedding_excluded
+# Pure record shaping for sources: field mapping, feed discovery, one record view.
+try:
+    from Vera.vera.fabric import source_map_core as _srcmap
+except Exception:                       # worktree / app-free import
+    from vera.fabric import source_map_core as _srcmap
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
@@ -3384,6 +3389,12 @@ async def _pull_rss(src: dict) -> List[dict]:
                       "feedparser",
         "Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8",
     }
+    try:                                          # the source's own headers win (a declared contact, a key)
+        extra = json.loads(src.get("headers") or "{}") if isinstance(src.get("headers"), str) else (src.get("headers") or {})
+        if isinstance(extra, dict):
+            headers.update({str(k): str(v) for k, v in extra.items() if v not in (None, "")})
+    except (TypeError, ValueError):
+        pass
     body: bytes = b""
     final_url = url
     try:
@@ -3428,10 +3439,14 @@ async def _pull_rss(src: dict) -> List[dict]:
         log.info("rss %s -> %d items (final_url=%s)", url, len(results), final_url)
         return results
 
-    # Fallback: regex-only (very rough)
-    text = body.decode("utf-8", errors="ignore")
-    items = re.findall(r"<title>(.*?)</title>", text, re.DOTALL)
-    return [{"text": t.strip()[:2000]} for t in items[1:21]]  # skip channel title
+    # No feedparser: the standard library reads RSS 2.0, RSS 1.0 and Atom with links,
+    # dates and summaries. (The old regex fallback kept titles only.)
+    items = _srcmap.parse_feed(body, limit=src.get("lim", src.get("limit", 50)))
+    if not items:
+        log.warning("rss %s: not a readable RSS/Atom document (final=%s)", url, final_url)
+    else:
+        log.info("rss %s -> %d items via the stdlib parser (final_url=%s)", url, len(items), final_url)
+    return items
 
 
 async def _pull_api(src: dict) -> List[dict]:
@@ -3443,6 +3458,12 @@ async def _pull_api(src: dict) -> List[dict]:
     async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
         r = await c.get(src["url"], headers=headers); r.raise_for_status()
         data = r.json()
+    cfg = _src_config(src)
+    if _srcmap.has_mapping(cfg) or cfg.get("item_path"):
+        # nested JSON (GeoJSON and the like): items where the source says, and a
+        # readable title/link/published/geo per item instead of flattened scalars
+        items = _srcmap.items_at(data, cfg.get("item_path") or src.get("jq_path") or "")
+        return [_srcmap.map_item(it, cfg) for it in items[:src.get("lim", src.get("limit", 50))]]
     jq = (src.get("jq_path") or "").strip()
     if jq:
         for key in jq.split("."):
@@ -3459,6 +3480,22 @@ async def _pull_api(src: dict) -> List[dict]:
             text = str(item)[:4000]
         results.append({"text": text, "data": item if isinstance(item, dict) else {"value": item}})
     return results
+
+
+async def _pull_telegram(src: dict) -> List[dict]:
+    """A PUBLIC Telegram channel through its web preview (https://t.me/s/<channel>): no
+    account, no key, the posts anyone can read in a browser. Newest ~20 per pull."""
+    cfg = _src_config(src)
+    name = _srcmap.telegram_channel(cfg.get("channel") or src.get("url", ""))
+    if not name:
+        log.warning("telegram source %s: no public channel name", src.get("id"))
+        return []
+    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True,
+                                 headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
+        r = await c.get(f"https://t.me/s/{name}")
+        r.raise_for_status()
+    posts = _srcmap.telegram_posts(r.text, name)
+    return posts[-int(src.get("lim", src.get("limit", 50))):]
 
 
 async def _pull_wiki(src: dict) -> List[dict]:
@@ -4340,10 +4377,26 @@ SOURCE_TYPES: Dict[str, Dict] = {
                 "config_fields": [], "auth_fields": [], "needs_url": True},
     "api":     {"description": "Generic JSON API endpoint",
                 "config_fields": [{"name":"jq_path","label":"JSON path",
-                                    "help":"e.g. items[*]"}],
+                                    "help":"e.g. items[*]"},
+                                   {"name":"item_path","label":"Items at (dot path)",
+                                    "help":"e.g. features or data.items - nested lists work"},
+                                   {"name":"title_field","label":"Title field",
+                                    "help":"dot path, e.g. properties.title"},
+                                   {"name":"url_field","label":"Link field",
+                                    "help":"dot path, e.g. properties.url"},
+                                   {"name":"time_field","label":"Time field",
+                                    "help":"dot path; epoch s/ms or ISO, e.g. properties.time"},
+                                   {"name":"text_fields","label":"Text fields",
+                                    "help":"comma-separated dot paths added to the text"},
+                                   {"name":"geo_field","label":"Coordinates field",
+                                    "help":"dot path to [lon, lat] or {lat, lon}, e.g. geometry.coordinates"}],
                 "auth_fields":   [{"name":"headers","label":"Headers (JSON)",
                                     "type":"textarea"}],
                 "needs_url": True},
+    "telegram": {"description": "Public Telegram channel (its web preview; no account)",
+                 "config_fields": [{"name": "channel", "label": "Channel", "required": True,
+                                    "help": "@name, t.me/name or https://t.me/s/name"}],
+                 "auth_fields": [], "needs_url": False},
     "wiki":    {"description": "MediaWiki API",
                 "config_fields": [], "auth_fields": [], "needs_url": True},
     "scrape":  {"description": "HTML scrape",
@@ -4837,6 +4890,8 @@ async def _pull_source(src: dict) -> int:
             items = await _pull_api(src)
         elif stype == "wiki":
             items = await _pull_wiki(src)
+        elif stype == "telegram":
+            items = await _pull_telegram(src)
         elif stype == "scrape":
             items = await _pull_scrape(src)
         elif stype == "recon":
@@ -6501,6 +6556,45 @@ async def fabric_sources_add_index(
         url=url, source_type="index", label=label, interval=int(interval or 0),
         tags=tags, headers=headers, config=json.dumps(cfg),
     )
+
+
+@capability(
+    "fabric.sources.discover_feed",
+    http_method="POST", http_path="/fabric/sources/discover_feed", http_tags=["fabric"],
+    memory="off",
+    description="Find the RSS/Atom feed(s) for a site, page or channel, to register with fabric.sources.add "
+                "(source_type=rss). Input: url (str! - a page, a feed, a YouTube @handle or channel, a GitHub "
+                "owner/repo, or an arXiv category such as cs.AI), kind (str: ''|arxiv|youtube|github_releases - "
+                "a hint for values that are not URLs). Output: {feeds:[{url, title, type}], url, note?}.",
+)
+async def fabric_sources_discover_feed(url: str = "", kind: str = "", trace_id=None):
+    value = (url or "").strip()
+    if not value:
+        return {"error": "url is required"}
+    preset = _srcmap.preset_feed(kind, value) if kind else ""
+    if not preset and not kind and not value.startswith(("http://", "https://", "@")):
+        for k in ("github_releases", "arxiv"):             # bare owner/repo or a category
+            if (k == "github_releases" and "/" in value) or (k == "arxiv" and "/" not in value and "." in value):
+                preset = _srcmap.preset_feed(k, value)
+                if preset:
+                    break
+    if preset:
+        return {"feeds": [{"url": preset, "title": "", "type": "application/rss+xml"}], "url": value}
+    page = _srcmap.youtube_page(value) or (value if value.startswith(("http://", "https://")) else "https://" + value)
+    try:
+        async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=20, follow_redirects=True,
+                                     headers={"User-Agent": "Mozilla/5.0 (compatible; Vera-Fabric/1.0)"}) as c:
+            r = await c.get(page)
+    except Exception as e:  # noqa: BLE001
+        return {"feeds": [], "url": value, "error": f"{type(e).__name__}: {e}"[:200]}
+    body = r.text[:400000]
+    if _srcmap.looks_like_feed(body, r.headers.get("content-type", "")):
+        return {"feeds": [{"url": str(r.url), "title": "", "type": r.headers.get("content-type", "")}], "url": value}
+    feeds = _srcmap.feed_links(body, str(r.url))
+    out = {"feeds": feeds, "url": value, "site": _srcmap.page_title(body)}
+    if not feeds:
+        out["note"] = "the page advertises no RSS/Atom feed; try its /feed, /rss or /atom.xml, or an api source"
+    return out
 
 
 @capability(

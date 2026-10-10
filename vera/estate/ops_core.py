@@ -263,9 +263,12 @@ def _services(src: Mapping[str, Any], M: Mapping[str, Any], stack_host: str, nod
         models = q.get("models") or []
         st_ = str(q.get("status") or "")
         busy = int(_num(q.get("in_use"), 0) or 0) + int(_num(g.get("held"), 0) or 0)
+        # switched to vLLM: its Ollama is stopped on purpose, status/models are the vLLM server's
+        be = str(q.get("backend") or "ollama")
         n = _node(nid, str(q.get("label") or iid), "service", COMPUTE, kind="ollama",
+                  backend=be, served_by=str(q.get("served_by") or ""),
                   status="down" if st_ in ("offline", "error", "down") else ("run" if busy else "ok"),
-                  detail=f"{len(models)} models · {int(_num(q.get('latency_ms'), 0) or 0)} ms" + (" · gpu" if q.get("has_gpu") else ""),
+                  detail=("vLLM · " if be == "vllm" else "") + f"{len(models)} models · {int(_num(q.get('latency_ms'), 0) or 0)} ms" + (" · gpu" if q.get("has_gpu") else ""),
                   inflight=busy, load=(100.0 * _num(g.get("held"), 0) / _num(g.get("capacity"), 1)) if g.get("gated") and _num(g.get("capacity"), 0) else None,
                   errors=int(_num(q.get("errors"), 0) or 0), caps=[str(x) for x in models][:12],
                   req={"name": "ollama.instances", "arguments": {}}, url=str(q.get("url") or ""), gate=g or None)
@@ -488,24 +491,352 @@ def _requests(src: Mapping[str, Any], now: Optional[datetime], nodes: Dict[str, 
     return inflight, through, lat
 
 
-def _events(src: Mapping[str, Any], now: Optional[datetime]) -> Tuple[List[Dict[str, Any]], int]:
+ACTIVITY_MIN = 10           # a node's calls are counted over the last ten minutes of the event ring, or as much of it as the ring holds
+ACTIVITY_SLICES = 10        # ... in this many columns, oldest first: a busy estate fills 500 events in seconds, a quiet one in minutes
+CAP_OPEN_S = 300            # a call with no answer after five minutes was lost, not open
+FLOWS_SHOWN = 16            # open calls drawn as their own flows; the rest are a count
+_DONE = ("cap.ok", "cap.error", "cap.done", "cap.fail")
+_FAILED = ("cap.error", "cap.fail")
+# a capability's group -> the core node that carries it, when its arguments name no machine
+_GROUP_NODE: List[Tuple[str, str]] = [
+    (r"^(fabric|memory|knowledge|entity|vector|embed)", "core:fabric"),
+    (r"^background", "core:background"),
+    (r"^(evolve|sandbox|loops?|workshop|census|ci)$", "core:looplab"),
+    (r"^dream", "core:dream"),
+    (r"^mesh", "core:mesh"),
+    (r"^(sched|cron)", "core:scheduler"),
+    (r"^(ollama|llm|bench|models?|vllm)$", "core:router"),
+]
+_ARG = re.compile(r"\b(host_id|instance_id|instance|vmid|node_id)=([^,\s]+)")
+
+
+def _cap_target(e: Mapping[str, Any], M: Mapping[str, Any], nodes: Mapping[str, Any]) -> str:
+    """The node a capability call ran against: the machine, instance or guest its arguments name, else the core node
+    that carries its group, else the capability bus."""
+    group = str(e.get("group") or "")
+    for k, v in _ARG.findall(str(e.get("args_preview") or "")):
+        v = v.strip("'\"")
+        if k == "host_id":
+            for nid in (("docker:" + v) if group == "docker" else "", M.get("by_ssh", {}).get(v) or "", "dockerhost:" + v, "docker:" + v):
+                if nid and nid in nodes:
+                    return nid
+        elif k in ("instance", "instance_id") and "ollama:" + v in nodes:
+            return "ollama:" + v
+        elif k == "vmid" and "guest:" + v in nodes:
+            return "guest:" + v
+        elif k == "node_id" and "mesh:" + v in nodes:
+            return "mesh:" + v
+    for pat, nid in _GROUP_NODE:
+        if re.search(pat, group) and nid in nodes:
+            return nid
+    return "core:cap-bus" if "core:cap-bus" in nodes else ""
+
+
+def attr_context(src: Mapping[str, Any], M: Mapping[str, Any], nodes: Dict[str, Dict[str, Any]],
+                 links: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """What attributing an event needs: the machines by SSH host and label, which machine each worker runs on, the bus,
+    and the maps an answer is paired through (a call's trace, a worker's task, a loop's stream). Kept between batches by
+    the live stream, so an answer that arrives later still finds its call."""
+    by_label = {_norm(n["label"]): nid for nid, n in nodes.items()}
+    workers: Dict[str, str] = {}
+    w = _ok(src, "obs.workers")
+    for wid, v in (w.items() if isinstance(w, Mapping) else []):
+        if not isinstance(v, Mapping):
+            continue
+        nid = (M.get("by_ssh", {}).get(str(v.get("host_id") or "")) or by_label.get(_norm(str(v.get("host") or "")))
+               or (M.get("self") if str(v.get("role") or "") == "host" else ""))
+        if nid and nid in nodes:
+            workers[str(wid)] = nid
+    return {"M": M, "nodes": nodes, "links": links if links is not None else [], "workers": workers,
+            "bus": "core:cap-bus" if "core:cap-bus" in nodes else "", "clients": {}, "trace": {}, "task": {}, "stream": {}, "loops": {}}
+
+
+def context_from_snapshot(snap: Mapping[str, Any], workers: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """An attribution context rebuilt from a built snapshot (its nodes carry their SSH host ids) - for the live stream and
+    a node's log, which have the snapshot but not the readers' answers."""
+    nodes = {str(n.get("id")): dict(n) for n in (snap.get("nodes") or []) if isinstance(n, Mapping)}
+    by_ssh = {str(n.get("ssh_host_id")): nid for nid, n in nodes.items() if n.get("ssh_host_id")}
+    self_ = next((nid for nid, n in nodes.items() if n.get("role") == "runs Vera"), "")
+    return attr_context({"obs.workers": workers or {}}, {"by_ssh": by_ssh, "self": self_}, nodes)
+
+
+def _client_of(e: Mapping[str, Any], ctx: Dict[str, Any], create: bool) -> str:
+    """Who made a call: the agent it came through (`via`), or the chat page (a `chat-` session). An agent the estate
+    already lists as a client is that node; one it does not becomes a client node when a snapshot is built."""
+    via, sid = str(e.get("via") or ""), str(e.get("session_id") or "")
+    key = ("via:" + _norm(via)) if via else ("chat" if sid.startswith("chat-") else "")
+    if not key:
+        return ""
+    if key in ctx["clients"]:
+        return ctx["clients"][key]
+    nodes, nid = ctx["nodes"], ""
+    if via:
+        v = via.lower()
+        nid = next((k for k, n in nodes.items() if n.get("kind") == "client" and (v in k.lower() or v in str(n.get("label") or "").lower())), "")
+        if not nid and create:
+            nid = "client:via:" + _norm(via)
+            nodes[nid] = _node(nid, via, "client", DEV, kind="client", ckind="agent", detail=f"calls made through {via}")
+    elif "client:chat" in nodes or create:
+        nid = "client:chat"
+        if nid not in nodes:
+            nodes[nid] = _node(nid, "chat sessions", "client", EDGE, kind="client", ckind="person", detail="calls made from chat")
+    if nid and create and ctx["bus"]:
+        ctx["links"].append({"a": nid, "b": ctx["bus"], "kind": "req"})
+    ctx["clients"][key] = nid
+    return nid
+
+
+_LOOP_RX = re.compile(r"^agent_loop")
+_WT_RX = re.compile(r"\[worktree:(?:vera-dev-)?([^\]]+)\]")
+
+
+def attribute(rows: List[Mapping[str, Any]], ctx: Dict[str, Any], now: Optional[datetime] = None, create: bool = False) -> List[Dict[str, Any]]:
+    """Each event's part on the graph, aligned with `rows` (any order): {hits: [(node, name)], count, failed, ms, open,
+    phase, client}. `count` marks the events a node's activity counts - a call, a worker job, a model request, a memory
+    write, a loop's tool, a sandbox command - while an answer (cap.ok, worker.done, ollama.request_done) gives its
+    call its time and outcome. A capability call counts on the node it ran against, on the bus, and on its client; a
+    worker job on the workers and on the machine the worker runs on; a memory write on the fabric and each store it
+    reached. `create` (building a snapshot) lets a client or a running agent loop become a node."""
+    nodes, bus = ctx["nodes"], ctx["bus"]
+    # answers first: the ring is newest first and a batch may hold an answer whose call came in an earlier one
+    ans: Dict[str, Tuple[str, Optional[float]]] = {}
+    jobs_done: Dict[str, Tuple[str, Any]] = {}
+    req_done: Dict[str, Mapping[str, Any]] = {}
+    for e in rows:
+        t = str(e.get("type") or "")
+        if t in _DONE and e.get("trace_id"):
+            ans[str(e["trace_id"])] = (t, _num(e.get("elapsed_ms")))
+        elif t in ("worker.done", "worker.error", "worker.cancelled") and e.get("task"):
+            jobs_done[str(e["task"])] = (t, e.get("ts"))
+        elif t == "ollama.request_done" and e.get("req_id"):
+            req_done[str(e["req_id"])] = e
+        elif _LOOP_RX.match(t) and e.get("stream_id") and e.get("session_id"):
+            ctx["stream"][str(e["stream_id"])] = str(e["session_id"])
+        if t == "cap.call" and e.get("trace_id"):
+            ctx["trace"][str(e["trace_id"])] = _cap_target(e, ctx["M"], nodes)
+        elif t == "worker.start" and e.get("task"):
+            ctx["task"][str(e["task"])] = [ctx["workers"].get(str(e.get("worker") or "")) or "", str(e.get("capability") or "job"), e.get("ts")]
+    # the agent loops running now: newest first, so the first event of a session says where it is
+    if create:
+        for e in rows:
+            t = str(e.get("type") or "")
+            if not _LOOP_RX.match(t):
+                continue
+            sid = str(e.get("session_id") or ctx["stream"].get(str(e.get("stream_id") or "")) or e.get("stream_id") or "")
+            if not sid:
+                continue
+            L = ctx["loops"].setdefault(sid, {"age": _age_s(e.get("ts"), now), "cycle": None, "tool": "", "events": 0, "tools": 0, "fails": 0})
+            L["events"] += 1
+            if L["cycle"] is None and e.get("cycle") is not None:
+                L["cycle"] = e.get("cycle")
+            if not L["tool"] and e.get("tool"):
+                L["tool"] = str(e["tool"])
+            if t.endswith("tool_done"):
+                L["tools"] += 1
+                L["fails"] += 0 if e.get("ok", True) else 1
+        for sid, L in ctx["loops"].items():
+            nid = "loop:" + sid[:12]
+            if nid in nodes:
+                continue
+            live = L["age"] is not None and L["age"] < 120
+            nodes[nid] = _node(nid, "agent loop " + sid[:8], "work", COMPUTE, kind="work", status="run" if live else "ok",
+                               detail=" · ".join(x for x in [f"cycle {L['cycle']}" if L["cycle"] is not None else "", L["tool"],
+                                                              f"{L['tools']} tools" + (f", {L['fails']} failed" if L["fails"] else "")] if x),
+                               inflight=1 if live else 0, session=sid, req={"name": "workshop.agent_loop.sessions", "arguments": {}})
+            if "core:router" in nodes:
+                ctx["links"].append({"a": nid, "b": "core:router", "kind": "req"})
+    out: List[Dict[str, Any]] = []
+    for e in rows:
+        t = str(e.get("type") or "")
+        r: Dict[str, Any] = {"hits": [], "count": False, "failed": False, "ms": None, "open": False, "phase": "event", "client": ""}
+        if t == "cap.call":
+            tid, name = str(e.get("trace_id") or ""), str(e.get("name") or "")
+            tgt = ctx["trace"].get(tid) or _cap_target(e, ctx["M"], nodes)
+            fin = ans.get(tid)
+            r.update(count=True, phase="call", failed=bool(fin and fin[0] in _FAILED), ms=fin[1] if fin else None, open=not fin)
+            r["client"] = _client_of(e, ctx, create)
+            r["hits"] = [(x, name) for x in dict.fromkeys([tgt, bus, r["client"]]) if x]
+        elif t in _DONE:
+            tgt = ctx["trace"].get(str(e.get("trace_id") or ""))
+            r.update(phase="fail" if t in _FAILED else "ok", failed=t in _FAILED, ms=_num(e.get("elapsed_ms")))
+            r["hits"] = [(x, str(e.get("name") or "")) for x in dict.fromkeys([tgt, bus]) if x]
+        elif t in ("worker.start", "worker.error"):
+            task = str(e.get("task") or "")
+            host, cap, ts0 = (ctx["task"].get(task) or [ctx["workers"].get(str(e.get("worker") or "")) or "", str(e.get("capability") or "job"), e.get("ts")])
+            fin = jobs_done.get(task)
+            ms = None
+            if fin and fin[1] and ts0:
+                a, b = _age_s(ts0, now or datetime.now(timezone.utc)), _age_s(fin[1], now or datetime.now(timezone.utc))
+                ms = round((a - b) * 1000.0, 1) if a is not None and b is not None and a >= b else None
+            r.update(count=True, phase="job", failed=t == "worker.error" or bool(fin and fin[0] == "worker.error"), ms=ms, open=not fin and t == "worker.start")
+            r["hits"] = [(x, cap) for x in dict.fromkeys(["core:workers" if "core:workers" in nodes else "", host]) if x]
+        elif t == "worker.done":
+            host, cap, _ = ctx["task"].get(str(e.get("task") or "")) or ["", "job", None]
+            r.update(phase="ok")
+            r["hits"] = [(x, cap) for x in dict.fromkeys(["core:workers" if "core:workers" in nodes else "", host]) if x]
+        elif t in ("ollama.request", "ollama.request_done"):
+            nid = "ollama:" + str(e.get("instance_id") or "")
+            if nid in nodes:
+                d = req_done.get(str(e.get("req_id") or "")) if t == "ollama.request" else e
+                el = _num(d.get("elapsed_s")) if d else None
+                r.update(count=t == "ollama.request", phase="call" if t == "ollama.request" else "ok", ms=el * 1000.0 if el is not None else None,
+                         open=t == "ollama.request" and not d)
+                if d and el:
+                    r["tok"] = _num(d.get("eval_count"))
+                    r["gen_s"] = el
+                r["hits"] = [(nid, str(e.get("model") or "model"))]
+        elif t in ("memory.stored", "memory.edge"):
+            be = e.get("backends") if isinstance(e.get("backends"), Mapping) else {}
+            stores = [("svc:" + k) for k, v in be.items() if v] if t == "memory.stored" else ["svc:neo4j"]
+            name = ("write " + str(e.get("record_type") or "record")) if t == "memory.stored" else "edge " + str(e.get("relation") or "")
+            r.update(count=True, phase="job")
+            r["hits"] = [(x, name.strip()) for x in dict.fromkeys(["core:fabric"] + stores) if x in nodes]
+        elif t.startswith("fabric.") and e.get("dataset_id"):
+            if "core:fabric" in nodes:
+                r.update(count=True, phase="job", hits=[("core:fabric", t.split(".", 1)[1] + " " + str(e.get("dataset_id")))])
+        elif t == "mesh.node":
+            nid = "mesh:" + str(e.get("node_id") or "")
+            if nid in nodes:
+                r.update(count=True, failed=str(e.get("status") or "") == "offline", hits=[(nid, str(e.get("stage") or "status") + " " + str(e.get("status") or ""))])
+        elif t == "evolve.audit":
+            m = _WT_RX.search(str(e.get("summary") or ""))
+            sb = next((k for k in nodes if m and k.startswith("sbx:") and k[4:] in m.group(1)), "")
+            tgt = sb or ("core:looplab" if "core:looplab" in nodes else "")
+            if tgt:
+                r.update(count=True, phase="job", failed=e.get("ok") is False, hits=[(tgt, str(e.get("action") or "audit"))])
+        elif t == "remote.sandbox.started":
+            if "core:looplab" in nodes:
+                r.update(count=True, phase="job", hits=[("core:looplab", "sandbox " + str(e.get("image") or ""))])
+                r["client"] = _client_of(e, ctx, create)
+        elif _LOOP_RX.match(t):
+            sid = str(e.get("session_id") or ctx["stream"].get(str(e.get("stream_id") or "")) or e.get("stream_id") or "")
+            nid = "loop:" + sid[:12]
+            if sid and nid in nodes:
+                done_tool = t.endswith("tool_done")
+                r.update(count=done_tool, phase="job" if done_tool else "event", failed=done_tool and e.get("ok") is False,
+                         ms=_num(e.get("elapsed_ms")) if done_tool else None, hits=[(nid, str(e.get("tool") or t.split(".", 1)[-1]))])
+        out.append(r)
+    return out
+
+
+def _activity(src: Mapping[str, Any], M: Mapping[str, Any], now: Optional[datetime], nodes: Dict[str, Dict[str, Any]],
+              links: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, List[float]], Dict[str, str]]:
+    """What each node did lately, from the event ring (see `attribute` for who counts what): its calls column by column,
+    the ones that failed, the ones it answers most, how long they took, tokens a second for a model instance. A call
+    still waiting for its answer is a flow in flight from the bus (or its client) to its node.
+    The window is what the ring holds, up to ACTIVITY_MIN minutes, cut into ACTIVITY_SLICES columns.
+    Returns (the open calls as flows, {node: calls per column, oldest first}, {trace: node} for the event log)."""
+    ev = _ok(src, "obs.events")
+    if not isinstance(ev, list):
+        return [], {}, {}
+    rows = [e for e in ev if isinstance(e, Mapping) and (_age_s(e.get("ts"), now) is None or _age_s(e.get("ts"), now) < ACTIVITY_MIN * 60)]
+    span = max([1.0] + [a for a in (_age_s(e.get("ts"), now) for e in rows) if a is not None])
+    width = span / ACTIVITY_SLICES
+    ctx = attr_context(src, M, nodes, links)
+    parts = attribute(rows, ctx, now, create=True)
+    bus = ctx["bus"]
+    acc: Dict[str, Dict[str, Any]] = {}
+    flows: List[Dict[str, Any]] = []
+    for e, r in zip(rows, parts):
+        if not r["count"]:
+            continue
+        age = _age_s(e.get("ts"), now)
+        for nid, name in r["hits"]:
+            a = acc.setdefault(nid, {"calls": 0, "errors": 0, "caps": {}, "ms": [], "pm": [0.0] * ACTIVITY_SLICES, "tok": 0.0, "gen_s": 0.0})
+            a["calls"] += 1
+            a["errors"] += 1 if r["failed"] else 0
+            a["caps"][name] = a["caps"].get(name, 0) + 1
+            if r["ms"] is not None and nid != bus:
+                a["ms"].append(r["ms"])
+            if r.get("tok") and r.get("gen_s"):
+                a["tok"] += r["tok"]
+                a["gen_s"] += r["gen_s"]
+            if age is not None:
+                a["pm"][max(0, ACTIVITY_SLICES - 1 - int(age // width))] += 1
+        if r["open"] and r["hits"] and (age is None or age < CAP_OPEN_S):
+            tgt = r["hits"][0][0]
+            kind = "llm.generate" if str(e.get("type")) == "ollama.request" else "background" if r["phase"] == "job" else "cap call"
+            nodes[tgt]["open_calls"] = int(nodes[tgt].get("open_calls") or 0) + 1
+            src_ = r["client"] or (bus if bus and tgt != bus else ("core:router" if "core:router" in nodes and tgt != "core:router" else ""))
+            if kind == "llm.generate":
+                src_ = "core:router" if "core:router" in nodes else src_
+            elif kind == "background":
+                src_ = "core:workers" if "core:workers" in nodes and tgt != "core:workers" else src_
+            if src_ and src_ != tgt:
+                flows.append({"kind": kind, "a": src_, "b": tgt, "age": age, "label": r["hits"][0][1]})
+            if kind == "cap call" and r["client"] and bus and tgt != bus:
+                flows.append({"kind": kind, "a": bus, "b": tgt, "age": age, "label": r["hits"][0][1]})
+    pm: Dict[str, List[float]] = {}
+    for nid, a in acc.items():
+        n = nodes[nid]
+        top = sorted(a["caps"].items(), key=lambda kv: -kv[1])[:4]
+        n["activity"] = {"calls": a["calls"], "errors": a["errors"], "top": [[k, c] for k, c in top],
+                         "ms": round(sum(a["ms"]) / len(a["ms"]), 1) if a["ms"] else None,
+                         "window_s": round(span), "per_min": round(a["calls"] * 60.0 / span, 1)}
+        if a["gen_s"]:
+            n["activity"]["tps"] = round(a["tok"] / a["gen_s"], 1)
+        pm[nid] = a["pm"]
+        if n.get("open_calls"):
+            n["inflight"] = max(int(n.get("inflight") or 0), int(n["open_calls"]))
+            if n["status"] == "ok":
+                n["status"] = "run"
+        if n["kind"] == "client" and n.get("ckind") in ("agent", "person") and nid.startswith(("client:via:", "client:chat")):
+            n["detail"] = f"{a['calls']} calls in {round(span)} s" + (f" · {a['errors']} failed" if a["errors"] else "")
+        # a machine the bus called (or a worker ran a job on) is joined to it, so its work has a pipe to run on
+        if n["plane"] in ("runtime", "host", "service", "edge"):
+            if bus and nid != bus:
+                links.append({"a": bus, "b": nid, "kind": "req", "live": True})
+            if "core:workers" in nodes and nid in set(ctx["workers"].values()):
+                links.append({"a": "core:workers", "b": nid, "kind": "req", "live": True})
+    flows.sort(key=lambda f: f["age"] if f["age"] is not None else 0)
+    target_of = {tid: nid for tid, nid in ctx["trace"].items() if nid}
+    return flows, pm, target_of
+
+
+def live_records(rows: List[Mapping[str, Any]], ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The live stream's view of a batch of new events (oldest first): one compact record per event that lands on the
+    graph - {ts, type, name, nodes, client, trace, phase, failed, ms, count}. The context carries the pairing maps from
+    batch to batch, trimmed so a long-open page does not grow without end."""
+    parts = attribute(rows, ctx, None, create=False)
+    out = []
+    for e, r in zip(rows, parts):
+        if not r["hits"]:
+            continue
+        out.append({"ts": str(e.get("ts") or ""), "type": str(e.get("type") or ""), "name": r["hits"][0][1], "nodes": [h[0] for h in r["hits"]],
+                    "client": r["client"], "trace": str(e.get("trace_id") or e.get("task") or e.get("req_id") or "")[:12], "phase": r["phase"],
+                    "failed": r["failed"], "ms": r["ms"], "count": r["count"]})
+    for k in ("trace", "task", "stream"):
+        if len(ctx[k]) > 4000:
+            for key in list(ctx[k])[:len(ctx[k]) - 2000]:
+                ctx[k].pop(key, None)
+    return out
+
+
+def _events(src: Mapping[str, Any], now: Optional[datetime], target_of: Optional[Mapping[str, str]] = None) -> Tuple[List[Dict[str, Any]], int]:
+    """The last events, trimmed, each naming the node its call ran against; and the calls still waiting for an answer.
+    The ring is newest first, so a call's answer is read before the call itself: a call is open only when no answer
+    for its trace is anywhere in the ring."""
     ev = _ok(src, "obs.events")
     if not isinstance(ev, list):
         return [], 0
+    target_of = target_of or {}
     out = []
-    open_calls: Dict[str, str] = {}
+    answered = {str(e.get("trace_id") or "") for e in ev if isinstance(e, Mapping) and str(e.get("type") or "") in _DONE}
+    open_calls = 0
     for e in ev:
         if not isinstance(e, Mapping):
             continue
         t = str(e.get("type") or "")
         tid = str(e.get("trace_id") or "")
-        if t == "cap.call" and tid:
-            open_calls[tid] = str(e.get("name") or "")
-        elif t in ("cap.ok", "cap.error", "cap.done") and tid:
-            open_calls.pop(tid, None)
-        out.append({"ts": str(e.get("ts") or "")[11:19], "type": t, "name": str(e.get("name") or e.get("node_id") or e.get("model") or ""),
-                    "group": str(e.get("group") or ""), "trace": tid[:8], "text": str(e.get("args_preview") or e.get("detail") or e.get("error") or "")[:80]})
-    return out[:100], len(open_calls)
+        if t == "cap.call" and tid and tid not in answered:
+            age = _age_s(e.get("ts"), now)
+            if age is None or age < CAP_OPEN_S:
+                open_calls += 1
+        if len(out) < 100:
+            out.append({"ts": str(e.get("ts") or "")[11:19], "type": t, "name": str(e.get("name") or e.get("node_id") or e.get("model") or e.get("capability") or ""),
+                        "group": str(e.get("group") or ""), "trace": tid[:8], "node": target_of.get(tid, ""),
+                        "text": str(e.get("args_preview") or e.get("detail") or e.get("error") or "")[:80]})
+    return out, open_calls
 
 
 def _errors(src: Mapping[str, Any], nodes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -666,6 +997,21 @@ def _registration(src: Mapping[str, Any], nodes: Dict[str, Dict[str, Any]]) -> N
         n["reg"] = {"complete": bool(r.get("complete")), "planes": planes}
 
 
+def failed_share(out: Any) -> float:
+    """The share of a snapshot's readers that failed (timed out, raised, not loaded)."""
+    srcs = ((out or {}).get("sources") or {}) if isinstance(out, Mapping) else {}
+    return sum(1 for v in srcs.values() if v != "ok") / len(srcs) if srcs else 1.0
+
+
+def keep_snapshot(new: Mapping[str, Any], old: Any, old_age: float, share: float = 0.34, keep_s: float = 120.0) -> bool:
+    """Whether a finished gather replaces the cached snapshot. A degraded one - a busy moment where a third of the
+    readers timed out, which once left the page showing two core nodes for eight minutes - does not replace a good
+    one younger than keep_s; the cache stays due, so the next poll gathers again."""
+    if old is None or failed_share(new) < share:
+        return True
+    return failed_share(old) >= share or old_age >= keep_s
+
+
 def build(src: Mapping[str, Any], own_ips: Iterable[str] = (), now: Optional[datetime] = None) -> Dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     nodes: Dict[str, Dict[str, Any]] = {}
@@ -680,9 +1026,12 @@ def build(src: Mapping[str, Any], own_ips: Iterable[str] = (), now: Optional[dat
     _registration(src, nodes)
     _clients(src, M, now, nodes, links)
     inflight, through, lat = _requests(src, now, nodes)
-    events, open_calls = _events(src, now)
+    flows, calls_pm, target_of = _activity(src, M, now, nodes, links)
+    events, open_calls = _events(src, now, target_of)
     errors = _errors(src, nodes)
     series = _series(src, M)
+    for nid, pm in calls_pm.items():
+        series.setdefault(nid, {})["calls"] = pm
     # keep only the links whose ends exist, once each
     seen = set()
     kept = []
@@ -700,8 +1049,12 @@ def build(src: Mapping[str, Any], own_ips: Iterable[str] = (), now: Optional[dat
     kinds["fabric write"] = int(_num(fh.get("write_queue_size"), 0) or 0)
     kinds["git op"] = sum(1 for n in nodes.values() if n["id"].startswith("pipe:"))
     kinds["background"] = 1 if "work:bg" in nodes else 0
-    if open_calls:
-        inflight.append({"kind": "cap call", "a": "core:router", "b": "core:cap-bus", "age": None, "label": f"{open_calls} open"})
+    # each open call runs from the bus to the node it was made against; past FLOWS_SHOWN, the rest are one count
+    llm_to = {f["b"] for f in inflight if f["kind"] == "llm.generate"}
+    inflight += [f for f in flows[:FLOWS_SHOWN] if f["a"] in nodes and f["b"] in nodes and f["a"] != f["b"] and not (f["kind"] == "llm.generate" and f["b"] in llm_to)]
+    rest = open_calls - len({(f["b"], f["label"]) for f in flows[:FLOWS_SHOWN] if f["kind"] == "cap call"})
+    if rest > 0:
+        inflight.append({"kind": "cap call", "a": "core:router", "b": "core:cap-bus", "age": None, "label": f"{rest} more open"})
     if kinds["fabric write"]:
         inflight.append({"kind": "fabric write", "a": "core:fabric", "b": "svc:chroma", "age": None, "label": f"queue {kinds['fabric write']}"})
     for n in nodes.values():

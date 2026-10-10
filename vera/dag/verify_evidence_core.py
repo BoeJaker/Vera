@@ -14,6 +14,16 @@ Two pure rules:
   none -> not met; failures -> not met; only a clean run lets the judge rule.
 - the judge's reason must quote tool evidence, not the summary (prompt rule;
   the prose lives here so the prompt and its test agree).
+
+And one evidence rule: a call that returned ok but whose OUTPUT reports a failure (a script printing
+"Error: ..." and exiting 0) is flagged to the judge as a failure (soft_failure) - but an EMPTY error field
+in a JSON result ("error": "", "errors": [], "failed": 0) reports none. Before 2026-10-10 the word alone
+flagged it: every prose.author / code.author result carries `"error": ""`, so clean writes reached the judge
+as "ok BUT ITS OUTPUT REPORTS AN ERROR" - the System 1 student, following the rules, failed them.
+The same day the WORD still flagged content: the HTML of a form that shows an email error message, an
+operator run confirming that error text appeared. A failure report is now a LINE that starts like one
+(Error:, Traceback, FAILED, fatal:), a failure count above zero ("1 failed"), or a failure field with a value
+("error": "permission denied", "failed": 2) - never the word inside the output's content.
 """
 from __future__ import annotations
 
@@ -155,3 +165,31 @@ def wrong_file_authored(named_files, authored_path: object) -> Optional[str]:
 def _first_line(s: str, n: int = 200) -> str:
     t = s.strip()
     return (t.splitlines()[0].strip() if t else "")[:n]
+
+
+#: a line that starts like a failure report (stdout/stderr lines, once the JSON escapes are read as text)
+_FAILURE_LINE_RE = re.compile(
+    r"(?im)^[\s\"']*(?:error|errors|traceback|exception|fatal|failed|fail)\b(?:[:\s(\[]|$)")
+#: a failure count above zero (pytest's "1 failed", "2 errors") or a traceback anywhere
+_FAILURE_COUNT_RE = re.compile(r"(?i)\b[1-9]\d* (?:failed|errors?)\b|\bTraceback \(most recent call last\)")
+#: a JSON failure field that carries a failure: a message or a count above zero
+_FAILURE_FIELD_RE = re.compile(
+    r'(?i)"(?:error|errors|exception|failed|fatal)"\s*:\s*(?:"[^"\s][^"]*"|[1-9]\d*)')
+
+
+def soft_failure(preview: object) -> str:
+    """The part of an ok call's output that reports a failure, or "" when it reports none. A failure report is a
+    line that starts like one, a failure count above zero or a failure field with a value - the word inside the
+    output's content (an HTML error message, a summary that confirms an error text appeared) is not one."""
+    raw = str(preview or "")
+    m = _FAILURE_FIELD_RE.search(raw)
+    if m:
+        return m.group(0).strip()[:160]
+    text = _plain(raw)
+    for rx in (_FAILURE_LINE_RE, _FAILURE_COUNT_RE):
+        m = rx.search(text)
+        if m:
+            start = text.rfind("\n", 0, m.start()) + 1
+            end = text.find("\n", m.end())
+            return text[start:end if end >= 0 else len(text)].strip()[:160]
+    return ""

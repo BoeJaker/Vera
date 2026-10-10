@@ -5128,6 +5128,20 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     'let','know','think','see','look','say','said','like','want','need',
   ]);
   const _CAP_MIN_SCORE=6;
+  /* caps every agent that has them is offered on any non-trivial message: finding facts must never depend on the
+     message happening to share a word with a description */
+  const _INFO_CORE_CAPS=['info.seek','web.research','web.fetch'];
+  /* short questions count ("latest on MCP?" is under the trivial-chat length); greetings and thanks never do */
+  const _INFO_ASK_RE=/\?|\b(latest|news|updates?|price|current|today|who|what|when|where|which|why|how)\b/i;
+  /* the caps whose result is outside evidence to cite */
+  function _isLookupCap(name){
+    return /^(web\.(research|search|fetch|search_and_crawl)|reader\.page|info\.seek|intel\.lookup|fabric\.discover\.query|research\.db\.search)$/.test(String(name||''));
+  }
+  function _wantsInfoCore(text){
+    const t=(text||'').trim();
+    if(!t || _TRIVIAL_CHAT_RE.test(t)) return false;
+    return !_isTrivialChat(t) || _INFO_ASK_RE.test(t);
+  }
 
   function _findRelevantCaps(query, allowedCaps, maxN=24){
     if(!ALL_CAPS.length) return allowedCaps||[];
@@ -5221,7 +5235,8 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
       +'Only rephrase to add missing context from the conversation, never to change the objective.\n'
       +'A planning loop (v7) then decomposes and EXECUTES it — it handles single-step, multi-step '
       +'and multi-day goals, assesses the system\'s own capabilities, and will ask you to clarify if '
-      +'needed. Answer directly for genuine questions, quick facts, or a single simple action. '
+      +'needed. Answer directly for genuine questions, quick facts, or a single simple action '
+      +'(look current facts up with a web cap in the same reply rather than from memory). '
       +'NEVER emit [[loop]] for greetings, small talk, thanks, casual conversation, or messages '
       +'about the conversation itself — those always get a normal reply.';
   }
@@ -5249,6 +5264,13 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
                   ...(_panelExtraCaps||[]).slice(0,10)]
         .filter(n=>ALL_CAPS.some(c=>c.name===n));
       relevantNames=[...new Set([...relevantNames,...seed])].slice(0,34);
+    }
+    // The information core is offered on every non-trivial message the agent may look things up for (info-seeking
+    // plan SK-1.1): word scoring missed "what's the latest on X" ("latest" is in no description), the turn got no
+    // manifest at all, and the model answered from training. Small talk stays exempt.
+    if(_wantsInfoCore(query||'')){
+      const core=_INFO_CORE_CAPS.filter(n=>allowedCaps.includes(n)&&ALL_CAPS.some(c=>c.name===n));
+      relevantNames=[...new Set([...core,...relevantNames])].slice(0,34);
     }
     // Relevance threshold may have filtered everything out — if so, this is
     // a chat message that doesn't need tool access and we stay silent.
@@ -5376,6 +5398,7 @@ Formats:
 
 IMPORTANT:
 - Conversational / simple questions → plain text. Do not invoke caps.
+- A question about the outside world that could have changed (a fact, the latest / news / updates on something, a price, anything after your training) is NOT simple: look it up first if a web cap is listed, cite what you use as [n] with its date, and never fill a gap with a guess. Memories are dated records, not proof of the present.
 - ${autoExec?'Auto-exec ON: use [[cap:...]] directly.':'Use [[cap:...]] to run immediately, [[suggest:...]] for destructive/slow ops.'}
 - DO NOT ask the user to run commands manually. Use [[cap:...]] to run for them.
 - DO NOT wrap placeholders in backticks or code fences.
@@ -11012,11 +11035,14 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
         // The LLM context window is large enough; truncating here hides data
         // the model needs to produce a correct answer. Base64 image payloads
         // are the one exception — stripped, or a single PNG eats the budget.
-        const resultText=typeof content==='string'?content:JSON.stringify(_stripB64(content),null,2);
+        // Lookups (info.seek, web.research...) go compact and get 24k: their evidence is the answer, and an 8k cut
+        // dropped the later sources, which the model then filled in itself (info-seeking plan SK-3.2).
+        const _look=_isLookupCap(capName);
+        const resultText=typeof content==='string'?content:JSON.stringify(_stripB64(content),null,_look?0:2);
         // Research reports get a much larger budget: 8000 chars cuts a real
         // report in half, and the model then "summarises" a document it only
         // half received.
-        const resultTrunc=resultText.slice(0,_rep?60000:8000);
+        const resultTrunc=resultText.slice(0,_rep?60000:(_look?24000:8000));
         HISTORY.push({role:'tool',content:`[${capName} result] ${resultTrunc}`});
         if(!silent){
           // The report is ALREADY on screen, rendered. Asking the model to
@@ -11032,7 +11058,15 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
               + `not already say: point at the part that answers their question, flag a gap or `
               + `caveat, or ask what they want next. If nothing useful can be added, say only `
               + `that the report is above.\n\nFor your reference, the report was:\n\n${resultTrunc}`
-            : `The capability ${capName} ran and returned:\n\n${resultTrunc}\n\nAnswer the user's question using this result. Be concise and complete.`;
+            : `The capability ${capName} ran and returned:\n\n${resultTrunc}\n\nAnswer the user's question using this result. Be concise and complete.`
+              + (_isLookupCap(capName)
+                 /* info-seeking plan SK-2.3: a lookup's answer cites what it used, with dates, and says what it did not
+                    find - the follow-up used to ask only for "concise and complete", and gaps got filled from memory */
+                 ? ` Number the sources you use and cite them as [n] with their date (published date when the page `
+                   + `gives one); end with the sources as "[n] title - url". Use only what the result says: if it does `
+                   + `not answer part of the question, say so plainly (or search again with a sharper query) - do not `
+                   + `fill the gap from memory or a guess.`
+                 : '');
           await continueConversation(agentName,followUp,null,true);
         }
       }else{
@@ -11951,6 +11985,15 @@ Your task: decide what to do next to advance toward the goal.
     return CTX_SRCS.has('web') && !!document.getElementById('cfgWebInteractive')?.checked;
   }
 
+  /* Memory went in as bare "[memory] text": no date, inside the user's message, so a model read an old note as the
+     user's word and as how things are now, and filled gaps from it (owner 2026-10-10; info-seeking plan SK-2.1). Each
+     line now carries the record's date when it has one, and the block says what it is. */
+  const _CTX_INJ_NOTE='(Added by Vera, not typed by the user: stored records that may help, dated where known. They '
+    +'are what was said or seen at that date, not proof of how things are now - check anything current before stating it.)';
+  function _ctxDateTag(n){
+    const d=String(n.created_at||n.updated_at||'').slice(0,10);
+    return /^\d{4}-\d\d-\d\d$/.test(d)?' · '+d:'';
+  }
   function buildCtxInj(forMsg){
     if(!document.getElementById('ctxInject')?.checked)return'';
     // In live-context mode CTX_NODES is query-driven: never inject context that
@@ -11970,10 +12013,12 @@ Your task: decide what to do next to advance toward the goal.
       .slice(0,k)
       .map(n=>{
         const src=n.source==='web'||n.source==='news'?`${n.source} "${n.label}"${n.url?' '+n.url:''}`:n.source;
-        return`[${src}] ${(n.text||n.label||'').slice(0,300)}`;
+        return`[${src}${_ctxDateTag(n)}] ${(n.text||n.label||'').slice(0,300)}`;
       });
     if(!items.length)return'';
-    return'\n\n[Retrieved Context]\n'+items.join('\n');
+    // "[Retrieved Context]" stays the first line on its own: memory_noise_core strips everything from it onward when
+    // the message is stored, so the user's own words are kept apart from what the page added
+    return'\n\n[Retrieved Context]\n'+_CTX_INJ_NOTE+'\n'+items.join('\n');
   }
   // the memory records buildCtxInj put in this turn's prompt (the same filters), so the server can count whether the
   // reply drew on them (context-and-ui CU-M.2 usage signals); only real memory ids - not web, fabric or synthetic rows

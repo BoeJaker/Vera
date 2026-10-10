@@ -61,6 +61,22 @@ def test_a_url_is_fetched_not_searched():
 def test_a_year_past_the_models_knowledge_wants_the_web():
     assert tn.needs("what changed in python 2026", knowledge_year=2024)["web"]["on"]
     assert not tn.needs("what changed in python 2023", knowledge_year=2024)["web"]["on"]
+    # the model's year unknown: this year counts as past it, older years do not
+    from datetime import date
+    assert tn.needs("uk budget 2026 measures", today=date(2026, 10, 10))["web"]["on"]
+    assert not tn.needs("uk budget 2019 measures", today=date(2026, 10, 10))["web"]["on"]
+
+
+@pytest.mark.parametrize("q", [
+    "updates on UK house prices", "what's new with the model context protocol", "any news about n8n",
+    "recent developments in RAG rerankers", "give me updates about Copilot Studio",
+])
+def test_asking_for_updates_wants_the_web(q):
+    assert tn.needs(q)["web"]["on"], q
+
+
+def test_updates_on_veras_own_work_stay_in_memory():
+    assert not tn.needs("any updates on the census pipeline")["web"]["on"]
 
 
 def test_the_query_drops_the_asking():

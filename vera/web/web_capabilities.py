@@ -218,6 +218,25 @@ async def _search_searxng(query: str, limit: int, host: str = "") -> List[Dict[s
     return []
 
 
+# What the last SearXNG answers looked like, for /health via web.engines.health. The record lives in search_engines
+# so researcher_api's copy (the one that runs when it imports) reports to the same place.
+def _note_searxng(body: Optional[Dict[str, Any]], error: str = "") -> None:
+    _engines.note_searxng_answer(body, error=error)
+
+
+@capability(
+    "web.engines.health",
+    http_method="GET", http_path="/web/engines/health",
+    http_tags=["web"], memory="off", silent=True,
+    description="Is web search getting real results? What the last SearXNG answers looked like: state "
+                "(ok|degraded|down|unknown), message, empty_streak, unresponsive engines with their reason, "
+                "ok_at (last answer with results). No network call - it reports what searches saw. "
+                "Shown under `search` in /health.",
+)
+async def cap_web_engines_health(trace_id=None) -> Dict[str, Any]:
+    return _engines.searxng_status(_engines.SEARXNG_STATE)
+
+
 async def _searxng_pages(host: str, query: str, limit: int) -> List[Dict[str, Any]]:
     """Walk SearXNG's pages for one host. Returns [] if it cannot be reached.
 
@@ -242,16 +261,21 @@ async def _searxng_pages(host: str, query: str, limit: int) -> List[Dict[str, An
                         domain=urlparse(host).netloc,
                     )
                     r.raise_for_status()
+                    body = r.json()
                 except Exception as e:
                     log.debug("_search_searxng [%s] page %d: %s", query[:40], pageno, e)
+                    if pageno == 1:
+                        _note_searxng(None, error=str(e))
                     # None ends the walk but KEEPS earlier pages.
                     return None
+                if pageno == 1:
+                    _note_searxng(body)
                 return [{
                     "url":     _decode_redirect(item.get("url", "")),
                     "title":   item.get("title", ""),
                     "snippet": item.get("content", "") or item.get("snippet", ""),
                     "engine":  "searxng",
-                } for item in (r.json().get("results") or [])]
+                } for item in (body.get("results") or [])]
 
             return await _engines.walk_pages(_fetch, limit)
     except Exception as e:
@@ -1074,19 +1098,20 @@ async def cap_web_search_and_crawl(
     "web.research",
     http_method="POST", http_path="/web/research",
     http_tags=["web", "search", "research"],
+    # what the chat's tool picker matches words against (info-seeking plan SK-0.4): the default for current facts
+    tags=["web", "search", "research", "latest", "news", "updates", "current", "facts", "lookup"],
     memory="on",
-    description="Unified fast web research — search the web BROADLY and PULL the useful "
-                "content from the top results in ONE call. WHEN TO USE: the default way to "
-                "'look something up', 'research X', 'find and read about Y' — it is broader + "
-                "faster than chaining web.search then web.fetch by hand, and far lighter than "
-                "research.run (no multi-stage synthesis pipeline). Returns immediately (not "
-                "LONG-RUNNING). Runs ONE web search, then fetches the top-N result pages in "
-                "PARALLEL (realistic browser fingerprint + reader-proxy fallback, same as "
-                "web.fetch) and returns their cleaned text INLINE so you can read, quote and "
-                "cite them straight away — no second round-trip. Extra un-fetched result links "
-                "come back under `more_links` for optional follow-up. This is a fast read, NOT a "
-                "crawl: nothing is written to the fabric. For synthesis + citations use "
-                "research.run / research.report; for one known URL use web.fetch. "
+    description="Look something up on the web and READ the top pages in ONE call (seconds). "
+                "WHEN TO USE: the default for any question about the outside world - a fact, "
+                "'what is X', 'find out about Y', 'the latest news / updates on Z', anything current "
+                "or that may have changed since training. Answer from the returned page text and cite "
+                "it with dates (`published` when the page gives one); if the pages do not answer, "
+                "search again with a sharper query rather than guessing. Not LONG-RUNNING. Runs ONE "
+                "web search, then reads the top-N result pages in PARALLEL through the reader (article "
+                "text, cached for later; plain fetch as the fallback) and returns their text INLINE. "
+                "Extra un-read result links come back under `more_links`. It does not crawl or write "
+                "datasets to the fabric. For a long written report the user will read later use "
+                "research.run (a background job, minutes); for one known URL use web.fetch. "
                 "Input: query (str!), results (int default 5, max 10 — pages to fetch & read), "
                 "max_chars (int default 4000 — text kept per page), engine (str: "
                 "auto|searxng|brave|ddg), fetch_timeout (float default 8.0). "
@@ -1180,6 +1205,289 @@ async def cap_web_research(
                          "snippet": h.get("snippet", "")} for h in hits[results:results + 6]],
         "elapsed_ms":  elapsed_ms,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# info.seek — the one front door for finding information (info-seeking plan SK-3)
+# ─────────────────────────────────────────────────────────────────────────────
+try:
+    from Vera.vera.web import info_seek_core as _seek
+except Exception:                                   # worktree / app-free import
+    from vera.web import info_seek_core as _seek
+
+
+async def _seek_call(name: str, timeout: float, **kw) -> Dict[str, Any]:
+    """One sibling cap, bounded; a missing cap, an error or a timeout is {} with the reason under _error."""
+    fn = (_orch.CAPABILITY_REGISTRY.get(name) or {}).get("func")
+    if not fn:
+        return {"_error": f"{name} not loaded"}
+    try:
+        r = await asyncio.wait_for(fn(**kw), timeout)
+        return r if isinstance(r, dict) else {"result": r}
+    except asyncio.TimeoutError:
+        return {"_error": f"{name} timed out after {timeout:.0f} s"}
+    except Exception as e:
+        return {"_error": f"{name}: {str(e)[:120]}"}
+
+
+# Searches one info.seek sends to SearXNG start this far apart (they still overlap). Four at once hit every upstream
+# engine four times in the same instant, and brave / duckduckgo answered this IP with "too many requests" and CAPTCHAs
+# (2026-10-10). Env VERA_SEEK_SPACING_S overrides; 0 sends them together.
+SEEK_SPACING_S = max(0.0, min(5.0, float(os.getenv("VERA_SEEK_SPACING_S", "0.5") or 0.5)))
+
+
+async def _seek_searches(queries: List[str], *, first_slot: int = 0) -> List[Dict[str, Any]]:
+    """web.search for each query, the i-th started (first_slot + i) * SEEK_SPACING_S after the call; results in
+    query order."""
+    async def one(i: int, q: str) -> Dict[str, Any]:
+        delay = (first_slot + i) * SEEK_SPACING_S
+        if delay:
+            await asyncio.sleep(delay)
+        return await _seek_call("web.search", 25, query=q, limit=8, discover="off")
+    return list(await asyncio.gather(*[one(i, q) for i, q in enumerate(queries)]))
+
+
+def _report_seller(title: str, snippet: str) -> bool:
+    """Market-research sellers ("... market size, share, CAGR 2026-2033") are not news; intel's rule, reused."""
+    try:
+        try:
+            from Vera.vera.intel import intel_ops_core as _iops
+        except Exception:
+            from vera.intel import intel_ops_core as _iops
+        return bool(_iops.report_seller_hint(title or "", snippet or ""))
+    except Exception:
+        return False
+
+
+def _searxng_host() -> str:
+    """The SearXNG the operator configured (the research subsystem's source), else the env/default one."""
+    ra = _researcher_api()
+    try:
+        src = next((s for s in (getattr(ra, "sources", None) or []) if getattr(s, "id", "") == "searxng"), None)
+        conf = src.config if src is not None else {}
+        if isinstance(conf, str):
+            conf = json.loads(conf or "{}")
+        host = (conf or {}).get("host") if isinstance(conf, dict) else ""
+        if host:
+            return str(host).rstrip("/")
+    except Exception:
+        pass
+    return DEFAULT_SEARXNG
+
+
+async def _searxng_news(query: str, limit: int = 10, time_range: str = "month") -> List[Dict[str, Any]]:
+    """SearXNG's NEWS category (bing/google/yahoo/qwant news...) inside a time range: current headlines with the
+    age each engine states ("14 hours ago | Source"). The general search behind web.search has no notion of time,
+    so 'latest' questions got evergreen explainers ranked first. Empty when SearXNG cannot be reached."""
+    host = _searxng_host()
+    params = _engines.searxng_params(query, 0, 1, categories="news", time_range=time_range)
+    for cand in _engines.host_candidates(host) or [host]:
+        try:
+            async with httpx.AsyncClient(timeout=12.0, headers=_engines.SEARXNG_HEADERS) as c:
+                r = await c.get(f"{cand}/search", params=params)
+                r.raise_for_status()
+                body = r.json()
+        except Exception as e:
+            log.debug("searxng news [%s] %s: %s", query[:40], cand, e)
+            continue
+        out = []
+        for it in body.get("results") or []:
+            if not it.get("url"):
+                continue
+            pub = it.get("publishedDate")
+            out.append({"url": _decode_redirect(it.get("url", "")), "title": it.get("title", ""),
+                        "snippet": it.get("content", "") or "", "engine": it.get("engine", "searxng-news"),
+                        "published": "" if pub in (None, "None") else str(pub),
+                        "age_text": str(it.get("metadata") or "")})
+        return out[:limit]
+    return []
+
+
+async def _seek_read(items: List[Dict[str, Any]], n: int, chars: int) -> int:
+    """Read the first `n` unread items through the reader (article text, cached), in parallel. Returns how many
+    yielded text. A page's own published date fills one the search did not give."""
+    todo = [it for it in items if not it.get("text") and it.get("url") and it.get("kind") != "intel"][:n]
+
+    async def one(it):
+        r = await _seek_call("reader.page", 25, url=it["url"], max_chars=max(chars * 3, 4000), mode="fetch")
+        md = str(r.get("markdown") or "") if r.get("ok") else ""
+        if not md.strip():
+            return 0
+        it["text"] = _seek.excerpt(md, chars)
+        it["title"] = r.get("title") or it.get("title")
+        if r.get("published") and not it.get("published"):
+            it["published"] = r["published"]
+        return 1
+    got = await asyncio.gather(*[one(it) for it in todo], return_exceptions=True)
+    return sum(x for x in got if isinstance(x, int))
+
+
+async def _seek_rerank(subject: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Order by relevance to the SUBJECT (short query, the reranker's strength); the search order when the NLP tier
+    is unavailable."""
+    if len(items) < 3:
+        return items
+    docs = [f"{it.get('title') or ''}. {it.get('snippet') or ''}"[:500] for it in items]
+    rr = await _seek_call("nlp.rerank", 15, query=subject, documents=docs, top_k=len(docs))
+    ranked = rr.get("ranked") or []
+    if not ranked:
+        return items
+    order = []
+    for x in ranked:
+        try:
+            i = int(x.get("index"))
+        except (TypeError, ValueError):
+            continue
+        if 0 <= i < len(items) and i not in order:
+            order.append(i)
+            items[i]["relevance"] = round(float(x.get("score") or 0.0), 2)
+    order += [i for i in range(len(items)) if i not in order]
+    # far off-topic results (cross-encoder logits well below zero) go; never all of them
+    kept = [items[i] for i in order if items[i].get("relevance", 0.0) > -6.0]
+    return kept or [items[i] for i in order]
+
+
+@capability(
+    "info.seek",
+    http_method="POST", http_path="/info/seek",
+    http_tags=["web", "info"], memory="on",
+    tags=["info", "search", "latest", "news", "updates", "facts", "lookup", "research", "current", "web"],
+    description="FIND INFORMATION to answer a question - the front door. It decides what the question needs and "
+                "runs the right lookups together, returning numbered, DATED evidence to cite. "
+                "WHEN TO USE: any question about the outside world - 'what's the latest on X', 'updates on X', "
+                "'what is X', 'explain/compare X', a price or a fact that may have changed since training. "
+                "need=latest (auto for latest/news/updates): checks what Vera already tracks on the subject "
+                "(intel), searches dated news plus up to three web searches, drops report-sellers, orders newest "
+                "first and reads the newest pages (~10-40 s). need=fact: the subject's keywords and the question, "
+                "ranked by whether they answer it, the best pages read, a second round when they do not. "
+                "need=overview: three angles, one page a site, more pages read (~20-60 s). need=deep: the "
+                "overview now plus research.run started in the background for a full report (job_id returned). "
+                "Input: question (str!), need (auto|fact|latest|overview|deep, default auto), since (ISO date: "
+                "what counts as new for latest; default 14 days), topic (the subject when the question is long), "
+                "pages (int, pages to read, default 5, max 8), excerpt_chars (int, per page, default 900). "
+                "Output: {need, subject, since, answerable, items:[{n, title, url, site, published, age_days, "
+                "kind (web|intel), read, text}], checked, gaps, guide, tracked?, job_id?, elapsed_ms}. Cite items "
+                "as [n] with their dates; report the gaps instead of guessing.",
+)
+async def cap_info_seek(question: str = "", need: str = "auto", since: str = "", topic: str = "",
+                        pages: int = 5, excerpt_chars: int = 900, trace_id=None) -> Dict[str, Any]:
+    question = " ".join(str(question or "").split())
+    if not question:
+        return {"error": "question required"}
+    t0 = time.monotonic()
+    now = datetime.now(timezone.utc)
+    cls = _seek.classify_need(question)
+    need = (need or "auto").strip().lower()
+    if need not in _seek.NEEDS:
+        need = cls["need"]
+    subject = (topic or "").strip() or _seek.subject_of(question)
+    pages = max(1, min(8, int(pages or 5)))
+    chars = max(300, min(3000, int(excerpt_chars or 900)))
+    checked: List[str] = [f"need: {need} ({cls['reason'] if need == cls['need'] else 'asked for'})"]
+    gaps: List[str] = []
+    extra: Dict[str, Any] = {}
+    items: List[Dict[str, Any]] = []
+
+    # what Vera already tracks on the subject - milliseconds, so always asked
+    intel_task = asyncio.create_task(_seek_call("intel.lookup", 8, query=subject, since=since))
+
+    if need == "latest":
+        since = since or _seek.default_since(now)
+        queries = _seek.latest_queries(subject, question, now)
+        span = "week" if (now - (_seek.parse_date(since) or now)).days <= 8 else "month"
+        news_task = asyncio.create_task(_searxng_news(subject, 12, span))
+        res = await _seek_searches(queries, first_slot=1)        # the news search has slot 0
+        try:
+            news = await asyncio.wait_for(news_task, 20)
+        except Exception:
+            news = []
+        # news first: it is what is current; the general results add depth and the explainers
+        hits = _seek.merge_hits([news] + [r.get("results") or [] for r in res])
+        engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
+        checked.append(f"news: {len(news)} headlines from the past {span}")
+        checked.append(f"web: {len(queries)} searches ({', '.join(engines) or 'no engine answered'}), {len(hits)} results")
+        _seek.fill_dates(hits, now)
+        dropped = [h for h in hits if _report_seller(h.get("title"), h.get("snippet"))]
+        hits = [h for h in hits if h not in dropped]
+        if dropped:
+            checked.append(f"dropped {len(dropped)} market-report sellers")
+        hits = await _seek_rerank(subject, hits)
+        items = [dict(h, kind="web") for h in _seek.per_site(hits, 2)][:12]
+        # newest first BEFORE reading: the pages read are the new ones, not the evergreen explainers relevance
+        # ranks high (prod, 10 Oct: every read page was an undated explainer while the dated news went unread)
+        items = _seek.order_latest(items, since, now)
+        got = await _seek_read(items, pages, chars)
+        checked.append(f"read {got} of the top pages")
+        items = _seek.order_latest(items, since, now)          # a page read may have given its own date
+    else:
+        # fact / overview / deep: the subject's keywords first, then other angles; ranked against the QUESTION (the
+        # cross-encoder judges "does this page answer it"), at most two pages a site, the best pages read
+        queries = (_seek.fact_queries(subject, question) if need == "fact"
+                   else _seek.overview_queries(subject, question, now))
+        res = await _seek_searches(queries)
+        hits = _seek.merge_hits([r.get("results") or [] for r in res])
+        engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
+        checked.append(f"web: {len(queries)} searches ({', '.join(engines) or 'no engine answered'}), {len(hits)} results")
+        _seek.fill_dates(hits, now)
+        hits = await _seek_rerank(question, hits)
+        cap = 2 if need == "fact" else 1          # an overview wants many sites, a fact may take two pages of one
+        items = [dict(h, kind="web") for h in _seek.per_site(hits, cap)][:10]
+        n_read = pages if need == "fact" else min(8, pages + 2)
+        got = await _seek_read(items, n_read, chars)
+        checked.append(f"read {got} of the top pages")
+        if need == "fact" and got < 2 and len(queries) < 3:
+            # depth over speed: the pages did not carry an answer - one sharper round before giving up
+            q3 = f"{subject} {now.year}"
+            r3 = await _seek_call("web.search", 25, query=q3, limit=8, discover="off")
+            more = _seek.merge_hits([items, r3.get("results") or []])[len(items):]
+            _seek.fill_dates(more, now)
+            more = [dict(h, kind="web") for h in (await _seek_rerank(question, more))][:5]
+            got2 = await _seek_read(more, 3, chars)
+            items = (items + more)[:10]
+            checked.append(f"second round '{q3}': {len(more)} results, read {got2}")
+        # what was read leads: an unread result is only its snippet
+        items = [it for it in items if it.get("text")] + [it for it in items if not it.get("text")]
+        if need == "deep":
+            job = await _seek_call("research.run", 20, query=question, mode="parallel", output_mode="report")
+            if job.get("job_id"):
+                extra["job_id"] = job["job_id"]
+                checked.append("research.run started in the background for the full report (job_id)")
+            else:
+                gaps.append("the background report could not start: " + str(job.get("_error") or job.get("error")))
+
+    intel = await intel_task
+    if intel.get("tracked"):
+        tp = intel.get("topic") or {}
+        snap = intel.get("snapshot") or {}
+        extra["tracked"] = {"topic_id": tp.get("id"), "name": tp.get("name"),
+                            "assessment": snap.get("headline") or "", "assessment_ts": snap.get("ts") or "",
+                            "assessment_age_days": snap.get("age_days")}
+        isigs = [{"title": s.get("title"), "url": s.get("url"), "published": s.get("published") or s.get("seen"),
+                  "snippet": s.get("summary") or "", "kind": "intel"} for s in (intel.get("signals") or [])
+                 if s.get("url")]
+        known = {_seek.canon_url(it.get("url") or "") for it in items}
+        isigs = [s for s in isigs if _seek.canon_url(s["url"]) not in known][:4]
+        if need == "latest":
+            items = _seek.order_latest(items + isigs, since, now)
+        else:
+            items = items + isigs
+        checked.append(f"intel: tracked as '{tp.get('name')}' ({len(isigs)} signals since {intel.get('since', '')[:10]})")
+    elif intel.get("_error"):
+        checked.append("intel: " + intel["_error"])
+    else:
+        checked.append("intel: not tracked" + (f" (near: {', '.join(m['name'] for m in intel.get('matches') or [])})"
+                                               if intel.get("matches") else ""))
+        if need == "latest":
+            extra["offer_tracking"] = f"Vera does not follow '{subject}'; offer to track it (intel.topic.save name=...)"
+
+    if not any(it.get("kind") == "web" for it in items):
+        gaps.append("the web searches returned nothing usable - see /health search")
+    pack = _seek.build_pack(need, question, subject, items[:10], since=since if need == "latest" else "",
+                            checked=checked, gaps=gaps, now=now,
+                            elapsed_ms=int((time.monotonic() - t0) * 1000), extra=extra)
+    await emit_event({"type": "info.seek.done", "need": need, "subject": subject[:80], "items": len(pack["items"]),
+                      "elapsed_ms": pack["elapsed_ms"]})
+    return pack
 
 
 # ─────────────────────────────────────────────────────────────────────────────

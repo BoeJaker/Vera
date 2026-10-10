@@ -98,6 +98,51 @@ def on_seek(query: str, ids: List[str]) -> None:
         log.debug("retrieval eval seek: %s", e)
 
 
+_CHAT: Dict[str, Any] = {}               # session_id -> (query, ranked ids) of the turn in flight
+
+
+def on_chat_recall(session_id: str, query: str, ids: List[str]) -> None:
+    """A chat turn was given these memories, best first. Kept until the turn's usage is judged
+    (take_chat); nothing is recorded yet. Never raises."""
+    try:
+        if session_id and ids:
+            _CHAT[str(session_id)] = (str(query or ""), [str(i) for i in ids][:REC.MAX_IDS])
+            if len(_CHAT) > 500:              # a turn that never finished does not hold memory forever
+                for k in list(_CHAT)[:100]:
+                    _CHAT.pop(k, None)
+    except Exception as e:
+        log.debug("retrieval eval chat recall: %s", e)
+
+
+def take_chat(session_id: str):
+    """The pending chat recall for this session, removed; None when there is none."""
+    try:
+        return _CHAT.pop(str(session_id or ""), None)
+    except Exception:
+        return None
+
+
+def on_chat_used(session_id: str, pending, used_ids: List[str]) -> None:
+    """The turn counted toward use: record its ranking decision and an outcome per used memory.
+    Never raises, never waits."""
+    try:
+        if not pending:
+            return
+        query, ranked = pending
+        if not ranked:
+            return
+        d = REC.chat_recall_decision(query, ranked, origin=_origin(), session_id=session_id)
+        _bg(_append_all([d] + REC.chat_used_outcomes(d["decision_id"], ranked, used_ids)))
+        _bg(_store_query(d["state_hash"], query))
+    except Exception as e:
+        log.debug("retrieval eval chat used: %s", e)
+
+
+async def _append_all(rows: List[Dict[str, Any]]) -> None:
+    for row in rows:                        # the decision first, then its outcomes
+        await _append(row)
+
+
 def on_read(record_id: str) -> None:
     """A read of a record a recent seek ranked: the seek's outcome. Never raises."""
     try:
@@ -148,13 +193,15 @@ async def _credit(record_id: str) -> None:
 @capability(
     "retrieval.eval", http_method="GET", http_path="/retrieval/eval", http_tags=["memory"],
     memory="off", silent=True,
-    description="The retrieval eval set from implicit labels (four-minds FM-7.0): every memory.seek is a "
-                "ranking decision on the ledger, and a memory.read of a record it ranked (within 30 min) "
-                "marks it used at that rank. Output: {summary: {seeks, used, use_rate, hit@1, hit@3, mrr}, "
-                "examples: [{query, ranked, used_ranks}]}. Input: days (int, default 7), examples (int, "
-                "default 20).",
+    description="The retrieval eval set from implicit labels (four-minds FM-7.0). kind=seek: every "
+                "memory.seek is a ranking decision on the ledger, and a memory.read of a record it ranked "
+                "(within 30 min) marks it used at that rank. kind=chat: the memories a counted chat turn "
+                "was given, in rank order, and the ones its reply drew on. Output: {kind, summary: {seeks, "
+                "used, use_rate, hit@1, hit@3, mrr}, examples: [{query, ranked, used_ranks}]}. Input: kind "
+                "(seek | chat, default seek), days (int, default 7), examples (int, default 20).",
 )
-async def cap_retrieval_eval(days: int = 7, examples: int = 20, trace_id=None) -> Dict[str, Any]:
+async def cap_retrieval_eval(days: int = 7, examples: int = 20, kind: str = "seek",
+                             trace_id=None) -> Dict[str, Any]:
     pool = getattr(_orch(), "PG_POOL", None)
     if pool is None:
         return {"error": "postgres unavailable"}
@@ -163,6 +210,7 @@ async def cap_retrieval_eval(days: int = 7, examples: int = 20, trace_id=None) -
         examples = max(0, min(200, int(examples)))
     except Exception:
         days, examples = 7, 20
+    qid = REC.CHAT_Q if str(kind or "").strip().lower() == "chat" else REC.SEEK_Q
     since = datetime.now(timezone.utc) - timedelta(days=days)
     async with pool.acquire() as conn:
         await conn.execute(_DDL)
@@ -170,15 +218,16 @@ async def cap_retrieval_eval(days: int = 7, examples: int = 20, trace_id=None) -
             """SELECT l.decision_id, l.row, q.query,
                       COALESCE(array_agg((o.row->'detail'->>'rank')::int) FILTER (WHERE o.decision_id IS NOT NULL), '{}') AS ranks
                FROM decision_ledger l
-               LEFT JOIN decision_outcomes o ON o.decision_id = l.decision_id AND o.source = 'seek.read'
+               LEFT JOIN decision_outcomes o ON o.decision_id = l.decision_id AND o.source = $3
                LEFT JOIN retrieval_eval_queries q ON q.state_hash = l.row->>'state_hash'
                WHERE l.question_id = $1 AND l.ts >= $2
-               GROUP BY l.decision_id, l.row, q.query, l.ts ORDER BY l.ts DESC""", REC.SEEK_Q, since)
+               GROUP BY l.decision_id, l.row, q.query, l.ts ORDER BY l.ts DESC""",
+            qid, since, REC.USED_SOURCE[qid])
     seeks = []
     for r in rows:
         row = json.loads(r["row"]) if isinstance(r["row"], str) else r["row"]
         seeks.append({"decision_id": r["decision_id"], "k": len(row.get("answer") or []),
                       "used_ranks": sorted(int(x) for x in (r["ranks"] or []) if x is not None),
                       "query": (r["query"] or "")[:160], "ranked": (row.get("answer") or [])[:10]})
-    return {"summary": REC.summarize(seeks), "days": days,
+    return {"kind": "chat" if qid == REC.CHAT_Q else "seek", "summary": REC.summarize(seeks), "days": days,
             "examples": [{k: s[k] for k in ("query", "ranked", "used_ranks")} for s in seeks[:examples]]}

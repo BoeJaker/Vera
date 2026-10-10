@@ -49,3 +49,18 @@ def test_the_level_loop_passes_the_budget():
     assert "plan_children=_i < _planners" in TEXT
     assert "if node.depth < MAX_RECURSIVE_DEPTH and plan_children:" in TEXT
     assert "return _merge_analyst_output(draft, result)" in TEXT
+
+
+def test_scored_sources_keep_the_good_ones_and_top_up_to_four():
+    cur = _fns("_curate_scored")["_curate_scored"]
+    scored = [(5, "a"), (4, "b"), (3, "c"), (2, "d"), (1, "e"), (0, "f")]
+    assert cur(scored) == ["a", "b", "c", "d"]
+    assert cur([(5, "a"), (4, "b"), (3, "c"), (3, "d"), (2, "e"), (0, "f")]) == ["a", "b", "c", "d", "e"]
+    # few score well: the scores still rank, the best four are kept (they used to be thrown away)
+    assert cur([(3, "a"), (1, "b"), (1, "c"), (0, "d"), (0, "e"), (0, "f")]) == ["a", "b", "c", "d"]
+    assert cur([(1, "a"), (0, "b")]) == ["a", "b"]
+    assert cur([]) == []
+
+
+def test_research_node_uses_the_curation():
+    assert "good = _curate_scored(scored)\n                if good:" in TEXT

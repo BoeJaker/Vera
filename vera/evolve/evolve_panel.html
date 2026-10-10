@@ -2207,7 +2207,7 @@ function watchOnEditq(ev){
   const b=$('watch-synth');if(!b)return;
   if(ev.type==='evolve.editq.running'){
     if(b.querySelector('.empty'))b.innerHTML='';
-    b.insertAdjacentHTML('afterbegin','<div id="synth-'+esc(ev.id)+'" class="row" style="padding:5px 0;border-bottom:1px solid var(--border)"><span class="spin"></span><span class="hint">synthesising on '+esc(ev.model||'')+(ev.instance?(' @'+esc(ev.instance)):'')+'…</span></div>');
+    b.insertAdjacentHTML('afterbegin','<div id="synth-'+esc(ev.id)+'" class="row" style="padding:5px 0;border-bottom:1px solid var(--border)"><span class="spin"></span><span class="hint">synthesising on '+esc(ev.model||'')+(ev.instance?(' @'+esc(ev.instance)):'')+'…</span>'+(ev.instance?_beTag(_beLive(ev.instance)):'')+'</div>');
   } else if(ev.type==='evolve.editq.done'){
     const el=$('synth-'+ev.id);
     if(el)el.innerHTML='<span style="color:'+(ev.status==='done'?'var(--ok)':'var(--err)')+'">'+(ev.status==='done'?'✓':'✗')+'</span> <span class="hint">variant synthesised'+(ev.ran_on?(' on '+esc(ev.ran_on)):'')+'</span> <button class="btn sm" onclick="openEditq(\''+esc(ev.id)+'\')">view</button>';
@@ -2828,6 +2828,7 @@ function _cenRoute(ro){
     +(changed.length?' <span style="color:#c96b6b" title="a role\'s model changed mid-run">≠</span>':'')
     +(ro.coder_overridden?' <span class="hint" title="Model Routing override">ovr</span>':'')
     +(nodes?(' <span class="hint mono">'+nodes+'</span>'):'')
+    +(ro.backends&&Object.keys(ro.backends).length?(' '+_beTags(ro.backends)):'')
     +(ro.spill_calls?(' <span style="color:#c96b6b" title="CPU spill">⚠'+ro.spill_calls+'</span>'):'')
     +(ro.reroutes?(' <span style="color:#c9a35a" title="re-routed">↷'+ro.reroutes+'</span>'):'')
     +'</span>';
@@ -3334,7 +3335,7 @@ async function openCensusGoal(run,goal){
     const rr=(ro.calls&&ro.calls.reroutes)||[];
     const callRows=calls.map(c=>'<tr'+(c.reroute?' style="color:#c9a35a"':'')+'><td class="mono hint">'+esc(String(c.ts||'').slice(11,19))+'</td>'
       +'<td class="mono">'+esc(String(c.caller||'').split(':').pop())+'</td><td class="mono hint">'+esc(c.role||c.job||'')+'</td>'
-      +'<td class="mono">'+esc(String(c.model||'').replace(/^jaahas\//,''))+'</td><td class="mono">'+esc(c.node||'')+'</td>'
+      +'<td class="mono">'+esc(String(c.model||'').replace(/^jaahas\//,''))+'</td><td>'+_beTag(_beOf(c))+'</td><td class="mono">'+esc(c.node||'')+'</td>'
       +'<td class="mono">'+(c.s==null?'—':Math.round(c.s)+'s')+'</td><td class="mono">'+(c.tok_s==null?'—':c.tok_s)+'</td>'
       +'<td class="mono"'+(c.gpu_pct!=null&&c.gpu_pct<99?' style="color:#c96b6b"':'')+'>'+(c.gpu_pct==null?'—':c.gpu_pct+'%')+'</td>'
       +'<td class="hint">'+esc(c.reroute||'')+'</td></tr>').join('');
@@ -3342,8 +3343,9 @@ async function openCensusGoal(run,goal){
       +calls.length+' LLM call(s)'+(rr.length?(' · <span style="color:#c9a35a">'+rr.length+' re-routed</span>'):'')
       +((ro.calls&&ro.calls.spill_calls)?(' · <span style="color:#c96b6b">'+ro.calls.spill_calls+' CPU spill(s)</span>'):'')
       +((ro.calls&&ro.calls.truncated)?' · <span style="color:#c96b6b">log truncated</span>':'')+'</span></summary>'
-      +'<div style="margin:4px 0">'+roleLine+'</div>'+(ro.calls&&ro.calls.calls&&ro.calls.calls.length?('<div class="hint" style="margin:2px 0 6px">calls by role: '+esc(Object.entries((r.record.routing_summary||{}).by_role||_cenByRole(ro.calls.calls)).map(([k,v])=>k+' '+Object.entries(v).map(([m,n])=>m.replace(/^jaahas\//,'')+' x'+n).join(', ')).join(' · '))+'</div>'):'')
-      +(callRows?('<div style="max-height:260px;overflow:auto"><table><tr><th>at</th><th>caller</th><th>role</th><th>model</th><th>node</th><th>took</th><th>tok/s</th><th>GPU</th><th>re-route</th></tr>'+callRows+'</table></div>'):'<div class="hint">no calls recorded in the window</div>')
+      +'<div style="margin:4px 0">'+roleLine+'</div>'
+      +(calls.length?('<div class="row" style="gap:4px;margin:2px 0 4px"><span class="hint">processed by</span> '+_beTags(((r.record&&r.record.routing_summary)||{}).backends||ro.calls.backends||calls.reduce((o,c)=>{const k=_beOf(c);if(k)o[k]=(o[k]||0)+1;return o},{}))+'</div>'):'')+(ro.calls&&ro.calls.calls&&ro.calls.calls.length?('<div class="hint" style="margin:2px 0 6px">calls by role: '+esc(Object.entries((r.record.routing_summary||{}).by_role||_cenByRole(ro.calls.calls)).map(([k,v])=>k+' '+Object.entries(v).map(([m,n])=>m.replace(/^jaahas\//,'')+' x'+n).join(', ')).join(' · '))+'</div>'):'')
+      +(callRows?('<div style="max-height:260px;overflow:auto"><table><tr><th>at</th><th>caller</th><th>role</th><th>model</th><th>backend</th><th>node</th><th>took</th><th>tok/s</th><th>GPU</th><th>re-route</th></tr>'+callRows+'</table></div>'):'<div class="hint">no calls recorded in the window</div>')
       +'</details>';
   }else if(r.record){
     routingHtml='<div class="hint" style="margin-top:8px">Routing not recorded for this goal (rows before 2026-09-10 predate routing capture).</div>';
@@ -3585,13 +3587,14 @@ async function loadWorkTaskDetail(id){
   let out='<div class="hint" style="margin:4px 0">'+(t.goal?esc(String(t.goal).slice(0,300)):'')+'</div>';
   out+='<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:4px">'+_thStats(h.stats,'all drivers')+_thStats(h.census_stats,'census only')+'</div>';
   if(!rows.length){el.innerHTML=out+'<div class="empty">No results yet.</div>';return}
-  out+='<table><tr><th>when</th><th>driver</th><th>status</th><th>wall</th><th>checks</th><th>code</th><th>coder</th></tr>'
+  out+='<table><tr><th>when</th><th>driver</th><th>status</th><th>wall</th><th>checks</th><th>code</th><th>coder</th><th>backend</th></tr>'
     +rows.map(r=>{const drv=r.driver||{};const onclick=r.source==='census'?'openCensusGoal(\''+esc(drv.id||'')+'\',\''+esc(r.goal||'')+'\')':'openRun(\''+esc(r.run_id||'')+'\')';
       const dk=drv.kind==='improve'?'session':(drv.kind==='census'?'census':(drv.kind==='suite'?'suite':'run'));
       return '<tr class="clk" onclick="event.stopPropagation();'+onclick+'"><td class="mono hint">'+esc(String(r.ts||'').slice(0,16).replace('T',' '))+'</td><td>'+_wkKindTag(drv.kind||r.source)+' <span class="mono">'+eid(dk,drv.id,null,dk==='census'?{goal:r.goal}:null)+'</span>'+(r.session?(' '+eid('loop',r.session,'<span class="hint">⟳</span>',{goal:r.goal},'the agent loop of this result')):'')+'</td>'
         +'<td>'+_cenStatus(r.status)+(r.reruns?(' <span class="tag" title="re-run after a pause or interruption">↻'+r.reruns+'</span>'):'')+'</td><td class="mono">'+_cenSec(r.wall_s)+(r.hit_cap?' <span class="hint">cap</span>':'')+'</td>'
         +'<td class="mono">'+(r.checks_n?((r.checks_ok||0)+'/'+r.checks_n):'—')+'</td><td class="mono hint">'+(r.code?esc((r.code.sha_short||'').slice(0,7)+'@'+(r.code.branch||'?'))+(r.code.changed?' ⚠':''):'—')+'</td>'
-        +'<td class="hint">'+esc((r.routing&&r.routing.coder)||'')+((r.routing&&r.routing.spill_calls)?' <span style="color:#c96b6b" title="CPU spill">⚠</span>':'')+'</td></tr>';}).join('')
+        +'<td class="hint">'+esc((r.routing&&r.routing.coder)||'')+((r.routing&&r.routing.spill_calls)?' <span style="color:#c96b6b" title="CPU spill">⚠</span>':'')+'</td>'
+        +'<td>'+((r.routing&&r.routing.backends&&Object.keys(r.routing.backends).length)?_beTags(r.routing.backends):'<span class="hint">—</span>')+'</td></tr>';}).join('')
     +'</table>'+((h.results||[]).length>12?('<div class="hint">'+((h.results||[]).length-12)+' older — <a href="#" onclick="event.preventDefault();event.stopPropagation();openTaskHistory(\''+esc(id)+'\')">all of them</a></div>'):'');
   el.innerHTML=out;
 }
@@ -3754,6 +3757,40 @@ function _cenDash(r){
   const info=$('cen-dash-info');
   if(info)info.innerHTML=_cenDashInfo(r,cap);
 }
+/* What processed a call: 'ollama' | 'vllm' | 'api:<provider>' | 'other[:<what>]'
+   (vera/census/control.py backend_label). A record from before the log named
+   it is read from its instance: provider:<id> = an API, vllm-* = a vLLM server. */
+function _beOf(c){
+  c=c||{};let b=String(c.backend||'');const i=String(c.instance||c.node||'');const pv=String(c.provider||'');
+  if(b.indexOf(':')>0)return b;
+  if(!b)b=i.indexOf('provider:')===0?'api':(i.indexOf('vllm')===0?'vllm':(i?'ollama':''));
+  if(b==='api')return 'api:'+(pv||i.split(':').slice(1).join(':')||'?');
+  if(b==='other'&&pv)return 'other:'+pv;
+  return b;
+}
+const _BE_COL={ollama:'var(--warn, #f5b341)',vllm:'var(--acc, #4a9eff)',api:'var(--dv3, #c678dd)',other:'var(--dim2, #8a90a0)'};
+const _BE_NAME={ollama:'Ollama',vllm:'vLLM',api:'API',other:'other'};
+function _beTag(label,n){
+  if(!label)return '';
+  const k=String(label).split(':')[0];const sub=String(label).split(':').slice(1).join(':');
+  const col=_BE_COL[k]||_BE_COL.other;
+  return '<span class="tag" style="color:'+col+';border:1px solid color-mix(in srgb, '+col+' 45%, transparent)" title="processed by '+esc(label)+(n!=null?(' · '+n+' call(s)'):'')+'">'
+    +esc(_BE_NAME[k]||k)+(sub?(' <span style="opacity:.8">'+esc(sub)+'</span>'):'')+(n!=null?(' '+n):'')+'</span>';
+}
+function _beTags(map){
+  return Object.entries(map||{}).sort((a,b)=>b[1]-a[1]).map(([k,n])=>_beTag(k,n)).join(' ');
+}
+/* the backend serving a node NOW (switched nodes = vLLM) - for live items only */
+let _beNow={};
+async function _beNowLoad(){
+  try{const o=await api('/nodes/backend/overview');const m={};
+    ((o&&o.nodes)||[]).forEach(n=>{m[n.instance]=n.backend==='vllm'?'vllm':'ollama';});_beNow=m;}catch(e){}
+}
+function _beLive(inst){
+  const i=String(inst||'');if(!i)return '';
+  if(i.indexOf('provider:')===0)return 'api:'+i.slice(9);
+  return i.indexOf('vllm')===0?'vllm':(_beNow[i]||'ollama');
+}
 function _cenDashBar(pct,col,h){
   return '<span style="display:inline-block;width:100%;height:'+(h||8)+'px;background:var(--bg3);border-radius:3px;overflow:hidden;vertical-align:middle">'
     +'<span style="display:block;width:'+Math.max(0,Math.min(100,pct))+'%;height:100%;background:'+col+'"></span></span>';
@@ -3792,8 +3829,9 @@ function _cenDashInfo(r,cap){
   const maxN=Math.max(1,...nodes.map(n=>ro.by_node[n]));
   const nodeRows=nodes.map(n=>'<div style="display:flex;align-items:center;gap:6px;margin:2px 0"><span class="mono" style="min-width:64px">'+esc(n)+'</span>'
     +'<span style="flex:1;min-width:0">'+_cenDashBar(ro.by_node[n]/maxN*100,n.indexOf('gpu')===0?'#3cb371':'#c9a35a',7)+'</span><span class="mono" style="min-width:24px;text-align:right">'+ro.by_node[n]+'</span></div>').join('');
-  const models=Object.keys(ro.by_model||{}).map(m=>'<span class="tag" title="'+ro.by_model[m]+' call(s)">'+esc(m)+' · '+ro.by_model[m]+'</span>').join(' ');
-  const last=(ro.last||[]).slice().reverse().map(x=>'<div class="mono hint" style="font-size:10px">'+esc(x.ts)+' '+esc(x.job||x.role||'')+' '+esc(x.model)+'@'+esc(x.node)
+  const models=Object.keys(ro.by_model||{}).map(m=>'<span class="tag" title="'+ro.by_model[m]+' call(s)">'+esc(m)+' · '+ro.by_model[m]+'</span>').join(' ')
+    +(ro.by_backend&&Object.keys(ro.by_backend).length?(' '+_beTags(ro.by_backend)):'');
+  const last=(ro.last||[]).slice().reverse().map(x=>'<div class="mono hint" style="font-size:10px">'+esc(x.ts)+' '+esc(x.job||x.role||'')+' '+esc(x.model)+'@'+esc(x.node)+(x.backend?(' '+_beTag(x.backend)):'')
     +(x.tok_s!=null?(' <b>'+(+x.tok_s).toFixed(1)+' tok/s</b>'):'')+(x.gpu_pct!=null?(' GPU '+x.gpu_pct+'%'):'')+(x.spill?' <span style="color:#c96b6b">spill</span>':'')+(x.status&&x.status!=='done'?(' '+esc(x.status)):'')+'</div>').join('');
   const routing=tile('routing · this goal · <b>'+(ro.calls||0)+'</b> calls'+(ro.tok_s_median!=null?(' · median <b>'+ro.tok_s_median+' tok/s</b>'):'')
       +(ro.spill_calls?' · <span style="color:#c96b6b">'+ro.spill_calls+' CPU spill</span>':'')+(ro.reroutes?' · <span style="color:#c9a35a">'+ro.reroutes+' re-routed</span>':''),
@@ -4274,7 +4312,7 @@ async function loadFleet(){
       +(a.status==='running'?'<span class="spin"></span>':'<span style="width:9px"></span>')
       +'<span class="mono" style="width:70px">'+esc(a.id.slice(0,8))+'</span>'
       +'<span class="tag" style="color:var(--acc4)">editor</span>'
-      +'<span class="hint">'+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+' · '+esc(a.status)+'</span></div>';
+      +'<span class="hint">'+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+' · '+esc(a.status)+'</span>'+(a.instance?_beTag(_beLive(a.instance)):'')+'</div>';
   }
   el.innerHTML=h;
 }
@@ -6247,6 +6285,7 @@ function renderSbxStrip(sb){
 function _theatreOnScreen(){const p=$('mc-live'),r=$('mc-live-run');return _curSec()==='mission'&&!!p&&p.style.display!=='none'&&!!r&&r.style.display!=='none'}
 setInterval(()=>{if(_theatreOnScreen())refreshActiveRun()},4000);
 setInterval(pollAutonomous,12000);
+_beNowLoad();setInterval(()=>{if(!document.hidden)_beNowLoad()},60000);
 refreshActiveRun();
 
 /* Branch race lanes (Pipelines tab) → click a run block to open its real

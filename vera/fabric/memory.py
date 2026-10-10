@@ -69,7 +69,7 @@ import re
 import time
 import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -84,7 +84,7 @@ def _to_dt(s) -> datetime:
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
         return datetime.now(timezone.utc)
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import httpx
 
@@ -119,6 +119,18 @@ try:                                                    # noisy records rank aft
     from Vera.vera.fabric import memory_noise_core as _noise_core
 except ImportError:                                     # pragma: no cover
     from . import memory_noise_core as _noise_core
+try:                                                    # default-off public-ingress revision canary
+    from Vera.vera.fabric import memory_dual_write_runtime as _revision_canary
+except ImportError:                                     # pragma: no cover
+    from . import memory_dual_write_runtime as _revision_canary
+try:                                                    # default-off manual split-write repair
+    from Vera.vera.fabric import memory_dual_write_repair_runtime as _revision_repair
+except ImportError:                                     # pragma: no cover
+    from . import memory_dual_write_repair_runtime as _revision_repair
+try:                                                    # deterministic rollback rehearsal
+    from Vera.vera.fabric import memory_dual_write_rollback as _revision_rollback
+except ImportError:                                     # pragma: no cover
+    from . import memory_dual_write_rollback as _revision_rollback
 try:                                                    # the time a question asks about (CU-M.9)
     from Vera.vera.fabric import recall_scope_core as _scope_core
 except ImportError:                                     # pragma: no cover
@@ -1591,8 +1603,12 @@ async def embed_text_outcome(text: str) -> Tuple[Optional[List[float]], str]:
     — records piled up in Postgres with no Chroma vector.
     """
     global _EMBED_FAILED_AT, _EMBED_SLOW_UNTIL
-    if not MEMORY_AUTO_EMBED or not text.strip():
+    if not MEMORY_AUTO_EMBED:
         return None, "skipped:off"
+    if not text.strip():
+        # an empty query is a listing (newest records), not a search: nothing to embed. Labelled apart from
+        # "off" so retrieval.timing does not read listings as the vector leg being disabled (FM-0.4, 2026-10-09)
+        return None, "skipped:empty"
     if _EMBED_FAILED_AT and (time.monotonic() - _EMBED_FAILED_AT) < _EMBED_RETRY_SECS:
         return None, "skipped:breaker"
     if _EMBED_SLOW_UNTIL and time.monotonic() < _EMBED_SLOW_UNTIL:
@@ -1636,7 +1652,7 @@ async def embed_text_outcome(text: str) -> Tuple[Optional[List[float]], str]:
 
 async def embed_text(text: str) -> Optional[List[float]]:
     """The query/record vector, or None. embed_text_outcome also says why there is none
-    (skipped:off|breaker|cooldown, timeout, unavailable, error) - the timing envelopes
+    (skipped:off|empty|breaker|cooldown, timeout, unavailable, error) - the timing envelopes
     need that to tell "no vector" apart from "nothing found"."""
     vec, _ = await embed_text_outcome(text)
     return vec
@@ -1721,6 +1737,43 @@ class HybridMemoryStore:
     @property
     def backends(self) -> List[str]:
         return list(self._backends.keys())
+
+    async def repair_get(self, backend_name: str, record_id: str) -> Optional[MemoryRecord]:
+        """Read one exact backend for content-verified reconciliation."""
+        backend = self._backends.get(str(backend_name or ""))
+        if backend is None:
+            raise ValueError("unknown memory backend")
+        return await asyncio.wait_for(
+            backend.get(str(record_id or "")), _BACKEND_OP_TIMEOUT_S)
+
+    async def repair_store(self, backend_name: str, record: MemoryRecord) -> bool:
+        """Rebuild one exact backend without invoking the normal fan-out path."""
+        backend_name = str(backend_name or "")
+        backend = self._backends.get(backend_name)
+        if backend is None:
+            raise ValueError("unknown memory backend")
+        if _sbx_write_blocked():
+            _sbx_note("memory")
+            return False
+        expected_hash = record.compute_hash()
+        if record.content_hash and record.content_hash != expected_hash:
+            raise ValueError("memory repair content hash mismatch")
+        record.content_hash = expected_hash
+        if not record.keywords:
+            record.keywords = _extract_keywords(record.full_text or record.text)
+        if not record.text and record.full_text:
+            record.text = record.full_text[:500]
+        if backend_name == "chroma" and not record.embedding:
+            if not MEMORY_AUTO_EMBED:
+                return False
+            embedding = await embed_text(record.text or record.summary)
+            if not embedding:
+                return False
+            record.embedding = embedding
+            record.embedding_model = OLLAMA_EMBED_MODEL
+        result = await asyncio.wait_for(
+            backend.store(record), _BACKEND_OP_TIMEOUT_S)
+        return result is True
 
     async def store(self, record: MemoryRecord) -> Dict:
         """Store a record across all backends. Returns per-backend success map."""
@@ -2468,9 +2521,103 @@ async def memory_store(
         importance  = importance,
         parent_id   = parent_id,
     )
-    result = await MEMORY.store(rec)
+    async def _native_store():
+        return await MEMORY.store(rec)
+
+    actor = str(_orch.CALLER_KIND.get("") or "user").strip().lower()
+    actor = {"mcp": "claude_code"}.get(actor, actor)
+    result = await _revision_canary.store_public_memory_with_revision_canary(
+        rec.to_dict(), native_write=_native_store, actor=actor,
+        observed_at=now_iso())
     return {"id": rec.id, "backends": result, "keywords": rec.keywords,
             "content_hash": rec.content_hash}
+
+
+@capability(
+    "memory.dual_write.reconcile", memory="off",
+    http_method="POST", http_path="/memory/dual-write/reconcile",
+    http_tags=["memory"],
+    description="Manually reconcile one previously journalled split Memory write. "
+                "Disabled unless VERA_MEMORY_RECONCILIATION_ENABLED=1. Repairs only "
+                "the receipt's exact unresolved revision or Postgres/Chroma/Neo4j "
+                "target, verifies canonical and native content identities, and never "
+                "moves read authority. Input: operation_id, attempt_id, timeout_s "
+                "(0..300). Output: classified target outcomes and convergence.",
+)
+async def memory_dual_write_reconcile(
+    operation_id: str, attempt_id: str, timeout_s: float = 30.0,
+    trace_id=None,
+):
+    async def load_native(backend_name: str, native_id: str):
+        record = await MEMORY.repair_get(backend_name, native_id)
+        return record.to_dict() if record is not None else None
+
+    async def write_native(backend_name: str, snapshot: Mapping[str, Any]):
+        allowed = {item.name for item in fields(MemoryRecord)}
+        record = MemoryRecord(**{
+            key: value for key, value in dict(snapshot).items() if key in allowed
+        })
+        return await MEMORY.repair_store(backend_name, record)
+
+    actor = str(_orch.CALLER_KIND.get("") or "user").strip().lower()
+    actor = {"mcp": "claude_code"}.get(actor, actor)
+    return await _revision_repair.run_manual_memory_reconciliation(
+        operation_id=operation_id, attempt_id=attempt_id, actor=actor,
+        native_loader=load_native, native_writer=write_native,
+        timeout_s=timeout_s)
+
+
+@capability(
+    "memory.dual_write.readiness", memory="off",
+    http_method="GET", http_path="/memory/dual-write/readiness",
+    http_tags=["memory"],
+    description="Assess bounded, payload-free Memory dual-write evidence for a "
+                "future activation review. Reads receipt and reconciliation "
+                "metadata plus the latest rollback-rehearsal receipt; performs "
+                "no repair and never grants or moves authority. Input: limit "
+                "(1..1000), min_receipts (1..1000), max_evidence_age_seconds "
+                "(60..31536000). Output: metrics, fail-closed reasons and "
+                "ready_for_activation_review; authority_switch_allowed is always false.",
+)
+async def memory_dual_write_readiness(
+    limit: int = 100, min_receipts: int = 25,
+    max_evidence_age_seconds: int = 86_400, trace_id=None,
+):
+    try:
+        from Vera.vera.provenance import get_provenance
+    except ImportError:                              # pragma: no cover
+        from ..provenance import get_provenance
+    source_commit = str(get_provenance().get("git_sha") or "")
+    return await asyncio.to_thread(
+        _revision_repair.read_memory_authority_readiness,
+        limit=limit, min_receipts=min_receipts,
+        max_evidence_age_seconds=max_evidence_age_seconds,
+        expected_source_commit=source_commit)
+
+
+@capability(
+    "memory.dual_write.rollback_rehearse", memory="off",
+    http_method="POST", http_path="/memory/dual-write/rollback-rehearse",
+    http_tags=["memory"],
+    description="Run a deterministic rollback rehearsal against the real disabled "
+                "dual-write and reconciliation gates using local sentinels only, "
+                "then persist a payload-free receipt bound to the running source "
+                "commit. It invokes no Memory backend, cannot enable either gate "
+                "and never moves authority. Input: rehearsal_id (stable opaque "
+                "operation ID). Output: created and exact rehearsal receipt.",
+)
+async def memory_dual_write_rollback_rehearse(
+    rehearsal_id: str, trace_id=None,
+):
+    try:
+        from Vera.vera.provenance import get_provenance
+    except ImportError:                              # pragma: no cover
+        from ..provenance import get_provenance
+    source_commit = str(get_provenance().get("git_sha") or "")
+    if not source_commit:
+        raise RuntimeError("running source identity is unavailable")
+    return await _revision_rollback.run_memory_rollback_rehearsal(
+        rehearsal_id=rehearsal_id, source_commit=source_commit)
 
 
 @capability(

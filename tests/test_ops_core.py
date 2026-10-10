@@ -224,3 +224,93 @@ def test_connections_parse_from_the_kernel_table():
     v6 = ("  sl  local_address                         remote_address                        st\n"
           "   0: 0000000000000000FFFF00008A00A8C0:2327 0000000000000000FFFF0000BE00A8C0:ACDA 01 0\n")
     assert oc.proc_tcp_peers(v6, 8999, v6=True) == {"192.168.0.190": 1}
+
+
+def test_activity_lands_on_the_nodes_calls_were_made_against():
+    src = _src()
+    # the ring is newest first: a call's answer comes before the call
+    src["obs.events"] = [
+        {"type": "cap.ok", "name": "docker.ps", "trace_id": "d1", "ts": "2026-09-21T23:29:50Z", "group": "docker", "elapsed_ms": 40},
+        {"type": "cap.call", "name": "docker.ps", "trace_id": "d1", "ts": "2026-09-21T23:29:49Z", "group": "docker", "args_preview": "host_id=local"},
+        {"type": "cap.call", "name": "exec.ssh.run", "trace_id": "e1", "ts": "2026-09-21T23:29:30Z", "group": "exec", "args_preview": "command=uptime, host_id=ssh-pve, timeout=19"},
+        {"type": "worker.start", "worker": "w1", "capability": "fabric.ingest", "task": "k1", "ts": "2026-09-21T23:29:00Z"},
+        {"type": "cap.error", "name": "ollama.pull", "trace_id": "o1", "ts": "2026-09-21T23:27:12Z", "group": "ollama"},
+        {"type": "cap.call", "name": "ollama.pull", "trace_id": "o1", "ts": "2026-09-21T23:27:10Z", "group": "ollama", "args_preview": "instance=gpu-250, model=a"},
+        {"type": "cap.call", "name": "fabric.search", "trace_id": "f1", "ts": "2026-09-21T23:10:00Z", "group": "fabric"},   # 20 min ago: lost, not open
+    ]
+    s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
+    ids = {n["id"]: n for n in s["nodes"]}
+    dk = ids["docker:local"]["activity"]
+    assert dk["calls"] == 1 and dk["ms"] == 40.0 and dk["top"] == [["docker.ps", 1]]
+    assert dk["window_s"] == 170 and dk["per_min"] == round(60 / 170, 1)               # the window is what the ring holds: 170 s back
+    assert s["series"]["docker:local"]["calls"] == [0.0] * 9 + [1.0]                   # ten columns of 17 s, oldest first
+    assert ids["ollama:gpu-250"]["activity"]["errors"] == 1                               # named by its instance; it failed
+    assert s["series"]["ollama:gpu-250"]["calls"][0] == 1.0                             # the oldest call: the first column
+    assert ids["core:cap-bus"]["activity"]["calls"] == 3                                  # the bus carried every call
+    # the one call still waiting runs as a flow from the bus to the machine it was made against, on a pipe of its own
+    assert ids["pve:corp"]["open_calls"] == 1 and ids["pve:corp"]["inflight"] >= 1
+    assert {"kind": "cap call", "a": "core:cap-bus", "b": "pve:corp", "age": 30.0, "label": "exec.ssh.run"} in s["inflight"]
+    assert ("core:cap-bus", "pve:corp", "req") in {(l["a"], l["b"], l["kind"]) for l in s["links"]}
+    assert s["inflight_kinds"]["cap call"] == 1                                          # answered and lost calls are not open
+    assert next(e for e in s["events"] if e["trace"] == "e1")["node"] == "pve:corp"
+    if "core:workers" in ids:
+        assert ids["core:workers"]["activity"]["top"] == [["fabric.ingest", 1]]
+
+
+def test_a_degraded_gather_does_not_replace_a_good_snapshot():
+    good = {"sources": {"a": "ok", "b": "ok", "c": "ok"}}
+    bad = {"sources": {"a": "a took longer than 6 s", "b": "b took longer than 6 s", "c": "ok"}}
+    assert oc.failed_share(bad) == pytest.approx(2 / 3) and oc.failed_share({}) == 1.0
+    assert oc.keep_snapshot(good, None, 0) and oc.keep_snapshot(good, bad, 1)
+    assert oc.keep_snapshot(bad, None, 0)                                 # nothing better to show
+    assert not oc.keep_snapshot(bad, good, 30)                            # a busy moment does not wipe a good picture
+    assert oc.keep_snapshot(bad, good, 600)                               # ... for long: the estate now beats the past
+    assert oc.keep_snapshot(bad, bad, 1)
+
+
+def test_workers_memory_loops_and_clients_land_on_their_nodes():
+    src = _src()
+    src["obs.workers"] = {"w1": {"status": "busy", "host_id": "ssh-250", "host": "Ollama"}, "w2": {"status": "idle", "role": "host", "host": "LLM"}}
+    src["obs.events"] = [
+        {"type": "worker.done", "worker": "w1", "task": "k1", "ts": "2026-09-21T23:29:58Z"},
+        {"type": "agent_loop_v5.tool_done", "stream_id": "st1", "tool": "exec.python.run", "ok": False, "elapsed_ms": 12, "ts": "2026-09-21T23:29:57Z"},
+        {"type": "memory.stored", "record_type": "cap_call", "backends": {"postgres": True, "neo4j": True, "chroma": False}, "ts": "2026-09-21T23:29:56Z"},
+        {"type": "cap.call", "name": "memory.search", "trace_id": "c1", "via": "claude", "group": "memory", "ts": "2026-09-21T23:29:55Z"},
+        {"type": "agent_loop_v5.cycle_planning", "stream_id": "st1", "session_id": "sess-abcdef123456", "cycle": 4, "ts": "2026-09-21T23:29:54Z"},
+        {"type": "worker.start", "worker": "w1", "capability": "memory.stats", "task": "k1", "ts": "2026-09-21T23:29:56Z"},
+        {"type": "cap.call", "name": "canvas.get", "trace_id": "c2", "session_id": "chat-1791", "group": "canvas", "ts": "2026-09-21T23:29:50Z"},
+        {"type": "cap.ok", "name": "canvas.get", "trace_id": "c2", "elapsed_ms": 5, "ts": "2026-09-21T23:29:51Z"},
+    ]
+    s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
+    ids = {n["id"]: n for n in s["nodes"]}
+    # a worker's job counts on the workers and on the machine the worker runs on (its SSH host), with how long it took
+    assert ids["guest:250"]["activity"]["top"] == [["memory.stats", 1]] and ids["guest:250"]["activity"]["ms"] == 2000.0
+    assert ids["core:workers"]["activity"]["calls"] == 1
+    # a memory write counts on the fabric and on each store it reached
+    assert ids["svc:postgres"]["activity"]["top"] == [["write cap_call", 1]] and "activity" not in ids["svc:chroma"]
+    # a running agent loop stands on the work plane: its cycle, its tool, the tool that failed
+    loop = ids["loop:sess-abcdef1"]
+    assert loop["plane"] == "work" and loop["status"] == "run" and "cycle 4" in loop["detail"] and "1 failed" in loop["detail"]
+    assert loop["activity"]["errors"] == 1 and ("loop:sess-abcdef1", "core:router", "req") in {(l["a"], l["b"], l["kind"]) for l in s["links"]}
+    # who called: an agent through `via` (a new client node when the estate does not list it), the chat page by its session
+    assert ids["client:via:claude"]["activity"]["calls"] == 1 and ids["client:chat"]["activity"]["calls"] == 1
+    assert {"kind": "cap call", "a": "client:via:claude", "b": "core:fabric", "age": 5.0, "label": "memory.search"} in s["inflight"]
+    assert ids["core:cap-bus"]["activity"]["calls"] == 2
+
+
+def test_live_records_pair_answers_across_batches():
+    s = oc.build(_src(), own_ips=["192.168.0.138"], now=NOW)
+    ctx = oc.context_from_snapshot(s)
+    a = oc.live_records([{"type": "cap.call", "name": "docker.ps", "trace_id": "t9", "group": "docker", "args_preview": "host_id=local", "ts": "x"}], ctx)
+    assert a[0]["nodes"] == ["docker:local", "core:cap-bus"] and a[0]["phase"] == "call" and a[0]["count"]
+    b = oc.live_records([{"type": "cap.error", "name": "docker.ps", "trace_id": "t9", "elapsed_ms": 9, "ts": "y"}], ctx)
+    assert b[0]["nodes"] == ["docker:local", "core:cap-bus"] and b[0]["phase"] == "fail" and b[0]["failed"] and not b[0]["count"]
+    assert oc.live_records([{"type": "heartbeat", "caps": 1}], ctx) == []
+
+
+def test_the_live_stream_reads_the_ring_through_obs_events():
+    src = open(os.path.join(ROOT, "vera", "estate", "ops_capabilities.py"), encoding="utf-8").read()
+    pump = src[src.index("async def _live_pump()"):src.index('@_orch.APP.get("/ops/live"')]
+    # the orchestrator module this one imports may be a copy that never connected to Redis (seen on the mirror):
+    # the ring is read through the capability, and only the events not seen at the last read go out
+    assert 'await _read("obs.events", 4.0, limit=300)' in pump and "_ev_key(e) not in seen" in pump and "REDIS" not in pump
