@@ -2985,11 +2985,15 @@
         doc = (j && j.content !== undefined) ? j.content : j;
         if (doc && doc.canvas) doc = doc.canvas;
       } catch (e) {
-        if (this._rev === null) body.innerHTML = '<div class="err">Canvas unreachable.</div>';
+        /* a canvas that has drawn keeps its last good render: the chat clears _rev to force a reload whenever items land,
+           and a fetch that failed then replaced the body - the live layer with it - so every graph on the desk was
+           destroyed while its card stayed (owner, 2026-10-10: "the graph seems to get wiped out by new element loading
+           into the desk but it container remains") */
+        if (this._rev === null && !this._doc) body.innerHTML = '<div class="err">Canvas unreachable.</div>';
         return;                                   // keep the last good render
       }
       if (!doc || doc.error) {
-        body.innerHTML = `<div class="err">${esc((doc && doc.error) || 'Not found')}</div>`;
+        if (!this._doc) body.innerHTML = `<div class="err">${esc((doc && doc.error) || 'Not found')}</div>`;   /* ...the same for an error answer */
         return;
       }
       const rev = doc.revision != null ? doc.revision : doc.rev != null ? doc.rev
@@ -3872,6 +3876,9 @@
       body.querySelectorAll('#items .vc-live[data-live]').forEach((h) => {
         const key = h.dataset.key, kind = h.dataset.live; let el = L[key];
         if (el && el.dataset.kind !== kind) { try { el.remove(); } catch (e) {} el = null; }
+        /* a live element that is no longer in the live layer (the layer was rebuilt) is dead - a graph destroys itself when
+           it is taken out of the page - so it is made again rather than kept as a name with nothing drawn */
+        if (el && !live.contains(el)) { delete L[key]; el = null; }
         if (!el) {
           // the wrapper is the column's (placed, sized, hidden); the element inside is the estate's own and keeps its styles
           let inner;
