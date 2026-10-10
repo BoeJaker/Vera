@@ -923,15 +923,7 @@ body[data-cols~="canvas"] #canvasColumn,body[data-cols~="graph"] #graphColumn{di
 /* the graph behind the desk: the canvas's back layer fills the desk; the element fills the layer */
 #deskBack{width:100%;height:100%;display:flex;min-height:0}
 #deskBack vera-context-graph{flex:1;min-height:0;min-width:0}
-/* the desk exploded: the lattice over the whole desk (the chat and the canvas), its bar on top */
-body.desk-exploded #chatColumn{position:relative}
-/* above everything on the desk: its cards stack up to z 200 in the same context and showed through at z 60 */
-#deskXpl{position:absolute;inset:0;z-index:1000;display:flex;flex-direction:column;background:var(--bg0,#0d0f12)}
-#deskXpl [hidden]{display:none!important}
-#deskXpl .dx-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border,#2a2f37);font-size:11px}
-#deskXpl .dx-bar .lbl{color:var(--dim,#8b93a1)}
-#deskXpl .dx-bar .sp{flex:1}
-#deskXpl .dx-host{flex:1;min-height:0;position:relative}/* the records in the focused turn's context run to the message: drawn over the columns, one collector per source */
+/* the records in the focused turn's context run to the message: drawn over the columns, one collector per source */
 body.has-cols #chatColumn{position:relative}
 #ctxRunsOverlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;display:none}
 body[data-cols~="graph"] #ctxRunsOverlay{display:block}
@@ -19485,52 +19477,8 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   function _ctxBroadcast(){ if(_EMBED.only==='menu') return; try{ _lhmPost('ctx',{ nodes:CTX_NODES, edges:CTX_EDGES, query:_ctxQuery, mid:_grFocusMid }); }catch(_){} }
   function _ctxRemoteInfo(){ return { on:_ctxRemote.on, lanes:_ctxRemote.lanes.slice(), block:_ctxRemoteBlock, ctx:CTX_NODES.length, focus:_grFocusMid }; }
   function _ctxRemoteSet(on){ _ctxRemote.on=!!on; if(!on) _ctxRemote.lanes=[]; document.body.classList.toggle('ctx-remote', !!on); try{ const gb=document.getElementById('colGraphBtn'); if(gb) gb.classList.toggle('col-on', !!on); }catch(_){} try{ _ctxRunsDraw(); }catch(_){} }
-  /* THE DESK, EXPLODED (WS-U; owner-approved desk 2026-10-06: "exploded mode integrated in the Live ops iso style", "the
-     graph at the back and visible in exploded mode"). On a Desk canvas, Explode lifts the desk's own layers apart on Live
-     ops' iso lattice (VeraLattice): the chat, the items, the UI panel and the context graph as planes, every item a node
-     with its own key. Nothing on the desk is moved or redrawn, so back to the desk is the same desk; a double click on an
-     item goes back and points it out. The turn scene (vera-exploded) stays what Explode is everywhere else. */
-  let _dxEl=null, _dxLv=null;
-  function _deskXplWanted(){ return _EMBED.only!=='menu' && _cvCfg('cfgCvAlign')==='desk' && _pages.has('canvas') && !!document.querySelector('#canvasColumnBody vera-canvas'); }
-  function _dxNeed(src, ok){ return new Promise(res=>{ if(ok()) return res(true); const s=document.createElement('script'); s.src=src; s.onload=()=>res(!!ok()); s.onerror=()=>res(false); document.head.appendChild(s); }); }
-  function _dxData(){
-    const cv=document.querySelector('#canvasColumnBody vera-canvas');
-    const items=cv&&typeof cv.deskSnapshot==='function'?cv.deskSnapshot():[];
-    const turns=[...document.querySelectorAll('#msgs .mwrap[data-mid]')].slice(-9).map(w=>({ mid:w.dataset.mid, label:String(w.textContent||'').replace(/\s+/g,' ').trim().slice(0,40) }));
-    let graph=[]; try{ graph=(CTX_NODES||[]).filter(n=>n.included!==false).slice(0,27).map(n=>({ id:n.id, label:n.label||n.title||n.id })); }catch(_){}
-    return VeraDesk.latticeOf({ items, turns, graph, focusMid:_grFocusMid||'' });
-  }
-  async function _deskXpl(on){
-    on=(on==null)?!_dxEl:!!on;
-    const b=document.getElementById('xplBtn');
-    if(!on){ if(_dxLv){ try{ _dxLv.destroy(); }catch(_){} _dxLv=null; } if(_dxEl){ _dxEl.remove(); _dxEl=null; } document.body.classList.remove('desk-exploded'); if(b) b.classList.remove('col-on'); return false; }
-    if(_dxEl) return true;
-    const col=document.getElementById('chatColumn'); if(!col) return false;
-    _dxEl=document.createElement('div'); _dxEl.id='deskXpl'; _dxEl.dataset.w='desk.exploded';
-    _dxEl.innerHTML='<div class="dx-bar"><b>The desk, exploded</b><span class="lbl">its layers lifted apart - chat, items, UI panel, context graph · click an item, then show it on the desk · ctrl+drag turns the view</span><span class="sp"></span><span class="lbl" id="dxSel"></span><button class="btn xs" id="dxGo" hidden title="Back to the desk with this item pointed out">show it on the desk</button><button class="btn xs" id="dxClose" title="Back to the desk (Esc)">back to the desk</button></div><div class="dx-host" id="dxHost"></div>';
-    col.appendChild(_dxEl); document.body.classList.add('desk-exploded'); if(b) b.classList.add('col-on');
-    _dxEl.querySelector('#dxClose').onclick=()=>_deskXpl(false);
-    const ok=await _dxNeed('/ui/iso.js', ()=>!!window.VeraISO) && await _dxNeed('/ui/iso-lattice.js', ()=>!!window.VeraLattice) && await _dxNeed('/ui/desk-layout.js', ()=>!!window.VeraDesk);
-    if(!_dxEl) return false;
-    const host=_dxEl.querySelector('#dxHost');
-    if(!ok){ host.innerHTML='<div class="sys-msg" style="padding:12px">The iso lattice (/ui/iso-lattice.js) did not load.</div>'; return false; }
-    /* the lattice redraws on a click (it selects the node), so the browser's double click never arrives: two picks of the
-       same item within 450 ms are the double click */
-    const open=(n)=>{ const k=n&&n.desk&&n.desk.key; if(!k) return; _deskXpl(false);
-      setTimeout(()=>{ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); cv&&cv.flash&&cv.flash(k); }catch(_){} }, 60); };
-    /* a pick names the item in the bar and offers the way back to it - the reliable path, whatever the lattice redraws */
-    let last={ id:'', t:0 };
-    const sel=_dxEl.querySelector('#dxSel'), go=_dxEl.querySelector('#dxGo');
-    const pick=(n)=>{ const k=n&&n.desk&&n.desk.key; sel.textContent=n?('selected: '+n.label+(n.detail?' · '+n.detail:'')):''; go.hidden=!k; go.onclick=k?()=>open(n):null; };
-    /* no machine widgets: the lattice's readings (load, in flight) are an estate's, and on the desk they were noise */
-    _dxLv=VeraLattice.mount(host, { view:'3d', widgets:false, onOpen:open, onPick:(n)=>{ const now=Date.now(); if(n&&n.id===last.id&&now-last.t<450){ last={ id:'', t:0 }; open(n); return; } last={ id:n?n.id:'', t:now }; pick(n); } });
-    _dxLv.set(_dxData()); _dxLv.fit(true); setTimeout(()=>{ try{ _dxLv&&_dxLv.fit(true); }catch(_){} }, 700);
-    return true;
-  }
-  document.addEventListener('keydown', ev=>{ if(ev.key==='Escape'&&_dxEl){ ev.preventDefault(); _deskXpl(false); } });
   function explode(on){
     if(_EMBED.only==='menu'){ _lhmPost('explode',{ on }); return; }
-    if(_dxEl||(_deskXplWanted()&&on!==false)){ _deskXpl(on); return (on==null)?!!_dxEl:!!on; }   /* on the desk: its layers, lifted */
     on=(on==null)?!_xpl.on:!!on; _xpl.on=on;
     if(!on&&_xpl.doc){ _xpl.doc=null; try{ _xplDocChip(); }catch(_){} }   // a structure shown in the scene goes with it
     // the scene has the canvas and the context graph built in (the Canvas board): the columns fold away while it is
@@ -19547,7 +19495,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     return on;
   }
   // the 3D → 2D close: the scene flattens, then the transcript is back
-  function _xplToggle(){ if(_dxEl){ _deskXpl(false); return; } if(_xpl.on) _xplClose(); else explode(true); }
+  function _xplToggle(){ if(_xpl.on) _xplClose(); else explode(true); }
   function _xplClose(){ if(!_xpl.on) return; if(_xplEl&&typeof _xplEl.flatten==='function'){ _xplEl.flatten(()=>explode(false)); } else explode(false); }
   function explodeMode(m){ if(!/^(cards|front|iso)$/.test(m)) return; if(_EMBED.only==='menu'){ _lhmPost('explodeMode',{ m }); return; } _xpl.mode=m; document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===m)); if(!_xpl.on) explode(true); else if(_xplEl&&typeof _xplEl.mode==='function') _xplEl.mode(m); }
   function _xplMount(){
