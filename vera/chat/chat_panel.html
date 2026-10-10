@@ -8530,7 +8530,11 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      With the canvas on the Desk alignment and "Graph: behind the desk" chosen, the grown graph is drawn in the canvas's
      back layer (its `back` slot) instead of the grown menu: the cards sit over it and the empty desk between them
      reaches the graph. Everything else about the graph — its feed, its frames, its picks — is the same element. */
-  function _deskBehind(){ return _cvCfg('cfgCvBack')==='behind' && _cvCfg('cfgCvAlign')==='desk' && _pages.has('canvas') && !!document.querySelector('#canvasColumnBody vera-canvas'); }
+  /* never in the menu instance (owner, 2026-10-10: "i press the button and the menu expands but its empty"): the menu
+     shares the chat's open pages, so it had a hidden canvas of its own - with "behind the desk" chosen it widened its
+     slot, then drew the graph into that hidden canvas's back layer, 0 x 0, and the grown menu stayed empty. The desk
+     is the chat's; the menu always draws the graph it grows to. */
+  function _deskBehind(){ if(_EMBED.only==='menu') return false; return _cvCfg('cfgCvBack')==='behind' && _cvCfg('cfgCvAlign')==='desk' && _pages.has('canvas') && !!document.querySelector('#canvasColumnBody vera-canvas'); }
   function _deskBackHost(){ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv) return null;
     let b=cv.querySelector(':scope > #deskBack'); if(!b){ b=document.createElement('div'); b.id='deskBack'; b.slot='back'; cv.appendChild(b); } return b; }
   function _ctxBackSync(){
