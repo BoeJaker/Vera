@@ -137,6 +137,22 @@ async def test_outage_is_compared_without_hidden_retry(tmp_path):
     assert provider.calls == 2
 
 
+@pytest.mark.asyncio
+async def test_provider_outage_rehearsal_fails_closed_and_restores_exactly(tmp_path):
+    session, binding, provider, value = prepared(tmp_path)
+    evidence = await session.rehearse_provider_outage(
+        binding, request(value), provider=provider, health=health(value),
+        source_commit=COMMIT, observed_at_ms=160)
+
+    assert evidence.passed
+    assert provider.calls == 0
+    restored = session.providers.get(binding.route.provider_id)
+    assert restored is not None
+    assert restored.revision == binding.route.provider_revision
+    assert restored.health == health(value)
+    assert session.routes.current("canary") == binding.route
+
+
 def test_rollback_removes_exact_route_and_alias_and_is_evidence(tmp_path):
     session, binding, _, _ = prepared(tmp_path)
     evidence = session.rollback(
