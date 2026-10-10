@@ -2713,7 +2713,8 @@
         age: x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null })), desk);
       const locks = this._lockGet();
       const lockOf = (key) => { const l = locks[key]; return l && isFinite(l.fx) && isFinite(l.fy) && l.w > 0 && l.h > 0 ? l : null; };
-      const firm = (x) => (this._rz && this._rz.el === x.c ? 4 : 0) + (lockOf(x.c.dataset.key || '') ? 2 : 0) + (userAt(x.c.dataset.key || '') ? 1 : 0);
+      const sized = (k) => !!(up[k] && up[k].w > 0 && up[k].h > 0);
+      const firm = (x) => (this._rz && this._rz.el === x.c ? 8 : 0) + (lockOf(x.c.dataset.key || '') ? 4 : 0) + (sized(x.c.dataset.key || '') ? 2 : 0) + (userAt(x.c.dataset.key || '') ? 1 : 0);
       ranked.sort((a, b) => firm(b) - firm(a));   /* the card being sized, then locked, then placed by hand: the others go round them */
       const plan = ranked.map((x) => {
         const c = x.c, key = c.dataset.key || String(x.i);
@@ -2721,8 +2722,11 @@
         if (this._rz && this._rz.el === c) { const r = this._rz, rw = Math.min(W - 16, r.w), rh = Math.min(H - 8, r.h);
           return { c, id: key, so: {}, fixed: true, sizing: true, x: r.l0 + rw / 2, y: r.t0 + rh / 2, w: rw, h: rh }; }
         const lk = lockOf(key); c.classList.toggle('desk-locked', !!lk);
-        if (lk) { const lw = Math.min(W - 16, lk.w), lh = Math.min(H - 8, lk.h);
-          return { c, id: key, so: {}, fixed: true, lock: lk, x: Math.max(lw / 2, Math.min(W - lw / 2, lk.fx * W)), y: Math.max(lh / 2, Math.min(H - lh / 2, lk.fy * H)), w: lw, h: lh }; }
+        /* locked, or sized by the person (its rectangle kept with its place): fixed at exactly that, the others go round */
+        const us = !lk && up[key] && up[key].w > 0 && up[key].h > 0 && isFinite(up[key].fx) && isFinite(up[key].fy) ? up[key] : null;
+        const fx = lk || us;
+        if (fx) { const lw = Math.min(W - 16, fx.w), lh = Math.min(H - 8, fx.h); if (us) c.classList.add('desk-placed');
+          return { c, id: key, so: {}, fixed: true, lock: fx, x: Math.max(lw / 2, Math.min(W - lw / 2, fx.fx * W)), y: Math.max(lh / 2, Math.min(H - lh / 2, fx.fy * H)), w: lw, h: lh }; }
         const p = userAt(key) || pos[key] || [W - 90, H - 30];
         c.classList.toggle('desk-placed', !!userAt(key));
         /* the person's size: the drag in progress, else what the canvas remembers for the item (this._pw / this._px) -
@@ -2734,13 +2738,15 @@
         const user = pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null;
         const so = { size: user, pinned: !!user && c.classList.contains('pinned'), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
-        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h) };
+        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h), face0: po.size.face };
       });
       D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h) }; }, { W: W, H: H });
       const out = [];
       plan.forEach((it) => {
         const c = it.c, key = it.id, s = it.lock ? { w: it.w, h: it.h, face: it.lock.face || 'card', nd: 0.5 }
-          : it.sizing ? { w: it.w, h: it.h, face: c.dataset.deskFace || 'max', nd: 0 } : D.sizeAt(R, it.x, it.y, it.so, desk);
+          : it.sizing ? { w: it.w, h: it.h, face: c.dataset.deskFace || 'max', nd: 0 }
+          /* moved where only its present size fits: it keeps that size and its face there, or it would grow over its neighbours */
+          : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: it.face0 || 'chip' }) : D.sizeAt(R, it.x, it.y, it.so, desk);
         const w = Math.min(W - 16, s.w), h = Math.min(H - 8, s.h);
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
         c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
@@ -3435,8 +3441,10 @@
         const cx = Math.max(10, Math.min(g.W - 10, d.cx0 + dx)), cy = Math.max(10, Math.min(g.H - 10, d.cy0 + dy));
         const pw = this._pw[d.key] || parseInt(d.el.dataset.pw || '0', 10) || 0, ph = this._px[d.key] || 0;
         const so = { size: pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null, pinned: pw > 0 && d.el.classList.contains('pinned') };
-        const s = D.sizeAt(g.R, cx, cy, so, g.desk), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
-        d.cx = cx; d.cy = cy;
+        /* a card sized by the person keeps its size as it is carried; any other is sized by where it is */
+        const kept = this._deskPosGet()[d.key]; const own = kept && kept.w > 0 && kept.h > 0 ? kept : null;
+        const s = own ? { w: own.w, h: own.h, face: own.face || 'max', t: 1 } : D.sizeAt(g.R, cx, cy, so, g.desk), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
+        d.cx = cx; d.cy = cy; d.own = own;
         /* the face changes with a margin: a card held near a boundary (chip | card | full) flipped its contents back and
            forth as the hand trembled - the flicker while moving (owner, 2026-10-08). The size still follows smoothly. */
         const TH = { chip: 0.25, card: 0.6 }, M = 0.05, cur = d.el.dataset.deskFace || s.face;
@@ -3452,7 +3460,8 @@
       doc.addEventListener('mouseup', () => { const d = this._dg; if (!d) return; this._dg = null;
         if (!d.moved) return;
         this._dgEnd = Date.now(); d.el.classList.remove('desk-dragging');
-        const g = this._deskGeo; if (g && d.cx != null) this._deskPosSet(d.key, { fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) });
+        const g = this._deskGeo; if (g && d.cx != null) this._deskPosSet(d.key, Object.assign({ fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) },
+          d.own ? { w: d.own.w, h: d.own.h, face: d.own.face } : {}));
         this._placeNow(); });
       doc.addEventListener('mousemove', (ev) => { const r = this._rz; if (!r) return;
         const h = Math.max(40, r.h0 + (ev.clientY - r.y0) / (r.Z || 1)); r.h = h; r.el.style.height = h + 'px';
@@ -3472,7 +3481,12 @@
         const g = this._deskGeo;
         if (g && this.deskAlign()) {
           const cx = (parseFloat(r.el.style.left) || 0) + r.w / 2, cy = (parseFloat(r.el.style.top) || 0) + r.h / 2;
-          this._deskPosSet(key, { fx: +(Math.max(0, Math.min(g.W, cx)) / g.W).toFixed(4), fy: +(Math.max(0, Math.min(g.H, cy)) / g.H).toFixed(4) });
+          /* ...AT THE SIZE YOU GAVE IT (owner, 2026-10-10: "i adjust the size of a graph element and another element can
+             fall inside it from the right edge"): the placer re-sized a sized card by its distance from the chat - grown
+             towards the border it came back smaller, or a chip, and the rest were placed for a size it did not have. Its
+             rectangle is the person's now: kept exactly, and everything else goes round it. */
+          const face = (r.el.dataset.deskFace && r.el.dataset.deskFace !== 'chip' && r.el.dataset.deskFace !== 'icon') ? r.el.dataset.deskFace : 'max';
+          this._deskPosSet(key, { fx: +(Math.max(0, Math.min(g.W, cx)) / g.W).toFixed(4), fy: +(Math.max(0, Math.min(g.H, cy)) / g.H).toFixed(4), w: Math.round(r.w), h: Math.round(r.h), face });
         }
         /* ...and onto the card NOW: the placer reads the card's data-pw, which only a redraw rewrites - a drag that kept
            the size class placed the card at the width of the drag before and it snapped back (owner, 2026-10-04: "i

@@ -198,4 +198,18 @@ t('a widget that says where it sits keeps that home: only the covered one moves'
   assert.ok(!cr.find((x) => x.id === 't0').covered);
 });
 
+t('a chip that only fits at its own size is moved clear at that size, not left inside a card the person grew', () => {
+  /* a card grown out to the right border (fixed: the person's rectangle) and two border chips it now covers; the size a
+     spot would give a chip near the chat is a full card, for which no room is left anywhere */
+  const R = { l: -440, t: 0, r: 0, b: 700 }, d = { W: 900, H: 700 };
+  const big = { id: 'grown', x: 380, y: 300, w: 760, h: 520, fixed: true };
+  const chips = [{ id: 'c1', x: 820, y: 120, w: 150, h: 34 }, { id: 'c2', x: 820, y: 170, w: 150, h: 34 }];
+  const res = D.separate([big].concat(chips), R, () => ({ w: 700, h: 500 }), d);
+  const hit = (a, b) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
+  chips.forEach((c) => { const o = res.find((x) => x.id === c.id); assert.ok(!hit(o, big), c.id + ' still inside the grown card');
+    assert.deepStrictEqual([o.w, o.h, !!o.keepSize], [150, 34, true], c.id + ' kept its size'); });
+  assert.ok(!hit(res.find((x) => x.id === 'c1'), res.find((x) => x.id === 'c2')), 'the chips clear of each other');
+  assert.deepStrictEqual([big.x, big.y, big.w, big.h], [380, 300, 760, 520], 'the grown card did not move');
+});
+
 console.log(n + ' passed');

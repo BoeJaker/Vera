@@ -277,7 +277,20 @@
           if (clear(t)) { best = t; break; }
         }
       }
-      if (best) { b.x = best.x; b.y = best.y; b.w = best.w; b.h = best.h; }
+      /* NONE CLEAR AT THE SIZE ITS PLACE WOULD GIVE IT: searched again at the size it HAS. A chip pushed off the border by a
+         card the person grew out to it was re-sized at every spot tried - near the chat it would be a full card, and no
+         such room was left - so it stayed where it was, inside the grown card's right edge (owner, 2026-10-10: "another
+         element can fall inside it from the right edge"). As it is, it fits somewhere clear; it keeps that size there. */
+      if (!best && !b.fixed) {
+        for (var rad2 = 24; rad2 <= Math.max(d.W, d.H) && !best; rad2 += 24) {
+          var n2 = Math.max(8, Math.round(rad2 / 12));
+          for (var k2 = 0; k2 < n2; k2++) {
+            var ang2 = (k2 / n2) * 2 * Math.PI, t2 = { x: b.x + rad2 * Math.cos(ang2), y: b.y + rad2 * Math.sin(ang2), w: b.w, h: b.h };
+            if (clear(t2)) { best = t2; best.keep = true; break; }
+          }
+        }
+      }
+      if (best) { b.x = best.x; b.y = best.y; b.w = best.w; b.h = best.h; if (best.keep) b.keepSize = true; }
       placed.push(b);
     });
     return items;
