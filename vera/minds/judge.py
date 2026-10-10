@@ -29,6 +29,10 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import judge_core as JC
 except Exception:                        # worktree / app-free import
     from vera.minds import judge_core as JC   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import export_core as EX
+except Exception:                        # worktree / app-free import
+    from vera.minds import export_core as EX   # type: ignore
 
 log = logging.getLogger("vera.minds.judge")
 JOB_TYPE = "idle_decide"
@@ -145,12 +149,17 @@ async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: 
     "decide.shadow.report", http_method="GET", http_path="/decide/shadow/report", http_tags=["minds"],
     memory="off", silent=True,
     description="How a shadow judge compares with the live decisions it shadows (four-minds FM-2): agreement "
-                "rate and the AUC of its probability against the live answer, per implementation. Input: "
-                "question_id (default loop.step_verify), days (int, default 30). Output: {question_id, "
-                "by_implementation: {impl: {n, agreement, auc (binary questions), live_positive, live_negative, "
-                "vs_outcomes: {n, accuracy, ece, at_confidence: {threshold: {coverage, precision}}} (binary questions, "
-                "against the true label from the live decision's strong/medium outcome)}}}. "
-                "With question_id 'all': one entry per judged question.",
+                "rate and the AUC of its probability against the live answer, per implementation, and both "
+                "against gold. Input: question_id (default loop.step_verify), days (int, default 30). Output: "
+                "{question_id, live_vs_outcomes: {n, accuracy} (the live model against gold - the bar a student "
+                "has to clear), by_implementation: {impl: {n, agreement, auc (binary questions), live_positive, "
+                "live_negative, vs_outcomes: {n, accuracy, ece, at_confidence: {threshold: {coverage, "
+                "precision}}}}}}. Gold is decide.export's: the strongest strong/medium outcome that settles the "
+                "answer (a named right answer, e.g. a human label; correct = the live answer; wrong = the other "
+                "label of a two-label question). A choice question's 'wrong' verdict gives no gold but rules the "
+                "live answer out: it counts as a live miss, and vs_outcomes.avoids_known_wrong {n, rate} says how "
+                "often the shadow chose something else. With question_id 'all': {questions: {question: "
+                "by_implementation}, live: {question: live_vs_outcomes}}.",
 )
 async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: int = 30,
                                    trace_id=None) -> Dict[str, Any]:
@@ -158,35 +167,47 @@ async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: 
     if pool is None:
         return {"error": "postgres unavailable"}
     if question_id == "all":
-        return {"questions": {qid: (await cap_decide_shadow_report(question_id=qid, days=days)).get("by_implementation", {})
-                              for qid in JC.QUESTIONS}}
+        each = {qid: await cap_decide_shadow_report(question_id=qid, days=days) for qid in JC.QUESTIONS}
+        return {"questions": {qid: r.get("by_implementation", {}) for qid, r in each.items()},
+                "live": {qid: r.get("live_vs_outcomes", {"n": 0}) for qid, r in each.items()}}
     positive = JC.positive_label(question_id)
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """SELECT x.row->>'implementation' AS impl, x.row->'answer' AS sa, x.p AS sp, l.row->'answer' AS la,
-                      (SELECT o.label FROM decision_outcomes o WHERE o.decision_id = l.decision_id
-                         AND o.strength IN ('strong', 'medium') ORDER BY (o.strength = 'strong') DESC, o.ts DESC
-                         LIMIT 1) AS ol
+            """SELECT x.row->>'implementation' AS impl, x.row->'answer' AS sa, x.p AS sp, l.decision_id AS lid,
+                      l.row AS live,
+                      (SELECT json_agg(o.row) FROM decision_outcomes o WHERE o.decision_id = l.decision_id) AS outs
                FROM decision_ledger x JOIN decision_ledger l ON l.decision_id = x.row->'detail'->>'for'
                WHERE x.mode = 'shadow' AND x.question_id = $1 AND x.ts >= NOW() - make_interval(days => $2)""",
             question_id, max(1, min(365, int(days or 30))))
     by: Dict[str, List] = {}
     truth: Dict[str, List] = {}
+    lives: Dict[str, Any] = {}
+    known_wrong: Dict[str, List] = {}
     for r in rows:
-        la = json.loads(r["la"]) if isinstance(r["la"], str) else r["la"]
+        live = (json.loads(r["live"]) if isinstance(r["live"], str) else r["live"]) or {}
+        outs = (json.loads(r["outs"]) if isinstance(r["outs"], str) else r["outs"]) or []
+        outs = [json.loads(o) if isinstance(o, str) else o for o in outs]
         sa = json.loads(r["sa"]) if isinstance(r["sa"], str) else r["sa"]
-        ol = json.loads(r["ol"]) if isinstance(r["ol"], str) else r["ol"]
+        la = live.get("answer")
         impl = r["impl"] or "?"
         by.setdefault(impl, []).append((la, sa, r["sp"]))
-        y = JC.true_label(question_id, la, ol)
-        if y is not None:
-            truth.setdefault(impl, []).append((r["sp"], y))
+        s = EX.settle(live, outs, "medium") or {}
+        gold, not_label = s.get("label"), s.get("not_label")
+        lives[r["lid"]] = (la, gold, not_label)
+        if gold is not None:
+            truth.setdefault(impl, []).append((sa, r["sp"], gold))
+        elif not_label is not None:
+            known_wrong.setdefault(impl, []).append((sa, not_label))
     out = {}
     for impl, pairs in by.items():
         out[impl] = JC.agreement(pairs, positive)
         if positive is not None:
-            out[impl]["vs_outcomes"] = JC.calibration(truth.get(impl, []), positive)
-    return {"question_id": question_id, "by_implementation": out}
+            out[impl]["vs_outcomes"] = JC.calibration([(p, y) for _, p, y in truth.get(impl, [])], positive)
+        else:
+            out[impl]["vs_outcomes"] = JC.choice_calibration(truth.get(impl, []))
+            out[impl]["vs_outcomes"]["avoids_known_wrong"] = JC.avoids_known_wrong(known_wrong.get(impl, []))
+    return {"question_id": question_id, "live_vs_outcomes": JC.live_accuracy(lives.values()),
+            "by_implementation": out}
 
 
 _DDL_VEC = ("""CREATE TABLE IF NOT EXISTS decision_vectors (

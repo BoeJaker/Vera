@@ -235,6 +235,57 @@ def calibration(rows: List[Tuple[Optional[float], str]], positive: str, bins: in
     return {"n": n, "accuracy": round(acc, 3), "ece": round(ece, 3), "at_confidence": at}
 
 
+def choice_calibration(rows: List[Tuple[Any, Optional[float], Any]], bins: int = 10,
+                       thresholds: Iterable[float] = (0.5, 0.7, 0.8, 0.9)) -> Dict[str, Any]:
+    """rows: (shadow answer, shadow p of that answer, gold). The same shape as `calibration` for a question with
+    more than two labels: accuracy, expected calibration error (confidence p against being right), and precision /
+    coverage when the shadow answers only at p >= each threshold."""
+    rows = [(a, float(p), g) for a, p, g in rows if p is not None and g is not None]
+    n = len(rows)
+    if not n:
+        return {"n": 0}
+    acc = sum(1 for a, _, g in rows if a == g) / n
+    ece = 0.0
+    for b in range(bins):
+        lo, hi = b / bins, (b + 1) / bins
+        inb = [(a, p, g) for a, p, g in rows if lo <= p < hi or (b == bins - 1 and p == 1.0)]
+        if inb:
+            conf = sum(p for _, p, _ in inb) / len(inb)
+            right = sum(1 for a, _, g in inb if a == g) / len(inb)
+            ece += len(inb) / n * abs(conf - right)
+    at = {}
+    for t in thresholds:
+        sure = [(a, g) for a, p, g in rows if p >= t]
+        at[str(t)] = {"coverage": round(len(sure) / n, 3),
+                      "precision": round(sum(1 for a, g in sure if a == g) / len(sure), 3) if sure else None}
+    return {"n": n, "accuracy": round(acc, 3), "ece": round(ece, 3), "at_confidence": at}
+
+
+def live_accuracy(rows: Iterable[Tuple[Any, ...]]) -> Dict[str, Any]:
+    """rows: (live answer, gold[, not_label]), one per live decision: the bar a student has to clear. A decision
+    known only to be wrong (not_label) counts as a live miss - leaving those out would score the live model only
+    where it was right."""
+    right = n = 0
+    for row in rows:
+        a, g, nl = (tuple(row) + (None,))[:3]
+        if g is not None:
+            n += 1
+            right += a == g
+        elif nl is not None:
+            n += 1
+    if not n:
+        return {"n": 0}
+    return {"n": n, "accuracy": round(right / n, 3)}
+
+
+def avoids_known_wrong(rows: Iterable[Tuple[Any, Any]]) -> Dict[str, Any]:
+    """rows: (shadow answer, the live answer known to be wrong): how often the shadow chose something else."""
+    rows = [(a, nl) for a, nl in rows if nl is not None]
+    if not rows:
+        return {"n": 0}
+    return {"n": len(rows), "rate": round(sum(1 for a, nl in rows if a != nl) / len(rows), 3)}
+
+
 KNN_IMPL = "knn:minilm"
 KNN_K = 7
 KNN_MIN_NEIGHBOURS = 5

@@ -56,12 +56,13 @@ def _write(snap: Dict[str, Any], body: str) -> str:
                 "{id, type, instructions, options}, state (redacted), gold, gold_source, gold_strength, weight, "
                 "live_answer, origin, group, split}. Gold comes from the strongest outcome that settles the "
                 "answer (a named right answer, e.g. a human label; 'correct' = the live answer; 'wrong' = the "
-                "other label of a two-label question). Whole goals are held out (census templates rerun the "
+                "other label of a two-label question; on a question with more labels, 'wrong' only rules the live answer "
+                "out and is kept as not_label). Whole goals are held out (census templates rerun the "
                 "same goal), so no run is split across train and test. Input: question_id (default 'all'), "
                 "days (int, default 90), origin (all | non_census | census, default all), min_strength "
                 "(weak | medium | strong, default medium), include_unlabelled (bool, default false), holdout "
                 "(0-1, default 0.2). Output: {ok, snapshot_id, path, record_count, counts: {question: "
-                "{examples, gold, train, test, by_source, by_origin, labels}}}. Rows are never returned.",
+                "{examples, gold, known_wrong, train, test, by_source, by_origin, labels}}}. Rows are never returned.",
 )
 async def cap_decide_export(question_id: str = "all", days: int = 90, origin: str = "all",
                             min_strength: str = "medium", include_unlabelled: bool = False,
@@ -100,7 +101,7 @@ async def cap_decide_export(question_id: str = "all", days: int = 90, origin: st
             continue
         e = EX.example(live, _json(r["state"]) or {}, by_decision.get(r["decision_id"], []),
                        goal=goals.get(live.get("run_id"), ""), min_strength=min_strength, holdout=holdout)
-        if e["gold"] is not None or include_unlabelled:
+        if e["gold"] is not None or e["not_label"] is not None or include_unlabelled:
             examples.append(e)
     body = EX.to_jsonl(examples)
     filters = {"question_id": question_id or "all", "days": days, "origin": origin, "min_strength": min_strength,
