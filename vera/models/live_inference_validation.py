@@ -217,24 +217,15 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
             not 0 < cancellation_delay_seconds <= 5):
         raise ValueError("cancellation delay must be within 5 seconds")
     expected_sha256 = hashlib.sha256(expected_output.encode("utf-8")).hexdigest()
-    package = ModelPackage(
-        _identifier(model, "ollama-model"), artifact_sha256[:12], "transformer", "gguf",
-        (ModelArtifact("registry_manifest", f"ollama://{instance_id}/{model}",
-                       artifact_sha256, artifact_size),),
-        ModelCompatibility(("generate",), "prompt/v1", "text/v1"),
-        framework="ollama", source_revision=artifact_sha256,
-    )
-    provider = LegacyOllamaInferenceProvider(
-        package, provider_id=f"ollama:{_identifier(instance_id, 'node')}",
-        model=model, instance_id=instance_id, runner=runner)
+    package, provider = ollama_validation_binding(
+        model=model, instance_id=instance_id,
+        artifact_sha256=artifact_sha256, artifact_size=artifact_size,
+        runner=runner)
     cases = []
     for stream in (False, True):
-        request = InferenceRequest(
-            package.package_id, "generate", "prompt/v1", "text/v1",
-            (InferenceValue.from_json("prompt", prompt),),
-            parameters=(("json_mode", content_mode == "json_semantic"),
-                        ("max_tokens", 32), ("temperature", 0), ("think", False)),
-            stream=stream, max_output_bytes=16_384)
+        request = ollama_validation_request(
+            package, prompt=prompt, stream=stream,
+            content_mode=content_mode)
         started = time.monotonic()
         try:
             result = await asyncio.wait_for(
@@ -255,12 +246,8 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         cases.append(evidence)
     cancellation = None
     if validate_cancellation:
-        request = InferenceRequest(
-            package.package_id, "generate", "prompt/v1", "text/v1",
-            (InferenceValue.from_json("prompt", prompt),),
-            parameters=(("json_mode", content_mode == "json_semantic"),
-                        ("max_tokens", 32), ("temperature", 0), ("think", False)),
-            stream=True, max_output_bytes=16_384)
+        request = ollama_validation_request(
+            package, prompt=prompt, stream=True, content_mode=content_mode)
         started = time.monotonic()
         task = asyncio.create_task(consume_inference(provider, request))
         await asyncio.sleep(cancellation_delay_seconds)
@@ -308,6 +295,35 @@ async def validate_ollama_provider(*, model: str, instance_id: str,
         report["cancellation"] = cancellation
         report["passed"] = bool(report["passed"] and cancellation["passed"])
     return report
+
+
+def ollama_validation_binding(*, model: str, instance_id: str,
+                              artifact_sha256: str, artifact_size: int,
+                              runner: Runner,
+                              ) -> tuple[ModelPackage, LegacyOllamaInferenceProvider]:
+    """Build the exact package/provider pair used by live validation."""
+    package = ModelPackage(
+        _identifier(model, "ollama-model"), artifact_sha256[:12], "transformer", "gguf",
+        (ModelArtifact("registry_manifest", f"ollama://{instance_id}/{model}",
+                       artifact_sha256, artifact_size),),
+        ModelCompatibility(("generate",), "prompt/v1", "text/v1"),
+        framework="ollama", source_revision=artifact_sha256,
+    )
+    provider = LegacyOllamaInferenceProvider(
+        package, provider_id=f"ollama:{_identifier(instance_id, 'node')}",
+        model=model, instance_id=instance_id, runner=runner)
+    return package, provider
+
+
+def ollama_validation_request(package: ModelPackage, *, prompt: str,
+                              stream: bool, content_mode: str) -> InferenceRequest:
+    """Build the exact request shape exercised by the live validator."""
+    return InferenceRequest(
+        package.package_id, "generate", "prompt/v1", "text/v1",
+        (InferenceValue.from_json("prompt", prompt),),
+        parameters=(("json_mode", content_mode == "json_semantic"),
+                    ("max_tokens", 32), ("temperature", 0), ("think", False)),
+        stream=stream, max_output_bytes=16_384)
 
 
 async def validate_openai_provider(*, model: str, instance_id: str,

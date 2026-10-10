@@ -34,6 +34,7 @@ from .inference_alias_route import (
 )
 from .inference_alias_runtime import execute_inference_alias_dispatch
 from .inference_contracts import (
+    InferenceContractConflict,
     InferenceProvider,
     InferenceRequest,
     InferenceTranscript,
@@ -336,6 +337,52 @@ class InferenceAliasCanarySession:
                 f"clone-alias-absent-{str(alias_absent).lower()}",
                 f"source-route-retained-{str(retained).lower()}",
             ), failure_codes=() if passed else ("rollback_rehearsal_failed",))
+
+    async def rehearse_provider_outage(
+        self, binding: InferenceAliasCanaryBinding,
+        request: InferenceRequest, *, provider: InferenceProvider,
+        health: InferenceProviderHealth, source_commit: str,
+        observed_at_ms: int,
+    ) -> InferenceAliasParityEvidence:
+        """Remove the exact provider and prove portable dispatch fails closed."""
+        descriptor = self.providers.get(binding.route.provider_id)
+        if descriptor is None or descriptor.revision != binding.route.provider_revision:
+            raise RuntimeError("route provider is not at the bound revision")
+        if provider.profile().provider_id != binding.route.provider_id \
+                or health != descriptor.health:
+            raise ValueError("outage restoration facts do not match the route")
+        calls_before = getattr(provider, "calls", None)
+        self.providers.remove(
+            binding.route.provider_id,
+            expected_revision=binding.route.provider_revision)
+        failed_closed = False
+        try:
+            try:
+                await execute_inference_alias_dispatch(
+                    binding.route.alias, request, enabled=True,
+                    retry_owner=binding.route.retry_owner,
+                    packages=self.packages, routes=self.routes,
+                    providers=self.providers, deployments=self.deployments,
+                    as_of_ms=observed_at_ms)
+            except (KeyError, InferenceContractConflict):
+                failed_closed = True
+        finally:
+            restored = self.providers.register(
+                provider, package_ids=descriptor.package_ids,
+                placements=descriptor.placements, health=health)
+        no_provider_call = calls_before is None \
+            or getattr(provider, "calls", None) == calls_before
+        restored_exactly = restored.revision == binding.route.provider_revision \
+            and restored.health == health
+        passed = failed_closed and no_provider_call and restored_exactly
+        return self.record_scenario(
+            binding, scenario="outage", source_commit=source_commit,
+            observed_at_ms=observed_at_ms, passed=passed,
+            evidence_refs=(
+                f"portable-failed-closed-{str(failed_closed).lower()}",
+                f"provider-not-called-{str(no_provider_call).lower()}",
+                f"provider-restored-{str(restored_exactly).lower()}",
+            ), failure_codes=() if passed else ("outage_rehearsal_failed",))
 
     def rollback(
         self, binding: InferenceAliasCanaryBinding, *, source_operation: str,
