@@ -266,3 +266,43 @@ def test_a_degraded_gather_does_not_replace_a_good_snapshot():
     assert not oc.keep_snapshot(bad, good, 30)                            # a busy moment does not wipe a good picture
     assert oc.keep_snapshot(bad, good, 600)                               # ... for long: the estate now beats the past
     assert oc.keep_snapshot(bad, bad, 1)
+
+
+def test_workers_memory_loops_and_clients_land_on_their_nodes():
+    src = _src()
+    src["obs.workers"] = {"w1": {"status": "busy", "host_id": "ssh-250", "host": "Ollama"}, "w2": {"status": "idle", "role": "host", "host": "LLM"}}
+    src["obs.events"] = [
+        {"type": "worker.done", "worker": "w1", "task": "k1", "ts": "2026-09-21T23:29:58Z"},
+        {"type": "agent_loop_v5.tool_done", "stream_id": "st1", "tool": "exec.python.run", "ok": False, "elapsed_ms": 12, "ts": "2026-09-21T23:29:57Z"},
+        {"type": "memory.stored", "record_type": "cap_call", "backends": {"postgres": True, "neo4j": True, "chroma": False}, "ts": "2026-09-21T23:29:56Z"},
+        {"type": "cap.call", "name": "memory.search", "trace_id": "c1", "via": "claude", "group": "memory", "ts": "2026-09-21T23:29:55Z"},
+        {"type": "agent_loop_v5.cycle_planning", "stream_id": "st1", "session_id": "sess-abcdef123456", "cycle": 4, "ts": "2026-09-21T23:29:54Z"},
+        {"type": "worker.start", "worker": "w1", "capability": "memory.stats", "task": "k1", "ts": "2026-09-21T23:29:56Z"},
+        {"type": "cap.call", "name": "canvas.get", "trace_id": "c2", "session_id": "chat-1791", "group": "canvas", "ts": "2026-09-21T23:29:50Z"},
+        {"type": "cap.ok", "name": "canvas.get", "trace_id": "c2", "elapsed_ms": 5, "ts": "2026-09-21T23:29:51Z"},
+    ]
+    s = oc.build(src, own_ips=["192.168.0.138"], now=NOW)
+    ids = {n["id"]: n for n in s["nodes"]}
+    # a worker's job counts on the workers and on the machine the worker runs on (its SSH host), with how long it took
+    assert ids["guest:250"]["activity"]["top"] == [["memory.stats", 1]] and ids["guest:250"]["activity"]["ms"] == 2000.0
+    assert ids["core:workers"]["activity"]["calls"] == 1
+    # a memory write counts on the fabric and on each store it reached
+    assert ids["svc:postgres"]["activity"]["top"] == [["write cap_call", 1]] and "activity" not in ids["svc:chroma"]
+    # a running agent loop stands on the work plane: its cycle, its tool, the tool that failed
+    loop = ids["loop:sess-abcdef1"]
+    assert loop["plane"] == "work" and loop["status"] == "run" and "cycle 4" in loop["detail"] and "1 failed" in loop["detail"]
+    assert loop["activity"]["errors"] == 1 and ("loop:sess-abcdef1", "core:router", "req") in {(l["a"], l["b"], l["kind"]) for l in s["links"]}
+    # who called: an agent through `via` (a new client node when the estate does not list it), the chat page by its session
+    assert ids["client:via:claude"]["activity"]["calls"] == 1 and ids["client:chat"]["activity"]["calls"] == 1
+    assert {"kind": "cap call", "a": "client:via:claude", "b": "core:fabric", "age": 5.0, "label": "memory.search"} in s["inflight"]
+    assert ids["core:cap-bus"]["activity"]["calls"] == 2
+
+
+def test_live_records_pair_answers_across_batches():
+    s = oc.build(_src(), own_ips=["192.168.0.138"], now=NOW)
+    ctx = oc.context_from_snapshot(s)
+    a = oc.live_records([{"type": "cap.call", "name": "docker.ps", "trace_id": "t9", "group": "docker", "args_preview": "host_id=local", "ts": "x"}], ctx)
+    assert a[0]["nodes"] == ["docker:local", "core:cap-bus"] and a[0]["phase"] == "call" and a[0]["count"]
+    b = oc.live_records([{"type": "cap.error", "name": "docker.ps", "trace_id": "t9", "elapsed_ms": 9, "ts": "y"}], ctx)
+    assert b[0]["nodes"] == ["docker:local", "core:cap-bus"] and b[0]["phase"] == "fail" and b[0]["failed"] and not b[0]["count"]
+    assert oc.live_records([{"type": "heartbeat", "caps": 1}], ctx) == []

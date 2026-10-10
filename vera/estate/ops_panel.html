@@ -112,6 +112,12 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .plot{flex:1 1 auto;min-height:420px;position:relative;overflow:hidden;margin:0 var(--pad) var(--pad);border-radius:var(--r-sm);background:var(--bg)}
 .pzv{position:absolute;left:0;top:0;transform-origin:0 0;cursor:grab;transition:transform .38s cubic-bezier(.22,.68,.18,1);--ui:1}
 .pzv.dragging{transition:none!important;cursor:grabbing}.pzv.rotating{transition:none!important;cursor:move}
+.pzv.moving{transition:none!important;will-change:transform}
+.blip::after,.blip2::after{content:'';position:absolute;inset:-5px;border-radius:inherit;box-shadow:0 0 0 2px var(--ac);opacity:0;animation:blip 1.4s ease-out;pointer-events:none}
+.blip2::after{animation-name:blip2}
+@keyframes blip{0%{opacity:.95}100%{opacity:0;transform:scale(1.3)}}
+@keyframes blip2{0%{opacity:.95}100%{opacity:0;transform:scale(1.3)}}
+.pzv.moving .flow i,.pzv.moving .owf-alarm{animation-play-state:paused}
 .pzc{position:absolute;right:10px;top:8px;z-index:44;display:flex;align-items:center;gap:3px;padding:4px 6px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--s1) 90%,transparent);box-shadow:0 0 0 1px var(--bd);opacity:.45;transition:opacity .16s ease}
 .pzc:hover{opacity:1}
 .pzc button{font-family:var(--f-mono);font-size:11px;line-height:1;color:var(--t2);padding:4px 7px;border-radius:var(--r-sm)}
@@ -193,7 +199,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .bus{position:absolute;width:calc(7px * var(--ui,1));height:calc(7px * var(--ui,1));border-radius:2px;transform:translate(-50%,-50%) rotate(45deg);background:var(--bg);box-shadow:0 0 0 calc(1.5px * var(--ui,1)) var(--pc);z-index:4;pointer-events:none}
 .wedge{position:absolute;height:calc(1.5px * var(--ui,1));transform-origin:0 50%;pointer-events:none;z-index:1;opacity:.9;background:repeating-linear-gradient(90deg,var(--pc) 0 4px,transparent 4px 7px)}
 .pin.dim,.stem.dim{display:none}
-.owf-svg{position:absolute;left:0;top:0;overflow:visible;z-index:7;pointer-events:none}
+.owf-svg{position:absolute;left:0;top:0;overflow:visible;z-index:7;pointer-events:none;--ui:1;--uic:1}
 .owf-svg polygon.t{stroke:rgba(255,255,255,.1);stroke-width:1}
 .owf-n{position:absolute;height:2.5px;transform-origin:0 50%;background:var(--t1);border-radius:2px;z-index:8;box-shadow:0 0 6px 1px color-mix(in srgb,var(--ac3) 60%,transparent)}
 .owf-l{position:absolute;transform:translate(-50%,0) scale(var(--ui,1));transform-origin:50% 0;font-family:var(--f-mono);font-size:9px;line-height:1.3;z-index:8;white-space:nowrap;pointer-events:none;padding:1px 5px;border-radius:3px;background:color-mix(in srgb,var(--bg) 82%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,currentColor 28%,transparent)}
@@ -336,6 +342,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 /* embedded in a graph tile (?embed=1): the controls, the plot and its cards; the rails behind the header's two buttons */
 .embtn{display:none}
 .embed .rt{height:100vh;min-height:0}
+html:root body .hd button{opacity:1!important}   /* the views, the layouts and the sizes are the page's working controls, not a bar's extras */
 .embed .hd{height:auto;min-height:38px;flex-wrap:wrap;row-gap:4px;padding:4px 8px}
 .embed .hd .wm,.embed .hd h1,.embed .axes,.embed .stage-hd{display:none}
 .embed .bd{padding:0 4px 4px;gap:6px}
@@ -447,7 +454,7 @@ const saveV = () => { try { localStorage.setItem(VKEY, JSON.stringify({ wv: 2, z
 const byId = () => { const m = {}; ((S.snap && S.snap.nodes) || []).forEach((n) => { m[n.id] = n; }); return m; };
 // the drawing engine (/ui/iso-lattice.js): the layout, the pipes, the iso widgets and the view; this page keeps its chrome and hands it hooks
 const LAT = window.VeraLattice.engine({ S, byId, PCOL, LCOL, KCOL, SC, wspec: (n) => wspec(n), lensCol: (n) => lensCol(n), lensDim: (n) => lensDim(n), lensTag: (n) => lensTag(n),
-  pill: (RT, AS, ID) => pill(RT, AS, ID), afterDraw: () => termScroll(), extraParts: (ID, pos, NSC, W, H) => [pickerHtml(ID, pos, NSC), cardHtml(ID, pos, W, H)] });
+  pill: (RT, AS, ID) => pill(RT, AS, ID), afterDraw: () => { termScroll(); blips(); }, onRest: () => { if (S.dirty){ S.dirty = false; render({ data: true }); } }, extraParts: (ID, pos, NSC, W, H) => [pickerHtml(ID, pos, NSC), cardHtml(ID, pos, W, H)] });
 const { ROWS, SLOTS, slotsFor, tempCol, tc, WKINDS, WNAME, wstep, UI_MIN, UI_MAX, uiScale, REGP, regYes, degOf, regOf, wdefaults, wcaption,
   layout, isoWidgets, polyOf, clampView, zoomAt, applyZoom, pipeCls, activeSet, routesFrom, fitView, keepCentre, keepPivot, vitHtml, regDots } = LAT;
 
@@ -458,28 +465,83 @@ function staleCheck(v){ if (!v || PAGE_VER.indexOf('__') === 0 || v === PAGE_VER
   try { sessionStorage.setItem('vera:ops:reloaded', v); } catch (_) { return; }
   location.reload(); }
 // ── the snapshot ──
-async function load(refresh){
-  if (S.busy || S.ext) return; S.busy = true;   // a host that hands the estate over keeps it
-  try {
-    const r = await fetch(BASE + '/ops/snapshot' + (refresh ? '?refresh=true' : ''), { cache: 'no-store' });
-    const j = await r.json(); const c = j && j.content !== undefined ? j.content : j;
-    if (!c || !Array.isArray(c.nodes)) throw new Error((c && c.error) || 'no snapshot');
-    // the same estate as last time draws nothing again (a redraw costs the view its scroll, a card its state, an input its focus)
-    const fp = c.nodes.map((n) => [n.id, n.status, Math.round(n.load || 0), n.inflight, n.errors, Math.round(n.temp || 0), n.detail, n.reg ? (n.reg.complete ? 'c' : 'i') + ((regOf(n) || {}).yes || 0) : ''].join('|')).join(';') + '#' + c.links.length + '#' + (c.inflight || []).length + '#' + (c.errors || []).length;
-    staleCheck(c.page_ver);
-    if (S.snap && fp === S.fp){ S.busy = false; if (c.refreshing && !S.soon){ S.soon = setTimeout(() => { S.soon = 0; load(false); }, 2500); } return; }
-    S.fp = fp; S.snap = c; S.err = '';
-    staleCheck(c.page_ver);
-    try { sessionStorage.setItem('vera:ops:last', JSON.stringify(c)); } catch (_) {}
-    // an answer served while a fresh one is being gathered: ask again shortly rather than at the next poll
-    if (c.refreshing && !S.soon){ S.soon = setTimeout(() => { S.soon = 0; load(false); }, 2500); }
-    if (S.sel && !byId()[S.sel]){ const q = String(S.sel).toLowerCase(); const hit = c.nodes.find((n) => n.label.toLowerCase() === q || n.ref === S.sel); S.sel = hit ? hit.id : null; }
-    if (!S.sel) S.sel = (c.nodes.find((n) => n.status === 'run') || c.nodes.find((n) => n.kind === 'ollama') || c.nodes[0] || {}).id || null;
-  } catch (e) { S.err = String(e && e.message || e); }
-  S.busy = false;
-  render();
+// one feed for every Live ops view in the browser - this page in its tab, the tiles that embed it, other tabs: the first
+// view to take the lock polls /ops/snapshot and holds /ops/live, and hands both to the others over a BroadcastChannel;
+// when it closes the next view takes over. A view that hears nothing for a while polls for itself.
+const POLL_MS = 10000;
+const FEED = (() => {
+  const subs = [], bc = (() => { try { return new BroadcastChannel('vera:ops:feed'); } catch (_) { return null; } })();
+  let leader = false, last = null, heard = 0, started = false;
+  const local = (m) => subs.forEach((f) => { try { f(m); } catch (e) { console.warn('ops feed', e); } });
+  const emit = (m) => { local(m); if (bc) try { bc.postMessage(m); } catch (_) {} };
+  async function poll(refresh){
+    try { const r = await fetch(BASE + '/ops/snapshot' + (refresh ? '?refresh=true' : ''), { cache: 'no-store' }); const j = await r.json(); const c = j && j.content !== undefined ? j.content : j;
+      if (!c || !Array.isArray(c.nodes)) throw new Error((c && c.error) || 'no snapshot');
+      last = c; heard = Date.now(); emit({ t: 'snap', c }); return c;
+    } catch (e) { local({ t: 'err', e: String(e && e.message || e) }); return null; } }
+  function lead(){ leader = true; poll(false); setInterval(() => poll(false), POLL_MS);
+    try { const es = new EventSource(BASE + '/ops/live'); es.onmessage = (e) => { let recs = null; try { recs = JSON.parse(e.data); } catch (_) { return; } heard = Math.max(heard, Date.now() - POLL_MS); emit({ t: 'live', recs }); }; } catch (_) {} }
+  function start(){ if (started) return; started = true;
+    if (bc) bc.onmessage = (e) => { const m = e.data || {}; if (m.t === 'want'){ if (leader && last) bc.postMessage({ t: 'snap', c: last }); return; } if (m.t === 'snap') heard = Date.now(); local(m); };
+    if (navigator.locks && bc){ navigator.locks.request('vera:ops:feed', () => new Promise(() => lead())); bc.postMessage({ t: 'want' }); }
+    else lead();
+    setInterval(() => { if (!leader && Date.now() - heard > POLL_MS * 2.5) poll(false); }, POLL_MS); }
+  return { start, poll, on: (f) => subs.push(f), get leader(){ return leader; } };
+})();
+// a view handed its estate by a host (?ext=1) keeps it; the rest read the feed
+function load(refresh){ if (S.ext) return; FEED.start(); return FEED.poll(!!refresh); }
+FEED.on((m) => { if (S.ext) return; if (m.t === 'snap') take(m.c); else if (m.t === 'err'){ S.err = m.e; renderSoon(); } else if (m.t === 'live') onLive(m.recs); });
+// a redraw waits while the view is moving (a gesture's frames are the picture sliding, nothing else) and runs when it rests
+function renderSoon(opts){ if (S.drag || performance.now() - (S.lastMove || 0) < 400){ S.dirty = true; return; } render(Object.assign({ data: true }, opts || {})); }
+function take(c){
+  // the same estate as last time draws nothing again; what it did lately (calls, open calls) counts as a change
+  const fp = c.nodes.map((n) => [n.id, n.status, Math.round(n.load || 0), n.inflight, n.errors, Math.round(n.temp || 0), n.detail, n.reg ? (n.reg.complete ? 'c' : 'i') + ((regOf(n) || {}).yes || 0) : '',
+    n.activity ? n.activity.calls + '/' + n.activity.errors : '', n.open_calls || 0].join('|')).join(';') + '#' + c.links.length + '#' + (c.inflight || []).length + '#' + (c.errors || []).length;
+  staleCheck(c.page_ver);
+  if (c.refreshing && !S.soon){ S.soon = setTimeout(() => { S.soon = 0; FEED.poll(false); }, 2500); }
+  if (S.snap && fp === S.fp) return;
+  const had = !!S.snap; S.fp = fp; S.snap = c; S.err = '';
+  // the live counts start again from this snapshot: it already holds the events they counted
+  S.lv = {}; c.nodes.forEach((n) => { n._a0 = n.activity ? JSON.parse(JSON.stringify(n.activity)) : null; n._o0 = n.open_calls || 0; });
+  S.if0 = (c.inflight || []).slice(); S.at0 = Date.now(); S.c0 = {}; Object.keys(c.series || {}).forEach((k) => { if (c.series[k].calls) S.c0[k] = c.series[k].calls.slice(); });
+  try { sessionStorage.setItem('vera:ops:last', JSON.stringify(c)); } catch (_) {}
+  if (S.sel && !byId()[S.sel]){ const q = String(S.sel).toLowerCase(); const hit = c.nodes.find((n) => n.label.toLowerCase() === q || n.ref === S.sel); S.sel = hit ? hit.id : null; }
+  if (!S.sel) S.sel = (c.nodes.find((n) => n.status === 'run') || c.nodes.find((n) => n.kind === 'ollama') || c.nodes[0] || {}).id || null;
+  if (had) renderSoon(); else render();
   S.fresh = false;
 }
+// ── live: the events as they happen, between snapshots ──
+// each record names the nodes it lands on; a call opens a flow until its answer closes it, a counted event adds to its
+// nodes' calls (and their newest column), a failed answer to their failures. Applied every few seconds, as a data redraw.
+S.lv = {}; S.open = {};
+const LIVE_MS = 3000, OPEN_MAX_MS = 300000;
+function onLive(recs){ if (!S.snap || !Array.isArray(recs)) return; const ID = byId(), now = Date.now();
+  const L = (nid) => (S.lv[nid] = S.lv[nid] || { calls: 0, errors: 0, names: {}, at: 0 });
+  recs.forEach((r) => { const nodes = (r.nodes || []).filter((x) => ID[x]); if (!nodes.length) return;
+    if (r.phase === 'call' && r.trace) S.open[r.trace] = { node: nodes[0], client: ID[r.client] ? r.client : '', name: r.name, at: now, kind: r.type === 'ollama.request' ? 'llm.generate' : 'cap call' };
+    if ((r.phase === 'ok' || r.phase === 'fail') && r.trace) delete S.open[r.trace];
+    if (r.count) nodes.forEach((nid) => { const x = L(nid); x.calls++; x.names[r.name] = (x.names[r.name] || 0) + 1; x.at = now; if (r.failed && r.phase !== 'call') x.errors++; });
+    if (r.phase === 'fail') nodes.forEach((nid) => { const x = L(nid); x.errors++; x.at = now; }); });
+  S.liveDirty = true; }
+function applyLive(){ if (!S.liveDirty || !S.snap || document.hidden) return; S.liveDirty = false; const ID = byId(), now = Date.now(), el = (now - (S.at0 || now)) / 1000;
+  Object.keys(S.open).forEach((k) => { if (now - S.open[k].at > OPEN_MAX_MS || !ID[S.open[k].node]) delete S.open[k]; });
+  const openBy = {}; Object.values(S.open).forEach((o) => { openBy[o.node] = (openBy[o.node] || 0) + 1; });
+  S.snap.nodes.forEach((n) => { const x = S.lv[n.id], a0 = n._a0;
+    if (x){ const a = n.activity = a0 ? JSON.parse(JSON.stringify(a0)) : { calls: 0, errors: 0, top: [], ms: null, window_s: 0, per_min: 0 };
+      a.calls += x.calls; a.errors += x.errors; const w = (a0 ? a0.window_s : 0) + el; a.per_min = w > 0 ? Math.round(a.calls * 600 / w) / 10 : a.calls;
+      const t = {}; (a.top || []).forEach((p) => { t[p[0]] = p[1]; }); Object.keys(x.names).forEach((k) => { t[k] = (t[k] || 0) + x.names[k]; });
+      a.top = Object.keys(t).map((k) => [k, t[k]]).sort((p, q) => q[1] - p[1]).slice(0, 4); a.live = x.calls;
+      const s0 = S.c0[n.id]; if (x.calls){ S.snap.series[n.id] = S.snap.series[n.id] || {}; const col = (s0 || new Array(10).fill(0)).slice(); col[col.length - 1] += x.calls; S.snap.series[n.id].calls = col; } }
+    const op = Math.max(n._o0 || 0, openBy[n.id] || 0); n.open_calls = op; });
+  // the open calls as flows: the snapshot's own, less its capability calls, and the ones open now
+  const bus = ID['core:cap-bus'] ? 'core:cap-bus' : '';
+  S.snap.inflight = (S.if0 || []).filter((f) => f.kind !== 'cap call').concat(Object.values(S.open).slice(-16).map((o) => ({ kind: o.kind, a: o.client || (o.kind === 'llm.generate' ? 'core:router' : bus), b: o.node, age: (now - o.at) / 1000, label: o.name }))
+    .filter((f) => f.a && f.a !== f.b && ID[f.a]));
+  renderSoon(); }
+setInterval(applyLive, LIVE_MS);
+function blips(){ const v = $('pzv'), now = Date.now(); Object.keys(S.lv || {}).forEach((nid) => { if (now - S.lv[nid].at > LIVE_MS + 500) return;
+  v.querySelectorAll('[data-node="' + (window.CSS && CSS.escape ? CSS.escape(nid) : nid) + '"]').forEach((e) => {   // two names, so a second blink restarts
+    const two = e.classList.contains('blip'); e.classList.toggle('blip', !two); e.classList.toggle('blip2', two); }); }); }
 
 // ── the widgets on a node: what it is, then its readings; the rail overrides the list ──
 // a host hands the estate over (?ext=1, a graph tile's own data): planes the page does not know take colours of their own
@@ -498,8 +560,9 @@ function render(opts){
   const plot = $('plot'), v = $('pzv');
   if (!S.snap){ v.innerHTML = '<div class="empty">' + (S.err ? 'The estate could not be read: ' + esc(S.err) : 'reading the estate…') + '</div>'; return; }
   const snap = S.snap, ID = byId(), is3d = S.view === '3d';
-  // the old picture goes first: every size read below would otherwise lay out thousands of stale elements (seconds in 3D)
-  v.textContent = '';
+  // the old picture goes first: every size read below would otherwise lay out thousands of stale elements (seconds in 3D);
+  // a redraw for new data keeps it - the engine lays the new picture over the old and swaps only what changed
+  if (!opts.data) v.textContent = '';
   document.documentElement.classList.toggle('iso', is3d);
   plot.classList.toggle('iso', is3d); plot.classList.toggle('flat', !is3d); plot.classList.toggle('fresh', S.fresh);
   $('liveN').textContent = String(snap.inflight_total || 0);
@@ -896,7 +959,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.termRun !== undefined){ const T = termOf(t.dataset.termRun); T.where = t.closest('.ndw') ? 'w' : 'i'; runTerm(t.dataset.termRun); return; }
   if (t.dataset.termClear !== undefined){ termOf(t.dataset.termClear).lines = []; render(); return; }
   if (t.dataset.capUse !== undefined){ const n = byId()[t.dataset.capNode]; if (n){ S.req[n.id] = { name: t.dataset.capUse, body: JSON.stringify(capArgs(n, t.dataset.capUse), null, 2), resp: '', err: false, busy: false }; if (t.dataset.where === 'w') S.wact = 'req'; else S.act = 'req'; render(); } return; }
-  if (t.dataset.plane !== undefined){ if (t.dataset.plane === '*'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); S.focus = null; } else if (S.view === '3d'){ S.focus = S.focus === t.dataset.plane ? null : t.dataset.plane; } else { S.on[t.dataset.plane] = !S.on[t.dataset.plane]; if (!Object.keys(S.on).some((k) => S.on[k])) S.on[t.dataset.plane] = true; } render(); return; }
+  if (t.dataset.plane !== undefined){ if (t.dataset.plane === '*'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); if (S.focus && S.view === '3d'){ focusLayer(S.focus); return; } S.focus = null; } else if (S.view === '3d'){ focusLayer(t.dataset.plane); return; } else { S.on[t.dataset.plane] = !S.on[t.dataset.plane]; if (!Object.keys(S.on).some((k) => S.on[k])) S.on[t.dataset.plane] = true; } render(); return; }
   if (t.dataset.exp !== undefined){ e.stopPropagation(); S.exp = S.exp === t.dataset.exp ? null : t.dataset.exp; S.sel = t.dataset.exp; renderCard(); lightRefresh(); return; }
   if (t.dataset.asg !== undefined){ e.stopPropagation(); S.sel = t.dataset.asg; S.wpick = S.wpick === t.dataset.asg ? null : t.dataset.asg; S.wadd = null; render(); return; }
   if (t.dataset.wk !== undefined){ e.stopPropagation(); setWidget(t.dataset.wkNode || S.wpick, t.dataset.wk); return; }
@@ -917,7 +980,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.ref !== undefined && t.dataset.ref){ e.preventDefault(); selectRef(t.dataset.ref); return; }
   if (t.dataset.selRuntime !== undefined){ selectRuntime(t.dataset.selRuntime); return; }
   if (t.dataset.errNode !== undefined){ if (t.dataset.errNode && byId()[t.dataset.errNode]){ S.sel = t.dataset.errNode; if (S.rt) S.rt = t.dataset.errNode; lightRefresh(); } return; }
-  if (t.dataset.layer !== undefined){ S.focus = S.focus === t.dataset.layer ? null : t.dataset.layer; render(); return; }
+  if (t.dataset.layer !== undefined){ focusLayer(t.dataset.layer); return; }
   if (t.dataset.floor !== undefined){ if (!S.moved) clearRoute(); return; }   // a single click on a floor only clears a lit route; a double click focuses the layer
   if (t.dataset.pz !== undefined){ const k = t.dataset.pz; if (k === 'in' || k === 'out'){ const pl = $('plot'); zoomAt(k === 'in' ? 1.25 : 0.8, (pl.clientWidth || 800) / 2, (pl.clientHeight || 600) / 2); } else if (k === 'l') S.vx += 140; else if (k === 'r') S.vx -= 140; else if (k === 'u') S.vy += 110; else if (k === 'd') S.vy -= 110;
     else if (k === 'fit'){ S.tilt = null; S.azim = null; } else { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 26) : S.tilt, A = S.azim == null ? 45 : S.azim; if (k === 'tiltUp') S.tilt = Math.min(60, T + 5); if (k === 'tiltDn') S.tilt = Math.max(4, T - 5); if (k === 'rotL') S.azim = Math.min(64, A + 6.5); if (k === 'rotR') S.azim = Math.max(26, A - 6.5); }
@@ -936,7 +999,7 @@ document.addEventListener('keydown', (e) => { const t = e.target; if (!t.dataset
 document.addEventListener('contextmenu', (e) => { const nd = e.target.closest('[data-node],[data-wnode]'); if (nd){ openMenu(e, byId()[nd.dataset.node || nd.dataset.wnode]); return; } if (e.target.closest('#plot')) openMenu(e, null); });
 $('b2d').onclick = () => { S.view = '2d'; S.wpick = null; render(); }; $('b3d').onclick = () => { S.view = '3d'; render(); };
 $('bStack').onclick = () => { S.layout3d = 'stack'; S.focus = null; render(); }; $('bFlat').onclick = () => { S.layout3d = 'flat'; S.focus = null; render(); };
-$('bOne').onclick = () => { if (S.focus){ S.focus = null; } else { const n = byId()[S.sel]; S.focus = n ? n.plane : 'work'; } render({ replay: true }); };
+$('bOne').onclick = () => { const n = byId()[S.sel]; focusLayer(S.focus || (n ? n.plane : 'work')); };
 $('bActive').onclick = () => { S.active = !S.active; saveV(); applyRoute(); };
 $('bPipes').onclick = () => { S.pipes = true; render(); }; $('bDirect').onclick = () => { S.pipes = false; render(); };
 document.querySelectorAll('[data-lbl]').forEach((b) => { b.onclick = () => { S.lbl = b.dataset.lbl; S.widgets = S.lbl !== 'labels'; saveV(); render(); }; });
@@ -946,7 +1009,11 @@ let rafId = 0; const rafRender = () => { if (rafId) return; rafId = requestAnima
 const rafRot = () => { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; keepPivot(() => render({ plotOnly: true })); }); };
 function clearRoute(){ if (!S.rt) return false; S.rt = null; lightRefresh(); return true; }
 // a double click on a floor looks at that layer on its own (again: every layer)
-document.addEventListener('dblclick', (e) => { const f = e.target.closest && e.target.closest('[data-floor]'); if (!f || S.view !== '3d') return; e.preventDefault(); S.focus = S.focus === f.dataset.floor ? null : f.dataset.floor; render({ replay: true }); });
+document.addEventListener('dblclick', (e) => { const f = e.target.closest && e.target.closest('[data-floor]'); if (!f || S.view !== '3d') return; e.preventDefault(); focusLayer(f.dataset.floor); });
+// a layer brought forward: the others step back, the layer draws in again and the camera glides until it fills the view;
+// the same layer again (or Show every plane) puts the stack back and glides out to frame it all
+function focusLayer(id){ const on = S.focus !== id; S.focus = on ? id : null; render({ replay: true, keepView: true });
+  requestAnimationFrame(() => { if (on && LAT.flyToPlane(id)) return; LAT.glideFit(true); }); }
 // Esc clears a lit route, else closes the node's card
 document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || S.cm || (e.target.matches && e.target.matches('input,textarea'))) return; if (clearRoute()) return; if (S.exp){ S.exp = null; render(); } });
 // THE KEYBOARD: arrows pan (shift + arrows turn the 3D view), + / - zoom, 0 fits everything, 2 / 3 the view, s / f / o stacked,
@@ -956,11 +1023,11 @@ document.addEventListener('keydown', (e) => { if (e.ctrlKey || e.metaKey || e.al
   if (k.indexOf('Arrow') === 0){
     if (e.shiftKey && S.view === '3d') return act(() => { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 26) : S.tilt, A = S.azim == null ? 45 : S.azim;
       if (k === 'ArrowLeft') S.azim = clamp(A - 2, 26, 64); else if (k === 'ArrowRight') S.azim = clamp(A + 2, 26, 64); else if (k === 'ArrowUp') S.tilt = clamp(T + 1.5, 4, 60); else S.tilt = clamp(T - 1.5, 4, 60); rafRot(); });
-    return act(() => { if (k === 'ArrowLeft') LAT.glide(PAN, 0); else if (k === 'ArrowRight') LAT.glide(-PAN, 0); else if (k === 'ArrowUp') LAT.glide(0, PAN); else LAT.glide(0, -PAN); }); }   // eased, a step at a time
+    return act(() => { if (k === 'ArrowLeft') LAT.glide(-PAN, 0); else if (k === 'ArrowRight') LAT.glide(PAN, 0); else if (k === 'ArrowUp') LAT.glide(0, -PAN); else LAT.glide(0, PAN); }); }   // the picture moves the way the arrow points; a held key builds on the glide under way
   if (k === '+' || k === '=' || k === '-' || k === '_') return act(() => LAT.glide(0, 0, k === '+' || k === '=' ? 1.1 : 1 / 1.1));
   // the layers: [ ] (PageUp PageDown) fly the camera from floor to floor; in One layer the next layer swaps in
   if ((k === '[' || k === ']' || k === 'PageUp' || k === 'PageDown') && S.snap) return act(() => { const ids = S.snap.planes.filter((pl) => S.on[pl.id]).map((pl) => pl.id); if (!ids.length) return; const up = k === '[' || k === 'PageUp';
-    if (S.focus){ const i = ids.indexOf(S.focus); S.focus = ids[(i + (up ? -1 : 1) + ids.length) % ids.length]; render({ replay: true }); return; }
+    if (S.focus){ const i = ids.indexOf(S.focus); const nx = ids[(i + (up ? -1 : 1) + ids.length) % ids.length]; S.focus = null; focusLayer(nx); return; }
     const i = ids.indexOf(S.ptz); S.ptz = ids[i < 0 ? (up ? ids.length - 1 : 0) : (i + (up ? -1 : 1) + ids.length) % ids.length]; if (S.view !== '3d'){ S.view = '3d'; render(); } LAT.flyToPlane(S.ptz); });
   if (k === '0') return act(() => { S.tilt = null; S.azim = null; render(); fitView(true); });
   if (k === '2') return act(() => $('b2d').click()); if (k === '3') return act(() => $('b3d').click());
@@ -984,13 +1051,13 @@ v.addEventListener('mousedown', (e) => { if (e.button || e.target.closest((e.ctr
 v.addEventListener('mousedown', () => { S.moved = false; }, true);
 window.addEventListener('mousemove', (e) => { const d = S.drag; if (!d) return; if (Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) > 4) S.moved = true;
   if (d.mode === 'rot'){ S.azim = clamp(d.a0 - (e.clientX - d.x0) * 0.22, 26, 64); S.tilt = clamp(d.t0 + (e.clientY - d.y0) * 0.18, 4, 60); rafRot(); return; }
-  S.vx = d.vx0 + (e.clientX - d.x0); S.vy = d.vy0 + (e.clientY - d.y0); v.style.transform = 'translate(' + S.vx + 'px,' + S.vy + 'px) scale(' + S.vz + ')'; });
+  S.vx = d.vx0 + (e.clientX - d.x0); S.vy = d.vy0 + (e.clientY - d.y0); LAT.zoomed(); });
 window.addEventListener('mouseup', () => { if (S.drag){ S.drag = null; v.classList.remove('dragging'); v.classList.remove('rotating'); applyZoom(); } });
 // the wheel zooms about the pointer; the chrome holds its screen size through --ui
 $('plot').addEventListener('wheel', (e) => { if (e.target.closest('.ndw')) return; e.preventDefault();
-  const r = $('plot').getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const r = S._pr && performance.now() - S._prAt < 500 ? S._pr : (S._pr = $('plot').getBoundingClientRect(), S._prAt = performance.now(), S._pr), mx = e.clientX - r.left, my = e.clientY - r.top;
   const z0 = S.vz, z1 = clamp(z0 * (e.deltaY > 0 ? .88 : 1.14), .05, 4);
-  S.vx = mx - (mx - S.vx) * (z1 / z0); S.vy = my - (my - S.vy) * (z1 / z0); S.vz = z1; applyZoom(); }, { passive: false });
+  S.vx = mx - (mx - S.vx) * (z1 / z0); S.vy = my - (my - S.vy) * (z1 / z0); S.vz = z1; LAT.zoomed(); }, { passive: false });
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(render, 120); });
 window.addEventListener('message', (e) => { const d = e && e.data; if (!d || typeof d !== 'object') return;
   if (d.type === 'vera:entity:focus' && d.ref){ const n = (S.snap ? S.snap.nodes : []).find((x) => x.ref === d.ref); if (n){ S.sel = n.id; render(); } try { e.source.postMessage({ type: 'vera:entity:focused', ref: d.ref, ok: !!n }, '*'); } catch (_) {} }
@@ -999,8 +1066,7 @@ window.addEventListener('message', (e) => { const d = e && e.data; if (!d || typ
 try { const q = new URLSearchParams(location.search).get('node'); if (q) S.sel = q; } catch (_) {}
 // the estate as this tab last saw it draws at once; the live one replaces it when it lands
 if (!EXT) try { const last = JSON.parse(sessionStorage.getItem('vera:ops:last') || 'null'); if (last && Array.isArray(last.nodes)){ S.snap = last; S.err = ''; S.sel = S.sel || ((last.nodes.find((n) => n.status === 'run') || last.nodes[0] || {}).id || null); render(); S.fresh = false; } } catch (_) {}
-if (EXT) S.ext = true; else load(false);
-setInterval(() => { if (!document.hidden && !S.drag && !(document.activeElement && document.activeElement.matches && document.activeElement.matches('input,textarea'))) load(false); }, 10000);
+if (EXT) S.ext = true; else FEED.start();
 window.VeraOps = { state: S, load, setSnapshot, render, layout, setWidget, wspec, wdefaults, uiScale, applyZoom, routesFrom, termRoute, lensCol, capArgs };
 })();
 </script>
