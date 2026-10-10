@@ -236,3 +236,13 @@ def test_seek_read_reads_the_next_result_when_one_is_blocked():
     assert got == 3 and calls == ["https://a/1", "https://blocked/2", "https://c/3", "https://d/4"]
     assert items[1]["unreadable"].startswith("blocked") and not items[1].get("text")
     assert items[3]["text"] and items[3]["published"] == "2026-10-09" and "text" not in items[4]
+
+
+def test_deep_without_a_background_job_for_loops():
+    # loops block research.* job caps (compute-roles, 10 Oct): need=deep with start_report=false is the overview only
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    body = src[src.index("async def cap_info_seek"):]
+    assert "start_report: bool = True" in body
+    i, j = body.index('if need == "deep" and not start_report:'), body.index('elif need == "deep":')
+    assert i < j and "research.run" not in body[i:j] and "research.run" in body[j:j + 300]
