@@ -802,7 +802,8 @@
       const st = run ? 'running' : bad ? 'error' : 'done';
       const when = (t) => { const d = new Date(+t); return isFinite(d) ? d.toTimeString().slice(0, 8) : ''; };
       const dur = (ms) => ms == null ? '' : ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + ' s';
-      return `<div class="vc-act st-${st}" data-w="canvas.activity"><div class="vc-act-h"><span class="vc-act-dot"></span><b>${esc(c.title || (run ? 'Working' : 'Done'))}</b>`
+      /* the card's header names it: the body opens with how it stands, not the title a second time */
+      return `<div class="vc-act st-${st}" data-w="canvas.activity"><div class="vc-act-h"><span class="vc-act-dot"></span><b>${run ? 'working' : bad ? 'finished, with failures' : 'finished'}</b>`
         + `<span class="vc-act-n">${run ? run + ' running · ' : ''}${calls.length - run} of ${calls.length} done${bad ? ' · ' + bad + ' failed' : ''}</span></div>`
         + `<ol class="vc-act-l">${calls.map((x) => `<li class="${esc(x.status || 'running')}"><span class="ic"></span><div class="tx"><div class="ln"><code>${esc(x.cap)}</code>`
           + `<span class="t">${x.status === 'running' ? 'since ' + esc(when(x.started)) : esc(dur(x.ms))}</span></div>`
@@ -2842,7 +2843,10 @@
       const T = this.getAttribute('bring-in') !== 'off' ? this._topic : null; const outside = new Set();
       if (T) {
         const tAt = {}; T.order.forEach((k, i) => { tAt[k] = i; });
-        const inT = (x) => tAt[x.c.dataset.key || ''] != null || x.c.classList.contains('pinned');
+        /* ...and anything made FOR the turn in focus (its own anchors), the moment it lands: the topic set is asked once a
+           turn, so an item a call of that turn adds afterwards (its activity, its result) was out of it and went to the border */
+        const ownTurn = (x) => !!T.mid && (x.c.dataset.mid === T.mid || x.c.dataset.from === T.mid || (x.c.dataset.anchors || '').split(' ').indexOf(T.mid) >= 0);
+        const inT = (x) => tAt[x.c.dataset.key || ''] != null || x.c.classList.contains('pinned') || ownTurn(x);
         const lead = ranked.filter(inT).sort((a, b) => (tAt[a.c.dataset.key] != null ? tAt[a.c.dataset.key] : -1) - (tAt[b.c.dataset.key] != null ? tAt[b.c.dataset.key] : -1));
         const rest = ranked.filter((x) => !inT(x)); rest.forEach((x) => outside.add(x.c.dataset.key || ''));
         ranked.length = 0; lead.concat(rest).forEach((x) => ranked.push(x));
