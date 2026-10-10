@@ -3,6 +3,7 @@ turn's stream, page calls and canvas showed - pure, from vera.minds.chat_corpus_
 import ast
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -186,7 +187,11 @@ def test_the_runner_and_capability_parse_and_the_runner_matches_turns():
         ast.parse(p.read_text(encoding="utf-8"))
     spec = importlib.util.spec_from_file_location("run_chat_corpus", ROOT / "tools" / "chat-corpus" / "run_chat_corpus.py")
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    saved = list(sys.path)
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path[:] = saved               # the runner puts the repo root first; leave the process as it was
     assert mod._sent({"body": json.dumps({"message": "What is 17% of 2,340?\n\n(hint)"})}, "What is 17% of 2,340?")
     assert not mod._sent({"body": json.dumps({"message": "name this chat"})}, "What is 17% of 2,340?")
     assert not mod._sent({"body": "not json"}, "x")
