@@ -19,7 +19,7 @@ const src = [
 ].join('\n');
 const api = new Function(src + '\nreturn {_INFO_CORE_CAPS, _wantsInfoCore};')();
 
-t('the core is web.research and web.fetch', JSON.stringify(api._INFO_CORE_CAPS) === '["web.research","web.fetch"]');
+t('the core is info.seek, web.research and web.fetch', JSON.stringify(api._INFO_CORE_CAPS) === '["info.seek","web.research","web.fetch"]');
 for (const q of ["what's the latest on OpenAI", 'latest on MCP', 'updates on UK house prices?', 'who won?',
                  'find out about the EU AI Act', 'any news about n8n', 'what is the base rate now'])
   t('offers the core: ' + q, api._wantsInfoCore(q));

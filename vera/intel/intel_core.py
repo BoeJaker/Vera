@@ -1501,3 +1501,103 @@ def channel_args(channel: str, doc: Dict[str, Any], *, report_url: str, action_u
         return {"text": short_text(doc, 600) + ("\nPage on Vera" if report_url else ""), "title": title[:24],
                 "printer_id": target or "", "cut": True}
     return {}
+
+
+# ── lookup: what tracking found on a subject, sized for a chat answer (info-seeking plan SK-3.4) ───────────────
+
+def _words(text: Any) -> set:
+    out = set()
+    for w in re.findall(r"[a-z0-9][a-z0-9+.#-]*", str(text or "").lower()):
+        w = w.strip(".-")
+        if len(w) < 2 or w in _STOP:
+            continue
+        out.add(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w)
+    return out
+
+
+# words that ask for news rather than name a subject: "updates on MCP" is about MCP
+_ASK_WORDS = set("update updates new recent recently development developments happening going tell me anything "
+                 "whats what's is in on of to a an me please give show find out look up".split())
+
+
+def match_topics(query: str, topics: Sequence[Dict[str, Any]], *, floor: float = 0.45) -> List[Tuple[float, Dict[str, Any]]]:
+    """Topics a free-text subject refers to, best first, as (score 0..1, topic). Each subject word is weighted by
+    how rare it is across the topics (\"uk\" or \"ai\" names half of them and says little; \"bitcoin\" names none), and
+    counts in full when it is in the topic's name or id, two thirds in its entities, one third in its brief or
+    questions. The subject as a phrase inside the topic's name or id adds 0.2 (\"uk news\" is the news topic, not
+    every UK one). An exact id or name scores 1 outright."""
+    import math
+    q = str(query or "").strip()
+    qs = slug(q, 80)
+    qw = {w for w in _words(q) if w not in _ASK_WORDS}
+    phrase = slug(" ".join(w for w in re.findall(r"[a-z0-9]+", q.lower()) if w not in _ASK_WORDS
+                             and w not in ("latest", "the")), 120) if q else ""
+    phrase = phrase if phrase != "topic" else ""
+    fields = []
+    for t in topics or []:
+        nw = _words(t.get("name")) | _words(str(t.get("id", "")).replace("-", " "))
+        ew = set().union(*[_words(e) for e in (t.get("entities") or [])]) if t.get("entities") else set()
+        bw = _words(t.get("brief")) | _words(" ".join(_question_str(x) for x in (t.get("questions") or [])))
+        fields.append((t, nw, ew, bw))
+    n = max(1, len(fields))
+    df = {w: sum(1 for _, nw, ew, bw in fields if w in nw or w in ew or w in bw) for w in qw}
+    wt = {w: math.log(1.0 + n / (1.0 + df[w])) for w in qw}
+    total = sum(wt.values()) or 1.0
+    out: List[Tuple[float, float, Dict[str, Any]]] = []
+    for t, nw, ew, bw in fields:
+        if q and (qs == t.get("id") or q.lower() == str(t.get("name") or "").lower()):
+            out.append((1.0, 9.0, t)); continue
+        if not qw:
+            continue
+        pts = sum(wt[w] * (1.0 if w in nw else 2 / 3 if w in ew else 1 / 3 if w in bw else 0.0) for w in qw)
+        sc = pts / total
+        if phrase and (phrase in str(t.get("id") or "") or phrase in slug(t.get("name") or "", 120)):
+            sc += 0.2
+        if sc >= floor:
+            out.append((round(min(1.0, sc), 3), sc, t))   # sorted on the uncapped score
+    out.sort(key=lambda x: (-x[1], str(x[2].get("name") or "")))
+    return [(a, t) for a, _, t in out]
+
+
+def _clean_title(t: Any) -> str:
+    s = str(t or "").strip()
+    s = re.sub(r"^<!\[CDATA\[(.*)\]\]>$", r"\1", s, flags=re.S)
+    return _html.unescape(s).strip()
+
+
+def age_days(ts: Any, now: Optional[datetime] = None) -> Optional[float]:
+    d = parse_ts(ts)
+    if not d:
+        return None
+    return round(((now or datetime.now(timezone.utc)) - d).total_seconds() / 86400.0, 1)
+
+
+def lookup_view(topic: Dict[str, Any], snapshot: Optional[Dict[str, Any]], signals: Sequence[Dict[str, Any]], *,
+                since: str = "", limit: int = 8, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """A tracked topic as a chat-sized answer: the latest assessment with its age, and the strongest signals seen
+    since `since` with their dates - never the stored vectors or page digests."""
+    now = now or datetime.now(timezone.utc)
+    rows = []
+    for s in signals:
+        if not s.get("url") and not s.get("title"):
+            continue
+        rows.append({
+            "title": _clean_title(s.get("title"))[:160],
+            "url": s.get("url") or "",
+            "site": s.get("site") or "",
+            "published": str(s.get("published") or "")[:10],
+            "seen": str(s.get("seen") or "")[:10],
+            "score": s.get("score"),
+            "summary": clean_prose(s.get("summary") or s.get("snippet") or "")[:300],
+        })
+        if len(rows) >= limit:
+            break
+    snap = None
+    if snapshot:
+        snap = {"headline": clean_prose(snapshot.get("headline") or "")[:400],
+                "state": str(snapshot.get("state") or "")[:300],
+                "ts": snapshot.get("ts") or "", "age_days": age_days(snapshot.get("ts"), now)}
+    return {"tracked": True,
+            "topic": {"id": topic.get("id"), "name": topic.get("name"), "brief": str(topic.get("brief") or "")[:200],
+                      "cadence": topic.get("cadence"), "last_sweep": topic.get("last_sweep") or ""},
+            "snapshot": snap, "since": since, "signals": rows}

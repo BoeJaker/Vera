@@ -58,3 +58,37 @@ def test_a_bare_deliver_is_html_only_and_refresh_queues(tmp_path):
     assert not [c for c in orch.CALLS if c[0] in ("print.text", "tg.send_rich", "tg.notify")]
     import inspect
     assert inspect.signature(mod.cap_refresh).parameters["queue"].default is True
+
+
+def test_lookup_finds_a_tracked_topic_by_name_and_answers_compactly(tmp_path):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    _R(orch, "intel.topic.save", name="UK house prices")
+    _R(orch, "intel.sweep", topic_id=t["id"])
+    r = _R(orch, "intel.lookup", query="what's new on AI property valuation?")
+    assert r["tracked"] and r["topic"]["id"] == t["id"] and r["matches"][0]["id"] == t["id"]
+    assert r["signals"] and all(set(s) == {"title", "url", "site", "published", "seen", "score", "summary"}
+                                for s in r["signals"])
+    assert "vec" not in str(r) and len(str(r)) < 6000
+    by_id = _R(orch, "intel.lookup", topic_id=t["id"])
+    assert by_id["tracked"] and by_id["topic"]["id"] == t["id"]
+
+
+def test_lookup_says_when_a_subject_is_not_tracked(tmp_path):
+    mod, orch = _load(tmp_path)
+    _R(orch, "intel.topic.save", name="AI property valuation")
+    r = _R(orch, "intel.lookup", query="bitcoin price")
+    assert r["tracked"] is False and "info.seek" in r["message"] and "intel.topic.save" in r["message"]
+
+
+def test_match_topics_weights_rare_words_and_phrases():
+    from vera.intel import intel_core as core
+    T = [{"id": "uk-news-and-current-affairs", "name": "UK news and current affairs"},
+         {"id": "uk-commercial-real-estate-market", "name": "UK commercial real estate market"},
+         {"id": "uk-residential-property-market-and-house-prices", "name": "UK residential property market and house prices"},
+         {"id": "mcp-and-llm-tooling", "name": "MCP and LLM tooling"}]
+    assert core.match_topics("updates on MCP", T)[0][1]["id"] == "mcp-and-llm-tooling"
+    assert core.match_topics("latest on UK house prices", T)[0][1]["id"].startswith("uk-residential")
+    assert core.match_topics("uk news", T)[0][1]["id"] == "uk-news-and-current-affairs"
+    assert core.match_topics("bitcoin price", T) == []                 # one shared generic word is not a match
+    assert core.match_topics("mcp-and-llm-tooling", T)[0][0] == 1.0

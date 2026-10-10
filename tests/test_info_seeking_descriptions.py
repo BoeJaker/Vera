@@ -61,7 +61,7 @@ def _agents_module_values():
 def test_the_aide_looks_things_up_and_keeps_research_run_for_reports():
     v, tree = _agents_module_values()
     p = v["AIDE_PROMPT"]
-    assert "web.research FIRST" in p and "BACKGROUND report job" in p
+    assert "info.seek FIRST" in p and "BACKGROUND report job" in p and "intel.lookup" in p
     assert "dated records" in p and "Never fill a gap with a plausible guess" in p
     assert "quick_search" not in p
     # the aide's default toolkit no longer lists the slow "quick" search
@@ -69,6 +69,7 @@ def test_the_aide_looks_things_up_and_keeps_research_run_for_reports():
                 and any(k.arg == "name" and getattr(k.value, "value", "") == "aide" for k in n.keywords))
     caps = ast.literal_eval(next(k.value for k in aide.keywords if k.arg == "domain_caps"))
     assert "research.quick_search" not in caps and "web.research" in caps and "research.run" in caps
+    assert {"info.seek", "intel.lookup", "intel.topic.save"} <= set(caps)
 
 
 def test_an_untouched_aide_is_upgraded_and_a_customised_one_is_not():
@@ -76,6 +77,7 @@ def test_an_untouched_aide_is_upgraded_and_a_customised_one_is_not():
     cur = hashlib.sha1(v["AIDE_PROMPT"].encode()).hexdigest()
     assert cur not in v["_AIDE_PRIOR_PROMPTS"]                   # the current default is not an "old" one
     assert "7a9ac80b6a8c4023d1cca601ae12610412a31fb3" in v["_AIDE_PRIOR_PROMPTS"]   # prod's stored prompt, 10 Oct
+    assert "68b6c2325f754d4be4b354004fbb02956eab2088" in v["_AIDE_PRIOR_PROMPTS"]   # ...and after the first release
     assert v["_AIDE_RETIRED_CAPS"] == ("research.quick_search",)
     seed = _src("agents", "agents.py")
     seed = seed[seed.index("async def _seed_defaults"):]

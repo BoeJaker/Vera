@@ -4050,12 +4050,14 @@ AIDE_PROMPT = (
     "GROUNDING — never guess where you can look\n"
     "• Anything external, current or online — a fact, 'what is X', 'the latest / "
     "news / updates on Y', a price, anything that may have changed since your "
-    "training → web.research FIRST (seconds: one search, the top pages read and "
-    "returned inline). Cite what you use as [n] with its date. If the pages do not "
-    "answer, search again with a sharper query; if still nothing, say what you "
-    "looked for and did not find. Use web.fetch for one known URL, http.get/http.post "
-    "for APIs. research.run is a BACKGROUND report job (5-30 minutes) — only when "
-    "the user asks for a report or deep dive, never to answer a question now.\n"
+    "training → info.seek FIRST: it checks what Vera already tracks (intel), "
+    "searches the web fresh, reads the top pages and returns numbered, dated "
+    "evidence (latest: newest first). Cite what you use as [n] with its date and "
+    "report its gaps rather than guessing. web.research is the lighter single "
+    "search-and-read; intel.lookup answers 'what has Vera's tracking found on X' "
+    "in milliseconds. Use web.fetch for one known URL, http.get/http.post for APIs. "
+    "research.run is a BACKGROUND report job (5-30 minutes) — only when the user "
+    "asks for a report or deep dive (info.seek need=deep starts it for you).\n"
     "• What Vera already knows about the user → memory.recall / memory.search / "
     "memory.session_history and context.assemble / context.recall. Persist a "
     "durable fact with memory.store.\n"
@@ -4075,8 +4077,10 @@ AIDE_PROMPT = (
     "mail.draft / mail.reply / mail.send to write.\n"
     "• Telegram & notifications → tg.send / tg.notify (tg.history, tg.chats.list "
     "to read).\n"
-    "• Web & research → web.research (answers, latest news), web.fetch (one URL), "
-    "research.run (a background report the user asked for).\n"
+    "• Finding things out → info.seek (answers, latest news, overviews), "
+    "intel.lookup (tracked topics), web.research, web.fetch (one URL), research.run "
+    "(a background report the user asked for); intel.topic.save to start following "
+    "a subject.\n"
     "• Markets → markets.fetch / markets.symbols / markets.indicators / "
     "markets.sentiment.analyze / markets.watchlist.list.\n"
     "• Business ops → business.stream.list / business.account.list / "
@@ -4115,6 +4119,7 @@ AIDE_PROMPT = (
 # to the current default at boot (_seed_defaults). Add the old hash here whenever AIDE_PROMPT changes.
 _AIDE_PRIOR_PROMPTS = {
     "7a9ac80b6a8c4023d1cca601ae12610412a31fb3",   # to 2026-10-10 (before the info-seeking grounding rules)
+    "68b6c2325f754d4be4b354004fbb02956eab2088",   # 2026-10-10 evening (web.research first, before info.seek)
 }
 _AIDE_RETIRED_CAPS = ("research.quick_search",)
 
@@ -4131,7 +4136,8 @@ DEFAULT_AGENTS = [
         domain_caps=[
             # Time & grounding
             "system.timestamp",
-            # Unified fast web research + targeted fetch / raw HTTP
+            # Finding information: the front door, tracked topics, then the web primitives
+            "info.seek", "intel.lookup", "intel.topic.save",
             "web.research", "web.search", "web.fetch", "http.get", "http.post",
             # Background report pipeline (a report the user asked for; not for answers)
             "research.run",

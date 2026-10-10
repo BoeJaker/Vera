@@ -1208,6 +1208,214 @@ async def cap_web_research(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# info.seek — the one front door for finding information (info-seeking plan SK-3)
+# ─────────────────────────────────────────────────────────────────────────────
+try:
+    from Vera.vera.web import info_seek_core as _seek
+except Exception:                                   # worktree / app-free import
+    from vera.web import info_seek_core as _seek
+
+
+async def _seek_call(name: str, timeout: float, **kw) -> Dict[str, Any]:
+    """One sibling cap, bounded; a missing cap, an error or a timeout is {} with the reason under _error."""
+    fn = (_orch.CAPABILITY_REGISTRY.get(name) or {}).get("func")
+    if not fn:
+        return {"_error": f"{name} not loaded"}
+    try:
+        r = await asyncio.wait_for(fn(**kw), timeout)
+        return r if isinstance(r, dict) else {"result": r}
+    except asyncio.TimeoutError:
+        return {"_error": f"{name} timed out after {timeout:.0f} s"}
+    except Exception as e:
+        return {"_error": f"{name}: {str(e)[:120]}"}
+
+
+def _report_seller(title: str, snippet: str) -> bool:
+    """Market-research sellers ("... market size, share, CAGR 2026-2033") are not news; intel's rule, reused."""
+    try:
+        try:
+            from Vera.vera.intel import intel_ops_core as _iops
+        except Exception:
+            from vera.intel import intel_ops_core as _iops
+        return bool(_iops.report_seller_hint(title or "", snippet or ""))
+    except Exception:
+        return False
+
+
+async def _seek_read(items: List[Dict[str, Any]], n: int, chars: int) -> int:
+    """Read the first `n` unread items through the reader (article text, cached), in parallel. Returns how many
+    yielded text. A page's own published date fills one the search did not give."""
+    todo = [it for it in items if not it.get("text") and it.get("url") and it.get("kind") != "intel"][:n]
+
+    async def one(it):
+        r = await _seek_call("reader.page", 25, url=it["url"], max_chars=max(chars * 3, 4000), mode="fetch")
+        md = str(r.get("markdown") or "") if r.get("ok") else ""
+        if not md.strip():
+            return 0
+        it["text"] = _seek.excerpt(md, chars)
+        it["title"] = r.get("title") or it.get("title")
+        if r.get("published") and not it.get("published"):
+            it["published"] = r["published"]
+        return 1
+    got = await asyncio.gather(*[one(it) for it in todo], return_exceptions=True)
+    return sum(x for x in got if isinstance(x, int))
+
+
+async def _seek_rerank(subject: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Order by relevance to the SUBJECT (short query, the reranker's strength); the search order when the NLP tier
+    is unavailable."""
+    if len(items) < 3:
+        return items
+    docs = [f"{it.get('title') or ''}. {it.get('snippet') or ''}"[:500] for it in items]
+    rr = await _seek_call("nlp.rerank", 15, query=subject, documents=docs, top_k=len(docs))
+    ranked = rr.get("ranked") or []
+    if not ranked:
+        return items
+    order = []
+    for x in ranked:
+        try:
+            i = int(x.get("index"))
+        except (TypeError, ValueError):
+            continue
+        if 0 <= i < len(items) and i not in order:
+            order.append(i)
+            items[i]["relevance"] = round(float(x.get("score") or 0.0), 2)
+    order += [i for i in range(len(items)) if i not in order]
+    # far off-topic results (cross-encoder logits well below zero) go; never all of them
+    kept = [items[i] for i in order if items[i].get("relevance", 0.0) > -6.0]
+    return kept or [items[i] for i in order]
+
+
+@capability(
+    "info.seek",
+    http_method="POST", http_path="/info/seek",
+    http_tags=["web", "info"], memory="on",
+    tags=["info", "search", "latest", "news", "updates", "facts", "lookup", "research", "current", "web"],
+    description="FIND INFORMATION to answer a question - the front door. It decides what the question needs and "
+                "runs the right lookups together, returning numbered, DATED evidence to cite. "
+                "WHEN TO USE: any question about the outside world - 'what's the latest on X', 'updates on X', "
+                "'what is X', 'explain/compare X', a price or a fact that may have changed since training. "
+                "need=latest (auto for latest/news/updates): checks what Vera already tracks on the subject "
+                "(intel), runs up to three fresh, dated web searches, drops report-sellers, ranks by relevance, reads "
+                "the top pages and orders newest first (~10-40 s). need=fact: one search with the top pages read, "
+                "and a second, sharper round when they do not answer. need=overview: two searches from different "
+                "angles, several sites, pages read (~30-90 s). need=deep: the overview now plus research.run "
+                "started in the background for a full report (job_id returned). "
+                "Input: question (str!), need (auto|fact|latest|overview|deep, default auto), since (ISO date: "
+                "what counts as new for latest; default 14 days), topic (the subject when the question is long), "
+                "pages (int, pages to read, default 5, max 8), excerpt_chars (int, per page, default 900). "
+                "Output: {need, subject, since, answerable, items:[{n, title, url, site, published, age_days, "
+                "kind (web|intel), read, text}], checked, gaps, guide, tracked?, job_id?, elapsed_ms}. Cite items "
+                "as [n] with their dates; report the gaps instead of guessing.",
+)
+async def cap_info_seek(question: str = "", need: str = "auto", since: str = "", topic: str = "",
+                        pages: int = 5, excerpt_chars: int = 900, trace_id=None) -> Dict[str, Any]:
+    question = " ".join(str(question or "").split())
+    if not question:
+        return {"error": "question required"}
+    t0 = time.monotonic()
+    now = datetime.now(timezone.utc)
+    cls = _seek.classify_need(question)
+    need = (need or "auto").strip().lower()
+    if need not in _seek.NEEDS:
+        need = cls["need"]
+    subject = (topic or "").strip() or _seek.subject_of(question)
+    pages = max(1, min(8, int(pages or 5)))
+    chars = max(300, min(3000, int(excerpt_chars or 900)))
+    checked: List[str] = [f"need: {need} ({cls['reason'] if need == cls['need'] else 'asked for'})"]
+    gaps: List[str] = []
+    extra: Dict[str, Any] = {}
+    items: List[Dict[str, Any]] = []
+
+    # what Vera already tracks on the subject - milliseconds, so always asked
+    intel_task = asyncio.create_task(_seek_call("intel.lookup", 8, query=subject, since=since))
+
+    if need == "latest":
+        since = since or _seek.default_since(now)
+        queries = _seek.latest_queries(subject, question, now)
+        res = await asyncio.gather(*[_seek_call("web.search", 25, query=q, limit=8, discover="off") for q in queries])
+        hits = _seek.merge_hits([r.get("results") or [] for r in res])
+        engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
+        checked.append(f"web: {len(queries)} searches ({', '.join(engines) or 'no engine answered'}), {len(hits)} results")
+        dropped = [h for h in hits if _report_seller(h.get("title"), h.get("snippet"))]
+        hits = [h for h in hits if h not in dropped]
+        if dropped:
+            checked.append(f"dropped {len(dropped)} market-report sellers")
+        hits = await _seek_rerank(subject, hits)
+        items = [dict(h, kind="web") for h in _seek.per_site(hits, 2)][:12]
+        got = await _seek_read(items, pages, chars)
+        checked.append(f"read {got} of the top pages")
+        items = _seek.order_latest(items, since, now)
+    else:
+        q2 = None
+        if need == "overview" or need == "deep":
+            q2 = f"{subject} overview analysis {now.year}"
+        calls = [_seek_call("web.research", 75, query=question, results=pages, max_chars=max(chars * 3, 3000))]
+        if q2:
+            calls.append(_seek_call("web.research", 75, query=q2, results=pages, max_chars=max(chars * 3, 3000)))
+        res = await asyncio.gather(*calls)
+        srcs = _seek.merge_hits([r.get("sources") or [] for r in res])
+        for s in srcs:
+            if s.get("text"):
+                s["text"] = _seek.excerpt(s["text"], chars)
+        good = [s for s in srcs if len(str(s.get("text") or "")) >= 400]
+        checked.append(f"web: {len(calls)} search{'es' if len(calls) > 1 else ''}, {len(srcs)} pages, "
+                       f"{len(good)} with readable text")
+        if need == "fact" and len(good) < 2:
+            # depth over speed: the pages did not carry an answer - one sharper round before giving up
+            r2 = await _seek_call("web.research", 75, query=f"{subject} {now.year}", results=pages,
+                                  max_chars=max(chars * 3, 3000))
+            more = _seek.merge_hits([srcs, r2.get("sources") or []])[len(srcs):]
+            for s in more:
+                if s.get("text"):
+                    s["text"] = _seek.excerpt(s["text"], chars)
+            srcs += more
+            checked.append(f"second round '{subject} {now.year}': {len(more)} more pages")
+        items = [dict(s, kind="web") for s in _seek.per_site(srcs, 2)][:10]
+        if need == "deep":
+            job = await _seek_call("research.run", 20, query=question, mode="parallel", output_mode="report")
+            if job.get("job_id"):
+                extra["job_id"] = job["job_id"]
+                checked.append("research.run started in the background for the full report (job_id)")
+            else:
+                gaps.append("the background report could not start: " + str(job.get("_error") or job.get("error")))
+
+    intel = await intel_task
+    if intel.get("tracked"):
+        tp = intel.get("topic") or {}
+        snap = intel.get("snapshot") or {}
+        extra["tracked"] = {"topic_id": tp.get("id"), "name": tp.get("name"),
+                            "assessment": snap.get("headline") or "", "assessment_ts": snap.get("ts") or "",
+                            "assessment_age_days": snap.get("age_days")}
+        isigs = [{"title": s.get("title"), "url": s.get("url"), "published": s.get("published") or s.get("seen"),
+                  "snippet": s.get("summary") or "", "kind": "intel"} for s in (intel.get("signals") or [])
+                 if s.get("url")]
+        known = {_seek.canon_url(it.get("url") or "") for it in items}
+        isigs = [s for s in isigs if _seek.canon_url(s["url"]) not in known][:4]
+        if need == "latest":
+            items = _seek.order_latest(items + isigs, since, now)
+        else:
+            items = items + isigs
+        checked.append(f"intel: tracked as '{tp.get('name')}' ({len(isigs)} signals since {intel.get('since', '')[:10]})")
+    elif intel.get("_error"):
+        checked.append("intel: " + intel["_error"])
+    else:
+        checked.append("intel: not tracked" + (f" (near: {', '.join(m['name'] for m in intel.get('matches') or [])})"
+                                               if intel.get("matches") else ""))
+        if need == "latest":
+            extra["offer_tracking"] = f"Vera does not follow '{subject}'; offer to track it (intel.topic.save name=...)"
+
+    if not any(it.get("kind") == "web" for it in items):
+        gaps.append("the web searches returned nothing usable - see /health search")
+    pack = _seek.build_pack(need, question, subject, items[:10], since=since if need == "latest" else "",
+                            checked=checked, gaps=gaps, now=now,
+                            elapsed_ms=int((time.monotonic() - t0) * 1000), extra=extra)
+    await emit_event({"type": "info.seek.done", "need": need, "subject": subject[:80], "items": len(pack["items"]),
+                      "elapsed_ms": pack["elapsed_ms"]})
+    return pack
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Module load message
 # ─────────────────────────────────────────────────────────────────────────────
 log.info("web_capabilities: loaded — caps registered: web.search, web.fetch, "
