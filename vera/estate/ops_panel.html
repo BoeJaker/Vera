@@ -1043,7 +1043,10 @@ document.addEventListener('keydown', (e) => { if (e.ctrlKey || e.metaKey || e.al
   if (k === 'r') return act(() => $('bRefresh').click()); });
 // embedded: the plot's own mousedown keeps the focus where it was (it starts a drag), so a press anywhere in the page takes it -
 // the keys then reach the page inside its tile
-if (EMBED) document.addEventListener('pointerdown', () => { try { window.focus(); } catch (_) {} }, true);
+// any frame (a tile, the shell's tab): the plot's mousedown keeps the focus where it was (a drag starts there), so a press
+// anywhere on the page takes it - the keys then reach this page, not the shell around it
+const FRAMED = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
+if (EMBED || FRAMED) document.addEventListener('pointerdown', () => { try { window.focus(); } catch (_) {} }, true);
 // embedded: the two rails behind the header's two buttons
 $('bRail').onclick = () => { document.documentElement.classList.toggle('show-l'); render(); }; $('bInsp').onclick = () => { document.documentElement.classList.toggle('show-i'); render(); };
 const v = $('pzv');
