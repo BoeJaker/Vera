@@ -77,6 +77,17 @@ import random
 import sqlite3
 import time
 from collections import defaultdict, Counter
+try:                                                   # FM-8.2 held-out evaluation and step cap (pure)
+    from Vera.vera.worldview import worldview_eval_core as _wv_eval
+except Exception:                                      # worktree / node / app-free import
+    try:
+        from vera.worldview import worldview_eval_core as _wv_eval   # type: ignore
+    except Exception:
+        import importlib.util as _ilu, os as _os
+        _spec = _ilu.spec_from_file_location(
+            "worldview_eval_core", _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "worldview_eval_core.py"))
+        _wv_eval = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_wv_eval)
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -161,9 +172,12 @@ except ImportError:
 
 EMBED_DIM        = int(os.getenv("WORLDVIEW_EMBED_DIM", "768"))
 LATENT_DIM       = int(os.getenv("WORLDVIEW_LATENT_DIM", "256"))
-HIDDEN_DIM       = int(os.getenv("WORLDVIEW_HIDDEN_DIM", "512"))
-NUM_GNN_LAYERS   = int(os.getenv("WORLDVIEW_GNN_LAYERS", "2"))
-NUM_CONCEPTS     = int(os.getenv("WORLDVIEW_NUM_CONCEPTS", "512"))
+# Right-sized 2026-10-10 (four-minds FM-8.2): 512 concepts over ~2,300 records was 4.5 per concept, and the
+# health floor is 20 - K 96, hidden 256 and one GNN layer, under a new checkpoint key (worldview_v3) so the old
+# model stays stored. The env vars still override every one of them.
+HIDDEN_DIM       = int(os.getenv("WORLDVIEW_HIDDEN_DIM", "256"))
+NUM_GNN_LAYERS   = int(os.getenv("WORLDVIEW_GNN_LAYERS", "1"))
+NUM_CONCEPTS     = int(os.getenv("WORLDVIEW_NUM_CONCEPTS", "96"))
 VQ_DECAY         = float(os.getenv("WORLDVIEW_VQ_DECAY", "0.99"))
 VQ_COMMITMENT    = float(os.getenv("WORLDVIEW_VQ_COMMIT", "0.25"))
 DYN_DIM          = int(os.getenv("WORLDVIEW_DYN_DIM", "192"))
@@ -178,7 +192,7 @@ WALK_LEN         = int(os.getenv("WORLDVIEW_WALK_LEN", "16"))
 CHECKPOINT_DIR   = Path(os.getenv("WORLDVIEW_CHECKPOINT_DIR",
                                    str(Path.home() / ".vera" / "worldview")))
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_CKPT     = CHECKPOINT_DIR / "worldview_v2.pt"
+DEFAULT_CKPT     = CHECKPOINT_DIR / "worldview_v3.pt"
 
 LOOM_EDGE_TYPES = [
     "SIMILAR_TO", "SHARES_TOPIC", "DERIVED_FROM",
@@ -673,6 +687,8 @@ class WorldView:
         # before the FAISS index is rebuilt.
         self.record_meta: Dict[str, Dict] = {}
         self.transition_counts: Dict[Tuple[int, int], int] = {}
+        # the last training's held-out next-concept evaluation (worldview_eval_core.verdict) - health reads it
+        self.held_out: Dict[str, Any] = {}
         self.last_fabric_persist: str = ""
         self.last_fabric_load:    str = ""
         self._last_revived:       int = 0
@@ -926,6 +942,33 @@ class WorldView:
 
     # ── Stage 3: Dynamics training ─────────────────────────────────────────
 
+    def eval_dynamics(self, token_seqs, batch: int = 128) -> Tuple[float, float, int]:
+        """(mean next-token negative log-likelihood in nats, top-1 accuracy, tokens) over held-out walks, the
+        same targets train_dynamics_step learns (the end-of-sequence padding never counts)."""
+        if not self.ready or not token_seqs:
+            return 0.0, 0.0, 0
+        self.dynamics.eval()
+        nll, hits, n = 0.0, 0, 0
+        with torch.no_grad():
+            for i in range(0, len(token_seqs), batch):
+                seqs = token_seqs[i:i + batch]
+                T = min(max(len(s) for s in seqs), self.dynamics.max_ctx)
+                tokens = torch.full((len(seqs), T), TOKEN_EOS, dtype=torch.long, device=self.device)
+                for j, s in enumerate(seqs):
+                    s = s[:T]
+                    tokens[j, :len(s)] = torch.tensor(s, dtype=torch.long, device=self.device)
+                logits = self.dynamics(tokens)[:, :-1]
+                tgt = tokens[:, 1:]
+                mask = tgt != TOKEN_EOS
+                if not bool(mask.any()):
+                    continue
+                lp = F.log_softmax(logits, dim=-1)
+                nll += float(-lp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)[mask].sum())
+                hits += int((logits.argmax(-1) == tgt)[mask].sum())
+                n += int(mask.sum())
+        self.dynamics.train()
+        return (nll / n if n else 0.0), (hits / n if n else 0.0), n
+
     def train_dynamics_step(self, token_seqs):
         if not self.ready or not token_seqs:
             return 0.0
@@ -1054,6 +1097,9 @@ class WorldView:
             "record_meta":       self.record_meta,
             "transition_counts": {f"{a},{b}": n
                                    for (a, b), n in self.transition_counts.items()},
+            "held_out":          dict(self.held_out or {}),
+            # when this checkpoint was written: health's checkpoint age survives a restart
+            "saved_at":          self.last_fabric_persist or now_iso(),
             "config": {
                 "embed_dim":    self.embed_dim,
                 "latent_dim":   self.latent_dim,
@@ -1119,6 +1165,9 @@ class WorldView:
         self.concept_labels  = ckpt.get("concept_labels", {})
         self.record_concepts = ckpt.get("record_concepts", {})
         self.record_meta     = ckpt.get("record_meta", {})
+        self.held_out        = dict(ckpt.get("held_out") or {})
+        if not self.last_fabric_persist and ckpt.get("saved_at"):
+            self.last_fabric_persist = str(ckpt["saved_at"])
         tc = ckpt.get("transition_counts", {})
         self.transition_counts = {}
         for k, v in tc.items():
@@ -1205,6 +1254,7 @@ class WorldView:
             "records_assigned": len(self.record_concepts),
             "labelled_concepts": len(self.concept_labels),
             "transitions_observed": len(self.transition_counts),
+            "held_out":         dict(self.held_out or {}),
             "last_fabric_persist": self.last_fabric_persist,
             "last_fabric_load":    self.last_fabric_load,
             "active_subview":      _WV_ACTIVE_SUBVIEW,
@@ -1388,7 +1438,7 @@ def _get_fabric():
 # FABRIC PERSISTENCE  —  SQLite + Postgres checkpoint store/load
 # ─────────────────────────────────────────────────────────────────────────────
 
-WV_BLOB_KEY = os.getenv("WORLDVIEW_BLOB_KEY", "worldview_v2")
+WV_BLOB_KEY = os.getenv("WORLDVIEW_BLOB_KEY", "worldview_v3")   # v2 = the pre-FM-8.2 512-concept model
 WORLDVIEW_PROVIDER_REVISION = "worldview-jepa-v2"
 MAX_PROVENANCE_JSON_BYTES = 16 * 1024 * 1024
 _WV_RETRIEVAL_PROVENANCE: Optional[JepaRetrievalProvenance] = None
@@ -2534,11 +2584,21 @@ def _train_stages_sync(model: "WorldView", graph: Dict, gnn_epochs: int,
             say("dynamics_error", error=str(e)[:200], message=f"Walk generation failed: {e}")
             walks = []
         walks_n = len(walks)
+        # FM-8.2: a share of the walks is held back for the next-concept evaluation health reads, and the epochs
+        # are capped so the dynamics never take more than ~20 steps per observed transition (memorising)
+        test_walks: List = []
         if walks:
-            say("dynamics_walks", walks=len(walks),
-                message=f"{len(walks)} walks generated — training dynamics...")
-            t_stage = time.time()
+            walks, test_walks = _wv_eval.split_walks(walks, float(_WV_CONFIG.get("held_out", _wv_eval.HELD_OUT)))
+        if walks:
             dyn_batch = _WV_CONFIG.get("batch_size", BATCH_SIZE)
+            per_epoch = sum(1 for i in range(0, len(walks), dyn_batch) if len(walks[i:i + dyn_batch]) >= 2)
+            capped = _wv_eval.step_cap(len(model.transition_counts), model.train_steps.get("dynamics", 0),
+                                       per_epoch, dynamics_epochs)
+            say("dynamics_walks", walks=len(walks), held_out=len(test_walks), epochs=capped,
+                message=f"{len(walks)} walks ({len(test_walks)} held out) — training dynamics, "
+                        f"{capped} of {dynamics_epochs} epochs (step cap)...")
+            dynamics_epochs = capped
+            t_stage = time.time()
             for epoch in range(dynamics_epochs):
                 if should_stop():
                     stopped = True
@@ -2563,6 +2623,20 @@ def _train_stages_sync(model: "WorldView", graph: Dict, gnn_epochs: int,
                     say("dynamics_error", epoch=epoch + 1, error=str(e)[:200],
                         message=f"Dynamics epoch {epoch+1} failed: {e}")
                     break
+            if test_walks:
+                try:
+                    nll, acc, _n = model.eval_dynamics(test_walks)
+                    base = _wv_eval.baselines(walks, test_walks, model.num_concepts + NUM_SPECIAL_TOKENS, TOKEN_EOS)
+                    model.held_out = _wv_eval.verdict(nll, acc, base, train_walks=len(walks),
+                                                      test_walks=len(test_walks))
+                    model.held_out["at"] = now_iso()
+                    say("dynamics_held_out", **{k: v for k, v in model.held_out.items() if k != "at"},
+                        message=f"Held out: model {nll:.3f} nats vs unigram {base.get('unigram_nll')} / bigram "
+                                f"{base.get('bigram_nll')} - "
+                                + ("beats both" if model.held_out["beats_baseline"] else model.held_out.get("why", "")))
+                except Exception as e:
+                    log.error("Held-out evaluation FAILED: %s", e, exc_info=True)
+                    say("dynamics_error", error=str(e)[:200], message=f"Held-out evaluation failed: {e}")
         gc.collect()
     if stopped:
         say("stopped", message="Training stopped — keeping the epochs already run")
@@ -4963,7 +5037,9 @@ async def cap_worldview_label_concepts(
     else:
         # Label unlabelled concepts first, then update existing labels
         target = [c for c, _ in pop.most_common() if c not in MODEL.concept_labels]
-    target = target[:max_concepts]
+    # FM-8.2: an LLM label for a concept with a handful of members names noise - not below the floor
+    floor = int(_WV_CONFIG.get("label_min_members", 5) or 0)
+    target = [c for c in target if pop[c] >= floor][:max_concepts]
     if not target:
         return {"labelled": [], "message": "Nothing to label"}
 
@@ -5273,7 +5349,8 @@ async def cap_worldview_health(trace_id=None) -> Dict:
     except ImportError:                                   # pragma: no cover
         from vera.worldview import worldview_health_core as _whc
     try:
-        return _whc.verdict(MODEL.stats(), WV_INDEX.stats())
+        st = MODEL.stats()
+        return _whc.verdict(st, WV_INDEX.stats(), held_out=st.get("held_out") or None)
     except Exception as e:                                # a broken model is not healthy
         log.warning("worldview.health: %s", e)
         return {"status": "untrained", "reasons": [f"health check failed: {e}"], "metrics": {}}
@@ -5356,6 +5433,8 @@ _WV_CONFIG: Dict[str, Any] = {
     "jepa_weight":        1.0,
     "vicreg_weight":      0.5,
     "target_ema_decay":   0.996,
+    "held_out":           0.2,         # FM-8.2: share of walks held back for the next-concept evaluation
+    "label_min_members":  5,           # FM-8.2: no LLM label for a concept with fewer members
     "auto_label":         True,        # auto-label concepts after training
     "auto_label_k":       50,          # max concepts to auto-label
 }
