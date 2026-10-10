@@ -371,3 +371,11 @@ def knn_vote(question_id: str, qvec: Iterable[float], pool: Iterable[Dict[str, A
     else:
         p = vote[answer] / total
     return answer, round(p, 4), len(rows)
+
+
+def latency(ms: Iterable[int]) -> Dict[str, Any]:
+    """{ms_p50, ms_p90} of a shadow judge's answers (each recorded its own call time), or {} when none did."""
+    v = sorted(int(x) for x in ms if x)
+    if not v:
+        return {}
+    return {"ms_p50": v[len(v) // 2], "ms_p90": v[min(len(v) - 1, int(len(v) * 0.9))]}
