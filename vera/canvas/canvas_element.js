@@ -581,7 +581,8 @@
       const doms = {}; all.forEach((r) => { if (r.domain) doms[r.domain] = (doms[r.domain] || 0) + 1; });
       const domList = Object.keys(doms).sort((a, b) => doms[b] - doms[a]).slice(0, size === 'xl' ? 12 : 6);
       const hue = (s) => { let h = 0; for (const ch of String(s || '')) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
-      const badge = (r) => { const d = r.domain || (r.meta && (r.meta.dataset_id || r.meta.source)) || c.kind || '?'; return `<span class="vc-rbx-fav" style="--h:${hue(d)}">${esc(String(d).replace(/^www\./, '').charAt(0).toUpperCase())}</span>`; };
+      /* a source's badge in one of the theme's category colours (--dv1..7), the same site always the same colour */
+      const badge = (r) => { const d = r.domain || (r.meta && (r.meta.dataset_id || r.meta.source)) || c.kind || '?'; const h = hue(d); return `<span class="vc-rbx-fav" style="--dvc:var(--dv${1 + (h % 7)},hsl(${h} 45% 60%))">${esc(String(d).replace(/^www\./, '').charAt(0).toUpperCase())}</span>`; };
       const ago = (t) => { const x = Date.parse(t); if (!isFinite(x)) return String(t || '').slice(0, 10); const s = (Date.now() - x) / 1000; return s < 3600 ? Math.max(1, Math.round(s / 60)) + 'm' : s < 172800 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd'; };
       const actBtn = (act, id, label, t) => `<button class="vc-rbx-b" data-rec-act="${act}" data-rec-key="${K}" data-rec-arg="${esc(id)}" title="${esc(t || '')}">${label}</button>`;
       /* A RECORD, OPENED, WITH ITS DEPTH (owner, 2026-09-29: the web results need "better depth and rendering of results &
@@ -661,7 +662,7 @@
         }
         if (map || tl) glance = `<div class="vc-rbx-glance">${map}${tl}</div>`;
       }
-      const seg = (name, opts) => `<span class="vc-rbx-seg">${opts.map((o) => `<button class="${(st[name] || opts[0][0]) === o[0] ? 'on' : ''}" data-rec-act="${name}" data-rec-key="${K}" data-rec-arg="${o[0]}" title="${esc(o[2] || '')}">${o[1]}</button>`).join('')}</span>`;
+      const seg = (name, opts) => `<span class="vc-rbx-seg seg-${name}">${opts.map((o) => `<button class="${(st[name] || opts[0][0]) === o[0] ? 'on' : ''}" data-rec-act="${name}" data-rec-key="${K}" data-rec-arg="${o[0]}" title="${esc(o[2] || '')}">${o[1]}</button>`).join('')}</span>`;
       const from = rows.length ? page * per + 1 : 0, to = Math.min(rows.length, page * per + per);
       const dots = pages > 1 ? Array.from({ length: Math.min(pages, 9) }, (_, i) => { const n = pages <= 9 ? i : Math.round(i * (pages - 1) / 8); return `<button class="vc-rbx-dot${n === page ? ' on' : ''}" data-rec-act="page" data-rec-key="${K}" data-rec-arg="${n}" title="page ${n + 1}"></button>`; }).join('') : '';
       return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
@@ -675,9 +676,23 @@
         + `</div>`;
     },
 
-    table: c => {
+    table: (c, size, key, el) => {
       const cols = c.columns || [];
       const rows = c.rows || [];
+      /* the table's other views (see VIEWS): each row a card (its first cell the title, the rest named), a list (the first
+         cell, the rest on a line under it), or a chart of its first column of numbers */
+      const view = rows.length ? viewOf(el, key, tableDefault(c, el)) : 'table';
+      const cell = (v) => esc(v == null ? '' : String(v));
+      if (view === 'cards' || view === 'list') {
+        return `<div class="vc-tv vc-tv-${view}">` + rows.filter(Array.isArray).map((r) => `<div class="vc-tv-r"><b class="vc-tv-t">${cell(r[0])}</b>`
+          + (view === 'cards' ? `<dl>${r.slice(1).map((v, j) => `<dt>${cell(cols[j + 1] || '')}</dt><dd>${cell(v)}</dd>`).join('')}</dl>` : `<span class="vc-tv-s">${r.slice(1).map((v, j) => (cols[j + 1] ? `<i>${cell(cols[j + 1])}</i> ` : '') + cell(v)).join(' · ')}</span>`)
+          + `</div>`).join('') + `</div>` + (c.caption ? `<div class="vc-cap">${esc(c.caption)}</div>` : '');
+      }
+      if (view === 'chart') { const j = numCol(c);
+        if (j > 0) { const pts = rows.filter(Array.isArray).map((r) => [String(r[0] == null ? '' : r[0]), parseFloat(String(r[j]).replace(/[,%$£€]/g, ''))]).filter((p) => isFinite(p[1]));
+          const mx = Math.max(...pts.map((p) => Math.abs(p[1])), 1e-9);
+          return `<div class="vc-tv vc-tv-chart"><div class="vc-tv-ch">${esc(cols[j] || '')}</div>` + pts.map((p) => `<div class="vc-tv-bar"><span class="l" title="${esc(p[0])}">${esc(p[0])}</span><span class="b"><i style="width:${(100 * Math.abs(p[1]) / mx).toFixed(1)}%"></i></span><span class="v">${esc(String(p[1]))}</span></div>`).join('') + `</div>`
+            + (c.caption ? `<div class="vc-cap">${esc(c.caption)}</div>` : ''); } }
       return `<div class="vc-tablewrap"><table class="vc-table">
         ${cols.length ? `<thead><tr>${cols.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>` : ''}
         <tbody>${rows.map(r => `<tr>${(r || []).map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}
@@ -789,6 +804,9 @@
       const groups = Array.isArray(c && c.groups) ? c.groups : [];
       if (!groups.length) return '<div class="vc-dim">nothing named</div>';
       const open = (el && el._entOpen && el._entOpen[key]) || '';
+      /* the names as a list (see VIEWS): one per row - the name, what it is, how often - each opening as its chip does */
+      if (viewOf(el, key, 'chips') === 'list') return '<div class="vc-ent vc-ent-list" data-w="canvas.entities">' + groups.map((g, gi) => `<div class="vc-ent-gl">${esc(g.group || '')}</div>`
+        + (Array.isArray(g.entities) ? g.entities : []).map((e, ei) => `<button class="vc-ent-row${open === gi + ':' + ei ? ' on' : ''}" data-act="entopen" data-ent="${gi}:${ei}"><b>${esc(e.text)}</b><span>${esc(e.type || '')}</span>${e.count > 1 ? `<i>${e.count}×</i>` : ''}</button>`).join('')).join('') + '</div>';
       return '<div class="vc-ent" data-w="canvas.entities">' + groups.map((g, gi) => {
         const ents = Array.isArray(g.entities) ? g.entities : [];
         const chips = ents.map((e, ei) => { const id = gi + ':' + ei;
@@ -1287,7 +1305,7 @@
      tall the tool row, the title line (the card's header already names it), a graph's pager and its caption go; a taller
      card, or the card maximised, has them. */
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd{container:deskcard / size}
-  @container deskcard (max-height: 380px) { .vc-rbx > :is(.vc-rbx-top,.vc-rbx-tools), .vc-rbx:has(> .vc-rbx-graph) > .vc-rbx-foot, .vc-rbx-gnote { display:none!important } }
+  @container deskcard (max-height: 380px) { .vc-rbx > :is(.vc-rbx-top,.vc-rbx-tools,.vc-rbx-glance,.vc-rbx-facets), .vc-rbx:has(> .vc-rbx-graph) > .vc-rbx-foot, .vc-rbx-gnote { display:none!important } }   /* the site bar and the site filters too: on a 171 px card they left the list 0 px */
   /* a desk card that is not a chip keeps its corner grip: a compact card's rule hid it, so no desk card could be resized */
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip):not([data-desk-face^="layer-"]) > .rz{display:block}
   /* a card is moved by its header on the desk; while it moves it follows the pointer exactly and rides above the rest */
@@ -1321,7 +1339,7 @@
     :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda > .hb:is([data-act="ctx"],[data-act="explode"],[data-act="edit"]){display:none}
     :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd,
     :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > :first-child > :is(.vc-codehead,.vc-th,.code-bar):first-child,
-    :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:92px!important} }
+    :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:114px!important} }   /* view · lock · fill · more · drop */
   .hda{display:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
   :host([align="desk"]:not([desk-narrow])) .stage .it:is(:hover,.hov,:focus-within) > .hda{opacity:1}
@@ -1340,6 +1358,11 @@
   .stage > .hd-pop > .ib:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
   .stage > .hd-pop > .ib.on{color:var(--acc,#5a9e8f)}
   .stage > .hd-pop > hr{border:0;border-top:1px solid var(--border,#2a2f37);margin:4px 2px}
+  .stage > .hd-pop > .ib.vrow{display:flex;align-items:center;gap:8px}.stage > .hd-pop > .ib.vrow .vic{display:inline-flex;color:var(--dim,#8b93a1)}
+  .stage > .hd-pop > .ib.vrow.on .vic{color:var(--acc,#5a9e8f)}
+  .stage > .hd-pop{min-width:0}.stage > .hd-pop:not([data-kind="view"]){min-width:170px}
+  /* the header's View button is the desk's one view switch: the records item's own switch would be a second */
+  :host([align="desk"]:not([desk-narrow])) .vc-rbx-seg.seg-view{display:none}
   /* resizing follows the hand: no size animation while the grip is held */
   :host([align="desk"]:not([desk-narrow])) .stage .it.resizing{transition:none!important}
   /* a redrawn card held at its last place (no animation), and a new one unseen until the desk has placed it */
@@ -1476,20 +1499,44 @@
   .vc-rbx-facets{display:flex;gap:4px;flex-wrap:wrap}
   .vc-rbx-facets button{font:inherit;font-size:9.5px;height:20px;padding:0 8px;border-radius:10px;border:1px solid var(--border,#3a3530);background:transparent;color:var(--dim2,#8a7e70);cursor:pointer;display:inline-flex;gap:5px;align-items:center}
   .vc-rbx-facets button i{font-style:normal;opacity:.6}.vc-rbx-facets button.on{border-color:var(--acc,#5a9e8f);color:var(--fg,#ddd);background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
-  .vc-rbx-list{display:flex;flex-direction:column;gap:2px}
-  .vc-rbx-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px}
-  .vc-rbx-row{padding:7px 8px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;gap:4px;border:1px solid transparent;min-width:0}
+  /* the table's other views, and the names as a list */
+  .vc-tv-list{display:flex;flex-direction:column}
+  .vc-tv-list .vc-tv-r{display:flex;flex-direction:column;gap:2px;padding:7px 4px;border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 60%,transparent)}
+  .vc-tv-t{font-weight:600;font-size:12px;color:var(--fg,#dce1e8)}
+  .vc-tv-s{font-size:11px;line-height:1.5;color:color-mix(in srgb,var(--fg,#dce1e8) 70%,transparent)}.vc-tv-s i{font-style:normal;color:var(--dim,#8b93a1)}
+  .vc-tv-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+  .vc-tv-cards .vc-tv-r{padding:9px 10px;border-radius:8px;border:1px solid color-mix(in srgb,var(--border,#2a2f37) 70%,transparent);background:color-mix(in srgb,var(--bg2,#1c2026) 55%,transparent)}
+  .vc-tv-cards dl{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;margin:6px 0 0;font-size:11px}
+  .vc-tv-cards dt{color:var(--dim,#8b93a1)}.vc-tv-cards dd{margin:0;color:var(--fg,#dce1e8);overflow-wrap:anywhere}
+  .vc-tv-chart{display:flex;flex-direction:column;gap:5px;font-size:11px}.vc-tv-ch{font-size:10px;color:var(--dim,#8b93a1);text-transform:uppercase;letter-spacing:.06em}
+  .vc-tv-bar{display:grid;grid-template-columns:minmax(60px,30%) 1fr auto;gap:8px;align-items:center}
+  .vc-tv-bar .l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg,#dce1e8)}
+  .vc-tv-bar .b{height:10px;border-radius:5px;background:color-mix(in srgb,var(--border,#2a2f37) 50%,transparent);overflow:hidden}
+  .vc-tv-bar .b i{display:block;height:100%;border-radius:5px;background:var(--acc,#5a9e8f)}.vc-tv-bar .v{font-family:var(--mono,monospace);color:var(--dim,#8b93a1)}
+  .vc-ent-list{display:flex;flex-direction:column}
+  .vc-ent-row{display:flex;align-items:baseline;gap:8px;padding:5px 4px;border:0;border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 60%,transparent);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+  .vc-ent-row b{font-weight:600;font-size:12px;color:var(--fg,#dce1e8)}.vc-ent-row span{font-size:10.5px;color:var(--dim,#8b93a1)}.vc-ent-row i{margin-left:auto;font-style:normal;font-size:10px;color:var(--dim,#8b93a1)}
+  .vc-ent-row:hover,.vc-ent-row.on{background:color-mix(in srgb,var(--acc,#5a9e8f) 10%,transparent)}
+  .vc-rbx-list{display:flex;flex-direction:column;gap:0}
+  .vc-rbx-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}
+  .vc-rbx-row{padding:8px 8px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;gap:4px;border:1px solid transparent;min-width:0}
+  /* A LIST YOU CAN READ (owner, 2026-10-10: "web and research sources doesnt look great its hard to read the lists"): rows
+     ruled apart, the title the strongest line, the source and age in the reading face rather than 9 px mono, the
+     snippet bright enough to read */
+  .vc-rbx-list > .vc-rbx-row{border-radius:0;border-width:0 0 1px;border-bottom-color:color-mix(in srgb,var(--border,#2a2f37) 55%,transparent)}
+  .vc-rbx-list > .vc-rbx-row:last-child{border-bottom-color:transparent}
   .vc-rbx-row:hover{background:var(--bg2,#272421)}.vc-rbx-row.on{background:var(--bg2,#272421);border-color:var(--border,#3a3530)}
   .vc-rbx-cards .vc-rbx-row{background:var(--bg2,#272421);border-color:var(--border,#3a3530)}.vc-rbx-cards .vc-rbx-row.on{grid-column:1/-1}
   .vc-rbx-hd{display:flex;gap:8px;align-items:flex-start;min-width:0}
-  .vc-rbx-fav{width:20px;height:20px;border-radius:6px;flex:none;display:grid;place-items:center;font:700 10px var(--mono,monospace);color:hsl(var(--h) 55% 78%);background:hsl(var(--h) 35% 24%)}
+  .vc-rbx-fav{width:20px;height:20px;border-radius:6px;flex:none;display:grid;place-items:center;font:700 10px var(--mono,monospace);color:var(--dvc,var(--acc,#5a9e8f));background:color-mix(in srgb,var(--dvc,var(--acc,#5a9e8f)) 18%,transparent)}
   .vc-rbx-tt{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
-  .vc-rbx-t{font-size:12px;font-weight:500;line-height:1.35;color:var(--fg,#ddd);text-decoration:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .vc-rbx-t{font-size:12.5px;font-weight:600;line-height:1.4;color:var(--fg,#ddd);text-decoration:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   a.vc-rbx-t:hover{text-decoration:underline;color:var(--acc,#5a9e8f)}
-  .vc-rbx-sub{display:flex;gap:8px;align-items:center;font:9px var(--mono,monospace);color:var(--dim2,#8a7e70);min-width:0}
+  .vc-rbx-sub{display:flex;gap:0;align-items:center;font-size:10.5px;color:var(--dim,#8b93a1);min-width:0}
   .vc-rbx-sub span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
+  .vc-rbx-sub > span + span::before{content:" · ";white-space:pre;opacity:.7}
   .vc-rbx-sc{display:inline-block;width:38px;height:4px;border-radius:2px;background:var(--bg3,#302c29);overflow:hidden}.vc-rbx-sc i{display:block;height:100%;background:var(--acc,#5a9e8f)}
-  .vc-rbx-s{font-size:10.5px;line-height:1.5;color:var(--dim2,#8a7e70);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;padding-left:28px}
+  .vc-rbx-s{font-size:11.5px;line-height:1.55;color:color-mix(in srgb,var(--fg,#dce1e8) 72%,transparent);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;padding-left:28px}
   .vc-rbx-cards .vc-rbx-s{padding-left:0;-webkit-line-clamp:4}
   .vc-rbx-open{display:flex;flex-direction:column;gap:6px;padding:4px 0 2px 28px;cursor:default}
   .vc-rbx-full{font-size:11px;line-height:1.55;color:var(--fg,#ddd);white-space:pre-wrap}
@@ -2356,7 +2403,33 @@
     restore: '<path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3"/>',
     drop: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>',
     more: '<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>',
+    list: '<path d="M3 4.5h10M3 8h10M3 11.5h10"/>',
+    cards: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>',
+    table: '<rect x="2.5" y="3" width="11" height="10" rx="1"/><path d="M2.5 6.5h11M2.5 9.8h11M6.5 3v10"/>',
+    graph: '<circle cx="4" cy="11.5" r="1.6"/><circle cx="8" cy="4" r="1.6"/><circle cx="12.5" cy="10" r="1.6"/><path d="M4.8 10.1l2.4-4.7M9.2 5.2l2.6 3.4M5.6 11.3l5.3-1"/>',
+    chart: '<path d="M3 13V8M6.5 13V4M10 13V9.5M13.5 13V6"/>',
+    chips: '<rect x="2" y="3.5" width="6" height="3.5" rx="1.75"/><rect x="9" y="3.5" width="5" height="3.5" rx="1.75"/><rect x="2" y="9" width="8" height="3.5" rx="1.75"/>',
   });
+  /* VIEWS - THE SAME THING, SEEN ANOTHER WAY (owner, 2026-10-10: "the elements used to be able to swap from graph to card to
+     list can you extend this out to all compatible canvas/desk elements - i cant see the option to do it on most elements").
+     A kind that can be seen more than one way says how: records (graph · list · cards · table), a table (table · cards ·
+     list · chart when a column is numbers), the names a reply mentions (chips · list). The choice is the reader's, per
+     item, kept in this browser; a records item's lives with its other browsing state. */
+  const VIEW_LABEL = { list: 'List', cards: 'Cards', table: 'Table', graph: 'Graph', chart: 'Chart', chips: 'Chips' };
+  const viewStore = (el) => { if (el._views) return el._views; try { el._views = JSON.parse(localStorage.getItem('vera:canvas:views:' + el.canvasId) || '{}') || {}; } catch (e) { el._views = {}; } return el._views; };
+  const viewOf = (el, key, dflt) => (el && key && viewStore(el)[key]) || dflt;
+  const viewSet = (el, key, v) => { const m = viewStore(el); m[key] = v; try { localStorage.setItem('vera:canvas:views:' + el.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } };
+  /* a table of three or more columns reads as a list on a desk card (a 250 px card cut a model table into words per line);
+     a narrow one, or one on a held column, as a table - the reader's choice always wins */
+  const tableDefault = (c, el) => (el && el.deskAlign && el.deskAlign() && (c.columns || []).length >= 3) ? 'list' : 'table';
+  const numCol = (c) => { const cols = c.columns || [], rows = (c.rows || []).filter(Array.isArray); for (let j = 1; j < cols.length; j++) { const vals = rows.map((r) => parseFloat(String(r[j]).replace(/[,%$£€]/g, ''))); if (rows.length >= 2 && vals.filter((v) => isFinite(v)).length >= Math.ceil(rows.length * 0.8)) return j; } return -1; };
+  const recCanGraph = (c, el, key) => { if (c.kind === 'memory' || c.view === 'graph') return true; const ents = (el && el._recEnts && el._recEnts[String(key)]) || {}; const n = {}; Object.keys(ents).forEach((id) => (ents[id] || []).forEach((e) => { n[e[0]] = (n[e[0]] || 0) + 1; })); return Object.keys(n).some((k) => n[k] >= 2); };
+  /* the views an item offers, and the one it shows: [] when it has only one way to be seen */
+  const viewsOf = (b, el) => { const c = (b && b.content) || {}, key = String((b && b.key) || '');
+    if (b.type === 'records') { const v = (recCanGraph(c, el, key) ? ['graph'] : []).concat(['list', 'cards', 'table']); return { views: v, cur: recState(el, key).view || 'list' }; }
+    if (b.type === 'table' && Array.isArray(c.rows) && c.rows.length) { const v = ['table', 'cards', 'list'].concat(numCol(c) > 0 ? ['chart'] : []); return { views: v, cur: viewOf(el, key, tableDefault(c, el)) }; }
+    if (b.type === 'entities' && Array.isArray(c.groups) && c.groups.length) return { views: ['chips', 'list'], cur: viewOf(el, key, 'chips') };
+    return { views: [], cur: '' }; };
   /* the kinds whose drawer already draws a head — name, state and the controls that belong to that kind. The card
      does not draw a second one over them; see "ONE HEADER PER ITEM" where the card is built. */
   /* the person's behind / front / among pick per panel item, kept in this browser for every canvas and frame */
@@ -2622,7 +2695,7 @@
        inside it), under the button, closed by its own use, a second ⋯ or a press anywhere else. */
     _hdMenu(key, btn) {
       const st = this.shadowRoot.getElementById('stage'); if (!st || !key) return;
-      const had = st.querySelector(':scope > .hd-pop'); if (had) { had.remove(); if (had.dataset.key === key) return; }
+      const had = st.querySelector(':scope > .hd-pop'); if (had) { had.remove(); if (had.dataset.key === key && had.dataset.kind !== 'view') return; }
       const c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); if (!c) return;
       const b = this._blockOf(key) || {}; const k = esc(key); const L = (this._layer || {})[key] || '';
       const row = (act, label, title, on) => `<button class="ib${on ? ' on' : ''}" data-act="${act}" data-layer-key="${k}" title="${esc(title || label)}">${esc(label)}</button>`;
@@ -2641,6 +2714,21 @@
       st.appendChild(pop);
       const pw = pop.offsetWidth || 180; let left = Math.round((r.right - S.left) / Z - pw), top = Math.round((r.bottom - S.top) / Z + 4);
       left = Math.max(4, Math.min(st.clientWidth - pw - 4, left)); pop.style.left = left + 'px'; pop.style.top = top + 'px';
+      const doc = this.ownerDocument || document;
+      const off = (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(pop) || (btn && p.includes(btn))) return; pop.remove(); doc.removeEventListener('mousedown', off, true); };
+      setTimeout(() => doc.addEventListener('mousedown', off, true), 0);
+    }
+    /* the item's views, under its View button: one row each, the one shown lit; a choice redraws the item that way */
+    _viewMenu(key, btn) {
+      const st = this.shadowRoot.getElementById('stage'); if (!st || !key) return;
+      const had = st.querySelector(':scope > .hd-pop'); if (had) { had.remove(); if (had.dataset.key === key && had.dataset.kind === 'view') return; }
+      const b = this._blockOf(key); if (!b) return; const vw = viewsOf(b, this); if (vw.views.length < 2) return;
+      const pop = document.createElement('div'); pop.className = 'hd-pop'; pop.dataset.key = key; pop.dataset.kind = 'view'; pop.dataset.w = 'canvas.item.views';
+      pop.innerHTML = vw.views.map((v) => `<button class="ib vrow${v === vw.cur ? ' on' : ''}" data-act="setview" data-view="${v}" data-layer-key="${esc(key)}"><span class="vic">${HDI[v] || ''}</span>${esc(VIEW_LABEL[v] || v)}</button>`).join('');
+      const S = st.getBoundingClientRect(), r = (btn || st).getBoundingClientRect(), Z = st.offsetWidth ? (S.width / st.offsetWidth) || 1 : 1;
+      st.appendChild(pop);
+      const pw = pop.offsetWidth || 140; let left = Math.round((r.right - S.left) / Z - pw); left = Math.max(4, Math.min(st.clientWidth - pw - 4, left));
+      pop.style.left = left + 'px'; pop.style.top = Math.round((r.bottom - S.top) / Z + 4) + 'px';
       const doc = this.ownerDocument || document;
       const off = (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(pop) || (btn && p.includes(btn))) return; pop.remove(); doc.removeEventListener('mousedown', off, true); };
       setTimeout(() => doc.addEventListener('mousedown', off, true), 0);
@@ -3238,7 +3326,9 @@
                as icons at the top right; everything else in the ⋯ menu. The footer and the panel's bar are not drawn. */
             const locked = !!this._lockGet()[key]; const ctxOn = inF && (F || b.state === 'pinned');
             const hb = (act, ic, title, on) => `<span class="hb${on ? ' on' : ''}" data-act="${act}" role="button" tabindex="0" title="${esc(title)}">${HDI[ic]}</span>`;
+            const vw = viewsOf(b, this);
             return `<div class="hda" data-w="canvas.item.controls">`
+              + (vw.views.length > 1 ? hb('hdview', vw.cur in HDI ? vw.cur : 'list', 'View: ' + (VIEW_LABEL[vw.cur] || vw.cur) + ' - see it as ' + vw.views.filter((v) => v !== vw.cur).map((v) => VIEW_LABEL[v].toLowerCase()).join(', ')) : '')
               + hb('lock', locked ? 'lock' : 'unlock', locked ? 'Locked where it is - nothing moves or resizes it; click to free it' : 'Lock it where it is: the desk will not move or resize it', locked)
               + (xplodable ? hb('explode', xploded ? 'source' : 'explode', xploded ? 'Back to the source alone' : 'See it as a structured diagram', xploded) : '')
               + (editable ? hb('edit', 'edit', editing ? 'Editing' : 'Edit its text', editing) : '')
@@ -3251,6 +3341,8 @@
           <div class="it-ft" data-w="canvas.item.rail"><span class="it-a">
               ${xplodable ? `<button data-act="explode" class="${xploded ? 'on' : ''}" title="${xploded ? 'Back to the source alone — the diagram goes' : 'See it as a structured diagram, bound to this item by span'}">${xploded ? 'source' : 'graph'}</button>` : ''}
               ${editable ? `<button data-act="edit" class="${editing ? 'on' : ''}" title="Edit its text — saved through canvas.update">${editing ? 'Editing' : 'Edit'}</button>` : ''}
+              ${(() => { const vw = viewsOf(b, this); if (vw.views.length < 2 || this.deskAlign()) return ''; const nx = vw.views[(vw.views.indexOf(vw.cur) + 1) % vw.views.length];
+                return `<button data-act="setview" data-view="${nx}" title="Seen as ${esc((VIEW_LABEL[vw.cur] || vw.cur).toLowerCase())} - click for ${esc(VIEW_LABEL[nx].toLowerCase())}">${esc(VIEW_LABEL[vw.cur] || vw.cur)} ↻</button>`; })()}
               ${plainDoc ? '<button data-act="up" title="Move it up — canvas.move">↑</button><button data-act="down" title="Move it down — canvas.move">↓</button>' : ''}
               ${bid ? '' : `<button data-act="pin" class="${b.state === 'pinned' ? 'on' : ''}" title="${b.state === 'pinned' ? 'Unpin — back into the flow' : 'Pin above the flow'}">${b.state === 'pinned' ? 'unpin' : 'pin'}</button>
               <button data-act="park" title="Park it below the flow">park</button>`}
@@ -3767,6 +3859,11 @@
       if (!it && key) it = [...this.shadowRoot.querySelectorAll('.stage .it[data-key]')].find((x) => x.dataset.key === key) || null;
       if (act === 'lock') return this.toggleLock(key);
       if (act === 'hdmore') return this._hdMenu(key, btn);
+      if (act === 'hdview') return this._viewMenu(key, btn);
+      /* a view chosen (see VIEWS): a records item keeps it with its browsing state, any other kind in the view store */
+      if (act === 'setview') { const v = btn.dataset.view; const b = this._blockOf(key); if (!v || !b) return;
+        if (b.type === 'records') { const st = recState(this, key); st.view = v; st.page = 0; } else viewSet(this, key, v);
+        if (this._doc) this.render(this._doc); return; }
       const focusMid = this.dataset.focusMid || '';
       /* a fused pane's own control: take THIS item out of the group it was drawn into and give it its card back.
          A reader's choice about how the canvas is drawn, so it is kept here and written nowhere. */
