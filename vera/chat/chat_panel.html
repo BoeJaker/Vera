@@ -880,6 +880,19 @@ body.has-panel #chatPanelHost{
 body.has-cols #chatColumn{flex-direction:row;gap:0}
 /* the chat on the right (Chat side, the desk): it moves to the end of the row, the columns keep their order before it */
 body[data-chat-side="right"] #chatStack{order:99}
+/* THE CHAT ON THE DESK (WS-U, owner approved 2026-10-06): a grip at its top drags it - to an edge to dock it, anywhere
+   else to float it over the canvas, which then takes the whole width behind it */
+#chatGrip{display:none}
+body.has-cols[data-desk="1"] #chatGrip{display:flex;position:absolute;top:0;left:50%;transform:translateX(-50%);width:72px;height:14px;z-index:30;cursor:grab;align-items:center;justify-content:center}
+#chatGrip span{width:38px;height:4px;border-radius:2px;background:var(--border2,#4a4540)}
+body.has-cols #chatGrip:hover span,body.chat-dragging #chatGrip span{background:var(--acc,#5a9e8f)}
+body.chat-dragging,body.chat-dragging *{cursor:grabbing!important;user-select:none}
+body[data-chat-side="float"].has-cols #chatColumn{position:relative}
+body[data-chat-side="float"].has-cols #chatStack{position:absolute;z-index:40;left:var(--chat-x,40%);top:var(--chat-y,6%);width:min(460px,46%);height:86%;flex:none!important;min-width:0!important;background:var(--bg0);border:1px solid var(--border2,#4a4540);border-radius:12px;box-shadow:0 30px 70px rgba(0,0,0,.55);overflow:hidden;transition:left .2s ease,top .2s ease}
+body.chat-dragging[data-chat-side="float"] #chatStack{transition:none}
+#chatDockHint{display:none;position:absolute;top:0;bottom:0;width:6px;background:var(--acc,#5a9e8f);opacity:.7;z-index:39;pointer-events:none}
+body.chat-dragging[data-dock-hint="left"] #chatDockHint{display:block;left:0}
+body.chat-dragging[data-dock-hint="right"] #chatDockHint{display:block;right:0}
 body.has-cols #chatStack{flex:1 1 0;min-width:360px}
 /* the measure is the column's: never wider than the space the chat has (the columns, the grown graph, the harness frame) */
 #chatColumn{--measure:min(736px, calc(100% - 32px))}
@@ -907,7 +920,18 @@ body[data-cols~="canvas"] #canvasColumn,body[data-cols~="graph"] #graphColumn{di
 .tri-bd{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
 #canvasColumn vera-canvas{--vc-max:none;margin:0;flex:1;min-height:0}
 #graphColumn vera-context-graph{flex:1;min-height:0}
-/* the records in the focused turn's context run to the message: drawn over the columns, one collector per source */
+/* the graph behind the desk: the canvas's back layer fills the desk; the element fills the layer */
+#deskBack{width:100%;height:100%;display:flex;min-height:0}
+#deskBack vera-context-graph{flex:1;min-height:0;min-width:0}
+/* the desk exploded: the lattice over the whole desk (the chat and the canvas), its bar on top */
+body.desk-exploded #chatColumn{position:relative}
+/* above everything on the desk: its cards stack up to z 200 in the same context and showed through at z 60 */
+#deskXpl{position:absolute;inset:0;z-index:1000;display:flex;flex-direction:column;background:var(--bg0,#0d0f12)}
+#deskXpl [hidden]{display:none!important}
+#deskXpl .dx-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border,#2a2f37);font-size:11px}
+#deskXpl .dx-bar .lbl{color:var(--dim,#8b93a1)}
+#deskXpl .dx-bar .sp{flex:1}
+#deskXpl .dx-host{flex:1;min-height:0;position:relative}/* the records in the focused turn's context run to the message: drawn over the columns, one collector per source */
 body.has-cols #chatColumn{position:relative}
 #ctxRunsOverlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;display:none}
 body[data-cols~="graph"] #ctxRunsOverlay{display:block}
@@ -2259,9 +2283,19 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
          canvas offers to explode what is on it. Each is a preference of YOURS, kept per browser like this sheet. -->
     <div class="sec" style="margin-top:5px">Session canvas</div>
     <div class="row"><label style="min-width:70px" title="Held: an item is kept inside the canvas column, level with its turn while there is room — it never scrolls away with the turn, and a tall item can always be reached. Strict: the column is the transcript's own frame, so an item is always exactly level with its turn and moves with it, off the bottom included.">Alignment</label>
-      <select id="cfgCvAlign" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="held">Held in view</option><option value="strict">Strict — level with the turn</option><option value="desk">Desk — sized by distance from the chat</option></select></div>
+      <select id="cfgCvAlign" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="desk">Desk — sized by distance from the chat</option><option value="held">Held in view</option><option value="strict">Strict — level with the turn</option></select></div>
     <div class="row"><label style="min-width:70px" title="Which side of the page the chat sits on when the canvas, the graph or a panel is open beside it. The other columns move to the other side; a Desk canvas sizes its items by their distance from the chat, wherever it is.">Chat side</label>
-      <select id="cfgCvSide" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="left">Left</option><option value="right">Right</option></select></div>
+      <select id="cfgCvSide" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="left">Left</option><option value="right">Right</option><option value="float">Float over the desk</option></select></div>
+    <div class="row"><label style="min-width:70px" title="Where the context graph is drawn when it is open. In the grown menu: beside the chat, as before. Behind the desk: with a Desk canvas, the graph is the desk's back layer - the cards sit over it and the empty desk between them reaches it.">Graph</label>
+      <select id="cfgCvBack" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="column">In the grown menu</option><option value="behind">Behind the desk</option></select></div>
+    <div class="row"><label style="min-width:70px" title="Where an open UI panel is drawn. Beside the chat: half the chat column, as before. On the desk: with a Desk canvas, a panel you open lands on the canvas as an item, sent behind the other items and filling the part of the desk the chat leaves free; its card's front button brings it over them, and pressing behind or front again puts it back among them.">UI panel</label>
+      <select id="cfgCvPanel" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="beside">Beside the chat</option><option value="desk">On the desk</option></select></div>
+    <div class="row"><label style="min-width:70px" title="How a Desk canvas lays its items out. Orbit: in bands out from the chat, the most relevant nearest. By kind: a column per kind of item. By time: a column per turn, the newest nearest. Stack: one column beside the chat, the rest at the border. Whatever the arrangement, an item is sized by its distance from the chat and one you placed by hand stays put.">Arrangement</label>
+      <select id="cfgCvArrange" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="orbit">Orbit - bands out from the chat</option><option value="kind">By kind</option><option value="timeline">By time - turns ago</option><option value="stack">Stack beside the chat</option></select></div>
+    <div class="row"><label style="min-width:70px" title="On a Desk canvas, a UI panel sent behind the items: its widgets move out from under the items covering them (to the free space nearest, a small face before they are ever covered), and go back when the items move away. Off: the panel's layout never changes.">Panel widgets</label>
+      <select id="cfgCvRoom" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Make room for the items</option><option value="off">Stay where they are</option></select></div>
+    <div class="row"><label style="min-width:70px" title="On a Desk canvas: when a reply lands, the items the turn is about (the canvas's relevance for that turn, best first) come in beside the chat. Off: the desk keeps its order - nothing moves unless you move it; new items join at the border.">Turn brings</label>
+      <select id="cfgCvBring" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Its items in, beside the chat</option><option value="off">Nothing - only I move things</option></select></div>
     <div class="row"><label style="min-width:70px" title="Whether an HTML item, and a code block that is a whole page, draw themselves or show their source. Drawing happens in a sandboxed frame — no network, no cookies, no reach into this page — and each item keeps its own switch either way.">HTML items</label>
       <select id="cfgCvPreview" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Draw them</option><option value="off">Show the source</option></select></div>
     <div class="row"><label style="min-width:70px" title="Where a thing that can live on the canvas is drawn while the canvas is open. On the canvas: the reply keeps a line saying where it went, and a click brings it into view there. In both: it is drawn in the reply as well. Close the canvas and everything comes back inline either way — nothing is ever removed from the reply.">Draw them</label>
@@ -2953,7 +2987,10 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
        msgs + ctxStrip + inputBar render in their normal vertical order
        and only span 50% of the centre area. -->
   <div id="chatColumn">
+    <div id="chatDockHint" aria-hidden="true"></div>
     <div id="chatStack">
+      <!-- the chat on the desk: drag it by this grip - to the left or right edge to dock it there, anywhere else to float it -->
+      <div id="chatGrip" title="Drag the chat: to the left or right edge to dock it, anywhere else to float it over the desk"><span></span></div>
       <!-- the turns of this conversation as a column of dots, top left, opening to each turn's first words -->
       <div id="turnRail" aria-label="turns in this conversation" hidden></div>
       <div id="xplHost"></div>
@@ -6134,13 +6171,19 @@ IMPORTANT:
      canvas reads its own behaviour off itself rather than the page reaching inside it. Defaults are what the canvas
      does today: held alignment, HTML drawn, explode offered on code and prose. */
   const _CV_CFG_KEY='vera_canvas_cfg';
-  const _CV_CFG={ cfgCvAlign:['align','held'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'] };
+  /* the desk is the chat's canvas (owner, 2026-10-08: "the desk is the replacement for the chat canvas"): it is the
+     default alignment; Held and Strict stay for whoever chose them (a saved choice is kept) */
+  const _CV_CFG={ cfgCvAlign:['align','desk'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'], cfgCvPanel:['panel-layer','beside'], cfgCvBring:['bring-in','on'], cfgCvArrange:['desk-arrange','orbit'], cfgCvRoom:['panel-room','on'] };
   function _cvCfg(id){ const el=document.getElementById(id); const v=el&&el.value?String(el.value):''; return v||_CV_CFG[id][1]; }
   function _cvApplyCfg(){
     const el=document.querySelector('#canvasColumnBody vera-canvas');
     if(el) Object.keys(_CV_CFG).forEach(id=>{ const a=_CV_CFG[id][0]; if(!a) return; const v=_cvCfg(id); if(el.getAttribute(a)!==v) el.setAttribute(a,v); });
     // which side of the page the chat sits on (the desk, owner-approved 2026-10-06): the columns swap round it
     try{ const side=_cvCfg('cfgCvSide'); if(document.body.dataset.chatSide!==side) document.body.dataset.chatSide=side; }catch(_){}
+    /* the chat's grip (drag it to float or dock) belongs to the desk: in Held or Strict it was a stray handle that floated the chat */
+    try{ const dk=_cvCfg('cfgCvAlign')==='desk'?'1':''; if((document.body.dataset.desk||'')!==dk) document.body.dataset.desk=dk; }catch(_){}
+    setTimeout(()=>{ try{ _chatRectToCanvas(); }catch(_){} }, 60);
+    try{ _ctxBackSync(); }catch(_){}   /* the graph follows the "behind the desk" choice, both ways */
     try{ _cvOneplaceSync(); }catch(_){}   // "draw them" is the page's own, not the element's: it is about the REPLY
   }
   /* THE BLOCKS TIER, FOLLOWED RATHER THAN SAMPLED ONCE. The canvas is in a shadow root, so a rule on <html> cannot
@@ -6168,6 +6211,67 @@ IMPORTANT:
     try{ document.body.dataset.chatSide=_cvCfg('cfgCvSide'); }catch(_){}
   }
   _restoreCanvasCfg();
+  /* the harness runs the chat and its menu in two frames: a setting changed in one is followed by the other (the menu kept
+     'Held / Beside the chat' after the chat was set to the desk, so a panel opened from the menu never reached the desk) */
+  window.addEventListener('storage', ev=>{ if(ev.key!==_CV_CFG_KEY) return; try{ _restoreCanvasCfg(); _cvApplyCfg(); }catch(_){} });
+
+  /* ── THE CHAT ON THE DESK: dragged by its grip (WS-U U-D3, owner approved the desk 2026-10-06) ──────────────────────
+     Pulled 80px away from its edge, a docked chat floats; dropped within 60px of the left or right edge, it docks there;
+     anywhere else it floats where it was let go. Its place is kept (percent of the chat column) and the canvas is told
+     where it is (chat-rect, in the stage's own pixels) so a Desk canvas sizes and arranges its items round it. */
+  const _CHAT_POS_KEY='vera_chat_float';
+  function _chatPos(){ try{ const p=JSON.parse(localStorage.getItem(_CHAT_POS_KEY)||'null'); return p&&typeof p.x==='number'?p:{x:40,y:6}; }catch(_){ return {x:40,y:6}; } }
+  function _chatApplyPos(p){ const col=document.getElementById('chatColumn'); if(!col) return; col.style.setProperty('--chat-x',p.x+'%'); col.style.setProperty('--chat-y',p.y+'%'); }
+  /* the canvas is often still loading when the side is applied: a missing stage is retried, not skipped (a floating
+     chat at 1366 px left the desk arranged as if it were docked, 18 cards under it - the desk matrix, 2026-10-07) */
+  let _chatRectRetry=0, _chatRectRO=null;
+  function _chatRectToCanvas(again){
+    if(!again) _chatRectRetry=0;
+    const cv=document.querySelector('#canvasColumnBody vera-canvas');
+    if(cv&&window.ResizeObserver){ if(!_chatRectRO) _chatRectRO=new ResizeObserver(()=>{ try{ _chatRectToCanvas(); }catch(_){} });
+      if(!cv._chatRectObs){ cv._chatRectObs=true; _chatRectRO.observe(cv); const cs0=document.getElementById('chatStack'); if(cs0&&!cs0._chatRectObs){ cs0._chatRectObs=true; _chatRectRO.observe(cs0); } } }
+    if(!cv){ if(document.body.dataset.chatSide==='float'&&_pages.has('canvas')&&_chatRectRetry++<40) setTimeout(()=>_chatRectToCanvas(true), 250); return; }
+    if(document.body.dataset.chatSide!=='float'){ if(cv.hasAttribute('chat-rect')) cv.removeAttribute('chat-rect'); return; }
+    const st=cv.shadowRoot&&cv.shadowRoot.getElementById('stage'), cs=document.getElementById('chatStack');
+    if(!st||!cs||!st.offsetWidth){ if(_chatRectRetry++<40) setTimeout(()=>_chatRectToCanvas(true), 250); return; }
+    const a=st.getBoundingClientRect(), b=cs.getBoundingClientRect(), k=st.offsetWidth?(a.width/st.offsetWidth):1;
+    const v=[(b.left-a.left)/k,(b.top-a.top)/k,b.width/k,b.height/k].map(n=>Math.round(n)).join(',');
+    if(cv.getAttribute('chat-rect')!==v) cv.setAttribute('chat-rect',v);
+  }
+  function _chatSetSide(side){ const sel=document.getElementById('cfgCvSide'); if(sel) sel.value=side; _persistCanvasCfg(); }
+  window.addEventListener('resize',()=>{ try{ _chatRectToCanvas(); }catch(_){} });
+  (function(){
+    const grip=document.getElementById('chatGrip'); if(!grip) return; let d=null;
+    _chatApplyPos(_chatPos());
+    grip.addEventListener('pointerdown',(e)=>{
+      const col=document.getElementById('chatColumn'), cs=document.getElementById('chatStack'); if(!col||!cs) return;
+      const c=col.getBoundingClientRect(), s=cs.getBoundingClientRect();
+      d={ c, ox:e.clientX-s.left, oy:e.clientY-s.top, w:s.width, sx:e.clientX, p:null, hint:'', raf:0 };
+      try{ grip.setPointerCapture(e.pointerId); }catch(_){}
+      document.body.classList.add('chat-dragging'); e.preventDefault();
+    });
+    grip.addEventListener('pointermove',(e)=>{
+      if(!d) return;
+      if((document.body.dataset.chatSide||'left')!=='float'){
+        if(Math.abs(e.clientX-d.sx)<80) return;                 // a docked chat floats once pulled away from its edge
+        document.body.dataset.chatSide='float';
+        d.w=Math.min(460,d.c.width*0.46); d.ox=Math.min(d.ox,d.w/2);
+      }
+      const x=Math.max(0,Math.min(d.c.width-d.w,e.clientX-d.c.left-d.ox)), y=Math.max(0,Math.min(d.c.height*0.14,e.clientY-d.c.top-d.oy));
+      d.p={ x:+(x/d.c.width*100).toFixed(2), y:+(y/d.c.height*100).toFixed(2) }; _chatApplyPos(d.p);
+      d.hint=(e.clientX-d.c.left<60)?'left':((d.c.right-e.clientX<60)?'right':'');
+      if(d.hint) document.body.dataset.dockHint=d.hint; else delete document.body.dataset.dockHint;
+      if(!d.raf) d.raf=requestAnimationFrame(()=>{ if(d) d.raf=0; try{ _chatRectToCanvas(); }catch(_){} });
+    });
+    const end=()=>{
+      if(!d) return;
+      document.body.classList.remove('chat-dragging'); delete document.body.dataset.dockHint;
+      const side=d.hint||document.body.dataset.chatSide||'left';
+      if(d.p){ try{ localStorage.setItem(_CHAT_POS_KEY,JSON.stringify(d.p)); }catch(_){} }
+      d=null; _chatSetSide(side);
+    };
+    grip.addEventListener('pointerup',end); grip.addEventListener('pointercancel',end);
+  })();
 
   /* ── Rolling thinking phrases ─────────────────────────────────────── */
   const _THINK_DEFAULTS=[
@@ -6968,8 +7072,8 @@ IMPORTANT:
          already there. The page beside the chat still opens: this adds the canvas, it does not replace anything. */
       case 'panel.open': { const ok=await panelOpen(String(a.id||''), who);
         { const sec=String(a.section||a.nav||''); if(ok&&sec){ (async()=>{ try{ if(typeof _awaitPanelReady==='function') await _awaitPanelReady(); }catch(_){} const fr=document.getElementById('chatPanelFrame'); try{ fr&&fr.contentWindow&&fr.contentWindow.postMessage({ type:'vera:panel:action', action:'nav_select', action_id:'sec-'+Date.now(), payload:{ id:sec } }, '*'); }catch(_){} })(); } }
-        if(ok) try{ _cvLandPanel(String(a.id||''), a.title||a.label||'', _cvRelMid||''); }catch(_){}
-        return ok?done('opened beside the chat'):{ok:false,outcome:'failed',note:'no panel '+a.id}; }
+        if(ok&&!_deskPanelOn()) try{ _cvLandPanel(String(a.id||''), a.title||a.label||'', _cvRelMid||''); }catch(_){}
+        return ok?done(_deskPanelOn()?'put on the desk, behind the items':'opened beside the chat'):{ok:false,outcome:'failed',note:'no panel '+a.id}; }
       case 'panel.close': {
         if(!a.id||a.id===_activePanelId){ panelClose(); return done('closed beside the chat'); }
         if(window.parent&&window.parent!==window){ try{ window.parent.postMessage({type:'vera:lhm:close', id:a.id}, '*'); }catch(_){} return done('asked the harness to close its tab'); }
@@ -7109,12 +7213,16 @@ IMPORTANT:
   function _ctxGrow(on){
     if(_EMBED.only==='chat'&&_EMBED.harness&&!_ctxGrown){ on=(on==null)?!_ctxRemote.on:!!on; _lhmPost('grow-set',{ on:on }); return _ctxRemote.on; }   // the harness: the LHM slot holds the one large graph — never a second one here
     if(_EMBED.only==='menu'){ on=(on==null)?!_ctxGrown:!!on; try{ window.parent.postMessage({ type:'vera:lhm:grow', on:on, width:on?706:318 }, '*'); }catch(_){} _lhmPost('grown',{ on:on }); }   // the menu instance grows IN PLACE: the harness widens the slot, the chat instance draws the seam runs
-    on=(on==null)?!_ctxGrown:!!on; if(on===_ctxGrown && document.getElementById('rightRail').classList.contains('lhm-grown')===on) return _ctxGrown;
+    on=(on==null)?!_ctxGrown:!!on;
+    /* behind the desk the graph is open but the menu does not grow: the graph is drawn in the canvas's back layer */
+    const vis=on&&!_deskBehind();
+    if(on===_ctxGrown && document.getElementById('rightRail').classList.contains('lhm-grown')===vis) return _ctxGrown;
     _ctxGrown=on; const host=document.getElementById('rightRail');
-    if(host) host.classList.toggle('lhm-grown', on); document.body.classList.toggle('ctx-grown', on);
-    try{ const det=host&&host.querySelector(':scope > .lhm-det'); if(det){ const kept=parseInt(localStorage.getItem('vera_ctx_grown_w')||'0',10); if(on&&kept>=420){ det.style.width=kept+'px'; det.style.flex='0 0 '+kept+'px'; } else if(!on){ det.style.width=''; det.style.flex=''; } } }catch(_){}   // the grown width you set, kept
+    if(host) host.classList.toggle('lhm-grown', vis); document.body.classList.toggle('ctx-grown', vis);
+    try{ const det=host&&host.querySelector(':scope > .lhm-det'); if(det){ const kept=parseInt(localStorage.getItem('vera_ctx_grown_w')||'0',10); if(vis&&kept>=420){ det.style.width=kept+'px'; det.style.flex='0 0 '+kept+'px'; } else if(!vis){ det.style.width=''; det.style.flex=''; } } }catch(_){}   // the grown width you set, kept
     try{ const gb=document.getElementById('colGraphBtn'); if(gb) gb.classList.toggle('col-on', on); }catch(_){}
-    if(on){ _pages.add('graph'); try{ if(window.VeraLHM){ VeraLHM.deep(false); VeraLHM.pick('context'); if(host&&host.classList.contains('slim')) toggleRight(); } }catch(_){} }
+    try{ document.body.dataset.graphBehind=(on&&!vis)?'1':''; }catch(_){}
+    if(on){ _pages.add('graph'); if(vis){ try{ if(window.VeraLHM){ VeraLHM.deep(false); VeraLHM.pick('context'); if(host&&host.classList.contains('slim')) toggleRight(); } }catch(_){} } }
     else { _pages.delete('graph'); _ctxRunsDraw(); }
     try{ if(window.VeraLHM) VeraLHM.render(); }catch(_){}
     if(on) _graphColumnMount();
@@ -7131,6 +7239,7 @@ IMPORTANT:
     // opened or closed, the reply follows: one place while the column is open, everything inline once it is not
     try{ _cvOneplaceSync(); }catch(_){}
     _cvResizeMount();
+    try{ _ctxBackSync(); }catch(_){}
     if(_pages.has('graph')) _graphColumnMount();
     try{ window.dispatchEvent(new CustomEvent('vera:panel-mounted',{detail:{placement:'column', pages:_pagesOpen()}})); }catch(_){}
     try{ _uiEvent('pages',{pages:_pagesOpen()}); }catch(_){}
@@ -7175,6 +7284,13 @@ IMPORTANT:
       // kept, then weighted by what is on screen - a message's relevance only holds while the message does
       _cvRelServer={ keys:(r.focus||[]).map(String), scores:r.scores||{} }; _cvFocusSig=''; _cvScreenFocus();
       if(o.apply!==false){ recalled=await _cvRecall(cv, r.focus||[], mid); if(recalled){ cv._rev=null; cv.refresh(); } } } }catch(_){}
+    /* THE TURN BRINGS ITS ITEMS IN (WS-U U-D6): a reply landed (the apply path - never a scroll or a focus change), the
+       canvas is a desk and the person has it on: the turn's focus set, best score first, comes in beside the chat */
+    try{ const cv=document.querySelector('#canvasColumnBody vera-canvas');
+      if(o.apply!==false&&r&&r.ok&&cv&&typeof cv.bringIn==='function'&&_cvCfg('cfgCvAlign')==='desk'&&_cvCfg('cfgCvBring')==='on'){
+        const sc=r.scores||{}, val=k=>{ const v=sc[k]; return v&&typeof v.score==='number'?v.score:0; };
+        const keys=(r.focus||[]).map(String).sort((a,b)=>val(b)-val(a));
+        if(keys.length){ const run=()=>{ try{ r.broughtIn=cv.bringIn(keys); }catch(_){} }; if(recalled) setTimeout(run, 400); else run(); } } }catch(_){}
     if(r&&typeof r==='object') r.recalledByChat=recalled;
     return r;
   }
@@ -7292,10 +7408,13 @@ IMPORTANT:
   /* A PANEL ON THE CANVAS. The canvas already draws one - live in its frame, with query and dispatch over the
      bridge - and nothing ever put one there; the block type existed and had no way in. Keyed by the panel, so
      opening the calendar twice keeps one item and brings it back rather than stacking copies. */
-  async function _cvLandPanel(id, title, mid){
+  async function _cvLandPanel(id, title, mid, layer){
     if(!SID||!id) return 0;
+    /* the panel's own address, as the page beside the chat opens it: the canvas's /ui/panels/<id> guess answered
+       {"detail":"Not Found"} for a panel served elsewhere (the system monitor's /sysmon/panel, 2026-10-07) */
+    let src=''; try{ const p=_resolvePanel(id); if(p) src=await _panelSrcAsync(p)||''; }catch(_){}
     try{ const r=await _capCall('canvas.add',{ session_id:SID, kind:'panel', key:'panel:'+id, at:'now', size:'l',
-      content:{ panel:id, title:String(title||id) },
+      content:Object.assign({ panel:id, title:String(title||id) }, src?{ src }:{}, layer?{ layer }:{}),
       anchor:mid?{ mid, turn:mid }:undefined });
       return (r&&r.ok)?1:0; }catch(_){ return 0; }
   }
@@ -8292,7 +8411,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      a hand-added item has none and gets no run. Exploded, a run leaves the item's station instead of the block. */
   function _cvRunsDraw(){
     const svg=document.getElementById('cvRunsOverlay'); if(!svg) return;
-    if(_runsOff.cv||_runsBlocked()){ svg.innerHTML=''; _cvLastCheck=null; return; }
+    if(_runsOff.cv||_runsBlocked()){ svg.innerHTML=''; _cvLastCheck=null; try{ const c0=document.querySelector('#canvasColumnBody vera-canvas'); c0&&c0.runTargets&&c0.runTargets([]); }catch(_){} return; }
     const cv=document.querySelector('#canvasColumnBody vera-canvas'); const col=document.getElementById('chatColumn'), ccol=document.getElementById('canvasColumn'), msgs=document.getElementById('msgs');
     if(!_pages.has('canvas')||!cv||!cv.itemRects||!col||!ccol||!msgs){ svg.innerHTML=''; _cvLastCheck=null; return; }
     const den=(document.documentElement.getAttribute('data-den')||'full').toLowerCase();
@@ -8307,6 +8426,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const R=col.getBoundingClientRect(), C=ccol.getBoundingClientRect(), MB=msgs.getBoundingClientRect();
     svg.setAttribute('viewBox','0 0 '+Math.round(R.width)+' '+Math.round(R.height));
     const all=cv.itemRects(); const wanted=pick(all);
+    const cvDesk=typeof cv.deskAlign==='function'&&cv.deskAlign();
     const rects=all.map(it=>({key:it.key, x0:it.rect.left, y0:it.rect.top, x1:it.rect.right, y1:it.rect.bottom}));
     const routes=[];
     wanted.forEach(it=>{ const M=_cvRunsSource(_srcMid(it), msgs); if(M) routes.push({it, M}); });
@@ -8320,6 +8440,11 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       g.forEach((r,j)=>{ r.my=M.top+th/2+(j-(k-1)/2)*fan; r.iy=Math.max(r.it.rect.top+2, Math.min(r.it.rect.bottom-2, r.it.rect.top+14));
         // where this run leaves: the block's clipped right edge — on a station, the plate's own edge at that height
         r.M=Object.assign({}, M, {right:M.rightAt?Math.min(M.right, M.rightAt(r.my)):M.right}); }); });
+    /* FROM THE PLACEHOLDER (owner, 2026-10-09: "draw a line from where they would be in the chat response"): an item the
+       reply moved to the canvas left a chip there; the run leaves that chip, level with it, when it is on screen */
+    routes.forEach(r=>{ try{ const ph=msgs.querySelector('.cv-moved[data-cv-key="'+(window.CSS&&CSS.escape?CSS.escape(r.it.key):r.it.key)+'"]'); if(!ph) return;
+      const q=ph.getBoundingClientRect(); if(!(q.height>0)||q.bottom<MB.top||q.top>MB.bottom) return;
+      r.M={left:q.left, top:q.top, right:Math.min(q.right, MB.right-1), bottom:q.bottom}; r.my=q.top+q.height/2; r.fromChip=true; }catch(_){} });
     // the channel: from the transcript's (or the scene's) edge to the first card; the lanes spread about its middle,
     // 9 px a side per run
     const edge0=(_xpl.on&&_xplEl&&document.body.classList.contains('exploded'))?document.getElementById('xplHost').getBoundingClientRect().right:MB.right;
@@ -8337,10 +8462,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
         if(it.col>0){ const col0=rects.filter(rc=>{ const o=all.find(x=>x.key===rc.key); return o&&o.col===0&&o.state==='now'; });
           const free=y=>!col0.some(rc=>y>rc.y0+1&&y<rc.y1-1); const cands=[iy, it.rect.top-6].concat(col0.flatMap(rc=>[rc.y0-4, rc.y1+4])).filter(y=>y>=it.rect.top-60&&y<=it.rect.bottom&&free(y));
           const gapX=it.rect.left-5+u; if(cands.length){ const fy=cands.sort((a,b)=>Math.abs(a-iy)-Math.abs(b-iy))[0]; pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:fy},{x:gapX, y:fy},{x:gapX, y:iy},{x:it.rect.left, y:iy}]; } }
+        if(cvDesk){ const ex=C.left+2, ey=Math.max(C.top+4, Math.min(C.bottom-4, iy)); pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:ey},{x:ex, y:ey}]; }
         const cls='run'+(it.inFocus?'':' dim');
         out+='<polyline class="'+cls+'" data-key="'+esc(it.key)+'" data-mid="'+esc(mid)+'" data-lane="'+r.lane+'" points="'+pts.map(p=>(p.x-R.left).toFixed(1)+','+(p.y-R.top).toFixed(1)).join(' ')+'"><title>'+esc(it.key)+' · turn '+esc(mid)+'</title></polyline>';
         drawn.push({key:it.key, pts, from:{key:'turn:'+mid, x0:M.left, y0:M.top, x1:M.right, y1:M.bottom}, to:{key:it.key, x0:it.rect.left, y0:it.rect.top, x1:it.rect.right, y1:it.rect.bottom}}); });
-    svg.innerHTML='<g fill="none" stroke="var(--acc3,#e09a55)" stroke-width="1.5" stroke-opacity=".85" stroke-linecap="round" stroke-linejoin="round">'+out+'</g>';
+    try{ if(typeof cv.runTargets==='function') cv.runTargets(cvDesk?routes.map(r=>r.it.key):[]); }catch(_){}
+    svg.innerHTML='<g fill="none" stroke="var(--acc,#9b8dfa)" stroke-width="1.5" stroke-opacity=".85" stroke-linecap="round" stroke-linejoin="round">'+out+'</g>';
     try{ _cvLastCheck=Object.assign(window.VeraCanvas.checkRoutes(drawn, rects), {tier:den, lanes:routes.map(r=>r.lane)}); }catch(_){ _cvLastCheck=null; }
   }
   // the graph column: the design's context graph — the Context menu grown into the full graph, beside the transcript.
@@ -8357,6 +8484,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const host=_ctxGraphHost(); if(!host) return;
     if(!_ctxCol||!host.contains(_ctxCol)){
       if(!(window.customElements&&window.customElements.get('vera-context-graph'))){ if(!host.querySelector('.sys-msg')) host.innerHTML='<div class="sys-msg" style="padding:12px">The context graph is loading…</div>'; if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800); return; }
+      if(_ctxCol&&_ctxCol.parentNode) _ctxCol.remove();   /* moved between the grown menu and the desk's back: one graph, never two */
       host.innerHTML=''; _ctxCol=document.createElement('vera-context-graph'); host.appendChild(_ctxCol);
       _ctxColSig=''; _ctxColMemSig=''; _ctxColDagSig=''; _ctxColFrameSig='';   // a fresh element knows nothing yet: every sync feeds it again (the graph was empty after Explode closed)
       // a fresh column shows this session's run again (replayed from its persisted events) and refreshes the runs list
@@ -8398,7 +8526,36 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(!_ctxColTimer) _ctxColTimer=setInterval(_graphColumnTick, 800);
     _graphAnchorPost(true);
   }
-  function _ctxGraphHost(){ return document.getElementById('ctxGrown') || document.getElementById('graphColumnBody'); }
+  /* THE GRAPH BEHIND THE DESK (WS-U, owner-approved desk 2026-10-06: "the graph at the back, visible in exploded mode").
+     With the canvas on the Desk alignment and "Graph: behind the desk" chosen, the grown graph is drawn in the canvas's
+     back layer (its `back` slot) instead of the grown menu: the cards sit over it and the empty desk between them
+     reaches the graph. Everything else about the graph — its feed, its frames, its picks — is the same element. */
+  function _deskBehind(){ return _cvCfg('cfgCvBack')==='behind' && _cvCfg('cfgCvAlign')==='desk' && _pages.has('canvas') && !!document.querySelector('#canvasColumnBody vera-canvas'); }
+  function _deskBackHost(){ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv) return null;
+    let b=cv.querySelector(':scope > #deskBack'); if(!b){ b=document.createElement('div'); b.id='deskBack'; b.slot='back'; cv.appendChild(b); } return b; }
+  function _ctxBackSync(){
+    const behind=!!(_ctxGrown&&_deskBehind());
+    if((document.body.dataset.graphBehind==='1')!==behind) document.body.dataset.graphBehind=behind?'1':'';
+    if(!behind){ const b=document.getElementById('deskBack'); if(b&&!(_ctxCol&&b.contains(_ctxCol))) b.remove(); }
+    if(!_ctxGrown) return;
+    const rr=document.getElementById('rightRail');
+    if(rr&&rr.classList.contains('lhm-grown')===behind) _ctxGrow(true); else _graphColumnMount();
+  }
+  /* A UI PANEL OPENED ONTO THE DESK (owner, 2026-10-07: "retain being able to open panels as canvas items and have
+     them behind / at the front"). With "UI panel: on the desk" and a Desk canvas, opening a panel - from the chat, the
+     menu or a command - lands it as a canvas item, sent behind the other items, instead of halving the chat column.
+     Its card's behind / front buttons move it from there; the item stays an item, so its frame is never reloaded. */
+  function _deskPanelOn(){ return _cvCfg('cfgCvPanel')==='desk' && _cvCfg('cfgCvAlign')==='desk'; }
+  async function _deskPanelLand(p){
+    /* the panel becomes a canvas item that is BEHIND the other items (the layer rides on the item, so whichever frame
+       draws the canvas places it so); the chat's canvas is opened if it is closed - from the menu frame, by asking the chat */
+    const ok=await _cvLandPanel(p.id, p.label||p.id, '', 'behind');
+    if(_EMBED.only==='menu'){ _lhmPost('pageOpen',{ name:'canvas' }); _lhmPost('canvasRefresh',{}); return !!ok; }
+    if(!_pages.has('canvas')) openPage('canvas');
+    setTimeout(()=>{ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} }, 300);
+    return !!ok;
+  }
+  function _ctxGraphHost(){ if(_ctxGrown&&_deskBehind()) return _deskBackHost(); return document.getElementById('ctxGrown') || document.getElementById('graphColumnBody'); }
   function _graphColumnTick(){ if(!_pages.has('graph')){ clearInterval(_ctxColTimer); _ctxColTimer=null; _ctxRunsDraw(); return; } const host=_ctxGraphHost(); if(!_ctxCol||!host||!host.contains(_ctxCol)){ _graphColumnMount(); return; } _ctxColumnSync(_grFocusMid||''); }
   // feed the element when the records or the focus changed (a signature, so a tick costs nothing)
   function _ctxColumnSync(mid){
@@ -8616,7 +8773,13 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   /* the runs stand down while a menu is over the surface they cross (defect 67). The page's own ☰ swaps the detail
      column the graph sits in for the TOP-LEVEL LIST, and the graph's node positions outlive the graph: routed across it
      anyway, the runs read as if the MENU were what the turn had read. The same for the tools sheet and a context menu. */
-  function _runsBlocked(){ try{ if(document.querySelector('#toolsSheet.on')) return true; if(document.querySelector('.cmw')) return true; if(document.querySelector('#rightRail .lhm-rail .lhm-ico.top.on')) return true; }catch(_){} return false; }
+  /* THE RUNS' COLOUR IS THE THEME'S (owner, 2026-10-09): a run to the canvas is the accent; a run from a context source
+     keeps its source's hue but leans into the accent, so the lines read as one family with the theme */
+  function _runCol(c){ return 'color-mix(in srgb, var(--acc,#9b8dfa) 55%, '+(c||'var(--acc,#9b8dfa)')+')'; }
+  function _runsBlocked(){ try{ if(document.querySelector('#toolsSheet.on')) return true;
+      /* a UI panel open - beside the chat, or a panel layer on the desk - takes the runs away entirely (owner, 2026-10-09) */
+      if(document.body.classList.contains('has-panel')) return true;
+      { const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&cv.shadowRoot&&cv.shadowRoot.querySelector('.stage .it[data-desk-face^="layer-"]')) return true; } if(document.querySelector('.cmw')) return true; if(document.querySelector('#rightRail .lhm-rail .lhm-ico.top.on')) return true; }catch(_){} return false; }
   // …and the graph has to BE there: on screen, not swapped out from under its own positions
   function _runsGraphVisible(){ const el=_ctxCol; if(!el||!el.isConnected) return false; const r=el.getBoundingClientRect(); return r.width>2&&r.height>2; }
   // the menu instance posts its lanes to the chat instance; when it draws none it says so, or the chat keeps the last set
@@ -8698,13 +8861,13 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       // the channel is the column's gutter at the frame's edge (the lanes it holds), never the whole margin
       const col0=document.getElementById('chatColumn').getBoundingClientRect().left; const chan0=col0, chan1=Math.min(T.content, col0+gut), G0=(chan0+chan1)/2, HWG=Math.max(1, Math.abs(chan1-chan0)/2-4); const edgeAt=(y,side)=>{ const Tq=(side==='a'&&TT.a)?TT.a:T; return (Tq.edgeAt?Tq.edgeAt(y):Tq.content)-2; };
       let out=''; lanes.forEach((l,i)=>{ const ye=l.ye-ft, ty=l.ty-ft; const u=rn>1?(l.lane-(rn-1)/2)/((rn-1)/2):0; const lx=G0+u*Math.min(HWG, 9*(rn-1));
-        const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(l.src)+'" data-lane="'+l.lane+'" x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'" stroke="'+l.col+'"><title>'+esc(l.src)+'</title></line>';
+        const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(l.src)+'" data-lane="'+l.lane+'" x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'" stroke="'+_runCol(l.col)+'"><title>'+esc(l.src)+'</title></line>';
         out+=L(0, ye, lx, ye, 'tr'); if(Math.abs(ty-ye)>0.5) out+=L(lx, ye, lx, ty, 'tr'); out+=L(lx, ty, edgeAt(ty, l.side), ty, 'tr'); });
       svg.innerHTML='<g fill="none" stroke-linecap="round">'+out+'</g>'; svg.dataset.target=T.kind; return;
     }
     if(Date.now()-_ctxTypingT<900){ _ctxRunsStand(svg); if(!_ctxTypingTimer) _ctxTypingTimer=setTimeout(()=>{ _ctxTypingTimer=null; _ctxRunsDraw(); }, 950); return; }
     const col=document.getElementById('chatColumn'), gcol=_ctxGrown?document.querySelector('#rightRail.lhm-host > .lhm-det'):document.getElementById('graphColumn');
-    if(!_pages.has('graph')||!_ctxCol||!col||!gcol||!_runsGraphVisible()){ _ctxRunsStand(svg); return; }
+    if(!_pages.has('graph')||!_ctxCol||!col||!gcol||!_runsGraphVisible()||document.body.dataset.graphBehind==='1'){ _ctxRunsStand(svg); return; }
     if(!_ctxCol._ctxRunsHoverBound){ _ctxCol._ctxRunsHoverBound=true; _ctxCol.addEventListener('mouseover', ev=>{ const n=ev.target&&ev.target.closest&&ev.target.closest('.cg-node[data-id],.cg-mem[data-id]'); _ctxRunsHover(n?n.dataset.id:''); }); _ctxCol.addEventListener('mouseleave', ()=>_ctxRunsHover('')); }
     // the types in this turn's context decide the channel's width; the channel is set first, everything measured after
     const gc0=gcol.getBoundingClientRect();
@@ -8750,7 +8913,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     let out='';
     G.forEach(g=>{
       const u=rn>1?(g.lane-(rn-1)/2)/((rn-1)/2):0; const lx=G0+(leftSide?1:-1)*u*Math.min(HWG, 9*(rn-1)); const c=g.col;
-      const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(g.src)+'" data-side="'+g.side+'" data-lane="'+g.lane+'" x1="'+(x1-R.left).toFixed(1)+'" y1="'+(y1-R.top).toFixed(1)+'" x2="'+(x2-R.left).toFixed(1)+'" y2="'+(y2-R.top).toFixed(1)+'" stroke="'+c+'"><title>'+esc(g.src)+' · '+g.nodes.length+(g.side==='a'?' read by the response':' in this prompt')+'</title></line>';
+      const L=(x1,y1,x2,y2,cls)=>'<line class="run '+cls+'" data-src="'+esc(g.src)+'" data-side="'+g.side+'" data-lane="'+g.lane+'" x1="'+(x1-R.left).toFixed(1)+'" y1="'+(y1-R.top).toFixed(1)+'" x2="'+(x2-R.left).toFixed(1)+'" y2="'+(y2-R.top).toFixed(1)+'" stroke="'+_runCol(c)+'"><title>'+esc(g.src)+' · '+g.nodes.length+(g.side==='a'?' read by the response':' in this prompt')+'</title></line>';
       // the type's COLLECTOR: a short vertical just past its cluster where the branches meet; from it ONE connector
       // crosses the rest of the plot to the channel, so a type crosses the plot once, not once per record
       const cx=leftSide?Math.min(gc.right-4, Math.max.apply(null, g.nodes.map(q=>q.x+q.rim))+12):Math.max(gc.left+4, Math.min.apply(null, g.nodes.map(q=>q.x-q.rim))-12);
@@ -16179,7 +16342,7 @@ function _embedMount(){
   }
   if(_EMBED.only==='chat'){
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from!=='menu') return; const a=m.args||{};
-      try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on); else if(m.act==='lanes'){ _ctxRemote.lanes=Array.isArray(a.lanes)?a.lanes:[]; _ctxRunsDraw(); } else if(m.act==='runs'){ _runsApply(a.which, a.off); } else if(m.act==='page') togglePage(a.name); else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
+      try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on); else if(m.act==='lanes'){ _ctxRemote.lanes=Array.isArray(a.lanes)?a.lanes:[]; _ctxRunsDraw(); } else if(m.act==='runs'){ _runsApply(a.which, a.off); } else if(m.act==='page') togglePage(a.name); else if(m.act==='pageOpen') openPage(a.name); else if(m.act==='canvasRefresh'){ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } } else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
   }
   /* The transcript's scroll listener is bound HERE, for any instance that has a transcript.
      It was bound only from the rail's quick menu and from mounting the graph column — and the chat instance on
@@ -17979,6 +18142,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     // panel-open event it then echoes. The agent looping on [[panel:exec-panel]]
     // across conversational turns was largely this.
     if(p.id===_activePanelId){ return true; }
+    if(_deskPanelOn()){ const landed=await _deskPanelLand(p); if(landed){ try{ _panelsOpenReport&&setTimeout(_panelsOpenReport,0); }catch(_){} return true; } }   /* onto the desk, behind the items */
     const src = await _panelSrcAsync(p);
     if(!src){
       appendSys(`<span style="color:var(--err)">Panel "${esc(p.id)}" has no embeddable URL.</span>`);
@@ -19224,8 +19388,52 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   function _ctxBroadcast(){ if(_EMBED.only==='menu') return; try{ _lhmPost('ctx',{ nodes:CTX_NODES, edges:CTX_EDGES, query:_ctxQuery, mid:_grFocusMid }); }catch(_){} }
   function _ctxRemoteInfo(){ return { on:_ctxRemote.on, lanes:_ctxRemote.lanes.slice(), block:_ctxRemoteBlock, ctx:CTX_NODES.length, focus:_grFocusMid }; }
   function _ctxRemoteSet(on){ _ctxRemote.on=!!on; if(!on) _ctxRemote.lanes=[]; document.body.classList.toggle('ctx-remote', !!on); try{ const gb=document.getElementById('colGraphBtn'); if(gb) gb.classList.toggle('col-on', !!on); }catch(_){} try{ _ctxRunsDraw(); }catch(_){} }
+  /* THE DESK, EXPLODED (WS-U; owner-approved desk 2026-10-06: "exploded mode integrated in the Live ops iso style", "the
+     graph at the back and visible in exploded mode"). On a Desk canvas, Explode lifts the desk's own layers apart on Live
+     ops' iso lattice (VeraLattice): the chat, the items, the UI panel and the context graph as planes, every item a node
+     with its own key. Nothing on the desk is moved or redrawn, so back to the desk is the same desk; a double click on an
+     item goes back and points it out. The turn scene (vera-exploded) stays what Explode is everywhere else. */
+  let _dxEl=null, _dxLv=null;
+  function _deskXplWanted(){ return _EMBED.only!=='menu' && _cvCfg('cfgCvAlign')==='desk' && _pages.has('canvas') && !!document.querySelector('#canvasColumnBody vera-canvas'); }
+  function _dxNeed(src, ok){ return new Promise(res=>{ if(ok()) return res(true); const s=document.createElement('script'); s.src=src; s.onload=()=>res(!!ok()); s.onerror=()=>res(false); document.head.appendChild(s); }); }
+  function _dxData(){
+    const cv=document.querySelector('#canvasColumnBody vera-canvas');
+    const items=cv&&typeof cv.deskSnapshot==='function'?cv.deskSnapshot():[];
+    const turns=[...document.querySelectorAll('#msgs .mwrap[data-mid]')].slice(-9).map(w=>({ mid:w.dataset.mid, label:String(w.textContent||'').replace(/\s+/g,' ').trim().slice(0,40) }));
+    let graph=[]; try{ graph=(CTX_NODES||[]).filter(n=>n.included!==false).slice(0,27).map(n=>({ id:n.id, label:n.label||n.title||n.id })); }catch(_){}
+    return VeraDesk.latticeOf({ items, turns, graph, focusMid:_grFocusMid||'' });
+  }
+  async function _deskXpl(on){
+    on=(on==null)?!_dxEl:!!on;
+    const b=document.getElementById('xplBtn');
+    if(!on){ if(_dxLv){ try{ _dxLv.destroy(); }catch(_){} _dxLv=null; } if(_dxEl){ _dxEl.remove(); _dxEl=null; } document.body.classList.remove('desk-exploded'); if(b) b.classList.remove('col-on'); return false; }
+    if(_dxEl) return true;
+    const col=document.getElementById('chatColumn'); if(!col) return false;
+    _dxEl=document.createElement('div'); _dxEl.id='deskXpl'; _dxEl.dataset.w='desk.exploded';
+    _dxEl.innerHTML='<div class="dx-bar"><b>The desk, exploded</b><span class="lbl">its layers lifted apart - chat, items, UI panel, context graph · click an item, then show it on the desk · ctrl+drag turns the view</span><span class="sp"></span><span class="lbl" id="dxSel"></span><button class="btn xs" id="dxGo" hidden title="Back to the desk with this item pointed out">show it on the desk</button><button class="btn xs" id="dxClose" title="Back to the desk (Esc)">back to the desk</button></div><div class="dx-host" id="dxHost"></div>';
+    col.appendChild(_dxEl); document.body.classList.add('desk-exploded'); if(b) b.classList.add('col-on');
+    _dxEl.querySelector('#dxClose').onclick=()=>_deskXpl(false);
+    const ok=await _dxNeed('/ui/iso.js', ()=>!!window.VeraISO) && await _dxNeed('/ui/iso-lattice.js', ()=>!!window.VeraLattice) && await _dxNeed('/ui/desk-layout.js', ()=>!!window.VeraDesk);
+    if(!_dxEl) return false;
+    const host=_dxEl.querySelector('#dxHost');
+    if(!ok){ host.innerHTML='<div class="sys-msg" style="padding:12px">The iso lattice (/ui/iso-lattice.js) did not load.</div>'; return false; }
+    /* the lattice redraws on a click (it selects the node), so the browser's double click never arrives: two picks of the
+       same item within 450 ms are the double click */
+    const open=(n)=>{ const k=n&&n.desk&&n.desk.key; if(!k) return; _deskXpl(false);
+      setTimeout(()=>{ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); cv&&cv.flash&&cv.flash(k); }catch(_){} }, 60); };
+    /* a pick names the item in the bar and offers the way back to it - the reliable path, whatever the lattice redraws */
+    let last={ id:'', t:0 };
+    const sel=_dxEl.querySelector('#dxSel'), go=_dxEl.querySelector('#dxGo');
+    const pick=(n)=>{ const k=n&&n.desk&&n.desk.key; sel.textContent=n?('selected: '+n.label+(n.detail?' · '+n.detail:'')):''; go.hidden=!k; go.onclick=k?()=>open(n):null; };
+    /* no machine widgets: the lattice's readings (load, in flight) are an estate's, and on the desk they were noise */
+    _dxLv=VeraLattice.mount(host, { view:'3d', widgets:false, onOpen:open, onPick:(n)=>{ const now=Date.now(); if(n&&n.id===last.id&&now-last.t<450){ last={ id:'', t:0 }; open(n); return; } last={ id:n?n.id:'', t:now }; pick(n); } });
+    _dxLv.set(_dxData()); _dxLv.fit(true); setTimeout(()=>{ try{ _dxLv&&_dxLv.fit(true); }catch(_){} }, 700);
+    return true;
+  }
+  document.addEventListener('keydown', ev=>{ if(ev.key==='Escape'&&_dxEl){ ev.preventDefault(); _deskXpl(false); } });
   function explode(on){
     if(_EMBED.only==='menu'){ _lhmPost('explode',{ on }); return; }
+    if(_dxEl||(_deskXplWanted()&&on!==false)){ _deskXpl(on); return (on==null)?!!_dxEl:!!on; }   /* on the desk: its layers, lifted */
     on=(on==null)?!_xpl.on:!!on; _xpl.on=on;
     if(!on&&_xpl.doc){ _xpl.doc=null; try{ _xplDocChip(); }catch(_){} }   // a structure shown in the scene goes with it
     // the scene has the canvas and the context graph built in (the Canvas board): the columns fold away while it is
@@ -19242,7 +19450,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     return on;
   }
   // the 3D → 2D close: the scene flattens, then the transcript is back
-  function _xplToggle(){ if(_xpl.on) _xplClose(); else explode(true); }
+  function _xplToggle(){ if(_dxEl){ _deskXpl(false); return; } if(_xpl.on) _xplClose(); else explode(true); }
   function _xplClose(){ if(!_xpl.on) return; if(_xplEl&&typeof _xplEl.flatten==='function'){ _xplEl.flatten(()=>explode(false)); } else explode(false); }
   function explodeMode(m){ if(!/^(cards|front|iso)$/.test(m)) return; if(_EMBED.only==='menu'){ _lhmPost('explodeMode',{ m }); return; } _xpl.mode=m; document.querySelectorAll('#xplSeg [data-xm]').forEach(b=>b.classList.toggle('col-on', b.dataset.xm===m)); if(!_xpl.on) explode(true); else if(_xplEl&&typeof _xplEl.mode==='function') _xplEl.mode(m); }
   function _xplMount(){
@@ -21509,7 +21717,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _cmpChip,_cmpSync,_paOpen,_paCopy,
     _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvTellToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
-    _persistMediaCfg,_persistCanvasCfg,_genThinkPhrases,_resetThinkPhrases,_artPop,
+    _persistMediaCfg,_persistCanvasCfg,_cvRelevance,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
     setBase:url=>{BASE=url;},
