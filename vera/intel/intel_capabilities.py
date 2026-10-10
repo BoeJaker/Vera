@@ -675,13 +675,18 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
     held = [(s["id"], s["vec"]) for s in recent if isinstance(s.get("vec"), list) and s.get("vec")][:200]
     emb = await _nlp("nlp.embed", texts=texts)
     vecs = emb.get("embeddings") if isinstance(emb.get("embeddings"), list) else []
-    rr = await _nlp("nlp.rerank", query=ops.profile_text(t), documents=texts, top_k=len(texts))
     rel: Dict[int, float] = {}
-    for x in rr.get("ranked") or []:
-        try:
-            rel[int(x.get("index"))] = ops.squash(x.get("score"))
-        except (TypeError, ValueError):
+    # relevance to the topic itself, or to one of its open questions - whichever is higher
+    for query in (ops.profile_text(t), ops.question_profile(t)):
+        if not query:
             continue
+        rr = await _nlp("nlp.rerank", query=query, documents=texts, top_k=len(texts))
+        for x in rr.get("ranked") or []:
+            try:
+                i, v = int(x.get("index")), ops.squash(x.get("score"))
+            except (TypeError, ValueError):
+                continue
+            rel[i] = max(rel.get(i, v), v)
     out: List[Dict[str, Any]] = []
     batch: Dict[str, Dict[str, Any]] = {}
     genre_budget = 40
@@ -1098,8 +1103,8 @@ async def snapshot_topic(t: Dict[str, Any]) -> Dict[str, Any]:
         await _alert(fresh, snap, why)
     if fresh.get("depth") == "deep" and config().get("auto_research") and snap["new_questions"]:
         pend = st.get_kv("research_wanted", []) or []
-        for q in snap["new_questions"][:2]:
-            if not any(p.get("query") == q for p in pend):
+        for q in [ops.question_text(x) for x in snap["new_questions"][:2]]:
+            if q and not any(p.get("query") == q for p in pend):
                 pend.append({"topic_id": t["id"], "query": q, "added": core.now_iso()})
         st.set_kv("research_wanted", pend[-40:])
     return {"topic": t["id"], "snapshot": snap, "alert": why if alert else ""}
