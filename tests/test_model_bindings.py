@@ -256,3 +256,17 @@ def test_an_embedder_is_not_picked_to_produce_text():
     zs = {"id": "zs", "uses": "Classify text against labels.", "io": {"in": "text+labels", "out": "labels"}}
     ranked = [r["id"] for r in mb.pick([emb, zs, stt], "turn this voice memo into text")]
     assert ranked[0] == "stt" and ranked.index("emb") > ranked.index("zs")
+
+
+def test_a_need_to_write_or_plan_picks_a_generator():
+    rows = _nlp_rows() + mb.llm_rows(
+        {"cpu-246": {"models": ["qwen3-coder:30b", "qwen3.5:9b"]}}, {},
+        facts={"qwen3-coder:30b": {"family": "qwen3moe", "params": "30.5B", "abilities": ["completion", "tools"]},
+               "qwen3.5:9b": {"family": "qwen35", "params": "8.95B", "abilities": ["completion", "tools"]}})
+    top = lambda q: mb.pick(rows, q, top_k=1)[0]["id"]
+    assert top("write python code for a web scraper") == "llm.generate:qwen3-coder:30b"
+    assert top("plan a multi-step research task").startswith("llm.generate:")
+    # extraction still goes to the extractors
+    assert top("find dates and amounts of money in an english news article") == "nlp.ner:ner"
+    uses, _ = mb.llm_describe("qwen3-coder:30b", {"params": "30.5B"})
+    assert uses.startswith("Writes, edits, reviews and explains code")
