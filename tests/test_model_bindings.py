@@ -84,10 +84,57 @@ def test_llms_come_from_the_routing_system():
     rows = {r["model"]: r for r in mb.llm_rows(inst, {"qwen3.5:9b": ["planning", "chat"]})}
     q = rows["qwen3.5:9b"]
     assert q["cap"] == "llm.generate" and q["selector"] == {"model": "qwen3.5:9b"}
-    assert q["uses"] == "Purpose tags: planning, chat"
+    assert q["uses"].startswith("Tagged for: planning, chat.")       # the operator's tags lead
     assert q["loaded_on"] == ["cpu-246"] and q["present_on"] == ["cpu-246", "gpu-250"]
-    assert "untagged" in rows["nomic-embed-text"]["uses"]
+    # nothing known yet: the row says so, and how to fix it
+    assert "No facts or tags yet" in mb.llm_rows(inst, {}, search="qwen")[0]["uses"]
     assert [r["model"] for r in mb.llm_rows(inst, {}, search="nomic")] == ["nomic-embed-text"]
+    # facts and measured speed write the description; an embedder is not a generator
+    rows = {r["model"]: r for r in mb.llm_rows(
+        inst, {}, facts={"qwen3.5:9b": {"family": "qwen35", "params": "9.7B", "quant": "Q4_K_M",
+                                         "ctx": 262144, "abilities": ["completion", "tools", "vision"]},
+                         "nomic-embed-text": {"abilities": ["embedding"]}},
+        stats=[{"model": "qwen3.5:9b", "instance": "gpu-250", "ema_tps": 41.2, "n": 9},
+               {"model": "qwen3.5:9b", "instance": "cpu-246", "ema_tps": 7.9, "n": 3}])}
+    q = rows["qwen3.5:9b"]
+    assert "reads images" in q["uses"] and "native tool calling" in q["uses"] and "256k" in q["uses"]
+    assert "Measured 41 tok/s on gpu-250 (cpu-246 8)" in q["uses"], q["uses"]
+    assert q["tps"] == {"gpu-250": 41.2, "cpu-246": 7.9}
+    n = rows["nomic-embed-text"]
+    assert n["task"] == "embed" and n["io"]["out"] == "vector" and "cannot generate" in n["limits"]
+
+
+def test_llm_descriptions_from_facts():
+    uses, limits = mb.llm_describe(
+        "qwen3.6:35b-a3b", {"family": "qwen3moe", "params": "35.1B", "quant": "Q4_K_M", "ctx": 262144,
+                            "abilities": ["completion", "tools", "thinking"]})
+    assert "mixture-of-experts with 3B active" in uses and "a thinking mode" in uses and limits == ""
+    uses, limits = mb.llm_describe("qwen3:0.6b", {"params": "751.63M", "ctx": 8192,
+                                                  "abilities": ["completion"]}, speeds={"cpu-247": 3.1})
+    assert "small" in limits and "no native tool calling" in limits and "short context" in limits
+    assert "slow here" in limits
+    f = mb.show_facts({"details": {"family": "llama", "parameter_size": "3.2B", "quantization_level": "Q8_0"},
+                       "model_info": {"general.architecture": "llama", "llama.context_length": 131072},
+                       "capabilities": ["tools", "completion"]})
+    assert f == {"family": "llama", "params": "3.2B", "quant": "Q8_0", "ctx": 131072,
+                 "abilities": ["completion", "tools"]}
+
+
+def test_selectors_give_the_options_and_what_each_picks():
+    assert mb.selector_values(NLP_SERVES["nlp.ner"], "task") == ["ner", "ner_multi", "gliner", "spacy"]
+    assert mb.selector_values(NLP_SERVES["nlp.qa"], "task") == []
+    bs, _ = mb.bind("nlp.ner", NLP_SERVES["nlp.ner"])
+    frag = mb.selector_schema(bs)["task"]
+    assert frag["enum"] == ["ner", "ner_multi", "gliner", "spacy"]
+    # "e.g." is not the end of a sentence
+    assert "gliner - Zero-shot entity extraction for ANY entity types named at call time (labels), e.g" \
+        in frag["description"] and "e.g;" not in frag["description"]
+    # the caps check `task` against the declared selectors, not a list of their own
+    import os
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "vera", "research", "nlp_capabilities.py"), encoding="utf-8").read()
+    assert "if task not in _NER_TASKS:" in src and "if task not in _CLASSIFY_TASKS:" in src
+    assert '("ner", "ner_multi", "gliner", "spacy")' not in src
 
 
 def test_every_nlp_cap_binding_is_valid_and_names_a_served_task():
