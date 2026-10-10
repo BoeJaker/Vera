@@ -5133,6 +5133,16 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     'let','know','think','see','look','say','said','like','want','need',
   ]);
   const _CAP_MIN_SCORE=6;
+  /* caps every agent that has them is offered on any non-trivial message: finding facts must never depend on the
+     message happening to share a word with a description */
+  const _INFO_CORE_CAPS=['web.research','web.fetch'];
+  /* short questions count ("latest on MCP?" is under the trivial-chat length); greetings and thanks never do */
+  const _INFO_ASK_RE=/\?|\b(latest|news|updates?|price|current|today|who|what|when|where|which|why|how)\b/i;
+  function _wantsInfoCore(text){
+    const t=(text||'').trim();
+    if(!t || _TRIVIAL_CHAT_RE.test(t)) return false;
+    return !_isTrivialChat(t) || _INFO_ASK_RE.test(t);
+  }
 
   function _findRelevantCaps(query, allowedCaps, maxN=24){
     if(!ALL_CAPS.length) return allowedCaps||[];
@@ -5226,7 +5236,8 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
       +'Only rephrase to add missing context from the conversation, never to change the objective.\n'
       +'A planning loop (v7) then decomposes and EXECUTES it — it handles single-step, multi-step '
       +'and multi-day goals, assesses the system\'s own capabilities, and will ask you to clarify if '
-      +'needed. Answer directly for genuine questions, quick facts, or a single simple action. '
+      +'needed. Answer directly for genuine questions, quick facts, or a single simple action '
+      +'(look current facts up with a web cap in the same reply rather than from memory). '
       +'NEVER emit [[loop]] for greetings, small talk, thanks, casual conversation, or messages '
       +'about the conversation itself — those always get a normal reply.';
   }
@@ -5254,6 +5265,13 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
                   ...(_panelExtraCaps||[]).slice(0,10)]
         .filter(n=>ALL_CAPS.some(c=>c.name===n));
       relevantNames=[...new Set([...relevantNames,...seed])].slice(0,34);
+    }
+    // The information core is offered on every non-trivial message the agent may look things up for (info-seeking
+    // plan SK-1.1): word scoring missed "what's the latest on X" ("latest" is in no description), the turn got no
+    // manifest at all, and the model answered from training. Small talk stays exempt.
+    if(_wantsInfoCore(query||'')){
+      const core=_INFO_CORE_CAPS.filter(n=>allowedCaps.includes(n)&&ALL_CAPS.some(c=>c.name===n));
+      relevantNames=[...new Set([...core,...relevantNames])].slice(0,34);
     }
     // Relevance threshold may have filtered everything out — if so, this is
     // a chat message that doesn't need tool access and we stay silent.
@@ -5381,6 +5399,7 @@ Formats:
 
 IMPORTANT:
 - Conversational / simple questions → plain text. Do not invoke caps.
+- A question about the outside world that could have changed (a fact, the latest / news / updates on something, a price, anything after your training) is NOT simple: look it up first if a web cap is listed, cite what you use as [n] with its date, and never fill a gap with a guess. Memories are dated records, not proof of the present.
 - ${autoExec?'Auto-exec ON: use [[cap:...]] directly.':'Use [[cap:...]] to run immediately, [[suggest:...]] for destructive/slow ops.'}
 - DO NOT ask the user to run commands manually. Use [[cap:...]] to run for them.
 - DO NOT wrap placeholders in backticks or code fences.

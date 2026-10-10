@@ -10543,9 +10543,10 @@ if _VERA_MODE:
         "research.run",
         http_method="POST", http_path="/research/run",
         http_tags=["research", "pipeline"], memory="on",
-        description="Submit a web research job that searches and synthesises information from the internet. "
-                    "WHEN TO USE: when you need to find, investigate, or compile information about a topic from the web; "
-                    "for 'research X', 'find out about Y', 'what is Z', 'trending topics', 'latest news on'. "
+        description="Start a BACKGROUND research job that writes a full report (typically 5-30 minutes). "
+                    "WHEN TO USE: only when the user asks for a report, a deep dive or a write-up they will read "
+                    "later. NOT for answering a question now, a quick fact, or 'latest news / updates on X' - use "
+                    "web.research for those (one search, pages read inline, seconds). "
                     "This is a LONG-RUNNING tool — it returns {job_id, status} immediately; "
                     "the agent loop polls research.job.status until done, then reads research.job.result. "
                     "HOW TO USE: research.run(query='your question or topic', mode='single') — single is fast, "
@@ -10621,9 +10622,9 @@ if _VERA_MODE:
     @capability("research.report", http_method="POST", http_path="/research/report",
                 compatibility_alias_for="research.run",
                 http_tags=["research", "pipeline"], memory="on",
-                description="Fast web research that produces a markdown report. "
-                            "WHEN TO USE: 'research X', 'find out about Y', 'write a report on Z', "
-                            "'what is the latest on' — faster than research.parallel/deep (single agent). "
+                description="Background job that writes a markdown report (single agent; minutes, not seconds). "
+                            "WHEN TO USE: 'write a report on Z' when the user wants a document. NOT for a quick "
+                            "answer or 'the latest on X' - use web.research. "
                             "LONG-RUNNING: returns {job_id, status} immediately; "
                             "poll research.job.status until status='done', then call research.job.result. "
                             "Input: query (str!), project_id (str), context (str — background info), context_mode (str). "
@@ -10713,9 +10714,9 @@ if _VERA_MODE:
     @capability("research.quick_search", http_method="POST", http_path="/research/quick_search",
                 compatibility_alias_for="research.report",
                 http_tags=["research", "pipeline"], memory="on",
-                description="Compatibility name for a single-agent synthesized research report. "
-                            "It has the same long-running job behavior as research.report; use web.search "
-                            "for direct search results without report synthesis. "
+                description="Compatibility name for research.report: despite the name it is NOT a quick search - "
+                            "it starts a background report job that takes minutes. For a quick answer use "
+                            "web.research; for raw result links use web.search. "
                             "LONG-RUNNING: returns {job_id, status}; poll research.job.status until done, then read research.job.result. "
                             "Input: query (str!), project_id, context, context_mode.",
                 schema=_ALIAS_SCHEMA)

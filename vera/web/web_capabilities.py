@@ -1074,19 +1074,20 @@ async def cap_web_search_and_crawl(
     "web.research",
     http_method="POST", http_path="/web/research",
     http_tags=["web", "search", "research"],
+    # what the chat's tool picker matches words against (info-seeking plan SK-0.4): the default for current facts
+    tags=["web", "search", "research", "latest", "news", "updates", "current", "facts", "lookup"],
     memory="on",
-    description="Unified fast web research — search the web BROADLY and PULL the useful "
-                "content from the top results in ONE call. WHEN TO USE: the default way to "
-                "'look something up', 'research X', 'find and read about Y' — it is broader + "
-                "faster than chaining web.search then web.fetch by hand, and far lighter than "
-                "research.run (no multi-stage synthesis pipeline). Returns immediately (not "
-                "LONG-RUNNING). Runs ONE web search, then fetches the top-N result pages in "
-                "PARALLEL (realistic browser fingerprint + reader-proxy fallback, same as "
-                "web.fetch) and returns their cleaned text INLINE so you can read, quote and "
-                "cite them straight away — no second round-trip. Extra un-fetched result links "
-                "come back under `more_links` for optional follow-up. This is a fast read, NOT a "
-                "crawl: nothing is written to the fabric. For synthesis + citations use "
-                "research.run / research.report; for one known URL use web.fetch. "
+    description="Look something up on the web and READ the top pages in ONE call (seconds). "
+                "WHEN TO USE: the default for any question about the outside world - a fact, "
+                "'what is X', 'find out about Y', 'the latest news / updates on Z', anything current "
+                "or that may have changed since training. Answer from the returned page text and cite "
+                "it with dates (`published` when the page gives one); if the pages do not answer, "
+                "search again with a sharper query rather than guessing. Not LONG-RUNNING. Runs ONE "
+                "web search, then reads the top-N result pages in PARALLEL through the reader (article "
+                "text, cached for later; plain fetch as the fallback) and returns their text INLINE. "
+                "Extra un-read result links come back under `more_links`. It does not crawl or write "
+                "datasets to the fabric. For a long written report the user will read later use "
+                "research.run (a background job, minutes); for one known URL use web.fetch. "
                 "Input: query (str!), results (int default 5, max 10 — pages to fetch & read), "
                 "max_chars (int default 4000 — text kept per page), engine (str: "
                 "auto|searxng|brave|ddg), fetch_timeout (float default 8.0). "
