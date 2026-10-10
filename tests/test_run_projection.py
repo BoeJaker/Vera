@@ -311,7 +311,10 @@ def test_observer_overhead_stays_below_generous_shadow_budget():
     # A single wall-clock sample is vulnerable to host scheduling while the
     # critical suite is busy. Keep the original budget, but allow two retries
     # with completely fresh state so the assertion measures observer work
-    # rather than one unrelated scheduler pause.
+    # rather than one unrelated scheduler pause. The clock is this process's
+    # CPU time: under the full 12-shard gate the wall clock still ran 0.56-0.78 s
+    # on three samples in a row (2026-10-10, 2 of 3 edge runs) while the same
+    # file alone passed - time spent waiting for a core is not observer work.
     for sample in range(3):
         registry = ShadowRunRegistry(max_runs=1000)
         parent = Run(id=f"parent-{sample}", kind="vera.dag")
@@ -323,9 +326,9 @@ def test_observer_overhead_stays_below_generous_shadow_budget():
                 await observer.node_started((index,), "test.cap")
                 await observer.node_finished((index,), "test.cap", {"ok": True})
 
-        started = time.perf_counter()
+        started = time.process_time()
         asyncio.run(exercise())
-        samples.append(time.perf_counter() - started)
+        samples.append(time.process_time() - started)
         final_registry = registry
 
     assert min(samples) < 0.5
