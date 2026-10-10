@@ -1,0 +1,125 @@
+Vera Personal and Academic Use License, Version 1.0
+
+Copyright (c) 2026 BoeJaker ("the Licensor"). All rights reserved except as
+granted below.
+
+This is a source-available licence. It is not an open-source licence.
+
+1. Definitions
+
+"Software" means the original works of the Licensor in this repository:
+source code, documentation, configuration, data and any other files, but
+excluding Third-Party Components.
+
+"Third-Party Components" means software, libraries, models, model weights,
+fonts, images and other material that was not written by the Licensor,
+whether vendored into this repository (for example under vendor/), listed
+as a dependency in a requirements or package file, installed by the
+Dockerfile, or downloaded at run time. See Section 10.
+
+"You" means either (a) an individual person acting solely on their own
+behalf, or (b) an Academic Institution, as defined below.
+
+"Academic Institution" means an accredited school, college or university,
+or a publicly recognised academic research body that is not operated for
+profit, acting in its teaching or non-commercial research capacity.
+
+"Excluded Party" means any of the following, and anyone acting for or on
+behalf of one:
+  (a) a corporation, company, partnership, sole trader operating a business,
+      or any other commercial or for-profit entity;
+  (b) a government, government agency, military, law-enforcement or
+      intelligence body, or a public authority or state-owned enterprise,
+      at any level (national, regional or local);
+  (c) a non-profit, charity or other organisation that is not an Academic
+      Institution.
+
+An Academic Institution that is also a government body is permitted only in
+its teaching or academic research capacity.
+
+2. Grant
+
+Subject to this licence, the Licensor grants You a non-exclusive,
+non-transferable, royalty-free, revocable licence to use, copy, modify and
+share the Software for Permitted Purposes only.
+
+"Permitted Purposes" means personal use, hobby projects, private study,
+education, teaching, and academic or other non-commercial research, in each
+case with no commercial advantage or monetary compensation.
+
+3. Restrictions
+
+You must not, and must not allow anyone else to:
+  (a) use the Software, or anything derived from it, if You are an Excluded
+      Party, or on behalf of, for the benefit of, or in the course of work
+      for an Excluded Party, including as an employee, contractor or
+      consultant. Using the Software "internally" at a company or agency is
+      still prohibited;
+  (b) use the Software for any commercial purpose, including selling,
+      licensing, renting or hosting it, offering it or its output as a
+      service, embedding it in a product or service, or using it to generate
+      revenue or other commercial advantage;
+  (c) use the Software, its output or its source to train, fine-tune,
+      evaluate or distil any machine-learning model, except for private
+      personal experimentation that is not shared or published;
+  (d) remove or alter copyright, licence or attribution notices;
+  (e) sublicense the Software or grant anyone rights beyond those in this
+      licence.
+
+4. Sharing and derivatives
+
+You may share copies of the Software, and modified versions of it, only to
+people who are permitted to use it under this licence, and only if each copy
+includes this licence text and the copyright notice. Anything You create that
+contains or is derived from the Software must be licensed under these same
+terms. You must state clearly which files You changed.
+
+5. Commercial and other licences
+
+The Licensor may grant separate written licences, including commercial
+licences, to any person or organisation. Nothing in this licence limits the
+Licensor's own rights to use or license the Software. Contact the Licensor
+for permission outside the scope of this licence.
+
+6. Termination
+
+This licence ends automatically if You breach it. You must then stop using
+and delete all copies of the Software. The Licensor may also revoke the
+licence for any person or organisation on written notice.
+
+7. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE AND NON-INFRINGEMENT.
+
+8. Limitation of liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE LICENSOR IS NOT LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM OR CONNECTED WITH THE SOFTWARE
+OR ITS USE, WHETHER IN CONTRACT, TORT OR OTHERWISE.
+
+9. General
+
+If any provision is unenforceable, the rest remains in effect. Rights not
+expressly granted are reserved by the Licensor.
+
+10. Third-party components
+
+This licence applies only to the Software. Third-Party Components are not
+licensed by the Licensor and remain under their own licences, which are not
+changed, restricted or replaced by this licence. The restrictions in Sections
+2 to 4 do not apply to Third-Party Components, and nothing here grants You any
+right in them.
+
+You are responsible for complying with the licence of every Third-Party
+Component You install, run, copy or distribute, including any notice,
+attribution, source-offer, share-alike, field-of-use or non-commercial terms,
+and including the terms of any machine-learning model or weights You
+download. Those terms may be stricter than this licence. Where a Third-Party
+Component's licence allows something this licence does not, this licence
+still governs the Software.
+
+When You distribute the Software together with Third-Party Components (for
+example in a container image), You must keep their licence texts and notices
+with them. See THIRD_PARTY_NOTICES.md for a summary.

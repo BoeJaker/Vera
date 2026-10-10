@@ -4,7 +4,7 @@
   "description": "Bring Vera's IDE features into VS Code / code-server: a Vera sidebar (memory search, enqueue Claude Code tasks) and a one-click command that wires Vera into this workspace's Claude Code as an MCP server.",
   "version": "0.1.0",
   "publisher": "vera",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "engines": {
     "vscode": "^1.85.0"
   },
