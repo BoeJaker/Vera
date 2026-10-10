@@ -52,8 +52,9 @@ def test_quick_search_is_not_misrepresented_as_direct_search():
 
     source = (Path(__file__).parents[1] / "vera" / "research" /
               "researcher_api.py").read_text(encoding="utf-8")
-    assert "It has the same long-running job behavior as research.report" in source
-    assert "use web.search" in source
+    assert "despite the name it is NOT a quick search" in source
+    assert "background report job that takes minutes" in source
+    assert "use web.research" in source and "use web.search" in source
 
 
 def test_every_compatibility_wrapper_dispatches_through_the_shared_matrix():

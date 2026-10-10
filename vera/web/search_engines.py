@@ -345,3 +345,49 @@ def enough(collected: int, limit: int) -> bool:
     except (TypeError, ValueError):
         return False
     return want > 0 and int(collected) >= want
+
+
+# ── SearXNG health (info-seeking plan SK-0.1) ────────────────────────────────
+# 8-10 Oct 2026 the searxng container lost its network after a host restart: every upstream engine was "Suspended:
+# timeout", each search came back empty, web.search fell through to DDG snippets for days and nothing said so. The
+# web module notes what each SearXNG answer looked like; /health reports it.
+
+DOWN_AFTER = 3          # empty answers in a row with every engine unresponsive = down
+
+
+def searxng_note(state: Dict[str, Any], body: Optional[Mapping[str, Any]], now: str, *,
+                 error: str = "") -> Dict[str, Any]:
+    """Fold one SearXNG answer (its JSON body, or None with `error` when it could not be reached) into `state`."""
+    st = dict(state or {})
+    st["checked_at"] = now
+    if body is None:
+        st.update(empty_streak=int(st.get("empty_streak") or 0) + 1, last_error=str(error)[:160],
+                  unresponsive=list(st.get("unresponsive") or []), reachable=False)
+        return st
+    results = body.get("results") or []
+    unresp = [f"{e[0]}: {e[1]}" if isinstance(e, (list, tuple)) and len(e) > 1 else str(e)
+              for e in (body.get("unresponsive_engines") or [])][:12]
+    st.update(reachable=True, unresponsive=unresp, last_count=len(results))
+    if results:
+        st.update(empty_streak=0, ok_at=now)
+    else:
+        st["empty_streak"] = int(st.get("empty_streak") or 0) + 1
+    return st
+
+
+def searxng_status(state: Mapping[str, Any]) -> Dict[str, Any]:
+    """{state: ok|degraded|down|unknown, message} for /health from what searxng_note gathered."""
+    st = dict(state or {})
+    if not st.get("checked_at"):
+        return {"state": "unknown", "message": "no search since start", **st}
+    streak = int(st.get("empty_streak") or 0)
+    unresp = st.get("unresponsive") or []
+    if not st.get("reachable", True) and streak >= DOWN_AFTER:
+        return {"state": "down", "message": "SearXNG cannot be reached; web search falls back to DDG snippets", **st}
+    if streak >= DOWN_AFTER and unresp and all("timeout" in u.lower() for u in unresp):
+        return {"state": "down", "message": "every SearXNG engine times out (check the container's network); "
+                                            "web search falls back to DDG snippets", **st}
+    if unresp or streak:
+        return {"state": "degraded", "message": f"{len(unresp)} engine(s) unresponsive; {streak} empty answer(s) "
+                                                "in a row", **st}
+    return {"state": "ok", "message": "", **st}
