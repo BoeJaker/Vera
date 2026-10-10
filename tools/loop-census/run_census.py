@@ -34,6 +34,18 @@ PLAN_STYLE = os.environ.get("CENSUS_PLAN_STYLE", "").strip().lower()
 # the loop ONLY when set - a Vera without the option would refuse the argument.
 # A forced core is its own SERIES (<template>-core-order-runN). (2026-09-28, roadmap G)
 INTENT_CORE = os.environ.get("CENSUS_INTENT_CORE", "").strip().lower()
+# A switchboard set forced on every goal - a census ARM (CENSUS_MINDS contract v1, four-minds
+# ROADMAP section 4.1; the scheduler sets both from a schedule's target.minds / minds_label):
+# CENSUS_MINDS is compact JSON {"<feature_id>": "<mode>"}, CENSUS_MINDS_LABEL names the arm
+# ([a-z0-9-]{1,24}, not style-*/core-*, not the template). Validated with minds.validate against
+# CENSUS_BASE before goal 1 - refused, unreachable or an unknown cap exits non-zero with no goal
+# started. Sent to the loop ONLY when non-empty. An arm is its own SERIES
+# (<template>[-style-s][-core-m]-<label>-runN) and every row carries minds_requested,
+# minds_digest and minds_label. (2026-10-10)
+MINDS_RAW = os.environ.get("CENSUS_MINDS", "").strip()
+MINDS_LABEL = os.environ.get("CENSUS_MINDS_LABEL", "").strip()
+MINDS = {}                     # parsed in main()
+MINDS_DIGEST = "default"
 WALL_CAP_S   = 1800          # 30 min per run, then cancel and record it.
                              # Raised from 1500 on 2026-08-31: run 21 capped
                              # research-web at 1512.5s while it was on its FINAL
@@ -249,6 +261,48 @@ def _answer_text(resp):
                 if isinstance(v.get(k2), str) and v[k2].strip():
                     return v[k2]
     return ""
+
+
+def parse_minds(raw, label, template):
+    """(minds, label) from CENSUS_MINDS / CENSUS_MINDS_LABEL; ({}, "") when no set is asked for.
+    Raises ValueError on a set that is not a JSON object of strings or a label the contract refuses."""
+    import re
+    raw = str(raw or "").strip()
+    if not raw:
+        return {}, ""
+    try:
+        minds = json.loads(raw)
+    except ValueError as e:
+        raise ValueError("CENSUS_MINDS is not JSON: %s" % e)
+    if not isinstance(minds, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in minds.items()):
+        raise ValueError("CENSUS_MINDS must be an object of {feature_id: mode} strings")
+    if not minds:
+        return {}, ""
+    label = str(label or "").strip()
+    if not re.fullmatch(r"[a-z0-9-]{1,24}", label):
+        raise ValueError("CENSUS_MINDS_LABEL must match [a-z0-9-]{1,24}")
+    if label.startswith(("style-", "core-")) or label == str(template or ""):
+        raise ValueError("CENSUS_MINDS_LABEL must not start with style-/core- or equal the template")
+    return {k: minds[k] for k in sorted(minds)}, label
+
+
+def minds_digest(minds):
+    """12 hex of sha256 over the canonical sorted set (switchboard_core.digest); 'default' when empty."""
+    import hashlib
+    if not minds:
+        return "default"
+    canon = json.dumps({str(k): str(v) for k, v in sorted(minds.items())}, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:12]
+
+
+def series_name(template, plan_style="", intent_core="", minds_label=""):
+    """<template>[-style-<s>][-core-<mode>][-<label>] (contract rule 4: existing names unchanged)."""
+    series = template if not plan_style else "%s-style-%s" % (template, plan_style)
+    if intent_core and intent_core != "off":
+        series = "%s-core-%s" % (series, intent_core)
+    if minds_label:
+        series = "%s-%s" % (series, minds_label)
+    return series
 
 
 def mcp(name, arguments, timeout=60):
@@ -786,6 +840,8 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
     if _core and _core != "off":
         _args["intent_core"] = _core
         log("  intent_core %s" % _core)
+    if MINDS:                                   # a census arm: only when one is asked for
+        _args["minds"] = dict(MINDS)
     # A goal that names a loop PROFILE (the specialist-loops template: "each
     # run by that profile rather than by planning") runs through loops.run,
     # which resolves the profile's engine, agent and toolkit; every other goal
@@ -1006,6 +1062,10 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
         # since 2026-10-02). `plan_style` below is what actually RAN.
         "plan_style_requested": _style or "default",
         "intent_core_requested": _core or "off",
+        # the switchboard set this arm asked for (contract rule 5): {} / "default" / "" off-arm
+        "minds_requested": dict(MINDS),
+        "minds_digest": MINDS_DIGEST,
+        "minds_label": MINDS_LABEL if MINDS else "",
         "plan_style": (tr.get("plan") or {}).get("style"),
         "plan_style_reason": (tr.get("plan") or {}).get("style_reason"),
         "stages": {s.get("stage"): s.get("calls") for s in (tr.get("stages") or [])},
@@ -1101,6 +1161,20 @@ def main():
         return
 
     template, tmpl_model, goals, tmpl_cap = load_template(args.template)
+    # A census arm: parse, then validate against the build under test BEFORE goal 1 (rule 3).
+    try:
+        _minds, _label = parse_minds(MINDS_RAW, MINDS_LABEL, template)
+    except ValueError as e:
+        log("census refused: %s" % e)
+        sys.exit(2)
+    globals()["MINDS"], globals()["MINDS_LABEL"] = _minds, _label
+    globals()["MINDS_DIGEST"] = minds_digest(_minds)
+    if _minds:
+        _v = mcp("minds.validate", {"minds": _minds, "census": True}, timeout=30)
+        if not (isinstance(_v, dict) and _v.get("ok") is True):
+            log("census refused: minds %s not valid on %s: %s" % (json.dumps(_minds), BASE, json.dumps(_v)[:300]))
+            sys.exit(2)
+        log("  minds arm %s: %s (digest %s)" % (_label, json.dumps(_minds), MINDS_DIGEST))
     # An explicit --model beats the template's own default.
     model = args.model or tmpl_model
 
@@ -1114,9 +1188,7 @@ def main():
     # A forced planning style is its own series: numbered and ingested apart from
     # the template's baseline runs (the goal set - `template` on each row - is
     # unchanged, so rows still compare goal by goal).
-    series = template if not PLAN_STYLE else "%s-style-%s" % (template, PLAN_STYLE)
-    if INTENT_CORE and INTENT_CORE != "off":
-        series = "%s-core-%s" % (series, INTENT_CORE)
+    series = series_name(template, PLAN_STYLE, INTENT_CORE, MINDS_LABEL if MINDS else "")
     census_run = reserve_census_run(series, done_rows)
     log("census start: template=%s model=%s plan_style=%s | %d goals, %d already done | will archive as %s"
         % (template, model or "(routing default)", PLAN_STYLE or "(per goal / auto)",
