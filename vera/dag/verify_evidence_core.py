@@ -14,6 +14,12 @@ Two pure rules:
   none -> not met; failures -> not met; only a clean run lets the judge rule.
 - the judge's reason must quote tool evidence, not the summary (prompt rule;
   the prose lives here so the prompt and its test agree).
+
+And one evidence rule: a call that returned ok but whose OUTPUT reports a failure (a script printing
+"Error: ..." and exiting 0) is flagged to the judge as a failure (soft_failure) - but an EMPTY error field
+in a JSON result ("error": "", "errors": [], "failed": 0) reports none. Before 2026-10-10 the word alone
+flagged it: every prose.author / code.author result carries `"error": ""`, so clean writes reached the judge
+as "ok BUT ITS OUTPUT REPORTS AN ERROR" - the System 1 student, following the rules, failed them.
 """
 from __future__ import annotations
 
@@ -155,3 +161,18 @@ def wrong_file_authored(named_files, authored_path: object) -> Optional[str]:
 def _first_line(s: str, n: int = 200) -> str:
     t = s.strip()
     return (t.splitlines()[0].strip() if t else "")[:n]
+
+
+_FAILURE_WORD_RE = re.compile(r"(?im)^[^\n]*\b(?:error|traceback|exception|failed|fatal)\b[^\n]*$")
+#: a JSON field named for a failure whose value says there was none
+_EMPTY_FAILURE_FIELD_RE = re.compile(
+    r'"[A-Za-z_]*(?:error|errors|exception|failed|fatal)[A-Za-z_]*"\s*:\s*(?:""|null|\[\s*\]|\{\s*\}|0|false)',
+    re.I)
+
+
+def soft_failure(preview: object) -> str:
+    """The line of an ok call's output that reports a failure, or "" when it reports none. Empty failure
+    fields of a JSON result are not reports."""
+    text = _EMPTY_FAILURE_FIELD_RE.sub("", str(preview or ""))
+    m = _FAILURE_WORD_RE.search(text)
+    return m.group(0).strip()[:160] if m else ""

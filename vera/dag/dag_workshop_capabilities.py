@@ -21775,9 +21775,8 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # prints "Error: …" and exits 0 is the common case, and it reads to the judge
     # as a clean success. Flag it deterministically so it cannot.
     def _soft_failed(h) -> str:
-        pv = str(h.get("preview") or "")
-        m = re.search(r'(?im)^[^\n]*\b(?:error|traceback|exception|failed|fatal)\b[^\n]*$', pv)
-        return (m.group(0).strip()[:160] if m else "")
+        # an empty "error" field of a JSON result is not a report (verify_evidence_core.soft_failure)
+        return _verify_evidence.soft_failure(h.get("preview"))
 
     # Exclude meta/no-op entries — "(empty exec.python.run)", "(denied X)",
     # "(invented path X)", "(skipped X)" — from being judged as real evidence.
