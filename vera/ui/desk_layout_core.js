@@ -304,6 +304,58 @@
     return items;
   }
 
+  /* THE CARDS TAKE THE ROOM AROUND THEM (owner, 2026-10-10: "for things on the desk to take up as much space as possible
+     and as good design allows"). After the cards are placed and pulled apart, each one that may grow (not a chip, not
+     fixed: the person's size, a lock and the card being sized stay as they are) grows into the free desk round it - a
+     step at a time, right, down, left and up in turn, while a side stays clear of the chat, the desk's edge and every
+     other card by `gap` - until no side can. Its width and height keep within an aspect of 1:2.2 either way, so a
+     card grows into a page, never a ribbon; `maxW` / `maxH` cap it. Order is the items' order: the first (the topic's)
+     grow first. Items are {x, y, w, h (centre and size), fixed?, chip?}; each grown one gets grown: true. */
+  function grow(items, R, d, o) {
+    d = desk(d); o = o || {};
+    var gap = o.gap || 14, step = o.step || 8, ratio = o.ratio || 2.2;
+    var maxW = o.maxW || d.W - 16, maxH = o.maxH || d.H - 8;
+    function box(it) { return { l: it.x - it.w / 2, t: it.y - it.h / 2, r: it.x + it.w / 2, b: it.y + it.h / 2 }; }
+    function hit(a, b, g) { return a.l < b.r + g && b.l < a.r + g && a.t < b.b + g && b.t < a.b + g; }
+    var chat = R && R.r > R.l ? R : null;
+    items.forEach(function (it) {
+      if (it.fixed || it.chip) return;
+      var others = items.filter(function (x) { return x !== it; });
+      /* the gap is kept in the direction it grows; across it only a hairline, or a neighbour 12 px to the side would stop it
+         growing up or down at all */
+      function hit2(a, q, gx, gy) { return a.l < q.r + gx && q.l < a.r + gx && a.t < q.b + gy && q.t < a.b + gy; }
+      function clear(b, s) {
+        if (b.l < 0 || b.t < 0 || b.r > d.W || b.b > d.H) return false;
+        var gx = s === 'r' || s === 'l' ? gap : 4, gy = s === 'b' || s === 't' ? gap : 4;
+        if (chat && hit2(b, chat, gx, gy)) return false;
+        for (var i = 0; i < others.length; i++) if (hit2(b, box(others[i]), gx, gy)) return false;
+        return true;
+      }
+      /* only the strip a side grows into is tested: cards the arrangement set closer than `gap` (its bands are 12 px
+         apart) are not blocked by the room they already have */
+      var b = box(it);
+      /* a side is closed by a neighbour, an edge or the cap; the aspect only holds it back for a round (it opens again
+         once the other way has grown). Done when a round grows nothing. */
+      var open = { r: true, b: true, l: true, t: true }, n = 0, moved = true;
+      while (moved && n++ < 800) {
+        moved = false;
+        ['r', 'b', 'l', 't'].forEach(function (s) {
+          if (!open[s]) return;
+          var t = { l: b.l, t: b.t, r: b.r, b: b.b }; t[s] += (s === 'r' || s === 'b') ? step : -step;
+          var w = t.r - t.l, h = t.b - t.t;
+          var strip = s === 'r' ? { l: b.r, t: b.t, r: t.r, b: b.b } : s === 'l' ? { l: t.l, t: b.t, r: b.l, b: b.b }
+            : s === 'b' ? { l: b.l, t: b.b, r: b.r, b: t.b } : { l: b.l, t: t.t, r: b.r, b: b.t };
+          if (w > maxW || h > maxH || !clear(strip, s)) { open[s] = false; return; }
+          if (w / h > ratio || h / w > ratio) return;
+          b = t; moved = true;
+        });
+      }
+      var nw = b.r - b.l, nh = b.b - b.t;
+      if (nw > it.w + 1 || nh > it.h + 1) { it.x = b.l + nw / 2; it.y = b.t + nh / 2; it.w = nw; it.h = nh; it.grown = true; }
+    });
+    return items;
+  }
+
   function stackOrder(nd, o) {
     o = o || {};
     if (o.dragging) return 200;
@@ -431,7 +483,7 @@
     return { planes: planes, areas: areas, nodes: nodes, links: links };
   }
 
-  var api = { DESK: DESK, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
+  var api = { DESK: DESK, grow: grow, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
               arrange: arrange, pushOut: pushOut, separate: separate, stackOrder: stackOrder, fullRegion: fullRegion, makeRoom: makeRoom,
               latticeOf: latticeOf };
   root.VeraDesk = api;

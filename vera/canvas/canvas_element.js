@@ -1368,6 +1368,18 @@
      bottom of the last turn's item — could not be reached at all. */
   /* the desk (align="desk", owner approved 2026-10-06): sized by the distance to the chat on the column's left edge */
   :host([align="desk"]:not([desk-narrow])) .stage .it{transition:left .45s cubic-bezier(.2,.8,.2,1), top .45s cubic-bezier(.2,.8,.2,1), width .35s, height .35s, opacity .3s; overflow:hidden!important; contain:paint; box-sizing:border-box; min-height:0}
+  /* a composite card (see _deskGroups): its members behind the front one are not drawn; the front one carries the tabs
+     under its header, and as a pill says how many it holds */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.cmp-behind:not(.cmp-front){display:none!important}   /* stronger than a pill's display:flex */
+  .cmp-tabs{display:none}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.cmp-front:not(.desk-chip) > .cmp-tabs{display:flex;gap:2px;flex:none;overflow-x:auto;scrollbar-width:none;padding:0 6px;margin:0 0 4px;border-bottom:1px solid var(--border,#2a2f37)}
+  .cmp-tabs::-webkit-scrollbar{display:none}
+  .cmp-tab{flex:none;max-width:220px;display:inline-flex;align-items:center;gap:6px;border:0;background:none;font:inherit;font-size:11.5px;color:var(--dim,#8b93a1);padding:5px 9px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cmp-tab:hover{color:var(--fg,#dce1e8)}
+  .cmp-tab.on{color:var(--fg,#dce1e8);border-bottom-color:var(--acc,#5a9e8f)}
+  .cmp-ty{font-style:normal;font-size:8.5px;font-weight:700;letter-spacing:.04em;padding:1px 4px;border-radius:4px;color:var(--dim,#8b93a1);background:color-mix(in srgb,var(--fg,#dce1e8) 8%,transparent)}
+  .cmp-tab.on .cmp-ty{color:var(--acc,#5a9e8f);background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent)}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.cmp-front.desk-chip::after{content:attr(data-cmp-n);flex:none;margin-left:6px;font-size:10px;font-weight:600;padding:0 6px;border-radius:8px;color:var(--acc,#5a9e8f);background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent)}
   /* on the desk the distance is the fold: a card or full-size face shows its body even if it was folded in held */
   :host([align="desk"]:not([desk-narrow])) .stage .it.compact:not(.desk-chip) > .it-bd{display:block}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip{border-radius:17px;padding:0 10px!important;display:flex!important;flex-direction:row!important;align-items:center;justify-content:flex-start}
@@ -2948,7 +2960,9 @@
         + (narrow && hd('ctx') ? row('ctx', hd('ctx').classList.contains('on') ? '✓ In context' : 'Put in context', hd('ctx').title, hd('ctx').classList.contains('on')) : '')
         + row('park', 'Park', 'Park it below the flow') + row('size', 'Size: ' + (c.dataset.size || 'm'), 'The next size')
         + (this._deskPosGet()[key] ? row('desk-auto', 'Back to the arrangement', 'Placed by hand - give it back to the arrangement') : '')
-        + row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line');
+        + row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line')
+        + (c.classList.contains('cmp-front') ? row('cmpsep', 'Take it out of the group', 'Show it as a card of its own; the group keeps its other tabs')
+          : this._sepGet()[key] ? row('cmpjoin', 'Combine with similar items', 'Put it back with the items of its kind on its topic, as a tab') : '');
       /* the card's own head's buttons (a code item's copy · preview · edit · run, a terminal's, a diagram's): that head is not
          drawn on the desk, so its buttons are listed here and a row presses the original - one container, nothing lost */
       /* the head's own buttons only - not the entries of a dropdown inside it (Send to's targets), and not one the header row
@@ -3002,6 +3016,60 @@
       if (card) card.querySelectorAll('[data-act^="layer-"]').forEach((bt) => bt.classList.toggle('on', bt.dataset.act === 'layer-' + this._layer[key]));
       try { this._placeNow(); } catch (e) { /* placed on the next paint */ }
     }
+    /* SIMILAR ITEMS ON ONE TOPIC, ONE CARD (owner, 2026-10-10: "id like similar elements on similar topics to be able to
+       combine into composite desk items and for things on the desk to take up as much space as possible"). A turn that
+       searched the web and the fabric and ran a research put three reading lists side by side, each with a third of the
+       room. Items of one family - reading lists (web, news, fabric, a research run, a page), tables and fields, widgets,
+       documents, diagrams, names, timelines, images - that came from the same turn or are about the same subject (the
+       part of the title after its " · ") now share one card as tabs, the way windows are tabbed on a desktop. Only the
+       tab in front is placed, so the desk's room goes to fewer cards; each tab is still the whole item, with its own
+       controls, graph and menu. A locked item, and one the person took out (its ⋯ menu), stays on its own. The tab
+       last chosen is in front; a newly arrived member comes to the front. Up to eight to a card. */
+    _deskGroups(cards) {
+      const FAM = { records: 'reading', research: 'reading', source: 'reading', table: 'data', kv: 'data', widget: 'widgets', markdown: 'docs',
+        diagram: 'diagrams', entities: 'names', timeline: 'dates', image: 'images' };
+      const res = { behind: new Set(), membersOf: new Map(), groups: [] };
+      cards.forEach((c) => { c.classList.remove('cmp-behind', 'cmp-front'); delete c.dataset.cmpN; const tb = c.querySelector(':scope > .cmp-tabs'); if (tb) tb.remove(); });
+      if (this.getAttribute('desk-combine') === 'off' || this.hasAttribute('desk-narrow')) return res;
+      const sep = this._sepGet(), locks = this._lockGet();
+      const titleOf = (c) => ((c.querySelector(':scope > .it-hd > .t') || {}).textContent || '').replace(/\s+/g, ' ').trim();
+      const subjOf = (t) => { const i = t.indexOf(' · '); return (i >= 0 ? t.slice(i + 3) : '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+      const prefOf = (t) => { const i = t.indexOf(' · '); return i >= 0 ? t.slice(0, i) : t; };
+      const elig = cards.filter((c) => { const k = c.dataset.key || ''; return k && FAM[c.dataset.type || ''] && !sep[k] && !locks[k] && !(this._max && this._max === k) && !(this._rz && this._rz.el === c); });
+      /* joined by family when they share a turn or a subject */
+      const par = new Map(elig.map((c) => [c, c]));
+      const find = (c) => { while (par.get(c) !== c) { par.set(c, par.get(par.get(c))); c = par.get(c); } return c; };
+      const by = {};
+      elig.forEach((c) => { const f = FAM[c.dataset.type]; const s = subjOf(titleOf(c));
+        [c.dataset.mid ? f + '|m|' + c.dataset.mid : '', s.length >= 4 ? f + '|s|' + s : ''].filter(Boolean)
+          .forEach((b) => { if (by[b]) par.set(find(c), find(by[b])); else by[b] = c; }); });
+      const sets = new Map(); elig.forEach((c) => { const r = find(c); if (!sets.has(r)) sets.set(r, []); sets.get(r).push(c); });
+      const act = this._cmpGet(); let stamped = false; const now = Date.now();
+      sets.forEach((list) => {
+        for (let i = 0; i < list.length; i += 8) {
+          const g = list.slice(i, i + 8); if (g.length < 2) continue;
+          /* a member never seen in a group before is the newest: it comes to the front */
+          g.forEach((c) => { if (act[c.dataset.key] == null) { act[c.dataset.key] = now; stamped = true; } });
+          const front = g.reduce((a, c) => ((act[c.dataset.key] || 0) >= (act[a.dataset.key] || 0) ? c : a), g[0]);
+          res.membersOf.set(front, g); res.groups.push(g.map((c) => c.dataset.key));
+          g.forEach((c) => { if (c !== front) { res.behind.add(c); c.classList.add('cmp-behind'); } });
+          front.classList.add('cmp-front'); front.dataset.cmpN = String(g.length);
+          /* the tabs name what differs: on one subject, the part before it (Web, From the fabric, Research); else the title */
+          const subs = new Set(g.map((c) => subjOf(titleOf(c))));
+          const lab = (c) => { const t = titleOf(c); return subs.size === 1 && [...subs][0] ? prefOf(t) : t; };
+          const tb = document.createElement('div'); tb.className = 'cmp-tabs'; tb.dataset.w = 'canvas.item.group';
+          tb.innerHTML = g.map((c) => `<button class="cmp-tab${c === front ? ' on' : ''}" data-act="cmptab" data-layer-key="${esc(c.dataset.key)}" title="${esc(titleOf(c))}"><i class="cmp-ty">${esc(String(c.dataset.type || '').slice(0, 2).toUpperCase())}</i>${esc(lab(c).slice(0, 42))}</button>`).join('');
+          const hd = front.querySelector(':scope > .it-hd'); if (hd) hd.after(tb); else front.prepend(tb);
+        }
+      });
+      if (stamped) this._cmpSet(act);
+      return res;
+    }
+    _cmpGet() { if (this._cmpA) return this._cmpA; try { this._cmpA = JSON.parse(localStorage.getItem('vera:canvas:deskfront:' + this.canvasId) || '{}') || {}; } catch (e) { this._cmpA = {}; } return this._cmpA; }
+    _cmpSet(m) { this._cmpA = m; const ks = Object.keys(m); if (ks.length > 400) ks.sort((a, b) => m[a] - m[b]).slice(0, ks.length - 400).forEach((k) => delete m[k]);
+      try { localStorage.setItem('vera:canvas:deskfront:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
+    _sepGet() { if (this._sepA) return this._sepA; try { this._sepA = JSON.parse(localStorage.getItem('vera:canvas:desksep:' + this.canvasId) || '{}') || {}; } catch (e) { this._sepA = {}; } return this._sepA; }
+    _sepSet(key, on) { const m = this._sepGet(); if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:desksep:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
     _placeDesk(st, cards) {
       const D = root.VeraDesk, body = this.shadowRoot.getElementById('body');
       this._liveFollow(650);   /* every card it places may glide (.45 s): what is drawn over them follows each frame */
@@ -3024,6 +3092,10 @@
       const layOf = (c) => (this._max && this._max === c.dataset.key) ? 'front' : this._layer[c.dataset.key || ''];
       const layered = cards.filter((c) => layOf(c));
       cards = cards.filter((c) => !layOf(c));
+      /* SIMILAR ITEMS ON ONE TOPIC ARE ONE CARD (see _deskGroups): only the tab in front is placed; the others take its
+         rectangle, unseen, after the placement below */
+      const grp = this._deskGroups(cards);
+      cards = cards.filter((c) => !grp.behind.has(c));
       this._deskGeo = { R, desk, W, H };   /* a drag sizes the card it moves with the same rules, live */
       const up = this._deskPosGet();
       const ranked = cards.map((c, i) => ({ c, i })).sort((a, b) => {
@@ -3058,9 +3130,12 @@
         const tAt = {}; T.order.forEach((k, i) => { tAt[k] = i; });
         /* ...and anything made FOR the turn in focus (its own anchors), the moment it lands: the topic set is asked once a
            turn, so an item a call of that turn adds afterwards (its activity, its result) was out of it and went to the border */
-        const ownTurn = (x) => !!T.mid && (x.c.dataset.mid === T.mid || x.c.dataset.from === T.mid || (x.c.dataset.anchors || '').split(' ').indexOf(T.mid) >= 0);
-        const inT = (x) => tAt[x.c.dataset.key || ''] != null || x.c.classList.contains('pinned') || ownTurn(x);
-        const lead = ranked.filter(inT).sort((a, b) => (tAt[a.c.dataset.key] != null ? tAt[a.c.dataset.key] : -1) - (tAt[b.c.dataset.key] != null ? tAt[b.c.dataset.key] : -1));
+        const ownTurn = (c) => !!T.mid && (c.dataset.mid === T.mid || c.dataset.from === T.mid || (c.dataset.anchors || '').split(' ').indexOf(T.mid) >= 0);
+        /* a composite card is in the topic when any of its tabs is, and ranks as its best one */
+        const mem = (x) => grp.membersOf.get(x.c) || [x.c];
+        const inT = (x) => mem(x).some((c) => tAt[c.dataset.key || ''] != null || c.classList.contains('pinned') || ownTurn(c));
+        const rk = (x) => Math.min.apply(null, mem(x).map((c) => (tAt[c.dataset.key] != null ? tAt[c.dataset.key] : -1)));
+        const lead = ranked.filter(inT).sort((a, b) => rk(a) - rk(b));
         const rest = ranked.filter((x) => !inT(x)); rest.forEach((x) => outside.add(x.c.dataset.key || ''));
         ranked.length = 0; lead.concat(rest).forEach((x) => ranked.push(x));
       }
@@ -3118,9 +3193,18 @@
         return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h), face0: po.size.face };
       });
       D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h) }; }, { W: W, H: H });
+      /* ...then every card takes the free desk round it (D.grow): a chip stays a chip, and what the person sized, locked
+         or is sizing stays as it is. Off with the canvas's desk-fill="off". */
+      if (typeof D.grow === 'function' && this.getAttribute('desk-fill') !== 'off') {
+        plan.forEach((it) => { if (it.fixed || it.keepSize) { it.chip = it.h <= 40; return; }
+          const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); it.face0 = s0.face; it.chip = s0.face === 'chip' || s0.face === 'icon'; });
+        D.grow(plan, R, { W: W, H: H }, { maxW: W - 16, maxH: H - 8 });
+      }
       const out = [];
       plan.forEach((it) => {
         const c = it.c, key = it.id, s = it.lock ? { w: it.w, h: it.h, face: it.lock.face || 'card', nd: 0.5 }
+          /* grown into the free desk: that size, its face from it (a card grown past a full card's size is a full card) */
+          : it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) })
           : it.sizing ? { w: it.w, h: it.h, face: c.dataset.deskFace || 'max', nd: 0 }
           /* moved where only its present size fits: it keeps that size and its face there, or it would grow over its neighbours */
           : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: it.face0 || 'chip' }) : D.sizeAt(R, it.x, it.y, it.so, desk);
@@ -3135,6 +3219,11 @@
         c.style.left = left + 'px'; c.style.top = top + 'px'; c.style.setProperty('width', w + 'px', 'important'); c.style.setProperty('height', h + 'px', 'important'); c.style.setProperty('min-height', '0px', 'important');
         c.style.zIndex = String(it.sizing ? D.stackOrder(0, { dragging: true }) : D.stackOrder(s.nd));
         out.push({ key: key, x: left, y: top, w: w, h: h, face: s.face });
+        /* the group's other tabs: the same rectangle and face, unseen until their tab is chosen */
+        (grp.membersOf.get(c) || []).forEach((m) => { if (m === c) return;
+          m.style.left = left + 'px'; m.style.top = top + 'px'; m.style.setProperty('width', w + 'px', 'important'); m.style.setProperty('height', h + 'px', 'important'); m.style.setProperty('min-height', '0px', 'important');
+          m.dataset.deskFace = s.face; m.classList.toggle('desk-chip', s.face === 'chip' || s.face === 'icon'); m.classList.toggle('desk-icon', s.face === 'icon'); m.style.zIndex = c.style.zIndex;
+          out.push({ key: m.dataset.key, x: left, y: top, w: w, h: h, face: s.face, behind: true }); });
       });
       /* the layered panels: the largest part of the desk the chat leaves free, under (behind) or over (front) the rest */
       const g = D.fullRegion(R, { W: W, H: H, m: 8, top: 4 });
@@ -4128,6 +4217,11 @@
       const pop = btn.closest('.hd-pop'); if (pop) pop.remove();
       if (!it && key) it = [...this.shadowRoot.querySelectorAll('.stage .it[data-key]')].find((x) => x.dataset.key === key) || null;
       if (act === 'lock') return this.toggleLock(key);
+      /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
+      if (act === 'cmptab' || act === 'cmpsep' || act === 'cmpjoin') {
+        if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); }
+        else this._sepSet(key, act === 'cmpsep');
+        this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
       if (act === 'hdview') return this._viewMenu(key, btn);
       if (act === 'ownbtn') { const o = it && it._ownBtns && it._ownBtns[+btn.dataset.own]; if (o) { try { o.click(); } catch (e) { /* its own handler */ } } return; }   /* a card's own head's button, from its ⋯ menu */
