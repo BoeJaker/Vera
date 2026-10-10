@@ -1340,11 +1340,11 @@ async def _seek_rerank(subject: str, items: List[Dict[str, Any]]) -> List[Dict[s
                 "WHEN TO USE: any question about the outside world - 'what's the latest on X', 'updates on X', "
                 "'what is X', 'explain/compare X', a price or a fact that may have changed since training. "
                 "need=latest (auto for latest/news/updates): checks what Vera already tracks on the subject "
-                "(intel), runs up to three fresh, dated web searches, drops report-sellers, ranks by relevance, reads "
-                "the top pages and orders newest first (~10-40 s). need=fact: one search with the top pages read, "
-                "and a second, sharper round when they do not answer. need=overview: two searches from different "
-                "angles, several sites, pages read (~30-90 s). need=deep: the overview now plus research.run "
-                "started in the background for a full report (job_id returned). "
+                "(intel), searches dated news plus up to three web searches, drops report-sellers, orders newest "
+                "first and reads the newest pages (~10-40 s). need=fact: the subject's keywords and the question, "
+                "ranked by whether they answer it, the best pages read, a second round when they do not. "
+                "need=overview: three angles, one page a site, more pages read (~20-60 s). need=deep: the "
+                "overview now plus research.run started in the background for a full report (job_id returned). "
                 "Input: question (str!), need (auto|fact|latest|overview|deep, default auto), since (ISO date: "
                 "what counts as new for latest; default 14 days), topic (the subject when the question is long), "
                 "pages (int, pages to read, default 5, max 8), excerpt_chars (int, per page, default 900). "
@@ -1396,35 +1396,40 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
             checked.append(f"dropped {len(dropped)} market-report sellers")
         hits = await _seek_rerank(subject, hits)
         items = [dict(h, kind="web") for h in _seek.per_site(hits, 2)][:12]
+        # newest first BEFORE reading: the pages read are the new ones, not the evergreen explainers relevance
+        # ranks high (prod, 10 Oct: every read page was an undated explainer while the dated news went unread)
+        items = _seek.order_latest(items, since, now)
         got = await _seek_read(items, pages, chars)
         checked.append(f"read {got} of the top pages")
-        items = _seek.order_latest(items, since, now)
+        items = _seek.order_latest(items, since, now)          # a page read may have given its own date
     else:
-        q2 = None
-        if need == "overview" or need == "deep":
-            q2 = f"{subject} overview analysis {now.year}"
-        calls = [_seek_call("web.research", 75, query=question, results=pages, max_chars=max(chars * 3, 3000))]
-        if q2:
-            calls.append(_seek_call("web.research", 75, query=q2, results=pages, max_chars=max(chars * 3, 3000)))
-        res = await asyncio.gather(*calls)
-        srcs = _seek.merge_hits([r.get("sources") or [] for r in res])
-        for s in srcs:
-            if s.get("text"):
-                s["text"] = _seek.excerpt(s["text"], chars)
-        good = [s for s in srcs if len(str(s.get("text") or "")) >= 400]
-        checked.append(f"web: {len(calls)} search{'es' if len(calls) > 1 else ''}, {len(srcs)} pages, "
-                       f"{len(good)} with readable text")
-        if need == "fact" and len(good) < 2:
+        # fact / overview / deep: the subject's keywords first, then other angles; ranked against the QUESTION (the
+        # cross-encoder judges "does this page answer it"), at most two pages a site, the best pages read
+        queries = (_seek.fact_queries(subject, question) if need == "fact"
+                   else _seek.overview_queries(subject, question, now))
+        res = await asyncio.gather(*[_seek_call("web.search", 25, query=q, limit=8, discover="off") for q in queries])
+        hits = _seek.merge_hits([r.get("results") or [] for r in res])
+        engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
+        checked.append(f"web: {len(queries)} searches ({', '.join(engines) or 'no engine answered'}), {len(hits)} results")
+        _seek.fill_dates(hits, now)
+        hits = await _seek_rerank(question, hits)
+        cap = 2 if need == "fact" else 1          # an overview wants many sites, a fact may take two pages of one
+        items = [dict(h, kind="web") for h in _seek.per_site(hits, cap)][:10]
+        n_read = pages if need == "fact" else min(8, pages + 2)
+        got = await _seek_read(items, n_read, chars)
+        checked.append(f"read {got} of the top pages")
+        if need == "fact" and got < 2 and len(queries) < 3:
             # depth over speed: the pages did not carry an answer - one sharper round before giving up
-            r2 = await _seek_call("web.research", 75, query=f"{subject} {now.year}", results=pages,
-                                  max_chars=max(chars * 3, 3000))
-            more = _seek.merge_hits([srcs, r2.get("sources") or []])[len(srcs):]
-            for s in more:
-                if s.get("text"):
-                    s["text"] = _seek.excerpt(s["text"], chars)
-            srcs += more
-            checked.append(f"second round '{subject} {now.year}': {len(more)} more pages")
-        items = [dict(s, kind="web") for s in _seek.per_site(srcs, 2)][:10]
+            q3 = f"{subject} {now.year}"
+            r3 = await _seek_call("web.search", 25, query=q3, limit=8, discover="off")
+            more = _seek.merge_hits([items, r3.get("results") or []])[len(items):]
+            _seek.fill_dates(more, now)
+            more = [dict(h, kind="web") for h in (await _seek_rerank(question, more))][:5]
+            got2 = await _seek_read(more, 3, chars)
+            items = (items + more)[:10]
+            checked.append(f"second round '{q3}': {len(more)} results, read {got2}")
+        # what was read leads: an unread result is only its snippet
+        items = [it for it in items if it.get("text")] + [it for it in items if not it.get("text")]
         if need == "deep":
             job = await _seek_call("research.run", 20, query=question, mode="parallel", output_mode="report")
             if job.get("job_id"):
