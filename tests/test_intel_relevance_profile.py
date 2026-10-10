@@ -56,3 +56,16 @@ def test_triage_takes_the_better_of_topic_and_question_relevance(tmp_path):
     pilot = next(v for k, v in sigs.items() if "pilot" in k.lower())
     repo = next(v for k, v in sigs.items() if "repo" in k.lower())
     assert pilot["relevance_nlp"] > 0.9 and repo["relevance_nlp"] > 0.9     # each relevant one way or the other
+
+
+def test_searches_are_anchored_on_the_topic_not_its_questions():
+    from datetime import datetime, timezone
+    t = {"name": "UK commercial real estate market",
+         "questions": ["What drives the SEGRO drop?", "Hines co-CEO structure?", "Uneven AI data in logistics?",
+                       "A fourth narrow question?"]}
+    qs = core.topic_queries(t, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
+    assert qs[:3] == ["UK commercial real estate market latest news", "UK commercial real estate market news October 2026",
+                      "UK commercial real estate market analysis"]
+    assert sum(1 for q in qs if q in t["questions"]) == 2                    # at most two of its open questions
+    first, _ = core.rotate_queries(dict(t, query_cursor=0), 4)
+    assert sum(1 for q in first if q in t["questions"]) <= 1                 # a night's four searches are mostly the topic

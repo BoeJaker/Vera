@@ -167,9 +167,14 @@ def _num(v: Any, d: float) -> float:
         return d
 
 
-def topic_queries(topic: Dict[str, Any]) -> List[str]:
-    """Every search that feeds a topic: the user's own first, then ones made from
-    its name, its open questions and the entities it follows."""
+def topic_queries(topic: Dict[str, Any], now: Optional[datetime] = None) -> List[str]:
+    """Every search that feeds a topic: the user's own first, then ones anchored on
+    the topic itself (its name, with "news", this month, "analysis"), then at most two
+    of its open questions, then the entities and sites it follows.
+
+    The open questions are written by the model about whatever it last read, so they
+    are narrow; when four of them followed one name search, three of every four
+    searches went to them and the night fetched off-topic pages (10 Oct 2026)."""
     out: List[str] = []
     def add(q: str) -> None:
         q = re.sub(r"\s+", " ", q or "").strip()
@@ -178,8 +183,11 @@ def topic_queries(topic: Dict[str, Any]) -> List[str]:
     for q in topic.get("queries") or []:
         add(q)
     name = topic.get("name") or ""
+    month = (now or datetime.now(timezone.utc)).strftime("%B %Y")
     add(f"{name} latest news")
-    for q in (topic.get("questions") or [])[:4]:
+    add(f"{name} news {month}")
+    add(f"{name} analysis")
+    for q in (topic.get("questions") or [])[:2]:
         add(_question_str(q))
     for e in (topic.get("entities") or [])[:4]:
         add(f"{e} {name}" if e.lower() not in name.lower() else e)
