@@ -907,7 +907,10 @@ body[data-width="full"][data-view="minimal"].has-msgs:not(.has-panel) #ctxStrip,
 #cvResize{display:none;width:5px;flex:0 0 5px;cursor:col-resize;background:transparent;transition:background .15s;z-index:10;align-self:stretch}
 #cvResize:hover,#cvResize.drag{background:var(--acc)!important}
 body[data-cols~="canvas"] #cvResize{display:block}
-#canvasColumn.sized{flex:0 0 var(--cv-w,520px)!important;width:var(--cv-w,520px)}
+/* the canvas's width you dragged to, never past the screen (owner, 2026-10-10: "the canvas extends off the screen on small
+   screens like my laptop - its fine on an ultrawide but i think its fixed"): a width set on the ultrawide (1400 px) ran 399 px
+   past a 1366 px laptop and left the chat 360 px. It is kept as a share of the screen, and the chat always keeps 480 px. */
+#canvasColumn.sized{flex:0 0 min(var(--cv-w,520px), calc(100% - 480px))!important;width:min(var(--cv-w,520px), calc(100% - 480px))}
 .tri-col{display:none;flex-direction:column;flex:1 1 0;min-width:0;min-height:0;background:var(--bg0);border-left:1px solid var(--border);overflow:hidden}
 body[data-cols~="canvas"] #canvasColumn,body[data-cols~="graph"] #graphColumn{display:flex}
 @media (max-width:1919px){ body[data-cols~="canvas"][data-cols~="graph"] #graphColumn{flex:0 0 min(340px,28%)} }
@@ -8420,8 +8423,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       let sx=0, sw=0, on=false;
       h.addEventListener('mousedown', e=>{ sx=e.clientX; sw=col.offsetWidth; on=true; h.classList.add('drag'); document.body.classList.add('dragging-split'); document.body.style.cursor='col-resize'; document.body.style.userSelect='none'; e.preventDefault(); });
       window.addEventListener('mousemove', e=>{ if(!on) return; const nw=Math.max(300, Math.min(Math.round(window.innerWidth*0.7), sw-(e.clientX-sx))); col.style.setProperty('--cv-w', nw+'px'); col.classList.add('sized'); try{ _cvRunsDraw(); _ctxRunsDraw(); }catch(_){} });
-      window.addEventListener('mouseup', ()=>{ if(!on) return; on=false; h.classList.remove('drag'); document.body.classList.remove('dragging-split'); document.body.style.cursor=''; document.body.style.userSelect=''; try{ localStorage.setItem('vera_canvas_col_w', col.style.getPropertyValue('--cv-w')); }catch(_){} try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); cv&&cv._placeNow&&cv._placeNow(); }catch(_){} }); }
-    try{ const kept=localStorage.getItem('vera_canvas_col_w'); if(kept&&parseInt(kept,10)>=300&&!col.classList.contains('sized')){ col.style.setProperty('--cv-w', kept); col.classList.add('sized'); } }catch(_){}
+      window.addEventListener('mouseup', ()=>{ if(!on) return; on=false; h.classList.remove('drag'); document.body.classList.remove('dragging-split'); document.body.style.cursor=''; document.body.style.userSelect=''; try{ const px=parseFloat(col.style.getPropertyValue('--cv-w'))||0; if(px>0){ const vw=(100*px/Math.max(1,window.innerWidth)).toFixed(2)+'vw'; col.style.setProperty('--cv-w', vw); localStorage.setItem('vera_canvas_col_w', vw); } }catch(_){}   /* a share of the screen, not pixels */ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); cv&&cv._placeNow&&cv._placeNow(); }catch(_){} }); }
+    /* kept as a share of the screen (vw); a width kept in pixels before that is read as a share of the ultrawide it was set on */
+    try{ let kept=localStorage.getItem('vera_canvas_col_w')||''; if(kept&&/px$/.test(kept)){ const px=parseFloat(kept)||0; kept=px>=300?(Math.min(70, 100*px/Math.max(window.innerWidth, 2560)).toFixed(2)+'vw'):''; if(kept) localStorage.setItem('vera_canvas_col_w', kept); }
+      if(kept&&parseFloat(kept)>=10&&!col.classList.contains('sized')){ col.style.setProperty('--cv-w', kept); col.classList.add('sized'); } }catch(_){}
   }
   function _canvasColumnIdle(){ if(_cvColTimer&&!_pages.has('canvas')){ clearInterval(_cvColTimer); _cvColTimer=null; } if(_cvStageTimer&&!_pages.has('canvas')){ clearInterval(_cvStageTimer); _cvStageTimer=null; _cvRunsDraw(); } }
   /* ── the stage's placer input and the router (Notes/38 §3.5; the Canvas board's canvas column) ──
