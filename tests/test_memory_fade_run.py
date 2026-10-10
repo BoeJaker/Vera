@@ -138,6 +138,8 @@ def _wire(H, monkeypatch, coll_have=(), faded=()):
     monkeypatch.setattr(H, "_redis", lambda: r)
     monkeypatch.setattr(H, "_memory", lambda: (_Mem(), None))
     monkeypatch.setattr(H, "_FADE_CHROMA_PAUSE_S", 0.0)
+    # off the wall clock: a gate run between 01:00 and 03:30 would otherwise stop every run at its first batch
+    monkeypatch.setattr(H, "_in_backup_window", lambda t=None: False)
     return conn, r, neo, coll, _Mem
 
 
