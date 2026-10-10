@@ -95,6 +95,7 @@ _TIMELINE_JS = _HERE / "intel_timeline_element.js"
 
 KIND_INTEL = "intel"
 SIGNALS_DATASET = "intel.signals"
+MAX_INDICATORS = 12                      # per topic; intel.indicator.add refuses the thirteenth
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "enabled": True,              # the nightly refresh + morning brief
@@ -1188,9 +1189,10 @@ async def cap_sweep(topic_id: str = "", depth: str = "", trace_id=None):
 
 @capability("intel.refresh", http_method="POST", http_path="/intel/refresh", http_tags=["intel"],
             description="The full cycle for one topic: sweep, read and tag with the NLP tier, have a model summarise "
-                        "the strongest, update the assessment. Input: topic_id (str!), queue (true = hand it to the "
-                        "idle queue instead of running now). Output: {sweep, enrich, snapshot}.")
-async def cap_refresh(topic_id: str = "", queue: bool = False, trace_id=None):
+                        "the strongest, update the assessment. Input: topic_id (str!), queue (default true = hand it to "
+                        "the idle queue, which runs it when the box is quiet; false runs it now and can take many "
+                        "minutes). Output: {queued} or {sweep, enrich, snapshot}.")
+async def cap_refresh(topic_id: str = "", queue: bool = True, trace_id=None):
     t = store().get_topic(topic_id)
     if not t:
         return {"error": f"unknown topic: {topic_id}"}
@@ -1513,7 +1515,11 @@ async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str 
     if market:
         ind["market"] = market
     inds = [i for i in inds if i["id"] != ind_id] + [ind]
-    _save_indicators(topic_id, inds[:12])
+    if len(inds) > MAX_INDICATORS:
+        # refuse rather than keep the first twelve: the new one would be cut off while the reply said it was added
+        return {"error": f"{t['name']} already watches {MAX_INDICATORS} indicators; remove one first "
+                         "(intel.indicator.remove)"}
+    _save_indicators(topic_id, inds)
     await _event("indicator.added", topic=topic_id, indicator=ind_id, label=ind["label"])
     return {"ok": True, "indicator": ind,
             "message": f"{t['name']} now watches {ind['label']} ({ds}); a new price fills in over the next minutes"}
@@ -2046,7 +2052,8 @@ async def cap_indicator_check(topic_id: str = "", trace_id=None):
 # ── reports ──────────────────────────────────────────────────────────────────
 
 async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: str = "",
-                       only_new: bool = True, synthesize: bool = False, note: str = "") -> Dict[str, Any]:
+                       only_new: bool = True, synthesize: bool = False, note: str = "",
+                       mark: Optional[bool] = None) -> Dict[str, Any]:
     """Build (and store) a report from what is gathered. `synthesize` lets the MoE
     write the cross-topic top line and follow-ups - only ever from background work
     (the nightly batch), never at delivery time."""
@@ -2119,7 +2126,7 @@ async def build_report(topic_ids: List[str], *, period_hours: int = 24, title: s
             st.put_action(dict(a, report_id=doc["id"]), report_id=doc["id"])
     html = core.render_html(doc, base_url="")
     st.put_report(doc, html)
-    if only_new:                      # a look-back report must not eat the next brief
+    if only_new if mark is None else (mark and only_new):   # a look-back or ad-hoc report must not eat the brief
         st.mark_reported(s["id"] for d in per.values() for s in d["signals"])
     if only_new and (doc["sections"] or notes):
         sent = [d["snapshot"]["id"] for d in per.values() if d.get("snapshot")]
@@ -2141,12 +2148,14 @@ def _has_content(doc: Dict[str, Any]) -> bool:
             description="Build an intelligence report now from what is already gathered (no new collection). "
                         "Input: topic_ids (list/csv, blank = all active), period_hours (default 24), title, "
                         "include_reported (re-use signals already in an earlier report), deliver (channels to send "
-                        "it to, e.g. telegram,chat), target (session id / email for channels that need one). "
+                        "it to, e.g. telegram,chat), target (session id / email for channels that need one), "
+                        "mark_reported (default false: an ad-hoc report leaves its signals for the next brief). "
                         "Output: {id, url, title, counts, delivered}.")
 async def cap_report_build(topic_ids: Any = None, period_hours: int = 24, title: str = "",
-                           include_reported: bool = False, deliver: Any = None, target: str = "", trace_id=None):
+                           include_reported: bool = False, deliver: Any = None, target: str = "",
+                           mark_reported: bool = False, trace_id=None):
     doc = await build_report(_list_arg(topic_ids), period_hours=int(period_hours or 24), title=title,
-                             only_new=not include_reported)
+                             only_new=not include_reported, mark=bool(mark_reported))
     out = {"id": doc["id"], "url": _report_url(doc["id"]), "title": doc["title"], "counts": doc["counts"],
            "empty": not _has_content(doc)}
     chans = _list_arg(deliver)
@@ -2498,9 +2507,11 @@ async def _send_audio(rid: str) -> bool:
 @capability("intel.deliver", http_method="POST", http_path="/intel/deliver", http_tags=["intel"],
             description="Send a built report to channels. Input: report_id (str!), channels (list/csv: html, "
                         "telegram, chat, email, canvas, notebook, memory, fabric, podcast, print), target "
-                        "(session id for chat/canvas, address for email). Output: {results:[{channel, ok, error}]}.")
+                        "(session id for chat/canvas, address for email); none given = html only (the morning brief uses the "
+                        "configured brief channels itself, so a bare call never prints or sends a podcast). "
+                        "Output: {results:[{channel, ok, error}]}.")
 async def cap_deliver(report_id: str = "", channels: Any = None, target: str = "", trace_id=None):
-    chans = _list_arg(channels) or list(config().get("brief_channels") or ["html"])
+    chans = _list_arg(channels) or ["html"]
     return await deliver_report(report_id, chans, target=target)
 
 

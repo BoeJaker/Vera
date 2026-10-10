@@ -423,7 +423,8 @@ def test_review_regressions(tmp_path):
     for s in mod.store().signals(t["id"]):
         mod.store().put_signal(dict(s, score=9.0))
     assert not _R(orch, "intel.report.build", topic_ids=t["id"], include_reported=True)["empty"]
-    assert not _R(orch, "intel.report.build", topic_ids=t["id"])["empty"]
+    assert not _R(orch, "intel.report.build", topic_ids=t["id"])["empty"]          # ad hoc: marks nothing
+    assert not _R(orch, "intel.report.build", topic_ids=t["id"], mark_reported=True)["empty"]
     assert _R(orch, "intel.report.build", topic_ids=t["id"])["empty"]
     a = _R(orch, "intel.action.list", status="offered")["rows"][0]
     mod.store().claim_action(a["token"])

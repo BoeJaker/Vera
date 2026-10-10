@@ -157,7 +157,9 @@ def normalise_topic(raw: Dict[str, Any], existing: Optional[Dict[str, Any]] = No
         "query_cursor": int(base.get("query_cursor", 0) or 0),
         "origin": str(raw.get("origin", base.get("origin", "")) or ""),
     }
-    return out
+    # fields this function does not own (the fabric source subscriptions, anything added later) ride along from the
+    # stored record: a save from the panel's form must never drop them
+    return {**{k: v for k, v in base.items() if k not in out}, **out}
 
 
 def _num(v: Any, d: float) -> float:

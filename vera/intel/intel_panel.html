@@ -717,7 +717,7 @@ async function deliver() {
 async function buildReport() {
   const ids = [...document.querySelectorAll('#rTopics input:checked')].map(x => x.value);
   msg('rMsg', 'building…');
-  const r = await call('intel.report.build', {topic_ids: ids, period_hours: +$('rHours').value || 24, title: $('rTitle').value, include_reported: $('rAgain').checked});
+  const r = await call('intel.report.build', {topic_ids: ids, period_hours: +$('rHours').value || 24, title: $('rTitle').value, include_reported: $('rAgain').checked, mark_reported: !$('rAgain').checked});
   if (r.error) return msg('rMsg', r.error, 'err');
   msg('rMsg', r.empty ? 'nothing new in that window - try including reported signals' : 'built', r.empty ? 'err' : 'ok');
   if (!r.empty) pickReport(r.id);
