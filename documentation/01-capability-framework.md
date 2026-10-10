@@ -422,6 +422,12 @@ task in words, and ranks every callable model by:
 Each pick says how to call the model (cap + selector) and `why` it ranked. With no NLP node it
 ranks by words alone, and says so in `ranked_by`.
 
+The Models tab has a **Callable models** page (`<vera-node-models section="callable">`,
+`/nodes/models/panel?section=callable`). It shows a "which model for a task?" box (`model.pick`), then
+the specialist models and the LLMs with what each is for and not for, where each is loaded, and p50 / p95
+latency, with family and text filters. It loads when opened and on reload only, because it reads node
+activity and every NLP node.
+
 Bound today:
 - **NLP:** `nlp.*` (11 models).
 - **Speech:** `stt.transcribe` (Whisper), `tts.synthesize` (Kokoro / Coqui by `engine`).
