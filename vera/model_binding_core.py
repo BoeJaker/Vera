@@ -297,6 +297,17 @@ def llm_describe(model: str, facts: Optional[Mapping[str, Any]] = None,
         desc = (kind.strip() or "General") + " LLM"
         if active:
             desc += f", mixture-of-experts with {active.group(1)}B active (fast for its size)"
+        # first, what it is FOR in task words: a list of facts alone ranked
+        # NER above every coder model for "write python code" (2026-10-10)
+        if "coder" in low or "code" in low:
+            purpose = "Writes, edits, reviews and explains code; general text generation too."
+        elif "vision" in ab or "-vl" in low or "vision" in low:
+            purpose = "Reads images and answers about them; writes and reasons in free text."
+        elif size is not None and size < 4 and not active:
+            purpose = "Quick short answers, simple rewrites and classification by generation."
+        else:
+            purpose = "Writes, summarises, plans, reasons and answers questions in free text; chat."
+        uses.append(purpose)
         uses.append(desc + (": " + ", ".join(what) if what else "") + ".")
         if f.get("ctx"):
             uses.append(f"Context window {int(f['ctx']) // 1024}k tokens.")
@@ -543,6 +554,15 @@ _LANGS = ("german", "french", "spanish", "italian", "dutch", "portuguese", "russ
           "japanese", "arabic", "polish", "swedish", "turkish", "korean", "hindi", "welsh")
 
 
+#: verbs that ask for free text to be produced (stemmed as _words does)
+_GEN_VERBS = frozenset({"write", "draft", "generate", "compose", "plan", "summarise", "summarize",
+                        "explain", "code", "program", "script", "rewrite", "reason", "chat", "brainstorm",
+                        "outline", "debug", "refactor", "implement"})
+#: families that generate text, and outputs that are extracted / scored, not written
+_GENERATORS = frozenset({"ollama", "llama-server", "vllm"})
+_EXTRACTED = frozenset({"spans", "label", "labels", "scores", "vector", "vectors"})
+
+
 def _media_in(text: str) -> List[str]:
     t = f" {str(text or '').lower()} "
     return [m for m, ws in _MEDIA_WORDS.items() if any(f" {w} " in t or f" {w}s " in t for w in ws)]
@@ -580,6 +600,7 @@ def pick(rows: Sequence[Mapping[str, Any]], need: str, *, top_k: int = 5,
     nw = _words(need)
     src, want_out = _wanted_io(need)
     other_lang = any(l in str(need or "").lower() for l in _LANGS)
+    generative = bool(nw & _GEN_VERBS)
     out = []
     for r in rows:
         io = r.get("io") or {}
@@ -593,6 +614,14 @@ def pick(rows: Sequence[Mapping[str, Any]], need: str, *, top_k: int = 5,
             direction += 0.1
         if want_out and m_in == want_out and m_out in src:
             direction -= 0.25                      # the reverse of what is asked
+        # a need to produce free text (write, plan, code ...) wants a generator,
+        # not an extractor or classifier
+        if generative:
+            out_kind = str(io.get("out") or "")
+            if out_kind == "answer" and r.get("family") in _GENERATORS:
+                direction += 0.2
+            elif out_kind in _EXTRACTED:
+                direction -= 0.1
         uses_low = str(r.get("uses") or "").lower()
         lang = 0.0
         if other_lang:
