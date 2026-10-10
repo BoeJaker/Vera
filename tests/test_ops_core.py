@@ -308,7 +308,9 @@ def test_live_records_pair_answers_across_batches():
     assert oc.live_records([{"type": "heartbeat", "caps": 1}], ctx) == []
 
 
-def test_the_live_stream_finds_the_connected_redis_whatever_name_the_orchestrator_loaded_under():
+def test_the_live_stream_reads_the_ring_through_obs_events():
     src = open(os.path.join(ROOT, "vera", "estate", "ops_capabilities.py"), encoding="utf-8").read()
-    assert "def _live_redis():" in src and 'CAPABILITY_REGISTRY.get("obs.events")' in src and "R, stream, block = _live_redis()" in src
-    assert 'R = getattr(_orch, "REDIS", None)' not in src  # the imported copy may never have connected (seen on the mirror)
+    pump = src[src.index("async def _live_pump()"):src.index('@_orch.APP.get("/ops/live"')]
+    # the orchestrator module this one imports may be a copy that never connected to Redis (seen on the mirror):
+    # the ring is read through the capability, and only the events not seen at the last read go out
+    assert 'await _read("obs.events", 4.0, limit=300)' in pump and "_ev_key(e) not in seen" in pump and "REDIS" not in pump
