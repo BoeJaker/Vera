@@ -595,6 +595,13 @@ try:
 except Exception:                                     # pragma: no cover
     from vera.workers import worker_placement_core as _placement
 try:
+    from Vera.vera import model_binding_core as _model_binding
+except Exception:                                     # pragma: no cover
+    from vera import model_binding_core as _model_binding
+#: Problems with declared model bindings (a bad binding is dropped and listed
+#: here, not raised: it must not cost the module its other capabilities).
+MODEL_BINDING_ERRORS: List[str] = []
+try:
     from Vera.vera.workers import node_compute_core as _compute_core
 except Exception:                                     # pragma: no cover
     from vera.workers import node_compute_core as _compute_core
@@ -7241,6 +7248,14 @@ def capability(
     # The replacement is registry metadata and enables conservative usage
     # evidence; it does not redirect, disable, or remove the capability.
     compatibility_alias_for: Optional[str] = None,
+    # ── Model bindings ──────────────────────────────────────────────────────
+    # The model this capability runs, or the models it serves picked by call
+    # arguments (a list, each with a selector) - built with
+    # model_binding_core.binding(...), each saying what it is FOR (`uses`).
+    # Not `model=`: that is the LLM routing system's argument. The registry of
+    # callable models is a view over these (model.callable); nothing here
+    # changes dispatch. The models' uses are appended to the description.
+    serves:      Any            = None,
 ):
     """
     Unified registration decorator.
@@ -7263,6 +7278,10 @@ def capability(
     because routes are mounted during lifespan, not at import time.
     """
     def deco(func):
+        _bindings, _binding_errs = _model_binding.bind(name, serves)
+        for _e in _binding_errs:
+            log.error("model binding dropped: %s", _e)
+            MODEL_BINDING_ERRORS.append(_e)
         _auto_schema   = generate_schema(func)
         _final_schema  = _merge_schema(_auto_schema, schema) if schema else _auto_schema
         group  = name.split(".")[0]
@@ -7522,7 +7541,7 @@ def capability(
             "func":        wrap,
             "raw":         func,
             "schema":      _final_schema,
-            "description": description or func.__doc__ or "",
+            "description": _model_binding.with_models(description or func.__doc__ or "", _bindings),
             "streams":     streams or [],
             "mode":        mode,
             "retries":     retries,
@@ -7535,6 +7554,7 @@ def capability(
             "redact_args": sorted(_redact_args),
             "redact_result": bool(redact_result),
             "contract":    copy.deepcopy(contract) if isinstance(contract, dict) else {},
+            "models":      _bindings,
             # HTTP route metadata — used at lifespan mount time
             "http_method": http_method,
             "http_path":   http_path,

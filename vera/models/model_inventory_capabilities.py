@@ -110,3 +110,63 @@ async def model_inventory(trace_id=None) -> dict[str, Any]:
         external_inventories=external,
         source_status=sources,
     )
+
+
+# ── callable models: the capability registry's model bindings, joined ──────────
+@capability(
+    "model.callable",
+    http_method="GET",
+    http_path="/models/callable",
+    http_tags=["models", "inventory"],
+    memory="off",
+    silent=True,
+    description=(
+        "Every model Vera can call, and what each is FOR - pick a model for a task "
+        "here. Specialist models (NLP, NER, GLiNER, spaCy, zero-shot, QA, embeddings, "
+        "reranker, decision models) come from the capabilities that serve them "
+        "(@capability serves=); LLMs come from the routing system (call llm.generate "
+        "with model=<name>; purposes are the operator's model tags). Each row: id, cap "
+        "and selector (the call that reaches it), task, family, uses, limits, io, "
+        "labels, questions (decision ids), tier, placement, model, loaded_on / "
+        "present_on (nodes), installable (specialist catalog id). Inputs: task, "
+        "family, question (str filters), search (str - in id, uses, model), "
+        "include_llms (bool=true). Output: {ok, count, models:[...], errors}."
+    ),
+)
+async def model_callable(task: str = "", family: str = "", question: str = "",
+                         search: str = "", include_llms: bool = True,
+                         trace_id: str | None = None) -> dict[str, Any]:
+    import Vera.vera.capability_orchestration as _orch
+    from Vera.vera import model_binding_core as _mb
+    from Vera.vera.catalog.specialist_catalog import CURATED
+    from Vera.vera.research.nlp_dispatch_core import DEFAULT_MODELS
+
+    nodes, sources = [], {}
+    # cap modules load under bare names in prod; the package name elsewhere
+    dispatch = (sys.modules.get("nlp_dispatch")
+                or sys.modules.get("Vera.vera.research.nlp_dispatch"))
+    if dispatch is None:
+        sources["nlp_nodes"] = "unavailable: dispatch not loaded"
+    else:
+        try:
+            nodes = await dispatch.discover()
+            sources["nlp_nodes"] = f"{len(nodes)} node(s)"
+        except Exception as exc:          # an outage is data, not a 500
+            sources["nlp_nodes"] = f"unavailable: {type(exc).__name__}"
+    rows = _mb.callable_view(_orch.CAPABILITY_REGISTRY, defaults=DEFAULT_MODELS,
+                             nodes=nodes, catalog=CURATED,
+                             task=task, family=family, question=question)
+    if include_llms and not (family and family != "ollama") and not question \
+            and (not task or task == "generate"):
+        try:
+            await _orch._model_tags_hydrate()
+        except Exception:
+            pass
+        rows += _mb.llm_rows(getattr(_orch, "OLLAMA_INSTANCES", {}) or {},
+                             getattr(_orch, "MODEL_TAGS", {}) or {})
+    if search:
+        q = search.lower()
+        rows = [r for r in rows if q in " ".join(
+            str(r.get(k) or "") for k in ("id", "uses", "model", "task")).lower()]
+    return {"ok": True, "count": len(rows), "models": rows, "sources": sources,
+            "errors": list(getattr(_orch, "MODEL_BINDING_ERRORS", []) or [])}
