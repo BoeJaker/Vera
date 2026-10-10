@@ -143,6 +143,12 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
     "loop":     {"desc": "An agentic run as an item: its goal, status and steps (each a "
                          "capability) — written by the chat and by the loop itself (P7).",
                  "content": "{goal:str, status:str, steps:[{n:str, cap?:str, status?:str, ms?:str}], run?:str}"},
+    "activity": {"desc": "What a turn is DOING: the capabilities the chat ran for it, each as it runs - running, then "
+                         "done or failed, how long it took and a line of what it answered. Written by the chat while "
+                         "the turn's calls run (one item per turn, updated in place), so the desk shows work in "
+                         "progress rather than only its results afterwards.",
+                 "content": "{title?:str, mid?:str, status:'running'|'done'|'error', calls:[{cap:str, args?:str, "
+                            "status:'running'|'ok'|'error', started?:num, ms?:int, peek?:str}]}"},
 }
 CANVAS_MODES = ("dynamic", "static")
 

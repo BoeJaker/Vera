@@ -793,6 +793,21 @@
         <ol class="vc-steps">${steps.map(s => `<li class="${esc((s && s.status) || '')}"><i></i><span>${esc((s && s.n) || '')}</span>${s && s.cap ? `<code>${esc(s.cap)}</code>` : ''}${s && s.ms ? `<em>${esc(s.ms)}</em>` : ''}</li>`).join('')}</ol>
         ${c.run ? `<div class="vc-dim vc-run">run ${esc(c.run)}</div>` : ''}</div>`;
     },
+    /* WHAT A TURN IS DOING (owner, 2026-10-10: "need more useful desk elements for caps to display output or status as they
+       run"): the capabilities the chat runs for a turn, each as it runs - a spinner while it works, then done or failed,
+       how long it took and a line of what it answered. The chat writes it as the calls start and end. */
+    activity: (c) => {
+      const calls = Array.isArray(c.calls) ? c.calls.filter((x) => x && x.cap) : [];
+      const run = calls.filter((x) => x.status === 'running').length, bad = calls.filter((x) => x.status === 'error').length;
+      const st = run ? 'running' : bad ? 'error' : 'done';
+      const when = (t) => { const d = new Date(+t); return isFinite(d) ? d.toTimeString().slice(0, 8) : ''; };
+      const dur = (ms) => ms == null ? '' : ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + ' s';
+      return `<div class="vc-act st-${st}" data-w="canvas.activity"><div class="vc-act-h"><span class="vc-act-dot"></span><b>${esc(c.title || (run ? 'Working' : 'Done'))}</b>`
+        + `<span class="vc-act-n">${run ? run + ' running · ' : ''}${calls.length - run} of ${calls.length} done${bad ? ' · ' + bad + ' failed' : ''}</span></div>`
+        + `<ol class="vc-act-l">${calls.map((x) => `<li class="${esc(x.status || 'running')}"><span class="ic"></span><div class="tx"><div class="ln"><code>${esc(x.cap)}</code>`
+          + `<span class="t">${x.status === 'running' ? 'since ' + esc(when(x.started)) : esc(dur(x.ms))}</span></div>`
+          + (x.args ? `<div class="ar">${esc(String(x.args).slice(0, 120))}</div>` : '') + (x.peek ? `<div class="pk">${esc(String(x.peek).slice(0, 200))}</div>` : '') + `</div></li>`).join('')}</ol></div>`;
+    },
 
 
     /* WHAT A TURN NAMES (canvas-enrichment slice 1 - owner, 2026-10-03: "the nlp enrichment is still few and far
@@ -1292,7 +1307,7 @@
      under its toolbar inside a 171 px card - drawn below the card and cut away whole, showing only as the card moved -
      and a widget or a list filled 60% of its card. A desk card with a body is a column whose working part grows. */
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd{display:flex!important;flex-direction:column;flex:1 1 auto;min-height:0;max-height:none!important;overflow:hidden}
-  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-rbx,.vc-filewrap,.vc-codewrap,.vc-diag,.vc-xp,.vc-term,.vc-tablewrap){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-rbx,.vc-filewrap,.vc-codewrap,.vc-diag,.vc-xp,.vc-term,.vc-tablewrap,.vc-act){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > .vc-tablewrap{display:block;overflow:auto}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-diag,.vc-xp,.vc-term) > .vc-live{flex:1 1 auto;height:auto!important;min-height:60px}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > .vc-live{flex:1 1 auto;height:auto!important;min-height:60px}
@@ -1499,6 +1514,28 @@
   .vc-rbx-facets{display:flex;gap:4px;flex-wrap:wrap}
   .vc-rbx-facets button{font:inherit;font-size:9.5px;height:20px;padding:0 8px;border-radius:10px;border:1px solid var(--border,#3a3530);background:transparent;color:var(--dim2,#8a7e70);cursor:pointer;display:inline-flex;gap:5px;align-items:center}
   .vc-rbx-facets button i{font-style:normal;opacity:.6}.vc-rbx-facets button.on{border-color:var(--acc,#5a9e8f);color:var(--fg,#ddd);background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  /* a turn's activity: one line per capability call, the state as its mark */
+  .vc-act{display:flex;flex-direction:column;gap:8px;min-width:0}
+  .vc-act-h{display:flex;align-items:center;gap:8px;min-width:0}.vc-act-h b{font-size:12.5px;font-weight:600}
+  .vc-act-n{margin-left:auto;font-size:10.5px;color:var(--dim,#8b93a1);white-space:nowrap}
+  .vc-act-dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--ok,#5fb98a)}
+  .vc-act.st-running .vc-act-dot{background:var(--acc,#5a9e8f);animation:vcActPulse 1.2s ease-in-out infinite}.vc-act.st-error .vc-act-dot{background:var(--err,#e06c6c)}
+  @keyframes vcActPulse{50%{opacity:.35}}
+  .vc-act-l{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;overflow:auto;min-height:0}
+  .vc-act-l li{display:flex;gap:8px;align-items:flex-start;padding:6px 2px;border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 50%,transparent)}
+  .vc-act-l li:last-child{border-bottom:0}
+  .vc-act-l .ic{width:14px;height:14px;flex:none;margin-top:1px;border-radius:50%;border:2px solid var(--ok,#5fb98a)}
+  .vc-act-l li.ok .ic{background:color-mix(in srgb,var(--ok,#5fb98a) 35%,transparent)}
+  .vc-act-l li.error .ic{border-color:var(--err,#e06c6c);background:color-mix(in srgb,var(--err,#e06c6c) 35%,transparent)}
+  .vc-act-l li.running .ic{border-color:color-mix(in srgb,var(--acc,#5a9e8f) 30%,transparent);border-top-color:var(--acc,#5a9e8f);animation:vcActSpin .8s linear infinite}
+  @keyframes vcActSpin{to{transform:rotate(360deg)}}
+  .vc-act-l .tx{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+  .vc-act-l .ln{display:flex;gap:8px;align-items:baseline;min-width:0}
+  .vc-act-l code{font-family:var(--mono,monospace);font-size:11.5px;color:var(--fg,#dce1e8);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vc-act-l .t{margin-left:auto;font-size:10px;color:var(--dim,#8b93a1);white-space:nowrap}
+  .vc-act-l .ar{font-family:var(--mono,monospace);font-size:10px;color:var(--dim,#8b93a1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vc-act-l .pk{font-size:11px;line-height:1.45;color:color-mix(in srgb,var(--fg,#dce1e8) 72%,transparent);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  @media (prefers-reduced-motion: reduce){ .vc-act-l li.running .ic,.vc-act.st-running .vc-act-dot{animation:none} }
   /* the table's other views, and the names as a list */
   .vc-tv-list{display:flex;flex-direction:column}
   .vc-tv-list .vc-tv-r{display:flex;flex-direction:column;gap:2px;padding:7px 4px;border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 60%,transparent)}
