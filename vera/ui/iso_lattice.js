@@ -483,7 +483,8 @@ function fitView(all){ const plot = $('plot'); if (!plot) return; const PW = plo
 // the camera moves rather than jumps: eased over ms to a pan, a zoom about the window's middle, or a whole framing
 let glideRaf = 0;
 function glideTo(vx, vy, vz, ms){ cancelAnimationFrame(glideRaf); const x0 = S.vx, y0 = S.vy, z0 = S.vz, t0 = performance.now(), D = ms == null ? 180 : ms; S._gt = [vx, vy, vz];
-  const step = (t) => { const k = Math.min(1, (t - t0) / D), e = 1 - Math.pow(1 - k, 3); S.vx = x0 + (vx - x0) * e; S.vy = y0 + (vy - y0) * e; S.vz = z0 + (vz - z0) * e; moving(); applyZoom(k < 1); if (k < 1) glideRaf = requestAnimationFrame(step); else { glideRaf = 0; S._gt = null; } };
+  // a frame's timestamp can come before the call that started the glide: a negative start would ease backwards first
+  const step = (t) => { const k = clamp((t - t0) / D, 0, 1), e = 1 - Math.pow(1 - k, 3); S.vx = x0 + (vx - x0) * e; S.vy = y0 + (vy - y0) * e; S.vz = z0 + (vz - z0) * e; moving(); applyZoom(k < 1); if (k < 1) glideRaf = requestAnimationFrame(step); else { glideRaf = 0; S._gt = null; } };
   glideRaf = requestAnimationFrame(step); }
 function glide(dx, dy, f){ const plot = $('plot'); if (!plot) return; const ps = plotSize(), cx = ps[0] / 2, cy = ps[1] / 2, g = S._gt || [S.vx, S.vy, S.vz], z1 = clamp(g[2] * (f || 1), 0.05, 4), k = z1 / g[2];
   glideTo(cx - (cx - g[0]) * k + (dx || 0), cy - (cy - g[1]) * k + (dy || 0), z1, 220); }
