@@ -22,6 +22,12 @@ except Exception:                       # worktree / app-free import
 
 MAX_INPUT_CHARS = 3000
 MAX_INPUT_CHARS_FIELD = 1500
+#: the live verifier's whole evidence prompt (tool calls, last action, fetched text, filesystem check) - what a
+#: student must see to judge the same thing the big model judged
+MAX_EVIDENCE_CHARS = 14000
+#: the live verifier ends its rules asking for JSON; a student answers the same rules in one word instead
+STUDENT_VERIFY_ANSWER = ("Answer with ONE word: yes if the evidence shows the success criterion was met, "
+                         "no if it does not.")
 
 #: per question: the system prompt, the label each answer token means (binary questions: the first
 #: token is the positive label; choice questions answer with one letter)
@@ -86,6 +92,9 @@ def user_message(question_id: str, state: Dict[str, Any]) -> Optional[str]:
     if not q or not isinstance(state, dict):
         return None
     if question_id == "loop.step_verify":
+        ev = str(state.get("evidence") or "").strip()
+        if ev:                                    # the live verifier's own prompt: the same input
+            return ev[:MAX_EVIDENCE_CHARS]
         crit, res = str(state.get("success") or "").strip(), str(state.get("result") or "").strip()
         if not crit or not res:
             return None
@@ -133,6 +142,37 @@ def label_probs(first_token_tops: Iterable[Dict[str, Any]], words: Iterable[str]
     if mass <= 0:
         return {}, 0.0
     return {w: v / mass for w, v in raw.items()}, mass
+
+
+def student_system(live_system: str) -> str:
+    """The live verifier's rules, asking for one word instead of JSON."""
+    s = str(live_system or "").strip()
+    cut = s.rfind("Respond ONLY with JSON")
+    return ((s[:cut] if cut >= 0 else s).rstrip() + "\n" + STUDENT_VERIFY_ANSWER).strip()
+
+
+def system_for(question_id: str, state: Optional[Dict[str, Any]] = None) -> str:
+    """The system prompt for a question: the live rules when the stored inputs carry them, else the generic one."""
+    if question_id == "loop.step_verify" and isinstance(state, dict) and state.get("evidence_system"):
+        return student_system(state["evidence_system"])
+    return (QUESTIONS.get(question_id) or {}).get("system", "")
+
+
+def confidence(question_id: str, answer: Optional[str], p: Optional[float]) -> Optional[float]:
+    """How sure the student is of the answer it gave (binary p is p(positive); choice p is already its own)."""
+    if answer is None or p is None:
+        return None
+    pos = positive_label(question_id)
+    if pos is None or answer == pos:
+        return float(p)
+    return 1.0 - float(p)
+
+
+def takes(question_id: str, answer: Optional[str], p: Optional[float], tau: float, allowed: Iterable[str]) -> bool:
+    """student_first: may the student's answer stand without the big model? Only an allowed label, only at
+    confidence >= tau."""
+    c = confidence(question_id, answer, p)
+    return c is not None and answer in set(allowed) and c >= float(tau)
 
 
 def verdict(question_id: str, probs: Dict[str, float]) -> Tuple[Optional[str], Optional[float]]:

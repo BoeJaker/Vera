@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from Vera.vera.minds import ledger_core as LC
@@ -89,19 +89,37 @@ def controller_decision(sid: str, step_id: Any, action: str, ctrl: Dict[str, Any
         detail={"after_step": step_id, "goal_met": state["goal_met"], "new_steps": len(steps)})
 
 
+def verify_by(by: Any, model: str = "", student: Optional[Dict[str, Any]] = None) -> Tuple[str, str, str]:
+    """(decider, implementation, mode) for a verdict from `by`: "llm" (the big model), "student" (a student
+    answered under student_first), "fallback" (the judge failed and the step's own ok flag stood) or
+    "rule:<name>" (a deterministic check - a parsed authored file, a test run, a missing file...)."""
+    by = str(by or "llm")
+    if by == "student":
+        return "student", _short((student or {}).get("impl"), 80) or "student", "student_first"
+    if by == "llm":
+        return "llm", _short(model, 80) or "verifier", "llm_only"
+    if by == "fallback":
+        return "rule", "fallback:ok_flag", "rule"
+    return "rule", _short(by, 80), "rule"
+
+
 def verify_decision(sid: str, step_id: Any, met: Any, attempt: int, *, model: str = "",
-                    minds_digest: str = "default", origin: str = "user") -> Optional[Dict[str, Any]]:
-    """None when verification did not run (met is None)."""
+                    minds_digest: str = "default", origin: str = "user", by: str = "llm",
+                    student: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """None when verification did not run (met is None). `by` says who decided (see verify_by); a verdict a
+    student gave carries its p."""
     if met is None:
         return None
     answer = "met" if met else "not_met"
+    decider, impl, mode = verify_by(by, model, student)
     return LC.make_decision(
         VERIFY_Q, answer, origin=origin, surface="loop", qtype="binary", labels=VERIFY_LABELS,
         state={"step": step_id, "attempt": int(attempt)},
         state_ref={"kind": "loop_step_attempt", "id": f"{_short(sid, 80)}:{step_id}:a{int(attempt)}"},
-        decider="llm", implementation=_short(model, 80) or "verifier", mode="llm_only",
+        decider=decider, implementation=impl, mode=mode,
+        p=(student or {}).get("p") if decider == "student" else None,
         minds_digest=minds_digest or "default", run_id=_short(sid, 80), session_id=_short(sid, 80),
-        detail={"step": step_id, "attempt": int(attempt)})
+        detail={"step": step_id, "attempt": int(attempt), "by": _short(by, 80)})
 
 
 def tier_decision(sid: str, tier: str, info: Dict[str, Any], *, model: str = "",

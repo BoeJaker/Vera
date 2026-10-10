@@ -23,7 +23,8 @@ SURFACE_DEFAULTS: Dict[str, bool] = {"loop": True, "chat": False, "intel": False
 RETENTION_DAYS = 90
 MAX_FIELD = 4000          # characters kept of any one string
 MAX_LIST = 30             # items kept of any one list
-MAX_TOTAL = 24000         # bytes of the whole rendered state (JSON)
+MAX_TOTAL = 32000         # bytes of the whole rendered state (JSON)
+LONG_FIELDS = {"evidence": 16000, "evidence_system": 8000}   # a model's whole prompt and rules (the live verifier's)
 
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
 # Phone numbers: international (+44 ...) or national with a leading 0 (07700 900123, 020 7946 0958).
@@ -70,12 +71,18 @@ def _render(v: Any, cred, limit: int) -> Any:
 
 def render(inputs: Dict[str, Any], cred: Optional[Callable[[str], str]] = None) -> Dict[str, Any]:
     """The inputs as stored: redacted, every string and list bounded, the whole under MAX_TOTAL
-    (strings are shortened further until it fits)."""
+    (strings are shortened further until it fits). A LONG_FIELDS string (a model's whole prompt, so a
+    student can be shown exactly what the model saw) keeps its own larger bound and its share of the total."""
+    inputs = dict(inputs or {})
+    long = {k: _render(inputs.pop(k), cred, LONG_FIELDS[k]) for k in list(inputs)
+            if k in LONG_FIELDS and isinstance(inputs[k], str)}
+    budget = MAX_TOTAL - sum(len(json.dumps(v)) for v in long.values())
     limit = MAX_FIELD
-    out = _render(dict(inputs or {}), cred, limit)
-    while len(json.dumps(out, default=str)) > MAX_TOTAL and limit > 100:
+    out = _render(inputs, cred, limit)
+    while len(json.dumps(out, default=str)) > budget and limit > 100:
         limit //= 2
         out = _render(out, None, limit)
+    out.update(long)
     return out
 
 

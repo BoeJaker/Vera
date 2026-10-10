@@ -14390,6 +14390,16 @@ except ImportError:                                   # pragma: no cover
     except ImportError:
         _minds_core = None
 
+# The System 1 student (four-minds FM-2.5): a pre-trained small model answering a live decision
+# in-band, per the switchboard (decide.student.step_verify) - see vera/minds/student.py.
+try:
+    from Vera.vera.minds import student as _student, judge_core as _judge_core
+except ImportError:                                   # pragma: no cover
+    try:
+        from vera.minds import student as _student, judge_core as _judge_core
+    except ImportError:
+        _student = _judge_core = None
+
 # Decision ledger (four-minds FM-0.2a): the controller's and the verifier's answers as
 # Decision v0 rows, sent in the background - the run never waits on them.
 try:
@@ -22031,6 +22041,33 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
               + f"RESULT SUMMARY (last cycle only - the executor's OWN ACCOUNT, not evidence; the tool "
                 f"results above win where they disagree):\n{(res.get('summary') or '')[:2000]}\n\n"
                 "Was the criterion met?")
+    # ── The System 1 student (switchboard decide.student.step_verify). It sees exactly this prompt and
+    # these rules, asked for one word. 'first': its verdict stands when it is an allowed label at confidence
+    # >= tau, else the big model decides below; 'shadow': it runs beside the big model, recorded only.
+    _evidence = {"evidence": prompt, "evidence_system": sys}
+    _stu_mode = _student.mode("loop.step_verify") if _student is not None else "off"
+    _stu: Optional[Dict[str, Any]] = None
+    _stu_task = None
+    if _stu_mode in ("first", "shadow"):
+        _stu_call = _student.ask("loop.step_verify", _judge_core.student_system(sys), prompt)
+        if _stu_mode == "first":
+            _stu = await _stu_call
+            if _student.decides("loop.step_verify", _stu):
+                _met = _stu["answer"] == "met"
+                return {"met": _met, "by": "student", "student": _stu, **_evidence,
+                        "reason": (f"the student ({_stu['model']}) judged the evidence "
+                                   f"{'met' if _met else 'not met'} at confidence {_stu['confidence']:.3f}")}
+        else:
+            _stu_task = asyncio.ensure_future(_stu_call)
+
+    async def _student_done() -> Optional[Dict[str, Any]]:
+        if _stu_task is None:
+            return _stu
+        try:
+            return await asyncio.wait_for(_stu_task, timeout=5)
+        except Exception:
+            return None
+
     try:
         try:
             await _emit_stage_context(
@@ -22059,16 +22096,18 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
                             _ce.update(await _v6_check_paths_exist(session_id, _al))
                         _gone = _verify_paths_core.missing_after_alias(_cited, _ce)
                         if _gone:
-                            return {"met": False,
+                            return {"met": False, "by": "rule:cited_path_missing",
+                                    "student": await _student_done(), **_evidence,
                                     "reason": ("the verdict relies on %s, which does NOT exist in "
                                                "the sandbox - nothing was written there."
                                                % ", ".join(_gone[:3]))[:300]}
                 except Exception as _ve:
                     log.debug("verdict path check skipped: %s", _ve)
-            return {"met": bool(obj.get("met")), "reason": _reason[:300]}
+            return {"met": bool(obj.get("met")), "reason": _reason[:300], "by": "llm",
+                    "student": await _student_done(), **_evidence}
     except Exception as e:
         log.debug("v6 step verify failed: %s", e)
-    return {"met": bool(res.get("ok")), "reason": ""}
+    return {"met": bool(res.get("ok")), "reason": "", "by": "fallback", "student": await _student_done()}
 
 
 _V6_FINALIZE_MIN_RAW = 400      # skip distillation below this — nothing to trim
@@ -25784,7 +25823,9 @@ async def cap_dag_agent_loop_v6(
         if _dl is not None:
             _dl.verify(step.get("id"), v["met"], len(_vr), model=str(model or ""),
                        inputs={"goal": goal, "step": step.get("title"), "step_goal": step.get("goal"),
-                               "success": step.get("success"), "result": res.get("summary")})
+                               "success": step.get("success"), "result": res.get("summary"),
+                               "evidence": v.get("evidence"), "evidence_system": v.get("evidence_system")},
+                       by=v.get("by") or "rule", student=v.get("student"))
         # `ok` on a VERIFY event must be the VERDICT, not the step's own flag.
         # Emitting res["ok"] made the trace read "verify ok=True" beside a reason
         # saying the deliverable was never created — so a run that was correctly

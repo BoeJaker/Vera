@@ -101,6 +101,7 @@ async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: 
             """SELECT s.decision_id, s.state, l.row FROM decision_states s
                JOIN decision_ledger l ON l.decision_id = s.decision_id
                WHERE s.question_id = $1 AND COALESCE(l.mode, '') <> 'shadow'
+                 AND COALESCE(l.row->>'decider', 'llm') <> 'rule'
                  AND s.ts >= NOW() - make_interval(hours => $2)
                  AND NOT EXISTS (SELECT 1 FROM decision_ledger x WHERE x.mode = 'shadow'
                                  AND x.row->'detail'->>'for' = s.decision_id AND x.row->>'implementation' = $3)
@@ -123,7 +124,7 @@ async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: 
         meta: Dict[str, Any] = {}
         t0 = time.monotonic()
         try:
-            await _orch.ollama_generate(msg, system=q["system"], model=model, job_type=JOB_TYPE, prefer_gpu=True,
+            await _orch.ollama_generate(msg, system=JC.system_for(question_id, state), model=model, job_type=JOB_TYPE, prefer_gpu=True,
                                         think=False, options={"num_predict": 1, "temperature": 0},
                                         logprobs=10, meta_out=meta, timeout=180)
         except Exception as e:

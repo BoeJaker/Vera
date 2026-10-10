@@ -69,6 +69,13 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "and then search memory deeply before the model answers - every session and agent, the vector leg when it "
        "answers in time - announced in the throbber, waited on at most 1.5 s. 'off' (default) = the agent's own "
        "memory only; 'rules' = the rules decide (turn_needs_core).", owner="context-and-ui"),
+    _f("decide.student.step_verify", ("off", "shadow", "first"), "loop", "FM-2.5",
+       "A pre-trained student (Qwen3-4B, one token over the live verifier's own evidence and rules) on every step "
+       "verdict the big model would give. 'off' (default) = the big model only; 'shadow' = the student runs beside "
+       "it and is recorded as a shadow; 'first' = the student answers first and its verdict stands when it is an "
+       "allowed label (VERA_DECIDE_STUDENT_VERIFY_LABELS, default met) at confidence >= "
+       "VERA_DECIDE_STUDENT_TAU (default 0.95), else the big model decides. Deterministic verdicts (parsed "
+       "files, test runs, missing files) never reach either."),
 )}
 
 
