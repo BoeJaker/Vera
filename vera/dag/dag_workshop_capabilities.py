@@ -14400,6 +14400,43 @@ except ImportError:                                   # pragma: no cover
     except ImportError:
         _student = _judge_core = None
 
+
+class _StudentHook:
+    """The student around one live model call. start() runs it per the switchboard: 'first' asks it before the
+    model (`decided` is its answer when that answer may stand); 'shadow' runs it beside the model. result()
+    is what it said, for the ledger (waited on at most 5 s more; never raises)."""
+
+    def __init__(self):
+        self.decided: Optional[Dict[str, Any]] = None
+        self._answer: Optional[Dict[str, Any]] = None
+        self._task = None
+
+    @classmethod
+    async def start(cls, question_id: str, system: str, prompt: str) -> "_StudentHook":
+        h = cls()
+        try:
+            mode = _student.mode(question_id) if _student is not None else "off"
+            if mode not in ("first", "shadow"):
+                return h
+            call = _student.ask(question_id, _judge_core.student_system(system, question_id), prompt)
+            if mode == "first":
+                h._answer = await call
+                if _student.decides(question_id, h._answer):
+                    h.decided = h._answer
+            else:
+                h._task = asyncio.ensure_future(call)
+        except Exception as e:                        # pragma: no cover - never alters the decision
+            log.debug("student %s: %s", question_id, e)
+        return h
+
+    async def result(self) -> Optional[Dict[str, Any]]:
+        if self._task is None:
+            return self._answer
+        try:
+            return await asyncio.wait_for(self._task, timeout=5)
+        except Exception:
+            return None
+
 # Decision ledger (four-minds FM-0.2a): the controller's and the verifier's answers as
 # Decision v0 rows, sent in the background - the run never waits on them.
 try:
@@ -21151,6 +21188,16 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
                 runtime={"goal_chars": len(goal or ""), "ledger_steps": len(results or []), "pending_steps": len(queue or []), "caps_count": len(catalog_names or [])})
         except Exception as _ae:      # pragma: no cover â€” instrumentation must never alter a stage
             log.debug("stage-context emit skipped: %s", _ae)
+        # The System 1 student (switchboard decide.student.controller_action): this prompt and these rules,
+        # asked for one letter. Under 'first' an allowed move (continue) at confidence >= tau stands - with no
+        # findings or steer, which only the big model writes.
+        _evidence = {"evidence": prompt, "evidence_system": sys}
+        _stu_hook = await _StudentHook.start("loop.controller_action", sys, prompt)
+        # a student writes no steps, so only a move that needs none may stand
+        if _stu_hook.decided is not None and _stu_hook.decided["answer"] in ("continue", "stop"):
+            return {"assessment": "", "findings": "", "goal_alignment": "", "direction": "",
+                    "goal_met": False, "action": _stu_hook.decided["answer"], "steps": [],
+                    "by": "student", "student": _stu_hook.decided, **_evidence}
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
@@ -21160,10 +21207,11 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
     except Exception as e:
         log.debug("v6 control call failed: %s", e)
         return {"assessment": "", "findings": "", "goal_alignment": "",
-                "direction": "", "goal_met": False, "action": "continue", "steps": []}
+                "direction": "", "goal_met": False, "action": "continue", "steps": [], "by": "fallback"}
     if not isinstance(obj, dict):
         return {"assessment": "", "findings": "", "goal_alignment": "",
-                "direction": "", "goal_met": False, "action": "continue", "steps": []}
+                "direction": "", "goal_met": False, "action": "continue", "steps": [], "by": "fallback",
+                "student": await _stu_hook.result(), **_evidence}
     action = str(obj.get("action") or "continue").strip().lower()
     if action not in _V6_CONTROL_ACTIONS:
         action = "continue"
@@ -21210,7 +21258,8 @@ async def _v6_control(goal: str, done_when: str, results: List[Dict[str, Any]],
             "findings": str(obj.get("findings") or "")[:800],
             "goal_alignment": _align,
             "direction": str(obj.get("direction") or "")[:400],
-            "goal_met": goal_met, "action": action, "steps": steps}
+            "goal_met": goal_met, "action": action, "steps": steps,
+            "by": "llm", "student": await _stu_hook.result(), **_evidence}
 
 
 # _PLAN_DRIFT_STOP / _plan_words / _plan_drifted now live in planner_core
@@ -22045,28 +22094,14 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     # these rules, asked for one word. 'first': its verdict stands when it is an allowed label at confidence
     # >= tau, else the big model decides below; 'shadow': it runs beside the big model, recorded only.
     _evidence = {"evidence": prompt, "evidence_system": sys}
-    _stu_mode = _student.mode("loop.step_verify") if _student is not None else "off"
-    _stu: Optional[Dict[str, Any]] = None
-    _stu_task = None
-    if _stu_mode in ("first", "shadow"):
-        _stu_call = _student.ask("loop.step_verify", _judge_core.student_system(sys), prompt)
-        if _stu_mode == "first":
-            _stu = await _stu_call
-            if _student.decides("loop.step_verify", _stu):
-                _met = _stu["answer"] == "met"
-                return {"met": _met, "by": "student", "student": _stu, **_evidence,
-                        "reason": (f"the student ({_stu['model']}) judged the evidence "
-                                   f"{'met' if _met else 'not met'} at confidence {_stu['confidence']:.3f}")}
-        else:
-            _stu_task = asyncio.ensure_future(_stu_call)
-
-    async def _student_done() -> Optional[Dict[str, Any]]:
-        if _stu_task is None:
-            return _stu
-        try:
-            return await asyncio.wait_for(_stu_task, timeout=5)
-        except Exception:
-            return None
+    _stu_hook = await _StudentHook.start("loop.step_verify", sys, prompt)
+    _stu = _stu_hook.decided
+    if _stu is not None:
+        _met = _stu["answer"] == "met"
+        return {"met": _met, "by": "student", "student": _stu, **_evidence,
+                "reason": (f"the student ({_stu['model']}) judged the evidence "
+                           f"{'met' if _met else 'not met'} at confidence {_stu['confidence']:.3f}")}
+    _student_done = _stu_hook.result
 
     try:
         try:
@@ -26261,7 +26296,9 @@ async def cap_dag_agent_loop_v6(
                                        "done": [{"title": r.get("title"), "ok": r.get("ok"), "met": r.get("met")}
                                                 for r in results],
                                        "queue": [q.get("title") for q in queue if isinstance(q, dict)],
-                                       "steps_left": steps_left})
+                                       "steps_left": steps_left,
+                                       "evidence": ctrl.get("evidence"), "evidence_system": ctrl.get("evidence_system")},
+                               by=ctrl.get("by") or "llm", student=ctrl.get("student"))
             if action == "stop":
                 break
             elif action == "replan" and new_steps:

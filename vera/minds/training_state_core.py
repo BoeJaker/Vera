@@ -23,8 +23,8 @@ SURFACE_DEFAULTS: Dict[str, bool] = {"loop": True, "chat": False, "intel": False
 RETENTION_DAYS = 90
 MAX_FIELD = 4000          # characters kept of any one string
 MAX_LIST = 30             # items kept of any one list
-MAX_TOTAL = 32000         # bytes of the whole rendered state (JSON)
-LONG_FIELDS = {"evidence": 16000, "evidence_system": 8000}   # a model's whole prompt and rules (the live verifier's)
+MAX_TOTAL = 40000         # bytes of the whole rendered state (JSON)
+LONG_FIELDS = {"evidence": 16000, "evidence_system": 16000}   # a model's whole prompt and rules (the live verifier's)
 
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
 # Phone numbers: international (+44 ...) or national with a leading 0 (07700 900123, 020 7946 0958).

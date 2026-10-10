@@ -136,15 +136,17 @@ class RunLedger:
             return "default"
 
     def controller(self, step_id: Any, action: str, ctrl: Dict[str, Any], model: str = "",
-                   inputs: Optional[Dict[str, Any]] = None) -> None:
+                   inputs: Optional[Dict[str, Any]] = None, by: str = "llm",
+                   student: Optional[Dict[str, Any]] = None) -> None:
         try:
             d = LD.controller_decision(self.sid, step_id, action, ctrl or {}, model=model,
-                                       minds_digest=self._digest_now(), origin=self.origin)
+                                       minds_digest=self._digest_now(), origin=self.origin, by=by, student=student)
         except Exception as e:
             log.debug("loop ledger controller: %s", e)
             return
         self.decisions.append(d)
         self._send(d, inputs)
+        self._student_shadow(d, by, student)
 
     def verify(self, step_id: Any, met: Any, attempt: int, model: str = "",
                inputs: Optional[Dict[str, Any]] = None, by: str = "llm",
@@ -161,14 +163,19 @@ class RunLedger:
             return
         self.decisions.append(d)
         self._send(d, inputs)
-        if student and student.get("answer") and by != "student":
-            try:
-                s = JC.shadow_decision(d, student["answer"], student.get("p"), student.get("impl") or "student",
-                                       mass=float(student.get("mass") or 0.0), ms=int(student.get("ms") or 0))
-            except Exception as e:
-                log.debug("loop ledger student shadow: %s", e)
-                return
-            self._send(s)
+        self._student_shadow(d, by, student)
+
+    def _student_shadow(self, d: Dict[str, Any], by: str, student: Optional[Dict[str, Any]]) -> None:
+        """A student that answered the same input but did not decide, as a shadow of the live decision."""
+        if not (student and student.get("answer")) or by == "student":
+            return
+        try:
+            s = JC.shadow_decision(d, student["answer"], student.get("p"), student.get("impl") or "student",
+                                   mass=float(student.get("mass") or 0.0), ms=int(student.get("ms") or 0))
+        except Exception as e:
+            log.debug("loop ledger student shadow: %s", e)
+            return
+        self._send(s)
 
     def step_done(self, step_id: Any, done_by: str, attempt: int,
                   inputs: Optional[Dict[str, Any]] = None) -> None:
