@@ -8456,6 +8456,16 @@ def _v5_goal_is_webby(goal: str) -> bool:
     return any(h in g for h in _V5_WEB_GOAL_HINTS)
 
 
+# info-first (owner 10 Oct 2026, compute-roles P1a / intelligence SK-1.4): a goal that needs the
+# outside world gets Vera's front door first - info.seek: dated, numbered evidence from what Vera
+# tracks (it calls intel.lookup itself) + news + web, report-sellers dropped - ahead of the raw
+# web.* chain. Per run (dag.agent_loop_v6 info_first), off by default until
+# measured; a ContextVar so the seeding needs no new argument threaded through.
+_V5_INFO_FIRST_CAPS = ("info.seek",)
+_INFO_FIRST_CV: "contextvars.ContextVar[bool]" = contextvars.ContextVar("vera_loop_info_first",
+                                                                         default=False)
+
+
 def _v5_seed_caps_for(goal: str) -> List[str]:
     """Caps to GUARANTEE in the v5 catalog (web research caps only when the goal
     looks like it needs the live web). Keeps web/data/exec avenues always offered
@@ -8467,6 +8477,8 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
         # http.get, so a research plan reached for raw fetches before it ever
         # saw web.research (2026-09-21, census research-report).
         seeds = list(_V5_WEB_RESEARCH_SEED_CAPS) + [c for c in seeds if c not in _V5_WEB_RESEARCH_SEED_CAPS]
+        if _INFO_FIRST_CV.get():
+            seeds = list(_V5_INFO_FIRST_CAPS) + [c for c in seeds if c not in _V5_INFO_FIRST_CAPS]
     # A goal whose OWN text asks for UI/HTML verification ("...then verify it
     # actually works by clicking the button...") never matches the research-y
     # web hints above, so operator.run/browser.navigate were never guaranteed
@@ -8984,7 +8996,8 @@ def _v5_resolve_tool_name(tool: str, allowed: List[str], catalog: set) -> str:
 
 # Caps that look up NEW / EXTERNAL knowledge — a "research" unit of work.
 _V5_RESEARCH_CAPS = {"web.research", "web.crawl", "web.search", "web.fetch",
-                     "research.quick_search", "fabric.discover.crawl", "web.search_and_crawl"}
+                     "research.quick_search", "fabric.discover.crawl", "web.search_and_crawl",
+                     "info.seek", "intel.lookup"}
 # Caps that PRODUCE or RUN something — a "build / execute" unit of work.
 _V5_BUILD_CAPS = {"llm.generate", "code.author", "code.edit", "prose.author",
                   "exec.python.run", "exec.bash.run",
@@ -18620,6 +18633,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                               "url": str(args.get("url") or ""), "session_id": sid})
 
+        # info.seek need=deep also starts research.run in the background - a job loops never
+        # spawn (_RESEARCH_JOB_CAPS). Loops get the overview pack instead (vera-03, 10 Oct 2026,
+        # until info.seek takes start_report=False).
+        if tool == "info.seek" and isinstance(args, dict) and str(args.get("need") or "").strip().lower() == "deep":
+            args = dict(args, need="overview")
         await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
                           "thought": thought, "session_id": sid})
@@ -24466,6 +24484,9 @@ async def cap_dag_agent_loop_v6(
     # or a specialised agentic model driving the loop. CPU-slow - chosen, never defaulted.
     controller_model:   str  = "",
     controller_node:    str  = "auto",
+    # info-first: info.seek + intel.lookup lead the catalogue for a goal that needs the outside
+    # world (_V5_INFO_FIRST_CAPS). Off by default until measured.
+    info_first:         bool = False,
     effort:             str  = "standard",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
@@ -24594,6 +24615,7 @@ async def cap_dag_agent_loop_v6(
             plan_style = _effort_adj["plan_style"]
         if _effort_adj.get("critic_route"):
             critic_route = _effort_adj["critic_route"]
+    _INFO_FIRST_CV.set(bool(info_first))   # every run sets it, so none leaks into the next
     try:
         _orch.RUN_ROLE_OVERRIDES.set(_role_overrides or None)
     except Exception as _roe:                          # pragma: no cover
@@ -26958,6 +26980,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_coder_node        = (body.get("coder_node", "auto") or "auto").strip().lower()
     v6_controller_model  = (body.get("controller_model", "") or "").strip()
     v6_controller_node   = (body.get("controller_node", "auto") or "auto").strip().lower()
+    v6_info_first        = bool(body.get("info_first", False))
     v6_effort            = (body.get("effort", "standard") or "standard").strip().lower()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
@@ -27117,6 +27140,7 @@ async def workshop_agent_loop_stream(request: Request):
             executor_model=v6_executor_model, executor_node=v6_executor_node,
             coder_model=v6_coder_model, coder_node=v6_coder_node, effort=v6_effort,
             controller_model=v6_controller_model, controller_node=v6_controller_node,
+            info_first=v6_info_first,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,
