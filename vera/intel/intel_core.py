@@ -86,12 +86,29 @@ def slug(text: str, n: int = 48) -> str:
     return (s[:n].rstrip("-")) or "topic"
 
 
+def _question_str(q: Any) -> str:
+    """A question kept as text: the model sometimes writes {question, answer}, and older
+    topics hold that stringified ("{'question': ...}") - never search or store the dict."""
+    if isinstance(q, dict):
+        return str(q.get("question") or q.get("text") or "").strip()
+    s = str(q or "").strip()
+    if s.startswith("{") and "question" in s:
+        try:
+            import ast as _ast
+            d = _ast.literal_eval(s)
+            if isinstance(d, dict):
+                return str(d.get("question") or d.get("text") or "").strip()
+        except (ValueError, SyntaxError):
+            pass
+    return s
+
+
 def _clean_list(v: Any, n: int = 24) -> List[str]:
     if isinstance(v, str):
         v = [x for x in re.split(r"[\n;]+", v)]
     out: List[str] = []
     for x in v or []:
-        t = str(x or "").strip()
+        t = _question_str(x)
         if t and t not in out:
             out.append(t)
     return out[:n]
@@ -163,7 +180,7 @@ def topic_queries(topic: Dict[str, Any]) -> List[str]:
     name = topic.get("name") or ""
     add(f"{name} latest news")
     for q in (topic.get("questions") or [])[:4]:
-        add(q)
+        add(_question_str(q))
     for e in (topic.get("entities") or [])[:4]:
         add(f"{e} {name}" if e.lower() not in name.lower() else e)
     for s in (topic.get("sites") or [])[:3]:

@@ -169,11 +169,23 @@ def question_text(q: Any) -> str:
 
 
 def profile_text(topic: Dict[str, Any]) -> str:
-    """What a reranker compares a signal with: the topic, why it matters, what is open."""
+    """What a reranker compares a signal with: the topic itself - name, what it is,
+    why it matters, who it follows. Its open questions are scored separately
+    (question_profile): written by the model about whatever it last read, they are
+    narrow ("hydrology tools in flood-risk zones"), and mixed into one query they
+    drowned the topic - 9 Oct 2026, "UK house prices fall" scored -4.1 against the
+    mixed profile and +5.3 against the topic's name, and every signal fell below
+    the model gate."""
     parts = [topic.get("name", ""), topic.get("brief", ""), topic.get("why", "")]
-    parts += [question_text(q) for q in (topic.get("questions") or [])[:5]]
     parts += (topic.get("entities") or [])[:6]
     return ". ".join(p for p in parts if p)[:1200]
+
+
+def question_profile(topic: Dict[str, Any]) -> str:
+    """The topic's open questions as one rerank query ('' when it has none): a source
+    that answers one of them is relevant even when it reads off the topic's centre."""
+    qs = [question_text(q) for q in (topic.get("questions") or [])[:5]]
+    return " ".join(q for q in qs if q)[:1200]
 
 
 #: tokens that come from page chrome or are too generic to be an entity: browser
