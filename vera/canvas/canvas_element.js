@@ -127,6 +127,27 @@
   }
   /* a page read in reader mode (browser.reader's answer): its title, who and when, how long, a note when the body was
      stitched from a fragmented page, and the article */
+  /* ONE PAGE VIEW (owner, 2026-10-10: "the autogen web results dont have all the readermode features the other web search
+     elements have can you make sure the canvas elements that show web results or sources or similar all use the same
+     system"). A page read once carries who wrote it, how long it is, what it names and where it points; a source item drew
+     all of that, a page opened in a records list (a search, the news, an enrich answer, a research run) drew none of it.
+     Both draw these parts, from the same reading. */
+  const PAGE_ENT = /^(PERSON|ORG|GPE|LOC|PRODUCT|EVENT|NORP|WORK_OF_ART|LAW|TICKER)$/;
+  function pageExtras(rdr, host) {
+    if (!rdr || typeof rdr !== 'object') return '';
+    const meta = [rdr.site, rdr.byline, rdr.published ? String(rdr.published).slice(0, 10) : '', rdr.minutes ? rdr.minutes + ' min read' : ''].filter(Boolean).map(String);
+    const ents = Array.isArray(rdr.entities) ? rdr.entities.filter((e) => e && PAGE_ENT.test(String(e.type || ''))).slice(0, 10) : [];
+    const outs = []; if (rdr.markdown) { const seen = new Set([host || '']); const rx = /\]\((https?:\/\/[^)\s]+)\)/g; let m; while ((m = rx.exec(String(rdr.markdown))) && outs.length < 6) { let h = ''; try { h = new URL(m[1]).host; } catch (e) { continue; } if (!h || seen.has(h)) continue; seen.add(h); outs.push([h, m[1]]); } }
+    return (meta.length ? `<div class="vc-src-m">${esc(meta.join(' · '))}</div>` : '')
+      + (ents.length ? `<div class="vc-src-ents">${ents.map((e) => `<button class="vc-chip" data-act="srcent" data-ent-t="${esc(String(e.text))}" data-ent-y="${esc(String(e.type))}" title="${esc(e.type + ' - look it up beside this')}">${esc(String(e.text))}${e.count > 1 ? `<i>${e.count}</i>` : ''}</button>`).join('')}</div>` : '')
+      + (outs.length ? `<div class="vc-src-out"><span>points to</span>${outs.map(([h, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${esc(h)}</a>`).join('')}</div>` : '');
+  }
+  /* browser.screenshot answers base64 under image_b64 (and not always PNG): the picture as a src */
+  function shotSrc(r) {
+    const shot = String((r && (r.image_b64 || r.image || r.data_url || r.screenshot || r.png)) || ''); if (!shot) return '';
+    const mime = /^\/9j\//.test(shot) ? 'image/jpeg' : /^R0lGOD/.test(shot) ? 'image/gif' : /^UklGR/.test(shot) ? 'image/webp' : 'image/png';
+    return /^data:|^https?:/.test(shot) ? shot : 'data:' + mime + ';base64,' + shot;
+  }
   function readerHtml(rd) {
     const when = rd.published ? String(rd.published).slice(0, 10) : '';
     const bits = [rd.site, rd.byline, when, rd.minutes ? rd.minutes + ' min read' : ''].filter(Boolean);
@@ -418,9 +439,6 @@
          carries its reading at once (the canvas asks the cache, never the web, for every source it draws): who wrote it,
          how long it is, the people, organisations and places it names - each a chip that looks the name up beside it -
          the other sites it points to, and an Explode of the page itself. */
-      const meta = rdr ? [rdr.site, rdr.byline, rdr.published ? String(rdr.published).slice(0, 10) : '', rdr.minutes ? rdr.minutes + ' min read' : ''].filter(Boolean).map(String) : [];
-      const ents = rdr && Array.isArray(rdr.entities) ? rdr.entities.filter((e) => e && /^(PERSON|ORG|GPE|LOC|PRODUCT|EVENT|NORP|WORK_OF_ART|LAW|TICKER)$/.test(String(e.type || ''))).slice(0, 10) : [];
-      const outs = []; if (rdr && rdr.markdown) { const seen = new Set([host]); const rx = /\]\((https?:\/\/[^)\s]+)\)/g; let m; while ((m = rx.exec(String(rdr.markdown))) && outs.length < 6) { let h = ''; try { h = new URL(m[1]).host; } catch (e) { continue; } if (!h || seen.has(h)) continue; seen.add(h); outs.push([h, m[1]]); } }
       return `<div class="vc-src${c.failed ? ' bad' : ''}${open ? ' open' : ''}">`
         + `<div class="vc-src-hd">`
         + `<span class="vc-src-dom">${esc(host)}</span>`
@@ -428,10 +446,8 @@
         + (c.failed ? `<span class="vc-src-n bad">did not load</span>` : '')
         + `</div>`
         + `<a class="vc-src-t" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(url)}">${esc(title)}</a>`
-        + (meta.length ? `<div class="vc-src-m">${esc(meta.join(' \u00b7 '))}</div>` : '')
         + (c.snippet ? `<div class="vc-src-s">${esc(String(c.snippet).slice(0, 400))}</div>` : '')
-        + (ents.length ? `<div class="vc-src-ents">${ents.map((e) => `<button class="vc-chip" data-act="srcent" data-ent-t="${esc(String(e.text))}" data-ent-y="${esc(String(e.type))}" title="${esc(e.type + ' - look it up beside this')}">${esc(String(e.text))}${e.count > 1 ? `<i>${e.count}</i>` : ''}</button>`).join('')}</div>` : '')
-        + (outs.length ? `<div class="vc-src-out"><span>points to</span>${outs.map(([h, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(u)}">${esc(h)}</a>`).join('')}</div>` : '')
+        + pageExtras(rdr, host)
         + `<div class="vc-src-act">`
         + `<button class="vc-src-b" data-src-act="read" data-src-key="${esc(key || '')}">${open ? 'less' : (text || rdr ? 'read' : 'reader mode')}</button>`
         + `<button class="vc-src-b" data-src-act="shot" data-src-key="${esc(key || '')}">${shot ? 'hide the picture' : 'see the page'}</button>`
@@ -594,7 +610,12 @@
       const opened = (r) => {
         const b = (st.body || {})[r.id] || {};
         const isRec = !!(r.ref && r.ref.record_id);
-        const acts = (r.url ? actBtn('read', r.id, b.reader || b.text ? 'read again' : 'reader mode', 'the page as the article it is - its body (or a composite of its parts) formatted (browser.reader)') + actBtn('land', r.id, 'to the canvas', 'land it as its own source item') + `<a class="vc-rbx-b" href="${esc(r.url)}" target="_blank" rel="noopener">open ↗</a>` : '')
+        /* a page in the list does everything a source item does (see ONE PAGE VIEW): reader mode, its picture, its explode,
+           to the canvas, open - and once read, who wrote it, what it names, where it points */
+        const acts = (r.url ? actBtn('read', r.id, b.reader || b.text ? 'read again' : 'reader mode', 'the page as the article it is - its body (or a composite of its parts) formatted (browser.reader)')
+            + actBtn('shot', r.id, b.shot ? 'hide the picture' : 'see the page', 'a picture of the page as it looks (browser.screenshot)')
+            + ((b.reader && b.reader.markdown) || b.text ? actBtn('xpl', r.id, 'explode', 'a structured diagram of the page - its sections, what it names, how they connect') : '')
+            + actBtn('land', r.id, 'to the canvas', 'land it as its own source item') + `<a class="vc-rbx-b" href="${esc(r.url)}" target="_blank" rel="noopener">open ↗</a>` : '')
           + (isRec ? actBtn('rec', r.id, b.text ? 'read again' : 'read the record', 'the record in full, in pages (fabric.record.get)')
                    + actBtn('nb', r.id, b.nb ? 'neighbours \u21bb' : 'neighbours', 'the records nearest this one, across every dataset (fabric.loom.record_match)') : '');
         const facts = []; const fact = (k, vHtml) => { if (vHtml != null && vHtml !== '') facts.push(`<span><i>${esc(k)}</i>${vHtml}</span>`); };
@@ -620,7 +641,9 @@
           + (facts.length ? `<div class="vc-rbx-meta">${facts.join('')}</div>` : '')
           + (tags.length ? `<div class="vc-rbx-tags">${tags.map((x) => `<span>#${esc(x)}</span>`).join('')}</div>` : '')
           + (fields.length ? `<details class="vc-rbx-fields"><summary>fields \u00b7 ${fields.length}</summary><div class="vc-rbx-kv">${fields.map((k) => `<span class="k">${esc(k)}</span><span class="v">${esc(rec.data[k] == null ? '' : String(rec.data[k]))}</span>`).join('')}</div></details>` : '')
+          + (b.reader ? pageExtras(b.reader, r.domain || '') : '')   /* who wrote it, what it names, where it points - as a source item shows */
           + `<div class="vc-rbx-acts">${acts}</div>`
+          + (b.shot ? `<img class="vc-src-shot" src="${esc(b.shot)}" alt="${esc(r.title || r.url || '')}">` : '')
           + (b.busy ? `<div class="vc-rbx-busy">… ${esc(b.busy)}</div>` : '')
           + (b.err ? `<div class="vc-rbx-err">${esc(b.err)}</div>` : '')
           + (b.reader ? `<div class="vc-rbx-body rd">${readerHtml(b.reader)}</div>`
@@ -4529,7 +4552,30 @@
       if (act === 'read' && it && it.url) {
         st.open[it.id] = true; st.body[it.id] = { busy: 'reading the page (reader mode)' }; redraw();
         const rd = await this._readPage(String(it.url));
-        st.body[it.id] = rd.reader ? { reader: rd.reader } : rd.text ? { text: rd.text } : { err: rd.err || 'the page gave nothing back' }; return redraw();
+        st.body[it.id] = rd.reader ? { reader: rd.reader } : rd.text ? { text: rd.text } : { err: rd.err || 'the page gave nothing back' };
+        /* a page read here names things too: its names join the list's name filters and its graph, as a cached reading's do */
+        if (rd.reader && Array.isArray(rd.reader.entities)) { this._recEnts = this._recEnts || {}; const em = this._recEnts[String(key)] = this._recEnts[String(key)] || {};
+          em[String(it.id)] = rd.reader.entities.filter((e) => e && e.text && PAGE_ENT.test(String(e.type || e.label || ''))).slice(0, 12).map((e) => [String(e.text), String(e.type || e.label)]); }
+        return redraw();
+      }
+      /* a page's picture, held with the list's browsing state (not written to the canvas), and its explode as its own item -
+         what a source item's "see the page" and "explode" do (see ONE PAGE VIEW) */
+      if (act === 'shot' && it && it.url) {
+        const cur = st.body[it.id] || {}; st.open[it.id] = true;
+        if (cur.shot) { st.body[it.id] = Object.assign({}, cur, { shot: '' }); return redraw(); }
+        st.body[it.id] = Object.assign({}, cur, { busy: 'taking the picture', err: '' }); redraw();
+        let r = null; try { r = await this.callResult('browser.screenshot', { url: String(it.url), full_page: false }); } catch (e) { r = null; }
+        const src = shotSrc(r);
+        st.body[it.id] = Object.assign({}, st.body[it.id], { busy: '', shot: src, err: src ? '' : ((r && r.error) || 'no picture came back') }); return redraw();
+      }
+      if (act === 'xpl' && it) {
+        const cur = st.body[it.id] || {}; const md = String((cur.reader && cur.reader.markdown) || cur.text || it.text || '');
+        if (!md.trim()) { st.body[it.id] = Object.assign({}, cur, { err: 'read the page first' }); return redraw(); }
+        let h = 0; for (const ch of String(it.url || it.id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+        const xk = 'explode:page:' + h.toString(36); this._revealSoon(xk);
+        return this.call('canvas.add', Object.assign({ kind: 'explode', key: xk, at: b && b.state === 'pinned' ? 'pinned' : 'now', size: 'l',
+          content: { text: md.slice(0, 20000), title: String(it.title || it.url || 'page') + ' — exploded', binds: '' } },
+          b && b.anchor && typeof b.anchor === 'object' ? { anchor: b.anchor } : {}));
       }
       if ((act === 'rec' || act === 'more') && it && it.ref && it.ref.record_id) {
         const cur = st.body[it.id] || {}; const offset = act === 'more' ? (cur.next | 0) : 0;
@@ -4667,14 +4713,10 @@
         /* browser.screenshot answers {ok, image_b64, url, title, load_ms} - image_b64, which is the one name
            this was not reading. The picture was fetched every time and thrown away every time: the press did
            nothing, silently, which is the worst way for it to fail. Measured against the live cap. */
-        const shot = String((r && (r.image_b64 || r.image || r.data_url || r.screenshot || r.png)) || '');
-        if (!shot) return this._readout(key, (r && r.error) || 'no picture came back');
-        /* the cap answers base64 bytes, and not always PNG despite the argument's name - measured, example.com
-           came back starting "/9j/", which is JPEG. Browsers sniff and draw it either way, so this was invisible
-           and wrong; the magic says which it is. */
-        const mime = /^\/9j\//.test(shot) ? 'image/jpeg' : /^R0lGOD/.test(shot) ? 'image/gif'
-          : /^UklGR/.test(shot) ? 'image/webp' : 'image/png';
-        const src = /^data:|^https?:/.test(shot) ? shot : 'data:' + mime + ';base64,' + shot;
+        /* the cap answers base64 bytes, and not always PNG despite the argument's name - measured, example.com came back
+           starting "/9j/", which is JPEG; shotSrc reads the magic (shared with a records list's pages) */
+        const src = shotSrc(r);
+        if (!src) return this._readout(key, (r && r.error) || 'no picture came back');
         return this.call('canvas.update', { key, content: Object.assign({}, c, { shot: src }) });
       }
     }
