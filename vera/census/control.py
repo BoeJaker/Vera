@@ -308,6 +308,8 @@ def routing_of(record: Dict[str, Any]) -> Dict[str, Any]:
         # What actually ran, by role: {role: {model: calls}}. Calls with no
         # role (embeddings, chat) are keyed by their job type.
         "by_role": calls_by_role(calls.get("calls") or []),
+        # what processed the calls: ollama | vllm | api:<provider> | other
+        "backends": calls.get("backends") or calls_by_backend(calls.get("calls") or []),
         "coder": coder.get("model") or "",
         "coder_overridden": bool(coder.get("overridden")),
         "coder_declared": coder.get("declared_model") or "",
@@ -321,6 +323,33 @@ def routing_of(record: Dict[str, Any]) -> Dict[str, Any]:
         "truncated": bool(calls.get("truncated")),
         "error": calls.get("error") or "",
     }
+
+
+def backend_label(e: Dict[str, Any]) -> str:
+    """What processed one logged call: 'ollama', 'vllm', 'api:<provider>' or
+    'other[:<what>]'. Entries from before the log named it are read from the
+    instance (provider:<id> = an API, vllm-* = a vLLM server)."""
+    be = str((e or {}).get("backend") or "").strip()
+    inst = str((e or {}).get("instance") or (e or {}).get("node") or "")
+    prov = str((e or {}).get("provider") or "").strip()
+    if not be:
+        be = "api" if inst.startswith("provider:") else ("vllm" if inst.startswith("vllm") else "ollama")
+    if be == "api":
+        return "api:" + (prov or inst.split(":", 1)[-1] or "?")
+    if be == "other" and prov:
+        return "other:" + prov
+    return be
+
+
+def calls_by_backend(calls: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    """{backend label: calls} - see backend_label."""
+    out: Dict[str, int] = {}
+    for c in calls or []:
+        if isinstance(c, dict):
+            k = str(c.get("backend") or "") if ":" in str(c.get("backend") or "") else backend_label(
+                dict(c, instance=c.get("instance") or c.get("node")))
+            out[k] = out.get(k, 0) + 1
+    return out
 
 
 def calls_by_role(calls: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
@@ -352,6 +381,7 @@ def routing_rollup(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     by_role: Dict[str, Dict[str, int]] = {}   # role -> {model: calls}
     nodes: Dict[str, int] = {}
     models: Dict[str, int] = {}
+    backends: Dict[str, int] = {}
     calls = reroutes = spill = recorded = 0
     for rec in records or []:
         ro = routing_of(rec)
@@ -375,6 +405,8 @@ def routing_rollup(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             nodes[str(k)] = nodes.get(str(k), 0) + int(v or 0)
         for k, v in (ro.get("models") or {}).items():
             models[str(k)] = models.get(str(k), 0) + int(v or 0)
+        for k, v in (ro.get("backends") or {}).items():
+            backends[str(k)] = backends.get(str(k), 0) + int(v or 0)
         calls += ro["calls"]
         reroutes += ro["reroutes"]
         spill += ro["spill_calls"]
@@ -385,7 +417,7 @@ def routing_rollup(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "roles": roles,
         "roles_changed": sorted(r for r, ms in roles.items() if len(ms) > 1),
         "by_role": by_role,
-        "nodes": nodes, "models": models,
+        "nodes": nodes, "models": models, "backends": backends,
         "calls": calls, "reroutes": reroutes, "spill_calls": spill,
     }
 
@@ -414,6 +446,7 @@ def live_routing(entries: Sequence[Dict[str, Any]], since_iso: str, *, session_i
             mine.append(e)
     by_node: Dict[str, int] = {}
     by_model: Dict[str, int] = {}
+    by_backend: Dict[str, int] = {}
     spill = reroutes = 0
     toks: List[float] = []
     for e in mine:
@@ -421,6 +454,8 @@ def live_routing(entries: Sequence[Dict[str, Any]], since_iso: str, *, session_i
         model = str(e.get("model") or "?")
         by_node[node] = by_node.get(node, 0) + 1
         by_model[model] = by_model.get(model, 0) + 1
+        be = backend_label(e)
+        by_backend[be] = by_backend.get(be, 0) + 1
         if e.get("cpu_spill"):
             spill += 1
         if e.get("escalated") or e.get("fallback_instance") or str(e.get("status") or "") == "done_fallback":
@@ -437,8 +472,10 @@ def live_routing(entries: Sequence[Dict[str, Any]], since_iso: str, *, session_i
     last = [{"ts": str(e.get("ts") or "")[11:19], "job": e.get("job_type") or "", "role": e.get("role") or "",
              "model": str(e.get("model") or ""), "node": str(e.get("instance") or e.get("fallback_instance") or ""),
              "tok_s": e.get("tok_per_s"), "gpu_pct": e.get("gpu_resident_pct"), "s": e.get("elapsed_s"),
-             "status": str(e.get("status") or ""), "spill": bool(e.get("cpu_spill"))}
+             "status": str(e.get("status") or ""), "spill": bool(e.get("cpu_spill")),
+             "backend": backend_label(e)}
             for e in tail]
-    return {"calls": len(mine), "by_node": by_node, "by_model": by_model, "spill_calls": spill,
+    return {"calls": len(mine), "by_node": by_node, "by_model": by_model, "by_backend": by_backend,
+            "spill_calls": spill,
             "reroutes": reroutes, "tok_s_median": (round(median, 1) if median is not None else None),
             "last": last, "since": lo}

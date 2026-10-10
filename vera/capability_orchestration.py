@@ -2270,7 +2270,8 @@ async def instance_health_loop(interval: float = 20.0):
                 log.debug("worker routing refresh: %s", e)
         await asyncio.gather(*[_ping_instance(iid,inst) for iid,inst in OLLAMA_INSTANCES.items()],return_exceptions=True)
         await emit_event({"type":"ollama.health","instances":{iid:{"status":i["status"],"latency_ms":i["latency_ms"],
-                                                                   "backend":i.get("backend","ollama")} for iid,i in OLLAMA_INSTANCES.items()}})
+                                                                   "backend":i.get("backend","ollama"),
+                                                                   "served_by":i.get("served_by","")} for iid,i in OLLAMA_INSTANCES.items()}})
         # Media nodes (GPU inference servers) ride the same heartbeat.
         try:
             await asyncio.gather(*[_ping_media_instance(iid, inst)
@@ -3411,9 +3412,25 @@ def _ollama_payload_preview(value: Any, kind: str = "prompt") -> str:
             f"sha256={evidence['sha256']}]")
 
 
+def _log_backend_of(instance: str) -> str:
+    """The backend an entry's instance names, for writers that do not say:
+    'api' (provider:<id>), 'vllm' (a vLLM server id), else 'ollama'."""
+    iid = str(instance or "")
+    if iid.startswith("provider:"):
+        return "api"
+    _vm = sys.modules.get("vllm_capabilities") or sys.modules.get("Vera.vera.vllm.vllm_capabilities")
+    if iid.startswith("vllm") or (_vm is not None and iid in (getattr(_vm, "VLLM_INSTANCES", {}) or {})):
+        return "vllm"
+    return "ollama"
+
+
 def _sanitize_ollama_log_entry(entry: dict) -> dict:
     """Copy one request-log entry without retaining raw prompt/embed content."""
     clean = dict(entry or {})
+    if not clean.get("backend"):
+        clean["backend"] = _log_backend_of(clean.get("instance") or clean.get("fallback_instance"))
+    if clean["backend"] == "api" and not clean.get("provider"):
+        clean["provider"] = str(clean.get("instance") or "").split(":", 1)[-1]
     raw_full = clean.pop("prompt_full", None)
     raw_preview = clean.get("prompt_preview", "")
     safe = (re.fullmatch(
@@ -3701,6 +3718,10 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
             _pin = str((_vm_r.effective_rule(eff_rule) or {}).get("pin") or _pin)
         except Exception:
             pass
+    _t_rt, _ts_rt = time.time(), now_iso()
+    _rl = {"job_type": eff_job_type, "rule_source": rule_source,
+           "profile": str(profile or "")[:64], "role": str(role or "")[:64],
+           "request_stage": str(request_stage or "")[:64], "prompt_chars": prompt_chars}
     if _pin.startswith("vllm:") and not instance_id:
         try:
             # Use the copy the module loader registered (bare name): a package
@@ -3718,9 +3739,14 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 if meta_out is not None:
                     meta_out.update({"model": _vr.get("model"), "instance": _vr.get("instance"),
                                      "backend": "vllm", "gate": _vr.get("gate")})
+                _log_served_elsewhere("vllm", instance=_vr.get("instance"), model=_vr.get("model"),
+                                      ts=_ts_rt, t0=_t_rt, caller=caller, **_rl)
                 return _vr.get("result") or ""
             raise RuntimeError((_vr or {}).get("error") or "vllm route failed")
         except Exception as _ve:
+            _log_served_elsewhere("vllm", instance=_pin, model=str(eff_model or ""), ts=_ts_rt,
+                                  t0=_t_rt, caller=caller, status="error",
+                                  error=f"{_ve} - fell back to Ollama", **_rl)
             log.warning("vllm delegation for pin '%s' failed (%s) — "
                         "falling back to Ollama routing", _pin, _ve)
     # ── API-provider delegation: a rule/profile pin of "provider:<id>" (or a
@@ -3772,8 +3798,18 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                               "caller_file": caller.get("file", ""),
                               "caller_func": caller.get("func", ""),
                               "cost_usd": _res.get("cost_usd")})
+            _el = max(0.01, time.time() - _t_rt)
+            _otk = _res.get("output_tokens")
+            _log_served_elsewhere("api", provider=_prov_id, instance=f"provider:{_prov_id}",
+                                  model=str(_res.get("model") or _prov_model), ts=_ts_rt, t0=_t_rt,
+                                  caller=caller, cost_usd=_res.get("cost_usd"),
+                                  tok_per_s=(round(_otk / _el, 1) if isinstance(_otk, (int, float)) and _otk else None),
+                                  **_rl)
             return _txt
         except Exception as _pe:
+            _log_served_elsewhere("api", provider=_prov_id, instance=f"provider:{_prov_id}",
+                                  model=str(_prov_model or ""), ts=_ts_rt, t0=_t_rt, caller=caller,
+                                  status="error", error=f"{_pe} - fell back to Ollama", **_rl)
             log.warning("provider delegation '%s' failed (%s) — "
                         "falling back to Ollama routing", _prov_id, _pe)
             if str(eff_model or "").startswith("provider:"):
@@ -3827,6 +3863,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     if _sv_id:
         _sv_node = OLLAMA_INSTANCES.get(chosen) or {}
         _sv_node["in_use"] = _sv_node.get("in_use", 0) + 1
+        _t_sv, _ts_sv = time.time(), now_iso()
         try:
             _vr = await _vllm_generate_routed(
                 _vm_r, {"pin": f"vllm:{_sv_id}"}, prompt=prompt, system=system,
@@ -3837,9 +3874,16 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
                 if meta_out is not None:
                     meta_out.update({"model": _vr.get("model"), "instance": _vr.get("instance"),
                                      "backend": "vllm", "gate": _vr.get("gate"), "node": chosen})
+                _log_served_elsewhere("vllm", instance=_vr.get("instance"), model=_vr.get("model"),
+                                      node=chosen, ts=_ts_sv, t0=_t_sv, caller=caller,
+                                      route_reason="; ".join(route_explain.get("reason") or [])[:400]
+                                      if isinstance(route_explain, dict) else "", **_rl)
                 return _vr.get("result") or ""
             raise RuntimeError((_vr or {}).get("error") or "vllm route failed")
         except Exception as _ve:
+            _log_served_elsewhere("vllm", instance=_sv_id, model=str(eff_model or ""), node=chosen,
+                                  ts=_ts_sv, t0=_t_sv, caller=caller, status="error",
+                                  error=f"{_ve} - fell back to Ollama nodes", **_rl)
             log.warning("switched node '%s' (vLLM %s) failed (%s) - Ollama nodes",
                         chosen, _sv_id, _ve)
         finally:
@@ -4079,7 +4123,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     )
 
     req_entry = {
-        "req_id": req_id, "model": mdl, "instance": chosen,
+        "req_id": req_id, "model": mdl, "instance": chosen, "backend": "ollama",
         "caller_file": caller["caller_file"], "caller_func": caller["caller_func"],
         "prompt_preview": prompt_preview, "ts": now_iso(),
         "status": "running",
@@ -4548,6 +4592,34 @@ def _ollama_log_append(entry: dict):
         del _OLLAMA_REQUEST_LOG[:-_OLLAMA_REQUEST_LOG_MAX]
 
 
+def _log_served_elsewhere(backend: str, *, instance: str, model: str, ts: str, t0: float,
+                          caller: Optional[dict] = None, provider: str = "", node: str = "",
+                          status: str = "done", error: str = "", kind: str = "generate",
+                          **fields) -> None:
+    """One request-log entry for a call served off the Ollama nodes - a vLLM
+    server, an API provider, an in-process embedder - so Loop Lab and the census
+    see it, with the backend that served it. Those paths return before the
+    Ollama path writes its own entry, so they were missing from the log.
+    backend: 'ollama' | 'vllm' | 'api' (provider = its id) | 'other'."""
+    try:
+        c = caller or {}
+        e = {"req_id": str(uuid.uuid4())[:12], "model": str(model or ""),
+             "instance": str(instance or ""), "backend": backend, "kind": kind,
+             "caller_file": c.get("caller_file", ""), "caller_func": c.get("caller_func", ""),
+             "ts": ts, "status": status, "elapsed_s": round(time.time() - t0, 2),
+             "session_id": OLLAMA_EVENT_SESSION.get("")}
+        if provider:
+            e["provider"] = provider
+        if node:
+            e["node"] = node
+        if error:
+            e["error"] = str(error)[:300]
+        e.update({k: v for k, v in fields.items() if v not in (None, "")})
+        _ollama_log_append(e)
+    except Exception as ex:
+        log.debug("request log (%s): %s", backend, ex)
+
+
 async def ollama_embed(text: str, model: Optional[str] = None,
                        instance_id: Optional[str] = None,
                        prefer_gpu: bool = False,
@@ -4671,9 +4743,13 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
         try:
             import Vera.vera.fabric.fastembed_provider as _fe
             if _fe.available():
+                _t_fe, _ts_fe = time.time(), now_iso()
                 vec = await asyncio.get_event_loop().run_in_executor(
                     None, _fe.embed, text[:4096])
                 if vec:
+                    _log_served_elsewhere("other", provider="fastembed", instance="in-process",
+                                          model="fastembed", ts=_ts_fe, t0=_t_fe, kind="embed",
+                                          caller=_ollama_caller_info())
                     if normalize:
                         _n = (sum(v * v for v in vec)) ** 0.5 or 1.0
                         vec = [v / _n for v in vec]
@@ -4693,6 +4769,7 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
         _vm = (sys.modules.get("vllm_capabilities")
                or sys.modules.get("Vera.vera.vllm.vllm_capabilities"))
         if _vm is not None and hasattr(_vm, "routed_call"):
+            _t_ve, _ts_ve = time.time(), now_iso()
             try:
                 _vr = await _vm.routed_call("embed", _resolve_rule("embedding"), model=mdl,
                                             prefer_gpu=eff_prefer_gpu, job_type="embedding",
@@ -4702,6 +4779,8 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
                     if normalize:
                         _n = (sum(v * v for v in vec)) ** 0.5 or 1.0
                         vec = [v / _n for v in vec]
+                    _log_served_elsewhere("vllm", instance=_vr.get("instance"), model=_vr.get("model") or mdl,
+                                          ts=_ts_ve, t0=_t_ve, kind="embed", caller=_ollama_caller_info())
                     return vec
                 if _vr:
                     log.info("embed vllm pin: %s - Ollama routing", _vr.get("error"))
@@ -4714,6 +4793,7 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
     _sv_e = (_vm_e.standin_for(chosen)
              if (_vm_e is not None and hasattr(_vm_e, "standin_for")) else "")
     if _sv_e:
+        _t_ve, _ts_ve = time.time(), now_iso()
         try:
             _vr = await _vm_e.routed_call("embed", {"pin": f"vllm:{_sv_e}"}, model=mdl,
                                           prefer_gpu=eff_prefer_gpu, job_type="embedding",
@@ -4723,6 +4803,9 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
                 if normalize:
                     _n = (sum(v * v for v in vec)) ** 0.5 or 1.0
                     vec = [v / _n for v in vec]
+                _log_served_elsewhere("vllm", instance=_vr.get("instance"), model=_vr.get("model") or mdl,
+                                      node=chosen, ts=_ts_ve, t0=_t_ve, kind="embed",
+                                      caller=_ollama_caller_info())
                 return vec
             log.info("embed on switched node %s: %s - Ollama nodes", chosen,
                      (_vr or {}).get("error"))
@@ -4755,7 +4838,7 @@ async def _ollama_embed_impl(text: str, model: Optional[str] = None,
     )
 
     req_entry = {
-        "req_id": req_id, "model": mdl, "instance": chosen,
+        "req_id": req_id, "model": mdl, "instance": chosen, "backend": "ollama", "kind": "embed",
         "caller_file": caller["caller_file"], "caller_func": caller["caller_func"],
         "prompt_preview": text_preview, "prompt_evidence": text_evidence,
         "ts": now_iso(),

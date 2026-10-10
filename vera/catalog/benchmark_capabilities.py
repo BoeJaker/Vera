@@ -1077,8 +1077,10 @@ async def cap_bench_loop(instance_id: str = "", model: str = "", goal: str = "",
                     instance_id=instance_id, max_steps=int(max_steps or 6))
     await emit_event({"type": "bench.loop.done", "model": model,
                       "instance_id": instance_id, "profile": profile})
+    # a node switched to vLLM runs the loop on its vLLM server: say which
     return {"ok": not (isinstance(res, dict) and res.get("error")),
             "instance_id": instance_id, "model": model, "profile": profile,
+            "backend": "vllm" if _switched(instance_id) else "ollama",
             "goal": goal, "result": res}
 
 
@@ -2025,6 +2027,9 @@ async def cap_bench_matrix_apply(id: str = "", models: Any = None,
     iid = rec.get("instance_id", "")
     if not _instance_url(iid):
         return {"error": "the node this sweep measured (%s) is no longer registered" % iid}
+    sw = _switched_error(iid)
+    if sw:
+        return sw
     learned = getattr(_orch, "_NODE_MODEL_CTX", None)
     if learned is None:
         return {"error": "this Vera has no learned-window store to write to"}

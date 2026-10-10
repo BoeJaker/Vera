@@ -3651,9 +3651,11 @@ function renderHdrPills(){
   el.innerHTML=Object.entries(instances).map(([iid,i])=>{
     const col=i.status==='online'?'var(--ok)':i.status==='offline'?'var(--err)':'var(--dim)';
     const lat=i.latency_ms!=null?`${i.latency_ms}ms`:'?';
-    return `<div class="hdr-pill" title="${i.url}">
+    /* a node switched to vLLM: its vLLM server answers for it */
+    const vl=i.backend==='vllm'?` <span style="color:var(--acc, #4a9eff)">vLLM</span>`:'';
+    return `<div class="hdr-pill" title="${i.url}${i.backend==='vllm'?' - served by '+(i.served_by||'vLLM'):''}">
       <span class="pill-dot" style="background:${col}"></span>
-      ${i.has_gpu?'⚡':''}${iid} <span style="color:${col}">${lat}</span>
+      ${i.has_gpu?'⚡':''}${iid}${vl} <span style="color:${col}">${lat}</span>
     </div>`;
   }).join('');
   renderOllamaLoad();   // keep the top-strip load meter in sync with the pills

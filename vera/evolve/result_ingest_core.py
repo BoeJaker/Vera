@@ -122,6 +122,7 @@ def _routing(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     return {"coder": (roles.get("coder") or {}).get("model") or "",
             "nodes": calls.get("nodes") or {},
+            **({"backends": calls["backends"]} if calls.get("backends") else {}),
             "spill_calls": int(calls.get("spill_calls") or 0),
             "reroutes": len(calls.get("reroutes") or [])}
 

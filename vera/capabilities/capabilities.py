@@ -2090,12 +2090,24 @@ async def llm_generate(
                 if isinstance(options, dict) and k in options}
         if think is not None:
             _vkw["extra"] = {"chat_template_kwargs": {"enable_thinking": bool(think)}}
+        import time as _tlv
+        _t_lv = _tlv.time()
+        _ts_lv = now_iso()
         try:
             _res = await _vllm_mod.routed_call(
                 "chat", {"pin": _pin}, model=model, prefer_gpu=prefer_gpu,
                 job_type=job_type, stream_cb=_tok, messages=_msgs, max_tokens=None, **_vkw)
         except Exception as _e:
             _res = {"ok": False, "error": f"{type(_e).__name__}: {_e}"}
+        try:
+            from Vera.vera.capability_orchestration import _log_served_elsewhere as _lse
+            _lse("vllm", instance=(_res or {}).get("instance") or _pin, model=(_res or {}).get("model") or model or "",
+                 ts=_ts_lv, t0=_t_lv, caller={"caller_file": "capabilities.py", "caller_func": "llm_generate"},
+                 status="done" if (_res or {}).get("ok") else "error",
+                 error="" if (_res or {}).get("ok") else f"{(_res or {}).get('error')} - fell back to Ollama",
+                 job_type=job_type)
+        except Exception:
+            pass
         if _res and _res.get("ok"):
             _msg = _res.get("result") or {}
             text = _vllm_mod._route_core.strip_think(str(_msg.get("content") or ""))
