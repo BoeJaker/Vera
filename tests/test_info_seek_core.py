@@ -193,3 +193,46 @@ def test_searches_are_spaced_not_sent_in_one_burst():
     assert gaps[0] >= 0.045 and gaps[1] - gaps[0] >= 0.04 and gaps[2] - gaps[1] >= 0.04
     assert "res = await _seek_searches(queries, first_slot=1)" in src and "res = await _seek_searches(queries)\n" in src
     assert 'os.getenv("VERA_SEEK_SPACING_S", "0.5")' in src
+
+
+def _fn_src(path, start, end):
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / path).read_text(encoding="utf-8")
+    return src[src.index(start):src.index(end)], src
+
+
+def test_a_challenge_page_is_not_an_article_and_is_never_cached():
+    # 2026-10-10: MSE's Cloudflare "Just a moment..." came back from reader.page as a read article, cached for a week
+    from vera.web import web_client as wc
+    body, src = _fn_src("browser_capabilities.py", "def _is_challenge", "async def reader_read")
+    ns = {"_wc": wc}
+    exec(body, ns)
+    ch = ns["_is_challenge"]
+    assert ch({"title": "Just a moment...", "markdown": "Enable JavaScript and cookies to continue"})
+    assert ch({"title": "", "markdown": "Checking your browser before accessing the site."})
+    assert not ch({"title": "Bank Rate held at 4%", "markdown": "The MPC voted... " * 40})
+    assert not ch({"title": "Why access denied errors happen", "markdown": "access denied " + "long article " * 400})
+    rd = src[src.index("async def reader_read"):]
+    assert 'page_html, title = ("" if fp.get("block_reason") else fp.get("html") or "")' in rd
+    assert "if rec and _is_challenge(rec):" in rd and rd.index("if rec and _is_challenge(rec):") < rd.index("await _rc.put(")
+    assert 'and not _is_challenge(hit):' in rd                      # a challenge already cached is read again
+
+
+def test_seek_read_reads_the_next_result_when_one_is_blocked():
+    import asyncio
+    body, _ = _fn_src("web_capabilities.py", "async def _seek_read", "async def _seek_rerank")
+    calls = []
+
+    async def fake_call(name, timeout, **kw):
+        calls.append(kw["url"])
+        if "blocked" in kw["url"]:
+            return {"ok": False, "error": "blocked: the page is an anti-bot challenge, not the article"}
+        return {"ok": True, "markdown": "Article text. " * 20, "title": "T", "published": "2026-10-09"}
+    ns = {"asyncio": asyncio, "List": list, "Dict": dict, "Any": object, "_seek_call": fake_call, "_seek": C}
+    exec(body, ns)
+    items = [{"url": "https://a/1"}, {"url": "https://blocked/2"}, {"url": "https://c/3"}, {"url": "https://d/4"},
+             {"url": "https://intel/5", "kind": "intel"}]
+    got = asyncio.run(ns["_seek_read"](items, 3, 200))
+    assert got == 3 and calls == ["https://a/1", "https://blocked/2", "https://c/3", "https://d/4"]
+    assert items[1]["unreadable"].startswith("blocked") and not items[1].get("text")
+    assert items[3]["text"] and items[3]["published"] == "2026-10-09" and "text" not in items[4]

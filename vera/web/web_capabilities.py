@@ -1304,22 +1304,35 @@ async def _searxng_news(query: str, limit: int = 10, time_range: str = "month") 
 
 
 async def _seek_read(items: List[Dict[str, Any]], n: int, chars: int) -> int:
-    """Read the first `n` unread items through the reader (article text, cached), in parallel. Returns how many
-    yielded text. A page's own published date fills one the search did not give."""
-    todo = [it for it in items if not it.get("text") and it.get("url") and it.get("kind") != "intel"][:n]
+    """Read up to `n` items through the reader (article text, cached), in order, in parallel. A page that cannot be
+    read - blocked by an anti-bot challenge, no article - is marked and the next result is read in its place (a
+    second batch), so a blocked site costs one slot, not the answer. A page's own published date fills one the
+    search did not give. Returns how many yielded text."""
+    def candidates():
+        return [it for it in items if not it.get("text") and not it.get("unreadable") and it.get("url")
+                and it.get("kind") != "intel"]
 
     async def one(it):
         r = await _seek_call("reader.page", 25, url=it["url"], max_chars=max(chars * 3, 4000), mode="fetch")
         md = str(r.get("markdown") or "") if r.get("ok") else ""
         if not md.strip():
+            it["unreadable"] = str(r.get("error") or r.get("_error") or "no article")[:80]
             return 0
         it["text"] = _seek.excerpt(md, chars)
         it["title"] = r.get("title") or it.get("title")
         if r.get("published") and not it.get("published"):
             it["published"] = r["published"]
         return 1
-    got = await asyncio.gather(*[one(it) for it in todo], return_exceptions=True)
-    return sum(x for x in got if isinstance(x, int))
+    got = 0
+    for _ in range(2):                       # the first batch, then one refill for what failed
+        todo = candidates()[:max(0, n - got)]
+        if not todo:
+            break
+        res = await asyncio.gather(*[one(it) for it in todo], return_exceptions=True)
+        got += sum(x for x in res if isinstance(x, int))
+        if got >= n:
+            break
+    return got
 
 
 async def _seek_rerank(subject: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
