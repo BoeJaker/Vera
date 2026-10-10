@@ -224,3 +224,19 @@ def test_static_audit_follows_calls_across_modules(tmp_path):
     assert rows["demo.chain"]["calls"] == ["demo.save"]
     eff = fc.static_markers(rows, safe=set())
     assert eff["demo.chain"] == ["calls_hostbound"] and eff["demo.pure"] == []
+
+
+
+def test_a_reviewed_list_scopes_the_drops_too():
+    # 2026-10-10: applying a reviewed batch also dropped every applied cap the
+    # evidence no longer cleared (ui.room) - `only` limited only the adds
+    v = {"a.one": ("vetted", ""), "a.two": ("vetted", ""), "b.room": ("host", "calls_hostbound"),
+         "a.gone": ("host", "x"), "a.unproven": ("unproven", "")}
+    p = fc.plan_vet(v, current={"b.room", "a.gone"}, only=["a.one", "a.unproven"])
+    assert p == {"add": ["a.one"], "drop": [], "not_cleared": ["a.unproven"]}, p
+    # no list: everything the evidence clears is added, everything it no longer clears is dropped
+    p = fc.plan_vet(v, current={"b.room", "a.gone", "a.one"})
+    assert p["add"] == ["a.two"] and p["drop"] == ["a.gone", "b.room"], p
+    # a namespace scopes both sides; a reviewed list naming a cap to drop drops it
+    assert fc.plan_vet(v, current={"b.room", "a.gone"}, namespace="a")["drop"] == ["a.gone"]
+    assert fc.plan_vet(v, current={"b.room"}, only=["b.room"])["drop"] == ["b.room"]
