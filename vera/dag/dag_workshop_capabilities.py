@@ -21613,7 +21613,10 @@ _V6_SLASHPATH_RE = re.compile(r"((?:\.{0,2}/)?(?:[\w.\-]+/)+[\w.\-]+\." + _V6_AR
 # and 44, a whole remediation step each time chasing a file that was never
 # a file. Also drops `config.yaml.bak` -> `config.yaml`, which was the
 # wrong name for a real file rather than a missing one.
-_V6_BAREFILE_RE  = re.compile(r"(?<![\w/.\-])([\w\-]{1,80}\." + _V6_ARTIFACT_EXT + r")(?!\.\w)\b", re.I)
+# `(?<![...%\\])` - a name right after a percent-escape or a backslash is the tail of a link
+# (`%20White.svg` read as `20White.svg`) or of an escape; the student-verify census arm
+# (2026-10-10) was told such files were "MISSING (was NOT written)".
+_V6_BAREFILE_RE  = re.compile(r"(?<![\w/.\-%\\])([\w\-]{1,80}\." + _V6_ARTIFACT_EXT + r")(?!\.\w)\b", re.I)
 # A criterion that is genuinely about a file EXISTING/being produced (gates the
 # hard auto-fail so merely naming a filename in passing never fails a step).
 _V6_FILE_CRIT_RE = re.compile(
@@ -21644,7 +21647,9 @@ def _v6_extract_paths(text: str, *, include_bare: bool = True) -> List[str]:
     existence probe decides truth."""
     if not text:
         return []
-    s = str(text)
+    # a JSON-encoded tool result carries its newlines and tabs as two characters (`\ntest.py`):
+    # read them as text, or the name comes out as `ntest.py`
+    s = str(text).replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
     out: List[str] = []
 
     def _add(p: str) -> None:
@@ -21924,6 +21929,10 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
     crit_paths = _v6_extract_paths(crit)
     claim_paths = _v6_extract_paths(str(res.get("summary") or "")) + _v6_extract_paths(
         " ".join(str(v) for v in list((res.get("outputs") or {}).values())[:8]))
+    # A tool's own absolute path outside the workspace (an operator screenshot under the host's
+    # artifacts dir) is the host's file, not a claim about the sandbox: probing it there reported it
+    # "MISSING (was NOT written)" (census arm 2026-10-10). The criterion's own paths are still checked.
+    claim_paths = [p for p in claim_paths if not (p.startswith("/") and not p.startswith("/workspace"))]
     all_paths = list(dict.fromkeys(crit_paths + claim_paths))
     exist = await _v6_check_paths_exist(session_id, all_paths) if all_paths else {}
     # A criterion path from ANOTHER environment (/tmp/x.md) the loop cannot write to: the
