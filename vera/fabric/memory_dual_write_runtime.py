@@ -154,4 +154,7 @@ async def store_public_memory_with_revision_canary(
         native_timeout_s=None,
         revision_timeout_s=None,
     )
-    return result.native_result
+    # ``MemoryDualWriteCanaryResult`` freezes its internal mapping with a
+    # ``MappingProxyType``.  Capability results cross a JSON boundary, so do
+    # not leak that implementation detail to ``memory.store`` callers.
+    return dict(result.native_result)
