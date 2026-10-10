@@ -1230,6 +1230,23 @@ async def _seek_call(name: str, timeout: float, **kw) -> Dict[str, Any]:
         return {"_error": f"{name}: {str(e)[:120]}"}
 
 
+# Searches one info.seek sends to SearXNG start this far apart (they still overlap). Four at once hit every upstream
+# engine four times in the same instant, and brave / duckduckgo answered this IP with "too many requests" and CAPTCHAs
+# (2026-10-10). Env VERA_SEEK_SPACING_S overrides; 0 sends them together.
+SEEK_SPACING_S = max(0.0, min(5.0, float(os.getenv("VERA_SEEK_SPACING_S", "0.5") or 0.5)))
+
+
+async def _seek_searches(queries: List[str], *, first_slot: int = 0) -> List[Dict[str, Any]]:
+    """web.search for each query, the i-th started (first_slot + i) * SEEK_SPACING_S after the call; results in
+    query order."""
+    async def one(i: int, q: str) -> Dict[str, Any]:
+        delay = (first_slot + i) * SEEK_SPACING_S
+        if delay:
+            await asyncio.sleep(delay)
+        return await _seek_call("web.search", 25, query=q, limit=8, discover="off")
+    return list(await asyncio.gather(*[one(i, q) for i, q in enumerate(queries)]))
+
+
 def _report_seller(title: str, snippet: str) -> bool:
     """Market-research sellers ("... market size, share, CAGR 2026-2033") are not news; intel's rule, reused."""
     try:
@@ -1379,7 +1396,7 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
         queries = _seek.latest_queries(subject, question, now)
         span = "week" if (now - (_seek.parse_date(since) or now)).days <= 8 else "month"
         news_task = asyncio.create_task(_searxng_news(subject, 12, span))
-        res = await asyncio.gather(*[_seek_call("web.search", 25, query=q, limit=8, discover="off") for q in queries])
+        res = await _seek_searches(queries, first_slot=1)        # the news search has slot 0
         try:
             news = await asyncio.wait_for(news_task, 20)
         except Exception:
@@ -1407,7 +1424,7 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
         # cross-encoder judges "does this page answer it"), at most two pages a site, the best pages read
         queries = (_seek.fact_queries(subject, question) if need == "fact"
                    else _seek.overview_queries(subject, question, now))
-        res = await asyncio.gather(*[_seek_call("web.search", 25, query=q, limit=8, discover="off") for q in queries])
+        res = await _seek_searches(queries)
         hits = _seek.merge_hits([r.get("results") or [] for r in res])
         engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
         checked.append(f"web: {len(queries)} searches ({', '.join(engines) or 'no engine answered'}), {len(hits)} results")

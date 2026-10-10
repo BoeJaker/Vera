@@ -170,3 +170,26 @@ def test_the_cap_reads_the_newest_first_and_ranks_facts_against_the_question():
     other = body[body.index("    else:\n        # fact"):body.index("intel = await intel_task")]
     assert "_seek.fact_queries(subject, question)" in other and "await _seek_rerank(question, hits)" in other
     assert "web.research" not in other                    # one question-shaped search was the bank-homepage failure
+
+
+def test_searches_are_spaced_not_sent_in_one_burst():
+    # 2026-10-10: four searches at once hit every upstream engine four times in the same instant; brave and
+    # duckduckgo answered this IP with "too many requests" and CAPTCHAs
+    import asyncio, time
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    fn = src[src.index("async def _seek_searches"):src.index("def _report_seller")]
+    starts = []
+
+    async def fake_call(name, timeout, **kw):
+        starts.append((kw["query"], time.monotonic()))
+        return {"results": [kw["query"]]}
+    ns = {"asyncio": asyncio, "List": list, "Dict": dict, "Any": object, "SEEK_SPACING_S": 0.05, "_seek_call": fake_call}
+    exec(fn, ns)
+    t0 = time.monotonic()
+    out = asyncio.run(ns["_seek_searches"](["a", "b", "c"], first_slot=1))
+    assert [r["results"] for r in out] == [["a"], ["b"], ["c"]]          # results in query order
+    gaps = [round(t - t0, 2) for _, t in sorted(starts, key=lambda x: x[1])]
+    assert gaps[0] >= 0.045 and gaps[1] - gaps[0] >= 0.04 and gaps[2] - gaps[1] >= 0.04
+    assert "res = await _seek_searches(queries, first_slot=1)" in src and "res = await _seek_searches(queries)\n" in src
+    assert 'os.getenv("VERA_SEEK_SPACING_S", "0.5")' in src
