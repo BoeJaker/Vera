@@ -171,6 +171,7 @@ The full signature (keyword-only after `name`):
 | `mcp_expose` | `True` | `False` hides the cap from `GET /mcp/tools` (used by `mcp.tools` and `mcp.call` themselves). It remains callable. |
 | `contract` | `None` | Capability Contract v2 declarations (canonical task, effects, approval, resources, …). Stored as `entry["contract"]`; feeds the policy shadow on every non-silent call. |
 | `compatibility_alias_for` | `None` | Names the canonical capability this one is a compatibility surface for. Must differ from `name` and match `[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}`, otherwise `ValueError` is raised at import. Sets `source="alias"`. |
+| `serves` | `None` | The model this capability runs, or a list of the models it serves (each with a `selector`: the call arguments that pick it), built with `model_binding_core.binding(...)`. Each says what the model is for (`uses`, required) and when not to use it (`limits`); these are appended to the description. Stored as `entry["models"]`. An invalid binding is logged and dropped, never raised. See [Callable models](#callable-models-serves). |
 
 Helpers exported beside the decorator:
 
@@ -309,6 +310,7 @@ decorator looks like this:
         "redact_args":   [],
         "redact_result": False,
         "contract":      {},               # deep copy of contract=
+        "models":        [],               # validated serves= bindings, each with id and cap
         "http_method":   "POST",
         "http_path":     "/math/add",
         "http_tags":     ["math"],
@@ -338,6 +340,50 @@ sibling capability without generating events.
 | `SCHEDULED_TASKS` | `{fn, int, name, last, runs, skip_in_sandbox, singleton}` | `GET /scheduler` |
 | `PENDING_RESULTS` | `task_id → Future` for dispatched calls awaiting a reply | `GET /pending` |
 | `STREAM_SUBS` | In-process `emit_stream` subscribers | — |
+
+### Callable models (`serves=`)
+
+A model Vera can use is a model reachable through a capability, so the
+capability declares it. There is no separate model registry: the list of
+callable models is a view over the registry entries' `models`, plus the LLMs
+the routing system can pick.
+
+```python
+from Vera.vera.model_binding_core import binding
+
+@capability("nlp.ner", serves=[
+    binding("ner", "nlp", selector={"task": "ner"}, io_out="spans", placement="nlp",
+            uses="Find named entities in English text, including DATE and MONEY ...",
+            limits="other languages (use ner_multi)."),
+    binding("ner", "gliner", selector={"task": "gliner"}, io_in="text+labels", io_out="spans",
+            placement="nlp", uses="Zero-shot entities of any type named at call time ..."),
+])
+async def cap_nlp_ner(text: str = "", task: str = "ner", ...): ...
+```
+
+| Field | Meaning |
+|---|---|
+| `task`, `family` | What the model does, and how it is run (`nlp`, `fastembed`, `gliner`, `spacy`, `onnx`, `ollama`, `llama-server`, `vllm`, `sklearn`, `knn`, `rules`). |
+| `uses` (required), `limits` | When to pick it and when not to, in sentences an LLM can act on. |
+| `selector` | The call arguments that pick this model on a capability serving several. Required on each binding when there is more than one. |
+| `model` | The model id. Empty means it is resolved at view time: for `nlp.*`, from `nlp_dispatch_core.DEFAULT_MODELS`, which a node may override. |
+| `io` | Coarse input/output kinds (`text`, `pair`, `text+labels`, `spans`, `label(s)`, `scores`, `vector(s)`, `answer`, `state` …). |
+| `labels`, `questions`, `tier` | A classifier's label set; the decision question ids it can answer; its System 1 cascade tier (1 rules … 5 big LLM). |
+| `placement`, `package_id`, `served_as` | Where it runs; its ModelPackage id when packaged; the key a server reports it under (default: `selector["task"]` or `task`). |
+
+The keyword is `serves`, not `model`: `model` is the LLM routing system's
+argument (per-cap routing rules pin a `model`; `llm.generate` takes
+`model=`). Each binding's id is `<cap>` or `<cap>:<selector values>`
+(`nlp.ner:gliner`), stable enough to serve as a decision ledger's
+implementation id.
+
+`model.callable` (`GET /models/callable`) returns the view: every binding with
+the call that reaches it, its uses and limits, the model id, the nodes it is
+loaded or present on (node `/models`), and its specialist-catalog id if it can
+be installed. It also lists the LLMs the routing system can pick (`llm.generate`
+with `model=<name>`), whose uses come from the operator's purpose tags
+(`ollama.model_tags.*`); an untagged LLM says so. Filters: `task`, `family`,
+`question`, `search`. Binding problems are listed under `errors`.
 
 ### Duplicate names
 
