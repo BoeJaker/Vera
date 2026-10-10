@@ -77,6 +77,10 @@ import random
 import sqlite3
 import time
 from collections import defaultdict, Counter
+try:                                                   # FM-8.3 curated corpus (pure)
+    from Vera.vera.worldview import worldview_corpus_core as _wv_corpus
+except Exception:                                      # worktree / app-free import
+    from vera.worldview import worldview_corpus_core as _wv_corpus   # type: ignore
 try:                                                   # FM-8.2 held-out evaluation and step cap (pure)
     from Vera.vera.worldview import worldview_eval_core as _wv_eval
 except Exception:                                      # worktree / node / app-free import
@@ -689,6 +693,8 @@ class WorldView:
         self.transition_counts: Dict[Tuple[int, int], int] = {}
         # the last training's held-out next-concept evaluation (worldview_eval_core.verdict) - health reads it
         self.held_out: Dict[str, Any] = {}
+        # the realised mix of the records it was last trained on (worldview_corpus_core.mix) - FM-8.3's exit
+        self.corpus: Dict[str, Any] = {}
         self.last_fabric_persist: str = ""
         self.last_fabric_load:    str = ""
         self._last_revived:       int = 0
@@ -1098,6 +1104,7 @@ class WorldView:
             "transition_counts": {f"{a},{b}": n
                                    for (a, b), n in self.transition_counts.items()},
             "held_out":          dict(self.held_out or {}),
+            "corpus":            dict(self.corpus or {}),
             # when this checkpoint was written: health's checkpoint age survives a restart
             "saved_at":          self.last_fabric_persist or now_iso(),
             "config": {
@@ -1166,6 +1173,7 @@ class WorldView:
         self.record_concepts = ckpt.get("record_concepts", {})
         self.record_meta     = ckpt.get("record_meta", {})
         self.held_out        = dict(ckpt.get("held_out") or {})
+        self.corpus          = dict(ckpt.get("corpus") or {})
         if not self.last_fabric_persist and ckpt.get("saved_at"):
             self.last_fabric_persist = str(ckpt["saved_at"])
         tc = ckpt.get("transition_counts", {})
@@ -1255,6 +1263,7 @@ class WorldView:
             "labelled_concepts": len(self.concept_labels),
             "transitions_observed": len(self.transition_counts),
             "held_out":         dict(self.held_out or {}),
+            "corpus":           dict(self.corpus or {}),
             "last_fabric_persist": self.last_fabric_persist,
             "last_fabric_load":    self.last_fabric_load,
             "active_subview":      _WV_ACTIVE_SUBVIEW,
@@ -3052,6 +3061,37 @@ async def _chroma_existing_ids(dataset_id: str = "") -> set:
         return set()
 
 
+async def _curated_corpus_ids(limit: int) -> Dict[str, Any]:
+    """FM-8.3: record ids for training, stratified by collector family (worldview_corpus_core.plan), from the
+    fabric's SQLite - never a filtered Chroma scan (a where-filter scans the whole collection). Each family's
+    quota is oversampled (not every record has a vector yet); build_graph fetches the vectors by id."""
+    fab = _get_fabric()
+    if not fab:
+        return {"ids": [], "error": "data_fabric not loaded"}
+    exclude = tuple(_WV_CONFIG.get("corpus_exclude") or _wv_corpus.SELF_TELEMETRY)
+    cap = float(_WV_CONFIG.get("corpus_family_cap", _wv_corpus.FAMILY_CAP))
+    over = float(_WV_CONFIG.get("corpus_oversample", 2.0))
+
+    def _pick():
+        conn = fab._sqlite_conn()
+        counts = {r[0]: int(r[1]) for r in conn.execute(
+            "SELECT dataset_id, count(*) FROM fabric_records WHERE text IS NOT NULL AND text != '' "
+            "GROUP BY dataset_id").fetchall() if r[0]}
+        p = _wv_corpus.plan(counts, int(limit), exclude, cap)
+        ids: List[str] = []
+        for fam, q in p["quotas"].items():
+            ds = p["datasets"].get(fam) or []
+            if not q or not ds:
+                continue
+            marks = ",".join("?" for _ in ds)
+            ids += [r[0] for r in conn.execute(
+                f"SELECT id FROM fabric_records WHERE dataset_id IN ({marks}) AND text IS NOT NULL AND text != '' "
+                f"ORDER BY random() LIMIT ?", (*ds, int(q * over))).fetchall()]
+        return {"ids": ids, "quotas": p["quotas"], "excluded": p["excluded"], "eligible": p["eligible"]}
+
+    return await asyncio.get_running_loop().run_in_executor(None, _pick)
+
+
 async def _sqlite_records_for_dataset(dataset_id: str = "",
                                        limit: int = 50000,
                                        exclude_ids: Optional[set] = None
@@ -3848,7 +3888,26 @@ async def cap_worldview_train(
                                 f"{len(resolved_node_ids)} FabricRecord IDs",
                         original=len(node_ids), resolved=len(resolved_node_ids))
 
+    if not dataset_id and not resolved_node_ids and _WV_CONFIG.get("curated_corpus", True):
+        # FM-8.3: "all datasets" is a stratified pick, not the first `limit` vectors in storage order
+        try:
+            cur = await _curated_corpus_ids(limit)
+        except Exception as e:
+            cur = {"ids": [], "error": str(e)}
+        if cur.get("ids"):
+            resolved_node_ids = cur["ids"]
+            await _emit("corpus", families=len(cur.get("quotas") or {}), picked=len(cur["ids"]),
+                        excluded=len(cur.get("excluded") or []),
+                        message=f"Curated corpus: {len(cur['ids'])} records from {len(cur.get('quotas') or {})} "
+                                f"families (<= {int(100 * _WV_CONFIG.get('corpus_family_cap', _wv_corpus.FAMILY_CAP))}% "
+                                f"each), {len(cur.get('excluded') or [])} self-telemetry datasets left out")
+        else:
+            await _emit("corpus", message="Curated corpus unavailable - all datasets in storage order "
+                                          f"({cur.get('error') or 'no eligible records'})")
     graph = await build_graph(dataset_id, limit=limit, node_ids=resolved_node_ids)
+    if graph.get("rids"):
+        MODEL.corpus = _wv_corpus.mix((graph.get("records") or {}).get(r, {}).get("dataset_id", "")
+                                      for r in graph["rids"])
     if not graph.get("rids"):
         diag = await _diagnose_no_records(dataset_id)
         return {"error": "No records with embeddings found",
@@ -5435,6 +5494,9 @@ _WV_CONFIG: Dict[str, Any] = {
     "target_ema_decay":   0.996,
     "held_out":           0.2,         # FM-8.2: share of walks held back for the next-concept evaluation
     "label_min_members":  5,           # FM-8.2: no LLM label for a concept with fewer members
+    "curated_corpus":     True,        # FM-8.3: "all datasets" = a stratified pick by collector family
+    "corpus_family_cap":  0.15,        # FM-8.3: no family above this share of the pick
+    "corpus_oversample":  2.0,         # FM-8.3: ids sampled per quota (not every record has a vector)
     "auto_label":         True,        # auto-label concepts after training
     "auto_label_k":       50,          # max concepts to auto-label
 }
