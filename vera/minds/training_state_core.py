@@ -19,7 +19,9 @@ import re
 from typing import Any, Callable, Dict, Iterable, Optional, Set
 
 # surface -> stored by default. The owner turns a surface on or off (VERA_TRAINING_STATE_SURFACES).
-SURFACE_DEFAULTS: Dict[str, bool] = {"loop": True, "chat": False, "intel": False, "memory": False}
+# discovery: the drift guard's page verdicts (public web excerpts), labelled for the FM-7.5 200-page set
+SURFACE_DEFAULTS: Dict[str, bool] = {"loop": True, "chat": False, "intel": False, "memory": False,
+                                     "discovery": True}
 RETENTION_DAYS = 90
 MAX_FIELD = 4000          # characters kept of any one string
 MAX_LIST = 30             # items kept of any one list
