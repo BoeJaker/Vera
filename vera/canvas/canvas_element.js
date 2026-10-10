@@ -4135,7 +4135,14 @@
             const of = (p) => { let i = P.indexOf(p); if (i < 0) i = P.indexOf('all'); if (i < 0) return ''; const d = Du[i % Du.length]; return parseFloat(d) > 0 ? p + ' ' + d + ' ' + Tf[i % Tf.length] + ' ' + De[i % De.length] : ''; };
             tr = [of('left'), of('top')].filter(Boolean).join(', ') || 'none'; }
         }
+        /* A GRAPH ARRIVING ON THE DESK IS SHOWN ONCE IT IS STILL (owner, 2026-10-10: "the graphs still flicker when they
+           first enter the desk"): its card grows in over a third of a second, and the graph was redrawn at each size on
+           the way - measured, 4-5 sizes and 2-4 blank frames in its first 0.76 s. Its drawing stays unseen until its box
+           has not changed for a moment (its last refit done), then fades in. */
+        if (!el._at && el.dataset.kind === 'rgraph' && this.deskAlign() && el.firstChild) { el._fading = true; el.firstChild.style.transition = 'opacity .18s'; el.firstChild.style.opacity = '0'; }
         el._at = true;
+        if (el._fading && el._fadeSz !== w + 'x' + ht) { el._fadeSz = w + 'x' + ht; clearTimeout(el._fadeT);   /* restarted only by a change of size */
+          el._fadeT = setTimeout(() => { el._fading = false; el._fadeSz = ''; if (el.firstChild) el.firstChild.style.opacity = ''; }, 480); }
         if (el.style.transition !== tr) el.style.transition = tr;
         el.style.display = ''; el.style.left = lx + 'px'; el.style.top = ly + 'px';
         /* THE LIVE LAYER IS NOT INSIDE THE CARD, so the card's own clipping never reached it: a widget whose slot ran

@@ -1028,7 +1028,8 @@
     if (typeof ResizeObserver !== 'undefined') {
       new ResizeObserver(function(){ resize(); state._dirty = true;
         /* calm: a new box is a new frame for the same settled layout - fitted, not re-simulated */
-        if (opts.calm && state.frozen && !state.stopped) { try { fitView(); draw(); state._dirty = false; } catch(e){} return; }   /* drawn now: a resized canvas is blank until it is */
+        /* drawn now: a resized canvas is blank until it is. Calm is still after any resize, whatever it was doing */
+        if (opts.calm && !state.stopped && state.nodes.length) { state.frozen = true; state.settleCycles = 0; try { fitView(); draw(); state._dirty = false; } catch(e){} return; }
         if (!state.stopped) { state.frozen = false; state.tickCount = 0; } else { startTick(); } }).observe(canvas);
     }
 
