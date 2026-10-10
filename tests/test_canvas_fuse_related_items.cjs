@@ -84,7 +84,7 @@ t('the live layer needs nothing new: it mounts by the slot\'s key, wherever the 
   /body\.querySelectorAll\('#items \.vc-live\[data-live\]'\)/.test(SRC));
 t('a control INSIDE a pane acts on the pane\'s item, not on the lead it is drawn in',
   /const pane = btn\.closest\('\.fu-p\[data-key\]'\);/.test(SRC)
-  && /const key = pane \? pane\.dataset\.key : it \? it\.dataset\.key : '';/.test(SRC));
+  && /const key = btn\.dataset\.layerKey \|\| \(pane \? pane\.dataset\.key : it \? it\.dataset\.key : ''\);/.test(SRC));
 t('split takes one item back out, and is kept here rather than written to the canvas',
   /\(this\._split \|\| \(this\._split = new Set\(\)\)\)\.add\(String\(pane\.dataset\.key\)\);/.test(SRC)
   && /const except = \{\}; \(this\._split \|\| new Set\(\)\)\.forEach/.test(SRC));
@@ -105,7 +105,7 @@ t('a strip flows its panes at the width each one needs', /\.it-bd\.fu-strip\{fle
 /* ── 7. the reader's own switch ──────────────────────────────────────────────────────────────────────────────── */
 t('fuse is an attribute of the element, defaulting to on',
   /String\(this\.getAttribute\('fuse'\) \|\| 'on'\)\.toLowerCase\(\) === 'off'/.test(SRC)
-  && /'explode-offer', 'fuse'\]/.test(SRC)
+  && /'explode-offer', 'fuse', 'chat-side'/.test(SRC)
   && /name === 'fuse'\) && this\._doc\) this\.render\(this\._doc\)/.test(SRC));
 t('and a setting in the canvas\'s own settings, which is how it gets there',
   /id="cfgCvFuse"[\s\S]*?value="on"[\s\S]*?value="off"/.test(CHAT) && /cfgCvFuse:\['fuse','on'\]/.test(CHAT));
