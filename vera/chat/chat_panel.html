@@ -16406,9 +16406,20 @@ function _embedMount(){
     try{ const ov=document.getElementById('ctxRunsOverlay'); if(ov&&ov.parentNode!==document.body) document.body.appendChild(ov); }catch(_){}   // the runs overlay out of the hidden column, over the menu's viewport
     // and the Settings page with it: the menu is where it is opened from, and where it was drawn 0x0
     try{ const sp=document.getElementById('settingsPage'); if(sp&&sp.parentNode!==document.body) document.body.appendChild(sp); }catch(_){}
-    window.addEventListener('storage', ev=>{ if(ev.key==='vera_session_id'&&ev.newValue&&ev.newValue!==SID){ try{ loadSession(ev.newValue); }catch(_){} } });
+    /* THE MENU FOLLOWS ITS OWN CHAT, NOT THE LAST TAB TO SPEAK (owner, 2026-10-10: "the memory graph in the chat's LHM is
+       not fixed and its still not displaying anything"). The stored session id and the broadcast channel are shared by
+       every tab of the site, so with a second Vera tab open the menu followed whichever tab changed session last - the
+       chat beside it in session A, its memory graph reading session B, a new empty one (measured on the design mirror:
+       the chat in chat-1791657382133, 4 memory nodes; the menu loading chat-1791657399723, 0). The chat frame beside
+       it in the same page is read directly and wins; the shared signals count only when there is no such frame. */
+    const _sibChatSid=()=>{ try{ const P=window.parent; if(!P||P===window) return ''; for(let i=0;i<P.frames.length;i++){ const f=P.frames[i]; if(f===window) continue;
+        try{ if(/[?&]only=chat(&|$)/.test(f.location.search) && f._chatSessionId) return String(f._chatSessionId); }catch(_){} } }catch(_){} return ''; };
+    const _followSid=(sid)=>{ const sib=_sibChatSid(); const want=sib||sid; if(want&&want!==SID){ try{ loadSession(want); }catch(_){} } };
+    window.addEventListener('storage', ev=>{ if(ev.key==='vera_session_id'&&ev.newValue) _followSid(ev.newValue); });
+    setTimeout(()=>_followSid(''), 600); setInterval(()=>{ const s=_sibChatSid(); if(s&&s!==SID) _followSid(s); }, 3000);   // a message missed while this frame loaded
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from==='menu') return; const a=m.args||{};
-      if(m.act==='session'&&a.sid&&a.sid!==SID){ try{ loadSession(a.sid); }catch(_){} }
+      if(m.act==='session'&&a.sid&&a.sid!==SID){ const sib=_sibChatSid(); if(!sib||sib===a.sid) _followSid(a.sid); }
+      if(m.act!=='session'&&m.sid&&SID&&m.sid!==SID) return;   /* another tab's chat, in another session: not this menu's */
       else if(m.act==='ctx'){ CTX_NODES=Array.isArray(a.nodes)?a.nodes:[]; CTX_EDGES=Array.isArray(a.edges)?a.edges:[]; _ctxQuery=a.query||''; if(a.mid) _grFocusMid=a.mid; try{ renderCtxGraph(); renderCtxList(); renderFabPane(); }catch(_){} const cc=document.getElementById('ctxCount'); if(cc) cc.textContent=CTX_NODES.length+' ctx'; const empty=document.getElementById('ctxEmpty'); if(empty) empty.style.display=CTX_NODES.length?'none':'flex'; if(_ctxGrown){ _ctxColSig=''; try{ _ctxColumnSync(a.mid||''); }catch(_){} } }
       /* The turn in view, from the instance that has the transcript. An EMPTY mid is a real value — "the chat is
          at the bottom with a question being typed, show the live set" — so this no longer requires a.mid, which
