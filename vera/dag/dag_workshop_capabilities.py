@@ -24493,7 +24493,7 @@ async def cap_dag_agent_loop_v6(
     # or a specialised agentic model driving the loop. CPU-slow - chosen, never defaulted.
     controller_model:   str  = "",
     controller_node:    str  = "auto",
-    # info-first: info.seek + intel.lookup lead the catalogue for a goal that needs the outside
+    # info-first: info.seek leads the catalogue for a goal that needs the outside
     # world (_V5_INFO_FIRST_CAPS). Off by default until measured.
     info_first:         bool = False,
     # The loop's other LLM stages on chosen models/nodes, e.g. the CPU MoE for the verifier
