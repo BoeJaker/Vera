@@ -231,20 +231,9 @@ async def ops_node_events(node: str = "", limit: int = 60, trace_id=None) -> Dic
 
 
 # ── the live stream: one reader of the event stream however many pages listen, each event attributed to its nodes ──
-LIVE_BATCH_S = 0.5          # events go out in batches at most this often
+LIVE_POLL_S = 1.0           # the ring is read this often while anyone listens; its new events go out as one batch
 LIVE_IDLE_S = 30.0          # the reader stops this long after the last listener leaves
 _live: Dict[str, Any] = {"subs": set(), "task": None, "ctx": None, "ctx_of": None, "workers": None}
-
-
-def _live_redis():
-    """The connected Redis client and its event stream's key, from obs.events' own module - the capability that reads
-    the ring is the one place sure to see the client the server connected. (The orchestrator's module body can run
-    under more than one name; the copy this module imports never connected on the mirror.)"""
-    import inspect
-    fn = (_orch.CAPABILITY_REGISTRY.get("obs.events") or {}).get("func")
-    g = getattr(inspect.unwrap(fn), "__globals__", {}) if fn else {}
-    r = g.get("REDIS") or getattr(_orch, "REDIS", None)
-    return r, g.get("EVENT_STREAM") or _orch.EVENT_STREAM, g.get("STREAM_BLOCK_MS") or _orch.STREAM_BLOCK_MS
 
 
 def _live_ctx():
@@ -261,8 +250,15 @@ def _live_ctx():
     return _live["ctx"]
 
 
+def _ev_key(e: Dict[str, Any]) -> tuple:
+    return (str(e.get("ts") or ""), str(e.get("type") or ""), str(e.get("trace_id") or e.get("task") or e.get("req_id") or e.get("name") or e.get("node_id") or ""))
+
+
 async def _live_pump() -> None:
-    last, idle = "$", None
+    """One reader for every listener: the ring through obs.events (the capability that is sure to hold the server's
+    Redis client - the orchestrator module this one imports may be a copy that never connected), once a second, the
+    events not seen at the last read handed on oldest first."""
+    seen, idle = None, None
     try:
         while True:
             if not _live["subs"]:
@@ -272,33 +268,23 @@ async def _live_pump() -> None:
                 await asyncio.sleep(1.0)
                 continue
             idle = None
-            R, stream, block = _live_redis()
-            if R is None:
-                await asyncio.sleep(5.0)
-                continue
-            try:
-                res = await R.xread({stream: last}, count=500, block=block)   # under the shared client's socket timeout
-            except Exception as e:  # noqa: BLE001 - redis away for a moment: wait, then read on
-                log.debug("ops live: %s", e)
+            ev = await _read("obs.events", 4.0, limit=300)
+            if not isinstance(ev, list):
                 await asyncio.sleep(2.0)
                 continue
-            rows = []
-            for _name, msgs in res or []:
-                for mid, fields in msgs:
-                    last = mid
-                    try:
-                        rows.append(json.loads(fields[b"data"] if b"data" in fields else fields["data"]))
-                    except Exception:  # noqa: BLE001 - a malformed event is skipped
-                        pass
+            rows = [e for e in ev if isinstance(e, dict)]
+            keys = {_ev_key(e) for e in rows}
+            new = [] if seen is None else [e for e in rows if _ev_key(e) not in seen]
+            seen = keys
             ctx = _live_ctx()
-            if rows and ctx is not None:
-                recs = core.live_records(rows, ctx)
+            if new and ctx is not None:
+                recs = core.live_records(list(reversed(new)), ctx)
                 if recs:
                     msg = json.dumps(recs, separators=(",", ":"), default=str)
                     for q in list(_live["subs"]):
                         if q.qsize() < 40:      # a listener that stopped reading loses batches, not memory
                             q.put_nowait(msg)
-            await asyncio.sleep(LIVE_BATCH_S)
+            await asyncio.sleep(LIVE_POLL_S)
     finally:
         _live["task"] = None
 
