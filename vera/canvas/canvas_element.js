@@ -166,6 +166,38 @@
   /* a page's names as graph node types (the Vera graph colours by type) */
   const ENT_NODE = { PERSON: 'Person', ORG: 'Organisation', GPE: 'Place', LOC: 'Place', FAC: 'Place', NORP: 'Group', PRODUCT: 'Product',
                      EVENT: 'Event', WORK_OF_ART: 'Work', LAW: 'Law', TICKER: 'Ticker' };
+  /* MORE THINGS AS A GRAPH (owner, 2026-10-10: "id like to be able to open more things as a graph in the element style
+     selector alongside cards and list"). Each kind says how its content is a graph; the records item's graph slot (still,
+     fitted, filling its card) draws it. Ids avoid the records graph's own (r: / e:), so a pick never browses a list. */
+  const tableCats = (c) => { const cols = c.columns || [], rows = (c.rows || []).filter(Array.isArray); const out = [];
+    for (let j = 1; j < cols.length; j++) { const vals = rows.map((r) => String(r[j] == null ? '' : r[j]).trim()).filter((v) => v && v.length <= 40);
+      const uniq = new Set(vals); if (vals.length >= 2 && uniq.size >= 1 && uniq.size < vals.length) out.push(j); } return out; };
+  function graphOf(b) {
+    const c = (b && b.content) || {}; const nodes = [], edges = [], seen = {};
+    const node = (n) => { if (seen[n.id]) return; seen[n.id] = 1; nodes.push(n); };
+    if (b.type === 'table') {
+      const cols = c.columns || [], rows = (c.rows || []).filter(Array.isArray).slice(0, 80), cats = tableCats(c);
+      node({ id: 'root', label: String(c.caption || 'table').slice(0, 40), type: 'Query', r: 15, props: { title: String(c.caption || '') } });
+      rows.forEach((r, i) => { const rid = 'row:' + i; node({ id: rid, label: String(r[0] == null ? 'row ' + (i + 1) : r[0]).slice(0, 40), type: 'FabricRecord', r: 9,
+        props: Object.fromEntries(cols.map((h, j) => [String(h || 'col ' + j), r[j]])) });
+        let linked = false;
+        cats.forEach((j) => { const v = String(r[j] == null ? '' : r[j]).trim(); if (!v || v.length > 40) return; const vid = 'v:' + j + ':' + v.toLowerCase();
+          node({ id: vid, label: (cols[j] ? cols[j] + ': ' : '') + v, type: 'Tag', r: 11, props: { name: v, column: cols[j] } }); edges.push({ from: rid, to: vid, rel: String(cols[j] || '') }); linked = true; });
+        if (!linked) edges.push({ from: 'root', to: rid, rel: 'row' }); });
+      cats.forEach((j) => { nodes.filter((n) => n.id.indexOf('v:' + j + ':') === 0).forEach((n) => edges.push({ from: 'root', to: n.id, rel: String(cols[j] || ''), dashed: true })); });
+    } else if (b.type === 'entities') {
+      node({ id: 'root', label: String(c.title || 'Mentioned').slice(0, 40), type: 'Query', r: 15, props: { title: String(c.title || '') } });
+      (Array.isArray(c.groups) ? c.groups : []).forEach((g, gi) => { const gid = 'g:' + gi; node({ id: gid, label: String(g.group || 'names'), type: 'Dataset', r: 12, props: { name: g.group } }); edges.push({ from: 'root', to: gid, rel: 'names' });
+        (Array.isArray(g.entities) ? g.entities : []).forEach((e, ei) => { const nid = 'n:' + gi + ':' + ei; node({ id: nid, label: String(e.text || ''), type: 'Entity', r: Math.min(16, 6 + 2 * (e.count || 1)), props: { name: e.text, type: e.type, count: e.count, text: (e.sentences || []).join(' ') } }); edges.push({ from: gid, to: nid, rel: String(e.type || '') }); }); });
+    } else if (b.type === 'kv') {
+      const f = c.fields || c.data || {}; const rows = Array.isArray(f) ? f : Object.keys(f).map((k) => [k, f[k]]);
+      node({ id: 'root', label: String(c.title || 'record').slice(0, 40), type: 'Query', r: 15, props: { title: String(c.title || '') } });
+      rows.slice(0, 40).forEach((r, i) => { const v = r && r[1]; const s = v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+        node({ id: 'f:' + i, label: (String(r && r[0]) + ': ' + s).slice(0, 44), type: 'Tag', r: 8, props: { name: String(r && r[0]), value: s.slice(0, 400) } }); edges.push({ from: 'root', to: 'f:' + i, rel: 'field' }); });
+    }
+    return { nodes, edges };
+  }
+  const graphSlot = (key) => `<div class="vc-tv-graph"><div class="vc-live" data-live="rgraph" data-key="${esc(key || '')}"><span class="vc-dim">drawing the graph…</span></div></div>`;
   function recGraph(c, bodies, ents) {
     const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object').slice(0, 80);
     const nodes = [], edges = [], seen = {};
@@ -705,6 +737,7 @@
       /* the table's other views (see VIEWS): each row a card (its first cell the title, the rest named), a list (the first
          cell, the rest on a line under it), or a chart of its first column of numbers */
       const view = rows.length ? viewOf(el, key, tableDefault(c, el)) : 'table';
+      if (view === 'graph' && tableCats(c).length) return graphSlot(key) + (c.caption ? `<div class="vc-cap">${esc(c.caption)}</div>` : '');
       const cell = (v) => esc(v == null ? '' : String(v));
       if (view === 'cards' || view === 'list') {
         return `<div class="vc-tv vc-tv-${view}">` + rows.filter(Array.isArray).map((r) => `<div class="vc-tv-r"><b class="vc-tv-t">${cell(r[0])}</b>`
@@ -843,6 +876,7 @@
       const groups = Array.isArray(c && c.groups) ? c.groups : [];
       if (!groups.length) return '<div class="vc-dim">nothing named</div>';
       const open = (el && el._entOpen && el._entOpen[key]) || '';
+      if (viewOf(el, key, 'chips') === 'graph') return graphSlot(key);
       /* the names as a list (see VIEWS): one per row - the name, what it is, how often - each opening as its chip does */
       if (viewOf(el, key, 'chips') === 'list') return '<div class="vc-ent vc-ent-list" data-w="canvas.entities">' + groups.map((g, gi) => `<div class="vc-ent-gl">${esc(g.group || '')}</div>`
         + (Array.isArray(g.entities) ? g.entities : []).map((e, ei) => `<button class="vc-ent-row${open === gi + ':' + ei ? ' on' : ''}" data-act="entopen" data-ent="${gi}:${ei}"><b>${esc(e.text)}</b><span>${esc(e.type || '')}</span>${e.count > 1 ? `<i>${e.count}×</i>` : ''}</button>`).join('')).join('') + '</div>';
@@ -864,9 +898,10 @@
       return '<div class="vc-json" data-w="canvas.json">' + (c && c.title ? '<div class="vc-json-t">' + esc(c.title) + '</div>' : '') + jsonTree(data, 0) + '</div>';
     },
     // a record: its fields, name beside value
-    kv: (c) => {
+    kv: (c, size, key, el) => {
       const f = (c && (c.fields || c.data)) || {};
       const rows = Array.isArray(f) ? f : Object.keys(f).map((k) => [k, f[k]]);
+      if (rows.length >= 3 && viewOf(el, key, 'fields') === 'graph') return graphSlot(key);
       return '<div class="vc-kv" data-w="canvas.kv">' + (c && c.title ? '<div class="vc-json-t">' + esc(c.title) + '</div>' : '')
         + rows.slice(0, 80).map((r) => { const v = r && r[1]; const s = v == null ? '\u2014' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
           return '<div class="kv-r"><span class="kv-k">' + esc(String(r && r[0])) + '</span><span class="kv-v' + (v === true ? ' yes' : v === false ? ' no' : '') + '">' + esc(s.slice(0, 600)) + '</span></div>'; }).join('')
@@ -1577,6 +1612,13 @@
   .vc-act-l .ar{font-family:var(--mono,monospace);font-size:10px;color:var(--dim,#8b93a1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .vc-act-l .pk{font-size:11px;line-height:1.45;color:color-mix(in srgb,var(--fg,#dce1e8) 72%,transparent);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
   @media (prefers-reduced-motion: reduce){ .vc-act-l li.running .ic,.vc-act.st-running .vc-act-dot{animation:none} }
+  /* another kind seen as a graph (graphOf): the records graph's slot, filling what it is given */
+  .vc-tv-graph{display:flex;flex-direction:column;gap:3px;min-height:0}
+  .vc-tv-graph > .vc-live{height:300px}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-tv-graph{flex:1 1 auto;min-height:0}
+  .it:is(.sized,.openin,.maxed) > .it-bd > .vc-tv-graph > .vc-live{flex:1 1 auto;height:auto!important;min-height:160px}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip) > .it-bd:not(.fu) > .vc-tv-graph{flex:1 1 auto;min-height:0}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip) > .it-bd:not(.fu) > .vc-tv-graph > .vc-live{flex:1 1 auto;height:auto!important;min-height:60px}
   /* the table's other views, and the names as a list */
   .vc-tv-list{display:flex;flex-direction:column}
   .vc-tv-list .vc-tv-r{display:flex;flex-direction:column;gap:2px;padding:7px 4px;border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 60%,transparent)}
@@ -2487,13 +2529,14 @@
     graph: '<circle cx="4" cy="11.5" r="1.6"/><circle cx="8" cy="4" r="1.6"/><circle cx="12.5" cy="10" r="1.6"/><path d="M4.8 10.1l2.4-4.7M9.2 5.2l2.6 3.4M5.6 11.3l5.3-1"/>',
     chart: '<path d="M3 13V8M6.5 13V4M10 13V9.5M13.5 13V6"/>',
     chips: '<rect x="2" y="3.5" width="6" height="3.5" rx="1.75"/><rect x="9" y="3.5" width="5" height="3.5" rx="1.75"/><rect x="2" y="9" width="8" height="3.5" rx="1.75"/>',
+    fields: '<path d="M3 4.5h3M3 8h3M3 11.5h3M8 4.5h5M8 8h5M8 11.5h5"/>',
   });
   /* VIEWS - THE SAME THING, SEEN ANOTHER WAY (owner, 2026-10-10: "the elements used to be able to swap from graph to card to
      list can you extend this out to all compatible canvas/desk elements - i cant see the option to do it on most elements").
      A kind that can be seen more than one way says how: records (graph · list · cards · table), a table (table · cards ·
      list · chart when a column is numbers), the names a reply mentions (chips · list). The choice is the reader's, per
      item, kept in this browser; a records item's lives with its other browsing state. */
-  const VIEW_LABEL = { list: 'List', cards: 'Cards', table: 'Table', graph: 'Graph', chart: 'Chart', chips: 'Chips' };
+  const VIEW_LABEL = { list: 'List', cards: 'Cards', table: 'Table', graph: 'Graph', chart: 'Chart', chips: 'Chips', fields: 'Fields' };
   const viewStore = (el) => { if (el._views) return el._views; try { el._views = JSON.parse(localStorage.getItem('vera:canvas:views:' + el.canvasId) || '{}') || {}; } catch (e) { el._views = {}; } return el._views; };
   const viewOf = (el, key, dflt) => (el && key && viewStore(el)[key]) || dflt;
   const viewSet = (el, key, v) => { const m = viewStore(el); m[key] = v; try { localStorage.setItem('vera:canvas:views:' + el.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } };
@@ -2505,8 +2548,9 @@
   /* the views an item offers, and the one it shows: [] when it has only one way to be seen */
   const viewsOf = (b, el) => { const c = (b && b.content) || {}, key = String((b && b.key) || '');
     if (b.type === 'records') { const v = (recCanGraph(c, el, key) ? ['graph'] : []).concat(['list', 'cards', 'table']); return { views: v, cur: recState(el, key).view || 'list' }; }
-    if (b.type === 'table' && Array.isArray(c.rows) && c.rows.length) { const v = ['table', 'cards', 'list'].concat(numCol(c) > 0 ? ['chart'] : []); return { views: v, cur: viewOf(el, key, tableDefault(c, el)) }; }
-    if (b.type === 'entities' && Array.isArray(c.groups) && c.groups.length) return { views: ['chips', 'list'], cur: viewOf(el, key, 'chips') };
+    if (b.type === 'table' && Array.isArray(c.rows) && c.rows.length) { const v = ['table', 'cards', 'list'].concat(numCol(c) > 0 ? ['chart'] : [], tableCats(c).length ? ['graph'] : []); return { views: v, cur: viewOf(el, key, tableDefault(c, el)) }; }
+    if (b.type === 'entities' && Array.isArray(c.groups) && c.groups.length) return { views: ['chips', 'list', 'graph'], cur: viewOf(el, key, 'chips') };
+    if (b.type === 'kv') { const f = c.fields || c.data || {}; const n = Array.isArray(f) ? f.length : Object.keys(f).length; if (n >= 3) return { views: ['fields', 'graph'], cur: viewOf(el, key, 'fields') }; }
     return { views: [], cur: '' }; };
   /* the kinds whose drawer already draws a head — name, state and the controls that belong to that kind. The card
      does not draw a second one over them; see "ONE HEADER PER ITEM" where the card is built. */
@@ -4249,6 +4293,15 @@
     }
     _rgFeed(embed, key) {
       if (!embed) return;
+      /* any other kind's graph view (see graphOf): built from the item's content, redrawn only when that changes */
+      const ob = this._blockOf(key);
+      if (ob && ob.type !== 'records') {
+        let sig2 = ''; try { sig2 = ob.type + '|' + JSON.stringify(ob.content || {}).length + '|' + JSON.stringify(ob.content || {}).slice(0, 200); } catch (e) { sig2 = String(Date.now()); }
+        if (embed._rgSig === sig2) return; embed._rgSig = sig2;
+        const g2 = graphOf(ob); const go2 = () => { try { embed.setGraph(g2); } catch (e) {} this._adoptGraphCss(); };
+        if (typeof embed.setGraph === 'function') go2(); else if (root.customElements) root.customElements.whenDefined('vera-graph-embed').then(go2).catch(() => {});
+        return;
+      }
       const c = this._contentOf(key) || {}; const bodies = recState(this, key).body || {};
       const ents = (this._recEnts && this._recEnts[String(key)]) || null; const g = recGraph(c, bodies, ents);
       const sig = (c.query || '') + '|' + (Array.isArray(c.items) ? c.items.map((r) => r && r.id).join(',') : '') + '|' + Object.keys(bodies).map((k) => k + ':' + ((bodies[k] && bodies[k].nb) || []).length).join(',')
