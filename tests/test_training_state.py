@@ -13,8 +13,10 @@ from vera.minds import ledger_core as LC, loop_ledger, training_state_core as TS
 pytestmark = pytest.mark.critical
 
 
-def test_surfaces_default_to_loop_only():
-    assert TS.enabled_surfaces(None) == {"loop"} and TS.enabled_surfaces("") == {"loop"}
+def test_surfaces_default_to_loop_and_discovery():
+    # discovery joined 2026-10-10: the drift guard's page verdicts (public web excerpts) are labelled for the
+    # FM-7.5 200-page set; chat, intel and memory stay off until asked for
+    assert TS.enabled_surfaces(None) == {"loop", "discovery"} and TS.enabled_surfaces("") == {"loop", "discovery"}
     assert TS.enabled_surfaces("none") == set()
     assert TS.enabled_surfaces("loop, chat") == {"loop", "chat"}
 

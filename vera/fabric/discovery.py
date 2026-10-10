@@ -2032,6 +2032,38 @@ async def _mirror_crawl_to_fabric(crawl_id: str, ds_id: str, label: str = ""):
         log.debug("fabric mirror %s: %s", ds_id, e)
 
 
+_PAGE_LEDGER_TASKS: Set["asyncio.Task"] = set()
+
+
+def _record_page_verdict(crawl_id: str, topic: str, title: str, text: str, url: str, keep: bool, *,
+                         llm: bool = False, relevance: Any = None, coverage: Any = None, neg_hit: bool = False,
+                         depth: int = 0) -> None:
+    """The drift guard's verdict on one page as a `discovery.page_on_topic` ledger decision, and what it saw to
+    the training store (four-minds FM-7.5, the 200-page labelled set). Background, best effort: never raises,
+    never waits."""
+    try:
+        try:
+            from Vera.vera.fabric import discovery_ledger_core as _DL
+            from Vera.vera.minds import training_state as _TSR
+            from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY as _REG
+        except Exception:                    # worktree / app-free import
+            from vera.fabric import discovery_ledger_core as _DL  # type: ignore
+            _TSR = None
+            _REG = {}
+        d = _DL.page_decision(url, keep, crawl_id=crawl_id, llm=llm, relevance=relevance, coverage=coverage,
+                              neg_hit=neg_hit, depth=depth)
+        fn = (_REG.get("decide.record") or {}).get("raw") or (_REG.get("decide.record") or {}).get("func")
+        if fn:
+            task = asyncio.get_running_loop().create_task(fn(row=d))
+            _PAGE_LEDGER_TASKS.add(task)
+            task.add_done_callback(_PAGE_LEDGER_TASKS.discard)
+        if _TSR is not None:
+            _TSR.put(d, _DL.page_inputs(topic, title, text, url, relevance=relevance, coverage=coverage,
+                                        neg_hit=neg_hit, depth=depth))
+    except Exception as e:                   # pragma: no cover - recording never alters the crawl
+        log.debug("page verdict not recorded: %s", e)
+
+
 async def _crawl_key_lock(key: str) -> "asyncio.Lock":
     global _CRAWL_LOCKS_GUARD
     if _CRAWL_LOCKS_GUARD is None:
@@ -2502,10 +2534,15 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
             if depth > 0 and drift_guard:
                 cov = _topic_coverage(full_text, title, page_url, tokens)
                 neg_hit = bool(neg_tokens & (_words(full_text) | _words(title)))
+                if not (cov < drift_min_cov or (neg_hit and cov < 0.5)):
+                    _record_page_verdict(crawl_id, topic, title, full_text, page_url, True,
+                                         relevance=relevance, coverage=cov, neg_hit=neg_hit, depth=depth)
                 if cov < drift_min_cov or (neg_hit and cov < 0.5):
                     # optional LLM second-opinion only for borderline pages
                     keep = False
+                    _asked_llm = False
                     if llm_drift and 0.15 <= relevance <= 0.55:
+                        _asked_llm = True
                         try:
                             async with _steer_sem:
                                 jd = _sjson(await _llm_generate(
@@ -2524,6 +2561,8 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                                         neg_tokens.add(w)   # learn sibling terms
                         except Exception:
                             keep = relevance >= 0.4
+                    _record_page_verdict(crawl_id, topic, title, full_text, page_url, keep, llm=_asked_llm,
+                                         relevance=relevance, coverage=cov, neg_hit=neg_hit, depth=depth)
                     if not keep:
                         await _emit("page_skipped", url=page_url, relevance=relevance,
                                     reason="off_topic_drift",
