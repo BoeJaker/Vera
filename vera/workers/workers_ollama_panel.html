@@ -700,7 +700,6 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
         <!-- Node cards -->
         <div class="widget w-w12 w-h4" data-wid="ol-nodes">
           <div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span><span class="w-title">Nodes <span id="ol-node-cnt" style="color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0"></span></span><span class="w-actions"><button class="w-iconbtn" onclick="P.gridHide('ollama','ol-nodes')">×</button></span></div>
-          <div style="padding:6px 10px 0"><vera-backend-switch id="ol-backend" compact></vera-backend-switch></div>
           <div class="w-body" id="ol-nodes-body"><span style="color:var(--dim);font-size:10px">Loading…</span></div>
           <span class="w-resize" data-resize></span>
         </div>
@@ -2821,13 +2820,6 @@ function renderOllama(){
   renderOllamaNodes(nodes);
 }
 
-/* A card's backend button hands off to the LLM backend component above the
-   cards (<vera-backend-switch>): dry run, confirm, background switch, progress. */
-function olSwitchOne(iid,backend){
-  const el=document.getElementById('ol-backend');
-  if(el&&el.switchNodes) return el.switchNodes([iid],backend);
-}
-
 function renderOllamaNodes(nodes){
   const el=$('ol-nodes-body');if(!el) return;
   if(!nodes.length){el.innerHTML='<span style="color:var(--dim);font-size:10px">No Ollama instances configured</span>';return;}
@@ -2913,7 +2905,6 @@ function renderOllamaNodes(nodes){
         <button class="btn sm" onclick="P.olPing(${sq(id)})">Ping</button>
         ${vllm?'<span style="font-size:8.5px;color:var(--dim2, #8a90a0)">on vLLM - Switch backend (Machines) moves it back</span>'
               :`<button class="btn sm ${disabled?'primary':'err-btn'}" onclick="P.nodeToggle(${sq(id)},${disabled?'true':'false'})">${disabled?'Enable':'Disable'}</button>`}
-        <button class="btn sm" onclick="P.olSwitchOne(${sq(id)},${vllm?"'ollama'":"'vllm'"})">${vllm?'→ Ollama':'→ vLLM'}</button>
         <button class="btn sm ${pinned?'primary':''}" onclick="P.olTogglePin(${sq(id)})">${pinned?'Unpin':'Pin'}</button>
         ${vllm?'':`<button class="btn sm gpu-btn" onclick="P.openPullModal(${sq(id)})">Pull</button>`}
         <span style="flex:1"></span>
@@ -8412,7 +8403,6 @@ return {
   ndLoad, ndDetect, ndDetectAll, ndProv, ndProvClose, ndCompToggle,
   ndModelSearch, ndModelPick, ndPlan, ndRun, ndSwitch,
   ndSwitchClose, ndSwitchBackendChanged, ndSwitchGo,
-  olSwitchOne,
 };
 })();
 </script>
@@ -8422,6 +8412,5 @@ return {
 <script src="/ui/vera-entity-drawer.js"></script>
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/elements/sandbox_controls.js" id="vera-sandbox-controls-js"></script>
-<script src="/ui/elements/backend_switch.js"></script>
 </body>
 </html>

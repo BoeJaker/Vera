@@ -57,16 +57,16 @@ def test_one_backend_control_on_every_page_that_lists_nodes():
     assert "'/nodes/backend/switch_many'" in el and "dry_run: true" in el and "confirm(" in el
     assert "'/nodes/backend/embeddings'" in el and "'/nodes/backend/config/set'" in el
     assert "prompt(" not in el
-    # Node settings, the Ollama page and the vLLM page all mount it
+    # Node settings and the vLLM page's Nodes tab mount it
     assert "<vera-backend-switch></vera-backend-switch>" in _src("vera/workers/warm_models_capabilities.py")
-    ol = _src("vera/workers/workers_ollama_panel.html")
-    assert '<vera-backend-switch id="ol-backend"' in ol and "_olSel" not in ol
-    assert "P.olSwitchOne(${sq(id)}" in ol
     vl = _src("vera/vllm/vllm_panel.html")
     assert '<vera-backend-switch id="vllm-backend">' in vl and 'data-tab="nodes"' in vl
-    assert "backendSwitch([" in vl
-    for page in (ol, vl):
-        assert '/ui/elements/backend_switch.js' in page
+    assert "backendSwitch([" in vl and '/ui/elements/backend_switch.js' in vl
+    # NOT the Ollama page's node cards: that widget shows the nodes, it is not
+    # the place for the backend controls (owner, 10 Oct 2026)
+    ol = _src("vera/workers/workers_ollama_panel.html")
+    for gone in ("vera-backend-switch", "olSwitchOne", "_olSel", "backend_switch.js"):
+        assert gone not in ol
 
 
 def test_all_moves_embeddings_too():
