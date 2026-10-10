@@ -14491,6 +14491,17 @@ except Exception:                                     # pragma: no cover
 
 # What a step already fetched, handed to the writer (live 3 Oct: research never reached it).
 try:
+    from Vera.vera.dag import evidence_ledger_core as _evidence_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import evidence_ledger_core as _evidence_core
+try:
+    from Vera.vera.agents import grounding_rules as _grounding_rules
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.agents import grounding_rules as _grounding_rules
+    except Exception:
+        _grounding_rules = None
+try:
     from Vera.vera.dag import research_sources_core as _research_sources_core
 except Exception:                                     # pragma: no cover
     from vera.dag import research_sources_core as _research_sources_core
@@ -14816,10 +14827,24 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
     except Exception as e:
         log.debug("answer check files: %s", e)
     findings = PSx.unresolved_findings(results, unmet)
+    # The run's dated evidence (info.seek items) + the deterministic grounding floor
+    # (intelligence's grounding_rules.check: bad [n] citations, figures no source contains).
+    evidence = _evidence_core.items(sid)
+    grounding: Dict[str, Any] = {}
+    if evidence and _grounding_rules is not None:
+        try:
+            grounding = _grounding_rules.check(final, evidence)
+        except Exception as e:
+            log.debug("grounding check failed: %s", e)
+    g_text = ""
+    if evidence:
+        g_text = PSx.grounding_block(
+            _evidence_core.block(evidence), grounding,
+            _grounding_rules.text("loop") if _grounding_rules is not None else "")
     answer, fixes, err = "", "", ""
     try:
         raw = await _safe_ollama_generate_dw(
-            PSx.answer_check_prompt(goal, files, final, findings),
+            PSx.answer_check_prompt(goal, files, final, findings, grounding_text=g_text),
             system=PSx.ANSWER_CHECK_SYSTEM, json_mode=False, model="", instance_id="",
             prefer_gpu=False, think=False, profile="planning_style", role=PSx.ENRICH_ROLE,
             request_stage="answer_check", timeout=600)
@@ -14829,7 +14854,10 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
     except Exception as e:
         err = f"{type(e).__name__}: {e}"[:160]
     return {"answer": answer, "fixes": fixes[:1200], "files": [p for p, _ in files],
-            "findings": findings, "elapsed_s": round(time.monotonic() - t1, 1), "error": err}
+            "findings": findings, "evidence_items": len(evidence),
+            "grounding": ({k: grounding.get(k) for k in ("ok", "bad_citations", "uncited_numbers")}
+                          if grounding else {}),
+            "elapsed_s": round(time.monotonic() - t1, 1), "error": err}
 
 
 async def _v6_entity_coverage(task: Any, output: str, *, sid: str, stream_id: str) -> None:
@@ -16933,6 +16961,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             history.append({"tool": hop_tool, "ok": entry_ok, "preview": preview[:_budget],
                             "args": h_args, "ms": elapsed})
             _research_sources_core.remember(sid, history[-1])
+            if entry_ok and hop_tool == "info.seek":  # the run's dated evidence (evidence_ledger_core)
+                _evidence_core.add(sid, invoke.get("result"))
             # A call that can write and names a registered file: forget its cached copy.
             _registry_stale_core.forget_named(artifacts, hop_tool, h_args)
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
@@ -19343,6 +19373,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
         _research_sources_core.remember(sid, history[-1])
+        if entry_ok and tool == "info.seek":          # the run's dated evidence (evidence_ledger_core)
+            _evidence_core.add(sid, invoke.get("result"))
         # A call that can write and names a registered file: forget its cached copy, so
         # the next read goes to disk (registry_stale_core; probe 3 Oct, a stale report.md).
         _registry_stale_core.forget_named(artifacts, tool, args)
@@ -26581,6 +26613,7 @@ async def cap_dag_agent_loop_v6(
                           "stream_id": stream_id, "changed": bool(_ac.get("answer")),
                           "fixes": _ac.get("fixes"), "files": _ac.get("files"),
                           "findings": _ac.get("findings"), "elapsed_s": _ac.get("elapsed_s"),
+                          "evidence_items": _ac.get("evidence_items"), "grounding": _ac.get("grounding"),
                           "error": _ac.get("error")})
         if _ac.get("answer"):
             final = _ac["answer"]
