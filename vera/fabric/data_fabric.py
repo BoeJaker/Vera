@@ -3439,10 +3439,14 @@ async def _pull_rss(src: dict) -> List[dict]:
         log.info("rss %s -> %d items (final_url=%s)", url, len(results), final_url)
         return results
 
-    # Fallback: regex-only (very rough)
-    text = body.decode("utf-8", errors="ignore")
-    items = re.findall(r"<title>(.*?)</title>", text, re.DOTALL)
-    return [{"text": t.strip()[:2000]} for t in items[1:21]]  # skip channel title
+    # No feedparser: the standard library reads RSS 2.0, RSS 1.0 and Atom with links,
+    # dates and summaries. (The old regex fallback kept titles only.)
+    items = _srcmap.parse_feed(body, limit=src.get("lim", src.get("limit", 50)))
+    if not items:
+        log.warning("rss %s: not a readable RSS/Atom document (final=%s)", url, final_url)
+    else:
+        log.info("rss %s -> %d items via the stdlib parser (final_url=%s)", url, len(items), final_url)
+    return items
 
 
 async def _pull_api(src: dict) -> List[dict]:
