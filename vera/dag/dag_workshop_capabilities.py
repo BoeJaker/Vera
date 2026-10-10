@@ -14390,6 +14390,12 @@ except ImportError:                                   # pragma: no cover
     except ImportError:
         _minds_core = None
 
+# Precedent for the planner (four-minds FM-4.2): pure wrapping of what the planner reads.
+try:
+    from Vera.vera.minds import precedent_core as _precedent_core
+except ImportError:                                   # pragma: no cover
+    from vera.minds import precedent_core as _precedent_core
+
 # The System 1 student (four-minds FM-2.5): a pre-trained small model answering a live decision
 # in-band, per the switchboard (decide.student.step_verify) - see vera/minds/student.py.
 try:
@@ -24813,6 +24819,25 @@ async def cap_dag_agent_loop_v6(
                     + "Plan for the OBJECTIVE stated above: " + _orig_goal)
     except Exception as e:
         log.debug("v6 memory context inject failed: %s", e)
+
+    # ── Precedent (four-minds FM-4.2, switch plan.precedent): how similar past goals went, as reference in
+    # what the planner reads - never in `goal` itself. Bounded; a failure or a miss changes nothing.
+    try:
+        if _minds_core is not None and _minds_core.mode_of("plan.precedent") == "on":
+            _pc_cap = (CAPABILITY_REGISTRY.get("plan.precedent") or {})
+            _pc_fn = _pc_cap.get("raw") or _pc_cap.get("func")
+            if _pc_fn:
+                _pc = await asyncio.wait_for(_pc_fn(goal=_orig_goal, exclude_run=sid,
+                                                    origin=getattr(_dl, "origin", "user") if _dl is not None else "user"),
+                                             timeout=4)
+                if isinstance(_pc, dict) and _pc.get("block"):
+                    plan_goal = _precedent_core.wrap(plan_goal, _orig_goal, _pc["block"])
+                    await emit_event({"type": "agent_loop_v6.precedent", "session_id": sid,
+                                      "runs": [p.get("run") for p in _pc.get("precedents") or []],
+                                      "outcomes": [p.get("outcome") for p in _pc.get("precedents") or []],
+                                      "node": _pc.get("node")})
+    except Exception as e:
+        log.debug("v6 precedent inject skipped: %s", e)
 
     # ── Catalog (identical construction to v5) ────────────────────────────────
     # category="other"/keywords=[] are NOT placeholders for "not triaged
