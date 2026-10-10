@@ -14836,16 +14836,22 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
     # The run's dated evidence (info.seek items) + the deterministic grounding floor
     # (intelligence's grounding_rules.check: bad [n] citations, figures no source contains).
     evidence = _evidence_core.items(sid)
+    ev_packs = _evidence_core.packs(sid)
     grounding: Dict[str, Any] = {}
     if evidence and _grounding_rules is not None:
         try:
-            grounding = _grounding_rules.check(final, evidence)
+            _ci = _evidence_core.check_items(sid)
+            grounding = dict(_grounding_rules.check(final, _ci))
+            if any(i.get("n") is None for i in _ci):
+                # several packs: an [n] is ambiguous, so only figures/dates count (vera-03 review)
+                grounding["bad_citations"] = []
+                grounding["ok"] = not grounding.get("uncited_numbers")
         except Exception as e:
             log.debug("grounding check failed: %s", e)
     g_text = ""
-    if evidence:
+    if evidence or ev_packs:
         g_text = PSx.grounding_block(
-            _evidence_core.block(evidence), grounding,
+            _evidence_core.block(evidence, packs_info=ev_packs), grounding,
             _grounding_rules.text("loop") if _grounding_rules is not None else "")
     answer, fixes, err = "", "", ""
     try:
