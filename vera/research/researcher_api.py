@@ -1035,13 +1035,21 @@ async def _searxng_once(host: str, query: str, limit: int) -> list[dict]:
         async with httpx.AsyncClient(timeout=10.0) as c:
 
             async def _fetch(pageno: int):
-                r = await _request_with_web_policy(
-                    lambda: c.get(f"{host}/search",
-                                  params=_engines.searxng_params(
-                                      query, web_cfg.safe_search, pageno)),
-                    domain=urlparse(host).netloc,
-                )
-                return r.json().get("results", []) or []
+                try:
+                    r = await _request_with_web_policy(
+                        lambda: c.get(f"{host}/search",
+                                      params=_engines.searxng_params(
+                                          query, web_cfg.safe_search, pageno)),
+                        domain=urlparse(host).netloc,
+                    )
+                    body = r.json()
+                except Exception as e:
+                    if pageno == 1:                     # /health: SearXNG unreachable (info-seeking SK-0.1)
+                        _engines.note_searxng_answer(None, error=str(e))
+                    raise
+                if pageno == 1:                         # /health: empty answers and suspended engines
+                    _engines.note_searxng_answer(body)
+                return body.get("results", []) or []
 
             results = await _engines.walk_pages(_fetch, limit)
             if not results:

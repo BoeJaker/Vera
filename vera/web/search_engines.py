@@ -354,6 +354,20 @@ def enough(collected: int, limit: int) -> bool:
 
 DOWN_AFTER = 3          # empty answers in a row with every engine unresponsive = down
 
+# The process's one record. Both SearXNG copies (web_capabilities and researcher_api - the latter is the one that runs
+# whenever it imports) report here, so /health sees every search whichever path it took.
+SEARXNG_STATE: Dict[str, Any] = {}
+
+
+def note_searxng_answer(body: Optional[Mapping[str, Any]], *, error: str = "") -> None:
+    """Record one SearXNG page-one answer in SEARXNG_STATE. Never raises: bookkeeping must not break a search."""
+    try:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        SEARXNG_STATE.update(searxng_note(SEARXNG_STATE, body, now, error=error))
+    except Exception:
+        pass
+
 
 def searxng_note(state: Dict[str, Any], body: Optional[Mapping[str, Any]], now: str, *,
                  error: str = "") -> Dict[str, Any]:
