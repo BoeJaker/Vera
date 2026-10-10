@@ -38,6 +38,10 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import export_core as EX
 except Exception:                        # worktree / app-free import
     from vera.minds import export_core as EX   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.model_binding_core import binding as _bind
+except Exception:                        # worktree / app-free import
+    from vera.model_binding_core import binding as _bind   # type: ignore
 
 log = logging.getLogger("vera.minds.judge")
 JOB_TYPE = "idle_decide"
@@ -78,8 +82,23 @@ async def _gate_busy() -> bool:
     return any(int(n.get("held") or 0) > 0 for n in (st.get("nodes") or []) if isinstance(n, dict))
 
 
+# What these judges are (model.callable / model.pick; four-minds owns the
+# cascade - these only describe it). The ids are the ledger's implementations.
+_SERVES_SCORE = _bind(
+    "decide", "ollama", io_in="state", io_out="label", tier=4, questions=list(JC.QUESTIONS),
+    uses="Answer a stored loop decision (was the step verified? done? which intent, tier or controller "
+         "action?) with a small LLM scoring one token by logprobs - a shadow judge beside the big model, "
+         "recorded in the ledger for calibration.",
+    limits="live decisions (shadow only until promoted); questions outside judge_core.QUESTIONS.",
+    note="models: VERA_DECIDE_SHADOW_MODEL (default " + DEFAULT_MODELS + ")")
+_SERVES_KNN = _bind(
+    "decide", "knn", io_in="state", io_out="label", tier=2, placement="nlp", questions=list(JC.QUESTIONS),
+    uses="Answer a stored loop decision by the similarity-weighted vote of its nearest past decisions "
+         "(MiniLM on an NLP node) - milliseconds, no LLM, a shadow judge.",
+    limits="questions with few stored decisions; situations unlike any seen before.")
+
 @capability(
-    "decide.shadow.score", http_method="POST", http_path="/decide/shadow/score", http_tags=["minds"],
+    "decide.shadow.score", serves=_SERVES_SCORE, http_method="POST", http_path="/decide/shadow/score", http_tags=["minds"],
     memory="off",
     description="Score stored loop decisions with a small model as a SHADOW judge (four-minds FM-2): each "
                 "recent live decision of the question with stored inputs and no shadow from this model is "
@@ -241,7 +260,7 @@ async def _embed(texts: List[str]) -> List[Optional[List[float]]]:
 
 
 @capability(
-    "decide.shadow.knn", http_method="POST", http_path="/decide/shadow/knn", http_tags=["minds"],
+    "decide.shadow.knn", serves=_SERVES_KNN, http_method="POST", http_path="/decide/shadow/knn", http_tags=["minds"],
     memory="off",
     description="A kNN shadow judge (four-minds FM-2, tier 2 of the cascade): each stored loop decision of the "
                 "question is answered by the similarity-weighted vote of the live answers of its 7 nearest past "
