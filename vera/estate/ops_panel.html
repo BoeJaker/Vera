@@ -342,6 +342,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 /* embedded in a graph tile (?embed=1): the controls, the plot and its cards; the rails behind the header's two buttons */
 .embtn{display:none}
 .embed .rt{height:100vh;min-height:0}
+html:root body .hd button{opacity:1!important}   /* the views, the layouts and the sizes are the page's working controls, not a bar's extras */
 .embed .hd{height:auto;min-height:38px;flex-wrap:wrap;row-gap:4px;padding:4px 8px}
 .embed .hd .wm,.embed .hd h1,.embed .axes,.embed .stage-hd{display:none}
 .embed .bd{padding:0 4px 4px;gap:6px}
@@ -958,7 +959,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.termRun !== undefined){ const T = termOf(t.dataset.termRun); T.where = t.closest('.ndw') ? 'w' : 'i'; runTerm(t.dataset.termRun); return; }
   if (t.dataset.termClear !== undefined){ termOf(t.dataset.termClear).lines = []; render(); return; }
   if (t.dataset.capUse !== undefined){ const n = byId()[t.dataset.capNode]; if (n){ S.req[n.id] = { name: t.dataset.capUse, body: JSON.stringify(capArgs(n, t.dataset.capUse), null, 2), resp: '', err: false, busy: false }; if (t.dataset.where === 'w') S.wact = 'req'; else S.act = 'req'; render(); } return; }
-  if (t.dataset.plane !== undefined){ if (t.dataset.plane === '*'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); S.focus = null; } else if (S.view === '3d'){ S.focus = S.focus === t.dataset.plane ? null : t.dataset.plane; } else { S.on[t.dataset.plane] = !S.on[t.dataset.plane]; if (!Object.keys(S.on).some((k) => S.on[k])) S.on[t.dataset.plane] = true; } render(); return; }
+  if (t.dataset.plane !== undefined){ if (t.dataset.plane === '*'){ Object.keys(S.on).forEach((p) => { S.on[p] = true; }); if (S.focus && S.view === '3d'){ focusLayer(S.focus); return; } S.focus = null; } else if (S.view === '3d'){ focusLayer(t.dataset.plane); return; } else { S.on[t.dataset.plane] = !S.on[t.dataset.plane]; if (!Object.keys(S.on).some((k) => S.on[k])) S.on[t.dataset.plane] = true; } render(); return; }
   if (t.dataset.exp !== undefined){ e.stopPropagation(); S.exp = S.exp === t.dataset.exp ? null : t.dataset.exp; S.sel = t.dataset.exp; renderCard(); lightRefresh(); return; }
   if (t.dataset.asg !== undefined){ e.stopPropagation(); S.sel = t.dataset.asg; S.wpick = S.wpick === t.dataset.asg ? null : t.dataset.asg; S.wadd = null; render(); return; }
   if (t.dataset.wk !== undefined){ e.stopPropagation(); setWidget(t.dataset.wkNode || S.wpick, t.dataset.wk); return; }
@@ -979,7 +980,7 @@ document.addEventListener('click', (e) => {
   if (t.dataset.ref !== undefined && t.dataset.ref){ e.preventDefault(); selectRef(t.dataset.ref); return; }
   if (t.dataset.selRuntime !== undefined){ selectRuntime(t.dataset.selRuntime); return; }
   if (t.dataset.errNode !== undefined){ if (t.dataset.errNode && byId()[t.dataset.errNode]){ S.sel = t.dataset.errNode; if (S.rt) S.rt = t.dataset.errNode; lightRefresh(); } return; }
-  if (t.dataset.layer !== undefined){ S.focus = S.focus === t.dataset.layer ? null : t.dataset.layer; render(); return; }
+  if (t.dataset.layer !== undefined){ focusLayer(t.dataset.layer); return; }
   if (t.dataset.floor !== undefined){ if (!S.moved) clearRoute(); return; }   // a single click on a floor only clears a lit route; a double click focuses the layer
   if (t.dataset.pz !== undefined){ const k = t.dataset.pz; if (k === 'in' || k === 'out'){ const pl = $('plot'); zoomAt(k === 'in' ? 1.25 : 0.8, (pl.clientWidth || 800) / 2, (pl.clientHeight || 600) / 2); } else if (k === 'l') S.vx += 140; else if (k === 'r') S.vx -= 140; else if (k === 'u') S.vy += 110; else if (k === 'd') S.vy -= 110;
     else if (k === 'fit'){ S.tilt = null; S.azim = null; } else { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 26) : S.tilt, A = S.azim == null ? 45 : S.azim; if (k === 'tiltUp') S.tilt = Math.min(60, T + 5); if (k === 'tiltDn') S.tilt = Math.max(4, T - 5); if (k === 'rotL') S.azim = Math.min(64, A + 6.5); if (k === 'rotR') S.azim = Math.max(26, A - 6.5); }
@@ -998,7 +999,7 @@ document.addEventListener('keydown', (e) => { const t = e.target; if (!t.dataset
 document.addEventListener('contextmenu', (e) => { const nd = e.target.closest('[data-node],[data-wnode]'); if (nd){ openMenu(e, byId()[nd.dataset.node || nd.dataset.wnode]); return; } if (e.target.closest('#plot')) openMenu(e, null); });
 $('b2d').onclick = () => { S.view = '2d'; S.wpick = null; render(); }; $('b3d').onclick = () => { S.view = '3d'; render(); };
 $('bStack').onclick = () => { S.layout3d = 'stack'; S.focus = null; render(); }; $('bFlat').onclick = () => { S.layout3d = 'flat'; S.focus = null; render(); };
-$('bOne').onclick = () => { if (S.focus){ S.focus = null; } else { const n = byId()[S.sel]; S.focus = n ? n.plane : 'work'; } render({ replay: true }); };
+$('bOne').onclick = () => { const n = byId()[S.sel]; focusLayer(S.focus || (n ? n.plane : 'work')); };
 $('bActive').onclick = () => { S.active = !S.active; saveV(); applyRoute(); };
 $('bPipes').onclick = () => { S.pipes = true; render(); }; $('bDirect').onclick = () => { S.pipes = false; render(); };
 document.querySelectorAll('[data-lbl]').forEach((b) => { b.onclick = () => { S.lbl = b.dataset.lbl; S.widgets = S.lbl !== 'labels'; saveV(); render(); }; });
@@ -1008,7 +1009,11 @@ let rafId = 0; const rafRender = () => { if (rafId) return; rafId = requestAnima
 const rafRot = () => { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = 0; keepPivot(() => render({ plotOnly: true })); }); };
 function clearRoute(){ if (!S.rt) return false; S.rt = null; lightRefresh(); return true; }
 // a double click on a floor looks at that layer on its own (again: every layer)
-document.addEventListener('dblclick', (e) => { const f = e.target.closest && e.target.closest('[data-floor]'); if (!f || S.view !== '3d') return; e.preventDefault(); S.focus = S.focus === f.dataset.floor ? null : f.dataset.floor; render({ replay: true }); });
+document.addEventListener('dblclick', (e) => { const f = e.target.closest && e.target.closest('[data-floor]'); if (!f || S.view !== '3d') return; e.preventDefault(); focusLayer(f.dataset.floor); });
+// a layer brought forward: the others step back, the layer draws in again and the camera glides until it fills the view;
+// the same layer again (or Show every plane) puts the stack back and glides out to frame it all
+function focusLayer(id){ const on = S.focus !== id; S.focus = on ? id : null; render({ replay: true, keepView: true });
+  requestAnimationFrame(() => { if (on && LAT.flyToPlane(id)) return; LAT.glideFit(true); }); }
 // Esc clears a lit route, else closes the node's card
 document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || S.cm || (e.target.matches && e.target.matches('input,textarea'))) return; if (clearRoute()) return; if (S.exp){ S.exp = null; render(); } });
 // THE KEYBOARD: arrows pan (shift + arrows turn the 3D view), + / - zoom, 0 fits everything, 2 / 3 the view, s / f / o stacked,
@@ -1018,11 +1023,11 @@ document.addEventListener('keydown', (e) => { if (e.ctrlKey || e.metaKey || e.al
   if (k.indexOf('Arrow') === 0){
     if (e.shiftKey && S.view === '3d') return act(() => { const T = S.tilt == null ? (S.layout3d === 'flat' ? 34 : 26) : S.tilt, A = S.azim == null ? 45 : S.azim;
       if (k === 'ArrowLeft') S.azim = clamp(A - 2, 26, 64); else if (k === 'ArrowRight') S.azim = clamp(A + 2, 26, 64); else if (k === 'ArrowUp') S.tilt = clamp(T + 1.5, 4, 60); else S.tilt = clamp(T - 1.5, 4, 60); rafRot(); });
-    return act(() => { if (k === 'ArrowLeft') LAT.glide(PAN, 0); else if (k === 'ArrowRight') LAT.glide(-PAN, 0); else if (k === 'ArrowUp') LAT.glide(0, PAN); else LAT.glide(0, -PAN); }); }   // eased, a step at a time
+    return act(() => { if (k === 'ArrowLeft') LAT.glide(-PAN, 0); else if (k === 'ArrowRight') LAT.glide(PAN, 0); else if (k === 'ArrowUp') LAT.glide(0, -PAN); else LAT.glide(0, PAN); }); }   // the picture moves the way the arrow points; a held key builds on the glide under way
   if (k === '+' || k === '=' || k === '-' || k === '_') return act(() => LAT.glide(0, 0, k === '+' || k === '=' ? 1.1 : 1 / 1.1));
   // the layers: [ ] (PageUp PageDown) fly the camera from floor to floor; in One layer the next layer swaps in
   if ((k === '[' || k === ']' || k === 'PageUp' || k === 'PageDown') && S.snap) return act(() => { const ids = S.snap.planes.filter((pl) => S.on[pl.id]).map((pl) => pl.id); if (!ids.length) return; const up = k === '[' || k === 'PageUp';
-    if (S.focus){ const i = ids.indexOf(S.focus); S.focus = ids[(i + (up ? -1 : 1) + ids.length) % ids.length]; render({ replay: true }); return; }
+    if (S.focus){ const i = ids.indexOf(S.focus); const nx = ids[(i + (up ? -1 : 1) + ids.length) % ids.length]; S.focus = null; focusLayer(nx); return; }
     const i = ids.indexOf(S.ptz); S.ptz = ids[i < 0 ? (up ? ids.length - 1 : 0) : (i + (up ? -1 : 1) + ids.length) % ids.length]; if (S.view !== '3d'){ S.view = '3d'; render(); } LAT.flyToPlane(S.ptz); });
   if (k === '0') return act(() => { S.tilt = null; S.azim = null; render(); fitView(true); });
   if (k === '2') return act(() => $('b2d').click()); if (k === '3') return act(() => $('b3d').click());
