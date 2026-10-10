@@ -11580,10 +11580,10 @@ _NARRATOR_PROBES: Dict[str, Dict[str, str]] = {
     #    gatherer AGENT's knowledge_sources RAG; these probes surface what's
     #    already indexed/discovered, plus a live pull when it matters.
     "agent.rag.query":        {"desc": "query the gatherer agent's WATCHED sources (news/press/sites/socials/forums)", "args": "{agent:str,query:str,limit:int}"},
-    "research.db.search":     {"desc": "search indexed research/news findings (fast)", "args": "{query:str,limit:int}"},
-    "fabric.discover.query":  {"desc": "query discovered/crawled external sources", "args": "{query:str}"},
+    "research.db.search":     {"desc": "search indexed research/news findings (fast)", "args": "{q:str,limit:int}"},
+    "fabric.discover.query":  {"desc": "query discovered/crawled external sources", "args": "{question:str}"},
     "fabric.discover.history": {"desc": "recent external discovery/crawl runs", "args": "{}"},
-    "web.research":           {"desc": "LIVE web research pull for a topic (SLOW — sparingly)", "args": "{query:str}"},
+    "web.research":           {"desc": "LIVE web search + the top pages read (seconds; sparingly)", "args": "{query:str}"},
     "web.fetch":              {"desc": "fetch one URL's content (a known feed/page)", "args": "{url:str}"},
 }
 
@@ -11619,6 +11619,9 @@ def _narrator_parse_json(raw: Any) -> Dict[str, Any]:
     return {}
 
 
+_PROBE_TEXT_ARG = {"research.db.search": "q", "fabric.discover.query": "question"}
+
+
 async def _narrator_run_probe(name: str, args: Dict[str, Any]) -> str:
     """Execute one read-only probe cap and return a compact text result (trimmed).
     Never raises — a failed probe just yields a short error string."""
@@ -11633,6 +11636,11 @@ async def _narrator_run_probe(name: str, args: Dict[str, Any]) -> str:
         args["limit"] = min(int(args.get("limit", 30) or 30), 40)
     elif name == "run.shadow.graph":
         args["limit"] = min(int(args.get("limit", 30) or 30), 40)
+    # these two name their search text differently; a `query` (the kit's old hint, still what models write) was
+    # silently dropped and the probe searched for nothing (info-seeking plan SK-0.5)
+    _text_arg = _PROBE_TEXT_ARG.get(name)
+    if _text_arg and "query" in args and not args.get(_text_arg):
+        args[_text_arg] = args.pop("query")
     try:
         res = await _call_cap(name, **args)
     except Exception as e:

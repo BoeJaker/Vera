@@ -19,7 +19,7 @@ const src = [
 ].join('\n');
 const api = new Function(src + '\nreturn {_INFO_CORE_CAPS, _wantsInfoCore};')();
 
-t('the core is web.research and web.fetch', JSON.stringify(api._INFO_CORE_CAPS) === '["web.research","web.fetch"]');
+t('the core is info.seek, web.research and web.fetch', JSON.stringify(api._INFO_CORE_CAPS) === '["info.seek","web.research","web.fetch"]');
 for (const q of ["what's the latest on OpenAI", 'latest on MCP', 'updates on UK house prices?', 'who won?',
                  'find out about the EU AI Act', 'any news about n8n', 'what is the base rate now'])
   t('offers the core: ' + q, api._wantsInfoCore(q));
@@ -33,6 +33,23 @@ t('the seed is limited to caps the agent allows', /_INFO_CORE_CAPS\.filter\(n=>a
 
 // the hint tells the model a current fact is not a "simple question"
 t('the cap hint says current facts are looked up, cited and dated', /is NOT simple: look it up first if a web cap is listed, cite what you use as \[n\] with its date/.test(CHAT));
+
+// SK-2.1: injected memory lines carry their date and the block says what it is; the first line stays exactly
+// "[Retrieved Context]" (memory_noise_core cuts the stored message there)
+const ctx = new Function(grab(/const _CTX_INJ_NOTE=[\s\S]*?;\n/, '_CTX_INJ_NOTE') + grab(/function _ctxDateTag\(n\)\{[\s\S]*?\n  \}/, '_ctxDateTag')
+  + '\nreturn {_CTX_INJ_NOTE, _ctxDateTag};')();
+t('a dated record gets its day', ctx._ctxDateTag({created_at: '2026-09-14T10:22:00Z'}) === ' \u00b7 2026-09-14');
+t('an undated record gets nothing (never "now")', ctx._ctxDateTag({ts: Date.now()}) === '' && ctx._ctxDateTag({created_at: 'yesterday'}) === '');
+t('the note says it is not the user and not proof of now', /not typed by the user/.test(ctx._CTX_INJ_NOTE) && /not proof of how things are now/.test(ctx._CTX_INJ_NOTE));
+t('the block still opens with the bare [Retrieved Context] line', /return'\\n\\n\[Retrieved Context\]\\n'\+_CTX_INJ_NOTE\+'\\n'\+items\.join\('\\n'\);/.test(CHAT));
+t('each line is tagged with its date', /return`\[\$\{src\}\$\{_ctxDateTag\(n\)\}\] /.test(CHAT));
+
+// SK-2.3: after a lookup the follow-up asks for [n] citations with dates and no gap-filling
+const look = new Function(grab(/function _isLookupCap\(name\)\{[\s\S]*?\n  \}/, '_isLookupCap') + '\nreturn _isLookupCap;')();
+t('lookup caps are recognised', ['web.research', 'web.fetch', 'reader.page', 'intel.lookup', 'info.seek'].every(look));
+t('other caps are not', !look('cal.events.list') && !look('web.research.extra') && !look('mail.search'));
+t('the follow-up after a lookup asks for dated [n] citations and no guesses',
+  /\+ \(_isLookupCap\(capName\)/.test(CHAT) && /cite them as \[n\] with their date/.test(CHAT) && /do not `\s*\+ `fill the gap from memory or a guess/.test(CHAT));
 
 if (fails) { console.log(fails + ' failed'); process.exit(1); }
 console.log('all passed');

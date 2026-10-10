@@ -409,6 +409,35 @@ async def cap_topic_get(id: str = "", trace_id=None):
             "queries": core.topic_queries(t)}
 
 
+@capability("intel.lookup", http_method="GET", http_path="/intel/lookup", http_tags=["intel"],
+            description="What Vera's own tracking has found on a subject, in one call and sized for a chat answer. "
+                        "WHEN TO USE: 'what's new on X', 'latest on X', 'anything on X' when X may be a topic Vera "
+                        "already follows - it answers in milliseconds from what the nightly sweeps and feeds "
+                        "gathered, with dates. Takes a name or a question (no topic id needed). Not tracked -> "
+                        "tracked:false and the near matches; then use info.seek / web.research, and offer to "
+                        "follow it with intel.topic.save. Input: query (str - a subject or question), topic_id "
+                        "(optional exact id), since (ISO date; default 14 days ago), limit (int, default 8). "
+                        "Output: {tracked, topic, snapshot {headline, ts, age_days}, signals [{title, url, site, "
+                        "published, seen, score, summary}], since, matches}.")
+async def cap_lookup(query: str = "", topic_id: str = "", since: str = "", limit: int = 8, trace_id=None):
+    st = store()
+    topics = st.topics()
+    matches = ([(1.0, st.get_topic(topic_id))] if topic_id and st.get_topic(topic_id)
+               else core.match_topics(query, [t for t in topics if t.get("status") != "deleted"]))
+    near = [{"id": t["id"], "name": t.get("name"), "score": sc} for sc, t in matches[:3]]
+    if not matches:
+        return {"tracked": False, "matches": [], "query": query,
+                "message": "Vera does not track this subject; look it up with info.seek or web.research, and offer "
+                           "to follow it (intel.topic.save name=...)"}
+    t = matches[0][1]
+    lim = max(1, min(20, int(limit or 8)))
+    since = since or (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sigs = st.signals(t["id"], since=since, limit=lim * 3, order="score")
+    out = core.lookup_view(t, st.latest_snapshot(t["id"]), sigs, since=since, limit=lim)
+    out["matches"] = near
+    return out
+
+
 @capability("intel.topic.save", http_method="POST", http_path="/intel/topic/save", http_tags=["intel"],
             schema=enum_schema(depth=list(core.DEPTHS), cadence=list(core.CADENCES), status=list(core.STATUSES),
                                kind=[""] + list(ops.TOPIC_KINDS)),

@@ -7042,6 +7042,21 @@ async def persist_research_to_fabric(job: ResearchJob) -> dict:
     return out
 
 
+def _error_where(e: BaseException) -> str:
+    """' (at file.py:123 in fn)' for the innermost frame of e's traceback. The job record outlives the log: eight
+    research jobs failed with 'sequence item 2: expected str instance, list found' and by the time anyone looked the
+    rotated log no longer held the traceback (info-seeking plan SK-0.5)."""
+    try:
+        import traceback as _tb
+        fr = _tb.extract_tb(e.__traceback__)
+        if not fr:
+            return ""
+        f = fr[-1]
+        return f" (at {os.path.basename(f.filename)}:{f.lineno} in {f.name})"
+    except Exception:
+        return ""
+
+
 async def run_job(job: ResearchJob):
     project: Optional[Project] = None
     if job.project_id and job.project_id in projects:
@@ -7072,7 +7087,7 @@ async def run_job(job: ResearchJob):
 
     except Exception as e:
         log.exception("Job %s failed", job.id)
-        job.status = JobStatus.ERROR; job.error = str(e)
+        job.status = JobStatus.ERROR; job.error = str(e) + _error_where(e)
     finally:
         job.finished_at = time.time()
         job.token_count = sum(s.tokens for s in agent_slots)
@@ -10596,9 +10611,20 @@ if _VERA_MODE:
         if not src_list:
             src_list = [src.id for src in globals()["sources"] if src.enabled]
         log.info("cap_research_run: query=%r sources=%s", query[:60], src_list)
+        # a model's guess at a mode ("fast", "quick", "report") used to raise and lose the request; the defaults run
+        # instead and the reply says so (info-seeking plan SK-0.5)
+        _note = []
+        try:
+            _mode = AgentMode(str(mode or "single").strip().lower())
+        except ValueError:
+            _mode = AgentMode("single"); _note.append(f"unknown mode {mode!r}: ran 'single'")
+        try:
+            _omode = OutputMode(str(output_mode or "report").strip().lower())
+        except ValueError:
+            _omode = OutputMode("report"); _note.append(f"unknown output_mode {output_mode!r}: ran 'report'")
         job = ResearchJob(
             id=str(uuid.uuid4()), query=query,
-            mode=AgentMode(mode), output_mode=OutputMode(output_mode),
+            mode=_mode, output_mode=_omode,
             sources=src_list, status=JobStatus.QUEUED,
             created_at=time.time(), project_id=project_id or None,
             prior_context=context or "", context_mode=context_mode or "fresh",
@@ -10607,7 +10633,10 @@ if _VERA_MODE:
         try: await DB.save_job(job)
         except Exception: pass
         asyncio.create_task(run_job(job))
-        return {"job_id": job.id, "status": "queued"}
+        out = {"job_id": job.id, "status": "queued"}
+        if _note:
+            out["note"] = "; ".join(_note)
+        return out
 
     # ── Convenience aliases (backwards compat with old research_capabilities.py) ──
     # These wrap research.run with preset mode/output_mode combinations.
