@@ -7357,7 +7357,9 @@ IMPORTANT:
      answer is kept with the message for whatever reads it next. The canvas's ✦ switch turns this off with the rest. */
   async function _cvEntities(mid, reply){
     const t=String(reply||''); if(!SID||!_cvEnrichOn()||t.replace(/```[\s\S]*?```/g,'').trim().length<160) return null;
-    let r=null; try{ r=await _capCall('turn.understand',{ text:t.slice(0,12000), session_id:SID, mid:String(mid||''), place:true }); }catch(_){ return null; }
+    /* look:2 - the two names the reply is most about are fetched for the turn unasked (the fabric's records, a web search
+       for things outside the estate), the same names under the same keys every time (turn_core.to_look) */
+    let r=null; try{ r=await _capCall('turn.understand',{ text:t.slice(0,12000), session_id:SID, mid:String(mid||''), place:true, look:2 }); }catch(_){ return null; }
     try{ if(r&&r.ok&&mid&&_MSG_REGISTRY[mid]) _MSG_REGISTRY[mid].entities=r.entities||[]; }catch(_){}
     return r;
   }
