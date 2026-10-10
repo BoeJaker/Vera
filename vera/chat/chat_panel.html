@@ -7361,6 +7361,42 @@ IMPORTANT:
     try{ if(r&&r.ok&&mid&&_MSG_REGISTRY[mid]) _MSG_REGISTRY[mid].entities=r.entities||[]; }catch(_){}
     return r;
   }
+  /* WHAT THE TURN IS DOING, ON THE DESK (owner, 2026-10-10: "need more useful desk elements for caps to display output or
+     status as they run"): every capability the chat runs for a turn is a line of one `activity` item - running as it
+     starts, then done or failed with its time and a line of its answer - written as the calls start and end (the first
+     write adds the item, the rest update it; a burst is written once). Anchored to the turn, so it is in that turn's
+     topic. The canvas's own calls and directives are not listed; the ✦ switch turns it off with the rest. */
+  const _cvAct={};
+  function _cvActMid(el){ try{ const w=el&&el.closest&&el.closest('.mwrap[data-mid]'); if(w){ let p=w; while(p&&!(p.classList&&p.classList.contains('u'))) p=p.previousElementSibling; return (p&&p.dataset&&p.dataset.mid)||w.dataset.mid; } }catch(_){} return _cvRelMid||''; }
+  function _cvActArgs(a){ try{ return Object.entries(a||{}).filter(([k])=>k!=='trace_id'&&k!=='session_id').map(([k,v])=>k+'='+(typeof v==='string'?v:JSON.stringify(v)).slice(0,40)).slice(0,4).join('  '); }catch(_){ return ''; } }
+  function _cvActPeek(c){ try{
+      if(c==null) return ''; if(typeof c==='string') return c.replace(/\s+/g,' ').trim().slice(0,160);
+      if(typeof c!=='object') return String(c);
+      if(c.error) return 'error: '+String(c.error).slice(0,150);
+      const rows=_cvRowsOf(c); if(Array.isArray(rows)) return rows.length+' '+(rows.length===1?'row':'rows')+(rows[0]&&(rows[0].title||rows[0].name)?': '+String(rows[0].title||rows[0].name).slice(0,90)+(rows.length>1?', …':''):'');
+      for(const k of ['summary','answer','text','message','status','result']) if(typeof c[k]==='string'&&c[k].trim()) return c[k].replace(/\s+/g,' ').trim().slice(0,160);
+      return Object.keys(c).slice(0,6).join(' · ');
+    }catch(_){ return ''; } }
+  function _cvActOn(cap){ return !!SID && _cvEnrichOn() && !/^(canvas\.|ui\.directive)/.test(String(cap||'')); }
+  function _cvActWrite(mid){
+    const a=_cvAct[mid]; if(!a) return; clearTimeout(a.t);
+    /* one write at a time, in order: the add has to have landed before an update can find the key */
+    a.t=setTimeout(()=>{ a.p=(a.p||Promise.resolve()).then(async()=>{ const calls=a.calls.map(x=>Object.assign({},x)); const run=calls.filter(x=>x.status==='running').length, bad=calls.filter(x=>x.status==='error').length;
+      const content={ mid, status: run?'running':bad?'error':'done', calls, title: run?'Working on it':'What ran for this turn' };
+      try{ if(!a.added){ const r=await _capCall('canvas.add',{ session_id:SID, kind:'activity', key:'activity:'+mid, content, at:'now', size:'m', anchor:{ turn:mid, mid, from:'activity' } }); a.added=!!(r&&r.ok);
+          if(r&&r.ok&&r.existing) await _capCall('canvas.update',{ session_id:SID, key:'activity:'+mid, content }); }   /* the turn ran before: its item takes the new calls */
+        else await _capCall('canvas.update',{ session_id:SID, key:'activity:'+mid, content });
+        const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} }); }, 150);
+  }
+  function _cvActStart(el, cap, args){
+    if(!_cvActOn(cap)) return null; const mid=_cvActMid(el); if(!mid) return null;
+    const a=_cvAct[mid]||(_cvAct[mid]={ calls:[], added:false, t:null });
+    const call={ cap:String(cap), args:_cvActArgs(args), status:'running', started:Date.now() }; a.calls.push(call); _cvActWrite(mid);
+    return { mid, call };
+  }
+  function _cvActEnd(h, ok, content){
+    if(!h) return; h.call.status=ok?'ok':'error'; h.call.ms=Date.now()-h.call.started; h.call.peek=_cvActPeek(content); _cvActWrite(h.mid);
+  }
   function _cvEnrichToggle(btn){ const on=!_cvEnrichOn(); try{ localStorage.setItem('vera:canvas:enrich', on?'1':'0'); }catch(_){} _cvEnrichPaint(btn); }
   function _cvEnrichPaint(btn){ const b=btn||document.getElementById('cvEnrichBtn'); if(!b) return; const on=_cvEnrichOn(); b.classList.toggle('on',on); b.style.opacity=on?'':'.55'; b.setAttribute('aria-pressed',on?'true':'false'); }
   setTimeout(()=>_cvEnrichPaint(),0);
@@ -10865,6 +10901,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const coercedArgs=_coerceCapArgs(capName,capArgs);
 
     let res=null,httpStatus=200;
+    const _act=(()=>{ try{ return _cvActStart(el, capName, coercedArgs); }catch(_){ return null; } })();   // the desk's activity line for this call
     try{
       // session_id rides along so the backend can route the call into this
       // session's sandbox container (and scope its events) — the /mcp/call
@@ -10874,6 +10911,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       httpStatus=r.status;
       res=await r.json();
     }catch(e){res=null;}
+    try{ const c=res&&res.type==='tool_result'?res.content:null; const bad=!res||res.type!=='tool_result'||(c&&typeof c==='object'&&(c.ok===false||(c.error!=null&&c.error!==''&&c.error!==false)));
+      _cvActEnd(_act, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer'); }catch(_){}
 
     // Build a persistent cap header showing what was run (never vanishes)
     const argsSummary=Object.entries(coercedArgs).filter(([k])=>k!=='trace_id').map(([k,v])=>`${k}=${JSON.stringify(v).slice(0,20)}`).slice(0,3).join(' ');
@@ -21758,7 +21797,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     cmdOpen,cmdClose,
     toggleViewMode,setViewMode,
     setDensity,toggleBlocks,
-    _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,_chromeFold,
+    _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,_chromeFold,executeCapInline,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
     _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvTellToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
