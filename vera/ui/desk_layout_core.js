@@ -164,6 +164,11 @@
     d = desk(d);
     var W = d.W, H = d.H, cx = (R.l + R.r) / 2, cy = (R.t + R.b) / 2, hw = (R.r - R.l) / 2, hh = (R.b - R.t) / 2;
     var pos = {}, chips = [];
+    /* OUT OF THE TOPIC, OUT TO THE BORDER (owner, 2026-10-10: the chat's primary topic decides "how close they are to chat
+       or if they are moved all the way out of focus and minimised"): an item marked border takes no band beside the chat,
+       however few the others are - it is a chip at the far border, after the items the arrangement places. */
+    var outside = items.filter(function (it) { return it && it.border; });
+    if (outside.length) items = items.filter(function (it) { return !(it && it.border); });
     var dockedLeft = R.l < 200, dockedRight = R.r > W - 200, below = R.t > H * 0.55;
     var sides = dockedLeft ? [1] : dockedRight ? [-1] : [1, -1];
     function cl(x, y) { return [clamp(x, Math.min(90, W / 2), Math.max(W / 2, W - 90)), clamp(y, Math.min(60, H / 2), Math.max(H / 2, H - 40))]; }
@@ -209,6 +214,7 @@
       }
       chips = items.slice(k);
     }
+    chips = chips.concat(outside);
     var cells = iconCells(R, d, edgeSlots(R, d, chips.length), chips.length);
     chips.forEach(function (it, i) { if (cells.length) pos[it.id] = cells[i % cells.length]; });
     return pos;

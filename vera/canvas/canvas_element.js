@@ -2707,6 +2707,16 @@
       }
       const nowOrder = ranked.map((x) => x.c.dataset.key || '').filter(Boolean);
       if (!kept || nowOrder.length !== kept.length || nowOrder.some((k, i) => kept[i] !== k)) this._deskOrderSet(nowOrder);
+      /* the primary topic leads (see setTopic): its items, best first, then the rest in the kept order - each of those
+         marked for the border. Pinned (in context) items count as in the topic. Only on a desk that brings items in. */
+      const T = this.getAttribute('bring-in') !== 'off' ? this._topic : null; const outside = new Set();
+      if (T) {
+        const tAt = {}; T.order.forEach((k, i) => { tAt[k] = i; });
+        const inT = (x) => tAt[x.c.dataset.key || ''] != null || x.c.classList.contains('pinned');
+        const lead = ranked.filter(inT).sort((a, b) => (tAt[a.c.dataset.key] != null ? tAt[a.c.dataset.key] : -1) - (tAt[b.c.dataset.key] != null ? tAt[b.c.dataset.key] : -1));
+        const rest = ranked.filter((x) => !inT(x)); rest.forEach((x) => outside.add(x.c.dataset.key || ''));
+        ranked.length = 0; lead.concat(rest).forEach((x) => ranked.push(x));
+      }
       /* the arrangement deals its places in the kept order (it was dealt before the order was applied, so a turn's items
          were "brought in" without moving) */
       /* the arrangement the person chose (owner, 2026-10-06: "automatically organised but let the user configure it"):
@@ -2714,7 +2724,7 @@
       const mode = ['orbit', 'kind', 'timeline', 'stack'].indexOf(this.getAttribute('desk-arrange')) >= 0 ? this.getAttribute('desk-arrange') : 'orbit';
       const mids = [...new Set(cards.map((c) => c.dataset.mid || '').filter(Boolean))].sort((a, b) => (parseInt(b.replace(/\D/g, ''), 10) || 0) - (parseInt(a.replace(/\D/g, ''), 10) || 0));
       const pos = D.arrange(mode, R, ranked.map((x) => ({ id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '',
-        age: x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null })), desk);
+        age: x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null, border: outside.has(x.c.dataset.key || '') })), desk);
       const locks = this._lockGet();
       const lockOf = (key) => { const l = locks[key]; return l && isFinite(l.fx) && isFinite(l.fy) && l.w > 0 && l.h > 0 ? l : null; };
       const sized = (k) => !!(up[k] && up[k].w > 0 && up[k].h > 0);
@@ -3033,6 +3043,29 @@
     /* The relevance engine's answer (Notes/38 §3.3, P2): the keys in focus now, with their scores. The tier decides
        how the rest shows — Full greys them, Hover reveals on hover, Zen shows only the focus set (the tier is
        data-den on <html>, the appearance the whole UI shares). */
+    /* THE CONVERSATION'S PRIMARY TOPIC (owner, 2026-10-10: "the chat focus (primary topic) still isnt steering/controlling
+       the items on the desk - how close they are to chat or if they are moved all the way out of focus and minimised"):
+       the items the turn in focus is about - the relevance pass's focus set for that turn, best first. On a desk that
+       brings items in, they come in beside the chat (the most useful nearest, as many as the bands hold); every other
+       item goes out to the far border as a chip. A question on two topics has both in its set, so both stay in. Locked
+       and hand-placed cards stay where they are. Called by the chat whenever the turn in focus changes. */
+    setTopic(keys, scores, mid) {
+      const sc = scores && typeof scores === 'object' ? scores : {};
+      const val = (k) => { const v = sc[k]; return v && typeof v.score === 'number' ? v.score : (typeof v === 'number' ? v : 0); };
+      /* ONLY WHAT THE TURN IS REALLY ABOUT: the relevance pass's focus set holds nearly everything (the last turns' items
+         all score 0.5 for being recent - 16-17 of 19 items in either test turn), so the topic is the items scoring 0.75
+         or more (the turn's own and those its words or names reach); none so strong - those at 0.6 or more */
+      let ks = Array.isArray(keys) ? keys.map(String) : null;
+      if (ks && Object.keys(sc).length) { const strong = ks.filter((k) => val(k) >= 0.75); ks = strong.length ? strong : ks.filter((k) => val(k) >= 0.6); }
+      /* a turn about nothing on the desk ("hello", "thanks") does not change the conversation's topic: the last one holds */
+      if (ks && !ks.length && this._topic) return false;
+      const sig = (mid || '') + '|' + (ks ? ks.join(',') : '-');
+      if (sig === this._topicSig) return false; this._topicSig = sig;
+      this._topic = ks ? { keys: new Set(ks), order: ks.slice().sort((a, b) => val(b) - val(a)), mid: mid || '' } : null;
+      if (this.deskAlign()) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:topic', { bubbles: true, detail: { mid: mid || '', keys: ks || [] } })); } catch (e) { /* no listener */ }
+      return true;
+    }
     setFocus(keys, scores) { this._focus = Array.isArray(keys) ? new Set(keys.map(String)) : null; this._scores = scores && typeof scores === 'object' ? scores : {}; if (this._doc) this.render(this._doc); }
     retier() { if (this._doc) this.render(this._doc); }
     tier() { const d = this.ownerDocument && this.ownerDocument.documentElement; const t = (this.getAttribute('tier') || (d && d.getAttribute('data-den')) || 'full').toLowerCase(); return t === 'hover' || t === 'zen' ? t : 'full'; }
