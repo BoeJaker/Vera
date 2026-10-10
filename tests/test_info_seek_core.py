@@ -90,3 +90,63 @@ def test_pack_numbers_dates_and_says_what_is_missing():
                          since="2026-09-26", now=NOW)
     assert stale["gaps"] == ["no source found is dated on or after 2026-09-26"]
     assert C.build_pack("fact", "q", "S", [], now=NOW)["gaps"] == ["nothing was found"]
+
+
+# ── dates the results state about themselves; titles; DDG; SearXNG news params ──
+
+from vera.web import search_engines as SE                  # noqa: E402
+
+
+@pytest.mark.parametrize("text,day", [
+    ("14 hours ago | Watford Observer on MSN", "2026-10-10"), ("3 days ago - Reuters", "2026-10-07"),
+    ("2 weeks ago", "2026-09-26"), ("yesterday", "2026-10-09"), ("Sep 17, 2026 - The bank held rates", "2026-09-17"),
+    ("17 September 2026 ... text", "2026-09-17"),
+])
+def test_date_from_text(text, day):
+    assert C.date_from_text(text, NOW).strftime("%Y-%m-%d") == day
+
+
+def test_an_event_date_inside_the_text_is_not_the_page_date():
+    assert C.date_from_text("What changed on 2 August 2026 for providers", NOW) is None
+
+
+def test_fill_dates_uses_the_byline_then_the_snippet_and_keeps_a_real_date():
+    items = [{"age_text": "5 hours ago | BBC"}, {"snippet": "Oct 1, 2026 - rates"}, {"published": "2026-09-01"}, {}]
+    assert C.fill_dates(items, NOW) == 2
+    assert [i.get("published") for i in items] == ["2026-10-10", "2026-10-01", "2026-09-01", None]
+
+
+def test_pack_titles_are_unescaped():
+    p = C.build_pack("fact", "q", "s", [{"title": "What&#x27;s Delayed &amp; What Applies", "url": "https://x.eu"}], now=NOW)
+    assert p["items"][0]["title"] == "What's Delayed & What Applies"
+
+
+def test_searxng_news_params_only_when_asked():
+    assert SE.searxng_params("x") == {"q": "x", "format": "json", "language": SE.DEFAULT_LANGUAGE, "safesearch": 0}
+    p = SE.searxng_params("x", categories="news", time_range="week")
+    assert p["categories"] == "news" and p["time_range"] == "week"
+    assert "time_range" not in SE.searxng_params("x", time_range="fortnight")
+
+
+DDG = '''<div class="result"><h2 class="result__title">
+<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fa.eu%2Fx&amp;rut=1">The <b>EU AI Act</b> in 2026</a></h2>
+<a class="result__url" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fa.eu%2Fx">a.eu/x</a>
+<a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">A running guide to where the <b>EU AI Act</b> stands &amp; what&#x27;s next.</a></div>
+<div class="result"><h2 class="result__title"><a rel="nofollow" class="result__a" href="https://b.eu/y">No snippet here</a></h2></div>
+<div class="result"><h2 class="result__title"><a class="result__a" rel="nofollow" href="https://c.eu/z">Third</a></h2>
+<a class="result__snippet" href="https://c.eu/z">Third's own snippet</a></div>'''
+
+
+def test_ddg_snippets_keep_the_bolded_words_and_stay_with_their_result():
+    r = SE.parse_ddg_html(DDG)
+    assert [x["title"] for x in r] == ["The EU AI Act in 2026", "No snippet here", "Third"]
+    assert r[0]["snippet"] == "A running guide to where the EU AI Act stands & what's next."
+    assert r[0]["raw_url"] == "//duckduckgo.com/l/?uddg=https%3A%2F%2Fa.eu%2Fx&rut=1"
+    assert r[1]["snippet"] == "" and r[2]["snippet"] == "Third's own snippet"   # never the neighbour's
+
+
+def test_the_researcher_ddg_uses_the_shared_parser():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "research" / "researcher_api.py").read_text(encoding="utf-8")
+    body = src[src.index("async def search_ddg"):src.index("async def search_ddg") + 2500]
+    assert "_engines.parse_ddg_html(r.text)" in body and "result__snippet" not in body

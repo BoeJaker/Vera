@@ -247,16 +247,23 @@ def page_plan(limit: int, per_page: int = DEFAULT_PER_PAGE,
 
 
 def searxng_params(query: str, safesearch: Any = 0, pageno: int = 1,
-                   language: str = DEFAULT_LANGUAGE) -> Dict[str, Any]:
+                   language: str = DEFAULT_LANGUAGE, *, categories: str = "",
+                   time_range: str = "") -> Dict[str, Any]:
     """Query parameters for one SearXNG page.
 
     ``pageno`` is OMITTED for page 1 so the first request is byte-identical to
     the one sent before pagination existed; SearXNG defaults to page 1 anyway.
+    ``categories`` ("news") and ``time_range`` (day|week|month|year) are sent
+    only when given, for the same reason.
     """
     params: Dict[str, Any] = {"q": query, "format": "json",
                               "language": language, "safesearch": safesearch}
     if int(pageno or 1) > 1:
         params["pageno"] = int(pageno)
+    if categories:
+        params["categories"] = categories
+    if time_range in ("day", "week", "month", "year"):
+        params["time_range"] = time_range
     return params
 
 
@@ -405,3 +412,31 @@ def searxng_status(state: Mapping[str, Any]) -> Dict[str, Any]:
         return {"state": "degraded", "message": f"{len(unresp)} engine(s) unresponsive; {streak} empty answer(s) "
                                                 "in a row", **st}
     return {"state": "ok", "message": "", **st}
+
+
+# ── DuckDuckGo HTML results (info-seeking plan, 10 Oct) ──────────────────────
+# The old regex captured a snippet up to its first "<" - DDG bolds the search words, so "A running guide to where
+# the <b>EU AI Act</b> stands" came back as "A running guide to where the " on every fallback search.
+
+def _ddg_text(fragment: str) -> str:
+    import re as _re
+    t = _re.sub(r"<[^>]+>", "", fragment or "")
+    return " ".join(_html.unescape(t).split())
+
+
+def parse_ddg_html(text: str) -> List[Dict[str, str]]:
+    """[{raw_url, title, snippet}] from html.duckduckgo.com, each snippet taken from its own result block (so a
+    result without one never borrows the next result's), with the bolded words kept."""
+    import re as _re
+    out: List[Dict[str, str]] = []
+    for part in _re.split(r'(?=<a\b[^>]*class="result__a")', text or "")[1:]:
+        tag = _re.match(r"<a\b([^>]*)>(.*?)</a>", part, _re.S)
+        if not tag:
+            continue
+        href = _re.search(r'href="([^"]+)"', tag.group(1))
+        if not href:
+            continue
+        snip = _re.search(r'class="result__snippet"[^>]*>(.*?)</(?:a|td|div|span)>', part, _re.S)
+        out.append({"raw_url": _html.unescape(href.group(1)), "title": _ddg_text(tag.group(2)),
+                    "snippet": _ddg_text(snip.group(1)) if snip else ""})
+    return out

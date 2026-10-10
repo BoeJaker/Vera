@@ -1108,18 +1108,17 @@ async def search_ddg(query: str, limit: int) -> list[dict]:
                               params={"q":query}, headers=_hdrs),
                 domain="html.duckduckgo.com",
             )
-        links    = re.findall(r'class="result__a"[^>]+href="([^"]+)"[^>]*>([^<]+)<', r.text)
-        snippets = re.findall(r'class="result__snippet"[^>]*>([^<]+)<', r.text)
+        # one parser, shared: the old regex cut every snippet at DDG's <b> around the search words
         results = []
-        for i, (raw_url, title) in enumerate(links[:limit]):
-            clean = _clean_search_url(raw_url)
+        for it in _engines.parse_ddg_html(r.text)[:limit]:
+            clean = _clean_search_url(it["raw_url"])
             # Skip DDG internal pages and empty URLs
             if not clean or "duckduckgo.com" in clean:
                 continue
             results.append({
                 "url":     clean,
-                "title":   title.strip(),
-                "content": snippets[i] if i < len(snippets) else ""
+                "title":   it["title"],
+                "content": it["snippet"],
             })
         return results
     except Exception as e:
