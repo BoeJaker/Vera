@@ -9,7 +9,10 @@ from typing import Any
 
 from Vera.vera.capability_orchestration import capability
 from Vera.vera.models.inference_deployment import SQLiteInferenceDeploymentRegistry
-from Vera.vera.models.model_inventory import project_model_inventory
+from Vera.vera.models.model_inventory import (
+    project_model_inventory,
+    project_persisted_inference_providers,
+)
 from Vera.vera.models.model_package_store import SQLiteModelPackageRegistry
 from Vera.vera.models.nlp_inventory import project_nlp_inventory
 from Vera.vera.state_paths import guard_out_of_tree, state_dir
@@ -51,11 +54,14 @@ def _read_persisted_records() -> dict[str, Any]:
         try:
             store = SQLiteInferenceDeploymentRegistry(deployment_path)
             deployments = store.list()
-            result["deployments"] = deployments
-            result["observations"] = tuple(
+            observations = tuple(
                 observation for deployment in deployments
                 if (observation := store.current(deployment.deployment_id)) is not None
             )
+            result["deployments"] = deployments
+            result["observations"] = observations
+            result["providers"] = project_persisted_inference_providers(
+                deployments, observations)
             result["sources"]["deployments"] = {"status": "available"}
         except Exception as exc:
             result["sources"]["deployments"] = {
