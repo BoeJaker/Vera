@@ -127,3 +127,38 @@ def test_the_fabric_reads_telegram_and_passes_rss_headers():
     rss = src[src.index("async def _pull_rss"):src.index("async def _pull_api")]
     assert 'headers.update(' in rss
     assert '"site": _srcmap.page_title(body)' in src
+
+
+RSS2 = b"""<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<channel><title>Guardian property</title>
+<item><title><![CDATA[Higher mortgage rates inflict 'pain' on UK housing market]]></title>
+<link>https://www.theguardian.com/money/2026/oct/10/mortgage</link>
+<description><![CDATA[<p>Rates rose &amp; demand fell.</p>]]></description>
+<pubDate>Fri, 10 Oct 2026 07:00:00 GMT</pubDate></item>
+<item><title>No link here</title><guid isPermaLink="false">abc-123</guid></item>
+</channel></rss>"""
+ATOM = b"""<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Weblog</title>
+<entry><title>Release 1.2</title><link rel="replies" href="https://x.test/c"/><link rel="alternate" href="https://x.test/r"/>
+<updated>2026-10-09T12:00:00Z</updated><summary type="html">&lt;b&gt;Faster&lt;/b&gt; builds</summary></entry></feed>"""
+RDF = b"""<?xml version="1.0"?><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"
+ xmlns:dc="http://purl.org/dc/elements/1.1/"><item rdf:about="https://arxiv.org/abs/1"><title>A paper</title>
+<link>https://arxiv.org/abs/1</link><description>Abstract.</description><dc:date>2026-10-09</dc:date></item></rdf:RDF>"""
+
+
+def test_feeds_read_without_feedparser():
+    a = sm.parse_feed(RSS2)
+    assert a[0]["data"]["title"] == "Higher mortgage rates inflict 'pain' on UK housing market"        # CDATA unwrapped
+    assert a[0]["data"]["link"].startswith("https://www.theguardian.com/") and a[0]["data"]["summary"] == "Rates rose & demand fell."
+    assert sm.record_view(a[0]["data"])["published"] == "2026-10-10T07:00:00Z"
+    assert a[1]["data"]["link"] == ""                                       # a guid that is not a URL is not a link
+    b = sm.parse_feed(ATOM)
+    assert b[0]["data"]["link"] == "https://x.test/r" and b[0]["data"]["summary"] == "Faster builds"
+    c = sm.parse_feed(RDF)
+    assert c[0]["data"]["link"] == "https://arxiv.org/abs/1" and c[0]["data"]["published"] == "2026-10-09"
+    assert sm.parse_feed(b"<html><body>not a feed") == [] and sm.parse_feed(RSS2, limit=1)[0]["data"]["title"]
+
+
+def test_the_rss_puller_falls_back_to_the_stdlib_parser():
+    src = open(os.path.join(ROOT, "vera", "fabric", "data_fabric.py"), encoding="utf-8").read()
+    rss = src[src.index("async def _pull_rss"):src.index("async def _pull_api")]
+    assert "_srcmap.parse_feed(body" in rss and 're.findall(r"<title>' not in rss

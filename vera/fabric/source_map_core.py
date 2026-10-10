@@ -298,3 +298,58 @@ def telegram_posts(page_html: str, channel: str) -> List[Dict[str, Any]]:
                              "published": to_iso(when.group(1)) if when else "",
                              "summary": text[:1000], "channel": channel}})
     return out
+
+
+# ── RSS / Atom without feedparser ────────────────────────────────────────────
+
+def _local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1].lower() if isinstance(tag, str) else ""
+
+
+def _child_text(el, *names: str) -> str:
+    for c in list(el):
+        if _local(c.tag) in names and (c.text or "").strip():
+            return (c.text or "").strip()
+    return ""
+
+
+def _atom_link(el) -> str:
+    best = ""
+    for c in list(el):
+        if _local(c.tag) != "link":
+            continue
+        href = (c.get("href") or (c.text or "")).strip()
+        rel = (c.get("rel") or "alternate").lower()
+        if href and rel == "alternate":
+            return href
+        best = best or href
+    return best
+
+
+def parse_feed(body: bytes, limit: int = 50) -> List[Dict[str, Any]]:
+    """RSS 2.0, RSS 1.0 (RDF) or Atom -> fabric items {text, data{title, link, published,
+    summary}}, with the standard library only. The fabric uses feedparser when it is
+    installed; without it, a regex kept only titles - no link, no date, CDATA left in -
+    and every RSS source in the estate read that way (10 Oct 2026: prod had no feedparser)."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return []
+    entries = [e for e in root.iter() if _local(e.tag) in ("item", "entry")]
+    out: List[Dict[str, Any]] = []
+    for e in entries[:max(1, int(limit))]:
+        title = re.sub(r"\s+", " ", _html.unescape(_child_text(e, "title"))).strip()
+        summary = _child_text(e, "description", "summary", "content", "encoded")
+        summary = re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", summary))).strip()
+        link = _child_text(e, "link") if _local(root.tag) != "feed" else ""
+        link = link or _atom_link(e) or _child_text(e, "guid")
+        if not link.startswith(("http://", "https://")):
+            link = ""
+        published = _child_text(e, "pubdate", "published", "updated", "date", "issued")
+        text = (title + ". " + summary).strip(". ").strip()[:4000]
+        if not text:
+            continue
+        out.append({"text": text, "data": {"title": title, "link": link, "published": published,
+                                           "summary": summary[:1000]}})
+    return out
