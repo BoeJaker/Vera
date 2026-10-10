@@ -7274,8 +7274,8 @@ IMPORTANT:
     o=o||{}; if(!SID) return null;
     const recent=[...document.querySelectorAll('#msgs .mwrap.u[data-mid]')].map(w=>w.dataset.mid).filter(Boolean).reverse().slice(0,8);
     if(mid&&recent[0]!==mid) recent.unshift(mid);
-    let entities=[];
-    try{ entities=CTX_NODES.filter(n=>n.included!==false).map(n=>String(n.label||'')).filter(Boolean).slice(0,40);
+    let entities=Array.isArray(o.entities)?o.entities.slice():[];
+    if(!Array.isArray(o.entities)) try{ entities=CTX_NODES.filter(n=>n.included!==false).map(n=>String(n.label||'')).filter(Boolean).slice(0,40);
       const od=_assembledCtx&&_assembledCtx.ontDetails; (Array.isArray(od)?od:[]).forEach(x=>((x&&x.entities)||[]).forEach(en=>{ const nm=String((en&&(en.name||en.label))||(typeof en==='string'?en:'')); if(nm) entities.push(nm); })); }catch(_){}
     let r=null;
     try{ r=await _capCall('canvas.session.relevance',{session_id:SID, turn:mid||'', text:String(text||'').slice(0,2000), entities:entities.slice(0,60), recent, apply:false}); }catch(_){ return null; }
@@ -7291,8 +7291,49 @@ IMPORTANT:
         const sc=r.scores||{}, val=k=>{ const v=sc[k]; return v&&typeof v.score==='number'?v.score:0; };
         const keys=(r.focus||[]).map(String).sort((a,b)=>val(b)-val(a));
         if(keys.length){ const run=()=>{ try{ r.broughtIn=cv.bringIn(keys); }catch(_){} }; if(recalled) setTimeout(run, 400); else run(); } } }catch(_){}
+    /* ...and the turn just answered is the one in focus: its topic is asked for again now (its new items, its own names) */
+    try{ if(o.apply!==false&&r&&r.ok&&mid){ delete _cvTopicCache[mid]; _cvTopicWant=''; _cvTopicFollow(mid); } }catch(_){}
     if(r&&typeof r==='object') r.recalledByChat=recalled;
     return r;
+  }
+  /* THE DESK FOLLOWS THE CONVERSATION'S PRIMARY TOPIC (owner, 2026-10-10: "the chat focus (primary topic) still isnt
+     steering/controlling the items on the desk"; 2026-10-09: the items of a topic the chat has left go out to the border
+     as pills, the new topic's come in beside the chat, back and forth; a question on both keeps both). The topic is the
+     turn in focus - the one just answered, or the one scrolled to - and its items are the relevance pass's focus set for
+     that turn (the six signals, the turn's own text: its question and its reply). Asked once per turn and kept a while;
+     on a desk that brings items in. */
+  const _cvTopicCache={}; let _cvTopicT=null, _cvTopicWant='';
+  function _cvTopicOn(){ return _cvCfg('cfgCvAlign')==='desk' && _cvCfg('cfgCvBring')==='on'; }
+  function _cvTurnText(mid){
+    const esc=(window.CSS&&CSS.escape)?CSS.escape(mid):String(mid).replace(/"/g,'\\"');
+    const u=document.querySelector('#msgs .mwrap[data-mid="'+esc+'"]'); if(!u) return '';
+    let t=u.textContent||'', n=u.nextElementSibling;
+    while(n&&t.length<1800){ if(n.classList&&n.classList.contains('mwrap')){ if(n.classList.contains('u')) break; t+='\n'+(n.textContent||''); } n=n.nextElementSibling; }
+    return t.replace(/\s+/g,' ').slice(0,1800);
+  }
+  /* the names a turn is about: capitalised words and words with digits (Microsoft, Phi-4, 7B, qwen2.5), the commonest
+     first - sentence openers and the chat's own chrome left out */
+  const _CV_NAME_SKIP=new Set(['the','this','that','these','those','here','there','what','when','where','which','who','why','how','you','your','yes','no','and','but','for','with','from','can','could','would','should','please','thanks','thank','hello','edit','resend','copy','explode','canvas','send','show','full','html','report','json','url','title','text','note','also','just','its','it’s','let','sure','okay','great','here’s']);
+  function _cvTurnNames(text){
+    const n={}; String(text||'').replace(/\b(?:[A-Z][A-Za-z0-9.+\-]{2,}|[A-Za-z]*\d[A-Za-z0-9.\-]*[A-Za-z][A-Za-z0-9.\-]*|\d+[A-Za-z]+)\b/g, m=>{ const w=m.toLowerCase().replace(/[.\-]+$/,''); if(w.length<3&&!/\d/.test(w)) return m; if(_CV_NAME_SKIP.has(w)) return m; if(/^\d{1,2}:\d{2}$/.test(w)) return m; n[w]=(n[w]||0)+1; return m; });
+    return Object.keys(n).sort((a,b)=>n[b]-n[a]).slice(0,24);
+  }
+  function _cvTopicFollow(mid){
+    if(!mid||!_cvTopicOn()) return;
+    const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv||typeof cv.setTopic!=='function') return;
+    const c=_cvTopicCache[mid];
+    if(c&&Date.now()-c.t<20000){ cv.setTopic(c.keys, c.scores, mid); return; }
+    if(_cvTopicWant===mid&&_cvTopicT) return;
+    _cvTopicWant=mid; clearTimeout(_cvTopicT);
+    _cvTopicT=setTimeout(async()=>{ _cvTopicT=null; if(_cvTopicWant!==mid) return;
+      /* the TURN's own names, not the context's: the context records are the latest turn's whatever turn is in focus, and
+         every item matching them scored 0.85 - the same five items for a greeting and for a question on model sizes */
+      const txt=_cvTurnText(mid);
+      let r=null; try{ r=await _cvRelevance(mid, txt, {apply:false, entities:_cvTurnNames(txt)}); }catch(_){}
+      if(!(r&&r.ok)) return;
+      _cvTopicCache[mid]={ keys:(r.focus||[]).map(String), scores:r.scores||{}, t:Date.now() };
+      const cv2=document.querySelector('#canvasColumnBody vera-canvas');
+      if(cv2&&_cvTopicWant===mid&&typeof cv2.setTopic==='function') cv2.setTopic(_cvTopicCache[mid].keys, _cvTopicCache[mid].scores, mid); }, 450);
   }
   /* CANVAS ENRICHMENT: after a reply, what ELSE on the estate is relevant to the turn comes forth beside it -
      canvas.enrich picks from the turn's words (the market overview and its news for a markets question, a web
@@ -8380,7 +8421,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     // the turn in focus, as the canvas counts turns (the user's turn — the anchors' own mids; a reply in view means its
     // question): the column opens what that turn made and ages what is behind it. Set here, not only when the graph
     // page posts its anchor — the column alone knew no focused turn.
-    try{ const fw=_focusedTurn(); let fm=fw?(fw.dataset.mid||''):''; if(fw&&fw.classList.contains('a')){ let p=fw.previousElementSibling; while(p&&!(p.classList&&p.classList.contains('mwrap')&&p.classList.contains('u'))) p=p.previousElementSibling; if(p&&p.dataset.mid) fm=p.dataset.mid; } if((cv.dataset.focusMid||'')!==fm) cv.dataset.focusMid=fm; }catch(_){}
+    try{ const fw=_focusedTurn(); let fm=fw?(fw.dataset.mid||''):''; if(fw&&fw.classList.contains('a')){ let p=fw.previousElementSibling; while(p&&!(p.classList&&p.classList.contains('mwrap')&&p.classList.contains('u'))) p=p.previousElementSibling; if(p&&p.dataset.mid) fm=p.dataset.mid; } if((cv.dataset.focusMid||'')!==fm) cv.dataset.focusMid=fm; try{ _cvTopicFollow(fm); }catch(_){} }catch(_){}
     if(force||sig!==_cvStageSig){ _cvStageSig=sig; try{ cv.setTurns(turns, {height:msgs.scrollHeight}); }catch(_){} }
     /* WHERE THE TRANSCRIPT IS — not where the column should be. The column places its items level with the turns
        on screen and keeps its own scroll, so an item stays in view instead of being carried off with its turn, and

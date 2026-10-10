@@ -212,4 +212,14 @@ t('a chip that only fits at its own size is moved clear at that size, not left i
   assert.deepStrictEqual([big.x, big.y, big.w, big.h], [380, 300, 760, 520], 'the grown card did not move');
 });
 
+t('an item out of the topic is a border chip even when the bands beside the chat have room', () => {
+  const R = D.chatRect('left', null), d = { W: 1600, H: 900 };
+  const items = [{ id: 'in1' }, { id: 'out1', border: true }, { id: 'in2' }, { id: 'out2', border: true }];
+  ['orbit', 'kind', 'timeline', 'stack'].forEach((mode) => {
+    const pos = D.arrange(mode, R, items.map((x) => Object.assign({ kind: 'records', age: 0 }, x)), d);
+    ['out1', 'out2'].forEach((k) => { assert.ok(pos[k], mode + ': ' + k + ' placed'); assert.strictEqual(D.sizeAt(R, pos[k][0], pos[k][1], {}, d).face !== 'max' && D.sizeAt(R, pos[k][0], pos[k][1], {}, d).face !== 'card', true, mode + ': ' + k + ' is a border face'); });
+    ['in1', 'in2'].forEach((k) => assert.ok(pos[k] && ['max', 'card'].indexOf(D.sizeAt(R, pos[k][0], pos[k][1], {}, d).face) >= 0, mode + ': ' + k + ' beside the chat'));
+  });
+});
+
 console.log(n + ' passed');

@@ -1249,7 +1249,10 @@
   /* NO GROUND ON A BARE DESK (owner, 2026-10-09: "id like the elements to have no background (if there is no panel behind
      them, else keep the background)"): with nothing behind them the items sit on the desk itself. One that rides over the
      others - dragged, peeking open, maximised - keeps its ground, or its text would run into theirs. */
-  :host([align="desk"]:not([desk-narrow]):not([layered])) .stage .it:not([data-desk-face^="layer-"]):not(.desk-dragging):not(.resizing):not(.peek):not(.hovopen):not(.maxed){background:transparent!important;border-color:transparent!important}   /* its marks (waiting, pinned, a run's end) are rings, kept */
+  :host([align="desk"]:not([desk-narrow]):not([layered])) .stage .it:not([data-desk-face^="layer-"]):not(.desk-dragging):not(.resizing):not(.peek):not(.hovopen):not(.maxed):not(.chip-peek){background:transparent!important;border-color:transparent!important}   /* its marks (waiting, pinned, a run's end) are rings, kept */
+  /* a pill opened to its whole title under the pointer: over its neighbours, with a ground, its title unclipped */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip.chip-peek{background:var(--bg2,#1d2128)!important;box-shadow:0 6px 18px rgba(0,0,0,.4);border-radius:17px}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip.chip-peek > .it-hd > .t{overflow:visible;text-overflow:clip}
   /* a card being carried or sized rides over the others with its ground, so it never mixes with what it passes over */
   :host([align="desk"]:not([desk-narrow])) .stage .it:is(.desk-dragging,.resizing){background:var(--bg1,#15181d)!important;border-radius:8px}
   /* a panel behind the items: they keep a ground over it, or their text runs into the panel's */
@@ -2658,6 +2661,7 @@
     _placeDesk(st, cards) {
       const D = root.VeraDesk, body = this.shadowRoot.getElementById('body');
       this._liveFollow(650);   /* every card it places may glide (.45 s): what is drawn over them follows each frame */
+      this._placeSeq = (this._placeSeq || 0) + 1;
       const W = st.clientWidth || 300;
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);
@@ -2703,6 +2707,16 @@
       }
       const nowOrder = ranked.map((x) => x.c.dataset.key || '').filter(Boolean);
       if (!kept || nowOrder.length !== kept.length || nowOrder.some((k, i) => kept[i] !== k)) this._deskOrderSet(nowOrder);
+      /* the primary topic leads (see setTopic): its items, best first, then the rest in the kept order - each of those
+         marked for the border. Pinned (in context) items count as in the topic. Only on a desk that brings items in. */
+      const T = this.getAttribute('bring-in') !== 'off' ? this._topic : null; const outside = new Set();
+      if (T) {
+        const tAt = {}; T.order.forEach((k, i) => { tAt[k] = i; });
+        const inT = (x) => tAt[x.c.dataset.key || ''] != null || x.c.classList.contains('pinned');
+        const lead = ranked.filter(inT).sort((a, b) => (tAt[a.c.dataset.key] != null ? tAt[a.c.dataset.key] : -1) - (tAt[b.c.dataset.key] != null ? tAt[b.c.dataset.key] : -1));
+        const rest = ranked.filter((x) => !inT(x)); rest.forEach((x) => outside.add(x.c.dataset.key || ''));
+        ranked.length = 0; lead.concat(rest).forEach((x) => ranked.push(x));
+      }
       /* the arrangement deals its places in the kept order (it was dealt before the order was applied, so a turn's items
          were "brought in" without moving) */
       /* the arrangement the person chose (owner, 2026-10-06: "automatically organised but let the user configure it"):
@@ -2710,7 +2724,7 @@
       const mode = ['orbit', 'kind', 'timeline', 'stack'].indexOf(this.getAttribute('desk-arrange')) >= 0 ? this.getAttribute('desk-arrange') : 'orbit';
       const mids = [...new Set(cards.map((c) => c.dataset.mid || '').filter(Boolean))].sort((a, b) => (parseInt(b.replace(/\D/g, ''), 10) || 0) - (parseInt(a.replace(/\D/g, ''), 10) || 0));
       const pos = D.arrange(mode, R, ranked.map((x) => ({ id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '',
-        age: x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null })), desk);
+        age: x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null, border: outside.has(x.c.dataset.key || '') })), desk);
       const locks = this._lockGet();
       const lockOf = (key) => { const l = locks[key]; return l && isFinite(l.fx) && isFinite(l.fy) && l.w > 0 && l.h > 0 ? l : null; };
       const sized = (k) => !!(up[k] && up[k].w > 0 && up[k].h > 0);
@@ -3029,6 +3043,29 @@
     /* The relevance engine's answer (Notes/38 §3.3, P2): the keys in focus now, with their scores. The tier decides
        how the rest shows — Full greys them, Hover reveals on hover, Zen shows only the focus set (the tier is
        data-den on <html>, the appearance the whole UI shares). */
+    /* THE CONVERSATION'S PRIMARY TOPIC (owner, 2026-10-10: "the chat focus (primary topic) still isnt steering/controlling
+       the items on the desk - how close they are to chat or if they are moved all the way out of focus and minimised"):
+       the items the turn in focus is about - the relevance pass's focus set for that turn, best first. On a desk that
+       brings items in, they come in beside the chat (the most useful nearest, as many as the bands hold); every other
+       item goes out to the far border as a chip. A question on two topics has both in its set, so both stay in. Locked
+       and hand-placed cards stay where they are. Called by the chat whenever the turn in focus changes. */
+    setTopic(keys, scores, mid) {
+      const sc = scores && typeof scores === 'object' ? scores : {};
+      const val = (k) => { const v = sc[k]; return v && typeof v.score === 'number' ? v.score : (typeof v === 'number' ? v : 0); };
+      /* ONLY WHAT THE TURN IS REALLY ABOUT: the relevance pass's focus set holds nearly everything (the last turns' items
+         all score 0.5 for being recent - 16-17 of 19 items in either test turn), so the topic is the items scoring 0.75
+         or more (the turn's own and those its words or names reach); none so strong - those at 0.6 or more */
+      let ks = Array.isArray(keys) ? keys.map(String) : null;
+      if (ks && Object.keys(sc).length) { const strong = ks.filter((k) => val(k) >= 0.75); ks = strong.length ? strong : ks.filter((k) => val(k) >= 0.6); }
+      /* a turn about nothing on the desk ("hello", "thanks") does not change the conversation's topic: the last one holds */
+      if (ks && !ks.length && this._topic) return false;
+      const sig = (mid || '') + '|' + (ks ? ks.join(',') : '-');
+      if (sig === this._topicSig) return false; this._topicSig = sig;
+      this._topic = ks ? { keys: new Set(ks), order: ks.slice().sort((a, b) => val(b) - val(a)), mid: mid || '' } : null;
+      if (this.deskAlign()) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
+      try { this.dispatchEvent(new CustomEvent('vera:canvas:topic', { bubbles: true, detail: { mid: mid || '', keys: ks || [] } })); } catch (e) { /* no listener */ }
+      return true;
+    }
     setFocus(keys, scores) { this._focus = Array.isArray(keys) ? new Set(keys.map(String)) : null; this._scores = scores && typeof scores === 'object' ? scores : {}; if (this._doc) this.render(this._doc); }
     retier() { if (this._doc) this.render(this._doc); }
     tier() { const d = this.ownerDocument && this.ownerDocument.documentElement; const t = (this.getAttribute('tier') || (d && d.getAttribute('data-den')) || 'full').toLowerCase(); return t === 'hover' || t === 'zen' ? t : 'full'; }
@@ -3516,9 +3553,34 @@
       const body = this.shadowRoot && this.shadowRoot.getElementById('body'); if (!body) return;
       const find = (x) => x ? body.querySelector('#items .it[data-key="' + String(x).replace(/"/g, '\\"') + '"]') : null;
       const prev = find(this._hovKey); if (prev) prev.classList.remove('hov');
+      this._chipPeek(prev, false);
       this._hovKey = k; const it = find(k); if (it) it.classList.add('hov');
+      this._chipPeek(it, true);
       this._hoverOpen(it);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:hover', { bubbles: true, detail: { key: k } })); } catch (e) {}
+    }
+    /* A PILL SAYS WHAT IT IS UNDER THE POINTER (owner, 2026-10-10: "if they are minimised to a pill its often too small to
+       read what they are, could expand to display the entire title on mouse over"): a chip or an icon on the desk widens
+       in place to its whole title, over its neighbours and with a ground, toward the desk if it would run off its edge;
+       it goes back when the pointer leaves. Nothing else moves; if the desk was placed meanwhile it is placed again. */
+    _chipPeek(it, on) {
+      if (!it || !this.deskAlign()) return;
+      if (!on) { const s = it._cpw; if (!s) return; it._cpw = null; it.classList.remove('chip-peek'); if (s.icon) it.classList.add('desk-icon');
+        if (s.seq !== this._placeSeq) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
+        else { it.style.setProperty('width', s.w, 'important'); it.style.left = s.l; it.style.zIndex = s.z; }
+        requestAnimationFrame(() => { it.style.transition = ''; }); return; }
+      if (it._cpw || !it.classList.contains('desk-chip')) return;
+      const icon = it.classList.contains('desk-icon');
+      const s = { w: it.style.getPropertyValue('width'), l: it.style.left, z: it.style.zIndex, icon, seq: this._placeSeq };
+      it.style.transition = 'none'; if (icon) it.classList.remove('desk-icon');
+      const t = it.querySelector(':scope > .it-hd > .t'); if (!t) { if (icon) it.classList.add('desk-icon'); it.style.transition = ''; return; }
+      const short = t.scrollWidth - t.clientWidth;
+      if (short <= 1 && !icon) { it.style.transition = ''; return; }   // its whole title already shows
+      it._cpw = s; it.classList.add('chip-peek');
+      const W = (it.parentElement && it.parentElement.clientWidth) || 1000;
+      const w = Math.min(W - 8, it.offsetWidth + Math.max(0, t.scrollWidth - t.clientWidth) + 8);
+      let left = parseFloat(it.style.left) || 0; if (left + w > W - 4) left = Math.max(4, W - 4 - w);
+      it.style.setProperty('width', w + 'px', 'important'); it.style.left = left + 'px'; it.style.zIndex = '210';
     }
     /* A FOLDED ITEM, PREVIEWED IN PLACE (owner, 2026-10-04: "hovering over lots of collapsed canvas items makes the
        previews flicker in and out as it doesnt stay in-place under the mouse. sometime hovering them doesnt open the
