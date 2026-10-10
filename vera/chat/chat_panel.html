@@ -7462,6 +7462,7 @@ IMPORTANT:
   function _cvTurnSubject(mid){ return String((document.querySelector('#msgs .mwrap.u[data-mid="'+(mid||'')+'"] .msg-body')||{}).textContent||'').replace(/\s+/g,' ').trim().slice(0,70); }
   function _cvLandSource(d){
     if(!SID||!d||!d.url) return;
+    if(d.job&&_CV_RR[d.job]) return;   // a run with its own item (_cvRunStart): its pages are in it
     const url=String(d.url); const id=url.split('#')[0]; const mid=_cvRelMid||'';
     const g=_CV_RS[mid]||(_CV_RS[mid]={ key:'research-sources:'+(mid||'session'), items:[], seen:{}, landed:false, t:0 });
     let domain=String(d.domain||''); if(!domain){ try{ domain=new URL(url).host; }catch(_){ domain=''; } }
@@ -7491,6 +7492,7 @@ IMPORTANT:
      already carry one, keyed by the job so a re-run of the same job updates rather than doubles. */
   async function _cvLandReport(text, mid, jobId, cits){
     if(!SID) return 0; let md=String(text||''); if(md.trim().length<80) return 0;
+    if(jobId&&_CV_RR[jobId]) return 1;   // the run's own item carries its report (its last write may still be on its way)
     const list=(Array.isArray(cits)?cits:[]).map(c=>(c&&typeof c==='object')?c:{ url:String(c||'') })
       .map(c=>({ url:String(c.url||c.link||c.href||''), title:String(c.title||c.name||'') })).filter(c=>/^https?:/.test(c.url));
     if(list.length&&!/^#+\s*(sources|references|citations|bibliography)\b/im.test(md))
@@ -7501,6 +7503,57 @@ IMPORTANT:
       return (r&&r.ok)?1:0; }catch(_){ return 0; }
   }
   document.addEventListener('vera:research:source', ev=>{ try{ _cvLandSource(ev.detail||{}); }catch(_){} });
+
+  /* THE RUN ITSELF, ON THE CANVAS (owner, 2026-10-10: "research.run on the desk is missing all of the detail it has in
+     chat"). The chat's research card holds how the run stands, its method, its pages, its citations and its report;
+     the canvas got the pages as a list and, at the end, the report as a separate document. One item per job now carries
+     all of it (the canvas's research item): drawn on this page's canvas as the card changes (a few times a second,
+     never written), kept on the server every few seconds and once at the end. While it exists, the separate sources
+     list and report copy are not made - the item has them. */
+  const _CV_RR={};
+  function _cvRunStart(jobId, rc){
+    if(!SID||!jobId||!rc||typeof rc.snapshot!=='function') return;
+    const mid=_cvRelMid||'';
+    _CV_RR[jobId]={ key:'research-run:'+jobId, rc, mid, q:_cvTurnSubject(mid), landed:false, ended:false, err:'', drawn:0, t:0, chain:Promise.resolve() };
+    _cvRunFeed(jobId);
+  }
+  function _cvRunContent(jobId, r, keepLive){
+    const s=r.rc.snapshot(); const base=(u)=>String(u||'').split('#')[0];
+    const cites=(s.cites||[]).filter(c=>c&&c.url).slice(0,80);
+    const citeOf={}; cites.forEach(c=>{ citeOf[base(c.url)]=c; });
+    const items=(s.pages||[]).filter(p=>p&&p.url).map(p=>{ const id=base(p.url), c=citeOf[id];
+      const rec={ id, url:String(p.url), domain:String(p.domain||'').replace(/^www\./,''), title:String((c&&c.title)||p.domain||p.url), meta:{} };
+      if(+p.chars) rec.meta.read=(+p.chars>1000?(+p.chars/1000).toFixed(1)+'k':String(+p.chars))+' chars';
+      if(p.failed) rec.meta.status='did not load';
+      if(c){ rec.cited=true; rec.meta.cited='cited in the report'; }
+      return rec; }).sort((a,b)=>(b.cited?1:0)-(a.cited?1:0));
+    const status=r.err?'error':s.status;
+    return { title:'Research'+(r.q?' · '+r.q:''), query:r.q||undefined, job:String(jobId), status, error:r.err||undefined,
+             step:s.step||'', writing:!!s.writing, started:s.started, secs:s.secs, plan:s.plan||undefined, items, cites,
+             live:keepLive&&status==='running'?String(s.live||'').slice(-20000):'', report:String(s.report||'').slice(0,60000) };
+  }
+  function _cvRunFeed(jobId, opt){
+    const r=_CV_RR[jobId]; if(!r||r.ended) return; opt=opt||{};
+    if(opt.error) r.err=String(opt.error);
+    const final=!!(opt.final||opt.error);
+    const now=Date.now();
+    if(r.landed&&(final||now-r.drawn>250)){ r.drawn=now;
+      try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&typeof cv.liveUpdate==='function') cv.liveUpdate(r.key, _cvRunContent(jobId, r, true)); }catch(_){} }
+    clearTimeout(r.t);
+    if(final){ r.ended=true; _cvRunSave(jobId, true); return; }
+    r.t=setTimeout(()=>_cvRunSave(jobId, false), r.landed?2500:300);
+  }
+  function _cvRunSave(jobId, final){
+    const r=_CV_RR[jobId]; if(!r||!SID) return;
+    r.chain=r.chain.then(async()=>{
+      const content=_cvRunContent(jobId, r, false);
+      try{
+        if(!r.landed){ const x=await _capCall('canvas.add',{ session_id:SID, kind:'research', key:r.key, at:'now', size:'l', content, anchor:r.mid?{ mid:r.mid, turn:r.mid }:undefined }); if(x&&x.ok) r.landed=true; }
+        else await _capCall('canvas.update',{ session_id:SID, key:r.key, content });
+      }catch(_){}
+      if(final){ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&typeof cv.liveDone==='function') cv.liveDone(r.key); }catch(_){} }
+    });
+  }
 
   /* A PANEL ON THE CANVAS. The canvas already draws one - live in its frame, with query and dispatch over the
      bridge - and nothing ever put one there; the block type existed and had no way in. Keyed by the panel, so
@@ -13948,11 +14001,12 @@ Your task: decide what to do next to advance toward the goal.
       cancel.onclick=()=>{cancelled=true;cancel.textContent='Cancelling…';};
       host.appendChild(cancel);
       rc._cancelBtn=cancel;
+      try{ _cvRunStart(jobId, rc); }catch(_){}   // the same run on the canvas, as one item
     }
-    const push=(m)=>{ if(rc) rc.push(m); };
-    const setStatus=(t)=>{ if(rc) rc.status(t); };
+    const push=(m)=>{ if(rc){ rc.push(m); try{ _cvRunFeed(jobId); }catch(_){} } };
+    const setStatus=(t)=>{ if(rc){ rc.status(t); try{ _cvRunFeed(jobId); }catch(_){} } };
     const finish=(result)=>{
-      if(rc){ rc.finish(result); if(rc._cancelBtn) rc._cancelBtn.remove(); }
+      if(rc){ rc.finish(result); if(rc._cancelBtn) rc._cancelBtn.remove(); try{ _cvRunFeed(jobId, { final:true }); }catch(_){} }
     };
     scroll();
 
@@ -14018,7 +14072,9 @@ Your task: decide what to do next to advance toward the goal.
           fullText='';break;
         }
       }
-    }finally{ if(rc&&rc._cancelBtn) rc._cancelBtn.remove(); }
+    }finally{ if(rc&&rc._cancelBtn) rc._cancelBtn.remove();
+      /* a run that ended any other way (failed, cancelled, out of time) says so on the canvas rather than spinning on */
+      try{ if(_CV_RR[jobId]&&!_CV_RR[jobId].ended) _cvRunFeed(jobId, { error: cancelled?'Cancelled.':(fullText?'':'The run ended without a report.') , final:true }); }catch(_){} }
 
     if(!fullText){return null;}
     try{ _cvLandReport(fullText, _cvRelMid||'', jobId, cits); }catch(_){}
