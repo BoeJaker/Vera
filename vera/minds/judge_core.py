@@ -363,18 +363,30 @@ def knn_vote(question_id: str, qvec: Iterable[float], pool: Iterable[Dict[str, A
     if not qv or len(rows) < max(1, int(min_neighbours)):
         return None, None, len(rows)
     near = sorted(((sum(a * b for a, b in zip(qv, r["vec"])), r) for r in rows), key=lambda x: -x[0])[:max(1, int(k))]
+    return vote_from_neighbours(question_id, [(s, r["answer"]) for s, r in near], len(rows), min_neighbours)
+
+
+def vote_from_neighbours(question_id: str, neighbours: Iterable[Tuple[float, Any]], eligible: int,
+                         min_neighbours: int = KNN_MIN_NEIGHBOURS) -> Tuple[Optional[str], Optional[float], int]:
+    """knn_vote's vote over neighbours found elsewhere (an NLP node's POST /decide, FM-9.1): (answer, p,
+    eligible). `eligible` is how many rows could have been neighbours (the run's own excluded)."""
+    q = QUESTIONS.get(question_id) or {}
+    labels = list((q.get("labels") or {}).values())
+    if eligible < max(1, int(min_neighbours)):
+        return None, None, eligible
     vote: Dict[str, float] = {}
-    for s, r in near:
-        vote[r["answer"]] = vote.get(r["answer"], 0.0) + max(0.0, s)
+    for s, ans in neighbours:
+        if ans in labels:
+            vote[ans] = vote.get(ans, 0.0) + max(0.0, float(s))
     total = sum(vote.values())
     if total <= 0:
-        return None, None, len(rows)
+        return None, None, eligible
     answer = max(vote, key=vote.get)
     if q.get("kind") == "binary":
         p = vote.get(labels[0], 0.0) / total
     else:
         p = vote[answer] / total
-    return answer, round(p, 4), len(rows)
+    return answer, round(p, 4), eligible
 
 
 def latency(ms: Iterable[int]) -> Dict[str, Any]:

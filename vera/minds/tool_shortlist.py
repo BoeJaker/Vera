@@ -25,10 +25,14 @@ try:                                     # pragma: no cover - import-shape only
 except Exception:                        # worktree / app-free import
     from vera.minds import tool_shortlist_core as TC   # type: ignore
     from vera.minds import judge_core as JC            # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import decide_dispatch as DD
+except Exception:                        # worktree / app-free import
+    from vera.minds import decide_dispatch as DD       # type: ignore
 
 log = logging.getLogger("vera.minds.tool_shortlist")
 _PENDING: set = set()
-_INDEX: Dict[str, Any] = {"rows": [], "loaded": 0.0}
+_INDEX: Dict[str, Any] = {"rows": [], "loaded": 0.0, "version": "", "prior": None}
 INDEX_TTL_S = 3600
 MAX_ROWS = 20000
 KEY_NIGHT = "vera:caps:shortlist:night:"
@@ -85,8 +89,15 @@ async def _rows() -> List[Dict[str, Any]]:
         vec = json.loads(r["vec"]) if isinstance(r["vec"], str) else r["vec"]
         tools = json.loads(r["tools"]) if isinstance(r["tools"], str) else r["tools"]
         rows.append({"run": r["run"], "vec": vec, "tools": tools})
-    _INDEX.update(rows=rows, loaded=time.time())
+    _INDEX.update(rows=rows, loaded=time.time(), prior=TC.prior(rows),
+                  version=DD.index_version([f"{r['run']}:{len(r['tools'] or [])}" for r in rows]))
     return rows
+
+
+async def _push_rows() -> List[Dict[str, Any]]:
+    """The index as a node keeps it (POST /decide/index): the tools ride as each row's payload."""
+    return [{"id": i, "vec": r["vec"], "run": r["run"], "payload": r["tools"]}
+            for i, r in enumerate(_INDEX["rows"])]
 
 
 async def build_index(limit_runs: int = 400) -> Dict[str, Any]:
@@ -136,9 +147,21 @@ async def cap_caps_shortlist(text: str = "", k: int = 10, exclude_run: str = "",
     if not str(text or "").strip():
         return {"error": "text is required"}
     rows = await _rows()
-    vec = (await _embed([str(text)[:1000]]) or [None])[0]
-    return {"tools": TC.shortlist(vec or [], rows, k=max(1, min(30, int(k or 10))), exclude_run=exclude_run),
-            "index_rows": len(rows), "degraded": vec is None}
+    k = max(1, min(30, int(k or 10)))
+    if not rows:
+        return {"tools": [], "index_rows": 0, "degraded": True}
+    # FM-9.1: the nearest past steps are found on an NLP node (one round trip: embed + search there)
+    res = await DD.knn("tool_steps", _INDEX["version"], _push_rows, text=str(text)[:1000],
+                       k=TC.NEIGHBOURS, exclude_run=exclude_run)
+    if res.get("ok"):
+        near = [(n["score"], n.get("payload") or []) for n in res.get("neighbours") or []]
+        return {"tools": TC.rank_from_neighbours(near, _INDEX["prior"] or TC.prior(rows), k),
+                "index_rows": len(rows), "degraded": False, "node": res.get("node"), "ms": res.get("ms")}
+    if not await DD.local_allowed():
+        return {"tools": [], "index_rows": len(rows), "degraded": True, "error": res.get("error")}
+    vec = (await _embed([str(text)[:1000]]) or [None])[0]      # nlp.local: the host, off the event loop
+    tools = await asyncio.to_thread(TC.shortlist, vec or [], rows, k, TC.NEIGHBOURS, exclude_run)
+    return {"tools": tools, "index_rows": len(rows), "degraded": vec is None, "node": "host"}
 
 
 @capability(

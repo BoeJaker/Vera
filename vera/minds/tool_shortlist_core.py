@@ -51,18 +51,31 @@ def shortlist(qvec: Sequence[float], index: Iterable[Dict[str, Any]], k: int = K
     {run, vec (unit), tools}. Rows of `exclude_run` are skipped."""
     q = _unit(qvec) if qvec else []
     rows = [r for r in index if r.get("run") != exclude_run and r.get("vec")]
-    prior = Counter(t for r in rows for t in (r.get("tools") or []))
-    vote: Counter = Counter()
+    sims: List[Tuple[float, Any]] = []
     if q:
-        sims = sorted(((sum(a * b for a, b in zip(q, r["vec"])), r) for r in rows if len(r["vec"]) == len(q)),
-                      key=lambda x: -x[0])[:max(1, int(neighbours))]
-        for s, r in sims:
-            for t in r.get("tools") or []:
-                vote[t] += max(0.0, s)
+        sims = [(s, r.get("tools") or []) for s, r in sorted(
+            ((sum(a * b for a, b in zip(q, r["vec"])), r) for r in rows if len(r["vec"]) == len(q)),
+            key=lambda x: -x[0])[:max(1, int(neighbours))]]
+    return rank_from_neighbours(sims, prior(rows), k)
+
+
+def prior(rows: Iterable[Dict[str, Any]]) -> Counter:
+    """How often each tool was used across the index (the shortlist's fallback order)."""
+    return Counter(t for r in rows for t in (r.get("tools") or []))
+
+
+def rank_from_neighbours(neighbours: Iterable[Tuple[float, Iterable[str]]], usage: Counter,
+                         k: int = K) -> List[Dict[str, Any]]:
+    """[{name, score, by}] best first from (similarity, tools) neighbours - found here or on an NLP node
+    (POST /decide, FM-9.1) - then the usage prior for the rest of the list."""
+    vote: Counter = Counter()
+    for s, tools in neighbours:
+        for t in tools or []:
+            vote[t] += max(0.0, float(s))
     ranked: List[Dict[str, Any]] = [{"name": t, "score": round(v, 4), "by": "neighbours"} for t, v in vote.most_common()]
     seen = {x["name"] for x in ranked}
-    total = sum(prior.values()) or 1
-    ranked += [{"name": t, "score": round(c / total, 4), "by": "prior"} for t, c in prior.most_common() if t not in seen]
+    total = sum(usage.values()) or 1
+    ranked += [{"name": t, "score": round(c / total, 4), "by": "prior"} for t, c in usage.most_common() if t not in seen]
     return ranked[:max(1, int(k))]
 
 
