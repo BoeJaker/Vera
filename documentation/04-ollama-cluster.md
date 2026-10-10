@@ -592,7 +592,7 @@ Workers cross-referenced with their Ollama node, the enriched node snapshot, ONN
 | Per-node status, `num_thread` that requests carry | `ollama.instances` (`GET /ollama/cluster`) |
 | Models per node with sizes | `ollama.list_models` (`GET /ollama/models`) |
 | Why a request would go where | `llm.route.resolve` |
-| Recent requests: caller, model, node, timing, status | `ollama.request_log` (in-process ring buffer) |
+| Recent requests: caller, model, node, timing, status, and the backend that processed each (`backend`: `ollama`, `vllm`, `api` with `provider`, or `other`; `node` when a vLLM server stood in for a node) - vLLM, API-provider and in-process embedding calls log an entry too | `ollama.request_log` (in-process ring buffer) |
 | Rolling `(model, node, job_type)` stats: count, EMA elapsed, tokens/s, chars/token, context shifts, duration estimate | `ollama.route_stats` |
 | Gate occupancy | `ollama.gate.status` |
 | Warm plan, residency, scenarios | `ollama.warm.status` |

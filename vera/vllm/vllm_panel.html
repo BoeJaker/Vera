@@ -445,8 +445,7 @@ textarea{resize:vertical;font-family:var(--mono);font-size:10.5px;line-height:1.
         </div>
         <div id="launch-status" style="padding:0 14px;font-size:10px;white-space:pre-wrap;font-family:var(--mono)"></div>
 
-        <div class="sec">Nodes serving vLLM</div>
-        <div id="lnch-node-list" style="padding:0 14px 12px;font-size:10.5px;color:var(--dim)">None</div>
+        <div class="sec">Nodes</div>
         <div style="padding:0 14px 12px;font-size:10px;color:var(--dim, #6a7080)">Switch nodes between Ollama and vLLM - one, ticked or all, with embeddings - in the <a href="#" onclick="showTab('nodes');return false">Nodes</a> tab.</div>
 
         <div class="sec">Running Managed Servers (this host)</div>
@@ -964,10 +963,6 @@ async function lnchLoadNodes(){
     ? _lnchNodes.map(x => `<option value="${esc(x.inst)}" data-node="${esc(x.node)}">${esc(x.inst)} · ${esc(x.label)}${x.gpu ? ' · GPU' : ' · CPU'}${x.switched ? ' · on vLLM' : ''}</option>`).join('')
     : '<option value="">No Ollama nodes found</option>';
   if(keep && _lnchNodes.some(x => x.inst === keep)) sel.value = keep;
-  const on = _lnchNodes.filter(x => x.switched);
-  document.getElementById('lnch-node-list').innerHTML = on.length
-    ? on.map(x => `<div>${esc(x.inst)} → vllm-${esc(x.inst)} <span style="color:var(--dim, #6a7080)">(${esc(x.label)}${x.gpu ? ', GPU' : ', CPU'}) - switch back from Estate → Machines</span></div>`).join('')
-    : 'None';
   lnchNodeChanged();
 }
 function _lnchNode(){

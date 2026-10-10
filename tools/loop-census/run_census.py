@@ -481,6 +481,20 @@ _REROUTE_WORDS = ("demoted", "fallback", "failover", "spill", "deny_gpu: gpu nod
                   "pinned model missing", "retry")
 
 
+def backend_label(e):
+    """ollama | vllm | api:<provider> | other[:<what>] (vera/census/control.py)."""
+    be = str(e.get("backend") or "").strip()
+    inst = str(e.get("instance") or "")
+    prov = str(e.get("provider") or "").strip()
+    if not be:
+        be = "api" if inst.startswith("provider:") else ("vllm" if inst.startswith("vllm") else "ollama")
+    if be == "api":
+        return "api:" + (prov or inst.split(":", 1)[-1] or "?")
+    if be == "other" and prov:
+        return "other:" + prov
+    return be
+
+
 def routing_calls(t_start, t_end):
     """Every LLM call prod logged in [t_start, t_end], from the in-process
     request log. The census holds the box alone (wait_for_free), so a time
@@ -489,7 +503,7 @@ def routing_calls(t_start, t_end):
     entries = d.get("entries") or []
     lo = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t_start - 2))
     hi = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t_end + 2))
-    calls, reroutes, nodes, models, spill = [], [], {}, {}, 0
+    calls, reroutes, nodes, models, backends, spill = [], [], {}, {}, {}, 0
     oldest = None
     for e in entries:
         ts = str(e.get("ts") or "")[:19]
@@ -508,6 +522,7 @@ def routing_calls(t_start, t_end):
         c = {"ts": ts, "caller": "%s:%s" % (e.get("caller_file"), e.get("caller_func")),
              "job": e.get("job_type"), "role": e.get("role") or "", "rule": e.get("rule_source"),
              "model": e.get("model"), "node": e.get("instance"), "status": e.get("status"),
+             "backend": backend_label(e),
              "s": e.get("elapsed_s"), "tok_s": e.get("tok_per_s"),
              "gpu_pct": e.get("gpu_resident_pct"), "num_ctx": e.get("num_ctx"),
              "prompt_chars": e.get("prompt_chars")}
@@ -517,10 +532,12 @@ def routing_calls(t_start, t_end):
         calls.append(c)
         nodes[c["node"]] = nodes.get(c["node"], 0) + 1
         models[c["model"]] = models.get(c["model"], 0) + 1
+        backends[c["backend"]] = backends.get(c["backend"], 0) + 1
         if e.get("cpu_spill"):
             spill += 1
     calls.sort(key=lambda c: c["ts"])
     return {"calls": calls, "reroutes": reroutes, "nodes": nodes, "models": models,
+            "backends": backends,
             "spill_calls": spill, "n": len(calls),
             "truncated": bool(oldest and oldest > lo),
             "log_total": d.get("total")}

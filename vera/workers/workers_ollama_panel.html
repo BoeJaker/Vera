@@ -1758,7 +1758,6 @@ html.view-models #sidebar[data-vera-lhm] #nav .nav-div[data-view="models"]{displ
     <!-- Models & NLP: the <vera-node-models> element (ollama.warm.*, nlp.*, specialist.*) -->
     <div class="pane" id="pane-warmmodels" style="padding:0;overflow:hidden">
       <div style="display:flex;flex-direction:column;height:100%">
-        <div id="warm-vllm-note" style="display:none;flex-shrink:0;padding:6px 10px;font-size:9.5px;color:var(--dim2, #8a90a0);border-bottom:1px solid var(--border, #2a2f3a)"></div>
         <iframe id="warmmodels-frame" src="about:blank" style="width:100%;flex:1;min-height:0;border:none;background:var(--bg0)"></iframe>
       </div>
     </div>
@@ -2820,18 +2819,6 @@ function renderOllama(){
   }
 
   renderOllamaNodes(nodes);
-  olWarmVllmNote();
-}
-
-/* Warm models pane: the warm plan never touches a node switched to vLLM, so it
-   drops out of the element below - say so above it instead of leaving it missing. */
-function olWarmVllmNote(){
-  const el=$('warm-vllm-note'); if(!el) return;
-  const sw=Object.entries((_cluster&&_cluster.ollama)||{}).filter(([,n])=>n.backend==='vllm');
-  el.style.display=sw.length?'':'none';
-  el.innerHTML=sw.map(([id,n])=>'<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px">'
-    +'<b style="color:var(--text, #d0d4dc)">'+esc(n.label||id)+'</b><span class="ol-badge" style="background:color-mix(in srgb, var(--acc, #8a7cf0) 15%, transparent);color:var(--acc, #8a7cf0);border:1px solid color-mix(in srgb, var(--acc, #8a7cf0) 35%, transparent)">vLLM</span>'
-    +'<span>on vLLM'+(n.served_by?' ('+esc(n.served_by)+')':'')+' — not managed here</span></span>').join('');
 }
 
 /* A card's backend button hands off to the LLM backend component above the
@@ -3316,7 +3303,9 @@ async function loadRouteActivity(){
         const esc2=e.escalated?' ⇧':'';
         return '<div title="'+esc(e.route_reason||'')+'" style="padding:1px 0;border-bottom:1px dotted var(--border)">'
           +'<span style="color:'+col+'">●</span> '
-          +esc((e.ts||'').slice(11,19))+' <b>'+esc(e.instance||'')+'</b> '+esc(e.model||'')
+          +esc((e.ts||'').slice(11,19))+' <b>'+esc(e.instance||'')+'</b> '
+          +'<span style="color:'+(String(e.backend||'ollama')==='ollama'?'var(--warn,#dec37e)':'var(--acc,#7ec3de)')+'">'+esc(e.backend==='api'?('API '+(e.provider||'')):(e.backend==='vllm'?'vLLM':(e.backend==='other'?('other '+(e.provider||'')):'Ollama')))+'</span> '
+          +esc(e.model||'')
           +' <span style="color:var(--acc,#7ec3de)">'+esc(e.job_type||'')+'</span>'
           +' <span style="color:var(--dim2)">'+esc(e.rule_source||'')+esc2+'</span>'
           +'<span style="color:var(--dim2)">'+est+act+(e.tokens?(' · '+e.tokens+' tok'):(e.eval_count?(' · '+e.eval_count+' tok'):''))+'</span>'
@@ -6445,7 +6434,7 @@ function showPane(name, el){
   if(name==='proxmox'){ if(_pmxInited){ if(_pmxCur) pmxRefresh(); } else pmxInit(); nmTick(true); }
   if(name==='sandbox'){ const el=$('wk-sandbox-ctl'); if(el&&el.refresh) el.refresh(); }
   if(name==='activity'){ _mountFrame('activity-frame', BASE+'/nodes/activity/panel'); }
-  if(name==='warmmodels'){ olWarmVllmNote(); _mountFrame('warmmodels-frame', BASE+'/nodes/models/panel?section=warm'); }
+  if(name==='warmmodels'){ _mountFrame('warmmodels-frame', BASE+'/nodes/models/panel?section=warm'); }
   if(name==='nodesettings'){ _mountFrame('nodesettings-frame', BASE+'/nodes/models/panel?section=settings'); }
   if(name==='nlpnodes'){ _mountFrame('nlpnodes-frame', BASE+'/nodes/models/panel?section=nlp'); }
   if(name==='trainnodes'){ _mountFrame('trainnodes-frame', BASE+'/nodes/models/panel?section=training'); }

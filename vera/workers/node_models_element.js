@@ -85,7 +85,10 @@
     }
     async load(auto) {
       const sec = this.section;
-      if (sec === 'warm') this._warm = await this._get('/ollama/warm/status');
+      if (sec === 'warm') {
+        const [w, bo] = await Promise.all([this._get('/ollama/warm/status'), this._get('/nodes/backend/overview')]);
+        this._warm = w; this._onVllm = ((bo && bo.nodes) || []).filter((n) => n.backend === 'vllm');
+      }
       else if (sec === 'nlp') {
         const [n, c, l] = await Promise.all([this._get('/nlp/nodes'), this._get('/nlp/config'), this._get('/fabric/nlp/config')]);
         this._nlp = n; this._ncfg = c; this._llmnlp = l;
@@ -142,8 +145,11 @@
     }
 
     _nodesHtml(w) {
-      const nodes = w.nodes || [];
-      if (!nodes.length) return '<div class="muted">no nodes</div>';
+      /* nodes serving vLLM: their Ollama is stopped, so the warm plan leaves them out */
+      const vl = (this._onVllm || []).map((n) => esc(n.instance) + (n.served_by ? ' (' + esc(n.served_by) + ')' : '')).join(', ');
+      const vnote = vl ? '<div class="muted" style="margin:2px 0 6px"><span class="badge ok">vLLM</span> ' + vl + ' - on vLLM now; warm slots belong to Ollama, so the plan leaves ' + ((this._onVllm || []).length > 1 ? 'them' : 'it') + ' out.</div>' : '';
+      const nodes = (w.nodes || []).filter((n) => !(this._onVllm || []).some((v) => v.instance === n.node));
+      if (!nodes.length) return vnote + '<div class="muted">no nodes</div>';
       const cards = nodes.map((n) => {
         const res = n.resident || [];
         const isRes = (m) => res.find((r) => String(r.model).replace(/:latest$/, '') === String(m).replace(/:latest$/, ''));
@@ -172,7 +178,7 @@
       }).join('');
       const acts = (w.actions || []).length ? '<div class="muted">next: ' + w.actions.map((a) => esc(a.action + ' ' + a.model + ' on ' + a.node)).join(' &middot; ') + '</div>' : '';
       const last = ((w.last || {}).results || []).length ? '<div class="muted">last: ' + w.last.results.map((r) => '<span class="' + (r.ok ? 'ok' : 'bad') + '">' + esc(r.action + ' ' + r.model + ' on ' + r.node + ' ' + (r.ok ? r.s + 's' : (r.error || 'failed'))) + '</span>').join(' &middot; ') + '</div>' : '';
-      return '<div class="sec">Warm slots</div><div class="grid">' + cards + '</div>' + acts + last;
+      return '<div class="sec">Warm slots</div>' + vnote + '<div class="grid">' + cards + '</div>' + acts + last;
     }
 
     _scenariosHtml(w) {

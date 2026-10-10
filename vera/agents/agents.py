@@ -3486,11 +3486,15 @@ class AgentRunner:
                         agent.name, _pre_s)
         _og_preview = (message or "")[:120].replace("\n", " ")
         _og_entry = {
-            "req_id": _og_req_id, "model": model, "instance": chosen,
+            "req_id": _og_req_id, "model": (_vt.get("model") or model) if _vt else model,
+            "instance": _vt["instance"] if _vt else chosen,
+            "backend": "vllm" if _vt else "ollama",
             "caller_file": "agents.py", "caller_func": "run_stream",
             "prompt_preview": _og_preview, "ts": now_iso(),
             "status": "running", "job_type": "chat",
         }
+        if _vt:
+            _og_entry["node"] = chosen
         try:
             await emit_event({
                 "type":           "ollama.request",
