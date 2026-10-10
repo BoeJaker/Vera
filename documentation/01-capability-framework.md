@@ -429,8 +429,20 @@ Bound today:
   `image.upscale` (Real-ESRGAN).
 - **Vision and worldview:** `vision.describe`, `worldview.encode` / `predict`.
 - **ONNX:** every `ml.onnx.model.<slug>`.
+- **Decision models (System 1):** `decide.shadow.score` (small-LLM judge, tier 4) and
+  `decide.shadow.knn` (nearest past decisions, tier 2), both answering every
+  `judge_core.QUESTIONS` id; `sense.frame` (tier 1); `caps.shortlist` (`loop.caps_shortlist`).
+  `model.callable question=<id>` lists what can answer a question. These only describe the
+  cascade; choosing among them stays with the four-minds plan.
 
-The decision models (`decide.*`) are the four-minds plan's to bind.
+**Placement.** A binding's `placement` is recorded per capability
+(`worker_placement_core.MODEL_PLACEMENT`, when all its bindings agree). It
+never makes a capability node-eligible: only the evidence (`nodes.parity.*`)
+or the node-safe lists do. But it has two effects:
+- **`host`** keeps the capability on the host even if it is vetted, because its model lives in
+  the host process (the worldview).
+- **`nlp` / `gpu` / `media`** sends an eligible capability to the `nlp` or `media` worker class
+  instead of the catch-all vetted class, so it lands on nodes that serve that kind of work.
 
 ### Duplicate names
 
