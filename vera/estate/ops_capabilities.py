@@ -236,6 +236,18 @@ LIVE_IDLE_S = 30.0          # the reader stops this long after the last listener
 _live: Dict[str, Any] = {"subs": set(), "task": None, "ctx": None, "ctx_of": None, "workers": None}
 
 
+def _live_redis():
+    """The connected Redis client. The orchestrator's module body can run under more than one name (the Vera.vera.*
+    import trap): the copy this module imported may never have connected, so the client is taken from whichever
+    loaded copy holds one."""
+    import sys
+    for name in ("Vera.vera.capability_orchestration", "vera.capability_orchestration", "capability_orchestration", "__main__"):
+        r = getattr(sys.modules.get(name), "REDIS", None)
+        if r is not None:
+            return r
+    return None
+
+
 def _live_ctx():
     """The attribution context for the snapshot now cached; the pairing maps carry over when the snapshot changes."""
     snap = _cache["out"]
@@ -261,7 +273,7 @@ async def _live_pump() -> None:
                 await asyncio.sleep(1.0)
                 continue
             idle = None
-            R = getattr(_orch, "REDIS", None)
+            R = _live_redis()
             if R is None:
                 await asyncio.sleep(5.0)
                 continue

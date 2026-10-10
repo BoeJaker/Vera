@@ -306,3 +306,9 @@ def test_live_records_pair_answers_across_batches():
     b = oc.live_records([{"type": "cap.error", "name": "docker.ps", "trace_id": "t9", "elapsed_ms": 9, "ts": "y"}], ctx)
     assert b[0]["nodes"] == ["docker:local", "core:cap-bus"] and b[0]["phase"] == "fail" and b[0]["failed"] and not b[0]["count"]
     assert oc.live_records([{"type": "heartbeat", "caps": 1}], ctx) == []
+
+
+def test_the_live_stream_finds_the_connected_redis_whatever_name_the_orchestrator_loaded_under():
+    src = open(os.path.join(ROOT, "vera", "estate", "ops_capabilities.py"), encoding="utf-8").read()
+    assert "def _live_redis():" in src and '"capability_orchestration", "__main__"' in src and "R = _live_redis()" in src
+    assert 'getattr(_orch, "REDIS", None)' not in src      # the imported copy may never have connected (seen on the mirror)
