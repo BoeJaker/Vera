@@ -285,12 +285,12 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .hero{display:flex;align-items:baseline;gap:8px;min-width:0}
 .hero b{font-family:var(--f-mono);font-size:24px;font-weight:700;letter-spacing:-.035em;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .wg{background:var(--surf2);border-radius:var(--r-sm);padding:9px 11px;display:flex;flex-direction:column;gap:7px;box-shadow:var(--elev-lo)}
-.wg .h{font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--t3);font-weight:600;display:flex;align-items:center;gap:7px}
-.wg .h b{margin-left:auto;font-family:var(--f-mono);font-size:9.5px;color:var(--t1);font-weight:400}
+.wg .h{font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--t3);font-weight:600;display:flex;align-items:center;gap:7px;height:13px;line-height:13px}
+.wg .h b{margin-left:auto;font-family:var(--f-mono);font-size:9.5px;color:var(--t1);font-weight:400;font-variant-numeric:tabular-nums}
 .wsp{height:38px}.wsp svg{width:100%;height:38px;display:block}
 .hbars{display:flex;align-items:flex-end;gap:2px;height:40px}.hbars i{flex:1;border-radius:2px 2px 0 0;display:block;min-height:1px}
-.arc{display:flex;align-items:center;gap:11px}.arc svg{flex-shrink:0}
-.arc .v{font-family:var(--f-mono);font-size:20px;font-weight:700;letter-spacing:-.03em}
+.arc{display:flex;align-items:center;gap:11px;height:40px}.arc svg{flex-shrink:0}
+.arc .v{font-family:var(--f-mono);font-size:20px;font-weight:700;letter-spacing:-.03em;line-height:24px;height:24px;font-variant-numeric:tabular-nums}
 .tmpbar{width:auto;height:7px;border-radius:4px;background:var(--s3);overflow:hidden;display:block}.tmpbar i{display:block;height:100%;border-radius:4px}
 .errrow{display:flex;align-items:center;gap:8px;font-size:10px;min-height:23px;cursor:pointer;border-radius:4px;padding:0 3px}
 .errrow:hover{background:var(--surf2)}
@@ -355,7 +355,6 @@ html:root body .hd button{opacity:1!important}   /* the views, the layouts and t
 <div class="rt" id="rt">
   <div class="wash"></div>
   <header class="hd">
-    <div class="wm">VERA</div>
     <h1>Live operations</h1>
     <span class="live" id="liveChip"><i></i><span id="liveN">—</span> in flight</span>
     <span class="lbl mono" id="estateLine">reading the estate…</span>
@@ -874,14 +873,14 @@ function diveHtml(n){ const D = S.dive[n.id]; if (!D || (!D.ent && !D.read && D.
 function renderInspector(){
   const ID = byId(), n = ID[S.sel]; const insp = $('insp');
   const ae = document.activeElement; if (ae && insp.contains(ae) && ae.matches && ae.matches('input,textarea')) return;
-  if (!n){ insp.innerHTML = '<div class="card"><div class="note">Select a node on the map.</div></div>'; return; }
+  if (!n){ setInsp(insp, '<div class="card"><div class="note">Select a node on the map.</div></div>'); return; }
   const col = PCOL[n.plane], arcLen = Math.PI * 23, loadPct = (n.load || 0) / 100; const plane = S.snap.planes.find((p) => p.id === n.plane) || {};
   const ser = S.snap.series[n.id] || {}; const vals = ser.tps || ser.cpu || ser.ping || null;
   const errs = (S.snap.errors || []).filter((e) => e.node === n.id); const list = errs.length ? errs : (S.snap.errors || []).slice(0, 8);
   const through = n.through || [];
   if (!S.dive[n.id] || Date.now() - S.dive[n.id].at > 30000) dive(n);
   setTimeout(termScroll, 0);
-  insp.innerHTML = '<div class="card"><h3>' + esc(plane.name || n.plane) + '<span class="lbl mono">' + esc(n.kind) + '</span></h3><div class="hero"><b style="color:' + col + '" title="' + esc(n.label) + '">' + esc(n.label) + '</b></div>'
+  setInsp(insp, '<div class="card"><h3>' + esc(plane.name || n.plane) + '<span class="lbl mono">' + esc(n.kind) + '</span></h3><div class="hero"><b style="color:' + col + '" title="' + esc(n.label) + '">' + esc(n.label) + '</b></div>'
     + '<div class="irow"><span class="k">status</span><span class="v" style="color:' + SC[n.status] + '">' + esc(n.status) + '</span></div><div class="irow"><span class="k">detail</span><span class="v" title="' + esc(n.detail) + '">' + esc(n.detail || '—') + '</span></div>'
     + (n.role ? '<div class="irow"><span class="k">role</span><span class="v">' + esc(n.role) + '</span></div>' : '')
     + (n.note ? '<div class="irow"><span class="k">note</span><span class="v" title="' + esc(n.note) + '">' + esc(n.note) + '</span></div>' : '')
@@ -896,8 +895,12 @@ function renderInspector(){
     + '<div class="card"><h3>Pipes<span class="lbl mono">' + degOf(n.id) + '</span></h3>' + neighboursHtml(n, ID) + '</div>'
     + '<div class="card"><h3>Actions<span class="lbl">' + esc(n.label) + '</span></h3>' + actionsHtml(n, S.act, 'i') + '</div>'
     + '<div class="card"><h3>' + (errs.length ? 'Findings · ' + esc(n.label) : 'Findings') + '<span class="lbl mono">' + (S.snap.errors || []).length + '</span></h3>' + (list.length ? list.map((e) => '<span class="errrow" data-err-node="' + esc(e.node) + '" title="' + esc(e.section + (e.ref ? ' · ' + e.ref : '')) + '"><i style="background:' + (e.sev === 'error' ? 'var(--ac4)' : 'var(--ac3)') + '"></i><span class="n">' + esc(e.n) + '</span><span class="c">' + e.c + '</span></span>').join('') : '<span class="note">no findings</span>') + '<span class="note">Nodes carrying findings are ringed in red on the map with a count. Selecting one filters this list to it.</span></div>'
-    + '<div class="card sp"><h3>Requests through this node</h3><div class="flist">' + (through.length ? through.map((r) => '<span class="frow"><i style="background:' + KCOL[r.kind] + '"></i><span class="n">' + esc(r.n) + '</span><span class="ms">' + esc(r.ms || r.status) + '</span></span>').join('') : '<span class="note">' + (n.kind === 'ollama' ? 'nothing in the request log for this instance' : 'the request log names model instances; this node carries none') + '</span>') + '</div></div>';
+    + '<div class="card sp"><h3>Requests through this node</h3><div class="flist">' + (through.length ? through.map((r) => '<span class="frow"><i style="background:' + KCOL[r.kind] + '"></i><span class="n">' + esc(r.n) + '</span><span class="ms">' + esc(r.ms || r.status) + '</span></span>').join('') : '<span class="note">' + (n.kind === 'ollama' ? 'nothing in the request log for this instance' : 'the request log names model instances; this node carries none') + '</span>') + '</div></div>');
 }
+// the inspector is redrawn with the plot (a live tick every few seconds): the same html does nothing, a different one is
+// laid over the old card by card - rebuilding it whole made the right-hand column jump and its figures flicker
+function setInsp(insp, html){ if (html === S._inspH && insp.firstElementChild) return; const same = S._inspN === S.sel; S._inspH = html; S._inspN = S.sel;
+  if (same && insp.firstElementChild) LAT.patchPlot(insp, html); else insp.innerHTML = html; }
 
 // ── actions ──
 async function fetchLogs(n){ try { const r = await fetch(BASE + '/ops/node/events?node=' + encodeURIComponent(n.label) + '&limit=60', { cache: 'no-store' }); const j = await r.json(); const c = j && j.content !== undefined ? j.content : j; S.logs[n.id] = (c && c.events) || []; } catch (e) { S.logs[n.id] = []; } render(); }
