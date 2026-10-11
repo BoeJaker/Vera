@@ -370,7 +370,7 @@
     function inChat(a) { return chat && a.x + a.w / 2 > chat.l - gap && a.x - a.w / 2 < chat.r + gap && a.y + a.h / 2 > chat.t - gap && a.y - a.h / 2 < chat.b + gap; }
     var order = items.slice().sort(function (a, b) { return (a.y - a.h / 2) - (b.y - b.h / 2); });
     order.forEach(function (it) {
-      if (it.fixed) return;
+      if (it.fixed || it.stay) return;   /* stay: put there by the person's hand - it stays where it was let go */
       var others = items.filter(function (x) { return x !== it; }), y0 = it.y, n = 0;
       while (it.y - it.h / 2 - step >= top && n++ < 2000) {
         var t = { x: it.x, y: it.y - step, w: it.w, h: it.h };
