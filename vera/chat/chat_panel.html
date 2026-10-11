@@ -7886,6 +7886,30 @@ IMPORTANT:
     (c,ctx)=>({ kind:'note', n:((ctx&&ctx.cap)||'capability')+' failed', k:'error', col:'var(--err)', d:'failed',
                 content:{ text:'\u2717 '+String(c.error||c.message).slice(0,2000), author:String((ctx&&ctx.cap)||'') } }));
   // pages, with addresses: a reading list, not a grid of truncated cells
+  /* A LOOKUP'S EVIDENCE, AS EVIDENCE (owner, 2026-10-11: "info.seek is another one that produces a near empty desk
+     element"). info.seek answers {need, subject, since, answerable, items:[{n, title, url, site, published, age_days,
+     kind (web|intel), read, text}], checked, gaps, tracked?, job_id?}: numbered, dated pages the reply cites as [n],
+     what was checked and what could not be found. It went through the generic page list as "Research" with every one
+     of those dropped - the numbers the reply cites, the dates, what it looked at, the gaps. It lands as a records item
+     of kind evidence: each page under its [n], newest first as the lookup ordered them, its excerpt; the item opens with
+     the subject, the need, since when, and closes with what was checked and the gaps. */
+  const _cvEvidence=(c)=>{
+    if(!c||typeof c!=='object'||!Array.isArray(c.items)||!Array.isArray(c.checked)) return null;
+    const items=c.items.filter(r=>r&&typeof r==='object'&&(r.url||r.title)).map((r,i)=>{ const u=String(r.url||''); let d=String(r.site||''); if(!d&&u){ try{ d=new URL(u).host.replace(/^www\./,''); }catch(_){} }
+      const meta={}; if(r.kind) meta.from=r.kind==='intel'?'tracked topic':'web'; if(r.age_days!=null&&isFinite(+r.age_days)) meta.age=(+r.age_days<1?'today':Math.round(+r.age_days)+' d ago'); if(r.read) meta.read='page read';
+      /* a page read through a scraper opens with its header ("Title: ... URL Source: ... Markdown Content:"): the text after it */
+      let txt=String(r.text||''); const mc=txt.search(/Markdown Content:\s*/i); if(mc>=0&&mc<600&&/^\s*Title:/i.test(txt)) txt=txt.slice(mc).replace(/^Markdown Content:\s*/i,'');
+      return { id:u||('n'+(r.n||i+1)), n:+r.n||i+1, url:u||undefined, domain:d, title:String(r.title||d||u), snippet:txt.slice(0,600), text:txt.length>=200?txt.slice(0,6000):undefined,
+               when:r.published||undefined, meta, kind:r.kind||undefined }; });
+    if(!items.length&&!(c.gaps||[]).length) return null;
+    const subj=String(c.subject||c.question||'').trim();
+    return { kind:'records', n:'Looked up'+(subj?' · '+subj:''), k:'records', col:'#7aa2d6', d:'evidence · '+items.length,
+      content:{ title:'Looked up'+(subj?' · '+subj:''), kind:'evidence', query:subj||undefined, items, total:items.length,
+        evidence:{ need:String(c.need||''), subject:subj, question:String(c.question||''), since:String(c.since||''), answerable:c.answerable!==false,
+          checked:(c.checked||[]).map(String).slice(0,12), gaps:(c.gaps||[]).map(String).slice(0,12), tracked:c.tracked?(typeof c.tracked==='string'?c.tracked:(c.tracked.name||c.tracked.topic||'')):'' ,
+          job:String(c.job_id||''), ms:+c.elapsed_ms||0 } } };
+  };
+  cvAdapter('evidence', (c)=>!!_cvEvidence(c), (c)=>_cvEvidence(c));
   cvAdapter('sources', (c)=>!!_cvCapSources(c), (c)=>_cvCapSources(c));
 
   // RAW HTML a cap built. The canvas has an html block and this was going to markdown as escaped source.
@@ -8078,7 +8102,13 @@ IMPORTANT:
         else h.take(body, out, 0, body);
       }catch(_){}
     });
-    return out.slice(0,12);
+    /* ONE ITEM PER THING: a mermaid fence is both a code block and a diagram slot, and the two hooks each landed it - the
+       same diagram twice on the desk (2026-10-11, chat-1791665749982: turn:m1:diagram:0 and :1, one source) */
+    const seen=new Set();
+    const uniq=out.filter(m=>{ if(!m||!m.content) return true; const c=m.content;
+      const sig=m.kind==='diagram'?'d:'+String(c.mermaid||'').replace(/\s+/g,' ').trim():m.kind==='code'?'c:'+String(c.lang||'')+':'+String(c.code||'').slice(0,4000):'';
+      if(!sig) return true; if(seen.has(sig)) return false; seen.add(sig); return true; });
+    return uniq.slice(0,12);
   }
   // the size a lifted item lands at: a diagram fills its width (m — its height follows the drawing), a widget its record's
   // own size, a table and an image m, the rest s (a header line and a few rows)

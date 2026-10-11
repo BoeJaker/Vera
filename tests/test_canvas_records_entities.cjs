@@ -30,7 +30,7 @@ t('each row shows its own top three', C.includes('entsOf(r).slice(0, 3).map((e) 
   t('a list with shared names offers the graph view; a name node opens the list at its pages', C.includes("const canGraph = c.kind === 'memory' || c.view === 'graph' || entList.length > 0;")
     && C.includes("if (id.indexOf('e:') === 0) { const st = recState(this, key); st.view = 'list'; st.ent = id.slice(2);"));
   t('a research or web answer shows its sites as one bar (a site chooses it) and its dates as a line (a dot opens its page)',
-    C.includes("if ((c.kind === 'research' || c.kind === 'web') && all.length > 2)") && C.includes('<div class="vc-rbx-map"') && C.includes('data-rec-act="goto"')
+    C.includes("if ((c.kind === 'research' || c.kind === 'web' || c.kind === 'evidence') && all.length > 2)") && C.includes('<div class="vc-rbx-map"') && C.includes('data-rec-act="goto"')
     && C.includes("if (act === 'goto') return this._rgNode(key, { id: 'r:' + arg });"));
 }
 console.log(fails ? fails + ' FAILED' : 'all passed');
