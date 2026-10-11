@@ -30,7 +30,14 @@ CREATE = f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX} ON fabric_records USI
 STATE = "SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass($1)"
 DROP = f"DROP INDEX CONCURRENTLY IF EXISTS {INDEX}"
 
+#: local hours the nightly database dump runs (backbone §2: no heavy DDL beside it)
+DUMP_WINDOW = (1, 2, 3)
+
 _WORD = re.compile(r"[a-z0-9]+")
+
+
+def in_dump_window(hour: int) -> bool:
+    return int(hour) in DUMP_WINDOW
 
 
 def terms(query: str, max_terms: int = MAX_TERMS) -> List[str]:

@@ -106,3 +106,15 @@ def test_the_switch_is_registered_like_by_default():
     from vera.minds import switchboard_core as SB
     f = SB.REGISTRY["memory.text_index"]
     assert f.modes == ("like", "fts") and f.default == "like" and f.package == "FM-7.1"
+
+
+def test_the_index_is_built_only_by_prods_host_and_never_beside_the_dump():
+    # backbone review 11 Oct: sandboxes and node workers share the database and must not build on it; no DDL in the
+    # 01:00-03:30 dump window
+    assert [h for h in range(24) if T.in_dump_window(h)] == [1, 2, 3]
+    src = open(os.path.join(ROOT, "vera", "fabric", "data_fabric.py"), encoding="utf-8").read()
+    assert "if FABRIC_PG.available and _tix_build_allowed():" in src
+    guard = src[src.index("def _tix_build_allowed("):src.index('schedule(_startup, interval=999999, name="fabric_startup")')]
+    assert "is_dev_sandbox()" in guard and "_IS_WORKER" in guard and "return False" in guard
+    ens = src[src.index("    async def ensure_text_index("):src.index("    async def search_text_fts(")]
+    assert ens.index("in_dump_window") < ens.index("_tix.CREATE") and "lock_timeout" in ens

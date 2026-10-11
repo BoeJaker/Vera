@@ -1806,9 +1806,13 @@ class FabricPostgres:
                 if state:
                     did = "present"
                 else:
+                    from datetime import datetime as _dt
+                    if _tix.in_dump_window(_dt.now().hour):
+                        return "deferred: backup window"   # the leg keeps ILIKE until a later start
                     if state is False:
                         await conn.execute(_tix.DROP)
                     await conn.execute("SET maintenance_work_mem = '512MB'")
+                    await conn.execute("SET lock_timeout = '5s'")
                     await conn.execute(_tix.CREATE, timeout=1800)
                     did = "built"
             self._tix_checked = 0.0
@@ -9872,8 +9876,10 @@ async def _startup():
     # Start auto-pull loop AND deferred index migration (off-thread, won't block)
     asyncio.create_task(_auto_pull_loop())
     asyncio.create_task(_sqlite_index_migration_async())
-    # seek's keyword-leg index (FM-7.1): built once if missing, in the background (a no-op when present)
-    if FABRIC_PG.available:
+    # seek's keyword-leg index (FM-7.1): built once if missing, in the background (a no-op when present) - by prod's
+    # host process only: never from a dev sandbox or a node worker, which share no business building on this database
+    # (backbone review, 11 Oct 2026)
+    if FABRIC_PG.available and _tix_build_allowed():
         asyncio.create_task(FABRIC_PG.ensure_text_index())
 
     # Hydrate the optional in-RAM FAISS tier from Chroma (background) — without
@@ -9890,6 +9896,14 @@ async def _startup():
                                ("object_store", OBJECT_STORE.available)] if ok]
     log.info("data_fabric ready — backends: %s (sqlite always on)", active or ["sqlite only"])
     await emit_event({"type": "fabric.ready", "backends": ["sqlite"] + active})
+
+
+def _tix_build_allowed() -> bool:
+    try:
+        import Vera.vera.capability_orchestration as _o
+        return not (_o.is_dev_sandbox() or getattr(_o, "_IS_WORKER", False))
+    except Exception:
+        return False
 
 
 schedule(_startup, interval=999999, name="fabric_startup")
