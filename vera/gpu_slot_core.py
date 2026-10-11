@@ -26,6 +26,25 @@ RESIDENT_TTL_S = 30.0
 BUSY_WINDOW_S = 45.0
 
 
+#: How long a load-wedge suspicion is shown without a fresh one.
+SUSPECT_TTL_S = 7200.0
+WEDGE_ADVICE = ("a model LOAD on this GPU timed out while its resident model kept serving - most likely "
+                "a wedged Ollama scheduler (11 Oct 2026); restarting ollama-vera on the node clears it")
+
+
+def load_suspect(*, has_gpu: bool, timed_out: bool, model: str, model_resident: bool,
+                 resident: Iterable[str]) -> bool:
+    """Was this failure a GPU model LOAD that hung? A timeout, on a GPU, for a model that was
+    not resident while something else was (11 Oct: every such load hung until restart)."""
+    res = [str(m) for m in (resident or []) if str(m).strip()]
+    return bool(has_gpu and timed_out and model and not model_resident and res)
+
+
+def live_suspects(suspects: dict, now: float, ttl_s: float = SUSPECT_TTL_S) -> dict:
+    """The suspicions still worth showing (younger than ttl_s)."""
+    return {k: v for k, v in (suspects or {}).items() if now - float((v or {}).get("ts") or 0) < ttl_s}
+
+
 def is_busy(in_use: int, last_used_at: float, now: float, window_s: float = BUSY_WINDOW_S) -> bool:
     return int(in_use or 0) > 0 or (bool(last_used_at) and now - float(last_used_at) < window_s)
 

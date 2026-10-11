@@ -2489,6 +2489,9 @@ async def media_slot(service: str = ""):
 _LAST_PICKED: Dict[str, float] = {}
 # GPU residency, refreshed from /api/ps before routing (gpu_slot_core): iid -> (read_at, [models]).
 _GPU_RESIDENT: Dict[str, Tuple[float, List[str]]] = {}
+# GPU model loads that hung (gpu_slot_core.load_suspect): iid -> {model, at, ts, elapsed_s, resident,
+# advice}. Shown on /health as gpu_load_suspect; cleared when the model is seen resident.
+_GPU_LOAD_SUSPECT: Dict[str, Dict[str, Any]] = {}
 try:
     from Vera.vera import gpu_slot_core as _gpu_slot_core
 except Exception:                                     # pragma: no cover
@@ -2511,6 +2514,9 @@ async def _refresh_gpu_resident() -> None:
             if r.status_code == 200:
                 _GPU_RESIDENT[iid] = (time.time(), [str(m.get("name") or "")
                                                     for m in (r.json() or {}).get("models") or []])
+                _sus = _GPU_LOAD_SUSPECT.get(iid)
+                if _sus and _model_tag_core.is_served(str(_sus.get("model") or ""), _GPU_RESIDENT[iid][1]):
+                    _GPU_LOAD_SUSPECT.pop(iid, None)          # the model loaded: no longer wedged
         except Exception as e:
             log.debug("gpu residency read failed for %s: %s", iid, e)
 
@@ -4452,6 +4458,21 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         log.error("ollama_generate [%s] FAILED after %.2fs inst=%s caller=%s:%s err=%s",
                   req_id, elapsed, chosen,
                   caller["caller_file"], caller["caller_func"], err_str)
+        try:
+            _at_w, _res_w = _GPU_RESIDENT.get(chosen) or (0.0, [])
+            if _gpu_slot_core.load_suspect(
+                    has_gpu=bool((OLLAMA_INSTANCES.get(chosen) or {}).get("has_gpu")),
+                    timed_out="timed out" in err_str.lower() or "timeout" in err_str.lower(),
+                    model=str(eff_model or ""), resident=_res_w,
+                    model_resident=_model_tag_core.is_served(str(eff_model or ""), _res_w)):
+                _GPU_LOAD_SUSPECT[chosen] = {"model": eff_model, "at": now_iso(), "ts": time.time(),
+                                             "elapsed_s": elapsed, "resident": list(_res_w)[:3],
+                                             "advice": _gpu_slot_core.WEDGE_ADVICE}
+                log.warning("GPU LOAD SUSPECT on %s: loading '%s' timed out after %.0fs while %s stayed "
+                            "resident - %s", chosen, eff_model, elapsed, ", ".join(_res_w[:3]),
+                            _gpu_slot_core.WEDGE_ADVICE)
+        except Exception:
+            pass
         # Don't flip a node offline on a single error — a slow generation that
         # exceeds the HTTP timeout (common for large-context jobs on CPU nodes)
         # would otherwise cascade the whole node out of rotation and starve
@@ -9669,6 +9690,7 @@ async def obs_health(trace_id=None):
                            "backend":i.get("backend","ollama"),"served_by":i.get("served_by","")}
                       for iid,i in OLLAMA_INSTANCES.items()},
             "gpu_gate":await _health_gpu_gate(),
+            "gpu_load_suspect": _gpu_slot_core.live_suspects(_GPU_LOAD_SUSPECT, time.time()),
             "census":await _health_census(),
             "activity":await _health_activity(),
             "files":_health_files(),
