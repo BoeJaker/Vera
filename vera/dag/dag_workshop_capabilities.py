@@ -10806,11 +10806,25 @@ def _v5_js_syntax_error(html: str) -> str:
     silently doesn't run in the browser — the exact broken-app mode seen on the
     pomodoro and pokedex builds. This catches it so it routes into the repair loop.
     Skips <script src=…> (external) and non-JS <script type> (JSON/templates).
-    Degrades to "" when esprima isn't installed — no false failure."""
+    Without esprima it falls back to `node --check` (panel_check): prod's venv has no esprima
+    while the gate image does, so on prod this check was silently skipped and a timer.html with
+    unbalanced braces passed (compute-roles, 11 Oct 2026). "" only when neither can run."""
     try:
         import esprima                                  # optional dep
     except Exception:
-        return ""
+        esprima = None
+    _node = None
+    if esprima is None:
+        try:
+            try:
+                from Vera.vera.evolve import panel_check as _pc
+            except Exception:
+                from vera.evolve import panel_check as _pc
+            _node = _pc if _pc.node_available() else None
+        except Exception:
+            _node = None
+        if _node is None:
+            return ""
     for m in re.finditer(r"<script\b([^>]*)>(.*?)</script\s*>", html, re.I | re.S):
         attrs, body = m.group(1) or "", m.group(2) or ""
         if re.search(r"\bsrc\s*=", attrs, re.I):
@@ -10821,6 +10835,13 @@ def _v5_js_syntax_error(html: str) -> str:
                                  "module", "text/babel", "text/jsx"):
             continue                                    # e.g. application/json — not JS
         if not body.strip():
+            continue
+        if esprima is None:
+            if _typ in ("text/babel", "text/jsx"):
+                continue                                # node cannot parse JSX
+            _err = _node._node_check(body, module=(_typ == "module"))
+            if _err:
+                return f"<script> JS: {_err}"
             continue
         try:
             (esprima.parseModule if _typ == "module" else esprima.parseScript)(body)
