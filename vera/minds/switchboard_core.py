@@ -113,6 +113,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "message, started when the turn arrives and never awaited before the model - a 'sense / frame' phase records "
        "its domain and when it landed, so the turn record shows how often it is ready before the first token. "
        "'off' (default) = no frame; 'on' = framed. Exit: TTFT p95 unchanged (it waits for nothing)."),
+    _f("tools.shortlist.chat", ("legacy", "shadow"), "chat", "FM-3.3",
+       "Which tools a chat turn is offered. 'legacy' (default) = the page's own word scoring only; 'shadow' = also "
+       "caps.shortlist on the user's words, started with the turn and never awaited, recorded after the reply beside "
+       "the page's list and what the reply used (caps.shortlist.chat_report: recall@16/24/28). 'on' (the server's "
+       "list offered to the model) comes after the shadow shows a gain and needs the page to take it."),
     _f("plan.precedent", ("off", "on"), "loop", "FM-4.2",
        "Precedent for the planner: up to 2 past runs of similar goals that went well, and 1 warning from one that "
        "did not (plan.precedent, searched on an NLP node), added to what the planner reads as reference with the "

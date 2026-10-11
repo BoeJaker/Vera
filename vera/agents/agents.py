@@ -120,6 +120,35 @@ try:
 except Exception:                       # worktree / app-free import
     from vera.agents import turn_phases_core as _phases
 try:
+    from Vera.vera.minds import chat_tools_core as _chat_tools
+except Exception:                       # worktree / app-free import
+    from vera.minds import chat_tools_core as _chat_tools
+
+CHAT_TOOLS_SHADOW_KEY = "vera:chat:tools:shadow"
+CHAT_TOOLS_SHADOW_CAP = 2000
+
+
+async def _record_tools_shadow(session_id: str, query: str, message: str, reply: str, task) -> None:
+    """FM-3.2/3.3 (switch tools.shortlist.chat=shadow): one row per chat turn - the page's offered capabilities (from
+    the message's manifest), the server's caps.shortlist on the user's words, and what the reply used. Background,
+    after the stream; never raises."""
+    from datetime import datetime
+    try:
+        try:
+            res = await asyncio.wait_for(asyncio.shield(task), 5.0)
+        except Exception:
+            res = None
+        server = [t.get("name") for t in ((res or {}).get("tools") or []) if isinstance(t, dict) and t.get("name")]
+        r = getattr(_orch, "REDIS", None)
+        if r is None:
+            return
+        row = _chat_tools.row(session_id, query, _chat_tools.offered(message), server, _chat_tools.used(reply),
+                              ts=datetime.utcnow().isoformat(timespec="seconds") + "Z")
+        await r.lpush(CHAT_TOOLS_SHADOW_KEY, json.dumps(row))
+        await r.ltrim(CHAT_TOOLS_SHADOW_KEY, 0, CHAT_TOOLS_SHADOW_CAP - 1)
+    except Exception as e:
+        log.debug("chat tools shadow: %s", e)
+try:
     from Vera.vera.fabric import fusion_core as _fusion
 except Exception:                       # worktree / app-free import
     from vera.fabric import fusion_core as _fusion
@@ -2074,6 +2103,14 @@ async def agent_chat_stream_endpoint(request: Request):
         _sf_fn = _sf.get("raw") or _sf.get("func")
         if _sf_fn:
             _frame_task = asyncio.create_task(_sf_fn(text=_bare_q, kind="chat"))
+    # FM-3.2/3.3 the tool shortlist in shadow (switch tools.shortlist.chat, default legacy): caps.shortlist on the
+    # user's words beside the page's own list - started with the turn, never awaited before the model, recorded after
+    _sl_task = None
+    if _bare_q.strip() and await _switch_mode("tools.shortlist.chat", body.get("minds"), default="legacy") == "shadow":
+        _sl = CAPABILITY_REGISTRY.get("caps.shortlist") or {}
+        _sl_fn = _sl.get("raw") or _sl.get("func")
+        if _sl_fn:
+            _sl_task = asyncio.create_task(_sl_fn(text=_bare_q, k=28))
 
     def _format_web_context(res) -> str:
         """Render web.search results into a system-prompt fragment."""
@@ -2517,6 +2554,8 @@ async def agent_chat_stream_endpoint(request: Request):
                     _t.cancel()
             elapsed_ms = round((_time.monotonic() - _stream_t0) * 1000)
             _record_chat_turn(_ph, agent.name, elapsed_ms, _resp_chars, session_id)
+            if _sl_task is not None:
+                asyncio.ensure_future(_record_tools_shadow(session_id, _bare_q, message, "".join(_resp_head), _sl_task))
             _note_info_miss(session_id, _bare_q, "".join(_resp_head), _web_auto)
             # a stream that ended early (client gone, error) still counts its memory use, in the background
             if _usage_t is None:

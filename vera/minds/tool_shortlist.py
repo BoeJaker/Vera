@@ -263,3 +263,32 @@ async def _night_job() -> None:
 
 
 schedule(_night_job, interval=900, name="caps_shortlist_index_night", singleton=True, skip_in_sandbox=True)
+
+
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import chat_tools_core as _CT
+except Exception:                        # worktree / app-free import
+    from vera.minds import chat_tools_core as _CT   # type: ignore
+
+
+@capability(
+    "caps.shortlist.chat_report", http_method="GET", http_path="/caps/shortlist/chat_report",
+    http_tags=["minds", "caps"], memory="off", silent=True,
+    description="The chat tool shortlist in shadow (four-minds FM-3.2/3.3, switch tools.shortlist.chat=shadow): over "
+                "recorded chat turns, recall@16/24/28 of the capabilities the reply used for the page's own list and "
+                "for caps.shortlist, the median position of a used capability in each, and how often the model used "
+                "one the page never offered. Input: limit (int=2000 - newest rows). Output: {rows, summary, examples}.",
+)
+async def cap_shortlist_chat_report(limit: int = 2000, trace_id=None) -> Dict[str, Any]:
+    r = getattr(_orch, "REDIS", None)
+    if r is None:
+        return {"rows": 0, "error": "redis unavailable"}
+    raw = await r.lrange("vera:chat:tools:shadow", 0, max(1, min(2000, int(limit or 2000))) - 1)
+    rows = []
+    for x in raw:
+        try:
+            rows.append(json.loads(x))
+        except Exception:
+            continue
+    return {"rows": len(rows), "summary": _CT.summarize(rows),
+            "examples": [r for r in rows if r.get("used")][:5]}
