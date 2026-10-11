@@ -79,6 +79,8 @@ LAYOUTS = {
     # B3 step-result entities into the journal (node NER), alone / with the A6 journal view
     "E1": {"journal_ner": True},
     "E2": {"journal_ner": True, "journal_delta": True},
+    # gather-then-write steps end at their author call (prose-only 380-1,148 s on re-checks, 11 Oct 2026)
+    "W1": {"author_gather": True},
     # the loop's role-less stages placed on CPU nodes (stage_models, 10 Oct 2026)
     "C1": {"stage_models": "verifier=qwen3.6:35b-a3b@cpu-246,gate=qwen3.6:35b-a3b@cpu-246"},
     "C2": {"stage_models": "journal=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
