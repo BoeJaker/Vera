@@ -7,7 +7,7 @@ competes with a person or another agent. Each run's trace is appended to
 census.jsonl; a run that exceeds the wall cap is cancelled and recorded as such,
 because a timeout is data too.
 """
-import calendar, json, subprocess, time, sys, os
+import calendar, json, subprocess, threading, time, sys, os
 
 # Which Vera the goals run against, and where the rows go. Defaults are prod and
 # the numbered series' files. CENSUS_BASE points a run at a sandbox (e.g. the
@@ -469,6 +469,11 @@ def ingest_row(rec, template, census_run):
 
 
 _ACTIVE = {}
+_ACTIVE_LOCK = threading.Lock()
+_HEARTBEAT = {"started": False}
+#: DEEP-21 D21-3: the active file is refreshed this often while running or parked, so a long goal or a
+#: long park never reads as a dead harness (readers call it stale after control.ACTIVE_STALE_S).
+HEARTBEAT_S = 60
 
 
 def write_active(**fields):
@@ -476,16 +481,31 @@ def write_active(**fields):
 
     Rewritten on every state change (goal start, pause, resume, goal end, exit)
     so a reader never has to infer progress from the log."""
-    _ACTIVE.update(fields)
-    _ACTIVE["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    _ACTIVE["pid"] = os.getpid()
-    try:
-        tmp = ACTIVE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(_ACTIVE, fh, indent=1)
-        os.replace(tmp, ACTIVE_FILE)
-    except Exception as e:
-        log("  (active file not written: %s)" % e)
+    with _ACTIVE_LOCK:
+        _ACTIVE.update(fields)
+        _ACTIVE["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _ACTIVE["pid"] = os.getpid()
+        try:
+            tmp = ACTIVE_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(_ACTIVE, fh, indent=1)
+            os.replace(tmp, ACTIVE_FILE)
+        except Exception as e:
+            log("  (active file not written: %s)" % e)
+
+
+def _heartbeat_loop(every=HEARTBEAT_S):
+    while True:
+        time.sleep(every)
+        if _ACTIVE.get("state") in ("running", "paused"):
+            write_active()
+
+
+def start_heartbeat():
+    """A daemon thread that refreshes the active file while the harness runs (D21-3)."""
+    t = threading.Thread(target=_heartbeat_loop, name="census-heartbeat", daemon=True)
+    t.start()
+    return t
 
 
 def prod_healthy():
@@ -913,6 +933,8 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
     log("== %s (%s/%s)%s ==" % (g["id"], g["intent"], g["tier"],
                                 "" if wall_cap == WALL_CAP_S
                                 else "  [cap %ds]" % wall_cap))
+    if not _HEARTBEAT.get("started"):
+        _HEARTBEAT["started"] = bool(start_heartbeat())
     write_active(state="running", current_goal=g["id"], session_id="",
                  goal_started_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                  wall_cap_s=wall_cap)
