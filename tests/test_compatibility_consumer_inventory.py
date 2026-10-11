@@ -81,6 +81,24 @@ def test_inventory_fails_closed_on_missing_roots_and_bounds(tmp_path: Path):
         collect_compatibility_consumer_inventory({"root": root}, SYMBOLS, max_files=1)
 
 
+def test_inventory_does_not_follow_file_symlinks_outside_declared_root(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("patch_new_cap()", encoding="utf-8")
+    link = root / "linked.py"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("file symlinks unavailable on this platform")
+
+    result = collect_compatibility_consumer_inventory({"root": root}, SYMBOLS)
+
+    scanned = result["declared_roots"][0]
+    assert scanned["skipped_symlinks"] == 1
+    assert scanned["matches"]["memory.patch_new_cap"] == []
+
+
 def test_declared_inventory_enriches_reviews_without_authorising_removal(tmp_path: Path):
     root = tmp_path / "external"
     root.mkdir()

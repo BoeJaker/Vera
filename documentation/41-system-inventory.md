@@ -312,7 +312,8 @@ normal zero-use cycles are still required.
 source roots without importing or executing them. The scan is bounded by file
 count and bytes, ignores dependency and VCS directories, and records only root
 labels, relative paths, line numbers and content digests—never matching source
-text or absolute paths. Its evidence can be attached to the independent path
+text or absolute paths. Symlink targets and unsupported file types are reported
+as coverage exclusions rather than followed. Its evidence can be attached to the independent path
 reviews, but is deliberately labelled `declared_roots_only` and
 `global_external_coverage: false`. A clean scan of selected repositories is not
 proof that no other consumer exists and never creates removal authority.

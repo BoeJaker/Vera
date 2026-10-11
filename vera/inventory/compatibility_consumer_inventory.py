@@ -73,7 +73,11 @@ def collect_compatibility_consumer_inventory(
         matches = {symbol: [] for symbol in ordered_symbols}
         scanned_files = 0
         scanned_bytes = 0
+        skipped_symlinks = 0
         for path in sorted(root.rglob("*")):
+            if path.is_symlink():
+                skipped_symlinks += 1
+                continue
             if not path.is_file() or path.suffix.lower() not in _SUFFIXES:
                 continue
             relative = path.relative_to(root)
@@ -103,6 +107,7 @@ def collect_compatibility_consumer_inventory(
             "root_identity": _identity("croot_", {"label": label}),
             "scanned_files": scanned_files,
             "scanned_bytes": scanned_bytes,
+            "skipped_symlinks": skipped_symlinks,
             "matches": matches,
             "scan_complete": True,
         })
@@ -114,6 +119,7 @@ def collect_compatibility_consumer_inventory(
         "scanned_files": total_files,
         "scanned_bytes": total_bytes,
         "scope": "declared_roots_only",
+        "coverage_exclusions": ["symlink_targets", "unsupported_file_types"],
         "global_external_coverage": False,
         "removal_authority": False,
         "executes": False,
