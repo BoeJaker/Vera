@@ -4065,8 +4065,10 @@ AIDE_PROMPT = (
     "in milliseconds. Use web.fetch for one known URL, http.get/http.post for APIs. "
     "research.run is a BACKGROUND report job (5-30 minutes) — only when the user "
     "asks for a report or deep dive (info.seek need=deep starts it for you).\n"
-    "• What Vera already knows about the user → memory.recall / memory.search / "
-    "memory.session_history and context.assemble / context.recall. Persist a "
+    "• What Vera already knows about the user → memory.seek (one search over every "
+    "store), then memory.read for a full record by id - the same pair the agent "
+    "loop uses; memory.session_history for this conversation; memory.recall / "
+    "memory.search and context.assemble / context.recall still work. Persist a "
     "durable fact with memory.store.\n"
     "• Memories and session notes are dated records of what was said or seen, not "
     "proof the world is still that way. Use them for the user's own preferences and "
@@ -4127,6 +4129,7 @@ AIDE_PROMPT = (
 _AIDE_PRIOR_PROMPTS = {
     "7a9ac80b6a8c4023d1cca601ae12610412a31fb3",   # to 2026-10-10 (before the info-seeking grounding rules)
     "68b6c2325f754d4be4b354004fbb02956eab2088",   # 2026-10-10 evening (web.research first, before info.seek)
+    "b99329fc86df0e71ed4d6f4fe7da18a21d9c89a7",   # 2026-10-11 (info.seek first, before memory.seek / memory.read)
 }
 _AIDE_RETIRED_CAPS = ("research.quick_search",)
 
@@ -4177,7 +4180,9 @@ DEFAULT_AGENTS = [
             # Babblefish protocol translation
             "babblefish.modules", "babblefish.speak",
             "babblefish.listen", "babblefish.decode",
-            # Memory (allowed — deliberately NOT the bare fabric.* caps)
+            # Memory (allowed — deliberately NOT the bare fabric.* caps). memory.seek / memory.read first: the
+            # canonical pair the agent loop uses (info-seeking plan SK-2.6); recall/search kept as older names.
+            "memory.seek", "memory.read",
             "memory.recall", "memory.search", "memory.session_history", "memory.store",
             # Context assembly (allowed)
             "context.assemble", "context.recall",
