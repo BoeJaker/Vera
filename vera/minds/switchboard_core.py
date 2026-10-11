@@ -134,6 +134,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "keeps the first rows matching any word, p95 2.2 s on prod 11 Oct); 'fts' = a GIN full-text index "
        "(fabric_records_fts, built once in the background): records with every word ranked first, then any-word "
        "records; falls back to 'like' while the index is missing."),
+    _f("canvas.surface_rank", ("off", "shadow"), "chat", "FM-6.2/6.3",
+       "The canvas curator's first questions: which domains a turn is about and which surfaces answer it, from the "
+       "turn's Frame vector against domain and surface cards (cosine), beside surface.find's word lists. 'off' "
+       "(default) = word lists only; 'shadow' = each turn.prepare also records what the cards would have chosen "
+       "(background, never awaited; canvas.surface_rank.report). 'on' needs engagement outcomes first."),
     # intel's modes (FM-13.3; mapping agreed with the intelligence unit 11 Oct, intel_switches_core). intel's config
     # stays the truth: a switch overrides its key only when set; at its default (the first mode) it changes nothing.
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
