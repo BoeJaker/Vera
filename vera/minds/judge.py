@@ -91,6 +91,13 @@ _SERVES_SCORE = _bind(
          "recorded in the ledger for calibration.",
     limits="live decisions (shadow only until promoted); questions outside judge_core.QUESTIONS.",
     note="models: VERA_DECIDE_SHADOW_MODEL (default " + DEFAULT_MODELS + ")")
+_SERVES_CARDS = _bind(
+    "decide", "nlp", io_in="state", io_out="label", tier=3, placement="nlp", questions=list(JC.CARDS),
+    model="sentence-transformers/all-MiniLM-L6-v2",  # pragma: allowlist secret (a model id, not a secret)
+    uses="Answer a stored loop decision by which label's short description card its input is nearest to in the "
+         "decision space (MiniLM on an NLP node) - no stored neighbours needed, no LLM, a shadow judge.",
+    limits="labels whose cards do not separate them; questions without cards (judge_core.CARDS).",
+    note="ledger implementation " + JC.CARD_IMPL)
 _SERVES_KNN = _bind(
     "decide", "knn", io_in="state", io_out="label", tier=2, placement="nlp", questions=list(JC.QUESTIONS),
     uses="Answer a stored loop decision by the similarity-weighted vote of its nearest past decisions "
@@ -247,7 +254,13 @@ async def cap_decide_shadow_report(question_id: str = "loop.step_verify", days: 
 
 _DDL_VEC = ("""CREATE TABLE IF NOT EXISTS decision_vectors (
                  decision_id TEXT PRIMARY KEY, question_id TEXT NOT NULL, vec JSONB NOT NULL,
-                 ts TIMESTAMPTZ NOT NULL DEFAULT NOW())""",)
+                 ts TIMESTAMPTZ NOT NULL DEFAULT NOW())""",
+            # which model made each vector (backbone review 11 Oct, W2-05/W2-06: no unpinned vectors); nullable
+            # columns, so no table rewrite - rows from before carry NULL (all MiniLM-L6, 384-d)
+            "ALTER TABLE decision_vectors ADD COLUMN IF NOT EXISTS model TEXT",
+            "ALTER TABLE decision_vectors ADD COLUMN IF NOT EXISTS dim INTEGER")
+#: what the NLP node said made the last vectors (nlp.embed reports model and dim)
+_EMBED_ID: Dict[str, Any] = {"model": "", "dim": 0}
 
 
 async def _embed(texts: List[str]) -> List[Optional[List[float]]]:
@@ -255,6 +268,8 @@ async def _embed(texts: List[str]) -> List[Optional[List[float]]]:
     for i in range(0, len(texts), 64):
         r = await _raw("nlp.embed", texts=texts[i:i + 64])
         vecs = r.get("embeddings") if isinstance(r.get("embeddings"), list) else []
+        if vecs and r.get("model"):
+            _EMBED_ID.update(model=str(r.get("model")), dim=int(r.get("dim") or len(vecs[0] or [])))
         out += vecs if len(vecs) == len(texts[i:i + 64]) else [None] * len(texts[i:i + 64])
     return out
 
@@ -311,9 +326,9 @@ async def cap_decide_shadow_knn(question_id: str = "loop.step_verify", limit: in
                 if v:
                     it["vec"] = JC._unit(v)
                     await conn.execute(
-                        "INSERT INTO decision_vectors (decision_id, question_id, vec) VALUES ($1, $2, $3::jsonb) "
-                        "ON CONFLICT (decision_id) DO NOTHING", it["id"], question_id,
-                        json.dumps([round(x, 5) for x in it["vec"]]))
+                        "INSERT INTO decision_vectors (decision_id, question_id, vec, model, dim) "
+                        "VALUES ($1, $2, $3::jsonb, $4, $5) ON CONFLICT (decision_id) DO NOTHING", it["id"], question_id,
+                        json.dumps([round(x, 5) for x in it["vec"]]), _EMBED_ID["model"] or None, len(it["vec"]))
     pool = [{"vec": it["vec"], "answer": it["live"].get("answer"), "run": it["live"].get("run_id"), "id": it["id"]}
             for it in items if it["vec"] and it["live"].get("answer") in (JC.QUESTIONS[question_id]["labels"].values())]
     # FM-9.1: the neighbours are found on an NLP node; the index is this question's labelled decisions
@@ -368,7 +383,8 @@ async def _card_vecs(question_id: str) -> Dict[str, List[float]]:
 
 
 @capability(
-    "decide.shadow.cards", http_method="POST", http_path="/decide/shadow/cards", http_tags=["minds"],
+    "decide.shadow.cards", serves=_SERVES_CARDS, http_method="POST", http_path="/decide/shadow/cards",
+    http_tags=["minds"],
     memory="off",
     description="The card-similarity shadow judge (four-minds FM-2.1 stage-0): each recent decision's input, in the "
                 "decision space, takes the label whose short description card it is nearest; recorded as a shadow "

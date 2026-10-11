@@ -65,8 +65,11 @@ async def _cards() -> Dict[str, List[float]]:
         if r is not None:
             try:
                 raw = await r.get(KEY_CARDS + h)
-                if raw:
-                    _CARDS[h] = json.loads(raw)
+                got = json.loads(raw) if raw else None
+                # v2 payload: the vectors with the model and dimension that made them (backbone review 11 Oct);
+                # a v1 payload (bare vectors, no identity) is re-embedded once
+                if isinstance(got, dict) and isinstance(got.get("vectors"), dict):
+                    _CARDS[h] = got["vectors"]
                     return _CARDS[h]
             except Exception:
                 pass
@@ -79,7 +82,8 @@ async def _cards() -> Dict[str, List[float]]:
         _CARDS[h] = cards
         if r is not None:
             try:
-                await r.set(KEY_CARDS + h, json.dumps(cards))
+                await r.set(KEY_CARDS + h, json.dumps({"model": res.get("model") or "", "dim": len(vecs[0] or []),
+                                                       "vectors": cards}))
             except Exception:
                 pass
         return cards
