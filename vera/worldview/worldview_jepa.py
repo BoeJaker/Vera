@@ -119,6 +119,14 @@ from Vera.vera.worldview.retrieval_provenance import (
     JepaRetrievalProvenance,
     build_index_snapshot_candidate,
 )
+try:
+    from Vera.vera.worldview.canonical_revision_provenance import (
+        enrich_matching_revisions,
+    )
+except ImportError:  # supported lower-case package topology
+    from vera.worldview.canonical_revision_provenance import (
+        enrich_matching_revisions,
+    )
 from Vera.vera.fabric.dataset_provider import DatasetSnapshot
 
 # ── Optional heavy imports (graceful degradation) ─────────────────────────────
@@ -1444,7 +1452,34 @@ async def _load_loss_history():
 def _get_fabric():
     import sys
     return (sys.modules.get("Vera.vera.fabric.data_fabric") or
-            sys.modules.get("Vera.vera.fabric.data_fabric"))
+            sys.modules.get("vera.fabric.data_fabric"))
+
+
+async def _enrich_canonical_revision_provenance(
+        records: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
+    """Join exact canonical revision IDs onto hash-qualified projections.
+
+    The canonical store is consulted only for records that already carry a
+    projection content hash. A record-ID match alone cannot prove that the
+    Chroma vector represents the current revision, so missing hashes and hash
+    mismatches deliberately remain ineligible for retrieval binding.
+    """
+    fab = _get_fabric()
+    path_factory = getattr(fab, "_canonical_revision_path", None) if fab else None
+    actor_factory = getattr(fab, "_revision_actor", None) if fab else None
+    if not callable(path_factory) or not callable(actor_factory):
+        return {"records": len(records), "authority_unavailable": len(records)}
+
+    def _join() -> Dict[str, int]:
+        try:
+            path = path_factory()
+            actor = actor_factory()
+        except Exception:
+            return {"records": len(records), "authority_unavailable": len(records)}
+        return enrich_matching_revisions(
+            records, lambda record_ids: path.get_many(record_ids, actor=actor))
+
+    return await asyncio.to_thread(_join)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1855,6 +1890,8 @@ async def _fetch_records_with_embeddings(dataset_id: str = "",
                      "(dataset=%s, limit=%d)",
                      len(rids), dataset_id or "*", limit)
             if rids:
+                provenance = await _enrich_canonical_revision_provenance(meta)
+                log.info("worldview: canonical provenance join %s", provenance)
                 return rids, emb_np, meta
         except Exception as e:
             log.warning("worldview: Chroma fetch failed: %s", e)

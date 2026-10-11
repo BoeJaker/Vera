@@ -290,6 +290,37 @@ class RevisionStore:
         head = self.head(record_id)
         return self.revision(head["revision_id"]) if head else None
 
+    def current_many(self, record_ids: Iterable[str], *, limit: int = 20000
+                     ) -> dict[str, dict[str, Any]]:
+        """Read current envelopes with one connection and bounded SQL batches."""
+        values = []
+        seen = set()
+        for value in record_ids:
+            record_id = str(value or "").strip()
+            if not record_id or record_id in seen:
+                continue
+            values.append(record_id)
+            seen.add(record_id)
+            if len(values) > limit:
+                raise ValueError(f"record_ids exceeds limit {limit}")
+        if not values:
+            return {}
+        found: dict[str, dict[str, Any]] = {}
+        with self._connect() as conn:
+            for offset in range(0, len(values), 500):
+                batch = values[offset:offset + 500]
+                marks = ",".join("?" for _ in batch)
+                rows = conn.execute(
+                    "SELECT h.record_id, r.envelope_json "
+                    "FROM fabric_record_heads h "
+                    "JOIN fabric_record_revisions r ON r.revision_id=h.revision_id "
+                    f"WHERE h.record_id IN ({marks})",
+                    tuple(batch),
+                ).fetchall()
+                for row in rows:
+                    found[str(row["record_id"])] = json.loads(row["envelope_json"])
+        return found
+
     def receipt(self, revision_id: str, projection: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM fabric_projection_receipts "

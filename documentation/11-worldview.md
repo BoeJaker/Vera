@@ -684,10 +684,14 @@ revisions.
 `worldview.retrieval.snapshot.preview` first freezes the exact active index into
 payload-free candidate records containing only record ID, revision ID, content
 hash and source dataset ID. Rebuild and streaming ingestion preserve those
-revision/hash facts from Fabric metadata. If even one legacy index member lacks
-either fact, preview returns ineligible with aggregate missing counts; it does
-not infer a revision from text, expose record content, persist state or authorize
-retrieval influence.
+revision/hash facts from Fabric metadata. During a graph fetch, a record that
+already has a projection content hash but no revision ID may be joined to the
+current canonical Fabric revision only when the record IDs and content hashes
+match exactly. A shared ID by itself is not evidence: records with no projection
+hash, a mismatched hash, unavailable authority or a denied read remain
+ineligible. If even one index member lacks either fact, preview returns
+ineligible with aggregate missing counts; it does not infer a revision from
+text, expose record content, persist state or authorize retrieval influence.
 
 `worldview.retrieval.bind` establishes the stricter boundary. It accepts a
 complete record manifest that must reproduce one immutable `DatasetSnapshot`

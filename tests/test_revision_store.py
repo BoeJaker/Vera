@@ -153,3 +153,16 @@ def test_head_cannot_change_stable_record_identity(tmp_path):
         created_at=T1, parents=[first.revision_id])
     with pytest.raises(RevisionConflict, match="stable record identity"):
         store.put(changed, projections=["vector"], expected_head=first.revision_id)
+
+
+def test_current_many_is_bounded_deduplicated_and_returns_current_heads(tmp_path):
+    store = RevisionStore(tmp_path / "fabric.db")
+    value = rev(1)
+    store.put(value, projections=["vector"], expected_head="")
+
+    result = store.current_many([value.record_id, value.record_id, "missing"])
+
+    assert list(result) == [value.record_id]
+    assert result[value.record_id]["revision_id"] == value.revision_id
+    with pytest.raises(ValueError, match="exceeds limit"):
+        store.current_many([value.record_id, "other"], limit=1)
