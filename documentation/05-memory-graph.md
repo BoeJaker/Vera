@@ -1002,7 +1002,7 @@ node and edge routes.
 | `VERA_MEMORY_TOOLING` | `canonical` | Fallback tooling mode when none is persisted |
 | `VERA_MEMORY_REVISION_CANARY` | `0` | `1` shadows new public `memory.store` writes into immutable revisions and records paired outcomes |
 | `VERA_MEMORY_RECONCILIATION_ENABLED` | `0` | `1` permits explicitly requested `memory.dual_write.reconcile` attempts; it does not schedule them |
-| `VERA_MEMORY_DUAL_WRITE_RECEIPTS` | `vera/fabric/memory_dual_write_receipts.db` | Dual-write and reconciliation evidence journal |
+| `VERA_MEMORY_DUAL_WRITE_RECEIPTS` | `VERA_STATE_DIR/fabric/memory-dual-write-receipts.sqlite3` | Dual-write and reconciliation evidence journal |
 | `MEMORY_SEEK_EMBED_WAIT_S` | `10` | `memory.seek` query-vector wait |
 | `FABRIC_SEEK_MIN_SCORE` | `0.28` | `memory.seek` cosine floor |
 | `VERA_SANDBOX_WRITE_GUARD` | `1` (in dev sandboxes) | `0` lets a dev sandbox write to shared stores |

@@ -916,7 +916,7 @@ relative to `vera/`.
 | `FABRIC_NER_MODEL` | `en_core_web_sm` | `catalog/specialist_capabilities.py`, `fabric/fabric_web_acquisition.py` |
 | `FABRIC_OBJECT_STORE` | `none` | `fabric/data_fabric.py` |
 | `FABRIC_REVISION_POLICY` | `""` | `fabric/data_fabric.py` |
-| `FABRIC_REVISION_SQLITE` | `vera/fabric/vera_fabric_revisions.db` | `fabric/data_fabric.py` |
+| `FABRIC_REVISION_SQLITE` | `VERA_STATE_DIR/fabric/record-revisions.sqlite3` | `fabric/data_fabric.py`, shared with the Memory authority canary |
 | `FABRIC_RRF_K` | `60` | `fabric/data_fabric.py` |
 | `FABRIC_S3_ACCESS` | `""` | `fabric/data_fabric.py`, `provisioning/stores_capabilities.py` |
 | `FABRIC_S3_BUCKET` | `vera-data-fabric` | `fabric/data_fabric.py`, `provisioning/stores_capabilities.py` |
