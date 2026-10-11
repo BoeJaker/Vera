@@ -7609,7 +7609,11 @@ IMPORTANT:
     r.chain=r.chain.then(async()=>{
       const content=_cvRunContent(jobId, r, false);
       try{
-        if(!r.landed){ const x=await _capCall('canvas.add',{ session_id:SID, kind:'research', key:r.key, at:'now', size:'l', content, anchor:r.mid?{ mid:r.mid, turn:r.mid }:undefined }); if(x&&x.ok) r.landed=true; }
+        if(!r.landed){ const x=await _capCall('canvas.add',{ session_id:SID, kind:'research', key:r.key, at:'now', size:'l', content, anchor:r.mid?{ mid:r.mid, turn:r.mid }:undefined }); if(x&&x.ok) r.landed=true;
+          /* ONE PLACE (owner, 2026-10-11: "the research cap family doesnt leave a placeholder chip in chat if the desk / canvas
+             is open - it should, or its being displayed 2 times"): with the canvas open the run is the canvas's item; the
+             chat's research card goes and a chip says where it is (the chat keeps both when the canvas is closed) */
+          if(r.landed){ try{ const host=(r.rc.closest&&r.rc.closest('.cap-inline'))||r.rc.parentElement||r.rc; _cvOnCanvas({ _el:host, n:'research'+(r.q?' · '+r.q.slice(0,40):'') }, r.key); }catch(_){} } }
         else await _capCall('canvas.update',{ session_id:SID, key:r.key, content });
       }catch(_){}
       if(final){ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&typeof cv.liveDone==='function') cv.liveDone(r.key); }catch(_){} }
@@ -8107,9 +8111,15 @@ IMPORTANT:
       // a search answers with PAGES - several items, not one - so a recogniser may hand back a list
       if(Array.isArray(made)){ made.forEach(x=>out.push(x)); return; }
       if(made){ out.push(made); return; }
-      out.push({kind:'markdown', n:n.split(' ')[0]||'capability', d:'capability \u00b7 '+(el.classList.contains('error')?'failed':'done'), content:{md:'**'+n+'**\n\n'+(res?'```\n'+res+'\n```':'')}, col:'var(--acc2)', k:'cap'}); });
+      /* NOTHING TO SHOW IS NO ITEM (owner, 2026-10-11: after a research run "this extra element on the page that is blank
+         except for the text  m1:cap:0 / research.run query=..."): a result no adapter could read - a job receipt, a card
+         restored without its result, a failure - landed as a document holding the card's own header and text in a code
+         fence. The tool card stays in the chat; the canvas gets what it can draw, and nothing else. */
+      return; });
 
-    cvHook('code', 'pre code', (el, out, i) => { const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||'';
+    /* a tool card's insides (its raw result, its tables, its pictures) are the card's: the capability hook lands the card's answer once */
+    const _inTool=(el)=>!!(el&&el.closest&&el.closest('.cap-inline,.cap-result'));
+    cvHook('code', 'pre code', (el, out, i) => { if(_inTool(el)) return; const lang=(String(el.className||'').match(/language-([\w-]+)/)||[])[1]||'';
       // the source from the card's registry entry (a card's DOM carries line numbers and edits the text does not)
       const _card=el.closest&&el.closest('.code-card[data-cb]'); const _blk=_card&&typeof VeraOut!=='undefined'&&VeraOut.blocks[_card.getAttribute('data-cb')];
       const s=_blk?String(_blk.code||''):String(el.textContent||''); if(!s.trim()) return;
@@ -8118,10 +8128,10 @@ IMPORTANT:
       out.push({kind:'code', n:(lang||'code')+' · '+s.split('\n').length+' lines', d:'code block', content:{code:s.slice(0,12000), lang}, col:'#fb923c', k:'code'}); });
 
     // a mermaid fence is a slot the mermaid element fills (renderMd keeps its source in _MM_BLOCKS): it lands as a diagram item
-    cvHook('diagram', '.mm-slot[data-mm]', (el, out, i) => { const s=String(_MM_BLOCKS[el.dataset.mm]||'').trim(); if(!s) return; out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{title:'Diagram', mermaid:s.slice(0,24000), caption:''}, col:'#c58bd6', k:'diagram'}); });
+    cvHook('diagram', '.mm-slot[data-mm]', (el, out, i) => { if(_inTool(el)) return; const s=String(_MM_BLOCKS[el.dataset.mm]||'').trim(); if(!s) return; out.push({kind:'diagram', n:'Diagram', d:'mermaid', content:{title:'Diagram', mermaid:s.slice(0,24000), caption:''}, col:'#c58bd6', k:'diagram'}); });
 
     // a whole diagram: the store has no cap of its own
-    cvHook('table', 'table', (el, out, i) => { const columns=[...el.querySelectorAll('thead th, tr:first-child th')].map(x=>String(x.textContent||'').trim()); const rows=[...el.querySelectorAll('tbody tr, tr')].filter(tr=>tr.querySelector('td')).map(tr=>[...tr.querySelectorAll('td')].map(td=>String(td.textContent||'').trim())).slice(0,60); if(!rows.length) return;
+    cvHook('table', 'table', (el, out, i) => { if(_inTool(el)) return; const columns=[...el.querySelectorAll('thead th, tr:first-child th')].map(x=>String(x.textContent||'').trim()); const rows=[...el.querySelectorAll('tbody tr, tr')].filter(tr=>tr.querySelector('td')).map(tr=>[...tr.querySelectorAll('td')].map(td=>String(td.textContent||'').trim())).slice(0,60); if(!rows.length) return;
       out.push({kind:'table', n:(columns[0]||'Table')+' · '+rows.length+' rows', d:'table · '+rows.length+' rows', content:{columns, rows, caption:''}, col:'#38bdf8', k:'table'}); });
 
     cvHook('widget', '.wblk[id^="w"]', (el, out, i) => { const w=_W_STORE[el.id]; if(!w||!w.rec||el.closest('vera-widget')) return; const rec=Object.assign({}, w.rec, w.data!==undefined?{data:w.data}:{}); const form=rec.draw.form; const title=rec.title||rec.name||form;
@@ -8133,7 +8143,7 @@ IMPORTANT:
       const title=(rec&&(rec.title||rec.name))||el.getAttribute('title')||form;
       out.push({kind:'widget', n:title, d:'widget · '+form, content:Object.assign({}, rec&&rec.draw?rec:{}, {widget:form, form, title, args:(rec&&(rec.source||rec.args))||{}, record:rec||undefined}), col:'#a78bfa', k:'widget'}); });
 
-    cvHook('image', 'img', (el, out, i) => { if(el.closest('.msg-actions,.cap-inline-header,.pa-att')||/\b(ico|icon|avatar)\b/.test(String(el.className||''))) return; const src=el.currentSrc||el.getAttribute('src')||''; if(!src||src.length>200000) return;
+    cvHook('image', 'img', (el, out, i) => { if(_inTool(el)&&!el.closest('.cap-imgs,.sd-img')) return;   /* a tool's gallery (diffusion) is the item */ if(el.closest('.msg-actions,.cap-inline-header,.pa-att')||/\b(ico|icon|avatar)\b/.test(String(el.className||''))) return; const src=el.currentSrc||el.getAttribute('src')||''; if(!src||src.length>200000) return;
       out.push({kind:'image', n:el.getAttribute('alt')||'image', d:el.closest('.sd-img,.cap-imgs')?'image · diffusion':'image', content:{url:src, alt:el.getAttribute('alt')||''}, col:'#e879f9', k:'image'}); });
 
   /* AND ONE THAT READS THE WORDS RATHER THAN THE MARKUP. Dates in a reply are a history whether or not a
@@ -8229,13 +8239,14 @@ IMPORTANT:
       el.classList.add('cv-elsewhere'); el.dataset.cvKey=key;
       // the line the paint already left (_cvHoldForCanvas) now knows which item it points at
       { const nx=el.nextElementSibling; if(nx&&nx.classList.contains('cv-moved')&&!nx.dataset.cvKey){ nx.dataset.cvKey=key; nx.textContent=(m.n?String(m.n).slice(0,48):'item')+' · on the canvas ↗';
-          nx.addEventListener('click',()=>{ try{ _capCall('canvas.add',{session_id:SID, key}); }catch(_){} try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} }); } }
+          nx.addEventListener('click',()=>{ try{ _capCall('canvas.add',{session_id:SID, key}); }catch(_){} try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); setTimeout(()=>{ try{ cv.flash&&cv.flash(key); }catch(_){} }, 450); } }catch(_){} }); } }
       if(!el.nextElementSibling||!el.nextElementSibling.classList.contains('cv-moved')){
         const chip=document.createElement('button'); chip.className='cv-moved'; chip.type='button';
         chip.dataset.cvKey=key; chip.title='On the session canvas — click to bring it into view there';
         chip.textContent=(m.n?String(m.n).slice(0,48):'item')+' · on the canvas ↗';
         chip.addEventListener('click',()=>{ try{ _capCall('canvas.add',{session_id:SID, key}); }catch(_){}
-          try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} });
+          /* the chip opens and focuses its item (owner, 2026-10-11: WSU-60): brought into view, a tab or a pill to the front */
+          try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); setTimeout(()=>{ try{ cv.flash&&cv.flash(key); }catch(_){} }, 450); } }catch(_){} });
         el.parentNode&&el.parentNode.insertBefore(chip, el.nextSibling);
       }
     }catch(_){}
