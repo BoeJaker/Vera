@@ -356,6 +356,32 @@
     return items;
   }
 
+  /* THE CARDS SIT UP THE DESK (owner, 2026-10-11: "desk elements seem to not use the entire height of the desk and drop in
+     in the middle ... they could be further up the desk"): the bands are dealt round the chat's middle, and a card fitted
+     to what it holds left the room above it empty. After they are pulled apart, each card that may move (not fixed: the
+     person's place, a lock, the card being sized) rises, top-most first, until it meets a card above it, the chat or the
+     top of the desk, keeping `gap`. Items are {x, y, w, h (centre and size), fixed?}; a moved one gets settled: true. */
+  function settle(items, R, d, o) {
+    d = desk(d); o = o || {};
+    var gap = o.gap == null ? 12 : o.gap, step = o.step || 4, top = o.top == null ? 4 : o.top;
+    var chat = R && R.r > R.l ? R : null;
+    /* the gap is kept above and below; beside, a hairline - the next band is 12 px away and must not stop a card rising */
+    function hit(a, b) { return a.x - a.w / 2 < b.x + b.w / 2 + 2 && b.x - b.w / 2 < a.x + a.w / 2 + 2 && a.y - a.h / 2 < b.y + b.h / 2 + gap && b.y - b.h / 2 < a.y + a.h / 2 + gap; }
+    function inChat(a) { return chat && a.x + a.w / 2 > chat.l - gap && a.x - a.w / 2 < chat.r + gap && a.y + a.h / 2 > chat.t - gap && a.y - a.h / 2 < chat.b + gap; }
+    var order = items.slice().sort(function (a, b) { return (a.y - a.h / 2) - (b.y - b.h / 2); });
+    order.forEach(function (it) {
+      if (it.fixed) return;
+      var others = items.filter(function (x) { return x !== it; }), y0 = it.y, n = 0;
+      while (it.y - it.h / 2 - step >= top && n++ < 2000) {
+        var t = { x: it.x, y: it.y - step, w: it.w, h: it.h };
+        if (inChat(t) || others.some(function (b) { return hit(t, b); })) break;
+        it.y = t.y;
+      }
+      if (it.y !== y0) it.settled = true;
+    });
+    return items;
+  }
+
   function stackOrder(nd, o) {
     o = o || {};
     if (o.dragging) return 200;
@@ -483,7 +509,7 @@
     return { planes: planes, areas: areas, nodes: nodes, links: links };
   }
 
-  var api = { DESK: DESK, grow: grow, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
+  var api = { DESK: DESK, grow: grow, settle: settle, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
               arrange: arrange, pushOut: pushOut, separate: separate, stackOrder: stackOrder, fullRegion: fullRegion, makeRoom: makeRoom,
               latticeOf: latticeOf };
   root.VeraDesk = api;

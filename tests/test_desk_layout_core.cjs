@@ -242,6 +242,19 @@ t('cards grow into the free desk round them, never into each other, the chat or 
   [A, B].forEach((it) => assert.ok(it.w / it.h <= 2.2 + 0.05 && it.h / it.w <= 2.2 + 0.05, it.id + ' a page, not a ribbon: ' + it.w + 'x' + it.h));
 });
 
+t('cards rise up the desk into the room above them; fixed ones stay; none meet', () => {
+  const R = { l: -440, t: 0, r: 0, b: 900 }, d = { W: 900, H: 900 };
+  const items = [{ id: 'a', x: 170, y: 400, w: 300, h: 200 }, { id: 'b', x: 170, y: 640, w: 300, h: 200 },
+                 { id: 'c', x: 482, y: 500, w: 300, h: 200 }, { id: 'f', x: 482, y: 160, w: 300, h: 100, fixed: true }];
+  D.settle(items, R, d, { gap: 12 });
+  const [A, B, C, F] = items;
+  assert.strictEqual(A.y - A.h / 2, 4, 'the first card is at the top: ' + A.y);
+  assert.strictEqual(B.y - B.h / 2 >= A.y + A.h / 2 + 12 && B.y - B.h / 2 <= A.y + A.h / 2 + 16, true, 'the next sits under it, a gap apart: ' + B.y);
+  assert.deepStrictEqual([F.x, F.y], [482, 160], 'a fixed card stays');
+  assert.ok(C.y - C.h / 2 >= F.y + F.h / 2 + 12 && C.y - C.h / 2 <= F.y + F.h / 2 + 16, 'the card under a fixed one rises to it: ' + C.y);
+  assert.ok(A.settled && B.settled && C.settled && !F.settled);
+});
+
 t('a card with the desk to itself grows to a page of it, not past the aspect', () => {
   const it = [{ id: 'x', x: 600, y: 450, w: 300, h: 196 }];
   D.grow(it, { l: -440, t: 0, r: 0, b: 900 }, { W: 1200, H: 900 }, {});

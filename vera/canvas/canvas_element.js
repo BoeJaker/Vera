@@ -652,7 +652,7 @@
         const isRec = !!(r.ref && r.ref.record_id);
         /* a page in the list does everything a source item does (see ONE PAGE VIEW): reader mode, its picture, its explode,
            to the canvas, open - and once read, who wrote it, what it names, where it points */
-        const acts = (r.url ? actBtn('read', r.id, b.reader || b.text ? 'read again' : 'reader mode', 'the page as the article it is - its body (or a composite of its parts) formatted (browser.reader)')
+        const acts = actBtn('open', r.id, '← back', 'close the page - the card goes back where it was') + (r.url ? actBtn('read', r.id, b.reader || b.text ? 'read again' : 'reader mode', 'the page as the article it is - its body (or a composite of its parts) formatted (browser.reader)')
             + actBtn('shot', r.id, b.shot ? 'hide the picture' : 'see the page', 'a picture of the page as it looks (browser.screenshot)')
             + ((b.reader && b.reader.markdown) || b.text ? actBtn('xpl', r.id, 'explode', 'a structured diagram of the page - its sections, what it names, how they connect') : '')
             + actBtn('land', r.id, 'to the canvas', 'land it as its own source item') + `<a class="vc-rbx-b" href="${esc(r.url)}" target="_blank" rel="noopener">open ↗</a>` : '')
@@ -2180,6 +2180,42 @@
   .vc-md th,.vc-md td{padding:5px 9px;text-align:left;vertical-align:top;border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 80%,transparent)}
   .vc-md th{font-weight:600;font-size:11px;color:var(--dim,#8b93a1);border-bottom-color:var(--border2,#3a3f48)}
   .vc-md tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--fg,#dce1e8) 3%,transparent)}
+  /* MINIMAL CARDS (owner, 2026-10-11: "make canvas elements more minimalist - hide the excess data displayed at the top
+     of the cards like counts and stats - keep controls, menus and filters. but they should only become visible if opened
+     or on mouseover in hover mode" - canvas and desk alike). Unless the canvas shows its full chrome (tier "full"):
+     the counts and stats at the top of an item are not drawn (a list's own title line - the card's header names it - its
+     sites bar and date line, a run's counts and job, a lookup's chips); the controls (the filter, sort and view bar, a
+     run's tabs, the pager, the card's own icon row) appear over the item when it is pointed at, used or opened; the
+     facets (sites, names) when the filter is in use or the item is opened. */
+  :host(:not([data-tier="full"])) .it .vc-rbx > :is(.vc-rbx-top,.vc-rbx-glance){display:none}
+  :host(:not([data-tier="full"])) .it :is(.vc-rr-n,.vc-rr-ft,.vc-act-n){display:none}
+  :host(:not([data-tier="full"])) .it:not(:hover):not(.hov):not(:focus-within):not(.maxed) .vc-ev-chips{display:none}
+  :host(:not([data-tier="full"])) .it .vc-rbx{position:relative}
+  :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-tools{position:absolute;left:0;right:0;top:0;z-index:5;margin:0;padding:4px 6px;border-radius:8px;
+    background:var(--bg2,#1d2128);box-shadow:0 6px 18px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .15s}
+  :host(:not([data-tier="full"])) .it:is(:hover,.hov,:focus-within,.maxed) .vc-rbx > .vc-rbx-tools{opacity:1;pointer-events:auto}
+  /* over the list, it takes no room: a small card (which drops its tool row in the flow, see deskcard) has it too */
+  @container deskcard (max-height: 380px) { :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-tools{display:flex!important} }
+  :host(:not([data-tier="full"])) .it:not(:focus-within):not(.maxed) .vc-rbx > .vc-rbx-facets{display:none}
+  :host(:not([data-tier="full"])) .it:is(:focus-within,.maxed) .vc-rbx > .vc-rbx-tools + .vc-rbx-facets{margin-top:38px}  :host(:not([data-tier="full"])) .it :is(.vc-rbx-foot,.vc-rr-tabs){opacity:0;transition:opacity .15s}
+  :host(:not([data-tier="full"])) .it:is(:hover,.hov,:focus-within,.maxed) :is(.vc-rbx-foot,.vc-rr-tabs){opacity:1}
+  :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:not(.desk-chip) > .hda{opacity:0}
+  :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .hda{opacity:1}
+  /* ...and a drawing's own chrome (a graph's caption of counts, its view menu, explode's caption with its enlarge) shows
+     when the drawing is pointed at; a combined card's tabs when the card is */
+  :host(:not([data-tier="full"])) #live .lv :is(.vge-note,.vg-layer){opacity:0;transition:opacity .15s}
+  :host(:not([data-tier="full"])) #live .lv:hover :is(.vge-note,.vg-layer){opacity:1}
+  :host(:not([data-tier="full"])) .stage .it > .cmp-tabs{opacity:0;transition:opacity .15s}
+  :host(:not([data-tier="full"])) .stage .it:is(:hover,.hov,:focus-within,.maxed) > .cmp-tabs{opacity:1}
+  /* READING (see _readerFollow): the card fills the room with the page that was opened, alone, at full height */
+  .it.reading .vc-rbx > :not(.vc-rbx-list):not(.vc-rbx-cards):not(.vc-tablewrap){display:none!important}
+  .it.reading .vc-rbx :is(.vc-rbx-row,tr[data-rec-act]):not(.on){display:none!important}
+  .it.reading .vc-rbx :is(.vc-rbx-list,.vc-rbx-cards){display:block;flex:1 1 auto;min-height:0;overflow:auto}
+  .it.reading .vc-rbx .vc-rbx-row.on{border:0;padding:4px 2px}
+  .it.reading .vc-rbx .vc-rbx-row.on .vc-rbx-body{max-height:none;font-size:14px;line-height:1.65;max-width:76ch}
+  .it.reading .vc-rr-tabs,.it.reading .vc-rr-q{display:none}
+  .it.reading .vc-rr-p:not([data-p="pages"]){display:none!important}
+  .it.reading .vc-rr-p[data-p="pages"]{display:block!important;grid-column:1 / -1;border-left:0;padding-left:0;height:100%;max-height:none}
   /* a command that ran: the prompt line, then its output */
   .vc-ran{display:flex;flex-direction:column;gap:6px;min-height:0}
   .vc-ran-cmd{display:flex;align-items:baseline;gap:8px;min-width:0;font-family:var(--mono,monospace);font-size:11.5px}
@@ -3340,6 +3376,12 @@
         return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h, nat || Infinity), face0: po.size.face, maxH: nat || undefined };
       });
       D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h, (s.face === 'chip' || s.face === 'icon') ? Infinity : (it.maxH || Infinity)) }; }, { W: W, H: H });
+      /* ...up the desk into the room above them (D.settle), the person's places, locks and sizes staying where they are... */
+      if (typeof D.settle === 'function' && this.getAttribute('desk-settle') !== 'off') {
+        D.settle(plan, R, { W: W, H: H }, { gap: 12 });
+        /* a card that rose keeps the size it was pulled apart at: re-sized where it now sits, it could meet its neighbours */
+        plan.forEach((it) => { if (it.settled && !it.fixed) { it.keepSize = true; if (!it.face0) it.face0 = D.faceOf(it.w, it.h); } });
+      }
       /* ...then every card takes the free desk round it (D.grow): a chip stays a chip, and what the person sized, locked
          or is sizing stays as it is. Off with the canvas's desk-fill="off". */
       if (typeof D.grow === 'function' && this.getAttribute('desk-fill') !== 'off') {
@@ -3821,7 +3863,7 @@
         // what is fused INTO this one: drawn as panes of its body, so the two read as one thing
         const g = groupOf(b);
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
-        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '') + (this.deskAlign() && this._lockGet()[key] ? ' desk-locked' : '');
+        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (maxed && this._autoMax === key ? ' reading' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '') + (this.deskAlign() && this._lockGet()[key] ? ' desk-locked' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
           ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="dp solo" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span><span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>` : ''}${
             /* the header line is drawn for EVERY item. An item whose drawer has its own head shows it only when the COLUMN
@@ -4960,6 +5002,18 @@
        browser's state is the element's (recState), so paging does not write the canvas; what a record's reading
        fetched is kept beside it for the session's look. Landing a url writes a source item through canvas.add
        (keyed source:<url>, so it is never there twice). */
+    /* A PAGE OPENED TAKES THE ROOM (owner, 2026-10-11: "if i open something inside a canvas element that should take up the
+       entire desk ... the reader mode portion should expand to take up the desk and then shrink to where it was before").
+       A record opened in a list - a search result, a research source - fills the free desk (the canvas column off the
+       desk), showing that page alone (.reading); closing the last open one puts the card back where it was. A card the
+       person maximised themselves is left as they had it. */
+    _readerFollow(key) {
+      const st = recState(this, key); const any = Object.keys(st.open || {}).some((k) => st.open[k]);
+      if (any) { const b = this._blockOf(key); if (b && b.type === 'research') { st.tab = 'pages'; st.side = 'pages'; } }   /* a run's page is read in its Pages pane */
+      if (any && this._max !== key) { this._autoMax = key; this._toggleMax(key); return true; }
+      if (!any && this._autoMax === key) { this._autoMax = null; if (this._max === key) this._toggleMax(key); return true; }
+      return false;
+    }
     async _recAct(key, act, arg) {
       const b = this._blockOf(key); const c = (b && b.content) || null; if (!c) return;
       const st = recState(this, key); const items = Array.isArray(c.items) ? c.items : [];
@@ -4974,12 +5028,13 @@
       if (act === 'ent') { st.ent = st.ent === arg ? '' : arg; st.page = 0; return redraw(); }
       if (act === 'goto') return this._rgNode(key, { id: 'r:' + arg });   // a timeline dot: its page, opened, wherever it sits
       if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key);
+          if (this._readerFollow(key) && !st.open[it.id]) return;
           // a fabric record opened is READ at once: its facts, its source, its text - the depth is the point of opening it
           const cur = st.body[it.id] || {};
           if (st.open[it.id] && it.ref && it.ref.record_id && !cur.text && !cur.busy && !cur.err) { redraw(); return this._recAct(key, 'rec', arg); } }
         return redraw(); }
       if (act === 'read' && it && it.url) {
-        st.open[it.id] = true; st.body[it.id] = { busy: 'reading the page (reader mode)' }; redraw();
+        st.open[it.id] = true; st.body[it.id] = { busy: 'reading the page (reader mode)' }; if (!this._readerFollow(key)) redraw();
         const rd = await this._readPage(String(it.url));
         st.body[it.id] = rd.reader ? { reader: rd.reader } : rd.text ? { text: rd.text } : { err: rd.err || 'the page gave nothing back' };
         /* a page read here names things too: its names join the list's name filters and its graph, as a cached reading's do */
