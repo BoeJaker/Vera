@@ -592,9 +592,10 @@
       return `<vera-mermaid class="vc-mm" bare title="${esc(title)}">${esc(src)}</vera-mermaid>` + cap;
     },
 
+    /* the caption is the card's title when the image has no title of its own (blockTitle): then it is not drawn twice */
     image: c => `<figure class="vc-fig">
         <img src="${esc(c.url || '')}" alt="${esc(c.alt || '')}" loading="lazy">
-        ${c.caption ? `<figcaption>${esc(c.caption)}</figcaption>` : ''}</figure>`,
+        ${c.caption && c.title && c.caption !== c.title ? `<figcaption>${esc(c.caption)}</figcaption>` : ''}</figure>`,
 
     note: c => `<div class="vc-note">${esc(c.text || '')}
         ${c.author ? `<span class="vc-by">— ${esc(c.author)}</span>` : ''}</div>`,
@@ -2171,6 +2172,11 @@
   .vc-rbx-efacets .vc-rbx-fl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7480));margin-right:4px;align-self:center}
   /* a research run at a glance: its sites as one bar, its pages' dates as a line */
   .vc-rbx-glance{display:flex;flex-direction:column;gap:6px;margin:6px 0 4px}
+  /* a table inside a document reads as a table: a ruled header, rows apart, numbers lined up */
+  .vc-md table{border-collapse:collapse;width:100%;margin:8px 0;font-size:12px}
+  .vc-md th,.vc-md td{padding:5px 9px;text-align:left;vertical-align:top;border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 80%,transparent)}
+  .vc-md th{font-weight:600;font-size:11px;color:var(--dim,#8b93a1);border-bottom-color:var(--border2,#3a3f48)}
+  .vc-md tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--fg,#dce1e8) 3%,transparent)}
   /* a command that ran: the prompt line, then its output */
   .vc-ran{display:flex;flex-direction:column;gap:6px;min-height:0}
   .vc-ran-cmd{display:flex;align-items:baseline;gap:8px;min-width:0;font-family:var(--mono,monospace);font-size:11.5px}
@@ -3168,6 +3174,13 @@
       sr.querySelectorAll('.stage .it[data-key][data-desk-face]').forEach((c) => {
         const key = c.dataset.key, face = c.dataset.deskFace || '';
         if (!/^(card|max)$/.test(face) || c.classList.contains('cmp-behind') || c.classList.contains('desk-locked') || c.classList.contains('desk-placed') || (this._rz && this._rz.el === c)) return;
+        /* an image fills its card up to half again its own size: a small picture blown up to the desk is not "as much room as
+           design allows" (a 200 px logo drawn 650 px tall) */
+        if (c.dataset.type === 'image') { const im = c.querySelector('.vc-fig img'), bd0 = c.querySelector(':scope > .it-bd');
+          if (im && im.naturalWidth > 0 && im.naturalHeight > 0 && bd0) { const s = Math.min(1.5, (bd0.clientWidth - 8) / im.naturalWidth);
+            const cap = c.querySelector('.vc-fig figcaption'); const want = Math.max(96, Math.round(c.offsetHeight - bd0.clientHeight + im.naturalHeight * s + (cap ? cap.offsetHeight + 6 : 0) + 12));
+            if (want < c.offsetHeight - 8 && (nat[key] == null || Math.abs(nat[key] - want) > 16)) { nat[key] = want; changed = true; } }
+          return; }
         if (FILLS.has(c.dataset.type || '') || (c.dataset.type !== 'diagram' && c.querySelector('.vc-live'))) { if (nat[key] != null) { delete nat[key]; changed = true; } return; }
         const bd = c.querySelector(':scope > .it-bd'); if (!bd || !bd.clientHeight) return;
         const B = bd.getBoundingClientRect(); let low = B.top;
