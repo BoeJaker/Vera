@@ -12010,6 +12010,8 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
             "path": saved.get("path", path), "fs_path": saved.get("fs_path", ""),
             "version": saved.get("version"), "bytes": saved.get("bytes"),
             "lang": saved.get("lang", lang), "chars": len(content),
+            # the length a "200-word" goal asks about, so nobody counts it again (11 Oct 2026)
+            "words": len(content.split()),
             "truncated": truncated,
             "grounded": not ungrounded,
             "ungrounded_refs": ungrounded,
@@ -19697,7 +19699,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 _ans, _why = _author_done.step_is_answered(
                     step.get("caps") or caps, f"{step.get('title') or ''}\n{step.get('goal') or ''}", tool,
                     (invoke or {}).get("result"),
-                    has_seam=lambda g: len(_V5_COMPOUND_SEAM_RE.split(g, maxsplit=1)) > 1)
+                    has_seam=lambda g: len(_V5_COMPOUND_SEAM_RE.split(g, maxsplit=1)) > 1,
+                    allow_gather=bool(step.get("_author_gather")))
             except Exception as _e:
                 _ans, _why = False, ""
                 log.debug("author_done check failed: %s", _e)
@@ -24768,6 +24771,8 @@ async def cap_dag_agent_loop_v6(
     # deliverable adversarially ONCE; real defects become one fix step (user 2026-10-04).
     deliverable_review: bool = False,
     answer_check: bool = False,
+    # A step that gathers then writes ends at its author call too (author_done_core.GATHER_CAPS).
+    author_gather: bool = False,
     # Roadmap B3: node NER over each step's result, new names merged into its journal entry.
     journal_ner: bool = False,
     # Roadmap A6: the executor's live journal block shows only entries new since the step-start
@@ -26540,6 +26545,8 @@ async def cap_dag_agent_loop_v6(
                               "count": len(user_updates)})
         if user_updates:
             step["goal"] = _user_updates_block(user_updates) + "\n\n" + str(step.get("goal", ""))
+        if author_gather:      # gather-then-write steps end at their author call (author_done_core)
+            step["_author_gather"] = True
         # ── Structured journal → step context: fold the run's accumulated
         #    structured record (key outputs, files/paths, entities) into this
         #    step's goal so the ephemeral specialist reuses what the run already
@@ -26860,6 +26867,8 @@ async def cap_dag_agent_loop_v6(
                                   "count": len(user_updates)})
             if user_updates:
                 step["goal"] = _user_updates_block(user_updates) + "\n\n" + str(step.get("goal", ""))
+            if author_gather:
+                step["_author_gather"] = True
             if journal_on and journal and not step.get("_journal_injected"):
                 _jdig = _v6_journal_digest(journal)
                 if _jdig:
@@ -27391,6 +27400,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_style_defaulted = bool(_v7_default and not str(body.get("plan_style") or "").strip())
     v6_deliverable_review = bool(body.get("deliverable_review", False))
     v6_answer_check = bool(body.get("answer_check", False))
+    v6_author_gather = bool(body.get("author_gather", False))
     v6_journal_ner = bool(body.get("journal_ner", False))
     v6_journal_delta = bool(body.get("journal_delta", False))
     v6_intel_prefacts = bool(body.get("intel_prefacts", False))
@@ -27562,6 +27572,7 @@ async def workshop_agent_loop_stream(request: Request):
             plan_style_defaulted=v6_plan_style_defaulted,
             deliverable_review=v6_deliverable_review,
             answer_check=v6_answer_check,
+            author_gather=v6_author_gather,
             journal_ner=v6_journal_ner,
             journal_delta=v6_journal_delta,
             intel_prefacts=v6_intel_prefacts,
