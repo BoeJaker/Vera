@@ -11071,6 +11071,73 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       `- If you cannot fix the arguments, say so clearly and suggest an alternative real cap`;
   }
 
+  /* A FINISHED TOOL CARD, drawn from its result: the live call (executeCapInline) and a restored transcript (WSU-45:
+     "restored sessions lose their tool cards") draw it the same way - header, peek, widget, tree or report, the kept
+     payload on el.__cap for the canvas. Nothing runs here. Returns the research report text when the result is one. */
+  function _capCardDraw(el, capName, capArgs, coercedArgs, content, isErr){
+    const argsSummary=Object.entries(coercedArgs||{}).filter(([k])=>k!=='trace_id').map(([k,v])=>`${k}=${JSON.stringify(v).slice(0,20)}`).slice(0,3).join(' ');
+    const preview=typeof content==='string'?content:JSON.stringify(content,null,2);
+    // Show cap + result — cap name always visible; result body respects cfgShowCapResult
+    const showResult=document.getElementById('cfgShowCapResult')?.checked!==false;
+    const resultId='cr-'+Date.now();
+    // Any images in the result render as an inline gallery (media.image.search,
+    // media.illustrate, image.generate, browser.screenshot …) — the JSON pre
+    // stays available behind Show for the raw payload.
+    const imgGallery=_capResultImages(content);
+    const previewClean=typeof content==='string'?preview:JSON.stringify(_stripB64(content),null,2);
+    // A research result's payload IS a written markdown report — the deliverable
+    // itself, not a data structure to inspect. Rendering it as a JSON tree (or
+    // as a raw <pre> of ## and **) buried the actual answer, and the model was
+    // then asked to "be concise" about it, so the user only ever saw a
+    // paraphrase of a document they were never shown. Pull the report out and
+    // render it.
+    const _rep=_researchReportText(capName,content);
+    // Structured (object/array) results render as an interactive tree with a
+    // raw-JSON toggle; strings/primitives fall back to a plain <pre>.
+    const structured=(!imgGallery)?_capStructuredView(content):null;
+    // by rule: the result's shape picks a default form — a widget above the tree, and the block says so
+    let ruleWidget='';
+    /* the answer as the widget that fits it - the one shared mapping (VeraWidget.fromCapResult, /ui/widgets/widget_element.js);
+       owner, 2026-09-27: "make caps output to widgets and have a broad set of widgets to display results". A plain
+       json/text/record adds nothing over the tree below it, so those keep the older shape rule. */
+    try{ if(!_rep&&!imgGallery&&content!=null&&window.VeraWidget&&typeof VeraWidget.fromCapResult==='function'){ const rs=VeraWidget.fromCapResult(capName, content, {args:capArgs}); const r0=rs&&rs[0];
+      if(r0&&r0.form&&!/^(json|text|record|kv)$/.test(r0.form)) ruleWidget='<div class="cap-vw" data-w="result · widget"><vera-widget bare size="'+esc((r0.frame&&r0.frame.size)||'m')+'" record="'+esc(JSON.stringify(r0))+'"></vera-widget></div>'; } }catch(_){ ruleWidget=''; }
+    if(!ruleWidget) try{ if(!_rep&&!imgGallery&&content&&typeof content==='object'){ const f=_widgetFormByShape(content); if(f) ruleWidget=_widgetBlock(_widgetRecord({form:f,source:capName,args:capArgs,name:capName},'rule'),'rule',content); } }catch(_){ ruleWidget=''; }
+    const rawStyle='font-family:var(--mono);font-size:9.5px;white-space:pre-wrap;margin:0';
+    const bodyInner=_rep
+      ? `<button class="cap-raw-btn" onclick="const w=this.parentNode,m=w.querySelector('.cap-md'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';m.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'report':'{ } raw';">{ } raw</button><div class="cap-md md">${renderMd(_rep)}</div><pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
+      : structured
+      ? `${ruleWidget}<button class="cap-raw-btn" onclick="const w=this.parentNode,j=w.querySelector('.cap-json'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';j.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'tree':'{ } raw';">{ } raw</button>${structured}<pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
+      : `${ruleWidget}<pre style="${rawStyle}">${esc(previewClean.slice(0,8000))}</pre>`;
+    el.className='cap-inline'+(isErr?' error':' done');
+    // Single compact header: cap · args · status · toggle — no sparse standalone
+    // "OK" row (that left a big empty band on short results). When collapsed, a
+    // one-line peek of the result keeps the card informative.
+    // A research report is the ANSWER — never collapse it behind a Show button
+    // the way a debug payload is collapsed.
+    const _collapsed=_rep?false:!(showResult&&!imgGallery);
+    const _peek=(previewClean||'').split('\n').map(s=>s.trim()).find(s=>s&&!/^[{}\[\],]*$/.test(s))||'';
+    el.innerHTML=`<div class="cap-inline-header" style="margin-bottom:4px">
+        <span class="cap-dot"></span>
+        <code style="color:var(--acc2);font-family:var(--mono)">${esc(capName)}</code>
+        <span style="font-size:8px;color:var(--dim2);font-family:var(--mono)">${argsSummary}</span>
+        <span style="margin-left:auto;font-size:9px;font-weight:600;color:${isErr?'var(--err)':'var(--ok)'}">${isErr?'✗ Error':'✓ OK'}</span>
+        <button class="btn xs" style="font-size:8px" onclick="const p=document.getElementById('${resultId}'),k=document.getElementById('${resultId}_pk');const o=p.style.display==='none';p.style.display=o?'block':'none';if(k)k.style.display=o?'none':'block';this.textContent=o?'Hide':'Show'">${_collapsed?'Show':'Hide'}</button>
+      </div>
+      ${(_peek&&!imgGallery)?`<div id="${resultId}_pk" class="cap-peek" style="display:${_collapsed?'block':'none'}">${esc(_peek.slice(0,160))}</div>`:''}
+      <div id="${resultId}" class="cap-result" style="background:var(--bg0);border-radius:3px;padding:${_rep?'8px 10px':'5px'};max-height:${_rep?'75vh':'300px'};overflow:auto;display:${_collapsed?'none':'block'}">${bodyInner}</div>
+      ${imgGallery}`;
+    /* THE RESULT ITSELF, KEPT. Everything above turns `content` into pixels and then drops it: the only trace
+       left in the DOM is the serialised text inside .cap-result, truncated for display. The session canvas
+       then harvested THAT - which is why a capability landed on the canvas as a fenced wall of JSON rather
+       than as the table, the chart or the terminal output it actually was. The payload costs nothing to keep
+       on the node that is already holding it, and it is what lets the canvas draw the result properly. */
+    try{ el.__cap={ name:capName, args:coercedArgs, content, err:isErr }; }catch(_){}
+    // a DIRECTIVE (the control plane) lands as the board's chip — name · outcome · target · policy · Undo — not a dump of the
+    // dispatcher's row; the raw result stays behind the toggle
+    if(capName==='ui.directive'&&content&&typeof content==='object'&&content.row){ try{ el.innerHTML=_drvChipHtml(content, resultId, previewClean); el.classList.add('drv'); }catch(_){} try{ _cvDrvRibbon(content); }catch(_){} }   // …and the ribbon on the surface it drove
+    return _rep;
+  }
   async function executeCapInline(el,capName,capArgs,{silent=false}={}){
     // Guard: stop button aborts in-progress cap chains
     if(_GLOBAL_ABORT.signal.aborted) return;
@@ -11147,65 +11214,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
         return;
       }
 
-      // Show cap + result — cap name always visible; result body respects cfgShowCapResult
-      const showResult=document.getElementById('cfgShowCapResult')?.checked!==false;
-      const resultId='cr-'+Date.now();
-      // Any images in the result render as an inline gallery (media.image.search,
-      // media.illustrate, image.generate, browser.screenshot …) — the JSON pre
-      // stays available behind Show for the raw payload.
-      const imgGallery=_capResultImages(content);
-      const previewClean=typeof content==='string'?preview:JSON.stringify(_stripB64(content),null,2);
-      // A research result's payload IS a written markdown report — the deliverable
-      // itself, not a data structure to inspect. Rendering it as a JSON tree (or
-      // as a raw <pre> of ## and **) buried the actual answer, and the model was
-      // then asked to "be concise" about it, so the user only ever saw a
-      // paraphrase of a document they were never shown. Pull the report out and
-      // render it.
-      const _rep=_researchReportText(capName,content);
-      // Structured (object/array) results render as an interactive tree with a
-      // raw-JSON toggle; strings/primitives fall back to a plain <pre>.
-      const structured=(!imgGallery)?_capStructuredView(content):null;
-      // by rule: the result's shape picks a default form — a widget above the tree, and the block says so
-      let ruleWidget='';
-      /* the answer as the widget that fits it - the one shared mapping (VeraWidget.fromCapResult, /ui/widgets/widget_element.js);
-         owner, 2026-09-27: "make caps output to widgets and have a broad set of widgets to display results". A plain
-         json/text/record adds nothing over the tree below it, so those keep the older shape rule. */
-      try{ if(!_rep&&!imgGallery&&content!=null&&window.VeraWidget&&typeof VeraWidget.fromCapResult==='function'){ const rs=VeraWidget.fromCapResult(capName, content, {args:capArgs}); const r0=rs&&rs[0];
-        if(r0&&r0.form&&!/^(json|text|record|kv)$/.test(r0.form)) ruleWidget='<div class="cap-vw" data-w="result · widget"><vera-widget bare size="'+esc((r0.frame&&r0.frame.size)||'m')+'" record="'+esc(JSON.stringify(r0))+'"></vera-widget></div>'; } }catch(_){ ruleWidget=''; }
-      if(!ruleWidget) try{ if(!_rep&&!imgGallery&&content&&typeof content==='object'){ const f=_widgetFormByShape(content); if(f) ruleWidget=_widgetBlock(_widgetRecord({form:f,source:capName,args:capArgs,name:capName},'rule'),'rule',content); } }catch(_){ ruleWidget=''; }
-      const rawStyle='font-family:var(--mono);font-size:9.5px;white-space:pre-wrap;margin:0';
-      const bodyInner=_rep
-        ? `<button class="cap-raw-btn" onclick="const w=this.parentNode,m=w.querySelector('.cap-md'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';m.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'report':'{ } raw';">{ } raw</button><div class="cap-md md">${renderMd(_rep)}</div><pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
-        : structured
-        ? `${ruleWidget}<button class="cap-raw-btn" onclick="const w=this.parentNode,j=w.querySelector('.cap-json'),r=w.querySelector('.cap-raw');const toRaw=r.style.display==='none';j.style.display=toRaw?'none':'block';r.style.display=toRaw?'block':'none';this.textContent=toRaw?'tree':'{ } raw';">{ } raw</button>${structured}<pre class="cap-raw" style="${rawStyle};display:none">${esc(previewClean.slice(0,8000))}</pre>`
-        : `${ruleWidget}<pre style="${rawStyle}">${esc(previewClean.slice(0,8000))}</pre>`;
-      el.className='cap-inline'+(isErr?' error':' done');
-      // Single compact header: cap · args · status · toggle — no sparse standalone
-      // "OK" row (that left a big empty band on short results). When collapsed, a
-      // one-line peek of the result keeps the card informative.
-      // A research report is the ANSWER — never collapse it behind a Show button
-      // the way a debug payload is collapsed.
-      const _collapsed=_rep?false:!(showResult&&!imgGallery);
-      const _peek=(previewClean||'').split('\n').map(s=>s.trim()).find(s=>s&&!/^[{}\[\],]*$/.test(s))||'';
-      el.innerHTML=`<div class="cap-inline-header" style="margin-bottom:4px">
-          <span class="cap-dot"></span>
-          <code style="color:var(--acc2);font-family:var(--mono)">${esc(capName)}</code>
-          <span style="font-size:8px;color:var(--dim2);font-family:var(--mono)">${argsSummary}</span>
-          <span style="margin-left:auto;font-size:9px;font-weight:600;color:${isErr?'var(--err)':'var(--ok)'}">${isErr?'✗ Error':'✓ OK'}</span>
-          <button class="btn xs" style="font-size:8px" onclick="const p=document.getElementById('${resultId}'),k=document.getElementById('${resultId}_pk');const o=p.style.display==='none';p.style.display=o?'block':'none';if(k)k.style.display=o?'none':'block';this.textContent=o?'Hide':'Show'">${_collapsed?'Show':'Hide'}</button>
-        </div>
-        ${(_peek&&!imgGallery)?`<div id="${resultId}_pk" class="cap-peek" style="display:${_collapsed?'block':'none'}">${esc(_peek.slice(0,160))}</div>`:''}
-        <div id="${resultId}" class="cap-result" style="background:var(--bg0);border-radius:3px;padding:${_rep?'8px 10px':'5px'};max-height:${_rep?'75vh':'300px'};overflow:auto;display:${_collapsed?'none':'block'}">${bodyInner}</div>
-        ${imgGallery}`;
-      /* THE RESULT ITSELF, KEPT. Everything above turns `content` into pixels and then drops it: the only trace
-         left in the DOM is the serialised text inside .cap-result, truncated for display. The session canvas
-         then harvested THAT - which is why a capability landed on the canvas as a fenced wall of JSON rather
-         than as the table, the chart or the terminal output it actually was. The payload costs nothing to keep
-         on the node that is already holding it, and it is what lets the canvas draw the result properly. */
-      try{ el.__cap={ name:capName, args:coercedArgs, content, err:isErr }; }catch(_){}
-      // a DIRECTIVE (the control plane) lands as the board's chip — name · outcome · target · policy · Undo — not a dump of the
-      // dispatcher's row; the raw result stays behind the toggle
-      if(capName==='ui.directive'&&content&&typeof content==='object'&&content.row){ try{ el.innerHTML=_drvChipHtml(content, resultId, previewClean); el.classList.add('drv'); }catch(_){} try{ _cvDrvRibbon(content); }catch(_){} }   // …and the ribbon on the surface it drove
+      const _rep=_capCardDraw(el, capName, capArgs, coercedArgs, content, isErr);
       scroll();
 
       if(!isErr){
@@ -17551,6 +17560,50 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
 
   function histFilter(){const q=(document.getElementById('histSearch')?.value||'').toLowerCase();renderHistList(q?SESSIONS.filter(s=>(s.displayName||s.name||s.session_id).toLowerCase().includes(q)||(s.agent||'').toLowerCase().includes(q)||(s.preview||'').toLowerCase().includes(q)):SESSIONS);}
 
+  /* ── A RESTORED TRANSCRIPT KEEPS ITS TOOL CARDS (WSU-45; owner: restored sessions showed raw [[cap:...]] and "The
+     capability X ran and returned") ─────────────────────────────────────────────────────────────────────────────
+     History stores what was said, not what was drawn: a reply keeps its [[cap:...]] markers, and the result came back
+     to the model as a follow-up turn ("The capability X ran and returned: <result> ...") that is stored as if the user
+     had said it. A restored reply is drawn from those: each marker becomes the finished card the live call drew
+     (_capCardDraw), filled from the follow-up that answered it; the follow-up itself is not drawn. NOTHING RUNS - a
+     restored marker is never executed. A call whose result was not kept (a lookup made before the turn is not in the
+     transcript at all) says so on its card. */
+  const _CAP_FOLLOWUP_RE=/^The capability "?([\w.]+)"? (ran and returned:|produced a full research report|was called but failed|does not exist in the registry)/;
+  function _capFollowupParse(txt){
+    const t=String(txt||''); const m=t.match(_CAP_FOLLOWUP_RE); if(!m) return null;
+    const name=m[1];
+    if(m[2]==='ran and returned:'){
+      let body=t.slice(m[0].length).replace(/^\s+/,''); const end=body.indexOf("\n\nAnswer the user's question using this result."); if(end>=0) body=body.slice(0,end);
+      let content=body; try{ content=JSON.parse(body); }catch(_){}
+      return { name, content, err:false };
+    }
+    if(m[2]==='produced a full research report'){
+      const k=t.indexOf('For your reference, the report was:'); const rep=k>=0?t.slice(k+35).trim():'';
+      return { name, content:{ report:rep }, err:false };
+    }
+    const e=t.match(/\nError: ([^\n]*)/);
+    return { name, content:{ ok:false, error:(e&&e[1])||(m[2]==='does not exist in the registry'?'not in the registry':'failed') }, err:true };
+  }
+  function _restoreAgentBody(txt, results){
+    const text=_stripMdLinksFromCap(txt); const box=document.createElement('div');
+    let matches=[]; try{ matches=_findAllPlaceholders(text); }catch(_){ matches=[]; }
+    let pos=0; const used=new Set();
+    for(const match of matches){
+      if(match.idx>pos){ const span=document.createElement('span'); span.innerHTML=renderMd(text.slice(pos,match.idx)); box.appendChild(span); }
+      pos=match.end;
+      const el=document.createElement('div'); box.appendChild(el);
+      const name=(match.groups&&match.groups[0])||match.type;
+      if(match.type!=='cap'){ el.className='cap-inline'; el.innerHTML=`<div class="cap-inline-header"><code style="color:var(--acc2);font-family:var(--mono)">${esc(String(name).slice(0,60))}</code><span style="color:var(--dim2)">${esc(match.type.replace(/_/g,' '))} · from history</span></div>`; continue; }
+      let args={}; try{ args=match.groups[1]?JSON.parse(match.groups[1]):{}; }catch(_){ const b=text.indexOf('{',match.idx); if(b>match.idx&&b<match.end){ const j=_extractBraceJson(text,b); if(j) try{ args=JSON.parse(j); }catch(_){} } }
+      const i=(results||[]).findIndex((r,k)=>!used.has(k)&&r.name===name);
+      if(i>=0){ used.add(i); const r=results[i]; try{ _capCardDraw(el, name, args, _coerceCapArgs(name,args), r.content, r.err); continue; }catch(_){} }
+      el.className='cap-inline';
+      el.innerHTML=`<div class="cap-inline-header"><span class="cap-dot"></span><code style="color:var(--acc2);font-family:var(--mono)">${esc(name)}</code><span style="color:var(--dim2)">ran · its result was not kept in history</span></div>`;
+    }
+    if(pos<text.length){ const span=document.createElement('span'); span.innerHTML=renderMd(text.slice(pos)); box.appendChild(span); }
+    return box;
+  }
+
   async function loadSession(sid){
     SID=sid;window._veraSessionId=sid;window._chatSessionId=sid;
     /* The two instances on the board are one chat. A session picked in the MENU instance (the history list lives
@@ -17578,12 +17631,16 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     const res=await api('/memory/search','POST',{query:'',limit:60,record_type:'message',category:'chat',session_id:sid});
     const records=(res?.results||[]).map(r=>r.record||r).filter(r=>r.session_id===sid).sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
     BOX().innerHTML=`<div class="sys-msg">Session: <b>${esc(sid.slice(-12))}</b> · ${records.length} messages</div>`;
+    // each stored tool follow-up belongs to the reply before it: its result fills that reply's card (WSU-45)
+    const _capRes=new Map(); { let lastAi=null; for(const rec of records){ const t=rec.full_text||rec.text||'';
+      if(rec.ai_output) lastAi=rec; else if(rec.human_text&&lastAi){ const f=_capFollowupParse(t); if(f){ rec._capFollowup=true; if(!_capRes.has(lastAi)) _capRes.set(lastAi,[]); _capRes.get(lastAi).push(f); } } } }
     for(const rec of records){
+      if(rec._capFollowup){ HISTORY.push({role:'user',content:rec.full_text||rec.text}); continue; }   // drawn on its card, not as something the user said
       if(rec.human_text&&(rec.full_text||rec.text)){
         const ts=(rec.created_at||'').slice(11,16)||'--:--';
         const txt=rec.full_text||rec.text;
         // Collapse if it contains an injected system block (cap hints, context)
-        const hasSystem=txt.includes('[INTEGRATED CAPABILITY MODE')||txt.includes('[Retrieved Context]')||txt.includes('[Parent Context]');
+        const hasSystem=txt.includes('[INTEGRATED CAPABILITY MODE')||txt.includes('[Retrieved Context]')||txt.includes('[Parent Context]')||txt.includes('\n\n[STUDIO');
         const displayTxt=hasSystem?txt.split('\n\n[')[0]:txt; // strip injected blocks for display
         const m=_mkMsg('user','you',esc(displayTxt).replace(/\n/g,'<br>'));
         try{ const pa=_paFromMarkdown(displayTxt); if(pa) _paRenderAttachments(m.body, pa.typed, pa.docs); }catch(_){}
@@ -17596,7 +17653,10 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
         const long=txt.length>800;
         const colId='col-'+Date.now()+'-'+Math.random().toString(36).slice(2,6);
         let bodyHtml;
-        if(long){
+        const _withCaps=(()=>{ try{ return hasCapPlaceholders(txt); }catch(_){ return false; } })();
+        if(_withCaps){
+          bodyHtml='';                                   // drawn below, with its tool cards
+        }else if(long){
           /* the preview never ends inside a fence (owner, 2026-10-04: a finished deck came back from history as a card
              saying "streaming… writing" - the 300 characters cut its ```slides open): it stops before the fence it would
              cut, and the fence is named instead; Show full draws everything */
@@ -17609,6 +17669,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
           bodyHtml=renderMd(txt);
         }
         const m=_mkMsg('agent',agLbl,bodyHtml);
+        if(_withCaps){ try{ m.body.innerHTML=''; m.body.appendChild(_restoreAgentBody(txt, _capRes.get(rec)||[])); }catch(_){ m.body.innerHTML=renderMd(txt); } }
         m.time.textContent=ts;BOX().appendChild(m.wrap);
         HISTORY.push({role:'assistant',content:txt});
       }
