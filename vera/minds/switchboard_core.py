@@ -90,6 +90,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "an allowed label (VERA_DECIDE_STUDENT_CONTROLLER_LABELS, default continue) at confidence >= "
        "VERA_DECIDE_STUDENT_TAU (default 0.95), else the big model decides. A student's continue carries no "
        "findings or steer for the next step - turn 'first' on only when shadow shows that costs nothing."),
+    _f("discovery.recall_index", ("off", "pg"), "discovery", "FM-7.1",
+       "Where discover_recall (the fabric's own pages beside every web.search) finds pages for a query. 'off' "
+       "(default) = SQLite LIKE per word, newest first; 'pg' = the Postgres page search index (weighted tsvector, "
+       "ranked; synced from the SQLite pages every 2 minutes), falling back to LIKE when the index cannot answer. "
+       "Owner 2026-10-11: Postgres, not SQLite FTS5."),
     _f("plan.precedent", ("off", "on"), "loop", "FM-4.2",
        "Precedent for the planner: up to 2 past runs of similar goals that went well, and 1 warning from one that "
        "did not (plan.precedent, searched on an NLP node), added to what the planner reads as reference with the "
