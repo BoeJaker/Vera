@@ -67,6 +67,15 @@ t('the desk header does not show a bare relevance number', src.includes('.stage 
 const wsrc = fs.readFileSync(path.join(__dirname, '..', 'vera', 'widgets', 'widget_element.js'), 'utf8');
 t('widget table rows share their column tracks (no auto: each row is its own grid)', wsrc.includes("return i ? (nm ? 'minmax(44px,.6fr)' : 'minmax(56px,1fr)') : 'minmax(0,1.4fr)'") && !wsrc.includes("'minmax(40px,auto)'"));
 
+/* minimal cards, a page opened takes the room, cards settle up the desk (2026-10-11) */
+t('minimal: counts and stats at the top are not drawn unless the canvas shows its full chrome', src.includes(':host(:not([data-tier="full"])) .it .vc-rbx > :is(.vc-rbx-top,.vc-rbx-glance){display:none}') && src.includes(':is(.vc-rr-n,.vc-rr-ft,.vc-act-n){display:none}'));
+t('minimal: controls over the item, shown when pointed at, used or opened; facets when the filter is used', src.includes('.it:is(:hover,.hov,:focus-within,.maxed) .vc-rbx > .vc-rbx-tools{opacity:1;pointer-events:auto}') && src.includes('.it:not(:focus-within):not(.maxed) .vc-rbx > .vc-rbx-facets{display:none}'));
+t('minimal: the card\'s icon row, a combined card\'s tabs and a drawing\'s caption and menu likewise', src.includes('.stage .it:not(.desk-chip) > .hda{opacity:0}') && src.includes('> .cmp-tabs{opacity:0') && src.includes('#live .lv :is(.vge-note,.vg-layer){opacity:0'));
+t('a page opened in a list fills the room, alone, and closing the last puts the card back', src.includes('_readerFollow(key) {') && src.includes("if (any && this._max !== key) { this._autoMax = key; this._toggleMax(key); return true; }")
+  && src.includes("if (!any && this._autoMax === key) { this._autoMax = null; if (this._max === key) this._toggleMax(key); return true; }") && src.includes("(maxed && this._autoMax === key ? ' reading' : '')"));
+t('an opened page has a way back', src.includes("actBtn('open', r.id, '← back'"));
+t('the desk settles its cards upward after pulling them apart; a risen card keeps its size', src.includes('D.settle(plan, R, { W: W, H: H }, { gap: 12 });') && src.includes('if (it.settled && !it.fixed) { it.keepSize = true;'));
+
 const D = require(path.join(__dirname, '..', 'vera', 'ui', 'desk_layout_core.js'));
 const g = [{ id: 'n', x: 300, y: 200, w: 300, h: 100, maxH: 120 }];
 D.grow(g, { l: -440, t: 0, r: 0, b: 900 }, { W: 1200, H: 900 }, {});

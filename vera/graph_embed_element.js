@@ -114,7 +114,7 @@
       this._h = height;
       if ((this.getAttribute('renderer') || '') === 'struct' && this.getAttribute('resize') !== 'off') this._mkGrip();
 
-      this._note = document.createElement('div');
+      this._note = document.createElement('div'); this._note.className = 'vge-note';   /* a host can quiet it (the canvas's minimal cards) */
       this._note.style.cssText =
         'font-size:8.5px;color:var(--dim,#6a6058);font-family:var(--mono,monospace);' +
         'margin-top:3px;display:flex;justify-content:space-between;align-items:center;gap:8px';
