@@ -9,7 +9,8 @@ rules, asked for one word) and answers with one token; the label probabilities c
 - first: the student answers first; its answer stands when it is an allowed label at confidence >= tau,
   otherwise the big model decides as before (and the student is recorded as a shadow).
 
-Settings: VERA_DECIDE_STUDENT_MODEL (default the shadow judge's first model, Qwen3-4B-Instruct),
+Settings: VERA_DECIDE_STUDENT_MODEL (default qwen3:1.7b - 11 Oct 2026: CPU nodes too slow for an inline check
+(15-78 s), and on gpu-250 only a 1.7B fits beside the 9b, at 6k ctx, 83.5% of the V100),
 VERA_DECIDE_STUDENT_TAU (default 0.95), VERA_DECIDE_STUDENT_VERIFY_LABELS (default "met": a "not met" verdict
 needs the big model's reason, which the retry that follows is built from), VERA_DECIDE_STUDENT_CONTROLLER_LABELS
 (default "continue": the others need the big model's new steps; a student's continue carries no steer for the
@@ -31,7 +32,7 @@ except Exception:                       # worktree / app-free import
     from vera.minds import judge_core as JC, switchboard_core as SB  # type: ignore
 
 log = logging.getLogger("vera.minds.student")
-DEFAULT_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
+DEFAULT_MODEL = "qwen3:1.7b"
 FEATURE = {"loop.step_verify": "decide.student.step_verify",
            "loop.controller_action": "decide.student.controller_action"}
 

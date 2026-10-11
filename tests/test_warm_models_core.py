@@ -286,3 +286,17 @@ def test_one_model_under_two_tags_is_one_model():
     assert W.request_overrides(pairs, "gpu-250", DEFAULT + ":9b", 1000)["keep_alive"] == -1
     # different weights stay different
     assert W.canonical_rows([{"name": "qwen3.5:9b", "digest": "d2"}], [DEFAULT], dg)[0]["name"] == "qwen3.5:9b"
+
+
+def test_node_memory_is_gib():
+    # gpu-250 (catalog vram_gb=12 = its 12,288 MiB): the 9b and the 1.7B student measured 83.5% of the card
+    # (11 Oct 2026); priced at weights x 1.2 they need 10.3e9 bytes - over a 1e9-based budget (10.2e9), under
+    # the GiB one (10.95e9)
+    sizes = {"jaahas/qwen3.5-uncensored:9b": 7_200_000_000, "qwen3:1.7b": 1_360_000_000}
+    models = list(sizes)
+    kept, dropped = W.fit_memory(models, sizes, 12 * W.GIB * W.MEM_SHARE)
+    assert kept == models and dropped == []
+    kept, dropped = W.fit_memory(models, sizes, 12 * 1e9 * W.MEM_SHARE)
+    assert kept == models[:1] and "GiB" in dropped[0]["why"]
+    src = open(W.__file__, encoding="utf-8").read()
+    assert "budget = ram * GIB * MEM_SHARE" in src and "ram * 1e9" not in src

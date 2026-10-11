@@ -208,3 +208,8 @@ def test_the_cosign_sample_and_its_mark(monkeypatch):
     hook = src[src.index("class _StudentHook:"):src.index("async def result(self)")]
     assert "_student.decides(question_id, h._answer, mode)" in hook and "_student.cosigned()" in hook
     assert "would_take=True" in hook
+
+
+def test_the_student_is_the_small_model_that_fits_beside_the_9b():
+    from vera.minds import student as S
+    assert S.DEFAULT_MODEL == "qwen3:1.7b"
