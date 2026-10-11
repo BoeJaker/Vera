@@ -2294,6 +2294,11 @@
   :host(:not([data-tier="full"])) .it:is(:focus-within,.maxed) .vc-rbx > .vc-rbx-tools + .vc-rbx-facets{margin-top:38px}  :host(:not([data-tier="full"])) .it :is(.vc-rbx-foot,.vc-rr-tabs){opacity:0;transition:opacity .15s}
   :host(:not([data-tier="full"])) .it:is(:hover,.hov,:focus-within,.maxed) :is(.vc-rbx-foot,.vc-rr-tabs){opacity:1}
   :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:not(.desk-chip) > .hda{opacity:0}
+  /* THE TITLE HAS THE HEADER WHILE THE CONTROLS ARE HIDDEN (WSU-69, the owner's desk 2026-10-11: titles cut to "C…", "N…"):
+     the header kept 168-250 px for controls that are invisible until hover in these tiers. At rest the title takes the
+     header; on hover the controls come in over its end on their own ground, faded at the left - nothing reflows. */
+  :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:not(.desk-chip):not(.ownhead) > .it-hd{padding-right:12px!important}
+  :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:not(.desk-chip) > .hda{padding-left:22px;background:linear-gradient(to right, transparent, var(--bg1,#16181d) 20px);border-radius:0 6px 0 0}
   :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .hda{opacity:1}
   /* ...and a drawing's own chrome (a graph's caption of counts, its view menu, explode's caption with its enlarge) shows
      when the drawing is pointed at; a combined card's tabs when the card is */
@@ -3385,6 +3390,28 @@
           if (rt && rt.clientHeight > 0) { const more = rt.scrollHeight - rt.clientHeight; const mh = this._minH || (this._minH = {});
             if (more > 6) { const want = c.offsetHeight + more + 8; if (!mh[key] || want > mh[key] + 4) { mh[key] = want; changed = true; } } } }
         if (FILLS.has(c.dataset.type || '') || (c.dataset.type !== 'diagram' && c.querySelector('.vc-live'))) { if (nat[key] != null) { delete nat[key]; changed = true; } return; }
+        /* AS WIDE AS WHAT IT HOLDS (WSU-69, the owner's session 2026-10-11: a checklist 775 px wide with 285 px of text, a note
+           420 with 51, the "Metric · Value · Change" table 775 with 157): a text-like card is measured for how far right
+           its content reaches and is no wider than that and its header's controls need (never under 240 px). When its
+           content fills the width it was given (it grew, or wraps), the measure is let go so it can widen again. */
+        if (/^(note|markdown|table|kv|entities)$/.test(c.dataset.type || '')) { const bdw = c.querySelector(':scope > .it-bd');
+          if (bdw && bdw.clientWidth > 0) { const B0 = bdw.getBoundingClientRect(); let right = 0;
+            bdw.querySelectorAll('*').forEach((e) => { if (e.childElementCount && !/^(TD|TH|LI|BUTTON|INPUT)$/.test(e.tagName)) return; const rg = document.createRange(); rg.selectNodeContents(e); [...rg.getClientRects()].forEach((q) => { if (q.width) right = Math.max(right, q.right - B0.left); }); });
+            const Zw = c.offsetWidth ? (c.getBoundingClientRect().width / c.offsetWidth) || 1 : 1; const used = Math.round(right / Zw);
+            const nw = this._natW || (this._natW = {});
+            if (used >= bdw.clientWidth - 6) { if (nw[key] != null) { delete nw[key]; changed = true; } }
+            /* ...and never narrower than its header needs: the whole title beside the controls (a 240 px card cut every
+               title to its first letter, "M…", "C…" - measured on the owner's desk) */
+            else { const hd = c.querySelector(':scope > .it-hd'), tt = hd && hd.querySelector(':scope > .t');
+              const ctl = hd ? [...hd.children].filter((x) => x !== tt && getComputedStyle(x).display !== 'none').reduce((s, x) => s + x.offsetWidth, 0) : 0;
+              /* the header's padding is where the controls sit (absolutely placed over it): counted, or the floor left the
+                 title no room in the tier that shows them */
+              const hcs = hd ? getComputedStyle(hd) : null; const pad = hcs ? (parseFloat(hcs.paddingLeft) || 0) + (parseFloat(hcs.paddingRight) || 0) : 0;
+              /* the title's TEXT width (a range over it): the title box stretches to fill the header, so its scrollWidth is
+                 the room it was given, not what it needs */
+              let tw = 0; if (tt) { const rg = document.createRange(); rg.selectNodeContents(tt); tw = Math.ceil([...rg.getClientRects()].reduce((s, q) => s + q.width, 0)); if (tt.scrollWidth > tt.clientWidth) tw = Math.max(tw, tt.scrollWidth); }
+              const head = tt ? Math.min(600, tw + ctl + pad + 16) : 0;
+              const want = Math.max(240, head, used + (c.offsetWidth - bdw.clientWidth) + 36); if (want < c.offsetWidth - 24 && (nw[key] == null || Math.abs(nw[key] - want) > 16)) { nw[key] = want; changed = true; } } } }
         const bd = c.querySelector(':scope > .it-bd'); if (!bd || !bd.clientHeight) return;
         const B = bd.getBoundingClientRect(); let low = B.top;
         /* how far the content reaches: its leaves (text runs, images, controls), not the boxes that stretch to fill */
@@ -3397,6 +3424,9 @@
            dropping it let the card grow back and be measured again, round and round */
         if (over && nat[key] != null) { const more = bd.scrollHeight - bd.clientHeight;
           if (more > 160) delete nat[key]; else nat[key] = c.offsetHeight + more + 6; changed = true; return; }
+        /* WSU-70: a card a little short for what it holds (a five-row table, a short list) was left clipped - only a card
+           already fitted got its overflow added. A short overflow is now its least height too; a long one still scrolls. */
+        if (over && nat[key] == null) { const more = bd.scrollHeight - bd.clientHeight; if (more > 4 && more <= 240) { const mh = this._minH || (this._minH = {}); const need = c.offsetHeight + more + 6; if (!mh[key] || need > mh[key] + 4) { mh[key] = need; nat[key] = need; changed = true; } } return; }
         if (over || want >= c.offsetHeight - 8) return;
         if (nat[key] == null || Math.abs(nat[key] - want) > 16) { nat[key] = want; changed = true; }
       });
@@ -3544,8 +3574,10 @@
         /* ...and a widget by its form (WSU-69, owner 2026-10-11: "some of the elements are still too wide, like the notes
            checklist"): lists, checklists, fields and single figures wrap short too; charts, tables and maps keep the room */
         const wf = c.dataset.type === 'widget' ? (() => { const cc = this._contentOf(key) || {}; return String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, ''); })() : '';
-        const nw = ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || '']
+        const nw0 = ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || '']
           || DESK_FORM_MAXW[wf];
+        /* ...and a text-like card no wider than its content measured (_deskFit, WSU-69) */
+        const nwm = (this._natW || {})[key]; const nw = nwm ? Math.min(nw0 || Infinity, nwm) : nw0;
         /* ...and never shorter than its own face needs (WSU-70): a widget clipped in its card is measured (_deskFit) */
         const mh = (this._minH || {})[key];
         return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, minH: mh || undefined, stay: !!userAt(key) };
