@@ -201,3 +201,50 @@ def test_the_runner_and_capability_parse_and_the_runner_matches_turns():
 def test_the_capability_module_is_loaded():
     src = (ROOT / "vera" / "capability_orchestration.py").read_text(encoding="utf-8")
     assert 'os.path.join(_here, "minds/chat_corpus.py")' in src
+
+
+# ── info-seeking cases (cases_info_v1.json, plan SK-4.1): tools and citations ──
+
+INFO_CASES = ROOT / "tools" / "chat-corpus" / "cases_info_v1.json"
+
+
+def test_the_info_cases_load_and_do_not_collide_with_v0():
+    info = CC.load_cases(json.loads(INFO_CASES.read_text(encoding="utf-8")))
+    v0 = CC.load_cases(json.loads(CASES.read_text(encoding="utf-8")))
+    assert len(info) == 70 and not ({c["id"] for c in info} & {c["id"] for c in v0})
+    kinds = {c["kind"] for c in info}
+    assert kinds == {"latest", "fact", "overview", "memory", "nosearch"}
+    assert all(c["tools_any"] and c["cites"] for c in info if c["kind"] in ("latest", "fact", "overview"))
+    assert all(c["tools_none"] == ["*"] and c["acquire"] == "none" for c in info if c["kind"] == "nosearch")
+
+
+def _info_ev(reply, calls):
+    return {"stream": _sse(_phase("model", "llm", "first", 900), _tok(reply)), "elapsed_ms": 9000,
+            "canvas": {"blocks": []}, "calls": calls}
+
+
+def test_a_lookup_turn_that_searched_and_cited_passes():
+    case = _case(acquire="any", tools_any=["info.seek", "web.research"], cites=True, mentions=["Bank Rate|base rate"])
+    r = CC.evaluate(case, _info_ev("Bank Rate is 3.75% [1] (2026-09-17).", [{"name": "info.seek"}]))
+    assert r["status"] == "pass", r["checks"]
+    assert [c["check"] for c in r["checks"]] == ["route", "tools_any", "cites", "mentions", "ttft_ms"]
+
+
+def test_answering_from_memory_without_a_tool_or_a_citation_fails():
+    case = _case(acquire="any", tools_any=["info.seek"], cites=True)
+    r = CC.evaluate(case, _info_ev("The base rate is 4%.", []))
+    bad = {c["check"] for c in r["checks"] if not c["ok"]}
+    assert r["status"] == "fail" and bad == {"tools_any", "cites"}
+
+
+def test_tools_none_for_small_talk_and_web_none_for_memory():
+    assert CC.evaluate(_case(tools_none=["*"]), _info_ev("Hi!", []))["status"] == "pass"
+    assert CC.evaluate(_case(tools_none=["*"]), _info_ev("Hi!", [{"name": "memory.seek"}]))["status"] == "fail"
+    mem = _case(acquire="any", tools_none=["web.search", "info.seek"])
+    assert CC.evaluate(mem, _info_ev("We decided X.", [{"name": "memory.seek"}]))["status"] == "pass"
+    assert CC.evaluate(mem, _info_ev("We decided X.", [{"name": "info.seek"}]))["status"] == "fail"
+
+
+def test_a_stubbed_call_still_counts_as_the_tool_chosen():
+    case = _case(acquire="any", tools_any=["research.run"])
+    assert CC.evaluate(case, _info_ev("Started.", [{"name": "research.run", "would_call": True}]))["status"] == "pass"
