@@ -603,7 +603,11 @@ other family views do not borrow or imply that authority. A static **Provider
 boundaries** inventory (`integration.effect.inventory`) separates local
 business records and simulations from marketplace reads, OAuth lifecycle,
 marketplace writes, container/build mutations, and Proxmox/provisioning
-mutations. It performs no probe.
+mutations. It reports observe-only projection coverage separately from
+enforcement: Commerce and Infrastructure can be fully observed while their
+enforcement remains unavailable. Operation-specific approval, validated
+provider idempotency and durable completion receipts are explicit false fields,
+not implied by observation coverage. It performs no probe.
 
 ### 12.6 Operator decision and activation
 
