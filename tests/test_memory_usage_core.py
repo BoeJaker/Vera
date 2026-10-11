@@ -161,7 +161,7 @@ def test_the_wiring():
     a, c, h = _src("vera/agents/agents.py"), _src("vera/chat/chat_panel.html"), _src("vera/fabric/memory_hooks.py")
     assert '_mh_u.record_turn_usage(session_id, "".join(_resp_head), _page_ids, _deep_items))' in a
     assert "return asyncio.create_task(\n                    _mh_u.record_turn_usage(" in a
-    assert "ctx_ids:(ctxInj?_ctxInjIds(msg):[])," in c and "function _ctxInjIds(forMsg){" in c
+    assert "ctx_ids:(ctxInj?_ctxInjIds(msg, a):[])," in c and "function _ctxInjIds(forMsg, agentRec){" in c
     assert ("    _note_injected(session_id, ranked[:limit])\n    if _reval is not None:\n"
             "        _reval.on_chat_recall(session_id, query, [it.get(\"id\") for it in ranked[:limit] if it.get(\"id\")])\n"
             "    return _chatmem_format(ranked[:limit])") in h
