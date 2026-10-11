@@ -118,6 +118,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "caps.shortlist on the user's words, started with the turn and never awaited, recorded after the reply beside "
        "the page's list and what the reply used (caps.shortlist.chat_report: recall@16/24/28). 'on' (the server's "
        "list offered to the model) comes after the shadow shows a gain and needs the page to take it."),
+    _f("memory.seek_exclude_self", ("off", "on"), "memory", "FM-7.1",
+       "Whether an unscoped memory.seek leaves Vera's own telemetry out (chat.messages, ide.*, caps.*, bus.*, ts.*, "
+       "streams.*, mesh.*, dream.reports - the worldview corpus' SELF_TELEMETRY list). 'off' (default) = searched like "
+       "any data; 'on' = left out unless the caller scopes to one of them. Found 11 Oct: a CVE-id seek put chat logs "
+       "and IDE sessions first."),
     _f("plan.precedent", ("off", "on"), "loop", "FM-4.2",
        "Precedent for the planner: up to 2 past runs of similar goals that went well, and 1 warning from one that "
        "did not (plan.precedent, searched on an NLP node), added to what the planner reads as reference with the "
