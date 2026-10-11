@@ -239,6 +239,23 @@ def date_from_text(text: Any, now: Optional[datetime] = None) -> Optional[dateti
     return parse_date(m.group(1).replace(".", "")) if m else None
 
 
+_LABELLED = re.compile(r"(?i)\b(?:published(?: time| on| at)?|updated(?: on| at)?|posted(?: on)?|last (?:updated|modified|"
+                       r"reviewed)(?: on)?|date published)\s*[:\-|]?\s*"
+                       r"(\d{1,2}(?:st|nd|rd|th)? [A-Za-z]{3,9}\.? 20\d\d|[A-Za-z]{3,9}\.? \d{1,2}(?:st|nd|rd|th)?,? 20\d\d|"
+                       r"20\d\d-\d\d-\d\d)")
+
+
+def labelled_date(text: Any, chars: int = 1500) -> Optional[datetime]:
+    """A date the page labels as its own near the top - "Updated on 31 August 2026", "Published Time: 2026-09-17".
+    A bare date there is often an event (a release date, a consultation deadline), so only a labelled one counts
+    (sampled on prod 11 Oct: 2 of 40 undated pages had one; 6 more had a bare date, mostly events)."""
+    m = _LABELLED.search(str(text or "")[:chars])
+    if not m:
+        return None
+    raw = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", m.group(1)).replace(".", "")
+    return parse_date(raw)
+
+
 def fill_dates(items: Sequence[Dict[str, Any]], now: Optional[datetime] = None) -> int:
     """Give undated items the date their own byline or snippet states; returns how many got one."""
     n = 0
@@ -250,6 +267,22 @@ def fill_dates(items: Sequence[Dict[str, Any]], now: Optional[datetime] = None) 
             it["published"] = d.strftime("%Y-%m-%d")
             n += 1
     return n
+
+
+def subject_key(subject: str) -> str:
+    """One spelling per subject for remembering when it was last looked up."""
+    return re.sub(r"[^a-z0-9]+", "-", str(subject or "").lower()).strip("-")[:80]
+
+
+def since_for(last_seek: Any, now: Optional[datetime] = None, default_days: int = 14) -> Dict[str, str]:
+    """What counts as new for a 'latest' question: since the user last asked about this subject when that was 2-30
+    days ago (plan SK-2.5: "what's new" means new to them); otherwise the default window - asked again the same day,
+    a since of an hour ago would find nothing, and after a month the default is the better frame."""
+    now = now or datetime.now(timezone.utc)
+    d = parse_date(last_seek)
+    if d and timedelta(days=2) <= now - d <= timedelta(days=30):
+        return {"since": d.strftime("%Y-%m-%d"), "why": f"since you last looked on {d.strftime('%Y-%m-%d')}"}
+    return {"since": default_since(now, default_days), "why": f"the last {default_days} days"}
 
 
 def default_since(now: Optional[datetime] = None, days: int = 14) -> str:

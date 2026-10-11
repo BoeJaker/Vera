@@ -270,3 +270,42 @@ def test_no_control_characters_in_the_core():
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "info_seek_core.py").read_text(encoding="utf-8")
     assert not any(ord(ch) < 9 for ch in src)          # a patch once wrote \b as a backspace byte
+
+
+@pytest.mark.parametrize("text,day", [
+    ("# High-level summary\nUpdated on 31 August 2026\nThe AI Act...", "2026-08-31"),
+    ("Title\nPublished Time: 2026-09-17T10:00:00\n...", "2026-09-17"),
+    ("By X | Posted on Oct 3, 2026 | 4 min read", "2026-10-03"),
+    ("Last updated: 1st October 2026", "2026-10-01"),
+])
+def test_a_labelled_page_date(text, day):
+    assert C.labelled_date(text).strftime("%Y-%m-%d") == day
+
+
+@pytest.mark.parametrize("text", [
+    "Ollama is a tool... Initial release July 8, 2023",          # an event, not the page's date
+    "Consultation closes 31 October 2026",                        # a deadline
+    "x" * 1600 + " Updated on 1 May 2026",                        # too far down to be the page's own line
+])
+def test_a_bare_or_distant_date_is_not_the_page_date(text):
+    assert C.labelled_date(text) is None
+
+
+def test_since_your_last_look():
+    assert C.subject_key("EU AI Act!") == "eu-ai-act"
+    s = C.since_for("2026-10-01T09:00:00+00:00", NOW)
+    assert s == {"since": "2026-10-01", "why": "since you last looked on 2026-10-01"}
+    assert C.since_for("2026-10-10T09:00:00+00:00", NOW)["since"] == "2026-09-26"      # same day: default window
+    assert C.since_for("2026-08-01", NOW)["since"] == "2026-09-26"                      # over a month: default
+    assert C.since_for("", NOW) == {"since": "2026-09-26", "why": "the last 14 days"}
+
+
+def test_latest_records_and_reads_the_last_look():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    body = src[src.index("async def cap_info_seek"):]
+    latest = body[body.index('if need == "latest":'):body.index("    else:\n        # fact")]
+    assert "_seek.since_for(await _last_seek(subject), now)" in latest
+    assert latest.index("await _last_seek(subject)") < latest.index("await _last_seek(subject, now.isoformat(")
+    helper = src[src.index("async def _last_seek"):src.index("def _report_seller")]
+    assert "except Exception" in helper and "ex=_LAST_SEEK_TTL" in helper
