@@ -73,8 +73,8 @@ t('the host can map a name to its glyph', /window\.VeraLHM = \{ glyphFor: glyphF
   const a = CHAT.indexOf('  const LHM_MENUS=['), b = CHAT.indexOf('  ];', a);
   const block = CHAT.slice(a, b);
   const menus = block.match(/\{id:'[a-z]+',\s*icon:/g) || [];
-  t('the chat has its nine menus (Settings joined the eight)', menus.length === 9, menus.length);
-  t('each menu has a short and a long description', (block.match(/icon:'[^']+',\s*label:'[^']+',\s*desc:'/g) || []).length === 9 && (block.match(/\n\s*desc_long:'/g) || []).length === 9);
+  t('the chat has its ten menus (Settings joined the eight; Canvas - the session canvas controls - 2026-10-11)', menus.length === 10, menus.length);
+  t('each menu has a short and a long description', (block.match(/icon:'[^']+',\s*label:'[^']+',\s*desc:'/g) || []).length === 10 && (block.match(/\n\s*desc_long:'/g) || []).length === 10);
   const tabs = block.match(/\{id:'[A-Za-z]+',label:'[^']+'[^}]*\}/g) || [];
   t('each tab has both too', tabs.length >= 12 && tabs.every((x) => /desc:'/.test(x) && /desc_long:'/.test(x)), tabs.filter((x) => !/desc_long/.test(x)).join(' | '));
 }

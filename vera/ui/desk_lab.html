@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desk Lab</title>
+<!-- The Desk Lab (framework F3): widget forms side by side on fixtures, every size and state, both themes, measured.
+     shared-planning/context-and-ui/DESK-DESIGN-FRAMEWORK-PLAN.md section 5.1. Served at /ui/desk-lab. -->
+<link rel="stylesheet" href="/ui/bootstrap.css">
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: var(--bg0, #0e0f12); color: var(--text, #d8dce4); font: 12.5px/1.45 var(--font, system-ui, sans-serif); }
+  .lab-top { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 16px;
+    background: var(--bg1, #16181d); border-bottom: 1px solid var(--border2, rgba(255,255,255,.12)); }
+  .lab-top h1 { margin: 0 6px 0 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim2, #8a92a0); font-weight: 600; }
+  .lab-top label { display: inline-flex; gap: 4px; align-items: center; color: var(--dim2, #8a92a0); }
+  .lab-top input[type=text], .lab-top select { background: var(--bg0, #0e0f12); color: var(--text, #d8dce4); border: 1px solid var(--border2, rgba(255,255,255,.14)); border-radius: 6px; padding: 4px 7px; font: inherit; }
+  .lab-top input[type=text] { width: 260px; }
+  .lab-grp { display: inline-flex; gap: 6px; align-items: center; padding-left: 10px; border-left: 1px solid var(--border2, rgba(255,255,255,.1)); }
+  #lab-known { display: flex; flex-wrap: wrap; gap: 4px; width: 100%; }
+  #lab-known .btn, #lab-run { padding: 3px 9px; font-size: 11.5px; }
+  #lab-sum { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--dim2, #8a92a0); }
+  #lab-sum .bad, .lab-hud.bad b { color: var(--err, #c96b6b); } #lab-sum .ok { color: var(--acc2, #8fb87a); }
+  #lab-json { width: 100%; min-height: 54px; display: none; background: var(--bg0, #0e0f12); color: var(--text, #d8dce4); border: 1px solid var(--border2, rgba(255,255,255,.14)); border-radius: 6px; font: 11px var(--mono, ui-monospace, monospace); }
+  body.json #lab-json { display: block; }
+  #lab-grid { padding: 12px 16px 40px; display: flex; flex-direction: column; gap: 10px; }
+  .lab-row { display: flex; gap: 12px; align-items: flex-start; }
+  .lab-head { position: sticky; top: 0; color: var(--dim2, #8a92a0); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .lab-lbl { width: 150px; flex: none; display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+  .lab-lbl b { font-weight: 600; } .lab-lbl small { color: var(--dim, #6b7280); }
+  .lab-lbl em { font-style: normal; font-size: 10.5px; color: var(--dim2, #8a92a0); }
+  .lab-lbl em.st-failed, .lab-lbl em.st-stale { color: var(--warn, #c9955a); }
+  .lab-col { flex: none; }
+  .lab-cell { flex: none; display: flex; flex-direction: column; gap: 3px; }
+  .lab-cell vera-widget { background: var(--bg1, #16181d); border: 1px solid var(--border2, rgba(255,255,255,.1)); border-radius: 8px; overflow: hidden; }
+  .lab-hud { display: flex; gap: 8px; font: 10px var(--mono, ui-monospace, monospace); color: var(--dim, #6b7280); }
+  .lab-hud.bad { color: var(--warn, #c9955a); }
+</style>
+</head>
+<body>
+<div class="lab-top">
+  <h1>Desk Lab</h1>
+  <label>forms <input id="lab-forms" type="text" list="lab-forms-list" placeholder="stepper,heat · a family · all"></label>
+  <span class="lab-grp">size
+    <label><input type="checkbox" name="size" value="xs">xs</label><label><input type="checkbox" name="size" value="s">s</label><label><input type="checkbox" name="size" value="m">m</label><label><input type="checkbox" name="size" value="l">l</label><label><input type="checkbox" name="size" value="xl">xl</label></span>
+  <span class="lab-grp">state
+    <label><input type="checkbox" name="state" value="live">live</label><label><input type="checkbox" name="state" value="sample">sample</label><label><input type="checkbox" name="state" value="reading">reading</label><label><input type="checkbox" name="state" value="empty">empty</label><label><input type="checkbox" name="state" value="failed">failed</label><label><input type="checkbox" name="state" value="stale">stale</label></span>
+  <span class="lab-grp">
+    <label>theme <select id="lab-theme"><option value="dark">dark</option><option value="light">light</option></select></label>
+    <label><input id="lab-views" type="checkbox">views</label>
+    <label>data <select id="lab-data" onchange="document.body.classList.toggle('json', this.value==='json')"><option value="sample">sample</option><option value="json">pasted JSON</option></select></label>
+    <label>scenario <select id="lab-scn"><option value="none">none</option><option value="sweep">sweep (frame times)</option></select></label>
+    <button id="lab-run" class="btn primary">Draw</button></span>
+  <div id="lab-known"></div>
+  <textarea id="lab-json" placeholder='paste the data every form draws, e.g. [{"name":"a","value":3}]'></textarea>
+  <div id="lab-sum"></div>
+</div>
+<div id="lab-grid"></div>
+<script src="/ui/vera-ui.js"></script>
+<script src="/ui/iso.js"></script>
+<script src="/ui/widgets/widget_element.js"></script>
+<script src="/ui/desk-lab.js"></script>
+</body>
+</html>

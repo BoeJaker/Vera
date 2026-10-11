@@ -139,6 +139,21 @@ details.lp-sub:not([open])>summary{opacity:.8}
    Caps/Panels) — visual styling comes from .ctab; railTab() queries .rtab. */
 .rpane{display:none;flex-direction:column;gap:5px;padding:7px;overflow-y:auto;flex:1;min-height:0}
 .rpane.on{display:flex}
+/* the session canvas's controls in the menu (WSU-72) */
+#rpCanvas .cvm-banner{display:flex;flex-direction:column;gap:6px}
+#rpCanvas .cvm-banner .cv-bn{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+#rpCanvas .cvm-banner .cv-bn > b{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a92a0)}
+#rpCanvas .cvm-sec{display:flex;flex-direction:column;gap:3px;padding-top:6px;border-top:1px solid var(--border,#2a2f37)}
+#rpCanvas .cvm-sec h5{margin:2px 0;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a92a0)}
+#rpCanvas .cvm-kinds{display:flex;flex-wrap:wrap;gap:3px}
+#rpCanvas .cvm-add b{margin-right:4px;font-family:var(--mono,ui-monospace,monospace);color:var(--acc,#5a9e8f)}
+#rpCanvas .cvm-it{display:flex;gap:6px;align-items:center;width:100%;text-align:left;border:0;background:none;color:var(--text,#d8dce4);font:inherit;font-size:11px;padding:3px 4px;border-radius:4px;cursor:pointer}
+#rpCanvas .cvm-it:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent)}
+#rpCanvas .cvm-it i{font-style:normal;color:var(--acc,#5a9e8f);width:12px;text-align:center}
+#rpCanvas .cvm-it span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rpCanvas .cvm-dim,#rpCanvas .cvm-none{font-size:10.5px;color:var(--dim,#6b7280)}
+#canvasColumn{position:relative}
+#canvasColumn > .drv-ribbon.cv-ovl{position:absolute;top:6px;right:10px;z-index:30;margin:0}
 .hi{padding:5px 7px;border-radius:3px;border:1px solid var(--border);cursor:pointer;background:var(--bg2);transition:border-color .14s}
 .hi:hover,.hi.on{border-color:var(--acc)}
 .hi-name{font-size:10px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -2458,6 +2473,14 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div id="rpAgentEdit"><div class="lhm-empty" style="padding:8px 2px">Pick an agent to edit it, or + New agent.</div></div>
   </div>
 
+  <!-- THE SESSION CANVAS'S CONTROLS (WSU-72, owner 2026-10-11: "id like the session canvas controls along the top to be
+       moved to the chat lhm to give the session canvas full height and a more minimalist look"). The canvas draws no
+       banner or add bar (chrome="none"); its column's controls (#cvBannerTpl: the subtitle, columns, enrich, tell, runs,
+       close) are mounted here with their ids, and the add kinds and the shelves are drawn here from the canvas itself. -->
+  <div class="rpane" id="rpCanvas" data-w="canvas controls · menu">
+    <div id="rpCanvasBanner" class="cvm-banner"></div>
+    <div id="rpCanvasDyn" class="cvm-dyn"></div>
+  </div>
   <div class="rpane" id="rpCaps">
     <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
       <input id="rpCapSearch" placeholder="Filter caps…" style="flex:1;font-size:10px;height:22px" oninput="CH._renderRailCaps()">
@@ -3313,6 +3336,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
     <div class="ctab" onclick="CH.ctxTab('goals',this)" title="Long-term goals the system is executing over days (strategic dream projects)">🎯 Goals</div>
     <div class="ctab" onclick="CH.ctxTab('loops',this)" title="All agentic loops — running and recent — pick any back up where it left off">⟳ Loops</div>
     <div class="ctab rtab" onclick="CH.railTab('Caps',this)">Caps</div>
+    <div class="ctab rtab" onclick="CH.railTab('Canvas',this)">Canvas</div>
     <div class="ctab rtab" onclick="CH.railTab('Agents',this)">Agents</div>
     <div class="ctab rtab" onclick="CH.railTab('Panels',this)">Panels</div>
   </div>
@@ -8578,6 +8602,73 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(_cvRelFocusT) clearTimeout(_cvRelFocusT);
     _cvRelFocusT=setTimeout(()=>{ const w=_focusedTurn(); const mid=w?(w.dataset.mid||''):''; if(mid&&mid!==_cvRelLastFocus){ _cvRelLastFocus=mid; _cvRelevance(mid, String(w.textContent||'').slice(0,600), {apply:false}); } }, 400);
   }
+  /* WHERE THE CANVAS'S CONTROLS GO (WSU-72). In the LHM's Canvas pane (#rpCanvas) by default: the canvas draws no banner
+     (chrome="none") and is full height; the banner's controls are mounted into the pane once, with their ids (they still
+     exist once and only while the canvas is on the page), and the driven ribbon - which must be seen while Vera drives the
+     canvas - floats at the column's top-right. localStorage vera:canvas:chrome = "bar" keeps the old banner in the canvas. */
+  let _cvMenuT=0;
+  function _cvChromeMount(el){
+    const tpl=document.getElementById('cvBannerTpl'); if(!tpl||!tpl.content) return;
+    let inBar=false; try{ inBar=localStorage.getItem('vera:canvas:chrome')==='bar'; }catch(_){}
+    const ban=document.getElementById('rpCanvasBanner'); const col=document.getElementById('canvasColumn');
+    if(ban) ban.innerHTML=''; if(col) col.querySelectorAll(':scope > .cv-ovl').forEach(x=>x.remove());
+    if(inBar||!ban){ el.removeAttribute('chrome'); el.appendChild(tpl.content.cloneNode(true)); return; }
+    el.setAttribute('chrome','none');
+    ban.appendChild(tpl.content.cloneNode(true));
+    ban.querySelectorAll('[slot]').forEach(s=>s.removeAttribute('slot'));
+    const rib=ban.querySelector('#cvDrvRibbon'); if(rib&&col){ rib.classList.add('cv-ovl'); col.appendChild(rib); }
+  }
+  /* the pane's moving parts: the kinds to add, the shelves (parked · hidden · removed), clear - drawn from the canvas */
+  /* THE SPLIT (?only=menu beside ?only=chat): the menu page has no canvas. The chat page publishes the canvas's state on
+     the LHM channel (cvstate) after each placement, the menu draws the pane from it, and every pane action goes back as
+     cvact for the chat page to run on its canvas. One page with both: the canvas is driven directly. */
+  let _cvRemote=null;
+  function _cvLocal(){ const c=document.querySelector('#canvasColumnBody vera-canvas'); return c&&typeof c.shelves==='function'?c:null; }
+  function _cvStateNow(){ const c=_cvLocal(); if(!c) return null; let runsOff=false; try{ runsOff=!!_runsOff.cv; }catch(_){}
+    return { kinds:c.kinds(), s:c.shelves(), cols:String(_cvCols()), enrich:_cvEnrichOn(), tell:_cvTellOn(), runsOff, resize:(typeof c.deskResizeMode==='function'?c.deskResizeMode():'pin'), open:true }; }
+  function _cvPublish(){ if(_EMBED.only!=='chat') return; const st=_cvStateNow(); if(st) _lhmPost('cvstate', st); }
+  function _cvMenuAct(a){ const c=_cvLocal();
+    if(!c){ if(a.a==='open'){ togglePage('canvas'); return Promise.resolve(); } _lhmPost('cvact', a); return Promise.resolve(); }
+    if(a.a==='add') return Promise.resolve(c.addKind(a.kind, a.anchor||c));
+    if(a.a==='back') return Promise.resolve(c.bringBack(a.key));
+    if(a.a==='restore') return Promise.resolve(c.restore(a.key));
+    if(a.a==='clear') return Promise.resolve(c.clearAll(true));
+    if(a.a==='cols'){ _cvColumns(a.n); return Promise.resolve(); }
+    if(a.a==='enrich'){ _cvEnrichToggle(); return Promise.resolve(); }
+    if(a.a==='tell'){ _cvTellToggle(); return Promise.resolve(); }
+    if(a.a==='runs'){ _runsToggle('cv'); return Promise.resolve(); }
+    if(a.a==='close'){ togglePage('canvas'); return Promise.resolve(); }
+    if(a.a==='resize'){ if(typeof c.setDeskResizeMode==='function') c.setDeskResizeMode(a.n); return Promise.resolve(); }
+    return Promise.resolve(); }
+  function _cvMenuRender(onlyIfOpen){
+    const pane=document.getElementById('rpCanvas'), dyn=document.getElementById('rpCanvasDyn'); if(!pane||!dyn) return;
+    if(onlyIfOpen&&!pane.classList.contains('on')) return;
+    const local=_cvLocal(); const st=local?_cvStateNow():_cvRemote;
+    if(!st){ dyn.innerHTML='<div class="cvm-none">'+(_pages&&_pages.has&&_pages.has('canvas')?'The canvas is starting…':'The canvas is closed. <button class="btn xs" data-cvm="open">Open the canvas</button>')+'</div>'; return; }
+    const s=st.s, kinds=st.kinds;
+    /* the banner's own controls exist only in a page with the canvas (mounted into #rpCanvasBanner); in the menu page they
+       are drawn here and act through the channel */
+    const sw=(a, on, label, tip)=>'<button class="btn xs'+(on?' on':'')+'" data-cvm="'+a+'" aria-pressed="'+(on?'true':'false')+'" title="'+esc(tip)+'" style="'+(on?'':'opacity:.55')+'">'+label+'</button>';
+    const remoteBanner=local?'':'<div class="cvm-sec"><h5>Arrange</h5><div class="cvm-kinds"><b class="cols-k" style="font-size:9px;color:var(--dim2,#8a92a0)">COLS</b>'
+      +['auto','1','2','3','4'].map(n=>'<button class="btn xs'+(st.cols===n?' on':'')+'" data-cvm="cols" data-n="'+n+'">'+n+'</button>').join('')+'</div><div class="cvm-kinds">'
+      +sw('enrich', st.enrich, '&#10022; enrich', 'Enrich: after each reply, bring forth what else is relevant beside it')
+      +sw('tell', st.tell, '&#9673; tell', 'Tell the model what the canvas is showing for the turn')
+      +sw('runs', !st.runsOff, 'Runs', 'The runs between the turns and the items they made or read')
+      +'<button class="btn xs" data-cvm="close" title="Close the canvas column">&#215; close</button></div></div>';
+    const row=(it, act, glyph, tip)=>'<button class="cvm-it" data-cvm="'+act+'" data-key="'+esc(it.key)+'" title="'+esc(tip)+'"><i>'+glyph+'</i><span>'+esc(String(it.title||it.key).slice(0,60))+'</span></button>';
+    const shelf=(label, list, act, glyph, tip, empty)=>'<div class="cvm-sec"><h5>'+label+(list.length?' · '+list.length:'')+'</h5>'+(list.length?list.map(it=>row(it, act, glyph, tip)).join(''):'<div class="cvm-dim">'+empty+'</div>')+'</div>';
+    /* WSU-74: what a resize does - keep moving (size kept), pin it where it is (as before), or lock it */
+    const rsz='<div class="cvm-sec"><h5>When I resize a card</h5><div class="cvm-kinds">'+[['move','keep moving','Its size is kept; it still moves out of the way of other cards'],['pin','pin it','Its place and size are kept; the others go round it (⤺ on the card lets it move again, keeping its size)'],['lock','lock it','Pinned and locked: nothing moves it until you unlock it']].map(([v,l,tip])=>'<button class="btn xs'+((st.resize||'pin')===v?' on':'')+'" data-cvm="resize" data-n="'+v+'" title="'+esc(tip)+'">'+l+'</button>').join('')+'</div></div>';
+    dyn.innerHTML=remoteBanner+rsz+
+      '<div class="cvm-sec"><h5>Add to the canvas</h5><div class="cvm-kinds">'+kinds.map(k=>'<button class="btn xs cvm-add" data-cvm="add" data-kind="'+esc(k.n)+'" title="Add a '+esc(k.n)+' (a '+esc(k.kind)+' item)"><b>'+esc(k.ik)+'</b>'+esc(k.n)+'</button>').join('')+'</div></div>'
+      + shelf('Parked', s.parked, 'back', '⤴', 'Bring it back into view', 'Nothing parked.')
+      + shelf('Hidden', s.hidden, 'back', '◐', 'Show it again', 'Nothing hidden.')
+      + shelf('Recently removed', s.removed, 'restore', '↺', 'Put it back on the canvas', 'Nothing removed.')
+      + '<div class="cvm-sec"><button class="btn xs" data-cvm="clear" title="Clear the canvas - pinned items stay; every item can be put back from Recently removed">Clear the canvas</button> <span class="cvm-dim">'+s.items+' on the canvas</span></div>';
+    if(!dyn._cvmBound){ dyn._cvmBound=true; dyn.addEventListener('click', ev=>{ const b=ev.target.closest('[data-cvm]'); if(!b) return; const a=b.dataset.cvm;
+      _cvMenuAct({ a, kind:b.dataset.kind||'', key:b.dataset.key||'', n:b.dataset.n||'', anchor:_cvLocal()?b:null })
+        .then(()=>setTimeout(()=>{ _cvPublish(); _cvMenuRender(true); }, 400)); }); }
+  }
   async function _canvasColumnMount(){
     const host=document.getElementById('canvasColumnBody'); if(!host) return;
     if(!_cvColTimer) _cvColTimer=setInterval(()=>{ if(_pages.has('canvas')&&SID&&SID!==_cvColSid) _canvasColumnMount(); }, 2000);
@@ -8591,10 +8682,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     try{ const r=await _capCall('canvas.session.resolve',{session_id:SID}); cid=(r&&r.id)||''; }catch(_){}
     if(!cid) cid='cv_session_'+String(SID).replace(/[^A-Za-z0-9_.-]/g,'_').slice(0,64);
     let el=host.querySelector('vera-canvas');
-    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); el.setAttribute('bare','');   /* one banner: the element's add bar IS the head, and these controls are slotted into it (§4.2) */ el.setAttribute('blocks', (document.documentElement.getAttribute('data-blocks')==='off')?'off':'on'); try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} /* the column's controls, into the banner (§4.2): a <template>, so their ids exist ONCE and only while this element is on the page - a second copy would shadow #cvColSub and the revision would stop moving. This whole line stays ONE line of live code (defect 81). */ try{ const tpl=document.getElementById('cvBannerTpl'); if(tpl&&tpl.content) el.appendChild(tpl.content.cloneNode(true)); }catch(_){} host.appendChild(el);
+    if(!el){ host.innerHTML=''; el=document.createElement('vera-canvas'); el.setAttribute('fill',''); el.setAttribute('session',''); el.setAttribute('stage',''); el.setAttribute('columns', String(_cvCols())); el.setAttribute('bare','');   /* one banner: the element's add bar IS the head, and these controls are slotted into it (§4.2) */ el.setAttribute('blocks', (document.documentElement.getAttribute('data-blocks')==='off')?'off':'on'); try{ el.setAttribute('nb-api', _NB_API_BASE()); }catch(_){} /* the column's controls, into the banner (§4.2): a <template>, so their ids exist ONCE and only while this element is on the page - a second copy would shadow #cvColSub and the revision would stop moving. This whole line stays ONE line of live code (defect 81). */ try{ _cvChromeMount(el); }catch(_){} host.appendChild(el);
       // the stage follows the transcript: its turn tops, its scroll, its reflow
       // and AUTO shows the count it landed on, refreshed only when that count actually moves
-      el.addEventListener('vera:canvas:placed', ev=>{ const n=(ev.detail||{}).columns; if(n!==_cvColShown){ _cvColShown=n; _cvColsSync(); } _cvRunsDraw(); });
+      el.addEventListener('vera:canvas:placed', ev=>{ const n=(ev.detail||{}).columns; if(n!==_cvColShown){ _cvColShown=n; _cvColsSync(); } _cvRunsDraw(); clearTimeout(_cvMenuT); _cvMenuT=setTimeout(()=>{ _cvMenuRender(true); _cvPublish(); },300); });
       /* 'placed' is the start of the items' .32s glide, not the end of it, so the runs follow the glide itself —
          from inside the shadow root the items live in, which a document listener cannot be relied on to see */
       try{ if(el.shadowRoot) el.shadowRoot.addEventListener('transitionstart', _runsGlide, true); }catch(_){}
@@ -16464,6 +16555,12 @@ Your task: decide what to do next to advance toward the goal.
      desc_long:'What is open beside the chat: any registered UI panel, and the browser. The action at the foot opens a panel beside the chat. Navigate here to open or switch the panel the chat works with (panel.dispatch / panel.query target it).',
      tabs:[{id:'Panels',label:'Panels', desc:'Open a panel beside the chat', desc_long:'The registered UI panels; picking one opens it beside the chat.'},{id:'browser',label:'Browser', desc:'The browser', desc_long:'The browser view beside the chat.'}],
      meta:()=>_activePanelId?('open · '+_lhmTxt('chatPanelTitle')):'nothing open beside the chat', cta:{label:'Open a panel beside the chat →', run:()=>railTab('Panels')}},
+    /* the session canvas's controls (WSU-72): moved here from the canvas's own banner so the canvas is full height */
+    {id:'canvas',   icon:'▤', label:'Canvas',    desc:'The session canvas: add to it, arrange it, bring things back',
+     desc_long:'The controls of the session canvas beside the chat: the kinds of item to add, columns, enrich and tell-the-model switches, the runs, and the shelves - parked, hidden and recently removed items, each a click from coming back. The action at the foot adds to the canvas. Navigate here to change what the canvas shows or recover something removed.',
+     tabs:[{id:'Canvas',label:'Canvas', desc:'Add, arrange, shelves', desc_long:'Add an item, set the columns and switches, and bring back parked, hidden or removed items.'}],
+     meta:()=>{ const st=_cvLocal()?_cvStateNow():_cvRemote; if(!st) return 'canvas closed'; const s=st.s; return s.items+' on the canvas'+(s.removed.length?' · '+s.removed.length+' removed':''); },
+     cta:{label:'+ Add to the canvas', run:()=>{ if(!_pages.has('canvas')) togglePage('canvas'); railTab('Canvas'); setTimeout(()=>{ const b=document.querySelector('#rpCanvasDyn .cvm-add'); if(b) b.focus(); },200); }}},
     {id:'sandbox',  icon:'⌨', label:'Sandbox',   desc:'This session\'s code sandbox',
      desc_long:'The session\'s sandbox: its status and the code it holds. The action at the foot opens its terminal. Navigate here to inspect or run what the agent wrote.',
      tabs:[{id:'code',label:'Code', desc:'Files and code in the sandbox', desc_long:'The code and files in this session\'s sandbox.'}],
@@ -16675,6 +16772,7 @@ function _embedMount(){
          on whatever they had, which on the board is the whole context graph the user actually looks at. */
       else if(m.act==='focus'){ _grFocusMid=a.mid||''; if(_ctxGrown){ try{ _ctxColumnSync(_grFocusMid); }catch(_){} } try{ _ctxFollow(true); }catch(_){} }
       else if(m.act==='grow-set'){ _ctxGrow(!!a.on); }
+      else if(m.act==='cvstate'){ _cvRemote=a; try{ _cvMenuRender(true); VeraLHM.render(); }catch(_){} }   // the session canvas, from the chat page (WSU-72)
       else if(m.act==='memory'){ try{ _memAfterTurn(); }catch(_){} }   // a reply finished in the chat: the memory graph follows
       else if(m.act==='turn'){ try{ _turnPhasesKeep(a); _turnPhasesRender(); }catch(_){} }   // its steps, for the Turn steps pane
       else if(m.act==='block'){ _ctxRemoteBlock=a; try{ _ctxRunsDraw(); }catch(_){} }
@@ -16686,6 +16784,8 @@ function _embedMount(){
   }
   if(_EMBED.only==='chat'){
     if(_LHMBC) _LHMBC.onmessage=ev=>{ const m=ev.data||{}; if(!m||m.from!=='menu') return; const a=m.args||{};
+      if(m.act==='cvact'){ try{ _cvMenuAct(a).then(()=>setTimeout(_cvPublish,400)); }catch(_){} return; }   // the menu page drives the canvas (WSU-72)
+      if(m.act==='cvhello'){ try{ _cvPublish(); }catch(_){} return; }
       try{ if(m.act==='grow') _ctxGrow(a.on!==false); else if(m.act==='grown') _ctxRemoteSet(a.on); else if(m.act==='lanes'){ _ctxRemote.lanes=Array.isArray(a.lanes)?a.lanes:[]; _ctxRunsDraw(); } else if(m.act==='runs'){ _runsApply(a.which, a.off); } else if(m.act==='page') togglePage(a.name); else if(m.act==='pageOpen') openPage(a.name); else if(m.act==='canvasRefresh'){ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } } else if(m.act==='explode') explode(a.on); else if(m.act==='explodeMode') explodeMode(a.m); else if(m.act==='session'&&a.sid&&a.sid!==SID) loadSession(a.sid); else if(m.act==='newSession') newSession(); }catch(_){} };
   }
   /* The transcript's scroll listener is bound HERE, for any instance that has a transcript.
@@ -17435,6 +17535,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
       rail.classList.toggle('wide', name==='Caps' || name==='Panels');
     }
     if(name==='Hist')histLoad();
+    if(name==='Canvas'){ if(!_cvLocal()) _lhmPost('cvhello', {}); _cvMenuRender(); }
     if(name==='Caps')_renderRailCaps();
     if(name==='Agents')_renderRailAgents();
     if(name==='Panels'){ _loadUiPanels().then(_renderRailPanels); }

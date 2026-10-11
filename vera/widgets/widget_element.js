@@ -4326,7 +4326,7 @@ span.vw-sampled{opacity:.85}
     }
   }
   if (window.customElements && !customElements.get('vera-widget')) customElements.define('vera-widget', VeraWidgetEl);
-  window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, compositeXL, xlCompositeRows: XL_COMPOSITE_ROWS, version: 5 };
+  window.VeraWidget = { draw, forms, viewsFor, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, compositeXL, xlCompositeRows: XL_COMPOSITE_ROWS, version: 5 };
   Object.assign(window.VeraWidget, { dive, openBlock, rowTip, rowRef, fontScale, fromCapResult, fromCapStream, capForms: () => CAP_FORMS.slice(), capHints: () => Object.assign({}, CAP_HINTS),
     drawer, relatedTo, resolveArgs, toVeraGraph, itemAt, ensureVeraGraph });   // round 3: the data drawer, the calendar's arguments, the Vera graph form   // the widget review, round 2: blocks, the deep dive, the text-size setting
 

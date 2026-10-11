@@ -319,7 +319,7 @@
     function hit(a, b, g) { return a.l < b.r + g && b.l < a.r + g && a.t < b.b + g && b.t < a.b + g; }
     var chat = R && R.r > R.l ? R : null;
     items.forEach(function (it) {
-      if (it.fixed || it.chip) return;
+      if (it.fixed || it.chip || it.own) return;   /* own: a size the person gave - kept, never grown (WSU-74) */
       var others = items.filter(function (x) { return x !== it; });
       /* the gap is kept in the direction it grows; across it only a hairline, or a neighbour 12 px to the side would stop it
          growing up or down at all */

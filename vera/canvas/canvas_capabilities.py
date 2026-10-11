@@ -205,6 +205,23 @@ async def _write(doc: Dict[str, Any], op: str, key: str = "", **extra) -> int:
     return int(doc.get("revision") or 0)
 
 
+REMOVED_KEEP = 30   # the "recently removed" a canvas keeps (WSU-66)
+
+
+def _tombstone(doc: Dict[str, Any], blocks: List[Dict[str, Any]]) -> None:
+    """Keep what is removed so it can be put back (WSU-66, owner 2026-10-11: "removed canvas element should be
+    restorable"): the whole block with its key, newest last, the last REMOVED_KEEP of them. Keyless blocks of an agent's
+    canvas are kept by their id."""
+    gone = [b for b in blocks if isinstance(b, dict)]
+    if not gone:
+        return
+    rem = [r for r in (doc.get("removed") or []) if isinstance(r, dict)]
+    keys = {str(b.get("key") or "") for b in gone if b.get("key")}
+    rem = [r for r in rem if not (r.get("key") and str(r.get("key")) in keys)]   # one entry per key: the latest removal
+    rem += [{"key": str(b.get("key") or ""), "id": str(b.get("id") or ""), "at": now_iso(), "block": b} for b in gone]
+    doc["removed"] = rem[-REMOVED_KEEP:]
+
+
 def _find_key(doc: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
     key = str(key or "")
     if not key:
@@ -533,18 +550,66 @@ async def cap_canvas_remove(id: str = "", block_id: str = "", key: str = "",
         if not hit:
             return {"ok": False, "error": f"unknown key: {key}"}
         doc["blocks"] = [b for b in doc.get("blocks", []) if b is not hit]
+        _tombstone(doc, [hit])
         rev = await _write(doc, "remove", key)
-        return {"ok": True, "removed": hit.get("id"), "key": key, "id": doc["id"], "revision": rev}
+        return {"ok": True, "removed": hit.get("id"), "key": key, "id": doc["id"], "revision": rev, "restorable": True}
     doc = await _load(id)
     if not doc:
         return {"error": f"unknown canvas: {id}"}
     before = len(doc.get("blocks", []))
+    gone = [b for b in doc.get("blocks", []) if b.get("id") == block_id]
     doc["blocks"] = [b for b in doc.get("blocks", []) if b.get("id") != block_id]
     if len(doc["blocks"]) == before:
         return {"error": f"unknown block: {block_id}"}
+    _tombstone(doc, gone)
     await _save(doc)
     await _emit(id, "remove", block_id=block_id)
     return {"ok": True, "removed": block_id}
+
+
+@capability(
+    "canvas.removed", memory="off", silent=True,
+    http_method="GET", http_path="/canvas/removed", http_tags=["canvas"],
+    description="What was recently removed from a canvas and can be put back (newest first, up to 30). Inputs: id (str) "
+                "or session_id (str). Output: {ok, removed: [{key, id, at, type, title}]}.",
+)
+async def cap_canvas_removed(id: str = "", session_id: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    out = []
+    for r in reversed([r for r in (doc.get("removed") or []) if isinstance(r, dict)]):
+        b = r.get("block") or {}
+        c = b.get("content") if isinstance(b.get("content"), dict) else {}
+        out.append({"key": r.get("key") or "", "id": r.get("id") or "", "at": r.get("at") or "",
+                    "type": b.get("type") or "", "title": str(c.get("title") or c.get("name") or r.get("key") or b.get("type") or "")[:120]})
+    return {"ok": True, "removed": out, "id": doc["id"]}
+
+
+@capability(
+    "canvas.restore", memory="off",
+    http_method="POST", http_path="/canvas/restore", http_tags=["canvas"],
+    description="Put a removed item back on its canvas (removing is undoable). Inputs: key (str) for a keyed "
+                "item, or block_id (str) for a keyless block; id (str) or session_id (str). The item comes back as it "
+                "was, in view. Fails if nothing with that key was removed, or an item with that key is on the canvas.",
+)
+async def cap_canvas_restore(key: str = "", block_id: str = "", id: str = "", session_id: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    rem = [r for r in (doc.get("removed") or []) if isinstance(r, dict)]
+    want = next((r for r in reversed(rem) if (key and r.get("key") == key) or (block_id and r.get("id") == block_id)), None)
+    if not want:
+        return {"ok": False, "error": f"nothing removed with {'key ' + key if key else 'id ' + block_id}"}
+    blk = dict(want.get("block") or {})
+    if blk.get("key") and _find_key(doc, blk["key"]):
+        return {"ok": False, "error": f"already on the canvas: {blk['key']}"}
+    if blk.get("key"):
+        blk["state"] = "now" if blk.get("state") in (None, "", "hidden") else blk["state"]
+    doc.setdefault("blocks", []).append(blk)
+    doc["removed"] = [r for r in rem if r is not want]
+    rev = await _write(doc, "restore", blk.get("key") or blk.get("id") or "")
+    return {"ok": True, "restored": blk.get("key") or blk.get("id"), "id": doc["id"], "revision": rev}
 
 
 @capability(
@@ -562,7 +627,9 @@ async def cap_canvas_clear(id: str = "", session_id: str = "", keep: str = "", t
     keys = {k.strip() for k in str(keep or "").split(",") if k.strip()}
     before = len(doc.get("blocks", []))
     # a kept key survives; everything else goes, including the keyless blocks of an agent's canvas
+    gone = [b for b in doc.get("blocks", []) if not (b.get("key") and str(b.get("key")) in keys)]
     doc["blocks"] = [b for b in doc.get("blocks", []) if b.get("key") and str(b.get("key")) in keys]
+    _tombstone(doc, gone)   # a clear can be taken back item by item too (WSU-66)
     rev = await _write(doc, "clear", ",".join(sorted(keys)) or "all")
     return {"ok": True, "id": doc["id"], "cleared": before - len(doc["blocks"]),
             "kept": len(doc["blocks"]), "revision": rev}
@@ -812,8 +879,120 @@ def _rel_strings(v: Any, out: List[str], depth: int = 0) -> None:
             _rel_strings(x, out, depth + 1)
 
 
+_REL_SPLIT = re.compile(r"[:/._-]+")
+"""NAMES AND THEIR SYMBOLS, FROM LIVE DATA (owner 2026-10-11: a turn about "bitcoin" scored the BTC-USD chart 0.12 - the
+chart says BTC, the turn says bitcoin; and "you hardcoded aliases for tickers - bad idea create a proper converter using
+live data you dont have to maintain"). Two sources, nothing written by hand:
+- the tracked market universe (markets.baseline.list, markets.overview, markets.watchlist.list): each asset's symbol and
+  name make one group (BTC-USD + "Bitcoin USD" -> {btc, bitcoin}); built in the background, refreshed hourly;
+- an entity of the turn the universe does not know is asked of the market search once (markets.lookup, 1.2 s at most)
+  and the answer kept (an empty answer too, for an hour).
+Quote currencies and company words (usd, inc, etf, ...) are never a link. Relevance never waits on the network for more
+than that one bounded lookup; with the markets subsystem absent every map is empty and scoring is as before."""
+_ALIAS_TTL = 3600.0
+_ALIAS_GENERIC = {"usd", "eur", "gbp", "jpy", "usdt", "usdc", "inc", "corp", "corporation", "ltd", "plc", "co", "the", "and",
+                  "etf", "fund", "trust", "class", "index", "group", "holdings", "company", "shares", "share", "common",
+                  "stock", "spdr", "ishares", "vanguard", "invesco", "yahoo", "binance", "coinbase", "kraken", "spot", "perp"}
+_ALIAS: Dict[str, Any] = {"at": 0.0, "of": {}, "task": None}
+_ALIAS_LOOK: Dict[str, Any] = {}   # entity -> (time, set of words)
+
+
+def _alias_group(symbol: str, name: str) -> set:
+    """One asset's words: its symbol's parts and its name's words, less quote currencies and company words."""
+    sym = {p for p in re.split(r"[^a-z0-9]+", str(symbol or "").lower()) if len(p) >= 2 and not p.isdigit()}
+    nam = {w for w in re.split(r"[^a-z0-9&]+", str(name or "").lower()) if len(w) >= 3 and not w.isdigit()}
+    return (sym | nam) - _ALIAS_GENERIC
+
+
+async def _alias_call(name: str, timeout: float, **kw) -> Dict[str, Any]:
+    e = CAPABILITY_REGISTRY.get(name) or {}
+    fn = isinstance(e, dict) and (e.get("func") or e.get("raw"))
+    if not fn:
+        return {}
+    try:
+        params = inspect.signature(e.get("raw") or fn).parameters
+        if not any(p.kind == p.VAR_KEYWORD for p in params.values()):
+            kw = {k: v for k, v in kw.items() if k in params}
+    except (TypeError, ValueError):
+        pass
+    try:
+        r = await asyncio.wait_for(fn(**kw), timeout=timeout)
+        return r if isinstance(r, dict) else {}
+    except Exception:
+        return {}
+
+
+def _alias_assets(r: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for k in ("assets", "results", "watchlist", "positions", "quotes"):
+        out += [x for x in (r.get(k) or []) if isinstance(x, dict)]
+    for g in r.get("groups") or []:
+        if isinstance(g, dict):
+            out += [x for x in (g.get("assets") or []) if isinstance(x, dict)]
+    return out
+
+
+async def _alias_build() -> None:
+    of: Dict[str, set] = {}
+    for cap in ("markets.baseline.list", "markets.overview", "markets.watchlist.list"):
+        for a in _alias_assets(await _alias_call(cap, 20.0)):
+            grp = _alias_group(a.get("symbol") or a.get("key") or "", a.get("name") or "")
+            if len(grp) < 2:
+                continue
+            for w in grp:
+                of.setdefault(w, set()).update(grp)
+    _ALIAS["of"] = of
+    _ALIAS["at"] = time.time()
+
+
+def _alias_refresh_soon() -> None:
+    """Rebuild the universe map in the background when it is stale; never awaited by a turn."""
+    t = _ALIAS.get("task")
+    if time.time() - float(_ALIAS.get("at") or 0) < _ALIAS_TTL or (t is not None and not t.done()):
+        return
+    try:
+        _ALIAS["task"] = asyncio.get_event_loop().create_task(_alias_build())
+    except Exception:
+        pass
+
+
+async def _rel_alias_map(entities: List[str]) -> Dict[str, set]:
+    """word -> its group, for this turn: the universe map, plus a bounded live lookup of each entity it does not know."""
+    _alias_refresh_soon()
+    amap: Dict[str, set] = dict(_ALIAS.get("of") or {})
+    for e in [str(x).strip().lower() for x in entities or []][:4]:
+        if len(e) < 3 or e in amap or e in _ALIAS_GENERIC:
+            continue
+        hit = _ALIAS_LOOK.get(e)
+        if not hit or time.time() - hit[0] > _ALIAS_TTL:
+            grp: set = set()
+            # the first result whose NAME has the entity as a whole word (not "pineapple" for "apple"), and only its
+            # symbol is linked - not every word of its name
+            for a in _alias_assets(await _alias_call("markets.lookup", 1.2, query=e, limit=3))[:3]:
+                if e in set(re.split(r"[^a-z0-9&]+", str(a.get("name") or "").lower())):
+                    grp = {p for p in re.split(r"[^a-z0-9]+", str(a.get("symbol") or "").lower()) if len(p) >= 2 and not p.isdigit()} - _ALIAS_GENERIC
+                    break
+            hit = (time.time(), grp)
+            _ALIAS_LOOK[e] = hit
+        if hit[1]:
+            for w in hit[1]:
+                amap.setdefault(w, set()).update(hit[1] | {e})
+            amap.setdefault(e, set()).update(hit[1])
+    return amap
+
+
+def _rel_expand(words: set, amap: Optional[Dict[str, set]] = None) -> set:
+    """Words plus their live aliases (a name's symbols, a symbol's name)."""
+    out = set(words)
+    for w in words:
+        out |= (amap or {}).get(w, set())
+    return out
+
+
 def _rel_words(s: str) -> set:
-    return set(_REL_WORD.findall(str(s or "").lower()))
+    """The words of a text: whole tokens and, for compound ones (yahoo:btc-usd, markets.chart), their parts too."""
+    ws = set(_REL_WORD.findall(str(s or "").lower()))
+    return ws | {p for w in ws for p in _REL_SPLIT.split(w) if len(p) >= 2}
 
 
 def _rel_item_text(b: Dict[str, Any]) -> str:
@@ -843,7 +1022,7 @@ def _rel_kind_of(b: Dict[str, Any]) -> set:
 
 
 def _rel_score(b: Dict[str, Any], turn: str, text: str, entities: List[str], recent: List[str],
-               hits: set, intents: Dict[str, str]) -> Dict[str, Any]:
+               hits: set, intents: Dict[str, str], amap: Optional[Dict[str, set]] = None) -> Dict[str, Any]:
     """One item's score and the signal that carried it."""
     key = str(b.get("key") or "")
     sig: Dict[str, float] = {}
@@ -855,14 +1034,15 @@ def _rel_score(b: Dict[str, Any], turn: str, text: str, entities: List[str], rec
     low = item_text.lower()
     words = _rel_words(item_text)
     ents = [e for e in (str(x).strip().lower() for x in entities or []) if len(e) >= 3]
-    if any((e in words) or (len(e) >= 4 and e in low) for e in ents):
+    ents = sorted(_rel_expand(set(ents), amap) | set(ents), key=len, reverse=True)   # an entity's live aliases count as it
+    if any((e in words) or (len(e) >= 4 and e in low) for e in ents if len(e) >= 2):
         sig["entity"] = 0.85
     kinds = _rel_kind_of(b)
     for kind, best_key in intents.items():
         aliases = set(_REL_KIND_ALIASES.get(kind, ())) | {kind}
         if kinds & aliases:
             sig["intent"] = max(sig.get("intent", 0.0), 0.7 if best_key == key else 0.5)
-    tw = _rel_words(text)
+    tw = _rel_expand(_rel_words(text), amap)
     if tw and words:
         overlap = len(tw & words) / float(max(1, min(len(tw), 12)))
         if overlap > 0:
@@ -903,6 +1083,7 @@ async def cap_canvas_session_relevance(session_id: str = "", turn: str = "", tex
     turn = str(turn or "")
     entities = _as_obj(entities) if entities is not None else []
     entities = [str(x) for x in entities] if isinstance(entities, (list, tuple)) else []
+    amap = await _rel_alias_map(entities)   # names <-> symbols from live market data (bounded; empty without markets)
     recent = _as_obj(recent) if recent is not None else []
     recent = [str(x) for x in recent] if isinstance(recent, (list, tuple)) else []
     if turn and turn not in recent:
@@ -927,7 +1108,7 @@ async def cap_canvas_session_relevance(session_id: str = "", turn: str = "", tex
     recalled: List[str] = []
     parked: List[str] = []
     for b in keyed:
-        s = _rel_score(b, turn, text, entities, recent, hits, intents)
+        s = _rel_score(b, turn, text, entities, recent, hits, intents, amap)
         key = str(b["key"])
         scores[key] = s
         live = s["score"] >= threshold or b.get("state") == "pinned"
@@ -1178,7 +1359,7 @@ register_ui(
 </div>""",
     "",
     ui_caps=["canvas.create", "canvas.get", "canvas.list", "canvas.append",
-             "canvas.update", "canvas.move", "canvas.remove", "canvas.clear", "canvas.delete",
+             "canvas.update", "canvas.move", "canvas.remove", "canvas.removed", "canvas.restore", "canvas.clear", "canvas.delete",
              "canvas.block_types",
              "canvas.session.resolve", "canvas.add", "canvas.pin", "canvas.park", "canvas.size",
              "canvas.recall", "canvas.timeline", "canvas.session.room", "canvas.session.relevance", "canvas.ask",

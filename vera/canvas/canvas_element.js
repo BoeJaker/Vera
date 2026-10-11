@@ -329,6 +329,35 @@
   const _recFallback = {};
   const recState = (el, key) => { const box = el ? (el._recUi = el._recUi || {}) : _recFallback; const k = String(key || '');
     return box[k] || (box[k] = { page: 0, q: '', sort: 'rank', view: 'list', dom: '', ent: '', open: {}, body: {} }); };
+  /* A PANEL'S OWN PAGE (WSU-67, owner 2026-10-11: "ui panels opened on the desk seem to lock up and can't be interacted
+     with"). An item with no `src` drew /ui/panels/<id> - a route that does not exist (404 for every panel, measured) - so
+     the frame was an empty page that took no input. Only the chat page resolved the real address (its listener for
+     vera:canvas:panel-src); a desk opened anywhere else, or restored, kept the dead frame. The canvas now resolves it
+     itself, the way the chat does: the iframe src in the panel's registered html, the alias table, a dedicated
+     /ui/panels/<id> route, then file-name guesses under /ui/panels/file/. Cached per panel; '' when nothing answers. */
+  const PANEL_ALIASES = { 'agents-skills-ontologies': '/ui/panels/agents-skills-ontologies', 'skills-editor': '/ui/panels/file/skills_panel.html',
+    'ontologies-browser': '/ui/panels/file/ontologies_panel.html', 'agents-editor': '/ui/panels/file/agent_panel.html', 'memory-graph': '/ui/panels/file/memory_graph_panel.html',
+    'cap_tracking': '/ui/panels/file/cap_tracking_panel.html', 'workers': '/ui/panels/file/worker_panel.html', 'workers-ollama': '/ui/panels/workers-ollama',
+    'model-routing': '/ui/panels/model-routing', 'chat2': '/chat_panel' };
+  const PANEL_SRC = {}; let PANEL_REG = null;
+  /* the widest a widget card of a short-content form is on the desk (WSU-69): lists, checklists, fields, notices and
+     single figures wrap short; wider was an empty band. Charts, tables, maps, graphs and calendars are not capped. */
+  const DESK_FORM_MAXW = { checklist: 420, list: 440, links: 440, notices: 460, people: 460, kv: 520, pills: 480, string: 460, announcement: 460,
+    counter: 380, hero: 400, ring: 360, radial: 360, dial: 360, gauge: 420, meter: 420, level: 380, glance: 460, numbers: 520, status: 480, stepper: 640, files: 520 };
+  async function panelSrc(id) {
+    id = String(id || ''); if (!id) return ''; if (PANEL_SRC[id] != null) return PANEL_SRC[id];
+    const base = (root._veraBase || '').replace(/\/$/, '');
+    const ok = async (path) => { try { const r = await fetch(base + path, { method: 'HEAD' }); return r.ok; } catch (e) { return false; } };
+    if (!PANEL_REG) PANEL_REG = fetch(base + '/ui/panels', { headers: { Accept: 'application/json' } }).then((r) => r.json()).then((j) => (Array.isArray(j) ? j : (j && j.panels) || [])).catch(() => []);
+    const reg = await PANEL_REG; const p = reg.find((x) => x && (x.id === id || x.label === id)) || null;
+    const m = p && String(p.html || '').match(/<iframe[^>]+src="([^"]+)"/i);
+    let src = m ? m[1] : (PANEL_ALIASES[id] || '');
+    if (!src && await ok('/ui/panels/' + encodeURIComponent(id))) src = '/ui/panels/' + encodeURIComponent(id);
+    if (!src) { const g = [id.replace(/-/g, '_') + '_panel.html', id.replace(/-panel$/, '').replace(/-/g, '_') + '_panel.html', id.replace(/-/g, '_') + '.html', id + '.html'];
+      for (const f of g.filter((x, i) => g.indexOf(x) === i)) { if (await ok('/ui/panels/file/' + f)) { src = '/ui/panels/file/' + f; break; } } }
+    PANEL_SRC[id] = src; return src;
+  }
+
   const BLOCK = {
     /* a document item draws with the reader's renderer (mdx): a research report's tables, numbered lists, quotes and
        figures were pipes and bare lines under the note subset */
@@ -867,7 +896,10 @@
 
     // a whole panel as an item: the panel page in its frame, driven over the one bridge
     panel: (c, size, key, el) => {
-      const id = String(c.panel || c.id || '').trim(); const src = c.src || (id ? '/ui/panels/' + encodeURIComponent(id) : '');
+      const id = String(c.panel || c.id || '').trim();
+      /* the item's own address, else the one resolved for its panel (panelSrc above); while it resolves, a line saying so */
+      const got = id && PANEL_SRC[id] != null ? PANEL_SRC[id] : null; const src = c.src || got || '';
+      if (!c.src && id && got == null && el && el._panelResolve) el._panelResolve(id);
       const q = el && el._pq && el._pq[key];
       /* behind / front live in the panel's own head, always drawn: in the item's footer rail they were hidden until hover
          and, on a panel sent behind, under the other items (owner, 2026-10-07: "i dont see the behind or front buttons") */
@@ -875,7 +907,10 @@
       const layBtns = lay === null ? '' : `<button class="ib${lay === 'behind' ? ' on' : ''}" data-act="layer-behind" title="Behind the desk: the panel fills the free part of the desk, under the other items - press again to put it back among them">behind</button><button class="ib${lay === 'front' ? ' on' : ''}" data-act="layer-front" title="In front: the panel fills the free part of the desk, over the other items (never over the chat) - press again to put it back among them">front</button>`;
       return `<div class="vc-panel" data-w="canvas.panel"><div class="vc-th"><i class="dot on"></i><b>${esc(c.title || c.label || id || 'panel')}</b><span class="mono">${esc(id)} · over the bridge</span><span class="sp"></span>`
         + layBtns + `<button class="ib" data-act="pquery" title="panel.query — what the panel holds">query</button><button class="ib" data-act="pdispatch" title="panel.dispatch — drive it">dispatch</button><button class="ib" data-act="prefresh" title="Reload the panel">refresh</button><button class="ib" data-act="pstand" title="Open it standalone">standalone ↗</button></div>`
-        + (src ? `<div class="vc-live vc-frame" data-live="frame" data-key="${esc(key)}" data-src="${esc(src)}"></div>` : '<div class="vc-dim">no panel id</div>')
+        + (src ? `<div class="vc-live vc-frame" data-live="frame" data-key="${esc(key)}" data-src="${esc(src)}"></div>`
+          : !id ? '<div class="vc-dim">no panel id</div>'
+          : got == null ? `<div class="vc-dim vc-pwait">opening ${esc(c.title || id)}…</div>`
+          : `<div class="vc-dim vc-pwait">${esc(c.title || id)} has no page that can open here.</div>`)
         + `<div class="vc-bridge"${el && el._pdOpen && el._pdOpen[key] ? '' : ' hidden'} data-w="canvas.panel.bridge"><div class="row"><input class="ti" data-f="action" placeholder="action" spellcheck="false"><input class="ti" data-f="payload" placeholder="payload {…}" spellcheck="false"><button class="ib on" data-act="psend">Send</button></div></div>`
         + `<pre class="vc-pre vc-out vc-pq"${q ? '' : ' hidden'}><code>${esc(q ? (q.text || '') : '')}</code></pre></div>`;
     },
@@ -1642,6 +1677,10 @@
   .hidbtn{font:inherit;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);background:none;border:1px solid var(--border,#2a2f37);border-radius:9px;padding:1px 8px;cursor:pointer}
   .hidbtn:hover{color:var(--fg,#dce1e8)}
   .hidpop[hidden]{display:none}
+  :host([chrome="none"]) .addbar{display:none!important}   /* the host draws these controls elsewhere (WSU-72) */
+  .hidpop .chip.rmv{cursor:pointer;border:0;font:inherit}
+  .vc-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:400;display:flex;gap:12px;align-items:center;padding:8px 10px 8px 14px;border-radius:10px;background:var(--bg2,#1c2026);border:1px solid var(--border2,rgba(255,255,255,.14));color:var(--text,#d8dce4);font:12.5px var(--ui,system-ui,sans-serif);box-shadow:0 6px 22px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
+  .vc-toast button{border:1px solid var(--accent,#5a9e8f);background:transparent;color:var(--accent,#5a9e8f);border-radius:6px;padding:3px 10px;font:600 12px var(--ui,system-ui,sans-serif);cursor:pointer}
   .hidpop{position:absolute;right:0;top:24px;z-index:6;background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);border-radius:8px;padding:6px 8px;display:flex;flex-wrap:wrap;gap:4px;max-width:260px;box-shadow:0 4px 14px rgba(0,0,0,.35)}
   .it .sc{font-family:ui-monospace,Consolas,monospace;font-size:8.5px;color:var(--dim,#6b7480);flex:0 0 auto}
   .it-hd{display:flex;align-items:center;gap:6px;padding:5px 8px 4px;cursor:pointer;flex:0 0 auto;min-height:18px}
@@ -1793,6 +1832,8 @@
   .vc-rr-body{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
   .vc-rr-p{display:none;min-width:0;min-height:0;overflow:auto;max-height:60vh}
   .vc-rr-p.on{display:block}
+  .vc-latest{position:sticky;bottom:8px;float:right;margin:-34px 8px 0 0;z-index:3;padding:4px 10px;border-radius:999px;border:1px solid var(--accent,#5a9e8f);background:var(--bg1,#16181d);color:var(--accent,#5a9e8f);font:600 11px var(--ui,system-ui,sans-serif);cursor:pointer;box-shadow:0 2px 10px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
+  .vc-latest:hover{background:color-mix(in srgb,var(--accent,#5a9e8f) 14%,var(--bg1,#16181d))}
   .vc-rr-p > .vc-rbx{max-height:none}
   .vc-rr-doc{font-size:13px;line-height:1.6}
   .vc-rr-live{color:color-mix(in srgb,var(--fg,#dce1e8) 82%,transparent)}
@@ -1809,8 +1850,21 @@
   .vc-rr-src a{color:var(--acc,#5a9e8f);text-decoration:none}.vc-rr-src a:hover{text-decoration:underline}
   .vc-rr-src small{display:block;font-family:var(--mono,monospace);font-size:10px;color:var(--dim,#8b93a1)}
   .vc-rr-ft{font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim,#8b93a1);flex:none}
+  /* WSU-65 (owner 2026-10-11: "the research plan doesn't render into the right hand panel reliably"): beside the report
+     only from 760 px, so a desk card sized narrower showed one pane at a time - the plan (the side pane while it runs)
+     was gone from view. Beside from 560 px now; narrower, the side pane goes under the report rather than away. */
+  @container vcrr (max-width: 559.98px) {
+    .vc-rr.lay-right .vc-rr-body{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1.5fr) minmax(0,1fr);gap:10px}
+    .vc-rr.lay-right .vc-rr-p{display:none}
+    .vc-rr.lay-right .vc-rr-p.main,.vc-rr.lay-right .vc-rr-p.side{display:block}
+    .vc-rr.lay-right .vc-rr-p.main{grid-row:1}
+    .vc-rr.lay-right .vc-rr-p.side{grid-row:2;border-top:1px solid var(--border,#2a2f37);padding-top:10px}
+    .vc-rr.lay-right .vc-rr-tab[data-rr-tab="report"]{display:none}
+    .vc-rr.lay-right .vc-rr-tab.on:not(.side){color:var(--dim,#8b93a1);border-bottom-color:transparent}
+    .vc-rr.lay-right .vc-rr-tab.side{color:var(--fg,#dce1e8);border-bottom-color:var(--acc,#5a9e8f)}
+  }
   /* wide: the report beside one other pane; its own tab is not needed there */
-  @container vcrr (min-width: 760px) {
+  @container vcrr (min-width: 560px) {
     .vc-rr-body{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(250px,1fr);gap:14px}
     .vc-rr-p{display:none}
     .vc-rr-p.main,.vc-rr-p.side{display:block}
@@ -2240,6 +2294,11 @@
   :host(:not([data-tier="full"])) .it:is(:focus-within,.maxed) .vc-rbx > .vc-rbx-tools + .vc-rbx-facets{margin-top:38px}  :host(:not([data-tier="full"])) .it :is(.vc-rbx-foot,.vc-rr-tabs){opacity:0;transition:opacity .15s}
   :host(:not([data-tier="full"])) .it:is(:hover,.hov,:focus-within,.maxed) :is(.vc-rbx-foot,.vc-rr-tabs){opacity:1}
   :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:not(.desk-chip) > .hda{opacity:0}
+  /* THE TITLE HAS THE HEADER WHILE THE CONTROLS ARE HIDDEN (WSU-69, the owner's desk 2026-10-11: titles cut to "C…", "N…"):
+     the header kept 168-250 px for controls that are invisible until hover in these tiers. At rest the title takes the
+     header; on hover the controls come in over its end on their own ground, faded at the left - nothing reflows. */
+  :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:not(.desk-chip):not(.ownhead) > .it-hd{padding-right:12px!important}
+  :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:not(.desk-chip) > .hda{padding-left:22px;background:linear-gradient(to right, transparent, var(--bg1,#16181d) 20px);border-radius:0 6px 0 0}
   :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .hda{opacity:1}
   /* ...and a drawing's own chrome (a graph's caption of counts, its view menu, explode's caption with its enlarge) shows
      when the drawing is pointed at; a combined card's tabs when the card is */
@@ -3063,7 +3122,7 @@
       const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!st) return false;
       let c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)); if (!c) return false;
       /* a tab behind the front of a combined card (see _deskGroups) comes to the front to be shown */
-      if (c.classList.contains('cmp-behind')) { const m = this._cmpGet(); m[String(key)] = Date.now(); this._cmpSet(m); this._placeNow();
+      if (c.classList.contains('cmp-behind')) { const m = this._cmpGet(); m[String(key)] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[String(key)] = Date.now(); this._placeNow();
         c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)) || c; }
       c.classList.remove('desk-flash'); void c.offsetWidth; c.classList.add('desk-flash');
       const z = c.style.zIndex; c.style.zIndex = '180';
@@ -3271,7 +3330,18 @@
           const g = list.slice(i, i + 8); if (g.length < 2) continue;
           /* a member never seen in a group before is the newest: it comes to the front */
           g.forEach((c) => { if (act[c.dataset.key] == null) { act[c.dataset.key] = now; stamped = true; } });
-          const front = g.reduce((a, c) => ((act[c.dataset.key] || 0) >= (act[a.dataset.key] || 0) ? c : a), g[0]);
+          /* THE TAB THE CONVERSATION IS ABOUT IS IN FRONT (WSU-71, owner 2026-10-11: "the actual bitcoin price chart which
+             should have stayed open did not, and closed. The other unrelated chart stayed open"): two charts on one subject
+             are one card, and the card stays in when any tab is in the topic - but the front was only the last one
+             touched, so the card stayed showing the unrelated chart with the bitcoin one behind it. The front is now the
+             member the turn's topic ranks best; a tab the person picked after the topic was set still wins. */
+          const T = this._topic; let front = g.reduce((a, c) => ((act[c.dataset.key] || 0) >= (act[a.dataset.key] || 0) ? c : a), g[0]);
+          if (T && T.keys && T.keys.size) {
+            const tRank = (c) => { const i = T.order.indexOf(c.dataset.key || ''); return i >= 0 ? i : (T.mid && (c.dataset.mid === T.mid || c.dataset.from === T.mid) ? T.order.length : Infinity); };
+            const inT = g.filter((c) => tRank(c) !== Infinity).sort((a, b) => tRank(a) - tRank(b));
+            const pickedSince = ((this._cmpPick || {})[front.dataset.key] || 0) > (this._topicAt || 0);   /* the person clicked its tab after the topic moved */
+            if (inT.length && !pickedSince) front = inT[0];
+          }
           res.membersOf.set(front, g); res.groups.push(g.map((c) => c.dataset.key));
           g.forEach((c) => { if (c !== front) { res.behind.add(c); c.classList.add('cmp-behind'); } });
           front.classList.add('cmp-front'); front.dataset.cmpN = String(g.length);
@@ -3309,7 +3379,39 @@
             const cap = c.querySelector('.vc-fig figcaption'); const want = Math.max(96, Math.round(c.offsetHeight - bd0.clientHeight + im.naturalHeight * s + (cap ? cap.offsetHeight + 6 : 0) + 12));
             if (want < c.offsetHeight - 8 && (nat[key] == null || Math.abs(nat[key] - want) > 16)) { nat[key] = want; changed = true; } }
           return; }
+        /* A WIDGET IS NEVER SHORTER THAN ITS FACE (WSU-70, owner 2026-10-11: "some elements are not tall enough like metric
+           value change"): a widget fills its card, so it was never measured - and a card the desk made short clipped the
+           figure's lower lines (its change, its trace). The widget's own body says how much more it needs; the card gets
+           that as its least height (kept in _minH), and only grows, never shrinks below it, while that widget is there. */
+        /* only the short-content forms (DESK_FORM_MAXW): a table, a log or a long list scrolls in its card by design */
+        const wfm = c.dataset.type === 'widget' ? (() => { const cc = this._contentOf(key) || {}; return String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, ''); })() : '';
+        if (wfm && DESK_FORM_MAXW[wfm] && wfm !== 'files' && wfm !== 'list') { const lv = this._live && this._live[key], wi = lv && lv.firstChild;
+          const rt = wi && wi.shadowRoot && wi.shadowRoot.querySelector('.vw-body, .vw-root');
+          if (rt && rt.clientHeight > 0) { const more = rt.scrollHeight - rt.clientHeight; const mh = this._minH || (this._minH = {});
+            if (more > 6) { const want = c.offsetHeight + more + 8; if (!mh[key] || want > mh[key] + 4) { mh[key] = want; changed = true; } } } }
         if (FILLS.has(c.dataset.type || '') || (c.dataset.type !== 'diagram' && c.querySelector('.vc-live'))) { if (nat[key] != null) { delete nat[key]; changed = true; } return; }
+        /* AS WIDE AS WHAT IT HOLDS (WSU-69, the owner's session 2026-10-11: a checklist 775 px wide with 285 px of text, a note
+           420 with 51, the "Metric · Value · Change" table 775 with 157): a text-like card is measured for how far right
+           its content reaches and is no wider than that and its header's controls need (never under 240 px). When its
+           content fills the width it was given (it grew, or wraps), the measure is let go so it can widen again. */
+        if (/^(note|markdown|table|kv|entities)$/.test(c.dataset.type || '')) { const bdw = c.querySelector(':scope > .it-bd');
+          if (bdw && bdw.clientWidth > 0) { const B0 = bdw.getBoundingClientRect(); let right = 0;
+            bdw.querySelectorAll('*').forEach((e) => { if (e.childElementCount && !/^(TD|TH|LI|BUTTON|INPUT)$/.test(e.tagName)) return; const rg = document.createRange(); rg.selectNodeContents(e); [...rg.getClientRects()].forEach((q) => { if (q.width) right = Math.max(right, q.right - B0.left); }); });
+            const Zw = c.offsetWidth ? (c.getBoundingClientRect().width / c.offsetWidth) || 1 : 1; const used = Math.round(right / Zw);
+            const nw = this._natW || (this._natW = {});
+            if (used >= bdw.clientWidth - 6) { if (nw[key] != null) { delete nw[key]; changed = true; } }
+            /* ...and never narrower than its header needs: the whole title beside the controls (a 240 px card cut every
+               title to its first letter, "M…", "C…" - measured on the owner's desk) */
+            else { const hd = c.querySelector(':scope > .it-hd'), tt = hd && hd.querySelector(':scope > .t');
+              const ctl = hd ? [...hd.children].filter((x) => x !== tt && getComputedStyle(x).display !== 'none').reduce((s, x) => s + x.offsetWidth, 0) : 0;
+              /* the header's padding is where the controls sit (absolutely placed over it): counted, or the floor left the
+                 title no room in the tier that shows them */
+              const hcs = hd ? getComputedStyle(hd) : null; const pad = hcs ? (parseFloat(hcs.paddingLeft) || 0) + (parseFloat(hcs.paddingRight) || 0) : 0;
+              /* the title's TEXT width (a range over it): the title box stretches to fill the header, so its scrollWidth is
+                 the room it was given, not what it needs */
+              let tw = 0; if (tt) { const rg = document.createRange(); rg.selectNodeContents(tt); tw = Math.ceil([...rg.getClientRects()].reduce((s, q) => s + q.width, 0)); if (tt.scrollWidth > tt.clientWidth) tw = Math.max(tw, tt.scrollWidth); }
+              const head = tt ? Math.min(600, tw + ctl + pad + 16) : 0;
+              const want = Math.max(240, head, used + (c.offsetWidth - bdw.clientWidth) + 36); if (want < c.offsetWidth - 24 && (nw[key] == null || Math.abs(nw[key] - want) > 16)) { nw[key] = want; changed = true; } } } }
         const bd = c.querySelector(':scope > .it-bd'); if (!bd || !bd.clientHeight) return;
         const B = bd.getBoundingClientRect(); let low = B.top;
         /* how far the content reaches: its leaves (text runs, images, controls), not the boxes that stretch to fill */
@@ -3322,6 +3424,9 @@
            dropping it let the card grow back and be measured again, round and round */
         if (over && nat[key] != null) { const more = bd.scrollHeight - bd.clientHeight;
           if (more > 160) delete nat[key]; else nat[key] = c.offsetHeight + more + 6; changed = true; return; }
+        /* WSU-70: a card a little short for what it holds (a five-row table, a short list) was left clipped - only a card
+           already fitted got its overflow added. A short overflow is now its least height too; a long one still scrolls. */
+        if (over && nat[key] == null) { const more = bd.scrollHeight - bd.clientHeight; if (more > 4 && more <= 240) { const mh = this._minH || (this._minH = {}); const need = c.offsetHeight + more + 6; if (!mh[key] || need > mh[key] + 4) { mh[key] = need; nat[key] = need; changed = true; } } return; }
         if (over || want >= c.offsetHeight - 8) return;
         if (nat[key] == null || Math.abs(nat[key] - want) > 16) { nat[key] = want; changed = true; }
       });
@@ -3455,21 +3560,32 @@
            not only the card's data-pw, which a compact card's markup leaves out, so a resized desk card lost its size
            on the redraw that followed the resize */
         const live = this._rz && this._rz.el === c ? this._rz : null;
-        const pw = (live ? live.w : 0) || this._pw[key] || parseInt(c.dataset.pw || '0', 10) || 0;
-        const ph = (live ? live.h : 0) || this._px[key] || 0;
+        /* ...or, released back to the arrangement with its size (WSU-74, {w, h, free}), that size - after a reload too */
+        const fr = up[key] && up[key].free && up[key].w > 0 ? up[key] : null;
+        const pw = (live ? live.w : 0) || this._pw[key] || (fr ? fr.w : 0) || parseInt(c.dataset.pw || '0', 10) || 0;
+        const ph = (live ? live.h : 0) || this._px[key] || (fr ? fr.h : 0) || 0;
         /* dropped in pill territory (deskPos.chip): the person's earlier width does not hold it big there */
         const user = pw > 0 && !(up[key] && up[key].chip) ? { w: pw, h: ph || Math.round(pw * 0.66) } : null;
         const so = { size: user, pinned: !!user && c.classList.contains('pinned'), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
         /* a card is no taller than what it holds (see _deskFit): its measured height caps its face and its growth */
-        const nat = (this._natH || {})[key];
+        const nat = user ? null : (this._natH || {})[key];   /* a size the person gave wins over the content fit (WSU-74) */
         /* ...and no wider than its kind uses (owner, 2026-10-11: "some desk items like the 'mentioned' take up too much width
            for their content"): names, a note, fields, a page, what ran - their content wraps short; a wide card of them was
            a wide empty band */
-        const nw = ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || ''];
-        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.min(H - 8, po.size.h, nat || Infinity), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, stay: !!userAt(key) };
+        /* ...and a widget by its form (WSU-69, owner 2026-10-11: "some of the elements are still too wide, like the notes
+           checklist"): lists, checklists, fields and single figures wrap short too; charts, tables and maps keep the room */
+        const wf = c.dataset.type === 'widget' ? (() => { const cc = this._contentOf(key) || {}; return String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, ''); })() : '';
+        const nw0 = ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || '']
+          || DESK_FORM_MAXW[wf];
+        /* ...and a text-like card no wider than its content measured (_deskFit, WSU-69) */
+        const nwm = user ? null : (this._natW || {})[key]; const nw = nwm ? Math.min(nw0 || Infinity, nwm) : (user ? null : nw0);
+        /* ...and never shorter than its own face needs (WSU-70): a widget clipped in its card is measured (_deskFit) */
+        const mh = (this._minH || {})[key];
+        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, minH: mh || undefined, stay: !!userAt(key), own: !!user /* a size the person gave: kept while it moves, never grown (WSU-74) */ };
       });
-      D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h, (s.face === 'chip' || s.face === 'icon') ? Infinity : (it.maxH || Infinity)) }; }, { W: W, H: H });
+      D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); const chip = s.face === 'chip' || s.face === 'icon';
+        return { w: Math.min(W - 16, s.w, chip ? Infinity : (it.maxW || Infinity)), h: Math.max(chip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h, chip ? Infinity : (it.maxH || Infinity))) }; }, { W: W, H: H });
       /* ...up the desk into the room above them (D.settle), the person's places, locks and sizes staying where they are... */
       if (typeof D.settle === 'function' && this.getAttribute('desk-settle') !== 'off') {
         D.settle(plan, R, { W: W, H: H }, { gap: 12 });
@@ -3479,7 +3595,7 @@
       /* ...then every card takes the free desk round it (D.grow): a chip stays a chip, and what the person sized, locked
          or is sizing stays as it is. Off with the canvas's desk-fill="off". */
       if (typeof D.grow === 'function' && this.getAttribute('desk-fill') !== 'off') {
-        plan.forEach((it) => { if (it.fixed || it.keepSize) { it.chip = it.h <= 40; return; }
+        plan.forEach((it) => { if (it.fixed || it.keepSize || it.own) { it.chip = it.h <= 40; return; }
           const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); it.face0 = s0.face; it.chip = s0.face === 'chip' || s0.face === 'icon'; });
         D.grow(plan, R, { W: W, H: H }, { maxW: W - 16, maxH: H - 8 });
       }
@@ -3489,11 +3605,14 @@
           /* grown into the free desk: that size, its face from it (a card grown past a full card's size is a full card) */
           : it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) })
           : it.sizing ? { w: it.w, h: it.h, face: c.dataset.deskFace || 'max', nd: 0 }
+          /* the person's size, the card free to move (WSU-74): exactly that size wherever the desk puts it */
+          : it.own && !it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h) })
           /* moved where only its present size fits: it keeps that size and its face there, or it would grow over its neighbours */
           : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: Math.min(it.h, it.h > 40 && it.maxH ? it.maxH : Infinity), face: it.face0 || 'chip' })
           : it.maxH ? (() => { const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); if (s0.face === 'chip' || s0.face === 'icon') return s0; const hh = Math.min(s0.h, it.maxH); return Object.assign({}, s0, { h: hh, face: D.faceOf(s0.w, hh) === 'chip' ? 'card' : D.faceOf(s0.w, hh) }); })()
           : D.sizeAt(R, it.x, it.y, it.so, desk);
-        const w = Math.min(W - 16, s.w, (s.face === 'chip' || s.face === 'icon') ? Infinity : (it.maxW || Infinity)), h = Math.min(H - 8, s.h);
+        const isChip = s.face === 'chip' || s.face === 'icon';
+        const w = Math.min(W - 16, s.w, isChip ? Infinity : (it.maxW || Infinity)), h = Math.max(isChip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h));
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
         c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
         c.classList.toggle('desk-chip', s.face === 'chip' || s.face === 'icon');
@@ -3806,6 +3925,7 @@
       const sig = (mid || '') + '|' + (ks ? ks.join(',') : '-');
       if (sig === this._topicSig) return false; this._topicSig = sig;
       this._topic = ks ? { keys: new Set(ks), order: ks.slice().sort((a, b) => val(b) - val(a)), mid: mid || '' } : null;
+      this._topicAt = Date.now();   /* a combined card's tab picked after this wins over the topic's choice (WSU-71) */
       if (this.deskAlign()) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
       try { this.dispatchEvent(new CustomEvent('vera:canvas:topic', { bubbles: true, detail: { mid: mid || '', keys: ks || [] } })); } catch (e) { /* no listener */ }
       return true;
@@ -4033,6 +4153,11 @@
       html += `<div class="addbar" data-w="canvas.add"><slot name="banner-start"></slot><span class="lbl">Add</span>${ADD_KINDS.map(k => `<button class="add" data-act="add" data-kind="${k.n}" title="Add a ${k.n} to the session canvas (a ${k.kind} item)"><b>${esc(k.ik)}</b>${k.n}</button>`).join('')}` +
         shelf('parkpop', 'parked', 'Parked items — shelved, not gone; a click brings one back into view', stage ? parked : []) +
         shelf('hid', 'hidden', 'Hidden items — a click brings one back', hidden) +
+        /* RECENTLY REMOVED (WSU-66, owner 2026-10-11: "removed canvas element should be restorable"): what canvas.remove and
+           canvas.clear took is kept on the document (doc.removed, the last 30); a click puts one back as it was */
+        (() => { const rem = ((doc && doc.removed) || []).filter((r) => r && r.key && !keyed.some((b) => String(b.key) === String(r.key))).slice().reverse().slice(0, 12);
+          return rem.length ? `<span class="hidwrap"><button class="hidbtn" data-act="rmvpop" title="Recently removed — a click puts one back">removed · ${rem.length} ▾</button><div class="hidpop" hidden>${rem.map((r) => { const c = (r.block && r.block.content) || {}; const t = c.title || c.name || String(r.key).split(':').slice(1).join(':') || (r.block && r.block.type) || r.key;
+            return `<button class="chip rmv" data-act="restore" data-rkey="${esc(r.key)}" title="Put it back on the canvas"><i></i>↺ ${esc(String(t).slice(0, 48))}</button>`; }).join('')}</div></span>` : ''; })() +
         /* START AGAIN. A working area you cannot empty fills up until you stop trusting it. Pinned items are what
            you said to keep, so they are kept; a second click within the beat clears those too. */
         (keyed.length ? `<button class="hidbtn" data-act="clear" title="Clear the canvas — pinned items stay; click again to clear those too">clear</button>` : '') +
@@ -4073,10 +4198,16 @@
            scrolling part of every item back at its top. What each one was doing is read first - at its end (or never
            scrolled), or held somewhere by the reader - and given back: the first follows the new end, the second keeps
            its place. */
+        /* WSU-64 (owner 2026-10-11: "as the text streams in the most recent content should stay in focus - at the moment
+           scroll gets stuck to the top and you can't scroll down as input streams in"): the research element's panes
+           (.vc-rr-p) scroll on their own and were not in this list, so every streamed revision put them back at the top
+           under the reader's wheel. They are kept like the others, and any part marked data-keep-scroll is too. A part
+           the reader has scrolled up in keeps its place while it grows, with a "latest" chip that goes back to the end. */
+        const SCROLLERS = '.it-bd, pre, .vc-out, .vc-rr-p, [data-keep-scroll]';
         const sc = {};
         layers.items.querySelectorAll('.it[data-key]').forEach((it) => {
-          const k = it.dataset.key; const parts = it.querySelectorAll('.it-bd, pre, .vc-out');
-          parts.forEach((el, j) => { if (el.scrollHeight > el.clientHeight + 2) sc[k + '\u0000' + j] = { top: el.scrollTop, end: el.scrollHeight - el.scrollTop - el.clientHeight < 24 }; else sc[k + '\u0000' + j] = { top: 0, end: true }; });
+          const k = it.dataset.key; const parts = it.querySelectorAll(SCROLLERS);
+          parts.forEach((el, j) => { if (el.scrollHeight > el.clientHeight + 2) sc[k + '\u0000' + j] = { top: el.scrollTop, end: el.scrollHeight - el.scrollTop - el.clientHeight < 24, h: el.scrollHeight }; else sc[k + '\u0000' + j] = { top: 0, end: true, h: el.scrollHeight }; });
         });
         this._html = mark;
         layers.items.innerHTML = html;
@@ -4098,9 +4229,14 @@
         }
         if (!stage) body.scrollTop = keepTop;
         layers.items.querySelectorAll('.it[data-key]').forEach((it) => {
-          const k = it.dataset.key; it.querySelectorAll('.it-bd, pre, .vc-out').forEach((el, j) => {
+          const k = it.dataset.key; it.querySelectorAll(SCROLLERS).forEach((el, j) => {
             const s = sc[k + '\u0000' + j]; if (!s || el.scrollHeight <= el.clientHeight + 2) return;
-            el.scrollTop = s.end ? el.scrollHeight : s.top; });
+            el.scrollTop = s.end ? el.scrollHeight : s.top;
+            /* held above a growing end: the chip says there is more below and takes the reader there (it then follows) */
+            if (!s.end && el.scrollHeight > s.h + 4 && el.matches('.vc-rr-p, [data-keep-scroll], pre, .vc-out')) {
+              const b = document.createElement('button'); b.className = 'vc-latest'; b.type = 'button'; b.textContent = '↓ latest'; b.title = 'Go to the newest text and follow it';
+              b.addEventListener('click', (e) => { e.stopPropagation(); el.scrollTop = el.scrollHeight; b.remove(); });
+              el.appendChild(b); } });
         });
       }
       this._bind(body);
@@ -4265,7 +4401,9 @@
         const d = this._dg; if (!d) return;
         const dx = (ev.clientX - d.x0) / d.Z, dy = (ev.clientY - d.y0) / d.Z;
         if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
-        if (!d.moved) { d.moved = true; d.el.classList.add('desk-dragging'); d.el.style.zIndex = String(root.VeraDesk ? root.VeraDesk.stackOrder(0, { dragging: true }) : 200); }
+        if (!d.moved) { d.moved = true; d.el.classList.add('desk-dragging'); d.el.style.zIndex = String(root.VeraDesk ? root.VeraDesk.stackOrder(0, { dragging: true }) : 200);
+          /* a pill opened by hover is let go as it starts moving - the drag sizes it from here on (WSU-68) */
+          clearTimeout(this._pillT); if (d.el._cpw) { d.el._cpw = null; d.el.classList.remove('chip-peek', 'pill-open'); } }
         ev.preventDefault();
         const g = this._deskGeo, D = root.VeraDesk; if (!g || !D) return;
         const cx = Math.max(10, Math.min(g.W - 10, d.cx0 + dx)), cy = Math.max(10, Math.min(g.H - 10, d.cy0 + dy));
@@ -4305,7 +4443,17 @@
         const g = this._deskGeo;
         if (g && d.cx != null) {
           if (asChip) this._deskPosSet(d.key, { chip: true });
-          else { this._deskPosSet(d.key, Object.assign({ fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) }, d.own ? { w: d.own.w, h: d.own.h, face: d.own.face } : {}));
+          else {
+            /* let go in a gap: fitted into it (WSU-73) - no larger than the gap, no larger than the card was, kept inside
+               it round the drop point; a gap too small to hold a usable card leaves the drop as before */
+            const gap = this._gapAt(d.cx, d.cy, d.key);
+            if (gap && gap.w >= 200 && gap.h >= 90) {
+              const w = Math.round(Math.min(d.el.offsetWidth, gap.w - 12)), h = Math.round(Math.min(d.el.offsetHeight, gap.h - 12));
+              const cx = Math.max(gap.x + 6 + w / 2, Math.min(gap.x + gap.w - 6 - w / 2, d.cx)), cy = Math.max(gap.y + 6 + h / 2, Math.min(gap.y + gap.h - 6 - h / 2, d.cy));
+              const face = d.el.dataset.deskFace && !/chip|icon/.test(d.el.dataset.deskFace) ? d.el.dataset.deskFace : 'card';
+              this._deskPosSet(d.key, { fx: +(cx / g.W).toFixed(4), fy: +(cy / g.H).toFixed(4), w, h, face });
+            } else
+            this._deskPosSet(d.key, Object.assign({ fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) }, d.own ? { w: d.own.w, h: d.own.h, face: d.own.face } : {}));
             if (this._pillGet()[d.key]) this._pillSet(d.key, false); }
         }
         this._placeNow(); });
@@ -4332,7 +4480,16 @@
              towards the border it came back smaller, or a chip, and the rest were placed for a size it did not have. Its
              rectangle is the person's now: kept exactly, and everything else goes round it. */
           const face = (r.el.dataset.deskFace && r.el.dataset.deskFace !== 'chip' && r.el.dataset.deskFace !== 'icon') ? r.el.dataset.deskFace : 'max';
-          this._deskPosSet(key, { fx: +(Math.max(0, Math.min(g.W, cx)) / g.W).toFixed(4), fy: +(Math.max(0, Math.min(g.H, cy)) / g.H).toFixed(4), w: Math.round(r.w), h: Math.round(r.h), face });
+          /* WHAT A RESIZE DOES (WSU-74, owner 2026-10-11: "if i change the size of an element ... it also stops moving
+             automatically - this is fine but there needs to be a way to restore it ... perhaps it could become pinned or
+             locked on resize - configurable in the settings"): "pin" (the default, as before) keeps its place and size;
+             "move" keeps the size only - it still moves out of the way; "lock" pins and locks it. */
+          const mode = this.deskResizeMode();
+          if (mode === 'move') this._deskPosSet(key, { w: Math.round(r.w), h: Math.round(r.h), face, free: true });
+          else {
+            this._deskPosSet(key, { fx: +(Math.max(0, Math.min(g.W, cx)) / g.W).toFixed(4), fy: +(Math.max(0, Math.min(g.H, cy)) / g.H).toFixed(4), w: Math.round(r.w), h: Math.round(r.h), face });
+            if (mode === 'lock' && !this._lockGet()[key] && typeof this.toggleLock === 'function') { try { this.toggleLock(key); } catch (e) { /* stays pinned */ } }
+          }
         }
         /* ...and onto the card NOW: the placer reads the card's data-pw, which only a redraw rewrites - a drag that kept
            the size class placed the card at the width of the drag before and it snapped back (owner, 2026-10-04: "i
@@ -4377,12 +4534,17 @@
         if (s.open) { try { this._liveLayout(); } catch (e) { /* optional */ } }
         requestAnimationFrame(() => { it.style.transition = ''; }); return; }
       if (it._cpw || !it.classList.contains('desk-chip')) return;
+      /* NOT WHILE IT IS BEING CARRIED (WSU-68, owner 2026-10-11: "some of the elements can't be fully dragged to the far
+         edge ... they get so far and turn into a pill but can't be dragged all the way - seems a bit random"): a card that
+         became a pill under the hand is hovered, and a pause of 260 ms opened it again as a 460 x 340 card kept inside the
+         desk - pulled back from the edge it was being carried to. Random because it took a pause. */
+      if (it.classList.contains('desk-dragging') || (this._dg && this._dg.moved)) return;
       /* A PILL OPENS UNDER THE POINTER (owner, 2026-10-11: "when a desk item is minimised to a pill and the user mouses over
          it it should expand - not for the code and mentioned desk items"): the title widening below only ran when a title
          was cut off, and "Mentioned" or "python · scan" fit. After a short pause the pill opens as a card - its content,
          about 460 x 340, over its neighbours and kept on the desk - and goes back to a pill when the pointer leaves. */
       const key = it.dataset.key; clearTimeout(this._pillT);
-      this._pillT = setTimeout(() => { if (this._hovKey !== key || (it._cpw && it._cpw.open) || !it.isConnected) return;
+      this._pillT = setTimeout(() => { if (this._hovKey !== key || (it._cpw && it._cpw.open) || !it.isConnected || it.classList.contains('desk-dragging') || (this._dg && this._dg.moved)) return;
         /* the title widening (below) ran first: undone, the card opens in its place */
         if (it._cpw) { const w0 = it._cpw; it._cpw = null; it.classList.remove('chip-peek'); it.style.setProperty('width', w0.w, 'important'); it.style.left = w0.l; it.style.zIndex = w0.z; if (w0.icon) it.classList.add('desk-icon'); }
         if (!it.classList.contains('desk-chip')) return;
@@ -4582,7 +4744,7 @@
       if (act === 'pill') { this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
       if (act === 'cmptab' || act === 'cmpsep' || act === 'cmpjoin') {
-        if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); }
+        if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now(); }
         else this._sepSet(key, act === 'cmpsep');
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
@@ -4630,7 +4792,11 @@
       }
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
-      if (act === 'remove') return this.call('canvas.remove', this._ref(key));
+      if (act === 'remove') {
+        /* removed, with Undo for a few seconds (WSU-66); the removed shelf keeps it after that */
+        const b0 = this._blockOf(key), c0 = (b0 && b0.content) || {}, name = c0.title || c0.name || String(key).split(':').slice(1).join(':') || 'item';
+        return Promise.resolve(this.call('canvas.remove', this._ref(key))).then((r) => { if (b0 && b0.key && !(r && r.ok === false)) this._undoToast('Removed ' + name, () => this.call('canvas.restore', { key: String(b0.key) })); return r; });
+      }
       if (act === 'size') { const i = ITEM_SIZES.indexOf(it.dataset.size); delete this._px[key]; delete this._pw[key]; return this._setSize(key, ITEM_SIZES[(i + 1) % ITEM_SIZES.length]); }
       if (act === 'up' || act === 'down') {   // a plain canvas keeps the document's order: canvas.move by block id
         const b = this._blockOf(key); if (!b) return; const bl = ((this._doc && this._doc.blocks) || []).filter(Boolean).slice().sort((x, y) => ((x.layout && x.layout.order) || 0) - ((y.layout && y.layout.order) || 0));
@@ -4640,15 +4806,18 @@
       if (act === 'fold') return this._setFold(key, !(it && it.classList.contains('ufold')));
       if (act === 'open') return this._toggleOpen(key);
       if (act === 'max') return this._toggleMax(key);
-      if (act === 'desk-auto') { this._deskPosSet(key, null); return this._placeNow(); }
+      /* back to the arrangement, KEEPING THE SIZE the person gave it (WSU-74): its place is let go, it moves out of the way
+         again; its width and height stay (kept in the entry, so a reload keeps them too) */
+      if (act === 'desk-auto') { const u = this._deskPosGet()[key]; this._deskPosSet(key, u && u.w > 0 && u.h > 0 ? { w: u.w, h: u.h, face: u.face, free: true } : null); return this._placeNow(); }
       if (act === 'layer-behind' || act === 'layer-front') return this.setLayer(key, this._layer[key] === act.slice(6) ? '' : act.slice(6));
       if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026'; return this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }); }
       // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
       // these are the shelves those items went to, so they carry their own act rather than sharing one.
-      if (act === 'hid' || act === 'parkpop') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
+      if (act === 'hid' || act === 'parkpop' || act === 'rmvpop') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
+      if (act === 'restore') { const rk = btn.dataset.rkey; if (rk) return this.call('canvas.restore', { key: rk }); return; }
       /* clear: the first press keeps what you pinned and says so; a second press within a few seconds takes those
-         too. No dialog — the shelf is not where a confirmation belongs, and every item it removes is recoverable
-         from the canvas's own timeline. */
+         too. No dialog — the shelf is not where a confirmation belongs, and every item it removes can be put back
+         from the "removed" shelf (canvas.restore; the document keeps the last 30). */
       if (act === 'clear') {
         const pinnedKeys = ((this._doc && this._doc.blocks) || []).filter((b) => b && b.key && b.state === 'pinned').map((b) => String(b.key));
         const again = this._clearAt && (Date.now() - this._clearAt) < 4000;
@@ -5549,6 +5718,75 @@
       this._open.add(nk);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key: nk, kind: 'widget', add: k.n, form } })); } catch (e) {}
       return this.call('canvas.add', args);
+    }
+    /* THE CANVAS'S CONTROLS FROM OUTSIDE IT (WSU-72, owner 2026-10-11: "id like the session canvas controls along the top to
+       be moved to the chat lhm to give the session canvas full height and a more minimalist look"). With chrome="none" the
+       add bar is not drawn; the host draws the same controls elsewhere (the chat's LHM) and drives them through these:
+       the kinds to add (an anchor element places the kind's picker), the shelves, bringing an item back, restoring a
+       removed one, and clearing. Each does exactly what the add bar's own button did. */
+    kinds() { return ADD_KINDS.map((k) => ({ n: k.n, ik: k.ik, kind: k.kind })); }
+    /* THE FREE AREA UNDER A POINT (WSU-73, owner 2026-10-11: "elements don't always pack well and can leave big gaps even if
+       i try to drag elements into the gap"): a card let go in a gap kept the size its distance from the chat gave it, larger
+       than the gap, so the separation pushed it back out. The largest empty rectangle round the drop point (the other open
+       cards' boxes, on a 16 px grid; pills and the dragged card do not count) - the card is fitted into it. */
+    _gapAt(cx, cy, except) {
+      const g = this._deskGeo; const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!g || !st) return null;
+      const G = 16, cols = Math.ceil(g.W / G), rows = Math.ceil(g.H / G);
+      const occ = Array.from({ length: rows }, () => new Uint8Array(cols));
+      st.querySelectorAll('.it[data-key]').forEach((c) => { if (c.dataset.key === except || c.classList.contains('desk-chip') || getComputedStyle(c).display === 'none') return;
+        const l = parseFloat(c.style.left) || 0, t = parseFloat(c.style.top) || 0, w = c.offsetWidth, h = c.offsetHeight;
+        for (let j = Math.max(0, Math.floor((t - 6) / G)); j < Math.min(rows, Math.ceil((t + h + 6) / G)); j++) for (let i = Math.max(0, Math.floor((l - 6) / G)); i < Math.min(cols, Math.ceil((l + w + 6) / G)); i++) occ[j][i] = 1; });
+      const pi = Math.max(0, Math.min(cols - 1, Math.floor(cx / G))), pj = Math.max(0, Math.min(rows - 1, Math.floor(cy / G)));
+      if (occ[pj][pi]) return null;
+      /* grow a rectangle from the point: widen and heighten while the cells stay free, keeping the best area */
+      let best = null;
+      for (let top = pj; top >= Math.max(0, pj - 40) && !occ[top][pi]; top--) for (let bot = pj; bot < Math.min(rows, pj + 41) && !occ[bot][pi]; bot++) {
+        let L = pi, R = pi; const free = (i) => { for (let j = top; j <= bot; j++) if (occ[j][i]) return false; return true; };
+        while (L > 0 && free(L - 1)) L--; while (R < cols - 1 && free(R + 1)) R++;
+        const area = (R - L + 1) * (bot - top + 1); if (!best || area > best.area) best = { x: L * G, y: top * G, w: (R - L + 1) * G, h: (bot - top + 1) * G, area }; }
+      return best;
+    }
+    /* what a resize does on the desk (WSU-74): the desk-resize attribute, else this browser's choice, else "pin" */
+    deskResizeMode() { let m = this.getAttribute('desk-resize') || ''; if (!m) { try { m = localStorage.getItem('vera:canvas:deskresize') || ''; } catch (e) { m = ''; } }
+      return m === 'move' || m === 'lock' ? m : 'pin'; }
+    setDeskResizeMode(m) { const v = m === 'move' || m === 'lock' ? m : 'pin'; try { localStorage.setItem('vera:canvas:deskresize', v); } catch (e) { /* this page only */ } this.setAttribute('desk-resize', v); return v; }
+    addKind(n, anchor) {
+      const k = ADD_KINDS.find((x) => x.n === n); if (!k) return false; const btn = anchor || this;
+      if (btn.dataset && !btn.dataset.kind) btn.dataset.kind = n;
+      if (k.hosts) return this._hostPick(btn);
+      if (k.pick) return this._panelPick(btn);
+      if (k.menu) return this._noteMenu(btn, k);
+      if (k.sheet) return this._widgetSurface() ? this._widgetPick(btn, k) : this._sheetless(btn, k);
+      return this._listed(btn, k);
+    }
+    shelves() {
+      const doc = this._doc || {}; const blocks = (doc.blocks || []).filter((b) => b && b.key);
+      const name = (b) => { const c = b.content || {}; return c.title || c.name || c.filename || String(b.key).split(':').slice(1).join(':') || b.type; };
+      const of = (st) => blocks.filter((b) => (b.state || 'now') === st).map((b) => ({ key: String(b.key), title: name(b), type: b.type }));
+      const on = new Set(blocks.map((b) => String(b.key)));
+      const removed = (doc.removed || []).filter((r) => r && r.key && !on.has(String(r.key))).slice().reverse().slice(0, 12)
+        .map((r) => ({ key: String(r.key), title: name(Object.assign({ key: r.key }, r.block || {})), type: (r.block && r.block.type) || '', at: r.at || '' }));
+      return { parked: of('parked'), hidden: of('hidden'), removed, items: blocks.filter((b) => ['now', 'pinned'].indexOf(b.state || 'now') >= 0).length, revision: doc.revision || 0 };
+    }
+    bringBack(key) { return this.call('canvas.add', { key: String(key) }); }
+    restore(key) { return this.call('canvas.restore', { key: String(key) }); }
+    clearAll(keepPinned) {
+      const pinnedKeys = ((this._doc && this._doc.blocks) || []).filter((b) => b && b.key && b.state === 'pinned').map((b) => String(b.key));
+      return this.call('canvas.clear', { keep: keepPinned === false ? '' : pinnedKeys.join(',') });
+    }
+    /* a short notice with one action (Undo), at the foot of the canvas; it leaves after 8 s or when acted on (WSU-66) */
+    _undoToast(text, undo) {
+      const sr = this.shadowRoot; if (!sr) return; const old = sr.querySelector('.vc-toast'); if (old) old.remove();
+      const t = document.createElement('div'); t.className = 'vc-toast'; t.setAttribute('role', 'status');
+      t.innerHTML = '<span></span><button type="button">Undo</button>'; t.firstChild.textContent = String(text || '').slice(0, 80);
+      const done = () => { clearTimeout(t._t); t.remove(); };
+      t.querySelector('button').addEventListener('click', (e) => { e.stopPropagation(); done(); try { undo && undo(); } catch (er) { /* the shelf still has it */ } });
+      t._t = setTimeout(done, 8000); sr.appendChild(t);
+    }
+    /* a panel item drawn without its page asks once; when the address comes back the column is drawn again (WSU-67) */
+    _panelResolve(id) {
+      const P = this._pResolving || (this._pResolving = new Set()); if (P.has(id)) return; P.add(id);
+      panelSrc(id).then(() => { P.delete(id); this._html = null; if (this._doc) this.render(this._doc); }).catch(() => { P.delete(id); });
     }
     _panelAdd(id, label) {
       id = String(id || '').trim(); if (!id) return; const key = 'panel:' + id; const focusMid = this.dataset.focusMid || '';

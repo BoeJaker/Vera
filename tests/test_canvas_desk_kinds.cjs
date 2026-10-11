@@ -47,7 +47,8 @@ t('calendar: an inner grid the wide layout lays out (month beside its list)', /<
 /* fitting and drawing */
 t('cards are fitted to what they hold after a placement; a fit that overflows a little grows, it is not dropped',
   src.includes('try { this._deskFit(); }') && src.includes('if (more > 160) delete nat[key]; else nat[key] = c.offsetHeight + more + 6;'));
-t('the fit caps a card\'s face, its separation size and its growth', src.includes('maxH: nat || undefined') && src.includes("(it.maxH || Infinity)) }; }, { W: W, H: H });") && src.includes('it.maxH || Infinity'));
+t('the fit caps a card\'s face, its separation size and its growth', src.includes('maxH: nat || undefined') && src.includes("(it.maxH || Infinity))) }; }, { W: W, H: H });") && src.includes('it.maxH || Infinity'));
+t('WSU-69/70: separation also caps width by kind/form and keeps a measured least height (minH)', src.includes('chip ? Infinity : (it.maxW || Infinity)') && src.includes('Math.min(H - 8, it.minH || 0)') && src.includes('const DESK_FORM_MAXW = {'));
 t('an image fills its card, whole', src.includes('.vc-fig > img{flex:1 1 0;min-height:0;width:100%;height:100%;max-width:none;object-fit:contain}'));
 t('a diagram no longer being written is drawn whole (render), so a broken one shows its error', src.includes("if (!streaming && typeof inner.render === 'function') { try { inner.render(code); } catch (e) {} return; }"));
 t('a mermaid fence lands once, not as a code item and a diagram both', chat.includes("const sig=m.kind==='diagram'?'d:'"));
