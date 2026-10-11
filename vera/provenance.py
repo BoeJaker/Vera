@@ -41,12 +41,25 @@ import json
 import os
 import socket
 import subprocess
+import builtins
 from datetime import datetime, timezone
 from typing import Any, Dict
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PROV_FILE = os.path.join(_REPO_ROOT, ".vera-provenance.json")
-_CACHE: Dict[str, Any] = {}
+# Vera supports both ``Vera.vera`` and ``vera`` import topologies.  Python can
+# therefore execute this file twice under different module names in one
+# process.  A module-local cache lets the later import inspect a worktree that
+# has moved since boot and falsely stamp newly produced evidence with code the
+# process never loaded.  Keep the boot identity in one interpreter-wide object
+# that both names resolve.  ``builtins`` is process-local, exists before either
+# package topology, and does not leak to child interpreters.
+_PROCESS_CACHE_KEY = "_vera_runtime_provenance_v1"
+_existing_cache = getattr(builtins, _PROCESS_CACHE_KEY, None)
+if not isinstance(_existing_cache, dict):
+    _existing_cache = {}
+    setattr(builtins, _PROCESS_CACHE_KEY, _existing_cache)
+_CACHE: Dict[str, Any] = _existing_cache
 
 
 def _git(args) -> str:

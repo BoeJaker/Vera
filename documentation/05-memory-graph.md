@@ -468,7 +468,10 @@ provenance; a missing identity or stale-code receipt fails closed. Actual
 authority activation remains unavailable. Identity-required checks retry only
 an unresolved early-startup provenance result; once a commit resolves, that
 process identity remains immutable. Ordinary event stamping continues using the
-cheap cached value and does not repeatedly invoke Git.
+cheap cached value and does not repeatedly invoke Git. The cache is shared
+across Vera's supported `Vera.vera` and `vera` import names, so a module loaded
+after a worktree refresh cannot relabel an already-running process with source
+it never booted.
 
 `memory.dual_write.rollback_rehearse` produces the rollback evidence without
 calling a live Memory backend. It invokes the real canary with the canary forced
