@@ -78,3 +78,46 @@ def enrich_matching_revisions(
         metadata["revision_id"] = revision_id
         counts["enriched"] += 1
     return counts
+
+
+def summarize_provenance(
+    records: Mapping[str, Mapping[str, Any]],
+    *,
+    enrichment: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
+    """Return payload-free eligibility counts for a bounded source corpus."""
+    complete = 0
+    missing_revision = 0
+    missing_content_hash = 0
+    datasets: dict[str, int] = {}
+    for metadata in records.values():
+        revision_id = str(metadata.get("revision_id") or "").strip()
+        content_hash = str(metadata.get("content_hash") or "").strip()
+        dataset_id = str(metadata.get("dataset_id") or "").strip()
+        if revision_id and content_hash:
+            complete += 1
+        if not revision_id:
+            missing_revision += 1
+        if not content_hash:
+            missing_content_hash += 1
+        if dataset_id:
+            datasets[dataset_id] = datasets.get(dataset_id, 0) + 1
+    total = len(records)
+    return {
+        "record_count": total,
+        "complete": complete,
+        "missing": {
+            "revision_id": missing_revision,
+            "content_hash": missing_content_hash,
+        },
+        "datasets": [
+            {"dataset_id": dataset_id, "count": count}
+            for dataset_id, count in sorted(
+                datasets.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "canonical_join": dict(enrichment or {}),
+        "eligible": total > 0 and complete == total,
+        "retains_content": False,
+        "mutates": False,
+        "activation_authority": False,
+    }

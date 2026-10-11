@@ -72,6 +72,7 @@ try:
     from Vera.vera.intel import intel_story_core as story
     from Vera.vera.intel import intel_activity_core as act
     from Vera.vera.intel import intel_apis_core as apis_core
+    from Vera.vera.intel import intel_switches_core as isw
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -86,6 +87,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_story_core as story
     from vera.intel import intel_activity_core as act
     from vera.intel import intel_apis_core as apis_core
+    from vera.intel import intel_switches_core as isw
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -161,7 +163,34 @@ def store() -> IntelStore:
 def config() -> Dict[str, Any]:
     c = dict(DEFAULT_CONFIG)
     c.update(store().get_kv("config", {}) or {})
+    c.update(_switch_overrides())
     return c
+
+
+# intel's modes as switchboard switches (four-minds FM-13.3, intel_switches_core): a SET switch overrides its config
+# key, a switch at its default changes nothing. config() runs for every signal in triage, so the effective modes are
+# read in the background at most every isw.TTL_S seconds and config() only reads the cached copy.
+_SW: Dict[str, Any] = {"at": 0.0, "over": {}, "task": None}
+
+
+def _switch_overrides() -> Dict[str, Any]:
+    now = time.monotonic()
+    if now - _SW["at"] >= isw.TTL_S and (_SW["task"] is None or _SW["task"].done()) and _has("minds.effective"):
+        try:
+            _SW["task"] = asyncio.get_running_loop().create_task(_refresh_switches())
+            _SW["at"] = now
+        except RuntimeError:                 # no loop (a sync caller): keep the last read
+            pass
+    return dict(_SW["over"])
+
+
+async def _refresh_switches() -> None:
+    try:
+        eff = await _call("minds.effective")
+        if isinstance(eff, dict) and isinstance(eff.get("modes"), dict):
+            _SW["over"] = isw.overrides(eff.get("modes") or {}, eff.get("source") or {})
+    except Exception as ex:  # noqa: BLE001 - a switch read must never break triage
+        log.debug("intel: switch read: %s", ex)
 
 
 # ── plumbing ─────────────────────────────────────────────────────────────────
@@ -3337,7 +3366,8 @@ async def _finish_night(night: str) -> None:
     n = st.get_kv("night", {}) or {}
     if n.get("brief"):
         return
-    doc = await build_report([], period_hours=int(config().get("report_period_hours", 24)), synthesize=True)
+    doc = await build_report([], period_hours=int(config().get("report_period_hours", 24)),
+                             synthesize=bool(config().get("brief_synthesize", True)))   # intel.brief (FM-13.3)
     n["brief"] = doc["id"] if _has_content(doc) else "-"
     st.set_kv("night", n)
     if _has_content(doc):
@@ -3515,6 +3545,8 @@ async def _tick() -> None:
 
 
 def _curves() -> Dict[str, Dict[str, Any]]:
+    if config().get("calibration_off"):      # intel.calibrated_gate=off (FM-13.3): no p_shadow either
+        return {}
     return (store().get_kv("calibration", {}) or {}).get("topics") or {}
 
 
@@ -3893,10 +3925,13 @@ async def cap_session_status(trace_id=None):
 @capability("intel.config.get", http_method="GET", http_path="/intel/config", http_tags=["intel"],
             memory="off", silent=True,
             description="Intelligence settings: schedule, delivery, persona, competitors, drop folders, sessions, NLP "
-                        "and model gates. Output: {config, schedule, profile}.")
+                        "and model gates. Output: {config, schedule, profile, switch_overrides} - switch_overrides "
+                        "names the settings an intel.* switchboard switch is overriding (four-minds FM-13.3), which "
+                        "intel.config.set cannot change while the switch is set.")
 async def cap_config_get(trace_id=None):
     st = store()
     return {"config": config(), "profile": "intel" if _PROFILE["declared"] else "",
+            "switch_overrides": sorted(_switch_overrides()),
             "schedule": {"nightly_day": st.get_kv("nightly_day"), "brief_day": st.get_kv("brief_day"),
                          "pending_brief": st.get_kv("pending_brief"), "last_nightly": st.get_kv("last_nightly"),
                          "weekly_day_done": st.get_kv("weekly_day_done"), "advise_week": st.get_kv("advise_week")}}

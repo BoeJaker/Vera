@@ -122,10 +122,12 @@ from Vera.vera.worldview.retrieval_provenance import (
 try:
     from Vera.vera.worldview.canonical_revision_provenance import (
         enrich_matching_revisions,
+        summarize_provenance,
     )
 except ImportError:  # supported lower-case package topology
     from vera.worldview.canonical_revision_provenance import (
         enrich_matching_revisions,
+        summarize_provenance,
     )
 from Vera.vera.fabric.dataset_provider import DatasetSnapshot
 
@@ -4543,6 +4545,67 @@ def _dataset_snapshot_from_dict(value: Any) -> DatasetSnapshot:
         )
     except (KeyError, TypeError) as exc:
         raise ValueError("snapshot_json is missing required fields") from exc
+
+
+@capability(
+    "worldview.retrieval.corpus.preview",
+    http_method="GET", http_path="/worldview/retrieval/corpus/preview",
+    http_tags=["worldview", "retrieval"], memory="off", silent=True,
+    description="Read a bounded set of JEPA source metadata and report whether "
+                "every record has exact revision/content-hash provenance before "
+                "training. Input: dataset_id (optional), limit (1..20000). "
+                "Returns aggregate counts only; no content, model execution, "
+                "binding, mutation or activation authority.",
+)
+async def cap_worldview_retrieval_corpus_preview(
+        dataset_id: str = "", limit: int = 1000, trace_id=None) -> Dict:
+    limit = max(1, min(int(limit), MAX_NODES, 20000))
+    fab = _get_fabric()
+    chroma = getattr(fab, "FABRIC_CHROMA", None) if fab else None
+    if not chroma or not getattr(chroma, "available", False):
+        return {"ok": False, "eligible": False,
+                "error_code": "chroma_unavailable", "record_count": 0,
+                "retains_content": False, "mutates": False,
+                "activation_authority": False}
+
+    def _fetch_metadata() -> Dict[str, Dict[str, Any]]:
+        col = getattr(chroma, "_col", None)
+        if col is None:
+            return {}
+        kwargs: Dict[str, Any] = {"include": ["metadatas"], "limit": limit}
+        if dataset_id:
+            kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
+        result = col.get(**kwargs)
+        ids = result.get("ids") or []
+        metadatas = result.get("metadatas") or []
+        try:
+            from Vera.vera.worldview.legacy_snapshot_provenance import (
+                legacy_snapshot_provenance,
+            )
+        except ImportError:
+            from vera.worldview.legacy_snapshot_provenance import (
+                legacy_snapshot_provenance,
+            )
+        records: Dict[str, Dict[str, Any]] = {}
+        for index, record_id in enumerate(ids):
+            metadata = (metadatas[index] if index < len(metadatas) else {}) or {}
+            records[str(record_id)] = {
+                "dataset_id": str(metadata.get("dataset_id") or ""),
+                **legacy_snapshot_provenance(metadata),
+            }
+        return records
+
+    try:
+        records = await asyncio.to_thread(_fetch_metadata)
+        enrichment = await _enrich_canonical_revision_provenance(records)
+    except Exception as exc:
+        log.warning("worldview corpus provenance preview failed: %s", exc)
+        return {"ok": False, "eligible": False,
+                "error_code": "metadata_read_failed", "record_count": 0,
+                "retains_content": False, "mutates": False,
+                "activation_authority": False}
+    return {"ok": True, "dataset_id": dataset_id, "limit": limit,
+            **summarize_provenance(records, enrichment=enrichment)}
 
 
 @capability(
