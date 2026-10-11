@@ -652,7 +652,7 @@
         const isRec = !!(r.ref && r.ref.record_id);
         /* a page in the list does everything a source item does (see ONE PAGE VIEW): reader mode, its picture, its explode,
            to the canvas, open - and once read, who wrote it, what it names, where it points */
-        const acts = actBtn('open', r.id, '← back', 'close the page - the card goes back where it was') + (r.url ? actBtn('read', r.id, b.reader || b.text ? 'read again' : 'reader mode', 'the page as the article it is - its body (or a composite of its parts) formatted (browser.reader)')
+        const acts = `<button class="vc-rbx-b rb-back" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}" title="close the page - the card goes back where it was">← back</button>` + (r.url ? actBtn('read', r.id, b.reader || b.text ? 'read again' : 'reader mode', 'the page as the article it is - its body (or a composite of its parts) formatted (browser.reader)')
             + actBtn('shot', r.id, b.shot ? 'hide the picture' : 'see the page', 'a picture of the page as it looks (browser.screenshot)')
             + ((b.reader && b.reader.markdown) || b.text ? actBtn('xpl', r.id, 'explode', 'a structured diagram of the page - its sections, what it names, how they connect') : '')
             + actBtn('land', r.id, 'to the canvas', 'land it as its own source item') + `<a class="vc-rbx-b" href="${esc(r.url)}" target="_blank" rel="noopener">open ↗</a>` : '')
@@ -745,7 +745,18 @@
       return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
         + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
         + evHead + glance
-        + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags and names they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
+        + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">`
+        /* WHAT THE PAGES NAME AND WHERE THEY CAME FROM, BEHIND A MENU (owner, 2026-10-11: "it has a list of names and counts
+           ... this could be displayed as a widget and in a menu rather than upfront as pills"): one button, and under it two
+           ranked-bar widgets (the widget system's own drawing) - the names the pages share and the sites - a bar choosing
+           that filter. The choice in force shows on the button. */
+        + ((entList.length || domList.length > 1) ? `<button class="vc-rbx-b vc-rbx-nbtn${st.namesOpen ? ' on' : ''}${st.ent || st.dom ? ' set' : ''}" data-rec-act="names" data-rec-key="${K}" data-rec-arg="" title="the names the pages share and the sites they came from - a choice filters the list">${esc(st.ent || st.dom || 'names · sites')}${st.ent || st.dom ? ' ✕' : ' ▾'}</button>` : '')
+        + `${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags and names they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
+        + (st.namesOpen ? (() => { const wjson = (title, rows) => esc(JSON.stringify({ form: 'ranked', title, data: rows }));
+            return `<div class="vc-rbx-names" data-rec-key="${K}" data-w="canvas.records.names">`
+              + (entList.length ? `<div class="vc-rbx-nw" data-pick="ent"><h5>names the pages share</h5><vera-widget bare size="m" record="${wjson('Names', entList.map((n) => ({ name: n, value: entN[n] })))}"></vera-widget></div>` : '')
+              + (domList.length > 1 ? `<div class="vc-rbx-nw" data-pick="dom"><h5>sites</h5><vera-widget bare size="m" record="${wjson('Sites', domList.map((d) => ({ name: d, value: doms[d] })))}"></vera-widget></div>` : '')
+              + `</div>`; })() : '')
         + (entList.length ? `<div class="vc-rbx-facets vc-rbx-efacets"><span class="vc-rbx-fl">names</span>${entList.map((n) => `<button class="${st.ent === n ? 'on' : ''}" data-rec-act="ent" data-rec-key="${K}" data-rec-arg="${esc(n)}">${esc(n)}<i>${entN[n]}</i></button>`).join('')}</div>` : '')
         + (domList.length > 1 ? `<div class="vc-rbx-facets">${domList.map((d) => `<button class="${st.dom === d ? 'on' : ''}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}">${esc(d)}<i>${doms[d]}</i></button>`).join('')}</div>` : '')
         + body + evFoot
@@ -1546,16 +1557,18 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip){padding-top:0!important;padding-bottom:0!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd,
   :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > :first-child > :is(.vc-codehead,.vc-th,.code-bar):first-child,
-  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:156px!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:250px!important}
   @container (max-width: 320px) {
     :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda > .hb:is([data-act="ctx"],[data-act="explode"],[data-act="edit"]){display:none}
     :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd,
     :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > :first-child > :is(.vc-codehead,.vc-th,.code-bar):first-child,
-    :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:114px!important} }   /* view · lock · fill · more · drop */
+    :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:168px!important} }   /* view · lock · fill · more · drop */
   .hda{display:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
   :host([align="desk"]:not([desk-narrow])) .stage .it:is(:hover,.hov,:focus-within) > .hda{opacity:1}
-  .hda > .hb{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;cursor:pointer;color:var(--dim,#8b93a1)}
+  /* the card's own controls, big enough to hit (owner, 2026-10-11: "the controls of the desk items on the top bar need to be a bit bigger") */
+  .hda > .hb{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;cursor:pointer;color:var(--dim,#8b93a1)}
+  .hda > .hb > svg{width:16px;height:16px}
   .hda > .hb:hover{color:var(--fg,#dce1e8);background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
   .hda > .hb.on{color:var(--acc,#5a9e8f)}
   .hda > .hb[data-act="remove"]:hover{color:var(--err,#e06c6c)}
@@ -2212,7 +2225,19 @@
   .it.reading .vc-rbx :is(.vc-rbx-row,tr[data-rec-act]):not(.on){display:none!important}
   .it.reading .vc-rbx :is(.vc-rbx-list,.vc-rbx-cards){display:block;flex:1 1 auto;min-height:0;overflow:auto}
   .it.reading .vc-rbx .vc-rbx-row.on{border:0;padding:4px 2px}
-  .it.reading .vc-rbx .vc-rbx-row.on .vc-rbx-body{max-height:none;font-size:14px;line-height:1.65;max-width:76ch}
+  /* the page is the card's: no box of its own, the card's whole width and height (owner, 2026-10-11: "the text of reader
+     mode has a seperate background and doesnt take up the available space") */
+  .it.reading .vc-rbx-open :is(.vc-rbx-body,.vc-reader,.vc-rd-body){background:transparent!important;border-color:transparent!important;box-shadow:none!important;max-width:none!important;max-height:none!important;overflow:visible}
+  .it.reading .vc-rbx-open .vc-rbx-body{font-size:14.5px;line-height:1.7;padding:4px 6px 18px}
+  .rb-back{display:none!important}.it.reading .rb-back{display:inline-flex!important}
+  /* a card filling the room is never see-through, whatever else it is (it showed the desk through it at times) */
+  .stage .it:is(.maxed,.reading){background:var(--bg1,#15181d)!important;border-color:var(--border,#2a2f37)!important}
+  /* the names and sites are a menu (the names · sites button and its widgets), not rows of pills, unless the full chrome */
+  :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-facets{display:none!important}
+  .vc-rbx-nbtn{white-space:nowrap}.vc-rbx-nbtn.set{color:var(--acc,#5a9e8f);border-color:color-mix(in srgb,var(--acc,#5a9e8f) 50%,transparent)}
+  .vc-rbx-names{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:2px 0 8px;padding:8px 10px;border:1px solid var(--border,#2a2f37);border-radius:9px;background:var(--bg2,#1d2128);position:relative;z-index:6}
+  .vc-rbx-names h5{margin:0 0 4px;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim,#8b93a1)}
+  .vc-rbx-names vera-widget{display:block;cursor:pointer}
   .it.reading .vc-rr-tabs,.it.reading .vc-rr-q{display:none}
   .it.reading .vc-rr-p:not([data-p="pages"]){display:none!important}
   .it.reading .vc-rr-p[data-p="pages"]{display:block!important;grid-column:1 / -1;border-left:0;padding-left:0;height:100%;max-height:none}
@@ -2791,6 +2816,7 @@
     max: '<path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3"/>',
     restore: '<path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3"/>',
     drop: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>',
+    pill: '<rect x="2.5" y="9.5" width="11" height="4" rx="2"/><path d="M8 2.5v4.5M5.8 5l2.2 2.2L10.2 5"/>',
     more: '<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>',
     list: '<path d="M3 4.5h10M3 8h10M3 11.5h10"/>',
     cards: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>',
@@ -3246,6 +3272,10 @@
       });
       if (changed && (this._fitRuns = (this._fitRuns || 0) + 1) <= 4) { this._inFit = true; try { this._placeNow(); } finally { this._inFit = false; } }
     }
+    /* A CARD MINIMISED TO A PILL (owner, 2026-10-11: "id like a way to minimise them to a pill from the top bar controls"):
+       kept per canvas; the desk places it on its border as a pill whatever the topic; a click on the pill opens it again */
+    _pillGet() { if (this._pillA) return this._pillA; try { this._pillA = JSON.parse(localStorage.getItem('vera:canvas:deskpill:' + this.canvasId) || '{}') || {}; } catch (e) { this._pillA = {}; } return this._pillA; }
+    _pillSet(key, on) { const m = this._pillGet(); if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:deskpill:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
     _cmpGet() { if (this._cmpA) return this._cmpA; try { this._cmpA = JSON.parse(localStorage.getItem('vera:canvas:deskfront:' + this.canvasId) || '{}') || {}; } catch (e) { this._cmpA = {}; } return this._cmpA; }
     _cmpSet(m) { this._cmpA = m; const ks = Object.keys(m); if (ks.length > 400) ks.sort((a, b) => m[a] - m[b]).slice(0, ks.length - 400).forEach((k) => delete m[k]);
       try { localStorage.setItem('vera:canvas:deskfront:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
@@ -3325,6 +3355,10 @@
          so two cards beside the chat were as small as ten. The faces now share about half the free desk among the cards
          beside the chat (the topic's, or the first nine), up to 2.4 times; never smaller than the width alone made them.
          Chips keep their size; the bands take their depth from the face, so the arrangement follows. */
+      /* minimised to a pill (_pillGet): on the border whatever the topic - a combined card goes with its front tab */
+      { const pills = this._pillGet(); const pilled = ranked.filter((x) => (grp.membersOf.get(x.c) || [x.c]).some((c) => pills[c.dataset.key || '']));
+        if (pilled.length) { pilled.forEach((x) => outside.add(x.c.dataset.key || ''));
+          const rest = ranked.filter((x) => pilled.indexOf(x) < 0); ranked.length = 0; rest.concat(pilled).forEach((x) => ranked.push(x)); } }
       const nNear = Math.max(1, Math.min(9, ranked.filter((x) => !outside.has(x.c.dataset.key || '')).length));
       desk.scale = Math.max(f, Math.min(2.4, Math.sqrt((W * H * 0.5) / (nNear * 300 * 196)))); desk.scaleY = 0;
       /* beside a docked chat the bands are columns: the cards are as wide as the columns the border's chips leave, and as
@@ -3373,7 +3407,11 @@
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
         /* a card is no taller than what it holds (see _deskFit): its measured height caps its face and its growth */
         const nat = (this._natH || {})[key];
-        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h, nat || Infinity), face0: po.size.face, maxH: nat || undefined };
+        /* ...and no wider than its kind uses (owner, 2026-10-11: "some desk items like the 'mentioned' take up too much width
+           for their content"): names, a note, fields, a page, what ran - their content wraps short; a wide card of them was
+           a wide empty band */
+        const nw = ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || ''];
+        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.min(H - 8, po.size.h, nat || Infinity), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined };
       });
       D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h, (s.face === 'chip' || s.face === 'icon') ? Infinity : (it.maxH || Infinity)) }; }, { W: W, H: H });
       /* ...up the desk into the room above them (D.settle), the person's places, locks and sizes staying where they are... */
@@ -3399,7 +3437,7 @@
           : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: Math.min(it.h, it.h > 40 && it.maxH ? it.maxH : Infinity), face: it.face0 || 'chip' })
           : it.maxH ? (() => { const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); if (s0.face === 'chip' || s0.face === 'icon') return s0; const hh = Math.min(s0.h, it.maxH); return Object.assign({}, s0, { h: hh, face: D.faceOf(s0.w, hh) === 'chip' ? 'card' : D.faceOf(s0.w, hh) }); })()
           : D.sizeAt(R, it.x, it.y, it.so, desk);
-        const w = Math.min(W - 16, s.w), h = Math.min(H - 8, s.h);
+        const w = Math.min(W - 16, s.w, (s.face === 'chip' || s.face === 'icon') ? Infinity : (it.maxW || Infinity)), h = Math.min(H - 8, s.h);
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
         c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
         c.classList.toggle('desk-chip', s.face === 'chip' || s.face === 'icon');
@@ -3886,6 +3924,7 @@
               + (xplodable ? hb('explode', xploded ? 'source' : 'explode', xploded ? 'Back to the source alone' : 'See it as a structured diagram', xploded) : '')
               + (editable ? hb('edit', 'edit', editing ? 'Editing' : 'Edit its text', editing) : '')
               + (bid ? '' : hb('ctx', 'ctx', ctxOn ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ctxOn))
+              + (maxed ? '' : hb('pill', 'pill', 'Minimise it to a pill on the border - a click on the pill opens it again'))
               + hb('max', maxed ? 'restore' : 'max', maxed ? 'Restore it' : 'Fill the free desk with it', maxed)
               + hb('hdmore', 'more', 'More: park, size, back to the arrangement' + (b.type === 'panel' ? ', behind / front, query, refresh, standalone' : ''))
               + hb('remove', 'drop', 'Take it off the desk')
@@ -4044,12 +4083,27 @@
       body.addEventListener('click', (ev) => {
         const t = ev.target; if (!t || !t.closest) return;
         if (t.closest('textarea')) return;
+        /* a card minimised to a pill (its ⋯ / pill control) opens again where the arrangement puts it, on a click */
+        const pc = t.closest('.stage .it.desk-chip[data-key]');
+        if (pc && body.contains(pc) && this._pillGet()[pc.dataset.key] && !t.closest('[data-act]:not(.it-hd):not(.t)')) { ev.stopPropagation(); this._pillSet(pc.dataset.key, false); this._html = null; if (this._doc) this.render(this._doc); return; }
         const act = t.closest('[data-act]');
         if (act && body.contains(act)) { ev.stopPropagation(); this._act(act, ev); return; }
         // a source's own two buttons: read the page, see the page
         const sa = t.closest('[data-src-act]');
         if (sa && body.contains(sa)) { ev.stopPropagation(); this._srcAct(sa.dataset.srcKey, sa.dataset.srcAct); return; }
         // a records item: page, sort, view, facet, open a record, read it, land it
+        /* a bar of the names · sites menu's widgets (inside the widget's own root): that name or site filters the list */
+        const nmenu = t.closest('.vc-rbx-names');
+        if (nmenu && body.contains(nmenu)) { ev.stopPropagation(); const path = ev.composedPath ? ev.composedPath() : [];
+          const bar = path.find((e) => e && e.classList && e.classList.contains('vb-rw')); const nw = path.find((e) => e && e.classList && e.classList.contains('vc-rbx-nw'));
+          const nm = bar && bar.querySelector('.n'); const name = nm ? (nm.getAttribute('title') || nm.textContent || '').trim() : '';
+          if (name && nw) this._recAct(nmenu.dataset.recKey, nw.dataset.pick === 'dom' ? 'pickdom' : 'pickent', name); return; }
+        /* A RESULT'S TITLE OPENS IT IN READER MODE (owner, 2026-10-11: "if you click the actual main title link text it takes
+           you to full reader mode of the page instead of to the page"): the page fills the room (see _readerFollow). A
+           ctrl / cmd / middle click still opens the page itself, and so does "open ↗". */
+        const tl = t.closest('a.vc-rbx-t');
+        if (tl && body.contains(tl) && !(ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.button === 1)) { const row = tl.closest('[data-rec-act][data-rec-key]');
+          if (row && row.dataset.recArg) { ev.preventDefault(); ev.stopPropagation(); this._recAct(row.dataset.recKey, 'read', row.dataset.recArg); return; } }
         if (t.closest('[data-rec-stop]') || t.closest('.vc-rbx-q') || (t.closest('a') && t.closest('.vc-rbx'))) return;
         const ra = t.closest('[data-rec-act]');
         // inside an OPENED record (its text, its facts, its fields) or an opened neighbour's text, a click is reading, not
@@ -4119,10 +4173,16 @@
       const deskHandle = (ev) => { if (!this.deskAlign() || ev.button !== 0) return null; const t = ev.target; if (!t || !t.closest) return null;
         if (t.closest('[data-act],.rz,input,textarea,select,button,a,.lay-pill')) return null;
         const hd = t.closest('.it-hd,.vc-th'); const it = hd && hd.closest('.stage .it[data-key]');
+        /* a card filling the room (maximised, or reading) is a handle too: carried, it goes back to the desk (see below) */
+        if (it && it.dataset.deskFace === 'layer-front' && this._max === it.dataset.key) return it;
         if (!it || it.dataset.deskFace === 'layer-behind' || it.dataset.deskFace === 'layer-front' || it.classList.contains('desk-locked')) return null; return it; };
       body.addEventListener('mousedown', (ev) => { const it = deskHandle(ev); if (!it) return;
         const st = this.shadowRoot.getElementById('stage'); if (!st) return;
         ev.preventDefault();   /* a card carried by its header does not select the text it passes over */
+        /* FROM FULL BACK TO THE DESK BY CARRYING IT (owner, 2026-10-11: "id like to be able to move items from fully expanded
+           back to the desk by moving them"): a press on a filling card's header waits for the hand to move; then the card
+           is restored and picked up under the hand, and goes where it is let go */
+        if (it.dataset.deskFace === 'layer-front') { this._dgMax = { key: it.dataset.key, x0: ev.clientX, y0: ev.clientY }; return; }
         const Z = st.offsetWidth ? (st.getBoundingClientRect().width / st.offsetWidth) || 1 : 1;
         this._dg = { el: it, key: it.dataset.key, x0: ev.clientX, y0: ev.clientY, Z,
           cx0: (parseFloat(it.style.left) || 0) + it.offsetWidth / 2, cy0: (parseFloat(it.style.top) || 0) + it.offsetHeight / 2, moved: false }; });
@@ -4132,7 +4192,17 @@
       /* a click that ends a drag is not a click on what was under it */
       body.addEventListener('click', (ev) => { if (Date.now() - (this._dgEnd || 0) < 250) { ev.stopPropagation(); ev.preventDefault(); } }, true);
       const doc = this.ownerDocument || document;
-      doc.addEventListener('mousemove', (ev) => { const d = this._dg; if (!d) return;
+      doc.addEventListener('mousemove', (ev) => {
+        const m = this._dgMax;
+        if (m) { if (Math.abs(ev.clientX - m.x0) + Math.abs(ev.clientY - m.y0) < 8) return; this._dgMax = null;
+          if (this._autoMax === m.key) this._autoMax = null; if (this._max === m.key) this._toggleMax(m.key);
+          const st = this.shadowRoot.getElementById('stage'); const el = st && [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === m.key); if (!el) return;
+          const S = st.getBoundingClientRect(), Z = st.offsetWidth ? (S.width / st.offsetWidth) || 1 : 1;
+          /* the card's header under the hand: its centre is half its height below the pointer */
+          const px = (ev.clientX - S.left) / Z, py = (ev.clientY - S.top) / Z;
+          this._dg = { el, key: m.key, x0: ev.clientX, y0: ev.clientY, Z, cx0: px, cy0: py + Math.max(20, el.offsetHeight / 2 - 16), moved: false };
+          return; }
+        const d = this._dg; if (!d) return;
         const dx = (ev.clientX - d.x0) / d.Z, dy = (ev.clientY - d.y0) / d.Z;
         if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
         if (!d.moved) { d.moved = true; d.el.classList.add('desk-dragging'); d.el.style.zIndex = String(root.VeraDesk ? root.VeraDesk.stackOrder(0, { dragging: true }) : 200); }
@@ -4157,7 +4227,7 @@
         d.el.style.left = Math.round(cx - w / 2) + 'px'; d.el.style.top = Math.round(cy - h / 2) + 'px';
         d.el.style.setProperty('width', w + 'px', 'important'); d.el.style.setProperty('height', h + 'px', 'important');
         try { this._liveLayout(); } catch (e) { /* optional */ } this._liveFollow(500); });
-      doc.addEventListener('mouseup', () => { const d = this._dg; if (!d) return; this._dg = null;
+      doc.addEventListener('mouseup', () => { this._dgMax = null; const d = this._dg; if (!d) return; this._dg = null;
         if (!d.moved) return;
         this._dgEnd = Date.now(); d.el.classList.remove('desk-dragging');
         const g = this._deskGeo; if (g && d.cx != null) this._deskPosSet(d.key, Object.assign({ fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) },
@@ -4411,6 +4481,7 @@
       const pop = btn.closest('.hd-pop'); if (pop) pop.remove();
       if (!it && key) it = [...this.shadowRoot.querySelectorAll('.stage .it[data-key]')].find((x) => x.dataset.key === key) || null;
       if (act === 'lock') return this.toggleLock(key);
+      if (act === 'pill') { this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
       if (act === 'cmptab' || act === 'cmpsep' || act === 'cmpjoin') {
         if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); }
@@ -5007,10 +5078,13 @@
        A record opened in a list - a search result, a research source - fills the free desk (the canvas column off the
        desk), showing that page alone (.reading); closing the last open one puts the card back where it was. A card the
        person maximised themselves is left as they had it. */
-    _readerFollow(key) {
+    /* ...only READER MODE fills the room (owner, 2026-10-11: "it takes up the full screen just to show the blurb text ... id
+       rather it opened a bit on the first click"): a plain open shows the whole blurb in place (grow false - it may only
+       give the room back); reader mode, or the title, is what fills it. */
+    _readerFollow(key, grow) {
       const st = recState(this, key); const any = Object.keys(st.open || {}).some((k) => st.open[k]);
-      if (any) { const b = this._blockOf(key); if (b && b.type === 'research') { st.tab = 'pages'; st.side = 'pages'; } }   /* a run's page is read in its Pages pane */
-      if (any && this._max !== key) { this._autoMax = key; this._toggleMax(key); return true; }
+      if (any && grow !== false) { const b = this._blockOf(key); if (b && b.type === 'research') { st.tab = 'pages'; st.side = 'pages'; } }   /* a run's page is read in its Pages pane */
+      if (any && grow !== false && this._max !== key) { this._autoMax = key; this._toggleMax(key); return true; }
       if (!any && this._autoMax === key) { this._autoMax = null; if (this._max === key) this._toggleMax(key); return true; }
       return false;
     }
@@ -5023,12 +5097,15 @@
       if (act === 'page') { st.page = arg === 'prev' ? Math.max(0, (st.page | 0) - 1) : arg === 'next' ? (st.page | 0) + 1 : (+arg || 0); return redraw(); }
       if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0; return redraw(); }
       if (act === 'dom') { st.dom = st.dom === arg ? '' : arg; st.page = 0; return redraw(); }
+      /* the names · sites menu: a filter in force is cleared by its button; otherwise the button opens or closes the menu */
+      if (act === 'names') { if (st.ent || st.dom) { st.ent = ''; st.dom = ''; st.page = 0; } else st.namesOpen = !st.namesOpen; return redraw(); }
+      if (act === 'pickent' || act === 'pickdom') { st[act === 'pickent' ? 'ent' : 'dom'] = arg; st.page = 0; st.namesOpen = false; return redraw(); }
       /* a research run's pane: shown alone on a narrow card; beside the report on a wide one (the report never leaves) */
       if (act === 'rrtab') { st.tab = arg; if (arg !== 'report') st.side = arg; return redraw(); }
       if (act === 'ent') { st.ent = st.ent === arg ? '' : arg; st.page = 0; return redraw(); }
       if (act === 'goto') return this._rgNode(key, { id: 'r:' + arg });   // a timeline dot: its page, opened, wherever it sits
       if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key);
-          if (this._readerFollow(key) && !st.open[it.id]) return;
+          if (!st.open[it.id] && this._readerFollow(key, false)) return;
           // a fabric record opened is READ at once: its facts, its source, its text - the depth is the point of opening it
           const cur = st.body[it.id] || {};
           if (st.open[it.id] && it.ref && it.ref.record_id && !cur.text && !cur.busy && !cur.err) { redraw(); return this._recAct(key, 'rec', arg); } }

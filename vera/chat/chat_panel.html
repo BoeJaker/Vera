@@ -14646,7 +14646,21 @@ Your task: decide what to do next to advance toward the goal.
     ]);
     _memAllNodes=nodesRes?.nodes||[];
     _memAllEdges=edgesRes?.edges||[];
+    try{ const old=document.querySelector('#paneMemGraph .mem-empty'); if(old&&_memAllNodes.length) old.remove(); }catch(_){}
     document.getElementById('memGraphStatus').textContent=`${_memAllNodes.length} nodes · ${_memAllEdges.length} edges`;
+    /* NOTHING STORED IS SAID, not drawn as an empty box (owner, 2026-10-11: "memory graph on the design bleeding edge is
+       still displaying nothing - 0 node 0 edges"): measured, every session started on a sandbox (the design and bleeding
+       mirrors run VERA_IS_DEV_SANDBOX) has no memory at all - a sandbox does not write memory - while a session started on
+       prod shows its memory from any of them. The graph was right; it was silent about why there was nothing. */
+    if(!_memAllNodes.length){
+      /* the page cannot tell it is a sandbox (its health and provenance are prod's, read through), so it says both */
+      document.getElementById('memGraphStatus').textContent='nothing stored in memory for this session';
+      const pane=document.getElementById('paneMemGraph'); let note=pane&&pane.querySelector('.mem-empty');
+      if(pane&&!note){ note=document.createElement('div'); note.className='mem-empty sys-msg'; note.style.cssText='padding:14px;font-size:12px;line-height:1.5;color:var(--dim)'; pane.appendChild(note); }
+      if(note) note.textContent='No memory has been stored for this session yet - it fills as the conversation is remembered. A session started on a sandbox (a mirror of an edge, such as the design edge) is never written to memory, so its graph stays empty there; a session started on the main Vera shows its memory on every mirror.';
+      try{ _renderMemGraph([],[]); }catch(_){}
+      return;
+    }
     _renderMemGraph(_memAllNodes,_memAllEdges);
   }
 
