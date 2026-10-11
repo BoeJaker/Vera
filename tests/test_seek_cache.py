@@ -41,7 +41,9 @@ def test_seek_reads_the_cache_first_and_stores_both_answers():
     assert "return dict(hit, cached=True)" in body and "_reval.on_seek(query" in body
     assert body.count("await _seek_cache_put(ck, ") == 2
     helper = src[src.index("async def _seek_cache_key("):src.index("async def _seek_cache_get(")]
-    assert '!= "on"' in helper and "return None" in helper and "_scc.GEN_KEY" in helper
+    assert 'await _switch("memory.seek_cache") != "on"' in helper and "return None" in helper and "_scc.GEN_KEY" in helper
+    sw = src[src.index("async def _switch("):src.index("async def _seek_cache_key(")]
+    assert sw.index("_SB.RUN_MINDS.get()") < sw.index('"minds.effective"')
 
 
 def test_every_ingest_bumps_the_generation():

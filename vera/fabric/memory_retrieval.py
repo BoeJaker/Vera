@@ -79,6 +79,10 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.fabric import seek_cache_core as _scc
 except ImportError:                      # pragma: no cover
     from vera.fabric import seek_cache_core as _scc   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import switchboard_core as _SB
+except ImportError:                      # pragma: no cover
+    from vera.minds import switchboard_core as _SB   # type: ignore
 try:                                     # the retrieval eval set (FM-7.0): seeks + reads as labels
     from Vera.vera.fabric import retrieval_eval as _reval
 except Exception:                        # pragma: no cover
@@ -462,11 +466,26 @@ def _seek_redis():
         return None
 
 
+async def _switch(feature_id: str, default: str = "off") -> str:
+    """A switch's mode for this seek: the run's own modes first (a census arm, an eval run - switchboard RUN_MINDS),
+    then the global layer (minds.effective), else the default. Never raises."""
+    try:
+        run = _SB.RUN_MINDS.get()
+        modes = (run or {}).get("modes", run or {}) if isinstance(run, dict) else {}
+        if feature_id in modes:
+            return str(modes[feature_id])
+        eff = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        if eff:
+            return str((((await eff()) or {}).get("modes") or {}).get(feature_id) or default)
+    except Exception as e:
+        log.debug("switch %s: %s", feature_id, e)
+    return default
+
+
 async def _seek_cache_key(query, scope, since, k, max_chars, include_memory) -> Optional[str]:
     """The cache key when the switch `memory.seek_cache` is on and Redis answers, else None (FM-7.1)."""
     try:
-        eff = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
-        if not eff or str((((await eff()) or {}).get("modes") or {}).get("memory.seek_cache") or "off") != "on":
+        if await _switch("memory.seek_cache") != "on":
             return None
         r = _seek_redis()
         if r is None:
