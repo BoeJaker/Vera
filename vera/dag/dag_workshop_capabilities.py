@@ -14478,6 +14478,52 @@ async def _v6_claim_nli(final: str, evidence: Sequence[Dict[str, Any]]) -> Dict[
     return out
 
 
+# Known dated facts before planning (compute-roles P1b, per-run intel_prefacts; rules agreed with
+# the intelligence unit 11 Oct 2026 - see intel_prefacts_core).
+try:
+    from Vera.vera.dag import intel_prefacts_core as _prefacts_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import intel_prefacts_core as _prefacts_core
+    except Exception:
+        _prefacts_core = None
+_PREFACTS_TIMEOUT_S = 8.0
+
+
+async def _v6_intel_prefacts(goal: str, *, sid: str, stream_id: str) -> str:
+    """intel.lookup on the goal; a tracked topic's dated signals go into the run's evidence ledger
+    and come back as the planner's KNOWN block ("" when nothing is tracked or the lookup is slow).
+    Raw cap function (no memories written); never raises."""
+    cap = CAPABILITY_REGISTRY.get("intel.lookup") or {}
+    fn = cap.get("raw") or cap.get("func")
+    if not fn or _prefacts_core is None:
+        return ""
+    latest = _prefacts_core.is_latest(goal)
+    try:
+        view = await asyncio.wait_for(
+            fn(query=str(goal)[:300], since=_prefacts_core.since_for(goal), limit=8),
+            timeout=_PREFACTS_TIMEOUT_S)
+    except Exception as e:
+        log.debug("intel prefacts: intel.lookup unavailable: %s", e)
+        return ""
+    its = _prefacts_core.items(view, latest)
+    assess = _prefacts_core.assessment(view) if isinstance(view, dict) and view.get("tracked") is True else None
+    if its:
+        try:
+            _evidence_core.add(sid, {"items": its, "need": "intel_prefacts"})
+        except Exception as e:
+            log.debug("intel prefacts: ledger add failed: %s", e)
+    topic = str(((view or {}).get("topic") or {}).get("name") or "") if isinstance(view, dict) else ""
+    try:
+        await emit_event({"type": "agent_loop_v6.intel_prefacts", "session_id": sid,
+                          "stream_id": stream_id, "tracked": bool(isinstance(view, dict) and view.get("tracked")),
+                          "topic": topic, "items": len(its), "latest": latest,
+                          "assessment_shown": bool(assess)})
+    except Exception:
+        pass
+    return _prefacts_core.block(its, topic=topic, assess=assess)
+
+
 # Zero-shot intent (roadmap B1): what an NLP node would call the goal's intent,
 # recorded beside the intent the run used. Measured - nothing reads it back.
 try:
@@ -24621,6 +24667,8 @@ async def cap_dag_agent_loop_v6(
     # deliverable adversarially ONCE; real defects become one fix step (user 2026-10-04).
     deliverable_review: bool = False,
     answer_check: bool = False,
+    # Known dated facts from intel.lookup before planning (compute-roles P1b, 11 Oct 2026).
+    intel_prefacts: bool = False,
     # With answer_check: the NLI claim check (compute-roles P3) - 'off' | 'shadow' (recorded) |
     # 'hint' (not-entailed claims handed to the checker to verify).
     claim_nli: str = "off",
@@ -25497,6 +25545,13 @@ async def cap_dag_agent_loop_v6(
     # runs only as the fallback when it yields no steps (four-minds Q2 #4: the structured plan
     # used to be made first and then replaced, a whole planning call per strategic run thrown
     # away). A goal the planner self-labels 'extreme' still needs the structured plan to know.
+    # P1b: known dated facts before planning - only when the run asks (intel_prefacts), so the
+    # default planner prompts stay byte-identical (the golden prompts hold).
+    if intel_prefacts and _prefacts_core is not None and (
+            str(intent or "").lower() == "research" or _prefacts_core.is_latest(goal)):
+        _pf_block = await _v6_intel_prefacts(goal, sid=sid, stream_id=stream_id)
+        if _pf_block:
+            _style_note = (_pf_block + "\n\n" + _style_note) if _style_note else _pf_block
     _master_ran = False
     _master_ok = enable_master_planner and bool(_pstyle.get("master_plan", True))
     _mp_first: Optional[Dict[str, Any]] = None
@@ -27187,6 +27242,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_style_defaulted = bool(_v7_default and not str(body.get("plan_style") or "").strip())
     v6_deliverable_review = bool(body.get("deliverable_review", False))
     v6_answer_check = bool(body.get("answer_check", False))
+    v6_intel_prefacts = bool(body.get("intel_prefacts", False))
     v6_claim_nli = (body.get("claim_nli", "off") or "off").strip().lower()
     if v6_claim_nli not in ("off", "shadow", "hint"):
         v6_claim_nli = "off"
@@ -27354,6 +27410,7 @@ async def workshop_agent_loop_stream(request: Request):
             plan_style_defaulted=v6_plan_style_defaulted,
             deliverable_review=v6_deliverable_review,
             answer_check=v6_answer_check,
+            intel_prefacts=v6_intel_prefacts,
             claim_nli=v6_claim_nli,
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
