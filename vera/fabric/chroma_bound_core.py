@@ -130,3 +130,33 @@ async def run(fn, *args, **kwargs):
     loop = asyncio.get_running_loop()
     ctx = contextvars.copy_context()
     return await loop.run_in_executor(pool(), functools.partial(ctx.run, fn, *args, **kwargs))
+
+
+#: words a chromadb / httpx error carries when the CLIENT is unusable (not when the query is wrong)
+_DEAD_MARKERS = ("client has been closed", "cannot send a request", "connection refused", "connecterror",
+                 "remoteprotocolerror", "server disconnected", "connection reset", "broken pipe",
+                 "readtimeout", "connecttimeout", "pooltimeout")
+
+
+def looks_dead(exc: BaseException) -> bool:
+    """True when an exception says the Chroma client cannot talk to the server (a reconnect may help), False for a
+    query the server refused (a wrong dimension, a bad filter) - reconnecting would not change that."""
+    text = (type(exc).__name__ + ": " + str(exc)).lower()
+    return any(m in text for m in _DEAD_MARKERS)
+
+
+class Throttle:
+    """At most one True per `every_s` per key: a failing hot path logs once, not once per call."""
+
+    def __init__(self, every_s: float = 300.0, clock=None):
+        import time as _t
+        self.every_s = float(every_s)
+        self._clock = clock or _t.monotonic
+        self._last: Dict[str, float] = {}
+
+    def due(self, key: str) -> bool:
+        now = self._clock()
+        if now - self._last.get(key, -1e18) >= self.every_s:
+            self._last[key] = now
+            return True
+        return False
