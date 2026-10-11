@@ -2783,6 +2783,15 @@ async def ingest_dataset(
     await emit_event({"type": "fabric.ingested", "dataset_id": dataset_id,
                       "ingested": ingested, "errors": errors, "source": source,
                       "record_ids": ingested_ids})
+    # the fabric's generation: memory.seek's result cache keys on it, so new data is never hidden behind a cached
+    # answer (four-minds FM-7.1, seek_cache_core.GEN_KEY)
+    if ingested:
+        try:
+            _r = _redis()
+            if _r is not None:
+                await _r.incr("vera:fabric:generation")
+        except Exception as _e:
+            log.debug("fabric generation bump: %s", _e)
 
     # ── Post-ingestion pipeline (async, non-blocking) ──────────────────────
     # Ensures every ingestion point gets: source registration, entity
