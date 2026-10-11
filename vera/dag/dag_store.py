@@ -1320,6 +1320,18 @@ async def caps_search(
         category_filter=category or None,
         tag_filter=[t.strip() for t in tags.split(",") if t.strip()] or None,
     )
+    # A question about the outside world gets the information caps first (info-seeking plan SK-1.2): word overlap
+    # put mcp.register_server first for "latest news about MCP" and evolve.delegate.rate for "what is the base rate".
+    if not category and not tags:
+        try:
+            try:
+                from Vera.vera.web import info_seek_core as _isc
+            except Exception:
+                from vera.web import info_seek_core as _isc
+            if _isc.info_intent(query):
+                results = _isc.boost_info(results, CAPABILITY_REGISTRY.keys(), top_k)
+        except Exception as e:                       # ranking help never breaks the search
+            log.debug("caps.search info boost: %s", e)
     return {
         "results": [
             {

@@ -1247,6 +1247,28 @@ async def _seek_searches(queries: List[str], *, first_slot: int = 0) -> List[Dic
     return list(await asyncio.gather(*[one(i, q) for i, q in enumerate(queries)]))
 
 
+_LAST_SEEK_KEY = "vera:info:last_seek:"
+_LAST_SEEK_TTL = 90 * 86400
+
+
+async def _last_seek(subject: str, set_to: str = "") -> str:
+    """When a 'latest' question about `subject` was last answered (Redis, 90 days), or "" - and record a new time
+    when `set_to` is given. Never raises: without Redis, latest just uses its default window."""
+    r = getattr(_orch, "REDIS", None)
+    key = _LAST_SEEK_KEY + _seek.subject_key(subject)
+    if r is None or key == _LAST_SEEK_KEY:
+        return ""
+    try:
+        if set_to:
+            await r.set(key, set_to, ex=_LAST_SEEK_TTL)
+            return set_to
+        v = await r.get(key)
+        return v.decode() if isinstance(v, (bytes, bytearray)) else str(v or "")
+    except Exception as e:
+        log.debug("info.seek last-seek %s: %s", key, e)
+        return ""
+
+
 def _report_seller(title: str, snippet: str) -> bool:
     """Market-research sellers ("... market size, share, CAGR 2026-2033") are not news; intel's rule, reused."""
     try:
@@ -1322,6 +1344,10 @@ async def _seek_read(items: List[Dict[str, Any]], n: int, chars: int) -> int:
         it["title"] = r.get("title") or it.get("title")
         if r.get("published") and not it.get("published"):
             it["published"] = r["published"]
+        if not it.get("published"):            # the page's own "Updated on ..." line (SK-3.3)
+            d = _seek.labelled_date(md)
+            if d:
+                it["published"] = d.strftime("%Y-%m-%d")
         return 1
     got = 0
     for _ in range(2):                       # the first batch, then one refill for what failed
@@ -1407,7 +1433,11 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
     intel_task = asyncio.create_task(_seek_call("intel.lookup", 8, query=subject, since=since))
 
     if need == "latest":
-        since = since or _seek.default_since(now)
+        if not since:
+            sf = _seek.since_for(await _last_seek(subject), now)
+            since = sf["since"]
+            checked.append("new means: " + sf["why"])
+        await _last_seek(subject, now.isoformat(timespec="seconds"))
         queries = _seek.latest_queries(subject, question, now)
         span = "week" if (now - (_seek.parse_date(since) or now)).days <= 8 else "month"
         news_task = asyncio.create_task(_searxng_news(subject, 12, span))

@@ -474,6 +474,8 @@ async def cap_topic_save(name: str = "", id: str = "", brief: str = None, why: s
     st.put_topic(t)
     if t.get("dream_loop"):
         await _ensure_think_loop(t)
+    elif existing and existing.get("dream_loop"):
+        await _drop_think_loop(t["id"])           # switched off: the loop stops too (it used to run on)
     await _event("topic.saved", topic=t["id"], name=t["name"], created=existing is None)
     out = {"ok": True, "topic": t, "created": existing is None}
     if existing is None and t.get("status") == "active" and config().get("first_sweep", True):
@@ -494,13 +496,53 @@ async def cap_topic_delete(id: str = "", purge: bool = False, trace_id=None):
     if not id:
         return {"error": "id required"}
     gone = [s["id"] for s in store().signals(id, limit=100000)] if purge else []
+    t = store().get_topic(id)
     ok = store().delete_topic(id, purge=purge)
+    cleaned = await _forget_topic(id, t) if ok else {}
     removed = 0
     for sid in gone:                              # and their copies in the fabric's signals dataset
         r = await _call("fabric.delete_record", record_id=_fabric_signal_id(sid), dataset_id=SIGNALS_DATASET)
         removed += 0 if r.get("error") else 1
     await _event("topic.deleted", topic=id, purge=purge)
-    return {"ok": ok, **({"fabric_records_removed": removed} if purge else {})}
+    return {"ok": ok, "cleaned": cleaned, **({"fabric_records_removed": removed} if purge else {})}
+
+
+async def _drop_think_loop(topic_id: str) -> bool:
+    st = store()
+    loops = st.get_kv("think_loops", {}) or {}
+    name = loops.pop(topic_id, None)
+    if not name:
+        return False
+    st.set_kv("think_loops", loops)
+    if _has("dream.think.delete"):
+        await _call("dream.think.delete", name=name)
+    return True
+
+
+async def _forget_topic(topic_id: str, t: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """What a deleted topic left running or stored outside its own record (review 2026-10-10): its dream think-loop
+    kept thinking, its indicators kept being checked, its research jobs and per-topic notes stayed, and its fabric
+    sources kept pulling for nobody. Each is removed here; a fabric source another topic still reads is kept."""
+    st = store()
+    out: Dict[str, Any] = {"think_loop": await _drop_think_loop(topic_id)}
+    had = bool(_indicators(topic_id))
+    _save_indicators(topic_id, [])
+    out["indicators"] = had
+    st.set_kv("ind_changes", [c for c in st.get_kv("ind_changes", []) or [] if c.get("topic_id") != topic_id])
+    jobs = st.get_kv("research_jobs", {}) or {}
+    st.set_kv("research_jobs", {k: v for k, v in jobs.items() if v.get("topic_id") != topic_id})
+    for key in (f"wv_over:{topic_id}", f"ind_suggest:{topic_id}"):
+        if st.get_kv(key) is not None:
+            st.set_kv(key, None)
+    removed = []
+    for sub in (t or {}).get("sources") or []:
+        sid = str(sub.get("id") or "")
+        if sid.startswith("intel-src-") and not srcs.users_of(st.topics(), sid, except_topic=topic_id):
+            r = await _call("fabric.sources.delete", source_id=sid)
+            if not r.get("error"):
+                removed.append(sid)
+    out["fabric_sources_removed"] = removed
+    return out
 
 
 async def _ensure_think_loop(t: Dict[str, Any]) -> None:
@@ -849,6 +891,28 @@ async def _fabric_sources_by_id() -> Dict[str, Dict[str, Any]]:
     return {str(s.get("id")): s for s in (r.get("sources") or []) if isinstance(s, dict)}
 
 
+SOURCE_MAX_PAGES = 10
+
+
+async def _browse_since(dataset_id: str, cursor: str) -> Dict[str, Any]:
+    """A source dataset's records newer than `cursor`, newest first, reading page after page until it reaches the
+    cursor (at most SOURCE_MAX_PAGES pages). One page of srcs.PER_SOURCE used to be all a sweep read, and the cursor
+    then moved to the newest - anything past the first page was skipped for good (review 2026-10-10 D7: USGS and
+    Telegram sources produce more than that between sweeps). Without a cursor (a new source) one page is enough."""
+    out: List[Dict[str, Any]] = []
+    page = int(srcs.PER_SOURCE)
+    for i in range(SOURCE_MAX_PAGES if cursor else 1):
+        r = await _call("fabric.browse", dataset_id=dataset_id, limit=page, offset=i * page)
+        if r.get("error"):
+            return {"error": r["error"]} if not out else {"records": out, "read": len(out)}
+        recs = r.get("records") or []
+        out += recs
+        reached = any(str(x.get("created_at") or "") <= cursor for x in recs) if cursor else True
+        if reached or not r.get("has_more") or not recs:
+            return {"records": out, "read": len(out)}
+    return {"records": out, "read": len(out), "truncated": True}
+
+
 async def _source_candidates(t: Dict[str, Any], seen_ids: set) -> Tuple[List[Dict[str, Any]], List[str]]:
     """New items from the fabric sources a topic reads, as signal candidates for the
     same triage as web results. The fabric pulls on its own schedule; a source that
@@ -869,14 +933,17 @@ async def _source_candidates(t: Dict[str, Any], seen_ids: set) -> Tuple[List[Dic
             pr = await _call("fabric.sources.pull", source_id=sub["id"])
             if pr.get("error"):
                 errors.append(f"{sub.get('label', sub['id'])}: {pr['error']}")
-        r = await _call("fabric.browse", dataset_id=sub["dataset_id"], limit=srcs.PER_SOURCE)
+        cursor = str(sub.get("cursor") or "")
+        r = await _browse_since(sub["dataset_id"], cursor)
         if r.get("error"):
             errors.append(f"{sub.get('label', sub['id'])}: {r['error']}")
             continue
+        if r.get("truncated"):
+            errors.append(f"{sub.get('label', sub['id'])}: more than {r['read']} new items since the last sweep - "
+                          "the oldest of them were not read")
         box = srcs.parse_bbox(sub.get("bbox")) if sub.get("bbox") else None
         # only records the fabric stored since the last sweep read this source: an item triage
         # joined to another story, or found off-topic, is not offered (and scored) again
-        cursor = str(sub.get("cursor") or "")
         recs = [rec for rec in r.get("records") or [] if str(rec.get("created_at") or "") > cursor or not cursor]
         newest = max([str(rec.get("created_at") or "") for rec in recs] + [cursor])
         if newest and newest != cursor:
@@ -920,22 +987,47 @@ async def _dream_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+RESEARCH_FORGET_AFTER = 5            # consecutive failed status checks before a job is let go
+RESEARCH_MAX_AGE_DAYS = 3
+
+
+def _remember_research(job_id: str, topic_id: str, query: str) -> None:
+    """Note a research run started for a topic, so its result comes back as a signal at the topic's next sweep."""
+    if not job_id or not topic_id:
+        return
+    st = store()
+    jobs = st.get_kv("research_jobs", {}) or {}
+    jobs[job_id] = {"topic_id": topic_id, "query": query, "started": core.now_iso()}
+    st.set_kv("research_jobs", jobs)
+
+
 async def _research_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Research runs started for this topic (sessions, report buttons) that have
     finished since: their result becomes a research signal."""
     st = store()
     jobs = st.get_kv("research_jobs", {}) or {}
-    out, keep = [], {}
+    out: List[Dict[str, Any]] = []
+    gone: set = set()
+    updated: Dict[str, Dict[str, Any]] = {}
     for jid, j in jobs.items():
         if j.get("topic_id") != t["id"]:
-            keep[jid] = j
             continue
         r = await _call("research.job.status", job_id=jid)
         status = str(r.get("status") or "")
         if status not in ("done", "completed", "complete", "finished"):
-            if status in ("failed", "error", "cancelled", "not_found") or (not status and r.get("error")):
-                continue                       # gone - forget it
-            keep[jid] = j
+            if status in ("failed", "error", "cancelled", "not_found"):
+                gone.add(jid)                  # the job itself ended without a result
+            elif not status and r.get("error"):
+                # the status call failed (research module restarting, a timeout): try again next sweep; let go only
+                # after several failures in a row or when the job is days old (review D8: one failure forgot it)
+                n = int(j.get("status_errors") or 0) + 1
+                age = core.age_days(j.get("started")) or 0
+                if n >= RESEARCH_FORGET_AFTER or age > RESEARCH_MAX_AGE_DAYS:
+                    gone.add(jid)
+                else:
+                    updated[jid] = dict(j, status_errors=n)
+            elif j.get("status_errors"):
+                updated[jid] = {k: v for k, v in j.items() if k != "status_errors"}
             continue
         res = r.get("result")
         text = res if isinstance(res, str) else str((res or {}).get("report") or (res or {}).get("text") or res or "")
@@ -945,7 +1037,16 @@ async def _research_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
             s.update(score=7.5, summary=core.clean_prose(text)[:1500], enriched=True)
             st.put_signal(s)
             out.append(s)
-    st.set_kv("research_jobs", keep)
+        gone.add(jid)
+    # re-read before writing: a job started (by a session or a report button) while these statuses were being
+    # checked must not be overwritten by the copy read at the top
+    cur = st.get_kv("research_jobs", {}) or {}
+    for jid in gone:
+        cur.pop(jid, None)
+    for jid, j in updated.items():
+        if jid in cur:
+            cur[jid] = j
+    st.set_kv("research_jobs", cur)
     return out
 
 
@@ -1197,16 +1298,57 @@ async def _alert(t: Dict[str, Any], snap: Dict[str, Any], why: str) -> None:
     if snap["id"] in sent:
         return
     text = ops.alert_text(t["name"], snap, why, config().get("public_base", "").rstrip("/") + f"/intel/go/alert/{snap['id']}")
+    ok, failed = await _send_alert(t, snap, text)
+    st = store()
+    if ok:
+        st.set_kv("alerts_sent", ((st.get_kv("alerts_sent", []) or []) + [snap["id"]])[-300:])
+    else:
+        # review 2026-10-10: a failed send was marked sent and never retried - the tick retries it (ALERT_RETRIES)
+        pend = [p for p in (st.get_kv("alerts_retry", []) or []) if p.get("snap") != snap["id"]]
+        st.set_kv("alerts_retry", (pend + [{"snap": snap["id"], "topic": t["id"], "text": text, "tries": 1,
+                                            "ts": core.now_iso()}])[-50:])
+    st.set_kv("alerts", ((st.get_kv("alerts", []) or []) + [{"ts": core.now_iso(), "topic": t["id"], "why": why,
+                                                            "headline": snap.get("headline"), "sent_to": ok,
+                                                            "failed": failed}])[-100:])
+    await _event("alert", topic=t["id"], why=why, headline=snap.get("headline"), sent_to=ok, failed=failed)
+
+
+ALERT_RETRIES = 3
+
+
+async def _send_alert(t: Dict[str, Any], snap: Dict[str, Any], text: str) -> Tuple[List[str], List[str]]:
+    """Send an alert on each configured channel; (channels that took it, channels that failed)."""
+    ok, failed = [], []
     for ch in config().get("alert_channels") or ["telegram"]:
         if ch == "telegram":
-            await _call("tg.notify", text=text, idempotency_key=f"intel-alert-{snap['id']}")
+            r = await _call("tg.notify", text=text, idempotency_key=f"intel-alert-{snap['id']}")
         elif ch == "phone":
-            await _call("ha.notify", target=config().get("phone_target"), title=f"Intel: {t['name']}"[:80],
-                        message=text[:240])
-    st.set_kv("alerts_sent", (sent + [snap["id"]])[-300:])
-    st.set_kv("alerts", ((st.get_kv("alerts", []) or []) + [{"ts": core.now_iso(), "topic": t["id"], "why": why,
-                                                            "headline": snap.get("headline")}])[-100:])
-    await _event("alert", topic=t["id"], why=why, headline=snap.get("headline"))
+            r = await _call("ha.notify", target=config().get("phone_target"), title=f"Intel: {t['name']}"[:80],
+                            message=text[:240])
+        else:
+            continue
+        (failed if (not isinstance(r, dict) or r.get("error") or r.get("ok") is False) else ok).append(ch)
+    return ok, failed
+
+
+async def _retry_alerts() -> None:
+    """Alerts no channel took, tried again on the tick - up to ALERT_RETRIES times in all."""
+    st = store()
+    pend = st.get_kv("alerts_retry", []) or []
+    if not pend:
+        return
+    keep = []
+    for p in pend:
+        t = st.get_topic(p.get("topic", "")) or {"id": p.get("topic", ""), "name": p.get("topic", "")}
+        ok, _failed = await _send_alert(t, {"id": p.get("snap", "")}, str(p.get("text") or ""))
+        if ok:
+            st.set_kv("alerts_sent", ((st.get_kv("alerts_sent", []) or []) + [p.get("snap")])[-300:])
+            await _event("alert.retried", topic=t["id"], sent_to=ok)
+        elif int(p.get("tries") or 1) + 1 < ALERT_RETRIES:
+            keep.append(dict(p, tries=int(p.get("tries") or 1) + 1))
+        else:
+            log.warning("intel: alert for %s not delivered after %d tries", t["id"], ALERT_RETRIES)
+    st.set_kv("alerts_retry", keep)
 
 
 @capability("intel.sweep", http_method="POST", http_path="/intel/sweep", http_tags=["intel"],
@@ -2601,6 +2743,10 @@ async def cap_action_run(token: str = "", trace_id=None):
     except Exception as ex:  # noqa: BLE001 - never leave a claimed action 'running'
         r = {"error": f"{type(ex).__name__}: {ex}"}
     good = not r.get("error")
+    if good and a.get("cap") == "research.run" and r.get("job_id"):
+        # review D8: research started from a report button was never collected - its result now comes back as a
+        # signal at the topic's next sweep, as the docstring always said
+        _remember_research(str(r["job_id"]), str(a.get("topic_id") or ""), str(args.get("query") or ""))
     st.finish_action(token, "done" if good else "failed", {k: r.get(k) for k in list(r)[:12]})
     if good and a.get("target") and a.get("topic_id"):
         tgt = core.canonical_url(a["target"])
@@ -2649,6 +2795,9 @@ async def cap_repo_get(url: str = "", topic_id: str = "", trace_id=None):
     from Vera.vera.state_paths import state_dir
     root = Path(os.environ.get(_REPO_ROOT_ENV) or state_dir("intel", "repos"))
     dest = root / r["host"] / r["owner"] / r["repo"]
+    # belt and braces with repo_of's dot-name refusal: the clone target never leaves the repos folder
+    if root.resolve() not in dest.resolve().parents:
+        return {"error": "refused: the repository path would leave the intel repo folder"}
     dest.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="true")
     fresh = not (dest / ".git").exists()
@@ -2967,10 +3116,7 @@ async def _job_research(p: Dict[str, Any]) -> Dict[str, Any]:
     r = await _call("research.run", query=q, mode="single", output_mode="report")
     if r.get("error") or not r.get("job_id"):
         return {"ok": False, "error": r.get("error") or "research did not start"}
-    st = store()
-    jobs = st.get_kv("research_jobs", {}) or {}
-    jobs[str(r["job_id"])] = {"topic_id": tid, "query": q, "started": core.now_iso()}
-    st.set_kv("research_jobs", jobs)
+    _remember_research(str(r["job_id"]), tid, q)
     return {"ok": True, "job_id": r["job_id"]}
 
 
@@ -3138,6 +3284,10 @@ async def _tick() -> None:
     c = config()
     if not c.get("enabled"):
         return
+    try:
+        await _retry_alerts()
+    except Exception as e:  # noqa: BLE001 - a retry never stops the tick
+        log.warning("intel: alert retry: %s", e)
     st = store()
     now = _local_now()
     today = now.date().isoformat()
@@ -3572,7 +3722,44 @@ async def cap_config_get(trace_id=None):
                          "weekly_day_done": st.get_kv("weekly_day_done"), "advise_week": st.get_kv("advise_week")}}
 
 
-def _clean_config(raw: Dict[str, Any]) -> Dict[str, Any]:
+# Settings that, changed by anyone who can call intel.config.set (chat, or text injected into a page a model read),
+# could send Telegram links and n8n calls elsewhere or read any folder on the files host (review 2026-10-10 D9).
+DROP_ROOT = os.environ.get("VERA_INTEL_DROP_ROOT", "/srv/pools/tank_sde/vfs/home").rstrip("/")
+_PUBLIC_HOSTS = re.compile(r"^(llm\.int|localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.66\.66\.\d{1,3}|"
+                           r"[a-z0-9-]+(\.[a-z0-9-]+)*\.duckdns\.org)$", re.I)
+PERSONA_MAX = 4000
+
+
+def _safe_folder(path: Any) -> str:
+    """The folder normalised, or "" when it is relative, climbs with "..", or leaves DROP_ROOT."""
+    import posixpath
+    p = str(path or "").strip()
+    if not p.startswith("/") or ".." in p.split("/"):
+        return ""
+    p = posixpath.normpath(p)
+    return p if (p == DROP_ROOT or p.startswith(DROP_ROOT + "/")) else ""
+
+
+def _safe_public_base(url: Any) -> str:
+    """scheme://host[:port] for a host Vera is reached by (llm.int, the LAN, the wg door, DuckDNS, or one in
+    VERA_INTEL_PUBLIC_HOSTS), else ""."""
+    from urllib.parse import urlsplit
+    u = str(url or "").strip().rstrip("/")
+    try:
+        sp = urlsplit(u)
+    except ValueError:
+        return ""
+    host = (sp.hostname or "").lower()
+    extra = {h.strip().lower() for h in os.environ.get("VERA_INTEL_PUBLIC_HOSTS", "").split(",") if h.strip()}
+    if sp.scheme not in ("http", "https") or not host or sp.path not in ("", "/") or sp.query or sp.username:
+        return ""
+    if not (_PUBLIC_HOSTS.match(host) or host in extra):
+        return ""
+    return f"{sp.scheme}://{sp.netloc}"
+
+
+def _clean_config(raw: Dict[str, Any], rejected: Optional[List[str]] = None) -> Dict[str, Any]:
+
     out: Dict[str, Any] = {}
     for k, v in (raw or {}).items():
         if k not in _CONFIG_KEYS or v is None:
@@ -3586,8 +3773,20 @@ def _clean_config(raw: Dict[str, Any]) -> Dict[str, Any]:
             v = [x for x in (ops.normalise_session(s) for s in (v if isinstance(v, list) else [])
                              if isinstance(s, dict)) if x][:12]
         elif k == "drop_folders":
-            v = [{"kind": f.get("kind"), "path": str(f.get("path") or "")} for f in (v if isinstance(v, list) else [])
-                 if isinstance(f, dict) and f.get("kind") in ops.FOLDER_KINDS and f.get("path")][:12]
+            got = [{"kind": f.get("kind"), "path": _safe_folder(f.get("path"))} for f in (v if isinstance(v, list) else [])
+                   if isinstance(f, dict) and f.get("kind") in ops.FOLDER_KINDS and f.get("path")][:12]
+            if any(not f["path"] for f in got) and rejected is not None:
+                rejected.append(f"drop_folders: only absolute folders under {DROP_ROOT} (no ..)")
+            v = [f for f in got if f["path"]]
+        elif k == "public_base":
+            v = _safe_public_base(v)
+            if not v:
+                if rejected is not None:
+                    rejected.append("public_base: a bare http(s)://host[:port] on llm.int, the LAN, the wg door or "
+                                    "DuckDNS (or VERA_INTEL_PUBLIC_HOSTS)")
+                continue
+        elif k == "persona":
+            v = str(v)[:PERSONA_MAX]
         elif isinstance(d, bool):
             v = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
         elif isinstance(d, int):
@@ -3625,13 +3824,17 @@ async def cap_config_set(settings: Any = None, enabled: bool = None, timezone: s
         if v is not None:
             raw[k] = v
     try:
-        clean = _clean_config(raw)
+        rejected: List[str] = []
+        clean = _clean_config(raw, rejected)
     except (TypeError, ValueError) as e:
         return {"error": f"bad setting: {e}"}
     cur = store().get_kv("config", {}) or {}
     cur.update(clean)
     store().set_kv("config", cur)
-    return {"ok": True, "config": config(), "changed": sorted(clean)}
+    out = {"ok": True, "config": config(), "changed": sorted(clean)}
+    if rejected:
+        out["rejected"] = rejected
+    return out
 
 
 # ── leaving n8n ──────────────────────────────────────────────────────────────
@@ -3777,17 +3980,31 @@ async def cap_n8n_retire(dry_run: bool = True, reactivate: bool = False, trace_i
 
 # ── outcomes from the product: link opens, feedback, alerts acted on ────────
 
+# Link-preview fetchers open every link in a message the moment it is sent; counting them taught the gates that
+# every alert and link was acted on (review 2026-10-10). A preview is redirected but never counted.
+_PREVIEW_UA = re.compile(r"(?i)(telegrambot|twitterbot|facebookexternalhit|slackbot|discordbot|whatsapp|"
+                         r"linkedinbot|skypeuripreview|embedly|bot\b|crawler|spider|preview)")
+
+
+def _is_preview(request: Any) -> bool:
+    try:
+        return bool(_PREVIEW_UA.search(str(request.headers.get("user-agent") or "")))
+    except Exception:
+        return False
+
+
 @APP.get("/intel/go/alert/{snap_id}", include_in_schema=False)
-async def _go_alert(snap_id: str):
-    """An alert's link: counts as 'acted on', then opens the panel."""
+async def _go_alert(snap_id: str, request: Request = None):
+    """An alert's link: counts as 'acted on' (unless a link-preview bot fetched it), then opens the panel."""
     from fastapi.responses import RedirectResponse
-    _outcome("snapshot", re.sub(r"[^a-f0-9]", "", snap_id)[:32], "alert.acted",
-             questions=["intel.material_change"])
+    if not _is_preview(request):
+        _outcome("snapshot", re.sub(r"[^a-f0-9]", "", snap_id)[:32], "alert.acted",
+                 questions=["intel.material_change"])
     return RedirectResponse("/intel/panel", status_code=302)
 
 
 @APP.get("/intel/go/{signal_id}", include_in_schema=False)
-async def _go_signal(signal_id: str):
+async def _go_signal(signal_id: str, request: Request = None):
     """A signal link in a report or a message: counts as 'opened', then redirects to the
     page the signal points at - only ever a stored http(s) URL, never one from the request."""
     from fastapi.responses import RedirectResponse
@@ -3795,8 +4012,9 @@ async def _go_signal(signal_id: str):
     s = store().get_signal(sid)
     if not s or not re.match(r"(?i)^https?://", str(s.get("url") or "")):
         return HTMLResponse("<h1>No such link</h1>", status_code=404)
-    _outcome("signal", sid, "link.opened", questions=["intel.signal_relevant", "intel.enrich_worth",
-                                                      "intel.page_genre"])
+    if not _is_preview(request):
+        _outcome("signal", sid, "link.opened", questions=["intel.signal_relevant", "intel.enrich_worth",
+                                                          "intel.page_genre"])
     return RedirectResponse(s["url"], status_code=302)
 
 

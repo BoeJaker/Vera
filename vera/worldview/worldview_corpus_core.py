@@ -19,7 +19,7 @@ Pure: no I/O.
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 FAMILY_CAP = 0.15
 #: the plan's self-telemetry (bus.*, ts.*, chat.messages, dream.reports) and the same category found in the store
@@ -96,6 +96,85 @@ def plan(dataset_counts: Dict[str, int], target: int, exclude: Sequence[str] = S
         sizes[f] += int(n)
     return {"quotas": quotas(dict(sizes), target, cap), "datasets": by_family,
             "excluded": sorted(dropped), "eligible": int(sum(sizes.values()))}
+
+
+
+def interleave(groups: Dict[str, Sequence[str]]) -> List[str]:
+    """Round-robin over the families' id lists (families in name order): fetching the vectors in this order and
+    stopping early still leaves every family its share, where a family-by-family list cut short drops the last
+    families whole (the first v3 training, 11 Oct: ~40k ids in one Chroma get timed out)."""
+    lists = [list(groups[k]) for k in sorted(groups) if groups[k]]
+    out: List[str] = []
+    for i in range(max((len(x) for x in lists), default=0)):
+        out.extend(x[i] for x in lists if i < len(x))
+    return out
+
+
+def batches(ids: Sequence[str], size: int) -> List[List[str]]:
+    size = max(1, int(size or 1))
+    return [list(ids[i:i + size]) for i in range(0, len(ids), size)]
+
+
+class FamilyTake:
+    """Which fetched records join the corpus: at most each family's quota and `limit` in all - the oversampled
+    pick has spare ids (not every record has a vector yet), this keeps the plan's shares when they all do."""
+
+    def __init__(self, family_quotas: Dict[str, int], limit: int):
+        self.quotas = {k: int(v) for k, v in (family_quotas or {}).items()}
+        self.limit = int(limit)
+        self.got: Counter = Counter()
+        self.n = 0
+
+    @property
+    def full(self) -> bool:
+        return self.n >= self.limit
+
+    def take(self, dataset_id: Any) -> bool:
+        f = family(dataset_id)
+        if self.full or self.got[f] >= self.quotas.get(f, 0):
+            return False
+        self.got[f] += 1
+        self.n += 1
+        return True
+
+
+def fetch_by_ids(get: Callable[[List[str]], Tuple[List[str], List[Any], Dict[str, Dict[str, Any]]]],
+                 ids: Sequence[str], size: int = 500, take: "Optional[FamilyTake]" = None, cap: int = 50000,
+                 max_fails: int = 3, on_fail: Optional[Callable[[int, int, Exception], None]] = None
+                 ) -> Tuple[List[str], List[Any], Dict[str, Dict[str, Any]], Dict[str, int]]:
+    """Vectors for an id set in bounded batches: get(batch) -> (rids, rows, meta by rid). A failed batch is skipped;
+    `max_fails` in a row end the fetch with what came. `take` picks the records that join (and ends the fetch when
+    full); `cap` bounds the result. Returns (rids, rows, meta, {batches, failed, fetched})."""
+    rids: List[str] = []
+    rows: List[Any] = []
+    meta: Dict[str, Dict[str, Any]] = {}
+    info = {"batches": 0, "failed": 0, "fetched": 0}
+    fails = 0
+    for batch in batches(list(ids), size):
+        if (take is not None and take.full) or len(rids) >= cap:
+            break
+        info["batches"] += 1
+        try:
+            r, w, m = get(batch)
+        except Exception as e:  # a slow or dropped batch costs that batch, not the training
+            fails += 1
+            info["failed"] += 1
+            if on_fail is not None:
+                on_fail(len(batch), fails, e)
+            if fails >= max_fails:
+                break
+            continue
+        fails = 0
+        info["fetched"] += len(r)
+        for rid, row in zip(r, w):
+            if len(rids) >= cap:
+                break
+            if take is not None and not take.take((m.get(rid) or {}).get("dataset_id", "")):
+                continue
+            rids.append(rid)
+            rows.append(row)
+            meta[rid] = m.get(rid) or {}
+    return rids, rows, meta, info
 
 
 SNAPSHOT_DATASET = "vera.worldview.corpus"

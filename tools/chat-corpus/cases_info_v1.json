@@ -1,0 +1,1235 @@
+{
+ "version": "info-v1",
+ "approved": "2026-10-11",
+ "source": ".git/vera-work/shared-planning/intelligence/PLAN-INFO-SEEKING.md SK-4.1 (tools/info-eval/questions.json, 10 Oct); owner approved all 70 on 2026-10-11",
+ "notes": "Info-seeking chat run: latest/fact/overview must call a lookup tool (tools_any), cite [n] and mention one expected term; memory turns must not search the web (tools_none); small talk calls nothing. acquire 'any' = not checked (pre-answer web search may or may not fire). ids 101-170 (v0 uses 1-30).",
+ "cases": [
+  {
+   "id": 101,
+   "label": "L01",
+   "kind": "latest",
+   "text": "What's the latest on the EU AI Act?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "AI Act"
+   ]
+  },
+  {
+   "id": 102,
+   "label": "L02",
+   "kind": "latest",
+   "text": "Any news about n8n?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "n8n"
+   ]
+  },
+  {
+   "id": 103,
+   "label": "L03",
+   "kind": "latest",
+   "text": "Give me updates on UK house prices",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "house price|property price|Nationwide|Halifax|Rightmove"
+   ]
+  },
+  {
+   "id": 104,
+   "label": "L04",
+   "kind": "latest",
+   "text": "What's new with the Model Context Protocol?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "MCP|Model Context Protocol"
+   ]
+  },
+  {
+   "id": 105,
+   "label": "L05",
+   "kind": "latest",
+   "text": "Latest news on Microsoft 365 Copilot",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Copilot"
+   ]
+  },
+  {
+   "id": 106,
+   "label": "L06",
+   "kind": "latest",
+   "text": "What's happening in UK commercial property this month?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "commercial property|office|industrial|logistics|REIT"
+   ]
+  },
+  {
+   "id": 107,
+   "label": "L07",
+   "kind": "latest",
+   "text": "Recent developments in RAG and retrieval for enterprise search",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "RAG|retrieval"
+   ]
+  },
+  {
+   "id": 108,
+   "label": "L08",
+   "kind": "latest",
+   "text": "Latest updates on LangGraph",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "LangGraph"
+   ]
+  },
+  {
+   "id": 109,
+   "label": "L09",
+   "kind": "latest",
+   "text": "Any news on the Bank of England interest rate decision?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Bank of England|Bank Rate|interest rate"
+   ]
+  },
+  {
+   "id": 110,
+   "label": "L10",
+   "kind": "latest",
+   "text": "What's the latest with Savills?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Savills"
+   ]
+  },
+  {
+   "id": 111,
+   "label": "L11",
+   "kind": "latest",
+   "text": "Latest AI model releases",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "model|release|launch"
+   ]
+  },
+  {
+   "id": 112,
+   "label": "L12",
+   "kind": "latest",
+   "text": "Updates on UK planning reform",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "planning"
+   ]
+  },
+  {
+   "id": 113,
+   "label": "L13",
+   "kind": "latest",
+   "text": "Any news about Ollama?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Ollama"
+   ]
+  },
+  {
+   "id": 114,
+   "label": "L14",
+   "kind": "latest",
+   "text": "What's new in vLLM?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "vLLM"
+   ]
+  },
+  {
+   "id": 115,
+   "label": "L15",
+   "kind": "latest",
+   "text": "Latest on UK mortgage rates",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "mortgage"
+   ]
+  },
+  {
+   "id": 116,
+   "label": "L16",
+   "kind": "latest",
+   "text": "What's the latest on data centre development in the UK?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "data centre|data center"
+   ]
+  },
+  {
+   "id": 117,
+   "label": "L17",
+   "kind": "latest",
+   "text": "Recent news about RICS",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "RICS"
+   ]
+  },
+  {
+   "id": 118,
+   "label": "L18",
+   "kind": "latest",
+   "text": "Latest bitcoin news",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "bitcoin|BTC"
+   ]
+  },
+  {
+   "id": 119,
+   "label": "L19",
+   "kind": "latest",
+   "text": "Any updates on the UK AI regulation white paper or AI bill?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "AI|regulation|bill"
+   ]
+  },
+  {
+   "id": 120,
+   "label": "L20",
+   "kind": "latest",
+   "text": "What's new with Home Assistant?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Home Assistant"
+   ]
+  },
+  {
+   "id": 121,
+   "label": "F01",
+   "kind": "fact",
+   "text": "What is the Bank of England base rate?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Bank Rate|base rate"
+   ]
+  },
+  {
+   "id": 122,
+   "label": "F02",
+   "kind": "fact",
+   "text": "What is the current UK inflation rate?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "CPI|inflation"
+   ]
+  },
+  {
+   "id": 123,
+   "label": "F03",
+   "kind": "fact",
+   "text": "Who is the CEO of Savills?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Savills"
+   ]
+  },
+  {
+   "id": 124,
+   "label": "F04",
+   "kind": "fact",
+   "text": "When does the EU AI Act's high-risk obligation apply?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "high-risk|high risk"
+   ]
+  },
+  {
+   "id": 125,
+   "label": "F05",
+   "kind": "fact",
+   "text": "What licence is n8n distributed under?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Sustainable Use|fair-code|licen"
+   ]
+  },
+  {
+   "id": 126,
+   "label": "F06",
+   "kind": "fact",
+   "text": "What is the UK stamp duty threshold for first-time buyers?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "stamp duty|SDLT"
+   ]
+  },
+  {
+   "id": 127,
+   "label": "F07",
+   "kind": "fact",
+   "text": "How much VRAM does an NVIDIA V100 have?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "16|32|GB"
+   ]
+  },
+  {
+   "id": 128,
+   "label": "F08",
+   "kind": "fact",
+   "text": "What port does SearXNG listen on by default?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "8080|8888"
+   ]
+  },
+  {
+   "id": 129,
+   "label": "F09",
+   "kind": "fact",
+   "text": "What is the population of Cambridge, England?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Cambridge"
+   ]
+  },
+  {
+   "id": 130,
+   "label": "F10",
+   "kind": "fact",
+   "text": "What is the current UK national living wage?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "National Living Wage|minimum wage"
+   ]
+  },
+  {
+   "id": 131,
+   "label": "F11",
+   "kind": "fact",
+   "text": "Which company makes the Qwen models?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Alibaba"
+   ]
+  },
+  {
+   "id": 132,
+   "label": "F12",
+   "kind": "fact",
+   "text": "What is the Nationwide house price index annual change?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Nationwide"
+   ]
+  },
+  {
+   "id": 133,
+   "label": "F13",
+   "kind": "fact",
+   "text": "When was the Model Context Protocol announced?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "2024|Anthropic"
+   ]
+  },
+  {
+   "id": 134,
+   "label": "F14",
+   "kind": "fact",
+   "text": "What is Proxmox VE's latest major version?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Proxmox"
+   ]
+  },
+  {
+   "id": 135,
+   "label": "F15",
+   "kind": "fact",
+   "text": "What is the UK corporation tax main rate?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "corporation tax|25%"
+   ]
+  },
+  {
+   "id": 136,
+   "label": "F16",
+   "kind": "fact",
+   "text": "Who chairs the Bank of England Monetary Policy Committee?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Governor|Bailey|MPC"
+   ]
+  },
+  {
+   "id": 137,
+   "label": "F17",
+   "kind": "fact",
+   "text": "What does a RICS Red Book valuation cover?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "Red Book|valuation"
+   ]
+  },
+  {
+   "id": 138,
+   "label": "F18",
+   "kind": "fact",
+   "text": "What is the price of an ounce of gold today?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "gold"
+   ]
+  },
+  {
+   "id": 139,
+   "label": "F19",
+   "kind": "fact",
+   "text": "What is FreeIPA?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "FreeIPA|identity"
+   ]
+  },
+  {
+   "id": 140,
+   "label": "F20",
+   "kind": "fact",
+   "text": "What is the GBP to USD exchange rate?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "GBP|USD|pound|dollar"
+   ]
+  },
+  {
+   "id": 141,
+   "label": "O01",
+   "kind": "overview",
+   "text": "Explain the state of retrieval-augmented generation rerankers",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "rerank"
+   ]
+  },
+  {
+   "id": 142,
+   "label": "O02",
+   "kind": "overview",
+   "text": "Compare LangGraph and CrewAI",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "LangGraph|CrewAI"
+   ]
+  },
+  {
+   "id": 143,
+   "label": "O03",
+   "kind": "overview",
+   "text": "Give me an overview of the UK industrial and logistics property market",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "logistics|industrial"
+   ]
+  },
+  {
+   "id": 144,
+   "label": "O04",
+   "kind": "overview",
+   "text": "Explain how the EU AI Act classifies risk",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "risk"
+   ]
+  },
+  {
+   "id": 145,
+   "label": "O05",
+   "kind": "overview",
+   "text": "Compare vLLM and Ollama for serving local models",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "vLLM|Ollama"
+   ]
+  },
+  {
+   "id": 146,
+   "label": "O06",
+   "kind": "overview",
+   "text": "Overview of AI adoption in UK property valuation",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "valuation|AI"
+   ]
+  },
+  {
+   "id": 147,
+   "label": "O07",
+   "kind": "overview",
+   "text": "Explain how HNSW vector indexes work",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "HNSW|graph"
+   ]
+  },
+  {
+   "id": 148,
+   "label": "O08",
+   "kind": "overview",
+   "text": "Compare n8n, Zapier and Make",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "n8n|Zapier|Make"
+   ]
+  },
+  {
+   "id": 149,
+   "label": "O09",
+   "kind": "overview",
+   "text": "Explain the landscape of open-weight LLMs",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "open|weight|model"
+   ]
+  },
+  {
+   "id": 150,
+   "label": "O10",
+   "kind": "overview",
+   "text": "Background on UK lab space demand in Oxford and Cambridge",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "intel.lookup",
+    "reader.page"
+   ],
+   "cites": true,
+   "mentions": [
+    "lab|Oxford|Cambridge"
+   ]
+  },
+  {
+   "id": 151,
+   "label": "M01",
+   "kind": "memory",
+   "text": "What did we decide about the intel brief channels?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_none": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "web.fetch",
+    "reader.page"
+   ],
+   "note": "answer from Vera's own memory/notes; must not web-search"
+  },
+  {
+   "id": 152,
+   "label": "M02",
+   "kind": "memory",
+   "text": "Remind me what we changed in SearXNG last night",
+   "route": "chat",
+   "acquire": "any",
+   "tools_none": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "web.fetch",
+    "reader.page"
+   ],
+   "note": "memory; dated"
+  },
+  {
+   "id": 153,
+   "label": "M03",
+   "kind": "memory",
+   "text": "What topics does Vera track for me?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_none": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "web.fetch",
+    "reader.page"
+   ],
+   "note": "intel.topic.list / intel.lookup, not the web"
+  },
+  {
+   "id": 154,
+   "label": "M04",
+   "kind": "memory",
+   "text": "What did I say about the census?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_none": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "web.fetch",
+    "reader.page"
+   ],
+   "note": "memory"
+  },
+  {
+   "id": 155,
+   "label": "M05",
+   "kind": "memory",
+   "text": "What was the last thing we worked on together?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_none": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "web.fetch",
+    "reader.page"
+   ],
+   "note": "session history"
+  },
+  {
+   "id": 156,
+   "label": "M06",
+   "kind": "memory",
+   "text": "Which GPU is the limiter on the estate?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_none": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "web.fetch",
+    "reader.page"
+   ],
+   "note": "memory: V100 thermal throttling"
+  },
+  {
+   "id": 157,
+   "label": "M07",
+   "kind": "memory",
+   "text": "Where do plans and handovers live?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_none": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "web.fetch",
+    "reader.page"
+   ],
+   "note": "memory: shared-planning"
+  },
+  {
+   "id": 158,
+   "label": "M08",
+   "kind": "memory",
+   "text": "What's new on my UK commercial property topic?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_any": [
+    "intel.lookup",
+    "info.seek"
+   ],
+   "note": "intel.lookup (tracked) - may also seek the web"
+  },
+  {
+   "id": 159,
+   "label": "M09",
+   "kind": "memory",
+   "text": "Did the intel brief run this morning?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_none": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "web.fetch",
+    "reader.page"
+   ],
+   "note": "Vera's own state"
+  },
+  {
+   "id": 160,
+   "label": "M10",
+   "kind": "memory",
+   "text": "What did we decide about release timing?",
+   "route": "chat",
+   "acquire": "any",
+   "tools_none": [
+    "info.seek",
+    "web.research",
+    "web.search",
+    "web.fetch",
+    "reader.page"
+   ],
+   "note": "memory"
+  },
+  {
+   "id": 161,
+   "label": "N01",
+   "kind": "nosearch",
+   "text": "hi",
+   "route": "chat",
+   "acquire": "none",
+   "tools_none": [
+    "*"
+   ],
+   "note": "small talk, no tools"
+  },
+  {
+   "id": 162,
+   "label": "N02",
+   "kind": "nosearch",
+   "text": "thanks, that's great",
+   "route": "chat",
+   "acquire": "none",
+   "tools_none": [
+    "*"
+   ],
+   "note": "no tools"
+  },
+  {
+   "id": 163,
+   "label": "N03",
+   "kind": "nosearch",
+   "text": "What is 17 times 23?",
+   "route": "chat",
+   "acquire": "none",
+   "tools_none": [
+    "*"
+   ],
+   "note": "maths, no web"
+  },
+  {
+   "id": 164,
+   "label": "N04",
+   "kind": "nosearch",
+   "text": "Write a haiku about autumn",
+   "route": "chat",
+   "acquire": "none",
+   "tools_none": [
+    "*"
+   ],
+   "note": "creative, no web"
+  },
+  {
+   "id": 165,
+   "label": "N05",
+   "kind": "nosearch",
+   "text": "Explain what a for loop is",
+   "route": "chat",
+   "acquire": "none",
+   "tools_none": [
+    "*"
+   ],
+   "note": "stable knowledge"
+  },
+  {
+   "id": 166,
+   "label": "N06",
+   "kind": "nosearch",
+   "text": "Translate 'good morning' into French",
+   "route": "chat",
+   "acquire": "none",
+   "tools_none": [
+    "*"
+   ],
+   "note": "no web"
+  },
+  {
+   "id": 167,
+   "label": "N07",
+   "kind": "nosearch",
+   "text": "What's the difference between a list and a tuple in Python?",
+   "route": "chat",
+   "acquire": "none",
+   "tools_none": [
+    "*"
+   ],
+   "note": "stable knowledge"
+  },
+  {
+   "id": 168,
+   "label": "N08",
+   "kind": "nosearch",
+   "text": "Summarise this: the cat sat on the mat and then slept",
+   "route": "chat",
+   "acquire": "none",
+   "tools_none": [
+    "*"
+   ],
+   "note": "transform given text"
+  },
+  {
+   "id": 169,
+   "label": "N09",
+   "kind": "nosearch",
+   "text": "ok",
+   "route": "chat",
+   "acquire": "none",
+   "tools_none": [
+    "*"
+   ],
+   "note": "no tools"
+  },
+  {
+   "id": 170,
+   "label": "N10",
+   "kind": "nosearch",
+   "text": "Rewrite 'we need to talk' more politely",
+   "route": "chat",
+   "acquire": "none",
+   "tools_none": [
+    "*"
+   ],
+   "note": "no web"
+  }
+ ]
+}

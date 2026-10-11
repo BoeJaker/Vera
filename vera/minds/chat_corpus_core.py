@@ -43,8 +43,10 @@ except Exception:                        # worktree / app-free import
     from vera.agents import turn_phases_core as TP      # type: ignore
 
 ROUTES = ("chat", "loop")
-ACQUIRES = ("none", "web", "memory")
-CHECKS = ("route", "acquire", "mentions", "not_mentions", "canvas", "ttft_ms")
+ACQUIRES = ("none", "web", "memory", "any")          # any: not checked
+CHECKS = ("route", "acquire", "mentions", "not_mentions", "canvas", "tools_any", "tools_none", "cites", "ttft_ms")
+#: a numbered source citation in a reply: [3], [E3], [1, 2]
+CITE_RE = r"\[\s*[Ee]?\d{1,3}(?:\s*[,;]\s*[Ee]?\d{1,3})*\s*\]"
 #: placeholders until the first run sets them (CHAT-CORPUS-v0: plain 6 s, triggered 12 s)
 TTFT_BUDGET_MS = {"plain": 6000, "triggered": 12000}
 SESSION_PREFIX = "chat-corpus-"
@@ -82,10 +84,19 @@ def load_cases(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         for k in ("mentions", "not_mentions"):
             if not isinstance(c.get(k, []), list) or not all(str(t).strip() for t in c.get(k, [])):
                 raise ValueError(f"case {cid}: {k} must be a list of terms")
+        for k in ("tools_any", "tools_none"):
+            if not isinstance(c.get(k, []), list) or not all(str(t).strip() for t in c.get(k, [])):
+                raise ValueError(f"case {cid}: {k} must be a list of capability names ('*' = any)")
         out.append({"id": cid, "text": str(c["text"]), "route": c["route"], "acquire": c.get("acquire", "none"),
                     "mentions": [str(t) for t in c.get("mentions", [])],
                     "not_mentions": [str(t) for t in c.get("not_mentions", [])],
-                    "canvas": str(c.get("canvas") or ""), "fixture": str(c.get("fixture") or "")})
+                    "canvas": str(c.get("canvas") or ""), "fixture": str(c.get("fixture") or ""),
+                    # info-seeking eval (cases_info_v1): which tools the turn should / must not call, and whether
+                    # the reply cites numbered sources - optional, so the v0 corpus judges exactly as before
+                    "tools_any": [str(t) for t in c.get("tools_any", [])],
+                    "tools_none": [str(t) for t in c.get("tools_none", [])],
+                    "cites": bool(c.get("cites")), "label": str(c.get("label") or ""),
+                    "kind": str(c.get("kind") or "")})
     return out
 
 
@@ -241,8 +252,22 @@ def evaluate(case: Dict[str, Any], ev: Dict[str, Any]) -> Dict[str, Any]:
     checks: List[Dict[str, Any]] = [{"check": "route", "want": case["route"], "got": route,
                                      "ok": route == case["route"]}]
     want_acq = case.get("acquire", "none")
-    acq_ok = (not acq) if want_acq == "none" else (want_acq in acq)
-    checks.append({"check": "acquire", "want": want_acq, "got": ",".join(acq) or "none", "ok": acq_ok})
+    if want_acq != "any":
+        acq_ok = (not acq) if want_acq == "none" else (want_acq in acq)
+        checks.append({"check": "acquire", "want": want_acq, "got": ",".join(acq) or "none", "ok": acq_ok})
+    used = [c.get("name") for c in calls if c.get("name")]
+    if case.get("tools_any"):
+        hit = [n for n in used if n in case["tools_any"]]
+        checks.append({"check": "tools_any", "want": case["tools_any"], "got": ",".join(used) or "none",
+                       "ok": bool(hit)})
+    if case.get("tools_none"):
+        bad = [n for n in used if "*" in case["tools_none"] or n in case["tools_none"]]
+        checks.append({"check": "tools_none", "want": case["tools_none"], "got": ",".join(bad) or "none",
+                       "ok": not bad})
+    if case.get("cites"):
+        import re as _re
+        checks.append({"check": "cites", "want": "[n] citations", "got": len(_re.findall(CITE_RE, reply)),
+                       "ok": bool(_re.search(CITE_RE, reply))})
     low = reply.lower()
     if case.get("mentions"):
         missing = [t for t in case["mentions"] if not _has(low, t)]

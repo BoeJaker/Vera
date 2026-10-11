@@ -49,6 +49,9 @@ REARM_WITHIN_S = 300
 
 #: Share of a node's memory the planned models may take (weights + KV room).
 MEM_SHARE = 0.85
+#: A node's memory figures (vram_gb, ram_gb) are GiB; treating them as 1e9 bytes left every budget 7% short
+#: (11 Oct 2026: a 1.7B refused beside the 9b on gpu-250 that measured 83.5% of the card).
+GIB = 2 ** 30
 #: KV/runtime overhead on top of the weights, as a fraction of the weights.
 KV_OVERHEAD = 0.20
 
@@ -292,8 +295,8 @@ def fit_memory(models: List[str], sizes: Dict[str, int], budget_bytes: float,
     for m in models:
         s = size_of(m) * (1 + KV_OVERHEAD)
         if budget_bytes and s and used + s > budget_bytes:
-            dropped.append({"model": m, "why": "does not fit: %.1f GB over a %.1f GB budget"
-                            % ((used + s) / 1e9, budget_bytes / 1e9)})
+            dropped.append({"model": m, "why": "does not fit: %.1f GiB over a %.1f GiB budget"
+                            % ((used + s) / GIB, budget_bytes / GIB)})
             continue
         used += s
         kept.append(m)
@@ -336,7 +339,8 @@ def plan(instances: Dict[str, Dict[str, Any]], cfg: Dict[str, Any],
             missing.append(embed)
             embed = ""
         ram = float(ncfg.get("ram_gb") or ram_by_node.get(iid) or 0)
-        budget = ram * 1e9 * MEM_SHARE if ram else 0
+        # node sizes (catalog vram_gb / ram_gb, node_config ram_gb) are GiB: 12 on gpu-250 is its 12,288 MiB
+        budget = ram * GIB * MEM_SHARE if ram else 0
         models, dropped = fit_memory(models, sizes_by_node.get(iid) or {}, budget, embed)
         dropped += [{"model": m, "why": "not on this node"} for m in missing]
         gw = (gpu_windows or {}).get(iid, 0)

@@ -1751,8 +1751,14 @@ def _restore_index_from_cached_latents():
 
 async def _fetch_records_with_embeddings(dataset_id: str = "",
                                           limit: int = MAX_NODES,
-                                          node_ids: list = None):
+                                          node_ids: list = None,
+                                          take=None):
     """Fetch records from Chroma for graph building.
+
+    By id (node_ids), the vectors come in batches of `fetch_batch` (500): one get for tens of thousands of ids
+    outlives the client's 60 s timeout (the first curated training, 11 Oct 2026). A failed batch is skipped (three
+    in a row end the fetch with what came). `take` (worldview_corpus_core.FamilyTake) decides which fetched records
+    join - the curated corpus' per-family quotas - and ends the fetch when it is full.
 
     Returns (rids, embeddings_np, meta_dict) where:
       - rids:          list of record IDs in order
@@ -1777,81 +1783,72 @@ async def _fetch_records_with_embeddings(dataset_id: str = "",
                 col = chroma._col
                 if col is None:
                     return [], None, {}
-                kwargs = {
-                    "include": ["embeddings", "documents", "metadatas"],
-                    "limit":   min(limit, 50000),
-                }
-                if node_ids:
-                    # Train on an explicit set of record IDs (e.g. the exact
-                    # node set of a saved vera-graph), not a whole dataset.
-                    kwargs["ids"] = list(node_ids)[:50000]
-                    kwargs.pop("limit", None)
-                elif dataset_id:
-                    kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
-                res = col.get(**kwargs)
-                ids   = res.get("ids")        if res.get("ids")        is not None else []
-                embs  = res.get("embeddings") if res.get("embeddings") is not None else []
-                docs  = res.get("documents")  if res.get("documents")  is not None else []
-                metas = res.get("metadatas")  if res.get("metadatas")  is not None else []
-                n_ids   = len(ids)
-                n_embs  = len(embs)  if hasattr(embs, "__len__")  else 0
-                n_docs  = len(docs)  if hasattr(docs, "__len__")  else 0
-                n_metas = len(metas) if hasattr(metas, "__len__") else 0
+                from Vera.vera.worldview.legacy_snapshot_provenance import (
+                    legacy_snapshot_provenance,
+                )
+                include = ["embeddings", "documents", "metadatas"]
 
-                # Build rids list, meta dict, and collect valid embedding indices
-                out_rids = []
-                out_meta = {}
-                valid_indices = []
-                for i in range(n_ids):
-                    if i >= n_embs:
-                        continue
-                    emb = embs[i]
-                    if emb is None:
-                        continue
-                    # Quick length check without converting to list
-                    try:
-                        emb_len = len(emb) if hasattr(emb, "__len__") else 0
-                    except Exception:
-                        continue
-                    if emb_len < 10:
-                        continue
-                    rid = ids[i]
-                    meta = metas[i] if i < n_metas else {}
-                    if meta is None:
-                        meta = {}
-                    text = (docs[i] if i < n_docs else "") or ""
-                    tags = meta.get("tags", [])
-                    if isinstance(tags, str):
+                def _rows(res):
+                    """(rids, embedding rows, meta) of one Chroma get - records without a usable vector left out."""
+                    ids   = res.get("ids")        if res.get("ids")        is not None else []
+                    embs  = res.get("embeddings") if res.get("embeddings") is not None else []
+                    docs  = res.get("documents")  if res.get("documents")  is not None else []
+                    metas = res.get("metadatas")  if res.get("metadatas")  is not None else []
+                    n_embs  = len(embs)  if hasattr(embs, "__len__")  else 0
+                    n_docs  = len(docs)  if hasattr(docs, "__len__")  else 0
+                    n_metas = len(metas) if hasattr(metas, "__len__") else 0
+                    out_rids, out_rows, out_meta = [], [], {}
+                    for i in range(len(ids)):
+                        if i >= n_embs:
+                            continue
+                        emb = embs[i]
+                        if emb is None:
+                            continue
+                        # Quick length check without converting to list
                         try:
-                            tags = json.loads(tags)
+                            emb_len = len(emb) if hasattr(emb, "__len__") else 0
                         except Exception:
-                            tags = []
-                    out_rids.append(rid)
-                    valid_indices.append(i)
-                    from Vera.vera.worldview.legacy_snapshot_provenance import (
-                        legacy_snapshot_provenance,
-                    )
-                    out_meta[rid] = {
-                        "dataset_id": meta.get("dataset_id", "") or "",
-                        "text":       (text or "")[:200],
-                        "created_at": meta.get("created_at", "") or "",
-                        "tags":       tags or [],
-                        **legacy_snapshot_provenance(meta),
-                    }
+                            continue
+                        if emb_len < 10:
+                            continue
+                        rid = ids[i]
+                        meta = (metas[i] if i < n_metas else {}) or {}
+                        text = (docs[i] if i < n_docs else "") or ""
+                        tags = meta.get("tags", [])
+                        if isinstance(tags, str):
+                            try:
+                                tags = json.loads(tags)
+                            except Exception:
+                                tags = []
+                        out_rids.append(rid)
+                        out_rows.append(emb)
+                        out_meta[rid] = {
+                            "dataset_id": meta.get("dataset_id", "") or "",
+                            "text":       (text or "")[:200],
+                            "created_at": meta.get("created_at", "") or "",
+                            "tags":       tags or [],
+                            **legacy_snapshot_provenance(meta),
+                        }
+                    return out_rids, out_rows, out_meta
 
-                # Build embeddings numpy array directly from Chroma's array
-                # without converting each row to a Python list first.
-                if valid_indices and hasattr(embs, "__array__"):
-                    # embs is already numpy — slice the valid rows
-                    emb_np = np.array(embs, dtype="float32")
-                    emb_np = emb_np[valid_indices]
-                elif valid_indices:
-                    # embs is a list of lists/arrays
-                    emb_np = np.array([embs[i] for i in valid_indices], dtype="float32")
+                if not node_ids:
+                    kwargs = {"include": include, "limit": min(limit, 50000)}
+                    if dataset_id:
+                        kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
+                    rids, rows, meta = _rows(col.get(**kwargs))
                 else:
-                    emb_np = None
-
-                return out_rids, emb_np, out_meta
+                    # Train on an explicit set of record IDs (a saved vera-graph's node set, or the curated
+                    # corpus), fetched in bounded batches.
+                    def _fail(n, fails, e):
+                        log.warning("worldview: Chroma batch of %d ids failed (%d in a row): %s", n, fails, e)
+                    rids, rows, meta, info = _wv_corpus.fetch_by_ids(
+                        lambda batch: _rows(col.get(ids=batch, include=include)), list(node_ids),
+                        int(_WV_CONFIG.get("fetch_batch", 500) or 500), take=take, on_fail=_fail)
+                    log.info("worldview: %d of %d ids had vectors, %d kept (%d batches, %d failed)",
+                             info["fetched"], len(node_ids), len(rids), info["batches"], info["failed"])
+                # one contiguous float32 array, no Python list of floats per row
+                emb_np = np.asarray(rows, dtype="float32") if rows else None
+                return rids, emb_np, meta
 
             rids, emb_np, meta = await loop.run_in_executor(None, _fetch_chroma)
             log.info("worldview: fetched %d records from Chroma "
@@ -2297,7 +2294,7 @@ async def _resolve_graph_node_ids_to_records(
 
 
 async def build_graph(dataset_id: str = "", limit: int = MAX_NODES,
-                      node_ids: list = None) -> Dict:
+                      node_ids: list = None, take=None) -> Dict:
     """Build full training subgraph from resolved FabricRecord IDs.
 
     node_ids, when provided, should already be resolved to Chroma-addressable
@@ -2305,7 +2302,7 @@ async def build_graph(dataset_id: str = "", limit: int = MAX_NODES,
     Pass raw vera-graph node IDs through that function first.
     """
     rids, emb_np, records = await _fetch_records_with_embeddings(
-        dataset_id, limit, node_ids=node_ids)
+        dataset_id, limit, node_ids=node_ids, take=take)
     if not rids or emb_np is None:
         return {"records": {}, "rids": [], "X": None}
 
@@ -3104,16 +3101,18 @@ async def _curated_corpus_ids(limit: int) -> Dict[str, Any]:
             "SELECT dataset_id, count(*) FROM fabric_records WHERE text IS NOT NULL AND text != '' "
             "GROUP BY dataset_id").fetchall() if r[0]}
         p = _wv_corpus.plan(counts, int(limit), exclude, cap)
-        ids: List[str] = []
+        groups: Dict[str, List[str]] = {}
         for fam, q in p["quotas"].items():
             ds = p["datasets"].get(fam) or []
             if not q or not ds:
                 continue
             marks = ",".join("?" for _ in ds)
-            ids += [r[0] for r in conn.execute(
+            groups[fam] = [r[0] for r in conn.execute(
                 f"SELECT id FROM fabric_records WHERE dataset_id IN ({marks}) AND text IS NOT NULL AND text != '' "
                 f"ORDER BY random() LIMIT ?", (*ds, int(q * over))).fetchall()]
-        return {"ids": ids, "quotas": p["quotas"], "excluded": p["excluded"], "eligible": p["eligible"]}
+        # interleaved, so the batched fetch can stop early and every family still has its share
+        return {"ids": _wv_corpus.interleave(groups), "quotas": p["quotas"], "excluded": p["excluded"],
+                "eligible": p["eligible"]}
 
     return await asyncio.get_running_loop().run_in_executor(None, _pick)
 
@@ -3914,6 +3913,7 @@ async def cap_worldview_train(
                                 f"{len(resolved_node_ids)} FabricRecord IDs",
                         original=len(node_ids), resolved=len(resolved_node_ids))
 
+    curated_take = None
     if not dataset_id and not resolved_node_ids and _WV_CONFIG.get("curated_corpus", True):
         # FM-8.3: "all datasets" is a stratified pick, not the first `limit` vectors in storage order
         try:
@@ -3922,6 +3922,7 @@ async def cap_worldview_train(
             cur = {"ids": [], "error": str(e)}
         if cur.get("ids"):
             resolved_node_ids = cur["ids"]
+            curated_take = _wv_corpus.FamilyTake(cur.get("quotas") or {}, limit)
             await _emit("corpus", families=len(cur.get("quotas") or {}), picked=len(cur["ids"]),
                         excluded=len(cur.get("excluded") or []),
                         message=f"Curated corpus: {len(cur['ids'])} records from {len(cur.get('quotas') or {})} "
@@ -3930,7 +3931,7 @@ async def cap_worldview_train(
         else:
             await _emit("corpus", message="Curated corpus unavailable - all datasets in storage order "
                                           f"({cur.get('error') or 'no eligible records'})")
-    graph = await build_graph(dataset_id, limit=limit, node_ids=resolved_node_ids)
+    graph = await build_graph(dataset_id, limit=limit, node_ids=resolved_node_ids, take=curated_take)
     if graph.get("rids"):
         MODEL.corpus = _wv_corpus.mix((graph.get("records") or {}).get(r, {}).get("dataset_id", "")
                                       for r in graph["rids"])
@@ -5587,6 +5588,7 @@ _WV_CONFIG: Dict[str, Any] = {
     "curated_corpus":     True,        # FM-8.3: "all datasets" = a stratified pick by collector family
     "corpus_family_cap":  0.15,        # FM-8.3: no family above this share of the pick
     "corpus_oversample":  2.0,         # FM-8.3: ids sampled per quota (not every record has a vector)
+    "fetch_batch":        500,         # ids per Chroma get when training on an id set (one get of 40k timed out)
     "auto_label":         True,        # auto-label concepts after training
     "auto_label_k":       50,          # max concepts to auto-label
 }

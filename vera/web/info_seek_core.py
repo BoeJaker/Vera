@@ -61,6 +61,32 @@ def classify_need(text: str) -> Dict[str, str]:
     return {"need": "fact", "reason": "a specific question"}
 
 
+_INFO_ASK = re.compile(r"^\s*(what|who|when|where|which|how (much|many|does|do|is|are))\b|\b(find out|look up|tell me about|"
+                       r"research|news|price of|prices?|rate|latest|update|explain)\b", re.I)
+# a question about Vera itself, or a request for a tool, is not a question about the world
+_INTERNAL = re.compile(r"\b(vera|census|loop ?lab|sandbox|pipeline|worktree|board item|capabilit|caps?|panel|dashboard|"
+                       r"canvas|widget|tools? (for|to|that)|skill|my (notes|memory|calendar|inbox|topics?))\b", re.I)
+INFO_CAPS = ("info.seek", "web.research", "intel.lookup")
+
+
+def info_intent(text: str) -> bool:
+    """True when `text` asks about the outside world - the latest on something, a fact, a price, "find out about" -
+    rather than about Vera's own parts or for a tool. caps.search uses it to put the information caps first (plan
+    SK-1.2: "latest news about MCP" ranked mcp.register_server first, "what is the base rate" evolve.delegate.rate)."""
+    t = " ".join(str(text or "").split())
+    return bool(t) and bool(_INFO_ASK.search(t)) and not _INTERNAL.search(t)
+
+
+def boost_info(results: Sequence[Any], available: Iterable[str], top_k: int) -> List[Any]:
+    """(name, score) results with the information caps first, in INFO_CAPS order, scored just above the best."""
+    have = set(available)
+    rows = [(str(n), float(s)) for n, s in results]
+    top = max([s for _, s in rows] + [0.0])
+    lead = [(n, round(top + 1.0 - 0.2 * i, 3)) for i, n in enumerate(c for c in INFO_CAPS if c in have)]
+    names = {n for n, _ in lead}
+    return (lead + [(n, s) for n, s in rows if n not in names])[:max(1, int(top_k))]
+
+
 def subject_of(text: str) -> str:
     """The subject inside a request: "what's the latest on the EU AI Act?" -> "the EU AI Act" -> "EU AI Act"."""
     s = " ".join(str(text or "").split())
@@ -239,6 +265,23 @@ def date_from_text(text: Any, now: Optional[datetime] = None) -> Optional[dateti
     return parse_date(m.group(1).replace(".", "")) if m else None
 
 
+_LABELLED = re.compile(r"(?i)\b(?:published(?: time| on| at)?|updated(?: on| at)?|posted(?: on)?|last (?:updated|modified|"
+                       r"reviewed)(?: on)?|date published)\s*[:\-|]?\s*"
+                       r"(\d{1,2}(?:st|nd|rd|th)? [A-Za-z]{3,9}\.? 20\d\d|[A-Za-z]{3,9}\.? \d{1,2}(?:st|nd|rd|th)?,? 20\d\d|"
+                       r"20\d\d-\d\d-\d\d)")
+
+
+def labelled_date(text: Any, chars: int = 1500) -> Optional[datetime]:
+    """A date the page labels as its own near the top - "Updated on 31 August 2026", "Published Time: 2026-09-17".
+    A bare date there is often an event (a release date, a consultation deadline), so only a labelled one counts
+    (sampled on prod 11 Oct: 2 of 40 undated pages had one; 6 more had a bare date, mostly events)."""
+    m = _LABELLED.search(str(text or "")[:chars])
+    if not m:
+        return None
+    raw = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", m.group(1)).replace(".", "")
+    return parse_date(raw)
+
+
 def fill_dates(items: Sequence[Dict[str, Any]], now: Optional[datetime] = None) -> int:
     """Give undated items the date their own byline or snippet states; returns how many got one."""
     n = 0
@@ -250,6 +293,22 @@ def fill_dates(items: Sequence[Dict[str, Any]], now: Optional[datetime] = None) 
             it["published"] = d.strftime("%Y-%m-%d")
             n += 1
     return n
+
+
+def subject_key(subject: str) -> str:
+    """One spelling per subject for remembering when it was last looked up."""
+    return re.sub(r"[^a-z0-9]+", "-", str(subject or "").lower()).strip("-")[:80]
+
+
+def since_for(last_seek: Any, now: Optional[datetime] = None, default_days: int = 14) -> Dict[str, str]:
+    """What counts as new for a 'latest' question: since the user last asked about this subject when that was 2-30
+    days ago (plan SK-2.5: "what's new" means new to them); otherwise the default window - asked again the same day,
+    a since of an hour ago would find nothing, and after a month the default is the better frame."""
+    now = now or datetime.now(timezone.utc)
+    d = parse_date(last_seek)
+    if d and timedelta(days=2) <= now - d <= timedelta(days=30):
+        return {"since": d.strftime("%Y-%m-%d"), "why": f"since you last looked on {d.strftime('%Y-%m-%d')}"}
+    return {"since": default_since(now, default_days), "why": f"the last {default_days} days"}
 
 
 def default_since(now: Optional[datetime] = None, days: int = 14) -> str:

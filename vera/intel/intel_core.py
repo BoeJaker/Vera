@@ -286,6 +286,10 @@ def repo_of(url: str) -> Optional[Dict[str, str]]:
     owner, repo = parts[0], re.sub(r"\.git$", "", parts[1])
     if not re.match(r"^[A-Za-z0-9_.-]+$", owner) or not re.match(r"^[A-Za-z0-9_.-]+$", repo):
         return None
+    # "." / ".." (or any dot-led name) would walk the clone directory out of the repos folder - review 2026-10-10:
+    # https://github.com/../.. resolved the clone target to the intel state dir, then `git reset --hard` ran there
+    if owner.startswith(".") or repo.startswith(".") or not repo.strip("."):
+        return None
     return {"host": host, "owner": owner, "repo": repo, "clone": f"https://{host}/{owner}/{repo}.git",
             "url": f"https://{host}/{owner}/{repo}"}
 
