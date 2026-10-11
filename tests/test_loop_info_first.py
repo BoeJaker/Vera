@@ -32,7 +32,7 @@ def test_off_by_default_and_on_puts_info_seek_first(monkeypatch):
         M._INFO_FIRST_CV.set(True)
         on = M._v5_seed_caps_for(WEB_GOAL)
         assert on[0] == "info.seek"
-        assert [c for c in on if c != "info.seek"] == off      # everything else as before
+        assert [c for c in on if c != "info.seek"] == [c for c in off if c not in ("web.research", "web.search")]
         assert "info.seek" not in M._v5_seed_caps_for("write hello.html with a heading")  # not webby
     finally:
         M._INFO_FIRST_CV.reset(tok)
@@ -59,3 +59,14 @@ def test_info_seek_deep_is_overview_in_a_loop():
     blk = SRC[i:i + 400]
     assert '== "deep"' in blk and 'args = dict(args, need="overview")' in blk
     assert i < SRC.index('"agent_loop_v5.tool_call", "stream_id": stream_id,', i)
+
+
+@needs_app
+def test_info_first_replaces_web_research_not_just_leads(monkeypatch):
+    monkeypatch.setitem(M.CAPABILITY_REGISTRY, "info.seek", {"name": "info.seek"})
+    tok = M._INFO_FIRST_CV.set(True)
+    try:
+        on = M._v5_seed_caps_for(WEB_GOAL)
+        assert on[0] == "info.seek" and "web.research" not in on and "web.search" not in on
+    finally:
+        M._INFO_FIRST_CV.reset(tok)

@@ -8471,6 +8471,7 @@ def _v5_goal_is_webby(goal: str) -> bool:
 # web.* chain. Per run (dag.agent_loop_v6 info_first), off by default until
 # measured; a ContextVar so the seeding needs no new argument threaded through.
 _V5_INFO_FIRST_CAPS = ("info.seek",)
+_V5_INFO_FIRST_REPLACES = ("web.research", "web.search")
 _INFO_FIRST_CV: "contextvars.ContextVar[bool]" = contextvars.ContextVar("vera_loop_info_first",
                                                                          default=False)
 
@@ -8487,7 +8488,11 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
         # saw web.research (2026-09-21, census research-report).
         seeds = list(_V5_WEB_RESEARCH_SEED_CAPS) + [c for c in seeds if c not in _V5_WEB_RESEARCH_SEED_CAPS]
         if _INFO_FIRST_CV.get():
-            seeds = list(_V5_INFO_FIRST_CAPS) + [c for c in seeds if c not in _V5_INFO_FIRST_CAPS]
+            # info.seek REPLACES the search front doors (web.research / web.search): first in
+            # line was not enough - the planner kept web.research (I2 probes, 11 Oct). web.fetch
+            # stays for reading a named page.
+            seeds = list(_V5_INFO_FIRST_CAPS) + [c for c in seeds
+                                                 if c not in _V5_INFO_FIRST_CAPS + _V5_INFO_FIRST_REPLACES]
     # A goal whose OWN text asks for UI/HTML verification ("...then verify it
     # actually works by clicking the button...") never matches the research-y
     # web hints above, so operator.run/browser.navigate were never guaranteed
@@ -16975,7 +16980,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             history.append({"tool": hop_tool, "ok": entry_ok, "preview": preview[:_budget],
                             "args": h_args, "ms": elapsed})
             _research_sources_core.remember(sid, history[-1])
-            if entry_ok and hop_tool == "info.seek":  # the run's dated evidence (evidence_ledger_core)
+            if entry_ok and hop_tool in _evidence_core.EVIDENCE_TOOLS:   # the run's evidence
                 _evidence_core.add(sid, invoke.get("result"))
             # A call that can write and names a registered file: forget its cached copy.
             _registry_stale_core.forget_named(artifacts, hop_tool, h_args)
@@ -19387,7 +19392,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
         _research_sources_core.remember(sid, history[-1])
-        if entry_ok and tool == "info.seek":          # the run's dated evidence (evidence_ledger_core)
+        if entry_ok and tool in _evidence_core.EVIDENCE_TOOLS:   # the run's evidence (evidence_ledger_core)
             _evidence_core.add(sid, invoke.get("result"))
         # A call that can write and names a registered file: forget its cached copy, so
         # the next read goes to disk (registry_stale_core; probe 3 Oct, a stale report.md).
