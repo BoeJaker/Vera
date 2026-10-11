@@ -308,6 +308,15 @@ other memory compatibility shims, remains importable. Its review is therefore
 `insufficient_evidence`, not removable: external-consumer coverage and two
 normal zero-use cycles are still required.
 
+`compatibility_consumer_inventory.py` can examine explicitly declared external
+source roots without importing or executing them. The scan is bounded by file
+count and bytes, ignores dependency and VCS directories, and records only root
+labels, relative paths, line numbers and content digests—never matching source
+text or absolute paths. Its evidence can be attached to the independent path
+reviews, but is deliberately labelled `declared_roots_only` and
+`global_external_coverage: false`. A clean scan of selected repositories is not
+proof that no other consumer exists and never creates removal authority.
+
 ### 7.3 The removal gate
 
 `removal_gate.py` (schema `vera.compatibility-removal-gate/v1`) evaluates one
