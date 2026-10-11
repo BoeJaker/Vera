@@ -243,6 +243,8 @@ def audit(root):
                 hits.add("home_fs")
             if orch_reads(m, node):
                 hits.add("orch_state")
+            if foreign_reads(mk, m, node):
+                hits.add("reads_state")
             INFO[k] = (hits, set(CALL_CAP.findall(seg)), writes_state(node, m["mutable"]))
         return INFO[k]
 
@@ -277,6 +279,26 @@ def audit(root):
                     and isinstance(c.args[0], ast.Name) and c.args[0].id in aliases
                     and isinstance(c.args[1], ast.Constant) and c.args[1].value in ORCH_RUNTIME):
                 return True
+        return False
+
+
+    def foreign_reads(mk, m, node):
+        """Does this function read ANOTHER module's runtime state through its
+        alias - `<alias>.NAME` where NAME is module state that module writes
+        while it runs (2026-10-11: web.engines.health returned
+        search_engines.SEARXNG_STATE, a dict each process fills as it
+        searches; the same-module rule could not see it)? The orchestrator
+        has its own rule (orch_reads)."""
+        targets = {a: t for a, t in m["aliases"].items()
+                   if t in MODS and t != mk and t != ORCH and t not in SHARED_RUNTIME}
+        if not targets:
+            return False
+        for c in ast.walk(node):
+            if isinstance(c, ast.Attribute) and isinstance(c.value, ast.Name) and c.value.id in targets:
+                t = targets[c.value.id]
+                state = (written(t) | MODS[t].get("instances", set())) - _SHARED_NAMES.get(t, set())
+                if c.attr in state:
+                    return True
         return False
 
 
