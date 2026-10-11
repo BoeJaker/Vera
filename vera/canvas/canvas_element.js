@@ -340,6 +340,10 @@
     'cap_tracking': '/ui/panels/file/cap_tracking_panel.html', 'workers': '/ui/panels/file/worker_panel.html', 'workers-ollama': '/ui/panels/workers-ollama',
     'model-routing': '/ui/panels/model-routing', 'chat2': '/chat_panel' };
   const PANEL_SRC = {}; let PANEL_REG = null;
+  /* the widest a widget card of a short-content form is on the desk (WSU-69): lists, checklists, fields, notices and
+     single figures wrap short; wider was an empty band. Charts, tables, maps, graphs and calendars are not capped. */
+  const DESK_FORM_MAXW = { checklist: 420, list: 440, links: 440, notices: 460, people: 460, kv: 520, pills: 480, string: 460, announcement: 460,
+    counter: 380, hero: 400, ring: 360, radial: 360, dial: 360, gauge: 420, meter: 420, level: 380, glance: 460, numbers: 520, status: 480, stepper: 640, files: 520 };
   async function panelSrc(id) {
     id = String(id || ''); if (!id) return ''; if (PANEL_SRC[id] != null) return PANEL_SRC[id];
     const base = (root._veraBase || '').replace(/\/$/, '');
@@ -3342,6 +3346,16 @@
             const cap = c.querySelector('.vc-fig figcaption'); const want = Math.max(96, Math.round(c.offsetHeight - bd0.clientHeight + im.naturalHeight * s + (cap ? cap.offsetHeight + 6 : 0) + 12));
             if (want < c.offsetHeight - 8 && (nat[key] == null || Math.abs(nat[key] - want) > 16)) { nat[key] = want; changed = true; } }
           return; }
+        /* A WIDGET IS NEVER SHORTER THAN ITS FACE (WSU-70, owner 2026-10-11: "some elements are not tall enough like metric
+           value change"): a widget fills its card, so it was never measured - and a card the desk made short clipped the
+           figure's lower lines (its change, its trace). The widget's own body says how much more it needs; the card gets
+           that as its least height (kept in _minH), and only grows, never shrinks below it, while that widget is there. */
+        /* only the short-content forms (DESK_FORM_MAXW): a table, a log or a long list scrolls in its card by design */
+        const wfm = c.dataset.type === 'widget' ? (() => { const cc = this._contentOf(key) || {}; return String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, ''); })() : '';
+        if (wfm && DESK_FORM_MAXW[wfm] && wfm !== 'files' && wfm !== 'list') { const lv = this._live && this._live[key], wi = lv && lv.firstChild;
+          const rt = wi && wi.shadowRoot && wi.shadowRoot.querySelector('.vw-body, .vw-root');
+          if (rt && rt.clientHeight > 0) { const more = rt.scrollHeight - rt.clientHeight; const mh = this._minH || (this._minH = {});
+            if (more > 6) { const want = c.offsetHeight + more + 8; if (!mh[key] || want > mh[key] + 4) { mh[key] = want; changed = true; } } } }
         if (FILLS.has(c.dataset.type || '') || (c.dataset.type !== 'diagram' && c.querySelector('.vc-live'))) { if (nat[key] != null) { delete nat[key]; changed = true; } return; }
         const bd = c.querySelector(':scope > .it-bd'); if (!bd || !bd.clientHeight) return;
         const B = bd.getBoundingClientRect(); let low = B.top;
@@ -3499,10 +3513,17 @@
         /* ...and no wider than its kind uses (owner, 2026-10-11: "some desk items like the 'mentioned' take up too much width
            for their content"): names, a note, fields, a page, what ran - their content wraps short; a wide card of them was
            a wide empty band */
-        const nw = ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || ''];
-        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.min(H - 8, po.size.h, nat || Infinity), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, stay: !!userAt(key) };
+        /* ...and a widget by its form (WSU-69, owner 2026-10-11: "some of the elements are still too wide, like the notes
+           checklist"): lists, checklists, fields and single figures wrap short too; charts, tables and maps keep the room */
+        const wf = c.dataset.type === 'widget' ? (() => { const cc = this._contentOf(key) || {}; return String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, ''); })() : '';
+        const nw = ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || '']
+          || DESK_FORM_MAXW[wf];
+        /* ...and never shorter than its own face needs (WSU-70): a widget clipped in its card is measured (_deskFit) */
+        const mh = (this._minH || {})[key];
+        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, minH: mh || undefined, stay: !!userAt(key) };
       });
-      D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h, (s.face === 'chip' || s.face === 'icon') ? Infinity : (it.maxH || Infinity)) }; }, { W: W, H: H });
+      D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); const chip = s.face === 'chip' || s.face === 'icon';
+        return { w: Math.min(W - 16, s.w, chip ? Infinity : (it.maxW || Infinity)), h: Math.max(chip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h, chip ? Infinity : (it.maxH || Infinity))) }; }, { W: W, H: H });
       /* ...up the desk into the room above them (D.settle), the person's places, locks and sizes staying where they are... */
       if (typeof D.settle === 'function' && this.getAttribute('desk-settle') !== 'off') {
         D.settle(plan, R, { W: W, H: H }, { gap: 12 });
@@ -3526,7 +3547,8 @@
           : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: Math.min(it.h, it.h > 40 && it.maxH ? it.maxH : Infinity), face: it.face0 || 'chip' })
           : it.maxH ? (() => { const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); if (s0.face === 'chip' || s0.face === 'icon') return s0; const hh = Math.min(s0.h, it.maxH); return Object.assign({}, s0, { h: hh, face: D.faceOf(s0.w, hh) === 'chip' ? 'card' : D.faceOf(s0.w, hh) }); })()
           : D.sizeAt(R, it.x, it.y, it.so, desk);
-        const w = Math.min(W - 16, s.w, (s.face === 'chip' || s.face === 'icon') ? Infinity : (it.maxW || Infinity)), h = Math.min(H - 8, s.h);
+        const isChip = s.face === 'chip' || s.face === 'icon';
+        const w = Math.min(W - 16, s.w, isChip ? Infinity : (it.maxW || Infinity)), h = Math.max(isChip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h));
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
         c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
         c.classList.toggle('desk-chip', s.face === 'chip' || s.face === 'icon');
