@@ -87,6 +87,9 @@ def load_cases(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
         for k in ("tools_any", "tools_none"):
             if not isinstance(c.get(k, []), list) or not all(str(t).strip() for t in c.get(k, [])):
                 raise ValueError(f"case {cid}: {k} must be a list of capability names ('*' = any)")
+        minds = c.get("minds") or {}
+        if not isinstance(minds, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in minds.items()):
+            raise ValueError(f"case {cid}: minds must map switch ids to modes")
         out.append({"id": cid, "text": str(c["text"]), "route": c["route"], "acquire": c.get("acquire", "none"),
                     "mentions": [str(t) for t in c.get("mentions", [])],
                     "not_mentions": [str(t) for t in c.get("not_mentions", [])],
@@ -96,7 +99,10 @@ def load_cases(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "tools_any": [str(t) for t in c.get("tools_any", [])],
                     "tools_none": [str(t) for t in c.get("tools_none", [])],
                     "cites": bool(c.get("cites")), "label": str(c.get("label") or ""),
-                    "kind": str(c.get("kind") or "")})
+                    "kind": str(c.get("kind") or ""),
+                    # switchboard modes for this case's chat request (the corpus' arms, §5.4), e.g. memory on for the
+                    # fixture cases; recorded with the result
+                    "minds": dict(c.get("minds") or {})})
     return out
 
 
@@ -117,6 +123,18 @@ def select(cases: Sequence[Dict[str, Any]], only: str = "") -> List[Dict[str, An
 
 def session_id(run_id: str, case_id: int) -> str:
     return f"{SESSION_PREFIX}{run_id}-{case_id}"
+
+
+def fixture_session_id(run_id: str, case_id: int) -> str:
+    """The memory session a case's fixture is written to (a `chat-corpus-` id, so only the corpus' own are touched)."""
+    return f"{SESSION_PREFIX}{run_id}-{case_id}-fixture"
+
+
+def fixture_turn(fixture: str) -> Dict[str, str]:
+    """The fixture as one remembered exchange (memory.record_turn arguments): what was said, and its acknowledgement."""
+    text = " ".join(str(fixture or "").split())
+    return {"human_text": f"Please remember this for later: {text}.",
+            "ai_text": f"Noted - I'll remember that {text}."}
 
 
 def canvas_id(sid: str) -> str:
@@ -227,9 +245,13 @@ def _has(reply_l: str, term: str) -> bool:
 def evaluate(case: Dict[str, Any], ev: Dict[str, Any]) -> Dict[str, Any]:
     """One case's result: status pass | fail | skipped | error, its checks, the turn record."""
     out: Dict[str, Any] = {"id": case["id"], "text": case["text"]}
-    if case.get("fixture"):
-        return dict(out, status="skipped", reason="fixture pending (seeding not built yet)", checks=[])
     ev = ev or {}
+    if case.get("fixture") and not ev.get("fixture_seeded"):
+        return dict(out, status="skipped", reason=ev.get("fixture_error") or "fixture not seeded", checks=[])
+    if case.get("minds"):
+        out["minds"] = dict(case["minds"])
+    if case.get("fixture"):
+        out["fixture"] = "seeded"
     s = parse_sse(ev.get("stream") or "")
     reply = s["reply"]
     loop_reqs = list(ev.get("loop") or [])

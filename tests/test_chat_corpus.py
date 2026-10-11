@@ -174,7 +174,7 @@ def test_summary_and_markdown():
     assert s["failed"] == [{"id": 2, "checks": ["mentions"]}] and s["ttft_ms"]["plain"]["n"] == 2
     assert s["ttft_ms"]["plain"]["p50"] == 800 and s["ttft_ms"]["plain"]["p90"] == 1200
     md = CC.render_md({"run_id": "r1", "target": "t"}, s, rs)
-    assert "pass 1" in md and "| 2 | fail |" in md and "fixture pending" in md
+    assert "pass 1" in md and "| 2 | fail |" in md and "fixture not seeded" in md
 
 
 def test_percentile():
@@ -248,3 +248,37 @@ def test_tools_none_for_small_talk_and_web_none_for_memory():
 def test_a_stubbed_call_still_counts_as_the_tool_chosen():
     case = _case(acquire="any", tools_any=["research.run"])
     assert CC.evaluate(case, _info_ev("Started.", [{"name": "research.run", "would_call": True}]))["status"] == "pass"
+
+
+def test_a_seeded_fixture_case_runs_and_records_its_minds():
+    case = _case(fixture="decided to move the cache from Redis to Valkey", acquire="memory", mentions=["Valkey"],
+                 minds={"context.needs_memory": "rules"})
+    ev = {"stream": _sse(_phase("acquire", "memory", "done", 300), _phase("model", "llm", "first", 900),
+                         _tok("We decided on Valkey.")), "fixture_seeded": True}
+    r = CC.evaluate(case, ev)
+    assert r["status"] == "pass" and r["fixture"] == "seeded" and r["minds"] == {"context.needs_memory": "rules"}
+    unseeded = CC.evaluate(case, {"fixture_error": "seed failed: boom"})
+    assert unseeded["status"] == "skipped" and unseeded["reason"] == "seed failed: boom"
+
+
+def test_minds_are_carried_and_checked():
+    doc = {"cases": [{"id": 1, "text": "a", "route": "chat", "minds": {"context.needs_memory": "rules"}}]}
+    assert CC.load_cases(doc)[0]["minds"] == {"context.needs_memory": "rules"}
+    with pytest.raises(ValueError):
+        CC.load_cases({"cases": [{"id": 1, "text": "a", "route": "chat", "minds": ["rules"]}]})
+
+
+def test_fixture_session_and_turn():
+    fsid = CC.fixture_session_id("20261011T140000", 7)
+    assert CC.ours(fsid) and fsid.endswith("-7-fixture")
+    t = CC.fixture_turn("  decided   to use Valkey ")
+    assert "decided to use Valkey" in t["human_text"] and "decided to use Valkey" in t["ai_text"]
+
+
+def test_the_runner_seeds_tears_down_and_sends_the_minds():
+    src = (ROOT / "tools" / "chat-corpus" / "run_chat_corpus.py").read_text(encoding="utf-8")
+    assert 'page.route("**/agents/chat/stream", on_chat)' in src and 'body["minds"]' in src
+    assert '"memory.record_turn"' in src and '"memory.forget"' in src and "finally:" in src
+    assert "if not CC.ours(fsid):" in src
+    cases = CC.load_cases(json.loads(CASES.read_text(encoding="utf-8")))
+    assert all(c["minds"] == {"context.needs_memory": "rules"} for c in cases if c["fixture"])

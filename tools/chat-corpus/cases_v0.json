@@ -2,7 +2,7 @@
  "version": "v0",
  "approved": "2026-10-10",
  "source": ".git/vera-work/shared-planning/four-minds/CHAT-CORPUS-v0.md (owner approved all 30)",
- "notes": "mentions: every term must appear (case-insensitive); 'a|b' = either. Cases with a fixture are skipped until fixture seeding exists. ttft budgets are advisory until the first run sets them.",
+ "notes": "mentions: every term must appear (case-insensitive); 'a|b' = either. Cases with a fixture are skipped until fixture seeding exists. ttft budgets are advisory until the first run sets them. Fixture cases (7-10) are seeded into their own chat-corpus- memory session before the turn and archived after, and run with context.needs_memory=rules on their own request (the switch is off globally) - recorded as minds in the result.",
  "cases": [
   {
    "id": 1,
@@ -64,7 +64,10 @@
    "mentions": [
     "Valkey"
    ],
-   "fixture": "decided to move the cache from Redis to Valkey after the licence change"
+   "fixture": "decided to move the cache from Redis to Valkey after the licence change",
+   "minds": {
+    "context.needs_memory": "rules"
+   }
   },
   {
    "id": 8,
@@ -75,7 +78,10 @@
     "V100"
    ],
    "canvas": "estate",
-   "fixture": "gpu-250 has a Tesla V100 with 12 GB"
+   "fixture": "gpu-250 has a Tesla V100 with 12 GB",
+   "minds": {
+    "context.needs_memory": "rules"
+   }
   },
   {
    "id": 9,
@@ -86,7 +92,10 @@
     "07:00",
     "17:00"
    ],
-   "fixture": "censuses run 07:00–17:00 on weekdays"
+   "fixture": "censuses run 07:00–17:00 on weekdays",
+   "minds": {
+    "context.needs_memory": "rules"
+   }
   },
   {
    "id": 10,
@@ -96,7 +105,10 @@
    "mentions": [
     "Qwen3"
    ],
-   "fixture": "the step_verify student is Qwen3-4B"
+   "fixture": "the step_verify student is Qwen3-4B",
+   "minds": {
+    "context.needs_memory": "rules"
+   }
   },
   {
    "id": 11,
