@@ -60,5 +60,28 @@ t('info.seek deep: the report it started is followed into the chat, not awaited'
   /if\(capName==='info\.seek'&&content&&typeof content==='object'&&content\.job_id\) _followReport\(content\.job_id,agentName\);/.test(CHAT)
   && /function _followReport\(jobId, agentName\)\{[\s\S]{0,900}_streamResearchJob\(jobId,agentName,card\)\.catch\(/.test(CHAT));
 
+// SK-1.1: the picker matches whole words - "out" (find out about) no longer matches output/about/without, "rate" no
+// longer matches generate; plurals still match
+{
+  const pick = new Function('ALL_CAPS',
+    grab(/const _CAP_STOPWORDS=new Set\(\[[\s\S]*?\]\);/, '_CAP_STOPWORDS') + '\n'
+    + grab(/const _CAP_MIN_SCORE=\d+;/, '_CAP_MIN_SCORE') + '\n'
+    + grab(/function _findRelevantCaps\(query, allowedCaps, maxN=24\)\{[\s\S]*?\n  \}/, '_findRelevantCaps')
+    + '\nreturn _findRelevantCaps;');
+  const caps = [
+    {name: 'web.research', description: 'look something up on the web: a fact, the latest news, updates', tags: ['web', 'latest', 'news']},
+    {name: 'media.export', description: 'writes output files about without limits', tags: ['media']},
+    {name: 'image.generate', description: 'generate an image at any rate', tags: ['image']},
+    {name: 'markets.rate', description: 'an interest rate series', tags: ['markets']},
+  ];
+  const f = pick(caps);
+  const all = caps.map(c => c.name);
+  const r1 = f('find out about the latest EU AI Act news', all, 10);
+  t('whole words: "out"/"about" do not pull in an output-writing tool', r1.includes('web.research') && !r1.includes('media.export'), JSON.stringify(r1));
+  const r2 = f('current interest rate figures', all, 10);
+  t('"rate" matches the rate tool, not generate', r2.includes('markets.rate') && !r2.includes('image.generate') || r2.indexOf('markets.rate') < r2.indexOf('image.generate'), JSON.stringify(r2));
+  t('plurals match ("updates" finds "update"-tagged text)', f('any news updates please', all, 10).includes('web.research'));
+}
+
 if (fails) { console.log(fails + ' failed'); process.exit(1); }
 console.log('all passed');
