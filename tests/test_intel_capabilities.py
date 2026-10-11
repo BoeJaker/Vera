@@ -1141,3 +1141,6 @@ def test_a_set_switch_overrides_intel_config_and_an_unset_one_changes_nothing(tm
     assert c["nlp"] is False and c["brief_synthesize"] is False
     assert c["calibrated_gate"] is False and c["calibration_off"] is True and mod._curves() == {}
     assert c["alerts"] == base["alerts"]               # unset: unchanged
+    # the panel can mark what the switchboard is overriding (a toggle there would do nothing)
+    assert set(_R(orch, "intel.config.get")["switch_overrides"]) == {"nlp", "brief_synthesize", "calibrated_gate",
+                                                                     "calibration_off"}

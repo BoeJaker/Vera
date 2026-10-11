@@ -3925,10 +3925,13 @@ async def cap_session_status(trace_id=None):
 @capability("intel.config.get", http_method="GET", http_path="/intel/config", http_tags=["intel"],
             memory="off", silent=True,
             description="Intelligence settings: schedule, delivery, persona, competitors, drop folders, sessions, NLP "
-                        "and model gates. Output: {config, schedule, profile}.")
+                        "and model gates. Output: {config, schedule, profile, switch_overrides} - switch_overrides "
+                        "names the settings an intel.* switchboard switch is overriding (four-minds FM-13.3), which "
+                        "intel.config.set cannot change while the switch is set.")
 async def cap_config_get(trace_id=None):
     st = store()
     return {"config": config(), "profile": "intel" if _PROFILE["declared"] else "",
+            "switch_overrides": sorted(_switch_overrides()),
             "schedule": {"nightly_day": st.get_kv("nightly_day"), "brief_day": st.get_kv("brief_day"),
                          "pending_brief": st.get_kv("pending_brief"), "last_nightly": st.get_kv("last_nightly"),
                          "weekly_day_done": st.get_kv("weekly_day_done"), "advise_week": st.get_kv("advise_week")}}
