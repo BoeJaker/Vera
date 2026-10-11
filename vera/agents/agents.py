@@ -2065,6 +2065,15 @@ async def agent_chat_stream_endpoint(request: Request):
                 log.debug("chat deep memory failed: %s", _e)
                 return {"text": "", "hits": 0, "vector": False, "ms": 0.0, "error": str(_e)}
         _mem_task = asyncio.create_task(_run_mem_deep())
+    # FM-1.2 the chat PRE frame (switch sense.chat_pre, default off): sense.frame for the message, started at once and
+    # NEVER awaited before the model - its phase frame says when it landed, so the turn record shows how often a frame
+    # is ready before the first token (what its consumers - the chat shortlist, the canvas curator - can rely on)
+    _frame_task = None
+    if _bare_q.strip() and await _switch_mode("sense.chat_pre", body.get("minds")) == "on":
+        _sf = CAPABILITY_REGISTRY.get("sense.frame") or {}
+        _sf_fn = _sf.get("raw") or _sf.get("func")
+        if _sf_fn:
+            _frame_task = asyncio.create_task(_sf_fn(text=_bare_q, kind="chat"))
 
     def _format_web_context(res) -> str:
         """Render web.search results into a system-prompt fragment."""
@@ -2110,6 +2119,25 @@ async def agent_chat_stream_endpoint(request: Request):
                                         "query": _web_query[:200]}) + "\n\n").encode())
         _web_phase = None
         _mem_phase = None
+        _frame_phase = None
+
+        async def _frame_phase_done():
+            # the PRE frame's phase: done with its domain (or degraded) and its own time, whenever it lands
+            try:
+                _fr = await asyncio.wait_for(asyncio.shield(_frame_task), 5.0)
+            except Exception:
+                _fr = None
+            _ok = isinstance(_fr, dict) and not _fr.get("error")
+            _det = ((_fr or {}).get("domain") or ("degraded" if (_fr or {}).get("degraded") else "")) if _ok else ""
+            _fms = ((_fr or {}).get("ms") or {}).get("total") if _ok else None
+            try:
+                _bytes = _ph.sse("sense", "frame", "reading the message", "done" if _ok else "fail",
+                                 ms=_fms if _fms is not None else 0, detail=_det)
+                if _bytes:
+                    await _q.put(_bytes)
+            except Exception as _e:
+                log.debug("frame phase skipped: %s", _e)
+
         _MEM_LABEL = "searching earlier conversations (all sessions)"
         _model_t0 = _time.monotonic()
         # the answer's model slot already taken as it starts: say "waiting for the GPU" until the first word, not
@@ -2143,6 +2171,8 @@ async def agent_chat_stream_endpoint(request: Request):
                 for _f in _phases.from_marks(_ph, _ep_marks):
                     if not _ph.silent:
                         await _q.put(_ph.raw(_f))
+                if _frame_task is not None:
+                    _frame_phase = asyncio.create_task(_frame_phase_done())
                 if _needs is not None and _web_rules:
                     _wn = _needs["web"]
                     await _q.put(_ph.sse("needs", "web", "deciding whether to search the web",
@@ -2481,7 +2511,8 @@ async def agent_chat_stream_endpoint(request: Request):
         finally:
             # Tear down the merge plumbing — an opener still in flight after
             # the main stream finished (or the client vanished) is pointless.
-            for _t in (_op_pump, _opener_task, _main_pump, _web_task, _web_phase, _mem_task, _mem_phase):
+            for _t in (_op_pump, _opener_task, _main_pump, _web_task, _web_phase, _mem_task, _mem_phase,
+                       _frame_task, _frame_phase):
                 if _t is not None and not _t.done():
                     _t.cancel()
             elapsed_ms = round((_time.monotonic() - _stream_t0) * 1000)
