@@ -14563,6 +14563,39 @@ async def _v6_plan_critique(goal: str, done_when: str, steps: Sequence[Dict[str,
     return findings
 
 
+# Step-result entities into the journal (roadmap B3, per-run journal_ner): node NER, beside the run.
+try:
+    from Vera.vera.dag import journal_ner_core as _jner_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import journal_ner_core as _jner_core
+    except Exception:
+        _jner_core = None
+
+
+async def _v6_journal_ner(entry: Dict[str, Any], res: Dict[str, Any], *, sid: str,
+                          stream_id: str, step_id: Any) -> None:
+    """nlp.ner over the step's own result text; new names merged into the journal entry in place
+    (the next digest shows them). Raw cap function (no memories written); never raises."""
+    if _jner_core is None:
+        return
+    cap = CAPABILITY_REGISTRY.get("nlp.ner") or {}
+    fn = cap.get("raw") or cap.get("func")
+    text = _jner_core.text_of(res)
+    if not fn or len(text) < 40:
+        return
+    try:
+        ner = await asyncio.wait_for(fn(text=text), timeout=_ENTITY_NER_TIMEOUT_S)
+        new = _jner_core.pick(ner, entry.get("entities") or [])
+        added = _jner_core.merge(entry, new)
+        if added:
+            await emit_event({"type": "agent_loop_v6.journal_ner", "session_id": sid,
+                              "stream_id": stream_id, "step_id": step_id,
+                              "added": entry["entities"][-added:]})
+    except Exception as e:
+        log.debug("journal NER skipped: %s", e)
+
+
 # Zero-shot intent (roadmap B1): what an NLP node would call the goal's intent,
 # recorded beside the intent the run used. Measured - nothing reads it back.
 try:
@@ -24715,6 +24748,8 @@ async def cap_dag_agent_loop_v6(
     # deliverable adversarially ONCE; real defects become one fix step (user 2026-10-04).
     deliverable_review: bool = False,
     answer_check: bool = False,
+    # Roadmap B3: node NER over each step's result, new names merged into its journal entry.
+    journal_ner: bool = False,
     # Roadmap A6: the executor's live journal block shows only entries new since the step-start
     # digest (which the step goal already carries) - the same notes no longer appear twice.
     journal_delta: bool = False,
@@ -26063,6 +26098,8 @@ async def cap_dag_agent_loop_v6(
             allowed_phases=allowed_phases, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, session_id=sid)
 
+    _jner_tasks: List[Any] = []
+
     async def _journal_step(step, res):
         """Fold a finished step into the structured journal (complex/long-term
         runs only): extract its record, persist to the fabric + JSON mirror, and
@@ -26074,6 +26111,9 @@ async def cap_dag_agent_loop_v6(
                 step, res, goal, session_id=sid, model=model,
                 instance_id=instance_id, prefer_gpu=prefer_gpu)
             journal.append(entry)
+            if journal_ner:        # B3: the result's own named entities, beside the run
+                _jner_tasks.append(asyncio.create_task(_v6_journal_ner(
+                    entry, res, sid=sid, stream_id=stream_id, step_id=step.get("id"))))
             await emit_event({"type": "agent_loop_v6.journal", "session_id": sid,
                               "stream_id": stream_id, "step_id": step.get("id"),
                               "entry": entry, "count": len(journal)})
@@ -26995,6 +27035,10 @@ async def cap_dag_agent_loop_v6(
     # stepwise-reviewed: a critique still running when the run is over informs nothing.
     if _critic is not None:
         _critic.cancel()
+    # B3: entity passes still running inform no later step.
+    for _t in _jner_tasks:
+        if not _t.done():
+            _t.cancel()
     # A3: a plan review that never landed informs nothing either; record what it did.
     if _plan_crit_task is not None:
         _landed = _plan_crit_task.done() and not _plan_crit_task.cancelled()
@@ -27327,6 +27371,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_style_defaulted = bool(_v7_default and not str(body.get("plan_style") or "").strip())
     v6_deliverable_review = bool(body.get("deliverable_review", False))
     v6_answer_check = bool(body.get("answer_check", False))
+    v6_journal_ner = bool(body.get("journal_ner", False))
     v6_journal_delta = bool(body.get("journal_delta", False))
     v6_intel_prefacts = bool(body.get("intel_prefacts", False))
     v6_plan_critique = bool(body.get("plan_critique", False))
@@ -27497,6 +27542,7 @@ async def workshop_agent_loop_stream(request: Request):
             plan_style_defaulted=v6_plan_style_defaulted,
             deliverable_review=v6_deliverable_review,
             answer_check=v6_answer_check,
+            journal_ner=v6_journal_ner,
             journal_delta=v6_journal_delta,
             intel_prefacts=v6_intel_prefacts,
             plan_critique=v6_plan_critique,
