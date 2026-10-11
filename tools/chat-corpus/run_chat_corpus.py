@@ -122,6 +122,17 @@ def run_case(browser, target: str, case: dict, run_id: str, turn_timeout: float,
         state["loop"].append({"url": request.url.split("?", 1)[0], "body": (request.post_data or "")[:600]})
         return route.fulfill(status=200, content_type="text/event-stream", body=LOOP_STUB)
 
+    def on_chat(route, request):
+        # the case's switchboard modes ride on its chat request (the corpus' arms, §5.4); the page sends none
+        if request.method != "POST" or not case.get("minds"):
+            return route.continue_()
+        try:
+            body = json.loads(request.post_data or "{}")
+        except ValueError:
+            return route.continue_()
+        body["minds"] = dict(body.get("minds") or {}, **case["minds"])
+        return route.continue_(post_data=json.dumps(body))
+
     def busy(delta):
         def f(req):
             if "/mcp/call" in req.url:
@@ -131,6 +142,7 @@ def run_case(browser, target: str, case: dict, run_id: str, turn_timeout: float,
 
     page.route("**/mcp/call", on_mcp)
     page.route("**/workshop/agent_loop/**", on_loop)
+    page.route("**/agents/chat/stream", on_chat)
     page.on("request", busy(+1))
     page.on("requestfinished", busy(-1))
     page.on("requestfailed", busy(-1))
@@ -182,6 +194,42 @@ def run_case(browser, target: str, case: dict, run_id: str, turn_timeout: float,
     return ev
 
 
+FIXTURE_SETTLE_S = 6.0
+
+
+def seed_fixture(target: str, case: dict, run_id: str) -> dict:
+    """Write the case's fixture as one remembered exchange in its own chat-corpus- memory session, then give the
+    memory store a moment (the keyword tier finds it at once; the vector leg once it is embedded)."""
+    fsid = CC.fixture_session_id(run_id, case["id"])
+    if not CC.ours(fsid):
+        return {"fixture_error": "fixture session id is not a chat-corpus- id"}
+    try:
+        res = _cap(target, "memory.record_turn", session_id=fsid, agent_name="assistant",
+                   tags="chat-corpus-fixture", **CC.fixture_turn(case["fixture"]))
+        if not isinstance(res, dict) or res.get("error"):
+            return {"fixture_error": f"seed failed: {res}"[:200]}
+    except Exception as e:
+        return {"fixture_error": f"seed failed: {e}"[:200]}
+    time.sleep(FIXTURE_SETTLE_S)
+    return {"fixture_seeded": True, "fixture_session": fsid}
+
+
+def teardown_fixture(target: str, fsid: str) -> str:
+    """Archive the fixture's records (memory never deletes; archived records leave every search) and drop its
+    session graph. Only chat-corpus- sessions."""
+    if not CC.ours(fsid):
+        return "refused: not a chat-corpus- session"
+    try:
+        hist = _cap(target, "memory.session_history", session_id=fsid, limit=20) or {}
+        ids = [r.get("id") for r in hist.get("records") or [] if isinstance(r, dict) and r.get("id")]
+        for rid in ids:
+            _cap(target, "memory.forget", id=rid)
+        _cap(target, "memory.session_delete", session_id=fsid)
+        return f"archived {len(ids)}"
+    except Exception as e:
+        return f"failed: {e}"[:120]
+
+
 def _sent(stream: dict, text: str) -> bool:
     try:
         return str(json.loads(stream.get("body") or "{}").get("message") or "").strip().startswith(text.strip()[:60])
@@ -228,13 +276,20 @@ def main() -> int:
             browser = p.chromium.launch(args=["--ignore-certificate-errors"])
             try:
                 for i, case in enumerate(cases):
-                    if case.get("fixture"):
-                        results.append(CC.evaluate(case, {}))
-                        continue
                     if i and a.gap:
                         time.sleep(a.gap)
-                    ev = run_case(browser, a.target, case, run_id, a.turn_timeout, a.settle)
-                    r = CC.evaluate(case, ev)
+                    seeded = seed_fixture(a.target, case, run_id) if case.get("fixture") else {}
+                    if case.get("fixture") and not seeded.get("fixture_seeded"):
+                        results.append(CC.evaluate(case, seeded))
+                        continue
+                    try:
+                        ev = run_case(browser, a.target, case, run_id, a.turn_timeout, a.settle)
+                    finally:
+                        if seeded.get("fixture_session"):
+                            seeded["fixture_cleanup"] = teardown_fixture(a.target, seeded["fixture_session"])
+                    r = CC.evaluate(case, dict(ev, **seeded))
+                    if seeded.get("fixture_cleanup"):
+                        r["fixture_cleanup"] = seeded["fixture_cleanup"]
                     sid = CC.session_id(run_id, case["id"])
                     if not a.keep_sessions and CC.ours(sid):
                         try:
