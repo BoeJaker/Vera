@@ -1473,6 +1473,8 @@
   /* a pill opened to its whole title under the pointer: over its neighbours, with a ground, its title unclipped */
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip.chip-peek{background:var(--bg2,#1d2128)!important;box-shadow:0 6px 18px rgba(0,0,0,.4);border-radius:17px}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip.chip-peek > .it-hd > .t{overflow:visible;text-overflow:clip}
+  /* a pill opened under the pointer (see _chipPeek): a card over its neighbours, with its ground */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.pill-open{background:var(--bg1,#15181d)!important;border:1px solid var(--border2,#3a3f48)!important;border-radius:10px;box-shadow:0 14px 36px rgba(0,0,0,.5);overflow:hidden}
   /* a card being carried or sized rides over the others with its ground, so it never mixes with what it passes over */
   :host([align="desk"]:not([desk-narrow])) .stage .it:is(.desk-dragging,.resizing){background:var(--bg1,#15181d)!important;border-radius:8px}
   /* a panel behind the items: they keep a ground over it, or their text runs into the panel's */
@@ -1499,6 +1501,12 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside .vc-live[data-live="explode"]{flex:1 1 auto;height:auto!important;min-height:160px}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-over{flex-direction:column!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-rbx,.vc-filewrap,.vc-codewrap,.vc-diag,.vc-xp,.vc-term,.vc-tablewrap,.vc-act,.vc-rr){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  /* CODE SCROLLS IN ITS CARD (owner, 2026-10-11: "code on the desk isnt scrollable in normal view - it is in edit mode"):
+     the kit's card (.code-card: its bar, then pre.vo-lines) was not a column that passes the card's height down, so the
+     body - overflow hidden - cut the lines off and nothing inside scrolled (measured: 391 px shown of 1801). The card is a
+     column; its lines take the height left and scroll. */
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip) > .it-bd .vc-codewrap > .code-card{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;margin:0}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip) > .it-bd .vc-codewrap > .code-card > pre{flex:1 1 auto;min-height:0;max-height:none!important;overflow:auto!important;margin:0}
   /* an image is as large as its card lets it be, whole (never cropped), its caption under it */
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip) > .it-bd > .vc-fig{flex:1 1 auto;min-height:0;margin:0;display:flex;flex-direction:column;align-items:center}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip) > .it-bd > .vc-fig > img{flex:1 1 0;min-height:0;width:100%;height:100%;max-width:none;object-fit:contain}
@@ -3251,7 +3259,7 @@
       const nat = this._natH = this._natH || {}; let changed = false;
       sr.querySelectorAll('.stage .it[data-key][data-desk-face]').forEach((c) => {
         const key = c.dataset.key, face = c.dataset.deskFace || '';
-        if (!/^(card|max)$/.test(face) || c.classList.contains('cmp-behind') || c.classList.contains('desk-locked') || c.classList.contains('desk-placed') || (this._rz && this._rz.el === c)) return;
+        if (!/^(card|max)$/.test(face) || c.classList.contains('pill-open') || c.classList.contains('cmp-behind') || c.classList.contains('desk-locked') || c.classList.contains('desk-placed') || (this._rz && this._rz.el === c)) return;
         /* an image fills its card up to half again its own size: a small picture blown up to the desk is not "as much room as
            design allows" (a 200 px logo drawn 650 px tall) */
         if (c.dataset.type === 'image') { const im = c.querySelector('.vc-fig img'), bd0 = c.querySelector(':scope > .it-bd');
@@ -3361,7 +3369,7 @@
          beside the chat (the topic's, or the first nine), up to 2.4 times; never smaller than the width alone made them.
          Chips keep their size; the bands take their depth from the face, so the arrangement follows. */
       /* minimised to a pill (_pillGet): on the border whatever the topic - a combined card goes with its front tab */
-      { const pills = this._pillGet(); const pilled = ranked.filter((x) => (grp.membersOf.get(x.c) || [x.c]).some((c) => pills[c.dataset.key || '']));
+      { const pills = this._pillGet(); const pilled = ranked.filter((x) => (grp.membersOf.get(x.c) || [x.c]).some((c) => pills[c.dataset.key || ''] || (up[c.dataset.key || ''] && up[c.dataset.key || ''].chip)));
         if (pilled.length) { pilled.forEach((x) => outside.add(x.c.dataset.key || ''));
           const rest = ranked.filter((x) => pilled.indexOf(x) < 0); ranked.length = 0; rest.concat(pilled).forEach((x) => ranked.push(x)); } }
       const nNear = Math.max(1, Math.min(9, ranked.filter((x) => !outside.has(x.c.dataset.key || '')).length));
@@ -3407,7 +3415,8 @@
         const live = this._rz && this._rz.el === c ? this._rz : null;
         const pw = (live ? live.w : 0) || this._pw[key] || parseInt(c.dataset.pw || '0', 10) || 0;
         const ph = (live ? live.h : 0) || this._px[key] || 0;
-        const user = pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null;
+        /* dropped in pill territory (deskPos.chip): the person's earlier width does not hold it big there */
+        const user = pw > 0 && !(up[key] && up[key].chip) ? { w: pw, h: ph || Math.round(pw * 0.66) } : null;
         const so = { size: user, pinned: !!user && c.classList.contains('pinned'), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
         /* a card is no taller than what it holds (see _deskFit): its measured height caps its face and its growth */
@@ -3416,7 +3425,7 @@
            for their content"): names, a note, fields, a page, what ran - their content wraps short; a wide card of them was
            a wide empty band */
         const nw = ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || ''];
-        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.min(H - 8, po.size.h, nat || Infinity), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined };
+        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.min(H - 8, po.size.h, nat || Infinity), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, stay: !!userAt(key) };
       });
       D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h, (s.face === 'chip' || s.face === 'icon') ? Infinity : (it.maxH || Infinity)) }; }, { W: W, H: H });
       /* ...up the desk into the room above them (D.settle), the person's places, locks and sizes staying where they are... */
@@ -4217,8 +4226,14 @@
         const pw = this._pw[d.key] || parseInt(d.el.dataset.pw || '0', 10) || 0, ph = this._px[d.key] || 0;
         const so = { size: pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null, pinned: pw > 0 && d.el.classList.contains('pinned') };
         /* a card sized by the person keeps its size as it is carried; any other is sized by where it is */
-        const kept = this._deskPosGet()[d.key]; const own = kept && kept.w > 0 && kept.h > 0 ? kept : null;
-        const s = own ? { w: own.w, h: own.h, face: own.face || 'max', t: 1 } : D.sizeAt(g.R, cx, cy, so, g.desk), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
+        const kept = this._deskPosGet()[d.key]; let own = kept && kept.w > 0 && kept.h > 0 ? kept : null;
+        /* ...but carried out to where a card is a pill, it IS a pill, whatever size it was given (owner, 2026-10-11: "trying to
+           get the 'from the fabric' desk element to turn into a pill by dragging it away from chat"; code with its explode
+           open "wont turn back into a chip if dragged to the far edge"): a kept size, or the person's width, held it big. Let
+           go there, it is a pill and its kept size goes. */
+        const bare = D.sizeAt(g.R, cx, cy, {}, g.desk);
+        if (bare.face === 'chip' || bare.face === 'icon') own = null;
+        const s = own ? { w: own.w, h: own.h, face: own.face || 'max', t: 1 } : ((bare.face === 'chip' || bare.face === 'icon') ? bare : D.sizeAt(g.R, cx, cy, so, g.desk)), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
         d.cx = cx; d.cy = cy; d.own = own;
         /* the face changes with a margin: a card held near a boundary (chip | card | full) flipped its contents back and
            forth as the hand trembled - the flicker while moving (owner, 2026-10-08). The size still follows smoothly. */
@@ -4235,8 +4250,18 @@
       doc.addEventListener('mouseup', () => { this._dgMax = null; const d = this._dg; if (!d) return; this._dg = null;
         if (!d.moved) return;
         this._dgEnd = Date.now(); d.el.classList.remove('desk-dragging');
-        const g = this._deskGeo; if (g && d.cx != null) this._deskPosSet(d.key, Object.assign({ fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) },
-          d.own ? { w: d.own.w, h: d.own.h, face: d.own.face } : {}));
+        /* let go where a card is a pill: it is kept a pill there (the person's earlier size does not hold it big, see the plan) */
+        /* WHERE IT IS LET GO (owner, 2026-10-11: "i drag the pill to the desk and it goes back to the furthest area from chat.
+           pills put near the furthest point should kinda stick to it so they align on whatever side is furthest from chat"):
+           let go on the desk, it stays there (and a card minimised to a pill is a pill no more); let go where a card is a
+           pill, it joins the border's column of pills - no exact spot is kept, so it lines up with them */
+        const asChip = /^(chip|icon)$/.test(d.el.dataset.deskFace || '');
+        const g = this._deskGeo;
+        if (g && d.cx != null) {
+          if (asChip) this._deskPosSet(d.key, { chip: true });
+          else { this._deskPosSet(d.key, Object.assign({ fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) }, d.own ? { w: d.own.w, h: d.own.h, face: d.own.face } : {}));
+            if (this._pillGet()[d.key]) this._pillSet(d.key, false); }
+        }
         this._placeNow(); });
       doc.addEventListener('mousemove', (ev) => { const r = this._rz; if (!r) return;
         const h = Math.max(40, r.h0 + (ev.clientY - r.y0) / (r.Z || 1)); r.h = h; r.el.style.height = h + 'px';
@@ -4299,11 +4324,33 @@
        it goes back when the pointer leaves. Nothing else moves; if the desk was placed meanwhile it is placed again. */
     _chipPeek(it, on) {
       if (!it || !this.deskAlign()) return;
-      if (!on) { const s = it._cpw; if (!s) return; it._cpw = null; it.classList.remove('chip-peek'); if (s.icon) it.classList.add('desk-icon');
+      if (!on) { clearTimeout(this._pillT); const s = it._cpw; if (!s) return; it._cpw = null; it.classList.remove('chip-peek', 'pill-open'); if (s.icon) it.classList.add('desk-icon');
+        if (s.open) { it.classList.add('desk-chip'); it.dataset.deskFace = s.face; it.style.setProperty('height', s.h, 'important'); it.style.top = s.t; }
         if (s.seq !== this._placeSeq) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
         else { it.style.setProperty('width', s.w, 'important'); it.style.left = s.l; it.style.zIndex = s.z; }
+        if (s.open) { try { this._liveLayout(); } catch (e) { /* optional */ } }
         requestAnimationFrame(() => { it.style.transition = ''; }); return; }
       if (it._cpw || !it.classList.contains('desk-chip')) return;
+      /* A PILL OPENS UNDER THE POINTER (owner, 2026-10-11: "when a desk item is minimised to a pill and the user mouses over
+         it it should expand - not for the code and mentioned desk items"): the title widening below only ran when a title
+         was cut off, and "Mentioned" or "python · scan" fit. After a short pause the pill opens as a card - its content,
+         about 460 x 340, over its neighbours and kept on the desk - and goes back to a pill when the pointer leaves. */
+      const key = it.dataset.key; clearTimeout(this._pillT);
+      this._pillT = setTimeout(() => { if (this._hovKey !== key || (it._cpw && it._cpw.open) || !it.isConnected) return;
+        /* the title widening (below) ran first: undone, the card opens in its place */
+        if (it._cpw) { const w0 = it._cpw; it._cpw = null; it.classList.remove('chip-peek'); it.style.setProperty('width', w0.w, 'important'); it.style.left = w0.l; it.style.zIndex = w0.z; if (w0.icon) it.classList.add('desk-icon'); }
+        if (!it.classList.contains('desk-chip')) return;
+        const st = it.parentElement; const W = (st && st.clientWidth) || 1000, H = (st && st.clientHeight) || 800;
+        const s = { w: it.style.getPropertyValue('width'), h: it.style.getPropertyValue('height'), l: it.style.left, t: it.style.top, z: it.style.zIndex,
+          icon: it.classList.contains('desk-icon'), face: it.dataset.deskFace, seq: this._placeSeq, open: true };
+        it._cpw = s; it.style.transition = 'none';
+        it.classList.remove('desk-chip', 'desk-icon'); it.classList.add('chip-peek', 'pill-open'); it.dataset.deskFace = 'card';
+        const w = Math.min(W - 8, 460), h = Math.min(H - 8, 340);
+        let left = parseFloat(s.l) || 0, top = parseFloat(s.t) || 0;
+        if (left + w > W - 4) left = Math.max(4, W - 4 - w); if (top + h > H - 4) top = Math.max(4, H - 4 - h);
+        it.style.setProperty('width', w + 'px', 'important'); it.style.setProperty('height', h + 'px', 'important');
+        it.style.left = left + 'px'; it.style.top = top + 'px'; it.style.zIndex = '210';
+        try { this._liveLayout(); } catch (e) { /* optional */ } }, 260);
       const icon = it.classList.contains('desk-icon');
       const s = { w: it.style.getPropertyValue('width'), l: it.style.left, z: it.style.zIndex, icon, seq: this._placeSeq };
       it.style.transition = 'none'; if (icon) it.classList.remove('desk-icon');

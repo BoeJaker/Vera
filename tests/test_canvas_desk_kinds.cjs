@@ -90,6 +90,12 @@ t('the memory graph says why it is empty rather than drawing nothing', chat.incl
 
 t('a card filling the desk is above every card and pill (the held canvas\'s z 8 put it under them: "see-through")', src.includes(':host([align="desk"]:not([desk-narrow])) .stage .it.maxed{z-index:150!important}'));
 
+/* round 5 (WSU-50, 51, 53, 56) */
+t('a pill opens as a card under the pointer, whatever its kind, and goes back when the pointer leaves', src.includes("it.classList.add('chip-peek', 'pill-open'); it.dataset.deskFace = 'card';") && src.includes("if (s.open) { it.classList.add('desk-chip'); it.dataset.deskFace = s.face;"));
+t('carried to where a card is a pill, it is a pill whatever size it was given; let go there it joins the border', src.includes("const bare = D.sizeAt(g.R, cx, cy, {}, g.desk);") && src.includes("if (asChip) this._deskPosSet(d.key, { chip: true });"));
+t('let go on the desk it stays there (and is no longer a minimised pill); the upward settle leaves it', src.includes("if (this._pillGet()[d.key]) this._pillSet(d.key, false);") && src.includes('stay: !!userAt(key)'));
+t('code scrolls in its card on the desk', src.includes('.vc-codewrap > .code-card > pre{flex:1 1 auto;min-height:0;max-height:none!important;overflow:auto!important'));
+
 const D = require(path.join(__dirname, '..', 'vera', 'ui', 'desk_layout_core.js'));
 const g = [{ id: 'n', x: 300, y: 200, w: 300, h: 100, maxH: 120 }];
 D.grow(g, { l: -440, t: 0, r: 0, b: 900 }, { W: 1200, H: 900 }, {});
