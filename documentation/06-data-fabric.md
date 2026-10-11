@@ -215,6 +215,7 @@ The public path is deliberately narrow:
 
 | Capability | HTTP | Behaviour |
 |---|---|---|
+| `fabric.revision.state.migrate` | `POST /fabric/revisions/state/migrate` | Non-destructive migration of the former checkout-local revision database into `VERA_STATE_DIR`. Dry-run is the default and returns a deterministic snapshot digest. Execution requires that exact digest plus `confirm=true`, refuses an open store or existing target, retains the source, and requires a restart |
 | `fabric.revision.put` | `POST /fabric/revisions/put` | Inputs `namespace`, `record_type`, `created_at`, `record_id` or `logical_key`, `content_json`, `parents` (csv), `policy_json`/`source_json`/`metadata_json`, `expected_head`, `tombstone`, `media_type`, `valid_from`/`valid_to`. Commits authority first, then projects the canonical envelope into the existing SQLite `fabric_records` read path and transitions its `sqlite` receipt to `applied`, `removed` or `failed`. Tombstones need `tombstone=true`, null content and a parent. Emits `fabric.revision.committed` |
 | `fabric.revision.get` | `POST /fabric/revisions/get` | Current revision for `record_id`, or an exact `revision_id` bound to it |
 | `fabric.revision.reconcile` | `POST /fabric/revisions/reconcile` | Bounded retry (`limit` 1–100) of failed/stale receipts through `rebuilding` |
@@ -1428,6 +1429,7 @@ after the graph summary is ready. Production is never seeded for screenshots.
 | `fabric.revision.get` | — | Policy-gated canonical Fabric revision read. Returns the current revision for record_id, or an exact revision_id bound to that record. |
 | `fabric.revision.put` | — | Policy-gated canonical Fabric revision write. Commits immutable authority and a SQLite projection receipt; projection failure is reported durably without undoing authority. Inputs: namespace, recor… |
 | `fabric.revision.reconcile` | — | Policy-gated bounded retry of failed/stale canonical SQLite projection receipts. Inputs: limit (1..100). Each item is transitioned through rebuilding and ends applied/removed/failed. |
+| `fabric.revision.state.migrate` | — | Inspect or explicitly copy the legacy checkout-local revision database into durable state without deleting the source. |
 | `fabric.rss.fetch_content` | — | Pull an RSS feed and fetch full article text for each entry. Input: source_id (str!) — must be an existing RSS source. max_articles (int, default 10) — cap on article fetches (rate-limiting). Outpu… |
 | `fabric.schema` | — | Get schema for a dataset. Input: dataset_id (query param). |
 | `fabric.schema.declare` | — | Declare (and version) the schema for a dataset so agents and loops can operate on it reliably and quality can be checked. Inputs: dataset_id (str!), schema (object mapping field -> {type: string\|n… |
