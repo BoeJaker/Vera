@@ -845,7 +845,14 @@ A job goes to the nodes only when every live compute worker has the libraries it
 
 Worker provisioning installs torch (CPU build) and scikit-learn, pinned to the host's releases, because a fitted model or checkpoint comes back as a pickle the host must load. The nodes' numpy is a newer major than the host's, so the host reads those pickles through a numpy-compatible unpickler, and stores markets models re-pickled in its own format. One training job uses `threads` (default 4) on its node.
 
-The worldview's live stream updates stay on the host: a few dynamics mini-batches per minute, where shipping the model would cost more than the work. So do inference calls on a trained model (`worldview.query`, `ml.train.predict`, ONNX runs).
+The worldview's live stream updates stay on the host: a few dynamics mini-batches per minute, where shipping the model would cost more than the work. So does `worldview.query`.
+
+ML Workshop inference runs on the nodes too. These calls are compute functions:
+- `ml.train.predict` and `ml.train.evaluate` call `ml.forward`;
+- `ml.run` calls `ml.module_forward`;
+- `ml.onnx.run` and every `ml.onnx.model.<slug>` call `onnx.run`. The artifact is stored once in Redis by its sha256 and sent by reference (`_blob_refs`); a node caches the session per hash.
+
+Inference waits at most 20 s for a node with room, then runs on the host's executor in degraded mode. Each reply says where it ran (`ran_on`). `onnx.run` goes only to workers whose venv has onnxruntime: the worker pip list installs it, pinned to the host's release.
 
 ### Scheduling
 

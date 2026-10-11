@@ -472,6 +472,51 @@ def _run_session_array(slug: str, Xarr):
     return out[0], (sess.get_providers()[0] if sess.get_providers() else None)
 
 
+#: ONNX sessions a worker built from artifact bytes, by sha256 (a node has no
+#: artifact files: the host stores each artifact once in Redis by its hash).
+_NODE_SESSIONS: Dict[str, Any] = {}
+ART_KEY = "vera:ml:onnx:art:{sha}"
+ART_TTL_S = 86400
+INFER_WAIT_S = 20
+
+
+def node_onnx_run(inputs: dict, progress, should_stop) -> dict:
+    """compute.run entry (FUNCTIONS["onnx.run"]): run an exported model on a
+    node from its bytes (`artifact`, sent by reference) on X."""
+    import hashlib as _hl
+    import onnxruntime as _ort
+    art = inputs["artifact"]
+    sha = inputs.get("sha") or _hl.sha256(art).hexdigest()
+    sess = _NODE_SESSIONS.get(sha)
+    if sess is None:
+        sess = _ort.InferenceSession(art, providers=["CPUExecutionProvider"])
+        _NODE_SESSIONS.clear() if len(_NODE_SESSIONS) > 32 else None
+        _NODE_SESSIONS[sha] = sess
+    inp = sess.get_inputs()[0]
+    dt = np.float64 if "double" in inp.type else np.float32
+    out = sess.run(None, {inp.name: np.asarray(inputs["X"], dtype=dt)})
+    return {"y": np.asarray(out[0]), "provider": "CPUExecutionProvider"}
+
+
+async def _run_on_pool(slug: str, onnx_path: str, Xarr):
+    """(predictions, provider, where) on a node worker; None when the compute
+    module is not loaded (the caller then runs it here)."""
+    import hashlib as _hl
+    orch = sys.modules.get("Vera.vera.capability_orchestration")
+    run = getattr(orch, "NODE_COMPUTE", None)
+    r = getattr(orch, "REDIS", None)
+    if run is None or r is None:
+        return None
+    with open(onnx_path, "rb") as f:
+        art = f.read()
+    sha = _hl.sha256(art).hexdigest()
+    key = ART_KEY.format(sha=sha)
+    await r.set(key, art, ex=ART_TTL_S, nx=True)
+    out = await run("onnx.run", {"_blob_refs": {"artifact": key}, "sha": sha, "X": Xarr},
+                    label=f"onnx {slug}", max_wait_s=INFER_WAIT_S, host_fallback=True)
+    return np.asarray(out["y"]), out.get("provider"), (out.get("_node") or out.get("_where") or "")
+
+
 async def _run_artifact(slug_or_id: str, X) -> dict:
     if not HAS_ORT:
         return {"error": "onnxruntime not installed", "hint": "pip install onnxruntime"}
@@ -488,13 +533,18 @@ async def _run_artifact(slug_or_id: str, X) -> dict:
         return {"error": f"X JSON parse: {e}"}
     if Xarr.ndim == 1:
         Xarr = Xarr[None, :]
+    ran_on = "host"
     try:
-        # off the event loop: a large batch blocked every request on the host
-        out, provider = await asyncio.get_running_loop().run_in_executor(
-            None, _run_session_array, slug, Xarr)
+        pooled = await _run_on_pool(slug, onnx_path, Xarr)       # MW-1: on a node
+        if pooled is not None:
+            out, provider, ran_on = pooled
+        else:
+            # off the event loop: a large batch blocked every request on the host
+            out, provider = await asyncio.get_running_loop().run_in_executor(
+                None, _run_session_array, slug, Xarr)
     except Exception as e:
         return {"error": f"onnxruntime inference failed: {e}"}
-    return {"ok": True, "artifact": slug, "provider": provider,
+    return {"ok": True, "artifact": slug, "provider": provider, "ran_on": ran_on,
             "predictions": out.tolist(), "shape": list(out.shape)}
 
 

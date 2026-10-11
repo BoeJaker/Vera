@@ -157,6 +157,10 @@ async def _run_here(fn: str, inputs: Dict[str, Any], threads: int,
             return False
 
     inputs = dict(inputs, _threads=threads)
+    if inputs.get("_blob_refs") and _orch.REDIS is not None:
+        err = await core.resolve_blob_refs(inputs, _orch.REDIS.get)
+        if err:
+            raise NodeComputeError(f"{fn}: {err}")
     return await loop.run_in_executor(None, func, inputs, progress, should_stop)
 
 
@@ -496,11 +500,9 @@ async def cap_compute_run(job: str = "", fn: str = "", trace_id=None) -> Dict:
     del blob
     # inputs too big to send with every job (a gate's code archive, shared by
     # its chunks) are stored once in Redis by the caller and named here
-    for name, key in (inputs.pop("_blob_refs", None) or {}).items():
-        data = await r.get(str(key))
-        if data is None:
-            return await finish(False, f"input {name!r} expired or was withdrawn")
-        inputs[name] = data
+    err = await core.resolve_blob_refs(inputs, r.get)
+    if err:
+        return await finish(False, err)
 
     stop_ev = threading.Event()
     pending: List[str] = []

@@ -1280,6 +1280,34 @@ def _train_epochs_sync(module: dict, weights: dict, X_tr, y_tr, X_va, y_va,
             "best_val_loss": round(best_val_loss, 6) if best_val_loss != float("inf") else None}
 
 
+#: Inference waits this long for a node with room, then runs on the host
+#: (degraded mode, as nlp.local is): an interactive call must not hang.
+INFER_WAIT_S = 20
+
+
+def node_forward(inputs: dict, progress, should_stop) -> dict:
+    """compute.run entry (FUNCTIONS["ml.forward"]): a trained module's forward
+    pass. Weights travel as [node_id, arrays] pairs, as in training."""
+    weights = {nid: dict(w) for nid, w in inputs["weights"]}
+    y, _ = _forward_with_weights(inputs["module"], weights, np.asarray(inputs["X"], dtype=np.float32))
+    return {"y": np.asarray(y)}
+
+
+async def _forward_on_pool(module: dict, weights: dict, X, label: str):
+    """(y_pred, where): the forward pass on a node worker, else (no compute
+    module, or no node within INFER_WAIT_S) on the host's executor."""
+    sys_mod = __import__("sys")
+    run = getattr(sys_mod.modules.get("Vera.vera.capability_orchestration"), "NODE_COMPUTE", None)
+    if run is not None:
+        out = await run("ml.forward", {"module": module,
+                                       "weights": [[nid, w] for nid, w in weights.items()],
+                                       "X": X}, label=label, max_wait_s=INFER_WAIT_S,
+                        host_fallback=True)
+        return np.asarray(out["y"]), (out.get("_node") or out.get("_where") or "")
+    y, _ = await asyncio.get_running_loop().run_in_executor(None, _forward_with_weights, module, weights, X)
+    return y, "host"
+
+
 def node_train_epochs(inputs: dict, progress, should_stop) -> dict:
     """compute.run entry (node_compute_core.FUNCTIONS["ml.train"]). Weights
     travel as [node_id, arrays] pairs so a numeric node id stays numeric."""
@@ -2320,10 +2348,9 @@ if _CAP_AVAILABLE:
         except Exception as e:
             return {"error": f"JSON parse: {e}"}
 
-        # Offloaded: a caller-supplied test set can be arbitrarily large, and this
-        # runs inside the HTTP handler on the event loop (see _fast_grad).
-        y_pred, _ = await asyncio.get_running_loop().run_in_executor(
-            None, _forward_with_weights, module, w, X)
+        # On a node worker (ml-workshop-compute MW-1); the host only as the
+        # degraded fallback, off the event loop.
+        y_pred, ran_on = await _forward_on_pool(module, w, X, f"ml.evaluate {module_id}")
 
         metrics = {
             "loss":     round(_compute_loss(y_pred, y, loss_fn), 6),
@@ -2347,6 +2374,7 @@ if _CAP_AVAILABLE:
             "ok":             True,
             "module_id":      module_id,
             "n_samples":      len(X),
+            "ran_on":         ran_on,
             "metrics":        metrics,
             "predictions_sample": pred_sample,
         }
@@ -2376,13 +2404,13 @@ if _CAP_AVAILABLE:
             Xarr = np.array(json.loads(X), dtype=np.float32)
         except Exception as e:
             return {"error": f"JSON parse: {e}"}
-        # Offloaded: batch inference on a caller-supplied X, on the event loop.
-        y_pred, _ = await asyncio.get_running_loop().run_in_executor(
-            None, _forward_with_weights, module, w, Xarr)
+        # On a node worker (ml-workshop-compute MW-1); host only as the fallback.
+        y_pred, ran_on = await _forward_on_pool(module, w, Xarr, f"ml.predict {module_id}")
         return {
             "ok":         True,
             "module_id":  module_id,
             "n":          len(Xarr),
+            "ran_on":     ran_on,
             "predictions": y_pred.tolist() if hasattr(y_pred, "tolist") else [[float(y_pred)]],
             "shape":      list(y_pred.shape) if hasattr(y_pred, "shape") else [],
         }
