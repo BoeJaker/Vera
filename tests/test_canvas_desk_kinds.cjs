@@ -88,6 +88,8 @@ const ge = fs.readFileSync(path.join(__dirname, '..', 'vera', 'graph_embed_eleme
 t('a graph of the host\'s own data takes no estate events (it flickered with each one)', ge.includes("subscribeLiveEvents: !(this.getAttribute('renderer') === 'data' || this.hasAttribute('calm'))"));
 t('the memory graph says why it is empty rather than drawing nothing', chat.includes('session started on a sandbox') && chat.includes("textContent='nothing stored in memory for this session'"));
 
+t('a card filling the desk is above every card and pill (the held canvas\'s z 8 put it under them: "see-through")', src.includes(':host([align="desk"]:not([desk-narrow])) .stage .it.maxed{z-index:150!important}'));
+
 const D = require(path.join(__dirname, '..', 'vera', 'ui', 'desk_layout_core.js'));
 const g = [{ id: 'n', x: 300, y: 200, w: 300, h: 100, maxH: 120 }];
 D.grow(g, { l: -440, t: 0, r: 0, b: 900 }, { W: 1200, H: 900 }, {});

@@ -2230,7 +2230,12 @@
   .it.reading .vc-rbx-open :is(.vc-rbx-body,.vc-reader,.vc-rd-body){background:transparent!important;border-color:transparent!important;box-shadow:none!important;max-width:none!important;max-height:none!important;overflow:visible}
   .it.reading .vc-rbx-open .vc-rbx-body{font-size:14.5px;line-height:1.7;padding:4px 6px 18px}
   .rb-back{display:none!important}.it.reading .rb-back{display:inline-flex!important}
-  /* a card filling the room is never see-through, whatever else it is (it showed the desk through it at times) */
+  /* A CARD FILLING THE ROOM IS ON TOP (owner, 2026-10-11: "the occasional see-through expanded card ... something triggers
+     the transparency"; "minimised elements that are chips can cover its controls"). Measured: the maximised card's
+     ground was solid, but it sat at z 8 - the .it.maxed rule written for the held canvas's flow - while
+     the desk stacks its cards 10..110 by their distance to the chat: every card and pill drew over it, and through it
+     what was under it showed. On the desk it is above every card and pill (150), below only a card being carried (200). */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.maxed{z-index:150!important}
   .stage .it:is(.maxed,.reading){background:var(--bg1,#15181d)!important;border-color:var(--border,#2a2f37)!important}
   /* the names and sites are a menu (the names · sites button and its widgets), not rows of pills, unless the full chrome */
   :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-facets{display:none!important}
