@@ -92,5 +92,16 @@ t('an html item with nothing in it says so rather than drawing an empty frame', 
   t('the item asks the element for the reader\'s setting', /canExplode\(b, this\.explodeOffer\(\)\)/.test(SRC));
 }
 
+// the desk's own switches on the shared Settings page (WSU-48): each a persisted setting handed to the element, which
+// reads it in one place and keeps today's behaviour when it is on (the default)
+for (const [id, attr, read] of [['cfgCvCombine', 'desk-combine', "this.getAttribute('desk-combine') === 'off'"],
+                                ['cfgCvFill', 'desk-fill', "this.getAttribute('desk-fill') !== 'off'"],
+                                ['cfgCvSettle', 'desk-settle', "this.getAttribute('desk-settle') !== 'off'"],
+                                ['cfgCvFit', 'desk-fit', "this.getAttribute('desk-fit') === 'off'"]]) {
+  t(`the desk switch ${attr}: a Settings row, persisted, read by the element`,
+    new RegExp(`id="${id}"[^>]*onchange="CH\\._persistCanvasCfg\\(\\)"[\\s\\S]*?value="on"[\\s\\S]*?value="off"`).test(CHAT)
+    && CHAT.includes(`${id}:['${attr}','on']`) && SRC.includes(read));
+}
+
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
