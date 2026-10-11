@@ -345,13 +345,37 @@ MAX_RERUNS = 2
 EXIT_DROPPED = 3
 
 
+def _hold_expired(d):
+    """A pause/yield with `until` in the past is over (census.control.set hours=...)."""
+    until = str((d or {}).get("until") or "").strip()
+    if not until or d.get("drop") or not d.get("pause"):
+        return False
+    try:
+        import calendar as _cal
+        return time.time() >= _cal.timegm(time.strptime(until[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return False
+
+
 def read_control():
     try:
         with open(CONTROL_FILE, encoding="utf-8") as fh:
             d = json.load(fh)
-        return d if isinstance(d, dict) else {}
+        d = d if isinstance(d, dict) else {}
     except Exception:
         return {}
+    if _hold_expired(d):
+        log("  hold expired at %s - resuming (it was: %s)" % (d.get("until"), d.get("reason") or "-"))
+        try:
+            with open(CONTROL_FILE, "w", encoding="utf-8") as fh:
+                json.dump({"pause": False, "after_goal": False, "drop": False,
+                           "reason": "hold expired (%s)" % d.get("until"), "by": "harness",
+                           "resume_on_start": False, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+                          fh, indent=1)
+        except Exception:
+            pass
+        return {}
+    return d
 
 
 # -- The census as a driver in Vera's own task system ---------------------------
