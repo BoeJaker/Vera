@@ -82,6 +82,77 @@ def _validated_snapshot_records(
 
 
 @dataclass(frozen=True)
+class JepaIndexSnapshotCandidate:
+    """Payload-free snapshot inputs for the exact active JEPA index."""
+
+    snapshot: DatasetSnapshot
+    records: tuple[dict[str, Any], ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "snapshot": self.snapshot.to_dict(),
+            "records": [dict(item) for item in self.records],
+            "record_count": len(self.records),
+            "retains_content": False,
+        }
+
+
+def build_index_snapshot_candidate(
+    *, indexed_record_ids: Sequence[str], record_metadata: Mapping[str, Any],
+    created_at: str, provider_revision: str,
+    dataset_id: str = "worldview-jepa-active-index",
+) -> JepaIndexSnapshotCandidate:
+    """Freeze revision-qualified membership without copying record content."""
+    if isinstance(indexed_record_ids, (str, bytes)):
+        raise TypeError("indexed record IDs must be a sequence")
+    if not isinstance(record_metadata, Mapping):
+        raise TypeError("record metadata must be a mapping")
+    ids = tuple(_identifier(value, "indexed record ID")
+                for value in indexed_record_ids)
+    if not ids or len(ids) > MAX_RECORDS:
+        raise ValueError("active index membership must be present and bounded")
+    if len(set(ids)) != len(ids):
+        raise ValueError("active index record IDs must be unique")
+    records: list[dict[str, Any]] = []
+    missing_revision = 0
+    missing_content_hash = 0
+    for record_id in sorted(ids):
+        meta = record_metadata.get(record_id)
+        if not isinstance(meta, Mapping):
+            meta = {}
+        revision_id = str(meta.get("revision_id") or "").strip()
+        content_hash = str(meta.get("content_hash") or "").strip()
+        if not revision_id:
+            missing_revision += 1
+        if not content_hash:
+            missing_content_hash += 1
+        records.append({
+            "record_id": record_id,
+            "revision_id": revision_id,
+            "content_hash": content_hash,
+            "source_dataset_id": str(meta.get("dataset_id") or "")[:256],
+        })
+    if missing_revision or missing_content_hash:
+        raise ValueError(
+            "active index lacks revision-qualified provenance: "
+            f"missing_revision={missing_revision}, "
+            f"missing_content_hash={missing_content_hash}")
+    snapshot, frozen = DatasetSnapshot.create(
+        dataset_id=dataset_id, created_at=created_at, records=records,
+        schema={
+            "record_id": "string", "revision_id": "string",
+            "content_hash": "string", "source_dataset_id": "string",
+        },
+        provenance={
+            "source": "worldview-active-index",
+            "provider_revision": _identifier(
+                provider_revision, "provider revision"),
+            "payload": "omitted",
+        })
+    return JepaIndexSnapshotCandidate(snapshot, frozen)
+
+
+@dataclass(frozen=True)
 class JepaRetrievalProvenance:
     """Bind one checkpoint and exact index membership to one dataset snapshot."""
 

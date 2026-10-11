@@ -398,7 +398,7 @@ survey of integration opportunities).
 
 ## 4. Capability reference
 
-All 38 capabilities are registered in `worldview_jepa.py`.
+All 39 capabilities are registered in `worldview_jepa.py`.
 
 | Capability | Route | Key inputs (defaults) | Purpose / notes |
 |---|---|---|---|
@@ -411,6 +411,7 @@ All 38 capabilities are registered in `worldview_jepa.py`.
 | `worldview.rollout` | `POST /worldview/rollout` | start as above, `steps` 8, `temperature` 0.8, `top_k` 20 | Sampled trajectory; each step lists up to 3 member records of that concept (first assigned, not query-specific) |
 | `worldview.counterfactual` | `POST /worldview/counterfactual` | `start_concept`, `swap_at` 1 (0-based generated step to replace; must be `< steps`), `swap_to`, `steps` 8, `temperature` 0.6, `seed` (optional) | Both timelines share the baseline's steps before `swap_at`; after it the baseline's sampled step and `swap_to` are each continued with the same seed. Returns `baseline`, `counterfactual`, `divergence_step` and the `seed` used (random when omitted) |
 | `worldview.query` | `POST /worldview/query` | `text`, `top_k` 10, `dataset_id` | Latent nearest neighbours; `dataset_id` filters after the top-k search |
+| `worldview.retrieval.snapshot.preview` | `GET /worldview/retrieval/snapshot/preview` | — | Build payload-free snapshot/bind inputs for the exact active index, or count missing revision/hash evidence without changing state |
 | `worldview.retrieval.bind` | `POST /worldview/retrieval/bind` | `snapshot_json`, `records_json`, `provider_revision`, `training_run_id` | Bind checkpoint + complete index to a `DatasetSnapshot` ([§13](#13-provenance-qualified-retrieval)) |
 | `worldview.retrieval.status` | `GET /worldview/retrieval/status` | — | Re-verify the binding |
 | `worldview.retrieval.query` | `POST /worldview/retrieval/query` | `text`, `top_k` 10, `snapshot_id` | Pinned, revision-qualified retrieval |
@@ -679,6 +680,14 @@ The historical `worldview.query` remains the general interactive latent search.
 Its result IDs alone are not enough for a provider comparison: an index can
 outlive or drift from the checkpoint, and it does not identify canonical record
 revisions.
+
+`worldview.retrieval.snapshot.preview` first freezes the exact active index into
+payload-free candidate records containing only record ID, revision ID, content
+hash and source dataset ID. Rebuild and streaming ingestion preserve those
+revision/hash facts from Fabric metadata. If even one legacy index member lacks
+either fact, preview returns ineligible with aggregate missing counts; it does
+not infer a revision from text, expose record content, persist state or authorize
+retrieval influence.
 
 `worldview.retrieval.bind` establishes the stricter boundary. It accepts a
 complete record manifest that must reproduce one immutable `DatasetSnapshot`
