@@ -161,6 +161,24 @@ HOST_BOUND_CAPS.update({
     "memory.chroma.pool": "reports this process's Chroma connections",
 })
 
+#: SW-05's revision canary and its evidence journal are deliberately local to
+#: the authoritative Vera host.  The ordinary Memory backends are shared, but
+#: these capabilities also touch the host's canonical SQLite revision store
+#: and payload-free receipt journal.  Letting the full-dispatch stage offload
+#: them produced split-brain evidence: a rollback rehearsal could be written
+#: by one node while the next readiness read reached another and reported it
+#: missing.  Keep the complete write/reconcile/review boundary together; a
+#: future shared store may relax this only after its own placement review.
+_MEMORY_REVISION_STATE = (
+    "uses the host-authoritative SW-05 revision/receipt stores"
+)
+HOST_BOUND_CAPS.update({
+    "memory.store": _MEMORY_REVISION_STATE,
+    "memory.dual_write.reconcile": _MEMORY_REVISION_STATE,
+    "memory.dual_write.readiness": _MEMORY_REVISION_STATE,
+    "memory.dual_write.rollback_rehearse": _MEMORY_REVISION_STATE,
+})
+
 MUTATOR_SEGMENTS = frozenset({
     "set", "config", "configure", "enable", "disable", "reset", "reload",
     "register", "unregister", "save", "delete",

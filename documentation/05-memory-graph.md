@@ -391,6 +391,15 @@ files. They are never derived from an importing module's `__file__`: Vera can
 load modules through more than one package topology, and checkout-relative
 machine state could split evidence or dirty the repository.
 
+The complete revision-bound boundary stays on the authoritative Vera host.
+`memory.store`, `memory.dual_write.reconcile`,
+`memory.dual_write.readiness` and `memory.dual_write.rollback_rehearse` are
+host-bound even when node dispatch is fully enabled. The ordinary Memory
+backends are shared, but compute nodes do not share the host's SQLite revision
+and receipt journals; routing any producer or reviewer to a node would create
+split-brain evidence. Other reviewed shared-backend reads, such as
+`memory.search`, remain node-eligible.
+
 The public `memory.store` ingress is now connected to this seam behind
 `VERA_MEMORY_REVISION_CANARY=1`; the default remains `0`. With the switch off,
 the capability directly awaits the existing native store and does not construct
