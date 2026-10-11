@@ -3174,6 +3174,12 @@ async def _get_dataset_processing_config(dataset_id: str) -> Dict:
 # QUERY DSL
 # ─────────────────────────────────────────────────────────────────────────────
 
+# fabric.query's result cache, counted (backbone review 11 Oct, fix list #11): it sits beside memory.seek's
+# generation-keyed cache; this one is NOT invalidated by an ingest (TTL only). The counts decide whether to fold the
+# two into one generation-keyed cache.
+_QUERY_CACHE_STATS: Dict[str, int] = {"hits": 0, "misses": 0, "sets": 0}
+
+
 def _cache_key(q: Dict) -> str:
     return "fabric:cache:" + hashlib.md5(
         json.dumps(q, sort_keys=True, default=str).encode()
@@ -3200,8 +3206,10 @@ async def execute_query(q: Dict) -> Dict:
     if q.get("cache", True):
         cached = await _cache_get(_cache_key(q))
         if cached:
+            _QUERY_CACHE_STATS["hits"] += 1
             cached["cached"] = True
             return cached
+        _QUERY_CACHE_STATS["misses"] += 1
 
     top_k      = int(q.get("top_k", 10))
     vector_q   = q.get("vector","") or q.get("text","")
@@ -3418,6 +3426,7 @@ async def execute_query(q: Dict) -> Dict:
                           "widen with a lower min_score, or gather the information another way.")
     if q.get("cache", True):
         await _cache_set(_cache_key(q), output, int(q.get("cache_ttl", FABRIC_CACHE_TTL)))
+        _QUERY_CACHE_STATS["sets"] += 1
     return output
 
 
@@ -6210,7 +6219,16 @@ async def cap_fabric_stats(trace_id=None) -> Dict:
         "neo4j":        {"available": FABRIC_NEO.available},
         "sqlite":       {"available": True, "path": SQLITE_PATH},
         "object_store": {"available": OBJECT_STORE.available, "mode": FABRIC_OBJECT_STORE},
+        # the two retrieval caches side by side, this process since its start (fix list #11)
+        "caches": {"fabric_query": dict(_QUERY_CACHE_STATS, ttl_s=FABRIC_CACHE_TTL, invalidated_by_ingest=False),
+                   "memory_seek": _seek_cache_stats()},
     }
+
+
+def _seek_cache_stats() -> Dict[str, Any]:
+    mr = sys.modules.get("memory_retrieval") or sys.modules.get("Vera.vera.fabric.memory_retrieval")
+    st = getattr(mr, "_SEEK_CACHE_STATS", None)
+    return dict(st, ttl_s=600, invalidated_by_ingest=True) if isinstance(st, dict) else {"loaded": False}
 
 
 @capability(
