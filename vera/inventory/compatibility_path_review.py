@@ -89,11 +89,13 @@ CURRENT_PATHS = (
     CompatibilityPath(
         "memory.patch_capability_for_memory", "capability_orchestration.act_enqueue",
         "deprecated_noop", _MEMORY_SOURCE,
-        ("def patch_capability_for_memory():", "patch_capability_for_memory()"),
-        True, "migrate",
-        ("startup_still_calls_noop", "second_wrapper_would_duplicate_activity"),
-        ("remove_internal_startup_call_first", "complete_external_consumer_inventory",
-         "retain_import_shim")),
+        ("def patch_capability_for_memory():",
+         "DEPRECATED — kept as a no-op."),
+        False, "insufficient_evidence",
+        ("internal_startup_call_migrated", "external_import_coverage_missing",
+         "second_wrapper_would_duplicate_activity"),
+        ("complete_external_consumer_inventory", "retain_import_shim",
+         "observe_two_normal_zero_use_cycles")),
     CompatibilityPath(
         "memory.patch_new_cap", "capability_orchestration.capability_decorator",
         "deprecated_noop", _MEMORY_SOURCE,
