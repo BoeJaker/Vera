@@ -34,6 +34,7 @@ Artifacts live in `ML_ONNX_DIR` (default `<repo>/edge/models`), tying into §4
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -488,7 +489,9 @@ async def _run_artifact(slug_or_id: str, X) -> dict:
     if Xarr.ndim == 1:
         Xarr = Xarr[None, :]
     try:
-        out, provider = _run_session_array(slug, Xarr)
+        # off the event loop: a large batch blocked every request on the host
+        out, provider = await asyncio.get_running_loop().run_in_executor(
+            None, _run_session_array, slug, Xarr)
     except Exception as e:
         return {"error": f"onnxruntime inference failed: {e}"}
     return {"ok": True, "artifact": slug, "provider": provider,
@@ -583,8 +586,10 @@ if _CAP_AVAILABLE:
         await _emit({"type": "ml.onnx.progress", "stage": "build",
                      "message": f"exporting {module_id} → ONNX"})
         try:
-            model, meta = _build_model(module, weights, dtype)
-            onnx_path, slug = _save_artifact(module_id, model, meta)
+            def _build_and_save():
+                model, meta = _build_model(module, weights, dtype)
+                return _save_artifact(module_id, model, meta) + (meta,)
+            onnx_path, slug, meta = await asyncio.get_running_loop().run_in_executor(None, _build_and_save)
         except Exception as e:
             log.error("ml_onnx export failed for %s: %s", module_id, e)
             return {"error": f"onnx export failed: {e}"}
@@ -665,10 +670,11 @@ if _CAP_AVAILABLE:
             return {"error": f"X JSON parse: {e}"}
 
         try:
-            ref, _ = mt._forward_with_weights(module, weights, Xarr)
-            ref = np.asarray(ref, dtype=np.float64)
-            ortout, provider = _run_session_array(slug, Xarr)
-            ortout = np.asarray(ortout, dtype=np.float64)
+            def _both():
+                r, _ = mt._forward_with_weights(module, weights, Xarr)
+                o, pv = _run_session_array(slug, Xarr)
+                return np.asarray(r, dtype=np.float64), np.asarray(o, dtype=np.float64), pv
+            ref, ortout, provider = await asyncio.get_running_loop().run_in_executor(None, _both)
         except Exception as e:
             return {"error": f"verify run failed: {e}"}
 

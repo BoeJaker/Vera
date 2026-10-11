@@ -31,6 +31,7 @@ _CRITICAL_MODULES = {
     "test_node_compute",  # model training ran on the Vera host, not the nodes (2026-10-02)
     "test_node_scheduling_and_test_pool",  # node jobs ignored node load; gates ran one at a time on the host (2026-10-04)
     "test_node_parity_evidence",  # node workers ran 91 of 2,700 caps; parity needs evidence per cap (2026-10-04)
+    "test_ml_inference_off_event_loop",  # ml.onnx.run / ml.run ran inline on the event loop of the 2-core host (2026-10-11)
     "test_model_bindings",  # no list of callable models said what each is for; LLMs could not pick one (2026-10-10)
     "test_route_warm",  # the picker scored raw in_use (a 2-slot CPU node looked full) and ignored residency (2026-09-28)
     "test_route_warm_picker",  # an oversized context went to the GPU and spilled: the patched picker dropped ctx_need (2026-09-28)
