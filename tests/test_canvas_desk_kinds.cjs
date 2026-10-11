@@ -102,7 +102,10 @@ t('the run streams in formatted, as the chat draws it', src.includes(': live ? `
 t('its second pane goes beside the report or under it', src.includes("act === 'rrlay'") && src.includes('.vc-rr.lay-below .vc-rr-body{display:grid!important'));
 t('a tool result nothing can draw makes no item (no fenced dump of the card); the old ones are not drawn', !chat.includes("content:{md:'**'+n+'**\\n\\n'+(res?'```\\n'+res+'\\n```':'')}") && src.includes("/^turn:[^:]+:cap:\\d+$/.test(String(b.key || ''))"));
 t('a tool card\'s insides are not lifted again by the code, diagram, table and image hooks', chat.includes("cvHook('code', 'pre code', (el, out, i) => { if(_inTool(el)) return;") && chat.includes("cvHook('table', 'table', (el, out, i) => { if(_inTool(el)) return;"));
-t('the chat\'s "on the canvas" chip focuses its item', chat.includes("setTimeout(()=>{ try{ cv.flash&&cv.flash(key); }catch(_){} }, 450)"));
+t('the chat\'s "on the canvas" chip focuses its item (WSU-60: every chip, one delegated click; the canvas opens; pill, tab and card to the front)',
+  chat.includes("closest('#msgs .cv-moved')") && chat.includes("if(!_pages.has('canvas')){ try{ openPage('canvas'); }catch(_){} }")
+  && chat.includes("cv.focusItem(key)") && !chat.includes("cv.flash&&cv.flash(key)")
+  && src.includes('focusItem(key, again) {') && src.includes("if (it && it.classList.contains('desk-chip')) { if (again) this._hovKey = null; this._hovSet(String(key)); }"));
 
 const D = require(path.join(__dirname, '..', 'vera', 'ui', 'desk_layout_core.js'));
 const g = [{ id: 'n', x: 300, y: 200, w: 300, h: 100, maxH: 120 }];

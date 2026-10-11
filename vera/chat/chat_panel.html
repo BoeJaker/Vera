@@ -8238,20 +8238,36 @@ IMPORTANT:
       el=(el.closest&&el.closest('.code-card'))||el;
       el.classList.add('cv-elsewhere'); el.dataset.cvKey=key;
       // the line the paint already left (_cvHoldForCanvas) now knows which item it points at
-      { const nx=el.nextElementSibling; if(nx&&nx.classList.contains('cv-moved')&&!nx.dataset.cvKey){ nx.dataset.cvKey=key; nx.textContent=(m.n?String(m.n).slice(0,48):'item')+' · on the canvas ↗';
-          nx.addEventListener('click',()=>{ try{ _capCall('canvas.add',{session_id:SID, key}); }catch(_){} try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); setTimeout(()=>{ try{ cv.flash&&cv.flash(key); }catch(_){} }, 450); } }catch(_){} }); } }
+      { const nx=el.nextElementSibling; if(nx&&nx.classList.contains('cv-moved')&&!nx.dataset.cvKey){ nx.dataset.cvKey=key; nx.textContent=(m.n?String(m.n).slice(0,48):'item')+' · on the canvas ↗'; } }
       if(!el.nextElementSibling||!el.nextElementSibling.classList.contains('cv-moved')){
         const chip=document.createElement('button'); chip.className='cv-moved'; chip.type='button';
-        chip.dataset.cvKey=key; chip.title='On the session canvas — click to bring it into view there';
+        chip.dataset.cvKey=key; chip.title='On the session canvas — click to open it there, in front';
         chip.textContent=(m.n?String(m.n).slice(0,48):'item')+' · on the canvas ↗';
-        chip.addEventListener('click',()=>{ try{ _capCall('canvas.add',{session_id:SID, key}); }catch(_){}
-          /* the chip opens and focuses its item (owner, 2026-10-11: WSU-60): brought into view, a tab or a pill to the front */
-          try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); setTimeout(()=>{ try{ cv.flash&&cv.flash(key); }catch(_){} }, 450); } }catch(_){} });
         el.parentNode&&el.parentNode.insertBefore(chip, el.nextSibling);
       }
     }catch(_){}
   }
   function _cvOneplaceOff(){ return !_pages.has('canvas') || _cvOneplace()==='both'; }
+  /* A PLACEHOLDER OPENS AND FOCUSES ITS ITEM (owner, 2026-10-11, WSU-60): every "· on the canvas" line - the harvest's
+     and the paint's - answers one click: the canvas column opens if it is not, the item is put back if
+     it was removed (canvas.add by key is idempotent), and once it is drawn it comes to the front (a tab, a pill, past a
+     filled card) and pulses - see vera-canvas focusItem. A line the paint left before its item had a key asks the card
+     it stands for. */
+  function _cvFocus(key){
+    if(!key) return;
+    if(!_pages.has('canvas')){ try{ openPage('canvas'); }catch(_){} }
+    const cv0=document.querySelector('#canvasColumnBody vera-canvas');
+    const drawn=()=>{ try{ return !!(cv0&&cv0.shadowRoot&&[...cv0.shadowRoot.querySelectorAll('#stage .it[data-key]')].some(x=>x.dataset.key===key)); }catch(_){ return false; } };
+    if(!drawn()){ try{ _capCall('canvas.add',{session_id:SID, key}); }catch(_){} try{ if(cv0){ cv0._rev=null; cv0.refresh(); } }catch(_){} }
+    let n=0; const tryFocus=()=>{ n++; const cv=document.querySelector('#canvasColumnBody vera-canvas');
+      let ok=false; try{ ok=!!(cv&&typeof cv.focusItem==='function'&&cv.focusItem(key)); }catch(_){}
+      if(!ok&&n<12) setTimeout(tryFocus, n===1?250:400); };
+    tryFocus();
+  }
+  document.addEventListener('click', ev=>{ try{
+    const chip=ev.target&&ev.target.closest&&ev.target.closest('#msgs .cv-moved'); if(!chip) return;
+    const prev=chip.previousElementSibling; _cvFocus(chip.dataset.cvKey||(prev&&prev.dataset&&prev.dataset.cvKey)||'');
+  }catch(_){} });
   /* WHILE THE CANVAS IS OPEN, CODE NEVER STREAMS INTO THE CHAT (owner, 2026-10-03: "the chat message area still has the
      code streaming to it if the canvas is open - it should not do this"). The harvest only hid a block once the reply
      had finished (a bubble being written was left alone: hiding a diagram's slot on the harvest's beat and showing it
