@@ -285,6 +285,10 @@ details.card>summary{cursor:pointer;font-weight:600}
 const $ = (id) => document.getElementById(id);
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || '')) ? u : '';
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/* a value inside an inline handler: a JS string literal (JSON), then escaped for the attribute. esc() alone
+   was undone by the HTML parser before the JS ran, so "Moody's" broke a button and crafted market or listing
+   data could inject script (review 2026-10-10). */
+const jsq = (s) => esc(JSON.stringify(String(s == null ? '' : s)));
 async function call(name, args) {
   const r = await fetch('/mcp/call', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({name, arguments: args || {}, caller_kind: 'user'})});
@@ -317,7 +321,7 @@ let TOPICS = [], CUR = '';
 async function loadTopics() {
   const r = await call('intel.topic.list', {status: $('tStatus').value});
   TOPICS = r.rows || [];
-  $('tlist').innerHTML = TOPICS.length ? TOPICS.map(t => `<div class="t ${t.id===CUR?'on':''}" onclick="openTopic('${esc(t.id)}')">
+  $('tlist').innerHTML = TOPICS.length ? TOPICS.map(t => `<div class="t ${t.id===CUR?'on':''}" onclick="openTopic(${jsq(t.id)})">
       <b>${esc(t.name)}</b>
       <div><span class="chip ${t.signals_24h?'new':''}">${t.signals_24h||0} new</span><span class="chip">${esc(t.depth)}</span><span class="chip">${esc(t.cadence)}</span>${t.status!=='active'?`<span class="chip">${esc(t.status)}</span>`:''}</div>
       ${t.headline?`<div class="hl">${esc(t.headline)}</div>`:''}</div>`).join('')
@@ -334,11 +338,11 @@ async function openTopic(id) {
   $('ws').innerHTML = `
     <div class="card ws-head">
       <div class="row"><h2 class="grow">${esc(t.name)}</h2>
-        <button class="btn" onclick="sweep('${esc(id)}')" title="search now - no model">↻ Sweep</button>
-        <button class="btn" onclick="refresh('${esc(id)}')" title="sweep, read, assess - queued for a quiet moment">◆ Reassess</button>
-        <button class="btn" onclick="topicReport('${esc(id)}')">▤ Report</button>
-        <button class="btn" onclick="toCanvas('${esc(id)}')" title="put this topic's timeline and signals on the chat canvas">⧉ Canvas</button>
-        <button class="btn" onclick="editTopic('${esc(id)}')">✎ Edit</button></div>
+        <button class="btn" onclick="sweep(${jsq(id)})" title="search now - no model">↻ Sweep</button>
+        <button class="btn" onclick="refresh(${jsq(id)})" title="sweep, read, assess - queued for a quiet moment">◆ Reassess</button>
+        <button class="btn" onclick="topicReport(${jsq(id)})">▤ Report</button>
+        <button class="btn" onclick="toCanvas(${jsq(id)})" title="put this topic's timeline and signals on the chat canvas">⧉ Canvas</button>
+        <button class="btn" onclick="editTopic(${jsq(id)})">✎ Edit</button></div>
       <div class="muted">${esc(t.brief||'')}</div>
       ${t.why?`<div class="small"><b>Why:</b> ${esc(t.why)}</div>`:''}
       <div style="margin-top:4px"><span class="chip">${esc(t.depth)}</span><span class="chip">${esc(t.cadence)}</span><span class="chip">${st.signals_total||0} signals</span>${t.dream_loop?'<span class="chip">dream loop</span>':''}<span class="chip">last sweep ${esc((t.last_sweep||'never').slice(0,16).replace('T',' '))}</span></div>
@@ -430,7 +434,7 @@ async function loadSources() {
       <b>${esc(x.label)}</b>${x.bbox ? ` <span class="chip">inside ${esc(x.bbox.join(', '))}</span>` : ''}
       <div class="muted">${x.missing ? '<b>missing from the fabric</b> · ' : ''}${x.last_pulled ? 'fetched ' + esc(String(x.last_pulled).slice(0, 16).replace('T', ' ')) : 'not fetched yet'}
         · ${x.pulls || 0} pulls · every ${Math.round((x.interval || 0) / 3600 * 10) / 10} h${x.url ? ` · <a href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener">${esc(x.url.length > 60 ? x.url.slice(0, 60) + '…' : x.url)}</a>` : ''}</div></div>
-      <div class="ops"><button class="btn" onclick="rmSource('${esc(x.id)}')">Stop</button></div></div>`).join('')
+      <div class="ops"><button class="btn" onclick="rmSource(${jsq(x.id)})">Stop</button></div></div>`).join('')
     || '<div class="muted" style="padding:6px 0">Only web search so far.</div>';
 }
 function srcKindHint() {
@@ -496,7 +500,7 @@ async function loadInd() {
       <b>${esc(i.label)}</b> <span class="muted">${esc(i.dataset_id)}</span>
       <div class="muted">${i.last != null ? 'last ' + esc(i.kind === 'probability' ? Math.round(i.last * 100) + '%' : String(+(+i.last).toPrecision(6))) + ' · ' : ''}${esc(i.status || '')}${i.bars ? ' · ' + i.bars + ' bars' : ''}${chgTxt(i)}</div>
       ${mine.map(c => `<div>${c.direction === 'up' ? '▲' : '▼'} ${esc(c.text)}${(c.stories || []).length ? ' <span class="muted">· around then: ' + c.stories.map(s => esc(s.title)).join(' · ') + '</span>' : ''}</div>`).join('')}</div>
-      <div class="ops"><button class="btn" onclick="rmInd('${esc(i.id)}')">Stop</button></div></div>`;
+      <div class="ops"><button class="btn" onclick="rmInd(${jsq(i.id)})">Stop</button></div></div>`;
   }).join('') || '<div class="muted" style="padding:6px 0">Nothing yet.</div>';
   const res = r.resolutions || [];
   if (res.length) $('indList').innerHTML += '<h3 style="margin-top:10px">Settled markets</h3><table style="width:100%"><tr><th align=left>question</th><th>answer</th><th>market a week before</th><th>intel\'s confidence then</th></tr>'
@@ -524,7 +528,7 @@ function pmRow(m) {
   const p = m.prob == null ? '–' : Math.round(m.prob * 100) + '%';
   return `<div class="sig"><div class="sc">${esc(p)}</div><div>${safeUrl(m.url) ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.question)}</a>` : esc(m.question)}
     <div class="muted">${esc(m.source)}${m.event && m.event !== m.question ? ' · ' + esc(m.event) : ''}${m.volume ? ' · vol ' + esc(String(Math.round(m.volume))) : ''}${m.end ? ' · ends ' + esc(String(m.end).slice(0, 10)) : ''}</div></div>
-    <div class="ops"><button class="btn" onclick="pmWatch('${esc(m.source)}','${esc(m.id)}',this)">Watch</button></div></div>`;
+    <div class="ops"><button class="btn" onclick="pmWatch(${jsq(m.source)},${jsq(m.id)},this)">Watch</button></div></div>`;
 }
 async function pmFind(q) {
   $('pmRows').innerHTML = '<div class="muted">searching…</div>';
@@ -536,9 +540,9 @@ async function indSuggest() {
   const r = await call('intel.indicator.suggest', {topic_id: CUR});
   const pr = (r.prices || []).map(p => `<div class="sig"><div class="sc">¤</div><div><b>${esc(p.name)}</b> <span class="muted">${esc(p.symbol)}</span>
       <div class="muted">${p.followed ? 'you follow ' + esc(p.entity) : 'named in ' + esc(String(p.mentions)) + ' of its sources as ' + esc(p.entity)}</div></div>
-      <div class="ops"><button class="btn" onclick="priceWatch('${esc(p.provider)}','${esc(p.symbol)}','${esc(p.name)}',this)">Watch</button></div></div>`).join('');
+      <div class="ops"><button class="btn" onclick="priceWatch(${jsq(p.provider)},${jsq(p.symbol)},${jsq(p.name)},this)">Watch</button></div></div>`).join('');
   const mk = (r.markets || []).map(pmRow).join('');
-  const at = (r.attention || []).map(a => `<div class="sig"><div class="sc">◉</div><div><b>${esc(a.label)}</b> <span class="muted">attention</span><div class="muted">${esc(a.description || '')} · daily Wikipedia views of ${esc(a.wiki)}</div></div><div class="ops"><button class="btn" onclick="attWatch('${esc(a.wiki)}','${esc(a.label)}',this)">Watch</button></div></div>`).join('');
+  const at = (r.attention || []).map(a => `<div class="sig"><div class="sc">◉</div><div><b>${esc(a.label)}</b> <span class="muted">attention</span><div class="muted">${esc(a.description || '')} · daily Wikipedia views of ${esc(a.wiki)}</div></div><div class="ops"><button class="btn" onclick="attWatch(${jsq(a.wiki)},${jsq(a.label)},this)">Watch</button></div></div>`).join('');
   $('pmRows').innerHTML = (pr ? '<div style="margin-top:6px"><b>Companies its sources name</b></div>' + pr : '')
     + (mk ? '<div style="margin-top:6px"><b>Prediction markets</b></div>' + mk : '')
     + (at ? '<div style="margin-top:6px"><b>Attention - when people start reading about them</b></div>' + at : '')
@@ -582,9 +586,9 @@ async function loadSignals() {
       ${safeUrl(s.url)?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>`:`<b>${esc(s.title)}</b>`}
       <div class="small muted">${esc(s.site||'')} · ${esc(s.kind||'')} · ${esc((s.seen||'').slice(0,10))}</div>
       <div>${esc(s.snippet||'')}</div>${s.so_what?`<div class="why">${esc(s.so_what)}</div>`:''}</div>
-      <div class="ops">${s.chars?`<button class="btn" onclick="readSignal('${esc(s.id)}')">Read</button>`:''}
-        <button class="btn" onclick="researchOn('${esc(s.id)}')" title="research.run on this">Research</button>
-        <span class="row" style="gap:4px"><button class="btn" title="useful - teaches the gates" onclick="fb('${esc(s.id)}','useful',this)">👍</button><button class="btn" title="not useful" onclick="fb('${esc(s.id)}','not_useful',this)">👎</button><button class="btn" title="never show this site again for this topic" onclick="fb('${esc(s.id)}','mute_site',this)">🔇</button></span></div></div>`;
+      <div class="ops">${s.chars?`<button class="btn" onclick="readSignal(${jsq(s.id)})">Read</button>`:''}
+        <button class="btn" onclick="researchOn(${jsq(s.id)})" title="research.run on this">Research</button>
+        <span class="row" style="gap:4px"><button class="btn" title="useful - teaches the gates" onclick="fb(${jsq(s.id)},'useful',this)">👍</button><button class="btn" title="not useful" onclick="fb(${jsq(s.id)},'not_useful',this)">👎</button><button class="btn" title="never show this site again for this topic" onclick="fb(${jsq(s.id)},'mute_site',this)">🔇</button></span></div></div>`;
   }).join('') : '<div class="muted small" style="padding:8px 0">Nothing in this window.</div>';
 }
 async function fb(id, verdict, btn) {
@@ -656,8 +660,8 @@ function editTopic(id) {
       <div class="grow"><label class="f">Report from score</label><input type="number" id="eMin" min="0" max="10" value="${esc(t.min_score??5)}"></div></div>
     <label class="small"><input type="checkbox" id="eDisc" ${t.discovery!==false?'checked':''}> map sources into fabric discovery (entity graph)</label><br>
     <label class="small"><input type="checkbox" id="eDream" ${t.dream_loop?'checked':''}> also let the dream director think about it (a think-loop)</label>
-    <div class="row" style="margin-top:10px"><button class="btn pri" onclick="saveTopic('${esc(id||'')}')">Save</button>
-      ${id?`<button class="btn danger" onclick="delTopic('${esc(id)}')">Stop tracking</button>`:''}<span id="eMsg" class="msg"></span></div>`;
+    <div class="row" style="margin-top:10px"><button class="btn pri" onclick="saveTopic(${jsq(id||'')})">Save</button>
+      ${id?`<button class="btn danger" onclick="delTopic(${jsq(id)})">Stop tracking</button>`:''}<span id="eMsg" class="msg"></span></div>`;
   $('dlg').showModal();
 }
 async function saveTopic(id) {
@@ -681,7 +685,7 @@ async function loadReports() {
   const [tl, rl, ch] = await Promise.all([call('intel.topic.list', {status: 'active'}), call('intel.report.list', {limit: 40}), CHANS.length ? null : call('intel.channel.list')]);
   if (ch) CHANS = ch.rows || [];
   $('rTopics').innerHTML = (tl.rows || []).map(t => `<label style="display:inline-block;margin-right:10px"><input type="checkbox" value="${esc(t.id)}"> ${esc(t.name)}</label>`).join('') || '<span class="muted">no active topics</span>';
-  $('rlist').innerHTML = (rl.rows || []).map(r => `<div class="rp ${r.id===RSEL?'on':''}" onclick="pickReport('${esc(r.id)}')"><b>${esc(r.title)}</b>
+  $('rlist').innerHTML = (rl.rows || []).map(r => `<div class="rp ${r.id===RSEL?'on':''}" onclick="pickReport(${jsq(r.id)})"><b>${esc(r.title)}</b>
      <div class="small muted">${esc((r.ts||'').slice(0,16).replace('T',' '))} · ${r.counts&&r.counts.signals||0} signals ${(r.delivered||[]).length?'· sent: '+esc(r.delivered.join(', ')):''}</div></div>`).join('') || '<div class="muted small">No reports yet.</div>';
   $('rChans').innerHTML = CHANS.filter(c => c.id !== 'html').map(c => `<label title="${c.available?'':'unavailable here'}" style="${c.available?'':'opacity:.5'}"><input type="checkbox" value="${esc(c.id)}" ${c.available?'':'disabled'}> ${esc(c.label)}${c.needs_target?' *':''}</label>`).join('');
   if (!ancestorWith('_veraSessionId')) $('rCanvasHere').style.display = 'none';
@@ -728,7 +732,7 @@ async function loadActions() {
   const r = await call('intel.action.list', {status: $('aStatus').value, limit: 100});
   $('alist').innerHTML = (r.rows || []).map(a => `<div class="act"><span style="width:18px;text-align:center">${esc(a.glyph||'')}</span>
      <div class="grow"><b>${esc(a.label)}</b><div class="small muted">${esc(a.query||a.target||'')} · ${esc(a.status)} ${a.result&&a.result.error?'· '+esc(a.result.error):''}</div></div>
-     ${a.status==='offered'?`<button class="btn pri" onclick="runAction('${esc(a.token)}', this)">Run</button>`:''}</div>`).join('') || '<div class="muted small">Nothing here.</div>';
+     ${a.status==='offered'?`<button class="btn pri" onclick="runAction(${jsq(a.token)}, this)">Run</button>`:''}</div>`).join('') || '<div class="muted small">Nothing here.</div>';
 }
 async function runAction(token, btn) {
   btn.disabled = true; btn.textContent = '…';
