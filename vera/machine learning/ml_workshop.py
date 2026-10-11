@@ -1974,7 +1974,8 @@ if _CAP_AVAILABLE:
             return {"error": f"inputs JSON: {e}"}
 
         t0 = time.monotonic()
-        result = _numpy_forward(m, inp)
+        # off the event loop: a forward pass on a big input blocked the host
+        result = await asyncio.get_running_loop().run_in_executor(None, _numpy_forward, m, inp)
         elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
 
         if "error" in result:
