@@ -57,7 +57,10 @@ async def _config() -> Dict[str, Any]:
 
 _WORKER_FIELDS = ("id", "role", "status", "classes", "libs", "host", "host_id",
                   "current_task", "task_started", "cpu_pct", "ncpu", "mem_avail_gb",
-                  "ram_total_gb", "ram_used_gb", "load1", "metrics_at")
+                  "ram_total_gb", "ram_used_gb", "load1", "metrics_at",
+                  # several jobs per worker (MW-7): admission reads these - left
+                  # out, every worker fell back to one job at a time (2026-10-11)
+                  "compute_slots", "compute_running")
 
 
 async def _workers() -> List[Dict[str, Any]]:
@@ -621,7 +624,10 @@ async def cap_compute_status(trace_id=None) -> Dict:
                          "status": w.get("status"),
                          "libs": json.loads(w["libs"]) if w.get("libs") else {},
                          "capacity": core.capacity(w),
-                         "reserved": _RESERVED.get(w.get("host_id") or "", {}),
+                         "reserved": {k: v for k, v in _RESERVED.get(w.get("host_id") or "", {}).items()
+                                      if k != "sent"},
+                         "compute_slots": w.get("compute_slots") or "",
+                         "compute_running": w.get("compute_running") or "",
                          "current_task": w.get("current_task")} for w in ws],
             "functions": funcs, "jobs": jobs}
 

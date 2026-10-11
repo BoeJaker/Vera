@@ -69,3 +69,19 @@ def test_the_worker_and_dispatcher_are_wired():
     assert "_reserve(hid, fn, -1, _entry)" in caps
     ml = open(os.path.join(ROOT, "vera", "machine learning", "ml_training.py"), encoding="utf-8").read()
     assert '"trained_on": job.get("trained_on", "")' in ml
+
+
+def test_the_dispatcher_reads_every_worker_field_admission_uses():
+    # 2026-10-11: the worker published compute_slots but the dispatcher's
+    # field list did not read it, so admission never saw a slot - unit tests
+    # passed dicts to admit() directly and missed it
+    import ast
+    import re
+    src = open(os.path.join(ROOT, "vera", "workers", "node_compute_capabilities.py"), encoding="utf-8").read()
+    tree = ast.parse(src)
+    fields = next(ast.literal_eval(n.value) for n in tree.body
+                  if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "_WORKER_FIELDS")
+    core = open(os.path.join(ROOT, "vera", "workers", "node_compute_core.py"), encoding="utf-8").read()
+    used = set(re.findall(r'_f\(w, "([a-z_]+)"\)', core)) | set(re.findall(r'w\.get\("([a-z_]+)"\)', core))
+    missing = sorted(used - set(fields))
+    assert not missing, f"admission reads {missing} but _workers() never loads them"
