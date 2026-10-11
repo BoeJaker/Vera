@@ -66,3 +66,17 @@ def test_seek_returns_the_evidence_per_pick():
     for field in ('"vector_score": round(float((vec_sims or {}).get(c["id"], 0.0)), 3)',
                   '"keyword": c["id"] in (text_ids or set())', '"origin": c.get("origin") or "fabric"'):
         assert field in body
+
+
+def test_seek_can_leave_self_telemetry_out_unless_scoped():
+    src = _src("vera/fabric/memory_retrieval.py")
+    body = src[src.index("async def cap_memory_seek("):src.index("async def cap_memory_read(")]
+    i = body.index("if scope_prefix:")
+    tail = body[i:i + 900]
+    assert 'elif await _switch("memory.seek_exclude_self") == "on":' in tail
+    assert "not _wvc.excluded(c[\"dataset_id\"])" in tail
+    from vera.worldview import worldview_corpus_core as WC
+    assert WC.excluded("chat.messages") and WC.excluded("ide.claude_sessions") and not WC.excluded("cve_nvd")
+    from vera.minds import switchboard_core as SB
+    f = SB.REGISTRY["memory.seek_exclude_self"]
+    assert f.modes == ("off", "on") and f.default == "off"

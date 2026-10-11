@@ -87,6 +87,10 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.fabric import rank_core as _rk
 except ImportError:                      # pragma: no cover
     from vera.fabric import rank_core as _rk   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.worldview import worldview_corpus_core as _wvc
+except ImportError:                      # pragma: no cover
+    from vera.worldview import worldview_corpus_core as _wvc   # type: ignore
 try:                                     # the retrieval eval set (FM-7.0): seeks + reads as labels
     from Vera.vera.fabric import retrieval_eval as _reval
 except Exception:                        # pragma: no cover
@@ -684,6 +688,10 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
                  if c["dataset_id"] == scope_prefix
                  or c["dataset_id"].startswith(scope_prefix + ".")
                  or c["dataset_id"] == scope]
+    elif await _switch("memory.seek_exclude_self") == "on":
+        # Vera's own telemetry (chat logs, IDE sessions, capability output, bus/ts streams - the worldview corpus'
+        # SELF_TELEMETRY) leaves an unscoped seek; asking for one of those datasets by scope still finds it
+        cands = [c for c in cands if not _wvc.excluded(c["dataset_id"])]
     if since_dt:
         cands = [c for c in cands if (_dt(c["created_at"]) or since_dt) >= since_dt]
 
