@@ -95,3 +95,21 @@ def test_redact_and_describe_hide_the_credential():
     assert "SECRET" not in shown and "api-key=%2A%2A%2A" in shown
     assert "SECRET" not in cc.describe(f)
     assert cc.describe(_f()) == "no key"
+
+
+def test_date_tokens_make_a_moving_window():
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 11, 9, 0, tzinfo=timezone.utc)
+    p = "/daily/{days_ago:120:%Y%m%d}/{today:%Y%m%d}?x={notatoken}"
+    assert cc.expand_path(p, now) == "/daily/20260613/20261011?x={notatoken}"
+    assert cc.expand_path("/plain", now) == "/plain"
+    r = cc.build_request(_f(), cc.expand_path("/a/{today:%Y}", now))
+    assert r["url"].endswith("/a/2026")
+
+
+def test_keyless_templates_identify_themselves_where_policy_asks():
+    for tid in ("wikidata", "nominatim", "wikimedia"):
+        f = cc.fields_from_template(cc.template(tid))
+        assert "Vera" in json.loads(f["headers"])["User-Agent"] and f["rate_per_min"], tid
+    for tid in ("polymarket_clob", "fred", "blockchain_info"):
+        assert cc.template(tid)["auth"] == "none"

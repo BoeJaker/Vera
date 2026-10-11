@@ -412,6 +412,7 @@ async function openTopic(id) {
       <div id="srcList" class="small"></div>
       <div class="row" style="margin-top:8px"><select id="srcKind" style="width:auto" onchange="srcKindHint()"></select>
         <input type="text" id="srcVal" class="grow" style="width:auto" onkeydown="if(event.key==='Enter')addSource()">
+        <datalist id="srcConns"></datalist>
         <button class="btn" onclick="addSource()">Read it</button></div>
       <div id="srcGeo" class="row small" style="display:none;margin-top:6px"><input type="text" id="srcBox" class="grow" placeholder="only inside a box (optional): min_lon,min_lat,max_lon,max_lat - e.g. -11,49,2,61 for the UK"></div>
       <div id="srcMap" style="display:none;margin-top:6px"><textarea id="srcMapping" placeholder='field mapping (JSON): {"item_path": "items", "title_field": "name", "url_field": "url", "time_field": "updated_at", "text_fields": "summary"}'></textarea></div>
@@ -469,7 +470,7 @@ async function loadSources() {
     $('srcKind').innerHTML = SRC_KINDS.map(k => `<option value="${esc(k.kind)}">${esc(k.label)}</option>`).join('');
   }
   srcKindHint();
-  const glyph = {feed: '◉', arxiv: '∂', youtube: '▶', github_releases: '⑂', usgs: '≋', api: '{}'};
+  const glyph = {feed: '◉', arxiv: '∂', youtube: '▶', github_releases: '⑂', usgs: '≋', api: '{}', connection: '⇄'};
   $('srcList').innerHTML = (r.sources || []).map(x => `<div class="sig"><div class="sc">${glyph[x.kind] || '•'}</div><div>
       <b>${esc(x.label)}</b>${x.bbox ? ` <span class="chip">inside ${esc(x.bbox.join(', '))}</span>` : ''}
       <div class="muted">${x.missing ? '<b>missing from the fabric</b> · ' : ''}${x.last_pulled ? 'fetched ' + esc(String(x.last_pulled).slice(0, 16).replace('T', ' ')) : 'not fetched yet'}
@@ -482,6 +483,18 @@ function srcKindHint() {
   $('srcVal').placeholder = k.value || '';
   $('srcGeo').style.display = k.geo ? '' : 'none';
   $('srcMap').style.display = k.mapping ? '' : 'none';
+  /* an API connection: suggest the ones on the Platforms page with their sample paths */
+  if (k.kind === 'connection') { $('srcVal').setAttribute('list', 'srcConns'); loadSrcConns(); }
+  else $('srcVal').removeAttribute('list');
+}
+let SRC_CONNS_LOADED = false;
+async function loadSrcConns() {
+  if (SRC_CONNS_LOADED) return;
+  const r = await call('platform.list', {});
+  const cs = (r.platforms || []).filter(p => p.kind === 'api');
+  $('srcConns').innerHTML = cs.map(p => `<option value="${esc(p.id + ' ' + ((p.fields || {}).sample_path || '/'))}">${esc(p.label)}</option>`).join('');
+  SRC_CONNS_LOADED = true;
+  if (!cs.length) msg('srcMsg', 'no API connections yet - add one on the Platforms page (Search & APIs links there)');
 }
 async function addSource() {
   const kind = $('srcKind').value, value = $('srcVal').value.trim();

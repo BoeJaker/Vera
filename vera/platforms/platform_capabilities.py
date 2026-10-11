@@ -570,7 +570,7 @@ async def connection_request(pid: str, path: str = "", params: Optional[Dict[str
     if got["record"].get("enabled") is False:
         return {"error": f"connection {pid!r} is disabled"}
     fields = got["resolved"]
-    req = cc.build_request(fields, path, params)
+    req = cc.build_request(fields, cc.expand_path(path), params)
     if req.get("error"):
         missing = [m["key"] for m in got["missing"] if m.get("kind") == "secret"]
         if missing:
@@ -586,7 +586,7 @@ async def connection_info(pid: str, path: str = "") -> Dict[str, Any]:
     if not rec or not (pc.platform_spec(rec.get("kind", "")) or {}).get("connection"):
         return {"error": f"no API connection {pid!r} (Platforms > Connections)"}
     fields = pc.resolve_fields(rec.get("fields") or {}, await _values_plain(), {})["resolved"]
-    shown = cc.build_request({**fields, "auth": "none", "credential": ""}, path)
+    shown = cc.build_request({**fields, "auth": "none", "credential": ""}, cc.expand_path(path))
     return {"id": pid, "label": rec.get("label", pid), "base_url": fields.get("base_url", ""),
             "auth": cc.describe(fields), "url": shown.get("url", ""), "error_url": shown.get("error", ""),
             "enabled": rec.get("enabled", True) is not False}
