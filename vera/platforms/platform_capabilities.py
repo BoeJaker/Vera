@@ -927,7 +927,8 @@ register_ui(
              "platform.values.list", "platform.values.set",
              "platform.values.delete", "platform.secrets.list",
              "platform.secrets.set", "platform.secrets.delete", "platform.secrets.vault_literals",
-             "platform.connection.templates", "platform.connection.add", "platform.connection.test"],
+             "platform.connection.templates", "platform.connection.add", "platform.connection.test",
+             "fabric.api.map", "fabric.sources.add", "fabric.sources.connections", "web.api.list"],
     mode="tab",
     tab_order=70,
 )

@@ -121,5 +121,17 @@ def test_intel_catalog_reads_set_state_from_the_master_store():
     assert by["github_token"]["set"] and not by["brave_search_api_key"]["set"]
     assert v["missing_used"] == ["brave_search_api_key"]               # used by code today, and not set
     assert all(r["ref"] == "@secret:" + r["key"] for r in v["apis"])
-    assert {r["status"] for r in v["apis"]} == {"used", "planned"} and v["keyless"] and "@secret:" in v["json_api_hint"]
+    assert {r["status"] for r in v["apis"]} == {"used", "planned"} and v["keyless"] and "connection" in v["json_api_hint"]
     assert all(k not in str(v) for k in ("value", "password"))         # the view never carries a key
+
+
+def test_intel_catalog_shows_each_apis_connection():
+    from vera.platforms import connections_core as CC
+    tpls = [{**t, "added": "guardian" if t["id"] == "guardian" else ""} for t in CC.TEMPLATES]
+    v = AC.view([], tpls, [{"id": "guardian", "label": "Guardian", "sources": 2}])
+    by = {r["key"]: r for r in v["apis"]}
+    assert by["guardian_api_key"]["template"] == "guardian" and by["guardian_api_key"]["connection"] == "guardian"
+    assert by["brave_search_api_key"]["template"] == "brave" and by["brave_search_api_key"]["connection"] == ""
+    assert all(r["template"] for r in v["apis"])                        # every keyed source the catalog names has one
+    assert {t["id"] for t in v["keyless_templates"]} >= {"hackernews", "polymarket", "wikidata"}
+    assert v["connections"][0]["sources"] == 2

@@ -223,6 +223,14 @@ details.card>summary{cursor:pointer;font-weight:600}
       <div id="apKeys" class="small muted">loading…</div>
       <h3>Read without a key</h3>
       <div id="apKeyless" class="small muted"></div>
+    </div>
+    <div class="card">
+      <h2>API connections</h2>
+      <p class="small muted">Every API Vera reads is a connection on the Platforms page - its address, how it signs
+        in and a reference to its key. Fabric sources read through them; map an endpoint there to add one.</p>
+      <div id="apConns" class="small muted">loading…</div>
+      <div id="apConnAdd" class="small" style="margin-top:8px"></div>
+      <div id="apConnMsg" class="msg"></div>
       <p id="apHint" class="small muted"></p>
     </div>
   </div>
@@ -936,10 +944,28 @@ async function loadApis() {
       <td>${esc(r.gives)}<div class="muted">${esc(r.cost || '')}</div></td>
       <td><span class="chip ${r.set ? 'ok' : (r.status === 'used' ? 'warn' : '')}">${r.set ? 'set' : 'not set'}</span><div class="muted"><code>${esc(r.ref)}</code></div></td>
       <td><a class="btn" href="/platform/panel?secret=${encodeURIComponent(r.key)}" target="_blank" rel="noopener">${r.set ? 'Change' : 'Add key'}</a>
-        <a class="btn" href="${esc(r.get)}" target="_blank" rel="noopener noreferrer">Get one</a></td></tr>`).join('') + '</table>'
+        <a class="btn" href="${esc(r.get)}" target="_blank" rel="noopener noreferrer">Get one</a>
+        ${r.connection ? `<div class="muted" style="margin-top:4px">connection <code>${esc(r.connection)}</code></div>`
+          : (r.template ? `<button class="btn" onclick="addApiConnection(${jsq(r.template)})">Add connection</button>` : '')}</td></tr>`).join('') + '</table>'
     : esc((a && a.error) || 'nothing listed');
   $('apKeyless').innerHTML = ((a && a.keyless) || []).map(k => `<span class="chip">${esc(k)}</span>`).join(' ');
+  const cs = (a && a.connections) || [];
+  $('apConns').innerHTML = cs.length
+    ? '<table class="vb-table"><tr><th>Connection</th><th>State</th><th>Fabric sources</th></tr>'
+      + cs.map(c => `<tr><td><b>${esc(c.label)}</b><div class="muted">${esc(c.base_url)}</div></td>
+        <td><span class="chip ${c.configured && c.enabled ? 'ok' : 'warn'}">${!c.enabled ? 'off' : (c.configured ? 'ready' : 'needs its key')}</span></td>
+        <td>${c.sources || 0}</td></tr>`).join('') + '</table>'
+    : 'No API connections yet.';
+  const free = ((a && a.keyless_templates) || []).filter(t => !t.connection);
+  $('apConnAdd').innerHTML = (free.length ? 'Add a keyless API: ' + free.map(t =>
+      `<button class="btn" onclick="addApiConnection(${jsq(t.id)})">${esc(t.label)}</button>`).join(' ') + ' ' : '')
+    + '<a class="btn" href="/platform/panel" target="_blank" rel="noopener">Open Platforms</a>';
   $('apHint').textContent = (a && a.json_api_hint) || '';
+}
+async function addApiConnection(template) {
+  const r = await call('platform.connection.add', {template});
+  if (r.error) { msg('apConnMsg', r.error, 'err'); return; }
+  loadApis();
 }
 
 async function saveConfig() {

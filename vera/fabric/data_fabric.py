@@ -6531,6 +6531,11 @@ async def fabric_sources(trace_id=None):
             if jq: out["jq_path"] = str(jq)[:200]
             page = s.get("page")
             if page: out["page"] = str(page)[:200]
+            if s.get("config") and "connection" in str(s.get("config")):
+                cfg = _src_config(s)
+                if cfg.get("connection"):        # reads through a Platforms API connection
+                    out["connection"] = str(cfg["connection"])[:64]
+                    out["connection_path"] = str(cfg.get("path") or "")[:500]
             results.append(out)
         except Exception as e:
             log.warning("fabric_sources: skipping malformed row %r: %s",
@@ -9790,6 +9795,31 @@ async def fabric_sources_update(
     return {"ok": True, "source_id": source_id, "vaulted": secured["keys"] if not secured.get("error") else []}
 
 
+async def fabric_sources_by_connection_impl() -> Dict[str, List[Dict[str, Any]]]:
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for src in await _sqlite_sources():
+        conn = (_src_config(src) if src.get("config") else {}).get("connection")
+        if conn:
+            out.setdefault(str(conn), []).append({
+                "id": src.get("id"), "label": src.get("label", ""), "dataset_id": src.get("dataset_id", ""),
+                "path": (_src_config(src) or {}).get("path", ""), "enabled": src.get("enabled", True),
+                "last_pulled": src.get("last_pulled", ""), "interval": src.get("interval", 0)})
+    return out
+
+
+@capability(
+    "fabric.sources.connections",
+    http_method="GET", http_path="/fabric/sources/connections", http_tags=["fabric"],
+    memory="off", silent=True,
+    description="The fabric sources that read through each Platforms API connection. "
+                "Output: {connections: {<connection id>: [{id, label, dataset_id, path, enabled, last_pulled, "
+                "interval}]}, count}.",
+)
+async def fabric_sources_connections(trace_id=None) -> Dict:
+    by = await fabric_sources_by_connection_impl()
+    return {"connections": by, "count": sum(len(v) for v in by.values())}
+
+
 @capability(
     "fabric.sources.secure",
     http_method="POST", http_path="/fabric/sources/secure", http_tags=["fabric"],
@@ -10861,6 +10891,7 @@ _reg_ui(
         "fabric.ingest", "fabric.query", "fabric.datasets", "fabric.stats",
         "fabric.schema", "fabric.browse", "fabric.sources", "fabric.sources.add",
         "fabric.sources.update", "fabric.sources.pull", "fabric.sources.delete", "fabric.sources.secure",
+        "fabric.sources.connections",
         "fabric.dataset.delete", "fabric.clear_dataset", "fabric.delete_record",
         "fabric.aux_graph.link", "fabric.aux_graph.query",
         "fabric.bus.configure", "fabric.bus.status",

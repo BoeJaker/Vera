@@ -2764,6 +2764,8 @@ function fabRenderSrcCard(s){
         '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">'+
           '<span style="font-weight:600;font-size:11px;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%">'+esc(s.label||s.url)+'</span>'+
           '<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:'+typeBg+';color:var(--acc);font-weight:600;text-transform:uppercase;letter-spacing:.4px">'+esc(srcType)+'</span>'+
+          /* a source that reads through a Platforms API connection: its key is in the credential store, not here */
+          (s.connection?'<span title="Reads through the API connection '+esc(s.connection)+' (Platforms) - its key stays in the credential store" style="font-size:8px;padding:1px 5px;border-radius:3px;border:1px solid var(--border2,#2e3742);color:var(--fg2,#9aa3ad)">&#8644; '+esc(s.connection)+'</span>':'')+
         '</div>'+
         '<div style="font-size:9px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%" title="'+esc(s.url)+'">'+esc(s.url||'(no URL)')+'</div>'+
       '</div>'+
