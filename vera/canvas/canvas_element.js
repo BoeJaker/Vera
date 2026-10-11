@@ -1793,6 +1793,8 @@
   .vc-rr-body{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
   .vc-rr-p{display:none;min-width:0;min-height:0;overflow:auto;max-height:60vh}
   .vc-rr-p.on{display:block}
+  .vc-latest{position:sticky;bottom:8px;float:right;margin:-34px 8px 0 0;z-index:3;padding:4px 10px;border-radius:999px;border:1px solid var(--accent,#5a9e8f);background:var(--bg1,#16181d);color:var(--accent,#5a9e8f);font:600 11px var(--ui,system-ui,sans-serif);cursor:pointer;box-shadow:0 2px 10px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
+  .vc-latest:hover{background:color-mix(in srgb,var(--accent,#5a9e8f) 14%,var(--bg1,#16181d))}
   .vc-rr-p > .vc-rbx{max-height:none}
   .vc-rr-doc{font-size:13px;line-height:1.6}
   .vc-rr-live{color:color-mix(in srgb,var(--fg,#dce1e8) 82%,transparent)}
@@ -4073,10 +4075,16 @@
            scrolling part of every item back at its top. What each one was doing is read first - at its end (or never
            scrolled), or held somewhere by the reader - and given back: the first follows the new end, the second keeps
            its place. */
+        /* WSU-64 (owner 2026-10-11: "as the text streams in the most recent content should stay in focus - at the moment
+           scroll gets stuck to the top and you can't scroll down as input streams in"): the research element's panes
+           (.vc-rr-p) scroll on their own and were not in this list, so every streamed revision put them back at the top
+           under the reader's wheel. They are kept like the others, and any part marked data-keep-scroll is too. A part
+           the reader has scrolled up in keeps its place while it grows, with a "latest" chip that goes back to the end. */
+        const SCROLLERS = '.it-bd, pre, .vc-out, .vc-rr-p, [data-keep-scroll]';
         const sc = {};
         layers.items.querySelectorAll('.it[data-key]').forEach((it) => {
-          const k = it.dataset.key; const parts = it.querySelectorAll('.it-bd, pre, .vc-out');
-          parts.forEach((el, j) => { if (el.scrollHeight > el.clientHeight + 2) sc[k + '\u0000' + j] = { top: el.scrollTop, end: el.scrollHeight - el.scrollTop - el.clientHeight < 24 }; else sc[k + '\u0000' + j] = { top: 0, end: true }; });
+          const k = it.dataset.key; const parts = it.querySelectorAll(SCROLLERS);
+          parts.forEach((el, j) => { if (el.scrollHeight > el.clientHeight + 2) sc[k + '\u0000' + j] = { top: el.scrollTop, end: el.scrollHeight - el.scrollTop - el.clientHeight < 24, h: el.scrollHeight }; else sc[k + '\u0000' + j] = { top: 0, end: true, h: el.scrollHeight }; });
         });
         this._html = mark;
         layers.items.innerHTML = html;
@@ -4098,9 +4106,14 @@
         }
         if (!stage) body.scrollTop = keepTop;
         layers.items.querySelectorAll('.it[data-key]').forEach((it) => {
-          const k = it.dataset.key; it.querySelectorAll('.it-bd, pre, .vc-out').forEach((el, j) => {
+          const k = it.dataset.key; it.querySelectorAll(SCROLLERS).forEach((el, j) => {
             const s = sc[k + '\u0000' + j]; if (!s || el.scrollHeight <= el.clientHeight + 2) return;
-            el.scrollTop = s.end ? el.scrollHeight : s.top; });
+            el.scrollTop = s.end ? el.scrollHeight : s.top;
+            /* held above a growing end: the chip says there is more below and takes the reader there (it then follows) */
+            if (!s.end && el.scrollHeight > s.h + 4 && el.matches('.vc-rr-p, [data-keep-scroll], pre, .vc-out')) {
+              const b = document.createElement('button'); b.className = 'vc-latest'; b.type = 'button'; b.textContent = '↓ latest'; b.title = 'Go to the newest text and follow it';
+              b.addEventListener('click', (e) => { e.stopPropagation(); el.scrollTop = el.scrollHeight; b.remove(); });
+              el.appendChild(b); } });
         });
       }
       this._bind(body);
