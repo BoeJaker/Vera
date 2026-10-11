@@ -69,3 +69,15 @@ class RevisionPath:
                     "namespace": value["namespace"] if value else ""}
         self._require("revision.read", actor, resource)
         return value
+
+    def get_many(self, record_ids: Iterable[str], *, actor: str,
+                 limit: int = 20000) -> dict[str, dict[str, Any]]:
+        """Read and authorize a bounded set of current record revisions."""
+        values = self.store.current_many(record_ids, limit=limit)
+        for record_id, value in values.items():
+            self._require("revision.read", actor, {
+                "record_id": record_id,
+                "revision_id": value["revision_id"],
+                "namespace": value["namespace"],
+            })
+        return values
