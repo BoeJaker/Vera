@@ -74,7 +74,9 @@ def test_node_onnx_run_serves_an_artifact_from_its_bytes():
                           [helper.make_tensor_value_info("X", TensorProto.FLOAT, [None, 2])],
                           [helper.make_tensor_value_info("Y", TensorProto.FLOAT, [None, 2])],
                           [helper.make_tensor("W", TensorProto.FLOAT, [2, 2], W.ravel().tolist())])
-    art = helper.make_model(g, opset_imports=[helper.make_opsetid("", 13)]).SerializeToString()
+    model = helper.make_model(g, opset_imports=[helper.make_opsetid("", 13)])
+    model.ir_version = 10              # what onnxruntime 1.22 loads (ml_onnx pins the same)
+    art = model.SerializeToString()
     m = _load("ml_onnx")
     out = m.node_onnx_run({"artifact": art, "X": [[1.0, 1.0]]}, None, None)
     assert np.allclose(out["y"], [[4.0, 6.0]])

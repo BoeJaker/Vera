@@ -82,6 +82,35 @@ def threads_for(fn: str, default: int) -> int:
     return max(1, int(round(need))) if need else max(1, int(default or 1))
 
 
+#: A job just sent counts against its node's free CPU / memory until the
+#: node's metrics are this much newer than the send: by then they show its load
+#: (counting it on top for its whole run under-admitted by half, MW-7).
+RESERVE_LAG_S = 15
+
+
+def compute_slots_default(ncpu: int) -> int:
+    """Compute jobs a node worker runs side by side (VERA_COMPUTE_SLOTS
+    overrides): an upper bound - free CPU / memory admit each job."""
+    return max(1, int(ncpu or 2) - 2)
+
+
+def run_detached(cap_name: str, is_worker: bool, slots: int) -> bool:
+    """Does a node worker run this task beside others instead of one at a
+    time? Only compute jobs, and only with more than one slot (MW-7)."""
+    return bool(is_worker and int(slots or 0) > 1 and cap_name == "compute.run")
+
+
+def reserved_now(res: Optional[Dict[str, Any]], metrics_at: float) -> Tuple[float, float]:
+    """(cpu, mem_gb) of the jobs this host sent that the node's metrics do not
+    show yet. Without send times (older callers): everything reserved."""
+    res = res or {}
+    sent = res.get("sent")
+    if sent is None or not metrics_at:
+        return float(res.get("cpu", 0.0)), float(res.get("mem_gb", 0.0))
+    recent = [s for s in sent if float(s[0]) > float(metrics_at) - RESERVE_LAG_S]
+    return sum(float(s[1]) for s in recent), sum(float(s[2]) for s in recent)
+
+
 #: Node metrics older than this are not trusted for admission.
 METRICS_STALE_S = 60
 
@@ -299,20 +328,30 @@ def admit(fn: str, w: Dict[str, Any], cfg: Dict[str, Any],
     job, in units of what the job needs."""
     need = NEEDS.get(fn, {"cpu": 1.0, "mem_gb": 1.0})
     status = str(w.get("status") or "")
-    if status != "idle":
+    res = reserved or {}
+    slots = int(_f(w, "compute_slots") or 0)
+    if slots > 0:
+        # a worker that runs compute jobs side by side (MW-7): a free slot, and
+        # then free CPU / memory below, decide
+        busy = max(int(res.get("jobs", 0) or 0), int(_f(w, "compute_running") or 0))
+        if busy >= slots:
+            return False, f"all {slots} compute slots in use", 0.0
+        if status == "starting":
+            return False, "worker starting", 0.0
+    elif status != "idle":
         return False, f"worker busy ({status or 'unknown'})", 0.0
     if now is not None and _f(w, "metrics_at") and now - _f(w, "metrics_at") > METRICS_STALE_S:
         return False, "no fresh metrics", 0.0
-    res = reserved or {}
-    if res.get("jobs", 0) >= 1:
-        # a worker runs one task at a time: a second job sent now would only
-        # queue behind the first
+    if slots <= 0 and res.get("jobs", 0) >= 1:
+        # a worker on older code runs one task at a time: a second job sent
+        # now would only queue behind the first
         return False, "a job was just sent to it", 0.0
     cap = capacity(w)
     r_cpu = float(cfg.get("reserve_cpu", 2.0))
     r_mem = float(cfg.get("reserve_mem_gb", 8.0))
-    cpu_left = cap["cpu_free"] - r_cpu - res.get("cpu", 0.0)
-    mem_left = cap["mem_free_gb"] - r_mem - res.get("mem_gb", 0.0)
+    rc, rm = reserved_now(res, _f(w, "metrics_at"))
+    cpu_left = cap["cpu_free"] - r_cpu - rc
+    mem_left = cap["mem_free_gb"] - r_mem - rm
     if cpu_left < need["cpu"]:
         return False, (f"CPU: {cap['cpu_free']:.1f} of {cap['cores']:.0f} cores free, "
                        f"needs {need['cpu']:.1f} + {r_cpu:.0f} reserved"), 0.0

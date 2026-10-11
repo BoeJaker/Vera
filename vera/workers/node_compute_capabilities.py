@@ -170,12 +170,26 @@ async def _run_here(fn: str, inputs: Dict[str, Any], threads: int,
 _RESERVED: Dict[str, Dict[str, float]] = {}
 
 
-def _reserve(hid: str, fn: str, sign: int) -> None:
+def _reserve(hid: str, fn: str, sign: int, entry: Optional[list] = None) -> list:
+    """+1: count a job sent to `hid` (returns its entry); -1 with that entry:
+    it finished. `sent` keeps each job's send time and size, so admission
+    stops counting a job once the node's metrics show it (MW-7)."""
     need = core.NEEDS.get(fn, {"cpu": 1.0, "mem_gb": 1.0})
-    cur = _RESERVED.setdefault(hid, {"cpu": 0.0, "mem_gb": 0.0, "jobs": 0.0})
+    cur = _RESERVED.setdefault(hid, {"cpu": 0.0, "mem_gb": 0.0, "jobs": 0.0, "sent": []})
+    cur.setdefault("sent", [])
     for k in ("cpu", "mem_gb"):
         cur[k] = max(0.0, cur[k] + sign * need[k])
     cur["jobs"] = max(0.0, cur.get("jobs", 0.0) + sign)
+    if sign > 0:
+        entry = [time.time(), float(need["cpu"]), float(need["mem_gb"])]
+        cur["sent"].append(entry)
+        return entry
+    if entry is not None:
+        try:
+            cur["sent"].remove(entry)
+        except ValueError:
+            pass
+    return entry or []
 
 
 async def node_plan(fn: str, exclude=()) -> Dict[str, Any]:
@@ -336,7 +350,7 @@ async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
         # reserve in the same step as the pick (no await between): jobs planned
         # side by side - a gate's shards - then see it and pick other nodes
         # (2026-10-04: two of a gate's three shards picked the same node)
-        _reserve(hid, fn, +1)
+        _entry = _reserve(hid, fn, +1)
         try:
             out = await _dispatch_and_wait(r, job, fn, blob, hid, node, base, t0,
                                            on_progress, stop, trace_id, attempt)
@@ -348,7 +362,7 @@ async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
             job = uuid.uuid4().hex[:12]
             base = {**base, "job": job}
         finally:
-            _reserve(hid, fn, -1)
+            _reserve(hid, fn, -1, _entry)
     await _record({**base, "state": "error", "error": last_err[:300],
                    "seconds": round(time.time() - t0, 1)})
     raise NodeComputeError(f"{fn}: {last_err} (twice)")

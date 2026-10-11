@@ -2523,6 +2523,12 @@ if _CAP_AVAILABLE:
                 "best_val_loss": job.get("best_val_loss", None),
                 "config":    job.get("config", {}),
                 "created_at": job.get("created_at",""),
+                # where the epochs ran (a node, or the host) and on what
+                "trained_on": job.get("trained_on", ""),
+                "data_ref":  job.get("data_ref", ""),
+                "dataset_id": job.get("dataset_id", ""),
+                "task":      job.get("task", ""),
+                **({"error": job["error"]} if job.get("error") else {}),
             }
         # List: merge in-process jobs with fabric history
         jobs = []
