@@ -69,6 +69,35 @@ def test_a_page_that_cannot_be_read_is_shown_unread(monkeypatch):
     assert "read: 2 of 3 pages" in last["checked"]
 
 
+def test_info_seek_steps_carry_the_trace_id_too(monkeypatch):
+    """DA-04a: info.seek's own steps are keyed by the call's trace as well, not only by the question text."""
+    events = []
+
+    async def emit(ev):
+        events.append(ev)
+
+    async def call(name, timeout, **kw):
+        return {}
+
+    async def searches(queries, first_slot=0):
+        return [{"results": [{"url": "https://a.example/1", "title": "A one", "domain": "a.example"}]} for _ in queries]
+
+    async def rerank(q, hits):
+        return hits
+
+    async def read(items, n, chars):
+        return [dict(i, text="text of " + i["url"]) for i in items[:n]]
+
+    monkeypatch.setattr(W, "emit_event", emit)
+    monkeypatch.setattr(W, "_seek_call", call)
+    monkeypatch.setattr(W, "_seek_searches", searches)
+    monkeypatch.setattr(W, "_seek_rerank", rerank)
+    monkeypatch.setattr(W, "_seek_read", read)
+    asyncio.run(W.cap_info_seek(question="what is the latest on the thing", trace_id="tr-9"))
+    steps = [e for e in events if e.get("type") == "info.seek.step"]
+    assert steps and all(e.get("trace_id") == "tr-9" for e in steps)
+
+
 def test_no_results_says_so(monkeypatch):
     async def empty(query, limit, engine, discover):
         return {"results": []}
