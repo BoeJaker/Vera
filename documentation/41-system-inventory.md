@@ -301,6 +301,13 @@ remains mandatory.
 compatibility paths. It reads source and checks the runtime registration, but
 never imports the reviewed modules.
 
+The historical `memory.patch_capability_for_memory` startup invocation has
+been removed because the function is already a no-op and activity is owned by
+`capability_orchestration.act_enqueue`. The function itself, along with the
+other memory compatibility shims, remains importable. Its review is therefore
+`insufficient_evidence`, not removable: external-consumer coverage and two
+normal zero-use cycles are still required.
+
 ### 7.3 The removal gate
 
 `removal_gate.py` (schema `vera.compatibility-removal-gate/v1`) evaluates one

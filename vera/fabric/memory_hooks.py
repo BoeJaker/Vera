@@ -2955,7 +2955,6 @@ async def _startup():
     await asyncio.sleep(1.0)
     extend_capability_decorator()
     apply_default_memory_modes()
-    patch_capability_for_memory()
     log.info("vera_memory_hooks ready")
 
 
