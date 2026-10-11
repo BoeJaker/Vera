@@ -71,6 +71,7 @@ class World:
         self.ns = {"json": json, "Any": Any, "Dict": Dict, "List": List, "Optional": Optional, "pc": pc,
                    "KEY_VALUES": "vera:platform:values", "KEY_SECRETS": "vera:platform:secrets",
                    "KEY_TARGETS": "vera:platform:targets", "_redis": lambda: world.redis,
+                   "_CONSUMERS": {},          # modules that declare they read a credential (none in these tests)
                    "_secrets_service": lambda: svc, "now_iso": lambda: "2026-09-13T16:00:00Z",
                    "log": types.SimpleNamespace(warning=lambda *a, **k: None),
                    "vsecrets": types.SimpleNamespace(seal=lambda v: "fernet:" + v,

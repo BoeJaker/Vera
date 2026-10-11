@@ -3387,6 +3387,39 @@ try:
 except Exception as _e:
     log.debug("migrate skipped: %s", _e)
 
+async def _secret_headers(headers: Dict[str, Any]) -> Dict[str, str]:
+    """Header values with "@secret:<key>" references replaced by the Platforms credential (platform.secrets, the
+    master key store) - so a keyed feed or API source holds a reference, never the key (owner 2026-10-11). A
+    reference that cannot be resolved drops its header rather than sending the reference text."""
+    import re as _re
+    out: Dict[str, str] = {}
+    for k, v in (headers or {}).items():
+        if v in (None, ""):
+            continue
+        v = str(v)
+        refs = _re.findall(r"@secret:([A-Za-z0-9_.-]+)", v)
+        if refs:
+            try:
+                try:
+                    from Vera.vera.platforms import platform_access as _pa
+                except Exception:
+                    from vera.platforms import platform_access as _pa
+                for ref in refs:
+                    val = await _pa.secret_value(_orch.CAPABILITY_REGISTRY, ref)
+                    if not val:
+                        v = ""
+                        break
+                    v = v.replace("@secret:" + ref, val)
+            except Exception as e:
+                log.debug("fabric: header secret %s: %s", k, e)
+                v = ""
+            if not v:
+                log.warning("fabric: header %s names a credential that is not set - sent without it", k)
+                continue
+        out[str(k)] = v
+    return out
+
+
 async def _pull_rss(src: dict) -> List[dict]:
     """Fetch RSS/Atom feed via httpx (proper UA + redirects) then parse with
     feedparser. Doing the HTTP ourselves is essential — feedparser's built-in
@@ -3401,7 +3434,7 @@ async def _pull_rss(src: dict) -> List[dict]:
     try:                                          # the source's own headers win (a declared contact, a key)
         extra = json.loads(src.get("headers") or "{}") if isinstance(src.get("headers"), str) else (src.get("headers") or {})
         if isinstance(extra, dict):
-            headers.update({str(k): str(v) for k, v in extra.items() if v not in (None, "")})
+            headers.update(await _secret_headers(extra))
     except (TypeError, ValueError):
         pass
     body: bytes = b""
@@ -3465,7 +3498,8 @@ async def _pull_api(src: dict) -> List[dict]:
     except Exception:
         headers = {}
     async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
-        r = await c.get(src["url"], headers=headers); r.raise_for_status()
+        r = await c.get(src["url"], headers=await _secret_headers(headers if isinstance(headers, dict) else {}))
+        r.raise_for_status()
         data = r.json()
     cfg = _src_config(src)
     if _srcmap.has_mapping(cfg) or cfg.get("item_path"):
@@ -4008,8 +4042,23 @@ async def _pull_github(src: dict) -> List[dict]:
     headers = {"Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
-    if auth.get("token"):
-        headers["Authorization"] = f"Bearer {auth['token']}"
+    token = auth.get("token") or ""
+    if not token or str(token).startswith("@secret:"):
+        # no token of its own (or a reference): the Platforms credential github_token, when set - 5,000 requests an
+        # hour instead of 60
+        try:
+            try:
+                from Vera.vera.platforms import platform_access as _pa
+            except Exception:
+                from vera.platforms import platform_access as _pa
+            _pa.declare(_orch.CAPABILITY_REGISTRY, "github_token", "fabric GitHub sources",
+                        label="GitHub token", why="GitHub API rate limit 60 -> 5,000 requests an hour")
+            token = await _pa.resolve(_orch.CAPABILITY_REGISTRY, token, "github_token")
+        except Exception as e:
+            log.debug("fabric github token: %s", e)
+            token = ""
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     items: list = []
     async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
         if mode == "issues":
