@@ -147,6 +147,38 @@ def declare_secret_use(key: str, who: str, *, label: str = "", why: str = "") ->
         rows.append({"who": str(who), "label": str(label or ""), "why": str(why or "")})
 
 
+# In-process copy of the credentials, for modules whose readers are sync (open_value_sync): filled at startup and
+# on every read and save here, so it never holds less than the store did when last asked.
+_PLAIN: Dict[str, str] = {}
+
+
+def secret_value_sync(key: str) -> str:
+    k = str(key or "").strip()
+    if k.startswith(pc.SECRET_REF):
+        k = k[len(pc.SECRET_REF):].strip()
+    return _PLAIN.get(k, "")
+
+
+async def warm_secrets() -> int:
+    try:
+        vals = await _secrets_plain()
+    except Exception as e:  # noqa: BLE001
+        log.warning("platform: could not warm the credential copy: %s", e)
+        return 0
+    _PLAIN.update({k: v for k, v in vals.items() if v})
+    return len(_PLAIN)
+
+
+@APP.on_event("startup")
+async def _warm_secrets_at_startup():
+    async def later():
+        for delay in (2, 10, 30, 120):              # the secrets service may come up after us
+            await asyncio.sleep(delay)
+            if await warm_secrets():
+                return
+    asyncio.create_task(later())
+
+
 async def secret_value(key: str) -> str:
     """One credential's current value for in-process use, "" when unset or unreadable. Never exposed through a
     capability - /mcp/call is unauthenticated (secrets service rule: no cap returns a value)."""
@@ -161,13 +193,17 @@ async def secret_value(key: str) -> str:
     if rec.get("path"):
         svc = _secrets_service()
         got = (await svc["get_named"](rec["path"])) if svc and svc.get("get_named") else None
-        return str((got or {}).get("value", "") or "")
-    raw = rec.get("value", "")
-    try:
-        return vsecrets.open_secret(raw) if raw else ""
-    except Exception:
-        log.warning("platform: could not unseal secret %s", k)
-        return ""
+        val = str((got or {}).get("value", "") or "")
+    else:
+        raw = rec.get("value", "")
+        try:
+            val = vsecrets.open_secret(raw) if raw else ""
+        except Exception:
+            log.warning("platform: could not unseal secret %s", k)
+            val = ""
+    if val:
+        _PLAIN[k] = val
+    return val
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -336,6 +372,7 @@ async def _store_secret(k: str, value: str, label: str = "") -> tuple:
         # saving still works, and say where it went.
         rec.update(value=vsecrets.seal(value), store="sealed inline")
     await _hset(KEY_SECRETS, k, rec)
+    _PLAIN[k] = value
     return rec, (stored.get("error", "") if not stored.get("ok") else "")
 
 
@@ -385,6 +422,7 @@ async def cap_secrets_delete(key: str = "", force: bool = False, trace_id=None):
     r = _redis()
     if r:
         await r.hdel(KEY_SECRETS, k)
+    _PLAIN.pop(k, None)
     return {"ok": True, "deleted": k, "orphaned": used if force else [],
             "removed_from_secrets_service": removed_from_service}
 
@@ -506,6 +544,42 @@ async def cap_delete(id: str = "", trace_id=None):
     return {"ok": True, "deleted": pc.normalise_key(id)}
 
 
+def _platform_access_mod():
+    try:
+        from Vera.vera.platforms import platform_access as _pa
+    except ImportError:
+        from vera.platforms import platform_access as _pa
+    return _pa
+
+
+@capability(
+    "platform.secrets.adopt", http_method="POST", http_path="/platform/secrets/adopt",
+    http_tags=["platform"], memory="on",
+    description="Move the credentials other modules still seal in their own records (web APIs, MCP servers, "
+                "integrations, Home Assistant, n8n, LLM providers, accounts, Telegram, Proxmox, Portainer, "
+                "Prometheus, SSH hosts...) into this credential store, leaving @secret: references - every "
+                "credential in one store. DRY RUN BY DEFAULT: lists what would move. Input: store (str, one "
+                "module's name; empty = all), dry_run (bool=True). Output: {ok, dry_run, stores:{name: {moved:"
+                "[{record, field, key}], error?}}, available[]}.",
+)
+async def cap_secrets_adopt(store: str = "", dry_run: bool = True, trace_id=None):
+    pa = _platform_access_mod()
+    adopters = dict(getattr(pa, "_ADOPTERS", {}) or {})
+    names = [store] if store else sorted(adopters)
+    out: Dict[str, Any] = {}
+    for name in names:
+        fn = adopters.get(name)
+        if fn is None:
+            out[name] = {"error": "no such store (see available)"}
+            continue
+        try:
+            out[name] = {"moved": await fn(bool(dry_run))}
+        except Exception as e:  # noqa: BLE001
+            log.warning("platform: adopting %s: %s", name, e)
+            out[name] = {"error": f"{type(e).__name__}: {e}"[:300]}
+    return {"ok": True, "dry_run": bool(dry_run), "stores": out, "available": sorted(adopters)}
+
+
 @capability(
     "platform.secrets.vault_literals", http_method="POST", http_path="/platform/secrets/vault_literals",
     http_tags=["platform"], memory="on",
@@ -570,7 +644,7 @@ async def connection_request(pid: str, path: str = "", params: Optional[Dict[str
     if got["record"].get("enabled") is False:
         return {"error": f"connection {pid!r} is disabled"}
     fields = got["resolved"]
-    req = cc.build_request(fields, path, params)
+    req = cc.build_request(fields, cc.expand_path(path), params)
     if req.get("error"):
         missing = [m["key"] for m in got["missing"] if m.get("kind") == "secret"]
         if missing:
@@ -586,7 +660,7 @@ async def connection_info(pid: str, path: str = "") -> Dict[str, Any]:
     if not rec or not (pc.platform_spec(rec.get("kind", "")) or {}).get("connection"):
         return {"error": f"no API connection {pid!r} (Platforms > Connections)"}
     fields = pc.resolve_fields(rec.get("fields") or {}, await _values_plain(), {})["resolved"]
-    shown = cc.build_request({**fields, "auth": "none", "credential": ""}, path)
+    shown = cc.build_request({**fields, "auth": "none", "credential": ""}, cc.expand_path(path))
     return {"id": pid, "label": rec.get("label", pid), "base_url": fields.get("base_url", ""),
             "auth": cc.describe(fields), "url": shown.get("url", ""), "error_url": shown.get("error", ""),
             "enabled": rec.get("enabled", True) is not False}
@@ -927,6 +1001,7 @@ register_ui(
              "platform.values.list", "platform.values.set",
              "platform.values.delete", "platform.secrets.list",
              "platform.secrets.set", "platform.secrets.delete", "platform.secrets.vault_literals",
+             "platform.secrets.adopt",
              "platform.connection.templates", "platform.connection.add", "platform.connection.test",
              "fabric.api.map", "fabric.sources.add", "fabric.sources.connections", "web.api.list"],
     mode="tab",

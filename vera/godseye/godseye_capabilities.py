@@ -108,12 +108,52 @@ def _seal(v: str) -> str:
 
 
 def _open(v: str) -> str:
+    # open_secret, not open: secrets.py has no `open`, so this raised, the except returned the SEALED text and the
+    # build baked ciphertext into .env.local (found 2026-10-11). A reference reads from the Platforms store.
+    if v and _pa().is_ref(v):
+        return _pa().open_value_sync(_orch.CAPABILITY_REGISTRY, v)
     if v and vsecrets is not None:
         try:
-            return vsecrets.open(v)
+            return vsecrets.open_secret(v)
         except Exception:
-            return v
+            log.warning("godseye: a stored key could not be opened")
+            return ""
     return v
+
+
+def _pa():
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p             # tests in a worktree: the newer copy
+    return _p
+
+
+async def _adopt(dry_run: bool) -> List[Dict[str, str]]:
+    """Move Godseye's keys still sealed here into the Platforms store (platform.secrets.adopt)."""
+    r = _redis()
+    if not r:
+        return []
+    moved: List[Dict[str, str]] = []
+    raw = await r.hgetall(KEY_CONFIG)
+    for k, v in (raw or {}).items():
+        key = k.decode() if isinstance(k, bytes) else str(k)
+        val = v.decode() if isinstance(v, bytes) else str(v)
+        if not _pa().needs_adopting(val):
+            continue
+        skey = _pa().key_for("godseye", key)
+        moved.append({"record": "godseye", "field": key, "key": skey})
+        if not dry_run:
+            new = await _pa().adopt_value(_orch.CAPABILITY_REGISTRY, skey, val, f"Godseye {key}")
+            if new != val:
+                await r.hset(KEY_CONFIG, key, new)
+    return moved
+
+
+_pa().register_adopter("godseye", _adopt)
 
 
 async def _run(argv: List[str], cwd: Optional[Path] = None,
@@ -252,7 +292,7 @@ async def _load_config() -> Dict[str, str]:
     for k, v in (raw or {}).items():
         key = k.decode() if isinstance(k, bytes) else str(k)
         val = v.decode() if isinstance(v, bytes) else str(v)
-        out[key] = _open(val)
+        out[key] = await _pa().open_any(_orch.CAPABILITY_REGISTRY, val) if _pa().is_ref(val) else _open(val)
     return _core.known_config(out)
 
 
@@ -508,7 +548,8 @@ async def godseye_config_set(keys: Optional[Dict[str, str]] = None,
     for k, v in incoming.items():
         try:
             if v:
-                await r.hset(KEY_CONFIG, k, _seal(v))
+                ref = await _pa().vault(_orch.CAPABILITY_REGISTRY, _pa().key_for("godseye", k), v, f"Godseye {k}")
+                await r.hset(KEY_CONFIG, k, ref or _seal(v))
                 was_set.append(k)
             else:
                 await r.hdel(KEY_CONFIG, k)

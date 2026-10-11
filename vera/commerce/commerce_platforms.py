@@ -136,6 +136,30 @@ async def _ensure_schema():
     if not _SCHEMA_READY:
         await _run(_ensure_schema_sync)
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+def _reg():
+    import Vera.vera.capability_orchestration as _c
+    return _c.CAPABILITY_REGISTRY
+
+
+def _open_field(v: str) -> str:
+    """A stored credential: a reference from the Platforms store (thread-safe in-process copy), else opened the
+    old way."""
+    return _pa().open_any_sync(_reg(), v or "")
+
+
 def _open_account(row) -> dict:
     """Return an account dict with secret cred fields + oauth tokens DECRYPTED."""
     d = dict(row)
@@ -146,10 +170,10 @@ def _open_account(row) -> dict:
         creds = {}
     for f in SECRET_CRED_FIELDS:
         if creds.get(f):
-            creds[f] = vsecrets.open_secret(creds[f])
+            creds[f] = _open_field(creds[f])
     d["creds"] = creds
-    d["oauth_token"] = vsecrets.open_secret(d.get("oauth_token") or "")
-    d["oauth_refresh"] = vsecrets.open_secret(d.get("oauth_refresh") or "")
+    d["oauth_token"] = _open_field(d.get("oauth_token") or "")
+    d["oauth_refresh"] = _open_field(d.get("oauth_refresh") or "")
     d["scopes"] = json.loads(d.get("scopes") or "[]") if d.get("scopes") else []
     return d
 
@@ -214,11 +238,25 @@ def _db_upsert_account(fields: dict) -> dict:
         base = _open_account(existing) if existing else {}
         aid = base.get("id") or aid or _new_id("plat")
         merged = {**base, **{k: v for k, v in fields.items() if v is not None}}
+        # a value moved to the Platforms credential store stays a reference while it is unchanged - re-sealing it
+        # here would quietly take it back out of the store
+        raw_creds, raw_refresh = {}, ""
+        if existing:
+            try:
+                raw_creds = json.loads(dict(existing).get("creds") or "{}")
+            except Exception:
+                raw_creds = {}
+            raw_refresh = dict(existing).get("oauth_refresh") or ""
+
+        def _store_form(new: str, raw: str) -> str:
+            if _pa().is_ref(raw) and new == _open_field(raw):
+                return raw
+            return vsecrets.seal(new)              # idempotent for already-sealed
 
         creds = dict(merged.get("creds") or {})
         for f in SECRET_CRED_FIELDS:
             if creds.get(f):
-                creds[f] = vsecrets.seal(creds[f])   # idempotent for already-sealed
+                creds[f] = _store_form(creds[f], raw_creds.get(f, ""))
 
         oauth_refresh = merged.get("oauth_refresh") or ""
         oauth_token = merged.get("oauth_token") or ""
@@ -230,13 +268,64 @@ def _db_upsert_account(fields: dict) -> dict:
             (aid, merged.get("connector", ""), merged.get("label", ""),
              merged.get("env", "production") or "production", json.dumps(creds),
              vsecrets.seal(oauth_token) if oauth_token else "",
-             vsecrets.seal(oauth_refresh) if oauth_refresh else "",
+             _store_form(oauth_refresh, raw_refresh) if oauth_refresh else "",
              json.dumps(merged.get("scopes") or []), merged.get("status", "configured"),
              base.get("created_at") or now, now))
         conn.commit()
         return _db_get_account(aid) or {"id": aid}
     finally:
         conn.close()
+
+async def _adopt(dry_run: bool):
+    """Move account credentials still sealed here into the Platforms store (platform.secrets.adopt). The eBay
+    ACCESS token is left: it expires within hours and is re-minted from the refresh token, which does move."""
+    await _ensure_schema()
+
+    def rows_sync():
+        conn = _sqlite_conn()
+        try:
+            return [dict(r) for r in conn.execute("SELECT id, label, creds, oauth_refresh FROM commerce_platform_accounts")]
+        finally:
+            conn.close()
+
+    def write_sync(aid, creds, refresh):
+        conn = _sqlite_conn()
+        try:
+            conn.execute("UPDATE commerce_platform_accounts SET creds=?, oauth_refresh=? WHERE id=?",
+                         (json.dumps(creds), refresh, aid))
+            conn.commit()
+        finally:
+            conn.close()
+
+    moved = []
+    for row in await _run(rows_sync):
+        try:
+            creds = json.loads(row.get("creds") or "{}")
+        except Exception:
+            creds = {}
+        refresh, changed = row.get("oauth_refresh") or "", False
+        targets = [(f, creds.get(f)) for f in sorted(SECRET_CRED_FIELDS)] + [("oauth_refresh", refresh)]
+        for f, v in targets:
+            if not _pa().needs_adopting(v):
+                continue
+            key = _pa().key_for("commerce", row["id"], f)
+            moved.append({"record": row["id"], "field": f, "key": key})
+            if dry_run:
+                continue
+            new = await _pa().adopt_value(_reg(), key, v, f"Commerce {row.get('label') or row['id']} {f}")
+            if new != v:
+                changed = True
+                if f == "oauth_refresh":
+                    refresh = new
+                else:
+                    creds[f] = new
+        if changed:
+            await _run(write_sync, row["id"], creds, refresh)
+    return moved
+
+
+_pa().register_adopter("commerce", _adopt)
+
 
 def _db_delete_account(aid: str) -> bool:
     conn = _sqlite_conn()

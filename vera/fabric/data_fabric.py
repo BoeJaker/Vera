@@ -3573,6 +3573,11 @@ async def _pull_api(src: dict) -> List[dict]:
             r = await c.get(src["url"], headers=await _secret_headers(headers if isinstance(headers, dict) else {}))
             r.raise_for_status()
             data = r.json()
+    if cfg.get("whole"):
+        # the whole answer as ONE record with a fixed text, so each pull replaces it (record ids hash the text):
+        # a time series or a snapshot a reader takes as a unit, not a list of items
+        return [{"text": f"{src.get('label') or src.get('id')} (latest)",
+                 "data": data if isinstance(data, dict) else {"items": data}}]
     if _srcmap.has_mapping(cfg) or cfg.get("item_path"):
         # nested JSON (GeoJSON and the like): items where the source says, and a
         # readable title/link/published/geo per item instead of flattened scalars

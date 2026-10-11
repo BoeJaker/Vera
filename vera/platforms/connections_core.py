@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import base64
 import json
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 AUTH_KINDS = ("none", "bearer", "header", "query", "basic")
+UA = {"User-Agent": "Vera intelligence/1.0 (https://github.com/BoeJaker/Vera)"}
 
 # Known APIs. key: the platform.secrets record its credential lives in ("" = keyless). sample_path: something cheap
 # to test and map. signup: where to get a key.
@@ -44,14 +47,29 @@ TEMPLATES: List[Dict[str, Any]] = [
      "key": "", "sample_path": "/search?query=llm&tags=story", "docs": "https://hn.algolia.com/api", "tags": ["news"]},
     {"id": "polymarket", "label": "Polymarket", "base_url": "https://gamma-api.polymarket.com", "auth": "none", "key": "",
      "sample_path": "/markets?limit=5&active=true", "docs": "https://docs.polymarket.com/", "tags": ["markets"]},
+    {"id": "polymarket_clob", "label": "Polymarket prices (CLOB)", "base_url": "https://clob.polymarket.com",
+     "auth": "none", "key": "", "sample_path": "/markets?limit=3", "docs": "https://docs.polymarket.com/",
+     "tags": ["markets"]},
     {"id": "manifold", "label": "Manifold Markets", "base_url": "https://api.manifold.markets/v0", "auth": "none",
      "key": "", "sample_path": "/search-markets?term=ai&limit=5", "docs": "https://docs.manifold.markets/api",
      "tags": ["markets"]},
     {"id": "wikidata", "label": "Wikidata", "base_url": "https://www.wikidata.org", "auth": "none", "key": "",
      "sample_path": "/w/api.php?action=wbsearchentities&search=Savills&language=en&format=json",
-     "docs": "https://www.wikidata.org/wiki/Wikidata:Data_access", "tags": ["reference"]},
+     "headers": UA, "rate_per_min": 40, "docs": "https://www.wikidata.org/wiki/Wikidata:Data_access",
+     "tags": ["reference"]},
+    {"id": "wikimedia", "label": "Wikimedia (page views)", "base_url": "https://wikimedia.org/api/rest_v1",
+     "auth": "none", "key": "", "headers": UA, "rate_per_min": 100,
+     "sample_path": "/metrics/pageviews/per-article/en.wikipedia/all-access/user/Bitcoin/daily/{days_ago:30:%Y%m%d}/{today:%Y%m%d}",
+     "docs": "https://wikimedia.org/api/rest_v1/", "tags": ["attention"]},
+    {"id": "fred", "label": "FRED (St. Louis Fed, public CSV)", "base_url": "https://fred.stlouisfed.org",
+     "auth": "none", "key": "", "sample_path": "/graph/fredgraph.csv?id=UNRATE",
+     "docs": "https://fred.stlouisfed.org/docs/api/fred/", "tags": ["macro"]},
+    {"id": "blockchain_info", "label": "Blockchain.com charts", "base_url": "https://api.blockchain.info",
+     "auth": "none", "key": "", "sample_path": "/charts/hash-rate?timespan=30days&format=json",
+     "docs": "https://www.blockchain.com/explorer/api/charts_api", "tags": ["macro", "crypto"]},
     {"id": "nominatim", "label": "Nominatim (OpenStreetMap)", "base_url": "https://nominatim.openstreetmap.org",
      "auth": "none", "key": "", "sample_path": "/search?q=Cambridge&format=jsonv2&limit=3",
+     "headers": UA, "rate_per_min": 60,                       # the usage policy: one request a second, say who you are
      "docs": "https://nominatim.org/release-docs/latest/api/Overview/", "tags": ["places"]},
 ]
 
@@ -65,7 +83,22 @@ def fields_from_template(t: Dict[str, Any]) -> Dict[str, str]:
     return {"base_url": t["base_url"], "auth": t.get("auth", "none"),
             "credential": ("@secret:" + t["key"]) if t.get("key") else "",
             "username": "", "headers": json.dumps(t["headers"]) if t.get("headers") else "",
-            "sample_path": t.get("sample_path", ""), "rate_per_min": "", "docs": t.get("docs", "")}
+            "sample_path": t.get("sample_path", ""), "rate_per_min": str(t.get("rate_per_min") or ""),
+            "docs": t.get("docs", "")}
+
+
+_DATE_TOKEN = re.compile(r"\{(today|days_ago:(\d{1,4})):([^{}]{1,20})\}")
+
+
+def expand_path(path: str, now: Optional[datetime] = None) -> str:
+    """Date tokens in a path, so a stored source can ask for a moving window: {today:%Y%m%d} and
+    {days_ago:120:%Y%m%d} (UTC). Anything else is left as it is."""
+    now = now or datetime.now(timezone.utc)
+
+    def sub(m):
+        when = now - timedelta(days=int(m.group(2))) if m.group(2) else now
+        return when.strftime(m.group(3))
+    return _DATE_TOKEN.sub(sub, str(path or ""))
 
 
 def parse_auth(auth: Any) -> Dict[str, str]:

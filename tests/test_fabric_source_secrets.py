@@ -143,3 +143,11 @@ def test_api_map_finds_items_one_level_down_and_offers_the_source():
     assert out["suggested_jq"] == "response.results" and out["count"] == 1
     assert out["add_source"] == {"connection": "guardian", "path": "/search", "source_type": "api",
                                  "jq_path": "response.results"}
+
+
+def test_whole_mode_and_connection_paths_are_wired():
+    s = open(FABRIC, encoding="utf-8").read()
+    api = s[s.index("async def _pull_api"):s.index("async def _pull_telegram")]
+    assert 'cfg.get("whole")' in api and "(latest)" in api          # one record, fixed text -> replaced each pull
+    pc = open(os.path.join(ROOT, "vera", "platforms", "platform_capabilities.py"), encoding="utf-8").read()
+    assert "cc.build_request(fields, cc.expand_path(path), params)" in pc
