@@ -1570,6 +1570,10 @@
      tall the tool row, the title line (the card's header already names it), a graph's pager and its caption go; a taller
      card, or the card maximised, has them. */
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd{container:deskcard / size}
+  /* LONG CODE IN A NARROW CARD WRAPS (WSU-44): sideways scrolling in a 300 px card hid most of every line. Below 460 px a
+     line wraps, its continuation hanging past the line numbers; a wider card keeps one line per line */
+  @container deskcard (max-width: 460px) { .it-bd pre.vc-pre code{white-space:pre-wrap;overflow-wrap:anywhere}   /* over the code-card kit's pre */
+    .it-bd pre .vc-line{padding-left:calc(3.15em + 2px);text-indent:-3.15em} }
   @container deskcard (max-height: 380px) { .vc-rbx > :is(.vc-rbx-top,.vc-rbx-tools,.vc-rbx-glance,.vc-rbx-facets), .vc-rbx:has(> .vc-rbx-graph) > .vc-rbx-foot, .vc-rbx-gnote { display:none!important } }   /* the site bar and the site filters too: on a 171 px card they left the list 0 px */
   /* a desk card that is not a chip keeps its corner grip: a compact card's rule hid it, so no desk card could be resized */
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip):not([data-desk-face^="layer-"]) > .rz{display:block}
@@ -2260,6 +2264,9 @@
   .vc-diag .vc-live{height:var(--dh,150px);max-height:400px}.it[data-size="s"] .vc-diag .vc-live{max-height:120px}.it[data-size="l"] .vc-diag .vc-live{max-height:640px}.it[data-size="xl"] .vc-diag .vc-live{max-height:none}
   /* ...the same in the diagram card (the kit's bar over the live drawing) */
   .vc-diagwrap .vc-live{height:var(--dh,150px);max-height:400px}.it[data-size="s"] .vc-diagwrap .vc-live{max-height:120px}.it[data-size="l"] .vc-diagwrap .vc-live{max-height:640px}.it[data-size="xl"] .vc-diagwrap .vc-live{max-height:none}
+  /* on the desk the card is the ceiling, not the size class: the slot is the drawing's height at the card's width and the
+     desk fits the card to it (_deskFit) - a small drawing in a wide card grows with it (WSU-44) */
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] :is(.vc-diag,.vc-diagwrap) .vc-live{max-height:none;flex:none;height:var(--dh,150px)}
   .it.sized .vc-diagwrap > .code-card,.it.openin .vc-diagwrap > .code-card,.it.maxed .vc-diagwrap > .code-card{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
   .it[data-type="diagram"] .it-bd{max-height:none}
   .vc-dgsrc{margin-top:6px;max-height:160px}
@@ -2648,6 +2655,11 @@
     if (L === 'css') return head + '<style>' + src + '</style><h1>Heading</h1><p>A paragraph, a <a href="#">link</a> and a <button>button</button>, dressed by the sheet.</p>';
     return head + '<body><script>try{' + src + '}catch(e){document.body.innerHTML=\'<pre style="color:#c96b6b">\'+String(e&&e.message||e)+\'</pre>\';}<\/script>';
   }
+  /* appended to every preview page: it tells the canvas how tall its content is (the body's own extent - the root's
+     scrollHeight is never less than the frame, so a short page could not say it is short), on load and when it changes */
+  const PREVIEW_H = '<script>(function(){var t=0;function s(){try{var b=document.body;if(!b)return;var h=b.getBoundingClientRect().top+window.scrollY+b.scrollHeight+(parseFloat(getComputedStyle(b).marginBottom)||0);'
+    + 'parent.postMessage({veraPreviewH:Math.ceil(h)},"*")}catch(e){}}addEventListener("load",function(){s();setTimeout(s,400)});'
+    + 'try{new ResizeObserver(function(){clearTimeout(t);t=setTimeout(s,120)}).observe(document.body||document.documentElement)}catch(e){}})()<\/script>';
   const _libs = {};
   function ensureLib(src, tag) {
     if (typeof document === 'undefined') return Promise.resolve(false);
@@ -2991,6 +3003,7 @@
       }
       if (this.hasAttribute('compact')) this.style.setProperty('--vc-max', '240px');
       this.refresh();
+      if (!this._pvMsg) { this._pvMsg = (ev) => this._previewH(ev); window.addEventListener('message', this._pvMsg); }   // preview pages say their height
       // Live-follow: cheap revision check, repaint only on real change.
       this._timer = setInterval(() => this.refresh(), 3000);
     }
@@ -3001,6 +3014,7 @@
       if (this._railTimer) { clearInterval(this._railTimer); this._railTimer = null; }
       if (this._liveTick) { clearInterval(this._liveTick); this._liveTick = null; }
       if (this._stageRO) { try { this._stageRO.disconnect(); } catch (e) {} this._stageRO = null; }
+      if (this._pvMsg) { window.removeEventListener('message', this._pvMsg); this._pvMsg = null; }
     }
 
     attributeChangedCallback(name) {
@@ -3389,6 +3403,14 @@
           const rt = wi && wi.shadowRoot && wi.shadowRoot.querySelector('.vw-body, .vw-root');
           if (rt && rt.clientHeight > 0) { const more = rt.scrollHeight - rt.clientHeight; const mh = this._minH || (this._minH = {});
             if (more > 6) { const want = c.offsetHeight + more + 8; if (!mh[key] || want > mh[key] + 4) { mh[key] = want; changed = true; } } } }
+        /* a drawn page (an html item, code shown as its preview) is as tall as the page says it is (_previewH, WSU-44): a short
+           page gives the card back its spare room; a long one lets it grow and scrolls inside */
+        const pv = c.querySelector('.vc-preview'), ph = this._pvH && this._pvH[key];
+        if (pv && ph > 0 && pv.clientHeight) {
+          const want = Math.max(96, Math.round(c.offsetHeight - pv.clientHeight + ph + 4));
+          if (want < c.offsetHeight - 8) { if (nat[key] == null || Math.abs(nat[key] - want) > 16) { nat[key] = want; changed = true; } }
+          else if (nat[key] != null && want > nat[key] + 16) { delete nat[key]; changed = true; }
+          return; }
         if (FILLS.has(c.dataset.type || '') || (c.dataset.type !== 'diagram' && c.querySelector('.vc-live'))) { if (nat[key] != null) { delete nat[key]; changed = true; } return; }
         /* AS WIDE AS WHAT IT HOLDS (WSU-69, the owner's session 2026-10-11: a checklist 775 px wide with 285 px of text, a note
            420 with 51, the "Metric · Value · Change" table 775 with 157): a text-like card is measured for how far right
@@ -4953,7 +4975,7 @@
           // the wrapper is the column's (placed, sized, hidden); the element inside is the estate's own and keeps its styles
           let inner;
           if (kind === 'term') { inner = document.createElement('vera-terminal'); inner.setAttribute('ws', h.dataset.ws || ''); ensureLib('/ui/vera-terminal.js', 'vera-terminal'); }
-          else if (kind === 'mermaid') { inner = document.createElement('vera-mermaid'); inner.setAttribute('bare', ''); inner.setAttribute('fill', ''); inner.setAttribute('title', h.dataset.title || 'diagram'); h.textContent = '';
+          else if (kind === 'mermaid') { inner = document.createElement('vera-mermaid'); inner.setAttribute('bare', ''); inner.setAttribute('fill', ''); if (this.deskAlign()) inner.setAttribute('max-scale', '2'); inner.setAttribute('title', h.dataset.title || 'diagram'); h.textContent = '';
             inner.addEventListener('vm:rendered', () => this._diagramGrew(key, inner)); this._mermaidInto(inner, key); }
           // `bare`: the widget draws its figure and nothing else. Its own frame inside a canvas item was a box in a
           // box — and it lives in a second shadow root, so no rule of ours could reach it (owner, 2026-09-24).
@@ -4987,7 +5009,8 @@
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
         } else if (kind === 'widget') { const inner = el.firstChild, rc = this._contentOf(key); const sz = h.dataset.size || 'm'; if (h.textContent) h.textContent = ''; if (inner && inner.getAttribute('size') !== sz) inner.setAttribute('size', sz); try { const j = JSON.stringify((rc && (rc.record || rc)) || null); if (inner && j && inner._recJson !== j) { inner._recJson = j; inner.record = rc.record || rc; } } catch (e) {}
           this._widgetFit(key, inner);   // a re-rendered slot is a fresh face: its own width again
-        } else if (kind === 'mermaid') { if (h.textContent) h.textContent = ''; this._mermaidInto(el.firstChild, key); this._diagramGrew(key, el.firstChild);   // a re-rendered slot is new markup: the drawn diagram's height again
+        } else if (kind === 'mermaid') { if (h.textContent) h.textContent = ''; try { if (this.deskAlign()) el.firstChild.setAttribute('max-scale', '2'); else el.firstChild.removeAttribute('max-scale'); } catch (e) {}   /* on the desk a diagram grows with its card (WSU-44) */
+          this._mermaidInto(el.firstChild, key); this._diagramGrew(key, el.firstChild);   // a re-rendered slot is new markup: the drawn diagram's height again
         } else if (kind === 'preview') { if (h.textContent) h.textContent = ''; const cc = this._contentOf(key) || {};
           /* an html item's page is its `html`, not `code` - reading only `code` redrew every html item as an empty page on
              its first update; and the redraw is double-buffered (_previewSwap) so there is never a blank frame */
@@ -5156,7 +5179,21 @@
     /* a page the chat is still writing follows its newest line: each swap is a fresh page, which opens at its top - so
        as the page grew past the frame its new content was never in view (owner, 2026-10-03: "the canvas is better but
        still bad"). While the item is streaming its document carries the scroll to its end; finished, it opens as itself. */
-    _pdoc(key, lang, src) { const d = previewDoc(lang, src); return (this._liveOv && this._liveOv[String(key)]) ? d + '<script>try{scrollTo(0,document.documentElement.scrollHeight)}catch(e){}<\/script>' : d; }
+    _pdoc(key, lang, src) { const d = previewDoc(lang, src) + PREVIEW_H; return (this._liveOv && this._liveOv[String(key)]) ? d + '<script>try{scrollTo(0,document.documentElement.scrollHeight)}catch(e){}<\/script>' : d; }
+    /* AN HTML ITEM IS AS TALL AS ITS PAGE (WSU-44): the frame is sandboxed (no same-origin), so it cannot be measured from
+       here - the page says its own height (PREVIEW_H) and the desk fits the card to it (_deskFit). Only a frame of ours
+       is heard: the message's source is matched to a preview frame in this canvas. */
+    _previewH(ev) {
+      const d = ev && ev.data; if (!d || typeof d !== 'object' || typeof d.veraPreviewH !== 'number' || !(d.veraPreviewH > 0)) return;
+      const sr = this.shadowRoot; if (!sr) return;
+      const fr = [...sr.querySelectorAll('iframe.vc-pframe')].find((f) => { try { return f.contentWindow === ev.source; } catch (e) { return false; } });
+      const wrap = fr && fr.closest('.lv'); const key = wrap && wrap.dataset.key; if (!key) return;
+      const h = Math.min(4000, Math.round(d.veraPreviewH)); const m = this._pvH = this._pvH || {};
+      if (m[key] != null && Math.abs(m[key] - h) <= 16) return;
+      m[key] = h;
+      if (!this.deskAlign()) return;
+      clearTimeout(this._pvT); this._pvT = setTimeout(() => { this._fitRuns = 0; try { this._deskFit(); } catch (e) { /* optional */ } }, 200);
+    }
     _previewSwap(wrap, doc) {
       if (!wrap) return;
       const shown = () => [...wrap.querySelectorAll(':scope > iframe.vc-pframe')].filter((f) => !f._pending).pop() || null;
