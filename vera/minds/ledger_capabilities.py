@@ -330,6 +330,7 @@ async def cap_decide_ledger_import(rows: Any = None, dry_run: bool = True, trace
 
 @capability(
     "decide.ledger", http_method="GET", http_path="/decide/ledger", http_tags=["minds"],
+    contract=_MC.contract("decision.ledger.read", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="Read the decision ledger (four-minds FM-0.2): the latest decisions, newest first, each "
                 "with its outcomes and the strongest one. Input: question_id, surface, run_id, "
@@ -378,6 +379,7 @@ async def cap_decide_ledger(question_id: str = "", surface: str = "", run_id: st
 
 @capability(
     "decide.ledger.stats", http_method="GET", http_path="/decide/ledger/stats", http_tags=["minds"],
+    contract=_MC.contract("decision.ledger.stats", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="Decision ledger health (four-minds FM-0.2): this process's append/refuse/drop/drain "
                 "counters, the stream's length and undrained rows, and decisions per question with "

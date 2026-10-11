@@ -607,8 +607,15 @@ async def _seek_cache_put(ck: Optional[str], out: Dict) -> Dict:
     return out
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "memory.seek",
+    contract=_MC.contract("memory.seek", effects=["read", "model"], idempotency="idempotent"),
     http_method="POST", http_path="/memory/seek", http_tags=["memory", "fabric"],
     memory="off",
     description=(
@@ -819,6 +826,7 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
 
 @capability(
     "memory.read",
+    contract=_MC.contract("memory.read", effects=["read"], idempotency="idempotent"),
     http_method="POST", http_path="/memory/read", http_tags=["memory", "fabric"],
     memory="off",
     description=(
@@ -906,6 +914,7 @@ async def cap_memory_read(record_id: str, offset: int = 0, max_chars: int = 6000
 
 @capability(
     "memory.map",
+    contract=_MC.contract("memory.map", effects=["read"], idempotency="idempotent"),
     http_method="GET", http_path="/memory/map", http_tags=["memory", "fabric"],
     memory="off", silent=True,
     description=(
@@ -1003,6 +1012,7 @@ def _render_browse(scope: str, rows: List[Dict], total: Optional[int],
 
 @capability(
     "memory.browse",
+    contract=_MC.contract("memory.browse", effects=["read"], idempotency="idempotent"),
     http_method="POST", http_path="/memory/browse", http_tags=["memory", "fabric"],
     memory="off",
     description=(

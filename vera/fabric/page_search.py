@@ -143,6 +143,7 @@ except Exception:                        # worktree / app-free import
 
 @capability(
     "discovery.recall_index.status", http_method="GET", http_path="/discovery/recall_index/status",
+    contract=_MC.contract("discovery.recall_index.status", effects=["read"], idempotency="idempotent"),
     http_tags=["fabric", "discovery"], memory="off", silent=True,
     description="The discovery page search index (Postgres, four-minds FM-7.1): {ok, rows, watermark, "
                 "sqlite_max_rowid, sqlite_pages, lag} - lag is how many page rowids the index is behind.",
@@ -173,6 +174,7 @@ async def cap_recall_index_sync(max_rows: int = MAX_PER_RUN, trace_id=None) -> D
 
 @capability(
     "discovery.recall_index.search", http_method="POST", http_path="/discovery/recall_index/search",
+    contract=_MC.contract("discovery.recall_index.search", effects=["read"], idempotency="idempotent"),
     http_tags=["fabric", "discovery"], memory="off", silent=True,
     description="Ranked discovery pages for a query from the Postgres page index (any word matches, more matches "
                 "rank higher; title weighs above text). Inputs: query (str!), dataset_id (str), limit (int=20). "

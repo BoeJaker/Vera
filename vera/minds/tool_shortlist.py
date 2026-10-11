@@ -157,6 +157,7 @@ except Exception:                        # worktree / app-free import
 
 @capability(
     "caps.shortlist", serves=_SERVES_SHORTLIST, http_method="POST", http_path="/caps/shortlist", http_tags=["minds", "caps"],
+    contract=_MC.contract("tool.shortlist", effects=["read", "model"], idempotency="idempotent"),
     memory="off", silent=True,
     description="The tools most likely needed for a piece of work, from what similar PAST loop steps actually "
                 "used (four-minds FM-3): the similarity-weighted vote of the 15 nearest indexed steps, filled with "
@@ -199,6 +200,7 @@ async def cap_caps_shortlist_index(limit_runs: int = 400, trace_id=None) -> Dict
 
 @capability(
     "caps.shortlist.report", http_method="GET", http_path="/caps/shortlist/report", http_tags=["minds", "caps"],
+    contract=_MC.contract("tool.shortlist.report", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="How the caps.shortlist shadow did on live loop steps (four-minds FM-3): hit@5, recall@10 and MRR "
                 "of the tools each step really used, from the loop.caps_shortlist decisions and their outcomes. "
@@ -304,6 +306,7 @@ except Exception:                        # worktree / app-free import
 
 @capability(
     "caps.shortlist.chat_report", http_method="GET", http_path="/caps/shortlist/chat_report",
+    contract=_MC.contract("tool.shortlist.chat_report", effects=["read"], idempotency="idempotent"),
     http_tags=["minds", "caps"], memory="off", silent=True,
     description="The chat tool shortlist in shadow (four-minds FM-3.2/3.3, switch tools.shortlist.chat=shadow): over "
                 "recorded chat turns, recall@16/24/28 of the capabilities the reply used for the page's own list and "

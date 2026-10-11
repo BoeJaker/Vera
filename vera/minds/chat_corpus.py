@@ -44,6 +44,12 @@ def _target() -> str:
     return f"{'https' if cfg.TLS_ENABLED else 'http'}://127.0.0.1:{cfg.ORCHESTRATOR_PORT}"
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "chat.corpus.run", http_method="POST", http_path="/chat/corpus/run", http_tags=["minds", "chat"],
     memory="off",
@@ -87,6 +93,7 @@ async def cap_chat_corpus_run(only: str = "", gap_s: float = 8.0, force: bool = 
 
 @capability(
     "chat.corpus.last", http_method="GET", http_path="/chat/corpus/last", http_tags=["minds", "chat"],
+    contract=_MC.contract("chat.corpus.last", effects=["read", "filesystem"], idempotency="idempotent", filesystem="state_dir"),
     memory="off", silent=True,
     description="The newest chat corpus run: {run, summary, results?} (results with full=true), plus running "
                 "{pid, run_id} while one is going. Input: full (bool=false).",

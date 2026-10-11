@@ -86,6 +86,12 @@ async def _widget_content(cap: str, args: Dict[str, Any], res: Any, title: str) 
     return dict(r, widget=r.get("form"), form=r.get("form"), title=title, record=r)
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "canvas.enrich", memory="off",
     http_method="POST", http_path="/canvas/enrich", http_tags=["canvas"],
@@ -600,6 +606,7 @@ def _surface_rank_shadow(text: str, found: Dict[str, Any], k: int) -> None:
 
 @capability(
     "canvas.surface_rank.report", memory="off", silent=True,
+    contract=_MC.contract("canvas.surface_rank.report", effects=["read"], idempotency="idempotent"),
     http_method="GET", http_path="/canvas/surface_rank/report", http_tags=["canvas"],
     description="The canvas curator's first questions in shadow (four-minds FM-6.2/6.3, switch canvas.surface_rank): "
                 "over recorded turns, how often the turn's Frame vector (cosine against domain and surface cards) "

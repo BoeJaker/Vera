@@ -102,6 +102,7 @@ async def cap_known_items_build(n: int = 200, name: str = KI.VERSION, every: int
 
 @capability(
     "retrieval.known_items.run", http_method="POST", http_path="/retrieval/known_items/run",
+    contract=_MC.contract("retrieval.eval.known_items.run", effects=["read", "model", "filesystem"], idempotency="at_least_once", filesystem="state_dir"),
     http_tags=["fabric", "memory", "eval"], memory="off",
     description="Score memory.seek on a frozen known-item set: each query searched (fabric only, the result cache "
                 "off), the record's rank turned into MRR, nDCG@10, hit@1/5/10 and latency p50/p95. Inputs: name "

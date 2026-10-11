@@ -52,3 +52,33 @@ def test_the_contract_gate_passes_a_four_minds_writer():
              "description": "Record one decision row."}
     gate = CC.gate_contracts([CC.project_contract("decide.record", entry)])
     assert gate["ok"], gate["issues"]
+
+
+READERS = {
+    "vera/fabric/memory_retrieval.py": ("memory.seek", "memory.read", "memory.map", "memory.browse"),
+    "vera/minds/switchboard_capabilities.py": ("minds.switch.list", "minds.switch.get", "minds.effective",
+                                               "minds.validate"),
+    "vera/minds/ledger_capabilities.py": ("decide.ledger", "decide.ledger.stats"),
+    "vera/minds/label_capabilities.py": ("decide.label.queue",),
+    "vera/minds/training_state.py": ("decide.training_state",),
+    "vera/minds/judge.py": ("decide.shadow.report",),
+    "vera/minds/sense_capabilities.py": ("sense.frame", "sense.stats"),
+    "vera/minds/tool_shortlist.py": ("caps.shortlist", "caps.shortlist.report", "caps.shortlist.chat_report"),
+    "vera/fabric/page_search.py": ("discovery.recall_index.status", "discovery.recall_index.search"),
+    "vera/fabric/known_item.py": ("retrieval.known_items.run",),
+    "vera/canvas/enrich_capabilities.py": ("canvas.surface_rank.report",),
+    "vera/minds/chat_corpus.py": ("chat.corpus.last",),
+}
+
+
+@pytest.mark.parametrize("rel,caps", sorted(READERS.items()))
+def test_each_reader_declares_one(rel, caps):
+    test_each_writer_declares_one(rel, caps)
+
+
+@pytest.mark.parametrize("rel", sorted(set(WRITERS) | set(READERS)))
+def test_the_import_never_splits_stacked_decorators(rel):
+    src = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+    i = src.index("    from Vera.vera.minds import contract_core as _MC")
+    before = src[:i].rstrip().rsplit("\n", 2)[-2]
+    assert not before.startswith("@"), (rel, before)

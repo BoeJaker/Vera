@@ -177,6 +177,7 @@ except Exception:                        # worktree / app-free import
 
 @capability(
     "decide.training_state", http_method="GET", http_path="/decide/training_state", http_tags=["minds"],
+    contract=_MC.contract("decision.inputs.read", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="The training store (four-minds FM-0.2): what recorded decisions saw, kept so decision "
                 "models can learn them - redacted, bounded, 90 days, only for enabled surfaces "
