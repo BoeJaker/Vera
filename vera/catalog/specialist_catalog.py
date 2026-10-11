@@ -62,6 +62,8 @@ CURATED: List[Dict[str, Any]] = [
      "in_use": True, "note": "negative / neutral / positive"},
     {"family": "nlp", "task": "zeroshot", "model": "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli",  # pragma: allowlist secret
      "in_use": True, "note": "NLI zero-shot, base"},
+    {"family": "nlp", "task": "nli", "model": "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli",  # pragma: allowlist secret
+     "in_use": True, "note": "NLI on pairs (claim vs evidence passage), large - nlp.nli"},
     {"family": "nlp", "task": "zeroshot", "model": "MoritzLaurer/deberta-v3-large-zeroshot-v2.0",
      "note": "large - better labels, ~3x slower on CPU"},
     {"family": "nlp", "task": "zeroshot", "model": "facebook/bart-large-mnli",

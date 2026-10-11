@@ -79,6 +79,11 @@ DEFAULT_MODELS: Dict[str, str] = {
     # the fabric's spaCy path used on the host. A pip package, pinned in the
     # component's install steps rather than a store directory.
     "spacy":      "en_core_web_sm",
+    # Natural-language inference on PAIRS: does a premise (an evidence passage) entail, contradict or
+    # say nothing about a hypothesis (a claim)? compute-roles P3, 11 Oct 2026: on hand-labelled loop
+    # answers the large model found every wrong claim (recall 1.0, precision 0.47) where the base
+    # zero-shot model found 6 of 8 - a finder for the answer check, not a judge.
+    "nli":        "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli",  # pragma: allowlist secret
 }
 
 #: The fabric's zero-shot label set (fabric_web_acquisition._GLINER_LABELS_DEFAULT
@@ -108,6 +113,7 @@ TASK_KIND: Dict[str, str] = {
     "rerank":     "fastembed",          # not an optimum export
     "gliner":     "gliner",             # a torch checkpoint the gliner package loads
     "spacy":      "spacy",              # a pip-installed pipeline package
+    "nli":        "text-classification",  # sequence pairs, scored raw (premise, hypothesis)
 }
 
 
