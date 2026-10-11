@@ -25,6 +25,10 @@ body{overflow:hidden}
 
 /* ── window shell (docked = fill; floating = draggable card on the page) ── */
 #win{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg0);overflow:hidden}
+/* on its own the views strip becomes the menu column (vera-panel.js, fixed at the left): the window starts after it, and
+   the column's header names the page, so the bar does not say it again (WSU-43: "STACK MONITOR" twice, one over the other) */
+body.vp-has-strip-menu #win:not(.floating){left:var(--lhm-width,184px)}
+body.vp-has-strip-menu .pane-tb-title{display:none}
 #win.floating{inset:auto;top:36px;left:36px;width:min(880px,92vw);height:min(660px,86vh);
   border:1px solid var(--border2);border-radius:var(--radius-lg);
   box-shadow:0 18px 60px rgba(0,0,0,.6);resize:both;min-width:340px;min-height:240px}

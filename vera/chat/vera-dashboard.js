@@ -668,7 +668,11 @@
     /* the span picks the size, read against the grid's OWN width: a grid narrower than a page (a dashboard in a side pane -
        Cap Hub's glance, 330 px) scales the span first, so a full-width tile there draws at M, not XL with its side lists
        (2026-09-28); a page-wide grid (1200 px and up) keeps its spans as they are */
-    function effSpan(sp) { var gw = grid.clientWidth || 0, k = gw ? Math.min(1, gw / 1200) : 1; return [Math.max(1, Math.round((+sp[0] || 1) * k)), sp[1]]; }
+    /* a span is in the 12-column grid's 100 px columns; a narrower grid scales it down. Measured against the grid's OWN
+       columns: under 1100 px the grid is already 6 (or 2) columns, and scaling by width/1200 shrank the span a second time -
+       a section's nested grid at 388 px drew its 4-wide tiles as xs chips (WSU-43). Twelve columns: unchanged. */
+    function effSpan(sp) { var gw = grid.clientWidth || 0, n = 0; try { n = (getComputedStyle(grid).gridTemplateColumns || '').split(' ').filter(Boolean).length; } catch (e) {}
+      var k = gw ? Math.min(1, gw / ((n || GRID.cols) * 100)) : 1; return [Math.max(1, Math.round((+sp[0] || 1) * k)), sp[1]]; }
     function syncSize(w) {
       // an XL composite (a composite with a list among its parts - VeraWidget.compositeXL) is never shorter than its floor:
       // its lists need the room, and scroll inside it beyond that
