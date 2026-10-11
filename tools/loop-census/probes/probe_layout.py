@@ -76,6 +76,9 @@ LAYOUTS = {
     "R1": {"plan_critique": True},
     # A6 one journal view for the executor (11 Oct 2026): the live block shows only what is new
     "J1": {"journal_delta": True},
+    # B3 step-result entities into the journal (node NER), alone / with the A6 journal view
+    "E1": {"journal_ner": True},
+    "E2": {"journal_ner": True, "journal_delta": True},
     # the loop's role-less stages placed on CPU nodes (stage_models, 10 Oct 2026)
     "C1": {"stage_models": "verifier=qwen3.6:35b-a3b@cpu-246,gate=qwen3.6:35b-a3b@cpu-246"},
     "C2": {"stage_models": "journal=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
