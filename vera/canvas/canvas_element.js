@@ -431,7 +431,8 @@
       const ticks = [y0]; if (y1 - y0 >= 4) { const step = (y1 - y0) / 4; for (let k = 1; k < 4; k++) ticks.push(Math.round(y0 + step * k)); } if (y1 !== y0) ticks.push(y1);
       const axis = `<div class="vc-tl-ax"><div class="vc-tl-ln"></div>`
         + ev.map((e, i) => `<button class="vc-tl-dot" style="left:${pct(xs[i])}%" data-tl-go="${i}" title="${esc(e.when + ' \u2014 ' + labelOf(e).slice(0, 90))}"></button>`).join('')
-        + [...new Set(ticks)].map((y, i, a) => `<span class="vc-tl-tick${i === a.length - 1 && a.length > 1 ? ' end' : ''}" style="left:${pct(y)}%">${y}</span>`).join('')
+        /* a year starts before its first event: its tick is kept on the axis, not drawn off its left end ("324" for 2024) */
+        + [...new Set(ticks)].map((y, i, a) => `<span class="vc-tl-tick${i === a.length - 1 && a.length > 1 ? ' end' : ''}" style="left:${Math.min(100, Math.max(0, +pct(y)))}%">${y}</span>`).join('')
         + `</div>`;
       let out = '', year = '';
       ev.forEach((e, i) => {
@@ -827,6 +828,12 @@
       const head = `<div class="vc-th"><i class="dot${attached ? (live ? ' on' : ' wait') : ''}"></i><b>${esc(shown ? (container ? shown + ' / ' + container : shown) : 'no host yet')}</b><span class="mono">${esc(shell || (container ? 'sh' : 'login shell'))}${c.command ? ' · ' + esc(c.command) : ''}</span><span class="sp"></span>`
         + (attached ? '<button class="ib" data-act="tdetach" title="Detach — the item keeps its host; Attach opens a new shell">detach</button>' : (ws ? '<button class="ib on" data-act="tattach" title="Open a shell on this host">attach</button>' : ''))
         + (ws ? '<button class="ib" data-act="tshare" title="Copy the terminal\'s address">share</button>' : '') + '</div>';
+      /* A COMMAND THAT RAN (a capability's command and its output, no shell open): what was run, where, and what it said -
+         not a connect form over it. The form is for opening a shell; "open a shell" still does that, on the same host. */
+      if (!attached && c.command && c.output != null) return `<div class="vc-term vc-ran" data-w="canvas.terminal">`
+        + `<div class="vc-ran-cmd"><span class="ps">$</span><code>${esc(String(c.command))}</code>${shown ? `<span class="host">${esc(shown)}</span>` : ''}`
+        + (ws ? '<button class="ib" data-act="tattach" title="Open a shell on this host">open a shell</button>' : '') + `</div>`
+        + `<pre class="vc-pre vc-out"><code>${esc(String(c.output).slice(0, 8000)) || '<span class="vc-dim">(no output)</span>'}</code></pre></div>`;
       const conn = attached ? `<div class="vc-live" data-live="term" data-key="${esc(key)}" data-ws="${esc(ws)}"><span class="vc-dim">connecting…</span></div>`
         : `<div class="vc-tconnect" data-w="canvas.terminal.connect"><input class="ti" data-f="host_id" placeholder="host id — an SSH host of the Exec panel" value="${esc(shown)}" spellcheck="false"><input class="ti" data-f="container" placeholder="container (docker) — optional" value="${esc(container)}" spellcheck="false"><input class="ti sm" data-f="shell" placeholder="shell" value="${esc(shell)}" spellcheck="false"><button class="ib${hostsOpen ? ' on' : ''}" data-act="thosts" title="The estate's known hosts — the Exec panel's SSH hosts, the containers on every docker host, your saved connections">hosts ▾</button><button class="ib on" data-act="tconnect">Connect</button></div>` + hosts;
       return `<div class="vc-term" data-w="canvas.terminal">${head}${conn}${c.output ? `<pre class="vc-pre vc-out"><code>${esc(String(c.output).slice(0, 4000))}</code></pre>` : ''}</div>`;
@@ -2164,6 +2171,15 @@
   .vc-rbx-efacets .vc-rbx-fl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7480));margin-right:4px;align-self:center}
   /* a research run at a glance: its sites as one bar, its pages' dates as a line */
   .vc-rbx-glance{display:flex;flex-direction:column;gap:6px;margin:6px 0 4px}
+  /* a command that ran: the prompt line, then its output */
+  .vc-ran{display:flex;flex-direction:column;gap:6px;min-height:0}
+  .vc-ran-cmd{display:flex;align-items:baseline;gap:8px;min-width:0;font-family:var(--mono,monospace);font-size:11.5px}
+  .vc-ran-cmd .ps{color:var(--acc,#5a9e8f);flex:none}
+  .vc-ran-cmd code{flex:1 1 auto;min-width:0;color:var(--fg,#dce1e8);white-space:pre-wrap;word-break:break-all}
+  .vc-ran-cmd .host{flex:none;font-size:10px;color:var(--dim,#8b93a1);padding:0 6px;border:1px solid var(--border,#2a2f37);border-radius:8px}
+  .vc-ran .vc-out{margin:0;font-size:11.5px;line-height:1.5;overflow:auto;min-height:0}
+  /* the desk's card header names the item; a bare relevance number beside the name ("1.00") says nothing there */
+  :host([align="desk"]:not([desk-narrow])) .stage .it > .it-hd > .sc{display:none}
   /* a lookup's evidence (records of kind evidence): its question and how it was looked up; [n] badges; checked and gaps */
   .vc-ev{display:flex;flex-direction:column;gap:6px;margin:4px 0 6px}
   .vc-ev-q{font-size:12.5px;line-height:1.45;color:color-mix(in srgb,var(--fg,#dce1e8) 85%,transparent)}
@@ -2703,6 +2719,15 @@
     const c = (b && b.content) || {}; const own = c.title || c.name || c.goal || c.filename || c.caption || c.widget || c.panel || c.cap;
     if (own) return String(own);
     if (b && b._bid) { const first = String(c[textFieldOf(b.type)] || '').split('\n').map(s => s.trim()).find(Boolean) || ''; const line = first.replace(/^#+\s*|^[-*]\s+\[.\]\s*|^[-*]\s+|\*\*/g, '').slice(0, 60); return line || ({ diagram: 'Diagram', explode: 'Explode', table: 'Table', image: 'Image', code: 'Code', markdown: 'Text', note: 'Note', html: 'HTML' }[b.type] || String(b.type || 'block')); }
+    /* no title of its own: named by what it holds, never by its key ("m7:code:0", "m9:table:0" read as nothing) - code by
+       its language and first definition, a table by its first columns and its rows, a terminal by its command */
+    if (b && b.type === 'code' && c.code) { const m = String(c.code).match(/^\s*(?:export\s+)?(?:async\s+)?(?:def|class|function|fn|func)\s+([A-Za-z_$][\w$]*)/m);
+      return (c.lang || 'code') + ' · ' + (m ? m[1] : String(c.code).replace(/\n$/, '').split('\n').length + ' lines'); }
+    if (b && b.type === 'table' && Array.isArray(c.columns)) { const cols = c.columns.map(String).filter((x) => x.trim()).slice(0, 3);
+      const n = Array.isArray(c.rows) ? c.rows.length : 0; if (cols.length || n) return (cols.length ? cols.join(' · ') + ' — ' : 'Table — ') + n + ' row' + (n === 1 ? '' : 's'); }
+    if (b && b.type === 'session' && c.command) return '$ ' + String(c.command).replace(/\s+/g, ' ').slice(0, 60);
+    if (b && b.type === 'html' && c.html) { const h = String(c.html).match(/<(title|h1|h2|h3)[^>]*>([\s\S]*?)<\/\1>/i);
+      const tx = h ? h[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : ''; if (tx) return tx.slice(0, 70); }
     return String(b && b.key ? String(b.key).split(':').slice(1).join(':') : '') || String((b && b.type) || 'block');
   }
   const EDITABLE = ['note', 'markdown', 'code', 'html'];
@@ -3138,7 +3163,7 @@
     _deskFit() {
       const sr = this.shadowRoot; if (!sr || this.getAttribute('desk-fit') === 'off') return;
       /* a diagram is measured too: its drawing has its own shape, and its slot is as tall as the drawing (_diagramGrew) */
-      const FILLS = new Set(['records', 'research', 'widget', 'explode', 'panel', 'session', 'notebook', 'html', 'image']);
+      const FILLS = new Set(['records', 'research', 'widget', 'explode', 'panel', 'notebook', 'html', 'image']);   /* a live shell is skipped by its .vc-live */
       const nat = this._natH = this._natH || {}; let changed = false;
       sr.querySelectorAll('.stage .it[data-key][data-desk-face]').forEach((c) => {
         const key = c.dataset.key, face = c.dataset.deskFace || '';
