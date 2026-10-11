@@ -96,6 +96,14 @@ t('carried to where a card is a pill, it is a pill whatever size it was given; l
 t('let go on the desk it stays there (and is no longer a minimised pill); the upward settle leaves it', src.includes("if (this._pillGet()[d.key]) this._pillSet(d.key, false);") && src.includes('stay: !!userAt(key)'));
 t('code scrolls in its card on the desk', src.includes('.vc-codewrap > .code-card > pre{flex:1 1 auto;min-height:0;max-height:none!important;overflow:auto!important'));
 
+/* round 6 (owner, 2026-10-11): research in one place, formatted streaming, pane below or beside, no dump items */
+t('a research run on the canvas leaves a chip in the chat (one place)', chat.includes("_cvOnCanvas({ _el:host, n:'research'+(r.q?' · '+r.q.slice(0,40):'') }, r.key)"));
+t('the run streams in formatted, as the chat draws it', src.includes(': live ? `<div class="vc-rr-doc vc-rr-live">${draw(live)}</div>`'));
+t('its second pane goes beside the report or under it', src.includes("act === 'rrlay'") && src.includes('.vc-rr.lay-below .vc-rr-body{display:grid!important'));
+t('a tool result nothing can draw makes no item (no fenced dump of the card); the old ones are not drawn', !chat.includes("content:{md:'**'+n+'**\\n\\n'+(res?'```\\n'+res+'\\n```':'')}") && src.includes("/^turn:[^:]+:cap:\\d+$/.test(String(b.key || ''))"));
+t('a tool card\'s insides are not lifted again by the code, diagram, table and image hooks', chat.includes("cvHook('code', 'pre code', (el, out, i) => { if(_inTool(el)) return;") && chat.includes("cvHook('table', 'table', (el, out, i) => { if(_inTool(el)) return;"));
+t('the chat\'s "on the canvas" chip focuses its item', chat.includes("setTimeout(()=>{ try{ cv.flash&&cv.flash(key); }catch(_){} }, 450)"));
+
 const D = require(path.join(__dirname, '..', 'vera', 'ui', 'desk_layout_core.js'));
 const g = [{ id: 'n', x: 300, y: 200, w: 300, h: 100, maxH: 120 }];
 D.grow(g, { l: -440, t: 0, r: 0, b: 900 }, { W: 1200, H: 900 }, {});

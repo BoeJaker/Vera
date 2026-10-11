@@ -944,7 +944,9 @@
         return h;
       };
       const reportHtml = () => report ? `<div class="vc-rr-doc">${draw(report)}</div>`
-        : live ? `<div class="vc-rr-doc vc-rr-live">${mdx(live)}</div>`
+        /* streamed formatted, as the chat draws it (owner, 2026-10-11: "the research streams in to the canvas / desk element
+           but its unformatted") - the kit's renderer, not the canvas's small markdown subset */
+        : live ? `<div class="vc-rr-doc vc-rr-live">${draw(live)}</div>`
         : `<div class="vc-rr-wait">${state === 'error' ? esc(c.error || 'The run stopped before it wrote a report.') : c.writing ? 'writing the report…' : 'gathering - the report is written once the pages are read'}</div>`;
       const sourcesHtml = () => cites.length
         ? `<ol class="vc-rr-src">${cites.map((s) => { let host = ''; try { host = new URL(s.url).host.replace(/^www\./, ''); } catch (e) { host = ''; }
@@ -956,9 +958,14 @@
          of the others sits beside it - the method while it runs, its pages once it is done */
       const tab = st.tab || 'report'; const side = st.side || (state === 'running' ? 'method' : 'pages');
       const T = [['report', 'Report'], ['method', 'Method'], ['pages', 'Pages', items.length], ['sources', 'Sources', cites.length]];
-      const tabs = `<div class="vc-rr-tabs">${T.map(([id, label, n]) => `<button class="vc-rr-tab${tab === id ? ' on' : ''}${side === id ? ' side' : ''}" data-rr-tab="${id}" data-rec-act="rrtab" data-rec-key="${K}" data-rec-arg="${id}">${label}${n != null ? `<i>${n}</i>` : ''}</button>`).join('')}</div>`;
+      /* WHERE THE SECOND PANE GOES (owner, 2026-10-11: "could it have the option to be in either of the divs underneath the
+         main or the one to the right"): beside the report, or under it (then on a narrow card too, rather than one tab at a
+         time). One choice for every run, kept in this browser. */
+      let lay = 'right'; try { lay = localStorage.getItem('vera:canvas:rrlay') === 'below' ? 'below' : 'right'; } catch (e) { /* default */ }
+      const layBtn = `<button class="vc-rr-lay" data-rec-act="rrlay" data-rec-key="${K}" data-rec-arg="${lay === 'below' ? 'right' : 'below'}" title="${lay === 'below' ? 'Put the second pane beside the report' : 'Put the second pane under the report'}">${lay === 'below' ? '⇥ beside' : '⤓ below'}</button>`;
+      const tabs = `<div class="vc-rr-tabs">${T.map(([id, label, n]) => `<button class="vc-rr-tab${tab === id ? ' on' : ''}${side === id ? ' side' : ''}" data-rr-tab="${id}" data-rec-act="rrtab" data-rec-key="${K}" data-rec-arg="${id}">${label}${n != null ? `<i>${n}</i>` : ''}</button>`).join('')}<span class="vc-rr-sp"></span>${layBtn}</div>`;
       const pane = (id, html) => `<div class="vc-rr-p${tab === id ? ' on' : ''}${id === 'report' ? ' main' : side === id ? ' side' : ''}" data-p="${id}">${html}</div>`;
-      return `<div class="vc-rr st-${state}" data-w="canvas.research">`
+      return `<div class="vc-rr st-${state} lay-${lay}" data-w="canvas.research">`
         + `<div class="vc-rr-hd"><span class="vc-rr-dot"></span><b>${head}</b>`
         + (state === 'running' && c.step ? `<span class="vc-rr-step">${esc(String(c.step).slice(0, 90))}</span>` : '')
         + `<span class="vc-rr-n">${items.length ? read + ' page' + (read === 1 ? '' : 's') + ' read' + (failed ? ' · ' + failed + ' failed' : '') : ''}${cites.length ? ' · ' + cites.length + ' cited' : ''}${dur ? ' · ' + dur : ''}</span></div>`
@@ -1813,6 +1820,18 @@
     .vc-rr-tab.side{color:var(--fg,#dce1e8);border-bottom-color:var(--acc,#5a9e8f)}
   }
   @media (prefers-reduced-motion: reduce){ .vc-rr.st-running .vc-rr-dot,.vc-rr-bar > i{animation:none} }
+  .vc-rr-sp{flex:1}
+  .vc-rr-lay{border:0;background:none;color:var(--dim,#8b93a1);font:inherit;font-size:11px;padding:5px 8px;cursor:pointer;white-space:nowrap}
+  .vc-rr-lay:hover{color:var(--fg,#dce1e8)}
+  /* the second pane under the report, at any width: the report, then the pane chosen in the tabs (not one at a time) */
+  .vc-rr.lay-below .vc-rr-body{display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:minmax(0,1.5fr) minmax(0,1fr);gap:10px}
+  .vc-rr.lay-below .vc-rr-p{display:none!important}
+  .vc-rr.lay-below .vc-rr-p.main,.vc-rr.lay-below .vc-rr-p.side{display:block!important;grid-column:1!important}
+  .vc-rr.lay-below .vc-rr-p.main{grid-row:1!important}
+  .vc-rr.lay-below .vc-rr-p.side{grid-row:2!important;border-left:0!important;padding-left:0!important;border-top:1px solid var(--border,#2a2f37);padding-top:10px}
+  .vc-rr.lay-below .vc-rr-tab[data-rr-tab="report"]{display:none}
+  .vc-rr.lay-below .vc-rr-tab.on:not(.side){color:var(--dim,#8b93a1);border-bottom-color:transparent}
+  .vc-rr.lay-below .vc-rr-tab.side{color:var(--fg,#dce1e8);border-bottom-color:var(--acc,#5a9e8f)}
   /* another kind seen as a graph (graphOf): the records graph's slot, filling what it is given */
   .vc-tv-graph{display:flex;flex-direction:column;gap:3px;min-height:0}
   .vc-tv-graph > .vc-live{height:300px}
@@ -3718,6 +3737,10 @@
 
     render(doc) {
       const root = this.shadowRoot;
+      /* a tool card's text landed as a document (the chat's old fallback, turn:<mid>:cap:<n>, a code fence of the card's
+         header and result - "blank except for the text m1:cap:0 research.run ...") is not drawn: the chat no longer makes
+         them, and those already kept are skipped */
+      if (Array.isArray(doc.blocks)) doc.blocks = doc.blocks.filter((b) => !(b && b.type === 'markdown' && /^turn:[^:]+:cap:\d+$/.test(String(b.key || ''))));
       const blocks = doc.blocks || [];
       // what the host is streaming into an item outranks whatever an older revision says it holds (liveUpdate)
       if (this._liveOv) blocks.forEach((b) => { const ov = b && b.key != null && this._liveOv[String(b.key)]; if (ov) b.content = Object.assign({}, b.content || {}, ov); });
@@ -5154,6 +5177,7 @@
       if (act === 'pickent' || act === 'pickdom') { st[act === 'pickent' ? 'ent' : 'dom'] = arg; st.page = 0; st.namesOpen = false; return redraw(); }
       /* a research run's pane: shown alone on a narrow card; beside the report on a wide one (the report never leaves) */
       if (act === 'rrtab') { st.tab = arg; if (arg !== 'report') st.side = arg; return redraw(); }
+      if (act === 'rrlay') { try { localStorage.setItem('vera:canvas:rrlay', arg === 'below' ? 'below' : 'right'); } catch (e) { /* this page only */ } return redraw(); }
       if (act === 'ent') { st.ent = st.ent === arg ? '' : arg; st.page = 0; return redraw(); }
       if (act === 'goto') return this._rgNode(key, { id: 'r:' + arg });   // a timeline dot: its page, opened, wherever it sits
       if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key);

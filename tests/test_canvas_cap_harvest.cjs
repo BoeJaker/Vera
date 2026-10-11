@@ -133,7 +133,8 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
 {
   const shapeless = { ok: true, note: 'nothing to draw here' };
   t('a result with no richer shape matches none of THESE recognisers', T(shapeless) === null && TBL(shapeless, 'x') === null && W(shapeless, 'x', {}) === null);
-  t('so the harvest still falls through to markdown', /out\.push\(\{kind:'markdown', n:n\.split\(' '\)\[0\]/.test(src));
+  /* owner, 2026-10-11: the fenced dump of a card's text was "a blank element" on the canvas - nothing to show is no item */
+  t('so the harvest lands nothing for it (no fenced dump of the card)', !/out\.push\(\{kind:'markdown', n:n\.split\(' '\)\[0\]/.test(src) && src.includes('NOTHING TO SHOW IS NO ITEM'));
   t('and a card from a restored session, with no kept result, falls through too',
     /const cap = el\.__cap \|\| null/.test(src) && /if\(made\)\{ out\.push\(made\); return; \}/.test(src));
   t('a FAILED cap is never drawn as data', /cap && !cap\.err \? cap\.content : null/.test(src));
