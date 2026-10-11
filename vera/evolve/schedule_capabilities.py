@@ -347,6 +347,9 @@ def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = 
 # A loop on a goal or a branch's unit tests takes minutes to an hour: the tick starts it and moves on, and the run
 # record is closed (result + detail) when it ends, which also releases the schedule's next start.
 _BG_TASKS: set = set()
+#: RF-09: run id -> schedule id of the EXCLUSIVE background runs (cap schedules) still going. A census
+#: does not start while one runs; the tick passes the count to schedule_core as `exclusive_running`.
+_EXCLUSIVE_BG: Dict[str, str] = {}
 
 
 def _bg_word(res: Any) -> str:
@@ -382,7 +385,10 @@ async def _board_note(rec: Dict[str, Any], body: str) -> None:
         pass
 
 
-def _in_background(run_id: str, rec: Dict[str, Any], coro) -> None:
+def _in_background(run_id: str, rec: Dict[str, Any], coro, *, exclusive: bool = False) -> None:
+    if exclusive:
+        _EXCLUSIVE_BG[run_id] = rec.get("id", "")
+
     async def _go():
         try:
             res = await coro
@@ -400,6 +406,8 @@ def _in_background(run_id: str, rec: Dict[str, Any], coro) -> None:
     t = asyncio.ensure_future(_go())
     _BG_TASKS.add(t)
     t.add_done_callback(_BG_TASKS.discard)
+    if exclusive:
+        t.add_done_callback(lambda _t: _EXCLUSIVE_BG.pop(run_id, None))
 
 
 async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") -> Dict[str, Any]:
@@ -456,7 +464,11 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
     if kind == "cap":
         if core.cap_denied(t.get("name", "")):
             return {"error": f"{t.get('name')} may not run from a schedule"}
-        return await _call(t.get("name", ""), **(t.get("arguments") or {}))
+        # RF-09: in the background, not inline in the tick - a long cap held _TICK_LOCK and
+        # stopped all scheduling. An exclusive one keeps censuses off the box while it runs.
+        _in_background(run_id, rec, _call(t.get("name", ""), **(t.get("arguments") or {})),
+                       exclusive=bool(rec.get("exclusive", True)))
+        return {"ok": True, "state": f"cap {t.get('name', '')} running", "background": True}
     return {"error": f"unknown kind {kind!r}"}
 
 
@@ -517,6 +529,7 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
     now = now or _now()
     cfg = await _get_config()
     state = await box_state()
+    state["exclusive_running"] = len(_EXCLUSIVE_BG)        # RF-09: exclusive cap runs in flight
     await _finalize_census_if_done(state)
     if not state.get("census_running"):
         state["census_owner"] = ""

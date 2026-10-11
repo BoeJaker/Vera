@@ -472,10 +472,14 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
             return False, "census in flight"
         if int(state.get("loops_running") or 0) > 0:
             return False, "an agent loop is running"
+        if int(state.get("exclusive_running") or 0) > 0:
+            return False, "an exclusive scheduled cap is running"      # RF-09
         if state.get("harness_blocked"):
             return False, str(state["harness_blocked"])
     elif rec.get("exclusive", True) and state.get("census_running"):
         return False, "census in flight"
+    elif kind == "cap" and rec.get("exclusive", True) and int(state.get("loops_running") or 0) > 0:
+        return False, "an agent loop is running"                      # RF-09: caps wait for loops
     return True, "due"
 
 
