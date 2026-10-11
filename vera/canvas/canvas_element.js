@@ -2968,7 +2968,7 @@
          preview="on|off"           whether an HTML item, and a code block that is a whole page, DRAW by default or
                                     show their source. Either way the drawing is a sandboxed frame.
          explode-offer="both|code|never"  whether the canvas offers to explode a code item, a prose item, or neither. */
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect', 'desk-arrange', 'panel-room']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect', 'desk-arrange', 'panel-room', 'desk-combine', 'desk-fill', 'desk-settle', 'desk-fit']; }
 
     constructor() {
       super();
@@ -3030,6 +3030,11 @@
       if (name === 'align' && this.hasAttribute('stage')) { this._view = null; this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); }
       if ((name === 'chat-side' || name === 'desk-arrange') && this.deskAlign() && this.hasAttribute('stage')) this._placeNow();
       if (name === 'panel-room') { try { this._panelRoom(); } catch (e) { /* optional */ } }
+      /* the desk's own switches (WSU-48, Settings): combine changes which cards there are, the rest how they are placed -
+         a change takes effect at once; fit switched off drops what it had measured */
+      if (/^desk-(combine|fill|settle|fit)$/.test(name) && this.deskAlign() && this.hasAttribute('stage')) {
+        if (name === 'desk-fit') { this._natH = {}; this._natW = {}; this._minH = {}; } this._fitRuns = 0;
+        if (name === 'desk-combine' && this._doc) { this._html = null; this.render(this._doc); } else this._placeNow(); }
       // a floating chat moved: place again on the next frame (a drag sends many)
       if (name === 'chat-rect' && this.deskAlign() && this.hasAttribute('stage') && !this._chatRaf) {
         this._chatRaf = requestAnimationFrame(() => { this._chatRaf = 0; this._placeNow(); });
