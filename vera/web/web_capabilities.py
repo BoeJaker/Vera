@@ -1443,6 +1443,7 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
     async def step(stage: str, have: Optional[List[Dict[str, Any]]] = None) -> None:
         try:
             await emit_event({"type": "info.seek.step", "question": question[:300], "need": need, "subject": subject[:120],
+                              "trace_id": str(trace_id or ""),   # the call's own key (DA-04a), as web.research's steps
                               "stage": stage, "checked": checked[-8:], "elapsed_ms": int((time.monotonic() - t0) * 1000),
                               "items": [{"title": str(h.get("title") or "")[:160], "url": h.get("url") or "",
                                          "site": h.get("site") or h.get("domain") or "", "published": h.get("published") or "",
