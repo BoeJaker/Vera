@@ -32,7 +32,15 @@ const ent = { key: 'e1', type: 'entities', content: { groups: [{ group: 'reply',
 const ed = D(ent, {});
 t('entities: by type', byId(ed, 'types') && byId(ed, 'types').data.ORG === 4 && byId(ed, 'types').data.PERSON === 2);
 t('entities: most mentioned', byId(ed, 'names') && byId(ed, 'names').data.Bitcoin === 3);
-t('other kinds: none', D({ key: 'n', type: 'note', content: { text: 'x' } }, {}).length === 0);
+t('other kinds, and a short note: none', D({ key: 'n', type: 'note', content: { text: 'x' } }, {}).length === 0 && D({ key: 'k', type: 'kv', content: { fields: { a: 1 } } }, {}).length === 0);
+
+const md = '# Choosing a model\n\nQwen leads for code; Qwen is small enough. Licences matter: Qwen is Apache, Llama has its own licence.\n\n'
+  + '## Shortlist\n\nQwen, Llama and Gemma were tried on forty prompts; Gemma was slowest. See https://huggingface.co/qwen and https://www.ollama.com/library and https://huggingface.co/meta.\n\n'
+  + '## Licences\n\nApache for Qwen, the Llama licence for Llama, Gemma terms for Gemma.';
+const dd = D({ key: 'd1', type: 'markdown', content: { title: 'Models', md } }, {});
+t('document: sections by their words', byId(dd, 'sections') && Object.keys(byId(dd, 'sections').data).join('|') === 'Choosing a model|Shortlist|Licences' && byId(dd, 'sections').data.Shortlist > 10, JSON.stringify(byId(dd, 'sections')));
+t('document: key terms, stop words out, links not counted as words', byId(dd, 'terms') && byId(dd, 'terms').data.qwen >= 5 && byId(dd, 'terms').data.licence >= 2 && !('https' in byId(dd, 'terms').data) && !('huggingface' in byId(dd, 'terms').data), JSON.stringify(byId(dd, 'terms') && byId(dd, 'terms').data));
+t('document: links by site', byId(dd, 'links') && byId(dd, 'links').data['huggingface.co'] === 2 && byId(dd, 'links').data['ollama.com'] === 1);
 
 t('the menu lists them, lit when open; the row toggles a bound widget item',
   SRC.includes("h += '<hr><div class=\"hd-lbl\">Deep dive</div>'") && SRC.includes("const dk = 'dive:' + d.id + ':' + key;")
