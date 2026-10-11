@@ -346,6 +346,12 @@
         memoryLayer: false,
         memoryStore: false,
         calm: this.hasAttribute('calm'),   /* settled before it is shown, still after: a graph among other things */
+        /* A GRAPH OF THE HOST'S OWN DATA TAKES NO ESTATE EVENTS (owner, 2026-10-11: the desk's graph "flickers like a broken
+           lightbulb"): every graph subscribed to the fabric's live events (record ingested, loom, acquire progress) and
+           each one ADDED a node to it and pulsed it - on a busy estate a stream of foreign nodes into a desk card's graph of
+           a search, re-laid out each time. A graph the host draws from its own data (renderer=data, setGraph), or a calm one,
+           shows that data only. */
+        subscribeLiveEvents: !(this.getAttribute('renderer') === 'data' || this.hasAttribute('calm')),
         defaultLayer: layer,
         layerOpts: params,
         onNodeClick: function (node) {

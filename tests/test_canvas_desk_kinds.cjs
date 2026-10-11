@@ -71,10 +71,22 @@ t('widget table rows share their column tracks (no auto: each row is its own gri
 t('minimal: counts and stats at the top are not drawn unless the canvas shows its full chrome', src.includes(':host(:not([data-tier="full"])) .it .vc-rbx > :is(.vc-rbx-top,.vc-rbx-glance){display:none}') && src.includes(':is(.vc-rr-n,.vc-rr-ft,.vc-act-n){display:none}'));
 t('minimal: controls over the item, shown when pointed at, used or opened; facets when the filter is used', src.includes('.it:is(:hover,.hov,:focus-within,.maxed) .vc-rbx > .vc-rbx-tools{opacity:1;pointer-events:auto}') && src.includes('.it:not(:focus-within):not(.maxed) .vc-rbx > .vc-rbx-facets{display:none}'));
 t('minimal: the card\'s icon row, a combined card\'s tabs and a drawing\'s caption and menu likewise', src.includes('.stage .it:not(.desk-chip) > .hda{opacity:0}') && src.includes('> .cmp-tabs{opacity:0') && src.includes('#live .lv :is(.vge-note,.vg-layer){opacity:0'));
-t('a page opened in a list fills the room, alone, and closing the last puts the card back', src.includes('_readerFollow(key) {') && src.includes("if (any && this._max !== key) { this._autoMax = key; this._toggleMax(key); return true; }")
+t('a page opened in a list fills the room, alone, and closing the last puts the card back', src.includes('_readerFollow(key, grow) {') && src.includes("if (any && grow !== false && this._max !== key) { this._autoMax = key; this._toggleMax(key); return true; }")
   && src.includes("if (!any && this._autoMax === key) { this._autoMax = null; if (this._max === key) this._toggleMax(key); return true; }") && src.includes("(maxed && this._autoMax === key ? ' reading' : '')"));
-t('an opened page has a way back', src.includes("actBtn('open', r.id, '← back'"));
+t('an opened page has a way back, shown while it fills the room', src.includes('class="vc-rbx-b rb-back" data-rec-act="open"') && src.includes('.rb-back{display:none!important}.it.reading .rb-back{display:inline-flex!important}'));
 t('the desk settles its cards upward after pulling them apart; a risen card keeps its size', src.includes('D.settle(plan, R, { W: W, H: H }, { gap: 12 });') && src.includes('if (it.settled && !it.fixed) { it.keepSize = true;'));
+
+/* round 4 (owner, 2026-10-11): reader on the title, plain click in place, carry back from full, pills, names menu, sizes */
+t('a plain click opens a result in place; only reader mode fills the room', src.includes('_readerFollow(key, grow)') && src.includes('if (!st.open[it.id] && this._readerFollow(key, false)) return;'));
+t('a result\'s title opens reader mode (ctrl / middle click still opens the page)', src.includes("const tl = t.closest('a.vc-rbx-t');") && src.includes("this._recAct(row.dataset.recKey, 'read', row.dataset.recArg)"));
+t('reader text has no box of its own and the card filling the room is never see-through', src.includes('.it.reading .vc-rbx-open :is(.vc-rbx-body,.vc-reader,.vc-rd-body){background:transparent!important') && src.includes('.stage .it:is(.maxed,.reading){background:var(--bg1,#15181d)!important'));
+t('a filling card carried by its header goes back to the desk where it is let go', src.includes("this._dgMax = { key: it.dataset.key, x0: ev.clientX, y0: ev.clientY }") && src.includes('if (this._max === m.key) this._toggleMax(m.key);'));
+t('a card minimises to a pill from its controls and opens again on a click', src.includes("hb('pill', 'pill'") && src.includes("if (act === 'pill') { this._pillSet(key, true);") && src.includes('this._pillSet(pc.dataset.key, false)'));
+t('names and sites are a menu of ranked widgets, not rows of pills', src.includes('data-rec-act="names"') && src.includes("form: 'ranked'") && src.includes(':host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-facets{display:none!important}'));
+t('the card\'s controls are bigger; narrow kinds are no wider than they use', src.includes('.hda > .hb{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px') && src.includes('entities: 460, note: 420, kv: 560'));
+const ge = fs.readFileSync(path.join(__dirname, '..', 'vera', 'graph_embed_element.js'), 'utf8');
+t('a graph of the host\'s own data takes no estate events (it flickered with each one)', ge.includes("subscribeLiveEvents: !(this.getAttribute('renderer') === 'data' || this.hasAttribute('calm'))"));
+t('the memory graph says why it is empty rather than drawing nothing', chat.includes('session started on a sandbox') && chat.includes("textContent='nothing stored in memory for this session'"));
 
 const D = require(path.join(__dirname, '..', 'vera', 'ui', 'desk_layout_core.js'));
 const g = [{ id: 'n', x: 300, y: 200, w: 300, h: 100, maxH: 120 }];
