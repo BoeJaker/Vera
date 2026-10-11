@@ -3335,7 +3335,8 @@ async def _tick() -> None:
         st.prune_decisions(_since(24 * 90))
     if st.get_kv("calibrated_week") != week:      # refit the topic curves from a week's new ratings
         st.set_kv("calibrated_week", week)
-        fit_curves()
+        # off the event loop: up to 20,000 decisions, each with its signal read from SQLite (review 2026-10-10)
+        await asyncio.to_thread(fit_curves)
 
 
 def _curves() -> Dict[str, Dict[str, Any]]:
@@ -3348,14 +3349,18 @@ def fit_curves() -> Dict[str, Any]:
     report buttons). Pure arithmetic over the local store - no model call."""
     st = store()
     by_topic: Dict[str, List[Tuple[float, int]]] = {}
+    topic_of: Dict[str, str] = {}
     for d in st.decisions(question_id="intel.signal_relevant", limit=20000, with_outcomes=True):
         y = calib.label_of(o.get("source") for o in d.get("outcomes") or [])
         score = (d.get("detail") or {}).get("score")
         if y is None or score is None:
             continue
-        sig = st.get_signal((d.get("state_ref") or {}).get("id", ""))
-        if sig:
-            by_topic.setdefault(sig["topic_id"], []).append((float(score), y))
+        sid = (d.get("state_ref") or {}).get("id", "")
+        if sid not in topic_of:                    # one read per signal, however many decisions name it
+            sig = st.get_signal(sid)
+            topic_of[sid] = sig["topic_id"] if sig else ""
+        if topic_of[sid]:
+            by_topic.setdefault(topic_of[sid], []).append((float(score), y))
     topics = {tid: calib.calibrate(pairs) for tid, pairs in by_topic.items()}
     rec = {"at": core.now_iso(), "topics": topics,
            "labelled": sum(len(v) for v in by_topic.values())}
@@ -3370,7 +3375,7 @@ def fit_curves() -> Dict[str, Any]:
                         "score where it says 50/50, and whether the learned gate is switched on (calibrated_gate). "
                         "Input: refit (bool - fit now from the ratings so far). Output: {at, labelled, on, topics}.")
 async def cap_calibration_status(refit: bool = False, trace_id=None):
-    rec = fit_curves() if refit else (store().get_kv("calibration", {}) or {})
+    rec = await asyncio.to_thread(fit_curves) if refit else (store().get_kv("calibration", {}) or {})
     return {"at": rec.get("at"), "labelled": rec.get("labelled", 0), "on": bool(config().get("calibrated_gate")),
             "topics": rec.get("topics") or {}}
 
