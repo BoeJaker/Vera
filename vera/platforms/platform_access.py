@@ -46,6 +46,38 @@ async def resolve(registry: Dict[str, Any], value: Any, default_key: str = "") -
     return await secret_value(registry, v or default_key)
 
 
+async def connection_get(registry: Dict[str, Any], pid: str, path: str = "",
+                         params: Optional[Dict[str, Any]] = None, **kw: Any) -> Dict[str, Any]:
+    """GET `path` through API connection `pid` (Platforms > Connections): {response, shown_url, ms} or {error}. The
+    connection supplies the base URL and the credential; the caller never sees the key."""
+    g = _platform(registry)
+    fn = g.get("connection_get") if g else None
+    if fn is None:
+        return {"error": "the platforms module is not loaded - API connections are unavailable"}
+    return await fn(pid, path, params, **kw)
+
+
+async def connection_info(registry: Dict[str, Any], pid: str, path: str = "") -> Dict[str, Any]:
+    """What a connection is, without its credential: {id, label, base_url, auth, url (for `path`), enabled} or
+    {error}."""
+    g = _platform(registry)
+    fn = g.get("connection_info") if g else None
+    if fn is None:
+        return {"error": "the platforms module is not loaded - API connections are unavailable"}
+    return await fn(pid, path)
+
+
+async def store_secret(registry: Dict[str, Any], key: str, value: str, label: str = "") -> bool:
+    """Put a credential into the store under `key` (OpenBao; sealed inline where there is none). False when the
+    platforms module is not loaded - the caller keeps what it had."""
+    g = _platform(registry)
+    fn = g.get("_store_secret") if g else None
+    if fn is None or not key or not value:
+        return False
+    await fn(key, value, label)
+    return True
+
+
 def declare(registry: Dict[str, Any], key: str, who: str, *, label: str = "", why: str = "") -> bool:
     """Tell the Platforms page that `who` reads credential `key`. False when the platforms module is not loaded."""
     g = _platform(registry)

@@ -4049,14 +4049,33 @@ async def cap_api_list(dataset_id: str = "", include_endpoints: bool = True,
     description="Sample an API endpoint and MAP its response shape: locate the "
                 "record array, infer a flat field schema, return a small sample, "
                 "and suggest a jq_path so it can be wired up as a pull source. "
-                "Input: surface_id (str) OR url (str), headers (JSON str='{}'), "
-                "sample (int=5). "
+                "Input: surface_id (str) OR url (str) OR connection (str, a Platforms API "
+                "connection id) + path (str), headers (JSON str='{}'), sample (int=5). "
+                "Through a connection its credential is used and never shown; the answer's "
+                "add_source holds the fabric.sources.add arguments for it. "
                 "Output: {ok, url, root_type, count, suggested_jq, "
-                "schema:[{field,type,example}], records:[...]}.",
+                "schema:[{field,type,example}], records:[...], add_source}.",
 )
 async def cap_api_map(surface_id: str = "", url: str = "", headers: str = "{}",
-                      sample: int = 5, trace_id=None) -> Dict:
+                      sample: int = 5, connection: str = "", path: str = "", trace_id=None) -> Dict:
     _ensure_tables()
+    if connection.strip():
+        try:
+            from Vera.vera.platforms import platform_access as _pa
+        except Exception:
+            from vera.platforms import platform_access as _pa
+        got = await _pa.connection_get(CAPABILITY_REGISTRY, connection.strip(), path, accept="application/json")
+        if got.get("error"):
+            return {"error": got["error"], "url": got.get("shown_url", "")}
+        r = got["response"]
+        if r.status_code >= 400:
+            return {"error": f"HTTP {r.status_code}", "url": got["shown_url"]}
+        try:
+            data = r.json()
+        except ValueError:
+            return {"error": "the answer is not JSON", "url": got["shown_url"]}
+        return _map_answer(data, got["shown_url"], sample,
+                           {"connection": connection.strip(), "path": path, "source_type": "api"})
     if surface_id and not url:
         row = _sqlite_conn().execute(
             "SELECT url FROM fabric_surfaces WHERE id=?", (surface_id,)).fetchone()
@@ -4078,7 +4097,12 @@ async def cap_api_map(surface_id: str = "", url: str = "", headers: str = "{}",
             data = r.json()
     except Exception as e:
         return {"error": f"fetch failed: {e}"}
+    return _map_answer(data, url, sample, {"url": url, "source_type": "api",
+                                           **({"headers": json.dumps(hdrs)} if hdrs else {})})
 
+
+def _map_answer(data: Any, url: str, sample: int, add: Dict[str, Any]) -> Dict:
+    """fabric.api.map's answer for a fetched JSON document."""
     # Locate the record array and the jq_path that reaches it.
     suggested_jq, arr = "", None
     if isinstance(data, list):
@@ -4093,6 +4117,14 @@ async def cap_api_map(surface_id: str = "", url: str = "", headers: str = "{}",
                 if isinstance(v, list) and v:
                     arr, suggested_jq = v, k
                     break
+        if arr is None:
+            # one level down: {"response": {"results": [...]}} (Guardian), {"data": {"items": [...]}}
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    k2 = next((k2 for k2, v2 in v.items() if isinstance(v2, list) and v2), "")
+                    if k2:
+                        arr, suggested_jq = v[k2], f"{k}.{k2}"
+                        break
         if arr is None:
             arr = [data]
     else:
@@ -4114,7 +4146,8 @@ async def cap_api_map(surface_id: str = "", url: str = "", headers: str = "{}",
     return {"ok": True, "url": url, "root_type": root_type,
             "count": len(arr or []), "suggested_jq": suggested_jq,
             "schema": list(schema_map.values()),
-            "records": (arr or [])[:max(1, min(int(sample or 5), 25))]}
+            "records": (arr or [])[:max(1, min(int(sample or 5), 25))],
+            "add_source": {**add, "jq_path": suggested_jq}}
 
 
 @capability(

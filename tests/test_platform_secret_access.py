@@ -27,9 +27,17 @@ def _fake_registry(store):
     return {"platform.secrets.list": {"func": g["platform_secrets_list"]}}, g
 
 
+def run(c):
+    """On a private loop: asyncio.run() would leave the main thread without one for later tests."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(c)
+    finally:
+        loop.close()
+
+
 def test_resolve_literal_reference_and_default():
     reg, g = _fake_registry({"brave_search_api_key": "BSK", "other": "OTH"})
-    run = asyncio.run
     assert run(PA.resolve(reg, "literal-key", "brave_search_api_key")) == "literal-key"     # older setups keep working
     assert run(PA.resolve(reg, "@secret:other", "brave_search_api_key")) == "OTH"
     assert run(PA.resolve(reg, "", "brave_search_api_key")) == "BSK"                       # empty -> the master record
@@ -62,7 +70,7 @@ def test_the_platforms_list_shows_keys_a_module_wants():
                                                   "why": "search fallback"}],
                          "ha_token": [{"who": "intel", "label": "", "why": ""}]}}
     exec(body, ns)
-    out = asyncio.run(ns["cap_secrets_list"]())["secrets"]
+    out = run(ns["cap_secrets_list"]())["secrets"]
     ha = next(r for r in out if r["key"] == "ha_token")
     assert ha["set"] and ha["used_by"] == ["intel"]
     want = next(r for r in out if r["key"] == "brave_search_api_key")
@@ -91,7 +99,7 @@ def test_fabric_headers_resolve_references_and_drop_unknown_ones():
     import logging
     ns = {"_orch": _O, "log": logging.getLogger("t"), "Dict": dict, "Any": object}
     exec(fn, ns)
-    out = asyncio.run(ns["_secret_headers"]({"api-key": "@secret:guardian_api_key", "Authorization": "Bearer @secret:nope",
+    out = run(ns["_secret_headers"]({"api-key": "@secret:guardian_api_key", "Authorization": "Bearer @secret:nope",
                                              "User-Agent": "Vera", "X-Empty": ""}))
     assert out == {"api-key": "G-KEY", "User-Agent": "Vera"}           # unresolved -> dropped, never sent as text
     assert "headers.update(await _secret_headers(extra))" in src
