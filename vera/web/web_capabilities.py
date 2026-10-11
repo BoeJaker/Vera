@@ -1140,6 +1140,7 @@ async def cap_web_research(
     async def step(stage: str) -> None:
         try:
             await emit_event({"type": "info.seek.step", "question": query[:300], "need": "lookup", "subject": query[:120],
+                              "trace_id": str(trace_id or ""),   # the call's own key (DA-04a: lookups matched by trace)
                               "stage": stage, "checked": checked[-8:], "elapsed_ms": int((time.monotonic() - t0) * 1000),
                               "items": [{"title": str(h.get("title") or "")[:160], "url": h.get("url") or "",
                                          "site": h.get("site") or h.get("domain") or "", "published": h.get("published") or "",

@@ -39,7 +39,7 @@ def _run(monkeypatch, read_fails=()):
     monkeypatch.setattr(W, "cap_web_search", search)
     monkeypatch.setattr(W, "cap_web_fetch", fetch)
     monkeypatch.setitem(W._orch.CAPABILITY_REGISTRY, "reader.page", {"func": reader})
-    out = asyncio.run(W.cap_web_research(query="latest on the thing", results=3))
+    out = asyncio.run(W.cap_web_research(query="latest on the thing", results=3, trace_id="tr-1"))
     return out, events
 
 
@@ -47,7 +47,7 @@ def test_stages_in_order_keyed_by_the_query(monkeypatch):
     out, events = _run(monkeypatch)
     steps = [e for e in events if e.get("type") == "info.seek.step"]
     assert len(out["sources"]) == 3
-    assert all(e["question"] == "latest on the thing" for e in steps)
+    assert all(e["question"] == "latest on the thing" and e["trace_id"] == "tr-1" for e in steps)   # DA-04a
     stages = [e["stage"] for e in steps]
     assert stages[0] == "searching the web"
     assert stages[1] == "reading the top 3 pages"
