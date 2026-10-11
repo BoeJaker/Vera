@@ -63,6 +63,8 @@ LAYOUTS = {
     # info-first (compute-roles P1a, 10 Oct 2026)
     "I1": {"info_first": True},
     "I2": {"info_first": True, "answer_check": True},
+    # goal constraints into done_when + the final gate (plan.goal_frame, B2, 11 Oct 2026)
+    "G1": {"minds": {"plan.goal_frame": "on"}},
     # the loop's role-less stages placed on CPU nodes (stage_models, 10 Oct 2026)
     "C1": {"stage_models": "verifier=qwen3.6:35b-a3b@cpu-246,gate=qwen3.6:35b-a3b@cpu-246"},
     "C2": {"stage_models": "journal=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"

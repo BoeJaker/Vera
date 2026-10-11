@@ -14378,6 +14378,20 @@ except Exception:                                     # pragma: no cover
 _ENTITY_NER_TIMEOUT_S = 20.0
 
 
+try:
+    from Vera.vera.dag import goal_constraints_core as _goal_cons_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import goal_constraints_core as _goal_cons_core
+
+
+def _goal_frame_on() -> bool:
+    """Switch plan.goal_frame (four-minds FM-1.3 / compute-roles B2), off by default."""
+    try:
+        return _minds_core is not None and _minds_core.mode_of("plan.goal_frame") == "on"
+    except Exception:
+        return False
+
+
 async def _v6_goal_entities(goal: str) -> List[Dict[str, str]]:
     """The goal's checkable entities (entity_coverage_core.goal_entities) from
     nlp.ner, or [] when NER is unavailable or slow. Calls the cap's raw
@@ -25594,6 +25608,15 @@ async def cap_dag_agent_loop_v6(
     except Exception:
         pass
 
+    # Goal constraints (plan.goal_frame, B2): dates, versions and numeric limits from the goal
+    # text become done_when items and the final gate's must-cover list (goal_constraints_core).
+    _goal_cons: List[Dict[str, Any]] = []
+    if _goal_frame_on():
+        _goal_cons = _goal_cons_core.extract(goal)
+        if _goal_cons:
+            done_when = (done_when + "\n" if done_when else "") + _goal_cons_core.block(_goal_cons)
+            await emit_event({"type": "agent_loop_v6.goal_constraints", "session_id": sid,
+                              "stream_id": stream_id, "constraints": _goal_cons})
     steps = plan.get("steps") or []
     if not steps:
         # Every planning stage failed (structured plan, minimal-schema retry,
@@ -26479,6 +26502,8 @@ async def cap_dag_agent_loop_v6(
         _gate_rounds += 1
         _gate_goal = (goal + "\n\n" + _user_updates_block(user_updates)
                       if user_updates else goal)
+        if _goal_cons:                                   # plan.goal_frame: the must-cover list
+            _gate_goal = _gate_goal + "\n\n" + _goal_cons_core.block(_goal_cons)
         # stepwise-reviewed: the critic's latest notes are evidence for the gate
         # (what it found missing is exactly what the gate must not wave through).
         if _critic is not None:
@@ -26725,6 +26750,13 @@ async def cap_dag_agent_loop_v6(
     # Before .done, so the trace digest and the Loop Lab record include it.
     await _v6_entity_coverage(_goal_ents_task, deliverable or final, sid=sid,
                               stream_id=stream_id)
+    if _goal_cons:                                       # plan.goal_frame: what the answer met
+        try:
+            await emit_event({"type": "agent_loop_v6.goal_constraint_coverage", "session_id": sid,
+                              "stream_id": stream_id,
+                              **_goal_cons_core.coverage(_goal_cons, deliverable or final)})
+        except Exception:
+            pass
     _zs_rec = await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
                                        stream_id=stream_id)
     if _dl is not None and _zs_rec:
