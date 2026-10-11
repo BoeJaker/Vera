@@ -668,9 +668,13 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
     text = _render_seek(query, selected, len(cands), collapsed_total, max_chars)
     env.stage("select", env.mark(), "weak" if weak_ctx else "ok", len(selected))
     _record(env)
+    # the evidence behind each pick (FM-7.1): its cosine, whether keyword search found it, and where it came from
     results = [{"n": i, "id": c["id"], "dataset_id": c["dataset_id"],
                 "score": round(c["score"], 3), "created_at": c["created_at"],
-                "collapsed": c.get("collapsed", 0)}
+                "collapsed": c.get("collapsed", 0),
+                "vector_score": round(float((vec_sims or {}).get(c["id"], 0.0)), 3),
+                "keyword": c["id"] in (text_ids or set()),
+                "origin": c.get("origin") or "fabric"}
                for i, c in enumerate(selected, 1)]
     out = {"text": text, "results": results, "count": len(selected),
            "candidates": len(cands), "collapsed": collapsed_total,

@@ -56,3 +56,11 @@ def test_the_switch_is_registered_off():
     from vera.minds import switchboard_core as SB
     f = SB.REGISTRY["memory.seek_cache"]
     assert f.modes == ("off", "on") and f.default == "off" and f.package == "FM-7.1"
+
+
+def test_seek_returns_the_evidence_per_pick():
+    src = _src("vera/fabric/memory_retrieval.py")
+    body = src[src.index("async def cap_memory_seek("):src.index("async def cap_memory_read(")]
+    for field in ('"vector_score": round(float((vec_sims or {}).get(c["id"], 0.0)), 3)',
+                  '"keyword": c["id"] in (text_ids or set())', '"origin": c.get("origin") or "fabric"'):
+        assert field in body
