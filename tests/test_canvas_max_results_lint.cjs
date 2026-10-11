@@ -29,7 +29,7 @@ t('nothing else\'s live content is drawn over it', /if \(this\._max && k !== thi
 
 // ── the preview never blanks ────────────────────────────────────────────────────────────────────────────────────
 t('an html item redraws from its html, not an empty code field', /this\._previewSwap\(el, this\._pdoc\(key, h\.dataset\.lang \|\| cc\.lang, cc\.code \|\| cc\.html \|\| ''\)\)/.test(SRC));
-t('a page still streaming opens at its newest line', /_pdoc\(key, lang, src\) \{ const d = previewDoc\(lang, src\); return \(this\._liveOv && this\._liveOv\[String\(key\)\]\) \? d \+ '<script>try\{scrollTo\(0,document\.documentElement\.scrollHeight\)\}/.test(SRC));
+t('a page still streaming opens at its newest line', /_pdoc\(key, lang, src\) \{ const d = previewDoc\(lang, src\)(?: \+ PREVIEW_H)?; return \(this\._liveOv && this\._liveOv\[String\(key\)\]\) \? d \+ '<script>try\{scrollTo\(0,document\.documentElement\.scrollHeight\)\}/.test(SRC));
 t('the first document is remembered, so an unchanged one is not reloaded', /inner\._doc = pd; inner\.srcdoc = pd;/.test(SRC));
 t('the next document loads behind the one on screen', /nf\.className = 'vc-pframe vc-pnext'/.test(SRC) && /#live \.lv > iframe\.vc-pnext\{position:absolute;left:0;top:0;opacity:0/.test(SRC));
 t('and a swap is at most every half second', /Math\.max\(0, 500 - \(Date\.now\(\) - t0\)\)/.test(SRC));
