@@ -51,5 +51,14 @@ t('other caps are not', !look('cal.events.list') && !look('web.research.extra') 
 t('the follow-up after a lookup asks for dated [n] citations and no guesses',
   /\+ \(_isLookupCap\(capName\)/.test(CHAT) && /cite them as \[n\] with their date/.test(CHAT) && /do not `\s*\+ `fill the gap from memory or a guess/.test(CHAT));
 
+// SK-3.7: a background report reaches the chat. 7 Oct: an 18-minute research job never did - the WebSocket failed and
+// polling stopped at 5 minutes, silently. info.seek need=deep returns a job_id with no status, so nothing followed it.
+t('polling lasts as long as a report can (maxWaitMs), not 5 minutes', !/Math\.min\(maxWaitMs,300000\)/.test(CHAT)
+  && /while\(!cancelled&&Date\.now\(\)-start<maxWaitMs\)\{/.test(CHAT));
+t('a report still running when the wait ends says so', /if\(!finished&&!cancelled\)\{\s*setStatus\(`Still running after/.test(CHAT));
+t('info.seek deep: the report it started is followed into the chat, not awaited',
+  /if\(capName==='info\.seek'&&content&&typeof content==='object'&&content\.job_id\) _followReport\(content\.job_id,agentName\);/.test(CHAT)
+  && /function _followReport\(jobId, agentName\)\{[\s\S]{0,900}_streamResearchJob\(jobId,agentName,card\)\.catch\(/.test(CHAT));
+
 if (fails) { console.log(fails + ' failed'); process.exit(1); }
 console.log('all passed');
