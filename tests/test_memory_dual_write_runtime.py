@@ -58,7 +58,7 @@ def test_compose_persists_and_forwards_the_default_off_canary_contract():
     source = (Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text(
         encoding="utf-8")
     assert 'VERA_STATE_DIR: "${VERA_STATE_DIR:-/var/lib/vera-state}"' in source
-    assert 'FABRIC_REVISION_SQLITE: "${FABRIC_REVISION_SQLITE:-/var/lib/vera-state/fabric/record-revisions.sqlite3}"' in source
+    assert 'FABRIC_REVISION_SQLITE: "${FABRIC_REVISION_SQLITE:-}"' in source
     assert 'VERA_MEMORY_DUAL_WRITE_RECEIPTS: "${VERA_MEMORY_DUAL_WRITE_RECEIPTS:-/var/lib/vera-state/fabric/memory-dual-write-receipts.sqlite3}"' in source
     assert 'VERA_MEMORY_REVISION_CANARY: "${VERA_MEMORY_REVISION_CANARY:-0}"' in source
     assert 'VERA_MEMORY_RECONCILIATION_ENABLED: "${VERA_MEMORY_RECONCILIATION_ENABLED:-0}"' in source

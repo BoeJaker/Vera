@@ -61,9 +61,15 @@ import httpx
 # ── Config (single source of truth) ──────────────────────────────────────────
 from Vera.vera.config import cfg
 try:
-    from Vera.vera.fabric.revision_state_paths import default_memory_revision_path
+    from Vera.vera.fabric.revision_state_paths import (
+        default_memory_revision_path,
+        migrate_legacy_memory_revision_state,
+    )
 except ImportError:                                     # pragma: no cover
-    from .revision_state_paths import default_memory_revision_path
+    from .revision_state_paths import (
+        default_memory_revision_path,
+        migrate_legacy_memory_revision_state,
+    )
 try:                                                    # RF-77
     from Vera.vera.fabric import chroma_bound_core as _chroma_bound
 except ImportError:                                     # pragma: no cover
@@ -5439,6 +5445,57 @@ def _json_value(raw: str, field: str) -> Any:
 def _project_canonical_revision_sqlite(envelope: Dict[str, Any]) -> Dict[str, Any]:
     """Apply one canonical revision to the existing SQLite read projection."""
     return apply_sqlite_projection(SQLITE_PATH, envelope, now=now_iso)
+
+
+@capability(
+    "fabric.revision.state.migrate", memory="off",
+    http_method="POST", http_path="/fabric/revisions/state/migrate",
+    http_tags=["fabric"],
+    description="Inspect or non-destructively copy the former checkout-local "
+                "Fabric revision SQLite database into durable VERA_STATE_DIR. "
+                "Dry-run is the default and returns the coherent SQLite snapshot "
+                "digest required for execution. Execution requires confirm=true, "
+                "an exact expected_snapshot_sha256, an unopened revision store, "
+                "and an absent canonical target. The legacy source is retained "
+                "and a process restart is required; no revision or authority is changed.",
+    contract={
+        "canonical_task": "fabric.revision.state.migrate", "aliases": [],
+        "effects": ["read", "write", "filesystem"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "explicit_confirmation"},
+        "trust": {"status": "digest_bound"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "sqlite_backup_source_retained"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "not_applicable"},
+        "schema_version": "1.0.0",
+    },
+)
+async def fabric_revision_state_migrate(
+    expected_snapshot_sha256: str = "", dry_run: bool = True,
+    confirm: bool = False, trace_id=None,
+):
+    if not isinstance(confirm, bool):
+        raise TypeError("confirm must be boolean")
+    if not dry_run:
+        if not confirm:
+            raise PermissionError("confirm=true required for revision state migration")
+        if _REVISION_STORE is not None:
+            raise RuntimeError(
+                "revision store is already open; restart and migrate before revision use")
+    result = await asyncio.to_thread(
+        migrate_legacy_memory_revision_state,
+        expected_snapshot_sha256=expected_snapshot_sha256,
+        dry_run=dry_run,
+    )
+    if result.get("executed"):
+        await emit_event({
+            "type": "fabric.revision.state.migrated",
+            "snapshot_sha256": result.get("snapshot_sha256", ""),
+            "source_retained": result.get("source_retained", False),
+            "restart_required": True,
+        })
+    return result
 
 
 @capability(
