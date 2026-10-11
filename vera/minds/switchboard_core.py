@@ -99,6 +99,10 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "memory.seek's result cache: the same seek (query, scope, since, k, size, memory merge) within 10 minutes "
        "and the same fabric generation - a counter every fabric ingest bumps - answers from Redis. 'off' (default) "
        "= every seek searches; 'on' = cached answers carry cached=true; session-memory hits can lag by up to 10 min."),
+    _f("memory.rerank", ("off", "on"), "memory", "FM-7.3",
+       "memory.seek's head reranked by the cross-encoder: the top 30 fused candidates re-read in one nlp.rerank call "
+       "on a node (bounded at 1.5 s), their order decided by it, still above the rest. 'off' (default) = fused order; "
+       "'on' = reranked. Exit: nDCG@10 +5 pts on the known-item set with p95 seek latency <= baseline + 200 ms."),
     _f("plan.precedent", ("off", "on"), "loop", "FM-4.2",
        "Precedent for the planner: up to 2 past runs of similar goals that went well, and 1 warning from one that "
        "did not (plan.precedent, searched on an NLP node), added to what the planner reads as reference with the "
