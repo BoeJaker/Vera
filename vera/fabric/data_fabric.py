@@ -60,6 +60,10 @@ import httpx
 
 # ── Config (single source of truth) ──────────────────────────────────────────
 from Vera.vera.config import cfg
+try:
+    from Vera.vera.fabric.revision_state_paths import default_memory_revision_path
+except ImportError:                                     # pragma: no cover
+    from .revision_state_paths import default_memory_revision_path
 try:                                                    # RF-77
     from Vera.vera.fabric import chroma_bound_core as _chroma_bound
 except ImportError:                                     # pragma: no cover
@@ -185,8 +189,9 @@ FABRIC_FAISS_ENABLED = os.getenv("FABRIC_FAISS", "0") == "1"
 FABRIC_CACHE_TTL    = int(os.getenv("FABRIC_CACHE_TTL",  "3600"))
 FABRIC_STREAM_KEY   = os.getenv("FABRIC_STREAM_KEY",     "vera:fabric:ingest")
 SQLITE_PATH         = os.getenv("FABRIC_SQLITE", str(Path(__file__).parent / "vera_fabric.db"))
-REVISION_SQLITE_PATH = os.getenv(
-    "FABRIC_REVISION_SQLITE", str(Path(__file__).parent / "vera_fabric_revisions.db"))
+REVISION_SQLITE_PATH = (
+    os.getenv("FABRIC_REVISION_SQLITE", "").strip()
+    or default_memory_revision_path())
 REVISION_POLICY_JSON = os.getenv("FABRIC_REVISION_POLICY", "")
 ARTIFACT_ROOT = os.getenv(
     "FABRIC_ARTIFACT_ROOT", str(Path(__file__).parent / "artifact_store"))

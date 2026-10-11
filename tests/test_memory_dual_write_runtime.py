@@ -45,12 +45,26 @@ def test_default_journals_are_shared_and_out_of_tree_across_import_topologies(
     monkeypatch.setenv("VERA_STATE_DIR", str(tmp_path / "state"))
     from Vera.vera.fabric import memory_dual_write_runtime as upper_runtime
 
-    expected_revision = tmp_path / "state" / "fabric" / "memory-record-revisions.sqlite3"
+    expected_revision = tmp_path / "state" / "fabric" / "record-revisions.sqlite3"
     expected_receipts = tmp_path / "state" / "fabric" / "memory-dual-write-receipts.sqlite3"
     assert default_memory_revision_path() == str(expected_revision)
     assert upper_runtime.default_memory_revision_path() == str(expected_revision)
     assert default_memory_dual_write_receipt_path() == str(expected_receipts)
     assert upper_runtime.default_memory_dual_write_receipt_path() == str(expected_receipts)
+
+
+def test_compose_persists_and_forwards_the_default_off_canary_contract():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text(
+        encoding="utf-8")
+    assert 'VERA_STATE_DIR: "${VERA_STATE_DIR:-/var/lib/vera-state}"' in source
+    assert 'FABRIC_REVISION_SQLITE: "${FABRIC_REVISION_SQLITE:-/var/lib/vera-state/fabric/record-revisions.sqlite3}"' in source
+    assert 'VERA_MEMORY_DUAL_WRITE_RECEIPTS: "${VERA_MEMORY_DUAL_WRITE_RECEIPTS:-/var/lib/vera-state/fabric/memory-dual-write-receipts.sqlite3}"' in source
+    assert 'VERA_MEMORY_REVISION_CANARY: "${VERA_MEMORY_REVISION_CANARY:-0}"' in source
+    assert 'VERA_MEMORY_RECONCILIATION_ENABLED: "${VERA_MEMORY_RECONCILIATION_ENABLED:-0}"' in source
+    assert 'FABRIC_REVISION_POLICY: "${FABRIC_REVISION_POLICY:-}"' in source
+    assert "- vera-state:/var/lib/vera-state" in source
+    assert "  vera-state:" in source
 
 
 def test_disabled_path_is_exact_native_await_and_constructs_nothing(tmp_path):

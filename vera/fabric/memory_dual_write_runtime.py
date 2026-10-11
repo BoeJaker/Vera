@@ -19,6 +19,10 @@ from .memory_dual_write_canary import (
 )
 from .memory_dual_write_store import MemoryDualWriteReceiptStore
 from .record_revision import create_record_revision
+from .revision_state_paths import (
+    default_memory_dual_write_receipt_path,
+    default_memory_revision_path,
+)
 from .revision_path import RevisionPath
 from .revision_policy import RevisionPolicy
 from .revision_store import RevisionStore
@@ -34,26 +38,6 @@ POLICY_ENV = "FABRIC_REVISION_POLICY"
 def memory_revision_canary_enabled(environ: Mapping[str, str] | None = None) -> bool:
     source = os.environ if environ is None else environ
     return str(source.get(CANARY_ENV, "0")).strip() == "1"
-
-
-def default_memory_revision_path() -> str:
-    """Return the shared, out-of-tree canonical revision journal path."""
-    try:
-        from Vera.vera import state_paths
-    except ImportError:                              # pragma: no cover
-        from .. import state_paths
-    path = state_paths.state_dir("fabric") / "memory-record-revisions.sqlite3"
-    return str(state_paths.guard_out_of_tree(path))
-
-
-def default_memory_dual_write_receipt_path() -> str:
-    """Return the shared, out-of-tree dual-write evidence journal path."""
-    try:
-        from Vera.vera import state_paths
-    except ImportError:                              # pragma: no cover
-        from .. import state_paths
-    path = state_paths.state_dir("fabric") / "memory-dual-write-receipts.sqlite3"
-    return str(state_paths.guard_out_of_tree(path))
 
 
 def _bounded_text(value: Any, limit: int) -> str:

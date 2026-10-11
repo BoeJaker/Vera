@@ -191,7 +191,7 @@ mutation cannot alter an existing observation.
 
 `vera.fabric.revision_store.RevisionStore` supplies the transactional
 authority. Its dedicated SQLite database (`FABRIC_REVISION_SQLITE`, default
-`vera/fabric/vera_fabric_revisions.db`; tables `fabric_record_revisions`,
+`VERA_STATE_DIR/fabric/record-revisions.sqlite3`; tables `fabric_record_revisions`,
 `fabric_record_heads`, `fabric_projection_receipts`, `fabric_revision_events`)
 atomically persists the revision, a current-head compare-and-swap, projection
 receipts and an audit event. Projection receipts move through a fixed state
@@ -1146,7 +1146,7 @@ edge type.
 | `VERA_EMBED_WAIT_S` / `VERA_EMBED_SLOW_COOLDOWN_S` | `5` / `30` | Embed wait and slow-embed cool-down |
 | `FABRIC_OBJECT_STORE` | `none` | Enable the S3-compatible blob store |
 | `FABRIC_S3_ENDPOINT` / `_ACCESS` / `_SECRET` / `_BUCKET` / `_REGION` | `http://localhost:3900` / — / — / `vera-data-fabric` / `garage` | Object-store connection |
-| `FABRIC_REVISION_SQLITE` | `vera/fabric/vera_fabric_revisions.db` | Canonical revision store |
+| `FABRIC_REVISION_SQLITE` | `VERA_STATE_DIR/fabric/record-revisions.sqlite3` | Canonical revision store shared with the Memory authority canary |
 | `FABRIC_REVISION_POLICY` | read: all, write: `user` | Revision caller policy (JSON) |
 | `FABRIC_ARTIFACT_ROOT` | `vera/fabric/artifact_store` | Local artifact store |
 | `FABRIC_ARTIFACT_POLICY` | read: all, write: `user` | Artifact caller policy (JSON) |
