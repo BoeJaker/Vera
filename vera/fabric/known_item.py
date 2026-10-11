@@ -137,7 +137,9 @@ async def cap_known_items_run(name: str = KI.VERSION, limit: int = 100, minds: O
     summary = KI.summarize(ranks, lat)
     out = {"ok": True, "name": name, "label": label or ("+".join(f"{k}={v}" for k, v in sorted((minds or {}).items()))
                                                        or "default"),
-           "minds": modes, "summary": summary, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+           "minds": modes, "summary": summary, "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           # the same run in the W5-03 evaluation contract (backbone review 11 Oct)
+           "evaluation_report": KI.evaluation_report(KI.set_revision(items), minds, summary)}
     runs = _dir() / "runs"
     runs.mkdir(parents=True, exist_ok=True)
     path = runs / f"{name}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}.json"

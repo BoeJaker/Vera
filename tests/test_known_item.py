@@ -75,3 +75,21 @@ def test_the_set_is_sampled_from_what_seek_searches():
     assert 'source: str = "pg"' in src and "TABLESAMPLE SYSTEM" in src and "FROM fabric_records" in src
     build = src[src.index("async def cap_known_items_build("):src.index("async def cap_known_items_run(")]
     assert build.index('if source == "sqlite":') < build.index("await _candidates_pg(")
+
+
+def test_a_run_is_a_w5_03_evaluation_report_bound_to_its_cases():
+    # backbone review 11 Oct: one evaluation contract (vera/models/training_contracts EvaluationReport)
+    from vera.fabric import known_item_core as K
+    items = [{"id": "r1", "query": "alpha beta gamma"}, {"id": "r2", "query": "delta epsilon zeta"}]
+    rev = K.set_revision(items)
+    assert rev == K.set_revision(list(reversed(items))) != K.set_revision(items[:1]) and rev.startswith("known_items:")
+    assert K.subject_id({"memory.rerank": "on"}) == "memory.seek:memory.rerank:on" and K.subject_id(None) == "memory.seek"
+    base = {"n": 2, "mrr": 0.5, "ndcg@10": 0.6, "hit@10": 0.5, "missing": 1}
+    arm = {"n": 2, "mrr": 0.75, "ndcg@10": 0.8, "hit@10": 1.0, "missing": 0}
+    rep = K.evaluation_report(rev, {"memory.rerank": "on"}, arm, baseline=base)
+    assert rep["schema"] == "vera.evaluation-report/v1" and rep["status"] == "completed" and rep["passed"]
+    assert rep["request"]["dataset_revision_id"] == rev and rep["evaluated_cases"] == 2
+    assert {m["metric_id"]: m["threshold"] for m in rep["metrics"]} == {"hit_at_10": 0.5, "mrr": 0.5, "ndcg_at_10": 0.6}
+    worse = K.evaluation_report(rev, None, base, baseline=arm)
+    assert not worse["passed"] and worse["failed_cases"] == 1
+    assert K.evaluation_report(rev, None, {"n": 0})["status"] == "failed"
