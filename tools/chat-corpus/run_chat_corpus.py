@@ -46,7 +46,12 @@ INIT_JS = r"""
     const url = typeof input === 'string' ? input : ((input && input.url) || '');
     const resp = await _f.apply(this, arguments);
     if (url.indexOf('/agents/chat/stream') >= 0) {
-      const rec = { body: (init && typeof init.body === 'string') ? init.body.slice(0, 4000) : '',
+      const raw = (init && typeof init.body === 'string') ? init.body : '';
+      // the message is read from the WHOLE body: a turn's body (history, retrieved context) runs past 4000 characters,
+      // and the cut copy kept below is not JSON - every turn of the 11 Oct run went unseen that way
+      let message = '';
+      try { message = String(JSON.parse(raw).message || ''); } catch (_) {}
+      const rec = { body: raw.slice(0, 4000), message: message.slice(0, 2000),
                     sent: performance.now(), first_ms: null, text: '', done: false, error: '' };
       window.__cc.streams.push(rec);
       try {
@@ -231,10 +236,15 @@ def teardown_fixture(target: str, fsid: str) -> str:
 
 
 def _sent(stream: dict, text: str) -> bool:
-    try:
-        return str(json.loads(stream.get("body") or "{}").get("message") or "").strip().startswith(text.strip()[:60])
-    except ValueError:
-        return False
+    """Whether this stream is the case's turn: its message (read by the page wrapper from the whole body) starts with
+    the case text. The kept body is cut at 4000 characters, so it is only a fallback for a short one."""
+    msg = stream.get("message")
+    if msg is None:
+        try:
+            msg = json.loads(stream.get("body") or "{}").get("message")
+        except ValueError:
+            return False
+    return str(msg or "").strip().startswith(text.strip()[:60])
 
 
 def main() -> int:

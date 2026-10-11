@@ -195,6 +195,12 @@ def test_the_runner_and_capability_parse_and_the_runner_matches_turns():
     assert mod._sent({"body": json.dumps({"message": "What is 17% of 2,340?\n\n(hint)"})}, "What is 17% of 2,340?")
     assert not mod._sent({"body": json.dumps({"message": "name this chat"})}, "What is 17% of 2,340?")
     assert not mod._sent({"body": "not json"}, "x")
+    # 11 Oct: every turn's body ran past the wrapper's 4000-character copy, so none was recognised
+    long_body = json.dumps({"message": "hello, what can you help me with?", "history": ["x" * 5000]})
+    assert mod._sent({"body": long_body[:4000], "message": "hello, what can you help me with?"},
+                     "hello, what can you help me with?")
+    assert not mod._sent({"body": long_body[:4000]}, "hello, what can you help me with?")      # the old failure
+    assert "JSON.parse(raw).message" in mod.INIT_JS and "message: message.slice(0, 2000)" in mod.INIT_JS
     assert "/agents/chat/stream" in mod.INIT_JS and "vera_auto_loop" in mod.INIT_JS
 
 
