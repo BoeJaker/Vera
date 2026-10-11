@@ -205,6 +205,23 @@ async def _write(doc: Dict[str, Any], op: str, key: str = "", **extra) -> int:
     return int(doc.get("revision") or 0)
 
 
+REMOVED_KEEP = 30   # the "recently removed" a canvas keeps (WSU-66)
+
+
+def _tombstone(doc: Dict[str, Any], blocks: List[Dict[str, Any]]) -> None:
+    """Keep what is removed so it can be put back (WSU-66, owner 2026-10-11: "removed canvas element should be
+    restorable"): the whole block with its key, newest last, the last REMOVED_KEEP of them. Keyless blocks of an agent's
+    canvas are kept by their id."""
+    gone = [b for b in blocks if isinstance(b, dict)]
+    if not gone:
+        return
+    rem = [r for r in (doc.get("removed") or []) if isinstance(r, dict)]
+    keys = {str(b.get("key") or "") for b in gone if b.get("key")}
+    rem = [r for r in rem if not (r.get("key") and str(r.get("key")) in keys)]   # one entry per key: the latest removal
+    rem += [{"key": str(b.get("key") or ""), "id": str(b.get("id") or ""), "at": now_iso(), "block": b} for b in gone]
+    doc["removed"] = rem[-REMOVED_KEEP:]
+
+
 def _find_key(doc: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
     key = str(key or "")
     if not key:
@@ -533,18 +550,66 @@ async def cap_canvas_remove(id: str = "", block_id: str = "", key: str = "",
         if not hit:
             return {"ok": False, "error": f"unknown key: {key}"}
         doc["blocks"] = [b for b in doc.get("blocks", []) if b is not hit]
+        _tombstone(doc, [hit])
         rev = await _write(doc, "remove", key)
-        return {"ok": True, "removed": hit.get("id"), "key": key, "id": doc["id"], "revision": rev}
+        return {"ok": True, "removed": hit.get("id"), "key": key, "id": doc["id"], "revision": rev, "restorable": True}
     doc = await _load(id)
     if not doc:
         return {"error": f"unknown canvas: {id}"}
     before = len(doc.get("blocks", []))
+    gone = [b for b in doc.get("blocks", []) if b.get("id") == block_id]
     doc["blocks"] = [b for b in doc.get("blocks", []) if b.get("id") != block_id]
     if len(doc["blocks"]) == before:
         return {"error": f"unknown block: {block_id}"}
+    _tombstone(doc, gone)
     await _save(doc)
     await _emit(id, "remove", block_id=block_id)
     return {"ok": True, "removed": block_id}
+
+
+@capability(
+    "canvas.removed", memory="off", silent=True,
+    http_method="GET", http_path="/canvas/removed", http_tags=["canvas"],
+    description="What was recently removed from a canvas and can be put back (newest first, up to 30). Inputs: id (str) "
+                "or session_id (str). Output: {ok, removed: [{key, id, at, type, title}]}.",
+)
+async def cap_canvas_removed(id: str = "", session_id: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    out = []
+    for r in reversed([r for r in (doc.get("removed") or []) if isinstance(r, dict)]):
+        b = r.get("block") or {}
+        c = b.get("content") if isinstance(b.get("content"), dict) else {}
+        out.append({"key": r.get("key") or "", "id": r.get("id") or "", "at": r.get("at") or "",
+                    "type": b.get("type") or "", "title": str(c.get("title") or c.get("name") or r.get("key") or b.get("type") or "")[:120]})
+    return {"ok": True, "removed": out, "id": doc["id"]}
+
+
+@capability(
+    "canvas.restore", memory="off",
+    http_method="POST", http_path="/canvas/restore", http_tags=["canvas"],
+    description="Put a removed item back on its canvas (removing is undoable). Inputs: key (str) for a keyed "
+                "item, or block_id (str) for a keyless block; id (str) or session_id (str). The item comes back as it "
+                "was, in view. Fails if nothing with that key was removed, or an item with that key is on the canvas.",
+)
+async def cap_canvas_restore(key: str = "", block_id: str = "", id: str = "", session_id: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    rem = [r for r in (doc.get("removed") or []) if isinstance(r, dict)]
+    want = next((r for r in reversed(rem) if (key and r.get("key") == key) or (block_id and r.get("id") == block_id)), None)
+    if not want:
+        return {"ok": False, "error": f"nothing removed with {'key ' + key if key else 'id ' + block_id}"}
+    blk = dict(want.get("block") or {})
+    if blk.get("key") and _find_key(doc, blk["key"]):
+        return {"ok": False, "error": f"already on the canvas: {blk['key']}"}
+    if blk.get("key"):
+        blk["state"] = "now" if blk.get("state") in (None, "", "hidden") else blk["state"]
+    doc.setdefault("blocks", []).append(blk)
+    doc["removed"] = [r for r in rem if r is not want]
+    rev = await _write(doc, "restore", blk.get("key") or blk.get("id") or "")
+    return {"ok": True, "restored": blk.get("key") or blk.get("id"), "id": doc["id"], "revision": rev}
 
 
 @capability(
@@ -562,7 +627,9 @@ async def cap_canvas_clear(id: str = "", session_id: str = "", keep: str = "", t
     keys = {k.strip() for k in str(keep or "").split(",") if k.strip()}
     before = len(doc.get("blocks", []))
     # a kept key survives; everything else goes, including the keyless blocks of an agent's canvas
+    gone = [b for b in doc.get("blocks", []) if not (b.get("key") and str(b.get("key")) in keys)]
     doc["blocks"] = [b for b in doc.get("blocks", []) if b.get("key") and str(b.get("key")) in keys]
+    _tombstone(doc, gone)   # a clear can be taken back item by item too (WSU-66)
     rev = await _write(doc, "clear", ",".join(sorted(keys)) or "all")
     return {"ok": True, "id": doc["id"], "cleared": before - len(doc["blocks"]),
             "kept": len(doc["blocks"]), "revision": rev}
@@ -1178,7 +1245,7 @@ register_ui(
 </div>""",
     "",
     ui_caps=["canvas.create", "canvas.get", "canvas.list", "canvas.append",
-             "canvas.update", "canvas.move", "canvas.remove", "canvas.clear", "canvas.delete",
+             "canvas.update", "canvas.move", "canvas.remove", "canvas.removed", "canvas.restore", "canvas.clear", "canvas.delete",
              "canvas.block_types",
              "canvas.session.resolve", "canvas.add", "canvas.pin", "canvas.park", "canvas.size",
              "canvas.recall", "canvas.timeline", "canvas.session.room", "canvas.session.relevance", "canvas.ask",

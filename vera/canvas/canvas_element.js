@@ -1677,6 +1677,9 @@
   .hidbtn{font:inherit;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);background:none;border:1px solid var(--border,#2a2f37);border-radius:9px;padding:1px 8px;cursor:pointer}
   .hidbtn:hover{color:var(--fg,#dce1e8)}
   .hidpop[hidden]{display:none}
+  .hidpop .chip.rmv{cursor:pointer;border:0;font:inherit}
+  .vc-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:400;display:flex;gap:12px;align-items:center;padding:8px 10px 8px 14px;border-radius:10px;background:var(--bg2,#1c2026);border:1px solid var(--border2,rgba(255,255,255,.14));color:var(--text,#d8dce4);font:12.5px var(--ui,system-ui,sans-serif);box-shadow:0 6px 22px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
+  .vc-toast button{border:1px solid var(--accent,#5a9e8f);background:transparent;color:var(--accent,#5a9e8f);border-radius:6px;padding:3px 10px;font:600 12px var(--ui,system-ui,sans-serif);cursor:pointer}
   .hidpop{position:absolute;right:0;top:24px;z-index:6;background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);border-radius:8px;padding:6px 8px;display:flex;flex-wrap:wrap;gap:4px;max-width:260px;box-shadow:0 4px 14px rgba(0,0,0,.35)}
   .it .sc{font-family:ui-monospace,Consolas,monospace;font-size:8.5px;color:var(--dim,#6b7480);flex:0 0 auto}
   .it-hd{display:flex;align-items:center;gap:6px;padding:5px 8px 4px;cursor:pointer;flex:0 0 auto;min-height:18px}
@@ -4100,6 +4103,11 @@
       html += `<div class="addbar" data-w="canvas.add"><slot name="banner-start"></slot><span class="lbl">Add</span>${ADD_KINDS.map(k => `<button class="add" data-act="add" data-kind="${k.n}" title="Add a ${k.n} to the session canvas (a ${k.kind} item)"><b>${esc(k.ik)}</b>${k.n}</button>`).join('')}` +
         shelf('parkpop', 'parked', 'Parked items — shelved, not gone; a click brings one back into view', stage ? parked : []) +
         shelf('hid', 'hidden', 'Hidden items — a click brings one back', hidden) +
+        /* RECENTLY REMOVED (WSU-66, owner 2026-10-11: "removed canvas element should be restorable"): what canvas.remove and
+           canvas.clear took is kept on the document (doc.removed, the last 30); a click puts one back as it was */
+        (() => { const rem = ((doc && doc.removed) || []).filter((r) => r && r.key && !keyed.some((b) => String(b.key) === String(r.key))).slice().reverse().slice(0, 12);
+          return rem.length ? `<span class="hidwrap"><button class="hidbtn" data-act="rmvpop" title="Recently removed — a click puts one back">removed · ${rem.length} ▾</button><div class="hidpop" hidden>${rem.map((r) => { const c = (r.block && r.block.content) || {}; const t = c.title || c.name || String(r.key).split(':').slice(1).join(':') || (r.block && r.block.type) || r.key;
+            return `<button class="chip rmv" data-act="restore" data-rkey="${esc(r.key)}" title="Put it back on the canvas"><i></i>↺ ${esc(String(t).slice(0, 48))}</button>`; }).join('')}</div></span>` : ''; })() +
         /* START AGAIN. A working area you cannot empty fills up until you stop trusting it. Pinned items are what
            you said to keep, so they are kept; a second click within the beat clears those too. */
         (keyed.length ? `<button class="hidbtn" data-act="clear" title="Clear the canvas — pinned items stay; click again to clear those too">clear</button>` : '') +
@@ -4715,7 +4723,11 @@
       }
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
-      if (act === 'remove') return this.call('canvas.remove', this._ref(key));
+      if (act === 'remove') {
+        /* removed, with Undo for a few seconds (WSU-66); the removed shelf keeps it after that */
+        const b0 = this._blockOf(key), c0 = (b0 && b0.content) || {}, name = c0.title || c0.name || String(key).split(':').slice(1).join(':') || 'item';
+        return Promise.resolve(this.call('canvas.remove', this._ref(key))).then((r) => { if (b0 && b0.key && !(r && r.ok === false)) this._undoToast('Removed ' + name, () => this.call('canvas.restore', { key: String(b0.key) })); return r; });
+      }
       if (act === 'size') { const i = ITEM_SIZES.indexOf(it.dataset.size); delete this._px[key]; delete this._pw[key]; return this._setSize(key, ITEM_SIZES[(i + 1) % ITEM_SIZES.length]); }
       if (act === 'up' || act === 'down') {   // a plain canvas keeps the document's order: canvas.move by block id
         const b = this._blockOf(key); if (!b) return; const bl = ((this._doc && this._doc.blocks) || []).filter(Boolean).slice().sort((x, y) => ((x.layout && x.layout.order) || 0) - ((y.layout && y.layout.order) || 0));
@@ -4730,10 +4742,11 @@
       if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026'; return this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }); }
       // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
       // these are the shelves those items went to, so they carry their own act rather than sharing one.
-      if (act === 'hid' || act === 'parkpop') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
+      if (act === 'hid' || act === 'parkpop' || act === 'rmvpop') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
+      if (act === 'restore') { const rk = btn.dataset.rkey; if (rk) return this.call('canvas.restore', { key: rk }); return; }
       /* clear: the first press keeps what you pinned and says so; a second press within a few seconds takes those
-         too. No dialog — the shelf is not where a confirmation belongs, and every item it removes is recoverable
-         from the canvas's own timeline. */
+         too. No dialog — the shelf is not where a confirmation belongs, and every item it removes can be put back
+         from the "removed" shelf (canvas.restore; the document keeps the last 30). */
       if (act === 'clear') {
         const pinnedKeys = ((this._doc && this._doc.blocks) || []).filter((b) => b && b.key && b.state === 'pinned').map((b) => String(b.key));
         const again = this._clearAt && (Date.now() - this._clearAt) < 4000;
@@ -5634,6 +5647,15 @@
       this._open.add(nk);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key: nk, kind: 'widget', add: k.n, form } })); } catch (e) {}
       return this.call('canvas.add', args);
+    }
+    /* a short notice with one action (Undo), at the foot of the canvas; it leaves after 8 s or when acted on (WSU-66) */
+    _undoToast(text, undo) {
+      const sr = this.shadowRoot; if (!sr) return; const old = sr.querySelector('.vc-toast'); if (old) old.remove();
+      const t = document.createElement('div'); t.className = 'vc-toast'; t.setAttribute('role', 'status');
+      t.innerHTML = '<span></span><button type="button">Undo</button>'; t.firstChild.textContent = String(text || '').slice(0, 80);
+      const done = () => { clearTimeout(t._t); t.remove(); };
+      t.querySelector('button').addEventListener('click', (e) => { e.stopPropagation(); done(); try { undo && undo(); } catch (er) { /* the shelf still has it */ } });
+      t._t = setTimeout(done, 8000); sr.appendChild(t);
     }
     /* a panel item drawn without its page asks once; when the address comes back the column is drawn again (WSU-67) */
     _panelResolve(id) {
