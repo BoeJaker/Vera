@@ -19,9 +19,11 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 NEEDS = ("fact", "latest", "overview", "deep")
 
-_DEEP = re.compile(r"\b(write (me )?(a |an )?(full |detailed )?(report|write-?up|brief(ing)?)|deep[- ]dive|"
-                   r"in[- ]depth (report|research|analysis)|comprehensive (report|research|analysis)|white ?paper|"
-                   r"research report)\b", re.I)
+# a report the user wants written - not a document named in the question ("updates on the AI white paper" is latest)
+_DEEP = re.compile(r"\b((write|make|produce|prepare|draft|do|give|put together)\s+(me\s+)?(a\s+|an\s+)?(full\s+|detailed\s+|"
+                   r"proper\s+|comprehensive\s+|in-?depth\s+)?(report|write-?up|briefing|white ?paper|deep[- ]dive)|"
+                   r"deep[- ]dive (into|on)|in[- ]depth (report|research|analysis) (on|of|into)|"
+                   r"comprehensive (report|research|analysis) (on|of|into))\b", re.I)
 _LATEST = re.compile(r"\b(latest|newest|news|headlines?|updates?|what'?s new|whats new|recent(ly)?|this (week|month)|"
                      r"today|tonight|developments?|just (announced|released|launched)|any (news|word)|"
                      r"happening (with|in|at))\b", re.I)
@@ -94,6 +96,46 @@ def latest_queries(subject: str, question: str = "", now: Optional[datetime] = N
             seen.add(k)
             uniq.append(x)
     return uniq[:limit]
+
+
+_WH = re.compile(r"^\s*(who|what|when|where|which|why|how|is|are|was|were|does|do|did|can|could|should|will|would|has|have)\b",
+                 re.I)
+_KW_STOP = set("who what when where which why how is are was were does do did can could should will would has have the "
+               "a an of to in on for at by with from about under into is it its this that these those me you your my i "
+               "tell please there any".split())
+
+
+def keywords_of(text: str) -> str:
+    """The content words of a question, in order and as written: "When does the EU AI Act's high-risk obligation
+    apply?" -> "EU AI Act's high-risk obligation apply". A question-shaped search drifts (prod, 10 Oct: this one
+    returned dictionary pages for "does")."""
+    words = [w for w in re.findall(r"[A-Za-z0-9][A-Za-z0-9'&.+/-]*", str(text or "")) if w.lower() not in _KW_STOP]
+    return " ".join(words).strip(" .?") or " ".join(str(text or "").split())
+
+
+def fact_queries(subject: str, question: str = "", limit: int = 2) -> List[str]:
+    """The subject's keywords first - measured on prod 10 Oct: "what is the Bank of England base rate" returned bank
+    home pages (Bank of America, Barclays, HSBC), "Bank of England base rate" the Bank's rate page, MSE and the BBC -
+    then the question itself for what the keywords miss."""
+    out = []
+    if _WH.match(subject or ""):            # the subject is still the question: search its keywords instead
+        subject = keywords_of(subject)
+    for x in (subject, question):
+        x = " ".join(str(x or "").split()).strip(" ?")
+        if x and x.lower() not in [o.lower() for o in out]:
+            out.append(x)
+    return out[:limit]
+
+
+def overview_queries(subject: str, question: str = "", now: Optional[datetime] = None, limit: int = 3) -> List[str]:
+    """Several angles for a wider picture: the subject, an explainer, and the question."""
+    now = now or datetime.now(timezone.utc)
+    out = []
+    for x in (subject, f"{subject} explained overview {now.year}", question):
+        x = " ".join(str(x or "").split()).strip(" ?")
+        if x and x.lower() not in [o.lower() for o in out]:
+            out.append(x)
+    return out[:limit]
 
 
 _TRACK = re.compile(r"^(utm_|fbclid$|gclid$|mc_cid$|mc_eid$|ref$|ref_src$|igshid$|si$)", re.I)

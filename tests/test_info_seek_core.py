@@ -150,3 +150,123 @@ def test_the_researcher_ddg_uses_the_shared_parser():
     src = (Path(__file__).resolve().parents[1] / "vera" / "research" / "researcher_api.py").read_text(encoding="utf-8")
     body = src[src.index("async def search_ddg"):src.index("async def search_ddg") + 2500]
     assert "_engines.parse_ddg_html(r.text)" in body and "result__snippet" not in body
+
+
+def test_fact_and_overview_queries_lead_with_the_subjects_keywords():
+    # prod 10 Oct: the question form returned bank home pages, the keyword form the Bank's rate page and the BBC
+    assert C.fact_queries("Bank of England base rate", "what is the Bank of England base rate?") == [
+        "Bank of England base rate", "what is the Bank of England base rate"]
+    assert C.fact_queries("x", "x?") == ["x"]
+    assert C.overview_queries("RAG rerankers", "compare RAG rerankers", NOW) == [
+        "RAG rerankers", "RAG rerankers explained overview 2026", "compare RAG rerankers"]
+
+
+def test_the_cap_reads_the_newest_first_and_ranks_facts_against_the_question():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    body = src[src.index("async def cap_info_seek"):]
+    latest = body[body.index('if need == "latest":'):body.index("    else:\n        # fact")]
+    assert latest.index("items = _seek.order_latest(items, since, now)") < latest.index("got = await _seek_read(")
+    other = body[body.index("    else:\n        # fact"):body.index("intel = await intel_task")]
+    assert "_seek.fact_queries(subject, question)" in other and "await _seek_rerank(question, hits)" in other
+    assert "web.research" not in other                    # one question-shaped search was the bank-homepage failure
+
+
+def test_searches_are_spaced_not_sent_in_one_burst():
+    # 2026-10-10: four searches at once hit every upstream engine four times in the same instant; brave and
+    # duckduckgo answered this IP with "too many requests" and CAPTCHAs
+    import asyncio, time
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    fn = src[src.index("async def _seek_searches"):src.index("def _report_seller")]
+    starts = []
+
+    async def fake_call(name, timeout, **kw):
+        starts.append((kw["query"], time.monotonic()))
+        return {"results": [kw["query"]]}
+    ns = {"asyncio": asyncio, "List": list, "Dict": dict, "Any": object, "SEEK_SPACING_S": 0.05, "_seek_call": fake_call}
+    exec(fn, ns)
+    t0 = time.monotonic()
+    out = asyncio.run(ns["_seek_searches"](["a", "b", "c"], first_slot=1))
+    assert [r["results"] for r in out] == [["a"], ["b"], ["c"]]          # results in query order
+    gaps = [round(t - t0, 2) for _, t in sorted(starts, key=lambda x: x[1])]
+    assert gaps[0] >= 0.045 and gaps[1] - gaps[0] >= 0.04 and gaps[2] - gaps[1] >= 0.04
+    assert "res = await _seek_searches(queries, first_slot=1)" in src and "res = await _seek_searches(queries)\n" in src
+    assert 'os.getenv("VERA_SEEK_SPACING_S", "0.5")' in src
+
+
+def _fn_src(path, start, end):
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / path).read_text(encoding="utf-8")
+    return src[src.index(start):src.index(end)], src
+
+
+def test_a_challenge_page_is_not_an_article_and_is_never_cached():
+    # 2026-10-10: MSE's Cloudflare "Just a moment..." came back from reader.page as a read article, cached for a week
+    from vera.web import web_client as wc
+    body, src = _fn_src("browser_capabilities.py", "def _is_challenge", "async def reader_read")
+    ns = {"_wc": wc}
+    exec(body, ns)
+    ch = ns["_is_challenge"]
+    assert ch({"title": "Just a moment...", "markdown": "Enable JavaScript and cookies to continue"})
+    assert ch({"title": "", "markdown": "Checking your browser before accessing the site."})
+    assert not ch({"title": "Bank Rate held at 4%", "markdown": "The MPC voted... " * 40})
+    assert not ch({"title": "Why access denied errors happen", "markdown": "access denied " + "long article " * 400})
+    rd = src[src.index("async def reader_read"):]
+    assert 'page_html, title = ("" if fp.get("block_reason") else fp.get("html") or "")' in rd
+    assert "if rec and _is_challenge(rec):" in rd and rd.index("if rec and _is_challenge(rec):") < rd.index("await _rc.put(")
+    assert 'and not _is_challenge(hit):' in rd                      # a challenge already cached is read again
+
+
+def test_seek_read_reads_the_next_result_when_one_is_blocked():
+    import asyncio
+    body, _ = _fn_src("web_capabilities.py", "async def _seek_read", "async def _seek_rerank")
+    calls = []
+
+    async def fake_call(name, timeout, **kw):
+        calls.append(kw["url"])
+        if "blocked" in kw["url"]:
+            return {"ok": False, "error": "blocked: the page is an anti-bot challenge, not the article"}
+        return {"ok": True, "markdown": "Article text. " * 20, "title": "T", "published": "2026-10-09"}
+    ns = {"asyncio": asyncio, "List": list, "Dict": dict, "Any": object, "_seek_call": fake_call, "_seek": C}
+    exec(body, ns)
+    items = [{"url": "https://a/1"}, {"url": "https://blocked/2"}, {"url": "https://c/3"}, {"url": "https://d/4"},
+             {"url": "https://intel/5", "kind": "intel"}]
+    got = asyncio.run(ns["_seek_read"](items, 3, 200))
+    assert got == 3 and calls == ["https://a/1", "https://blocked/2", "https://c/3", "https://d/4"]
+    assert items[1]["unreadable"].startswith("blocked") and not items[1].get("text")
+    assert items[3]["text"] and items[3]["published"] == "2026-10-09" and "text" not in items[4]
+
+
+def test_deep_without_a_background_job_for_loops():
+    # loops block research.* job caps (compute-roles, 10 Oct): need=deep with start_report=false is the overview only
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    body = src[src.index("async def cap_info_seek"):]
+    assert "start_report: bool = True" in body
+    i, j = body.index('if need == "deep" and not start_report:'), body.index('elif need == "deep":')
+    assert i < j and "research.run" not in body[i:j] and "research.run" in body[j:j + 300]
+
+
+# baseline run 10 Oct (tools/info-eval): L19 "updates on the ... white paper" was taken as a report request and
+# started research.run; F04 "When does ... apply?" searched the question and got dictionary pages for "does"
+@pytest.mark.parametrize("q,need", [
+    ("Any updates on the UK AI regulation white paper or AI bill?", "latest"),
+    ("what does the research report say about rates", "fact"),
+    ("write a white paper on AI in valuation", "deep"), ("give me a detailed report on n8n", "deep"),
+])
+def test_a_named_document_is_not_a_report_request(q, need):
+    assert C.classify_need(q)["need"] == need
+
+
+def test_wh_questions_search_their_keywords_first():
+    assert C.keywords_of("When does the EU AI Act's high-risk obligation apply?") == "EU AI Act's high-risk obligation apply"
+    q = "When does the EU AI Act's high-risk obligation apply?"
+    assert C.fact_queries(C.subject_of(q), q)[0] == "EU AI Act's high-risk obligation apply"
+    assert C.fact_queries("Bank of England base rate", "What is the Bank of England base rate?")[0] == "Bank of England base rate"
+
+
+def test_no_control_characters_in_the_core():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "info_seek_core.py").read_text(encoding="utf-8")
+    assert not any(ord(ch) < 9 for ch in src)          # a patch once wrote \b as a backspace byte

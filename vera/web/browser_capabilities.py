@@ -486,6 +486,22 @@ def _spawn_bg(coro):
     t = asyncio.ensure_future(coro); _reader_bg.add(t); t.add_done_callback(_reader_bg.discard)
 
 
+def _is_challenge(rec: dict) -> bool:
+    """A 'read' that is really an anti-bot / consent interstitial: its title says so, or its text is short and does.
+    (A long article that merely mentions "access denied" is not one.)"""
+    title = " ".join(str(rec.get("title") or "").lower().split())
+    md = str(rec.get("markdown") or "")
+    try:
+        sigs = getattr(_wc, "_BLOCK_SIGNATURES", ())
+        # a challenge's title IS the phrase ("Just a moment...", "Access denied", "Attention Required! | Cloudflare");
+        # an article about access-denied errors only contains it
+        if len(title) < 60 and any(title.startswith(s) for s in sigs):
+            return True
+        return len(md) < 2500 and bool(_wc.detect_block(md, 200))
+    except Exception:
+        return False
+
+
 async def reader_read(url: str, *, max_chars: int = 60_000, fresh: bool = False, mode: str = "auto",
                       html: str = "") -> dict:
     """The reader version of a page: the cache first; then the fetched page read in memory; then a real render."""
@@ -494,7 +510,7 @@ async def reader_read(url: str, *, max_chars: int = 60_000, fresh: bool = False,
     redis = _orch.REDIS
     if not fresh:
         hit = await _rc.get(redis, url, _cap_fn("fabric.objects.get"))
-        if hit and (hit.get("markdown") or "").strip():
+        if hit and (hit.get("markdown") or "").strip() and not _is_challenge(hit):
             out = _rc.trimmed(hit, max_chars)
             out.update(ok=True, cached=True, ms=round((time.monotonic() - t0) * 1000))
             return out
@@ -509,7 +525,9 @@ async def reader_read(url: str, *, max_chars: int = 60_000, fresh: bool = False,
                 why = fp.get("error") or "HTTP %s" % fp.get("status")
             elif fp.get("block_reason"):
                 why = "blocked: " + str(fp.get("block_reason"))
-            page_html, title = fp.get("html") or "", fp.get("title") or ""
+            # a page the fetch recognised as an anti-bot challenge is not read as the article (it was: MSE's
+            # Cloudflare "Just a moment..." came back as a read page and was cached for a week, 2026-10-10)
+            page_html, title = ("" if fp.get("block_reason") else fp.get("html") or ""), fp.get("title") or ""
             # the reader proxy's answer is text already - the article, without a document to read it from
             if not page_html and fp.get("via_reader") and len(str(fp.get("text") or "").split()) >= READER_MIN_WORDS:
                 rec, via = {"ok": True, "url": url, "title": title, "markdown": fp["text"],
@@ -526,6 +544,8 @@ async def reader_read(url: str, *, max_chars: int = 60_000, fresh: bool = False,
             rec, via = r, "browser"
         elif not why:
             why = r.get("error") or "no article found"
+    if rec and _is_challenge(rec):
+        why, rec = "blocked: the page is an anti-bot challenge, not the article", None
     if not rec:
         return _err(why or "no article found", url=url, markdown="", ms=round((time.monotonic() - t0) * 1000))
     rec = dict(rec, via=via, read_at=now_iso())

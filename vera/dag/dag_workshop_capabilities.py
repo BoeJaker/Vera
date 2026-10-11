@@ -2591,7 +2591,7 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
                                      model="", instance_id="", prefer_gpu=True,
                                      stream_cb=None, options=None, think=False,
                                      profile="", role="", job_type="", timeout=0,
-                                     request_stage=""):
+                                     request_stage="", stage_role=""):
     """Thinking-model-aware ollama_generate wrapper for dag_workshop callers.
 
     Lazily resolves ollama_generate via the context module so we don't have
@@ -2626,6 +2626,15 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
     _lsid = _LOOP_SESSION_CV.get()
     if _lsid and await _loop_run_cancelled(_lsid):
         raise asyncio.CancelledError(f"loop {_lsid} cancelled — aborting generation")
+    # A stage with no routing role of its own (gate, verifier, journal, ...) takes the
+    # loop/<stage> role only when THIS run placed it (stage_models -> RUN_ROLE_OVERRIDES),
+    # so an unplaced stage routes exactly as before (role_override_core.STAGE_ROLES).
+    if stage_role and not (profile or role):
+        try:
+            if "%s/%s" % (LOOP_ROUTING_PROFILE, stage_role) in (_orch.RUN_ROLE_OVERRIDES.get() or {}):
+                profile, role = LOOP_ROUTING_PROFILE, stage_role
+        except Exception:
+            pass
     system = _now_context_line() + ("\n\n" + system if system else "")
     import importlib
     try:
@@ -5053,7 +5062,7 @@ async def _attempt_arg_recovery(*, cap_name: str, failed_args: Dict[str, Any],
                 prompt, system=_RECOVERY_SYSTEM_PROMPT,
                 model=model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, json_mode=True,
-            )
+            stage_role="argfix")
         except Exception as e:
             last_error = f"recovery LLM call failed: {e}"
             attempts.append({"args": last_args, "error": last_error})
@@ -8456,6 +8465,16 @@ def _v5_goal_is_webby(goal: str) -> bool:
     return any(h in g for h in _V5_WEB_GOAL_HINTS)
 
 
+# info-first (owner 10 Oct 2026, compute-roles P1a / intelligence SK-1.4): a goal that needs the
+# outside world gets Vera's front door first - info.seek: dated, numbered evidence from what Vera
+# tracks (it calls intel.lookup itself) + news + web, report-sellers dropped - ahead of the raw
+# web.* chain. Per run (dag.agent_loop_v6 info_first), off by default until
+# measured; a ContextVar so the seeding needs no new argument threaded through.
+_V5_INFO_FIRST_CAPS = ("info.seek",)
+_INFO_FIRST_CV: "contextvars.ContextVar[bool]" = contextvars.ContextVar("vera_loop_info_first",
+                                                                         default=False)
+
+
 def _v5_seed_caps_for(goal: str) -> List[str]:
     """Caps to GUARANTEE in the v5 catalog (web research caps only when the goal
     looks like it needs the live web). Keeps web/data/exec avenues always offered
@@ -8467,6 +8486,8 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
         # http.get, so a research plan reached for raw fetches before it ever
         # saw web.research (2026-09-21, census research-report).
         seeds = list(_V5_WEB_RESEARCH_SEED_CAPS) + [c for c in seeds if c not in _V5_WEB_RESEARCH_SEED_CAPS]
+        if _INFO_FIRST_CV.get():
+            seeds = list(_V5_INFO_FIRST_CAPS) + [c for c in seeds if c not in _V5_INFO_FIRST_CAPS]
     # A goal whose OWN text asks for UI/HTML verification ("...then verify it
     # actually works by clicking the button...") never matches the research-y
     # web hints above, so operator.run/browser.navigate were never guaranteed
@@ -8984,7 +9005,8 @@ def _v5_resolve_tool_name(tool: str, allowed: List[str], catalog: set) -> str:
 
 # Caps that look up NEW / EXTERNAL knowledge — a "research" unit of work.
 _V5_RESEARCH_CAPS = {"web.research", "web.crawl", "web.search", "web.fetch",
-                     "research.quick_search", "fabric.discover.crawl", "web.search_and_crawl"}
+                     "research.quick_search", "fabric.discover.crawl", "web.search_and_crawl",
+                     "info.seek", "intel.lookup"}
 # Caps that PRODUCE or RUN something — a "build / execute" unit of work.
 _V5_BUILD_CAPS = {"llm.generate", "code.author", "code.edit", "prose.author",
                   "exec.python.run", "exec.bash.run",
@@ -9648,7 +9670,7 @@ async def _v5_condense_output(raw_text: str, tool: str, step_goal: str, *,
         # is the documented precedence.
         out = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False, job_type="summarize")
+            prefer_gpu=prefer_gpu, json_mode=False, job_type="summarize", stage_role="condense")
         clean = _strip_think(out or "")[0].strip()
         if clean:
             clean = clean[:max_out]
@@ -14390,6 +14412,12 @@ except ImportError:                                   # pragma: no cover
     except ImportError:
         _minds_core = None
 
+# Precedent for the planner (four-minds FM-4.2): pure wrapping of what the planner reads.
+try:
+    from Vera.vera.minds import precedent_core as _precedent_core
+except ImportError:                                   # pragma: no cover
+    from vera.minds import precedent_core as _precedent_core
+
 # The System 1 student (four-minds FM-2.5): a pre-trained small model answering a live decision
 # in-band, per the switchboard (decide.student.step_verify) - see vera/minds/student.py.
 try:
@@ -14468,6 +14496,17 @@ except Exception:                                     # pragma: no cover
     from vera.dag import operator_url_core as _operator_url_core
 
 # What a step already fetched, handed to the writer (live 3 Oct: research never reached it).
+try:
+    from Vera.vera.dag import evidence_ledger_core as _evidence_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import evidence_ledger_core as _evidence_core
+try:
+    from Vera.vera.agents import grounding_rules as _grounding_rules
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.agents import grounding_rules as _grounding_rules
+    except Exception:
+        _grounding_rules = None
 try:
     from Vera.vera.dag import research_sources_core as _research_sources_core
 except Exception:                                     # pragma: no cover
@@ -14794,10 +14833,31 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
     except Exception as e:
         log.debug("answer check files: %s", e)
     findings = PSx.unresolved_findings(results, unmet)
+    # The run's dated evidence (info.seek items) + the deterministic grounding floor
+    # (intelligence's grounding_rules.check: bad [n] citations, figures no source contains).
+    evidence = _evidence_core.items(sid)
+    ev_packs = _evidence_core.packs(sid)
+    grounding: Dict[str, Any] = {}
+    if evidence and _grounding_rules is not None:
+        try:
+            _ci = _evidence_core.check_items(sid)
+            grounding = dict(_grounding_rules.check(final, _ci))
+            if any(i.get("n") is None for i in _ci):
+                # several packs: an [n] is ambiguous, so only figures/dates count (vera-03 review)
+                grounding["bad_citations"] = []
+                grounding["citations_unchecked"] = len(ev_packs)   # not "clean": unchecked (N packs)
+                grounding["ok"] = not grounding.get("uncited_numbers")
+        except Exception as e:
+            log.debug("grounding check failed: %s", e)
+    g_text = ""
+    if evidence or ev_packs:
+        g_text = PSx.grounding_block(
+            _evidence_core.block(evidence, packs_info=ev_packs), grounding,
+            _grounding_rules.text("loop") if _grounding_rules is not None else "")
     answer, fixes, err = "", "", ""
     try:
         raw = await _safe_ollama_generate_dw(
-            PSx.answer_check_prompt(goal, files, final, findings),
+            PSx.answer_check_prompt(goal, files, final, findings, grounding_text=g_text),
             system=PSx.ANSWER_CHECK_SYSTEM, json_mode=False, model="", instance_id="",
             prefer_gpu=False, think=False, profile="planning_style", role=PSx.ENRICH_ROLE,
             request_stage="answer_check", timeout=600)
@@ -14807,7 +14867,11 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
     except Exception as e:
         err = f"{type(e).__name__}: {e}"[:160]
     return {"answer": answer, "fixes": fixes[:1200], "files": [p for p, _ in files],
-            "findings": findings, "elapsed_s": round(time.monotonic() - t1, 1), "error": err}
+            "findings": findings, "evidence_items": len(evidence),
+            "grounding": ({k: grounding.get(k) for k in ("ok", "bad_citations", "uncited_numbers",
+                                                          "citations_unchecked")}
+                          if grounding else {}),
+            "elapsed_s": round(time.monotonic() - t1, 1), "error": err}
 
 
 async def _v6_entity_coverage(task: Any, output: str, *, sid: str, stream_id: str) -> None:
@@ -16911,6 +16975,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             history.append({"tool": hop_tool, "ok": entry_ok, "preview": preview[:_budget],
                             "args": h_args, "ms": elapsed})
             _research_sources_core.remember(sid, history[-1])
+            if entry_ok and hop_tool == "info.seek":  # the run's dated evidence (evidence_ledger_core)
+                _evidence_core.add(sid, invoke.get("result"))
             # A call that can write and names a registered file: forget its cached copy.
             _registry_stale_core.forget_named(artifacts, hop_tool, h_args)
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
@@ -18620,6 +18686,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                               "url": str(args.get("url") or ""), "session_id": sid})
 
+        # info.seek need=deep also starts research.run in the background - a job loops never
+        # spawn (_RESEARCH_JOB_CAPS). Loops get the overview pack instead (vera-03, 10 Oct 2026,
+        # until info.seek takes start_report=False).
+        if tool == "info.seek" and isinstance(args, dict) and str(args.get("need") or "").strip().lower() == "deep":
+            args = dict(args, need="overview")
         await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
                           "thought": thought, "session_id": sid})
@@ -19316,6 +19387,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
         _research_sources_core.remember(sid, history[-1])
+        if entry_ok and tool == "info.seek":          # the run's dated evidence (evidence_ledger_core)
+            _evidence_core.add(sid, invoke.get("result"))
         # A call that can write and names a registered file: forget its cached copy, so
         # the next read goes to disk (registry_stale_core; probe 3 Oct, a stale report.md).
         _registry_stale_core.forget_named(artifacts, tool, args)
@@ -20290,7 +20363,7 @@ async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, stage_role="synth")
         out = _strip_think(raw or "")[0].strip()
         if out:
             return out[:8000]
@@ -21373,7 +21446,7 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
             log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True, request_stage="gate")
+            prefer_gpu=prefer_gpu, json_mode=True, request_stage="gate", stage_role="gate")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 final gate failed: %s", e)
@@ -22126,7 +22199,7 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
-            request_stage="critic")
+            request_stage="critic", stage_role="verifier")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         if isinstance(obj, dict) and "met" in obj:
             _reason = str(obj.get("reason") or "")
@@ -22257,7 +22330,7 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     try:
         out = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=bool(with_journal), timeout=_V5_UTILITY_TIMEOUT)
+            prefer_gpu=prefer_gpu, json_mode=bool(with_journal), timeout=_V5_UTILITY_TIMEOUT, stage_role="finalize")
         out = _strip_think(out or "")[0].strip()
         if with_journal:
             obj = _extract_json(out) or {}
@@ -22470,7 +22543,7 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
             log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="adjust")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 adjust step failed: %s", e)
@@ -22634,7 +22707,7 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
         try:
             raw = await _safe_ollama_generate_dw(
                 prompt, system=sys, model=model, instance_id=instance_id,
-                prefer_gpu=prefer_gpu, json_mode=True)
+                prefer_gpu=prefer_gpu, json_mode=True, stage_role="journal")
             obj = _extract_json(_strip_think(raw or "")[0]) or {}
         except Exception as e:
             log.debug("v6 journal extract failed: %s", e)
@@ -22839,7 +22912,7 @@ async def _v6_branch_strategist(goal: str, failed_step: Dict[str, Any],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="strategist")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 branch strategist failed: %s", e)
@@ -23566,7 +23639,7 @@ async def _v7_single_cap_shortcut(goal: str, catalog_names: List[str], *, call_t
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="fastpath")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v7 single-cap pick failed: %s", e)
@@ -23618,7 +23691,7 @@ async def _v7_generate_clarifications(goal: str, done_when: str, tier: str, *, m
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="prestep")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         qs = obj.get("questions") if isinstance(obj, dict) else None
         if isinstance(qs, list):
@@ -23829,7 +23902,7 @@ async def _v7_assume_answers(goal: str, questions: List[str], tier: str, *,
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, stage_role="prestep")
         return _strip_think(raw or "")[0].strip()[:1600]
     except Exception as e:
         log.debug("v7 assume answers failed: %s", e)
@@ -24074,7 +24147,7 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT)
+            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT, stage_role="prestep")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         gaps = obj.get("gaps") if isinstance(obj, dict) else None
         gaps = [str(g).strip() for g in gaps if str(g).strip()][:5] if isinstance(gaps, list) else []
@@ -24257,7 +24330,7 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, stage_role="deliver")
         md = _strip_think(raw or "")[0].strip()[:_V6_DELIVER_OUT_MAX]
         if md and _deliverable is not None:
             md, _notes = _deliverable.finish(
@@ -24466,6 +24539,13 @@ async def cap_dag_agent_loop_v6(
     # or a specialised agentic model driving the loop. CPU-slow - chosen, never defaulted.
     controller_model:   str  = "",
     controller_node:    str  = "auto",
+    # info-first: info.seek leads the catalogue for a goal that needs the outside
+    # world (_V5_INFO_FIRST_CAPS). Off by default until measured.
+    info_first:         bool = False,
+    # The loop's other LLM stages on chosen models/nodes, e.g. the CPU MoE for the verifier
+    # and the final gate: "verifier=qwen3.6:35b-a3b@cpu-246,gate=..." or a dict
+    # (role_override_core.parse_stage_models / STAGE_ROLES). Unplaced stages are unchanged.
+    stage_models:       Any  = "",
     effort:             str  = "standard",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
@@ -24589,11 +24669,12 @@ async def cap_dag_agent_loop_v6(
             executor_model=executor_model, executor_node=executor_node,
             coder_model=coder_model, coder_node=coder_node, effort=effort,
             plan_style=plan_style, controller_model=controller_model,
-            controller_node=controller_node)
+            controller_node=controller_node, stage_models=stage_models)
         if _effort_adj.get("plan_style"):
             plan_style = _effort_adj["plan_style"]
         if _effort_adj.get("critic_route"):
             critic_route = _effort_adj["critic_route"]
+    _INFO_FIRST_CV.set(bool(info_first))   # every run sets it, so none leaks into the next
     try:
         _orch.RUN_ROLE_OVERRIDES.set(_role_overrides or None)
     except Exception as _roe:                          # pragma: no cover
@@ -24813,6 +24894,25 @@ async def cap_dag_agent_loop_v6(
                     + "Plan for the OBJECTIVE stated above: " + _orig_goal)
     except Exception as e:
         log.debug("v6 memory context inject failed: %s", e)
+
+    # ── Precedent (four-minds FM-4.2, switch plan.precedent): how similar past goals went, as reference in
+    # what the planner reads - never in `goal` itself. Bounded; a failure or a miss changes nothing.
+    try:
+        if _minds_core is not None and _minds_core.mode_of("plan.precedent") == "on":
+            _pc_cap = (CAPABILITY_REGISTRY.get("plan.precedent") or {})
+            _pc_fn = _pc_cap.get("raw") or _pc_cap.get("func")
+            if _pc_fn:
+                _pc = await asyncio.wait_for(_pc_fn(goal=_orig_goal, exclude_run=sid,
+                                                    origin=getattr(_dl, "origin", "user") if _dl is not None else "user"),
+                                             timeout=4)
+                if isinstance(_pc, dict) and _pc.get("block"):
+                    plan_goal = _precedent_core.wrap(plan_goal, _orig_goal, _pc["block"])
+                    await emit_event({"type": "agent_loop_v6.precedent", "session_id": sid,
+                                      "runs": [p.get("run") for p in _pc.get("precedents") or []],
+                                      "outcomes": [p.get("outcome") for p in _pc.get("precedents") or []],
+                                      "node": _pc.get("node")})
+    except Exception as e:
+        log.debug("v6 precedent inject skipped: %s", e)
 
     # ── Catalog (identical construction to v5) ────────────────────────────────
     # category="other"/keywords=[] are NOT placeholders for "not triaged
@@ -26546,6 +26646,7 @@ async def cap_dag_agent_loop_v6(
                           "stream_id": stream_id, "changed": bool(_ac.get("answer")),
                           "fixes": _ac.get("fixes"), "files": _ac.get("files"),
                           "findings": _ac.get("findings"), "elapsed_s": _ac.get("elapsed_s"),
+                          "evidence_items": _ac.get("evidence_items"), "grounding": _ac.get("grounding"),
                           "error": _ac.get("error")})
         if _ac.get("answer"):
             final = _ac["answer"]
@@ -26958,6 +27059,8 @@ async def workshop_agent_loop_stream(request: Request):
     v6_coder_node        = (body.get("coder_node", "auto") or "auto").strip().lower()
     v6_controller_model  = (body.get("controller_model", "") or "").strip()
     v6_controller_node   = (body.get("controller_node", "auto") or "auto").strip().lower()
+    v6_info_first        = bool(body.get("info_first", False))
+    v6_stage_models      = body.get("stage_models", "") or ""
     v6_effort            = (body.get("effort", "standard") or "standard").strip().lower()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
@@ -27117,6 +27220,8 @@ async def workshop_agent_loop_stream(request: Request):
             executor_model=v6_executor_model, executor_node=v6_executor_node,
             coder_model=v6_coder_model, coder_node=v6_coder_node, effort=v6_effort,
             controller_model=v6_controller_model, controller_node=v6_controller_node,
+            info_first=v6_info_first,
+            stage_models=v6_stage_models,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,

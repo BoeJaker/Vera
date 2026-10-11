@@ -134,8 +134,21 @@ async def build_index(limit_runs: int = 400) -> Dict[str, Any]:
     return {"ok": True, "runs_seen": len(runs), "traced": traced, "steps_added": added}
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.model_binding_core import binding as _bind
+except Exception:                        # worktree / app-free import
+    from vera.model_binding_core import binding as _bind   # type: ignore
+
+_SERVES_SHORTLIST = _bind(
+    "shortlist", "knn", io_in="text", io_out="labels", tier=2, placement="nlp",
+    questions=["loop.caps_shortlist"],
+    uses="Name the tools a piece of work will most likely need, from what the nearest past loop steps "
+         "actually used (MiniLM kNN on an NLP node, filled with the usage prior).",
+    limits="work unlike any past step; picking a model (use model.pick).")
+
+
 @capability(
-    "caps.shortlist", http_method="POST", http_path="/caps/shortlist", http_tags=["minds", "caps"],
+    "caps.shortlist", serves=_SERVES_SHORTLIST, http_method="POST", http_path="/caps/shortlist", http_tags=["minds", "caps"],
     memory="off", silent=True,
     description="The tools most likely needed for a piece of work, from what similar PAST loop steps actually "
                 "used (four-minds FM-3): the similarity-weighted vote of the 15 nearest indexed steps, filled with "

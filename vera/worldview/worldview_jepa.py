@@ -78,6 +78,21 @@ import re
 import sqlite3
 import time
 from collections import defaultdict, Counter
+try:                                                   # FM-8.3 curated corpus (pure)
+    from Vera.vera.worldview import worldview_corpus_core as _wv_corpus
+except Exception:                                      # worktree / app-free import
+    from vera.worldview import worldview_corpus_core as _wv_corpus   # type: ignore
+try:                                                   # FM-8.2 held-out evaluation and step cap (pure)
+    from Vera.vera.worldview import worldview_eval_core as _wv_eval
+except Exception:                                      # worktree / node / app-free import
+    try:
+        from vera.worldview import worldview_eval_core as _wv_eval   # type: ignore
+    except Exception:
+        import importlib.util as _ilu, os as _os
+        _spec = _ilu.spec_from_file_location(
+            "worldview_eval_core", _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "worldview_eval_core.py"))
+        _wv_eval = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_wv_eval)
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -165,9 +180,12 @@ except ImportError:
 
 EMBED_DIM        = int(os.getenv("WORLDVIEW_EMBED_DIM", "768"))
 LATENT_DIM       = int(os.getenv("WORLDVIEW_LATENT_DIM", "256"))
-HIDDEN_DIM       = int(os.getenv("WORLDVIEW_HIDDEN_DIM", "512"))
-NUM_GNN_LAYERS   = int(os.getenv("WORLDVIEW_GNN_LAYERS", "2"))
-NUM_CONCEPTS     = int(os.getenv("WORLDVIEW_NUM_CONCEPTS", "512"))
+# Right-sized 2026-10-10 (four-minds FM-8.2): 512 concepts over ~2,300 records was 4.5 per concept, and the
+# health floor is 20 - K 96, hidden 256 and one GNN layer, under a new checkpoint key (worldview_v3) so the old
+# model stays stored. The env vars still override every one of them.
+HIDDEN_DIM       = int(os.getenv("WORLDVIEW_HIDDEN_DIM", "256"))
+NUM_GNN_LAYERS   = int(os.getenv("WORLDVIEW_GNN_LAYERS", "1"))
+NUM_CONCEPTS     = int(os.getenv("WORLDVIEW_NUM_CONCEPTS", "96"))
 VQ_DECAY         = float(os.getenv("WORLDVIEW_VQ_DECAY", "0.99"))
 VQ_COMMITMENT    = float(os.getenv("WORLDVIEW_VQ_COMMIT", "0.25"))
 DYN_DIM          = int(os.getenv("WORLDVIEW_DYN_DIM", "192"))
@@ -182,7 +200,7 @@ WALK_LEN         = int(os.getenv("WORLDVIEW_WALK_LEN", "16"))
 CHECKPOINT_DIR   = Path(os.getenv("WORLDVIEW_CHECKPOINT_DIR",
                                    str(Path.home() / ".vera" / "worldview")))
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_CKPT     = CHECKPOINT_DIR / "worldview_v2.pt"
+DEFAULT_CKPT     = CHECKPOINT_DIR / "worldview_v3.pt"
 
 LOOM_EDGE_TYPES = [
     "SIMILAR_TO", "SHARES_TOPIC", "DERIVED_FROM",
@@ -677,6 +695,10 @@ class WorldView:
         # before the FAISS index is rebuilt.
         self.record_meta: Dict[str, Dict] = {}
         self.transition_counts: Dict[Tuple[int, int], int] = {}
+        # the last training's held-out next-concept evaluation (worldview_eval_core.verdict) - health reads it
+        self.held_out: Dict[str, Any] = {}
+        # the realised mix of the records it was last trained on (worldview_corpus_core.mix) - FM-8.3's exit
+        self.corpus: Dict[str, Any] = {}
         self.last_fabric_persist: str = ""
         self.last_fabric_load:    str = ""
         self._last_revived:       int = 0
@@ -930,6 +952,33 @@ class WorldView:
 
     # ── Stage 3: Dynamics training ─────────────────────────────────────────
 
+    def eval_dynamics(self, token_seqs, batch: int = 128) -> Tuple[float, float, int]:
+        """(mean next-token negative log-likelihood in nats, top-1 accuracy, tokens) over held-out walks, the
+        same targets train_dynamics_step learns (the end-of-sequence padding never counts)."""
+        if not self.ready or not token_seqs:
+            return 0.0, 0.0, 0
+        self.dynamics.eval()
+        nll, hits, n = 0.0, 0, 0
+        with torch.no_grad():
+            for i in range(0, len(token_seqs), batch):
+                seqs = token_seqs[i:i + batch]
+                T = min(max(len(s) for s in seqs), self.dynamics.max_ctx)
+                tokens = torch.full((len(seqs), T), TOKEN_EOS, dtype=torch.long, device=self.device)
+                for j, s in enumerate(seqs):
+                    s = s[:T]
+                    tokens[j, :len(s)] = torch.tensor(s, dtype=torch.long, device=self.device)
+                logits = self.dynamics(tokens)[:, :-1]
+                tgt = tokens[:, 1:]
+                mask = tgt != TOKEN_EOS
+                if not bool(mask.any()):
+                    continue
+                lp = F.log_softmax(logits, dim=-1)
+                nll += float(-lp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)[mask].sum())
+                hits += int((logits.argmax(-1) == tgt)[mask].sum())
+                n += int(mask.sum())
+        self.dynamics.train()
+        return (nll / n if n else 0.0), (hits / n if n else 0.0), n
+
     def train_dynamics_step(self, token_seqs):
         if not self.ready or not token_seqs:
             return 0.0
@@ -1058,6 +1107,10 @@ class WorldView:
             "record_meta":       self.record_meta,
             "transition_counts": {f"{a},{b}": n
                                    for (a, b), n in self.transition_counts.items()},
+            "held_out":          dict(self.held_out or {}),
+            "corpus":            dict(self.corpus or {}),
+            # when this checkpoint was written: health's checkpoint age survives a restart
+            "saved_at":          self.last_fabric_persist or now_iso(),
             "config": {
                 "embed_dim":    self.embed_dim,
                 "latent_dim":   self.latent_dim,
@@ -1123,6 +1176,10 @@ class WorldView:
         self.concept_labels  = ckpt.get("concept_labels", {})
         self.record_concepts = ckpt.get("record_concepts", {})
         self.record_meta     = ckpt.get("record_meta", {})
+        self.held_out        = dict(ckpt.get("held_out") or {})
+        self.corpus          = dict(ckpt.get("corpus") or {})
+        if not self.last_fabric_persist and ckpt.get("saved_at"):
+            self.last_fabric_persist = str(ckpt["saved_at"])
         tc = ckpt.get("transition_counts", {})
         self.transition_counts = {}
         for k, v in tc.items():
@@ -1209,6 +1266,8 @@ class WorldView:
             "records_assigned": len(self.record_concepts),
             "labelled_concepts": len(self.concept_labels),
             "transitions_observed": len(self.transition_counts),
+            "held_out":         dict(self.held_out or {}),
+            "corpus":           dict(self.corpus or {}),
             "last_fabric_persist": self.last_fabric_persist,
             "last_fabric_load":    self.last_fabric_load,
             "active_subview":      _WV_ACTIVE_SUBVIEW,
@@ -1392,7 +1451,7 @@ def _get_fabric():
 # FABRIC PERSISTENCE  —  SQLite + Postgres checkpoint store/load
 # ─────────────────────────────────────────────────────────────────────────────
 
-WV_BLOB_KEY = os.getenv("WORLDVIEW_BLOB_KEY", "worldview_v2")
+WV_BLOB_KEY = os.getenv("WORLDVIEW_BLOB_KEY", "worldview_v3")   # v2 = the pre-FM-8.2 512-concept model
 WORLDVIEW_PROVIDER_REVISION = "worldview-jepa-v2"
 MAX_PROVENANCE_JSON_BYTES = 16 * 1024 * 1024
 _WV_RETRIEVAL_PROVENANCE: Optional[JepaRetrievalProvenance] = None
@@ -2538,11 +2597,21 @@ def _train_stages_sync(model: "WorldView", graph: Dict, gnn_epochs: int,
             say("dynamics_error", error=str(e)[:200], message=f"Walk generation failed: {e}")
             walks = []
         walks_n = len(walks)
+        # FM-8.2: a share of the walks is held back for the next-concept evaluation health reads, and the epochs
+        # are capped so the dynamics never take more than ~20 steps per observed transition (memorising)
+        test_walks: List = []
         if walks:
-            say("dynamics_walks", walks=len(walks),
-                message=f"{len(walks)} walks generated — training dynamics...")
-            t_stage = time.time()
+            walks, test_walks = _wv_eval.split_walks(walks, float(_WV_CONFIG.get("held_out", _wv_eval.HELD_OUT)))
+        if walks:
             dyn_batch = _WV_CONFIG.get("batch_size", BATCH_SIZE)
+            per_epoch = sum(1 for i in range(0, len(walks), dyn_batch) if len(walks[i:i + dyn_batch]) >= 2)
+            capped = _wv_eval.step_cap(len(model.transition_counts), model.train_steps.get("dynamics", 0),
+                                       per_epoch, dynamics_epochs)
+            say("dynamics_walks", walks=len(walks), held_out=len(test_walks), epochs=capped,
+                message=f"{len(walks)} walks ({len(test_walks)} held out) — training dynamics, "
+                        f"{capped} of {dynamics_epochs} epochs (step cap)...")
+            dynamics_epochs = capped
+            t_stage = time.time()
             for epoch in range(dynamics_epochs):
                 if should_stop():
                     stopped = True
@@ -2567,6 +2636,20 @@ def _train_stages_sync(model: "WorldView", graph: Dict, gnn_epochs: int,
                     say("dynamics_error", epoch=epoch + 1, error=str(e)[:200],
                         message=f"Dynamics epoch {epoch+1} failed: {e}")
                     break
+            if test_walks:
+                try:
+                    nll, acc, _n = model.eval_dynamics(test_walks)
+                    base = _wv_eval.baselines(walks, test_walks, model.num_concepts + NUM_SPECIAL_TOKENS, TOKEN_EOS)
+                    model.held_out = _wv_eval.verdict(nll, acc, base, train_walks=len(walks),
+                                                      test_walks=len(test_walks))
+                    model.held_out["at"] = now_iso()
+                    say("dynamics_held_out", **{k: v for k, v in model.held_out.items() if k != "at"},
+                        message=f"Held out: model {nll:.3f} nats vs unigram {base.get('unigram_nll')} / bigram "
+                                f"{base.get('bigram_nll')} - "
+                                + ("beats both" if model.held_out["beats_baseline"] else model.held_out.get("why", "")))
+                except Exception as e:
+                    log.error("Held-out evaluation FAILED: %s", e, exc_info=True)
+                    say("dynamics_error", error=str(e)[:200], message=f"Held-out evaluation failed: {e}")
         gc.collect()
     if stopped:
         say("stopped", message="Training stopped — keeping the epochs already run")
@@ -2982,6 +3065,57 @@ async def _chroma_existing_ids(dataset_id: str = "") -> set:
     except Exception as e:
         log.debug("chroma id scan: %s", e)
         return set()
+
+
+async def _pin_corpus(graph: Dict, curated: bool) -> Dict[str, Any]:
+    """A DatasetSnapshot of the records this training uses (references: id + dataset), written with its id list
+    under the state root (datasets/worldview/<snapshot_id>.json). Returns {snapshot_id, snapshot_path}."""
+    from Vera.vera.state_paths import state_dir
+    recs = _wv_corpus.snapshot_records(graph.get("rids") or [], graph.get("records") or {})
+    snap, _ = DatasetSnapshot.create(
+        dataset_id=_wv_corpus.SNAPSHOT_DATASET, created_at=now_iso(), records=recs,
+        schema=_wv_corpus.SNAPSHOT_SCHEMA,
+        provenance={"curated": bool(curated), "key": WV_BLOB_KEY,
+                    "family_cap": _WV_CONFIG.get("corpus_family_cap"),
+                    "exclude": list(_WV_CONFIG.get("corpus_exclude") or _wv_corpus.SELF_TELEMETRY)})
+
+    def _write():
+        path = state_dir("datasets", "worldview") / f"{snap.snapshot_id}.json"
+        path.write_text(json.dumps({"snapshot": snap.to_dict(), "records": recs}), encoding="utf-8")
+        return str(path)
+    path = await asyncio.get_running_loop().run_in_executor(None, _write)
+    return {"snapshot_id": snap.snapshot_id, "snapshot_path": path}
+
+
+async def _curated_corpus_ids(limit: int) -> Dict[str, Any]:
+    """FM-8.3: record ids for training, stratified by collector family (worldview_corpus_core.plan), from the
+    fabric's SQLite - never a filtered Chroma scan (a where-filter scans the whole collection). Each family's
+    quota is oversampled (not every record has a vector yet); build_graph fetches the vectors by id."""
+    fab = _get_fabric()
+    if not fab:
+        return {"ids": [], "error": "data_fabric not loaded"}
+    exclude = tuple(_WV_CONFIG.get("corpus_exclude") or _wv_corpus.SELF_TELEMETRY)
+    cap = float(_WV_CONFIG.get("corpus_family_cap", _wv_corpus.FAMILY_CAP))
+    over = float(_WV_CONFIG.get("corpus_oversample", 2.0))
+
+    def _pick():
+        conn = fab._sqlite_conn()
+        counts = {r[0]: int(r[1]) for r in conn.execute(
+            "SELECT dataset_id, count(*) FROM fabric_records WHERE text IS NOT NULL AND text != '' "
+            "GROUP BY dataset_id").fetchall() if r[0]}
+        p = _wv_corpus.plan(counts, int(limit), exclude, cap)
+        ids: List[str] = []
+        for fam, q in p["quotas"].items():
+            ds = p["datasets"].get(fam) or []
+            if not q or not ds:
+                continue
+            marks = ",".join("?" for _ in ds)
+            ids += [r[0] for r in conn.execute(
+                f"SELECT id FROM fabric_records WHERE dataset_id IN ({marks}) AND text IS NOT NULL AND text != '' "
+                f"ORDER BY random() LIMIT ?", (*ds, int(q * over))).fetchall()]
+        return {"ids": ids, "quotas": p["quotas"], "excluded": p["excluded"], "eligible": p["eligible"]}
+
+    return await asyncio.get_running_loop().run_in_executor(None, _pick)
 
 
 async def _sqlite_records_for_dataset(dataset_id: str = "",
@@ -3780,7 +3914,32 @@ async def cap_worldview_train(
                                 f"{len(resolved_node_ids)} FabricRecord IDs",
                         original=len(node_ids), resolved=len(resolved_node_ids))
 
+    if not dataset_id and not resolved_node_ids and _WV_CONFIG.get("curated_corpus", True):
+        # FM-8.3: "all datasets" is a stratified pick, not the first `limit` vectors in storage order
+        try:
+            cur = await _curated_corpus_ids(limit)
+        except Exception as e:
+            cur = {"ids": [], "error": str(e)}
+        if cur.get("ids"):
+            resolved_node_ids = cur["ids"]
+            await _emit("corpus", families=len(cur.get("quotas") or {}), picked=len(cur["ids"]),
+                        excluded=len(cur.get("excluded") or []),
+                        message=f"Curated corpus: {len(cur['ids'])} records from {len(cur.get('quotas') or {})} "
+                                f"families (<= {int(100 * _WV_CONFIG.get('corpus_family_cap', _wv_corpus.FAMILY_CAP))}% "
+                                f"each), {len(cur.get('excluded') or [])} self-telemetry datasets left out")
+        else:
+            await _emit("corpus", message="Curated corpus unavailable - all datasets in storage order "
+                                          f"({cur.get('error') or 'no eligible records'})")
     graph = await build_graph(dataset_id, limit=limit, node_ids=resolved_node_ids)
+    if graph.get("rids"):
+        MODEL.corpus = _wv_corpus.mix((graph.get("records") or {}).get(r, {}).get("dataset_id", "")
+                                      for r in graph["rids"])
+        # FM-8.3: the corpus is pinned - a DatasetSnapshot of the record references, kept off the repo, so the
+        # model's health and the next training can name exactly what it learnt from
+        try:
+            MODEL.corpus.update(await _pin_corpus(graph, curated=bool(resolved_node_ids and not node_ids)))
+        except Exception as e:
+            log.warning("worldview: corpus snapshot not pinned: %s", e)
     if not graph.get("rids"):
         diag = await _diagnose_no_records(dataset_id)
         return {"error": "No records with embeddings found",
@@ -4004,8 +4163,24 @@ async def cap_worldview_rebuild_index(
     return {"ok": True, "indexed": indexed, "duration_s": duration}
 
 
+try:
+    from Vera.vera.model_binding_core import binding as _bind
+except ImportError:  # standalone/test import path
+    from vera.model_binding_core import binding as _bind
+
+_SERVES_WV_ENCODE = _bind(
+    "encode", "jepa", io_in="text", io_out="label", placement="host",
+    uses="Place a text or stored record in the worldview's latent space and name the concept "
+         "cluster it belongs to.",
+    limits="anything the worldview has not been trained on yet (check worldview.health).")
+_SERVES_WV_PREDICT = _bind(
+    "predict", "jepa", io_in="text", io_out="labels", placement="host",
+    uses="Predict which concepts tend to follow a record, concept or text, with probabilities - "
+         "what usually comes next.",
+    limits="facts or reasoning; concepts are clusters, not answers.")
+
 @capability(
-    "worldview.encode",
+    "worldview.encode", serves=_SERVES_WV_ENCODE,
     http_method="POST", http_path="/worldview/encode",
     http_tags=["worldview"], memory="off",
     description="Encode text or record into latent + concept. "
@@ -4055,7 +4230,7 @@ async def cap_worldview_encode(
 
 
 @capability(
-    "worldview.predict",
+    "worldview.predict", serves=_SERVES_WV_PREDICT,
     http_method="POST", http_path="/worldview/predict",
     http_tags=["worldview"], memory="off",
     description="Predict the next concept after a record/concept/text. "
@@ -5011,7 +5186,9 @@ async def cap_worldview_label_concepts(
     else:
         # Label unlabelled concepts first, then update existing labels
         target = [c for c, _ in pop.most_common() if c not in MODEL.concept_labels]
-    target = target[:max_concepts]
+    # FM-8.2: an LLM label for a concept with a handful of members names noise - not below the floor
+    floor = int(_WV_CONFIG.get("label_min_members", 5) or 0)
+    target = [c for c in target if pop[c] >= floor][:max_concepts]
     if not target:
         return {"labelled": [], "message": "Nothing to label"}
 
@@ -5321,7 +5498,8 @@ async def cap_worldview_health(trace_id=None) -> Dict:
     except ImportError:                                   # pragma: no cover
         from vera.worldview import worldview_health_core as _whc
     try:
-        return _whc.verdict(MODEL.stats(), WV_INDEX.stats())
+        st = MODEL.stats()
+        return _whc.verdict(st, WV_INDEX.stats(), held_out=st.get("held_out") or None)
     except Exception as e:                                # a broken model is not healthy
         log.warning("worldview.health: %s", e)
         return {"status": "untrained", "reasons": [f"health check failed: {e}"], "metrics": {}}
@@ -5404,6 +5582,11 @@ _WV_CONFIG: Dict[str, Any] = {
     "jepa_weight":        1.0,
     "vicreg_weight":      0.5,
     "target_ema_decay":   0.996,
+    "held_out":           0.2,         # FM-8.2: share of walks held back for the next-concept evaluation
+    "label_min_members":  5,           # FM-8.2: no LLM label for a concept with fewer members
+    "curated_corpus":     True,        # FM-8.3: "all datasets" = a stratified pick by collector family
+    "corpus_family_cap":  0.15,        # FM-8.3: no family above this share of the pick
+    "corpus_oversample":  2.0,         # FM-8.3: ids sampled per quota (not every record has a vector)
     "auto_label":         True,        # auto-label concepts after training
     "auto_label_k":       50,          # max concepts to auto-label
 }

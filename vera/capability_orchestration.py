@@ -7282,8 +7282,19 @@ def capability(
         for _e in _binding_errs:
             log.error("model binding dropped: %s", _e)
             MODEL_BINDING_ERRORS.append(_e)
+        if _bindings:
+            _placement.set_model_placement(name, [b.get("placement") for b in _bindings])
         _auto_schema   = generate_schema(func)
         _final_schema  = _merge_schema(_auto_schema, schema) if schema else _auto_schema
+        # A selector argument (nlp.ner's `task`) gets its options and what each
+        # picks from the bindings, unless schema= already declared them - so
+        # the form, the LLM signature and the capability's check agree.
+        _props = _final_schema.get("properties") or {}
+        for _k, _frag in _model_binding.selector_schema(_bindings).items():
+            if isinstance(_props.get(_k), dict):
+                _props[_k].setdefault("enum", _frag["enum"])
+                if not _props[_k].get("description"):
+                    _props[_k]["description"] = _frag["description"]
         group  = name.split(".")[0]
         _redact_args = frozenset(str(key) for key in (redact_args or ()))
         _alias_for = str(compatibility_alias_for or "").strip()
@@ -12310,6 +12321,9 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "minds/tool_shortlist.py"),
         os.path.join(_here, "minds/label_capabilities.py"),
         os.path.join(_here, "minds/export.py"),
+        os.path.join(_here, "minds/calibration.py"),
+        os.path.join(_here, "minds/precedent.py"),
+        os.path.join(_here, "minds/chat_corpus.py"),
         os.path.join(_here, "minds/sense_capabilities.py"),
         os.path.join(_here, "minds/baseline_capabilities.py"),
         # The widget registry (UI redesign): every part of the UI as a record -
