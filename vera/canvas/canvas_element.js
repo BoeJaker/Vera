@@ -1849,8 +1849,21 @@
   .vc-rr-src a{color:var(--acc,#5a9e8f);text-decoration:none}.vc-rr-src a:hover{text-decoration:underline}
   .vc-rr-src small{display:block;font-family:var(--mono,monospace);font-size:10px;color:var(--dim,#8b93a1)}
   .vc-rr-ft{font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim,#8b93a1);flex:none}
+  /* WSU-65 (owner 2026-10-11: "the research plan doesn't render into the right hand panel reliably"): beside the report
+     only from 760 px, so a desk card sized narrower showed one pane at a time - the plan (the side pane while it runs)
+     was gone from view. Beside from 560 px now; narrower, the side pane goes under the report rather than away. */
+  @container vcrr (max-width: 559.98px) {
+    .vc-rr.lay-right .vc-rr-body{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1.5fr) minmax(0,1fr);gap:10px}
+    .vc-rr.lay-right .vc-rr-p{display:none}
+    .vc-rr.lay-right .vc-rr-p.main,.vc-rr.lay-right .vc-rr-p.side{display:block}
+    .vc-rr.lay-right .vc-rr-p.main{grid-row:1}
+    .vc-rr.lay-right .vc-rr-p.side{grid-row:2;border-top:1px solid var(--border,#2a2f37);padding-top:10px}
+    .vc-rr.lay-right .vc-rr-tab[data-rr-tab="report"]{display:none}
+    .vc-rr.lay-right .vc-rr-tab.on:not(.side){color:var(--dim,#8b93a1);border-bottom-color:transparent}
+    .vc-rr.lay-right .vc-rr-tab.side{color:var(--fg,#dce1e8);border-bottom-color:var(--acc,#5a9e8f)}
+  }
   /* wide: the report beside one other pane; its own tab is not needed there */
-  @container vcrr (min-width: 760px) {
+  @container vcrr (min-width: 560px) {
     .vc-rr-body{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(250px,1fr);gap:14px}
     .vc-rr-p{display:none}
     .vc-rr-p.main,.vc-rr-p.side{display:block}
