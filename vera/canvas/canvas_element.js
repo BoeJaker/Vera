@@ -3070,6 +3070,29 @@
       clearTimeout(c._flT); c._flT = setTimeout(() => { c.classList.remove('desk-flash'); c.style.zIndex = z; }, 1600);
       return true;
     }
+    /* A PLACEHOLDER IN THE CHAT OPENS ITS ITEM (owner, 2026-10-11, WSU-60: "a placeholder in the chat opens and focuses
+       its item"): the item comes to the front and pulses. On the desk a tab behind its combined card comes forward
+       (flash) and a pill opens as it does under the pointer, until the pointer goes elsewhere; in the held column a
+       folded item is opened and scrolled into view. False while the item is not drawn yet - the caller tries again. */
+    focusItem(key, again) {
+      const find = () => { const st = this.shadowRoot && this.shadowRoot.getElementById('stage');   // a render replaces the stage: looked up each time
+        return st ? [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)) : null; };
+      const c = find(); if (!c) return false;
+      if (this.deskAlign()) {
+        if (!this.flash(key)) return false;
+        const it = find(); if (it && it.classList.contains('desk-chip')) { if (again) this._hovKey = null; this._hovSet(String(key)); }
+        /* renders landing just after the click (the first seconds after a session loads, measured: two in 900 ms) redraw
+           the stage, and the pulse and the opened pill go with them - the item is pointed out again, a few times at most */
+        if (!again) { clearInterval(this._fiT); let ticks = 0, redo = 0;
+          this._fiT = setInterval(() => { if (++ticks > 4) return clearInterval(this._fiT);
+            const now = find(); if (now && !now.classList.contains('desk-flash') && redo++ < 3) this.focusItem(key, true); }, 350); }
+        return true;
+      }
+      if (c.classList.contains('compact') || c.classList.contains('overfold')) { this._open.add(String(key)); if (this._doc) this.render(this._doc); }
+      this._revealSoon(String(key));
+      this.flash(key);
+      return true;
+    }
     /* A PANEL BEHIND THE ITEMS MAKES ROOM (owner, 2026-10-06: "could it automatically move the widgets out of the way
        (optionally)"): each panel item sent behind is told where the other cards cover its frame, as shares of the frame's
        view (the frame has its own scale); its dashboard moves its widgets out from under them. Any other panel item is
