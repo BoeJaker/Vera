@@ -694,7 +694,7 @@
       };      const title = (r) => r.url ? `<a class="vc-rbx-t" href="${esc(r.url)}" target="_blank" rel="noopener" data-rec-stop="1">${esc(r.title || r.url)}</a>` : `<span class="vc-rbx-t">${esc(r.title || r.id)}</span>`;
       const score = (r) => r.score != null ? `<span class="vc-rbx-sc" title="relevance ${esc(r.score)}"><i style="width:${Math.round(Math.max(0, Math.min(1, +r.score)) * 100)}%"></i></span>` : '';
       let body = '';
-      if (!all.length) body = `<div class="vc-rbx-empty">nothing in it</div>`;
+      if (!all.length) body = `<div class="vc-rbx-empty">${c.running ? 'searching - the pages appear here as they are found' : 'nothing in it'}</div>`;
       else if (!rows.length) body = `<div class="vc-rbx-empty">nothing matches “${esc(st.q || st.dom)}”</div>`;
       else if (st.view === 'graph') body = `<div class="vc-rbx-graph"><div class="vc-live" data-live="rgraph" data-key="${K}"><span class="vc-dim">drawing the graph…</span></div><div class="vc-rbx-gnote">a record's node opens it in the list; a name, the pages that name it</div></div>`;
       else if (st.view === 'table') {
@@ -717,9 +717,12 @@
          topic it tracks - over the pages; what it checked and the gaps it could not fill under them */
       const ev = c.kind === 'evidence' && c.evidence && typeof c.evidence === 'object' ? c.evidence : null;
       const evChip = (k, v, cls) => `<span class="vc-ev-chip${cls ? ' ' + cls : ''}"><i>${esc(k)}</i>${esc(v)}</span>`;
-      const evHead = ev ? `<div class="vc-ev">${ev.question && ev.question !== ev.subject ? `<div class="vc-ev-q">${esc(ev.question.slice(0, 200))}</div>` : ''}<div class="vc-ev-chips">`
+      /* still looking (the chat's lookup item, before the answer): what it is doing now, how long, a moving line */
+      const secs = ev && ev.started ? Math.max(0, Math.round((Date.now() - +ev.started) / 1000)) : 0;
+      const evRun = ev && c.running ? `<div class="vc-ev-run"><span class="vc-rr-dot"></span><b>${esc(ev.stage || 'looking it up')}</b><span class="t">${secs ? secs + ' s' : ''}</span></div><div class="vc-rr-bar"><i></i></div>` : '';
+      const evHead = ev ? `<div class="vc-ev${c.running ? ' running' : ''}">${evRun}${ev.question && ev.question !== ev.subject ? `<div class="vc-ev-q">${esc(ev.question.slice(0, 200))}</div>` : ''}<div class="vc-ev-chips">`
         + (ev.need ? evChip('need', ev.need) : '') + (ev.since ? evChip('since', String(ev.since).slice(0, 10)) : '')
-        + (ev.tracked ? evChip('tracked', ev.tracked) : '') + evChip('', ev.answerable ? 'answerable' : 'not answered', ev.answerable ? 'ok' : 'bad')
+        + (ev.tracked ? evChip('tracked', ev.tracked) : '') + (c.running ? (ev.cap ? evChip('', ev.cap) : '') : evChip('', ev.answerable ? 'answerable' : 'not answered', ev.answerable ? 'ok' : 'bad'))
         + (ev.ms ? evChip('took', (ev.ms / 1000).toFixed(ev.ms < 10000 ? 1 : 0) + ' s') : '') + (ev.job ? evChip('report', 'job ' + ev.job) : '') + `</div></div>` : '';
       const evFoot = ev && ((ev.checked || []).length || (ev.gaps || []).length) ? `<details class="vc-ev-foot"${(ev.gaps || []).length ? ' open' : ''}><summary>checked ${(ev.checked || []).length}${(ev.gaps || []).length ? ' · <b>' + ev.gaps.length + ' gap' + (ev.gaps.length === 1 ? '' : 's') + '</b>' : ''}</summary>`
         + ((ev.gaps || []).length ? `<ul class="vc-ev-gaps">${ev.gaps.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : '')
@@ -2188,6 +2191,10 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it > .it-hd > .sc{display:none}
   /* a lookup's evidence (records of kind evidence): its question and how it was looked up; [n] badges; checked and gaps */
   .vc-ev{display:flex;flex-direction:column;gap:6px;margin:4px 0 6px}
+  .vc-ev-run{display:flex;align-items:center;gap:8px;min-width:0}
+  .vc-ev-run b{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .vc-ev-run .t{margin-left:auto;font-size:10.5px;color:var(--dim,#8b93a1);white-space:nowrap}
+  .vc-ev.running .vc-rr-dot{background:var(--acc,#5a9e8f);animation:vcActPulse 1.2s ease-in-out infinite}
   .vc-ev-q{font-size:12.5px;line-height:1.45;color:color-mix(in srgb,var(--fg,#dce1e8) 85%,transparent)}
   .vc-ev-chips{display:flex;flex-wrap:wrap;gap:4px}
   .vc-ev-chip{font-size:10.5px;border:1px solid var(--border,#2a2f37);border-radius:10px;padding:1px 8px;color:var(--fg,#dce1e8);white-space:nowrap}
@@ -2960,7 +2967,10 @@
     /* point one item out on the desk (the exploded view's double click): it rides on top and pulses for a moment */
     flash(key) {
       const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!st) return false;
-      const c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)); if (!c) return false;
+      let c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)); if (!c) return false;
+      /* a tab behind the front of a combined card (see _deskGroups) comes to the front to be shown */
+      if (c.classList.contains('cmp-behind')) { const m = this._cmpGet(); m[String(key)] = Date.now(); this._cmpSet(m); this._placeNow();
+        c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)) || c; }
       c.classList.remove('desk-flash'); void c.offsetWidth; c.classList.add('desk-flash');
       const z = c.style.zIndex; c.style.zIndex = '180';
       clearTimeout(c._flT); c._flT = setTimeout(() => { c.classList.remove('desk-flash'); c.style.zIndex = z; }, 1600);
@@ -3169,7 +3179,8 @@
     _deskFit() {
       const sr = this.shadowRoot; if (!sr || this.getAttribute('desk-fit') === 'off') return;
       /* a diagram is measured too: its drawing has its own shape, and its slot is as tall as the drawing (_diagramGrew) */
-      const FILLS = new Set(['records', 'research', 'widget', 'explode', 'panel', 'notebook', 'html', 'image']);   /* a live shell is skipped by its .vc-live */
+      /* a notebook cell is measured too: its source and its output were each stretched to half a tall card (2026-10-11) */
+      const FILLS = new Set(['records', 'research', 'widget', 'explode', 'panel', 'html', 'image']);   /* a live shell is skipped by its .vc-live */
       const nat = this._natH = this._natH || {}; let changed = false;
       sr.querySelectorAll('.stage .it[data-key][data-desk-face]').forEach((c) => {
         const key = c.dataset.key, face = c.dataset.deskFace || '';

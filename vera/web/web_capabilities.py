@@ -1401,6 +1401,21 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
     extra: Dict[str, Any] = {}
     items: List[Dict[str, Any]] = []
 
+    # HOW THE LOOKUP STANDS, AS IT GOES (owner, 2026-10-11: "the research family of caps has rich output while its
+    # running that need to be communicated"): each stage is an info.seek.step event - what it is doing, what it has
+    # checked so far, the pages it has in hand - keyed by the question, so the chat's item for this call can show the
+    # lookup working rather than a card that appears only at the end. Best effort: a lost event changes nothing.
+    async def step(stage: str, have: Optional[List[Dict[str, Any]]] = None) -> None:
+        try:
+            await emit_event({"type": "info.seek.step", "question": question[:300], "need": need, "subject": subject[:120],
+                              "stage": stage, "checked": checked[-8:], "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                              "items": [{"title": str(h.get("title") or "")[:160], "url": h.get("url") or "",
+                                         "site": h.get("site") or h.get("domain") or "", "published": h.get("published") or "",
+                                         "read": bool(h.get("text"))} for h in (have or [])[:12]]})
+        except Exception:
+            pass
+    await step("planning: need " + need + " · " + subject[:80])
+
     # what Vera already tracks on the subject - milliseconds, so always asked
     intel_task = asyncio.create_task(_seek_call("intel.lookup", 8, query=subject, since=since))
 
@@ -1424,14 +1439,17 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
         hits = [h for h in hits if h not in dropped]
         if dropped:
             checked.append(f"dropped {len(dropped)} market-report sellers")
+        await step(f"ranking {len(hits)} results")
         hits = await _seek_rerank(subject, hits)
         items = [dict(h, kind="web") for h in _seek.per_site(hits, 2)][:12]
         # newest first BEFORE reading: the pages read are the new ones, not the evergreen explainers relevance
         # ranks high (prod, 10 Oct: every read page was an undated explainer while the dated news went unread)
         items = _seek.order_latest(items, since, now)
+        await step(f"reading the {min(pages, len(items))} newest pages", items)
         got = await _seek_read(items, pages, chars)
         checked.append(f"read {got} of the top pages")
         items = _seek.order_latest(items, since, now)          # a page read may have given its own date
+        await step("read the pages; checking what Vera tracks", items)
     else:
         # fact / overview / deep: the subject's keywords first, then other angles; ranked against the QUESTION (the
         # cross-encoder judges "does this page answer it"), at most two pages a site, the best pages read
@@ -1442,12 +1460,15 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
         engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
         checked.append(f"web: {len(queries)} searches ({', '.join(engines) or 'no engine answered'}), {len(hits)} results")
         _seek.fill_dates(hits, now)
+        await step(f"ranking {len(hits)} results against the question")
         hits = await _seek_rerank(question, hits)
         cap = 2 if need == "fact" else 1          # an overview wants many sites, a fact may take two pages of one
         items = [dict(h, kind="web") for h in _seek.per_site(hits, cap)][:10]
         n_read = pages if need == "fact" else min(8, pages + 2)
+        await step(f"reading the {min(n_read, len(items))} best pages", items)
         got = await _seek_read(items, n_read, chars)
         checked.append(f"read {got} of the top pages")
+        await step("read the pages", items)
         if need == "fact" and got < 2 and len(queries) < 3:
             # depth over speed: the pages did not carry an answer - one sharper round before giving up
             q3 = f"{subject} {now.year}"
