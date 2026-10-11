@@ -74,6 +74,7 @@ import logging
 import math
 import os
 import random
+import re
 import sqlite3
 import time
 from collections import defaultdict, Counter
@@ -99,7 +100,10 @@ from Vera.vera.capability_orchestration import (
     capability, APP, emit_event, now_iso, schedule, ollama_generate, register_ui,
 )
 from Vera.vera.config import cfg
-from Vera.vera.worldview.retrieval_provenance import JepaRetrievalProvenance
+from Vera.vera.worldview.retrieval_provenance import (
+    JepaRetrievalProvenance,
+    build_index_snapshot_candidate,
+)
 from Vera.vera.fabric.dataset_provider import DatasetSnapshot
 
 # ── Optional heavy imports (graceful degradation) ─────────────────────────────
@@ -2857,6 +2861,8 @@ async def _rebuild_index_from_graph(graph: Dict) -> int:
             "dataset_id":    r["dataset_id"],
             "text":          (r.get("text") or "")[:200],
             "created_at":    r.get("created_at", ""),
+            "revision_id":   r.get("revision_id", ""),
+            "content_hash":  r.get("content_hash", ""),
             "concept":       c,
             "concept_label": MODEL.concept_labels.get(c, ""),
         }
@@ -4327,6 +4333,48 @@ def _dataset_snapshot_from_dict(value: Any) -> DatasetSnapshot:
 
 
 @capability(
+    "worldview.retrieval.snapshot.preview",
+    http_method="GET", http_path="/worldview/retrieval/snapshot/preview",
+    http_tags=["worldview", "retrieval"], memory="off", silent=True,
+    description="Build payload-free DatasetSnapshot binding inputs for the exact "
+                "active JEPA index. Fails closed when an indexed record lacks "
+                "revision/content-hash provenance. It does not persist a binding, "
+                "query the model, or activate retrieval influence.",
+)
+async def cap_worldview_retrieval_snapshot_preview(trace_id=None) -> Dict:
+    if not MODEL.ready or not WV_INDEX.available:
+        return {"ok": True, "eligible": False,
+                "error_code": "worldview_not_ready", "executes": False}
+    indexed_ids = _active_index_record_ids()
+    try:
+        candidate = build_index_snapshot_candidate(
+            indexed_record_ids=indexed_ids,
+            record_metadata=MODEL.record_meta,
+            created_at=now_iso(), provider_revision=WORLDVIEW_PROVIDER_REVISION)
+    except (TypeError, ValueError) as exc:
+        missing = {}
+        match = re.search(
+            r"missing_revision=(\d+), missing_content_hash=(\d+)", str(exc))
+        if match:
+            missing = {"revision_id": int(match.group(1)),
+                       "content_hash": int(match.group(2))}
+        return {
+            "ok": True, "eligible": False,
+            "error_code": "index_provenance_incomplete",
+            "record_count": len(indexed_ids), "missing": missing,
+            "executes": False, "retains_content": False,
+        }
+    value = candidate.to_dict()
+    return {
+        "ok": True, "eligible": True,
+        "snapshot": value["snapshot"], "records": value["records"],
+        "record_count": value["record_count"],
+        "executes": False, "retains_content": False,
+        "activation_authority": False,
+    }
+
+
+@capability(
     "worldview.retrieval.bind",
     http_method="POST", http_path="/worldview/retrieval/bind",
     http_tags=["worldview", "retrieval"], memory="off",
@@ -5696,6 +5744,9 @@ async def _stream_encode_new_records(dataset_id: str, limit: int = 64,
                     "dataset_id":    meta.get("dataset_id", dataset_id),
                     "text":          text[:200],
                     "created_at":    meta.get("created_at", ""),
+                    "revision_id":   meta.get("revision_id", ""),
+                    "content_hash":  (meta.get("content_hash", "") or
+                                      meta.get("source_content_hash", "")),
                     "concept":       concept,
                     "concept_label": MODEL.concept_labels.get(concept, ""),
                 }

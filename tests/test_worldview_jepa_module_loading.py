@@ -36,6 +36,7 @@ namespace = runpy.run_path(path, run_name="worldview_jepa_no_torch")
 assert namespace["HAS_TORCH"] is False
 assert namespace["MODEL"].ready is False
 assert callable(namespace["cap_worldview_retrieval_bind"])
+assert callable(namespace["cap_worldview_retrieval_snapshot_preview"])
 assert callable(namespace["cap_worldview_retrieval_status"])
 assert callable(namespace["cap_worldview_retrieval_query"])
 '''
@@ -71,6 +72,7 @@ namespace = runpy.run_path(sys.argv[1], run_name="worldview_jepa_no_torch_caps")
 bind_cap = inspect.unwrap(namespace["cap_worldview_retrieval_bind"])
 status_cap = inspect.unwrap(namespace["cap_worldview_retrieval_status"])
 query_cap = inspect.unwrap(namespace["cap_worldview_retrieval_query"])
+preview_cap = inspect.unwrap(namespace["cap_worldview_retrieval_snapshot_preview"])
 state = bind_cap.__globals__
 DatasetSnapshot = state["DatasetSnapshot"]
 
@@ -92,6 +94,12 @@ class Model:
     num_concepts = 2
     embed_dim = 3
     record_concepts = {"r1": 0, "r2": 1}
+    record_meta = {
+        "r1": {"revision_id": "rev-a", "content_hash": "sha256:a",
+               "dataset_id": "source-a", "text": "private alpha"},
+        "r2": {"revision_id": "rev-b", "content_hash": "sha256:b",
+               "dataset_id": "source-b", "text": "private beta"},
+    }
     last_fabric_persist = ""
     def serialize_bytes(self):
         return b"exact-checkpoint"
@@ -114,6 +122,16 @@ async def query(**kwargs):
 state["MODEL"] = Model()
 state["WV_INDEX"] = Index()
 state["_fabric_store_checkpoint"] = store
+preview = asyncio.run(preview_cap())
+assert preview["eligible"] is True, preview
+assert preview["record_count"] == 2
+assert "private alpha" not in repr(preview)
+assert preview["activation_authority"] is False
+state["MODEL"].record_meta = {"r1": {}, "r2": {}}
+incomplete = asyncio.run(preview_cap())
+assert incomplete["eligible"] is False, incomplete
+assert incomplete["missing"] == {"revision_id": 2, "content_hash": 2}
+state["MODEL"].record_meta = Model.record_meta
 bound = asyncio.run(bind_cap(
     snapshot_json=json.dumps(snapshot.to_dict()),
     records_json=json.dumps(list(frozen)),
