@@ -13,6 +13,13 @@ import asyncio
 import json
 import logging
 import os
+import sys
+
+# ONE module object (as data_fabric, 11 Oct 2026): the loader loads this file as `training_state`, while loop_ledger and
+# discovery import `Vera.vera.minds.training_state` - a second copy with its own stats, its own decide.* capabilities
+# registered over the first, and its own retention job. Both names point at this object before anything else runs.
+for _alias in ("training_state", "Vera.vera.minds.training_state"):
+    sys.modules.setdefault(_alias, sys.modules[__name__])
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
