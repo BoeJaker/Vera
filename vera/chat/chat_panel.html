@@ -8625,7 +8625,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   let _cvRemote=null;
   function _cvLocal(){ const c=document.querySelector('#canvasColumnBody vera-canvas'); return c&&typeof c.shelves==='function'?c:null; }
   function _cvStateNow(){ const c=_cvLocal(); if(!c) return null; let runsOff=false; try{ runsOff=!!_runsOff.cv; }catch(_){}
-    return { kinds:c.kinds(), s:c.shelves(), cols:String(_cvCols()), enrich:_cvEnrichOn(), tell:_cvTellOn(), runsOff, open:true }; }
+    return { kinds:c.kinds(), s:c.shelves(), cols:String(_cvCols()), enrich:_cvEnrichOn(), tell:_cvTellOn(), runsOff, resize:(typeof c.deskResizeMode==='function'?c.deskResizeMode():'pin'), open:true }; }
   function _cvPublish(){ if(_EMBED.only!=='chat') return; const st=_cvStateNow(); if(st) _lhmPost('cvstate', st); }
   function _cvMenuAct(a){ const c=_cvLocal();
     if(!c){ if(a.a==='open'){ togglePage('canvas'); return Promise.resolve(); } _lhmPost('cvact', a); return Promise.resolve(); }
@@ -8638,6 +8638,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(a.a==='tell'){ _cvTellToggle(); return Promise.resolve(); }
     if(a.a==='runs'){ _runsToggle('cv'); return Promise.resolve(); }
     if(a.a==='close'){ togglePage('canvas'); return Promise.resolve(); }
+    if(a.a==='resize'){ if(typeof c.setDeskResizeMode==='function') c.setDeskResizeMode(a.n); return Promise.resolve(); }
     return Promise.resolve(); }
   function _cvMenuRender(onlyIfOpen){
     const pane=document.getElementById('rpCanvas'), dyn=document.getElementById('rpCanvasDyn'); if(!pane||!dyn) return;
@@ -8656,7 +8657,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       +'<button class="btn xs" data-cvm="close" title="Close the canvas column">&#215; close</button></div></div>';
     const row=(it, act, glyph, tip)=>'<button class="cvm-it" data-cvm="'+act+'" data-key="'+esc(it.key)+'" title="'+esc(tip)+'"><i>'+glyph+'</i><span>'+esc(String(it.title||it.key).slice(0,60))+'</span></button>';
     const shelf=(label, list, act, glyph, tip, empty)=>'<div class="cvm-sec"><h5>'+label+(list.length?' · '+list.length:'')+'</h5>'+(list.length?list.map(it=>row(it, act, glyph, tip)).join(''):'<div class="cvm-dim">'+empty+'</div>')+'</div>';
-    dyn.innerHTML=remoteBanner+
+    /* WSU-74: what a resize does - keep moving (size kept), pin it where it is (as before), or lock it */
+    const rsz='<div class="cvm-sec"><h5>When I resize a card</h5><div class="cvm-kinds">'+[['move','keep moving','Its size is kept; it still moves out of the way of other cards'],['pin','pin it','Its place and size are kept; the others go round it (⤺ on the card lets it move again, keeping its size)'],['lock','lock it','Pinned and locked: nothing moves it until you unlock it']].map(([v,l,tip])=>'<button class="btn xs'+((st.resize||'pin')===v?' on':'')+'" data-cvm="resize" data-n="'+v+'" title="'+esc(tip)+'">'+l+'</button>').join('')+'</div></div>';
+    dyn.innerHTML=remoteBanner+rsz+
       '<div class="cvm-sec"><h5>Add to the canvas</h5><div class="cvm-kinds">'+kinds.map(k=>'<button class="btn xs cvm-add" data-cvm="add" data-kind="'+esc(k.n)+'" title="Add a '+esc(k.n)+' (a '+esc(k.kind)+' item)"><b>'+esc(k.ik)+'</b>'+esc(k.n)+'</button>').join('')+'</div></div>'
       + shelf('Parked', s.parked, 'back', '⤴', 'Bring it back into view', 'Nothing parked.')
       + shelf('Hidden', s.hidden, 'back', '◐', 'Show it again', 'Nothing hidden.')

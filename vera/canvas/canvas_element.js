@@ -3560,14 +3560,16 @@
            not only the card's data-pw, which a compact card's markup leaves out, so a resized desk card lost its size
            on the redraw that followed the resize */
         const live = this._rz && this._rz.el === c ? this._rz : null;
-        const pw = (live ? live.w : 0) || this._pw[key] || parseInt(c.dataset.pw || '0', 10) || 0;
-        const ph = (live ? live.h : 0) || this._px[key] || 0;
+        /* ...or, released back to the arrangement with its size (WSU-74, {w, h, free}), that size - after a reload too */
+        const fr = up[key] && up[key].free && up[key].w > 0 ? up[key] : null;
+        const pw = (live ? live.w : 0) || this._pw[key] || (fr ? fr.w : 0) || parseInt(c.dataset.pw || '0', 10) || 0;
+        const ph = (live ? live.h : 0) || this._px[key] || (fr ? fr.h : 0) || 0;
         /* dropped in pill territory (deskPos.chip): the person's earlier width does not hold it big there */
         const user = pw > 0 && !(up[key] && up[key].chip) ? { w: pw, h: ph || Math.round(pw * 0.66) } : null;
         const so = { size: user, pinned: !!user && c.classList.contains('pinned'), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
         /* a card is no taller than what it holds (see _deskFit): its measured height caps its face and its growth */
-        const nat = (this._natH || {})[key];
+        const nat = user ? null : (this._natH || {})[key];   /* a size the person gave wins over the content fit (WSU-74) */
         /* ...and no wider than its kind uses (owner, 2026-10-11: "some desk items like the 'mentioned' take up too much width
            for their content"): names, a note, fields, a page, what ran - their content wraps short; a wide card of them was
            a wide empty band */
@@ -3577,10 +3579,10 @@
         const nw0 = ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || '']
           || DESK_FORM_MAXW[wf];
         /* ...and a text-like card no wider than its content measured (_deskFit, WSU-69) */
-        const nwm = (this._natW || {})[key]; const nw = nwm ? Math.min(nw0 || Infinity, nwm) : nw0;
+        const nwm = user ? null : (this._natW || {})[key]; const nw = nwm ? Math.min(nw0 || Infinity, nwm) : (user ? null : nw0);
         /* ...and never shorter than its own face needs (WSU-70): a widget clipped in its card is measured (_deskFit) */
         const mh = (this._minH || {})[key];
-        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, minH: mh || undefined, stay: !!userAt(key) };
+        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, minH: mh || undefined, stay: !!userAt(key), own: !!user /* a size the person gave: kept while it moves, never grown (WSU-74) */ };
       });
       D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); const chip = s.face === 'chip' || s.face === 'icon';
         return { w: Math.min(W - 16, s.w, chip ? Infinity : (it.maxW || Infinity)), h: Math.max(chip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h, chip ? Infinity : (it.maxH || Infinity))) }; }, { W: W, H: H });
@@ -3593,7 +3595,7 @@
       /* ...then every card takes the free desk round it (D.grow): a chip stays a chip, and what the person sized, locked
          or is sizing stays as it is. Off with the canvas's desk-fill="off". */
       if (typeof D.grow === 'function' && this.getAttribute('desk-fill') !== 'off') {
-        plan.forEach((it) => { if (it.fixed || it.keepSize) { it.chip = it.h <= 40; return; }
+        plan.forEach((it) => { if (it.fixed || it.keepSize || it.own) { it.chip = it.h <= 40; return; }
           const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); it.face0 = s0.face; it.chip = s0.face === 'chip' || s0.face === 'icon'; });
         D.grow(plan, R, { W: W, H: H }, { maxW: W - 16, maxH: H - 8 });
       }
@@ -3603,6 +3605,8 @@
           /* grown into the free desk: that size, its face from it (a card grown past a full card's size is a full card) */
           : it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) })
           : it.sizing ? { w: it.w, h: it.h, face: c.dataset.deskFace || 'max', nd: 0 }
+          /* the person's size, the card free to move (WSU-74): exactly that size wherever the desk puts it */
+          : it.own && !it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h) })
           /* moved where only its present size fits: it keeps that size and its face there, or it would grow over its neighbours */
           : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: Math.min(it.h, it.h > 40 && it.maxH ? it.maxH : Infinity), face: it.face0 || 'chip' })
           : it.maxH ? (() => { const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); if (s0.face === 'chip' || s0.face === 'icon') return s0; const hh = Math.min(s0.h, it.maxH); return Object.assign({}, s0, { h: hh, face: D.faceOf(s0.w, hh) === 'chip' ? 'card' : D.faceOf(s0.w, hh) }); })()
@@ -4439,7 +4443,17 @@
         const g = this._deskGeo;
         if (g && d.cx != null) {
           if (asChip) this._deskPosSet(d.key, { chip: true });
-          else { this._deskPosSet(d.key, Object.assign({ fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) }, d.own ? { w: d.own.w, h: d.own.h, face: d.own.face } : {}));
+          else {
+            /* let go in a gap: fitted into it (WSU-73) - no larger than the gap, no larger than the card was, kept inside
+               it round the drop point; a gap too small to hold a usable card leaves the drop as before */
+            const gap = this._gapAt(d.cx, d.cy, d.key);
+            if (gap && gap.w >= 200 && gap.h >= 90) {
+              const w = Math.round(Math.min(d.el.offsetWidth, gap.w - 12)), h = Math.round(Math.min(d.el.offsetHeight, gap.h - 12));
+              const cx = Math.max(gap.x + 6 + w / 2, Math.min(gap.x + gap.w - 6 - w / 2, d.cx)), cy = Math.max(gap.y + 6 + h / 2, Math.min(gap.y + gap.h - 6 - h / 2, d.cy));
+              const face = d.el.dataset.deskFace && !/chip|icon/.test(d.el.dataset.deskFace) ? d.el.dataset.deskFace : 'card';
+              this._deskPosSet(d.key, { fx: +(cx / g.W).toFixed(4), fy: +(cy / g.H).toFixed(4), w, h, face });
+            } else
+            this._deskPosSet(d.key, Object.assign({ fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) }, d.own ? { w: d.own.w, h: d.own.h, face: d.own.face } : {}));
             if (this._pillGet()[d.key]) this._pillSet(d.key, false); }
         }
         this._placeNow(); });
@@ -4466,7 +4480,16 @@
              towards the border it came back smaller, or a chip, and the rest were placed for a size it did not have. Its
              rectangle is the person's now: kept exactly, and everything else goes round it. */
           const face = (r.el.dataset.deskFace && r.el.dataset.deskFace !== 'chip' && r.el.dataset.deskFace !== 'icon') ? r.el.dataset.deskFace : 'max';
-          this._deskPosSet(key, { fx: +(Math.max(0, Math.min(g.W, cx)) / g.W).toFixed(4), fy: +(Math.max(0, Math.min(g.H, cy)) / g.H).toFixed(4), w: Math.round(r.w), h: Math.round(r.h), face });
+          /* WHAT A RESIZE DOES (WSU-74, owner 2026-10-11: "if i change the size of an element ... it also stops moving
+             automatically - this is fine but there needs to be a way to restore it ... perhaps it could become pinned or
+             locked on resize - configurable in the settings"): "pin" (the default, as before) keeps its place and size;
+             "move" keeps the size only - it still moves out of the way; "lock" pins and locks it. */
+          const mode = this.deskResizeMode();
+          if (mode === 'move') this._deskPosSet(key, { w: Math.round(r.w), h: Math.round(r.h), face, free: true });
+          else {
+            this._deskPosSet(key, { fx: +(Math.max(0, Math.min(g.W, cx)) / g.W).toFixed(4), fy: +(Math.max(0, Math.min(g.H, cy)) / g.H).toFixed(4), w: Math.round(r.w), h: Math.round(r.h), face });
+            if (mode === 'lock' && !this._lockGet()[key] && typeof this.toggleLock === 'function') { try { this.toggleLock(key); } catch (e) { /* stays pinned */ } }
+          }
         }
         /* ...and onto the card NOW: the placer reads the card's data-pw, which only a redraw rewrites - a drag that kept
            the size class placed the card at the width of the drag before and it snapped back (owner, 2026-10-04: "i
@@ -4783,7 +4806,9 @@
       if (act === 'fold') return this._setFold(key, !(it && it.classList.contains('ufold')));
       if (act === 'open') return this._toggleOpen(key);
       if (act === 'max') return this._toggleMax(key);
-      if (act === 'desk-auto') { this._deskPosSet(key, null); return this._placeNow(); }
+      /* back to the arrangement, KEEPING THE SIZE the person gave it (WSU-74): its place is let go, it moves out of the way
+         again; its width and height stay (kept in the entry, so a reload keeps them too) */
+      if (act === 'desk-auto') { const u = this._deskPosGet()[key]; this._deskPosSet(key, u && u.w > 0 && u.h > 0 ? { w: u.w, h: u.h, face: u.face, free: true } : null); return this._placeNow(); }
       if (act === 'layer-behind' || act === 'layer-front') return this.setLayer(key, this._layer[key] === act.slice(6) ? '' : act.slice(6));
       if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026'; return this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }); }
       // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
@@ -5700,6 +5725,31 @@
        the kinds to add (an anchor element places the kind's picker), the shelves, bringing an item back, restoring a
        removed one, and clearing. Each does exactly what the add bar's own button did. */
     kinds() { return ADD_KINDS.map((k) => ({ n: k.n, ik: k.ik, kind: k.kind })); }
+    /* THE FREE AREA UNDER A POINT (WSU-73, owner 2026-10-11: "elements don't always pack well and can leave big gaps even if
+       i try to drag elements into the gap"): a card let go in a gap kept the size its distance from the chat gave it, larger
+       than the gap, so the separation pushed it back out. The largest empty rectangle round the drop point (the other open
+       cards' boxes, on a 16 px grid; pills and the dragged card do not count) - the card is fitted into it. */
+    _gapAt(cx, cy, except) {
+      const g = this._deskGeo; const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!g || !st) return null;
+      const G = 16, cols = Math.ceil(g.W / G), rows = Math.ceil(g.H / G);
+      const occ = Array.from({ length: rows }, () => new Uint8Array(cols));
+      st.querySelectorAll('.it[data-key]').forEach((c) => { if (c.dataset.key === except || c.classList.contains('desk-chip') || getComputedStyle(c).display === 'none') return;
+        const l = parseFloat(c.style.left) || 0, t = parseFloat(c.style.top) || 0, w = c.offsetWidth, h = c.offsetHeight;
+        for (let j = Math.max(0, Math.floor((t - 6) / G)); j < Math.min(rows, Math.ceil((t + h + 6) / G)); j++) for (let i = Math.max(0, Math.floor((l - 6) / G)); i < Math.min(cols, Math.ceil((l + w + 6) / G)); i++) occ[j][i] = 1; });
+      const pi = Math.max(0, Math.min(cols - 1, Math.floor(cx / G))), pj = Math.max(0, Math.min(rows - 1, Math.floor(cy / G)));
+      if (occ[pj][pi]) return null;
+      /* grow a rectangle from the point: widen and heighten while the cells stay free, keeping the best area */
+      let best = null;
+      for (let top = pj; top >= Math.max(0, pj - 40) && !occ[top][pi]; top--) for (let bot = pj; bot < Math.min(rows, pj + 41) && !occ[bot][pi]; bot++) {
+        let L = pi, R = pi; const free = (i) => { for (let j = top; j <= bot; j++) if (occ[j][i]) return false; return true; };
+        while (L > 0 && free(L - 1)) L--; while (R < cols - 1 && free(R + 1)) R++;
+        const area = (R - L + 1) * (bot - top + 1); if (!best || area > best.area) best = { x: L * G, y: top * G, w: (R - L + 1) * G, h: (bot - top + 1) * G, area }; }
+      return best;
+    }
+    /* what a resize does on the desk (WSU-74): the desk-resize attribute, else this browser's choice, else "pin" */
+    deskResizeMode() { let m = this.getAttribute('desk-resize') || ''; if (!m) { try { m = localStorage.getItem('vera:canvas:deskresize') || ''; } catch (e) { m = ''; } }
+      return m === 'move' || m === 'lock' ? m : 'pin'; }
+    setDeskResizeMode(m) { const v = m === 'move' || m === 'lock' ? m : 'pin'; try { localStorage.setItem('vera:canvas:deskresize', v); } catch (e) { /* this page only */ } this.setAttribute('desk-resize', v); return v; }
     addKind(n, anchor) {
       const k = ADD_KINDS.find((x) => x.n === n); if (!k) return false; const btn = anchor || this;
       if (btn.dataset && !btn.dataset.kind) btn.dataset.kind = n;
