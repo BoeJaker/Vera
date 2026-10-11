@@ -4309,7 +4309,9 @@
         const d = this._dg; if (!d) return;
         const dx = (ev.clientX - d.x0) / d.Z, dy = (ev.clientY - d.y0) / d.Z;
         if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
-        if (!d.moved) { d.moved = true; d.el.classList.add('desk-dragging'); d.el.style.zIndex = String(root.VeraDesk ? root.VeraDesk.stackOrder(0, { dragging: true }) : 200); }
+        if (!d.moved) { d.moved = true; d.el.classList.add('desk-dragging'); d.el.style.zIndex = String(root.VeraDesk ? root.VeraDesk.stackOrder(0, { dragging: true }) : 200);
+          /* a pill opened by hover is let go as it starts moving - the drag sizes it from here on (WSU-68) */
+          clearTimeout(this._pillT); if (d.el._cpw) { d.el._cpw = null; d.el.classList.remove('chip-peek', 'pill-open'); } }
         ev.preventDefault();
         const g = this._deskGeo, D = root.VeraDesk; if (!g || !D) return;
         const cx = Math.max(10, Math.min(g.W - 10, d.cx0 + dx)), cy = Math.max(10, Math.min(g.H - 10, d.cy0 + dy));
@@ -4421,12 +4423,17 @@
         if (s.open) { try { this._liveLayout(); } catch (e) { /* optional */ } }
         requestAnimationFrame(() => { it.style.transition = ''; }); return; }
       if (it._cpw || !it.classList.contains('desk-chip')) return;
+      /* NOT WHILE IT IS BEING CARRIED (WSU-68, owner 2026-10-11: "some of the elements can't be fully dragged to the far
+         edge ... they get so far and turn into a pill but can't be dragged all the way - seems a bit random"): a card that
+         became a pill under the hand is hovered, and a pause of 260 ms opened it again as a 460 x 340 card kept inside the
+         desk - pulled back from the edge it was being carried to. Random because it took a pause. */
+      if (it.classList.contains('desk-dragging') || (this._dg && this._dg.moved)) return;
       /* A PILL OPENS UNDER THE POINTER (owner, 2026-10-11: "when a desk item is minimised to a pill and the user mouses over
          it it should expand - not for the code and mentioned desk items"): the title widening below only ran when a title
          was cut off, and "Mentioned" or "python · scan" fit. After a short pause the pill opens as a card - its content,
          about 460 x 340, over its neighbours and kept on the desk - and goes back to a pill when the pointer leaves. */
       const key = it.dataset.key; clearTimeout(this._pillT);
-      this._pillT = setTimeout(() => { if (this._hovKey !== key || (it._cpw && it._cpw.open) || !it.isConnected) return;
+      this._pillT = setTimeout(() => { if (this._hovKey !== key || (it._cpw && it._cpw.open) || !it.isConnected || it.classList.contains('desk-dragging') || (this._dg && this._dg.moved)) return;
         /* the title widening (below) ran first: undone, the card opens in its place */
         if (it._cpw) { const w0 = it._cpw; it._cpw = null; it.classList.remove('chip-peek'); it.style.setProperty('width', w0.w, 'important'); it.style.left = w0.l; it.style.zIndex = w0.z; if (w0.icon) it.classList.add('desk-icon'); }
         if (!it.classList.contains('desk-chip')) return;
