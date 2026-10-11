@@ -879,8 +879,35 @@ def _rel_strings(v: Any, out: List[str], depth: int = 0) -> None:
             _rel_strings(x, out, depth + 1)
 
 
+_REL_SPLIT = re.compile(r"[:/._-]+")
+# names and their tickers, both ways (the owner, 2026-10-11: a turn about "bitcoin" scored the BTC-USD chart 0.12 - the
+# chart says BTC, the turn says bitcoin - so the chart left the desk's focus while an unrelated one stayed)
+_REL_ALIASES = {
+    "bitcoin": ("btc", "xbt"), "ethereum": ("eth", "ether"), "solana": ("sol",), "ripple": ("xrp",), "cardano": ("ada",),
+    "dogecoin": ("doge",), "litecoin": ("ltc",), "avalanche": ("avax",),   # (no "dot"/"link"/"cl": ordinary words)
+    "tether": ("usdt",), "gold": ("xau", "gld"), "silver": ("xag", "slv"), "oil": ("wti", "brent", "uso"),
+    "apple": ("aapl",), "microsoft": ("msft",), "nvidia": ("nvda",), "tesla": ("tsla",), "amazon": ("amzn",),
+    "google": ("googl", "goog", "alphabet"), "meta": ("fb",), "s&p": ("spy", "spx", "sp500"), "nasdaq": ("qqq", "ndx"),
+}
+_REL_ALIAS_OF: Dict[str, set] = {}
+for _n, _ts in _REL_ALIASES.items():
+    _grp = {_n, *_ts}
+    for _w in _grp:
+        _REL_ALIAS_OF.setdefault(_w, set()).update(_grp)
+
+
+def _rel_expand(words: set) -> set:
+    """Words plus their aliases (a name's tickers, a ticker's name)."""
+    out = set(words)
+    for w in words:
+        out |= _REL_ALIAS_OF.get(w, set())
+    return out
+
+
 def _rel_words(s: str) -> set:
-    return set(_REL_WORD.findall(str(s or "").lower()))
+    """The words of a text: whole tokens and, for compound ones (yahoo:btc-usd, markets.chart), their parts too."""
+    ws = set(_REL_WORD.findall(str(s or "").lower()))
+    return ws | {p for w in ws for p in _REL_SPLIT.split(w) if len(p) >= 2}
 
 
 def _rel_item_text(b: Dict[str, Any]) -> str:
@@ -922,14 +949,15 @@ def _rel_score(b: Dict[str, Any], turn: str, text: str, entities: List[str], rec
     low = item_text.lower()
     words = _rel_words(item_text)
     ents = [e for e in (str(x).strip().lower() for x in entities or []) if len(e) >= 3]
-    if any((e in words) or (len(e) >= 4 and e in low) for e in ents):
+    ents = sorted(_rel_expand(set(ents)) | set(ents), key=len, reverse=True)   # an entity's aliases count as it
+    if any((e in words) or (len(e) >= 4 and e in low) for e in ents if len(e) >= 2):
         sig["entity"] = 0.85
     kinds = _rel_kind_of(b)
     for kind, best_key in intents.items():
         aliases = set(_REL_KIND_ALIASES.get(kind, ())) | {kind}
         if kinds & aliases:
             sig["intent"] = max(sig.get("intent", 0.0), 0.7 if best_key == key else 0.5)
-    tw = _rel_words(text)
+    tw = _rel_expand(_rel_words(text))
     if tw and words:
         overlap = len(tw & words) / float(max(1, min(len(tw), 12)))
         if overlap > 0:
