@@ -144,6 +144,23 @@ HOST_BOUND_CAPS: Dict[str, str] = {
     "memory.canonical.mark": "a background folding job held by this process",
 }
 
+#: memory.* is node-safe for the memory module's own backends (memory_startup connects them on a worker). These
+#: caps go through data_fabric instead, whose Postgres and Chroma only the host's fabric_startup connects and whose
+#: SQLite store of record is a host file: on 2026-10-11 (dispatch stage full) memory.seek answered from node workers
+#: with no vector and no keyword leg, and a worker's memory.record_turn sent its chat-entity ingest into an
+#: unconnected fabric.
+_FABRIC = "reads or writes data_fabric, whose stores only the host connects"
+HOST_BOUND_CAPS.update({
+    "memory.seek":        _FABRIC,
+    "memory.read":        _FABRIC,
+    "memory.map":         _FABRIC,
+    "memory.browse":      _FABRIC,
+    "memory.tooling":     _FABRIC,
+    "memory.select":      _FABRIC,
+    "memory.record_turn": _FABRIC,
+    "memory.chroma.pool": "reports this process's Chroma connections",
+})
+
 MUTATOR_SEGMENTS = frozenset({
     "set", "config", "configure", "enable", "disable", "reset", "reload",
     "register", "unregister", "save", "delete",
