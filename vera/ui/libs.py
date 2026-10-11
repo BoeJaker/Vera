@@ -117,3 +117,18 @@ async def _serve_structgraph_js():
 @APP.get("/ui/desk-layout.js", include_in_schema=False)
 async def _serve_desk_layout_js():
     return _script("desk_layout_core.js")
+
+
+# the Desk Lab (owner 2026-10-11, the desk design framework's step F3): widget forms side by side on fixtures, at every
+# size and state, in either theme, with a performance readout - a page for judging designs by measurement. Read-only:
+# it draws sample or pasted data and never calls a capability. shared-planning/context-and-ui/DESK-DESIGN-FRAMEWORK-PLAN.md
+@APP.get("/ui/desk-lab", include_in_schema=False)
+async def _serve_desk_lab():
+    from fastapi.responses import Response
+    p = _HERE / "desk_lab.html"
+    return Response(content=p.read_text(encoding="utf-8") if p.exists() else "desk_lab.html not found", media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-cache"})
+
+
+@APP.get("/ui/desk-lab.js", include_in_schema=False)
+async def _serve_desk_lab_js():
+    return _script("desk_lab.js")
