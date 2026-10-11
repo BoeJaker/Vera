@@ -181,7 +181,11 @@ def active_view(active: Dict[str, Any], *, now: Optional[float] = None) -> Dict[
     updated = str(a.get("updated_at") or "")
     age = None
     try:
-        t = time.mktime(time.strptime(updated, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+        # UTC text -> epoch with timegm. mktime read it as LOCAL time: on prod (Europe/London,
+        # timezone 0, BST in summer) every age came out an hour too old, so a census whose active file
+        # was 1 h old read as stale/dead to /health and the release hold (DEEP-21 D21-3, 11 Oct 2026).
+        import calendar
+        t = calendar.timegm(time.strptime(updated, "%Y-%m-%dT%H:%M:%SZ"))
         age = round((now if now is not None else time.time()) - t)
     except Exception:
         pass
