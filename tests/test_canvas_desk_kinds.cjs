@@ -1,0 +1,61 @@
+// The desk's item kinds, reviewed one by one (2026-10-11): a lookup's evidence, fields in words, no title drawn twice,
+// names without the reply's markdown, cards fitted to what they hold, diagrams that say when they cannot be drawn,
+// one item per thing harvested.
+const fs = require('node:fs');
+const path = require('node:path');
+
+let fails = 0;
+const t = (name, ok) => { console.log((ok ? 'ok   ' : 'FAIL ') + name); if (!ok) fails++; };
+const mod = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js'));
+const B = mod.BLOCK;
+const src = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js'), 'utf8');
+const chat = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_panel.html'), 'utf8');
+
+/* evidence (info.seek) */
+const ev = { title: 'Looked up · ai model releases', kind: 'evidence', query: 'ai model releases',
+  items: [{ id: 'u1', n: 1, url: 'https://a.example/1', domain: 'a.example', title: 'Release one', snippet: 'one', when: '2026-10-10', kind: 'web' },
+          { id: 'u2', n: 2, url: 'https://b.example/2', domain: 'b.example', title: 'Tracked two', snippet: 'two', when: '2026-10-05', kind: 'intel' }],
+  evidence: { need: 'latest', subject: 'ai model releases', question: 'what are the latest ai model releases', since: '2026-09-27', answerable: true,
+    checked: ['news: 7 headlines', 'web: 3 searches'], gaps: ['no benchmark numbers'], tracked: 'AI research', ms: 32000 } };
+const e = B.records(ev, 'l', 'k', {});
+t('evidence: the question and how it was looked up', /what are the latest ai model releases/.test(e) && /need<\/i>latest/.test(e) && /since<\/i>2026-09-27/.test(e) && /answerable/.test(e) && /tracked<\/i>AI research/.test(e));
+t('evidence: each page under the number the reply cites it by; a tracked topic\'s in its own colour', /vc-rbx-num" title="cited as \[1\]/.test(e) && /vc-rbx-num intel/.test(e));
+t('evidence: what was checked and the gaps, the gaps open', /<details class="vc-ev-foot" open>/.test(e) && /no benchmark numbers/.test(e) && /web: 3 searches/.test(e));
+t('the chat lands info.seek as evidence, before the generic page list', chat.indexOf("cvAdapter('evidence'") > 0 && chat.indexOf("cvAdapter('evidence'") < chat.indexOf("cvAdapter('sources'"));
+t('evidence: a scraper\'s header is taken off the excerpt', chat.includes('Markdown Content:') && chat.includes('/^\\s*Title:/i.test(txt)'));
+
+/* fields */
+const kv = B.kv({ title: 'gpu-250 · status', fields: { vram_used: '21.4 GB', modelsLoaded: 3 } }, 'm', 'k', {});
+t('fields: named in words, the raw name as the tip', />Vram used</.test(kv) && />Models loaded</.test(kv) && /title="vram_used"/.test(kv));
+t('fields: the header names it, so the body does not', !/gpu-250 · status/.test(kv));
+t('fields: tiles when wide (a container query on an inner grid, not on the container)', src.includes('.vc-kv-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))'));
+
+/* documents */
+const md = B.markdown({ title: 'Choosing a 7B model', md: '# Choosing a 7B model\n\nBody text.' }, 'm', '', {});
+t('a document whose first heading is its title does not draw it twice', !/Choosing a 7B model/.test(md) && /Body text/.test(md));
+const md2 = B.markdown({ title: 'Notes', md: '# Something else\n\nBody.' }, 'm', '', {});
+t('...a different first heading stays', /Something else/.test(md2));
+
+/* names */
+const en = B.entities({ groups: [{ group: 'products', entities: [{ text: '`Phi', type: 'PRODUCT', count: 1 }, { text: 'Qwen-2.5-Coder`', type: 'PRODUCT', count: 1 }] }] }, 'm', 'k', {});
+t('names without the reply\'s markdown round them', />Phi</.test(en) && />Qwen-2.5-Coder</.test(en) && !/`/.test(en.replace(/<[^>]+>/g, '')));
+
+/* calendar */
+const cal = B.calendar({ month: '2026-10', events: [] }, 'm', 'k', {});
+t('calendar: an inner grid the wide layout lays out (month beside its list)', /<div class="vc-cal"><div class="vc-cal-in">/.test(cal) && src.includes('grid-template-areas:"hd l" "w l" "g l"'));
+
+/* fitting and drawing */
+t('cards are fitted to what they hold after a placement; a fit that overflows a little grows, it is not dropped',
+  src.includes('try { this._deskFit(); }') && src.includes('if (more > 160) delete nat[key]; else nat[key] = c.offsetHeight + more + 6;'));
+t('the fit caps a card\'s face, its separation size and its growth', src.includes('maxH: nat || undefined') && src.includes("(it.maxH || Infinity)) }; }, { W: W, H: H });") && src.includes('it.maxH || Infinity'));
+t('an image fills its card, whole', src.includes('.vc-fig > img{flex:1 1 0;min-height:0;width:100%;height:100%;max-width:none;object-fit:contain}'));
+t('a diagram no longer being written is drawn whole (render), so a broken one shows its error', src.includes("if (!streaming && typeof inner.render === 'function') { try { inner.render(code); } catch (e) {} return; }"));
+t('a mermaid fence lands once, not as a code item and a diagram both', chat.includes("const sig=m.kind==='diagram'?'d:'"));
+
+const D = require(path.join(__dirname, '..', 'vera', 'ui', 'desk_layout_core.js'));
+const g = [{ id: 'n', x: 300, y: 200, w: 300, h: 100, maxH: 120 }];
+D.grow(g, { l: -440, t: 0, r: 0, b: 900 }, { W: 1200, H: 900 }, {});
+t('a card grows no taller than what it holds (and no wider than a page of it)', g[0].h <= 120 && g[0].w >= 300);
+
+console.log(fails ? fails + ' FAILED' : 'all passed');
+process.exit(fails ? 1 : 0);

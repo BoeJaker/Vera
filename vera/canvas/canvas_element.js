@@ -340,7 +340,11 @@
        "Send to" - an HTML report, a podcast, a notebook, a file, a project, any channel with a style. */
     markdown: (c, size, key, el) => {
       const VO = root.VeraOut; const md = String(c.md || c.text || '');
-      const body = VO && typeof VO.render === 'function' ? VO.render(md, { canvas: false }) : mdx(md);
+      /* the card's header names the document: a first heading that only says the same again is not drawn twice */
+      const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const h1 = md.match(/^\s*#{1,2}\s+(.+?)\s*(\n|$)/);
+      const shown = h1 && c.title && norm(h1[1]) === norm(c.title) ? md.slice(h1[0].length) : md;
+      const body = VO && typeof VO.render === 'function' ? VO.render(shown, { canvas: false }) : mdx(shown);
       let row = '';
       if (VO && typeof VO.proseMenu === 'function' && key) {
         const own = (act, ico, label, tip) => `<button class="mact" data-act="${act}" title="${esc(tip)}">${(VO.icons && VO.icons[ico]) || ''}<span>${label}</span></button>`;
@@ -390,7 +394,7 @@
         + '<span class="vc-cal-n" style="border-color:' + esc(String(e.color || 'var(--acc,#5a9e8f)')) + '">' + esc(String(e.title || 'event'))
         + (e.location ? ' <em>' + esc(String(e.location)) + '</em>' : '') + '</span></div>').join('')
         || '<div class="vc-cal-none">' + (sel ? 'Nothing on this day.' : 'Nothing in this month.') + '</div>';
-      return '<div class="vc-cal">'
+      return '<div class="vc-cal"><div class="vc-cal-in">'
         + '<div class="vc-cal-hd">'
         + '<button class="vc-cal-b" data-cal-mv="-1" data-cal-key="' + esc(key || '') + '" title="The month before">\u2039</button>'
         + '<span class="vc-cal-m">' + esc(MON[M - 1] + ' ' + Y) + '</span>'
@@ -401,7 +405,7 @@
         + '<div class="vc-cal-w">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => '<span>' + d + '</span>').join('') + '</div>'
         + '<div class="vc-cal-g">' + cells + '</div>'
         + '<div class="vc-cal-l">' + rows + '</div>'
-        + '</div>';
+        + '</div></div>';
     },
 
     /* DATED EVENTS IN ORDER. `when` is whatever precision the prose had - a year, a month, a day - and it is
@@ -625,12 +629,14 @@
       const pages = Math.max(1, Math.ceil(rows.length / per)); const page = Math.min(Math.max(0, st.page | 0), pages - 1);
       const shown = rows.slice(page * per, page * per + per);
       const K = esc(key || '');
-      const icon = { web: '\u{1F310}', news: '\u{1F4F0}', memory: '◈', research: '\u{1F50E}' }[c.kind] || '☰';
+      const icon = { web: '\u{1F310}', news: '\u{1F4F0}', memory: '◈', research: '\u{1F50E}', evidence: '\u{1F50E}' }[c.kind] || '☰';
       const doms = {}; all.forEach((r) => { if (r.domain) doms[r.domain] = (doms[r.domain] || 0) + 1; });
       const domList = Object.keys(doms).sort((a, b) => doms[b] - doms[a]).slice(0, size === 'xl' ? 12 : 6);
       const hue = (s) => { let h = 0; for (const ch of String(s || '')) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
       /* a source's badge in one of the theme's category colours (--dv1..7), the same site always the same colour */
-      const badge = (r) => { const d = r.domain || (r.meta && (r.meta.dataset_id || r.meta.source)) || c.kind || '?'; const h = hue(d); return `<span class="vc-rbx-fav" style="--dvc:var(--dv${1 + (h % 7)},hsl(${h} 45% 60%))">${esc(String(d).replace(/^www\./, '').charAt(0).toUpperCase())}</span>`; };
+      /* a lookup's evidence carries the number the reply cites it by: that is its badge (see the evidence strip below) */
+      const badge = (r) => c.kind === 'evidence' && r.n ? `<span class="vc-rbx-fav vc-rbx-num${r.kind === 'intel' ? ' intel' : ''}" title="cited as [${esc(r.n)}]${r.kind === 'intel' ? ' - from a tracked topic' : ''}">${esc(r.n)}</span>` : badge0(r);
+      const badge0 = (r) => { const d = r.domain || (r.meta && (r.meta.dataset_id || r.meta.source)) || c.kind || '?'; const h = hue(d); return `<span class="vc-rbx-fav" style="--dvc:var(--dv${1 + (h % 7)},hsl(${h} 45% 60%))">${esc(String(d).replace(/^www\./, '').charAt(0).toUpperCase())}</span>`; };
       const ago = (t) => { const x = Date.parse(t); if (!isFinite(x)) return String(t || '').slice(0, 10); const s = (Date.now() - x) / 1000; return s < 3600 ? Math.max(1, Math.round(s / 60)) + 'm' : s < 172800 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd'; };
       const actBtn = (act, id, label, t) => `<button class="vc-rbx-b" data-rec-act="${act}" data-rec-key="${K}" data-rec-arg="${esc(id)}" title="${esc(t || '')}">${label}</button>`;
       /* A RECORD, OPENED, WITH ITS DEPTH (owner, 2026-09-29: the web results need "better depth and rendering of results &
@@ -705,7 +711,18 @@
       /* A RESEARCH RUN AT A GLANCE (a web or research answer): where its pages came from - one bar, each site its share,
          a site's part choosing it - and, when the pages carry dates, when they were written, each a dot that opens its page */
       let glance = '';
-      if ((c.kind === 'research' || c.kind === 'web') && all.length > 2) {
+      /* A LOOKUP'S EVIDENCE (info.seek): what was asked and how - the need, since when, whether it could be answered, the
+         topic it tracks - over the pages; what it checked and the gaps it could not fill under them */
+      const ev = c.kind === 'evidence' && c.evidence && typeof c.evidence === 'object' ? c.evidence : null;
+      const evChip = (k, v, cls) => `<span class="vc-ev-chip${cls ? ' ' + cls : ''}"><i>${esc(k)}</i>${esc(v)}</span>`;
+      const evHead = ev ? `<div class="vc-ev">${ev.question && ev.question !== ev.subject ? `<div class="vc-ev-q">${esc(ev.question.slice(0, 200))}</div>` : ''}<div class="vc-ev-chips">`
+        + (ev.need ? evChip('need', ev.need) : '') + (ev.since ? evChip('since', String(ev.since).slice(0, 10)) : '')
+        + (ev.tracked ? evChip('tracked', ev.tracked) : '') + evChip('', ev.answerable ? 'answerable' : 'not answered', ev.answerable ? 'ok' : 'bad')
+        + (ev.ms ? evChip('took', (ev.ms / 1000).toFixed(ev.ms < 10000 ? 1 : 0) + ' s') : '') + (ev.job ? evChip('report', 'job ' + ev.job) : '') + `</div></div>` : '';
+      const evFoot = ev && ((ev.checked || []).length || (ev.gaps || []).length) ? `<details class="vc-ev-foot"${(ev.gaps || []).length ? ' open' : ''}><summary>checked ${(ev.checked || []).length}${(ev.gaps || []).length ? ' · <b>' + ev.gaps.length + ' gap' + (ev.gaps.length === 1 ? '' : 's') + '</b>' : ''}</summary>`
+        + ((ev.gaps || []).length ? `<ul class="vc-ev-gaps">${ev.gaps.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : '')
+        + `<ul class="vc-ev-chk">${(ev.checked || []).map((g) => `<li>${esc(g)}</li>`).join('')}</ul></details>` : '';
+      if ((c.kind === 'research' || c.kind === 'web' || c.kind === 'evidence') && all.length > 2) {
         const sites = Object.keys(doms).sort((a, b) => doms[b] - doms[a]); const top = sites.slice(0, 10); const rest = all.length - top.reduce((s, d) => s + doms[d], 0);
         const map = sites.length > 1 ? `<div class="vc-rbx-map" title="where the pages came from">${top.map((d) => `<button class="${st.dom === d ? 'on' : ''}" style="flex:${doms[d]};--h:${hue(d)}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}" title="${esc(d)} · ${doms[d]}"><span>${esc(d.replace(/^www\./, ''))}</span></button>`).join('')}${rest > 0 ? `<i style="flex:${rest}" title="${rest} more"></i>` : ''}</div>` : '';
         const dated = all.map((r) => [r, Date.parse(r.when)]).filter((x) => isFinite(x[1]));
@@ -722,11 +739,11 @@
       const dots = pages > 1 ? Array.from({ length: Math.min(pages, 9) }, (_, i) => { const n = pages <= 9 ? i : Math.round(i * (pages - 1) / 8); return `<button class="vc-rbx-dot${n === page ? ' on' : ''}" data-rec-act="page" data-rec-key="${K}" data-rec-arg="${n}" title="page ${n + 1}"></button>`; }).join('') : '';
       return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
         + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
-        + glance
+        + evHead + glance
         + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags and names they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
         + (entList.length ? `<div class="vc-rbx-facets vc-rbx-efacets"><span class="vc-rbx-fl">names</span>${entList.map((n) => `<button class="${st.ent === n ? 'on' : ''}" data-rec-act="ent" data-rec-key="${K}" data-rec-arg="${esc(n)}">${esc(n)}<i>${entN[n]}</i></button>`).join('')}</div>` : '')
         + (domList.length > 1 ? `<div class="vc-rbx-facets">${domList.map((d) => `<button class="${st.dom === d ? 'on' : ''}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}">${esc(d)}<i>${doms[d]}</i></button>`).join('')}</div>` : '')
-        + body
+        + body + evFoot
         + `<div class="vc-rbx-foot"><span>${from}–${to} of ${rows.length}${rows.length !== all.length ? ' (of ' + all.length + ')' : ''}</span><span class="vc-rbx-pg">${pages > 1 ? `<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="prev" ${page ? '' : 'disabled'}>‹</button>${dots}<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="next" ${page < pages - 1 ? '' : 'disabled'}>›</button>` : ''}</span>${c.next && c.next.cap ? actBtn('loadmore', '', 'more from ' + esc(c.next.cap), 'fetch the next page from the source') : ''}</div>`
         + `</div>`;
     },
@@ -941,6 +958,8 @@
       const groups = Array.isArray(c && c.groups) ? c.groups : [];
       if (!groups.length) return '<div class="vc-dim">nothing named</div>';
       const open = (el && el._entOpen && el._entOpen[key]) || '';
+      /* a name as it reads: the markdown round it in the reply (`Phi`, **Qwen**, quotes) is not part of it */
+      const entTxt = (t) => String(t || '').replace(/^[`'"*_\s]+|[`'"*_\s]+$/g, '') || String(t || '');
       if (viewOf(el, key, 'chips') === 'graph') return graphSlot(key);
       /* the names as a list (see VIEWS): one per row - the name, what it is, how often - each opening as its chip does */
       if (viewOf(el, key, 'chips') === 'list') return '<div class="vc-ent vc-ent-list" data-w="canvas.entities">' + groups.map((g, gi) => `<div class="vc-ent-gl">${esc(g.group || '')}</div>`
@@ -948,7 +967,7 @@
       return '<div class="vc-ent" data-w="canvas.entities">' + groups.map((g, gi) => {
         const ents = Array.isArray(g.entities) ? g.entities : [];
         const chips = ents.map((e, ei) => { const id = gi + ':' + ei;
-          return `<button class="vc-chip${open === id ? ' on' : ''}" data-act="entopen" data-ent="${id}" title="${esc(e.type + (e.count > 1 ? ' · named ' + e.count + ' times' : ''))}">${esc(e.text)}${e.count > 1 ? `<i>${e.count}</i>` : ''}</button>`; }).join('');
+          return `<button class="vc-chip${open === id ? ' on' : ''}" data-act="entopen" data-ent="${id}" title="${esc(e.type + (e.count > 1 ? ' · named ' + e.count + ' times' : ''))}">${esc(entTxt(e.text))}${e.count > 1 ? `<i>${e.count}</i>` : ''}</button>`; }).join('');
         const [ogi, oei] = open.split(':').map(Number); const oe = (ogi === gi && ents[oei]) || null;
         const detail = oe ? `<div class="vc-ent-d"><div class="vc-ent-h"><b>${esc(oe.text)}</b><span class="mono">${esc(oe.type)}</span><span class="sp"></span>`
           + `<button class="ib" data-act="entlook" data-ent="${gi}:${oei}" title="The fabric's records and a web search for it, beside this item">look it up</button></div>`
@@ -967,10 +986,15 @@
       const f = (c && (c.fields || c.data)) || {};
       const rows = Array.isArray(f) ? f : Object.keys(f).map((k) => [k, f[k]]);
       if (rows.length >= 3 && viewOf(el, key, 'fields') === 'graph') return graphSlot(key);
-      return '<div class="vc-kv" data-w="canvas.kv">' + (c && c.title ? '<div class="vc-json-t">' + esc(c.title) + '</div>' : '')
-        + rows.slice(0, 80).map((r) => { const v = r && r[1]; const s = v == null ? '\u2014' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
-          return '<div class="kv-r"><span class="kv-k">' + esc(String(r && r[0])) + '</span><span class="kv-v' + (v === true ? ' yes' : v === false ? ' no' : '') + '">' + esc(s.slice(0, 600)) + '</span></div>'; }).join('')
-        + '</div>';
+      /* the card's header names it, so the body does not again; a field is named in words ("vram_used" is "Vram used"),
+         its raw name kept as the tip. Narrow: name beside value. Wide (the container rule): tiles, the value large. */
+      const say = (k) => { const ws = String(k).replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').split(/\s+/).filter(Boolean)
+          .map((w) => (w.length > 1 && /^[A-Z0-9]+$/.test(w) ? w : w.toLowerCase())); const s = ws.join(' ');   /* an acronym (GPU, URL) stays as it is */
+        return s ? s.charAt(0).toUpperCase() + s.slice(1) : String(k); };
+      return '<div class="vc-kv" data-w="canvas.kv"><div class="vc-kv-g">'
+        + rows.slice(0, 80).map((r) => { const v = r && r[1]; const s = v == null ? '\u2014' : (typeof v === 'object' ? JSON.stringify(v) : String(v)); const k = String(r && r[0]);
+          return '<div class="kv-r' + (s.length > 48 ? ' long' : '') + '"><span class="kv-k" title="' + esc(k) + '">' + esc(say(k)) + '</span><span class="kv-v' + (v === true ? ' yes' : v === false ? ' no' : '') + (typeof v === 'number' ? ' num' : '') + '">' + esc(s.slice(0, 600)) + '</span></div>'; }).join('')
+        + '</div></div>';
     },
     // an exchange: who asked, who answered - a model's or an agent's answer is a conversation, not a paragraph
     chat: (c) => {
@@ -1453,6 +1477,9 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside .vc-live[data-live="explode"]{flex:1 1 auto;height:auto!important;min-height:160px}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-over{flex-direction:column!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip):not([data-desk-face^="layer-"]) > .it-bd:not(.fu) > :is(.vc-wid,.vc-rbx,.vc-filewrap,.vc-codewrap,.vc-diag,.vc-xp,.vc-term,.vc-tablewrap,.vc-act,.vc-rr){flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  /* an image is as large as its card lets it be, whole (never cropped), its caption under it */
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip) > .it-bd > .vc-fig{flex:1 1 auto;min-height:0;margin:0;display:flex;flex-direction:column;align-items:center}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip) > .it-bd > .vc-fig > img{flex:1 1 0;min-height:0;width:100%;height:100%;max-width:none;object-fit:contain}
   /* a research run fills its card: its panes take the height there is and scroll inside it, not the 60vh cap */
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd > .vc-rr .vc-rr-p{max-height:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd > .vc-rr .vc-rr-body{flex:1 1 0;min-height:0}
@@ -1614,6 +1641,16 @@
   .vc-cal-n{font-size:10.5px;color:var(--fg,#ddd);border-left:2px solid var(--acc,#5a9e8f);padding-left:6px}
   .vc-cal-n em{font-style:normal;font-size:9px;color:var(--dim2,#8a7e70)}
   .vc-cal-none{font-size:10px;color:var(--dim2,#8a7e70);font-style:italic}
+  /* readable at a desk card's size, and wide: the month on the left, the day's (or the month's) list beside it, so the
+     list is never pushed under the grid and cut off */
+  .vc-cal{container:vccal / inline-size}.vc-cal-in{display:flex;flex-direction:column;gap:6px}
+  .vc-cal-m{font-size:12.5px}.vc-cal-w{font-size:10px}.vc-cal-d b{font-size:11.5px}.vc-cal-t{font-size:10.5px}.vc-cal-n{font-size:12px}.vc-cal-none{font-size:11.5px}
+  @container vccal (min-width: 470px) {
+    .vc-cal-in{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(150px,1fr);grid-template-rows:auto auto 1fr;column-gap:14px;row-gap:6px;
+      grid-template-areas:"hd l" "w l" "g l"}
+    .vc-cal-hd{grid-area:hd}.vc-cal-w{grid-area:w}.vc-cal-g{grid-area:g;align-content:start}
+    .vc-cal-l{grid-area:l;border-top:0;border-left:1px solid var(--border,#3a3530);padding:0 0 0 12px;overflow:auto;min-height:0}
+  }
   .vc-wid-b{font:inherit;font-size:8.5px;height:16px;padding:0 7px;margin-left:6px;border:1px solid var(--border,#3a3530);
     border-radius:8px;background:var(--bg2,#272421);color:var(--dim2,#8a7e70);cursor:pointer;vertical-align:middle}
   .vc-wid-b:hover{color:var(--fg,#ddd);border-color:var(--acc,#5a9e8f)}
@@ -2025,6 +2062,17 @@
   .vc-json .j-row{display:flex;gap:6px;padding-left:12px;min-width:0}.vc-json .j-k{color:var(--acc4,#7aa2d6);flex:0 0 auto}.vc-json .j-k::after{content:':'}
   .vc-json .j-str{color:var(--acc2,#8fb87a);word-break:break-word}.vc-json .j-num{color:var(--acc3,#c9955a)}.vc-json .j-null,.vc-json .j-more{color:var(--dim,#6b7480)}
   .vc-kv .kv-r{display:grid;grid-template-columns:minmax(80px,38%) 1fr;gap:8px;padding:2px 0;border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 50%,transparent)}
+  /* fields read in words: the names in the UI face, the values in the mono face; wide, as tiles (the value large) */
+  .vc-kv{container:vckv / inline-size}
+  .vc-kv .kv-k{font:500 11.5px/1.5 system-ui,sans-serif}.vc-kv .kv-v{font-size:12px}.vc-kv .kv-v.num{font-variant-numeric:tabular-nums}
+  @container vckv (min-width: 460px) {
+    .vc-kv-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+    .vc-kv .kv-r{display:flex;flex-direction:column-reverse;gap:2px;padding:8px 10px;border:1px solid var(--border,#2a2f37);border-radius:8px;min-width:0}
+    .vc-kv .kv-r.long{grid-column:1 / -1}
+    .vc-kv .kv-v{font-size:15px;line-height:1.3;color:var(--fg,#dce1e8);overflow:hidden;text-overflow:ellipsis}
+    .vc-kv .kv-r.long .kv-v{font-size:12px}
+    .vc-kv .kv-k{font-size:10.5px;color:var(--dim,#8b93a1)}
+  }
   .vc-kv .kv-k{color:var(--dim,#6b7480);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vc-kv .kv-v{word-break:break-word}.vc-kv .kv-v.yes{color:var(--ok,#8fb87a)}.vc-kv .kv-v.no{color:var(--err,#c96b6b)}
   .vc-chat{display:flex;flex-direction:column;gap:6px}.vc-msg{border-radius:8px;padding:5px 8px;background:var(--s2,var(--bg2,#1a1c20))}.vc-msg.u{background:color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent)}
   .vc-who{display:block;font:600 9px system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--dim,#6b7480);margin-bottom:2px}
@@ -2116,6 +2164,21 @@
   .vc-rbx-efacets .vc-rbx-fl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3,var(--dim,#6b7480));margin-right:4px;align-self:center}
   /* a research run at a glance: its sites as one bar, its pages' dates as a line */
   .vc-rbx-glance{display:flex;flex-direction:column;gap:6px;margin:6px 0 4px}
+  /* a lookup's evidence (records of kind evidence): its question and how it was looked up; [n] badges; checked and gaps */
+  .vc-ev{display:flex;flex-direction:column;gap:6px;margin:4px 0 6px}
+  .vc-ev-q{font-size:12.5px;line-height:1.45;color:color-mix(in srgb,var(--fg,#dce1e8) 85%,transparent)}
+  .vc-ev-chips{display:flex;flex-wrap:wrap;gap:4px}
+  .vc-ev-chip{font-size:10.5px;border:1px solid var(--border,#2a2f37);border-radius:10px;padding:1px 8px;color:var(--fg,#dce1e8);white-space:nowrap}
+  .vc-ev-chip i{font-style:normal;color:var(--dim,#8b93a1);margin-right:5px}.vc-ev-chip i:empty{display:none}
+  .vc-ev-chip.ok{color:var(--ok,#5fb98a);border-color:color-mix(in srgb,var(--ok,#5fb98a) 40%,transparent)}
+  .vc-ev-chip.bad{color:var(--warn,#e0b25a);border-color:color-mix(in srgb,var(--warn,#e0b25a) 40%,transparent)}
+  .vc-rbx-fav.vc-rbx-num{font-size:10.5px;color:var(--acc,#5a9e8f);background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent)}
+  .vc-rbx-fav.vc-rbx-num.intel{color:var(--dv4,#c58bd6);background:color-mix(in srgb,var(--dv4,#c58bd6) 16%,transparent)}
+  .vc-ev-foot{margin:8px 0 2px;font-size:11.5px;color:var(--dim,#8b93a1)}
+  .vc-ev-foot > summary{cursor:pointer;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase}
+  .vc-ev-foot > summary b{color:var(--warn,#e0b25a);font-weight:600}
+  .vc-ev-foot ul{margin:4px 0 0;padding-left:18px;line-height:1.5}
+  .vc-ev-gaps{color:var(--warn,#e0b25a)}
   .vc-rbx-map{display:flex;height:18px;border-radius:5px;overflow:hidden;gap:1px}
   .vc-rbx-map button{min-width:6px;border:0;padding:0 5px;cursor:pointer;background:hsl(var(--h) 45% 42% / .55);color:var(--t1,var(--fg,#e6e9ee));font-size:9.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left}
   .vc-rbx-map button span{pointer-events:none}.vc-rbx-map button.on,.vc-rbx-map button:hover{background:hsl(var(--h) 55% 50% / .85)}
@@ -3065,6 +3128,39 @@
       if (stamped) this._cmpSet(act);
       return res;
     }
+    /* A CARD IS NO TALLER THAN WHAT IT HOLDS (owner, 2026-10-10: "the current ui for most desk elements is not styled well";
+       measured 2026-10-11: a note used 48 px of a 426 px card, a page 147 of 332, fields 205 of 335, names 156 of 426 -
+       the desk sized every card by where it sat and then grew it into the free room, whatever was in it). After a
+       placement the cards that hold a fixed amount - not a drawing, a graph, a widget, a reading list or a run, which
+       take the room they are given and scroll - are measured: how far down their content reaches. A card with room to
+       spare is given that height (never under 96 px) and does not grow past it; one whose content outgrows it is let go
+       again. A change re-places the desk, at most four times in a row. */
+    _deskFit() {
+      const sr = this.shadowRoot; if (!sr || this.getAttribute('desk-fit') === 'off') return;
+      /* a diagram is measured too: its drawing has its own shape, and its slot is as tall as the drawing (_diagramGrew) */
+      const FILLS = new Set(['records', 'research', 'widget', 'explode', 'panel', 'session', 'notebook', 'html', 'image']);
+      const nat = this._natH = this._natH || {}; let changed = false;
+      sr.querySelectorAll('.stage .it[data-key][data-desk-face]').forEach((c) => {
+        const key = c.dataset.key, face = c.dataset.deskFace || '';
+        if (!/^(card|max)$/.test(face) || c.classList.contains('cmp-behind') || c.classList.contains('desk-locked') || c.classList.contains('desk-placed') || (this._rz && this._rz.el === c)) return;
+        if (FILLS.has(c.dataset.type || '') || (c.dataset.type !== 'diagram' && c.querySelector('.vc-live'))) { if (nat[key] != null) { delete nat[key]; changed = true; } return; }
+        const bd = c.querySelector(':scope > .it-bd'); if (!bd || !bd.clientHeight) return;
+        const B = bd.getBoundingClientRect(); let low = B.top;
+        /* how far the content reaches: its leaves (text runs, images, controls), not the boxes that stretch to fill */
+        bd.querySelectorAll('*').forEach((e) => { if (e.childElementCount && !/^(IMG|SVG|CANVAS|BUTTON|INPUT|SELECT|TEXTAREA|TR|LI)$/i.test(e.tagName)) return;
+          const q = e.getBoundingClientRect(); if (q.height && q.width) low = Math.max(low, q.bottom); });
+        const Z = c.offsetHeight ? (c.getBoundingClientRect().height / c.offsetHeight) || 1 : 1;
+        const over = bd.scrollHeight > bd.clientHeight + 4;
+        const want = Math.max(96, Math.round(c.offsetHeight - bd.clientHeight + (low - B.top) / Z + 14));
+        /* fitted a little short (the body's own padding, a last line's descent): the overflow is added, not the fit dropped -
+           dropping it let the card grow back and be measured again, round and round */
+        if (over && nat[key] != null) { const more = bd.scrollHeight - bd.clientHeight;
+          if (more > 160) delete nat[key]; else nat[key] = c.offsetHeight + more + 6; changed = true; return; }
+        if (over || want >= c.offsetHeight - 8) return;
+        if (nat[key] == null || Math.abs(nat[key] - want) > 16) { nat[key] = want; changed = true; }
+      });
+      if (changed && (this._fitRuns = (this._fitRuns || 0) + 1) <= 4) { this._inFit = true; try { this._placeNow(); } finally { this._inFit = false; } }
+    }
     _cmpGet() { if (this._cmpA) return this._cmpA; try { this._cmpA = JSON.parse(localStorage.getItem('vera:canvas:deskfront:' + this.canvasId) || '{}') || {}; } catch (e) { this._cmpA = {}; } return this._cmpA; }
     _cmpSet(m) { this._cmpA = m; const ks = Object.keys(m); if (ks.length > 400) ks.sort((a, b) => m[a] - m[b]).slice(0, ks.length - 400).forEach((k) => delete m[k]);
       try { localStorage.setItem('vera:canvas:deskfront:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
@@ -3190,9 +3286,11 @@
         const user = pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null;
         const so = { size: user, pinned: !!user && c.classList.contains('pinned'), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
-        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h), face0: po.size.face };
+        /* a card is no taller than what it holds (see _deskFit): its measured height caps its face and its growth */
+        const nat = (this._natH || {})[key];
+        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w), h: Math.min(H - 8, po.size.h, nat || Infinity), face0: po.size.face, maxH: nat || undefined };
       });
-      D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h) }; }, { W: W, H: H });
+      D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); return { w: Math.min(W - 16, s.w), h: Math.min(H - 8, s.h, (s.face === 'chip' || s.face === 'icon') ? Infinity : (it.maxH || Infinity)) }; }, { W: W, H: H });
       /* ...then every card takes the free desk round it (D.grow): a chip stays a chip, and what the person sized, locked
          or is sizing stays as it is. Off with the canvas's desk-fill="off". */
       if (typeof D.grow === 'function' && this.getAttribute('desk-fill') !== 'off') {
@@ -3207,7 +3305,9 @@
           : it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) })
           : it.sizing ? { w: it.w, h: it.h, face: c.dataset.deskFace || 'max', nd: 0 }
           /* moved where only its present size fits: it keeps that size and its face there, or it would grow over its neighbours */
-          : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: it.face0 || 'chip' }) : D.sizeAt(R, it.x, it.y, it.so, desk);
+          : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: Math.min(it.h, it.h > 40 && it.maxH ? it.maxH : Infinity), face: it.face0 || 'chip' })
+          : it.maxH ? (() => { const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); if (s0.face === 'chip' || s0.face === 'icon') return s0; const hh = Math.min(s0.h, it.maxH); return Object.assign({}, s0, { h: hh, face: D.faceOf(s0.w, hh) === 'chip' ? 'card' : D.faceOf(s0.w, hh) }); })()
+          : D.sizeAt(R, it.x, it.y, it.so, desk);
         const w = Math.min(W - 16, s.w), h = Math.min(H - 8, s.h);
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
         c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
@@ -3259,7 +3359,10 @@
       try { this._liveLayout(); } catch (e) { /* the live layout readers are optional */ }
       // the cards slide to their places (.45s): the live layer follows once they have arrived
       clearTimeout(this._deskLiveT);
-      this._deskLiveT = setTimeout(() => { try { this._liveLayout(); } catch (e) { /* optional */ } try { this._panelRoom(); } catch (e) { /* optional */ } }, 520);
+      this._deskLiveT = setTimeout(() => { try { this._liveLayout(); } catch (e) { /* optional */ } try { this._panelRoom(); } catch (e) { /* optional */ }
+        try { this._deskFit(); } catch (e) { /* optional */ } }, 520);
+      /* a placement that is not a refit's own lets the refit run again (see _deskFit) */
+      if (!this._inFit) this._fitRuns = 0;
       try { this.dispatchEvent(new CustomEvent('vera:canvas:placed', { bubbles: true, detail: { n: out.length, mode: 'desk', height: H,
         faces: out.reduce((m, o) => { m[o.face] = (m[o.face] || 0) + 1; return m; }, {}) } })); } catch (e) { /* no listener */ }
     }
@@ -4764,7 +4867,10 @@
     /* the diagram's source into the estate's mermaid element (loaded once from the page); a changed source redraws it;
        the host's own window.mermaid draws when the element cannot be had, the source shows when nothing can */
     _mermaidInto(inner, key) {
-      const c = this._contentOf(key) || {}; const code = String(c.mermaid || c.code || c.source || '').trim(); if (!inner || inner._mmCode === code) return; inner._mmCode = code;
+      const c = this._contentOf(key) || {}; const code = String(c.mermaid || c.code || c.source || '').trim();
+      const live = !!(this._liveOv && this._liveOv[String(key)]);
+      /* the same source again is nothing to do - unless it was last drawn as a stream and the stream is over (drawn whole now) */
+      if (!inner || (inner._mmCode === code && (live || inner._mmWhole))) return; inner._mmCode = code; inner._mmWhole = !live;
       ensureLib('/ui/elements/vera_mermaid.js', 'vera-mermaid').then((ok) => {
         if (!inner.isConnected) return;
         if (typeof inner.render !== 'function' && typeof customElements !== 'undefined' && customElements.get('vera-mermaid')) { try { customElements.upgrade(inner); } catch (e) {} }
@@ -4774,6 +4880,11 @@
            after its been fully rendered in chat" (owner, 2026-09-24), even though the writes were arriving all
            along. `stream` draws the complete lines and holds the partial one, which is exactly what the chat's own
            live fence does. A finished diagram is just the case where no line is partial. */
+        /* ...but a diagram nothing is writing any more is drawn whole: `stream` never says a source is broken (a line it
+           cannot draw is held as "partial"), so an invalid one stayed a blank card forever (2026-10-11: a reply's
+           "bar / x-axis / series" pseudo-chart, two empty cards). `render` draws it, or shows the parse error with the source. */
+        const streaming = !!(this._liveOv && this._liveOv[String(key)]);
+        if (!streaming && typeof inner.render === 'function') { try { inner.render(code); } catch (e) {} return; }
         if (typeof inner.stream === 'function') { try { inner.stream(code); } catch (e) { try { inner.render(code); } catch (_) {} } return; }
         if (typeof inner.render === 'function') { try { inner.render(code); } catch (e) {} return; }
         if (!ok && window.mermaid && typeof window.mermaid.render === 'function') { try { Promise.resolve(window.mermaid.render('vc-mm-' + Math.random().toString(36).slice(2, 8), code)).then((r) => { inner.innerHTML = (r && r.svg) || ''; }).catch(() => { inner.textContent = code; }); } catch (e) { inner.textContent = code; } return; }

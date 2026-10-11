@@ -309,7 +309,7 @@
      fixed: the person's size, a lock and the card being sized stay as they are) grows into the free desk round it - a
      step at a time, right, down, left and up in turn, while a side stays clear of the chat, the desk's edge and every
      other card by `gap` - until no side can. Its width and height keep within an aspect of 1:2.2 either way, so a
-     card grows into a page, never a ribbon; `maxW` / `maxH` cap it. Order is the items' order: the first (the topic's)
+     card grows into a page, never a ribbon; `maxW` / `maxH` cap it, and an item's own maxW / maxH (what it holds). Order is the items' order: the first (the topic's)
      grow first. Items are {x, y, w, h (centre and size), fixed?, chip?}; each grown one gets grown: true. */
   function grow(items, R, d, o) {
     d = desk(d); o = o || {};
@@ -345,7 +345,7 @@
           var w = t.r - t.l, h = t.b - t.t;
           var strip = s === 'r' ? { l: b.r, t: b.t, r: t.r, b: b.b } : s === 'l' ? { l: t.l, t: b.t, r: b.l, b: b.b }
             : s === 'b' ? { l: b.l, t: b.b, r: b.r, b: t.b } : { l: b.l, t: t.t, r: b.r, b: b.t };
-          if (w > maxW || h > maxH || !clear(strip, s)) { open[s] = false; return; }
+          if (w > Math.min(maxW, it.maxW || Infinity) || h > Math.min(maxH, it.maxH || Infinity) || !clear(strip, s)) { open[s] = false; return; }
           if (w / h > ratio || h / w > ratio) return;
           b = t; moved = true;
         });
