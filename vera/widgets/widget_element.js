@@ -497,11 +497,6 @@
     const r = Math.max(16, (H - 8) / 2), c = 2 * Math.PI * r, s = H / 2 + 2, unit = l.unit || ((l.bounded && l.hi === 100 && l.lo === 0) ? '%' : '');
     return '<svg class="vw-svg" viewBox="0 0 ' + (s * 2) + ' ' + (s * 2) + '" style="height:' + H + 'px;width:auto"><circle cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="var(--bg2,#1a1c20)" stroke-width="6"/><circle cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="var(--acc,#5a9e8f)" stroke-width="6" stroke-dasharray="' + (f * c).toFixed(1) + ' ' + (c - f * c).toFixed(1) + '" transform="rotate(-90 ' + s + ' ' + s + ')" stroke-linecap="round"/><text x="' + s + '" y="' + s + '" text-anchor="middle" dominant-baseline="central" font-size="' + Math.max(10, r * 0.55) + '" fill="var(--text,#d8dce4)" font-family="var(--mono,ui-monospace,monospace)">' + esc(fmt(l.v)) + esc(unit) + '</text></svg>';
   };
-  R.counter = (d, H) => {
-    const l = level(d); if (!l) return EMPTY('a counter needs a value');
-    const dl = l.delta != null ? '<span class="vw-delta ' + (num(l.delta) >= 0 ? 'up' : 'down') + '">' + (num(l.delta) >= 0 ? '▲' : '▼') + ' ' + esc(fmt(Math.abs(num(l.delta)))) + '</span>' : '';
-    return '<div class="vw-hero"><b>' + esc(fmt(l.v)) + '</b><span class="vw-unit">' + esc(l.unit) + '</span>' + dl + '</div>';   // the hero fits the body it stands in (a 2×2 tile's is ~46 px) — no nominal floor from the size
-  };
   R.bar = (d, H) => {
     const l = level(d); if (!l) return EMPTY('a meter needs { value, min, max }');
     const f = Math.max(0, Math.min(1, (l.v - l.lo) / ((l.hi - l.lo) || 1)));
@@ -525,21 +520,6 @@
     const lim = Math.min(8, (o && o.draw && +o.draw.limit) || 8, Math.max(2, Math.floor(((H || 150) + 4) / 18)));
     return '<div class="vw-therm">' + kv.slice(0, lim).map((x) => '<div><label title="' + esc(x[0]) + '">' + esc(x[0]) + '</label><span><i style="width:' + (100 * Math.abs(x[1]) / hi).toFixed(1) + '%"></i></span><b>' + esc(fmt(x[1])) + '</b></div>').join('') + '</div>';
   };
-  R.heat = (d) => {
-    const kv = keyed(d); if (!kv.length) return EMPTY('no numbers to draw');
-    const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, cols = Math.min(6, Math.max(3, Math.ceil(Math.sqrt(kv.length))));
-    return '<div class="vw-heat" style="grid-template-columns:repeat(' + cols + ',1fr)">' + kv.slice(0, 48).map((x) => '<div style="opacity:' + (0.2 + 0.8 * Math.abs(x[1]) / hi).toFixed(2) + '" title="' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '">' + esc(x[0]) + '</div>').join('') + '</div>';
-  };
-  R.matrix = (d) => {
-    // {row: {col: value}} or [{name, a, b, c}] → a grid of cells coloured by value (a status matrix)
-    let rws = [], cols = [];
-    if (d && typeof d === 'object' && !Array.isArray(d)) { rws = Object.keys(d).filter((k) => d[k] && typeof d[k] === 'object').map((k) => [k, d[k]]); }
-    else rows(d).forEach((r) => rws.push([String(r.name ?? r.id ?? ''), r]));
-    if (!rws.length) return EMPTY('a matrix needs rows of values');
-    cols = Object.keys(rws[0][1]).filter((c) => typeof rws[0][1][c] !== 'object' && c !== 'name' && c !== 'id').slice(0, 10);
-    const val = (v) => typeof v === 'number' ? v : (v === true || /^(ok|up|green|pass)$/i.test(String(v)) ? 1 : (v === false || /^(down|fail|red|error)$/i.test(String(v)) ? 0 : 0.5));
-    return '<div class="vw-matrix" style="grid-template-columns:auto repeat(' + cols.length + ',1fr)"><i></i>' + cols.map((c) => '<i>' + esc(c) + '</i>').join('') + rws.slice(0, 12).map((r) => '<b>' + esc(r[0]) + '</b>' + cols.map((c) => { const v = val(r[1][c]); return '<span style="background:color-mix(in srgb,var(--acc,#5a9e8f) ' + Math.round(v * 80 + 10) + '%,var(--bg2,#1a1c20))" title="' + esc(r[0]) + ' · ' + esc(c) + ' · ' + esc(String(r[1][c])) + '"></span>'; }).join('')).join('') + '</div>';
-  };
   /* the donut is as tall as its body and no wider than it is tall: the ring sized to the body (never past 140 px), its
      total in the middle, the legend beside it as a short column of name + value + share - or under it when the tile
      is narrow - so a donut tile can be three columns wide instead of four (the owner: "donut/ring charts take up too
@@ -556,35 +536,7 @@
     const mid = '<text x="' + s + '" y="' + s + '" class="vw-dtot" text-anchor="middle" dominant-baseline="central">' + esc(fmt(tot)) + '</text>';
     return '<div class="vw-donut"><svg class="vw-svg" viewBox="0 0 ' + D + ' ' + D + '" style="height:' + D + 'px;width:' + D + 'px;flex:none">' + arcs + mid + '</svg><div class="vw-legend vw-legend-col">' + kv.map((x, i) => '<span data-b="p' + i + '"' + itemAttr({ name: x[0], value: x[1], share: Math.round(Math.abs(x[1]) / tot * 1000) / 10, of: tot }, 'slice') + '><i style="background:' + cols[i % cols.length] + '"></i><em>' + esc(x[0]) + '</em><b>' + esc(fmt(x[1])) + '</b><small>' + pc(x[1]) + '</small></span>').join('') + '</div></div>';
   };
-  R.stack = (d) => {
-    const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
-    const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1;
-    const cols = ['var(--acc,#5a9e8f)', 'var(--acc2,#8fb87a)', 'var(--acc3,#d4a96a)', '#a78bfa', '#e07a9a', '#5ab0d8', '#c9a35a', '#7ac9b0'];
-    return '<div class="vw-stack"><div class="vw-stackbar">' + kv.map((x, i) => '<i style="width:' + (100 * Math.abs(x[1]) / tot).toFixed(1) + '%;background:' + cols[i % cols.length] + '" title="' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '"></i>').join('') + '</div><div class="vw-legend">' + kv.map((x, i) => '<span><i style="background:' + cols[i % cols.length] + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + '</div></div>';
-  };
-  R.pills = (d) => {
-    const kv = keyed(d); const st = rows(d);
-    if (kv.length) return '<div class="vw-pills">' + kv.slice(0, 12).map((x) => '<span class="vw-pill"><small>' + esc(x[0]) + '</small><b>' + esc(fmt(x[1])) + '</b></span>').join('') + '</div>';
-    if (st.length) return '<div class="vw-pills">' + st.slice(0, 12).map((r) => { const s = String(r.status ?? r.state ?? r.value ?? ''); const ok = /^(ok|up|green|pass|running|healthy)$/i.test(s); const bad = /^(down|fail|red|error|stopped)$/i.test(s); return '<span class="vw-pill ' + (ok ? 'ok' : bad ? 'bad' : '') + '"><small>' + esc(String(r.name ?? r.id ?? r.label ?? '')) + '</small><b>' + esc(s) + '</b></span>'; }).join('') + '</div>';
-    return EMPTY('pills need { name: number } or rows with a status');
-  };
   const logLine = (r) => '<div><span class="t">' + esc(String(r.t ?? r.ts ?? r.time ?? r.when ?? '').slice(11, 19) || String(r.t ?? r.ts ?? '').slice(0, 8)) + '</span><span class="k">' + esc(String(r.kind ?? r.level ?? r.type ?? '')) + '</span><span>' + esc(String(r.text ?? r.msg ?? r.message ?? r.line ?? r.title ?? '')) + '</span></div>';
-  R.log = (d, H) => {
-    const rw = rows(d); if (!rw.length || !rw.some((r) => r.text != null || r.msg != null || r.message != null || r.line != null || r.title != null)) return EMPTY('a log needs rows with text');
-    const n = Math.max(3, Math.min(40, Math.floor(((H || 70) - 2) / 14)));   // the lines that fit the body (14 px each)
-    return '<div class="vw-log">' + rw.slice(-n).map(logLine).join('') + '</div>';
-  };
-  R.lane = (d) => {
-    const rw = rows(d); if (!rw.length || !rw.some((r) => r.text != null || r.msg != null || r.message != null || r.line != null)) return EMPTY('a log needs rows with text');
-    const by = {}; rw.forEach((r) => { const k = String(r.kind ?? r.level ?? r.type ?? 'other'); (by[k] = by[k] || []).push(r); });
-    return '<div class="vw-log">' + Object.keys(by).slice(0, 6).map((k) => '<div class="lane">' + esc(k) + ' · ' + by[k].length + '</div>' + by[k].slice(-4).map(logLine).join('')).join('') + '</div>';
-  };
-  R.table = (d, H, o) => {
-    const rw = rows(d); if (!rw.length) return EMPTY('no rows');
-    const want = (o && o.draw && Array.isArray(o.draw.columns)) ? o.draw.columns : null;
-    const cols = (want || Object.keys(rw[0]).filter((k) => typeof rw[0][k] !== 'object')).slice(0, 6);
-    return '<div class="vw-tablewrap" style="max-height:' + Math.max(H, 60) + 'px"><table><thead><tr>' + cols.map((c) => '<th>' + esc(c) + '</th>').join('') + '</tr></thead><tbody>' + rw.slice(0, (o && o.draw && o.draw.limit) || 12).map((r) => '<tr>' + cols.map((c) => '<td title="' + esc(String(r[c] ?? '')) + '">' + esc(String(r[c] ?? '')) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
-  };
   /* A READING LIST (owner, 2026-10-01: web.research "is too dense of a format ... the cells of the table are commonly
      truncated so it cant be read"). Pages are not rows of a grid: each is a card - its title (the link), where it is from,
      when, how much was read - and two or three lines of what it says, wrapped and never cut to a cell. A card opens in
@@ -617,26 +569,11 @@
         + (body.length > sn.length + 60 ? '<button class="mo"' + set('open', on ? -1 : i) + '>' + (on ? 'less' : 'read more') + '</button>' : '') + '</div></div>'; }).join('');
     return wrap('reading', '<div class="vb-rds">' + cards + '</div>' + (pages > 1 ? '<div class="vb-fn"><button' + set('page', (pg + pages - 1) % pages) + '>\u2039</button><button' + set('page', (pg + 1) % pages) + '>\u203a</button><span>' + (pg + 1) + ' / ' + pages + ' \u00b7 ' + n + ' pages</span></div>' : ''));
   };
-  R.files = (d, H, o) => { const rw = rows(d); if (!rw.length) return EMPTY('no rows'); if (!rw.some((r) => r.path != null)) return EMPTY('files need a path field'); return R.table(rw, H, { draw: { columns: ['path'].concat(Object.keys(rw[0]).filter((k) => k !== 'path' && typeof rw[0][k] !== 'object').slice(0, 4)) } }); };
   R.list = (d, H) => {
     const rw = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const n = Math.max(2, Math.min(24, Math.floor(((H || 70) - 2) / 16)));
     if (str.length) return '<div class="vw-list">' + str.slice(0, n).map((s) => '<div><b>' + esc(s) + '</b></div>').join('') + '</div>';
     if (!rw.length) return EMPTY('no rows');
     return '<div class="vw-list">' + rw.slice(0, n).map((r) => '<div><b>' + esc(String(r.name ?? r.title ?? r.label ?? r.id ?? '')) + '</b><small>' + esc(String(r.meta ?? r.when ?? r.status ?? r.count ?? r.value ?? '')) + '</small></div>').join('') + '</div>';
-  };
-  R.checklist = (d) => {
-    const rw = rows(d); if (!rw.length) return EMPTY('a checklist needs items');
-    return '<div class="vw-check">' + rw.slice(0, 12).map((r) => { const on = !!(r.done || r.checked || r.state === 'done' || r.status === 'done'); return '<div class="' + (on ? 'on' : '') + '"><i>' + (on ? '☑' : '☐') + '</i><span>' + esc(String(r.text ?? r.title ?? r.name ?? '')) + '</span>' + (r.due || r.when ? '<small>' + esc(String(r.due ?? r.when)) + '</small>' : '') + '</div>'; }).join('') + '</div>';
-  };
-  R.stepper = (d) => {
-    const arr = Array.isArray(d) ? d : (d && (d.stages || d.steps)) || []; if (!arr.length) return EMPTY('stages need a list');
-    return '<div class="vw-steps">' + arr.slice(0, 12).map((s, i) => { const o = (s && typeof s === 'object') ? s : { name: String(s) }; const st = o.done || o.state === 'done' || o.status === 'done' ? 'done' : (o.current || o.state === 'running' || o.status === 'running' || o.state === 'current' ? 'now' : (o.state === 'failed' || o.status === 'failed' || o.error ? 'bad' : '')); return '<div class="' + st + '"><i>' + (i + 1) + '</i><span>' + esc(String(o.name ?? o.title ?? o.step ?? '')) + '</span>' + (o.when || o.ms != null ? '<small>' + esc(String(o.when ?? (o.ms + ' ms'))) + '</small>' : '') + '</div>'; }).join('') + '</div>';
-  };
-  R.calendar = (d) => {
-    const rw = rows(d); if (!rw.length) return EMPTY('a calendar needs events');
-    const day = (r) => String(r.when ?? r.start ?? r.t ?? r.date ?? '').slice(0, 10) || 'undated';
-    const by = {}; rw.forEach((r) => (by[day(r)] = by[day(r)] || []).push(r));
-    return '<div class="vw-cal">' + Object.keys(by).sort().slice(0, 6).map((k) => '<div class="day"><b>' + esc(k) + '</b>' + by[k].slice(0, 5).map((r) => '<span><small>' + esc(String(r.when ?? r.start ?? r.t ?? '').slice(11, 16)) + '</small>' + esc(String(r.title ?? r.name ?? r.text ?? '')) + '</span>').join('') + '</div>').join('') + '</div>';
   };
   R.string = (d) => { const s = typeof d === 'string' ? d : (d && typeof d === 'object' ? String(d.text ?? d.value ?? d.message ?? JSON.stringify(d)) : String(d)); return s ? '<div class="vw-str">' + esc(s.slice(0, 2000)) + '</div>' : EMPTY('nothing to show'); };
   R.kv = (d, H, o2) => {
@@ -671,11 +608,6 @@
     const n = Object.keys(ed).length, st = (o && o.ui && o.ui._fmStatus) || (n ? n + ' changed' : '');
     const foot = (dr.save && dr.save.cap) ? '<div class="vw-fm-foot"><span class="vw-fm-st" data-vf-status>' + esc(st) + '</span><button type="button" class="vw-fm-save" data-vf-save' + (n ? '' : ' disabled') + '>' + esc(dr.save.label || 'Save') + '</button></div>' : '';
     return '<div class="vw-fm">' + fields.map(row).join('') + foot + '</div>';
-  };
-  R.scatter = (d, H) => {
-    const pts = rows(d).map((p) => [num(p.x ?? p.t ?? p[0]), num(p.y ?? p.v ?? p.value ?? p[1]), num(p.size ?? p.r ?? 3)]); if (pts.length < 2) return EMPTY('a scatter needs points');
-    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]); const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), W = 300;
-    return '<svg class="vw-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' + pts.slice(0, 400).map((p) => '<circle cx="' + (((p[0] - x0) / ((x1 - x0) || 1)) * (W - 12) + 6).toFixed(1) + '" cy="' + ((H - 6) - ((p[1] - y0) / ((y1 - y0) || 1)) * (H - 12)).toFixed(1) + '" r="' + Math.max(2, Math.min(8, p[2] || 3)) + '" fill="var(--acc,#5a9e8f)" fill-opacity=".7"/>').join('') + '</svg>';
   };
   // the CONTEXT GRAPH (the chat's own graph, the Graph board): a lane per family — context · memory · loop · plan ·
   // canvas — its members scattered by relevance (left = most relevant), hollow where related but not injected, the
@@ -912,7 +844,9 @@
   const stagesOf = (d) => { const arr = Array.isArray(d) ? d : (d && (d.stages || d.steps || d.items)) || []; return arr.map((s, i) => (s && typeof s === 'object') ? s : { name: String(s) }).map((o) => { const st = o.done || o.state === 'done' || o.status === 'done' || o.status === 'merged' ? 'done' : (o.current || o.now || o.state === 'running' || o.status === 'running' || o.state === 'current' || o.status === 'review' ? 'now' : (o.state === 'failed' || o.status === 'failed' || o.error ? 'bad' : '')); return Object.assign({ st }, o); }); };
   // the chart's height inside the size's body: what the form's own chrome (a hero, a legend, a caption) leaves
   const chH = (H, used) => Math.max(40, Math.round(H - used));
-  const evsOf = (d) => rows(d).filter((r) => r.t != null || r.ts != null || r.time != null || r.when != null || r.text != null || r.title != null || r.msg != null);
+  /* `message` and `line` count as an event's text too (DU-X1): the early log and lane drew rows whose text was in them,
+     and the shared line formatters (logLine, txt) read them - only this filter had dropped them */
+  const evsOf = (d) => rows(d).filter((r) => r.t != null || r.ts != null || r.time != null || r.when != null || r.text != null || r.title != null || r.msg != null || r.message != null || r.line != null);
 
   /* ── the standard set: a feed, files, a table, a gallery, a terminal, an agenda, people, links, a notice, a board ── */
   R.feed = (d, H, o) => {
@@ -1484,7 +1418,10 @@
         return '<div class="vb-heatkey"><span>0</span><span class="g" style="background:linear-gradient(90deg,' + mix(B.t2, 10) + ',' + mix(B.t2, 96) + ')"></span><span>' + esc(fmt(hi)) + '</span></div>'; })() : ''), 'vb-heatfit'); }
     if (!kv.length) return EMPTY('a heat map needs rows of numbers');
     const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, cols = Math.min(12, Math.max(4, kv.length)); const pal = palOf(o, 'load');
-    return wrap('heat', '<div class="vb-heatstrip" style="grid-template-columns:repeat(' + cols + ',1fr)">' + kv.slice(0, 48).map((x, i) => '<i style="background:' + pal(i, x[1], hi) + ';opacity:' + (0.25 + 0.75 * Math.abs(x[1]) / hi).toFixed(2) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '"></i>').join('') + '</div>');
+    /* names under the cells (the early heat wrote each name in its cell - DU-X1 keeps that): up to 16 cells a label sits
+       under each square; denser strips keep the name in the tooltip only, where a label would not be readable */
+    const named = kv.length <= 16;
+    return wrap('heat', '<div class="vb-heatstrip' + (named ? ' named' : '') + '" style="grid-template-columns:repeat(' + cols + ',1fr)">' + kv.slice(0, 48).map((x, i) => { const cell = '<i style="background:' + pal(i, x[1], hi) + ';opacity:' + (0.25 + 0.75 * Math.abs(x[1]) / hi).toFixed(2) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '"></i>'; return named ? '<span>' + cell + '<em>' + esc(x[0]) + '</em></span>' : cell; }).join('') + '</div>');
   };
   R.matrix = (d, H, o) => {
     const m = cellsOf(d); if (!m.rows.length) return EMPTY('a matrix needs rows of values'); const cols = m.cols.length ? m.cols : m.rows[0].v.map((_, i) => String(i + 1));
@@ -3580,7 +3517,7 @@ span.vw-sampled{opacity:.85}
 .vb-tmap{flex:none;min-height:40px;display:flex;flex-wrap:wrap;gap:2px;align-content:stretch}.vb-tmap span{border-radius:3px;display:flex;align-items:flex-end;padding:4px 5px;font-family:var(--b-mono);font-size:8px;color:var(--b-on);overflow:hidden;white-space:nowrap}
 /* matrices and calendars */
 .vb-heatrow{display:grid;grid-template-columns:46px 1fr 32px;align-items:center;gap:8px}.vb-heatrow.nt{grid-template-columns:46px 1fr}.vb-heatfit{gap:3px;justify-content:center}.vb-heatrow.hd .vb-heat b{font-family:var(--b-mono);font-size:8px;font-weight:400;color:var(--b-t3);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-heatfit .vb-heat i{display:flex;align-items:center;justify-content:center;font-family:var(--b-mono);font-size:8.5px;font-style:normal;color:var(--b-t1)}.vb-heatfit .vb-lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-heatrow .v{font-family:var(--b-mono);font-size:9px;text-align:right}.vb-heat{display:grid;gap:2px;align-content:center}.vb-heat i{aspect-ratio:1;border-radius:2px;display:block}
-.vb-heatstrip{display:grid;gap:2px;flex:1;min-height:0;align-content:center}.vb-heatstrip i{aspect-ratio:1;border-radius:2px;max-width:44px;justify-self:center;width:100%}
+.vb-heatstrip{display:grid;gap:2px;flex:1;min-height:0;align-content:center}.vb-heatstrip i{aspect-ratio:1;border-radius:2px;max-width:44px;justify-self:center;width:100%}.vb-heatstrip.named span{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0}.vb-heatstrip.named em{font-style:normal;font-size:8.5px;line-height:1.1;color:var(--b-t3);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vb-mxh,.vb-mxr{display:grid;gap:4px;align-items:center}.vb-mxh span{font-family:var(--b-mono);font-size:8px;color:var(--b-t3);text-align:center;white-space:nowrap;overflow:hidden}.vb-mxr .n{font-size:9.5px;color:var(--b-t2);white-space:nowrap;overflow:hidden}.vb-mxr i{height:17px;border-radius:3px;display:block}
 .vb-dots{display:grid;grid-template-columns:repeat(20,1fr);gap:3px;flex:1;min-height:0;align-content:center}.vb-dots i{aspect-ratio:1;border-radius:50%;display:block}
 .vb-cal{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:2px;flex:none;min-height:70px}.vb-cal i{border-radius:2px;display:block}
