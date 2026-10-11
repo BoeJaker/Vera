@@ -6797,34 +6797,6 @@ CHAT_TURNS = _rtc_chat.Window(500)
 _CHAT_TURN_TASKS: set = set()     # strong refs to the background posts
 
 
-def _chat_turn_task_done(t) -> None:
-    _CHAT_TURN_TASKS.discard(t)
-    if not t.cancelled() and t.exception() is not None:
-        log.debug("chat turn ingest: %s", t.exception())
-
-
-def _record_chat_turn(ph, agent_name: str, elapsed_ms: int, chars: int, session_id: str = "") -> None:
-    """Never raises; never awaits (the event goes out as a background task)."""
-    try:
-        rec = _phases.turn_record(getattr(ph, "log", []) or [], agent=agent_name, elapsed_ms=elapsed_ms,
-                                  chars=chars, ok=bool(chars))
-        rec["session_id"] = str(session_id or "")[:80]
-        CHAT_TURNS.add(_phases.as_envelope(rec))
-        try:
-            _loop = asyncio.get_running_loop()
-            _loop.create_task(emit_event(rec))
-            # into Loop Lab (evolve.chat.ingest, its own list); fire-and-forget and bounded, so a
-            # slow store never holds a chat turn up
-            _t = _loop.create_task(asyncio.wait_for(_call_registered_cap("evolve.chat.ingest", turn=rec),
-                                                    timeout=2.0))
-            _CHAT_TURN_TASKS.add(_t)
-            _t.add_done_callback(_chat_turn_task_done)
-        except Exception:
-            pass
-    except Exception as e:
-        log.debug("chat turn record: %s", e)
-
-
 # ── info-seeking misses in live chat (plan SK-4.3) ───────────────────────────────────────────────────────────────
 _INFO_MISS_KEY = "vera:info:misses:"
 
@@ -6893,6 +6865,34 @@ async def cap_info_misses(days: int = 14, trace_id=None):
             "miss_rate": round((totals["no_lookup"] + totals["snippets_only"]) / wt, 3) if wt else None}
 
 
+
+
+def _chat_turn_task_done(t) -> None:
+    _CHAT_TURN_TASKS.discard(t)
+    if not t.cancelled() and t.exception() is not None:
+        log.debug("chat turn ingest: %s", t.exception())
+
+
+def _record_chat_turn(ph, agent_name: str, elapsed_ms: int, chars: int, session_id: str = "") -> None:
+    """Never raises; never awaits (the event goes out as a background task)."""
+    try:
+        rec = _phases.turn_record(getattr(ph, "log", []) or [], agent=agent_name, elapsed_ms=elapsed_ms,
+                                  chars=chars, ok=bool(chars))
+        rec["session_id"] = str(session_id or "")[:80]
+        CHAT_TURNS.add(_phases.as_envelope(rec))
+        try:
+            _loop = asyncio.get_running_loop()
+            _loop.create_task(emit_event(rec))
+            # into Loop Lab (evolve.chat.ingest, its own list); fire-and-forget and bounded, so a
+            # slow store never holds a chat turn up
+            _t = _loop.create_task(asyncio.wait_for(_call_registered_cap("evolve.chat.ingest", turn=rec),
+                                                    timeout=2.0))
+            _CHAT_TURN_TASKS.add(_t)
+            _t.add_done_callback(_chat_turn_task_done)
+        except Exception:
+            pass
+    except Exception as e:
+        log.debug("chat turn record: %s", e)
 
 
 @capability(
