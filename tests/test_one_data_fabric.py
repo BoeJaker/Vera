@@ -24,6 +24,16 @@ def test_data_fabric_aliases_itself_before_anything_else_runs():
     assert src.index(alias) < src.index('schedule(_startup, interval=999999, name="fabric_startup")')
 
 
+def test_training_state_aliases_itself_too():
+    # loop_ledger and discovery import it by full name at call time; the loader loads it as `training_state`
+    src = _src("vera/minds/training_state.py")
+    alias = ('for _alias in ("training_state", "Vera.vera.minds.training_state"):\n'
+             '    sys.modules.setdefault(_alias, sys.modules[__name__])')
+    assert alias in src
+    assert src.index(alias) < src.index("import Vera.vera.capability_orchestration as _orch")
+    assert src.index(alias) < src.index("schedule(_retention_job")
+
+
 def test_the_loader_skips_a_name_already_in_sys_modules():
     src = _src("vera/capability_orchestration.py")
     i = src.index("for _fpath in _module_files:")
