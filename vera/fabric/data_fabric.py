@@ -52,6 +52,15 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+
+# ONE module object, whatever name it is imported by. The module loader loads this file as `data_fabric`; an
+# `import Vera.vera.fabric.data_fabric` elsewhere would otherwise execute it a SECOND time - a second FABRIC_PG /
+# FABRIC_CHROMA, a second set of capabilities, and a second schedule("fabric_startup") that REPLACES the first by
+# name, so the copy 40+ call sites use (sys.modules["data_fabric"]) never connected. Seen 11 Oct 2026: memory.seek's
+# Chroma leg empty in 0.2 ms and its Postgres leg "unavailable" after a new module imported the full name at the
+# scheduler's first tick. Both names now point at this one object before anything else runs.
+for _alias in ("data_fabric", "Vera.vera.fabric.data_fabric"):
+    sys.modules.setdefault(_alias, sys.modules[__name__])
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -60,10 +69,24 @@ import httpx
 
 # ── Config (single source of truth) ──────────────────────────────────────────
 from Vera.vera.config import cfg
+try:
+    from Vera.vera.fabric.revision_state_paths import (
+        default_memory_revision_path,
+        migrate_legacy_memory_revision_state,
+    )
+except ImportError:                                     # pragma: no cover
+    from .revision_state_paths import (
+        default_memory_revision_path,
+        migrate_legacy_memory_revision_state,
+    )
 try:                                                    # RF-77
     from Vera.vera.fabric import chroma_bound_core as _chroma_bound
 except ImportError:                                     # pragma: no cover
     from . import chroma_bound_core as _chroma_bound
+try:                                                    # FM-7.1: seek's keyword leg on a full-text index
+    from Vera.vera.fabric import text_index_core as _tix
+except ImportError:                                     # pragma: no cover
+    from . import text_index_core as _tix
 
 # ── Orchestrator integration ──────────────────────────────────────────────────
 # Pure embedding policy (no app import, so tests reach it as
@@ -185,8 +208,9 @@ FABRIC_FAISS_ENABLED = os.getenv("FABRIC_FAISS", "0") == "1"
 FABRIC_CACHE_TTL    = int(os.getenv("FABRIC_CACHE_TTL",  "3600"))
 FABRIC_STREAM_KEY   = os.getenv("FABRIC_STREAM_KEY",     "vera:fabric:ingest")
 SQLITE_PATH         = os.getenv("FABRIC_SQLITE", str(Path(__file__).parent / "vera_fabric.db"))
-REVISION_SQLITE_PATH = os.getenv(
-    "FABRIC_REVISION_SQLITE", str(Path(__file__).parent / "vera_fabric_revisions.db"))
+REVISION_SQLITE_PATH = (
+    os.getenv("FABRIC_REVISION_SQLITE", "").strip()
+    or default_memory_revision_path())
 REVISION_POLICY_JSON = os.getenv("FABRIC_REVISION_POLICY", "")
 ARTIFACT_ROOT = os.getenv(
     "FABRIC_ARTIFACT_ROOT", str(Path(__file__).parent / "artifact_store"))
@@ -890,9 +914,17 @@ async def query_dataset(dataset_id: str = "",
     return out
 
 
+def _stored_form(src: dict) -> dict:
+    """A copy made for a puller by _with_secrets carries resolved credentials: this is it as stored, with the auth
+    references back in place - whatever writes it back or caches it."""
+    if "_auth_stored" not in src:
+        return src
+    return {k: v for k, v in src.items() if k != "_auth_stored"} | {"auth": src["_auth_stored"]}
+
+
 async def _sqlite_upsert_source(src: dict):
     """Source upsert via the single-writer queue."""
-    await _enqueue_write({"kind": "upsert_source", "src": src}, wait=True)
+    await _enqueue_write({"kind": "upsert_source", "src": _stored_form(src)}, wait=True)
 
 
 
@@ -1453,6 +1485,17 @@ class FabricChromaStore:
         self._client = None
         self._col    = None
         self._count_cache: Tuple[float, int] = (0.0, 0)
+        # errors were logged at debug only: a dead client made every memory.seek semantic leg silently empty and
+        # every vector write silently dropped (11 Oct 2026) - now counted, warned (throttled) and, for a dead client,
+        # reconnected
+        self.errors: Dict[str, int] = {}
+        self._throttle = _chroma_bound.Throttle(300.0)
+
+    def _failed(self, op: str, e: BaseException) -> None:
+        self.errors[op] = self.errors.get(op, 0) + 1
+        if self._throttle.due(op):
+            log.warning("FabricChroma %s failed (%d so far): %s: %s", op, self.errors[op], type(e).__name__,
+                        str(e)[:300])
 
     def _cached_count(self) -> int:
         """Collection count with a short TTL — search() needed it on every call
@@ -1510,7 +1553,7 @@ class FabricChromaStore:
                              metadatas=[meta], embeddings=[record.embedding])
             return True
         except Exception as e:
-            log.debug("FabricChroma upsert: %s", e); return False
+            self._failed("upsert", e); return False
 
     def search(self, embedding: List[float], dataset_id: Optional[str] = None,
                top_k: int = 10, filters: Optional[Dict] = None) -> List[Tuple[str, float]]:
@@ -1524,11 +1567,21 @@ class FabricChromaStore:
                             "query_embeddings": [embedding]}
             if where:
                 kwargs["where"] = where
-            res = self._col.query(**kwargs)
+            try:
+                res = self._col.query(**kwargs)
+            except Exception as e:
+                if not _chroma_bound.looks_dead(e):
+                    raise
+                self._failed("search", e)
+                # the client cannot reach the server (a closed session, a dropped connection): one fresh client,
+                # one retry
+                if not self.connect():
+                    return []
+                res = self._col.query(**kwargs)
             return [(rid, max(0.0, 1.0 - d))
                     for rid, d in zip(res["ids"][0], res["distances"][0])]
         except Exception as e:
-            log.debug("FabricChroma search: %s", e); return []
+            self._failed("search", e); return []
 
     def delete_dataset(self, dataset_id: str) -> bool:
         if not self._col: return False
@@ -1567,8 +1620,11 @@ class FabricChromaStore:
     def stats(self) -> Dict:
         if not self._col: return {"available": False}
         try:
-            return {"available": True, "count": self._col.count(), "collection": self.COLLECTION}
-        except Exception: return {"available": False}
+            return {"available": True, "count": self._col.count(), "collection": self.COLLECTION,
+                    "errors": dict(self.errors)}
+        except Exception as e:
+            self._failed("stats", e)
+            return {"available": False, "errors": dict(self.errors)}
 
 
 FABRIC_CHROMA = FabricChromaStore()
@@ -1582,6 +1638,8 @@ class FabricPostgres:
     def __init__(self):
         self._pool = None
         self._connecting = False
+        self._tix_ready = False
+        self._tix_checked = 0.0
 
     async def connect(self) -> bool:
         if not HAS_PG or self._connecting: return False
@@ -1723,6 +1781,60 @@ class FabricPostgres:
             return scored[:limit]
         except Exception:
             return []
+
+    async def text_index_ready(self) -> bool:
+        """True when the full-text index on fabric_records exists and is valid (checked once per 10 minutes)."""
+        now = time.monotonic()
+        if now - self._tix_checked < 600.0:
+            return self._tix_ready
+        self._tix_checked = now
+        try:
+            async with self._pool.acquire() as conn:
+                self._tix_ready = bool(await conn.fetchval(_tix.STATE, _tix.INDEX))
+        except Exception:
+            self._tix_ready = False
+        return self._tix_ready
+
+    async def ensure_text_index(self) -> str:
+        """Build the full-text index if it is missing, CONCURRENTLY (no write lock, no table rewrite); an invalid
+        one left by an interrupted build is dropped and rebuilt. Returns what it did."""
+        if not self._pool:
+            return "no-db"
+        try:
+            async with self._pool.acquire() as conn:
+                state = await conn.fetchval(_tix.STATE, _tix.INDEX)
+                if state:
+                    did = "present"
+                else:
+                    if state is False:
+                        await conn.execute(_tix.DROP)
+                    await conn.execute("SET maintenance_work_mem = '512MB'")
+                    await conn.execute(_tix.CREATE, timeout=1800)
+                    did = "built"
+            self._tix_checked = 0.0
+            return did
+        except Exception as e:
+            log.warning("fabric text index: %s", e)
+            return f"error: {e}"
+
+    async def search_text_fts(self, query: str, dataset_id: Optional[str] = None,
+                              limit: int = 10) -> Optional[List[Tuple[str, float]]]:
+        """search_text on the full-text index (text_index_core): all-word records ranked first, then any-word ones
+        from a capped candidate set. None when the index is not ready, so the caller can use search_text."""
+        if not self._pool or not await self.text_index_ready():
+            return None
+        words = _tix.terms(query)
+        if not words:
+            return []
+        args = (dataset_id,) if dataset_id else ()
+        async with self._pool.acquire() as conn:
+            all_rows = await conn.fetch(_tix.search_sql("all", bool(dataset_id)),
+                                        _tix.tsquery(words, "&"), limit, *args)
+            any_rows = []
+            if len(all_rows) < limit and len(words) > 1:
+                any_rows = await conn.fetch(_tix.search_sql("any", bool(dataset_id)),
+                                            _tix.tsquery(words, "|"), limit, *args)
+        return _tix.merge([(r["id"], r["r"]) for r in all_rows], [(r["id"], r["r"]) for r in any_rows], limit)
 
     async def get_by_ids(self, ids: List[str]) -> Dict[str, DataRecord]:
         if not self._pool or not ids: return {}
@@ -3387,6 +3499,39 @@ try:
 except Exception as _e:
     log.debug("migrate skipped: %s", _e)
 
+async def _secret_headers(headers: Dict[str, Any]) -> Dict[str, str]:
+    """Header values with "@secret:<key>" references replaced by the Platforms credential (platform.secrets, the
+    master key store) - so a keyed feed or API source holds a reference, never the key (owner 2026-10-11). A
+    reference that cannot be resolved drops its header rather than sending the reference text."""
+    import re as _re
+    out: Dict[str, str] = {}
+    for k, v in (headers or {}).items():
+        if v in (None, ""):
+            continue
+        v = str(v)
+        refs = _re.findall(r"@secret:([A-Za-z0-9_.-]+)", v)
+        if refs:
+            try:
+                try:
+                    from Vera.vera.platforms import platform_access as _pa
+                except Exception:
+                    from vera.platforms import platform_access as _pa
+                for ref in refs:
+                    val = await _pa.secret_value(_orch.CAPABILITY_REGISTRY, ref)
+                    if not val:
+                        v = ""
+                        break
+                    v = v.replace("@secret:" + ref, val)
+            except Exception as e:
+                log.debug("fabric: header secret %s: %s", k, e)
+                v = ""
+            if not v:
+                log.warning("fabric: header %s names a credential that is not set - sent without it", k)
+                continue
+        out[str(k)] = v
+    return out
+
+
 async def _pull_rss(src: dict) -> List[dict]:
     """Fetch RSS/Atom feed via httpx (proper UA + redirects) then parse with
     feedparser. Doing the HTTP ourselves is essential — feedparser's built-in
@@ -3401,7 +3546,7 @@ async def _pull_rss(src: dict) -> List[dict]:
     try:                                          # the source's own headers win (a declared contact, a key)
         extra = json.loads(src.get("headers") or "{}") if isinstance(src.get("headers"), str) else (src.get("headers") or {})
         if isinstance(extra, dict):
-            headers.update({str(k): str(v) for k, v in extra.items() if v not in (None, "")})
+            headers.update(await _secret_headers(extra))
     except (TypeError, ValueError):
         pass
     body: bytes = b""
@@ -3458,16 +3603,41 @@ async def _pull_rss(src: dict) -> List[dict]:
     return items
 
 
-async def _pull_api(src: dict) -> List[dict]:
+def _platform_access():
     try:
-        headers = json.loads(src.get("headers") or "{}")
-        if isinstance(headers, str): headers = {}
+        from Vera.vera.platforms import platform_access as _pa
     except Exception:
-        headers = {}
-    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
-        r = await c.get(src["url"], headers=headers); r.raise_for_status()
-        data = r.json()
+        from vera.platforms import platform_access as _pa
+    return _pa
+
+
+async def _pull_api(src: dict) -> List[dict]:
     cfg = _src_config(src)
+    if cfg.get("connection"):
+        # through a Platforms API connection (data-connections plan): the connection holds the base URL and the
+        # credential; the source holds only the connection's id and the path
+        got = await _platform_access().connection_get(_orch.CAPABILITY_REGISTRY, cfg["connection"],
+                                                      cfg.get("path") or "", accept="application/json")
+        if got.get("error"):
+            raise RuntimeError(f"connection {cfg['connection']}: {got['error']}")
+        r = got["response"]
+        r.raise_for_status()
+        data = r.json()
+    else:
+        try:
+            headers = json.loads(src.get("headers") or "{}")
+            if isinstance(headers, str): headers = {}
+        except Exception:
+            headers = {}
+        async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
+            r = await c.get(src["url"], headers=await _secret_headers(headers if isinstance(headers, dict) else {}))
+            r.raise_for_status()
+            data = r.json()
+    if cfg.get("whole"):
+        # the whole answer as ONE record with a fixed text, so each pull replaces it (record ids hash the text):
+        # a time series or a snapshot a reader takes as a unit, not a list of items
+        return [{"text": f"{src.get('label') or src.get('id')} (latest)",
+                 "data": data if isinstance(data, dict) else {"items": data}}]
     if _srcmap.has_mapping(cfg) or cfg.get("item_path"):
         # nested JSON (GeoJSON and the like): items where the source says, and a
         # readable title/link/published/geo per item instead of flattened scalars
@@ -3797,7 +3967,7 @@ async def _pull_recon(src: dict) -> List[dict]:
             updated = {**src, "page": best_url,
                        "headers": json.dumps(session_headers)}
             await _sqlite_upsert_source(updated)
-            _SOURCES[src["id"]] = updated
+            _SOURCES[src["id"]] = _stored_form(updated)
         except Exception as e:
             log.warning("recon persist: %s", e)
 
@@ -3921,6 +4091,47 @@ def _src_config(src: dict) -> dict:
             log.warning("source %s: config is not valid JSON", src.get("id"))
     return {}
 
+async def _secure_source(src: dict, dry: bool = False) -> tuple:
+    """Move the literal credentials in a source's headers / auth into the Platforms store and leave references
+    (owner 2026-10-11: every credential in the store). -> (source as it should be stored, report). Without the
+    platforms module the source is left as it is and the report says so."""
+    try:
+        from Vera.vera.fabric import source_secrets_core as _ssc
+    except Exception:
+        from vera.fabric import source_secrets_core as _ssc
+    plan = _ssc.plan(src)
+    report = {"id": src.get("id"), "label": src.get("label", ""), "headers": sorted(plan["headers"]),
+              "auth": sorted(plan["auth"]), "keys": sorted({*plan["headers"].values(), *plan["auth"].values()}),
+              "key_in_url": plan["url_params"]}
+    if dry or not _ssc.anything(plan):
+        return src, report
+    pa = _platform_access()
+    for row in _ssc.values(src, plan):
+        if not await pa.store_secret(_orch.CAPABILITY_REGISTRY, row["key"], row["value"], row["label"]):
+            report["error"] = "the credential store is not loaded - left as it was"
+            return src, report
+    return _ssc.apply(src, plan), report
+
+
+async def _with_secrets(src: dict) -> dict:
+    """A copy of the source whose auth "@secret:<key>" references are resolved from the Platforms credential store,
+    for the puller only - the stored source keeps the reference (owner 2026-10-11: every credential in the store).
+    An unresolved reference becomes "" rather than being sent as text."""
+    a = src.get("auth")
+    if not a or "@secret:" not in (a if isinstance(a, str) else json.dumps(a, default=str)):
+        return src
+    auth = _src_auth(src)
+    pa = _platform_access()
+    out = {}
+    for k, v in auth.items():
+        if pa.is_ref(v):
+            v = await pa.secret_value(_orch.CAPABILITY_REGISTRY, v)
+            if not v:
+                log.warning("source %s: auth %s names a credential that is not set", src.get("id"), k)
+        out[k] = v
+    return {**src, "auth": out, "_auth_stored": a}
+
+
 def _src_auth(src: dict) -> dict:
     a = src.get("auth")
     if isinstance(a, dict):
@@ -4008,8 +4219,23 @@ async def _pull_github(src: dict) -> List[dict]:
     headers = {"Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
-    if auth.get("token"):
-        headers["Authorization"] = f"Bearer {auth['token']}"
+    token = auth.get("token") or ""
+    if not token or str(token).startswith("@secret:"):
+        # no token of its own (or a reference): the Platforms credential github_token, when set - 5,000 requests an
+        # hour instead of 60
+        try:
+            try:
+                from Vera.vera.platforms import platform_access as _pa
+            except Exception:
+                from vera.platforms import platform_access as _pa
+            _pa.declare(_orch.CAPABILITY_REGISTRY, "github_token", "fabric GitHub sources",
+                        label="GitHub token", why="GitHub API rate limit 60 -> 5,000 requests an hour")
+            token = await _pa.resolve(_orch.CAPABILITY_REGISTRY, token, "github_token")
+        except Exception as e:
+            log.debug("fabric github token: %s", e)
+            token = ""
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     items: list = []
     async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
         if mode == "issues":
@@ -4893,43 +5119,44 @@ async def _pull_source(src: dict) -> int:
     await emit_event({"type": "fabric.source.pulling", "label": label,
                       "source_type": stype, "url": src.get("url","")})
     try:
+        psrc = await _with_secrets(src)          # resolved credentials for the puller; `src` (stored) keeps references
         if stype == "rss":
-            items = await _pull_rss(src)
+            items = await _pull_rss(psrc)
         elif stype in ("api","http"):
-            items = await _pull_api(src)
+            items = await _pull_api(psrc)
         elif stype == "wiki":
-            items = await _pull_wiki(src)
+            items = await _pull_wiki(psrc)
         elif stype == "telegram":
-            items = await _pull_telegram(src)
+            items = await _pull_telegram(psrc)
         elif stype == "scrape":
-            items = await _pull_scrape(src)
+            items = await _pull_scrape(psrc)
         elif stype == "recon":
-            items = await _pull_recon(src)
+            items = await _pull_recon(psrc)
         elif stype == "gitea":
-            items = await _pull_gitea(src)
+            items = await _pull_gitea(psrc)
         elif stype == "github":
-            items = await _pull_github(src)
+            items = await _pull_github(psrc)
         elif stype == "gitlab":
-            items = await _pull_gitlab(src)
+            items = await _pull_gitlab(psrc)
         elif stype == "postgres":
-            items = await _pull_postgres(src)
+            items = await _pull_postgres(psrc)
         elif stype == "mysql":
-            items = await _pull_mysql(src)
+            items = await _pull_mysql(psrc)
         elif stype == "sqlite":
-            items = await _pull_sqlite(src)
+            items = await _pull_sqlite(psrc)
         elif stype == "mongodb":
-            items = await _pull_mongodb(src)
+            items = await _pull_mongodb(psrc)
         elif stype == "elasticsearch":
-            items = await _pull_elasticsearch(src)
+            items = await _pull_elasticsearch(psrc)
         elif stype == "docs":
-            items = await _pull_docs(src)
+            items = await _pull_docs(psrc)
         elif stype == "topic":
-            items = await _pull_topic(src)
+            items = await _pull_topic(psrc)
         elif stype == "index":
-            items = await _pull_index(src)
+            items = await _pull_index(psrc)
         else:
             log.warning("unknown source_type %r — falling back to rss", stype)
-            items = await _pull_rss(src)
+            items = await _pull_rss(psrc)
     except httpx.HTTPStatusError as e:
         # Surface the actual status code in the error message
         log.error("data_fabric: pull %s (%s): HTTP %d %s",
@@ -5361,6 +5588,57 @@ def _json_value(raw: str, field: str) -> Any:
 def _project_canonical_revision_sqlite(envelope: Dict[str, Any]) -> Dict[str, Any]:
     """Apply one canonical revision to the existing SQLite read projection."""
     return apply_sqlite_projection(SQLITE_PATH, envelope, now=now_iso)
+
+
+@capability(
+    "fabric.revision.state.migrate", memory="off",
+    http_method="POST", http_path="/fabric/revisions/state/migrate",
+    http_tags=["fabric"],
+    description="Inspect or non-destructively copy the former checkout-local "
+                "Fabric revision SQLite database into durable VERA_STATE_DIR. "
+                "Dry-run is the default and returns the coherent SQLite snapshot "
+                "digest required for execution. Execution requires confirm=true, "
+                "an exact expected_snapshot_sha256, an unopened revision store, "
+                "and an absent canonical target. The legacy source is retained "
+                "and a process restart is required; no revision or authority is changed.",
+    contract={
+        "canonical_task": "fabric.revision.state.migrate", "aliases": [],
+        "effects": ["read", "write", "filesystem"],
+        "output_schema": {"type": "object"},
+        "approval": {"status": "explicit_confirmation"},
+        "trust": {"status": "digest_bound"},
+        "secrets": {"status": "not_required"},
+        "filesystem": {"status": "sqlite_backup_source_retained"},
+        "network": {"status": "not_required"},
+        "tenant": {"status": "not_applicable"},
+        "schema_version": "1.0.0",
+    },
+)
+async def fabric_revision_state_migrate(
+    expected_snapshot_sha256: str = "", dry_run: bool = True,
+    confirm: bool = False, trace_id=None,
+):
+    if not isinstance(confirm, bool):
+        raise TypeError("confirm must be boolean")
+    if not dry_run:
+        if not confirm:
+            raise PermissionError("confirm=true required for revision state migration")
+        if _REVISION_STORE is not None:
+            raise RuntimeError(
+                "revision store is already open; restart and migrate before revision use")
+    result = await asyncio.to_thread(
+        migrate_legacy_memory_revision_state,
+        expected_snapshot_sha256=expected_snapshot_sha256,
+        dry_run=dry_run,
+    )
+    if result.get("executed"):
+        await emit_event({
+            "type": "fabric.revision.state.migrated",
+            "snapshot_sha256": result.get("snapshot_sha256", ""),
+            "source_retained": result.get("source_retained", False),
+            "restart_required": True,
+        })
+    return result
 
 
 @capability(
@@ -6413,6 +6691,11 @@ async def fabric_sources(trace_id=None):
             if jq: out["jq_path"] = str(jq)[:200]
             page = s.get("page")
             if page: out["page"] = str(page)[:200]
+            if s.get("config") and "connection" in str(s.get("config")):
+                cfg = _src_config(s)
+                if cfg.get("connection"):        # reads through a Platforms API connection
+                    out["connection"] = str(cfg["connection"])[:64]
+                    out["connection_path"] = str(cfg.get("path") or "")[:500]
             results.append(out)
         except Exception as e:
             log.warning("fabric_sources: skipping malformed row %r: %s",
@@ -6451,8 +6734,27 @@ async def fabric_sources_add(
     config:      str  = "",
     auth:        str  = "",
     id:          str  = "",
+    connection:  str  = "",
+    path:        str  = "",
     trace_id=None,
 ):
+    if connection.strip():
+        # through a Platforms API connection: the source keeps the connection id and the path; the URL shown is
+        # the connection's, without its credential
+        info = await _platform_access().connection_info(_orch.CAPABILITY_REGISTRY, connection.strip(), path)
+        if info.get("error") or info.get("error_url"):
+            return {"error": info.get("error") or info.get("error_url")}
+        try:
+            cfg = config if isinstance(config, dict) else (json.loads(config) if str(config or "").strip() else {})
+        except ValueError:
+            cfg = None
+        if not isinstance(cfg, dict):
+            return {"error": "config must be a JSON object"}
+        cfg.update(connection=info["id"], path=path)
+        config, url = cfg, info["url"]
+        if source_type in ("", "rss"):
+            source_type = "api"
+        label = label or f"{info['label']} {path}".strip()
     # Caller can pre-set the source id for idempotent re-registration
     # (e.g. the doc crawler re-uses the same ID across re-crawls).
     src_id  = id.strip() if id and id.strip() else str(uuid.uuid4())
@@ -6505,10 +6807,14 @@ async def fabric_sources_add(
         "config":      _to_json_str(config),
         "auth":        _to_json_str(auth),
     }
+    src, secured = await _secure_source(src)
     _SOURCES[src_id] = src
     await _sqlite_upsert_source(src)
     await emit_event({"type":"fabric.source.added","id":src_id,"label":lbl,"dataset_id":ds_id})
-    return {"id": src_id, "label": lbl, "dataset_id": ds_id, "url": url}
+    return {"id": src_id, "label": lbl, "dataset_id": ds_id, "url": url,
+            "vaulted": secured["keys"] if not secured.get("error") else [],
+            **({"warning": "a credential is written into the URL - use an API connection (Platforms > "
+                           "Connections) so it is kept in the store"} if secured["key_in_url"] else {})}
 
 
 @capability(
@@ -9566,6 +9872,9 @@ async def _startup():
     # Start auto-pull loop AND deferred index migration (off-thread, won't block)
     asyncio.create_task(_auto_pull_loop())
     asyncio.create_task(_sqlite_index_migration_async())
+    # seek's keyword-leg index (FM-7.1): built once if missing, in the background (a no-op when present)
+    if FABRIC_PG.available:
+        asyncio.create_task(FABRIC_PG.ensure_text_index())
 
     # Hydrate the optional in-RAM FAISS tier from Chroma (background) — without
     # this the index started empty every boot and only ever held records
@@ -9608,6 +9917,9 @@ async def fabric_sources_update(
     enabled:   bool = None,
     jq_path:   str  = None,
     headers:   str  = None,
+    auth:      str  = None,
+    connection: str = None,
+    path:      str  = None,
     trace_id=None,
 ) -> Dict:
     # Load current
@@ -9625,9 +9937,76 @@ async def fabric_sources_update(
     if enabled  is not None: updated["enabled"]  = enabled
     if jq_path  is not None: updated["jq_path"]  = jq_path
     if headers  is not None: updated["headers"]  = headers
+    if auth     is not None: updated["auth"]     = auth if isinstance(auth, str) else json.dumps(auth)
+    if connection is not None or path is not None:
+        cfg = _src_config({"config": updated.get("config")}) if updated.get("config") else {}
+        conn = (connection if connection is not None else cfg.get("connection", "")).strip()
+        pth = path if path is not None else cfg.get("path", "")
+        if conn:
+            info = await _platform_access().connection_info(_orch.CAPABILITY_REGISTRY, conn, pth)
+            if info.get("error") or info.get("error_url"):
+                return {"error": info.get("error") or info.get("error_url")}
+            cfg.update(connection=info["id"], path=pth)
+            updated["url"] = info["url"]
+        else:
+            cfg.pop("connection", None)
+            cfg.pop("path", None)
+        updated["config"] = json.dumps(cfg)
+    updated, secured = await _secure_source(updated)
     _SOURCES[source_id] = updated
     await _sqlite_upsert_source(updated)
-    return {"ok": True, "source_id": source_id}
+    return {"ok": True, "source_id": source_id, "vaulted": secured["keys"] if not secured.get("error") else []}
+
+
+async def fabric_sources_by_connection_impl() -> Dict[str, List[Dict[str, Any]]]:
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for src in await _sqlite_sources():
+        conn = (_src_config(src) if src.get("config") else {}).get("connection")
+        if conn:
+            out.setdefault(str(conn), []).append({
+                "id": src.get("id"), "label": src.get("label", ""), "dataset_id": src.get("dataset_id", ""),
+                "path": (_src_config(src) or {}).get("path", ""), "enabled": src.get("enabled", True),
+                "last_pulled": src.get("last_pulled", ""), "interval": src.get("interval", 0)})
+    return out
+
+
+@capability(
+    "fabric.sources.connections",
+    http_method="GET", http_path="/fabric/sources/connections", http_tags=["fabric"],
+    memory="off", silent=True,
+    description="The fabric sources that read through each Platforms API connection. "
+                "Output: {connections: {<connection id>: [{id, label, dataset_id, path, enabled, last_pulled, "
+                "interval}]}, count}.",
+)
+async def fabric_sources_connections(trace_id=None) -> Dict:
+    by = await fabric_sources_by_connection_impl()
+    return {"connections": by, "count": sum(len(v) for v in by.values())}
+
+
+@capability(
+    "fabric.sources.secure",
+    http_method="POST", http_path="/fabric/sources/secure", http_tags=["fabric"],
+    memory="off",
+    description="Move every credential written into a source's headers or auth (Authorization, X-Api-Key, token, "
+                "password...) into the Platforms credential store, leaving @secret: references. DRY RUN BY DEFAULT: "
+                "lists what would move. Sources with a key written into the URL are listed under key_in_url - they "
+                "want an API connection. Input: dry_run (bool=True). Output: {ok, dry_run, sources[], moved, "
+                "key_in_url[]}.",
+)
+async def fabric_sources_secure(dry_run: bool = True, trace_id=None) -> Dict:
+    rows, in_url, moved = [], [], 0
+    for src in await _sqlite_sources():
+        new, rep = await _secure_source(src, dry=dry_run)
+        if rep["key_in_url"]:
+            in_url.append({"id": rep["id"], "label": rep["label"], "params": rep["key_in_url"]})
+        if not rep["keys"]:
+            continue
+        rows.append(rep)
+        if not dry_run and not rep.get("error") and new is not src:
+            _SOURCES[src["id"]] = new
+            await _sqlite_upsert_source(new)
+            moved += 1
+    return {"ok": True, "dry_run": dry_run, "sources": rows, "moved": moved, "key_in_url": in_url}
 
 
 @capability(
@@ -10674,7 +11053,8 @@ _reg_ui(
     ui_caps=[
         "fabric.ingest", "fabric.query", "fabric.datasets", "fabric.stats",
         "fabric.schema", "fabric.browse", "fabric.sources", "fabric.sources.add",
-        "fabric.sources.update", "fabric.sources.pull", "fabric.sources.delete",
+        "fabric.sources.update", "fabric.sources.pull", "fabric.sources.delete", "fabric.sources.secure",
+        "fabric.sources.connections",
         "fabric.dataset.delete", "fabric.clear_dataset", "fabric.delete_record",
         "fabric.aux_graph.link", "fabric.aux_graph.query",
         "fabric.bus.configure", "fabric.bus.status",

@@ -384,6 +384,13 @@ does not advance Fabric heads or projection receipts, and supplies no runtime
 activation switch. Wiring one narrow writer to this seam and proving recovery
 remain outside the enabled path.
 
+Unless explicitly overridden, the canonical revision and dual-write evidence
+journals live under `VERA_STATE_DIR/fabric/`. All runtime, readiness,
+reconciliation and rollback-rehearsal paths resolve those same out-of-tree
+files. They are never derived from an importing module's `__file__`: Vera can
+load modules through more than one package topology, and checkout-relative
+machine state could split evidence or dirty the repository.
+
 The public `memory.store` ingress is now connected to this seam behind
 `VERA_MEMORY_REVISION_CANARY=1`; the default remains `0`. With the switch off,
 the capability directly awaits the existing native store and does not construct
@@ -449,7 +456,10 @@ failed, or a recent passing rollback rehearsal is absent. Passing means only
 read does not invoke repair, query a Memory backend or create a missing journal.
 The rehearsal must name the exact commit reported by the running process's
 provenance; a missing identity or stale-code receipt fails closed. Actual
-authority activation remains unavailable.
+authority activation remains unavailable. Identity-required checks retry only
+an unresolved early-startup provenance result; once a commit resolves, that
+process identity remains immutable. Ordinary event stamping continues using the
+cheap cached value and does not repeatedly invoke Git.
 
 `memory.dual_write.rollback_rehearse` produces the rollback evidence without
 calling a live Memory backend. It invokes the real canary with the canary forced
@@ -995,7 +1005,7 @@ node and edge routes.
 | `VERA_MEMORY_TOOLING` | `canonical` | Fallback tooling mode when none is persisted |
 | `VERA_MEMORY_REVISION_CANARY` | `0` | `1` shadows new public `memory.store` writes into immutable revisions and records paired outcomes |
 | `VERA_MEMORY_RECONCILIATION_ENABLED` | `0` | `1` permits explicitly requested `memory.dual_write.reconcile` attempts; it does not schedule them |
-| `VERA_MEMORY_DUAL_WRITE_RECEIPTS` | `vera/fabric/memory_dual_write_receipts.db` | Dual-write and reconciliation evidence journal |
+| `VERA_MEMORY_DUAL_WRITE_RECEIPTS` | `VERA_STATE_DIR/fabric/memory-dual-write-receipts.sqlite3` | Dual-write and reconciliation evidence journal |
 | `MEMORY_SEEK_EMBED_WAIT_S` | `10` | `memory.seek` query-vector wait |
 | `FABRIC_SEEK_MIN_SCORE` | `0.28` | `memory.seek` cosine floor |
 | `VERA_SANDBOX_WRITE_GUARD` | `1` (in dev sandboxes) | `0` lets a dev sandbox write to shared stores |

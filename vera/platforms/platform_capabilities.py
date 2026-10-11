@@ -28,8 +28,10 @@ Redis layout
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -40,6 +42,7 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, register_ui,
 )
+from Vera.vera.platforms import connections_core as cc
 from Vera.vera.platforms import platform_core as pc
 from Vera.vera.security import secrets as vsecrets
 
@@ -126,6 +129,81 @@ async def _secrets_plain() -> Dict[str, Any]:
             log.warning("platform: could not unseal secret %s", k)
             out[k] = ""
     return out
+
+
+# In-process consumers of a credential that are not platform targets (Brave search, GitHub source pulls, intel's
+# keyed sources...): key -> [{who, label, why}]. Filled by declare_secret_use; shown under "used by", and a declared
+# key with no record yet is listed as wanted - so the one Platforms page shows every key Vera could use.
+_CONSUMERS: Dict[str, List[Dict[str, str]]] = {}
+
+
+def declare_secret_use(key: str, who: str, *, label: str = "", why: str = "") -> None:
+    """A module says it reads credential `key` in-process (idempotent)."""
+    k = str(key or "").strip()
+    if not k or not who:
+        return
+    rows = _CONSUMERS.setdefault(k, [])
+    if not any(r.get("who") == who for r in rows):
+        rows.append({"who": str(who), "label": str(label or ""), "why": str(why or "")})
+
+
+# In-process copy of the credentials, for modules whose readers are sync (open_value_sync): filled at startup and
+# on every read and save here, so it never holds less than the store did when last asked.
+_PLAIN: Dict[str, str] = {}
+
+
+def secret_value_sync(key: str) -> str:
+    k = str(key or "").strip()
+    if k.startswith(pc.SECRET_REF):
+        k = k[len(pc.SECRET_REF):].strip()
+    return _PLAIN.get(k, "")
+
+
+async def warm_secrets() -> int:
+    try:
+        vals = await _secrets_plain()
+    except Exception as e:  # noqa: BLE001
+        log.warning("platform: could not warm the credential copy: %s", e)
+        return 0
+    _PLAIN.update({k: v for k, v in vals.items() if v})
+    return len(_PLAIN)
+
+
+@APP.on_event("startup")
+async def _warm_secrets_at_startup():
+    async def later():
+        for delay in (2, 10, 30, 120):              # the secrets service may come up after us
+            await asyncio.sleep(delay)
+            if await warm_secrets():
+                return
+    asyncio.create_task(later())
+
+
+async def secret_value(key: str) -> str:
+    """One credential's current value for in-process use, "" when unset or unreadable. Never exposed through a
+    capability - /mcp/call is unauthenticated (secrets service rule: no cap returns a value)."""
+    k = str(key or "").strip()
+    if k.startswith(pc.SECRET_REF):
+        k = k[len(pc.SECRET_REF):].strip()
+    if not k:
+        return ""
+    rec = (await _hgetall(KEY_SECRETS)).get(k)
+    if not rec:
+        return ""
+    if rec.get("path"):
+        svc = _secrets_service()
+        got = (await svc["get_named"](rec["path"])) if svc and svc.get("get_named") else None
+        val = str((got or {}).get("value", "") or "")
+    else:
+        raw = rec.get("value", "")
+        try:
+            val = vsecrets.open_secret(raw) if raw else ""
+        except Exception:
+            log.warning("platform: could not unseal secret %s", k)
+            val = ""
+    if val:
+        _PLAIN[k] = val
+    return val
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -229,8 +307,28 @@ async def cap_secrets_list(trace_id=None):
                     "store": rec.get("store") or ("secrets service" if rec.get("path") else "sealed inline"),
                     "path": rec.get("path", ""),
                     "updated": rec.get("updated", ""),
-                    "used_by": pc.referencing_platforms(targets, "secret", k),
+                    "used_by": pc.referencing_platforms(targets, "secret", k)
+                               + [c["who"] for c in _CONSUMERS.get(k, [])],
                     "ref": pc.SECRET_REF + k})
+    # keys a module reads but nobody has set yet: listed so the Platforms page shows what Vera could use
+    for k, rows in sorted(_CONSUMERS.items()):
+        if k in secs:
+            continue
+        first = rows[0] if rows else {}
+        out.append({"key": k, "label": first.get("label") or k, "set": False, "store": "", "path": "",
+                    "updated": "", "used_by": [c["who"] for c in rows], "ref": pc.SECRET_REF + k,
+                    "wanted": True, "why": first.get("why", "")})
+    # ...and keys a platform (an API connection, say) references that are not set
+    listed = {r["key"] for r in out}
+    for t in targets:
+        for f, v in (t.get("fields") or {}).items():
+            k = v[len(pc.SECRET_REF):].strip() if isinstance(v, str) and v.startswith(pc.SECRET_REF) else ""
+            if k and k not in listed:
+                listed.add(k)
+                out.append({"key": k, "label": k.replace("_", " ").title(), "set": False, "store": "", "path": "",
+                            "updated": "", "used_by": pc.referencing_platforms(targets, "secret", k),
+                            "ref": pc.SECRET_REF + k, "wanted": True,
+                            "why": f"{t.get('label') or t.get('id')} uses it ({f})"})
     return {"secrets": out, "count": len(out),
             "store_ok": bool(_redis())}
 
@@ -254,6 +352,14 @@ async def cap_secrets_set(key: str = "", value: str = "", label: str = "",
         return {"error": "key must be lowercase letters, digits or underscores"}
     if not value:
         return {"error": "value is required"}
+    rec, note = await _store_secret(k, value, label)
+    targets = list((await _hgetall(KEY_TARGETS)).values())
+    return {"ok": True, "key": k, "ref": pc.SECRET_REF + k, "store": rec["store"], "note": note,
+            "used_by": pc.referencing_platforms(targets, "secret", k)}
+
+
+async def _store_secret(k: str, value: str, label: str = "") -> tuple:
+    """Keep credential `k` in the secrets service (sealed inline when there is none) -> (record, note)."""
     rec = {"key": k, "label": label or k.replace("_", " ").title(), "updated": now_iso()}
     svc = _secrets_service()
     stored = {}
@@ -266,10 +372,26 @@ async def cap_secrets_set(key: str = "", value: str = "", label: str = "",
         # saving still works, and say where it went.
         rec.update(value=vsecrets.seal(value), store="sealed inline")
     await _hset(KEY_SECRETS, k, rec)
-    targets = list((await _hgetall(KEY_TARGETS)).values())
-    return {"ok": True, "key": k, "ref": pc.SECRET_REF + k, "store": rec["store"],
-            "note": stored.get("error", "") if not stored.get("ok") else "",
-            "used_by": pc.referencing_platforms(targets, "secret", k)}
+    _PLAIN[k] = value
+    return rec, (stored.get("error", "") if not stored.get("ok") else "")
+
+
+async def _vault_literals(rec: Dict[str, Any], dry: bool = False) -> List[str]:
+    """Move a platform's literal secret fields into the store as <id>_<field> and leave @secret: references in their
+    place (owner 2026-10-11: every credential lives in the store). Returns the keys moved (or that would be)."""
+    fields = rec.get("fields") or {}
+    moved = []
+    for f in pc.secret_field_keys(rec.get("kind", "")):
+        v = fields.get(f)
+        if not isinstance(v, str) or not v.strip() or v.startswith((pc.SECRET_REF, pc.VALUE_REF)):
+            continue
+        key = pc.normalise_key(f"{rec.get('id', '')}_{f}")[:64]
+        if not dry:
+            await _store_secret(key, v.strip(), f"{rec.get('label') or rec.get('id')} {f.replace('_', ' ')}")
+            fields[f] = pc.SECRET_REF + key
+        moved.append(key)
+    rec["fields"] = fields
+    return moved
 
 
 @capability(
@@ -300,6 +422,7 @@ async def cap_secrets_delete(key: str = "", force: bool = False, trace_id=None):
     r = _redis()
     if r:
         await r.hdel(KEY_SECRETS, k)
+    _PLAIN.pop(k, None)
     return {"ok": True, "deleted": k, "orphaned": used if force else [],
             "removed_from_secrets_service": removed_from_service}
 
@@ -327,7 +450,7 @@ async def _resolved(pid: str) -> Optional[Dict[str, Any]]:
 async def cap_kinds(trace_id=None):
     return {"kinds": [{"kind": k, "label": s["label"], "icon": s.get("icon", ""),
                        "docs": s.get("docs", ""), "fields": s["fields"],
-                       "actions": s.get("actions", [])}
+                       "actions": s.get("actions", []), "connection": bool(s.get("connection"))}
                       for k, s in sorted(pc.PLATFORM_SPECS.items())]}
 
 
@@ -350,6 +473,7 @@ async def cap_list(trace_id=None):
                     "enabled": rec.get("enabled", True),
                     "fields": pc.redact_fields(rec.get("fields") or {},
                                                res["secret_fields"]),
+                    "secret_refs": {f: (rec.get("fields") or {}).get(f, "") for f in res["secret_fields"]},
                     "unresolved_refs": res["missing"], **comp})
     return {"platforms": out, "count": len(out),
             "store_ok": bool(_redis())}
@@ -392,14 +516,16 @@ async def cap_upsert(kind: str = "", id: str = "", label: str = "",
             if v != "":
                 merged[k] = v
         rec["fields"] = merged
+    vaulted = await _vault_literals(rec)
     rec["updated"] = now_iso()
     await _hset(KEY_TARGETS, pid, rec)
 
     res = pc.resolve_fields(rec.get("fields") or {},
                             await _values_plain(), await _secrets_plain())
     comp = pc.config_completeness(rec.get("kind", ""), res["resolved"])
-    return {"ok": True, "platform": {
+    return {"ok": True, "vaulted": vaulted, "platform": {
         **rec, "fields": pc.redact_fields(rec["fields"], res["secret_fields"]),
+        "secret_refs": {f: rec["fields"].get(f, "") for f in res["secret_fields"]},
         "unresolved_refs": res["missing"], **comp}}
 
 
@@ -416,6 +542,272 @@ async def cap_delete(id: str = "", trace_id=None):
     if r:
         await r.hdel(KEY_TARGETS, pc.normalise_key(id))
     return {"ok": True, "deleted": pc.normalise_key(id)}
+
+
+def _platform_access_mod():
+    try:
+        from Vera.vera.platforms import platform_access as _pa
+    except ImportError:
+        from vera.platforms import platform_access as _pa
+    return _pa
+
+
+@capability(
+    "platform.secrets.adopt", http_method="POST", http_path="/platform/secrets/adopt",
+    http_tags=["platform"], memory="on",
+    description="Move the credentials other modules still seal in their own records (web APIs, MCP servers, "
+                "integrations, Home Assistant, n8n, LLM providers, accounts, Telegram, Proxmox, Portainer, "
+                "Prometheus, SSH hosts...) into this credential store, leaving @secret: references - every "
+                "credential in one store. DRY RUN BY DEFAULT: lists what would move. Input: store (str, one "
+                "module's name; empty = all), dry_run (bool=True). Output: {ok, dry_run, stores:{name: {moved:"
+                "[{record, field, key}], error?}}, available[]}.",
+)
+async def cap_secrets_adopt(store: str = "", dry_run: bool = True, trace_id=None):
+    pa = _platform_access_mod()
+    adopters = dict(getattr(pa, "_ADOPTERS", {}) or {})
+    names = [store] if store else sorted(adopters)
+    out: Dict[str, Any] = {}
+    for name in names:
+        fn = adopters.get(name)
+        if fn is None:
+            out[name] = {"error": "no such store (see available)"}
+            continue
+        try:
+            out[name] = {"moved": await fn(bool(dry_run))}
+        except Exception as e:  # noqa: BLE001
+            log.warning("platform: adopting %s: %s", name, e)
+            out[name] = {"error": f"{type(e).__name__}: {e}"[:300]}
+    return {"ok": True, "dry_run": bool(dry_run), "stores": out, "available": sorted(adopters)}
+
+
+@capability(
+    "platform.secrets.vault_literals", http_method="POST", http_path="/platform/secrets/vault_literals",
+    http_tags=["platform"], memory="on",
+    description="Move every platform's literal secret field (a token typed straight into a record) into the "
+                "credential store as <platform>_<field>, leaving an @secret: reference in its place. DRY RUN BY "
+                "DEFAULT. Input: dry_run (bool=True). Output: {ok, dry_run, moved:[{platform, keys[]}]}.",
+)
+async def cap_secrets_vault_literals(dry_run: bool = True, trace_id=None):
+    if not _redis():
+        return _no_store()
+    moved = []
+    for pid, rec in sorted((await _hgetall(KEY_TARGETS)).items()):
+        rec.setdefault("id", pid)
+        keys = await _vault_literals(rec, dry=dry_run)
+        if keys:
+            moved.append({"platform": pid, "keys": keys})
+            if not dry_run:
+                rec["updated"] = now_iso()
+                await _hset(KEY_TARGETS, pid, rec)
+    return {"ok": True, "dry_run": dry_run, "moved": moved}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  API CONNECTIONS  —  platforms of kind "api" (data-connections plan, 2026-10-11)
+# ═════════════════════════════════════════════════════════════════════════════
+# One record per API: base URL, auth, and the credential as an @secret: reference. Fabric sources, intel and the
+# rest reach an API through connection_get, so a key lives in one place and goes only to its own host.
+
+_RATE: Dict[str, List[float]] = {}
+
+
+def _connections(targets: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    return {pid: t for pid, t in targets.items()
+            if (pc.platform_spec(t.get("kind", "")) or {}).get("connection")}
+
+
+async def _rate_wait(pid: str, per_min: Any) -> None:
+    try:
+        n = int(float(per_min or 0))
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return
+    now = time.monotonic()
+    win = [t for t in _RATE.get(pid, []) if now - t < 60]
+    if len(win) >= n:
+        await asyncio.sleep(min(60.0, 60 - (now - win[0])))
+        now = time.monotonic()
+        win = [t for t in win if now - t < 60]
+    win.append(now)
+    _RATE[pid] = win
+
+
+async def connection_request(pid: str, path: str = "", params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The request for `path` through connection `pid`, its credential resolved - in-process only, never returned
+    by a capability. {url, headers, auth, shown_url, fields} or {error}."""
+    got = await _resolved(pc.normalise_key(pid))
+    if not got:
+        return {"error": f"no connection {pid!r} (Platforms > Connections)"}
+    if not (pc.platform_spec(got["record"].get("kind", "")) or {}).get("connection"):
+        return {"error": f"platform {pid!r} is not an API connection"}
+    if got["record"].get("enabled") is False:
+        return {"error": f"connection {pid!r} is disabled"}
+    fields = got["resolved"]
+    req = cc.build_request(fields, cc.expand_path(path), params)
+    if req.get("error"):
+        missing = [m["key"] for m in got["missing"] if m.get("kind") == "secret"]
+        if missing:
+            req["error"] += f" (credential {', '.join(missing)} is not set - Platforms > Shared credentials)"
+        return req
+    return {**req, "shown_url": cc.redact_url(req["url"], fields), "fields": fields}
+
+
+async def connection_info(pid: str, path: str = "") -> Dict[str, Any]:
+    """A connection without its credential - for a source to show where it reads from."""
+    pid = pc.normalise_key(pid)
+    rec = (await _hgetall(KEY_TARGETS)).get(pid)
+    if not rec or not (pc.platform_spec(rec.get("kind", "")) or {}).get("connection"):
+        return {"error": f"no API connection {pid!r} (Platforms > Connections)"}
+    fields = pc.resolve_fields(rec.get("fields") or {}, await _values_plain(), {})["resolved"]
+    shown = cc.build_request({**fields, "auth": "none", "credential": ""}, cc.expand_path(path))
+    return {"id": pid, "label": rec.get("label", pid), "base_url": fields.get("base_url", ""),
+            "auth": cc.describe(fields), "url": shown.get("url", ""), "error_url": shown.get("error", ""),
+            "enabled": rec.get("enabled", True) is not False}
+
+
+async def connection_get(pid: str, path: str = "", params: Optional[Dict[str, Any]] = None, *,
+                         timeout: float = 30, accept: str = "") -> Dict[str, Any]:
+    """GET through a connection: {response, shown_url, ms} or {error}. Redirects are followed only on the
+    connection's own host, so the credential never follows one elsewhere; its rate limit is kept."""
+    req = await connection_request(pid, path, params)
+    if req.get("error"):
+        return req
+    await _rate_wait(pc.normalise_key(pid), req["fields"].get("rate_per_min"))
+    headers = dict(req["headers"])
+    if accept and "Accept" not in headers:
+        headers["Accept"] = accept
+    headers.setdefault("User-Agent", "Vera/1.0 (+data fabric)")
+    host = (httpx.URL(req["url"]).host or "").lower()
+    url, t0 = req["url"], time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as c:
+            for _ in range(4):
+                r = await c.get(url, headers=headers, auth=req["auth"])
+                if r.status_code not in (301, 302, 303, 307, 308) or "location" not in r.headers:
+                    break
+                nxt = r.url.join(r.headers["location"])
+                if (nxt.host or "").lower() != host:
+                    return {"error": f"the API redirected to another host ({nxt.host}); not followed with the credential",
+                            "shown_url": req["shown_url"]}
+                url = str(nxt)
+    except httpx.HTTPError as e:
+        return {"error": f"{type(e).__name__}: {str(e)[:200]}", "shown_url": req["shown_url"]}
+    return {"response": r, "shown_url": req["shown_url"], "ms": int((time.monotonic() - t0) * 1000)}
+
+
+def _shape(data: Any) -> Dict[str, Any]:
+    """What came back, in outline: top-level keys and the largest list (where the items are, usually)."""
+    if isinstance(data, list):
+        return {"type": "list", "items": len(data)}
+    if not isinstance(data, dict):
+        return {"type": type(data).__name__}
+    lists = {k: len(v) for k, v in data.items() if isinstance(v, list)}
+    for k, v in data.items():                                # one level down: {"response": {"results": [...]}}
+        if isinstance(v, dict):
+            lists.update({f"{k}.{k2}": len(v2) for k2, v2 in v.items() if isinstance(v2, list)})
+    best = max(lists, key=lists.get) if lists else ""
+    return {"type": "object", "keys": list(data)[:20], "item_path": best, "items": lists.get(best, 0)}
+
+
+@capability(
+    "platform.connection.templates", http_method="GET", http_path="/platform/connection/templates",
+    http_tags=["platform"], memory="off",
+    description="Known APIs that can be added as a connection in one step (Brave, GitHub, Guardian, Companies House, "
+                "EPC, Hacker News, Polymarket, Manifold, Wikidata, Nominatim), with whether each is already added and "
+                "whether its credential is set. Output: {templates:[{id,label,base_url,auth,key,key_set,added,"
+                "docs,signup,tags}]}.",
+)
+async def cap_connection_templates(trace_id=None):
+    targets = await _hgetall(KEY_TARGETS)
+    secs = await _hgetall(KEY_SECRETS)
+    conns = _connections(targets)
+    by_base = {str((t.get("fields") or {}).get("base_url", "")).rstrip("/"): pid for pid, t in conns.items()}
+    out = []
+    for t in cc.TEMPLATES:
+        added = t["id"] if t["id"] in conns else by_base.get(t["base_url"].rstrip("/"), "")
+        srec = secs.get(t["key"]) or {} if t["key"] else {}
+        out.append({**{k: t.get(k, "") for k in ("id", "label", "base_url", "auth", "key", "docs", "signup",
+                                                  "sample_path", "username_hint")},
+                    "tags": t.get("tags", []), "auth_desc": cc.describe(t),
+                    "key_set": bool(srec.get("path") or srec.get("value")),
+                    "added": added})
+    return {"templates": out, "count": len(out)}
+
+
+@capability(
+    "platform.connection.add", http_method="POST", http_path="/platform/connection/add",
+    http_tags=["platform"], memory="on",
+    description="Add an API connection, from a template (template=guardian) or by hand (base_url + auth). The "
+                "credential is never stored in the connection: a template points at its named credential, and a "
+                "value given here goes into the credential store as <id>_credential. "
+                "Input: template (str), id (str), label (str), base_url (str), auth (str: none | bearer | "
+                "header:<Name> | query:<param> | basic), credential (str: a value or @secret:<key>), username (str), "
+                "headers (str JSON), sample_path (str), rate_per_min (int). Output: {ok, platform, vaulted}.",
+)
+async def cap_connection_add(template: str = "", id: str = "", label: str = "", base_url: str = "",
+                             auth: str = "", credential: str = "", username: str = "", headers: str = "",
+                             sample_path: str = "", rate_per_min: Any = "", trace_id=None):
+    if not _redis():
+        return _no_store()
+    t = cc.template(template) if template else None
+    if template and not t:
+        return {"error": f"unknown template {template!r} (platform.connection.templates)"}
+    fields = cc.fields_from_template(t) if t else {"auth": "none"}
+    given = {"base_url": base_url, "auth": auth, "credential": credential, "username": username,
+             "headers": headers, "sample_path": sample_path, "rate_per_min": str(rate_per_min or "")}
+    fields.update({k: str(v).strip() for k, v in given.items() if str(v or "").strip()})
+    if not fields.get("base_url"):
+        return {"error": "base_url is required (or pick a template)"}
+    if fields.get("headers"):
+        try:
+            if not isinstance(json.loads(fields["headers"]), dict):
+                raise ValueError
+        except ValueError:
+            return {"error": "headers must be a JSON object, e.g. {\"Accept\": \"application/json\"}"}
+    probe = cc.build_request({**fields, "credential": "x"}, "")
+    if probe.get("error"):
+        return {"error": probe["error"]}
+    labels = (httpx.URL(fields["base_url"]).host or "").split(".")
+    pid = pc.normalise_key(id or (t["id"] if t else "") or (labels[-2] if len(labels) > 1 else labels[0]))
+    if not pc.valid_key(pid):
+        return {"error": "id must be lowercase letters, digits or underscores"}
+    if pid in await _hgetall(KEY_TARGETS):
+        return {"error": f"a platform {pid!r} already exists - edit it, or give another id"}
+    return await cap_upsert(kind="api", id=pid, label=label or (t["label"] if t else pid), fields=fields)
+
+
+@capability(
+    "platform.connection.test", http_method="POST", http_path="/platform/connection/test",
+    http_tags=["platform"], memory="off",
+    description="Make one GET through an API connection (its sample path, or `path`) and say what came back: "
+                "status, time, content type and the shape of a JSON answer (top-level keys, where the item list "
+                "is). The credential is never shown. Input: id (str!), path (str). Output: {ok, status, ms, "
+                "content_type, bytes, url, shape, preview}.",
+)
+async def cap_connection_test(id: str = "", path: str = "", trace_id=None):
+    pid = pc.normalise_key(id)
+    rec = (await _hgetall(KEY_TARGETS)).get(pid) or {}
+    p = path or (rec.get("fields") or {}).get("sample_path", "")
+    got = await connection_get(pid, p, timeout=20)
+    if got.get("error"):
+        return {"ok": False, "id": pid, "error": got["error"], "url": got.get("shown_url", "")}
+    r = got["response"]
+    ctype = r.headers.get("content-type", "").split(";")[0]
+    text = r.text or ""
+    req = await connection_request(pid, p)
+    cred = str((req.get("fields") or {}).get("credential") or "")
+    if cred and len(cred) >= 4:
+        text = text.replace(cred, "***")                     # an API that echoes the key back
+    shape: Dict[str, Any] = {}
+    if "json" in ctype or text[:1] in "[{":
+        try:
+            shape = _shape(json.loads(text))
+        except ValueError:
+            pass
+    return {"ok": r.status_code < 400, "id": pid, "status": r.status_code, "ms": got["ms"],
+            "content_type": ctype, "bytes": len(r.content), "url": got["shown_url"], "shape": shape,
+            "preview": text[:600]}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -564,8 +956,8 @@ async def cap_seed(trace_id=None):
         return _no_store()
     targets = await _hgetall(KEY_TARGETS)
     created = []
-    for kind in pc.PLATFORM_SPECS:
-        if kind in targets:
+    for kind, spec in pc.PLATFORM_SPECS.items():
+        if kind in targets or spec.get("connection"):      # API connections come from platform.connection.add
             continue
         await _hset(KEY_TARGETS, kind, pc.new_platform(kind))
         created.append(kind)
@@ -608,7 +1000,10 @@ register_ui(
              "platform.delete", "platform.apply", "platform.seed",
              "platform.values.list", "platform.values.set",
              "platform.values.delete", "platform.secrets.list",
-             "platform.secrets.set", "platform.secrets.delete"],
+             "platform.secrets.set", "platform.secrets.delete", "platform.secrets.vault_literals",
+             "platform.secrets.adopt",
+             "platform.connection.templates", "platform.connection.add", "platform.connection.test",
+             "fabric.api.map", "fabric.sources.add", "fabric.sources.connections", "web.api.list"],
     mode="tab",
     tab_order=70,
 )

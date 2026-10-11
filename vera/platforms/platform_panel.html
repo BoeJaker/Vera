@@ -107,6 +107,56 @@ pre{background:var(--bg2);border:1px solid var(--border);border-radius:6px;paddi
       <div class="row"><button class="btn primary" onclick="setSecret()">Save credential</button></div>
     </div>
 
+    <div class="card" id="conncard">
+      <h2>API connections</h2>
+      <p class="why">One record per API Vera reads: its address, how it signs in, and its key as a reference to
+        a shared credential above, so the key is never kept in the connection or in a data source. Fabric sources
+        and intel read through these: map an endpoint, then add it as a fabric source.</p>
+      <div id="connections"><div class="empty">loading…</div></div>
+      <div class="row">
+        <select id="ctpl" style="width:auto;max-width:420px" onchange="tplChanged(event)"></select>
+        <button class="btn primary" onclick="addConnection()">Add connection</button>
+        <span class="muted" id="ctplnote"></span>
+      </div>
+      <div class="grid2" id="ccustom" style="display:none;margin-top:12px">
+        <label>Id</label><input type="text" id="c_id" placeholder="my_api (lowercase, digits, _)">
+        <label>Name</label><input type="text" id="c_label" placeholder="My API">
+        <label>Base URL *</label><input type="text" id="c_base" placeholder="https://api.example.com/v1">
+        <label>Signs in with</label>
+        <select id="c_auth" onchange="authChanged()">
+          <option value="none">no key</option><option value="bearer">bearer token</option>
+          <option value="header">key in a header</option><option value="query">key in a query parameter</option>
+          <option value="basic">basic auth</option>
+        </select>
+        <label class="c-named">Header / parameter name</label>
+        <input class="c-named" type="text" id="c_authname" placeholder="X-Api-Key / api_key">
+        <label class="c-keyed">Key</label>
+        <input class="c-keyed" type="password" id="c_cred" placeholder="paste it - it goes to Shared credentials">
+        <label class="c-basic">Username</label>
+        <input class="c-basic" type="text" id="c_user" placeholder="blank sends the key as the username">
+        <label>Sample path</label><input type="text" id="c_sample" placeholder="/search?q=test">
+      </div>
+      <div id="cmap" style="display:none;margin-top:12px">
+        <div class="row" style="margin-top:0">
+          <b id="cmaptitle"></b>
+          <input type="text" id="cmappath" placeholder="/path?query" style="flex:1;min-width:200px">
+          <button class="btn" onclick="runMap()">Map</button>
+          <button class="btn" onclick="$('cmap').style.display='none'">Close</button>
+        </div>
+        <div id="cmapout"></div>
+      </div>
+      <pre id="connout" style="display:none"></pre>
+    </div>
+
+    <div class="card" id="webapicard">
+      <h2>Web search &amp; fetch APIs</h2>
+      <p class="why">Providers web search and web fetch switch to when a request targets their site (Reddit,
+        GitHub, Hacker News, a custom REST API) - the Web APIs page, kept here with the other APIs.</p>
+      <div id="webapis"><div class="empty">loading…</div></div>
+      <div class="row"><button class="btn" id="webapibtn" onclick="toggleWebApis()">Manage providers</button></div>
+      <div id="webapiframe" style="display:none;height:560px;margin-top:10px;border:1px solid var(--border);border-radius:6px;overflow:hidden"></div>
+    </div>
+
     <div class="card">
       <h2>Platforms</h2>
       <p class="why">Each field is a literal or a reference. Apply is a dry run
@@ -136,6 +186,10 @@ pre{background:var(--bg2);border:1px solid var(--border);border-radius:6px;paddi
 <script>
 const $ = id => document.getElementById(id);
 let KINDS = {}, PLATFORMS = [], EDITING = null;
+let SECRETS = {}, TEMPLATES = [], USES = {}, MAPPING = null, MAPCONN = '';
+const isConn = p => !!(KINDS[p.kind] || {}).connection;
+/* a value as a quoted JS string inside an onclick="" attribute */
+const jsq = v => esc(JSON.stringify(String(v == null ? '' : v)));
 
 function toast(m, k){ const t=$('toast'); t.textContent=m; t.className=k||'';
   t.style.display='block'; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',4500); }
@@ -166,12 +220,16 @@ async function loadValues(){
 async function loadSecrets(){
   const c = await cap('platform.secrets.list');
   const ss = c.secrets || [];
+  SECRETS = {}; ss.forEach(s => SECRETS[s.key] = s);
   $('secrets').innerHTML = ss.length ? '<table><tr><th>Key</th><th>Status</th><th>Reference</th><th>Used by</th><th></th></tr>'
-    + ss.map(s => `<tr><td>${esc(s.label||s.key)}</td>
-      <td><span class="pill ${s.set?'ok':'err'}">${s.set?'set':'empty'}</span></td>
+    + ss.map(s => `<tr><td>${esc(s.label||s.key)}${s.why?`<div class="muted">${esc(s.why)}</div>`:''}</td>
+      <td><span class="pill ${s.set?'ok':(s.wanted?'warn':'err')}">${s.set?'set':(s.wanted?'wanted':'empty')}</span></td>
       <td><code>${esc(s.ref)}</code></td>
       <td class="muted">${(s.used_by||[]).map(esc).join(', ')||'—'}</td>
-      <td><button class="btn sm" onclick="delSecret('${esc(s.key)}')">delete</button></td></tr>`).join('')
+      <td>${s.wanted
+        /* a key a module reads but nobody has set: fill the form below with its name */
+        ? `<button class="btn sm" onclick="${'fillSecret(' + esc(JSON.stringify(String(s.key))) + ')'}">set</button>`
+        : `<button class="btn sm" onclick="${'delSecret(' + esc(JSON.stringify(String(s.key))) + ')'}">delete</button>`}</td></tr>`).join('')
     + '</table>' : '<div class="empty">No credentials yet.</div>';
 }
 
@@ -180,9 +238,10 @@ async function loadPlatforms(){
   KINDS = {}; (k.kinds||[]).forEach(x => KINDS[x.kind] = x);
   const c = await cap('platform.list');
   PLATFORMS = c.platforms || [];
-  $('platforms').innerHTML = PLATFORMS.length
+  const plain = PLATFORMS.filter(p => !isConn(p));      /* API connections have their own card */
+  $('platforms').innerHTML = plain.length
     ? '<table><tr><th>Platform</th><th>State</th><th>Needs</th><th></th></tr>'
-      + PLATFORMS.map(p => {
+      + plain.map(p => {
           const bad = (p.missing_required||[]).concat(
             (p.unresolved_refs||[]).map(m => m.field+' → @'+m.kind+':'+m.key));
           return `<tr><td>${esc(p.label)} <span class="muted">${esc(p.kind)}</span></td>
@@ -236,6 +295,7 @@ async function applyAction(){
   if (!EDITING) return;
   const action = $('action').value;
   if (!action) return toast('no action for this platform', 'err');
+  if (action === 'platform.connection.test') return testConnection(EDITING.id);
   const live = $('live').checked;
   toast(live ? 'applying…' : 'dry run…');
   const r = await cap('platform.apply',
@@ -259,6 +319,15 @@ async function delValue(key){
   if (r.error) return toast(r.error, 'err');
   toast('deleted', 'ok'); loadAll();
 }
+function fillSecret(key){
+  $('skey').value = key; $('sval').value = ''; $('sval').focus();
+}
+// ?secret=<key> opens the page with that key ready to paste (intel's API list links here)
+(function(){ try{ const k = new URLSearchParams(location.search).get('secret');
+  if (!k) return;
+  const go = () => { try{ fillSecret(k); $('skey').scrollIntoView({block:'center'}); }catch(_){} };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go); else setTimeout(go, 0);
+  }catch(_){} })();
 async function setSecret(){
   const key = $('skey').value.trim(), value = $('sval').value;
   if (!key || !value) return toast('key and value are required', 'err');
@@ -278,8 +347,152 @@ async function seed(){
   loadAll();
 }
 
+/* ── API connections ─────────────────────────────────────────────────── */
+function authDesc(a){
+  const s = String(a || 'none'), i = s.indexOf(':'), k = i < 0 ? s : s.slice(0, i), n = i < 0 ? '' : s.slice(i + 1);
+  return ({none:'no key', bearer:'bearer token', header:'key in header ' + n, query:'key in query ' + n,
+           basic:'basic auth'})[k] || s;
+}
+async function loadConnections(){
+  const [t, u] = await Promise.all([cap('platform.connection.templates'),
+                                    cap('fabric.sources.connections').catch(() => ({}))]);
+  TEMPLATES = t.templates || []; USES = (u && u.connections) || {};
+  renderConnections(); renderTemplates();
+}
+function renderConnections(){
+  const cs = PLATFORMS.filter(isConn);
+  $('connections').innerHTML = cs.length
+    ? '<table><tr><th>Connection</th><th>Signs in</th><th>Fabric sources</th><th></th></tr>' + cs.map(p => {
+        const f = p.fields || {}, key = String((p.secret_refs || {}).credential || '').replace('@secret:', '');
+        const keyed = String(f.auth || 'none') !== 'none';
+        const st = !keyed ? '' : (key && SECRETS[key] && SECRETS[key].set) ? '<span class="pill ok">key set</span>'
+          : `<span class="pill warn">key not set</span> <button class="btn sm" onclick="setKeyFor(${jsq(key)})">set</button>`;
+        const used = USES[p.id] || [];
+        return `<tr><td>${esc(p.label)}${p.enabled === false ? ' <span class="pill">off</span>' : ''}
+            <div class="muted">${esc(f.base_url || '')}</div></td>
+          <td>${esc(authDesc(f.auth))} ${st}</td>
+          <td class="muted">${used.length ? used.length + ' · ' + used.slice(0, 3).map(s => esc(s.label)).join(', ')
+                                             + (used.length > 3 ? '…' : '') : '—'}</td>
+          <td style="white-space:nowrap"><button class="btn sm" onclick="testConnection(${jsq(p.id)})">test</button>
+            <button class="btn sm" onclick="openMap(${jsq(p.id)})">map</button>
+            <button class="btn sm" onclick="edit(${jsq(p.id)})">configure</button></td></tr>`;
+      }).join('') + '</table>'
+    : '<div class="empty">No API connections yet - add one below.</div>';
+}
+function setKeyFor(key){ fillSecret(key); $('skey').scrollIntoView({block:'center'}); }
+function renderTemplates(){
+  const keep = $('ctpl').value;
+  $('ctpl').innerHTML = TEMPLATES.filter(t => !t.added).map(t =>
+      `<option value="${esc(t.id)}">${esc(t.label)} - ${esc(t.auth_desc)}${t.key ? (t.key_set ? ' · key set' : ' · needs a key') : ''}</option>`).join('')
+    + '<option value="">Custom API…</option>';
+  /* keep the choice across a reload; on first load the first template is chosen, not "Custom API…" */
+  if ($('ctpl').dataset.touched && [...$('ctpl').options].some(o => o.value === keep)) $('ctpl').value = keep;
+  tplChanged();
+}
+function tplChanged(ev){
+  if (ev) $('ctpl').dataset.touched = '1';
+  const id = $('ctpl').value, t = TEMPLATES.find(x => x.id === id);
+  $('ccustom').style.display = id ? 'none' : '';
+  $('ctplnote').innerHTML = t ? esc(t.base_url) + (t.signup
+    ? ` · <a href="${esc(t.signup)}" target="_blank" rel="noopener" style="color:var(--acc)">get a key</a>` : '') : '';
+  authChanged();
+}
+function authChanged(){
+  const a = $('c_auth').value;
+  document.querySelectorAll('.c-keyed').forEach(e => e.style.display = a === 'none' ? 'none' : '');
+  document.querySelectorAll('.c-named').forEach(e => e.style.display = (a === 'header' || a === 'query') ? '' : 'none');
+  document.querySelectorAll('.c-basic').forEach(e => e.style.display = a === 'basic' ? '' : 'none');
+}
+async function addConnection(){
+  const tid = $('ctpl').value;
+  let args;
+  if (tid) args = {template: tid};
+  else {
+    const a = $('c_auth').value, n = $('c_authname').value.trim();
+    if ((a === 'header' || a === 'query') && !n) return toast('name the header or parameter that carries the key', 'err');
+    args = {id: $('c_id').value.trim(), label: $('c_label').value.trim(), base_url: $('c_base').value.trim(),
+            auth: (a === 'header' || a === 'query') ? a + ':' + n : a,
+            credential: a === 'none' ? '' : $('c_cred').value, username: a === 'basic' ? $('c_user').value.trim() : '',
+            sample_path: $('c_sample').value.trim()};
+    if (!args.base_url) return toast('the base URL is required', 'err');
+  }
+  const r = await cap('platform.connection.add', args);
+  if (r.error) return toast(r.error, 'err');
+  $('c_cred').value = '';
+  const p = r.platform || {}, key = String((p.secret_refs || {}).credential || '').replace('@secret:', '');
+  await loadAll();
+  if (key && !(SECRETS[key] && SECRETS[key].set)) { setKeyFor(key); toast('added ' + (p.label || p.id) + ' - now paste its key', 'ok'); }
+  else toast('added ' + (p.label || p.id) + ((r.vaulted || []).length ? ' · key stored as ' + r.vaulted.join(', ') : ''), 'ok');
+}
+async function testConnection(id){
+  toast('testing ' + id + '…');
+  const r = await cap('platform.connection.test', {id});
+  const o = $('connout'); o.style.display = ''; o.textContent = JSON.stringify(r, null, 2);
+  if (r.ok) toast(`${id}: HTTP ${r.status} in ${r.ms} ms` + (r.shape && r.shape.items
+                  ? ` · ${r.shape.items} items at ${r.shape.item_path || 'the top'}` : ''), 'ok');
+  else toast(`${id}: ${r.error || ('HTTP ' + r.status)}`, 'err');
+}
+function openMap(id){
+  const p = PLATFORMS.find(x => x.id === id) || {};
+  MAPCONN = id; MAPPING = null;
+  $('cmaptitle').textContent = (p.label || id) + ' ›';
+  $('cmappath').value = (p.fields || {}).sample_path || '';
+  $('cmapout').innerHTML = ''; $('cmap').style.display = '';
+  $('cmap').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+async function runMap(){
+  const path = $('cmappath').value.trim();
+  $('cmapout').innerHTML = '<div class="empty">sampling…</div>';
+  const r = await cap('fabric.api.map', {connection: MAPCONN, path, sample: 3});
+  if (r.error) { $('cmapout').innerHTML = `<div class="empty" style="color:var(--err)">${esc(r.error)}</div>`; return; }
+  MAPPING = r;
+  const label = ((PLATFORMS.find(x => x.id === MAPCONN) || {}).label || MAPCONN) + ' ' + path.split('?')[0];
+  $('cmapout').innerHTML = `<p class="muted">${esc(r.url)} · ${esc(r.count)} item(s) at <code>${esc(r.suggested_jq || '(the top)')}</code></p>
+    <table><tr><th>Field</th><th>Type</th><th>Example</th></tr>${(r.schema || []).slice(0, 40).map(s =>
+      `<tr><td><code>${esc(s.field)}</code></td><td class="muted">${esc(s.type)}</td>
+       <td class="muted">${esc(String(s.example == null ? '' : s.example).slice(0, 90))}</td></tr>`).join('')}</table>
+    <div class="row"><input type="text" id="msrc_label" value="${esc(label)}" style="flex:1;min-width:180px">
+      <select id="msrc_int" style="width:auto"><option value="0">pull by hand</option><option value="3600">hourly</option>
+        <option value="21600" selected>every 6 hours</option><option value="86400">daily</option></select>
+      <button class="btn ok" onclick="addMappedSource()">Add as fabric source</button></div>`;
+}
+async function addMappedSource(){
+  if (!MAPPING || !MAPPING.add_source) return;
+  const r = await cap('fabric.sources.add', {...MAPPING.add_source, label: $('msrc_label').value.trim(),
+                                             interval: parseInt($('msrc_int').value, 10) || 0,
+                                             tags: 'connection,' + MAPCONN});
+  if (r.error) return toast(r.error, 'err');
+  toast('fabric source added: ' + (r.label || r.id) + ' → dataset ' + r.dataset_id, 'ok');
+  loadConnections();
+}
+
+/* ── web search & fetch providers (web.api.*) ────────────────────────── */
+async function loadWebApis(){
+  let r = {};
+  try { r = await cap('web.api.list'); } catch (_) {}
+  const ps = (r && r.providers) || [];
+  $('webapis').innerHTML = ps.length
+    ? '<table><tr><th>Provider</th><th>Routes</th><th>Key</th></tr>' + ps.map(p => {
+        const hs = p.has_secret || {}, ks = Object.keys(hs), set = ks.filter(k => hs[k]);
+        return `<tr><td>${esc(p.label)} <span class="muted">${esc(p.kind)}</span>${p.enabled ? '' : ' <span class="pill">off</span>'}</td>
+          <td class="muted">${(p.domains || []).map(esc).join(', ') || '—'}</td>
+          <td>${ks.length ? `<span class="pill ${set.length ? 'ok' : 'warn'}">${set.length ? 'set' : 'not set'}</span>`
+                          : '<span class="muted">none needed</span>'}</td></tr>`;
+      }).join('') + '</table>'
+    : '<div class="empty">No web search providers yet.</div>';
+}
+function toggleWebApis(){
+  const f = $('webapiframe'), open = f.style.display === 'none';
+  if (open && !f.firstChild)
+    f.innerHTML = '<iframe src="/web/api/panel" style="border:none;width:100%;height:100%" allow="clipboard-read; clipboard-write"></iframe>';
+  f.style.display = open ? '' : 'none';
+  $('webapibtn').textContent = open ? 'Hide providers' : 'Manage providers';
+  if (!open) loadWebApis();
+}
+
 async function loadAll(){
   await loadValues(); await loadSecrets(); await loadPlatforms();
+  await loadConnections(); loadWebApis();
 }
 loadAll();
 </script>

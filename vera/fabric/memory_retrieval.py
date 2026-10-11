@@ -87,6 +87,10 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.fabric import rank_core as _rk
 except ImportError:                      # pragma: no cover
     from vera.fabric import rank_core as _rk   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.worldview import worldview_corpus_core as _wvc
+except ImportError:                      # pragma: no cover
+    from vera.worldview import worldview_corpus_core as _wvc   # type: ignore
 try:                                     # the retrieval eval set (FM-7.0): seeks + reads as labels
     from Vera.vera.fabric import retrieval_eval as _reval
 except Exception:                        # pragma: no cover
@@ -98,10 +102,42 @@ except Exception:                        # pragma: no cover
 log = logging.getLogger("vera.memory_retrieval")
 
 
+def _df_candidates() -> List[Any]:
+    """Every data_fabric module object this process holds: both sys.modules names and the module that owns the
+    registered fabric.query (11 Oct 2026: sys.modules["data_fabric"] was an unconnected copy while fabric.query's
+    module was connected)."""
+    out: List[Any] = []
+    for m in (sys.modules.get("data_fabric"), sys.modules.get("Vera.vera.fabric.data_fabric")):
+        if m is not None and all(m is not x for x in out):
+            out.append(m)
+    try:
+        fn = (CAPABILITY_REGISTRY.get("fabric.query") or {}).get("func")
+        owner = sys.modules.get(getattr(fn, "__module__", "") or "")
+        if owner is not None and hasattr(owner, "FABRIC_PG") and all(owner is not x for x in out):
+            out.append(owner)
+    except Exception:
+        pass
+    return out
+
+
+def _connected(m: Any) -> bool:
+    return bool(getattr(getattr(m, "FABRIC_PG", None), "available", False)
+                or getattr(getattr(m, "FABRIC_CHROMA", None), "available", False))
+
+
 def _df():
-    """The LIVE data_fabric module instance (loaded by the module loader)."""
-    return (sys.modules.get("data_fabric")
-            or sys.modules.get("Vera.vera.fabric.data_fabric"))
+    """The LIVE data_fabric module: the candidate whose stores are connected, else the first one."""
+    cands = _df_candidates()
+    return next((m for m in cands if _connected(m)), cands[0] if cands else None)
+
+
+def _df_evidence(df: Any) -> Dict[str, Any]:
+    """Which data_fabric served this seek, and every candidate's identity and connection state."""
+    return {"used": f"{getattr(df, '__name__', '')}@{id(df):x}",
+            "candidates": [{"name": getattr(m, "__name__", ""), "id": f"{id(m):x}",
+                            "pg": bool(getattr(getattr(m, "FABRIC_PG", None), "available", False)),
+                            "chroma": bool(getattr(getattr(m, "FABRIC_CHROMA", None), "available", False))}
+                           for m in _df_candidates()]}
 
 
 def _mem():
@@ -379,14 +415,26 @@ async def _gather_ranked_lists(df, query: str, scope: str, pool: int, env=None):
         env.stage("chroma", 0.0, "skipped:no-vector")
 
     if getattr(df.FABRIC_PG, "available", False):
-        res, ms = await _rtc.timed(asyncio.wait_for(
-            df.FABRIC_PG.search_text(query, scoped_ds or None, limit=pool), timeout=6))
+        # FM-7.1 (switch memory.text_index): the full-text index when it is ready, else the ILIKE scan
+        leg, res, ms = "pg_text", None, 0.0
+        if hasattr(df.FABRIC_PG, "search_text_fts") and await _switch("memory.text_index") == "fts":
+            res, ms = await _rtc.timed(asyncio.wait_for(
+                df.FABRIC_PG.search_text_fts(query, scoped_ds or None, limit=pool), timeout=6))
+            leg = "pg_fts"
+            if isinstance(res, BaseException):
+                log.debug("seek pg_fts: %s", res)
+                _leg(env, "pg_fts", res, ms)
+                res = None
+        if res is None:
+            res, ms = await _rtc.timed(asyncio.wait_for(
+                df.FABRIC_PG.search_text(query, scoped_ds or None, limit=pool), timeout=6))
+            leg = "pg_text"
         if isinstance(res, BaseException):
-            log.debug("seek pg_text: %s", res)
+            log.debug("seek %s: %s", leg, res)
         elif res:
             ranked.append([rid for rid, _ in res])
             text_ids.update(rid for rid, _ in res)
-        _leg(env, "pg_text", res, ms)
+        _leg(env, leg, res, ms)
     elif env is not None:
         env.stage("pg_text", 0.0, "skipped:unavailable")
 
@@ -684,6 +732,10 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
                  if c["dataset_id"] == scope_prefix
                  or c["dataset_id"].startswith(scope_prefix + ".")
                  or c["dataset_id"] == scope]
+    elif await _switch("memory.seek_exclude_self") == "on":
+        # Vera's own telemetry (chat logs, IDE sessions, capability output, bus/ts streams - the worldview corpus'
+        # SELF_TELEMETRY) leaves an unscoped seek; asking for one of those datasets by scope still finds it
+        cands = [c for c in cands if not _wvc.excluded(c["dataset_id"])]
     if since_dt:
         cands = [c for c in cands if (_dt(c["created_at"]) or since_dt) >= since_dt]
 
@@ -691,7 +743,8 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
         _record(env)
         return await _seek_cache_put(ck, {"text": _render_seek(query, [], 0, 0, max_chars),
                                           "results": [], "count": 0, "candidates": 0,
-                                          "collapsed": 0, "datasets": []})
+                                          "collapsed": 0, "datasets": [],
+                                          "legs": list(env.stages), "fabric": _df_evidence(df)})
 
     if await _switch("memory.rerank") == "on":
         await _rerank_head(query, cands, env)
@@ -749,7 +802,10 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
     out = {"text": text, "results": results, "count": len(selected),
            "candidates": len(cands), "collapsed": collapsed_total,
            "weak": bool(weak_ctx),
-           "datasets": sorted({c["dataset_id"] for c in selected})}
+           "datasets": sorted({c["dataset_id"] for c in selected}),
+           # what each backend leg returned (stage, ms, outcome, n) and which fabric module served it - the evidence
+           # that found seek's semantic leg empty on 11 Oct 2026
+           "legs": list(env.stages), "fabric": _df_evidence(df)}
     if ranked_mode:
         out["temporal_intent"] = intent
     if _reval is not None:

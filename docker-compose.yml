@@ -104,6 +104,18 @@ services:
       # ── IDE projects root (inside container)
       VERA_PROJECT_ROOT: "/data/projects"
 
+      # ── Durable application state and default-off Memory authority canary.
+      #    The revision and evidence paths must remain on the same persistent
+      #    volume. Enabling the canary still requires an explicit policy.
+      VERA_STATE_DIR: "${VERA_STATE_DIR:-/var/lib/vera-state}"
+      # Empty preserves the guarded legacy fallback until
+      # fabric.revision.state.migrate has copied existing state.
+      FABRIC_REVISION_SQLITE: "${FABRIC_REVISION_SQLITE:-}"
+      VERA_MEMORY_DUAL_WRITE_RECEIPTS: "${VERA_MEMORY_DUAL_WRITE_RECEIPTS:-/var/lib/vera-state/fabric/memory-dual-write-receipts.sqlite3}"
+      VERA_MEMORY_REVISION_CANARY: "${VERA_MEMORY_REVISION_CANARY:-0}"
+      VERA_MEMORY_RECONCILIATION_ENABLED: "${VERA_MEMORY_RECONCILIATION_ENABLED:-0}"
+      FABRIC_REVISION_POLICY: "${FABRIC_REVISION_POLICY:-}"
+
       # ── Durable Run observation state. This uses its own volume rather than
       #    moving VERA_STATE_DIR (which may already own unrelated live state).
       #    Set VERA_RUN_JOURNAL_MODE=memory for the one-step persistence rollback.
@@ -132,6 +144,7 @@ services:
       - vera-projects:/data/projects
       - vera-tls:/root/.vera/tls   # persist auto-generated self-signed TLS cert
       - vera-run-observation:/var/lib/vera-run-observation
+      - vera-state:/var/lib/vera-state
     depends_on:
       redis:
         condition: service_healthy
@@ -346,6 +359,7 @@ volumes:
   vera-projects:
   vera-tls:
   vera-run-observation:
+  vera-state:
   vscode-data:
   garage-meta:
   garage-data:

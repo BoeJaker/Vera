@@ -66,3 +66,41 @@ def test_seek_returns_the_evidence_per_pick():
     for field in ('"vector_score": round(float((vec_sims or {}).get(c["id"], 0.0)), 3)',
                   '"keyword": c["id"] in (text_ids or set())', '"origin": c.get("origin") or "fabric"'):
         assert field in body
+
+
+def test_seek_can_leave_self_telemetry_out_unless_scoped():
+    src = _src("vera/fabric/memory_retrieval.py")
+    body = src[src.index("async def cap_memory_seek("):src.index("async def cap_memory_read(")]
+    i = body.index("if scope_prefix:")
+    tail = body[i:i + 900]
+    assert 'elif await _switch("memory.seek_exclude_self") == "on":' in tail
+    assert "not _wvc.excluded(c[\"dataset_id\"])" in tail
+    from vera.worldview import worldview_corpus_core as WC
+    assert WC.excluded("chat.messages") and WC.excluded("ide.claude_sessions") and not WC.excluded("cve_nvd")
+    from vera.minds import switchboard_core as SB
+    f = SB.REGISTRY["memory.seek_exclude_self"]
+    assert f.modes == ("off", "on") and f.default == "off"
+
+
+def test_seek_reports_its_legs():
+    src = _src("vera/fabric/memory_retrieval.py")
+    body = src[src.index("async def cap_memory_seek("):src.index("async def cap_memory_read(")]
+    assert body.count('"legs": list(env.stages)') == 2 and body.count('"fabric": _df_evidence(df)') == 2
+
+
+def test_seek_prefers_the_connected_fabric(monkeypatch):
+    import types
+    from vera.fabric import memory_retrieval as MR
+    dead = types.ModuleType("data_fabric")
+    dead.FABRIC_PG = types.SimpleNamespace(available=False)
+    dead.FABRIC_CHROMA = types.SimpleNamespace(available=False)
+    live = types.ModuleType("Vera.vera.fabric.data_fabric")
+    live.FABRIC_PG = types.SimpleNamespace(available=True)
+    live.FABRIC_CHROMA = types.SimpleNamespace(available=True)
+    monkeypatch.setitem(sys.modules, "data_fabric", dead)
+    monkeypatch.setitem(sys.modules, "Vera.vera.fabric.data_fabric", live)
+    assert MR._df() is live
+    ev = MR._df_evidence(live)
+    assert ev["used"].startswith("Vera.vera.fabric.data_fabric@") and len(ev["candidates"]) >= 2
+    monkeypatch.setitem(sys.modules, "Vera.vera.fabric.data_fabric", dead)
+    assert MR._df() is dead                                  # nothing connected: the first, as before

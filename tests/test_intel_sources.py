@@ -223,3 +223,30 @@ def test_purge_also_removes_the_fabric_copies(tmp_path):
         assert "fabric_records_removed" not in R("intel.topic.delete", id="nope")    # no purge, no fabric work
     finally:
         sys.modules.pop("data_fabric", None)
+
+
+def test_a_connection_source_reads_an_endpoint_and_carries_no_url_or_key():
+    p = srcs.plan_source("connection", "Guardian /search?q=house+prices")
+    assert p["source_type"] == "api" and p["connection"] == "guardian" and p["path"] == "/search?q=house+prices"
+    assert p["url"] == "" and "key" not in str(p).lower().replace("house", "")
+    assert p["id"] == srcs.plan_source("connection", "guardian /search?q=house+prices")["id"]     # shared by topics
+    assert "error" in srcs.plan_source("connection", "/search?q=x")                               # no connection id
+    assert "error" in srcs.plan_source("connection", "guardian https://evil.example/x")           # a full URL
+    assert srcs.KINDS["connection"]["mapping"]
+
+
+def test_indicator_feeds_read_through_connections():
+    import ast, types
+    src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "intel", "intel_capabilities.py"), encoding="utf-8").read()
+    tree = ast.parse(src)
+    fn = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_ind_feed"]
+    import typing
+    ns = {"Dict": typing.Dict, "Any": typing.Any, "Optional": typing.Optional, "pm": types.SimpleNamespace(CLOB="https://clob", MANIFOLD="https://mf")}
+    exec(compile(ast.Module(body=fn, type_ignores=[]), "x", "exec"), ns)
+    f = ns["_ind_feed"]
+    w = f({"dataset_id": "wiki:en:Bank of England"})
+    assert w["conn"] == "wikimedia" and "Bank%20of%20England" in w["path"] and "{today:%Y%m%d}" in w["path"]
+    assert f({"dataset_id": "pm:polymarket:t1", "market": {"source": "polymarket", "token": "t1"}})["conn"] == "polymarket_clob"
+    assert f({"dataset_id": "pm:manifold:m1", "market": {"source": "manifold", "id": "m1"}})["path"].startswith("/bets?contractId=m1")
+    assert f({"dataset_id": "mkt.macro.fred_unrate.1d"}) is None          # stored bars stay with markets
+    assert "_api(" in src and src.count("await _http_json(") == 1       # every keyless read goes through _api

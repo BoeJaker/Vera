@@ -252,6 +252,31 @@ PLATFORM_SPECS: Dict[str, Dict[str, Any]] = {
         "defaults": {"timezone": VALUE_REF + "timezone"},
         "actions": ["n8n.ping"],
     },
+    # Any HTTP API Vera reads (data-connections plan, 2026-10-11): one record per API - its address, how it
+    # authenticates and the credential as an @secret: reference - so fabric sources, intel and the rest reach it
+    # through here instead of keeping their own key. Templates for known APIs: connections_core.TEMPLATES.
+    "api": {
+        "label": "API connection",
+        "icon": "⇄",
+        "docs": "",
+        "connection": True,
+        "fields": [
+            field_spec("base_url", "Base URL", required=True,
+                       hint="e.g. https://api.example.com/v1 - every request stays under it"),
+            field_spec("auth", "Authentication",
+                       hint="none | bearer | header:<Name> | query:<param> | basic"),
+            field_spec("credential", "Credential", secret=True,
+                       hint="@secret:<key> - kept under Shared credentials, never in this record"),
+            field_spec("username", "Username (basic auth)",
+                       hint="basic auth only - e.g. the account email; blank sends the credential as the username"),
+            field_spec("headers", "Extra headers (JSON)", hint='e.g. {"Accept": "application/json"}'),
+            field_spec("sample_path", "Sample path", hint="a path to test and map, e.g. /search?q=test"),
+            field_spec("rate_per_min", "Requests per minute", hint="0 or blank = no limit"),
+            field_spec("docs", "Docs URL"),
+        ],
+        "defaults": {"auth": "none"},
+        "actions": ["platform.connection.test"],
+    },
 }
 
 

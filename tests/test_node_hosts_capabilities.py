@@ -25,7 +25,7 @@ PMX_SRC = os.path.join(ROOT, "vera", "proxmox", "proxmox_capabilities.py")
 PX_SRC = os.path.join(ROOT, "vera", "proxmox", "pxstore_capabilities.py")
 PMX_WANTED = {"_redact", "_all_raw", "_get_cluster", "_open", "_web_root", "_host_port", "set_node_hosts",
               "_exec_logins", "_pxstore_cfg_raw", "_resolve_node_login", "cap_node_exec",
-              "cap_node_hosts_merge", "cap_cluster_save"}
+              "cap_node_hosts_merge", "cap_cluster_save", "_pa"}
 PVE01 = "27f0ce6b-1be7-4e3c-8240-af94780bb4ae"
 EXEC = [{"id": PVE01, "label": "PVE01", "host": "192.168.0.200"},
         {"id": "pve02-login", "label": "pve02", "host": "192.168.0.201"},
@@ -82,7 +82,8 @@ def proxmox(records, pxstore=None, exec_hosts=EXEC):
           "_redis": lambda: redis, "_cap": registry.get, "now_iso": lambda: "2026-09-13T10:00:00Z",
           "emit_event": emit, "_observe_proxmox_effect": lambda **kw: {
               "enforcement": "observe_only", "delivery": {"mode": kw["mode"]}},
-          "vsecrets": types.SimpleNamespace(seal=lambda s: "sealed:" + s, open_secret=lambda s: s)}
+          "vsecrets": types.SimpleNamespace(seal=lambda s: "sealed:" + s, open_secret=lambda s: s),
+          "_orch": types.SimpleNamespace(CAPABILITY_REGISTRY={})}     # no credential store loaded here
     exec(compile(functions(PMX_SRC, PMX_WANTED), PMX_SRC, "exec"), ns)
     return ns, redis, runs, events
 

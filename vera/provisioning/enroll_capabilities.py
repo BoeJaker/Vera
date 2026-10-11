@@ -66,6 +66,27 @@ def _redis():
     return getattr(_orch, "REDIS", None)
 
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+async def _adopt(dry_run: bool):
+    """Move SSH host credentials still sealed here into the Platforms store (platform.secrets.adopt)."""
+    return await _pa().adopt_json_hash(_orch.CAPABILITY_REGISTRY, _redis(), KEY_HOSTS, ('password', 'private_key'), "ssh", dry_run, "SSH host")
+
+
+_pa().register_adopter("ssh_enrol", _adopt)
+
+
 def _cap(name: str):
     c = _orch.CAPABILITY_REGISTRY.get(name)
     return c.get("func") if c else None
@@ -176,7 +197,7 @@ def _redact(rec: Dict) -> Dict:
 def _open(rec: Dict) -> Dict:
     out = dict(rec)
     for f in _SECRET_FIELDS:
-        out[f] = vsecrets.open_secret(rec.get(f, ""))
+        out[f] = _pa().open_any_sync(_orch.CAPABILITY_REGISTRY, rec.get(f, ""))
     return out
 
 
@@ -188,6 +209,8 @@ async def _get_host(host_id: str, opened: bool = False) -> Optional[Dict]:
     if not raw:
         return None
     rec = json.loads(raw)
+    if opened:
+        await _pa().prime(_orch.CAPABILITY_REGISTRY, *(rec.get(f) for f in _SECRET_FIELDS))
     return _open(rec) if opened else rec
 
 
@@ -277,9 +300,11 @@ async def cap_host_save(
         rec["label"] = host or user or "host"
     try:
         if password:
-            rec["password"] = vsecrets.seal(password)
+            rec["password"] = await _pa().keep(_orch.CAPABILITY_REGISTRY, _pa().key_for("ssh", rec["id"], "password"), password,
+                                              f"SSH {rec.get('label') or rec['id']} password")
         if private_key:
-            rec["private_key"] = vsecrets.seal(private_key)
+            rec["private_key"] = await _pa().keep(_orch.CAPABILITY_REGISTRY, _pa().key_for("ssh", rec["id"], "key"), private_key,
+                                                 f"SSH {rec.get('label') or rec['id']} private key")
     except RuntimeError as e:
         return {"error": str(e)}
     rec["updated"] = now_iso()
@@ -399,7 +424,7 @@ async def cap_stores_merge(apply: bool = False, trace_id=None) -> Dict:
         rec = by_id.get(step["enrol_id"]) or {}
         password = ""
         if step["action"] == "copy" and step.get("exec_auth") == "password":
-            password = vsecrets.open_secret(rec.get("password", ""))
+            password = await _pa().open_any(_orch.CAPABILITY_REGISTRY, rec.get("password", ""))
         res = await _ensure_exec_twin(rec, password=password)
         applied.append({"enrol_id": step["enrol_id"], "action": step["action"],
                         "ok": not res.get("error"), "exec_id": res.get("exec_id", ""),
@@ -428,7 +453,7 @@ async def cap_ssh_cert_mint(principal: str = "vera", force: bool = False,
     url = state.get("stepca_url", "")
     fp = state.get("stepca_fingerprint", "")
     prov = state.get("stepca_provisioner", "")
-    pw = vsecrets.open_secret(state.get("stepca_provisioner_password", ""))
+    pw = await _pa().open_any(_orch.CAPABILITY_REGISTRY, state.get("stepca_provisioner_password", ""))
     key = _vera_key_path(); pub = key + ".pub"; cert = key + "-cert.pub"
 
     if not _have("step"):

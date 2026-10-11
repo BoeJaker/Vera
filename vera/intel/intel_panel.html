@@ -30,6 +30,13 @@ h2{font-size:15px;margin:0 0 10px}h3{font-size:12px;margin:14px 0 6px;color:var(
 .tlist .t b{display:block}.tlist .t .hl{font-size:11.5px;color:var(--muted,#9aa3b2);margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .chip{display:inline-block;font-size:10.5px;padding:1px 7px;border:1px solid var(--line,#2a2f3a);border-radius:999px;color:var(--muted,#9aa3b2);margin-right:4px}
 .chip.new{border-color:var(--int-acc);color:var(--int-acc)}
+.chip.ok{border-color:var(--green,#9ece6a);color:var(--green,#9ece6a)}
+.chip.warn{border-color:var(--yellow,#e0af68);color:var(--yellow,#e0af68)}
+.chip.err{border-color:var(--red,#f7768e);color:var(--red,#f7768e)}
+#apKeys table{width:100%;border-collapse:collapse}
+#apKeys th{text-align:left;font-weight:600;color:var(--muted,#9aa3b2);padding:4px 6px;border-bottom:1px solid var(--line,#2a2f3a)}
+#apKeys td{vertical-align:top;padding:6px;border-bottom:1px solid var(--line,#2a2f3a)}
+#apKeys td .btn{margin:0 4px 4px 0;text-decoration:none;display:inline-block}
 .ws-head h2{margin:0;font-size:17px}
 .state{border-left:3px solid var(--int-acc);padding:6px 10px;margin:6px 0;white-space:pre-wrap}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media (max-width:1100px){.grid2{grid-template-columns:1fr}}
@@ -80,6 +87,7 @@ details.card>summary{cursor:pointer;font-weight:600}
     <button data-label="Reports" data-desc="Briefs and their delivery" data-desc-long="Reports: build a brief, read it, send it to Telegram, chat, email, the canvas and more." class="nav-btn" data-go="reports" onclick="go('reports')"><span class="gl">▤</span>Reports</button>
     <button data-label="Actions" data-desc="What Vera can do next" data-desc-long="Actions reports offered - fetch a repo, research a question further, track an entity - and what became of them." class="nav-btn" data-go="actions" onclick="go('actions')"><span class="gl">➜</span>Actions</button>
     <button data-label="Activity" data-desc="What it is doing on its own" data-desc-long="The night batch, sessions, alerts it raised, research waiting, notes from your drop folders and automation proposals - and a command line." class="nav-btn" data-go="activity" onclick="go('activity')"><span class="gl">◷</span>Activity</button>
+    <button data-label="Search &amp; APIs" data-desc="Search health and the keys sources use" data-desc-long="Is web search getting real results, how often chat answered a current question without looking it up, and the keyed data sources intelligence can use - each key is added once on the Platforms page." class="nav-btn" data-go="apis" onclick="go('apis')"><span class="gl">⚿</span>Search &amp; APIs</button>
     <button data-label="Settings" data-desc="Schedule, delivery, thinking, voice" data-desc-long="When the nightly refresh, the morning brief, the week in review and the proposals run; where briefs and alerts go; how it thinks, the sessions it may plan work into; voice and narration." class="nav-btn" data-go="settings" data-vera-settings="#pane-settings" onclick="go('settings')"><span class="gl">⚙</span>Settings</button>
   </nav>
   <div id="status-tile">
@@ -197,6 +205,36 @@ details.card>summary{cursor:pointer;font-weight:600}
     </div>
   </div>
 
+  <div class="pane" id="pane-apis">
+    <div class="grid2">
+      <div class="card">
+        <h2>Web search</h2>
+        <div id="apSearch" class="small muted">loading…</div>
+      </div>
+      <div class="card">
+        <h2>Chat lookups (7 days)</h2>
+        <div id="apMiss" class="small muted">loading…</div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>API keys</h2>
+      <p class="small muted">Keys live in one place - the Platforms page (Vera's secrets service, never shown again).
+        Add a key there and everything that reads it picks it up.</p>
+      <div id="apKeys" class="small muted">loading…</div>
+      <h3>Read without a key</h3>
+      <div id="apKeyless" class="small muted"></div>
+    </div>
+    <div class="card">
+      <h2>API connections</h2>
+      <p class="small muted">Every API Vera reads is a connection on the Platforms page - its address, how it signs
+        in and a reference to its key. Fabric sources read through them; map an endpoint there to add one.</p>
+      <div id="apConns" class="small muted">loading…</div>
+      <div id="apConnAdd" class="small" style="margin-top:8px"></div>
+      <div id="apConnMsg" class="msg"></div>
+      <p id="apHint" class="small muted"></p>
+    </div>
+  </div>
+
   <div class="pane" id="pane-settings">
     <div class="grid2">
       <div class="card">
@@ -215,6 +253,7 @@ details.card>summary{cursor:pointer;font-weight:600}
         <div class="row"><div class="grow"><label class="f">Automation proposals on</label><select id="cAdvDay"></select></div>
           <div class="grow"><label class="f">at (hour)</label><input type="number" id="cAdvHour" min="0" max="23"></div></div>
         <label class="small"><input type="checkbox" id="cIll"> illustrate briefs (image generation)</label>
+        <label class="small"><input type="checkbox" id="cFirst"> sweep a new topic at once (no model), not at the next nightly run</label>
         <div class="row" style="margin-top:8px"><button class="btn pri" onclick="saveConfig()">Save</button><span id="cMsg" class="msg"></span></div>
         <h3>Last runs</h3><div id="cSched" class="small muted"></div>
         <p class="small muted">The refresh runs through the idle queue: only when the box is quiet, one topic at a time,
@@ -306,6 +345,7 @@ function go(id) {
   if (id === 'actions') loadActions();
   if (id === 'settings' && !LOADED.settings) { LOADED.settings = 1; loadConfig(); }
   if (id === 'activity') loadActivity();
+  if (id === 'apis') loadApis();
   if (id === 'timeline') { loadAsOfTopics(); loadAllStories(); }
   try { localStorage.setItem('vera.intel.pane', id); } catch (e) {}
 }
@@ -372,6 +412,7 @@ async function openTopic(id) {
       <div id="srcList" class="small"></div>
       <div class="row" style="margin-top:8px"><select id="srcKind" style="width:auto" onchange="srcKindHint()"></select>
         <input type="text" id="srcVal" class="grow" style="width:auto" onkeydown="if(event.key==='Enter')addSource()">
+        <datalist id="srcConns"></datalist>
         <button class="btn" onclick="addSource()">Read it</button></div>
       <div id="srcGeo" class="row small" style="display:none;margin-top:6px"><input type="text" id="srcBox" class="grow" placeholder="only inside a box (optional): min_lon,min_lat,max_lon,max_lat - e.g. -11,49,2,61 for the UK"></div>
       <div id="srcMap" style="display:none;margin-top:6px"><textarea id="srcMapping" placeholder='field mapping (JSON): {"item_path": "items", "title_field": "name", "url_field": "url", "time_field": "updated_at", "text_fields": "summary"}'></textarea></div>
@@ -429,7 +470,7 @@ async function loadSources() {
     $('srcKind').innerHTML = SRC_KINDS.map(k => `<option value="${esc(k.kind)}">${esc(k.label)}</option>`).join('');
   }
   srcKindHint();
-  const glyph = {feed: '◉', arxiv: '∂', youtube: '▶', github_releases: '⑂', usgs: '≋', api: '{}'};
+  const glyph = {feed: '◉', arxiv: '∂', youtube: '▶', github_releases: '⑂', usgs: '≋', api: '{}', connection: '⇄'};
   $('srcList').innerHTML = (r.sources || []).map(x => `<div class="sig"><div class="sc">${glyph[x.kind] || '•'}</div><div>
       <b>${esc(x.label)}</b>${x.bbox ? ` <span class="chip">inside ${esc(x.bbox.join(', '))}</span>` : ''}
       <div class="muted">${x.missing ? '<b>missing from the fabric</b> · ' : ''}${x.last_pulled ? 'fetched ' + esc(String(x.last_pulled).slice(0, 16).replace('T', ' ')) : 'not fetched yet'}
@@ -442,6 +483,18 @@ function srcKindHint() {
   $('srcVal').placeholder = k.value || '';
   $('srcGeo').style.display = k.geo ? '' : 'none';
   $('srcMap').style.display = k.mapping ? '' : 'none';
+  /* an API connection: suggest the ones on the Platforms page with their sample paths */
+  if (k.kind === 'connection') { $('srcVal').setAttribute('list', 'srcConns'); loadSrcConns(); }
+  else $('srcVal').removeAttribute('list');
+}
+let SRC_CONNS_LOADED = false;
+async function loadSrcConns() {
+  if (SRC_CONNS_LOADED) return;
+  const r = await call('platform.list', {});
+  const cs = (r.platforms || []).filter(p => p.kind === 'api');
+  $('srcConns').innerHTML = cs.map(p => `<option value="${esc(p.id + ' ' + ((p.fields || {}).sample_path || '/'))}">${esc(p.label)}</option>`).join('');
+  SRC_CONNS_LOADED = true;
+  if (!cs.length) msg('srcMsg', 'no API connections yet - add one on the Platforms page (Search & APIs links there)');
 }
 async function addSource() {
   const kind = $('srcKind').value, value = $('srcVal').value.trim();
@@ -748,7 +801,7 @@ async function loadConfig() {
   const c = r.config || {};
   $('cEnabled').checked = !!c.enabled; $('cSweep').value = c.sweep_hour; $('cBrief').value = c.brief_hour;
   $('cMax').value = c.max_topics_per_night; $('cPeriod').value = c.report_period_hours; $('cTz').value = c.timezone || '';
-  $('cBase').value = c.public_base || ''; $('cIll').checked = !!c.illustrate;
+  $('cBase').value = c.public_base || ''; $('cIll').checked = !!c.illustrate; $('cFirst').checked = c.first_sweep !== false;
   $('cChans').innerHTML = CHANS.filter(x => !x.needs_target).map(x => `<label><input type="checkbox" value="${esc(x.id)}" ${(c.brief_channels||[]).includes(x.id)?'checked':''}> ${esc(x.label)}</label>`).join('');
   $('cAlertChans').innerHTML = CHANS.filter(x => !x.needs_target).map(x => `<label><input type="checkbox" value="${esc(x.id)}" ${(c.alert_channels||[]).includes(x.id)?'checked':''}> ${esc(x.label)}</label>`).join('');
   const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -881,14 +934,68 @@ async function setLearned(on) { await call('intel.config.set', {settings: {calib
 async function runCmd() { const t = $('acCmd').value.trim(); if (!t) return; $('acOut').textContent = '…'; const r = await call('intel.command', {text: t}); $('acOut').textContent = r.text || r.error || JSON.stringify(r); tile(); }
 async function runFiles() { const r = await call('intel.files.run', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }
 async function runAdvise() { const r = await call('intel.advise', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }
+/* Search & APIs: web.engines.health, info.misses, intel.apis (keys themselves are only ever set on the Platforms
+   page - platform.secrets, the master key store) */
+async function loadApis() {
+  const [h, m, a] = await Promise.all([call('web.engines.health', {}), call('info.misses', {days: 7}), call('intel.apis', {})]);
+  const st = (h && h.state) || 'unknown';
+  const cls = st === 'ok' ? 'ok' : (st === 'down' ? 'err' : 'warn');
+  $('apSearch').innerHTML = h && !h.error
+    ? `<div><span class="chip ${cls}">${esc(st)}</span> ${esc(h.message || '')}</div>`
+      + ((h.unresponsive || []).length ? `<div style="margin-top:6px">Not answering: ${(h.unresponsive || []).map(u => `<span class="chip">${esc(u)}</span>`).join(' ')}</div>` : '')
+      + `<div class="muted" style="margin-top:6px">last good answer ${esc(h.ok_at || '-')} · checked ${esc(h.checked_at || '-')}</div>`
+    : esc((h && h.error) || 'no search since the last restart');
+  const t = (m && m.totals) || {};
+  $('apMiss').innerHTML = m && !m.error
+    ? `<div><b>${t.web_turns || 0}</b> questions wanted the web · <b>${(t.no_lookup || 0) + (t.snippets_only || 0)}</b> answered without a lookup`
+      + (m.miss_rate != null ? ` (${Math.round(m.miss_rate * 100)}%)` : '') + `</div>`
+      + `<div class="muted" style="margin-top:6px">no lookup ${t.no_lookup || 0} · snippets only ${t.snippets_only || 0} · you pushed back ${t.pushback || 0}</div>`
+    : esc((m && m.error) || '');
+  const rows = (a && a.apis) || [];
+  $('apKeys').innerHTML = rows.length ? '<table class="vb-table"><tr><th>Source</th><th>What it adds</th><th>Key</th><th></th></tr>'
+    + rows.map(r => `<tr><td><b>${esc(r.name)}</b><div class="muted">${esc(r.status === 'used' ? 'used by ' + r.used_by : 'planned source')}</div></td>
+      <td>${esc(r.gives)}<div class="muted">${esc(r.cost || '')}</div></td>
+      <td><span class="chip ${r.set ? 'ok' : (r.status === 'used' ? 'warn' : '')}">${r.set ? 'set' : 'not set'}</span><div class="muted"><code>${esc(r.ref)}</code></div></td>
+      <td><a class="btn" href="/platform/panel?secret=${encodeURIComponent(r.key)}" target="_blank" rel="noopener">${r.set ? 'Change' : 'Add key'}</a>
+        <a class="btn" href="${esc(r.get)}" target="_blank" rel="noopener noreferrer">Get one</a>
+        ${r.connection ? `<div class="muted" style="margin-top:4px">connection <code>${esc(r.connection)}</code></div>`
+          : (r.template ? `<button class="btn" onclick="addApiConnection(${jsq(r.template)})">Add connection</button>` : '')}</td></tr>`).join('') + '</table>'
+    : esc((a && a.error) || 'nothing listed');
+  $('apKeyless').innerHTML = ((a && a.keyless) || []).map(k => `<span class="chip">${esc(k)}</span>`).join(' ');
+  const cs = (a && a.connections) || [];
+  $('apConns').innerHTML = cs.length
+    ? '<table class="vb-table"><tr><th>Connection</th><th>State</th><th>Fabric sources</th></tr>'
+      + cs.map(c => `<tr><td><b>${esc(c.label)}</b><div class="muted">${esc(c.base_url)}</div></td>
+        <td><span class="chip ${c.configured && c.enabled ? 'ok' : 'warn'}">${!c.enabled ? 'off' : (c.configured ? 'ready' : 'needs its key')}</span></td>
+        <td>${c.sources || 0}</td></tr>`).join('') + '</table>'
+    : 'No API connections yet.';
+  const free = ((a && a.keyless_templates) || []).filter(t => !t.connection);
+  $('apConnAdd').innerHTML = (free.length ? 'Add a keyless API: ' + free.map(t =>
+      `<button class="btn" onclick="addApiConnection(${jsq(t.id)})">${esc(t.label)}</button>`).join(' ') + ' ' : '')
+    + '<a class="btn" href="/platform/panel" target="_blank" rel="noopener">Open Platforms</a>';
+  $('apHint').textContent = (a && a.json_api_hint) || '';
+}
+async function addApiConnection(template) {
+  const r = await call('platform.connection.add', {template});
+  if (r.error) { msg('apConnMsg', r.error, 'err'); return; }
+  loadApis();
+}
+
 async function saveConfig() {
   const r = await call('intel.config.set', {enabled: $('cEnabled').checked, sweep_hour: +$('cSweep').value, brief_hour: +$('cBrief').value,
     max_topics_per_night: +$('cMax').value, report_period_hours: +$('cPeriod').value, timezone: $('cTz').value, public_base: $('cBase').value,
     illustrate: $('cIll').checked, brief_channels: [...document.querySelectorAll('#cChans input:checked')].map(x => x.value)});
   const r2 = r.error ? {} : await call('intel.config.set', {settings: {
     alert_channels: [...document.querySelectorAll('#cAlertChans input:checked')].map(x => x.value),
-    weekly_day: +$('cWeekDay').value, weekly_hour: +$('cWeekHour').value, advise_day: +$('cAdvDay').value, advise_hour: +$('cAdvHour').value}});
-  msg('cMsg', r.error || r2.error || 'saved', (r.error || r2.error) ? 'err' : 'ok'); tile();
+    weekly_day: +$('cWeekDay').value, weekly_hour: +$('cWeekHour').value, advise_day: +$('cAdvDay').value, advise_hour: +$('cAdvHour').value,
+    first_sweep: $('cFirst').checked}});
+  // a refused value (a public link base off the allowed hosts, a folder outside the drop root) is reported, not stored -
+  // the form used to say "saved" over it
+  const rej = [].concat(r.rejected || [], r2.rejected || []);
+  const bad = r.error || r2.error || (rej.length ? 'not saved: ' + rej.join('; ') : '');
+  msg('cMsg', bad || 'saved', bad ? 'err' : 'ok');
+  if (rej.length) { LOADED.settings = 0; loadConfig(); }       // show what is actually stored
+  tile();
 }
 async function n8nImport(dry) {
   $('nImp').textContent = 'reading the n8n datasets…';

@@ -265,3 +265,14 @@ def test_memory_background_jobs_stay_on_the_host():
                                       args_ok=True)
         assert ok is False and why == "host-bound"
     assert wp.placement("memory.search")[0] == "any"          # the rest of memory.* still may run on a node
+
+def test_fabric_backed_memory_caps_stay_on_the_host():
+    # 2026-10-11, dispatch stage full: memory.seek answered from node workers whose data_fabric never connected
+    # Postgres or Chroma (only the host's fabric_startup does), so every seek there had no vector and no keyword leg
+    for cap in ("memory.seek", "memory.read", "memory.map", "memory.browse", "memory.tooling", "memory.select",
+                "memory.record_turn", "memory.chroma.pool"):
+        assert wp.placement(cap)[0] == "host", cap
+        ok, why = wp.offload_decision(cap, stage=5, free={"general": 3}, is_worker=False, is_sandbox=False,
+                                      args_ok=True)
+        assert ok is False and why == "host-bound", cap
+    assert wp.placement("memory.store")[0] == "any"           # the memory module's own backends still may

@@ -71,6 +71,7 @@ try:
     from Vera.vera.intel import intel_sources_core as srcs
     from Vera.vera.intel import intel_story_core as story
     from Vera.vera.intel import intel_activity_core as act
+    from Vera.vera.intel import intel_apis_core as apis_core
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -84,6 +85,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_sources_core as srcs
     from vera.intel import intel_story_core as story
     from vera.intel import intel_activity_core as act
+    from vera.intel import intel_apis_core as apis_core
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -289,27 +291,32 @@ def _spend(key: str, seconds: float) -> None:
 _LEDGER_TASKS: set = set()
 
 
-def _to_ledger(row: Dict[str, Any]) -> None:
+def _to_ledger(row: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> None:
     """Mirror a Decision/Outcome v0 row into the shared decision ledger
     (decide.record), in the background and best effort: the local store stays
-    the record, and intel.decisions.export -> decide.ledger.import backfills."""
+    the record, and intel.decisions.export -> decide.ledger.import backfills.
+    `inputs` (what the decision saw) goes to the training store, so the
+    decision can be rated in /decide/labels (four-minds FM-13.6)."""
     if not _has("decide.record"):
         return
     try:
-        task = asyncio.get_running_loop().create_task(_call("decide.record", row=row))
+        kw = {"inputs": inputs} if inputs else {}
+        task = asyncio.get_running_loop().create_task(_call("decide.record", row=row, **kw))
     except RuntimeError:                     # no loop (a sync caller in a test)
         return
     _LEDGER_TASKS.add(task)
     task.add_done_callback(_LEDGER_TASKS.discard)
 
 
-def _decide(question_id: str, answer: Any, *, state: Any, ref_kind: str, ref_id: str, **kw) -> Optional[str]:
+def _decide(question_id: str, answer: Any, *, state: Any, ref_kind: str, ref_id: str,
+            inputs: Optional[Dict[str, Any]] = None, **kw) -> Optional[str]:
     """Record one decision in the four-minds Decision v0 shape: the local store,
-    mirrored to the shared ledger. Never raises; returns the decision id."""
+    mirrored to the shared ledger, with what it saw (`inputs`, else `state`) for
+    the training store. Never raises; returns the decision id."""
     try:
         d = ledger.make_decision(question_id, answer, state=state, state_ref={"kind": ref_kind, "id": ref_id}, **kw)
         store().put_decision(d)
-        _to_ledger(d)
+        _to_ledger(d, inputs or (state if isinstance(state, dict) else None))
         return d["decision_id"]
     except Exception as ex:  # noqa: BLE001
         log.debug("intel: decision not recorded: %s", ex)
@@ -408,6 +415,47 @@ async def cap_topic_get(id: str = "", trace_id=None):
         return {"error": f"unknown topic: {id}"}
     return {"topic": t, "snapshot": store().latest_snapshot(id), "stats": _topic_stats(t),
             "queries": core.topic_queries(t)}
+
+
+_APIS_DECLARED = {"done": False}
+
+
+def _declare_apis() -> bool:
+    """Tell the Platforms page (platform.secrets, the master key store) which credentials intelligence can use, so
+    unset ones show there as wanted. Idempotent; False while the platforms module is not loaded."""
+    try:
+        try:
+            from Vera.vera.platforms import platform_access as _pa
+        except Exception:
+            from vera.platforms import platform_access as _pa
+        ok = all(_pa.declare(CAPABILITY_REGISTRY, a["key"], "intelligence" + (f" ({a['used_by']})" if a["used_by"]
+                             else " (planned source)"), label=a["name"], why=a["gives"][:160]) for a in apis_core.APIS)
+        _APIS_DECLARED["done"] = ok
+        return ok
+    except Exception as e:  # noqa: BLE001
+        log.debug("intel: declaring api keys: %s", e)
+        return False
+
+
+@capability("intel.apis", http_method="GET", http_path="/intel/apis", http_tags=["intel"], memory="off", silent=True,
+            description="The keyed data sources intelligence can use: for each, the Platforms credential it reads "
+                        "(platform.secrets - the master key store; add keys on the Platforms page, never here), what "
+                        "it adds, where to get a key, whether one is set, and whether Vera uses it yet (used | "
+                        "planned), and its API connection on the Platforms page (template, connection). Also what it reads "
+                        "without a key and the API connections with how many fabric sources read through each. Never "
+                        "returns a key. Output: {apis:[{key, name, status, gives, used_by, get, cost, set, ref, "
+                        "template, connection}], keyless, keyless_templates, connections:[{id, label, base_url, "
+                        "configured, enabled, sources}], json_api_hint, missing_used}.")
+async def cap_apis(trace_id=None):
+    _declare_apis()
+    rows = (await _call("platform.secrets.list")).get("secrets") or []
+    tpls = (await _call("platform.connection.templates")).get("templates") or []
+    plats = (await _call("platform.list")).get("platforms") or []
+    uses = (await _call("fabric.sources.connections")).get("connections") or {}
+    conns = [{"id": p["id"], "label": p.get("label", p["id"]), "base_url": (p.get("fields") or {}).get("base_url", ""),
+              "configured": bool(p.get("configured")), "enabled": p.get("enabled", True) is not False,
+              "sources": len(uses.get(p["id"]) or [])} for p in plats if p.get("kind") == "api"]
+    return apis_core.view(rows, tpls, conns)
 
 
 @capability("intel.lookup", http_method="GET", http_path="/intel/lookup", http_tags=["intel"],
@@ -830,13 +878,14 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
         else:
             rel_ans = "relevant" if (c.get("score") or 0) >= float(t.get("min_score", 5)) else "not_relevant"
         _decide("intel.signal_relevant", rel_ans, state=ledger.signal_state(c, t["id"]), ref_kind="signal",
-                ref_id=c["id"], decider="calibrated" if learned else "rule", mode="learned" if learned else "rule",
+                ref_id=c["id"], inputs=ledger.signal_inputs(c, t), decider="calibrated" if learned else "rule", mode="learned" if learned else "rule",
                 p=ps if (curve and curve.get("usable")) else None,
                 detail={"score": c.get("score"), "rerank": rel.get(i), "novelty": c.get("novelty"),
                         "threshold": float(t.get("min_score", 5)), "p_shadow": ps})
         if c.get("genre") or c.get("genre_p") is not None:
             _decide("intel.page_genre", c.get("genre") or "unsure", state=ledger.signal_state(c, t["id"]),
-                    ref_kind="signal", ref_id=c["id"], decider="student", mode="rule",
+                    ref_kind="signal", ref_id=c["id"], inputs=ledger.signal_inputs(c, t), decider="student",
+                    mode="rule",
                     detail={"score": c.get("genre_p")})
     stats["nlp"] = bool(vecs or rel)
     return out
@@ -1164,7 +1213,7 @@ async def enrich_topic(t: Dict[str, Any], *, limit: int = 0, should_continue=Non
         low_genre = s2.get("genre") in ops.LOW_GENRES and not (s2.get("genre") == "marketing" and t.get("vendors"))
         to_model = not ((s2.get("score") or 0) < gate or llm_done >= n or low_genre)
         _decide("intel.enrich_worth", "model" if to_model else "nlp_only", state=ledger.signal_state(s2, t["id"]),
-                ref_kind="signal", ref_id=s2["id"], decider="rule", mode="rule",
+                ref_kind="signal", ref_id=s2["id"], inputs=ledger.signal_inputs(s2, t), decider="rule", mode="rule",
                 detail={"score": s2.get("score"), "gate": gate, "budget_left": n - llm_done, "low_genre": low_genre})
         if not to_model:
             text = str(page.get("markdown") or s.get("snippet") or "")
@@ -1484,7 +1533,8 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
             new.append(c)
     fresh = {i["id"]: i for i in _indicators(t["id"])}          # an add/remove while we read wins
     _save_indicators(t["id"], [dict(fresh[i["id"]], **{k: i.get(k) for k in ("status", "last", "last_t", "bars", "checked",
-                                                                              "chg7", "chg30", "resolved")
+                                                                              "chg7", "chg30", "resolved",
+                                                                              "fabric_source", "fabric_dataset")
                                                         if k in i}) for i in inds if i["id"] in fresh])
     if new:
         st.set_kv("ind_changes", ((st.get_kv("ind_changes", []) or []) + new)[-400:])
@@ -1500,9 +1550,11 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
             schema=enum_schema(kind=list(srcs.KINDS)),
             description="Have a topic read a source besides web search, through the data fabric's sources system "
                         "(the fabric pulls it on its schedule; each sweep triages what is new). Input: topic_id (str!), "
-                        "kind (feed|arxiv|youtube|github_releases|usgs|api), value (str! - a site/page/feed URL; an "
+                        "kind (feed|arxiv|youtube|github_releases|usgs|api|telegram|connection), value (str! - a site/page/feed URL; an "
                         "arXiv category like cs.AI; a YouTube channel URL, id or @handle; owner/repo; a USGS magnitude "
-                        "significant|4.5|2.5|1.0|all; a JSON API URL), label, interval_h (hours between pulls), "
+                        "significant|4.5|2.5|1.0|all; a JSON API URL; for kind=connection a Platforms API connection id and "
+                        "a path, e.g. 'guardian /search?q=house+prices' - its key stays in the credential store), "
+                        "label, interval_h (hours between pulls), "
                         "bbox (min_lon,min_lat,max_lon,max_lat - only items inside, for geo sources), mapping (JSON "
                         "field mapping for kind=api: item_path, title_field, url_field, time_field, text_fields, "
                         "geo_field). Output: {ok, source, pulled}.")
@@ -1530,7 +1582,7 @@ async def cap_source_add(topic_id: str = "", kind: str = "feed", value: str = ""
         name = srcs.srcmap.feed_label(feeds[0].get("title", ""), str(d.get("site") or ""))
         if name and not label:                      # the site's name, not a feed link's "Atom"
             plan["label"] = f"{srcs.KINDS[kind]['label']}: {name}"[:80]
-    if kind == "api" and mapping:
+    if kind in ("api", "connection") and mapping:
         try:
             plan["config"] = mapping if isinstance(mapping, dict) else json.loads(str(mapping))
         except ValueError:
@@ -1540,10 +1592,13 @@ async def cap_source_add(topic_id: str = "", kind: str = "feed", value: str = ""
     args = {k: plan[k] for k in ("id", "url", "source_type", "label", "dataset_id", "interval", "tags")}
     if plan.get("config"):
         args["config"] = json.dumps(plan["config"])
+    if plan.get("connection"):                   # the fabric fills the URL from the connection, without its key
+        args.update(connection=plan["connection"], path=plan.get("path", ""))
     r = await _call("fabric.sources.add", **args)
     if r.get("error"):
         return {"error": f"fabric: {r['error']}"}
     plan["dataset_id"] = r.get("dataset_id") or plan["dataset_id"]
+    plan["url"] = plan.get("url") or r.get("url", "")
     sub = srcs.subscription(plan, kind, value, bbox=box, now_iso=core.now_iso())
     subs = [s for s in (t.get("sources") or []) if s.get("id") != sub["id"]] + [sub]
     st.patch_topic(t["id"], {"sources": subs})
@@ -1718,18 +1773,74 @@ async def _http_json(url: str, params: Optional[Dict[str, Any]] = None, timeout:
         return r.json()
 
 
+# the keyless APIs intelligence reads, as Platforms connections (data-connections plan, phase 2): made on the
+# first tick so the owner sees them, can rate-limit or switch one off, and the reads show up there
+INTEL_CONNECTIONS = ("polymarket", "polymarket_clob", "manifold", "wikidata", "nominatim", "wikimedia",
+                     "fred", "blockchain_info")          # the last two: markets' macro series, which indicators watch
+_CONNS_ENSURED = {"done": False}
+
+
+async def _ensure_connections() -> bool:
+    """Add the connections intel reads that are not on the Platforms page yet (idempotent)."""
+    have = {t.get("id"): t.get("added") for t in (await _call("platform.connection.templates")).get("templates") or []}
+    if not have:
+        return False
+    for tid in INTEL_CONNECTIONS:
+        if tid in have and not have[tid]:
+            r = await _call("platform.connection.add", template=tid)
+            if r.get("error"):
+                log.debug("intel: connection %s: %s", tid, r["error"])
+    _CONNS_ENSURED["done"] = True
+    return True
+
+
+def _pa():
+    try:
+        from Vera.vera.platforms import platform_access as _p
+    except Exception:
+        from vera.platforms import platform_access as _p
+    return _p
+
+
+async def _api(conn: str, base: str, path: str, params: Optional[Dict[str, Any]] = None, *,
+               headers: Optional[Dict[str, str]] = None, timeout: float = 20.0) -> Any:
+    """A keyless JSON read through the Platforms connection `conn` (its rate limit, its switch, its visibility);
+    the same read straight to `base` while there is no such connection (older setups, a sandbox)."""
+    try:
+        got = await _pa().connection_get(CAPABILITY_REGISTRY, conn, path, params, timeout=timeout,
+                                         accept="application/json")
+    except Exception as ex:  # noqa: BLE001
+        got = {"error": f"no connection ({ex})"}
+    err = str(got.get("error") or "")
+    if err and ("no connection" in err or "not loaded" in err or "no API connection" in err):
+        try:
+            from Vera.vera.platforms.connections_core import expand_path
+        except ImportError:
+            from vera.platforms.connections_core import expand_path
+        from urllib.parse import parse_qsl
+        kw = {"headers": headers} if headers else {}
+        pth, _, qs = expand_path(path).partition("?")          # a query in the path rides as params, as it always did
+        merged = dict(parse_qsl(qs, keep_blank_values=True), **(params or {})) if qs else params
+        return await _http_json(base.rstrip("/") + pth, merged, timeout=timeout, **kw)
+    if err:
+        raise RuntimeError(f"{conn}: {err}")
+    r = got["response"]
+    r.raise_for_status()
+    return r.json()
+
+
 async def pm_search(query: str, limit: int = 8) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Open markets on Polymarket and Manifold for a question, best match first
     (the NLP tier's reranker over the market questions; by volume without it)."""
     cands: List[Dict[str, Any]] = []
     errors: List[str] = []
     try:
-        cands += pm.polymarket_search(await _http_json(f"{pm.GAMMA}/public-search", {
+        cands += pm.polymarket_search(await _api("polymarket", pm.GAMMA, "/public-search", {
             "q": query, "limit_per_type": 6, "events_status": "active"}), 20)
     except Exception as ex:  # noqa: BLE001
         errors.append(f"polymarket: {type(ex).__name__}: {ex}"[:200])
     try:
-        cands += pm.manifold_search(await _http_json(f"{pm.MANIFOLD}/search-markets", {"term": query, "limit": 10}), 10)
+        cands += pm.manifold_search(await _api("manifold", pm.MANIFOLD, "/search-markets", {"term": query, "limit": 10}), 10)
     except Exception as ex:  # noqa: BLE001
         errors.append(f"manifold: {type(ex).__name__}: {ex}"[:200])
     if cands:
@@ -1747,9 +1858,9 @@ async def _market_resolution(m: Dict[str, Any]) -> Optional[str]:
     """'yes'/'no' when a watched market has resolved (one small read per check)."""
     try:
         if m.get("source") == "polymarket":
-            return pm.resolution("polymarket", await _http_json(f"{pm.GAMMA}/markets/{m.get('id')}"))
+            return pm.resolution("polymarket", await _api("polymarket", pm.GAMMA, f"/markets/{m.get('id')}"))
         if m.get("source") == "manifold":
-            return pm.resolution("manifold", await _http_json(f"{pm.MANIFOLD}/market/{m.get('id')}"))
+            return pm.resolution("manifold", await _api("manifold", pm.MANIFOLD, f"/market/{m.get('id')}"))
     except Exception as ex:  # noqa: BLE001
         log.debug("intel: market state unavailable: %s", ex)
     return None
@@ -1772,47 +1883,102 @@ def _record_resolution(t: Dict[str, Any], ind: Dict[str, Any], answer: str, chg7
 
 async def _pm_market(source: str, market_id: str) -> Optional[Dict[str, Any]]:
     if source == "polymarket":
-        return pm.polymarket_market(await _http_json(f"{pm.GAMMA}/markets/{market_id}"))
+        return pm.polymarket_market(await _api("polymarket", pm.GAMMA, f"/markets/{market_id}"))
     if source == "manifold":
-        return pm.manifold_market(await _http_json(f"{pm.MANIFOLD}/market/{market_id}"))
+        return pm.manifold_market(await _api("manifold", pm.MANIFOLD, f"/market/{market_id}"))
     return None
 
 
-async def _series(ind: Dict[str, Any]) -> Tuple[List[float], List[float], str]:
-    """An indicator's (times, values) oldest first, or an error: a market's price
-    history straight from its source (hourly), or stored bars from the markets
-    subsystem (daily), or a Wikipedia article's daily views (attention)."""
+def _ind_feed(ind: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Where an indicator's series is read: {conn, base, path, kind} for a Wikipedia article's views or a
+    prediction market's history; None for stored bars (the markets subsystem keeps those)."""
     ds = str(ind.get("dataset_id") or "")
     if ds.startswith("wiki:"):
         _, lang, title = ds.split(":", 2)
         from urllib.parse import quote
-        end = datetime.now(timezone.utc)
-        start = end - timedelta(days=120)
-        url = (f"https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/{lang}.wikipedia/all-access/user/"
-               f"{quote(title, safe='')}/daily/{start:%Y%m%d}/{end:%Y%m%d}")
+        return {"conn": "wikimedia", "base": "https://wikimedia.org/api/rest_v1", "kind": "wiki",
+                "path": (f"/metrics/pageviews/per-article/{lang}.wikipedia/all-access/user/{quote(title, safe='')}"
+                         "/daily/{days_ago:120:%Y%m%d}/{today:%Y%m%d}")}
+    m = ind.get("market") or {}
+    if m.get("source") == "polymarket" and m.get("token"):
+        return {"conn": "polymarket_clob", "base": pm.CLOB, "kind": "polymarket",
+                "path": f"/prices-history?market={m.get('token')}&interval=1m&fidelity=60"}
+    if m.get("source") == "manifold" and m.get("id"):
+        return {"conn": "manifold", "base": pm.MANIFOLD, "kind": "manifold",
+                "path": f"/bets?contractId={m.get('id')}&limit=1000"}
+    return None
+
+
+IND_FEED_INTERVAL_S = 6 * 3600          # the fabric pulls an indicator's series this often
+
+
+def _ind_ids(feed: Dict[str, str]) -> Tuple[str, str]:
+    """The fabric source id and dataset for an indicator's series - deterministic, so topics watching the same
+    market or article share one source."""
+    sid = srcs.source_id("connection", f"{feed['conn']} {feed['path']}")
+    return sid, f"intel_ind_{sid[10:]}"
+
+
+async def _ind_register(ind: Dict[str, Any], feed: Dict[str, str]) -> bool:
+    """Register the fabric source that pulls this indicator's series through its connection - one record, replaced
+    each pull - so the data is in the fabric like every other source."""
+    sid, ds = _ind_ids(feed)
+    r = await _call("fabric.sources.add", id=sid, connection=feed["conn"], path=feed["path"], source_type="api",
+                    label=f"Indicator: {ind.get('label') or ind.get('id')}"[:80], dataset_id=ds,
+                    interval=IND_FEED_INTERVAL_S, tags="intel,indicator", config=json.dumps({"whole": True}))
+    if r.get("error"):
+        log.debug("intel: indicator source %s: %s", ind.get("id"), r["error"])
+        return False
+    ind["fabric_source"], ind["fabric_dataset"] = sid, ds
+    return True
+
+
+async def _ind_doc(ind: Dict[str, Any], feed: Dict[str, str]) -> Any:
+    """The indicator's latest series document: the fabric's copy when it is fresh; else read live (registering
+    the fabric source first if its dataset is empty - registering again would reset its pull state)."""
+    sid, ds = _ind_ids(feed)
+    b = await _call("fabric.browse", dataset_id=ds, limit=1)
+    rec = (b.get("records") or [None])[0]
+    if rec:
+        ind["fabric_source"], ind["fabric_dataset"] = sid, ds
+        at = core.parse_ts(rec.get("created_at"))
+        if at and at > datetime.now(timezone.utc) - timedelta(seconds=1.5 * IND_FEED_INTERVAL_S):
+            data = rec.get("data")
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except ValueError:
+                    data = None
+            if isinstance(data, dict):
+                return data.get("items") if set(data) == {"items"} else data
+    elif not b.get("error"):
+        await _ind_register(ind, feed)
+    return await _api(feed["conn"], feed["base"], feed["path"],
+                      headers={"User-Agent": rsv.USER_AGENT} if feed["kind"] == "wiki" else None)
+
+
+async def _series(ind: Dict[str, Any]) -> Tuple[List[float], List[float], str]:
+    """An indicator's (times, values) oldest first, or an error: a market's price
+    history (hourly) or a Wikipedia article's daily views (attention) - from the fabric source
+    that pulls it through its connection, live when that copy is missing or stale - or stored
+    bars from the markets subsystem (daily)."""
+    feed = _ind_feed(ind)
+    if feed:
         try:
-            items = (await _http_json(url, headers={"User-Agent": rsv.USER_AGENT})).get("items") or []
+            doc = await _ind_doc(ind, feed)
         except Exception as ex:  # noqa: BLE001
             return [], [], f"{type(ex).__name__}: {ex}"[:200]
-        pts = []
-        for it in items:
-            try:
-                d = datetime.strptime(str(it["timestamp"])[:8], "%Y%m%d").replace(tzinfo=timezone.utc)
-                pts.append((d.timestamp(), float(it.get("views") or 0)))
-            except (KeyError, ValueError):
-                continue
-        pts.sort()
-        return [p[0] for p in pts], [p[1] for p in pts], ""
-    m = ind.get("market")
-    if m:
-        try:
-            if m.get("source") == "polymarket":
-                pts = pm.polymarket_series(await _http_json(f"{pm.CLOB}/prices-history", {
-                    "market": m.get("token"), "interval": "1m", "fidelity": 60}))
-            else:
-                pts = pm.manifold_series(await _http_json(f"{pm.MANIFOLD}/bets", {"contractId": m.get("id"), "limit": 1000}))
-        except Exception as ex:  # noqa: BLE001
-            return [], [], f"{type(ex).__name__}: {ex}"[:200]
+        if feed["kind"] == "wiki":
+            pts = []
+            for it in (doc or {}).get("items") or []:
+                try:
+                    d = datetime.strptime(str(it["timestamp"])[:8], "%Y%m%d").replace(tzinfo=timezone.utc)
+                    pts.append((d.timestamp(), float(it.get("views") or 0)))
+                except (KeyError, ValueError):
+                    continue
+            pts.sort()
+            return [p[0] for p in pts], [p[1] for p in pts], ""
+        pts = pm.polymarket_series(doc) if feed["kind"] == "polymarket" else pm.manifold_series(doc)
         ts, vals = pm.resample(pts, 3600.0, until=time.time())
         return ts, vals, ""
     r = await _call("markets.bars", dataset_id=ind["dataset_id"], limit=50000)
@@ -2002,7 +2168,8 @@ async def geo_lookup(name: str, cc: str = "") -> Optional[Dict[str, Any]]:
             params = {"q": name, "format": "jsonv2", "limit": 1, "addressdetails": 1, "accept-language": "en"}
             if cc:
                 params["countrycodes"] = cc
-            res = geo.parse(await _http_json(geo.NOMINATIM, params, headers={"User-Agent": geo.USER_AGENT}), name)
+            res = geo.parse(await _api("nominatim", geo.NOMINATIM.rsplit("/", 1)[0], "/search", params,
+                                       headers={"User-Agent": geo.USER_AGENT}), name)
         except Exception as ex:  # noqa: BLE001
             log.debug("intel: geocode failed for %s: %s", name, ex)
             return None
@@ -2029,7 +2196,8 @@ async def _wd(params: Dict[str, Any]) -> Dict[str, Any]:
         if wait > 0:
             await asyncio.sleep(wait)
         try:
-            return await _http_json(rsv.API, dict(params, format="json"), headers={"User-Agent": rsv.USER_AGENT})
+            return await _api("wikidata", rsv.API.rsplit("/w/", 1)[0], "/w/api.php", dict(params, format="json"),
+                              headers={"User-Agent": rsv.USER_AGENT})
         except Exception as ex:  # noqa: BLE001
             raise _Throttled(str(ex)[:160]) from ex
         finally:
@@ -3281,6 +3449,13 @@ async def _tick() -> None:
     brief (never generate it). Monday: the week in review. Sunday: the advisor.
     Any time: due topics as idle-queue units within the daily budget, and an open
     session's planned work. Nothing here runs a model - the queue does, when quiet."""
+    if not _APIS_DECLARED["done"]:
+        _declare_apis()                       # once the platforms module is loaded: unset keys show there as wanted
+    if not _CONNS_ENSURED["done"]:
+        try:
+            await _ensure_connections()           # intel's keyless APIs as Platforms connections
+        except Exception as e:  # noqa: BLE001
+            log.debug("intel: ensuring connections: %s", e)
     c = config()
     if not c.get("enabled"):
         return
@@ -4073,6 +4248,40 @@ async def cap_decisions_export(since: str = "", limit: int = 5000, trace_id=None
             "schema": {"decision": ledger.DECISION_SCHEMA, "outcome": ledger.OUTCOME_SCHEMA}}
 
 
+@capability("intel.decisions.backfill_inputs", http_method="POST", http_path="/intel/decisions/backfill_inputs",
+            http_tags=["intel"], memory="off",
+            description="Give past signal decisions (signal_relevant, page_genre, enrich_worth) what they saw in the "
+                        "training store, rebuilt from the stored signal and its topic, so they can be rated in "
+                        "/decide/labels (four-minds FM-13.6). The signal as it is now, not as it was: a later "
+                        "enrichment may have added a summary. Input: days (default 30), dry_run (default true). "
+                        "Output: {decisions, rebuilt, written, missing_signal}.")
+async def cap_decisions_backfill_inputs(days: int = 30, dry_run: bool = True, trace_id=None):
+    if isinstance(dry_run, str):
+        dry_run = dry_run.strip().lower() not in ("0", "false", "no")
+    ts = sys.modules.get("training_state") or sys.modules.get("Vera.vera.minds.training_state")
+    if ts is None and not dry_run:
+        return {"ok": False, "error": "training store not loaded"}
+    st = store()
+    since = _since(24 * max(1, min(90, int(days))))
+    out = {"ok": True, "dry_run": dry_run, "decisions": 0, "rebuilt": 0, "written": 0, "missing_signal": 0}
+    topics: Dict[str, Dict[str, Any]] = {}
+    for q in ledger.SIGNAL_QUESTIONS:
+        for d in st.decisions(question_id=q, since=since, limit=20000, with_outcomes=False):
+            out["decisions"] += 1
+            sig = st.get_signal(str((d.get("state_ref") or {}).get("id") or ""))
+            if not sig:
+                out["missing_signal"] += 1
+                continue
+            tid = str(sig.get("topic_id") or "")
+            if tid not in topics:
+                topics[tid] = st.get_topic(tid) or {"id": tid}
+            inputs = ledger.signal_inputs(sig, topics[tid])
+            out["rebuilt"] += 1
+            if not dry_run and await ts.put_now(d, inputs):
+                out["written"] += 1
+    return out
+
+
 # ── UI ───────────────────────────────────────────────────────────────────────
 
 @capability("intel.panel.html", http_method="GET", http_path="/intel/panel", http_tags=["intel"],
@@ -4096,6 +4305,7 @@ register_ui(
          'style="flex:1;border:none;width:100%;height:100%"></iframe></div>',
     ui_caps=["intel.topic.list", "intel.topic.save", "intel.signal.list", "intel.timeline.get",
              "intel.report.build", "intel.report.list", "intel.deliver", "intel.refresh", "intel.command",
-             "intel.save", "intel.session.status", "intel.notes.list", "intel.advise"],
+             "intel.save", "intel.session.status", "intel.notes.list", "intel.advise", "intel.apis",
+             "platform.connection.add", "platform.list"],
     mode="tab", tab_order=58,
 )

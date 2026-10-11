@@ -99,6 +99,17 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "memory.seek's result cache: the same seek (query, scope, since, k, size, memory merge) within 10 minutes "
        "and the same fabric generation - a counter every fabric ingest bumps - answers from Redis. 'off' (default) "
        "= every seek searches; 'on' = cached answers carry cached=true; session-memory hits can lag by up to 10 min."),
+    _f("plan.goal_frame", ("off", "on"), "loop", "FM-1.3",
+       "Goal constraints (compute-roles B2): dates, versions and numeric limits in the goal text "
+       "(\"since March 2024\", \"Python 3.12\", \"under 500 words\", \"top 5\") become done_when items "
+       "and the final gate's must-cover list; the run records which ones its answer met. 'off' "
+       "(default) = none; 'on' = added when the goal has any. Measured on dated goals (info-eval), not "
+       "the census templates, which carry none."),
+    _f("plan.tier_lower", ("off", "on"), "loop", "FM-4.3",
+       "Tier lowering: the deterministic tier floor no longer calls a goal 'complex' only because it "
+       "has three or more conjunctions (no complex hint, under 60 words) - it falls to the length rules "
+       "(simple under 40 words). The LLM pre-pass can still raise it. 'off' (default) = the old floor; "
+       "'on' = lowered. Measured 11 Oct: 73% of complex-tier census runs executed <= 2 steps."),
     _f("memory.rerank", ("off", "on"), "memory", "FM-7.3",
        "memory.seek's head reranked by the cross-encoder: the top 30 fused candidates re-read in one nlp.rerank call "
        "on a node (bounded at 1.5 s), their order decided by it, still above the rest. 'off' (default) = fused order; "
@@ -113,6 +124,21 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "message, started when the turn arrives and never awaited before the model - a 'sense / frame' phase records "
        "its domain and when it landed, so the turn record shows how often it is ready before the first token. "
        "'off' (default) = no frame; 'on' = framed. Exit: TTFT p95 unchanged (it waits for nothing)."),
+    _f("tools.shortlist.chat", ("legacy", "shadow"), "chat", "FM-3.3",
+       "Which tools a chat turn is offered. 'legacy' (default) = the page's own word scoring only; 'shadow' = also "
+       "caps.shortlist on the user's words, started with the turn and never awaited, recorded after the reply beside "
+       "the page's list and what the reply used (caps.shortlist.chat_report: recall@16/24/28). 'on' (the server's "
+       "list offered to the model) comes after the shadow shows a gain and needs the page to take it."),
+    _f("memory.text_index", ("like", "fts"), "memory", "FM-7.1",
+       "memory.seek's keyword leg. 'like' (default) = text ILIKE per word over fabric_records (a sequential scan that "
+       "keeps the first rows matching any word, p95 2.2 s on prod 11 Oct); 'fts' = a GIN full-text index "
+       "(fabric_records_fts, built once in the background): records with every word ranked first, then any-word "
+       "records; falls back to 'like' while the index is missing."),
+    _f("memory.seek_exclude_self", ("off", "on"), "memory", "FM-7.1",
+       "Whether an unscoped memory.seek leaves Vera's own telemetry out (chat.messages, ide.*, caps.*, bus.*, ts.*, "
+       "streams.*, mesh.*, dream.reports - the worldview corpus' SELF_TELEMETRY list). 'off' (default) = searched like "
+       "any data; 'on' = left out unless the caller scopes to one of them. Found 11 Oct: a CVE-id seek put chat logs "
+       "and IDE sessions first."),
     _f("plan.precedent", ("off", "on"), "loop", "FM-4.2",
        "Precedent for the planner: up to 2 past runs of similar goals that went well, and 1 warning from one that "
        "did not (plan.precedent, searched on an NLP node), added to what the planner reads as reference with the "

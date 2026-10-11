@@ -27,7 +27,7 @@ PANEL = os.path.join(ROOT, "vera", "workers", "workers_ollama_panel.html")
 SECRETS_SRC = os.path.join(ROOT, "vera", "security", "secrets_capabilities.py")
 SECRETS_PANEL = os.path.join(ROOT, "vera", "security", "secrets_panel.html")
 WANTED = {"_hgetall", "_hset", "_no_store", "_secret_path", "_secrets_plain",
-          "cap_secrets_list", "cap_secrets_set", "cap_secrets_delete"}
+          "cap_secrets_list", "cap_secrets_set", "cap_secrets_delete", "_store_secret"}
 
 
 class FakeRedis:
@@ -71,6 +71,7 @@ class World:
         self.ns = {"json": json, "Any": Any, "Dict": Dict, "List": List, "Optional": Optional, "pc": pc,
                    "KEY_VALUES": "vera:platform:values", "KEY_SECRETS": "vera:platform:secrets",
                    "KEY_TARGETS": "vera:platform:targets", "_redis": lambda: world.redis,
+                   "_CONSUMERS": {}, "_PLAIN": {},          # modules that declare they read a credential (none in these tests)
                    "_secrets_service": lambda: svc, "now_iso": lambda: "2026-09-13T16:00:00Z",
                    "log": types.SimpleNamespace(warning=lambda *a, **k: None),
                    "vsecrets": types.SimpleNamespace(seal=lambda v: "fernet:" + v,

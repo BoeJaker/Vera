@@ -105,6 +105,33 @@ def _redis():
     return getattr(_orch, "REDIS", None)
 
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+def _reg():
+    import Vera.vera.capability_orchestration as _c
+    return _c.CAPABILITY_REGISTRY
+
+
+async def _adopt(dry_run: bool):
+    """Move account credentials still sealed here into the Platforms store (platform.secrets.adopt)."""
+    return await _pa().adopt_json_hash(_reg(), _redis(), KEY_ACCOUNTS, list(_SECRET_FIELDS), "account", dry_run,
+                                       "Account")
+
+
+_pa().register_adopter("accounts", _adopt)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STORE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,8 +154,13 @@ def _open_secrets(acct: Dict) -> Dict:
     """Return a copy with secret fields decrypted (for internal use)."""
     out = dict(acct)
     for f in _SECRET_FIELDS:
-        out[f] = vsecrets.open_secret(acct.get(f, ""))
+        out[f] = _pa().open_any_sync(_reg(), acct.get(f, ""))
     return out
+
+
+async def _opened(acct: Dict) -> Dict:
+    await _pa().prime(_reg(), *(acct.get(f) for f in _SECRET_FIELDS))
+    return _open_secrets(acct)
 
 
 def _redact(acct: Dict) -> Dict:
@@ -155,7 +187,7 @@ async def get_account(account_id: str) -> Optional[Dict]:
     if not raw:
         return None
     try:
-        return _open_secrets(json.loads(raw))
+        return await _opened(json.loads(raw))
     except Exception:
         return None
 
@@ -163,14 +195,14 @@ async def get_account(account_id: str) -> Optional[Dict]:
 async def list_accounts(opened: bool = False) -> List[Dict]:
     """All accounts. opened=True decrypts secrets (internal); else redacted."""
     accts = await _all_raw()
-    return [_open_secrets(a) if opened else _redact(a) for a in accts]
+    return [(await _opened(a)) if opened else _redact(a) for a in accts]
 
 
 async def default_mail_account() -> Optional[Dict]:
     """First mail-enabled account with an app-password (secrets opened)."""
     for a in await _all_raw():
         if a.get("mail_enabled") and a.get("app_password"):
-            return _open_secrets(a)
+            return await _opened(a)
     return None
 
 
@@ -200,14 +232,10 @@ async def upsert_account(fields: Dict[str, Any]) -> Dict[str, Any]:
     if not acct.get("label"):
         acct["label"] = acct.get("email") or "Account"
     try:
-        if fields.get("app_password"):
-            acct["app_password"] = vsecrets.seal(fields["app_password"])
-        if fields.get("caldav_password"):
-            acct["caldav_password"] = vsecrets.seal(fields["caldav_password"])
-        if fields.get("oauth_client_secret"):
-            acct["oauth_client_secret"] = vsecrets.seal(fields["oauth_client_secret"])
-        if fields.get("oauth_refresh_token"):
-            acct["oauth_refresh_token"] = vsecrets.seal(fields["oauth_refresh_token"])
+        for f in ("app_password", "caldav_password", "oauth_client_secret", "oauth_refresh_token"):
+            if fields.get(f):
+                acct[f] = await _pa().keep(_reg(), _pa().key_for("account", acct["id"], f), fields[f],
+                                           f"Account {acct.get('label') or acct['id']} {f.replace('_', ' ')}")
     except RuntimeError as e:
         return {"error": str(e)}
     acct["updated"] = now_iso()

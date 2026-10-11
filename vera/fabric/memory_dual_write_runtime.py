@@ -11,7 +11,6 @@ import asyncio
 import hashlib
 import math
 import os
-from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
 from .memory_dual_write_canary import (
@@ -20,6 +19,10 @@ from .memory_dual_write_canary import (
 )
 from .memory_dual_write_store import MemoryDualWriteReceiptStore
 from .record_revision import create_record_revision
+from .revision_state_paths import (
+    default_memory_dual_write_receipt_path,
+    default_memory_revision_path,
+)
 from .revision_path import RevisionPath
 from .revision_policy import RevisionPolicy
 from .revision_store import RevisionStore
@@ -35,14 +38,6 @@ POLICY_ENV = "FABRIC_REVISION_POLICY"
 def memory_revision_canary_enabled(environ: Mapping[str, str] | None = None) -> bool:
     source = os.environ if environ is None else environ
     return str(source.get(CANARY_ENV, "0")).strip() == "1"
-
-
-def _default_revision_path() -> str:
-    return str(Path(__file__).with_name("vera_fabric_revisions.db"))
-
-
-def _default_receipt_path() -> str:
-    return str(Path(__file__).with_name("memory_dual_write_receipts.db"))
 
 
 def _bounded_text(value: Any, limit: int) -> str:
@@ -128,11 +123,11 @@ async def store_public_memory_with_revision_canary(
         native_hash = native_memory_content_hash(snapshot)
     policy = RevisionPolicy.from_json(str(env.get(POLICY_ENV, "")))
     path = RevisionPath(
-        RevisionStore(str(env.get(REVISION_PATH_ENV) or _default_revision_path())),
+        RevisionStore(str(env.get(REVISION_PATH_ENV) or default_memory_revision_path())),
         policy.allows,
     )
     receipt_sink = MemoryDualWriteReceiptStore(
-        str(env.get(RECEIPT_PATH_ENV) or _default_receipt_path()))
+        str(env.get(RECEIPT_PATH_ENV) or default_memory_dual_write_receipt_path()))
 
     async def revision_write(value):
         return await asyncio.to_thread(
