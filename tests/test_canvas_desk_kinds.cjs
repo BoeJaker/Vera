@@ -52,6 +52,21 @@ t('an image fills its card, whole', src.includes('.vc-fig > img{flex:1 1 0;min-h
 t('a diagram no longer being written is drawn whole (render), so a broken one shows its error', src.includes("if (!streaming && typeof inner.render === 'function') { try { inner.render(code); } catch (e) {} return; }"));
 t('a mermaid fence lands once, not as a code item and a diagram both', chat.includes("const sig=m.kind==='diagram'?'d:'"));
 
+/* round 2: titles from what an item holds, a command that ran, the timeline's ticks, the header's score, widget tables */
+const btSrc = src.slice(src.indexOf('function blockTitle(b)'), src.indexOf('const EDITABLE'));
+const textFieldOf = () => 'text'; const blockTitle = new Function('textFieldOf', btSrc + '; return blockTitle;')(textFieldOf);
+t('code is named by its language and first definition, not its key', blockTitle({ key: 'turn:m7:code:0', type: 'code', content: { lang: 'python', code: 'import os\n\ndef scan(net):\n  pass\n' } }) === 'python · scan');
+t('a table by its first columns and rows', blockTitle({ key: 'turn:m9:table:0', type: 'table', content: { columns: ['Model', 'Strengths', 'Best For', 'x'], rows: [[1], [2]] } }) === 'Model · Strengths · Best For — 2 rows');
+t('a terminal by its command, html by its first heading', blockTitle({ key: 'k:t', type: 'session', content: { command: 'nvidia-smi  -q' } }) === '$ nvidia-smi -q'
+  && blockTitle({ key: 'k:h', type: 'html', content: { html: '<div><h2>Benchmark <b>summary</b></h2></div>' } }) === 'Benchmark summary');
+const ran = B.session({ command: 'nvidia-smi', output: 'Tesla V100', host: 'gpu-250' }, 'm', 'k', {});
+t('a command that ran shows what ran, where, and its output - not a connect form', /vc-ran-cmd/.test(ran) && /\$<\/span><code>nvidia-smi/.test(ran) && /Tesla V100/.test(ran) && !/vc-tconnect/.test(ran));
+const tl = B.timeline({ events: [{ when: '2024-04', label: 'a' }, { when: '2025-01', label: 'b' }, { when: '2026-10', label: 'c' }] });
+t('a timeline\'s first year tick stays on the axis', !/left:-/.test(tl));
+t('the desk header does not show a bare relevance number', src.includes('.stage .it > .it-hd > .sc{display:none}'));
+const wsrc = fs.readFileSync(path.join(__dirname, '..', 'vera', 'widgets', 'widget_element.js'), 'utf8');
+t('widget table rows share their column tracks (no auto: each row is its own grid)', wsrc.includes("return i ? (nm ? 'minmax(44px,.6fr)' : 'minmax(56px,1fr)') : 'minmax(0,1.4fr)'") && !wsrc.includes("'minmax(40px,auto)'"));
+
 const D = require(path.join(__dirname, '..', 'vera', 'ui', 'desk_layout_core.js'));
 const g = [{ id: 'n', x: 300, y: 200, w: 300, h: 100, maxH: 120 }];
 D.grow(g, { l: -440, t: 0, r: 0, b: 900 }, { W: 1200, H: 900 }, {});
