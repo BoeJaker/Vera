@@ -1453,6 +1453,17 @@ class FabricChromaStore:
         self._client = None
         self._col    = None
         self._count_cache: Tuple[float, int] = (0.0, 0)
+        # errors were logged at debug only: a dead client made every memory.seek semantic leg silently empty and
+        # every vector write silently dropped (11 Oct 2026) - now counted, warned (throttled) and, for a dead client,
+        # reconnected
+        self.errors: Dict[str, int] = {}
+        self._throttle = _chroma_bound.Throttle(300.0)
+
+    def _failed(self, op: str, e: BaseException) -> None:
+        self.errors[op] = self.errors.get(op, 0) + 1
+        if self._throttle.due(op):
+            log.warning("FabricChroma %s failed (%d so far): %s: %s", op, self.errors[op], type(e).__name__,
+                        str(e)[:300])
 
     def _cached_count(self) -> int:
         """Collection count with a short TTL — search() needed it on every call
@@ -1510,7 +1521,7 @@ class FabricChromaStore:
                              metadatas=[meta], embeddings=[record.embedding])
             return True
         except Exception as e:
-            log.debug("FabricChroma upsert: %s", e); return False
+            self._failed("upsert", e); return False
 
     def search(self, embedding: List[float], dataset_id: Optional[str] = None,
                top_k: int = 10, filters: Optional[Dict] = None) -> List[Tuple[str, float]]:
@@ -1524,11 +1535,21 @@ class FabricChromaStore:
                             "query_embeddings": [embedding]}
             if where:
                 kwargs["where"] = where
-            res = self._col.query(**kwargs)
+            try:
+                res = self._col.query(**kwargs)
+            except Exception as e:
+                if not _chroma_bound.looks_dead(e):
+                    raise
+                self._failed("search", e)
+                # the client cannot reach the server (a closed session, a dropped connection): one fresh client,
+                # one retry
+                if not self.connect():
+                    return []
+                res = self._col.query(**kwargs)
             return [(rid, max(0.0, 1.0 - d))
                     for rid, d in zip(res["ids"][0], res["distances"][0])]
         except Exception as e:
-            log.debug("FabricChroma search: %s", e); return []
+            self._failed("search", e); return []
 
     def delete_dataset(self, dataset_id: str) -> bool:
         if not self._col: return False
@@ -1567,8 +1588,11 @@ class FabricChromaStore:
     def stats(self) -> Dict:
         if not self._col: return {"available": False}
         try:
-            return {"available": True, "count": self._col.count(), "collection": self.COLLECTION}
-        except Exception: return {"available": False}
+            return {"available": True, "count": self._col.count(), "collection": self.COLLECTION,
+                    "errors": dict(self.errors)}
+        except Exception as e:
+            self._failed("stats", e)
+            return {"available": False, "errors": dict(self.errors)}
 
 
 FABRIC_CHROMA = FabricChromaStore()
