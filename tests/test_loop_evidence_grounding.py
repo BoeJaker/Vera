@@ -124,7 +124,20 @@ def test_several_packs_drop_ambiguous_citations_but_keep_figures(monkeypatch):
 
 def test_both_tool_call_sites_record_info_seek():
     src = (ROOT / "vera" / "dag" / "dag_workshop_capabilities.py").read_text(encoding="utf-8")
-    assert 'if entry_ok and tool == "info.seek":' in src
-    assert 'if entry_ok and hop_tool == "info.seek":' in src
+    assert "if entry_ok and tool in _evidence_core.EVIDENCE_TOOLS:" in src
+    assert "if entry_ok and hop_tool in _evidence_core.EVIDENCE_TOOLS:" in src
     assert src.count("_evidence_core.add(sid, invoke.get(\"result\"))") == 2
     assert "_evidence_core.check_items(sid)" in src and "packs_info=ev_packs" in src
+
+
+def test_web_research_and_fetch_are_evidence_too():
+    E.forget("s-web")
+    wr = {"query": "q", "sources": [{"url": "https://gpuweb.example/status", "title": "Implementation Status",
+                                     "snippet": "Safari 26 supports WebGPU", "text": "In macOS Tahoe 26 WebGPU is supported."}]}
+    assert E.add("s-web", wr) == 1
+    assert E.add("s-web", {"url": "https://ex.org/p", "title": "Page", "content": "Chrome 113 shipped WebGPU."}) == 1
+    its = E.items("s-web")
+    assert [i["url"] for i in its] == ["https://gpuweb.example/status", "https://ex.org/p"]
+    assert its[0]["pack_n"] == 1 and "Tahoe 26" in its[0]["text"]
+    assert set(E.EVIDENCE_TOOLS) == {"info.seek", "web.research", "web.fetch"}
+    E.forget("s-web")

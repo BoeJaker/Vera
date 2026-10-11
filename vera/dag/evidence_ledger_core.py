@@ -35,10 +35,29 @@ def _pack(result: Any) -> Dict[str, Any]:
     return r if isinstance(r, dict) else {}
 
 
+#: Tools whose results are evidence: info.seek packs (items, dated), web.research (sources,
+#: read pages, undated) and web.fetch (one page). 11 Oct 2026: the I2 probes never called
+#: info.seek - the planner kept web.research - so the ledger stayed empty and the grounding
+#: floor never ran; web.* evidence still lets it catch figures no source contains.
+EVIDENCE_TOOLS = ("info.seek", "web.research", "web.fetch")
+
+
+def _raw_items(pk: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if isinstance(pk.get("items"), list):
+        return [i for i in pk["items"] if isinstance(i, dict)]
+    if isinstance(pk.get("sources"), list):                 # web.research
+        return [dict(s, n=s.get("n") or k + 1) for k, s in enumerate(pk["sources"]) if isinstance(s, dict)]
+    if pk.get("url") and (pk.get("text") or pk.get("content")):   # web.fetch: one page
+        return [{"n": 1, "url": pk.get("url"), "title": pk.get("title") or pk.get("url"),
+                 "text": pk.get("text") or pk.get("content"), "published": pk.get("published") or ""}]
+    return []
+
+
 def items_from(result: Any) -> List[Dict[str, Any]]:
-    """The items of an info.seek pack (the cap's result or its {result: ...} wrapper)."""
+    """The items of an evidence pack: info.seek items, web.research sources or a web.fetch page
+    (the cap's result or its {result: ...} wrapper)."""
     out = []
-    for it in _pack(result).get("items") or []:
+    for it in _raw_items(_pack(result)):
         if not isinstance(it, dict):
             continue
         text = str(it.get("text") or it.get("snippet") or it.get("claim_or_snippet") or "")
