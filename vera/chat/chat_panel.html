@@ -8634,7 +8634,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   let _cvRemote=null;
   function _cvLocal(){ const c=document.querySelector('#canvasColumnBody vera-canvas'); return c&&typeof c.shelves==='function'?c:null; }
   function _cvStateNow(){ const c=_cvLocal(); if(!c) return null; let runsOff=false; try{ runsOff=!!_runsOff.cv; }catch(_){}
-    return { kinds:c.kinds(), s:c.shelves(), cols:String(_cvCols()), enrich:_cvEnrichOn(), tell:_cvTellOn(), runsOff, resize:(typeof c.deskResizeMode==='function'?c.deskResizeMode():'pin'), open:true }; }
+    return { kinds:c.kinds(), s:c.shelves(), cols:String(_cvCols()), enrich:_cvEnrichOn(), tell:_cvTellOn(), runsOff, resize:(typeof c.deskResizeMode==='function'?c.deskResizeMode():'pin'), desk:_cvDeskSw(), open:true }; }
+  /* the desk's own switches (WSU-48): the Settings sheet holds them; the Canvas menu shows and flips the same fields */
+  const _CV_DESK_SW={ combine:'cfgCvCombine', fill:'cfgCvFill', settle:'cfgCvSettle', fit:'cfgCvFit' };
+  function _cvDeskSw(){ const o={}; Object.keys(_CV_DESK_SW).forEach(k=>{ o[k]=_cvCfg(_CV_DESK_SW[k])!=='off'; }); return o; }
   function _cvPublish(){ if(_EMBED.only!=='chat') return; const st=_cvStateNow(); if(st) _lhmPost('cvstate', st); }
   function _cvMenuAct(a){ const c=_cvLocal();
     if(!c){ if(a.a==='open'){ togglePage('canvas'); return Promise.resolve(); } _lhmPost('cvact', a); return Promise.resolve(); }
@@ -8648,6 +8651,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(a.a==='runs'){ _runsToggle('cv'); return Promise.resolve(); }
     if(a.a==='close'){ togglePage('canvas'); return Promise.resolve(); }
     if(a.a==='resize'){ if(typeof c.setDeskResizeMode==='function') c.setDeskResizeMode(a.n); return Promise.resolve(); }
+    if(a.a==='desk'){ const e=document.getElementById(_CV_DESK_SW[a.n]||''); if(e){ e.value=(e.value==='off')?'on':'off'; _persistCanvasCfg(); } return Promise.resolve(); }
     return Promise.resolve(); }
   function _cvMenuRender(onlyIfOpen){
     const pane=document.getElementById('rpCanvas'), dyn=document.getElementById('rpCanvasDyn'); if(!pane||!dyn) return;
@@ -8668,7 +8672,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const shelf=(label, list, act, glyph, tip, empty)=>'<div class="cvm-sec"><h5>'+label+(list.length?' · '+list.length:'')+'</h5>'+(list.length?list.map(it=>row(it, act, glyph, tip)).join(''):'<div class="cvm-dim">'+empty+'</div>')+'</div>';
     /* WSU-74: what a resize does - keep moving (size kept), pin it where it is (as before), or lock it */
     const rsz='<div class="cvm-sec"><h5>When I resize a card</h5><div class="cvm-kinds">'+[['move','keep moving','Its size is kept; it still moves out of the way of other cards'],['pin','pin it','Its place and size are kept; the others go round it (⤺ on the card lets it move again, keeping its size)'],['lock','lock it','Pinned and locked: nothing moves it until you unlock it']].map(([v,l,tip])=>'<button class="btn xs'+((st.resize||'pin')===v?' on':'')+'" data-cvm="resize" data-n="'+v+'" title="'+esc(tip)+'">'+l+'</button>').join('')+'</div></div>';
-    dyn.innerHTML=remoteBanner+rsz+
+    const dsw=st.desk?'<div class="cvm-sec"><h5>The desk</h5><div class="cvm-kinds">'+[['combine','combine','Related items share one card as tabs'],['fill','fill','Cards grow into the free room round them'],['settle','settle','Cards rise into room left above them'],['fit','fit','A card is no bigger than what it holds']]
+      .map(([n,l,tip])=>'<button class="btn xs'+(st.desk[n]?' on':'')+'" data-cvm="desk" data-n="'+n+'" aria-pressed="'+(st.desk[n]?'true':'false')+'" title="'+esc(tip+' - '+(st.desk[n]?'on':'off')+' (also on the Settings sheet)')+'" style="'+(st.desk[n]?'':'opacity:.55')+'">'+l+'</button>').join('')+'</div></div>':'';
+    dyn.innerHTML=remoteBanner+rsz+dsw+
       '<div class="cvm-sec"><h5>Add to the canvas</h5><div class="cvm-kinds">'+kinds.map(k=>'<button class="btn xs cvm-add" data-cvm="add" data-kind="'+esc(k.n)+'" title="Add a '+esc(k.n)+' (a '+esc(k.kind)+' item)"><b>'+esc(k.ik)+'</b>'+esc(k.n)+'</button>').join('')+'</div></div>'
       + shelf('Parked', s.parked, 'back', '⤴', 'Bring it back into view', 'Nothing parked.')
       + shelf('Hidden', s.hidden, 'back', '◐', 'Show it again', 'Nothing hidden.')
