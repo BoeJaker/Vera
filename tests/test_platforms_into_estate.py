@@ -27,7 +27,7 @@ PANEL = os.path.join(ROOT, "vera", "workers", "workers_ollama_panel.html")
 SECRETS_SRC = os.path.join(ROOT, "vera", "security", "secrets_capabilities.py")
 SECRETS_PANEL = os.path.join(ROOT, "vera", "security", "secrets_panel.html")
 WANTED = {"_hgetall", "_hset", "_no_store", "_secret_path", "_secrets_plain",
-          "cap_secrets_list", "cap_secrets_set", "cap_secrets_delete"}
+          "cap_secrets_list", "cap_secrets_set", "cap_secrets_delete", "_store_secret"}
 
 
 class FakeRedis:

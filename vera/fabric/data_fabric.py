@@ -890,9 +890,17 @@ async def query_dataset(dataset_id: str = "",
     return out
 
 
+def _stored_form(src: dict) -> dict:
+    """A copy made for a puller by _with_secrets carries resolved credentials: this is it as stored, with the auth
+    references back in place - whatever writes it back or caches it."""
+    if "_auth_stored" not in src:
+        return src
+    return {k: v for k, v in src.items() if k != "_auth_stored"} | {"auth": src["_auth_stored"]}
+
+
 async def _sqlite_upsert_source(src: dict):
     """Source upsert via the single-writer queue."""
-    await _enqueue_write({"kind": "upsert_source", "src": src}, wait=True)
+    await _enqueue_write({"kind": "upsert_source", "src": _stored_form(src)}, wait=True)
 
 
 
@@ -3515,17 +3523,36 @@ async def _pull_rss(src: dict) -> List[dict]:
     return items
 
 
-async def _pull_api(src: dict) -> List[dict]:
+def _platform_access():
     try:
-        headers = json.loads(src.get("headers") or "{}")
-        if isinstance(headers, str): headers = {}
+        from Vera.vera.platforms import platform_access as _pa
     except Exception:
-        headers = {}
-    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
-        r = await c.get(src["url"], headers=await _secret_headers(headers if isinstance(headers, dict) else {}))
+        from vera.platforms import platform_access as _pa
+    return _pa
+
+
+async def _pull_api(src: dict) -> List[dict]:
+    cfg = _src_config(src)
+    if cfg.get("connection"):
+        # through a Platforms API connection (data-connections plan): the connection holds the base URL and the
+        # credential; the source holds only the connection's id and the path
+        got = await _platform_access().connection_get(_orch.CAPABILITY_REGISTRY, cfg["connection"],
+                                                      cfg.get("path") or "", accept="application/json")
+        if got.get("error"):
+            raise RuntimeError(f"connection {cfg['connection']}: {got['error']}")
+        r = got["response"]
         r.raise_for_status()
         data = r.json()
-    cfg = _src_config(src)
+    else:
+        try:
+            headers = json.loads(src.get("headers") or "{}")
+            if isinstance(headers, str): headers = {}
+        except Exception:
+            headers = {}
+        async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
+            r = await c.get(src["url"], headers=await _secret_headers(headers if isinstance(headers, dict) else {}))
+            r.raise_for_status()
+            data = r.json()
     if _srcmap.has_mapping(cfg) or cfg.get("item_path"):
         # nested JSON (GeoJSON and the like): items where the source says, and a
         # readable title/link/published/geo per item instead of flattened scalars
@@ -3855,7 +3882,7 @@ async def _pull_recon(src: dict) -> List[dict]:
             updated = {**src, "page": best_url,
                        "headers": json.dumps(session_headers)}
             await _sqlite_upsert_source(updated)
-            _SOURCES[src["id"]] = updated
+            _SOURCES[src["id"]] = _stored_form(updated)
         except Exception as e:
             log.warning("recon persist: %s", e)
 
@@ -3978,6 +4005,47 @@ def _src_config(src: dict) -> dict:
         except Exception:
             log.warning("source %s: config is not valid JSON", src.get("id"))
     return {}
+
+async def _secure_source(src: dict, dry: bool = False) -> tuple:
+    """Move the literal credentials in a source's headers / auth into the Platforms store and leave references
+    (owner 2026-10-11: every credential in the store). -> (source as it should be stored, report). Without the
+    platforms module the source is left as it is and the report says so."""
+    try:
+        from Vera.vera.fabric import source_secrets_core as _ssc
+    except Exception:
+        from vera.fabric import source_secrets_core as _ssc
+    plan = _ssc.plan(src)
+    report = {"id": src.get("id"), "label": src.get("label", ""), "headers": sorted(plan["headers"]),
+              "auth": sorted(plan["auth"]), "keys": sorted({*plan["headers"].values(), *plan["auth"].values()}),
+              "key_in_url": plan["url_params"]}
+    if dry or not _ssc.anything(plan):
+        return src, report
+    pa = _platform_access()
+    for row in _ssc.values(src, plan):
+        if not await pa.store_secret(_orch.CAPABILITY_REGISTRY, row["key"], row["value"], row["label"]):
+            report["error"] = "the credential store is not loaded - left as it was"
+            return src, report
+    return _ssc.apply(src, plan), report
+
+
+async def _with_secrets(src: dict) -> dict:
+    """A copy of the source whose auth "@secret:<key>" references are resolved from the Platforms credential store,
+    for the puller only - the stored source keeps the reference (owner 2026-10-11: every credential in the store).
+    An unresolved reference becomes "" rather than being sent as text."""
+    a = src.get("auth")
+    if not a or "@secret:" not in (a if isinstance(a, str) else json.dumps(a, default=str)):
+        return src
+    auth = _src_auth(src)
+    pa = _platform_access()
+    out = {}
+    for k, v in auth.items():
+        if pa.is_ref(v):
+            v = await pa.secret_value(_orch.CAPABILITY_REGISTRY, v)
+            if not v:
+                log.warning("source %s: auth %s names a credential that is not set", src.get("id"), k)
+        out[k] = v
+    return {**src, "auth": out, "_auth_stored": a}
+
 
 def _src_auth(src: dict) -> dict:
     a = src.get("auth")
@@ -4966,43 +5034,44 @@ async def _pull_source(src: dict) -> int:
     await emit_event({"type": "fabric.source.pulling", "label": label,
                       "source_type": stype, "url": src.get("url","")})
     try:
+        psrc = await _with_secrets(src)          # resolved credentials for the puller; `src` (stored) keeps references
         if stype == "rss":
-            items = await _pull_rss(src)
+            items = await _pull_rss(psrc)
         elif stype in ("api","http"):
-            items = await _pull_api(src)
+            items = await _pull_api(psrc)
         elif stype == "wiki":
-            items = await _pull_wiki(src)
+            items = await _pull_wiki(psrc)
         elif stype == "telegram":
-            items = await _pull_telegram(src)
+            items = await _pull_telegram(psrc)
         elif stype == "scrape":
-            items = await _pull_scrape(src)
+            items = await _pull_scrape(psrc)
         elif stype == "recon":
-            items = await _pull_recon(src)
+            items = await _pull_recon(psrc)
         elif stype == "gitea":
-            items = await _pull_gitea(src)
+            items = await _pull_gitea(psrc)
         elif stype == "github":
-            items = await _pull_github(src)
+            items = await _pull_github(psrc)
         elif stype == "gitlab":
-            items = await _pull_gitlab(src)
+            items = await _pull_gitlab(psrc)
         elif stype == "postgres":
-            items = await _pull_postgres(src)
+            items = await _pull_postgres(psrc)
         elif stype == "mysql":
-            items = await _pull_mysql(src)
+            items = await _pull_mysql(psrc)
         elif stype == "sqlite":
-            items = await _pull_sqlite(src)
+            items = await _pull_sqlite(psrc)
         elif stype == "mongodb":
-            items = await _pull_mongodb(src)
+            items = await _pull_mongodb(psrc)
         elif stype == "elasticsearch":
-            items = await _pull_elasticsearch(src)
+            items = await _pull_elasticsearch(psrc)
         elif stype == "docs":
-            items = await _pull_docs(src)
+            items = await _pull_docs(psrc)
         elif stype == "topic":
-            items = await _pull_topic(src)
+            items = await _pull_topic(psrc)
         elif stype == "index":
-            items = await _pull_index(src)
+            items = await _pull_index(psrc)
         else:
             log.warning("unknown source_type %r — falling back to rss", stype)
-            items = await _pull_rss(src)
+            items = await _pull_rss(psrc)
     except httpx.HTTPStatusError as e:
         # Surface the actual status code in the error message
         log.error("data_fabric: pull %s (%s): HTTP %d %s",
@@ -6486,6 +6555,11 @@ async def fabric_sources(trace_id=None):
             if jq: out["jq_path"] = str(jq)[:200]
             page = s.get("page")
             if page: out["page"] = str(page)[:200]
+            if s.get("config") and "connection" in str(s.get("config")):
+                cfg = _src_config(s)
+                if cfg.get("connection"):        # reads through a Platforms API connection
+                    out["connection"] = str(cfg["connection"])[:64]
+                    out["connection_path"] = str(cfg.get("path") or "")[:500]
             results.append(out)
         except Exception as e:
             log.warning("fabric_sources: skipping malformed row %r: %s",
@@ -6524,8 +6598,27 @@ async def fabric_sources_add(
     config:      str  = "",
     auth:        str  = "",
     id:          str  = "",
+    connection:  str  = "",
+    path:        str  = "",
     trace_id=None,
 ):
+    if connection.strip():
+        # through a Platforms API connection: the source keeps the connection id and the path; the URL shown is
+        # the connection's, without its credential
+        info = await _platform_access().connection_info(_orch.CAPABILITY_REGISTRY, connection.strip(), path)
+        if info.get("error") or info.get("error_url"):
+            return {"error": info.get("error") or info.get("error_url")}
+        try:
+            cfg = config if isinstance(config, dict) else (json.loads(config) if str(config or "").strip() else {})
+        except ValueError:
+            cfg = None
+        if not isinstance(cfg, dict):
+            return {"error": "config must be a JSON object"}
+        cfg.update(connection=info["id"], path=path)
+        config, url = cfg, info["url"]
+        if source_type in ("", "rss"):
+            source_type = "api"
+        label = label or f"{info['label']} {path}".strip()
     # Caller can pre-set the source id for idempotent re-registration
     # (e.g. the doc crawler re-uses the same ID across re-crawls).
     src_id  = id.strip() if id and id.strip() else str(uuid.uuid4())
@@ -6578,10 +6671,14 @@ async def fabric_sources_add(
         "config":      _to_json_str(config),
         "auth":        _to_json_str(auth),
     }
+    src, secured = await _secure_source(src)
     _SOURCES[src_id] = src
     await _sqlite_upsert_source(src)
     await emit_event({"type":"fabric.source.added","id":src_id,"label":lbl,"dataset_id":ds_id})
-    return {"id": src_id, "label": lbl, "dataset_id": ds_id, "url": url}
+    return {"id": src_id, "label": lbl, "dataset_id": ds_id, "url": url,
+            "vaulted": secured["keys"] if not secured.get("error") else [],
+            **({"warning": "a credential is written into the URL - use an API connection (Platforms > "
+                           "Connections) so it is kept in the store"} if secured["key_in_url"] else {})}
 
 
 @capability(
@@ -9681,6 +9778,9 @@ async def fabric_sources_update(
     enabled:   bool = None,
     jq_path:   str  = None,
     headers:   str  = None,
+    auth:      str  = None,
+    connection: str = None,
+    path:      str  = None,
     trace_id=None,
 ) -> Dict:
     # Load current
@@ -9698,9 +9798,76 @@ async def fabric_sources_update(
     if enabled  is not None: updated["enabled"]  = enabled
     if jq_path  is not None: updated["jq_path"]  = jq_path
     if headers  is not None: updated["headers"]  = headers
+    if auth     is not None: updated["auth"]     = auth if isinstance(auth, str) else json.dumps(auth)
+    if connection is not None or path is not None:
+        cfg = _src_config({"config": updated.get("config")}) if updated.get("config") else {}
+        conn = (connection if connection is not None else cfg.get("connection", "")).strip()
+        pth = path if path is not None else cfg.get("path", "")
+        if conn:
+            info = await _platform_access().connection_info(_orch.CAPABILITY_REGISTRY, conn, pth)
+            if info.get("error") or info.get("error_url"):
+                return {"error": info.get("error") or info.get("error_url")}
+            cfg.update(connection=info["id"], path=pth)
+            updated["url"] = info["url"]
+        else:
+            cfg.pop("connection", None)
+            cfg.pop("path", None)
+        updated["config"] = json.dumps(cfg)
+    updated, secured = await _secure_source(updated)
     _SOURCES[source_id] = updated
     await _sqlite_upsert_source(updated)
-    return {"ok": True, "source_id": source_id}
+    return {"ok": True, "source_id": source_id, "vaulted": secured["keys"] if not secured.get("error") else []}
+
+
+async def fabric_sources_by_connection_impl() -> Dict[str, List[Dict[str, Any]]]:
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for src in await _sqlite_sources():
+        conn = (_src_config(src) if src.get("config") else {}).get("connection")
+        if conn:
+            out.setdefault(str(conn), []).append({
+                "id": src.get("id"), "label": src.get("label", ""), "dataset_id": src.get("dataset_id", ""),
+                "path": (_src_config(src) or {}).get("path", ""), "enabled": src.get("enabled", True),
+                "last_pulled": src.get("last_pulled", ""), "interval": src.get("interval", 0)})
+    return out
+
+
+@capability(
+    "fabric.sources.connections",
+    http_method="GET", http_path="/fabric/sources/connections", http_tags=["fabric"],
+    memory="off", silent=True,
+    description="The fabric sources that read through each Platforms API connection. "
+                "Output: {connections: {<connection id>: [{id, label, dataset_id, path, enabled, last_pulled, "
+                "interval}]}, count}.",
+)
+async def fabric_sources_connections(trace_id=None) -> Dict:
+    by = await fabric_sources_by_connection_impl()
+    return {"connections": by, "count": sum(len(v) for v in by.values())}
+
+
+@capability(
+    "fabric.sources.secure",
+    http_method="POST", http_path="/fabric/sources/secure", http_tags=["fabric"],
+    memory="off",
+    description="Move every credential written into a source's headers or auth (Authorization, X-Api-Key, token, "
+                "password...) into the Platforms credential store, leaving @secret: references. DRY RUN BY DEFAULT: "
+                "lists what would move. Sources with a key written into the URL are listed under key_in_url - they "
+                "want an API connection. Input: dry_run (bool=True). Output: {ok, dry_run, sources[], moved, "
+                "key_in_url[]}.",
+)
+async def fabric_sources_secure(dry_run: bool = True, trace_id=None) -> Dict:
+    rows, in_url, moved = [], [], 0
+    for src in await _sqlite_sources():
+        new, rep = await _secure_source(src, dry=dry_run)
+        if rep["key_in_url"]:
+            in_url.append({"id": rep["id"], "label": rep["label"], "params": rep["key_in_url"]})
+        if not rep["keys"]:
+            continue
+        rows.append(rep)
+        if not dry_run and not rep.get("error") and new is not src:
+            _SOURCES[src["id"]] = new
+            await _sqlite_upsert_source(new)
+            moved += 1
+    return {"ok": True, "dry_run": dry_run, "sources": rows, "moved": moved, "key_in_url": in_url}
 
 
 @capability(
@@ -10747,7 +10914,8 @@ _reg_ui(
     ui_caps=[
         "fabric.ingest", "fabric.query", "fabric.datasets", "fabric.stats",
         "fabric.schema", "fabric.browse", "fabric.sources", "fabric.sources.add",
-        "fabric.sources.update", "fabric.sources.pull", "fabric.sources.delete",
+        "fabric.sources.update", "fabric.sources.pull", "fabric.sources.delete", "fabric.sources.secure",
+        "fabric.sources.connections",
         "fabric.dataset.delete", "fabric.clear_dataset", "fabric.delete_record",
         "fabric.aux_graph.link", "fabric.aux_graph.query",
         "fabric.bus.configure", "fabric.bus.status",

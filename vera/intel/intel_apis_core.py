@@ -40,14 +40,22 @@ KEYLESS = [
     "Nominatim (OpenStreetMap)", "USGS earthquakes", "arXiv", "YouTube channel feeds", "GitHub release feeds",
 ]
 
-#: any JSON API source can carry a key too: a header value "@secret:<key>" is resolved at pull time
-JSON_API_HINT = ("Any other API with a key: add it on the Platforms page, then add a JSON API source whose header "
-                 "names it, e.g. Authorization: Bearer @secret:<key> - the source holds the reference, never the key.")
+#: any other API: a Platforms connection, mapped, then a fabric source that reads through it
+JSON_API_HINT = ("Any other API: add it as an API connection on the Platforms page (its key goes to Shared "
+                 "credentials), map an endpoint and add it as a fabric source - the source holds no key.")
 
 
-def view(records: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-    """The catalog with each key's state from platform.secrets.list rows ({key, set, ...})."""
+def view(records: Iterable[Dict[str, Any]], templates: Iterable[Dict[str, Any]] = (),
+         connections: Iterable[Dict[str, Any]] = ()) -> Dict[str, Any]:
+    """The catalog with each key's state from platform.secrets.list rows ({key, set, ...}), each API's connection
+    from platform.connection.templates rows ({id, key, added, ...}), and the API connections themselves."""
     have = {str(r.get("key")): bool(r.get("set")) for r in records or []}
-    rows = [dict(a, set=have.get(a["key"], False), ref="@secret:" + a["key"]) for a in APIS]
-    return {"apis": rows, "keyless": KEYLESS, "json_api_hint": JSON_API_HINT,
+    by_key = {t.get("key"): t for t in templates or () if t.get("key")}
+    rows = [dict(a, set=have.get(a["key"], False), ref="@secret:" + a["key"],
+                 template=(by_key.get(a["key"]) or {}).get("id", ""),
+                 connection=(by_key.get(a["key"]) or {}).get("added", "")) for a in APIS]
+    keyless = [{"id": t["id"], "label": t.get("label", t["id"]), "connection": t.get("added", ""),
+                "tags": t.get("tags", [])} for t in templates or () if not t.get("key")]
+    return {"apis": rows, "keyless": KEYLESS, "keyless_templates": keyless, "connections": list(connections or ()),
+            "json_api_hint": JSON_API_HINT,
             "missing_used": [r["key"] for r in rows if r["status"] == "used" and not r["set"]]}

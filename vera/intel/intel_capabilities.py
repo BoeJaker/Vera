@@ -436,12 +436,21 @@ def _declare_apis() -> bool:
             description="The keyed data sources intelligence can use: for each, the Platforms credential it reads "
                         "(platform.secrets - the master key store; add keys on the Platforms page, never here), what "
                         "it adds, where to get a key, whether one is set, and whether Vera uses it yet (used | "
-                        "planned). Also what it reads without a key. Never returns a key. Output: {apis:[{key, name, "
-                        "status, gives, used_by, get, cost, set, ref}], keyless, json_api_hint, missing_used}.")
+                        "planned), and its API connection on the Platforms page (template, connection). Also what it reads "
+                        "without a key and the API connections with how many fabric sources read through each. Never "
+                        "returns a key. Output: {apis:[{key, name, status, gives, used_by, get, cost, set, ref, "
+                        "template, connection}], keyless, keyless_templates, connections:[{id, label, base_url, "
+                        "configured, enabled, sources}], json_api_hint, missing_used}.")
 async def cap_apis(trace_id=None):
     _declare_apis()
     rows = (await _call("platform.secrets.list")).get("secrets") or []
-    return apis_core.view(rows)
+    tpls = (await _call("platform.connection.templates")).get("templates") or []
+    plats = (await _call("platform.list")).get("platforms") or []
+    uses = (await _call("fabric.sources.connections")).get("connections") or {}
+    conns = [{"id": p["id"], "label": p.get("label", p["id"]), "base_url": (p.get("fields") or {}).get("base_url", ""),
+              "configured": bool(p.get("configured")), "enabled": p.get("enabled", True) is not False,
+              "sources": len(uses.get(p["id"]) or [])} for p in plats if p.get("kind") == "api"]
+    return apis_core.view(rows, tpls, conns)
 
 
 @capability("intel.lookup", http_method="GET", http_path="/intel/lookup", http_tags=["intel"],
@@ -4132,6 +4141,7 @@ register_ui(
          'style="flex:1;border:none;width:100%;height:100%"></iframe></div>',
     ui_caps=["intel.topic.list", "intel.topic.save", "intel.signal.list", "intel.timeline.get",
              "intel.report.build", "intel.report.list", "intel.deliver", "intel.refresh", "intel.command",
-             "intel.save", "intel.session.status", "intel.notes.list", "intel.advise"],
+             "intel.save", "intel.session.status", "intel.notes.list", "intel.advise", "intel.apis",
+             "platform.connection.add"],
     mode="tab", tab_order=58,
 )

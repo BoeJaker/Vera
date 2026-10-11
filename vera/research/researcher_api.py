@@ -954,7 +954,7 @@ async def query_redis(query: str) -> list[Citation]:
             host=src.config.get("host",_BACKEND_HOST),
             port=int(src.config.get("port",6379)),
             username=src.config.get("username") or None,   # a Redis ACL user
-            password=src.config.get("password") or None,
+            password=(await _cfg_secret(src.config, "password")) or None,
             db=int(src.config.get("db",0)),
             decode_responses=True,
         )
@@ -1656,7 +1656,7 @@ async def query_neo4j(query: str) -> list[Citation]:
     if not src: return []
     uri      = src.config.get("uri", "bolt://localhost:7687")
     user     = src.config.get("user", "neo4j")
-    password = src.config.get("password", "")
+    password = await _cfg_secret(src.config, "password")
     cypher   = src.config.get("cypher", "")
     label    = src.config.get("node_label", "")
     prop     = src.config.get("text_property", "text")
@@ -1943,7 +1943,7 @@ async def gather_github(query: str, limit: int = 8) -> list[Citation]:
     """
     src = next((s for s in sources if s.id == "github" and s.enabled), None)
     if not src: return []
-    token = src.config.get("token", "")
+    token = await _cfg_secret(src.config, "token", "github_token")
     if not token:
         log.info("GitHub: no token — using web-search fallback")
     orgs        = src.config.get("orgs", "")
@@ -7792,6 +7792,81 @@ async def download_job_files_zip(job_id: str):
 
 
 
+# ── Source credentials: kept in the Platforms store (owner 2026-10-11: every credential in the store) ────────
+# A source's api_key / token / password is saved as an "@secret:research_<id>_<field>" reference; the key itself
+# goes to platform.secrets. Lists show a stored literal as bullets, and bullets posted back keep what is stored.
+_SRC_SECRET_FIELDS = ("api_key", "token", "password")
+_SRC_BULLETS = "\u2022" * 8
+
+
+def _src_cfg_dict(cfg) -> dict:
+    if isinstance(cfg, dict):
+        return cfg
+    if isinstance(cfg, str) and cfg.strip():
+        try:
+            d = json.loads(cfg)
+            return d if isinstance(d, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _src_redacted(cfg) -> dict:
+    out = dict(_src_cfg_dict(cfg))
+    for f in _SRC_SECRET_FIELDS:
+        v = out.get(f)
+        if isinstance(v, str) and v and not v.startswith("@secret:"):
+            out[f] = _SRC_BULLETS
+    return out
+
+
+def _platform_access():
+    try:
+        from Vera.vera.platforms import platform_access as _pa
+    except Exception:
+        from vera.platforms import platform_access as _pa
+    return _pa
+
+
+async def _cfg_secret(cfg, field: str, default_key: str = "") -> str:
+    """A source's credential: a literal (older setups), an "@secret:<key>" reference, or - empty - the
+    Platforms credential `default_key`."""
+    v = _src_cfg_dict(cfg).get(field, "") or ""
+    if v == _SRC_BULLETS:
+        v = ""
+    try:
+        return await _platform_access().resolve(CAPABILITY_REGISTRY, v, default_key)
+    except Exception as e:
+        log.debug("research: credential %s: %s", field, e)
+        return "" if str(v).startswith("@secret:") else str(v)
+
+
+async def _secure_sources(new_list, old_list, dry: bool = False) -> list:
+    """Move literal credentials in `new_list`'s configs into the store (in place); bullets posted back keep the
+    value stored in `old_list`. Returns the store keys moved (or that would be)."""
+    old = {o.id: _src_cfg_dict(o.config) for o in (old_list or [])}
+    moved = []
+    pa = _platform_access()
+    for src in new_list:
+        cfg = dict(_src_cfg_dict(src.config))
+        for f in _SRC_SECRET_FIELDS:
+            v = cfg.get(f)
+            if v == _SRC_BULLETS:
+                cfg[f] = old.get(src.id, {}).get(f, "")
+                v = cfg[f]
+            if not isinstance(v, str) or not v.strip() or v.startswith("@secret:"):
+                continue
+            key = re.sub(r"[^a-z0-9_]+", "_", f"research_{src.id}_{f}".lower())[:64]
+            if not dry:
+                if not await pa.store_secret(CAPABILITY_REGISTRY, key, v.strip(), f"Research source {src.label} {f}"):
+                    continue                     # no credential store loaded: keep the literal rather than lose it
+                cfg[f] = "@secret:" + key
+            moved.append(key)
+        if not dry:
+            src.config = cfg
+    return moved
+
+
 # ── Sources ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/sources")
@@ -7801,7 +7876,7 @@ async def get_sources():
     for s in sources:
         if s.id not in seen:
             seen.add(s.id)
-            deduped.append(asdict(s))
+            deduped.append({**asdict(s), "config": _src_redacted(s.config)})
     return deduped
 
 
@@ -7824,6 +7899,7 @@ async def update_sources(req: SourceUpdateRequest):
             ))
         except Exception as e:
             raise HTTPException(400, f"Invalid source: {e}")
+    await _secure_sources(new, sources)
     sources = new
     await DB.save_sources(sources)
     _write_config_file()
@@ -7838,6 +7914,7 @@ async def add_source(d: dict):
                          enabled=bool(d.get("enabled",True)),config=d.get("config",{}))
         # Remove any existing source with the same id first
         global sources
+        await _secure_sources([src], sources)
         sources = [s for s in sources if s.id != src.id]
         sources.append(src)
         await DB.save_sources(sources)
@@ -7880,7 +7957,7 @@ async def test_source(req: SourceTestRequest):
 
     elif src.id=="brave":
         try:
-            key=cfg.get("api_key","")
+            key=await _cfg_secret(cfg, "api_key", "brave_search_api_key")
             if not key: detail="No API key configured"; ok=False
             else:
                 async with httpx.AsyncClient(timeout=8.0) as c:
@@ -7893,7 +7970,7 @@ async def test_source(req: SourceTestRequest):
     elif src.type==SourceType.NEO4J:
         uri=cfg.get("uri","bolt://localhost:7687")
         user=cfg.get("user","neo4j")
-        password=cfg.get("password","")
+        password=await _cfg_secret(cfg, "password")
 
         # ── Strategy A: try Vera session driver first (no new connection needed) ──
         vera_tried=False
@@ -8018,7 +8095,7 @@ async def test_source(req: SourceTestRequest):
         try:
             import redis.asyncio as aioredis  # type:ignore
             r=aioredis.Redis(host=cfg.get("host","localhost"),port=int(cfg.get("port",6379)),
-                username=cfg.get("username") or None,password=cfg.get("password") or None,
+                username=cfg.get("username") or None,password=(await _cfg_secret(cfg, "password")) or None,
                 db=int(cfg.get("db",0)),decode_responses=True)
             await r.ping()
             prefix=cfg.get("prefix","vera:")
@@ -8028,7 +8105,7 @@ async def test_source(req: SourceTestRequest):
         except Exception as e: detail=str(e)
 
     elif src.type==SourceType.GITHUB:
-        token=cfg.get("token","")
+        token=await _cfg_secret(cfg, "token", "github_token")
         if not token: detail="No token configured — add a GitHub personal access token"; ok=False
         else:
             try:
@@ -11105,7 +11182,7 @@ if _VERA_MODE:
     )
     async def cap_sources(trace_id=None):
         return [{"id": s.id, "label": s.label, "type": s.type.value,
-                 "enabled": s.enabled, "config": s.config, "status": s.status}
+                 "enabled": s.enabled, "config": _src_redacted(s.config), "status": s.status}
                 for s in globals()["sources"]]
 
     @capability(
@@ -11124,6 +11201,7 @@ if _VERA_MODE:
                 id=d["id"], label=d["label"], type=SourceType(d["type"]),
                 enabled=bool(d.get("enabled", True)), config=d.get("config", {}),
                 status=d.get("status", "unknown")))
+        await _secure_sources(new, sources)
         sources = new
         await DB.save_sources(sources)
         _write_config_file()
@@ -11145,11 +11223,28 @@ if _VERA_MODE:
         global sources
         cfg = json.loads(config) if isinstance(config, str) else config
         src = DataSource(id=id, label=label, type=SourceType(type), enabled=enabled, config=cfg)
+        await _secure_sources([src], sources)
         sources = [s for s in sources if s.id != src.id]
         sources.append(src)
         await DB.save_sources(sources)
         _write_config_file()
         return {"ok": True}
+
+    @capability(
+        "research.sources.secure",
+        http_method="POST", http_path="/research/sources/secure",
+        http_tags=["research"], memory="off",
+        description="Move the API keys, tokens and passwords written into research sources' config into the "
+                    "Platforms credential store, leaving @secret: references. DRY RUN BY DEFAULT. "
+                    "Input: dry_run (bool=True). Output: {ok, dry_run, moved[]}.",
+    )
+    async def cap_sources_secure(dry_run: bool = True, trace_id=None):
+        cur = globals()["sources"]
+        moved = await _secure_sources(cur, cur, dry=dry_run)
+        if moved and not dry_run:
+            await DB.save_sources(cur)
+            _write_config_file()
+        return {"ok": True, "dry_run": dry_run, "moved": moved}
 
     @capability(
         "research.sources.delete",
