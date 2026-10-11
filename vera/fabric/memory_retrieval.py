@@ -83,6 +83,10 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import switchboard_core as _SB
 except ImportError:                      # pragma: no cover
     from vera.minds import switchboard_core as _SB   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.fabric import rank_core as _rk
+except ImportError:                      # pragma: no cover
+    from vera.fabric import rank_core as _rk   # type: ignore
 try:                                     # the retrieval eval set (FM-7.0): seeks + reads as labels
     from Vera.vera.fabric import retrieval_eval as _reval
 except Exception:                        # pragma: no cover
@@ -419,6 +423,7 @@ async def _memory_candidates(query: str, limit: int, weight: float = 1.0) -> Lis
                     "tags": rec.get("tags", []) or [],
                     "source": "memory",
                     "score": float(weight) / (_RRF_K + rank),
+                    "importance": rec.get("importance"),
                     "origin": "memory"})
     terms = _fc.query_terms(query)
     return [c for c in out if _fc.lexical_pass(terms, c["text"])]
@@ -691,10 +696,15 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
     if await _switch("memory.rerank") == "on":
         await _rerank_head(query, cands, env)
 
-    # Normalise fused scores to ~0..1 for display, apply mild recency boost.
+    # Normalise fused scores to ~0..1 for display, then age them: per dataset class and the question's temporal
+    # intent with memory.rank on (FM-7.2, rank_core), else the old mild recency boost.
+    ranked_mode = await _switch("memory.rank") == "on"
+    intent = _rk.temporal_intent(query) if ranked_mode else "none"
     top = max(c["score"] for c in cands) or 1.0
     for c in cands:
-        c["score"] = (c["score"] / top) * _recency_boost(c["created_at"])
+        rel = c["score"] / top
+        c["score"] = (_rk.score(rel, c["created_at"], c["dataset_id"], c.get("importance"), intent) if ranked_mode
+                      else rel * _recency_boost(c["created_at"]))
         c["_tok"] = _tok(c["text"])
     cands.sort(key=lambda c: -c["score"])
 
@@ -740,6 +750,8 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
            "candidates": len(cands), "collapsed": collapsed_total,
            "weak": bool(weak_ctx),
            "datasets": sorted({c["dataset_id"] for c in selected})}
+    if ranked_mode:
+        out["temporal_intent"] = intent
     if _reval is not None:
         _reval.on_seek(query, [r["id"] for r in results if r.get("id")])
     if weak_ctx:
