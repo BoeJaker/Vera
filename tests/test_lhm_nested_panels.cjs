@@ -16,7 +16,7 @@ t('nested items render indented in the docked menu', /\(t\.depth \? ' sub' : ''\
 {
   const a = BR.indexOf('  var _navLhmOpts = null;'), b = BR.indexOf('  // ── DOM helpers');
   const ctx = { document: { title: 'Vera — Comms' } }; vm.createContext(ctx);
-  vm.runInContext('var _navItems = null, _navActiveId = ""; var _kid = null; function _activeKid(){ return _kid; }\n' + BR.slice(a, b) + '\nthis.lhm=_navLhm; this.set=function(i,a,k){ _navItems=i; _navActiveId=a; _kid=k; };', ctx);
+  vm.runInContext('var _navItems = null, _navActiveId = ""; function _shownKidCta(){ return null; }  /* no nested panel shown: the nested primary action is tested in test_ui_bootstrap */ var _kid = null; function _activeKid(){ return _kid; }\n' + BR.slice(a, b) + '\nthis.lhm=_navLhm; this.set=function(i,a,k){ _navItems=i; _navActiveId=a; _kid=k; };', ctx);
   ctx.set([{ id: 'system', label: 'System' }, { id: 'calendar', label: 'Calendar' }, { id: 'email', label: 'Email' }], 'calendar',
           { nav: { items: [{ id: 'month', label: 'Month' }, { id: 'agenda', label: 'Agenda' }], active: 'agenda' } });
   const s = ctx.lhm(); const m = s.menus.find((x) => x.id === s.active.menu);

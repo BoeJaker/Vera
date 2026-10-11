@@ -44,7 +44,7 @@ t('the element is kept per card and re-attached, so a render does not throw away
   /this\._graphEls\[id\] = el/.test(SCENE) && /if \(el\.parentNode !== slot\)/.test(SCENE)
   && /this\._graphMount\(\)/.test(SCENE));
 t('the structured renderer is fetched only when a card asks for it',
-  /function ensureStruct\(doc\)/.test(SCENE) && /a scene that never asks for/.test(SCENE));
+  /function ensureStruct\(doc(?:, ready)?\)/.test(SCENE) && /a scene that never asks for/.test(SCENE));
 
 // ── the host's half ──────────────────────────────────────────────────────────────────────────────────────────
 t('the chat listens for it and hands the contract back to that card',

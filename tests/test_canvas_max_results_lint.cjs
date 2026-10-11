@@ -25,7 +25,7 @@ t('the choice is kept per canvas', /'vera:canvas:max:' \+ this\.canvasId/.test(S
 t('a maximised item is open', /const open = this\._open\.has\(key\) \|\| editing \|\| this\._max === key;/.test(SRC));
 t('the placer leaves it out and puts it over the view', /filter\(\(c\) => c !== maxCard\)/.test(SRC) && /maxCard\.style\.top = mtop \+ 'px'/.test(SRC));
 t('the column does not scroll under it', /:host\(\[data-maxed\]\) #body\{overflow:hidden!important\}/.test(SRC));
-t('nothing else\'s live content is drawn over it', /if \(this\._max && k !== this\._max\) \{ L\[k\]\.style\.display = 'none'; return; \}/.test(SRC));
+t('nothing else\'s live content is drawn over it', /if \(this\._max && k !== this\._max[^{]*\) \{ el\.style\.display = 'none';/.test(SRC)   /* the filled card's own live content stays */);
 
 // ── the preview never blanks ────────────────────────────────────────────────────────────────────────────────────
 t('an html item redraws from its html, not an empty code field', /this\._previewSwap\(el, this\._pdoc\(key, h\.dataset\.lang \|\| cc\.lang, cc\.code \|\| cc\.html \|\| ''\)\)/.test(SRC));

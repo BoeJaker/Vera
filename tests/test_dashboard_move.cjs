@@ -65,7 +65,7 @@ T('the behaviour the browser smoke drives is in the text', () => {
     // the grid lines on their own layer, never on the grid's background
     "'.dash-grid.editing{position:relative;background-image:none}'", "'.dash-grid.editing::before{content:\"\";position:absolute;z-index:0;pointer-events:none;will-change:transform;'",
     "grid.style.setProperty('--vd-pl', (parseFloat(cs.paddingLeft) || 0) + 'px');", "'.vd-ghost{position:fixed;",
-    "'.dash-grid.editing > .widget.dragging{transition:none}'", 'withSample: withSample, slotAt: slotAt };'
+    "'.dash-grid.editing > .widget.dragging{transition:none}'", 'withSample: withSample, slotAt: slotAt'   // roomFor joined the exports after it
   ]) assert(src.includes(s), s);
   assert(!/'\.dash-grid\.editing\{background-image:linear-gradient/.test(src), 'no gradient background on the grid itself');
 });

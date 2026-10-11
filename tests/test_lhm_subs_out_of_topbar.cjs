@@ -22,7 +22,7 @@ t('the bar is offered again the moment docking changes', /_kidsHosted\(true\);\n
   const subs = [el('ol-nodes', 'Nodes', true, 'The Ollama nodes', 'Every node, long'), el('ol-traffic', 'Traffic', false, 'Who calls each node', 'Traffic, long')];
   const ctx = { document: { title: 'Vera — Models', body: {}, querySelectorAll: () => subs, querySelector: () => null }, getComputedStyle: () => ({ visibility: 'visible', display: 'block' }), String, Array };
   vm.createContext(ctx);
-  vm.runInContext('var _navItems = null, _navActiveId = ""; function _activeKid(){ return null; }\n' + BR.slice(a, b) + '\n' + BR.slice(c, d) + '\nthis.lhm=_navLhm; this.set=function(i,x){ _navItems=i; _navActiveId=x; };', ctx);
+  vm.runInContext('var _navItems = null, _navActiveId = ""; function _shownKidCta(){ return null; }  /* no nested panel shown: the nested primary action is tested in test_ui_bootstrap */ function _activeKid(){ return null; }\n' + BR.slice(a, b) + '\n' + BR.slice(c, d) + '\nthis.lhm=_navLhm; this.set=function(i,x){ _navItems=i; _navActiveId=x; };', ctx);
   ctx.set([{ id: 'ollama', label: 'Ollama' }, { id: 'routing', label: 'Model Routing' }], 'ollama');
   const s = ctx.lhm(); const m = s.menus.find((x) => x.id === s.active.menu);
   const sub = m.tabs.filter((x) => String(x.id).indexOf('s:') === 0);
