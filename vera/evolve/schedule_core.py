@@ -71,6 +71,14 @@ CAP_DENY_PREFIXES = ("sys.", "background.", "evolve.bleeding_edge.", "evolve.sch
                      "evolve.sandbox.up", "evolve.pipeline.promote",
                      "cluster.job.stop", "jobs.purge_pending")
 
+#: DEEP-21 D21-2 (11 Oct 2026): a `cap` schedule may run only these families - read, measure, report and
+#: model-training work. Anything else (release, exec, sandbox, secrets, autonomous...) is refused at save
+#: AND at start; the deny-list above still wins inside an allowed family. Add a family here, with a reason,
+#: when a new kind of scheduled job is wanted.
+CAP_ALLOW_PREFIXES = ("decide.", "obs.", "evolve.suite.", "chat.corpus.", "worldview.", "intel.", "bench.", "census.",
+                      "nlp.", "info.seek", "memory.seek", "memory.map", "caps.shortlist.",
+                      "perf.", "evolve.loop.record", "evolve.result.", "agents.work.")
+
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
 
@@ -334,9 +342,17 @@ def census_plan_styles() -> List[str]:
     return list(_ps.LOOP_STYLES.keys())
 
 
-def cap_denied(name: str) -> bool:
+def cap_allowed(name: str) -> bool:
+    """Whether a schedule may run this capability: an allowed family and not a denied one."""
     n = (name or "").strip()
-    return any(n == p.rstrip(".") or n.startswith(p) for p in CAP_DENY_PREFIXES)
+    if not n or any(n == p.rstrip(".") or n.startswith(p) for p in CAP_DENY_PREFIXES):
+        return False
+    return any(n == p.rstrip(".") or n.startswith(p) for p in CAP_ALLOW_PREFIXES)
+
+
+def cap_denied(name: str) -> bool:
+    """A schedule may NOT run this capability (allow-list, D21-2; was a deny-list only)."""
+    return not cap_allowed(name)
 
 
 def _default_title(kind: str, t: Dict[str, Any]) -> str:
