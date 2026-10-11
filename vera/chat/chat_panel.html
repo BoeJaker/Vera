@@ -7397,12 +7397,70 @@ IMPORTANT:
       for(const k of ['summary','answer','text','message','status','result']) if(typeof c[k]==='string'&&c[k].trim()) return c[k].replace(/\s+/g,' ').trim().slice(0,160);
       return Object.keys(c).slice(0,6).join(' · ');
     }catch(_){ return ''; } }
-  function _cvActOn(cap){ return !!SID && _cvEnrichOn() && !/^(canvas\.|ui\.directive)/.test(String(cap||'')); }
+  /* A LOOKUP IS ITS OWN ITEM FROM THE START (owner, 2026-10-11: "the research family of caps has rich output while its
+     running that need to be communicated possibly needing its own desk item"). info.seek, web.research and their kind
+     put their evidence item on the desk the moment they start - the question, "looking up", a progress line - and it
+     fills as the lookup goes (info.seek.step events: the stage, what it has checked, the pages it has in hand); the
+     answer replaces it in place under the same key. It is not also an activity line. */
+  const _CV_LOOK_RE=/^(info\.seek|web\.research|research\.quick_search|intel\.lookup)$/;
+  const _cvLook={}; let _cvLookEs=null, _cvLookN=0;
+  function _cvLookQ(args){ const a=args||{}; return String(a.question||a.query||a.q||a.topic||'').replace(/\s+/g,' ').trim(); }
+  function _cvLookContent(h){ const subj=h.subject||h.q;
+    return { title:'Looked up'+(subj?' · '+subj.slice(0,80):''), kind:'evidence', query:subj||undefined, running:h.state==='running', failed:h.state==='error'||undefined,
+      items:h.items.slice(0,12), total:h.items.length,
+      evidence:{ need:h.need||'', subject:subj||'', question:h.q, since:'', answerable:true, checked:h.checked.slice(-8), gaps:h.gaps||[], stage:h.stage||'', started:h.t0, ms:h.ms||0, cap:h.cap } }; }
+  function _cvLookDraw(h, save){
+    const content=_cvLookContent(h);
+    try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&h.added&&typeof cv.liveUpdate==='function') cv.liveUpdate(h.key, content); }catch(_){}
+    if(!save) return; clearTimeout(h.t);
+    h.t=setTimeout(()=>{ h.p=(h.p||Promise.resolve()).then(async()=>{ try{
+      if(!h.added){ const r=await _capCall('canvas.add',{ session_id:SID, kind:'records', key:h.key, content:_cvLookContent(h), at:'now', size:'l', anchor:{ turn:h.mid, mid:h.mid, from:'lookup' } }); h.added=!!(r&&r.ok);
+        const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }
+      else await _capCall('canvas.update',{ session_id:SID, key:h.key, content:_cvLookContent(h) }); }catch(_){} }); }, h.added?1200:60);
+  }
+  function _cvLookListen(){
+    if(_cvLookEs||!Object.keys(_cvLook).length) return;
+    try{ _cvLookEs=new EventSource(location.origin+'/events'); }catch(_){ _cvLookEs=null; return; }
+    _cvLookEs.onmessage=(ev)=>{ let m; try{ m=JSON.parse(ev.data); }catch(_){ return; } const t=m.event||m.type||'';
+      if(t!=='info.seek.step') return; const q=String(m.question||'').replace(/\s+/g,' ').trim();
+      const h=Object.values(_cvLook).find(x=>x.state==='running'&&x.q&&(x.q===q||q.startsWith(x.q.slice(0,120)))); if(!h) return;
+      h.stage=String(m.stage||''); h.need=m.need||h.need; h.subject=m.subject||h.subject; if(Array.isArray(m.checked)) h.checked=m.checked.map(String);
+      if(Array.isArray(m.items)&&m.items.length) h.items=m.items.filter(x=>x&&x.url).map((x,i)=>({ id:x.url, n:i+1, url:x.url, domain:String(x.site||'').replace(/^www\./,''), title:String(x.title||x.url), when:x.published||undefined, meta:x.read?{ read:'page read' }:{} }));
+      _cvLookDraw(h, true); };
+    _cvLookEs.onerror=()=>{ try{ _cvLookEs.close(); }catch(_){} _cvLookEs=null; };
+  }
+  function _cvLookStart(el, cap, args){
+    if(!SID||!_cvEnrichOn()||!_CV_LOOK_RE.test(String(cap||''))) return null; const mid=_cvActMid(el); if(!mid) return null;
+    const h={ key:'lookup:'+mid+':'+(++_cvLookN), mid, cap:String(cap), q:_cvLookQ(args), state:'running', stage:'starting', items:[], checked:[], t0:Date.now(), added:false };
+    _cvLook[h.key]=h; h.el=el; try{ el.__cvLookKey=h.key; }catch(_){}
+    _cvLookDraw(h, true); _cvLookListen(); return h;
+  }
+  function _cvLookEnd(h, ok, content, args){
+    if(!h) return; h.state=ok?'done':'error'; h.ms=Date.now()-h.t0;
+    let made=null; try{ made=ok?_cvAdapt(h.cap, content, args):null; }catch(_){ made=null; } if(Array.isArray(made)) made=made[0];
+    if(made&&made.content&&made.kind!=='records'){ /* an answer of another kind: the working item goes, the reply's harvest lands it */
+      try{ if(h.el) delete h.el.__cvLookKey; }catch(_){}
+      h.p=(h.p||Promise.resolve()).then(async()=>{ try{ clearTimeout(h.t); if(h.added) await _capCall('canvas.remove',{ session_id:SID, key:h.key }); }catch(_){} });
+    } else if(made&&made.content){ /* the answer, in place of the working item: the same key (a records item, as it was) */
+      const c=Object.assign({}, made.content, { running:false });
+      h.p=(h.p||Promise.resolve()).then(async()=>{ try{ clearTimeout(h.t); await _capCall('canvas.update',{ session_id:SID, key:h.key, content:c });
+        const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ if(cv.liveDone) cv.liveDone(h.key); cv._rev=null; cv.refresh(); } }catch(_){} });
+    } else { h.gaps=[ok?'the answer had nothing to show':'the lookup failed: '+String((content&&(content.error||content.detail))||content||'').slice(0,200)]; h.stage=ok?'done':'failed'; _cvLookDraw(h, true); }
+    delete _cvLook[h.key]; if(!Object.keys(_cvLook).length&&_cvLookEs){ try{ _cvLookEs.close(); }catch(_){} _cvLookEs=null; }
+  }
+  function _cvActOn(cap){ return !!SID && _cvEnrichOn() && !/^(canvas\.|ui\.directive)/.test(String(cap||'')) && !_CV_LOOK_RE.test(String(cap||'')); }
   function _cvActWrite(mid){
     const a=_cvAct[mid]; if(!a) return; clearTimeout(a.t);
     /* one write at a time, in order: the add has to have landed before an update can find the key */
     a.t=setTimeout(()=>{ a.p=(a.p||Promise.resolve()).then(async()=>{ const calls=a.calls.map(x=>Object.assign({},x)); const run=calls.filter(x=>x.status==='running').length, bad=calls.filter(x=>x.status==='error').length;
       const content={ mid, status: run?'running':bad?'error':'done', calls, title: run?'Working on it':'What ran for this turn' };
+      /* DONE, IT GOES (owner, 2026-10-11: "they shouldnt leave an empty desk item like that its weird"): the item is the
+         work while it runs; once every call has finished it was a card holding a capability's name and a time beside
+         the result itself. It leaves the desk a moment after the last call ends (the result items stay); a turn with a
+         failure keeps it, so the failure is seen. */
+      if(!run&&!bad){ if(a.added){ await new Promise(r=>setTimeout(r,1500)); if(a.calls.some(x=>x.status==='running')) return;
+          try{ await _capCall('canvas.remove',{ session_id:SID, key:'activity:'+mid }); a.added=false; const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }catch(_){} }
+        return; }
       try{ if(!a.added){ const r=await _capCall('canvas.add',{ session_id:SID, kind:'activity', key:'activity:'+mid, content, at:'now', size:'m', anchor:{ turn:mid, mid, from:'activity' } }); a.added=!!(r&&r.ok);
           if(r&&r.ok&&r.existing) await _capCall('canvas.update',{ session_id:SID, key:'activity:'+mid, content }); }   /* the turn ran before: its item takes the new calls */
         else await _capCall('canvas.update',{ session_id:SID, key:'activity:'+mid, content });
@@ -8033,7 +8091,13 @@ IMPORTANT:
          from a restored session has none, and falls through to the markdown it always landed as. */
       const cap = el.__cap || null, cres = cap && !cap.err ? cap.content : null;
       const cname = String((cap && cap.name) || n.split(' ')[0] || 'capability');
+      /* A JOB RECEIPT IS NOT AN ITEM (owner, 2026-10-11: research "is just a blank card with the capability name on"):
+         research.run and its kind answer {job_id, status, ws_url...} at once and do the work afterwards - the run has its
+         own item (the research run), so the receipt landed as a near-empty card beside it */
+      if(cres&&typeof cres==='object'&&!Array.isArray(cres)&&(cres.job_id||cres.job)&&Object.keys(cres).every(k=>/^(ok|job_id|job|status|state|ws_url|stream|poll|poll_url|message|queued|eta|mode|output_mode|query|id)$/.test(k))) return;
       let made = null;
+      /* a lookup has its item already (_cvLookStart): its answer went into it in place, so the harvest does not make another */
+      if(el.__cvLookKey) return;
       // an event written is not an item in itself - it is a reason to show the month it landed in
       try{ if(/^cal\.(event|todo)\.upsert$/.test(cname)&&cres&&cres.event) _cvLandCalendar(cres.event, _cvRelMid||''); }catch(_){}
       try{ made = _cvAdapt(cname, cres, cap && cap.args); }catch(_){ made = null; }
@@ -11007,6 +11071,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
 
     let res=null,httpStatus=200;
     const _act=(()=>{ try{ return _cvActStart(el, capName, coercedArgs); }catch(_){ return null; } })();   // the desk's activity line for this call
+    const _look=(()=>{ try{ return _cvLookStart(el, capName, coercedArgs); }catch(_){ return null; } })();   // a lookup's own item, from its start
     try{
       // session_id rides along so the backend can route the call into this
       // session's sandbox container (and scope its events) — the /mcp/call
@@ -11017,7 +11082,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       res=await r.json();
     }catch(e){res=null;}
     try{ const c=res&&res.type==='tool_result'?res.content:null; const bad=!res||res.type!=='tool_result'||(c&&typeof c==='object'&&(c.ok===false||(c.error!=null&&c.error!==''&&c.error!==false)));
-      _cvActEnd(_act, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer'); }catch(_){}
+      _cvActEnd(_act, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer');
+      _cvLookEnd(_look, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer', coercedArgs); }catch(_){}
 
     // Build a persistent cap header showing what was run (never vanishes)
     const argsSummary=Object.entries(coercedArgs).filter(([k])=>k!=='trace_id').map(([k,v])=>`${k}=${JSON.stringify(v).slice(0,20)}`).slice(0,3).join(' ');
