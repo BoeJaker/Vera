@@ -115,6 +115,9 @@
     /* measure each element's first draw: time spent in its render() calls until it settles */
     const proto = customElements.get('vera-widget') && customElements.get('vera-widget').prototype;
     if (proto && !proto.__labTimed) { const r0 = proto.render; proto.render = function () { const t0 = performance.now(); try { return r0.apply(this, arguments); } finally { this.__labMs = (this.__labMs || 0) + (performance.now() - t0); this.__labRenders = (this.__labRenders || 0) + 1; } }; proto.__labTimed = true; }
+    /* warm-up: one throwaway widget drawn and dropped before anything is measured - the page's first widget paid for
+       the stylesheet and the iso library, which charged the first cell 40-60 ms that were not its own (2026-10-11) */
+    if (!root.__labWarm) { root.__labWarm = true; const wu = doc.createElement('vera-widget'); wu.style.cssText = 'position:absolute;left:-9999px;top:0;width:300px;height:150px'; wu.setAttribute('size', 'm'); wu.record = { form: 'heat', data: { a: 1, b: 2 } }; doc.body.appendChild(wu); await new Promise((res) => setTimeout(res, 400)); wu.remove(); }
     const rows = [];
     for (const form of opts.forms) {
       const variants = [form];
