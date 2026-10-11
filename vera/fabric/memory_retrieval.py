@@ -102,10 +102,42 @@ except Exception:                        # pragma: no cover
 log = logging.getLogger("vera.memory_retrieval")
 
 
+def _df_candidates() -> List[Any]:
+    """Every data_fabric module object this process holds: both sys.modules names and the module that owns the
+    registered fabric.query (11 Oct 2026: sys.modules["data_fabric"] was an unconnected copy while fabric.query's
+    module was connected)."""
+    out: List[Any] = []
+    for m in (sys.modules.get("data_fabric"), sys.modules.get("Vera.vera.fabric.data_fabric")):
+        if m is not None and all(m is not x for x in out):
+            out.append(m)
+    try:
+        fn = (CAPABILITY_REGISTRY.get("fabric.query") or {}).get("func")
+        owner = sys.modules.get(getattr(fn, "__module__", "") or "")
+        if owner is not None and hasattr(owner, "FABRIC_PG") and all(owner is not x for x in out):
+            out.append(owner)
+    except Exception:
+        pass
+    return out
+
+
+def _connected(m: Any) -> bool:
+    return bool(getattr(getattr(m, "FABRIC_PG", None), "available", False)
+                or getattr(getattr(m, "FABRIC_CHROMA", None), "available", False))
+
+
 def _df():
-    """The LIVE data_fabric module instance (loaded by the module loader)."""
-    return (sys.modules.get("data_fabric")
-            or sys.modules.get("Vera.vera.fabric.data_fabric"))
+    """The LIVE data_fabric module: the candidate whose stores are connected, else the first one."""
+    cands = _df_candidates()
+    return next((m for m in cands if _connected(m)), cands[0] if cands else None)
+
+
+def _df_evidence(df: Any) -> Dict[str, Any]:
+    """Which data_fabric served this seek, and every candidate's identity and connection state."""
+    return {"used": f"{getattr(df, '__name__', '')}@{id(df):x}",
+            "candidates": [{"name": getattr(m, "__name__", ""), "id": f"{id(m):x}",
+                            "pg": bool(getattr(getattr(m, "FABRIC_PG", None), "available", False)),
+                            "chroma": bool(getattr(getattr(m, "FABRIC_CHROMA", None), "available", False))}
+                           for m in _df_candidates()]}
 
 
 def _mem():
@@ -700,7 +732,7 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
         return await _seek_cache_put(ck, {"text": _render_seek(query, [], 0, 0, max_chars),
                                           "results": [], "count": 0, "candidates": 0,
                                           "collapsed": 0, "datasets": [],
-                                          "legs": list(env.stages), "fabric": getattr(df, "__name__", "")})
+                                          "legs": list(env.stages), "fabric": _df_evidence(df)})
 
     if await _switch("memory.rerank") == "on":
         await _rerank_head(query, cands, env)
@@ -761,7 +793,7 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
            "datasets": sorted({c["dataset_id"] for c in selected}),
            # what each backend leg returned (stage, ms, outcome, n) and which fabric module served it - the evidence
            # that found seek's semantic leg empty on 11 Oct 2026
-           "legs": list(env.stages), "fabric": getattr(df, "__name__", "")}
+           "legs": list(env.stages), "fabric": _df_evidence(df)}
     if ranked_mode:
         out["temporal_intent"] = intent
     if _reval is not None:
