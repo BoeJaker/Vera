@@ -69,6 +69,8 @@ LAYOUTS = {
     # NLI claim check (compute-roles P3, 11 Oct 2026): I2 + claim_nli shadow (recorded) / hint (to the checker)
     "N0": {"info_first": True, "answer_check": True, "claim_nli": "shadow"},
     "N1": {"info_first": True, "answer_check": True, "claim_nli": "hint"},
+    # A3 plan critique (11 Oct 2026): the CPU 35B reviews the whole plan beside the run
+    "R1": {"plan_critique": True},
     # the loop's role-less stages placed on CPU nodes (stage_models, 10 Oct 2026)
     "C1": {"stage_models": "verifier=qwen3.6:35b-a3b@cpu-246,gate=qwen3.6:35b-a3b@cpu-246"},
     "C2": {"stage_models": "journal=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
