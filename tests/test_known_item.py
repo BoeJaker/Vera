@@ -68,3 +68,10 @@ def test_the_run_forces_the_cache_off_and_uses_the_run_layer():
     assert "include_memory=False" in src
     assert 'os.path.join(_here, "fabric/known_item.py")' in open(
         os.path.join(ROOT, "vera", "capability_orchestration.py"), encoding="utf-8").read()
+
+
+def test_the_set_is_sampled_from_what_seek_searches():
+    src = open(os.path.join(ROOT, "vera", "fabric", "known_item.py"), encoding="utf-8").read()
+    assert 'source: str = "pg"' in src and "TABLESAMPLE SYSTEM" in src and "FROM fabric_records" in src
+    build = src[src.index("async def cap_known_items_build("):src.index("async def cap_known_items_run(")]
+    assert build.index('if source == "sqlite":') < build.index("await _candidates_pg(")

@@ -34,6 +34,20 @@ def _dir() -> Path:
     return Path(state_dir("eval", "known_items"))
 
 
+async def _candidates_pg(percent: float) -> List[Dict[str, Any]]:
+    """A random block sample of the fabric's Postgres records - the table memory.seek searches and hydrates from, so
+    every item is one seek can return (11 Oct 2026: a SQLite sample was mostly records seek cannot see)."""
+    import Vera.vera.fabric.data_fabric as df
+    pool = getattr(getattr(df, "FABRIC_PG", None), "_pool", None)
+    if pool is None:
+        return []
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, dataset_id, left(text, 600) AS text FROM fabric_records "
+            f"TABLESAMPLE SYSTEM ({float(percent)}) WHERE text IS NOT NULL")
+    return [{"id": r["id"], "dataset_id": r["dataset_id"], "text": r["text"]} for r in rows]
+
+
 def _candidates(every: int) -> List[Dict[str, Any]]:
     import Vera.vera.fabric.data_fabric as df
     conn = df._sqlite_conn()
@@ -46,22 +60,28 @@ def _candidates(every: int) -> List[Dict[str, Any]]:
     "retrieval.known_items.build", http_method="POST", http_path="/retrieval/known_items/build",
     http_tags=["fabric", "memory", "eval"], memory="off",
     description="Build and freeze a known-item eval set for memory.seek (four-minds FM-7.0c): n real fabric records, "
-                "every Nth row, stratified by collector family (none above 15%, self-telemetry left out), each with a "
-                "query made of the distinctive words it opens with. Inputs: n (int=200), name (str='v1'), every "
-                "(int=500 - the row sampling step). Output: {ok, name, items, families, path}.",
+                "a block sample of the fabric's Postgres records (what seek searches), stratified by collector family "
+                "(none above 15%, self-telemetry left out), each with a query made of the distinctive words it opens "
+                "with. Inputs: n (int=200), name (str='v1'), source ('pg' default | 'sqlite' - every Nth SQLite row, "
+                "which includes records seek cannot see), percent (float=0.4, pg sample), every (int=500, sqlite). "
+                "Output: {ok, name, source, items, sampled, families, path}.",
 )
 async def cap_known_items_build(n: int = 200, name: str = KI.VERSION, every: int = SAMPLE_EVERY,
-                                trace_id=None) -> Dict[str, Any]:
-    cands = await asyncio.to_thread(_candidates, max(1, int(every)))
+                                source: str = "pg", percent: float = 0.4, trace_id=None) -> Dict[str, Any]:
+    if source == "sqlite":
+        cands = await asyncio.to_thread(_candidates, max(1, int(every)))
+    else:
+        cands = await _candidates_pg(max(0.01, min(10.0, float(percent or 0.4))))
     items = KI.pick(cands, max(1, int(n)), seed=str(name))
     doc = {"name": str(name), "version": KI.VERSION, "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-           "sampled": len(cands), "items": items}
+           "source": source, "sampled": len(cands), "items": items}
     p = _dir() / f"{name}.json"
     p.write_text(json.dumps(doc, indent=1), encoding="utf-8")
     fams: Dict[str, int] = {}
     for it in items:
         fams[it["family"]] = fams.get(it["family"], 0) + 1
-    return {"ok": True, "name": str(name), "items": len(items), "sampled": len(cands), "families": fams, "path": str(p)}
+    return {"ok": True, "name": str(name), "source": source, "items": len(items), "sampled": len(cands),
+            "families": fams, "path": str(p)}
 
 
 @capability(
