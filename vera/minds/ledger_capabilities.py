@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -265,14 +266,26 @@ def _rows_arg(rows: Any) -> List[Dict[str, Any]]:
     memory="off", silent=True,
     description="Record one Decision v0 or Outcome v0 row in the decision ledger (four-minds FM-0.2). "
                 "The row is checked against the frozen v0 shape (ROADMAP §5.1) and appended to a Redis "
-                "stream; a background job moves it to Postgres. Input: row (object or JSON string). "
-                "Output: {ok, decision_id, kind} or {ok:false, errors[]}.",
+                "stream; a background job moves it to Postgres. Input: row (object or JSON string), inputs "
+                "(optional object: what the decision saw, kept in the training store when its surface is "
+                "enabled, so it can be rated in /decide/labels). Output: {ok, decision_id, kind} or "
+                "{ok:false, errors[]}.",
 )
-async def cap_decide_record(row: Any = None, trace_id=None) -> Dict[str, Any]:
+async def cap_decide_record(row: Any = None, inputs: Any = None, trace_id=None) -> Dict[str, Any]:
     rows = _rows_arg(row)
     if len(rows) != 1:
         return {"ok": False, "errors": ["pass exactly one row"]}
-    return await append(rows[0])
+    out = await append(rows[0])
+    if out.get("ok") and isinstance(inputs, dict) and inputs and out.get("kind") == "decision":
+        ts = _training_state()
+        if ts is not None:
+            ts.put(rows[0], inputs)
+    return out
+
+
+def _training_state():
+    """The LIVE training_state module (the loader loads it under its bare name, after this one)."""
+    return sys.modules.get("training_state") or sys.modules.get("Vera.vera.minds.training_state")
 
 
 @capability(

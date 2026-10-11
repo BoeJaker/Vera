@@ -134,6 +134,22 @@ def signal_state(signal: Dict[str, Any], topic_id: str) -> Dict[str, Any]:
             "score": signal.get("score"), "genre": signal.get("genre"), "novelty": signal.get("novelty")}
 
 
+#: Signal questions whose inputs a backfill can rebuild from the stored signal.
+SIGNAL_QUESTIONS = ("intel.signal_relevant", "intel.page_genre", "intel.enrich_worth")
+SNIPPET_CHARS = 1200
+
+
+def signal_inputs(signal: Dict[str, Any], topic: Dict[str, Any]) -> Dict[str, Any]:
+    """What a signal decision saw, for the training store (four-minds FM-13.6): signal_state plus the topic's name
+    and the text a person needs to rate it. The store redacts and bounds it; the ledger row still carries only the
+    hash."""
+    out = signal_state(signal, str(topic.get("id") or ""))
+    out.update(topic_name=topic.get("name") or topic.get("title") or "",
+               snippet=str(signal.get("summary") or signal.get("snippet") or "")[:SNIPPET_CHARS],
+               source=signal.get("site") or signal.get("source") or "")
+    return out
+
+
 def strongest(outcomes: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Calibration uses the strongest outcome of a decision, the latest among equals."""
     order = {"strong": 3, "medium": 2, "weak": 1}

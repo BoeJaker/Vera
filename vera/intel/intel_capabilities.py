@@ -291,27 +291,32 @@ def _spend(key: str, seconds: float) -> None:
 _LEDGER_TASKS: set = set()
 
 
-def _to_ledger(row: Dict[str, Any]) -> None:
+def _to_ledger(row: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> None:
     """Mirror a Decision/Outcome v0 row into the shared decision ledger
     (decide.record), in the background and best effort: the local store stays
-    the record, and intel.decisions.export -> decide.ledger.import backfills."""
+    the record, and intel.decisions.export -> decide.ledger.import backfills.
+    `inputs` (what the decision saw) goes to the training store, so the
+    decision can be rated in /decide/labels (four-minds FM-13.6)."""
     if not _has("decide.record"):
         return
     try:
-        task = asyncio.get_running_loop().create_task(_call("decide.record", row=row))
+        kw = {"inputs": inputs} if inputs else {}
+        task = asyncio.get_running_loop().create_task(_call("decide.record", row=row, **kw))
     except RuntimeError:                     # no loop (a sync caller in a test)
         return
     _LEDGER_TASKS.add(task)
     task.add_done_callback(_LEDGER_TASKS.discard)
 
 
-def _decide(question_id: str, answer: Any, *, state: Any, ref_kind: str, ref_id: str, **kw) -> Optional[str]:
+def _decide(question_id: str, answer: Any, *, state: Any, ref_kind: str, ref_id: str,
+            inputs: Optional[Dict[str, Any]] = None, **kw) -> Optional[str]:
     """Record one decision in the four-minds Decision v0 shape: the local store,
-    mirrored to the shared ledger. Never raises; returns the decision id."""
+    mirrored to the shared ledger, with what it saw (`inputs`, else `state`) for
+    the training store. Never raises; returns the decision id."""
     try:
         d = ledger.make_decision(question_id, answer, state=state, state_ref={"kind": ref_kind, "id": ref_id}, **kw)
         store().put_decision(d)
-        _to_ledger(d)
+        _to_ledger(d, inputs or (state if isinstance(state, dict) else None))
         return d["decision_id"]
     except Exception as ex:  # noqa: BLE001
         log.debug("intel: decision not recorded: %s", ex)
@@ -873,13 +878,14 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
         else:
             rel_ans = "relevant" if (c.get("score") or 0) >= float(t.get("min_score", 5)) else "not_relevant"
         _decide("intel.signal_relevant", rel_ans, state=ledger.signal_state(c, t["id"]), ref_kind="signal",
-                ref_id=c["id"], decider="calibrated" if learned else "rule", mode="learned" if learned else "rule",
+                ref_id=c["id"], inputs=ledger.signal_inputs(c, t), decider="calibrated" if learned else "rule", mode="learned" if learned else "rule",
                 p=ps if (curve and curve.get("usable")) else None,
                 detail={"score": c.get("score"), "rerank": rel.get(i), "novelty": c.get("novelty"),
                         "threshold": float(t.get("min_score", 5)), "p_shadow": ps})
         if c.get("genre") or c.get("genre_p") is not None:
             _decide("intel.page_genre", c.get("genre") or "unsure", state=ledger.signal_state(c, t["id"]),
-                    ref_kind="signal", ref_id=c["id"], decider="student", mode="rule",
+                    ref_kind="signal", ref_id=c["id"], inputs=ledger.signal_inputs(c, t), decider="student",
+                    mode="rule",
                     detail={"score": c.get("genre_p")})
     stats["nlp"] = bool(vecs or rel)
     return out
@@ -1207,7 +1213,7 @@ async def enrich_topic(t: Dict[str, Any], *, limit: int = 0, should_continue=Non
         low_genre = s2.get("genre") in ops.LOW_GENRES and not (s2.get("genre") == "marketing" and t.get("vendors"))
         to_model = not ((s2.get("score") or 0) < gate or llm_done >= n or low_genre)
         _decide("intel.enrich_worth", "model" if to_model else "nlp_only", state=ledger.signal_state(s2, t["id"]),
-                ref_kind="signal", ref_id=s2["id"], decider="rule", mode="rule",
+                ref_kind="signal", ref_id=s2["id"], inputs=ledger.signal_inputs(s2, t), decider="rule", mode="rule",
                 detail={"score": s2.get("score"), "gate": gate, "budget_left": n - llm_done, "low_genre": low_genre})
         if not to_model:
             text = str(page.get("markdown") or s.get("snippet") or "")
@@ -4240,6 +4246,40 @@ async def cap_decisions_export(since: str = "", limit: int = 5000, trace_id=None
     rows = store().decisions(since=since, limit=max(1, min(50000, int(limit))), with_outcomes=False)
     return {"decisions": rows, "outcomes": store().outcomes_since(since, limit=max(1, min(200000, int(limit) * 4))),
             "schema": {"decision": ledger.DECISION_SCHEMA, "outcome": ledger.OUTCOME_SCHEMA}}
+
+
+@capability("intel.decisions.backfill_inputs", http_method="POST", http_path="/intel/decisions/backfill_inputs",
+            http_tags=["intel"], memory="off",
+            description="Give past signal decisions (signal_relevant, page_genre, enrich_worth) what they saw in the "
+                        "training store, rebuilt from the stored signal and its topic, so they can be rated in "
+                        "/decide/labels (four-minds FM-13.6). The signal as it is now, not as it was: a later "
+                        "enrichment may have added a summary. Input: days (default 30), dry_run (default true). "
+                        "Output: {decisions, rebuilt, written, missing_signal}.")
+async def cap_decisions_backfill_inputs(days: int = 30, dry_run: bool = True, trace_id=None):
+    if isinstance(dry_run, str):
+        dry_run = dry_run.strip().lower() not in ("0", "false", "no")
+    ts = sys.modules.get("training_state") or sys.modules.get("Vera.vera.minds.training_state")
+    if ts is None and not dry_run:
+        return {"ok": False, "error": "training store not loaded"}
+    st = store()
+    since = _since(24 * max(1, min(90, int(days))))
+    out = {"ok": True, "dry_run": dry_run, "decisions": 0, "rebuilt": 0, "written": 0, "missing_signal": 0}
+    topics: Dict[str, Dict[str, Any]] = {}
+    for q in ledger.SIGNAL_QUESTIONS:
+        for d in st.decisions(question_id=q, since=since, limit=20000, with_outcomes=False):
+            out["decisions"] += 1
+            sig = st.get_signal(str((d.get("state_ref") or {}).get("id") or ""))
+            if not sig:
+                out["missing_signal"] += 1
+                continue
+            tid = str(sig.get("topic_id") or "")
+            if tid not in topics:
+                topics[tid] = st.get_topic(tid) or {"id": tid}
+            inputs = ledger.signal_inputs(sig, topics[tid])
+            out["rebuilt"] += 1
+            if not dry_run and await ts.put_now(d, inputs):
+                out["written"] += 1
+    return out
 
 
 # ── UI ───────────────────────────────────────────────────────────────────────

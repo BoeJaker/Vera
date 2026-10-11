@@ -1063,3 +1063,53 @@ def test_narration_is_compressed_to_mp3_without_ffmpeg(tmp_path):
         w.writeframes(b"\x10\x00\xf0\xff" * 24000)
     r = _R(orch, "intel.audio.compact")
     assert r["converted"] == 1 and r["kept_wav"] == 0
+
+
+def test_decisions_send_what_they_saw_to_the_training_store(tmp_path, monkeypatch):
+    # four-minds FM-13.6: decide.record gets the inputs (a signal's richer view, else the state) so intel decisions
+    # can be rated in /decide/labels; the ledger row itself still carries only the hash
+    mod, orch = _load(tmp_path)
+    calls = []
+
+    async def fake_call(name, /, **kw):
+        calls.append((name, kw))
+        return {"ok": True}
+
+    monkeypatch.setattr(mod, "_has", lambda n: n == "decide.record")
+    monkeypatch.setattr(mod, "_call", fake_call)
+
+    async def go():
+        mod._decide("intel.signal_relevant", "relevant", state={"url": "https://a"}, ref_kind="signal", ref_id="s1",
+                    inputs={"url": "https://a", "snippet": "text"})
+        mod._decide("intel.material_change", "alert", state={"topic": "t1"}, ref_kind="snapshot", ref_id="n1")
+        await asyncio.gather(*list(mod._LEDGER_TASKS))
+
+    _run(go())
+    assert [c[0] for c in calls] == ["decide.record", "decide.record"]
+    assert calls[0][1]["inputs"] == {"url": "https://a", "snippet": "text"}
+    assert calls[1][1]["inputs"] == {"topic": "t1"}
+    assert "snippet" not in json.dumps(calls[0][1]["row"])
+
+
+def test_backfill_rebuilds_signal_inputs_and_writes_only_when_asked(tmp_path, monkeypatch):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    st = mod.store()
+    for i in range(3):
+        st.put_signal({"id": f"s{i}", "topic_id": t["id"], "title": f"t{i}", "url": f"https://x.example/{i}",
+                       "score": 6, "snippet": f"body {i}", "seen": mod.core.now_iso()})
+        mod._decide("intel.signal_relevant", "relevant", state={"s": i}, ref_kind="signal", ref_id=f"s{i}")
+    mod._decide("intel.enrich_worth", "model", state={}, ref_kind="signal", ref_id="gone")
+    written = []
+
+    async def put_now(d, inputs):
+        written.append((d["decision_id"], inputs))
+        return True
+
+    monkeypatch.setitem(sys.modules, "training_state", types.SimpleNamespace(put_now=put_now))
+    dry = _R(orch, "intel.decisions.backfill_inputs")
+    assert (dry["decisions"], dry["rebuilt"], dry["missing_signal"], dry["written"]) == (4, 3, 1, 0) and not written
+    out = _R(orch, "intel.decisions.backfill_inputs", dry_run=False)
+    assert out["written"] == 3 and len(written) == 3
+    assert {w[1]["topic_name"] for w in written} == {"AI property valuation"}
+    assert {w[1]["snippet"] for w in written} == {"body 0", "body 1", "body 2"}
