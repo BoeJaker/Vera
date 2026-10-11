@@ -41,6 +41,14 @@ except ImportError:                                   # pragma: no cover
 
 log = logging.getLogger("vera.evolve.delegate")
 
+try:
+    from Vera.vera.evolve import delegate_reap_core as _reap_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.evolve import delegate_reap_core as _reap_core
+    except Exception:
+        _reap_core = None
+
 KEY_JOB = "vera:delegate:job:%s"
 KEY_INDEX = "vera:delegate:jobs"
 JOB_TTL_S = 14 * 86400
@@ -127,6 +135,60 @@ async def _drop_worktree(path: str) -> None:
         await ev._git("worktree", "remove", "--force", path, timeout=120, repo_root=root)
     except Exception as e:
         log.debug("delegate worktree cleanup %s: %s", path, e)
+
+
+# ── jobs a restart left behind (ROADMAP J5c) ─────────────────────────────────
+
+async def _reap_interrupted(limit: int = 200) -> Dict[str, Any]:
+    """Once per process start: settle delegated jobs a restart killed (delegate_reap_core) -
+    status interrupted, their own worktree removed (exact path, never prune), the loop's run hash
+    closed, the trajectory kept. Never in a dev sandbox (it shares prod's .git). Never raises."""
+    out: Dict[str, Any] = {"checked": 0, "reaped": []}
+    r = _redis()
+    if not r or _reap_core is None or _orch.is_dev_sandbox():
+        return out
+    try:
+        ids = await r.zrevrange(KEY_INDEX, 0, max(0, int(limit) - 1)) or []
+        for raw in ids:
+            jid = raw.decode() if isinstance(raw, bytes) else str(raw)
+            job = await _load(jid)
+            if not job:
+                continue
+            out["checked"] += 1
+            evs = await _loop_events(job.get("session_id", ""))
+            last = next((e.get("ts") for e in reversed(evs) if isinstance(e, dict) and e.get("ts")), None)
+            ok, why = _reap_core.should_reap(job, running_here=jid in _TASKS, last_event_iso=last,
+                                             now=time.time())
+            if not ok:
+                continue
+            job["status"] = "interrupted"
+            job["ended_at"] = now_iso()
+            job["error"] = ("prod restarted while the job ran (%s); its worktree was removed - "
+                            "start it again to re-run" % why)[:400]
+            await _keep_trajectory(job)
+            await _drop_worktree(job.get("worktree", ""))
+            try:
+                await r.hset("vera:loop:run:%s" % job["session_id"],
+                             mapping={"status": "interrupted", "updated_at": now_iso()})
+            except Exception:
+                pass
+            await _save(job)
+            out["reaped"].append(jid)
+        if out["reaped"]:
+            log.info("delegate: settled %d job(s) a restart left behind: %s",
+                     len(out["reaped"]), ", ".join(out["reaped"]))
+            await emit_event({"type": "evolve.delegate.reaped", "jobs": out["reaped"]})
+    except Exception as e:
+        log.debug("delegate reap: %s", e)
+    return out
+
+
+async def _reap_startup() -> None:
+    await asyncio.sleep(30)          # let Redis and the loop registry settle after the restart
+    await _reap_interrupted()
+
+
+_orch.start_at_import(_reap_startup, "delegate_reap")
 
 
 # ── the job in Loop Lab (ROADMAP J1) ─────────────────────────────────────────
