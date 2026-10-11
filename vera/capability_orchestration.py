@@ -12480,6 +12480,7 @@ async def lifespan(app: FastAPI):
         # records, so it must come after both census/ and evolve/ above.
         os.path.join(_here, "evolve/task_history_capabilities.py"),
         os.path.join(_here, "evolve/delegate_capabilities.py"),
+        os.path.join(_here, "agents/agent_work_capabilities.py"),
         # The Ship page's one table: a row per branch from the pipeline list,
         # the sandbox registry, the test history and the edges - after evolve/.
         os.path.join(_here, "evolve/ship_capabilities.py"),
