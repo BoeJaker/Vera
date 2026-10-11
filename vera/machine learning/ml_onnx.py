@@ -558,7 +558,40 @@ def _make_runner(slug: str):
     return _runner
 
 
-def _register_model_cap(slug: str, module_id: str, live_mount: bool = False) -> Optional[str]:
+def trained_for(module_id: str) -> Dict[str, Any]:
+    """What the module's latest finished training run was for (dataset, task,
+    features, best validation loss) - recorded in the export manifest so the
+    model's binding can say it (MW-5)."""
+    mt = sys.modules.get("ml_training")
+    ws = sys.modules.get("ml_workshop")
+    jobs = [j for j in (getattr(mt, "_TRAINING_JOBS", {}) or {}).values()
+            if j.get("module_id") == module_id and j.get("status") in ("complete", "early_stopped")]
+    j = jobs[-1] if jobs else {}
+    m = (getattr(ws, "_MODULES", {}) or {}).get(module_id) or {}
+    return {k: v for k, v in {"name": m.get("name") or "", "dataset_id": j.get("dataset_id") or "",
+                              "task": j.get("task") or "", "n_features": j.get("n_features"),
+                              "best_val_loss": j.get("best_val_loss"),
+                              "loss": (j.get("config") or {}).get("loss")}.items() if v not in (None, "")}
+
+
+def model_uses(module_id: str, t: Optional[Dict[str, Any]]) -> str:
+    t = t or {}
+    what = f"Predictions from the ML Workshop model {(t.get('name') or module_id)!r}"
+    if t.get("task") or t.get("dataset_id"):
+        what += " trained for " + (t.get("task") or "prediction") + \
+                (f" on dataset {t['dataset_id']}" if t.get("dataset_id") else "")
+    det = []
+    if t.get("n_features"):
+        det.append(f"{t['n_features']} input features")
+    if t.get("best_val_loss") is not None:
+        det.append(f"best validation loss {float(t['best_val_loss']):.4g}" +
+                   (f" ({t['loss']})" if t.get("loss") else ""))
+    return what + (" (" + ", ".join(det) + ")" if det else "") + \
+        ": give it feature rows (X, a JSON list), get its outputs back."
+
+
+def _register_model_cap(slug: str, module_id: str, live_mount: bool = False,
+                        trained: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """Register `ml.onnx.model.<slug>` bound to one artifact. Import-time calls
     get HTTP routes from the normal lifespan mount pass; runtime calls pass
     live_mount=True to add the route immediately (best-effort)."""
@@ -574,10 +607,12 @@ def _register_model_cap(slug: str, module_id: str, live_mount: bool = False) -> 
         capability(
             cap_name, http_method="POST", http_path=path,
             http_tags=["ml", "onnx", "model"], memory="on",
-            serves=_bind("predict", "onnx", io_in="vectors", io_out="scores", placement="any",
-                         uses=f"Predictions from the ML Workshop model {module_id!r} exported to "
-                              f"ONNX: give it feature rows (X, a JSON list), get its outputs back.",
-                         limits="inputs with a different feature layout than it was trained on."),
+            serves=_bind((trained or {}).get("task") or "predict", "onnx", io_in="vectors",
+                         io_out="labels" if "class" in str((trained or {}).get("task") or "") else "scores",
+                         placement="any", uses=model_uses(module_id, trained),
+                         limits="inputs with a different feature layout than it was trained on"
+                                + (f" (it takes {trained['n_features']})" if (trained or {}).get("n_features") else "")
+                                + "."),
             description=(f"Run the exported ONNX model {module_id!r} via ONNX "
                          f"Runtime. Input: X (JSON list). Output: {{predictions}}."),
         )(_make_runner(slug))
@@ -636,8 +671,10 @@ if _CAP_AVAILABLE:
         await _emit({"type": "ml.onnx.progress", "stage": "build",
                      "message": f"exporting {module_id} → ONNX"})
         try:
+            trained = trained_for(module_id)
             def _build_and_save():
                 model, meta = _build_model(module, weights, dtype)
+                meta["trained"] = trained          # what it is for (MW-5), kept in the manifest
                 return _save_artifact(module_id, model, meta) + (meta,)
             onnx_path, slug, meta = await asyncio.get_running_loop().run_in_executor(None, _build_and_save)
         except Exception as e:
@@ -646,7 +683,7 @@ if _CAP_AVAILABLE:
 
         cap_name = None
         if register_cap:
-            cap_name = _register_model_cap(slug, module_id, live_mount=True)
+            cap_name = _register_model_cap(slug, module_id, live_mount=True, trained=trained)
             # stamp cap_name into the manifest so a restart re-registers it
             try:
                 _, meta_path = _paths(slug)
@@ -803,7 +840,8 @@ if _CAP_AVAILABLE:
                     m = json.load(f)
                 if m.get("cap_name"):
                     _register_model_cap(m.get("slug", os.path.splitext(fn)[0]),
-                                        m.get("module_id", ""), live_mount=False)
+                                        m.get("module_id", ""), live_mount=False,
+                                        trained=m.get("trained"))
                     n += 1
             except Exception:
                 pass

@@ -156,7 +156,7 @@ async def _run_here(fn: str, inputs: Dict[str, Any], threads: int,
         except Exception:
             return False
 
-    inputs = dict(inputs, _threads=threads)
+    inputs = dict(inputs, _threads=core.threads_for(fn, threads))
     if inputs.get("_blob_refs") and _orch.REDIS is not None:
         err = await core.resolve_blob_refs(inputs, _orch.REDIS.get)
         if err:
@@ -306,7 +306,7 @@ async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
         return await on_host(why)
 
     # ── node ─────────────────────────────────────────────────────────────────
-    blob = core.pack(dict(inputs, _threads=cfg["threads"]))
+    blob = core.pack(dict(inputs, _threads=core.threads_for(fn, cfg["threads"])))
     exclude: List[str] = []
     last_err = ""
     for attempt in range(2):

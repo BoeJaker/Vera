@@ -74,6 +74,14 @@ NEEDS: Dict[str, Dict[str, float]] = {
     "ml.module_forward": {"cpu": 1.0, "mem_gb": 1.0},
     "onnx.run":          {"cpu": 1.0, "mem_gb": 1.0},
 }
+def threads_for(fn: str, default: int) -> int:
+    """Threads a job of `fn` may use: the cores it was admitted for (NEEDS).
+    Every job used the config-wide 4 while ml.train reserved 1 core, so
+    parallel trials would oversubscribe a node (2026-10-11, MW-4)."""
+    need = (NEEDS.get(fn) or {}).get("cpu")
+    return max(1, int(round(need))) if need else max(1, int(default or 1))
+
+
 #: Node metrics older than this are not trusted for admission.
 METRICS_STALE_S = 60
 
