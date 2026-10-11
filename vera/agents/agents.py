@@ -96,8 +96,10 @@ except Exception:                       # worktree / app-free import
     from vera.agents import agent_patch_core as _agent_patch
 try:
     from Vera.vera.agents import turn_needs_core as _turn_needs
+    from Vera.vera.agents import info_miss_core as _info_miss
 except Exception:                       # worktree / app-free import
     from vera.agents import turn_needs_core as _turn_needs
+    from vera.agents import info_miss_core as _info_miss
 
 
 async def _switch_mode(feature_id: str, minds: Any = None, default: str = "off") -> str:
@@ -2484,6 +2486,7 @@ async def agent_chat_stream_endpoint(request: Request):
                     _t.cancel()
             elapsed_ms = round((_time.monotonic() - _stream_t0) * 1000)
             _record_chat_turn(_ph, agent.name, elapsed_ms, _resp_chars, session_id)
+            _note_info_miss(session_id, _bare_q, "".join(_resp_head), _web_auto)
             # a stream that ended early (client gone, error) still counts its memory use, in the background
             if _usage_t is None:
                 _usage_start()
@@ -6820,6 +6823,76 @@ def _record_chat_turn(ph, agent_name: str, elapsed_ms: int, chars: int, session_
             pass
     except Exception as e:
         log.debug("chat turn record: %s", e)
+
+
+# ── info-seeking misses in live chat (plan SK-4.3) ───────────────────────────────────────────────────────────────
+_INFO_MISS_KEY = "vera:info:misses:"
+
+
+def _note_info_miss(session_id: str, question: str, reply: str, prefetched: bool) -> None:
+    """At the end of a turn: did a question about the outside world get no lookup, and is the user pushing back?
+    Never raises, never awaits - counting happens in the background."""
+    try:
+        wants = bool((_turn_needs.needs(question or "") or {}).get("web", {}).get("on"))
+        miss = _info_miss.classify(question, reply, wants_web=wants, prefetched=bool(prefetched))
+        pb = _info_miss.pushback(question)
+        kinds = (["web_turns"] if wants else []) + ([miss["kind"]] if miss else []) + (["pushback"] if pb else [])
+        if not kinds:
+            return
+        _t = asyncio.get_running_loop().create_task(_record_info_miss(session_id, question, kinds, miss, pb))
+        _CHAT_TURN_TASKS.add(_t)
+        _t.add_done_callback(_chat_turn_task_done)
+    except Exception as e:
+        log.debug("info miss note: %s", e)
+
+
+async def _record_info_miss(session_id: str, question: str, kinds: List[str], miss: Optional[Dict[str, Any]],
+                            pb: Optional[str]) -> None:
+    from datetime import datetime, timezone
+    r = _redis()
+    if r is not None:
+        key = _INFO_MISS_KEY + datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        for k in kinds:
+            await r.hincrby(key, k, 1)
+        await r.expire(key, 60 * 86400)
+    if miss or pb:
+        await emit_event({"type": "info.miss", "session_id": str(session_id or "")[:80],
+                          "kinds": [k for k in kinds if k != "web_turns"], "question": str(question or "")[:200],
+                          "detail": (miss or {}).get("detail", ""), "pushback": pb or ""})
+
+
+@capability(
+    "info.misses", memory="off", silent=True,
+    http_method="GET", http_path="/info/misses", http_tags=["info", "chat"],
+    description="How often chat answered a question about the outside world without looking it up, and how often "
+                "the user pushed back on an answer's facts - per day (info-seeking plan SK-4.3). Kinds: web_turns "
+                "(turns the rules say want the web), no_lookup (answered with no lookup at all), snippets_only "
+                "(only the pre-answer search snippets, no info.seek), pushback ('that's out of date', 'you made "
+                "that up'). Input: days (int, default 14). Output: {days: [{date, web_turns, no_lookup, "
+                "snippets_only, pushback}], totals, miss_rate}.",
+)
+async def cap_info_misses(days: int = 14, trace_id=None):
+    from datetime import datetime, timedelta, timezone
+    r = _redis()
+    if r is None:
+        return {"error": "redis unavailable"}
+    n = max(1, min(60, int(days or 14)))
+    today = datetime.now(timezone.utc).date()
+    out, totals = [], {"web_turns": 0, "no_lookup": 0, "snippets_only": 0, "pushback": 0}
+    for i in range(n):
+        d = (today - timedelta(days=i)).isoformat()
+        raw = await r.hgetall(_INFO_MISS_KEY + d) or {}
+        raw = {(k.decode() if isinstance(k, (bytes, bytearray)) else str(k)): v for k, v in raw.items()}
+        row = {"date": d}
+        for k in totals:
+            row[k] = int(raw.get(k) or 0)
+            totals[k] += row[k]
+        out.append(row)
+    wt = totals["web_turns"]
+    return {"days": out, "totals": totals,
+            "miss_rate": round((totals["no_lookup"] + totals["snippets_only"]) / wt, 3) if wt else None}
+
+
 
 
 @capability(
