@@ -41,6 +41,15 @@ def test_sync_rows_cap_text_and_carry_the_watermark():
     assert PS.to_rows([]) == ([], 0)
 
 
+def test_nul_bytes_never_reach_postgres():
+    nul = chr(0)
+    args, top = PS.to_rows([(3, "page:n", "https://n" + nul, "Ti" + nul + "tle", "web" + nul + ".x", 2,
+                             "a" + nul + "b" + nul + "c")])
+    assert top == 3 and args[0] == ("page:n", "https://n", "Title", "web.x", 2, "abc", 3)
+    assert all(nul not in str(v) for v in args[0])
+    assert PS.clean(("x" + nul) * 3, 2) == "xx" and PS.clean(None) == ""
+
+
 def test_search_sql_ranks_and_filters():
     s = PS.search_sql(False)
     assert "ts_rank_cd(search_vector, q)" in s and "ORDER BY rank DESC, src_rowid DESC" in s and "$3" not in s
