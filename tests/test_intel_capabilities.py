@@ -1113,3 +1113,34 @@ def test_backfill_rebuilds_signal_inputs_and_writes_only_when_asked(tmp_path, mo
     assert out["written"] == 3 and len(written) == 3
     assert {w[1]["topic_name"] for w in written} == {"AI property valuation"}
     assert {w[1]["snippet"] for w in written} == {"body 0", "body 1", "body 2"}
+
+
+def test_a_set_switch_overrides_intel_config_and_an_unset_one_changes_nothing(tmp_path):
+    # four-minds FM-13.3: intel's modes as switchboard switches; intel's config stays the truth
+    mod, orch = _load(tmp_path)
+    eff = {"modes": {"intel.nlp_triage": "on", "intel.brief": "llm", "intel.auto_research": "off",
+                     "intel.material_alerts": "on", "intel.calibrated_gate": "shadow"},
+           "source": {s: "default" for s in mod.isw.SWITCHES}}
+
+    async def minds_effective(minds=None, arm=None, trace_id=None):
+        return eff
+
+    orch.CAPABILITY_REGISTRY["minds.effective"] = {"func": minds_effective, "raw": minds_effective}
+
+    async def read_twice():
+        mod._SW.update(at=0.0, over={}, task=None)
+        mod.config()                                   # starts the background read
+        await mod._SW["task"]
+        return mod.config()
+
+    base = _run(read_twice())
+    assert base["nlp"] is True and not base.get("calibration_off") and "brief_synthesize" not in base
+    eff["modes"].update({"intel.nlp_triage": "off", "intel.brief": "extractive", "intel.calibrated_gate": "off"})
+    eff["source"].update({"intel.nlp_triage": "global", "intel.brief": "global", "intel.calibrated_gate": "arm"})
+    c = _run(read_twice())
+    assert c["nlp"] is False and c["brief_synthesize"] is False
+    assert c["calibrated_gate"] is False and c["calibration_off"] is True and mod._curves() == {}
+    assert c["alerts"] == base["alerts"]               # unset: unchanged
+    # the panel can mark what the switchboard is overriding (a toggle there would do nothing)
+    assert set(_R(orch, "intel.config.get")["switch_overrides"]) == {"nlp", "brief_synthesize", "calibrated_gate",
+                                                                     "calibration_off"}
