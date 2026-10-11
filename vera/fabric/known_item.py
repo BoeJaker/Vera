@@ -26,6 +26,15 @@ except Exception:                        # worktree / app-free import
     from vera.minds import switchboard_core as SB          # type: ignore
 
 log = logging.getLogger("vera.fabric.known_item")
+
+
+def _df():
+    """The LIVE data_fabric module (the one the loader connected), never a fresh import of a second copy."""
+    import sys
+    m = sys.modules.get("data_fabric") or sys.modules.get("Vera.vera.fabric.data_fabric")
+    if m is None:
+        raise RuntimeError("data_fabric is not loaded yet")
+    return m
 SAMPLE_EVERY = 500
 
 
@@ -37,7 +46,7 @@ def _dir() -> Path:
 async def _candidates_pg(percent: float) -> List[Dict[str, Any]]:
     """A random block sample of the fabric's Postgres records - the table memory.seek searches and hydrates from, so
     every item is one seek can return (11 Oct 2026: a SQLite sample was mostly records seek cannot see)."""
-    import Vera.vera.fabric.data_fabric as df
+    df = _df()
     pool = getattr(getattr(df, "FABRIC_PG", None), "_pool", None)
     if pool is None:
         return []
@@ -49,7 +58,7 @@ async def _candidates_pg(percent: float) -> List[Dict[str, Any]]:
 
 
 def _candidates(every: int) -> List[Dict[str, Any]]:
-    import Vera.vera.fabric.data_fabric as df
+    df = _df()
     conn = df._sqlite_conn()
     rows = conn.execute("SELECT id, dataset_id, substr(text, 1, 600) FROM fabric_records "
                         "WHERE rowid % ? = 0 AND text IS NOT NULL", (int(every),)).fetchall()
