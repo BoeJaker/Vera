@@ -1239,6 +1239,7 @@
     border-left:2px solid color-mix(in srgb,var(--border,#2a2f37) 80%,transparent);
     border-radius:0;padding:6px 9px;overflow-x:auto;margin:.3em 0}
   .vc-pre code{white-space:pre}
+  .hd-pop .hd-lbl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);padding:2px 8px 0}
   /* a line of a code item: addressable, and lit when an explode card's span covers it */
   .vc-code .vc-line{display:block;padding-left:2px;border-left:2px solid transparent;transition:background .12s}
   .vc-code .vc-lno{display:inline-block;width:2.4em;margin-right:.5em;text-align:right;font-style:normal;
@@ -2950,6 +2951,44 @@
     if (b.type === 'entities' && Array.isArray(c.groups) && c.groups.length) return { views: ['chips', 'list', 'graph'], cur: viewOf(el, key, 'chips') };
     if (b.type === 'kv') { const f = c.fields || c.data || {}; const n = Array.isArray(f) ? f.length : Object.keys(f).length; if (n >= 3) return { views: ['fields', 'graph'], cur: viewOf(el, key, 'fields') }; }
     return { views: [], cur: '' }; };
+  /* DEEP DIVES AS WIDGETS (WSU-42 / DA-09; owner: "deep dives ... shown through widgets"; the spine: "no stats in front -
+     counts, facets behind menus"). What an item can be looked into, worked out from what it already holds - nothing is
+     fetched, no model runs: each dive is a widget record (form + data) that opens as an item of its own beside its source,
+     bound to it (dive:<id>:<source key>), and goes again from the same menu row. Only dives with something to show. */
+  const divesOf = (b, el) => {
+    const c = (b && b.content) || {}, key = String((b && b.key) || ''), out = [];
+    const count = (list) => { const m = {}; list.forEach((x) => { if (x != null && x !== '') m[x] = (m[x] || 0) + 1; }); return m; };
+    const top = (m, n) => { const o = {}; Object.keys(m).sort((a, b2) => m[b2] - m[a]).slice(0, n || 12).forEach((k) => { o[k] = m[k]; }); return o; };
+    const n = (m) => Object.keys(m).length;
+    const dive = (id, label, form, data, note) => out.push({ id, label, form, data, title: label + ' · ' + String(blockTitle(b) || b.type || '').slice(0, 60), note: note || '' });
+    if (b && b.type === 'records') {
+      const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object');
+      const sites = count(items.map((r) => r.domain)); if (n(sites) >= 2) dive('sites', 'Sites', 'ranked', top(sites, 12), 'pages per site');
+      const days = {}; items.map((r) => Date.parse(r.when)).filter((t) => isFinite(t)).sort((a, b2) => a - b2)
+        .forEach((t) => { const d = new Date(t).toISOString().slice(0, 10); days[d] = (days[d] || 0) + 1; });
+      if (n(days) >= 2) dive('dates', 'When written', 'histogram', days, 'pages per day');
+      const kinds = count(items.map((r) => r.type || r.kind || r.record_type)); if (n(kinds) >= 2) dive('kinds', 'Kinds', 'donut', top(kinds, 8));
+      const ents = (el && el._recEnts && el._recEnts[key]) || {}; const names = {};
+      Object.keys(ents).forEach((id) => (ents[id] || []).forEach((e) => { if (e && e[0]) names[e[0]] = (names[e[0]] || 0) + 1; }));
+      if (n(names) >= 3) dive('names', 'Names', 'ranked', top(names, 12), 'records naming each');
+    } else if (b && b.type === 'table' && Array.isArray(c.rows) && c.rows.length >= 2) {
+      const cols = c.columns || [], rows = c.rows.filter(Array.isArray); const lab = (r, i) => String(r[0] == null || r[0] === '' ? '#' + (i + 1) : r[0]).slice(0, 40);
+      const numOf = (v) => { const x = parseFloat(String(v == null ? '' : v).replace(/[,%$£€\s]/g, '')); return isFinite(x) ? x : null; };
+      for (let j = 0; j < cols.length && out.length < 6; j++) {
+        const vals = rows.map((r) => numOf(r[j])), ok = vals.filter((v) => v != null).length;
+        if (j > 0 && ok >= Math.max(2, Math.ceil(rows.length * 0.6))) {
+          if (rows.length > 40) dive('num:' + j, String(cols[j]) + ' · spread', 'histogram', vals.filter((v) => v != null), 'how the values spread');
+          else { const m = {}; rows.forEach((r, i) => { if (vals[i] != null) m[lab(r, i)] = vals[i]; }); dive('num:' + j, String(cols[j]) + ' by ' + String(cols[0] || 'row'), 'ranked', m); }
+        } else if (ok < rows.length * 0.6) {
+          const m = count(rows.map((r) => (r[j] == null ? '' : String(r[j]).slice(0, 40)))); if (n(m) >= 2 && n(m) < rows.length) dive('top:' + j, 'Top ' + String(cols[j]), 'ranked', top(m, 12), 'rows per value');
+        }
+      }
+    } else if (b && b.type === 'entities' && Array.isArray(c.groups)) {
+      const all = []; c.groups.forEach((g) => (Array.isArray(g.entities) ? g.entities : []).forEach((e) => { if (e && e.text) all.push(e); }));
+      const types = {}; all.forEach((e) => { const t = e.type || 'other'; types[t] = (types[t] || 0) + (e.count || 1); }); if (n(types) >= 2) dive('types', 'By type', 'donut', top(types, 8));
+      const names = {}; all.forEach((e) => { names[e.text] = (names[e.text] || 0) + (e.count || 1); }); if (n(names) >= 3) dive('names', 'Most mentioned', 'ranked', top(names, 12));
+    }
+    return out; };
   /* the kinds whose drawer already draws a head — name, state and the controls that belong to that kind. The card
      does not draw a second one over them; see "ONE HEADER PER ITEM" where the card is built. */
   /* the person's behind / front / among pick per panel item, kept in this browser for every canvas and frame */
@@ -3273,6 +3312,10 @@
       if (own.length && b.type !== 'panel') { c._ownBtns = own; h += '<hr>' + own.slice(0, 10).map((x, i) => `<button class="ib" data-act="ownbtn" data-own="${i}" data-layer-key="${k}" title="${esc(x.title || '')}">${esc(((x.textContent || '').trim() || x.title || 'action').slice(0, 40))}</button>`).join(''); }
       if (b.type === 'panel') h += '<hr>' + row('layer-behind', 'Behind the items', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'In front', 'Fill the free desk, over the other items', L === 'front')
         + row('pquery', 'Query', 'panel.query - what the panel holds') + row('pdispatch', 'Dispatch…', 'panel.dispatch - drive it') + row('prefresh', 'Refresh', 'Reload the panel') + row('pstand', 'Open standalone ↗', 'Open it in a tab of its own');
+      /* its deep dives (WSU-42): each a widget item beside it; a row lit when that dive is open, pressing it again closes it */
+      { const dv = divesOf(b, this); const have = new Set(((this._doc && this._doc.blocks) || []).map((x) => String(x.key || '')));
+        if (dv.length) h += '<hr><div class="hd-lbl">Deep dive</div>' + dv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
+          return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-layer-key="${k}" title="${esc((on ? 'Close ' : 'Open ') + d.label.toLowerCase() + (d.note ? ' - ' + d.note : '') + ' (a widget beside it)')}">${esc(d.label)}</button>`; }).join(''); }
       const pop = document.createElement('div'); pop.className = 'hd-pop'; pop.dataset.key = key; pop.dataset.w = 'canvas.item.menu'; pop.innerHTML = h;
       const S = st.getBoundingClientRect(), r = (btn || c).getBoundingClientRect(), Z = st.offsetWidth ? (S.width / st.offsetWidth) || 1 : 1;
       st.appendChild(pop);
@@ -4819,6 +4862,11 @@
       }
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
+      if (act === 'dive') { const b = this._blockOf(key); const d = b && divesOf(b, this).find((x) => x.id === btn.dataset.dive); if (!d) return;
+        const dk = 'dive:' + d.id + ':' + key; try { const pop = btn.closest('.hd-pop'); if (pop) pop.remove(); } catch (e) { /* closed anyway */ }
+        if (((this._doc && this._doc.blocks) || []).some((x) => String(x.key || '') === dk)) return this.call('canvas.remove', { key: dk });
+        return this.call('canvas.add', { kind: 'widget', key: dk, at: b.state === 'pinned' ? 'pinned' : 'now', size: 'm',
+          content: { form: d.form, title: d.title, data: d.data, binds: key, source: 'deep dive · ' + d.label } }); }
       if (act === 'remove') {
         /* removed, with Undo for a few seconds (WSU-66); the removed shelf keeps it after that */
         const b0 = this._blockOf(key), c0 = (b0 && b0.content) || {}, name = c0.title || c0.name || String(key).split(':').slice(1).join(':') || 'item';
@@ -5929,7 +5977,7 @@
     }
   }
 
-  const api = { place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, version: 6 };
+  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {
