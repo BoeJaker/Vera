@@ -415,14 +415,26 @@ async def _gather_ranked_lists(df, query: str, scope: str, pool: int, env=None):
         env.stage("chroma", 0.0, "skipped:no-vector")
 
     if getattr(df.FABRIC_PG, "available", False):
-        res, ms = await _rtc.timed(asyncio.wait_for(
-            df.FABRIC_PG.search_text(query, scoped_ds or None, limit=pool), timeout=6))
+        # FM-7.1 (switch memory.text_index): the full-text index when it is ready, else the ILIKE scan
+        leg, res, ms = "pg_text", None, 0.0
+        if hasattr(df.FABRIC_PG, "search_text_fts") and await _switch("memory.text_index") == "fts":
+            res, ms = await _rtc.timed(asyncio.wait_for(
+                df.FABRIC_PG.search_text_fts(query, scoped_ds or None, limit=pool), timeout=6))
+            leg = "pg_fts"
+            if isinstance(res, BaseException):
+                log.debug("seek pg_fts: %s", res)
+                _leg(env, "pg_fts", res, ms)
+                res = None
+        if res is None:
+            res, ms = await _rtc.timed(asyncio.wait_for(
+                df.FABRIC_PG.search_text(query, scoped_ds or None, limit=pool), timeout=6))
+            leg = "pg_text"
         if isinstance(res, BaseException):
-            log.debug("seek pg_text: %s", res)
+            log.debug("seek %s: %s", leg, res)
         elif res:
             ranked.append([rid for rid, _ in res])
             text_ids.update(rid for rid, _ in res)
-        _leg(env, "pg_text", res, ms)
+        _leg(env, leg, res, ms)
     elif env is not None:
         env.stage("pg_text", 0.0, "skipped:unavailable")
 

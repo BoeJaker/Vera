@@ -83,6 +83,10 @@ try:                                                    # RF-77
     from Vera.vera.fabric import chroma_bound_core as _chroma_bound
 except ImportError:                                     # pragma: no cover
     from . import chroma_bound_core as _chroma_bound
+try:                                                    # FM-7.1: seek's keyword leg on a full-text index
+    from Vera.vera.fabric import text_index_core as _tix
+except ImportError:                                     # pragma: no cover
+    from . import text_index_core as _tix
 
 # ── Orchestrator integration ──────────────────────────────────────────────────
 # Pure embedding policy (no app import, so tests reach it as
@@ -1634,6 +1638,8 @@ class FabricPostgres:
     def __init__(self):
         self._pool = None
         self._connecting = False
+        self._tix_ready = False
+        self._tix_checked = 0.0
 
     async def connect(self) -> bool:
         if not HAS_PG or self._connecting: return False
@@ -1775,6 +1781,60 @@ class FabricPostgres:
             return scored[:limit]
         except Exception:
             return []
+
+    async def text_index_ready(self) -> bool:
+        """True when the full-text index on fabric_records exists and is valid (checked once per 10 minutes)."""
+        now = time.monotonic()
+        if now - self._tix_checked < 600.0:
+            return self._tix_ready
+        self._tix_checked = now
+        try:
+            async with self._pool.acquire() as conn:
+                self._tix_ready = bool(await conn.fetchval(_tix.STATE, _tix.INDEX))
+        except Exception:
+            self._tix_ready = False
+        return self._tix_ready
+
+    async def ensure_text_index(self) -> str:
+        """Build the full-text index if it is missing, CONCURRENTLY (no write lock, no table rewrite); an invalid
+        one left by an interrupted build is dropped and rebuilt. Returns what it did."""
+        if not self._pool:
+            return "no-db"
+        try:
+            async with self._pool.acquire() as conn:
+                state = await conn.fetchval(_tix.STATE, _tix.INDEX)
+                if state:
+                    did = "present"
+                else:
+                    if state is False:
+                        await conn.execute(_tix.DROP)
+                    await conn.execute("SET maintenance_work_mem = '512MB'")
+                    await conn.execute(_tix.CREATE, timeout=1800)
+                    did = "built"
+            self._tix_checked = 0.0
+            return did
+        except Exception as e:
+            log.warning("fabric text index: %s", e)
+            return f"error: {e}"
+
+    async def search_text_fts(self, query: str, dataset_id: Optional[str] = None,
+                              limit: int = 10) -> Optional[List[Tuple[str, float]]]:
+        """search_text on the full-text index (text_index_core): all-word records ranked first, then any-word ones
+        from a capped candidate set. None when the index is not ready, so the caller can use search_text."""
+        if not self._pool or not await self.text_index_ready():
+            return None
+        words = _tix.terms(query)
+        if not words:
+            return []
+        args = (dataset_id,) if dataset_id else ()
+        async with self._pool.acquire() as conn:
+            all_rows = await conn.fetch(_tix.search_sql("all", bool(dataset_id)),
+                                        _tix.tsquery(words, "&"), limit, *args)
+            any_rows = []
+            if len(all_rows) < limit and len(words) > 1:
+                any_rows = await conn.fetch(_tix.search_sql("any", bool(dataset_id)),
+                                            _tix.tsquery(words, "|"), limit, *args)
+        return _tix.merge([(r["id"], r["r"]) for r in all_rows], [(r["id"], r["r"]) for r in any_rows], limit)
 
     async def get_by_ids(self, ids: List[str]) -> Dict[str, DataRecord]:
         if not self._pool or not ids: return {}
@@ -9812,6 +9872,9 @@ async def _startup():
     # Start auto-pull loop AND deferred index migration (off-thread, won't block)
     asyncio.create_task(_auto_pull_loop())
     asyncio.create_task(_sqlite_index_migration_async())
+    # seek's keyword-leg index (FM-7.1): built once if missing, in the background (a no-op when present)
+    if FABRIC_PG.available:
+        asyncio.create_task(FABRIC_PG.ensure_text_index())
 
     # Hydrate the optional in-RAM FAISS tier from Chroma (background) — without
     # this the index started empty every boot and only ever held records
