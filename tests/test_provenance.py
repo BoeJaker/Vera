@@ -97,3 +97,24 @@ def test_from_file_absent_returns_empty(tmp_path):
         assert prov._from_file() == {}
     finally:
         prov._PROV_FILE = saved
+
+
+def test_required_identity_can_refresh_an_early_unresolved_cache(monkeypatch):
+    attempts = iter(({}, {
+        "git_sha": "abcdef1234567890", "git_sha_short": "abcdef1234",
+        "branch": "main", "dirty": False, "source": "git",
+    }))
+    monkeypatch.setattr(prov, "_CACHE", {})
+    monkeypatch.setattr(prov, "_from_env", lambda: {})
+    monkeypatch.setattr(prov, "_from_git", lambda: next(attempts))
+    monkeypatch.setattr(prov, "_from_file", lambda: {})
+    monkeypatch.setattr(prov, "_persist", lambda core: None)
+
+    assert prov.get_provenance()["source"] == "none"
+    # Ordinary reads remain cheap and keep the boot result.
+    assert prov.get_provenance()["source"] == "none"
+    refreshed = prov.get_provenance(refresh_unresolved=True)
+    assert refreshed["git_sha"] == "abcdef1234567890"
+    assert refreshed["source"] == "git"
+    # Once resolved, even a refresh request preserves the process identity.
+    assert prov.get_provenance(refresh_unresolved=True) == refreshed

@@ -456,7 +456,10 @@ failed, or a recent passing rollback rehearsal is absent. Passing means only
 read does not invoke repair, query a Memory backend or create a missing journal.
 The rehearsal must name the exact commit reported by the running process's
 provenance; a missing identity or stale-code receipt fails closed. Actual
-authority activation remains unavailable.
+authority activation remains unavailable. Identity-required checks retry only
+an unresolved early-startup provenance result; once a commit resolves, that
+process identity remains immutable. Ordinary event stamping continues using the
+cheap cached value and does not repeatedly invoke Git.
 
 `memory.dual_write.rollback_rehearse` produces the rollback evidence without
 calling a live Memory backend. It invokes the real canary with the canary forced

@@ -122,13 +122,19 @@ def _persist(core: Dict[str, Any]) -> None:
         pass
 
 
-def get_provenance() -> Dict[str, Any]:
+def get_provenance(*, refresh_unresolved: bool = False) -> Dict[str, Any]:
     """The running process's git provenance, computed once and cached.
 
     {git_sha, git_sha_short, branch, dirty, source, instance, pid, started_at}.
     All git fields degrade gracefully (empty strings / False) if no source can
-    resolve them — this never raises."""
-    if _CACHE:
+    resolve them — this never raises.
+
+    A successful identity is immutable for the process. Callers that require a
+    source identity may set ``refresh_unresolved=True`` to retry an initial
+    source:none result produced during early startup. Ordinary event stamping
+    remains a cheap cached read and never repeatedly invokes git.
+    """
+    if _CACHE and (not refresh_unresolved or _CACHE.get("git_sha")):
         return dict(_CACHE)
     core = _from_env()
     if not core:
@@ -145,6 +151,7 @@ def get_provenance() -> Dict[str, Any]:
         "pid": os.getpid(),
         "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     })
+    _CACHE.clear()
     _CACHE.update(core)
     return dict(_CACHE)
 
