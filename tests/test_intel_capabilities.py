@@ -222,6 +222,8 @@ def _load(tmp_path, *, nlp=True):
         raise mod._Throttled("no network in tests")
     mod._wd = no_network
     mod.WD_SPACING_S = 0.0
+    # these tests drive sweeps themselves; a new topic's immediate first sweep (SK-3.6) is tested on its own
+    mod.store().set_kv("config", dict(mod.store().get_kv("config", {}) or {}, first_sweep=False))
     return mod, orch
 
 
