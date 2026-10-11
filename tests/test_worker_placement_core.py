@@ -17,7 +17,7 @@ from vera.provisioning.ollama_node_core import registration_threads  # noqa: E40
 # ── placement: fail closed ────────────────────────────────────────────────────
 def test_vetted_namespaces_run_anywhere():
     for cap in ("llm.generate", "nlp.ner", "text.split_chunks", "math.compute",
-                "http.get", "memory.store", "memory.search"):
+                "http.get", "memory.search"):
         assert wp.placement(cap)[0] == "any", cap
 
 
@@ -95,7 +95,7 @@ def test_vetted_single_caps_join_a_class_without_opening_their_namespace():
 
 def test_class_of():
     assert wp.class_of("llm.generate", env={}) == "general"
-    assert wp.class_of("memory.store", env={}) == "general"
+    assert wp.class_of("memory.store", env={}) == ""
     assert wp.class_of("nlp.ner", env={}) == "nlp"
     assert wp.class_of("evolve.targets", env={}) == ""          # host-bound
     assert wp.class_of("nlp.config.set", env={}) == ""          # mutator
@@ -275,4 +275,26 @@ def test_fabric_backed_memory_caps_stay_on_the_host():
         ok, why = wp.offload_decision(cap, stage=5, free={"general": 3}, is_worker=False, is_sandbox=False,
                                       args_ok=True)
         assert ok is False and why == "host-bound", cap
-    assert wp.placement("memory.store")[0] == "any"           # the memory module's own backends still may
+    assert wp.placement("memory.search")[0] == "any"          # shared Memory reads still may run on a node
+
+
+def test_revision_bound_memory_caps_stay_on_one_authoritative_host():
+    # SW-05 adds host-local canonical revision and receipt state to memory.store.
+    # All producers, repair and readiness must therefore share one placement;
+    # otherwise consecutive calls can observe different SQLite journals.
+    caps = (
+        "memory.store",
+        "memory.dual_write.reconcile",
+        "memory.dual_write.readiness",
+        "memory.dual_write.rollback_rehearse",
+    )
+    for cap in caps:
+        where, why = wp.placement(cap)
+        assert where == "host", cap
+        assert "SW-05 revision/receipt stores" in why
+        assert wp.class_of(cap) == ""
+        ok, decision = wp.offload_decision(
+            cap, stage=5, free={"general": 3}, is_worker=False,
+            is_sandbox=False, args_ok=True,
+        )
+        assert ok is False and decision == "host-bound", cap
