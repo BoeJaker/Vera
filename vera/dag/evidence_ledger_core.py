@@ -81,6 +81,7 @@ def add(session_id: str, result: Any, step: Any = None) -> int:
     run["packs"].append({"pack": pack_no, "step": step, "need": str(pk.get("need") or ""),
                          "since": str(pk.get("since") or ""),
                          "answerable": pk.get("answerable"),
+                         "guide": str(pk.get("guide") or "")[:300],
                          "gaps": [str(g)[:240] for g in (pk.get("gaps") or [])][:6]})
     have = run["items"]
     seen = {(i.get("url"), i.get("title")) for i in have}
@@ -136,6 +137,22 @@ def block(evidence: List[Dict[str, Any]], max_chars: int = BLOCK_CHARS,
                 " NOT answerable;" if p.get("answerable") is False else "",
                 " | ".join(p.get("gaps") or []) or "-"))
     return "\n\n".join(parts)[:max_chars]
+
+
+WRITER_RULE = ("Cite these sources as [E<n>] - the E numbers below - with their dates. Use only "
+               "what they say; where they do not cover something, say so instead of filling it in.")
+
+
+def writer_sources(session_id: str, max_chars: int = BLOCK_CHARS) -> str:
+    """The run's evidence for a writer (prose.author): the citing rule, the info.seek guide if
+    any, then the E-numbered block. "" when the run has none. The writer cites [E<n>] - ids
+    that are unique across packs, so the answer check can check every citation exactly."""
+    its = items(session_id)
+    if not its:
+        return ""
+    guide = next((p.get("guide") for p in packs(session_id) if p.get("guide")), "")
+    head = WRITER_RULE + (("\n" + guide) if guide else "")
+    return head + "\n\n" + block(its, max_chars=max_chars, packs_info=packs(session_id))
 
 
 def forget(session_id: str) -> None:

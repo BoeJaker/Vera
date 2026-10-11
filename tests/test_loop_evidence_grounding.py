@@ -141,3 +141,46 @@ def test_web_research_and_fetch_are_evidence_too():
     assert its[0]["pack_n"] == 1 and "Tahoe 26" in its[0]["text"]
     assert set(E.EVIDENCE_TOOLS) == {"info.seek", "web.research", "web.fetch"}
     E.forget("s-web")
+
+
+def test_writer_gets_e_numbered_sources_with_the_rule_and_guide():
+    E.forget("s-wr")
+    assert E.writer_sources("s-wr") == ""
+    E.add("s-wr", dict(PACK, guide="cite [n] with dates, report gaps, never fill from memory"))
+    E.add("s-wr", PACK2)
+    w = E.writer_sources("s-wr")
+    assert w.startswith(E.WRITER_RULE)
+    assert "never fill from memory" in w
+    assert "E3 (pack 2 [1]) (2024-09-16) Valkey 8 released" in w
+    E.forget("s-wr")
+
+
+@needs_app
+def test_e_citations_are_checked_exactly_across_packs(monkeypatch):
+    async def fake_gen(prompt, **kw):
+        return "OK"
+
+    async def fake_load(path, session_id="", repo=""):
+        return ""
+
+    monkeypatch.setattr(M, "_plan_styles", PS)
+    monkeypatch.setattr(M, "_evidence_core", E)
+    monkeypatch.setattr(M, "_safe_ollama_generate_dw", fake_gen)
+    monkeypatch.setattr(M, "_v5_load_current", fake_load)
+    E.forget("s-e")
+    E.add("s-e", PACK)
+    E.add("s-e", PACK2)
+    out = asyncio.run(M._v6_answer_check(
+        "g", [], [], "Valkey 8.0 shipped on 16 September 2024 [E3]; see also [E9].", [], "s-e"))
+    if M._grounding_rules is not None:
+        g = out["grounding"]
+        assert g.get("citations_unchecked") is None              # E ids are exact across packs
+        assert [str(x) for x in g["bad_citations"]] in (["E9"], ["9"])
+        assert "2024" not in (g.get("uncited_numbers") or [])
+    E.forget("s-e")
+
+
+def test_the_writer_hand_off_prefers_the_ledger():
+    src = (ROOT / "vera" / "dag" / "dag_workshop_capabilities.py").read_text(encoding="utf-8")
+    assert "_srcs = _evidence_core.writer_sources(sid) or _research_sources_core.sources_block(" in src
+    assert 'grounding = dict(_grounding_rules.check(final, evidence, id_key="e"))' in src

@@ -14846,8 +14846,12 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
     if evidence and _grounding_rules is not None:
         try:
             _ci = _evidence_core.check_items(sid)
-            grounding = dict(_grounding_rules.check(final, _ci))
-            if any(i.get("n") is None for i in _ci):
+            if re.search(r"\[E\d+", final or ""):
+                # the writer cited run-wide E numbers (writer_sources): exact across packs
+                grounding = dict(_grounding_rules.check(final, evidence, id_key="e"))
+            else:
+                grounding = dict(_grounding_rules.check(final, _ci))
+            if not re.search(r"\[E\d+", final or "") and any(i.get("n") is None for i in _ci):
                 # several packs: an [n] is ambiguous, so only figures/dates count (vera-03 review)
                 grounding["bad_citations"] = []
                 grounding["citations_unchecked"] = len(ev_packs)   # not "clean": unchecked (N packs)
@@ -17810,7 +17814,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     args.get("context_files"), args.get("sources"),
                     known=list(workdir_files or []) + list(saved_run_files or {})):
             # The run's research too - it is usually an EARLIER step (probe 3 Oct, 1e84cf1d).
-            _srcs = _research_sources_core.sources_block(
+            # The evidence ledger first: E-numbered, dated, every pack (info.seek, web.research,
+            # web.fetch) - the writer cites [E<n>], which the answer check can verify exactly.
+            _srcs = _evidence_core.writer_sources(sid) or _research_sources_core.sources_block(
                 _research_sources_core.recall(sid) + list(history))
             if _srcs:
                 # Keep what the executor named (a URL, a title) in front of the material.
