@@ -36,6 +36,7 @@ namespace = runpy.run_path(path, run_name="worldview_jepa_no_torch")
 assert namespace["HAS_TORCH"] is False
 assert namespace["MODEL"].ready is False
 assert callable(namespace["cap_worldview_retrieval_bind"])
+assert callable(namespace["cap_worldview_retrieval_corpus_preview"])
 assert callable(namespace["cap_worldview_retrieval_snapshot_preview"])
 assert callable(namespace["cap_worldview_retrieval_status"])
 assert callable(namespace["cap_worldview_retrieval_query"])
