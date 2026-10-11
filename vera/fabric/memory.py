@@ -2587,7 +2587,7 @@ async def memory_dual_write_readiness(
         from Vera.vera.provenance import get_provenance
     except ImportError:                              # pragma: no cover
         from ..provenance import get_provenance
-    source_commit = str(get_provenance().get("git_sha") or "")
+    source_commit = str(get_provenance(refresh_unresolved=True).get("git_sha") or "")
     return await asyncio.to_thread(
         _revision_repair.read_memory_authority_readiness,
         limit=limit, min_receipts=min_receipts,
@@ -2613,7 +2613,7 @@ async def memory_dual_write_rollback_rehearse(
         from Vera.vera.provenance import get_provenance
     except ImportError:                              # pragma: no cover
         from ..provenance import get_provenance
-    source_commit = str(get_provenance().get("git_sha") or "")
+    source_commit = str(get_provenance(refresh_unresolved=True).get("git_sha") or "")
     if not source_commit:
         raise RuntimeError("running source identity is unavailable")
     return await _revision_rollback.run_memory_rollback_rehearsal(
