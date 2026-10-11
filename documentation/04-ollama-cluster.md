@@ -852,7 +852,13 @@ ML Workshop inference runs on the nodes too. These calls are compute functions:
 - `ml.run` calls `ml.module_forward`;
 - `ml.onnx.run` and every `ml.onnx.model.<slug>` call `onnx.run`. The artifact is stored once in Redis by its sha256 and sent by reference (`_blob_refs`); a node caches the session per hash.
 
-Inference waits at most 20 s for a node with room, then runs on the host's executor in degraded mode. Each reply says where it ran (`ran_on`). `onnx.run` goes only to workers whose venv has onnxruntime: the worker pip list installs it, pinned to the host's release.
+Inference waits at most 20 s for a node with room, then runs on the host's executor in degraded mode.
+
+**Several jobs per node.** A node worker runs compute jobs side by side, up to its `compute_slots` (default: its
+cores minus 2; `VERA_COMPUTE_SLOTS` overrides it). It publishes `compute_running`, and other tasks still run one at a
+time. Admission takes a node while it has a free slot, and only if its free CPU and memory beyond the reserve cover
+the job. A job just sent counts on top of the node's metrics only until they are 15 s newer than the send, by which
+time they show its load. Workers on older code publish no slots and keep the one-job rule. Each reply says where it ran (`ran_on`). `onnx.run` goes only to workers whose venv has onnxruntime: the worker pip list installs it, pinned to the host's release.
 
 ### Scheduling
 

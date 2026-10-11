@@ -6177,6 +6177,10 @@ async def worker_loop(worker_id: str):
     await _refresh_vetted()
     _classes = (await _worker_classes()) if _IS_WORKER else None
     _host_id = os.environ.get("VERA_WORKER_HOST_ID", "") if _IS_WORKER else ""
+    # compute jobs this node worker runs side by side (MW-7); 0 on the host
+    _compute_slots = ((int(os.environ.get("VERA_COMPUTE_SLOTS") or 0)
+                       or _compute_core.compute_slots_default(os.cpu_count() or 2))
+                      if _IS_WORKER else 0)
     _streams = _placement.streams_to_read(is_worker=_IS_WORKER, classes=_classes,
                                           host_id=_host_id)
     _advertised = [c for c in CAPABILITY_REGISTRY
@@ -6205,6 +6209,9 @@ async def worker_loop(worker_id: str):
         "current_task": "",
         "task_started": "",
         "ollama_instance": "",
+        # compute jobs it runs side by side, and how many run now (admission)
+        "compute_slots": _compute_slots,
+        "compute_running": 0,
     }
     WORKER_REGISTRY[worker_id] = dict(reg)
     try:
@@ -6262,6 +6269,7 @@ async def worker_loop(worker_id: str):
                 "current_task": str(w.get("current_task", "")),
                 "task_started": str(w.get("task_started", "")),
                 "ollama_instance": str(w.get("ollama_instance", "")),
+                "compute_running": str(w.get("compute_running", 0)),
             })
             await REDIS.expire(f"vera:workers:{worker_id}", 120)
         except Exception:
@@ -6343,9 +6351,14 @@ async def worker_loop(worker_id: str):
                              worker_id, cap_name, _why, _target)
                     continue
 
-                WORKER_REGISTRY[worker_id]["status"] = f"running:{cap_name}"
-                WORKER_REGISTRY[worker_id]["current_task"] = cap_name
-                WORKER_REGISTRY[worker_id]["task_started"] = now_iso()
+                # a compute job runs beside the others (MW-7): the worker stays
+                # free to read the next one; anything else runs one at a time
+                _detach = cap is not None and _compute_core.run_detached(
+                    cap_name, _IS_WORKER, _compute_slots)
+                if not _detach:
+                    WORKER_REGISTRY[worker_id]["status"] = f"running:{cap_name}"
+                    WORKER_REGISTRY[worker_id]["current_task"] = cap_name
+                    WORKER_REGISTRY[worker_id]["task_started"] = now_iso()
                 await emit_event({
                     "type": "worker.start", "worker": worker_id,
                     "capability": cap_name, "task": task_id,
@@ -6397,67 +6410,86 @@ async def worker_loop(worker_id: str):
                         await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                         await REDIS.xdel(_stream, msg_id)
                 else:
-                    # Run the cap as a separate task so cluster.job.stop can
-                    # cancel it cooperatively (cancel() interrupts at next await).
-                    # A record carrying `bg` runs inside BACKGROUND_LLM: every
-                    # Ollama call the cap makes is then background work — demoted
-                    # off the GPU while a person is active — exactly as the dream
-                    # scheduler's calls are. The set() lands in the new task's own
-                    # context, so nothing leaks into the worker loop.
-                    async def _run_cap(_bg=bg_label):
-                        if _bg:
-                            BACKGROUND_LLM.set(_bg)
-                        return await cap["raw"](**payload, trace_id=trace_id)
-                    inner = asyncio.ensure_future(_run_cap())
-                    RUNNING_TASKS[task_id] = inner
+                    async def _execute(cap=cap, payload=payload, trace_id=trace_id, task_id=task_id,
+                                       reply_to=reply_to, _stream=_stream, msg_id=msg_id,
+                                       cap_name=cap_name, bg_label=bg_label):
+                        # Run the cap as a separate task so cluster.job.stop can
+                        # cancel it cooperatively (cancel() interrupts at next await).
+                        # A record carrying `bg` runs inside BACKGROUND_LLM: every
+                        # Ollama call the cap makes is then background work — demoted
+                        # off the GPU while a person is active — exactly as the dream
+                        # scheduler's calls are. The set() lands in the new task's own
+                        # context, so nothing leaks into the worker loop.
+                        async def _run_cap(_bg=bg_label):
+                            if _bg:
+                                BACKGROUND_LLM.set(_bg)
+                            return await cap["raw"](**payload, trace_id=trace_id)
+                        inner = asyncio.ensure_future(_run_cap())
+                        RUNNING_TASKS[task_id] = inner
 
-                    # The registration's TTL is refreshed once per loop turn,
-                    # and a turn blocks here for the whole task - so a task
-                    # longer than 120 s made a busy worker look dead, and orphan
-                    # recovery (which skips live consumers) could run it twice.
-                    async def _heartbeat(_wid=worker_id):
-                        while True:
-                            await asyncio.sleep(30)
+                        # The registration's TTL is refreshed once per loop turn,
+                        # and a turn blocks here for the whole task - so a task
+                        # longer than 120 s made a busy worker look dead, and orphan
+                        # recovery (which skips live consumers) could run it twice.
+                        async def _heartbeat(_wid=worker_id):
+                            while True:
+                                await asyncio.sleep(30)
+                                try:
+                                    await REDIS.expire(f"vera:workers:{_wid}", 120)
+                                except Exception:
+                                    pass
+                        _hb = asyncio.create_task(_heartbeat())
+                        _act = {"t0": time.time(), "result": None, "error": ""}
+                        try:
+                            result = await inner
+                            _act["result"] = result
+                            await _post_result(reply_to, {
+                                "id": task_id, "result": json.dumps(result), "trace_id": trace_id,
+                            }, maxlen=5000)
+                            WORKER_REGISTRY[worker_id]["tasks_done"] += 1
+                            await emit_event({"type": "worker.done", "worker": worker_id, "task": task_id})
+                        except asyncio.CancelledError:
+                            # Intentional cancel of the inner task — not the worker loop.
+                            _act["error"] = "cancelled"
+                            await _post_result(reply_to, {
+                                "id": task_id, "error": "cancelled", "trace_id": trace_id,
+                            })
+                            await emit_event({
+                                "type": "worker.cancelled", "worker": worker_id, "task": task_id,
+                            })
+                        except Exception as e:
+                            _act["error"] = str(e)[:300]
+                            await _post_result(reply_to, {
+                                "id": task_id, "error": str(e), "trace_id": trace_id,
+                            })
+                            WORKER_REGISTRY[worker_id]["tasks_failed"] += 1
+                            await emit_event({
+                                "type": "worker.error", "worker": worker_id,
+                                "task": task_id, "error": str(e),
+                            })
+                        finally:
+                            _hb.cancel()
+                            RUNNING_TASKS.pop(task_id, None)
+                            await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                            await REDIS.xdel(_stream, msg_id)
+                            asyncio.ensure_future(_worker_activity(
+                                worker_id, cap_name, cap, payload, trace_id, bg_label, _act))
+
+                    if _detach:
+                        WORKER_REGISTRY[worker_id]["compute_running"] = \
+                            WORKER_REGISTRY[worker_id].get("compute_running", 0) + 1
+
+                        async def _detached(_ex=_execute, _wid=worker_id):
                             try:
-                                await REDIS.expire(f"vera:workers:{_wid}", 120)
-                            except Exception:
-                                pass
-                    _hb = asyncio.create_task(_heartbeat())
-                    _act = {"t0": time.time(), "result": None, "error": ""}
-                    try:
-                        result = await inner
-                        _act["result"] = result
-                        await _post_result(reply_to, {
-                            "id": task_id, "result": json.dumps(result), "trace_id": trace_id,
-                        }, maxlen=5000)
-                        WORKER_REGISTRY[worker_id]["tasks_done"] += 1
-                        await emit_event({"type": "worker.done", "worker": worker_id, "task": task_id})
-                    except asyncio.CancelledError:
-                        # Intentional cancel of the inner task — not the worker loop.
-                        _act["error"] = "cancelled"
-                        await _post_result(reply_to, {
-                            "id": task_id, "error": "cancelled", "trace_id": trace_id,
-                        })
-                        await emit_event({
-                            "type": "worker.cancelled", "worker": worker_id, "task": task_id,
-                        })
-                    except Exception as e:
-                        _act["error"] = str(e)[:300]
-                        await _post_result(reply_to, {
-                            "id": task_id, "error": str(e), "trace_id": trace_id,
-                        })
-                        WORKER_REGISTRY[worker_id]["tasks_failed"] += 1
-                        await emit_event({
-                            "type": "worker.error", "worker": worker_id,
-                            "task": task_id, "error": str(e),
-                        })
-                    finally:
-                        _hb.cancel()
-                        RUNNING_TASKS.pop(task_id, None)
-                        await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
-                        await REDIS.xdel(_stream, msg_id)
-                        asyncio.ensure_future(_worker_activity(
-                            worker_id, cap_name, cap, payload, trace_id, bg_label, _act))
+                                await _ex()
+                            except Exception as _e:
+                                log.warning("compute job (detached) failed: %s", _e)
+                            finally:
+                                WORKER_REGISTRY[_wid]["compute_running"] = max(
+                                    0, WORKER_REGISTRY[_wid].get("compute_running", 1) - 1)
+                        asyncio.ensure_future(_detached())
+                        continue
+                    await _execute()
 
                 WORKER_REGISTRY[worker_id]["status"] = "idle"
                 WORKER_REGISTRY[worker_id]["current_task"] = ""
