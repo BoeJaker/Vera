@@ -352,6 +352,79 @@ async def cap_decide_shadow_knn(question_id: str = "loop.step_verify", limit: in
     return {"ok": True, "question_id": question_id, "scored": scored, "skipped": skipped, "pool": len(pool)}
 
 
+_CARD_VECS: Dict[str, Dict[str, List[float]]] = {}
+
+
+async def _card_vecs(question_id: str) -> Dict[str, List[float]]:
+    """The question's label cards in the decision space, embedded once per process (keyed by their text)."""
+    cards = JC.CARDS.get(question_id) or {}
+    key = question_id + "|" + "|".join(f"{k}={v}" for k, v in sorted(cards.items()))
+    if key not in _CARD_VECS:
+        vecs = await _embed(list(cards.values()))
+        if not vecs or any(v is None for v in vecs):
+            return {}
+        _CARD_VECS[key] = {lab: JC._unit(v) for lab, v in zip(cards.keys(), vecs)}
+    return _CARD_VECS[key]
+
+
+@capability(
+    "decide.shadow.cards", http_method="POST", http_path="/decide/shadow/cards", http_tags=["minds"],
+    memory="off",
+    description="The card-similarity shadow judge (four-minds FM-2.1 stage-0): each recent decision's input, in the "
+                "decision space, takes the label whose short description card it is nearest; recorded as a shadow "
+                "decision (implementation card:minilm) beside the live one. Embeddings only, no generation; reuses "
+                "the kNN judge's stored decision vectors. Inputs: question_id (str='all'), limit (int=200), "
+                "since_hours (int=72). Output: {ok, question_id, scored, skipped}.",
+)
+async def cap_decide_shadow_cards(question_id: str = "all", limit: int = 200, since_hours: int = 72,
+                                  trace_id=None) -> Dict[str, Any]:
+    if question_id == "all":
+        return {"ok": True, "questions": {q: await cap_decide_shadow_cards(question_id=q, limit=limit,
+                                                                            since_hours=since_hours)
+                                          for q in JC.CARDS}}
+    if question_id not in JC.CARDS:
+        return {"ok": False, "error": f"no cards for {question_id!r}"}
+    pool_db = getattr(_orch, "PG_POOL", None)
+    if pool_db is None:
+        return {"ok": False, "error": "postgres unavailable"}
+    cards = await _card_vecs(question_id)
+    if not cards:
+        return {"ok": False, "error": "the cards could not be embedded (no NLP node answered)"}
+    async with pool_db.acquire() as conn:
+        for st in _DDL_VEC:
+            await conn.execute(st)
+        rows = await conn.fetch(
+            """SELECT s.decision_id, l.row, v.vec FROM decision_states s
+               JOIN decision_ledger l ON l.decision_id = s.decision_id
+               JOIN decision_vectors v ON v.decision_id = s.decision_id
+               WHERE s.question_id = $1 AND COALESCE(l.mode, '') <> 'shadow'
+                 AND s.ts >= NOW() - make_interval(hours => $2)
+               ORDER BY s.ts DESC LIMIT $3""", question_id, int(since_hours or 72), int(limit or 200) * 2)
+        done = {r["f"] for r in await conn.fetch(
+            """SELECT x.row->'detail'->>'for' AS f FROM decision_ledger x
+               WHERE x.mode = 'shadow' AND x.question_id = $1 AND x.row->>'implementation' = $2""",
+            question_id, JC.CARD_IMPL)}
+    try:
+        from Vera.vera.minds import ledger_capabilities as L
+    except Exception:                    # pragma: no cover
+        from vera.minds import ledger_capabilities as L  # type: ignore
+    scored = skipped = 0
+    for r in rows:
+        if scored >= int(limit or 200):
+            break
+        if r["decision_id"] in done:
+            continue
+        live = json.loads(r["row"]) if isinstance(r["row"], str) else (r["row"] or {})
+        vec = json.loads(r["vec"]) if isinstance(r["vec"], str) else r["vec"]
+        answer, p = JC.card_vote(vec, cards)
+        if not answer:
+            skipped += 1
+            continue
+        res = await L.append(JC.shadow_decision(live, answer, p, JC.CARD_IMPL, mass=1.0))
+        scored += 1 if res.get("ok") else 0
+    return {"ok": True, "question_id": question_id, "scored": scored, "skipped": skipped}
+
+
 async def _night_job() -> None:
     """Queue tonight's scoring through the background queue (the background-inference rule), once a night.
 
@@ -378,6 +451,9 @@ async def _night_job() -> None:
         # the kNN judge: embeddings only, every question, beside the LLM judge
         jobs.append(("decide.shadow.knn", "shadow judge: kNN, all questions",
                      {"question_id": "all", "limit": 400, "since_hours": 48}, "knn"))
+        # the card judge (FM-2.1 stage-0): after the kNN judge, which stores the decision vectors it reads
+        jobs.append(("decide.shadow.cards", "shadow judge: label cards, all questions",
+                     {"question_id": "all", "limit": 400, "since_hours": 48}, "cards"))
         queued, failed = 0, []
         for name, title, args, key in jobs:
             jid = "shadow-" + night + "-" + "".join(c if c.isalnum() else "-" for c in key)[:60]

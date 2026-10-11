@@ -5162,20 +5162,26 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
 
     const allowedSet=new Set(allowedCaps);
 
+    /* whole words, plurals tolerated (info-seeking plan SK-1.1): a substring test let "out" (from "find out about")
+       match "output", "about" and "without" in nearly every description, and "rate" match "generate" - the same fix
+       the loop's scorer got (dag/cap_relevance_core) */
+    const wre=words.map(w=>new RegExp('(^|[^a-z0-9])'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(e?s)?($|[^a-z0-9])'));
     const scored=ALL_CAPS
       .filter(cap=>allowedSet.has(cap.name))
       .map(cap=>{
         const name=(cap.name||'').toLowerCase();
+        const nameWords=name.replace(/[._-]+/g,' ');
         const desc=(cap.description||'').toLowerCase();
         const tags=(cap.tags||[]).join(' ').toLowerCase();
         const group=name.split('.')[0];
         let score=0;
-        for(const w of words){
-          if(name.includes(w))  score += 15;
-          if(desc.includes(w))  score += 5;
-          if(tags.includes(w))  score += 8;
-          if(group===w)         score += 20;
-        }
+        words.forEach((w,i)=>{
+          const re=wre[i];
+          if(re.test(nameWords)) score += 15;
+          if(re.test(desc))      score += 5;
+          if(re.test(tags))      score += 8;
+          if(group===w)          score += 20;
+        });
         return{name:cap.name,score};
       })
       .filter(c=>c.score >= _CAP_MIN_SCORE);

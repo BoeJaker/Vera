@@ -192,8 +192,23 @@ def test_static_audit_follows_calls_across_modules(tmp_path):
         "@capability('demo.panel')\nasync def panel():\n    return HTMLResponse('<h1>x</h1>')\n\n"
         "@capability('demo.policy')\nasync def policy():\n    return {'p': _load(), 'path': str(_POLICY)}\n\n"
         "@capability('demo.fired')\nasync def fired():\n    return _STATE['fired']\n")
+    # another module's runtime state, read through its alias (2026-10-11:
+    # web.engines.health -> search_engines.SEARXNG_STATE); its functions and
+    # load-time constants are fine
+    (v / "web2").mkdir()
+    (v / "web2" / "eng.py").write_text(
+        "STATE = {}\nLIMIT = 5\n\n"
+        "def note(x):\n    STATE['last'] = x\n\n"
+        "def status(s):\n    return dict(s)\n")
+    (v / "webcaps.py").write_text(
+        "from Vera.vera.web2 import eng as _eng\n"
+        "from Vera.vera.capability_orchestration import capability\n\n"
+        "@capability('demo.engines.health')\nasync def health():\n    return _eng.status(_eng.STATE)\n\n"
+        "@capability('demo.engines.limit')\nasync def limit():\n    return _eng.LIMIT\n")
     rows = audit.audit(str(tmp_path))
     assert "http_response" in rows["demo.panel"]["markers"], rows["demo.panel"]
+    assert "reads_state" in rows["demo.engines.health"]["markers"], rows["demo.engines.health"]
+    assert "reads_state" not in rows["demo.engines.limit"]["markers"], rows["demo.engines.limit"]
     assert "home_fs" in rows["demo.policy"]["markers"], rows["demo.policy"]
     assert "reads_state" in rows["demo.fired"]["markers"], rows["demo.fired"]
     assert fc.verdict({"runs": 50, "runs_tracked": 50, "kinds": {}}, rows["demo.policy"]["markers"])[0] == "host"

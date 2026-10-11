@@ -41,7 +41,9 @@ def test_seek_reads_the_cache_first_and_stores_both_answers():
     assert "return dict(hit, cached=True)" in body and "_reval.on_seek(query" in body
     assert body.count("await _seek_cache_put(ck, ") == 2
     helper = src[src.index("async def _seek_cache_key("):src.index("async def _seek_cache_get(")]
-    assert '!= "on"' in helper and "return None" in helper and "_scc.GEN_KEY" in helper
+    assert 'await _switch("memory.seek_cache") != "on"' in helper and "return None" in helper and "_scc.GEN_KEY" in helper
+    sw = src[src.index("async def _switch("):src.index("async def _seek_cache_key(")]
+    assert sw.index("_SB.RUN_MINDS.get()") < sw.index('"minds.effective"')
 
 
 def test_every_ingest_bumps_the_generation():
@@ -64,3 +66,17 @@ def test_seek_returns_the_evidence_per_pick():
     for field in ('"vector_score": round(float((vec_sims or {}).get(c["id"], 0.0)), 3)',
                   '"keyword": c["id"] in (text_ids or set())', '"origin": c.get("origin") or "fabric"'):
         assert field in body
+
+
+def test_seek_can_leave_self_telemetry_out_unless_scoped():
+    src = _src("vera/fabric/memory_retrieval.py")
+    body = src[src.index("async def cap_memory_seek("):src.index("async def cap_memory_read(")]
+    i = body.index("if scope_prefix:")
+    tail = body[i:i + 900]
+    assert 'elif await _switch("memory.seek_exclude_self") == "on":' in tail
+    assert "not _wvc.excluded(c[\"dataset_id\"])" in tail
+    from vera.worldview import worldview_corpus_core as WC
+    assert WC.excluded("chat.messages") and WC.excluded("ide.claude_sessions") and not WC.excluded("cve_nvd")
+    from vera.minds import switchboard_core as SB
+    f = SB.REGISTRY["memory.seek_exclude_self"]
+    assert f.modes == ("off", "on") and f.default == "off"

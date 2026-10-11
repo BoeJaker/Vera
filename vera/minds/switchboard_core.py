@@ -110,6 +110,30 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "has three or more conjunctions (no complex hint, under 60 words) - it falls to the length rules "
        "(simple under 40 words). The LLM pre-pass can still raise it. 'off' (default) = the old floor; "
        "'on' = lowered. Measured 11 Oct: 73% of complex-tier census runs executed <= 2 steps."),
+    _f("memory.rerank", ("off", "on"), "memory", "FM-7.3",
+       "memory.seek's head reranked by the cross-encoder: the top 30 fused candidates re-read in one nlp.rerank call "
+       "on a node (bounded at 1.5 s), their order decided by it, still above the rest. 'off' (default) = fused order; "
+       "'on' = reranked. Exit: nDCG@10 +5 pts on the known-item set with p95 seek latency <= baseline + 200 ms."),
+    _f("memory.rank", ("off", "on"), "memory", "FM-7.2",
+       "How memory.seek ages what it found: 'off' (default) = one mild recency boost for every record (+25% at most, "
+       "45-day e-folding); 'on' = rank_core - relevance x a half-life per dataset class (news 3 d, chat 14 d, research "
+       "60 d, telemetry 1 d, docs and facts none, others 30 d; floor 0.2) x importance, and the question's words set the "
+       "temporal intent ('latest' halves the half-life, 'originally' turns decay off)."),
+    _f("sense.chat_pre", ("off", "on"), "chat", "FM-1.2",
+       "The chat PRE frame: sense.frame (patterns, the MiniLM decision vector on a node, domain cards) for every chat "
+       "message, started when the turn arrives and never awaited before the model - a 'sense / frame' phase records "
+       "its domain and when it landed, so the turn record shows how often it is ready before the first token. "
+       "'off' (default) = no frame; 'on' = framed. Exit: TTFT p95 unchanged (it waits for nothing)."),
+    _f("tools.shortlist.chat", ("legacy", "shadow"), "chat", "FM-3.3",
+       "Which tools a chat turn is offered. 'legacy' (default) = the page's own word scoring only; 'shadow' = also "
+       "caps.shortlist on the user's words, started with the turn and never awaited, recorded after the reply beside "
+       "the page's list and what the reply used (caps.shortlist.chat_report: recall@16/24/28). 'on' (the server's "
+       "list offered to the model) comes after the shadow shows a gain and needs the page to take it."),
+    _f("memory.seek_exclude_self", ("off", "on"), "memory", "FM-7.1",
+       "Whether an unscoped memory.seek leaves Vera's own telemetry out (chat.messages, ide.*, caps.*, bus.*, ts.*, "
+       "streams.*, mesh.*, dream.reports - the worldview corpus' SELF_TELEMETRY list). 'off' (default) = searched like "
+       "any data; 'on' = left out unless the caller scopes to one of them. Found 11 Oct: a CVE-id seek put chat logs "
+       "and IDE sessions first."),
     _f("plan.precedent", ("off", "on"), "loop", "FM-4.2",
        "Precedent for the planner: up to 2 past runs of similar goals that went well, and 1 warning from one that "
        "did not (plan.precedent, searched on an NLP node), added to what the planner reads as reference with the "

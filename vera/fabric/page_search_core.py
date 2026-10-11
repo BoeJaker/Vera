@@ -91,9 +91,17 @@ def search_sql(with_dataset: bool) -> str:
             f"ORDER BY rank DESC, src_rowid DESC LIMIT $2")
 
 
+def clean(text: Any, cap: int = 0) -> str:
+    """Text Postgres can store: NUL bytes removed (crawled pages carry them; one stopped the first sync on 11 Oct
+    2026 - 'invalid byte sequence for encoding UTF8: 0x00' - and the whole batch with it), optionally capped."""
+    t = str(text or "").replace("\x00", "")
+    return t[:cap] if cap else t
+
+
 def to_rows(sqlite_rows: Iterable[Sequence[Any]]) -> Tuple[List[Tuple], int]:
     """SQLite (rowid, id, url, title, dataset_id, word_count, full_text) rows -> UPSERT argument tuples, and the
-    highest rowid seen (the next watermark). Rows without an id are skipped; text is capped at TEXT_CAP."""
+    highest rowid seen (the next watermark). Rows without an id are skipped; text is NUL-free and capped at
+    TEXT_CAP."""
     out: List[Tuple] = []
     top = 0
     for r in sqlite_rows:
@@ -101,8 +109,8 @@ def to_rows(sqlite_rows: Iterable[Sequence[Any]]) -> Tuple[List[Tuple], int]:
         top = max(top, int(rowid or 0))
         if not pid:
             continue
-        out.append((str(pid), str(url or ""), str(title or "")[:1000], str(ds or ""), int(wc or 0),
-                    str(text or "")[:TEXT_CAP], int(rowid or 0)))
+        out.append((clean(pid), clean(url), clean(title, 1000), clean(ds), int(wc or 0),
+                    clean(text, TEXT_CAP), int(rowid or 0)))
     return out, top
 
 

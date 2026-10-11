@@ -79,6 +79,18 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.fabric import seek_cache_core as _scc
 except ImportError:                      # pragma: no cover
     from vera.fabric import seek_cache_core as _scc   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import switchboard_core as _SB
+except ImportError:                      # pragma: no cover
+    from vera.minds import switchboard_core as _SB   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.fabric import rank_core as _rk
+except ImportError:                      # pragma: no cover
+    from vera.fabric import rank_core as _rk   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.worldview import worldview_corpus_core as _wvc
+except ImportError:                      # pragma: no cover
+    from vera.worldview import worldview_corpus_core as _wvc   # type: ignore
 try:                                     # the retrieval eval set (FM-7.0): seeks + reads as labels
     from Vera.vera.fabric import retrieval_eval as _reval
 except Exception:                        # pragma: no cover
@@ -415,6 +427,7 @@ async def _memory_candidates(query: str, limit: int, weight: float = 1.0) -> Lis
                     "tags": rec.get("tags", []) or [],
                     "source": "memory",
                     "score": float(weight) / (_RRF_K + rank),
+                    "importance": rec.get("importance"),
                     "origin": "memory"})
     terms = _fc.query_terms(query)
     return [c for c in out if _fc.lexical_pass(terms, c["text"])]
@@ -462,11 +475,26 @@ def _seek_redis():
         return None
 
 
+async def _switch(feature_id: str, default: str = "off") -> str:
+    """A switch's mode for this seek: the run's own modes first (a census arm, an eval run - switchboard RUN_MINDS),
+    then the global layer (minds.effective), else the default. Never raises."""
+    try:
+        run = _SB.RUN_MINDS.get()
+        modes = (run or {}).get("modes", run or {}) if isinstance(run, dict) else {}
+        if feature_id in modes:
+            return str(modes[feature_id])
+        eff = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        if eff:
+            return str((((await eff()) or {}).get("modes") or {}).get(feature_id) or default)
+    except Exception as e:
+        log.debug("switch %s: %s", feature_id, e)
+    return default
+
+
 async def _seek_cache_key(query, scope, since, k, max_chars, include_memory) -> Optional[str]:
     """The cache key when the switch `memory.seek_cache` is on and Redis answers, else None (FM-7.1)."""
     try:
-        eff = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
-        if not eff or str((((await eff()) or {}).get("modes") or {}).get("memory.seek_cache") or "off") != "on":
+        if await _switch("memory.seek_cache") != "on":
             return None
         r = _seek_redis()
         if r is None:
@@ -478,6 +506,44 @@ async def _seek_cache_key(query, scope, since, k, max_chars, include_memory) -> 
     except Exception as e:
         log.debug("seek cache key: %s", e)
         return None
+
+
+_RERANK_TIMEOUT_S = float(os.getenv("VERA_SEEK_RERANK_TIMEOUT_S", "1.5") or 1.5)
+
+
+async def _rerank_head(query: str, cands: List[Dict], env=None) -> None:
+    """FM-7.3 (switch memory.rerank): the cross-encoder re-reads the top fused candidates (one node call) and
+    decides their order; they stay above the rest. Bounded at _RERANK_TIMEOUT_S; any failure keeps the fused order.
+    Calls nlp.rerank's bare function, so a seek writes no activity record for it."""
+    head = sorted(cands, key=lambda c: -c["score"])[:_fc.RERANK_TOP]
+    if len(head) < 2:
+        return
+    cap = CAPABILITY_REGISTRY.get("nlp.rerank") or {}
+    fn = cap.get("raw") or cap.get("func")
+    outcome, n = "unavailable", 0
+    if fn:
+        try:
+            res = await asyncio.wait_for(fn(query=query, documents=[(c["text"] or "")[:1000] for c in head], top_k=0),
+                                         _RERANK_TIMEOUT_S)
+            ranked = (res or {}).get("ranked") if isinstance(res, dict) else None
+            if ranked:
+                by_idx = {int(r["index"]): float(r["score"]) for r in ranked if "index" in r}
+                if len(by_idx) == len(head):
+                    top = max(c["score"] for c in cands)
+                    for c, new in zip(head, _fc.rerank_lift([by_idx[i] for i in range(len(head))], top)):
+                        c["score"] = new
+                    outcome, n = "ok", len(head)
+                else:
+                    outcome = "partial"
+            else:
+                outcome = "error"
+        except asyncio.TimeoutError:
+            outcome = "timeout"
+        except Exception as e:
+            log.debug("seek rerank: %s", e)
+            outcome = "error"
+    if env is not None:
+        env.stage("rerank", env.mark(), outcome, n)
 
 
 async def _seek_cache_get(ck: str) -> Optional[Dict]:
@@ -622,6 +688,10 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
                  if c["dataset_id"] == scope_prefix
                  or c["dataset_id"].startswith(scope_prefix + ".")
                  or c["dataset_id"] == scope]
+    elif await _switch("memory.seek_exclude_self") == "on":
+        # Vera's own telemetry (chat logs, IDE sessions, capability output, bus/ts streams - the worldview corpus'
+        # SELF_TELEMETRY) leaves an unscoped seek; asking for one of those datasets by scope still finds it
+        cands = [c for c in cands if not _wvc.excluded(c["dataset_id"])]
     if since_dt:
         cands = [c for c in cands if (_dt(c["created_at"]) or since_dt) >= since_dt]
 
@@ -631,10 +701,18 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
                                           "results": [], "count": 0, "candidates": 0,
                                           "collapsed": 0, "datasets": []})
 
-    # Normalise fused scores to ~0..1 for display, apply mild recency boost.
+    if await _switch("memory.rerank") == "on":
+        await _rerank_head(query, cands, env)
+
+    # Normalise fused scores to ~0..1 for display, then age them: per dataset class and the question's temporal
+    # intent with memory.rank on (FM-7.2, rank_core), else the old mild recency boost.
+    ranked_mode = await _switch("memory.rank") == "on"
+    intent = _rk.temporal_intent(query) if ranked_mode else "none"
     top = max(c["score"] for c in cands) or 1.0
     for c in cands:
-        c["score"] = (c["score"] / top) * _recency_boost(c["created_at"])
+        rel = c["score"] / top
+        c["score"] = (_rk.score(rel, c["created_at"], c["dataset_id"], c.get("importance"), intent) if ranked_mode
+                      else rel * _recency_boost(c["created_at"]))
         c["_tok"] = _tok(c["text"])
     cands.sort(key=lambda c: -c["score"])
 
@@ -680,6 +758,8 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
            "candidates": len(cands), "collapsed": collapsed_total,
            "weak": bool(weak_ctx),
            "datasets": sorted({c["dataset_id"] for c in selected})}
+    if ranked_mode:
+        out["temporal_intent"] = intent
     if _reval is not None:
         _reval.on_seek(query, [r["id"] for r in results if r.get("id")])
     if weak_ctx:

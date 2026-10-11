@@ -1453,6 +1453,17 @@ class FabricChromaStore:
         self._client = None
         self._col    = None
         self._count_cache: Tuple[float, int] = (0.0, 0)
+        # errors were logged at debug only: a dead client made every memory.seek semantic leg silently empty and
+        # every vector write silently dropped (11 Oct 2026) - now counted, warned (throttled) and, for a dead client,
+        # reconnected
+        self.errors: Dict[str, int] = {}
+        self._throttle = _chroma_bound.Throttle(300.0)
+
+    def _failed(self, op: str, e: BaseException) -> None:
+        self.errors[op] = self.errors.get(op, 0) + 1
+        if self._throttle.due(op):
+            log.warning("FabricChroma %s failed (%d so far): %s: %s", op, self.errors[op], type(e).__name__,
+                        str(e)[:300])
 
     def _cached_count(self) -> int:
         """Collection count with a short TTL — search() needed it on every call
@@ -1510,7 +1521,7 @@ class FabricChromaStore:
                              metadatas=[meta], embeddings=[record.embedding])
             return True
         except Exception as e:
-            log.debug("FabricChroma upsert: %s", e); return False
+            self._failed("upsert", e); return False
 
     def search(self, embedding: List[float], dataset_id: Optional[str] = None,
                top_k: int = 10, filters: Optional[Dict] = None) -> List[Tuple[str, float]]:
@@ -1524,11 +1535,21 @@ class FabricChromaStore:
                             "query_embeddings": [embedding]}
             if where:
                 kwargs["where"] = where
-            res = self._col.query(**kwargs)
+            try:
+                res = self._col.query(**kwargs)
+            except Exception as e:
+                if not _chroma_bound.looks_dead(e):
+                    raise
+                self._failed("search", e)
+                # the client cannot reach the server (a closed session, a dropped connection): one fresh client,
+                # one retry
+                if not self.connect():
+                    return []
+                res = self._col.query(**kwargs)
             return [(rid, max(0.0, 1.0 - d))
                     for rid, d in zip(res["ids"][0], res["distances"][0])]
         except Exception as e:
-            log.debug("FabricChroma search: %s", e); return []
+            self._failed("search", e); return []
 
     def delete_dataset(self, dataset_id: str) -> bool:
         if not self._col: return False
@@ -1567,8 +1588,11 @@ class FabricChromaStore:
     def stats(self) -> Dict:
         if not self._col: return {"available": False}
         try:
-            return {"available": True, "count": self._col.count(), "collection": self.COLLECTION}
-        except Exception: return {"available": False}
+            return {"available": True, "count": self._col.count(), "collection": self.COLLECTION,
+                    "errors": dict(self.errors)}
+        except Exception as e:
+            self._failed("stats", e)
+            return {"available": False, "errors": dict(self.errors)}
 
 
 FABRIC_CHROMA = FabricChromaStore()
@@ -3387,6 +3411,39 @@ try:
 except Exception as _e:
     log.debug("migrate skipped: %s", _e)
 
+async def _secret_headers(headers: Dict[str, Any]) -> Dict[str, str]:
+    """Header values with "@secret:<key>" references replaced by the Platforms credential (platform.secrets, the
+    master key store) - so a keyed feed or API source holds a reference, never the key (owner 2026-10-11). A
+    reference that cannot be resolved drops its header rather than sending the reference text."""
+    import re as _re
+    out: Dict[str, str] = {}
+    for k, v in (headers or {}).items():
+        if v in (None, ""):
+            continue
+        v = str(v)
+        refs = _re.findall(r"@secret:([A-Za-z0-9_.-]+)", v)
+        if refs:
+            try:
+                try:
+                    from Vera.vera.platforms import platform_access as _pa
+                except Exception:
+                    from vera.platforms import platform_access as _pa
+                for ref in refs:
+                    val = await _pa.secret_value(_orch.CAPABILITY_REGISTRY, ref)
+                    if not val:
+                        v = ""
+                        break
+                    v = v.replace("@secret:" + ref, val)
+            except Exception as e:
+                log.debug("fabric: header secret %s: %s", k, e)
+                v = ""
+            if not v:
+                log.warning("fabric: header %s names a credential that is not set - sent without it", k)
+                continue
+        out[str(k)] = v
+    return out
+
+
 async def _pull_rss(src: dict) -> List[dict]:
     """Fetch RSS/Atom feed via httpx (proper UA + redirects) then parse with
     feedparser. Doing the HTTP ourselves is essential — feedparser's built-in
@@ -3401,7 +3458,7 @@ async def _pull_rss(src: dict) -> List[dict]:
     try:                                          # the source's own headers win (a declared contact, a key)
         extra = json.loads(src.get("headers") or "{}") if isinstance(src.get("headers"), str) else (src.get("headers") or {})
         if isinstance(extra, dict):
-            headers.update({str(k): str(v) for k, v in extra.items() if v not in (None, "")})
+            headers.update(await _secret_headers(extra))
     except (TypeError, ValueError):
         pass
     body: bytes = b""
@@ -3465,7 +3522,8 @@ async def _pull_api(src: dict) -> List[dict]:
     except Exception:
         headers = {}
     async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
-        r = await c.get(src["url"], headers=headers); r.raise_for_status()
+        r = await c.get(src["url"], headers=await _secret_headers(headers if isinstance(headers, dict) else {}))
+        r.raise_for_status()
         data = r.json()
     cfg = _src_config(src)
     if _srcmap.has_mapping(cfg) or cfg.get("item_path"):
@@ -4008,8 +4066,23 @@ async def _pull_github(src: dict) -> List[dict]:
     headers = {"Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
-    if auth.get("token"):
-        headers["Authorization"] = f"Bearer {auth['token']}"
+    token = auth.get("token") or ""
+    if not token or str(token).startswith("@secret:"):
+        # no token of its own (or a reference): the Platforms credential github_token, when set - 5,000 requests an
+        # hour instead of 60
+        try:
+            try:
+                from Vera.vera.platforms import platform_access as _pa
+            except Exception:
+                from vera.platforms import platform_access as _pa
+            _pa.declare(_orch.CAPABILITY_REGISTRY, "github_token", "fabric GitHub sources",
+                        label="GitHub token", why="GitHub API rate limit 60 -> 5,000 requests an hour")
+            token = await _pa.resolve(_orch.CAPABILITY_REGISTRY, token, "github_token")
+        except Exception as e:
+            log.debug("fabric github token: %s", e)
+            token = ""
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     items: list = []
     async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
         if mode == "issues":

@@ -71,6 +71,7 @@ try:
     from Vera.vera.intel import intel_sources_core as srcs
     from Vera.vera.intel import intel_story_core as story
     from Vera.vera.intel import intel_activity_core as act
+    from Vera.vera.intel import intel_apis_core as apis_core
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -84,6 +85,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_sources_core as srcs
     from vera.intel import intel_story_core as story
     from vera.intel import intel_activity_core as act
+    from vera.intel import intel_apis_core as apis_core
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -408,6 +410,38 @@ async def cap_topic_get(id: str = "", trace_id=None):
         return {"error": f"unknown topic: {id}"}
     return {"topic": t, "snapshot": store().latest_snapshot(id), "stats": _topic_stats(t),
             "queries": core.topic_queries(t)}
+
+
+_APIS_DECLARED = {"done": False}
+
+
+def _declare_apis() -> bool:
+    """Tell the Platforms page (platform.secrets, the master key store) which credentials intelligence can use, so
+    unset ones show there as wanted. Idempotent; False while the platforms module is not loaded."""
+    try:
+        try:
+            from Vera.vera.platforms import platform_access as _pa
+        except Exception:
+            from vera.platforms import platform_access as _pa
+        ok = all(_pa.declare(CAPABILITY_REGISTRY, a["key"], "intelligence" + (f" ({a['used_by']})" if a["used_by"]
+                             else " (planned source)"), label=a["name"], why=a["gives"][:160]) for a in apis_core.APIS)
+        _APIS_DECLARED["done"] = ok
+        return ok
+    except Exception as e:  # noqa: BLE001
+        log.debug("intel: declaring api keys: %s", e)
+        return False
+
+
+@capability("intel.apis", http_method="GET", http_path="/intel/apis", http_tags=["intel"], memory="off", silent=True,
+            description="The keyed data sources intelligence can use: for each, the Platforms credential it reads "
+                        "(platform.secrets - the master key store; add keys on the Platforms page, never here), what "
+                        "it adds, where to get a key, whether one is set, and whether Vera uses it yet (used | "
+                        "planned). Also what it reads without a key. Never returns a key. Output: {apis:[{key, name, "
+                        "status, gives, used_by, get, cost, set, ref}], keyless, json_api_hint, missing_used}.")
+async def cap_apis(trace_id=None):
+    _declare_apis()
+    rows = (await _call("platform.secrets.list")).get("secrets") or []
+    return apis_core.view(rows)
 
 
 @capability("intel.lookup", http_method="GET", http_path="/intel/lookup", http_tags=["intel"],
@@ -3281,6 +3315,8 @@ async def _tick() -> None:
     brief (never generate it). Monday: the week in review. Sunday: the advisor.
     Any time: due topics as idle-queue units within the daily budget, and an open
     session's planned work. Nothing here runs a model - the queue does, when quiet."""
+    if not _APIS_DECLARED["done"]:
+        _declare_apis()                       # once the platforms module is loaded: unset keys show there as wanted
     c = config()
     if not c.get("enabled"):
         return
