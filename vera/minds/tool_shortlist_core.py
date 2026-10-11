@@ -100,6 +100,42 @@ def outcomes(d: Dict[str, Any], used: Iterable[str]) -> List[Dict[str, Any]]:
     return out
 
 
+REPLAY_KS = (5, 10, 16, 24, 28)
+
+
+def replay(rows: Iterable[Dict[str, Any]], ks: Sequence[int] = REPLAY_KS,
+           neighbours: int = NEIGHBOURS) -> Dict[str, Any]:
+    """The offline replay (FM-3.2): every indexed step asks the shortlist again with its OWN run held out, and is
+    scored on the tools it really used - recall@k, hit@5, MRR, the median position of a found tool, and the
+    unknown-tool rate (a used tool no other run ever used, which no shortlist built from the past can offer).
+    Embeddings are already in the index, so this is dot products only. Rows: {run, vec (unit), tools}."""
+    rows = [r for r in rows if r.get("vec") and r.get("tools")]
+    if not rows:
+        return {"n": 0}
+    by_run: Dict[str, set] = {}
+    for r in rows:
+        by_run.setdefault(r["run"], set()).update(r["tools"])
+    runs_using: Counter = Counter(t for tools in by_run.values() for t in tools)
+    kmax = max(ks)
+    found: List[List[Optional[int]]] = []
+    unknown = 0
+    for r in rows:
+        names = [x["name"] for x in shortlist(r["vec"], rows, kmax, neighbours, exclude_run=r["run"])]
+        pos = {n: i + 1 for i, n in enumerate(names)}
+        found.append([pos.get(t) for t in r["tools"]])
+        unknown += sum(1 for t in r["tools"] if runs_using[t] <= 1)
+    used_total = sum(len(f) for f in found)
+    out: Dict[str, Any] = {"n": len(found), "tools_used": used_total}
+    for k in ks:
+        out[f"recall@{k}"] = round(sum(1 for f in found for p in f if p and p <= k) / used_total, 3)
+    out["hit@5"] = round(sum(1 for f in found if any(p and p <= 5 for p in f)) / len(found), 3)
+    out["mrr"] = round(sum(1.0 / min(p for p in f if p) if any(f) else 0.0 for f in found) / len(found), 3)
+    hits = sorted(p for f in found for p in f if p)
+    out["median_position"] = hits[len(hits) // 2] if hits else None
+    out["unknown_rate"] = round(unknown / used_total, 3)
+    return out
+
+
 def summarize(rows: List[Tuple[List[int], int]]) -> Dict[str, Any]:
     """rows: (ranks of used tools found, tools used). hit@5, recall@10, MRR."""
     n = len(rows)

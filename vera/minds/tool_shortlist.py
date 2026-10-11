@@ -36,6 +36,8 @@ _INDEX: Dict[str, Any] = {"rows": [], "loaded": 0.0, "version": "", "prior": Non
 INDEX_TTL_S = 3600
 MAX_ROWS = 20000
 KEY_NIGHT = "vera:caps:shortlist:night:"
+KEY_REPLAY = "vera:caps:shortlist:replay"      # newest first, one snapshot per night (FM-3.2)
+REPLAY_KEEP = 90
 _DDL = (
     """CREATE TABLE IF NOT EXISTS tool_step_index (
            run TEXT NOT NULL, step TEXT NOT NULL, title TEXT NOT NULL, vec JSONB NOT NULL,
@@ -257,12 +259,34 @@ async def _night_job() -> None:
         out = await build_index()
         if out.get("ok"):
             await r.set(KEY_NIGHT + night, "1", ex=86400)
+            try:
+                snap = await run_replay(night)
+                log.info("caps.shortlist nightly replay %s: %s", night, snap.get("loop"))
+            except Exception as e:
+                log.warning("tool shortlist replay: %s", e)
         log.info("caps.shortlist nightly index %s: %s", night, out)
     except Exception as e:
         log.warning("tool shortlist night job: %s", e)
 
 
 schedule(_night_job, interval=900, name="caps_shortlist_index_night", singleton=True, skip_in_sandbox=True)
+
+
+async def run_replay(night: str = "") -> Dict[str, Any]:
+    """The offline replay (FM-3.2) over the whole index, off the event loop (dot products, no embedding, no LLM), with
+    the chat shadow's summary beside it; kept as one snapshot per night."""
+    _INDEX["loaded"] = 0.0                       # the index may have just been rebuilt
+    rows = await _rows()
+    t0 = time.monotonic()
+    loop = await asyncio.to_thread(TC.replay, rows)
+    chat = (await cap_shortlist_chat_report()).get("summary")
+    snap = {"night": night or datetime.now().date().isoformat(), "ts": datetime.now().isoformat(timespec="seconds"),
+            "index_rows": len(rows), "loop": loop, "chat": chat, "ms": round((time.monotonic() - t0) * 1000)}
+    r = getattr(_orch, "REDIS", None)
+    if r is not None:
+        await r.lpush(KEY_REPLAY, json.dumps(snap))
+        await r.ltrim(KEY_REPLAY, 0, REPLAY_KEEP - 1)
+    return snap
 
 
 try:                                     # pragma: no cover - import-shape only
@@ -292,3 +316,31 @@ async def cap_shortlist_chat_report(limit: int = 2000, trace_id=None) -> Dict[st
             continue
     return {"rows": len(rows), "summary": _CT.summarize(rows),
             "examples": [r for r in rows if r.get("used")][:5]}
+
+
+@capability(
+    "caps.shortlist.replay", http_method="POST", http_path="/caps/shortlist/replay", http_tags=["minds", "caps"],
+    memory="off", silent=True,
+    description="The tool shortlist's offline replay (four-minds FM-3.2): every indexed loop step asks caps.shortlist "
+                "again with its own run held out - recall@5/10/16/24/28, hit@5, MRR, median position and the "
+                "unknown-tool rate (tools no other run used) - with the chat shadow's summary beside it. Runs nightly "
+                "after the index rebuild (dot products only, no model). Input: run (bool, default false: return the "
+                "kept snapshots; true: replay now), history (int, default 14). Output: {latest, history}.",
+)
+async def cap_caps_shortlist_replay(run: bool = False, history: int = 14, trace_id=None) -> Dict[str, Any]:
+    if isinstance(run, str):
+        run = run.strip().lower() in ("1", "true", "yes")
+    if run:
+        snap = await run_replay()
+        return {"latest": snap, "history": []}
+    r = getattr(_orch, "REDIS", None)
+    if r is None:
+        return {"error": "redis unavailable"}
+    raw = await r.lrange(KEY_REPLAY, 0, max(1, min(REPLAY_KEEP, int(history or 14))) - 1)
+    snaps = []
+    for x in raw:
+        try:
+            snaps.append(json.loads(x))
+        except Exception:
+            continue
+    return {"latest": snaps[0] if snaps else None, "history": snaps}
