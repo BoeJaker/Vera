@@ -1424,6 +1424,7 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
         queries = _seek.latest_queries(subject, question, now)
         span = "week" if (now - (_seek.parse_date(since) or now)).days <= 8 else "month"
         news_task = asyncio.create_task(_searxng_news(subject, 12, span))
+        await step(f"searching: the news of the past {span} and {len(queries)} web searches")
         res = await _seek_searches(queries, first_slot=1)        # the news search has slot 0
         try:
             news = await asyncio.wait_for(news_task, 20)
@@ -1455,6 +1456,7 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
         # cross-encoder judges "does this page answer it"), at most two pages a site, the best pages read
         queries = (_seek.fact_queries(subject, question) if need == "fact"
                    else _seek.overview_queries(subject, question, now))
+        await step(f"searching: {len(queries)} web searches")
         res = await _seek_searches(queries)
         hits = _seek.merge_hits([r.get("results") or [] for r in res])
         engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
