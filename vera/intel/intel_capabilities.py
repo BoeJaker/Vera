@@ -108,6 +108,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "alert_channels": ["telegram"],
     "public_base": "https://llm.int:8999",   # links in Telegram / phone / email must work off the box
     "illustrate": False,
+    "first_sweep": True,          # a new topic is swept (no model) at once, not at the next nightly batch
     "speak": True,                # read every report aloud (background) - the page gets a player
     "speak_voice": "",            # "" = the voice set for all of Vera (tts.config.set)
     "speak_speed": 0.0,           # 0 = the speed set for all of Vera
@@ -474,7 +475,15 @@ async def cap_topic_save(name: str = "", id: str = "", brief: str = None, why: s
     if t.get("dream_loop"):
         await _ensure_think_loop(t)
     await _event("topic.saved", topic=t["id"], name=t["name"], created=existing is None)
-    return {"ok": True, "topic": t, "created": existing is None}
+    out = {"ok": True, "topic": t, "created": existing is None}
+    if existing is None and t.get("status") == "active" and config().get("first_sweep", True):
+        # the first collection now, not at tonight's batch (no model; the idle queue runs it when the box is quiet)
+        r = await _submit("first", f"intel: first sweep of {t['name'][:50]}", key=f"first:{t['id']}",
+                          payload={"topic_id": t["id"]}, priority=30)
+        out["first_sweep"] = r.get("message")
+        out["message"] = (f"Now tracking {t['name']}. A first sweep is {r.get('message')}; model summaries and "
+                          f"the assessment follow in the {t.get('cadence') or 'nightly'} run.")
+    return out
 
 
 @capability("intel.topic.delete", http_method="POST", http_path="/intel/topic/delete", http_tags=["intel"],
@@ -2819,6 +2828,8 @@ async def _intel_job(job: Dict[str, Any], should_continue) -> Dict[str, Any]:
         return await _job_research(p)
     if mode == "sweeps":
         return await _job_sweeps(job, p, should_continue)
+    if mode == "first":
+        return await _job_first_sweep(p)
     if mode == "speak":
         return await speak_report(p.get("report_id", ""), should_continue=should_continue)
     if mode == "brief":
@@ -2897,6 +2908,19 @@ async def _sweep_and_check(t: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as ex:  # noqa: BLE001
             log.warning("intel: entity resolution failed for %s: %s", t["id"], ex)
     return sw
+
+
+async def _job_first_sweep(p: Dict[str, Any]) -> Dict[str, Any]:
+    """A new topic's first collection (search, NLP triage - no model), so "track X" has signals within the hour
+    rather than after tonight's batch (info-seeking plan SK-3.6). Skipped if the topic has been swept meanwhile."""
+    t = store().get_topic(str(p.get("topic_id") or ""))
+    if not t or t.get("status") != "active":
+        return {"ok": True, "skipped": "topic gone or not active"}
+    if t.get("last_sweep"):
+        return {"ok": True, "skipped": "already swept"}
+    sw = await _sweep_and_check(t)
+    await _event("topic.first_sweep", topic=t["id"], new=int(sw.get("new") or 0))
+    return {"ok": True, "topic_id": t["id"], "new": int(sw.get("new") or 0)}
 
 
 async def _job_sweeps(job: Dict[str, Any], p: Dict[str, Any], should_continue) -> Dict[str, Any]:

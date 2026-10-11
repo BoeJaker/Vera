@@ -92,3 +92,19 @@ def test_match_topics_weights_rare_words_and_phrases():
     assert core.match_topics("uk news", T)[0][1]["id"] == "uk-news-and-current-affairs"
     assert core.match_topics("bitcoin price", T) == []                 # one shared generic word is not a match
     assert core.match_topics("mcp-and-llm-tooling", T)[0][0] == 1.0
+
+
+def test_a_new_topic_gets_its_first_sweep_now_not_tonight(tmp_path):
+    # info-seeking plan SK-3.6: "track X" used to collect nothing until the 23:00 batch
+    mod, orch = _load(tmp_path)
+    mod.store().set_kv("config", dict(mod.store().get_kv("config", {}) or {}, first_sweep=True))
+    r = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])
+    assert r["created"] and "first sweep" in r["message"] and "first_sweep" in r
+    assert ("submit", {"mode": "first", "key": f"first:{r['topic']['id']}",
+                       "payload": {"topic_id": r["topic"]["id"]}}) in orch.CALLS
+    t = mod.store().get_topic(r["topic"]["id"])                       # the harness runs the job inline
+    assert t.get("last_sweep") and mod.store().signals(t["id"])
+    again = _R(orch, "intel.topic.save", id=r["topic"]["id"], name="AI property valuation", brief="b")
+    assert "first_sweep" not in again                                  # only on creation
+    assert _run(mod._intel_job({"payload": {"mode": "first", "topic_id": r["topic"]["id"]}}, None))["skipped"]
+    assert _run(mod._intel_job({"payload": {"mode": "first", "topic_id": "nope"}}, None))["skipped"]
