@@ -19,7 +19,7 @@ GOOD = "<html><body><script>function tick() { if (x) { go(); } }</script></body>
 def test_fallback_is_wired():
     i = SRC.index("def _v5_js_syntax_error(")
     body = SRC[i:SRC.index("\ndef ", i + 10)]
-    assert "esprima = None" in body and "_pc.node_available()" in body
+    assert "esprima = None" in body and "_node.node_available()" in body
     assert "_node._node_check(body, module=(_typ == \"module\"))" in body
 
 

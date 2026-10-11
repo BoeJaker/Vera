@@ -10815,15 +10815,14 @@ def _v5_js_syntax_error(html: str) -> str:
         esprima = None
     _node = None
     if esprima is None:
-        try:
+        import importlib
+        for _mod in ("Vera.vera.evolve.panel_check", "vera.evolve.panel_check"):
             try:
-                from Vera.vera.evolve import panel_check as _pc
+                _node = importlib.import_module(_mod)
+                break
             except Exception:
-                from vera.evolve import panel_check as _pc
-            _node = _pc if _pc.node_available() else None
-        except Exception:
-            _node = None
-        if _node is None:
+                continue
+        if _node is None or not _node.node_available():
             return ""
     for m in re.finditer(r"<script\b([^>]*)>(.*?)</script\s*>", html, re.I | re.S):
         attrs, body = m.group(1) or "", m.group(2) or ""
