@@ -41,8 +41,9 @@ const mod = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element
 // ── the panel item is driven over the bridge, which it already was ─────────────────────────────────────────────
 {
   t('the canvas draws a panel', typeof mod.BLOCK.panel === 'function');
-  const h = mod.BLOCK.panel({ panel: 'calendar-panel', title: 'Calendar' }, 'l', 'panel:calendar-panel', null);
-  t('live in its frame', /data-live="frame"/.test(h) && /calendar-panel/.test(h));
+  /* with its page (the chat or the canvas's own resolver gives it: WSU-67, /ui/panels/<id> is not a route) */
+  const h = mod.BLOCK.panel({ panel: 'calendar-panel', title: 'Calendar', src: '/cal/panel' }, 'l', 'panel:calendar-panel', null);
+  t('live in its frame', /data-live="frame"/.test(h) && /calendar-panel/.test(h) && /data-src="\/cal\/panel"/.test(h));
   t('with query and dispatch over the bridge', /data-act="pquery"/.test(h) && /data-act="pdispatch"/.test(h));
   t('a console to drive it by hand', /data-f="action"/.test(h) && /data-f="payload"/.test(h));
   t('and a way out to the standalone page', /data-act="pstand"/.test(h));

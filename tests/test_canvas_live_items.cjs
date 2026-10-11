@@ -34,8 +34,12 @@ t('a markdown cell renders and has no Run; an empty output stays hidden', /<h1>P
 t('the run command is the notebook page\'s own: a python heredoc, node, ruby, else the shell snippet', /^python3 - <<'VERA_NB_EOF_\w+'\nprint\(1\)\nVERA_NB_EOF_/.test(V.langRunCmd('python', 'print(1)')) && /^node - <</.test(V.langRunCmd('js', '1')) && V.langRunCmd('bash', 'ls -la') === 'ls -la' && V.langRunCmd('', 'echo x') === 'echo x');
 
 // ── the whole panel ──
-const pn = B.panel({ panel: 'workers', title: 'Workers' }, 'l', 'panel:workers', { _pq: {}, _pdOpen: {} });
-t('a panel item frames the panel page (its route by default) and carries the bridge actions', /data-live="frame"/.test(pn) && /data-src="\/ui\/panels\/workers"/.test(pn) && /over the bridge/.test(pn) && ['pquery', 'pdispatch', 'prefresh', 'pstand'].every(a => pn.includes('data-act="' + a + '"')));
+/* WSU-67 (2026-10-11): /ui/panels/<id> answers 404 for every panel, so an item without its page no longer frames that
+   route - it says it is opening and asks the canvas to resolve the page (panelSrc; tests/test_canvas_panel_src.cjs) */
+let asked = ''; const pn0 = B.panel({ panel: 'workers', title: 'Workers' }, 'l', 'panel:workers', { _pq: {}, _pdOpen: {}, _panelResolve: (id) => { asked = id; } });
+t('a panel item without its page says it is opening and asks for it (never the dead /ui/panels/<id> frame)', /opening Workers…/.test(pn0) && asked === 'workers' && !/data-src="\/ui\/panels\/workers"/.test(pn0));
+const pn = B.panel({ panel: 'workers', title: 'Workers', src: '/ui/panels/file/worker_panel.html' }, 'l', 'panel:workers', { _pq: {}, _pdOpen: {} });
+t('a panel item frames the panel page and carries the bridge actions', /data-live="frame"/.test(pn) && /data-src="\/ui\/panels\/file\/worker_panel\.html"/.test(pn) && /over the bridge/.test(pn) && ['pquery', 'pdispatch', 'prefresh', 'pstand'].every(a => pn.includes('data-act="' + a + '"')));
 t('the dispatch row is hidden until asked; the readout hidden until there is one', /vc-bridge" hidden/.test(pn) && /vc-pq" hidden/.test(pn));
 const pn2 = B.panel({ panel: 'dag', src: '/ui/panels/dag-workshop' }, 'l', 'panel:dag', { _pq: { 'panel:dag': { text: '{"ok":true}' } }, _pdOpen: { 'panel:dag': true } });
 t('a resolved page wins over the route; an answered query shows; the dispatch row opens', /data-src="\/ui\/panels\/dag-workshop"/.test(pn2) && /vc-pq"><code>\{&quot;ok&quot;:true\}/.test(pn2) && /vc-bridge" data-w/.test(pn2));
