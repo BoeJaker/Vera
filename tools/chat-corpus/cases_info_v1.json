@@ -1,7 +1,7 @@
 {
  "version": "info-v1",
- "approved": "",
- "source": ".git/vera-work/shared-planning/intelligence/PLAN-INFO-SEEKING.md SK-4.1 (tools/info-eval/questions.json, 10 Oct); proposed, not yet owner-approved",
+ "approved": "2026-10-11",
+ "source": ".git/vera-work/shared-planning/intelligence/PLAN-INFO-SEEKING.md SK-4.1 (tools/info-eval/questions.json, 10 Oct); owner approved all 70 on 2026-10-11",
  "notes": "Info-seeking chat run: latest/fact/overview must call a lookup tool (tools_any), cite [n] and mention one expected term; memory turns must not search the web (tools_none); small talk calls nothing. acquire 'any' = not checked (pre-answer web search may or may not fire). ids 101-170 (v0 uses 1-30).",
  "cases": [
   {

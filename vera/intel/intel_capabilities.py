@@ -2649,6 +2649,9 @@ async def cap_repo_get(url: str = "", topic_id: str = "", trace_id=None):
     from Vera.vera.state_paths import state_dir
     root = Path(os.environ.get(_REPO_ROOT_ENV) or state_dir("intel", "repos"))
     dest = root / r["host"] / r["owner"] / r["repo"]
+    # belt and braces with repo_of's dot-name refusal: the clone target never leaves the repos folder
+    if root.resolve() not in dest.resolve().parents:
+        return {"error": "refused: the repository path would leave the intel repo folder"}
     dest.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="true")
     fresh = not (dest / ".git").exists()
@@ -3572,7 +3575,44 @@ async def cap_config_get(trace_id=None):
                          "weekly_day_done": st.get_kv("weekly_day_done"), "advise_week": st.get_kv("advise_week")}}
 
 
-def _clean_config(raw: Dict[str, Any]) -> Dict[str, Any]:
+# Settings that, changed by anyone who can call intel.config.set (chat, or text injected into a page a model read),
+# could send Telegram links and n8n calls elsewhere or read any folder on the files host (review 2026-10-10 D9).
+DROP_ROOT = os.environ.get("VERA_INTEL_DROP_ROOT", "/srv/pools/tank_sde/vfs/home").rstrip("/")
+_PUBLIC_HOSTS = re.compile(r"^(llm\.int|localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.66\.66\.\d{1,3}|"
+                           r"[a-z0-9-]+(\.[a-z0-9-]+)*\.duckdns\.org)$", re.I)
+PERSONA_MAX = 4000
+
+
+def _safe_folder(path: Any) -> str:
+    """The folder normalised, or "" when it is relative, climbs with "..", or leaves DROP_ROOT."""
+    import posixpath
+    p = str(path or "").strip()
+    if not p.startswith("/") or ".." in p.split("/"):
+        return ""
+    p = posixpath.normpath(p)
+    return p if (p == DROP_ROOT or p.startswith(DROP_ROOT + "/")) else ""
+
+
+def _safe_public_base(url: Any) -> str:
+    """scheme://host[:port] for a host Vera is reached by (llm.int, the LAN, the wg door, DuckDNS, or one in
+    VERA_INTEL_PUBLIC_HOSTS), else ""."""
+    from urllib.parse import urlsplit
+    u = str(url or "").strip().rstrip("/")
+    try:
+        sp = urlsplit(u)
+    except ValueError:
+        return ""
+    host = (sp.hostname or "").lower()
+    extra = {h.strip().lower() for h in os.environ.get("VERA_INTEL_PUBLIC_HOSTS", "").split(",") if h.strip()}
+    if sp.scheme not in ("http", "https") or not host or sp.path not in ("", "/") or sp.query or sp.username:
+        return ""
+    if not (_PUBLIC_HOSTS.match(host) or host in extra):
+        return ""
+    return f"{sp.scheme}://{sp.netloc}"
+
+
+def _clean_config(raw: Dict[str, Any], rejected: Optional[List[str]] = None) -> Dict[str, Any]:
+
     out: Dict[str, Any] = {}
     for k, v in (raw or {}).items():
         if k not in _CONFIG_KEYS or v is None:
@@ -3586,8 +3626,20 @@ def _clean_config(raw: Dict[str, Any]) -> Dict[str, Any]:
             v = [x for x in (ops.normalise_session(s) for s in (v if isinstance(v, list) else [])
                              if isinstance(s, dict)) if x][:12]
         elif k == "drop_folders":
-            v = [{"kind": f.get("kind"), "path": str(f.get("path") or "")} for f in (v if isinstance(v, list) else [])
-                 if isinstance(f, dict) and f.get("kind") in ops.FOLDER_KINDS and f.get("path")][:12]
+            got = [{"kind": f.get("kind"), "path": _safe_folder(f.get("path"))} for f in (v if isinstance(v, list) else [])
+                   if isinstance(f, dict) and f.get("kind") in ops.FOLDER_KINDS and f.get("path")][:12]
+            if any(not f["path"] for f in got) and rejected is not None:
+                rejected.append(f"drop_folders: only absolute folders under {DROP_ROOT} (no ..)")
+            v = [f for f in got if f["path"]]
+        elif k == "public_base":
+            v = _safe_public_base(v)
+            if not v:
+                if rejected is not None:
+                    rejected.append("public_base: a bare http(s)://host[:port] on llm.int, the LAN, the wg door or "
+                                    "DuckDNS (or VERA_INTEL_PUBLIC_HOSTS)")
+                continue
+        elif k == "persona":
+            v = str(v)[:PERSONA_MAX]
         elif isinstance(d, bool):
             v = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
         elif isinstance(d, int):
@@ -3625,13 +3677,17 @@ async def cap_config_set(settings: Any = None, enabled: bool = None, timezone: s
         if v is not None:
             raw[k] = v
     try:
-        clean = _clean_config(raw)
+        rejected: List[str] = []
+        clean = _clean_config(raw, rejected)
     except (TypeError, ValueError) as e:
         return {"error": f"bad setting: {e}"}
     cur = store().get_kv("config", {}) or {}
     cur.update(clean)
     store().set_kv("config", cur)
-    return {"ok": True, "config": config(), "changed": sorted(clean)}
+    out = {"ok": True, "config": config(), "changed": sorted(clean)}
+    if rejected:
+        out["rejected"] = rejected
+    return out
 
 
 # ── leaving n8n ──────────────────────────────────────────────────────────────
