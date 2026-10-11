@@ -134,6 +134,25 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "keeps the first rows matching any word, p95 2.2 s on prod 11 Oct); 'fts' = a GIN full-text index "
        "(fabric_records_fts, built once in the background): records with every word ranked first, then any-word "
        "records; falls back to 'like' while the index is missing."),
+    # intel's modes (FM-13.3; mapping agreed with the intelligence unit 11 Oct, intel_switches_core). intel's config
+    # stays the truth: a switch overrides its key only when set; at its default (the first mode) it changes nothing.
+    _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
+       "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
+       "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),
+    _f("intel.brief", ("llm", "extractive"), "intel", "FM-13.3",
+       "The night brief: 'llm' = the MoE writes the cross-topic top line and follow-ups (build_report "
+       "synthesize=True); 'extractive' = per-topic assessments only, no cross-topic pass. Not a no-LLM mode "
+       "(snapshot assessments still use the assess role).", owner="intelligence"),
+    _f("intel.auto_research", ("off", "on"), "intel", "FM-13.3",
+       "Whether a deep topic's new questions start research by themselves (config 'auto_research').",
+       owner="intelligence"),
+    _f("intel.material_alerts", ("on", "off"), "intel", "FM-13.3",
+       "Whether a material change is sent as an alert (config 'alerts'); intel.material_change decisions are "
+       "recorded either way.", owner="intelligence"),
+    _f("intel.calibrated_gate", ("shadow", "on", "off"), "intel", "FM-13.3",
+       "intel's relevance gate: 'shadow' (today) = the score threshold decides, a topic's learned curve records "
+       "p_shadow; 'on' = the curve decides once it is usable (ECE <= 0.05, AUC >= 0.6, 30+ ratings); 'off' = no "
+       "curve at all.", owner="intelligence"),
     _f("memory.seek_exclude_self", ("off", "on"), "memory", "FM-7.1",
        "Whether an unscoped memory.seek leaves Vera's own telemetry out (chat.messages, ide.*, caps.*, bus.*, ts.*, "
        "streams.*, mesh.*, dream.reports - the worldview corpus' SELF_TELEMETRY list). 'off' (default) = searched like "
