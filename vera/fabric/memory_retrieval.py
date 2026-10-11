@@ -699,7 +699,8 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
         _record(env)
         return await _seek_cache_put(ck, {"text": _render_seek(query, [], 0, 0, max_chars),
                                           "results": [], "count": 0, "candidates": 0,
-                                          "collapsed": 0, "datasets": []})
+                                          "collapsed": 0, "datasets": [],
+                                          "legs": list(env.stages), "fabric": getattr(df, "__name__", "")})
 
     if await _switch("memory.rerank") == "on":
         await _rerank_head(query, cands, env)
@@ -757,7 +758,10 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
     out = {"text": text, "results": results, "count": len(selected),
            "candidates": len(cands), "collapsed": collapsed_total,
            "weak": bool(weak_ctx),
-           "datasets": sorted({c["dataset_id"] for c in selected})}
+           "datasets": sorted({c["dataset_id"] for c in selected}),
+           # what each backend leg returned (stage, ms, outcome, n) and which fabric module served it - the evidence
+           # that found seek's semantic leg empty on 11 Oct 2026
+           "legs": list(env.stages), "fabric": getattr(df, "__name__", "")}
     if ranked_mode:
         out["temporal_intent"] = intent
     if _reval is not None:

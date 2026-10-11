@@ -80,3 +80,9 @@ def test_seek_can_leave_self_telemetry_out_unless_scoped():
     from vera.minds import switchboard_core as SB
     f = SB.REGISTRY["memory.seek_exclude_self"]
     assert f.modes == ("off", "on") and f.default == "off"
+
+
+def test_seek_reports_its_legs():
+    src = _src("vera/fabric/memory_retrieval.py")
+    body = src[src.index("async def cap_memory_seek("):src.index("async def cap_memory_read(")]
+    assert body.count('"legs": list(env.stages)') == 2 and body.count('"fabric": getattr(df, "__name__", "")') == 2
