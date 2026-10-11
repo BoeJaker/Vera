@@ -85,4 +85,22 @@ def test_seek_can_leave_self_telemetry_out_unless_scoped():
 def test_seek_reports_its_legs():
     src = _src("vera/fabric/memory_retrieval.py")
     body = src[src.index("async def cap_memory_seek("):src.index("async def cap_memory_read(")]
-    assert body.count('"legs": list(env.stages)') == 2 and body.count('"fabric": getattr(df, "__name__", "")') == 2
+    assert body.count('"legs": list(env.stages)') == 2 and body.count('"fabric": _df_evidence(df)') == 2
+
+
+def test_seek_prefers_the_connected_fabric(monkeypatch):
+    import types
+    from vera.fabric import memory_retrieval as MR
+    dead = types.ModuleType("data_fabric")
+    dead.FABRIC_PG = types.SimpleNamespace(available=False)
+    dead.FABRIC_CHROMA = types.SimpleNamespace(available=False)
+    live = types.ModuleType("Vera.vera.fabric.data_fabric")
+    live.FABRIC_PG = types.SimpleNamespace(available=True)
+    live.FABRIC_CHROMA = types.SimpleNamespace(available=True)
+    monkeypatch.setitem(sys.modules, "data_fabric", dead)
+    monkeypatch.setitem(sys.modules, "Vera.vera.fabric.data_fabric", live)
+    assert MR._df() is live
+    ev = MR._df_evidence(live)
+    assert ev["used"].startswith("Vera.vera.fabric.data_fabric@") and len(ev["candidates"]) >= 2
+    monkeypatch.setitem(sys.modules, "Vera.vera.fabric.data_fabric", dead)
+    assert MR._df() is dead                                  # nothing connected: the first, as before
