@@ -108,6 +108,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "45-day e-folding); 'on' = rank_core - relevance x a half-life per dataset class (news 3 d, chat 14 d, research "
        "60 d, telemetry 1 d, docs and facts none, others 30 d; floor 0.2) x importance, and the question's words set the "
        "temporal intent ('latest' halves the half-life, 'originally' turns decay off)."),
+    _f("sense.chat_pre", ("off", "on"), "chat", "FM-1.2",
+       "The chat PRE frame: sense.frame (patterns, the MiniLM decision vector on a node, domain cards) for every chat "
+       "message, started when the turn arrives and never awaited before the model - a 'sense / frame' phase records "
+       "its domain and when it landed, so the turn record shows how often it is ready before the first token. "
+       "'off' (default) = no frame; 'on' = framed. Exit: TTFT p95 unchanged (it waits for nothing)."),
     _f("plan.precedent", ("off", "on"), "loop", "FM-4.2",
        "Precedent for the planner: up to 2 past runs of similar goals that went well, and 1 warning from one that "
        "did not (plan.precedent, searched on an NLP node), added to what the planner reads as reference with the "
