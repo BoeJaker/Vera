@@ -12231,6 +12231,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "fabric/context.py"),
         os.path.join(_here, "fabric/memory_retrieval.py"),
         os.path.join(_here, "fabric/discovery.py"),
+        os.path.join(_here, "fabric/page_search.py"),
         os.path.join(_here, "fabric/knowledgebase.py"),
         os.path.join(_here, "text/text_ops_capabilities.py"),
         os.path.join(_here, "skills/skills.py"),

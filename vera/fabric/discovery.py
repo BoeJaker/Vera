@@ -3284,11 +3284,31 @@ async def discover_recall(query: str = "", urls: Optional[List[str]] = None,
     in a worker thread: web.search calls this beside every live search, and on the
     event loop it stalled every other request while it ran (RF-02).
     """
-    return await asyncio.to_thread(_discover_recall_sync, query, urls, dataset_id, limit)
+    indexed = await _recall_from_index(query, dataset_id, limit) if query else None
+    return await asyncio.to_thread(_discover_recall_sync, query, urls, dataset_id, limit, indexed)
+
+
+async def _recall_from_index(query: str, dataset_id: str, limit: int) -> Optional[List[Dict]]:
+    """Pages from the Postgres page search index (four-minds FM-7.1) when the switch `discovery.recall_index` is
+    `pg` and the index answers; None keeps the LIKE path (the default, and every failure)."""
+    try:
+        eff = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        mode = str((((await eff()) or {}).get("modes") or {}).get("discovery.recall_index") or "off") if eff else "off"
+        if mode != "pg":
+            return None
+        fn = (CAPABILITY_REGISTRY.get("discovery.recall_index.search") or {}).get("func")
+        if not fn:
+            return None
+        res = await fn(query=query, dataset_id=dataset_id, limit=limit)
+        return list(res.get("pages") or []) if isinstance(res, dict) and res.get("ok") else None
+    except Exception as e:
+        log.debug("discover_recall index: %s", e)
+        return None
 
 
 def _discover_recall_sync(query: str = "", urls: Optional[List[str]] = None,
-                          dataset_id: str = "", limit: int = 20) -> Dict:
+                          dataset_id: str = "", limit: int = 20,
+                          indexed: Optional[List[Dict]] = None) -> Dict:
     """Pull already-processed discovery data (pages + entities) from the fabric.
 
     Used by the web.* caps to return what the fabric already knows about a query
@@ -3316,7 +3336,15 @@ def _discover_recall_sync(query: str = "", urls: Optional[List[str]] = None,
                 if d.get("url") in seen:
                     continue
                 seen.add(d.get("url")); pages.append(d)
-        if query and len(pages) < limit:
+        if indexed is not None:
+            # ranked by the Postgres page index (FM-7.1); the URL hits above keep their place first
+            for d in indexed:
+                if len(pages) >= limit:
+                    break
+                if d.get("url") in seen:
+                    continue
+                seen.add(d.get("url")); pages.append(d)
+        elif query and len(pages) < limit:
             terms = [t for t in query.lower().split() if len(t) >= 3][:6] or [query[:40].lower()]
             clauses, params = [], []
             for t in terms:
