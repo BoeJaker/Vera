@@ -7420,8 +7420,10 @@ IMPORTANT:
   }
   function _cvLookListen(){
     if(_cvLookEs||!Object.keys(_cvLook).length) return;
-    try{ _cvLookEs=new EventSource(location.origin+'/events'); }catch(_){ _cvLookEs=null; return; }
-    _cvLookEs.onmessage=(ev)=>{ let m; try{ m=JSON.parse(ev.data); }catch(_){ return; } const t=m.event||m.type||'';
+    /* the live events are the /ws/mcp socket's (subscribe_events): /events is a list of recent ones, not a stream */
+    try{ _cvLookEs=new WebSocket(location.origin.replace(/^http/,'ws')+'/ws/mcp'); }catch(_){ _cvLookEs=null; return; }
+    _cvLookEs.onopen=()=>{ try{ _cvLookEs.send(JSON.stringify({ action:'subscribe_events' })); }catch(_){} };
+    _cvLookEs.onmessage=(ev)=>{ let w; try{ w=JSON.parse(ev.data); }catch(_){ return; } if(!w||w.type!=='event'||!w.data) return; const m=w.data; const t=m.event||m.type||'';
       if(t!=='info.seek.step') return; const q=String(m.question||'').replace(/\s+/g,' ').trim();
       const h=Object.values(_cvLook).find(x=>x.state==='running'&&x.q&&(x.q===q||q.startsWith(x.q.slice(0,120)))); if(!h) return;
       h.stage=String(m.stage||''); h.need=m.need||h.need; h.subject=m.subject||h.subject; if(Array.isArray(m.checked)) h.checked=m.checked.map(String);
@@ -7431,7 +7433,8 @@ IMPORTANT:
   }
   function _cvLookStart(el, cap, args){
     if(!SID||!_cvEnrichOn()||!_CV_LOOK_RE.test(String(cap||''))) return null; const mid=_cvActMid(el); if(!mid) return null;
-    const h={ key:'lookup:'+mid+':'+(++_cvLookN), mid, cap:String(cap), q:_cvLookQ(args), state:'running', stage:'starting', items:[], checked:[], t0:Date.now(), added:false };
+    /* its first stages go out before the live socket is subscribed: the item says what a lookup does first */
+    const h={ key:'lookup:'+mid+':'+(++_cvLookN), mid, cap:String(cap), q:_cvLookQ(args), state:'running', stage:/^intel\./.test(String(cap))?'checking what Vera tracks':'searching the web and the news', items:[], checked:[], t0:Date.now(), added:false };
     _cvLook[h.key]=h; h.el=el; try{ el.__cvLookKey=h.key; }catch(_){}
     _cvLookDraw(h, true); _cvLookListen(); return h;
   }
