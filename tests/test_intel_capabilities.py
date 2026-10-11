@@ -319,6 +319,16 @@ def test_night_batch_brief_and_delivery(tmp_path):
     assert orch.SENT[-1]["text"].count("▸") == 3                          # the top line once, not the headlines too
 
 
+def test_the_night_refits_the_calibration_curves(tmp_path):
+    # the curves were only ever fitted on request, so the learned gate never saw a rating given after 6 Oct
+    mod, orch = _load(tmp_path)
+    _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])
+    assert not mod.store().get_kv("calibration")
+    _run(mod._start_night("2026-10-04"))
+    rec = mod.store().get_kv("calibration")
+    assert rec and rec.get("at") and "labelled" in rec
+
+
 def test_drop_folders(tmp_path):
     mod, orch = _load(tmp_path)
     r = _run(mod.run_drop_folders(None))

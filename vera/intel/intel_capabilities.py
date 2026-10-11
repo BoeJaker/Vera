@@ -3366,6 +3366,10 @@ async def _finish_night(night: str) -> None:
     n = st.get_kv("night", {}) or {}
     if n.get("brief"):
         return
+    try:                     # the learned gate's curves follow the ratings: refit once a night (arithmetic only)
+        await asyncio.to_thread(fit_curves)
+    except Exception as ex:  # noqa: BLE001 - a refit must never cost the brief
+        log.debug("intel: calibration refit: %s", ex)
     doc = await build_report([], period_hours=int(config().get("report_period_hours", 24)),
                              synthesize=bool(config().get("brief_synthesize", True)))   # intel.brief (FM-13.3)
     n["brief"] = doc["id"] if _has_content(doc) else "-"
