@@ -4885,7 +4885,12 @@
           if (bl.type === 'diagram' || was.mermaid != null) { next.mermaid = d.code; if (was.source != null) next.source = d.code; }   // a diagram draws from `mermaid` first
           return this.call('canvas.update', Object.assign(this._ref(key), { content: Object.assign({}, was, next) })); } };
       // an edit in progress is never redrawn away: the column waits for it, then draws what it missed
-      this.shadowRoot.addEventListener('vera:code:editend', () => { if (this._editHeld) { this._editHeld = false; this._html = null; if (this._doc) this.render(this._doc); } });
+      this.shadowRoot.addEventListener('vera:code:editend', (ev) => { const it = ev.target && ev.target.closest && ev.target.closest('.it[data-key]'); if (it) this._editFit(it, true);
+        if (this._editHeld) { this._editHeld = false; this._html = null; if (this._doc) this.render(this._doc); } });
+      /* EDIT GROWS TO WHAT IT NEEDS (WSU-59, owner: "edit on a big code item -> full room; a few lines -> just enough to
+         edit; grows on paste"): the editor says its size as it opens and as the text changes (vera_output_element.js) */
+      this.shadowRoot.addEventListener('vera:code:editstart', (ev) => { const it = ev.target && ev.target.closest && ev.target.closest('.it[data-key]'); if (it) this._editFit(it, false); });
+      this.shadowRoot.addEventListener('vera:code:editsize', (ev) => { const it = ev.target && ev.target.closest && ev.target.closest('.it[data-key]'); if (it) this._editFit(it, false); });
       return this.__voh;
     }
     _ref(key) { const bid = this._bidOf(key); return bid ? { block_id: bid } : { key }; }
@@ -5973,6 +5978,20 @@
     clearAll(keepPinned) {
       const pinnedKeys = ((this._doc && this._doc.blocks) || []).filter((b) => b && b.key && b.state === 'pinned').map((b) => String(b.key));
       return this.call('canvas.clear', { keep: keepPinned === false ? '' : pinnedKeys.join(',') });
+    }
+    /* a card being edited on the desk is as tall as its editor needs (WSU-59): the card's chrome plus the editor's bar and
+       box; more than the desk can give (or past ~70% of it) - the card fills the room for the edit (maximised) and goes
+       back when the edit ends. A card that grew for the edit lets the height go when it ends. */
+    _editFit(it, ended) {
+      if (!this.deskAlign()) return; const key = it.dataset.key; const E = this._editGrow || (this._editGrow = {});
+      if (ended) { if (E[key] === 'max' && this._max === key) this._toggleMax(key); if (E[key]) { delete (this._minH || {})[key]; delete E[key]; this._placeNow(); } return; }
+      const box = it.querySelector('.vo-ed');
+      const bar = it.querySelector('.cb-editbar'); const bd = it.querySelector(':scope > .it-bd'); if (!box || !bd) return;
+      const g = this._deskGeo; const H = (g && g.H) || 800;
+      const chrome = it.offsetHeight - bd.clientHeight;
+      const need = Math.round(chrome + (bd.scrollHeight - bd.clientHeight > 0 ? bd.scrollHeight : bd.clientHeight) + 8);
+      if (need > H * 0.7) { if (this._max !== key) { this._toggleMax(key); E[key] = 'max'; } return; }
+      if (need > it.offsetHeight + 4) { (this._minH || (this._minH = {}))[key] = need; E[key] = E[key] || 'grow'; this._placeNow(); }
     }
     /* a short notice with one action (Undo), at the foot of the canvas; it leaves after 8 s or when acted on (WSU-66) */
     _undoToast(text, undo) {
