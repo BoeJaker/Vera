@@ -17239,10 +17239,19 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # steps. Cheap: formatting an in-memory list, no LLM call.
         _journal_live = ""
         if journal:
-            _jdig = _v6_journal_digest(journal)
-            if _jdig:
-                _journal_live = ("\n\nRUN JOURNAL (live — reuse, don't re-derive):\n"
-                                  + _jdig[:1200])
+            # journal_delta (roadmap A6): the step goal already holds the digest frozen at step
+            # start, so the live block shows only entries added since - one view, not two.
+            _jfrom = step.get("_journal_from")
+            if isinstance(_jfrom, int):
+                _jdig = _v6_journal_digest(journal[_jfrom:]) if len(journal) > _jfrom else ""
+                if _jdig:
+                    _journal_live = ("\n\nRUN JOURNAL - new during this step (earlier entries are in "
+                                     "the step goal; reuse, don't re-derive):\n" + _jdig[:1200])
+            else:
+                _jdig = _v6_journal_digest(journal)
+                if _jdig:
+                    _journal_live = ("\n\nRUN JOURNAL (live — reuse, don't re-derive):\n"
+                                      + _jdig[:1200])
         user_msg = (f"STEP GOAL: {step['goal']}\n\nYour results so far:\n{obs}{_think_back}{_rep_hint}{_note}{_grant_block}{_journal_live}\n\n"
                     "Reply with ONE JSON action, or a `done` summary if the step goal is met.")
 
@@ -24706,6 +24715,9 @@ async def cap_dag_agent_loop_v6(
     # deliverable adversarially ONCE; real defects become one fix step (user 2026-10-04).
     deliverable_review: bool = False,
     answer_check: bool = False,
+    # Roadmap A6: the executor's live journal block shows only entries new since the step-start
+    # digest (which the step goal already carries) - the same notes no longer appear twice.
+    journal_delta: bool = False,
     # Known dated facts from intel.lookup before planning (compute-roles P1b, 11 Oct 2026).
     intel_prefacts: bool = False,
     # A large CPU model reviews the whole plan beside the run; findings reach the controller once
@@ -26480,6 +26492,8 @@ async def cap_dag_agent_loop_v6(
                     "\n\nRUN JOURNAL (structured context already produced by earlier steps — "
                     "reuse these outputs, files, and findings; do NOT re-derive them):\n" + _jdig)
             step["_journal_injected"] = True
+            if journal_delta:
+                step["_journal_from"] = len(journal)
         # ── Pre-step info gathering: identify the concrete info this step needs
         #    that earlier steps did NOT already collect, and fold both the gaps and
         #    a digest of what's already known into the step goal — so the step
@@ -26794,6 +26808,8 @@ async def cap_dag_agent_loop_v6(
                         "\n\nRUN JOURNAL (structured context already produced by earlier steps — "
                         "reuse these outputs, files, and findings; do NOT re-derive them):\n" + _jdig)
                 step["_journal_injected"] = True
+                if journal_delta:
+                    step["_journal_from"] = len(journal)
             pre_bb = dict(blackboard)
             res = await _run_one(step, gcycle)
             res["success"] = step.get("success", "")
@@ -27311,6 +27327,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_style_defaulted = bool(_v7_default and not str(body.get("plan_style") or "").strip())
     v6_deliverable_review = bool(body.get("deliverable_review", False))
     v6_answer_check = bool(body.get("answer_check", False))
+    v6_journal_delta = bool(body.get("journal_delta", False))
     v6_intel_prefacts = bool(body.get("intel_prefacts", False))
     v6_plan_critique = bool(body.get("plan_critique", False))
     v6_claim_nli = (body.get("claim_nli", "off") or "off").strip().lower()
@@ -27480,6 +27497,7 @@ async def workshop_agent_loop_stream(request: Request):
             plan_style_defaulted=v6_plan_style_defaulted,
             deliverable_review=v6_deliverable_review,
             answer_check=v6_answer_check,
+            journal_delta=v6_journal_delta,
             intel_prefacts=v6_intel_prefacts,
             plan_critique=v6_plan_critique,
             claim_nli=v6_claim_nli,
