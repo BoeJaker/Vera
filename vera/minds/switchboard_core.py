@@ -134,6 +134,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "keeps the first rows matching any word, p95 2.2 s on prod 11 Oct); 'fts' = a GIN full-text index "
        "(fabric_records_fts, built once in the background): records with every word ranked first, then any-word "
        "records; falls back to 'like' while the index is missing."),
+    _f("canvas.surface_rank", ("off", "shadow"), "chat", "FM-6.2/6.3",
+       "The canvas curator's first questions: which domains a turn is about and which surfaces answer it, from the "
+       "turn's Frame vector against domain and surface cards (cosine), beside surface.find's word lists. 'off' "
+       "(default) = word lists only; 'shadow' = each turn.prepare also records what the cards would have chosen "
+       "(background, never awaited; canvas.surface_rank.report). 'on' needs engagement outcomes first."),
     _f("memory.seek_exclude_self", ("off", "on"), "memory", "FM-7.1",
        "Whether an unscoped memory.seek leaves Vera's own telemetry out (chat.messages, ide.*, caps.*, bus.*, ts.*, "
        "streams.*, mesh.*, dream.reports - the worldview corpus' SELF_TELEMETRY list). 'off' (default) = searched like "
