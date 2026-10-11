@@ -69,6 +69,10 @@ NEEDS: Dict[str, Dict[str, float]] = {
     "markets.ml.train": {"cpu": 4.0, "mem_gb": 2.0},
     # a chunk runs as test_pool node_parallel (4) pytest processes
     "pytest.shard":     {"cpu": 4.0, "mem_gb": 6.0},
+    # ML Workshop inference (ml-workshop-compute MW-1)
+    "ml.forward":        {"cpu": 1.0, "mem_gb": 1.0},
+    "ml.module_forward": {"cpu": 1.0, "mem_gb": 1.0},
+    "onnx.run":          {"cpu": 1.0, "mem_gb": 1.0},
 }
 #: Node metrics older than this are not trusted for admission.
 METRICS_STALE_S = 60
@@ -116,6 +120,12 @@ FUNCTIONS: Dict[str, Tuple[str, str, Tuple[str, ...]]] = {
     # a shard of a pipeline gate's pytest run, in the node's pinned test venv
     # (`testenv`: the node's venv matches the gate image's packages)
     "pytest.shard":    ("test_runner_core", "node_run_shard", ("testenv",)),
+    # ML Workshop inference off the host (ml-workshop-compute MW-1): a trained
+    # module's forward pass, a module's per-node introspection pass, and an
+    # exported ONNX model (the artifact travels by reference, _blob_refs)
+    "ml.forward":        ("ml_training", "node_forward", ("numpy",)),
+    "ml.module_forward": ("ml_workshop", "node_module_forward", ("numpy",)),
+    "onnx.run":          ("ml_onnx", "node_onnx_run", ("numpy", "onnxruntime")),
 }
 
 #: Modules that are not capability modules (so not loaded by a worker at
@@ -123,7 +133,7 @@ FUNCTIONS: Dict[str, Tuple[str, str, Tuple[str, ...]]] = {
 IMPORTS: Dict[str, str] = {"test_runner_core": "Vera.vera.evolve.test_runner_core"}
 
 #: What a worker reports it can run (registration field `libs`).
-PROBED_LIBS = ("numpy", "torch", "sklearn", "scipy")
+PROBED_LIBS = ("numpy", "torch", "sklearn", "scipy", "onnxruntime")
 
 
 def available_libs(find=importlib.util.find_spec) -> Dict[str, bool]:
@@ -452,7 +462,7 @@ def ml_pins(versions: Dict[str, str]) -> Dict[str, str]:
     pickles must load on the host, so the libraries match. The local build tag
     goes - the worker takes torch's CPU build of the same release."""
     out = {}
-    for pkg in ("torch", "scikit-learn"):
+    for pkg in ("torch", "scikit-learn", "onnxruntime"):
         v = str((versions or {}).get(pkg) or "").split("+", 1)[0].strip()
         if v and all(p.isdigit() for p in v.split(".")):
             out[pkg] = v
@@ -465,3 +475,16 @@ def job_record(job: str, fn: str, *, where: str, why: str, label: str = "",
            "state": state}
     rec.update(extra)
     return rec
+
+
+async def resolve_blob_refs(inputs: Dict[str, Any], get) -> Optional[str]:
+    """Replace `_blob_refs` ({name: redis key}) in `inputs` with the stored
+    bytes, using `get` (an async Redis get). Returns an error, or None. One
+    place for the worker path and the host fallback - the host path used to
+    hand a function the bare key (2026-10-11)."""
+    for name, k in (inputs.pop("_blob_refs", None) or {}).items():
+        data = await get(str(k))
+        if data is None:
+            return f"input {name!r} expired or was withdrawn"
+        inputs[name] = data
+    return None
