@@ -128,6 +128,45 @@ async def _secrets_plain() -> Dict[str, Any]:
     return out
 
 
+# In-process consumers of a credential that are not platform targets (Brave search, GitHub source pulls, intel's
+# keyed sources...): key -> [{who, label, why}]. Filled by declare_secret_use; shown under "used by", and a declared
+# key with no record yet is listed as wanted - so the one Platforms page shows every key Vera could use.
+_CONSUMERS: Dict[str, List[Dict[str, str]]] = {}
+
+
+def declare_secret_use(key: str, who: str, *, label: str = "", why: str = "") -> None:
+    """A module says it reads credential `key` in-process (idempotent)."""
+    k = str(key or "").strip()
+    if not k or not who:
+        return
+    rows = _CONSUMERS.setdefault(k, [])
+    if not any(r.get("who") == who for r in rows):
+        rows.append({"who": str(who), "label": str(label or ""), "why": str(why or "")})
+
+
+async def secret_value(key: str) -> str:
+    """One credential's current value for in-process use, "" when unset or unreadable. Never exposed through a
+    capability - /mcp/call is unauthenticated (secrets service rule: no cap returns a value)."""
+    k = str(key or "").strip()
+    if k.startswith(pc.SECRET_REF):
+        k = k[len(pc.SECRET_REF):].strip()
+    if not k:
+        return ""
+    rec = (await _hgetall(KEY_SECRETS)).get(k)
+    if not rec:
+        return ""
+    if rec.get("path"):
+        svc = _secrets_service()
+        got = (await svc["get_named"](rec["path"])) if svc and svc.get("get_named") else None
+        return str((got or {}).get("value", "") or "")
+    raw = rec.get("value", "")
+    try:
+        return vsecrets.open_secret(raw) if raw else ""
+    except Exception:
+        log.warning("platform: could not unseal secret %s", k)
+        return ""
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  SHARED VALUES
 # ═════════════════════════════════════════════════════════════════════════════
@@ -229,8 +268,17 @@ async def cap_secrets_list(trace_id=None):
                     "store": rec.get("store") or ("secrets service" if rec.get("path") else "sealed inline"),
                     "path": rec.get("path", ""),
                     "updated": rec.get("updated", ""),
-                    "used_by": pc.referencing_platforms(targets, "secret", k),
+                    "used_by": pc.referencing_platforms(targets, "secret", k)
+                               + [c["who"] for c in _CONSUMERS.get(k, [])],
                     "ref": pc.SECRET_REF + k})
+    # keys a module reads but nobody has set yet: listed so the Platforms page shows what Vera could use
+    for k, rows in sorted(_CONSUMERS.items()):
+        if k in secs:
+            continue
+        first = rows[0] if rows else {}
+        out.append({"key": k, "label": first.get("label") or k, "set": False, "store": "", "path": "",
+                    "updated": "", "used_by": [c["who"] for c in rows], "ref": pc.SECRET_REF + k,
+                    "wanted": True, "why": first.get("why", "")})
     return {"secrets": out, "count": len(out),
             "store_ok": bool(_redis())}
 

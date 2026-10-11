@@ -1072,7 +1072,20 @@ async def search_brave(query: str, limit: int) -> list[dict]:
     if isinstance(src.config, str):
         try: cfg = json.loads(src.config)
         except Exception: cfg = {}
+    # the key: a literal here (older setups), an "@secret:<key>" reference, or - when empty - the Platforms
+    # credential brave_search_api_key (the master key store; owner 2026-10-11)
     api_key = cfg.get("api_key", "")
+    try:
+        try:
+            from Vera.vera.platforms import platform_access as _pa
+        except Exception:
+            from vera.platforms import platform_access as _pa
+        _pa.declare(CAPABILITY_REGISTRY, "brave_search_api_key", "web.search / research (Brave)",
+                    label="Brave Search API", why="search fallback when SearXNG is thin")
+        api_key = await _pa.resolve(CAPABILITY_REGISTRY, api_key, "brave_search_api_key")
+    except Exception as e:
+        log.debug("search_brave: platform key: %s", e)
+        api_key = "" if str(api_key).startswith("@secret:") else api_key
     if not api_key:
         log.debug("search_brave: no api_key configured")
         return []

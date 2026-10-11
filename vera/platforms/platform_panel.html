@@ -167,11 +167,14 @@ async function loadSecrets(){
   const c = await cap('platform.secrets.list');
   const ss = c.secrets || [];
   $('secrets').innerHTML = ss.length ? '<table><tr><th>Key</th><th>Status</th><th>Reference</th><th>Used by</th><th></th></tr>'
-    + ss.map(s => `<tr><td>${esc(s.label||s.key)}</td>
-      <td><span class="pill ${s.set?'ok':'err'}">${s.set?'set':'empty'}</span></td>
+    + ss.map(s => `<tr><td>${esc(s.label||s.key)}${s.why?`<div class="muted">${esc(s.why)}</div>`:''}</td>
+      <td><span class="pill ${s.set?'ok':(s.wanted?'warn':'err')}">${s.set?'set':(s.wanted?'wanted':'empty')}</span></td>
       <td><code>${esc(s.ref)}</code></td>
       <td class="muted">${(s.used_by||[]).map(esc).join(', ')||'—'}</td>
-      <td><button class="btn sm" onclick="delSecret('${esc(s.key)}')">delete</button></td></tr>`).join('')
+      <td>${s.wanted
+        /* a key a module reads but nobody has set: fill the form below with its name */
+        ? `<button class="btn sm" onclick="${'fillSecret(' + esc(JSON.stringify(String(s.key))) + ')'}">set</button>`
+        : `<button class="btn sm" onclick="${'delSecret(' + esc(JSON.stringify(String(s.key))) + ')'}">delete</button>`}</td></tr>`).join('')
     + '</table>' : '<div class="empty">No credentials yet.</div>';
 }
 
@@ -259,6 +262,15 @@ async function delValue(key){
   if (r.error) return toast(r.error, 'err');
   toast('deleted', 'ok'); loadAll();
 }
+function fillSecret(key){
+  $('skey').value = key; $('sval').value = ''; $('sval').focus();
+}
+// ?secret=<key> opens the page with that key ready to paste (intel's API list links here)
+(function(){ try{ const k = new URLSearchParams(location.search).get('secret');
+  if (!k) return;
+  const go = () => { try{ fillSecret(k); $('skey').scrollIntoView({block:'center'}); }catch(_){} };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go); else setTimeout(go, 0);
+  }catch(_){} })();
 async function setSecret(){
   const key = $('skey').value.trim(), value = $('sval').value;
   if (!key || !value) return toast('key and value are required', 'err');
