@@ -5,6 +5,8 @@ import sqlite3
 import pytest
 
 from vera.fabric.memory_dual_write_runtime import (
+    default_memory_dual_write_receipt_path,
+    default_memory_revision_path,
     store_public_memory_with_revision_canary,
 )
 
@@ -36,6 +38,19 @@ def paths(tmp_path, enabled="1", policy='{"writers":["codex"]}'):
         "VERA_MEMORY_DUAL_WRITE_RECEIPTS": str(tmp_path / "receipts.sqlite3"),
         "FABRIC_REVISION_POLICY": policy,
     }
+
+
+def test_default_journals_are_shared_and_out_of_tree_across_import_topologies(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("VERA_STATE_DIR", str(tmp_path / "state"))
+    from Vera.vera.fabric import memory_dual_write_runtime as upper_runtime
+
+    expected_revision = tmp_path / "state" / "fabric" / "memory-record-revisions.sqlite3"
+    expected_receipts = tmp_path / "state" / "fabric" / "memory-dual-write-receipts.sqlite3"
+    assert default_memory_revision_path() == str(expected_revision)
+    assert upper_runtime.default_memory_revision_path() == str(expected_revision)
+    assert default_memory_dual_write_receipt_path() == str(expected_receipts)
+    assert upper_runtime.default_memory_dual_write_receipt_path() == str(expected_receipts)
 
 
 def test_disabled_path_is_exact_native_await_and_constructs_nothing(tmp_path):

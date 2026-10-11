@@ -384,6 +384,13 @@ does not advance Fabric heads or projection receipts, and supplies no runtime
 activation switch. Wiring one narrow writer to this seam and proving recovery
 remain outside the enabled path.
 
+Unless explicitly overridden, the canonical revision and dual-write evidence
+journals live under `VERA_STATE_DIR/fabric/`. All runtime, readiness,
+reconciliation and rollback-rehearsal paths resolve those same out-of-tree
+files. They are never derived from an importing module's `__file__`: Vera can
+load modules through more than one package topology, and checkout-relative
+machine state could split evidence or dirty the repository.
+
 The public `memory.store` ingress is now connected to this seam behind
 `VERA_MEMORY_REVISION_CANARY=1`; the default remains `0`. With the switch off,
 the capability directly awaits the existing native store and does not construct

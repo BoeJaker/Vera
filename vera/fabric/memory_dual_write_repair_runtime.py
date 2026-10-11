@@ -11,7 +11,11 @@ from typing import Any, Awaitable, Callable, Mapping
 from .memory_dual_write_reconciliation import reconcile_memory_dual_write
 from .memory_dual_write_readiness import assess_memory_authority_readiness
 from .memory_dual_write_repairs import MemoryDualWriteRepairAdapter, NATIVE_TARGETS
-from .memory_dual_write_runtime import native_memory_content_hash
+from .memory_dual_write_runtime import (
+    default_memory_dual_write_receipt_path,
+    default_memory_revision_path,
+    native_memory_content_hash,
+)
 from .memory_dual_write_store import MemoryDualWriteReceiptStore
 from .record_revision import RecordRevision, record_revision_from_dict
 from .revision_path import RevisionPath
@@ -44,8 +48,8 @@ def read_memory_authority_readiness(
 ) -> dict[str, Any]:
     """Read bounded journal evidence; never repair or switch authority."""
     env = os.environ if environ is None else environ
-    receipt_file = Path(str(env.get(RECEIPT_PATH_ENV) or Path(__file__).with_name(
-        "memory_dual_write_receipts.db")))
+    receipt_file = Path(str(
+        env.get(RECEIPT_PATH_ENV) or default_memory_dual_write_receipt_path()))
     if receipt_file.exists():
         store = MemoryDualWriteReceiptStore(receipt_file)
         evidence = store.readiness_evidence(limit=limit)
@@ -91,10 +95,10 @@ async def run_manual_memory_reconciliation(
     if not actor:
         raise ValueError("actor is required")
 
-    revision_file = str(env.get(REVISION_PATH_ENV) or Path(__file__).with_name(
-        "vera_fabric_revisions.db"))
-    receipt_file = str(env.get(RECEIPT_PATH_ENV) or Path(__file__).with_name(
-        "memory_dual_write_receipts.db"))
+    revision_file = str(
+        env.get(REVISION_PATH_ENV) or default_memory_revision_path())
+    receipt_file = str(
+        env.get(RECEIPT_PATH_ENV) or default_memory_dual_write_receipt_path())
     policy = RevisionPolicy.from_json(str(env.get(POLICY_ENV, "")))
     revision_path = RevisionPath(RevisionStore(revision_file), policy.allows)
     receipt_store = MemoryDualWriteReceiptStore(receipt_file)

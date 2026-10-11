@@ -11,7 +11,6 @@ import asyncio
 import hashlib
 import math
 import os
-from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
 from .memory_dual_write_canary import (
@@ -37,12 +36,24 @@ def memory_revision_canary_enabled(environ: Mapping[str, str] | None = None) -> 
     return str(source.get(CANARY_ENV, "0")).strip() == "1"
 
 
-def _default_revision_path() -> str:
-    return str(Path(__file__).with_name("vera_fabric_revisions.db"))
+def default_memory_revision_path() -> str:
+    """Return the shared, out-of-tree canonical revision journal path."""
+    try:
+        from Vera.vera import state_paths
+    except ImportError:                              # pragma: no cover
+        from .. import state_paths
+    path = state_paths.state_dir("fabric") / "memory-record-revisions.sqlite3"
+    return str(state_paths.guard_out_of_tree(path))
 
 
-def _default_receipt_path() -> str:
-    return str(Path(__file__).with_name("memory_dual_write_receipts.db"))
+def default_memory_dual_write_receipt_path() -> str:
+    """Return the shared, out-of-tree dual-write evidence journal path."""
+    try:
+        from Vera.vera import state_paths
+    except ImportError:                              # pragma: no cover
+        from .. import state_paths
+    path = state_paths.state_dir("fabric") / "memory-dual-write-receipts.sqlite3"
+    return str(state_paths.guard_out_of_tree(path))
 
 
 def _bounded_text(value: Any, limit: int) -> str:
@@ -128,11 +139,11 @@ async def store_public_memory_with_revision_canary(
         native_hash = native_memory_content_hash(snapshot)
     policy = RevisionPolicy.from_json(str(env.get(POLICY_ENV, "")))
     path = RevisionPath(
-        RevisionStore(str(env.get(REVISION_PATH_ENV) or _default_revision_path())),
+        RevisionStore(str(env.get(REVISION_PATH_ENV) or default_memory_revision_path())),
         policy.allows,
     )
     receipt_sink = MemoryDualWriteReceiptStore(
-        str(env.get(RECEIPT_PATH_ENV) or _default_receipt_path()))
+        str(env.get(RECEIPT_PATH_ENV) or default_memory_dual_write_receipt_path()))
 
     async def revision_write(value):
         return await asyncio.to_thread(
