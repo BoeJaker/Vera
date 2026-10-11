@@ -169,3 +169,19 @@ def test_import_checks_then_appends(ledger):
     jsonl = "\n".join(json.dumps(r) for r in rows)
     real = asyncio.run(L.cap_decide_ledger_import(rows=jsonl, dry_run="false"))
     assert real["appended"] == 1 and len(redis.entries) == 1
+
+
+def test_record_hands_inputs_to_the_training_store(ledger, monkeypatch):
+    # four-minds FM-13.6: an emitter outside the loop (intel) passes what a decision saw beside the row
+    import types
+    L, redis, _ = ledger
+    put = []
+    monkeypatch.setitem(sys.modules, "training_state", types.SimpleNamespace(put=lambda d, i: put.append((d, i))))
+    d = _dec()
+    assert asyncio.run(L.cap_decide_record(row=d, inputs={"goal": "g"}))["ok"]
+    assert put == [(d, {"goal": "g"})]
+    asyncio.run(L.cap_decide_record(row=_dec()))                                    # no inputs: nothing stored
+    asyncio.run(L.cap_decide_record(row={"schema": "vera.decision/v0"}, inputs={"goal": "g"}))   # refused row
+    o = LC.make_outcome(d["decision_id"], "correct", "gate.verdict", "strong")
+    asyncio.run(L.cap_decide_record(row=o, inputs={"goal": "g"}))                   # outcomes carry no inputs
+    assert len(put) == 1 and len(redis.entries) == 3

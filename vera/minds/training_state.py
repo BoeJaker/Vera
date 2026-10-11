@@ -103,6 +103,20 @@ def put(decision: Optional[Dict[str, Any]], inputs: Optional[Dict[str, Any]]) ->
         log.debug("training state: %s", e)
 
 
+async def put_now(decision: Optional[Dict[str, Any]], inputs: Optional[Dict[str, Any]]) -> bool:
+    """put(), awaited: for a backfill that writes many rows one after another instead of a task per row.
+    True when the row was written (or already there). Never raises."""
+    try:
+        if not decision or not inputs or not TS.wanted(decision, surfaces()):
+            return False
+        before = _STATS["stored"]
+        await _write(TS.state_row(decision, TS.render(inputs, _cred())))
+        return _STATS["stored"] > before
+    except Exception as e:
+        log.debug("training state: %s", e)
+        return False
+
+
 async def _ensure(conn) -> None:
     global _DDL_DONE
     if _DDL_DONE:
