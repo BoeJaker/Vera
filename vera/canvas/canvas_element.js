@@ -329,6 +329,31 @@
   const _recFallback = {};
   const recState = (el, key) => { const box = el ? (el._recUi = el._recUi || {}) : _recFallback; const k = String(key || '');
     return box[k] || (box[k] = { page: 0, q: '', sort: 'rank', view: 'list', dom: '', ent: '', open: {}, body: {} }); };
+  /* A PANEL'S OWN PAGE (WSU-67, owner 2026-10-11: "ui panels opened on the desk seem to lock up and can't be interacted
+     with"). An item with no `src` drew /ui/panels/<id> - a route that does not exist (404 for every panel, measured) - so
+     the frame was an empty page that took no input. Only the chat page resolved the real address (its listener for
+     vera:canvas:panel-src); a desk opened anywhere else, or restored, kept the dead frame. The canvas now resolves it
+     itself, the way the chat does: the iframe src in the panel's registered html, the alias table, a dedicated
+     /ui/panels/<id> route, then file-name guesses under /ui/panels/file/. Cached per panel; '' when nothing answers. */
+  const PANEL_ALIASES = { 'agents-skills-ontologies': '/ui/panels/agents-skills-ontologies', 'skills-editor': '/ui/panels/file/skills_panel.html',
+    'ontologies-browser': '/ui/panels/file/ontologies_panel.html', 'agents-editor': '/ui/panels/file/agent_panel.html', 'memory-graph': '/ui/panels/file/memory_graph_panel.html',
+    'cap_tracking': '/ui/panels/file/cap_tracking_panel.html', 'workers': '/ui/panels/file/worker_panel.html', 'workers-ollama': '/ui/panels/workers-ollama',
+    'model-routing': '/ui/panels/model-routing', 'chat2': '/chat_panel' };
+  const PANEL_SRC = {}; let PANEL_REG = null;
+  async function panelSrc(id) {
+    id = String(id || ''); if (!id) return ''; if (PANEL_SRC[id] != null) return PANEL_SRC[id];
+    const base = (root._veraBase || '').replace(/\/$/, '');
+    const ok = async (path) => { try { const r = await fetch(base + path, { method: 'HEAD' }); return r.ok; } catch (e) { return false; } };
+    if (!PANEL_REG) PANEL_REG = fetch(base + '/ui/panels', { headers: { Accept: 'application/json' } }).then((r) => r.json()).then((j) => (Array.isArray(j) ? j : (j && j.panels) || [])).catch(() => []);
+    const reg = await PANEL_REG; const p = reg.find((x) => x && (x.id === id || x.label === id)) || null;
+    const m = p && String(p.html || '').match(/<iframe[^>]+src="([^"]+)"/i);
+    let src = m ? m[1] : (PANEL_ALIASES[id] || '');
+    if (!src && await ok('/ui/panels/' + encodeURIComponent(id))) src = '/ui/panels/' + encodeURIComponent(id);
+    if (!src) { const g = [id.replace(/-/g, '_') + '_panel.html', id.replace(/-panel$/, '').replace(/-/g, '_') + '_panel.html', id.replace(/-/g, '_') + '.html', id + '.html'];
+      for (const f of g.filter((x, i) => g.indexOf(x) === i)) { if (await ok('/ui/panels/file/' + f)) { src = '/ui/panels/file/' + f; break; } } }
+    PANEL_SRC[id] = src; return src;
+  }
+
   const BLOCK = {
     /* a document item draws with the reader's renderer (mdx): a research report's tables, numbered lists, quotes and
        figures were pipes and bare lines under the note subset */
@@ -867,7 +892,10 @@
 
     // a whole panel as an item: the panel page in its frame, driven over the one bridge
     panel: (c, size, key, el) => {
-      const id = String(c.panel || c.id || '').trim(); const src = c.src || (id ? '/ui/panels/' + encodeURIComponent(id) : '');
+      const id = String(c.panel || c.id || '').trim();
+      /* the item's own address, else the one resolved for its panel (panelSrc above); while it resolves, a line saying so */
+      const got = id && PANEL_SRC[id] != null ? PANEL_SRC[id] : null; const src = c.src || got || '';
+      if (!c.src && id && got == null && el && el._panelResolve) el._panelResolve(id);
       const q = el && el._pq && el._pq[key];
       /* behind / front live in the panel's own head, always drawn: in the item's footer rail they were hidden until hover
          and, on a panel sent behind, under the other items (owner, 2026-10-07: "i dont see the behind or front buttons") */
@@ -875,7 +903,10 @@
       const layBtns = lay === null ? '' : `<button class="ib${lay === 'behind' ? ' on' : ''}" data-act="layer-behind" title="Behind the desk: the panel fills the free part of the desk, under the other items - press again to put it back among them">behind</button><button class="ib${lay === 'front' ? ' on' : ''}" data-act="layer-front" title="In front: the panel fills the free part of the desk, over the other items (never over the chat) - press again to put it back among them">front</button>`;
       return `<div class="vc-panel" data-w="canvas.panel"><div class="vc-th"><i class="dot on"></i><b>${esc(c.title || c.label || id || 'panel')}</b><span class="mono">${esc(id)} · over the bridge</span><span class="sp"></span>`
         + layBtns + `<button class="ib" data-act="pquery" title="panel.query — what the panel holds">query</button><button class="ib" data-act="pdispatch" title="panel.dispatch — drive it">dispatch</button><button class="ib" data-act="prefresh" title="Reload the panel">refresh</button><button class="ib" data-act="pstand" title="Open it standalone">standalone ↗</button></div>`
-        + (src ? `<div class="vc-live vc-frame" data-live="frame" data-key="${esc(key)}" data-src="${esc(src)}"></div>` : '<div class="vc-dim">no panel id</div>')
+        + (src ? `<div class="vc-live vc-frame" data-live="frame" data-key="${esc(key)}" data-src="${esc(src)}"></div>`
+          : !id ? '<div class="vc-dim">no panel id</div>'
+          : got == null ? `<div class="vc-dim vc-pwait">opening ${esc(c.title || id)}…</div>`
+          : `<div class="vc-dim vc-pwait">${esc(c.title || id)} has no page that can open here.</div>`)
         + `<div class="vc-bridge"${el && el._pdOpen && el._pdOpen[key] ? '' : ' hidden'} data-w="canvas.panel.bridge"><div class="row"><input class="ti" data-f="action" placeholder="action" spellcheck="false"><input class="ti" data-f="payload" placeholder="payload {…}" spellcheck="false"><button class="ib on" data-act="psend">Send</button></div></div>`
         + `<pre class="vc-pre vc-out vc-pq"${q ? '' : ' hidden'}><code>${esc(q ? (q.text || '') : '')}</code></pre></div>`;
     },
@@ -5562,6 +5593,11 @@
       this._open.add(nk);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key: nk, kind: 'widget', add: k.n, form } })); } catch (e) {}
       return this.call('canvas.add', args);
+    }
+    /* a panel item drawn without its page asks once; when the address comes back the column is drawn again (WSU-67) */
+    _panelResolve(id) {
+      const P = this._pResolving || (this._pResolving = new Set()); if (P.has(id)) return; P.add(id);
+      panelSrc(id).then(() => { P.delete(id); this._html = null; if (this._doc) this.render(this._doc); }).catch(() => { P.delete(id); });
     }
     _panelAdd(id, label) {
       id = String(id || '').trim(); if (!id) return; const key = 'panel:' + id; const focusMid = this.dataset.focusMid || '';
