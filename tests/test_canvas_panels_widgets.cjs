@@ -35,7 +35,7 @@ const mod = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element
   /* the page beside the chat still opens - this ADDS the canvas, it does not move the panel off the screen the
      user asked for it on */
   t('the page beside the chat still opens', /const ok=await panelOpen\(String\(a\.id\|\|''\), who\);/.test(chat));
-  t('and the canvas only hears about it when the open succeeded', /if\(ok\) try\{ _cvLandPanel/.test(chat));
+  t('and the canvas only hears about it when the open succeeded', /if\(ok(?:&&!_deskPanelOn\(\))?\) try\{ _cvLandPanel/.test(chat));   /* on the desk the panel layer takes it instead */
 }
 
 // ── the panel item is driven over the bridge, which it already was ─────────────────────────────────────────────

@@ -11,7 +11,7 @@ const CHAT = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_pa
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
 /* ── the settings exist, with the defaults being what the canvas already did ─────────────────────────────────── */
-t('the element takes the settings as attributes', /'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse'\]/.test(SRC));
+t('the element takes the settings as attributes', /'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse'[,\]]/.test(SRC)   /* the desk's attributes follow */);
 t('each is read in ONE place, and defaults to today\'s behaviour',
   /strictAlign\(\) \{ return String\(this\.getAttribute\('align'\) \|\| 'held'\)/.test(SRC) &&
   /previewOn\(\) \{ return String\(this\.getAttribute\('preview'\) \|\| 'on'\)[^}]*!== 'off'/.test(SRC) &&
@@ -23,7 +23,7 @@ t('the page offers them in Settings, each with its own persisted value',
   /id="cfgCvAlign"[\s\S]*?value="held"[\s\S]*?value="strict"/.test(CHAT) &&
   /id="cfgCvPreview"[\s\S]*?value="on"[\s\S]*?value="off"/.test(CHAT) &&
   /id="cfgCvExplode"[\s\S]*?value="both"[\s\S]*?value="code"[\s\S]*?value="never"/.test(CHAT) &&
-  /_CV_CFG=\{ cfgCvAlign:\['align','held'\], cfgCvPreview:\['preview','on'\], cfgCvExplode:\['explode-offer','both'\], cfgCvWhere:\['', 'canvas'\], cfgCvFuse:\['fuse','on'\] \}/.test(CHAT));
+  /_CV_CFG=\{ cfgCvAlign:\['align','desk'\], cfgCvPreview:\['preview','on'\], cfgCvExplode:\['explode-offer','both'\], cfgCvWhere:\['', 'canvas'\], cfgCvFuse:\['fuse','on'\][, ]/.test(CHAT)   /* the desk is the default now (feat/desk-default); the desk's settings follow */);
 // and WHERE a canvas-compatible element is drawn while the column is open — a page-side setting (empty attribute name),
 // because the element draws its items either way: what changes is whether the REPLY draws them a second time
 t('...including where they are drawn, which the element knows nothing about',

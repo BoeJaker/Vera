@@ -84,7 +84,7 @@ t('a finished reply re-reads the memory graph, here and in the menu instance', H
   t('...and a drag starts from the height the item had, read before it is marked sized', CV.includes("const h0 = it.offsetHeight, w0 = it.offsetWidth; it.classList.add('sized', 'resizing');")); }
 // owner, 2026-10-04: graphs "dont resize on the y axis" / "cannot resize an element ... to span more columns"
 { const CV = R('vera/canvas/canvas_element.js'), VG = R('vera/vera_graph.js');
-  t('a records graph takes its slot\'s height and fits its nodes to it', CV.includes("if (g && typeof g._setHeight === 'function' && Math.abs((g._h || 0) - (ht - 16)) > 3) g._setHeight(Math.max(160, ht - 16));")
+  t('a records graph takes its slot\'s height and fits its nodes to it', CV.includes("if (g && typeof g._setHeight === 'function' && hh && Math.abs((g._h || 0) - (hh - 16)) > 3) g._setHeight(Math.max(this.deskAlign() ? 60 : 160, hh - 16));")   /* a desk card may be smaller */
     && CV.includes("const gg = g && g._graph; if (gg && typeof gg.fit === 'function') gg.fit();") && VG.includes('fit:            function(){ try { fitView(); } catch(e){} },'));
   t('a drop writes the dragged width onto the card the placer reads', CV.includes('r.el.dataset.pw = String(Math.round(r.w));')); }
 // owner, 2026-10-04: the canvas explode "opens very far away from the other elements and you can barely see it"

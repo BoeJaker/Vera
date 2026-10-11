@@ -17,7 +17,10 @@ t('its head: the host, the shell, detach, share', /<b>ct126<\/b>/.test(ssh) && /
 const dk = B.session({ host_id: 'local', container: 'vera-mirror', shell: 'bash' }, 'm', 'session:t2', { _live: {} });
 t('a container on a host is the docker terminal socket', /\/remote\/docker\/term\/ws\/local\/vera-mirror\?shell=bash/.test(dk) && /local \/ vera-mirror/.test(dk));
 const none = B.session({ title: 'pytest', host: 'ct126', command: 'pytest -q', output: '20 passed' }, 'm', 'session:t3', { _live: {} });
-t('a session with no host id keeps its results and offers the connect row (host prefilled), never a socket', !/data-live/.test(none) && /data-act="tconnect"/.test(none) && /value="ct126"/.test(none) && /20 passed/.test(none) && /pytest -q/.test(none));
+/* a command that ran is shown as it ran - "$ cmd", the host, its output (desk kinds review r2, 2026-10-11) - never a socket */
+t('a command that ran keeps its results: $ command, host, output, never a socket', !/data-live/.test(none) && /vc-ran/.test(none) && /20 passed/.test(none) && /pytest -q/.test(none) && /ct126/.test(none));
+const idle = B.session({ title: 'shell', host: 'ct126' }, 'm', 'session:t3b', { _live: {} });
+t('a session with no host id and nothing run offers the connect row (host prefilled), never a socket', !/data-live/.test(idle) && /data-act="tconnect"/.test(idle) && /value="ct126"/.test(idle));
 const det = B.session({ host_id: 'ct126', attached: false }, 'm', 'session:t4', { _live: {} });
 t('a detached terminal keeps its host and offers attach', !/data-live/.test(det) && /data-act="tattach"/.test(det));
 t('the live dot: waiting until the element exists, on once it does', /dot wait/.test(ssh) && /dot on/.test(B.session({ host_id: 'ct126' }, 'm', 'session:t5', { _live: { 'session:t5': {} } })));
@@ -49,7 +52,7 @@ t('the render writes the items layer, never the live layer', SRC.includes("layer
 t('markup that has not changed is not rewritten', SRC.includes("if (this._html !== mark || !layers.items.childElementCount) {"));
 t('the live elements are mounted after the placement and placed again after every placement, scroll and resize', /if \(stage\) this\._placeNow\(\);[\s\S]{0,1200}?this\._mountLive\(body\);/.test(SRC) && SRC.includes("this._placed = P;\n      this._liveLayout();") && SRC.includes("body.addEventListener('scroll', () => this._liveLayout())") && SRC.includes("this._liveRO = new ResizeObserver(() => this._liveLayout())"));
 t('a live element is wrapped (the estate element keeps its own styles) and is never re-created by a render', SRC.includes("el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);") && SRC.includes("let el = L[key];"));
-t('a folded item hides its live element, still connected', SRC.includes("if (!h || !h.getClientRects().length) { el.style.display = 'none'; return; }"));
+t('a folded item hides its live element, still connected', SRC.includes("if (!h || !h.getClientRects().length) { el.style.display = 'none';"));
 t('the terminal element is loaded once from the page; the slow tick stops with the element', SRC.includes("ensureLib('/ui/vera-terminal.js', 'vera-terminal')") && SRC.includes("if (this._liveTick) { clearInterval(this._liveTick); this._liveTick = null; }"));
 t('the bridge is asked through the same /mcp/call, its reply back on the item', SRC.includes("async callResult(name, args) {") && SRC.includes("name = 'panel.dispatch'; args = { session_id: this._sid(), panel: id, action, payload }") && SRC.includes("this.callResult('ui.panels.open', { session_id: this._sid() })"));
 t('the cell runs through the notebook\'s exec SSE and its output lands on the cell and the item', SRC.includes("fetch(api + '/ide-api/exec/run'") && SRC.includes("'/cells/' + encodeURIComponent(c.cell_id), { method: 'PATCH'") && SRC.includes("return this.call('canvas.update', { key, content: Object.assign(c, { generated: text }) });"));
