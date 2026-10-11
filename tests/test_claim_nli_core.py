@@ -66,3 +66,19 @@ def test_verdicts_and_summary():
     assert vs[1]["verdict"] == "unsupported" and vs[1]["entail"] is None
     s = C.summary(vs)
     assert s["claims"] == 2 and s["supported"] == 1 and s["flagged"] == [cl[1]["text"]]
+
+
+def test_narration_is_not_a_claim():
+    txt = ("Source Retrieval: Fetched official documentation about Redis 8 in 2024.\n"
+           "A comprehensive Markdown document detailing WebGPU status as of 2026.\n"
+           "Redis 7.4 moved to RSALv2 and SSPLv1 in March 2024.")
+    assert [c["text"] for c in C.claims(txt)] == ["Redis 7.4 moved to RSALv2 and SSPLv1 in March 2024."]
+
+
+def test_a_rankers_order_wins_over_word_overlap():
+    cl = C.claims("Chrome shipped WebGPU in version 113 by default.")
+    wins = C.windows(ITEMS)
+    cand = C.candidates(cl[0], wins)
+    assert cand and wins[cand[0]]["item"] == "E1"
+    prs = C.pairs(cl, ITEMS, ranked={0: [1, 0]})
+    assert [p["item"] for p in prs] == ["E2", "E1"]

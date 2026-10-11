@@ -28,6 +28,12 @@ _CITE = re.compile(r"\[\s*([Ee]?\d{1,4}(?:\s*[,;]\s*[Ee]?\d{1,4})*)\s*\]")
 _FACT = re.compile(r"\b(?:19|20)\d{2}\b|\bv?\d+\.\d+(?:\.\d+)?\b|\d+(?:\.\d+)?\s?%|[£$€]\s?\d|\b\d{2,}\b")
 _SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[*])|\n+")
 _MD = re.compile(r"^\s*(?:[-*+]\s+|\d{1,2}[.)]\s+|#{1,6}\s+|>\s*)|\*\*|__|`")
+# the run narrating itself ("Source Retrieval: Fetched the docs...", "A comprehensive Markdown document
+# detailing...") is not a claim about the world (replay 11 Oct: 6 of 32 delivered "claims")
+_NARRATION = re.compile(r"^(?:[A-Z][\w /&-]{2,32}:\s*)?(?:fetched|retrieved|queried|ran|searched|gathered|collected|"
+                        r"called|performed|executed|looked up|checked|consulted|used|reviewed|compiled|wrote|saved|"
+                        r"created|produced|based on)\b|^(?:a|the|this)\s+(?:\w+\s+){0,2}(?:markdown|document|"
+                        r"report|file|summary|table)\b", re.I)
 _WORD = re.compile(r"[a-z0-9]+(?:\.[0-9]+)*")
 _STOP = frozenset("the a an and or of to in on for with by from at as is are was were be been it its this that "
                   "these those which who what when where how than then into over under about after before "
@@ -58,7 +64,7 @@ def claims(answer: str, max_claims: int = MAX_CLAIMS) -> List[Dict[str, Any]]:
         if re.match(r"^\s*(#{1,6}\s|\|?\s*:?-{3,})", raw or ""):
             continue
         text = _clean(raw)
-        if len(text.split()) < 4 or not _FACT.search(text):
+        if len(text.split()) < 4 or not _FACT.search(text) or _NARRATION.search(text):
             continue
         key = text.lower()
         if key in seen:
@@ -100,32 +106,49 @@ def _item_id(it: Dict[str, Any]) -> str:
     return str(it.get("n") or "").strip().upper()
 
 
-def pairs(cl: Sequence[Dict[str, Any]], items: Sequence[Dict[str, Any]],
-          per_claim: int = MAX_PAIRS_PER_CLAIM) -> List[Dict[str, Any]]:
-    """[{claim, item, premise, overlap}] - for each claim, its best evidence windows: the windows of
-    the items it cites first, then the windows with the most shared words (a claim's figures count
-    double), at most `per_claim` per claim. A claim with no window sharing a word gets no pair."""
+def windows(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """[{item, text}] - every evidence item cut into windows (title and date lead its first one)."""
     wins: List[Dict[str, Any]] = []
     for it in items or []:
         body = " ".join(str(it.get(k) or "") for k in ("title", "published")) + " " + \
                str(it.get("text") or it.get("snippet") or "")
         for w in _windows(body):
-            wins.append({"item": _item_id(it), "text": w, "tok": _tokens(w)})
+            wins.append({"item": _item_id(it), "text": w})
+    return wins
+
+
+def candidates(c: Dict[str, Any], wins: Sequence[Dict[str, Any]], limit: int = 12) -> List[int]:
+    """Indices of the windows worth showing a ranker for claim `c`: the cited items' windows, then
+    the windows sharing the most words with it (figures count double). [] = none share a word."""
+    ct = _tokens(c.get("text"))
+    figs = {t for t in ct if any(ch.isdigit() for ch in t)}
+    cited = {x.lstrip("E") for x in (c.get("cites") or [])}
+    scored = []
+    for k, w in enumerate(wins):
+        tok = w.get("tok") or _tokens(w["text"])
+        ov = min(99, len(ct & tok) + len(figs & tok))
+        boost = 100 if w["item"].lstrip("E") in cited else 0
+        if ov or boost:
+            scored.append((boost + ov, k))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [k for _s, k in scored[:limit]]
+
+
+def pairs(cl: Sequence[Dict[str, Any]], items: Sequence[Dict[str, Any]],
+          per_claim: int = MAX_PAIRS_PER_CLAIM,
+          ranked: Dict[int, List[int]] = None) -> List[Dict[str, Any]]:
+    """[{claim, item, premise}] - each claim with its best evidence windows, at most `per_claim`.
+    `ranked` {claim i: [window index, best first]} is a ranker's order (nlp.rerank over
+    candidates()); without it the word-overlap order of candidates() is used. Replay 11 Oct: the
+    overlap order picked a page header over the sentence that said it, so a ranker is preferred."""
+    wins = windows(items)
     out: List[Dict[str, Any]] = []
     for c in cl or []:
-        ct = _tokens(c.get("text"))
-        figs = {t for t in ct if any(ch.isdigit() for ch in t)}
-        cited = {x.lstrip("E") for x in (c.get("cites") or [])}
-        scored = []
-        for k, w in enumerate(wins):
-            ov = min(99, len(ct & w["tok"]) + len(figs & w["tok"]))
-            boost = 100 if w["item"].lstrip("E") in cited else 0
-            if ov or boost:
-                scored.append((boost + ov, k))
-        scored.sort(key=lambda x: (-x[0], x[1]))
-        for score, k in scored[:per_claim]:
-            out.append({"claim": c["i"], "item": wins[k]["item"], "premise": wins[k]["text"],
-                        "overlap": score % 100})
+        order = (ranked or {}).get(c["i"])
+        if order is None:
+            order = candidates(c, wins)
+        for k in order[:per_claim]:
+            out.append({"claim": c["i"], "item": wins[k]["item"], "premise": wins[k]["text"]})
     return out
 
 

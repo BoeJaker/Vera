@@ -116,8 +116,50 @@ class NLI:
         return out
 
 
-def check(nli, claims, items):
-    prs = C.pairs(claims, items)
+VERA = os.environ.get("VERA_URL", "https://127.0.0.1:8999")
+
+
+def _rerank(query, docs):
+    """nlp.rerank on a node (cross-encoder): document indices, best first; None when unavailable."""
+    import ssl
+    import urllib.request
+    body = json.dumps({"name": "nlp.rerank", "arguments": {"query": query, "documents": docs}}).encode()
+    req = urllib.request.Request(VERA + "/mcp/call", data=body, headers={"content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60, context=ssl._create_unverified_context()) as r:
+            out = json.loads(r.read()).get("content") or {}
+        return [int(x["index"]) for x in out.get("ranked") or []] or None
+    except Exception:
+        return None
+
+
+def ranked_order(claims, items):
+    """{claim i: [window index, best first]} from nlp.rerank over each claim's candidates."""
+    wins = C.windows(items)
+    order = {}
+    for c in claims:
+        cand = C.candidates(c, wins)
+        if not cand:
+            continue
+        got = _rerank(c["text"], [wins[k]["text"] for k in cand])
+        if got:
+            order[c["i"]] = [cand[j] for j in got if j < len(cand)]
+    return order
+
+
+def _norm(s):
+    return re.sub(r"^[^A-Za-z0-9]+", "", s or "")
+
+
+def label_of(labels, sid, text):
+    for key, lab in (labels.get(sid[:8]) or {}).items():
+        if _norm(text).startswith(_norm(key)):
+            return lab
+    return None
+
+
+def check(nli, claims, items, rerank=False):
+    prs = C.pairs(claims, items, ranked=ranked_order(claims, items) if rerank else None)
     t = time.monotonic()
     scores = nli.score([{"premise": p["premise"], "hypothesis": claims[p["claim"]]["text"]} for p in prs]) if prs else []
     vs = C.verdicts(claims, prs, scores)
@@ -130,7 +172,11 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--model", default=MODEL)
     ap.add_argument("--threads", type=int, default=2)
+    ap.add_argument("--rerank", action="store_true", help="pair claims with evidence via nlp.rerank")
+    ap.add_argument("--labels", default="", help="hand labels JSON {sid8: {claim prefix: ok|bad}}")
     a = ap.parse_args()
+    labels = json.load(open(a.labels, encoding="utf-8")) if a.labels else {}
+    conf = {"tp": 0, "fp": 0, "fn": 0, "tn": 0, "unlabelled": 0}
     runs = [r for r in (run_inputs(p) for p in sorted(glob.glob(os.path.join(a.ev_dir, "*.jsonl")))) if r]
     if a.limit:
         runs = runs[:a.limit]
@@ -140,8 +186,17 @@ def main():
     for r in runs:
         ca = [{"i": k, "text": q[:C.CLAIM_CHARS], "cites": []} for k, q in enumerate(r["flagged"][:C.MAX_CLAIMS])]
         cb = C.claims(r["final"])
-        va, na, sa = check(nli, ca, r["items"])
-        vb, nb, sb = check(nli, cb, r["items"])
+        va, na, sa = check(nli, ca, r["items"], a.rerank)
+        vb, nb, sb = check(nli, cb, r["items"], a.rerank)
+        if labels and r["items"]:
+            for v in vb:
+                lab = label_of(labels, r["sid"], v["text"])
+                v["label"] = lab
+                flag = v["verdict"] != "supported"
+                if lab is None:
+                    conf["unlabelled"] += 1
+                else:
+                    conf[("tp" if flag else "fn") if lab == "bad" else ("fp" if flag else "tn")] += 1
         tot["A"][0] += sum(v["verdict"] != "supported" for v in va); tot["A"][1] += len(va)
         tot["B"][0] += sum(v["verdict"] != "supported" for v in vb); tot["B"][1] += len(vb)
         tot["pairs"] += na + nb; tot["secs"] += sa + sb
@@ -152,7 +207,12 @@ def main():
                  sum(v["verdict"] != "supported" for v in vb), len(vb)), flush=True)
     summ = {"runs": len(runs), "model": a.model,
             "llm_flagged_not_supported": tot["A"], "delivered_not_supported": tot["B"],
-            "pairs": tot["pairs"], "ms_per_pair": round(1000 * tot["secs"] / max(1, tot["pairs"]), 1)}
+            "pairs": tot["pairs"], "ms_per_pair": round(1000 * tot["secs"] / max(1, tot["pairs"]), 1),
+            "rerank": a.rerank}
+    if labels:
+        tp, fp, fn = conf["tp"], conf["fp"], conf["fn"]
+        summ["vs_labels"] = dict(conf, precision=round(tp / max(1, tp + fp), 2),
+                                 recall=round(tp / max(1, tp + fn), 2))
     os.makedirs(os.path.join(DATA, "nli_replay"), exist_ok=True)
     outp = os.path.join(DATA, "nli_replay", time.strftime("%Y%m%d-%H%M%S") + ".json")
     json.dump({"summary": summ, "runs": res}, open(outp, "w"), indent=1)
