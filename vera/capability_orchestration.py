@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover - a worktree test imports the package as
 import logging.handlers  # noqa: E402  (submodule; `import logging` alone won't load it)
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from .capability_enforcement import PolicyEnforcementDenied, enforcement_projection
 # Pure context-budget decisions — window vs prompt vs output vs retained prefix.
@@ -2487,6 +2487,32 @@ async def media_slot(service: str = ""):
 # When each node was last handed work. Only used as the FINAL tie-break in
 # _pick_best, so it spreads otherwise-identical candidates round-robin.
 _LAST_PICKED: Dict[str, float] = {}
+# GPU residency, refreshed from /api/ps before routing (gpu_slot_core): iid -> (read_at, [models]).
+_GPU_RESIDENT: Dict[str, Tuple[float, List[str]]] = {}
+try:
+    from Vera.vera import gpu_slot_core as _gpu_slot_core
+except Exception:                                     # pragma: no cover
+    from vera import gpu_slot_core as _gpu_slot_core
+
+
+async def _refresh_gpu_resident() -> None:
+    """Read each online GPU node's resident models (/api/ps) when the cached reading is
+    older than gpu_slot_core.RESIDENT_TTL_S / 2. Cheap (one GET, 3 s cap); never raises."""
+    now = time.time()
+    for iid, inst in list(OLLAMA_INSTANCES.items()):
+        if not (inst.get("has_gpu") and inst.get("url") and inst.get("status") == "online"):
+            continue
+        at, _ = _GPU_RESIDENT.get(iid) or (0.0, [])
+        if now - at < _gpu_slot_core.RESIDENT_TTL_S / 2:
+            continue
+        try:
+            async with httpx.AsyncClient(verify=_SSL_CTX, timeout=3) as c:
+                r = await c.get(f"{inst['url']}/api/ps")
+            if r.status_code == 200:
+                _GPU_RESIDENT[iid] = (time.time(), [str(m.get("name") or "")
+                                                    for m in (r.json() or {}).get("models") or []])
+        except Exception as e:
+            log.debug("gpu residency read failed for %s: %s", iid, e)
 
 
 def _embed_node_id() -> str:
@@ -2830,6 +2856,21 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
                 _note(f"ctx escalation: ~{ctx_need} tokens exceeds GPU window {_lim} — "
                       f"routing to CPU ({_cpu_ids}) to keep the GPU free and avoid a spill")
 
+    # ── GPU slot guard (gpu_slot_core, 11 Oct 2026): a model that is NOT resident on a busy
+    #    GPU would wait inside Ollama for the resident model to go idle - which a loop never
+    #    lets happen (300 s timeouts on every coder call). Send it to a CPU node that has it.
+    if model and has_model:
+        _cpu_alt = any(not i.get("has_gpu") for i in has_model.values())
+        for _g in [iid for iid, i in has_model.items() if i.get("has_gpu")]:
+            _at, _res = _GPU_RESIDENT.get(_g) or (0.0, [])
+            _skip, _why = _gpu_slot_core.skip_gpu(
+                model=model, model_resident=_model_tag_core.is_served(model, _res),
+                resident=_res, resident_at=_at, cpu_alternative=_cpu_alt, now=time.time(),
+                busy=_gpu_slot_core.is_busy((has_model[_g] or {}).get("in_use") or 0,
+                                            _LAST_PICKED.get(_g, 0.0), time.time()))
+            if _skip:
+                has_model = {iid: i for iid, i in has_model.items() if iid != _g}
+                _note(_why)
     if prefer_gpu:
         # Best: GPU node that has the model
         gpu_with_model = {iid:i for iid,i in has_model.items() if i["has_gpu"]}
@@ -3857,6 +3898,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         _prompt_need = prompt_need_tokens(prompt, system, eff_model or OLLAMA_MODEL, eff_job_type)
     except Exception:
         _prompt_need = 0
+    await _refresh_gpu_resident()       # residency for the GPU slot guard (gpu_slot_core)
     chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id,
                            model=eff_model, job_type=eff_job_type,
                            rule_override=(eff_rule if (cap_rule or bg_demoted) else None),
