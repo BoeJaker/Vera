@@ -129,6 +129,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "caps.shortlist on the user's words, started with the turn and never awaited, recorded after the reply beside "
        "the page's list and what the reply used (caps.shortlist.chat_report: recall@16/24/28). 'on' (the server's "
        "list offered to the model) comes after the shadow shows a gain and needs the page to take it."),
+    _f("memory.text_index", ("like", "fts"), "memory", "FM-7.1",
+       "memory.seek's keyword leg. 'like' (default) = text ILIKE per word over fabric_records (a sequential scan that "
+       "keeps the first rows matching any word, p95 2.2 s on prod 11 Oct); 'fts' = a GIN full-text index "
+       "(fabric_records_fts, built once in the background): records with every word ranked first, then any-word "
+       "records; falls back to 'like' while the index is missing."),
     _f("memory.seek_exclude_self", ("off", "on"), "memory", "FM-7.1",
        "Whether an unscoped memory.seek leaves Vera's own telemetry out (chat.messages, ide.*, caps.*, bus.*, ts.*, "
        "streams.*, mesh.*, dream.reports - the worldview corpus' SELF_TELEMETRY list). 'off' (default) = searched like "
