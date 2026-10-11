@@ -60,7 +60,7 @@ def world(handler=None):
     for n in keep:
         n.decorator_list = []
     ns = {"json": json, "asyncio": asyncio, "time": time, "httpx": fake_httpx, "Any": Any, "Dict": Dict,
-          "List": List, "Optional": Optional, "pc": pc, "cc": cc, "_RATE": {}, "_CONSUMERS": {},
+          "List": List, "Optional": Optional, "pc": pc, "cc": cc, "_RATE": {}, "_CONSUMERS": {}, "_PLAIN": {},
           "KEY_VALUES": "vera:platform:values", "KEY_SECRETS": "vera:platform:secrets",
           "KEY_TARGETS": "vera:platform:targets", "_redis": lambda: redis, "_secrets_service": lambda: svc,
           "now_iso": lambda: "2026-10-11T12:00:00Z", "log": types.SimpleNamespace(warning=lambda *a, **k: None),
