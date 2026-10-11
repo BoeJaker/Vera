@@ -82,3 +82,25 @@ def test_a_rankers_order_wins_over_word_overlap():
     assert cand and wins[cand[0]]["item"] == "E1"
     prs = C.pairs(cl, ITEMS, ranked={0: [1, 0]})
     assert [p["item"] for p in prs] == ["E2", "E1"]
+
+
+def test_hint_block_asks_to_verify_not_to_delete():
+    assert C.hint_block([]) == ""
+    b = C.hint_block(["Firefox 157 shipped WebGPU.", " "] + ["c%d is 2024." % i for i in range(20)])
+    assert b.startswith("CLAIMS NO EVIDENCE PASSAGE ENTAILS") and "VERIFY" in b
+    assert b.count("\n- ") == C.HINT_MAX and "- Firefox 157 shipped WebGPU." in b
+
+
+def test_wired_per_run_into_the_answer_check():
+    src = (ROOT / "vera" / "dag" / "dag_workshop_capabilities.py").read_text(encoding="utf-8")
+    assert 'v6_claim_nli = (body.get("claim_nli", "off") or "off").strip().lower()' in src
+    assert "claim_nli=v6_claim_nli," in src
+    assert "_ac = await _v6_answer_check(goal, flat_history, results, final, _unmet, sid,\n" \
+           "                                     claim_nli=claim_nli)" in src
+    i = src.index("async def _v6_answer_check(")
+    body = src[i:src.index("\nasync def ", i + 10)]
+    assert 'if claim_nli in ("shadow", "hint") and evidence:' in body
+    assert '_claim_nli.hint_block(nli_sum["flagged"])' in body and 'claim_nli == "hint"' in body
+    # the hint lands in the checker's grounding text, before the LLM call
+    assert body.index("hint_block") < body.index("PSx.answer_check_prompt(")
+    assert 'nli.get("raw") or nli.get("func")' in src and "_CLAIM_NLI_TIMEOUT_S" in src

@@ -182,6 +182,21 @@ def verdicts(cl: Sequence[Dict[str, Any]], prs: Sequence[Dict[str, Any]],
     return out
 
 
+HINT_MAX = 10
+
+
+def hint_block(flagged: Sequence[str]) -> str:
+    """The not-entailed claims as a block for the answer check ("" when none). NLI over-flags
+    paraphrase (replay 11 Oct: precision 0.47, recall 1.0), so the checker is told to VERIFY each
+    against the evidence, not to treat it as wrong."""
+    rows = [str(f).strip() for f in flagged or [] if str(f).strip()][:HINT_MAX]
+    if not rows:
+        return ""
+    return ("CLAIMS NO EVIDENCE PASSAGE ENTAILS (an NLI model's check - it also flags correct "
+            "paraphrases, so VERIFY each against the evidence above; correct or remove only the ones "
+            "the evidence does not support):" + chr(10) + chr(10).join("- " + r for r in rows))
+
+
 def summary(vs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """{claims, supported, contradicted, unsupported, flagged: [text of the not-supported]}."""
     n = {k: sum(1 for v in vs if v["verdict"] == k) for k in ("supported", "contradicted", "unsupported")}

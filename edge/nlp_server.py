@@ -504,6 +504,29 @@ def run_qa(question, context):
             "start": out.get("start"), "end": out.get("end")}
 
 
+NLI_MAX_PAIRS = 64
+NLI_BATCH = 8
+
+
+def run_nli(pairs):
+    """Premise -> hypothesis inference for each pair: {entailment, neutral, contradiction}
+    probabilities, in order. Scored raw (the text-classification pipeline takes one text), with
+    the pipeline's own model and tokenizer, so the preload's copy is the only one in memory."""
+    import torch
+    pipe = get_pipe("nli")
+    model, tok = pipe.model, pipe.tokenizer
+    names = {int(i): str(lab).lower() for i, lab in model.config.id2label.items()}
+    out = []
+    for k in range(0, len(pairs), NLI_BATCH):
+        chunk = pairs[k:k + NLI_BATCH]
+        enc = tok([p["premise"] for p in chunk], [p["hypothesis"] for p in chunk],
+                  truncation="only_first", max_length=320, padding=True, return_tensors="pt")
+        with torch.no_grad():
+            probs = torch.softmax(model(**enc).logits, dim=-1).tolist()
+        out += [{names.get(i, str(i)): round(float(v), 4) for i, v in enumerate(row)} for row in probs]
+    return {"ok": True, "model": model_id_for("nli"), "results": out}
+
+
 def run_langid(text):
     res = get_pipe("langid")(text[:512])
     flat = res[0] if (res and isinstance(res[0], list)) else res
@@ -639,7 +662,7 @@ def build_app():
     # a pure-ASGI tee, bytes untouched. Absent module = old behaviour.
     try:
         import activity_record
-        activity_record.install(app, "nlp", ("/ner", "/classify", "/zeroshot", "/qa",
+        activity_record.install(app, "nlp", ("/ner", "/classify", "/zeroshot", "/qa", "/nli",
                                              "/langid", "/embed", "/rerank", "/decide",
                                              "/decide/index"),
                                 port=int(os.getenv("VERA_NLP_PORT", "8771") or 8771))
@@ -666,6 +689,9 @@ def build_app():
     class QaReq(BaseModel):
         question: str = ""
         context: str = ""
+
+    class NliReq(BaseModel):
+        pairs: List[Dict[str, str]] = []
 
     class TextReq(BaseModel):
         text: str = ""
@@ -764,6 +790,16 @@ def build_app():
         if not req.labels:
             return {"error": "labels is required (a list of candidate labels)"}
         return await _run(run_zeroshot, req.text, req.labels, req.multi_label)
+
+    @app.post("/nli")
+    async def nli(req: NliReq):
+        pairs = [{"premise": str(p.get("premise") or "")[:4000],
+                  "hypothesis": str(p.get("hypothesis") or "")[:1000]}
+                 for p in (req.pairs or [])[:NLI_MAX_PAIRS] if isinstance(p, dict)]
+        pairs = [p for p in pairs if p["premise"].strip() and p["hypothesis"].strip()]
+        if not pairs:
+            return {"error": "pairs is required: [{premise, hypothesis}, ...]"}
+        return await _run(run_nli, pairs)
 
     @app.post("/qa")
     async def qa(req: QaReq):

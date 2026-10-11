@@ -14412,6 +14412,72 @@ async def _v6_goal_entities(goal: str) -> List[Dict[str, str]]:
     return _entity_cov.goal_entities(res)
 
 
+# NLI claim check (compute-roles P3, 11 Oct 2026): the answer's dated/numeric claims paired with
+# the run's evidence and scored by nlp.nli on a node; per-run claim_nli = off | shadow | hint.
+try:
+    from Vera.vera.dag import claim_nli_core as _claim_nli
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import claim_nli_core as _claim_nli
+    except Exception:
+        _claim_nli = None
+_CLAIM_NLI_TIMEOUT_S = 90.0
+_CLAIM_NLI_CANDIDATES = 8
+
+
+async def _v6_claim_nli(final: str, evidence: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """claim_nli_core over the answer: each claim's candidate windows reranked by nlp.rerank,
+    the best three per claim scored by nlp.nli. {claims, supported, contradicted, unsupported,
+    flagged, elapsed_s} or {} when the nodes cannot answer. Raw cap functions (a check must not
+    write memories); bounded by _CLAIM_NLI_TIMEOUT_S; never raises."""
+    if _claim_nli is None or not str(final or "").strip() or not evidence:
+        return {}
+    nli = (CAPABILITY_REGISTRY.get("nlp.nli") or {})
+    nli_fn = nli.get("raw") or nli.get("func")
+    rr = (CAPABILITY_REGISTRY.get("nlp.rerank") or {})
+    rr_fn = rr.get("raw") or rr.get("func")
+    if not nli_fn:
+        return {}
+    t0 = time.monotonic()
+
+    async def run() -> Dict[str, Any]:
+        claims = _claim_nli.claims(final)
+        if not claims:
+            return {"claims": 0, "supported": 0, "contradicted": 0, "unsupported": 0, "flagged": []}
+        wins = _claim_nli.windows(evidence)
+        cands = {c["i"]: _claim_nli.candidates(c, wins, limit=_CLAIM_NLI_CANDIDATES) for c in claims}
+
+        async def order(c):
+            cand = cands.get(c["i"]) or []
+            if not cand or not rr_fn:
+                return c["i"], cand
+            try:
+                res = await rr_fn(query=c["text"], documents=[wins[k]["text"] for k in cand])
+                idx = [int(x["index"]) for x in (res or {}).get("ranked") or []
+                       if int(x["index"]) < len(cand)]
+                return c["i"], ([cand[j] for j in idx] or cand)
+            except Exception:
+                return c["i"], cand
+        ranked = dict(await asyncio.gather(*(order(c) for c in claims)))
+        prs = _claim_nli.pairs(claims, evidence, ranked=ranked)
+        if not prs:
+            return _claim_nli.summary(_claim_nli.verdicts(claims, [], []))
+        res = await nli_fn(pairs=[{"premise": p["premise"], "hypothesis": claims[p["claim"]]["text"]}
+                                  for p in prs])
+        scores = (res or {}).get("results") if isinstance(res, dict) else None
+        if not isinstance(scores, list) or len(scores) != len(prs):
+            return {}
+        return _claim_nli.summary(_claim_nli.verdicts(claims, prs, scores))
+    try:
+        out = await asyncio.wait_for(run(), timeout=_CLAIM_NLI_TIMEOUT_S)
+    except Exception as e:
+        log.debug("claim NLI unavailable: %s", e)
+        return {}
+    if out:
+        out["elapsed_s"] = round(time.monotonic() - t0, 1)
+    return out
+
+
 # Zero-shot intent (roadmap B1): what an NLP node would call the goal's intent,
 # recorded beside the intent the run used. Measured - nothing reads it back.
 try:
@@ -14835,7 +14901,8 @@ async def _v6_deliverable_review(goal: str, done_when: str, history: Sequence[Di
 
 async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
                            results: Sequence[Dict[str, Any]], final: str,
-                           unmet: Optional[Sequence[Any]], sid: str) -> Dict[str, Any]:
+                           unmet: Optional[Sequence[Any]], sid: str,
+                           claim_nli: str = "off") -> Dict[str, Any]:
     """The large CPU model (the enrich role) checks the FINAL answer against the files the
     run wrote and the verifier findings it left unresolved, and corrects it
     (planner_styles.ANSWER_CHECK_SYSTEM). {answer ('' = keep the original), fixes, files,
@@ -14877,6 +14944,13 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
         g_text = PSx.grounding_block(
             _evidence_core.block(evidence, packs_info=ev_packs), grounding,
             _grounding_rules.text("loop") if _grounding_rules is not None else "")
+    # NLI claim check (per-run claim_nli, compute-roles P3): shadow = recorded beside the LLM
+    # check; hint = the not-entailed claims also go to the checker as "verify these".
+    nli_sum: Dict[str, Any] = {}
+    if claim_nli in ("shadow", "hint") and evidence:
+        nli_sum = await _v6_claim_nli(final, evidence)
+        if claim_nli == "hint" and nli_sum.get("flagged") and _claim_nli is not None:
+            g_text = (g_text + chr(10) + chr(10) if g_text else "") + _claim_nli.hint_block(nli_sum["flagged"])
     answer, fixes, err = "", "", ""
     try:
         raw = await _safe_ollama_generate_dw(
@@ -14894,6 +14968,10 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
             "grounding": ({k: grounding.get(k) for k in ("ok", "bad_citations", "uncited_numbers",
                                                           "citations_unchecked")}
                           if grounding else {}),
+            "claim_nli": ({"mode": claim_nli, **{k: nli_sum.get(k) for k in (
+                "claims", "supported", "contradicted", "unsupported", "flagged", "elapsed_s")}}
+                          if nli_sum else ({"mode": claim_nli, "unavailable": True}
+                                           if claim_nli in ("shadow", "hint") and evidence else {})),
             "elapsed_s": round(time.monotonic() - t1, 1), "error": err}
 
 
@@ -24543,6 +24621,9 @@ async def cap_dag_agent_loop_v6(
     # deliverable adversarially ONCE; real defects become one fix step (user 2026-10-04).
     deliverable_review: bool = False,
     answer_check: bool = False,
+    # With answer_check: the NLI claim check (compute-roles P3) - 'off' | 'shadow' (recorded) |
+    # 'hint' (not-entailed claims handed to the checker to verify).
+    claim_nli: str = "off",
     # BROAD only: the model the long-horizon CPU node writes stream briefs with
     # ('' = the planning_style/enrich route's model). The route keeps whichever
     # model it runs warm.
@@ -26689,12 +26770,14 @@ async def cap_dag_agent_loop_v6(
             await emit_event({"type": "agent_loop_v6.stage_start", "stream_id": stream_id,
                               "session_id": sid, "stage": "answer_check", "key": "final",
                               "label": "\U0001f50e Checking the answer against the files\u2026"})
-        _ac = await _v6_answer_check(goal, flat_history, results, final, _unmet, sid)
+        _ac = await _v6_answer_check(goal, flat_history, results, final, _unmet, sid,
+                                     claim_nli=claim_nli)
         await emit_event({"type": "agent_loop_v6.answer_check", "session_id": sid,
                           "stream_id": stream_id, "changed": bool(_ac.get("answer")),
                           "fixes": _ac.get("fixes"), "files": _ac.get("files"),
                           "findings": _ac.get("findings"), "elapsed_s": _ac.get("elapsed_s"),
                           "evidence_items": _ac.get("evidence_items"), "grounding": _ac.get("grounding"),
+                          "claim_nli": _ac.get("claim_nli"),
                           "error": _ac.get("error")})
         if _ac.get("answer"):
             final = _ac["answer"]
@@ -27104,6 +27187,9 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_style_defaulted = bool(_v7_default and not str(body.get("plan_style") or "").strip())
     v6_deliverable_review = bool(body.get("deliverable_review", False))
     v6_answer_check = bool(body.get("answer_check", False))
+    v6_claim_nli = (body.get("claim_nli", "off") or "off").strip().lower()
+    if v6_claim_nli not in ("off", "shadow", "hint"):
+        v6_claim_nli = "off"
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
     v6_intent_core       = (body.get("intent_core", "off") or "off").strip().lower()
@@ -27268,6 +27354,7 @@ async def workshop_agent_loop_stream(request: Request):
             plan_style_defaulted=v6_plan_style_defaulted,
             deliverable_review=v6_deliverable_review,
             answer_check=v6_answer_check,
+            claim_nli=v6_claim_nli,
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
             intent_core=v6_intent_core,
