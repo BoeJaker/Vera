@@ -1677,6 +1677,7 @@
   .hidbtn{font:inherit;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);background:none;border:1px solid var(--border,#2a2f37);border-radius:9px;padding:1px 8px;cursor:pointer}
   .hidbtn:hover{color:var(--fg,#dce1e8)}
   .hidpop[hidden]{display:none}
+  :host([chrome="none"]) .addbar{display:none!important}   /* the host draws these controls elsewhere (WSU-72) */
   .hidpop .chip.rmv{cursor:pointer;border:0;font:inherit}
   .vc-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:400;display:flex;gap:12px;align-items:center;padding:8px 10px 8px 14px;border-radius:10px;background:var(--bg2,#1c2026);border:1px solid var(--border2,rgba(255,255,255,.14));color:var(--text,#d8dce4);font:12.5px var(--ui,system-ui,sans-serif);box-shadow:0 6px 22px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
   .vc-toast button{border:1px solid var(--accent,#5a9e8f);background:transparent;color:var(--accent,#5a9e8f);border-radius:6px;padding:3px 10px;font:600 12px var(--ui,system-ui,sans-serif);cursor:pointer}
@@ -5660,6 +5661,36 @@
       this._open.add(nk);
       try { this.dispatchEvent(new CustomEvent('vera:canvas:add', { bubbles: true, detail: { key: nk, kind: 'widget', add: k.n, form } })); } catch (e) {}
       return this.call('canvas.add', args);
+    }
+    /* THE CANVAS'S CONTROLS FROM OUTSIDE IT (WSU-72, owner 2026-10-11: "id like the session canvas controls along the top to
+       be moved to the chat lhm to give the session canvas full height and a more minimalist look"). With chrome="none" the
+       add bar is not drawn; the host draws the same controls elsewhere (the chat's LHM) and drives them through these:
+       the kinds to add (an anchor element places the kind's picker), the shelves, bringing an item back, restoring a
+       removed one, and clearing. Each does exactly what the add bar's own button did. */
+    kinds() { return ADD_KINDS.map((k) => ({ n: k.n, ik: k.ik, kind: k.kind })); }
+    addKind(n, anchor) {
+      const k = ADD_KINDS.find((x) => x.n === n); if (!k) return false; const btn = anchor || this;
+      if (btn.dataset && !btn.dataset.kind) btn.dataset.kind = n;
+      if (k.hosts) return this._hostPick(btn);
+      if (k.pick) return this._panelPick(btn);
+      if (k.menu) return this._noteMenu(btn, k);
+      if (k.sheet) return this._widgetSurface() ? this._widgetPick(btn, k) : this._sheetless(btn, k);
+      return this._listed(btn, k);
+    }
+    shelves() {
+      const doc = this._doc || {}; const blocks = (doc.blocks || []).filter((b) => b && b.key);
+      const name = (b) => { const c = b.content || {}; return c.title || c.name || c.filename || String(b.key).split(':').slice(1).join(':') || b.type; };
+      const of = (st) => blocks.filter((b) => (b.state || 'now') === st).map((b) => ({ key: String(b.key), title: name(b), type: b.type }));
+      const on = new Set(blocks.map((b) => String(b.key)));
+      const removed = (doc.removed || []).filter((r) => r && r.key && !on.has(String(r.key))).slice().reverse().slice(0, 12)
+        .map((r) => ({ key: String(r.key), title: name(Object.assign({ key: r.key }, r.block || {})), type: (r.block && r.block.type) || '', at: r.at || '' }));
+      return { parked: of('parked'), hidden: of('hidden'), removed, items: blocks.filter((b) => ['now', 'pinned'].indexOf(b.state || 'now') >= 0).length, revision: doc.revision || 0 };
+    }
+    bringBack(key) { return this.call('canvas.add', { key: String(key) }); }
+    restore(key) { return this.call('canvas.restore', { key: String(key) }); }
+    clearAll(keepPinned) {
+      const pinnedKeys = ((this._doc && this._doc.blocks) || []).filter((b) => b && b.key && b.state === 'pinned').map((b) => String(b.key));
+      return this.call('canvas.clear', { keep: keepPinned === false ? '' : pinnedKeys.join(',') });
     }
     /* a short notice with one action (Undo), at the foot of the canvas; it leaves after 8 s or when acted on (WSU-66) */
     _undoToast(text, undo) {

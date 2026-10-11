@@ -19,12 +19,12 @@ t('the column no longer draws a header row of its own', !/<div class="tri-hd"><b
 t('only the controls claim the free space — the hidden-items button sits with the kinds it restores',
   /\.addbar \.hidwrap\{margin-left:6px\}/.test(SRC));
 t('its controls are a template, cloned into the element so their ids exist exactly once',
-  /<template id="cvBannerTpl">/.test(CHAT) && /getElementById\('cvBannerTpl'\); if\(tpl&&tpl\.content\) el\.appendChild\(tpl\.content\.cloneNode\(true\)\)/.test(CHAT));
+  /<template id="cvBannerTpl">/.test(CHAT) && /function _cvChromeMount\(el\)\{\s*const tpl=document\.getElementById\('cvBannerTpl'\)/.test(CHAT) && CHAT.includes('el.appendChild(tpl.content.cloneNode(true))') && CHAT.includes('ban.appendChild(tpl.content.cloneNode(true))'));  /* cloned once: into the canvas (the old bar, vera:canvas:chrome=bar) or into the LHM's Canvas pane (WSU-72) */
 /* the clone rides on the MOUNT line, which stays one line of live code from end to end: a note left mid-line once
    swallowed the append and the column drew empty with nothing thrown (defect 81; test_chat_tripage guards it too) */
 { const mk = CHAT.split('\n').find((ln) => ln.includes("el=document.createElement('vera-canvas')")) || '';
   t('the clone and the append are on the mount line itself, still live code end to end',
-    mk.includes("tpl.content.cloneNode(true)") && mk.includes('host.appendChild(el);') && !/\/\/[^*]*$/.test(mk)); }
+    mk.includes('_cvChromeMount(el)') && mk.includes('host.appendChild(el);') && !/\/\/[^*]*$/.test(mk)); }
 // the ids and handlers the page looks up must survive the move, or the counts stop moving and the ribbon goes dead
 ['cvColSub', 'cvColCols', 'cvDrvRibbon'].forEach((id) => {
   const inTpl = new RegExp('<template id="cvBannerTpl">[\\s\\S]*?id="' + id + '"[\\s\\S]*?<\\/template>').test(CHAT);
