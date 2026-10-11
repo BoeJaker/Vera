@@ -195,6 +195,14 @@ def _reserve(hid: str, fn: str, sign: int, entry: Optional[list] = None) -> list
     return entry or []
 
 
+def _avoided(pick: Dict[str, Any], avoid) -> bool:
+    """Whether a pick is one of `avoid` (node names or host ids, any case)."""
+    want = {str(a).strip().lower() for a in avoid or () if str(a).strip()}
+    if not want:
+        return False
+    return bool(want & {str(pick.get(k) or "").strip().lower() for k in ("host", "host_id")} - {""})
+
+
 async def node_plan(fn: str, exclude=()) -> Dict[str, Any]:
     """Where `fn` would run right now (see core.plan)."""
     cfg = await _config()
@@ -212,7 +220,7 @@ async def run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
                       stop: Optional[Callable[[], bool]] = None,
                       trace_id: str = "", max_wait_s: Optional[int] = None,
                       host_fallback: Optional[bool] = None,
-                      serial: str = "") -> Dict[str, Any]:
+                      serial: str = "", avoid=()) -> Dict[str, Any]:
     """_run_on_node, optionally inside a cluster-wide one-at-a-time slot.
 
     `serial` names the slot (e.g. "training"): of all the jobs - on every
@@ -227,7 +235,7 @@ async def run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
     if not name or r is None:
         return await _run_on_node(fn, inputs, label=label, on_progress=on_progress, stop=stop,
                                   trace_id=trace_id, max_wait_s=max_wait_s,
-                                  host_fallback=host_fallback)
+                                  host_fallback=host_fallback, avoid=avoid)
     cfg = await _config()
     cap = cfg["max_wait_s"] if max_wait_s is None else max(0, int(max_wait_s))
     key, token, t0 = core.serial_key(name), uuid.uuid4().hex, time.time()
@@ -258,7 +266,7 @@ async def run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
         left = max(0, int(cap - (time.time() - t0)))
         return await _run_on_node(fn, inputs, label=label, on_progress=on_progress, stop=stop,
                                   trace_id=trace_id, max_wait_s=left,
-                                  host_fallback=host_fallback)
+                                  host_fallback=host_fallback, avoid=avoid)
     finally:
         keeper.cancel()
         try:
@@ -271,7 +279,7 @@ async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
                        on_progress: Optional[Callable[[Dict[str, Any]], Any]] = None,
                        stop: Optional[Callable[[], bool]] = None,
                        trace_id: str = "", max_wait_s: Optional[int] = None,
-                       host_fallback: Optional[bool] = None) -> Dict[str, Any]:
+                       host_fallback: Optional[bool] = None, avoid=()) -> Dict[str, Any]:
     """Run an allow-listed function on the node worker with the most room for
     it and return its outputs. `on_progress` (async) receives each progress
     dict; `stop()` is polled and, once true, asks the node to stop at its next
@@ -331,6 +339,10 @@ async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
         waited_note = ""
         while True:
             p = await node_plan(fn, exclude=exclude)
+            if p["pick"] is not None and _avoided(p["pick"], avoid):
+                # a node the caller leaves alone (a gate beside a census: compute-roles K)
+                exclude.append(str(p["pick"].get("host_id")))
+                continue
             if p["pick"] is not None:
                 break
             if stop and stop():
