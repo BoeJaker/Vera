@@ -72,6 +72,8 @@ LAYOUTS = {
     # P1b known dated facts from intel.lookup before planning (11 Oct 2026): alone / on top of I2
     "F1": {"intel_prefacts": True},
     "F2": {"info_first": True, "answer_check": True, "intel_prefacts": True},
+    # A3 plan critique (11 Oct 2026): the CPU 35B reviews the whole plan beside the run
+    "R1": {"plan_critique": True},
     # the loop's role-less stages placed on CPU nodes (stage_models, 10 Oct 2026)
     "C1": {"stage_models": "verifier=qwen3.6:35b-a3b@cpu-246,gate=qwen3.6:35b-a3b@cpu-246"},
     "C2": {"stage_models": "journal=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"

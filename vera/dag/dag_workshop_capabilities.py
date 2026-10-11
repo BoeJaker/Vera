@@ -14524,6 +14524,45 @@ async def _v6_intel_prefacts(goal: str, *, sid: str, stream_id: str) -> str:
     return _prefacts_core.block(its, topic=topic, assess=assess)
 
 
+# Plan critique (roadmap A3, per-run plan_critique): the long-horizon CPU model reviews the whole
+# plan beside the run; its findings reach the adaptive controller once, as advice.
+try:
+    from Vera.vera.dag import plan_critique_core as _plan_crit_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import plan_critique_core as _plan_crit_core
+    except Exception:
+        _plan_crit_core = None
+
+
+async def _v6_plan_critique(goal: str, done_when: str, steps: Sequence[Dict[str, Any]], *,
+                            sid: str, stream_id: str) -> List[Dict[str, Any]]:
+    """One review of the merged plan by the enrich role (the CPU node's 35B), never waited on by
+    the run. [] on any failure; emits agent_loop_v6.plan_critique when it lands."""
+    t0 = time.monotonic()
+    findings: List[Dict[str, Any]] = []
+    err = ""
+    try:
+        raw = await _safe_ollama_generate_dw(
+            _plan_crit_core.prompt(goal, done_when, steps), system=_plan_crit_core.SYSTEM,
+            json_mode=True, model="", instance_id="", prefer_gpu=False, think=False,
+            profile="planning_style",
+            role=(getattr(_plan_styles, "ENRICH_ROLE", "") if _plan_styles is not None else "") or "enrich",
+            request_stage="plan_critique", timeout=900)
+        findings = _plan_crit_core.parse(_strip_think(raw or "")[0], [s.get("id") for s in steps])
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"[:160]
+    try:
+        await emit_event({"type": "agent_loop_v6.plan_critique", "session_id": sid,
+                          "stream_id": stream_id, "findings": findings, "error": err,
+                          "elapsed_s": round(time.monotonic() - t0, 1)})
+    except Exception:
+        pass
+    return findings
+
+
 # Zero-shot intent (roadmap B1): what an NLP node would call the goal's intent,
 # recorded beside the intent the run used. Measured - nothing reads it back.
 try:
@@ -24669,6 +24708,9 @@ async def cap_dag_agent_loop_v6(
     answer_check: bool = False,
     # Known dated facts from intel.lookup before planning (compute-roles P1b, 11 Oct 2026).
     intel_prefacts: bool = False,
+    # A large CPU model reviews the whole plan beside the run; findings reach the controller once
+    # (roadmap A3, compute-roles 11 Oct 2026).
+    plan_critique: bool = False,
     # With answer_check: the NLI claim check (compute-roles P3) - 'off' | 'shadow' (recorded) |
     # 'hint' (not-entailed claims handed to the checker to verify).
     claim_nli: str = "off",
@@ -25926,6 +25968,21 @@ async def cap_dag_agent_loop_v6(
                       "reason": plan.get("reason", ""),
                       "complexity": plan.get("complexity", ""),
                       "done_when": done_when})
+    # Plan critique (A3): started now, beside the first steps; delivered by _plan_crit_take().
+    _plan_crit_task = None
+    _plan_crit_state: Dict[str, Any] = {"delivered_after": None}
+    if plan_critique and _plan_crit_core is not None and _plan_crit_core.worth(steps):
+        _plan_crit_task = asyncio.create_task(
+            _v6_plan_critique(goal, done_when, list(steps), sid=sid, stream_id=stream_id))
+
+    def _plan_crit_take(after_step: Any) -> str:
+        """The plan review for the controller, once, as soon as it has landed; "" otherwise."""
+        t = _plan_crit_task
+        if t is None or _plan_crit_state["delivered_after"] is not None or not t.done() \
+                or t.cancelled() or t.exception() is not None:
+            return ""
+        _plan_crit_state["delivered_after"] = after_step
+        return ("\n\n" + _plan_crit_core.block(t.result())) if t.result() else ""
     # Which planning style this run asked for and which it actually used (they
     # differ when a style falls back, e.g. detailed with no lens answering). The
     # trace digest and census rows read this event.
@@ -26570,7 +26627,8 @@ async def cap_dag_agent_loop_v6(
                 base_id=max_id, steps_left=steps_left, model=model,
                 instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
                 file_register=lambda _d: _v6_file_register_block(artifacts, _d),
-                style_note=_ctrl_style_note + (_critic.new_block() if _critic is not None else ""))
+                style_note=_ctrl_style_note + (_critic.new_block() if _critic is not None else "")
+                + _plan_crit_take(step.get("id")))
             await emit_event({"type": "agent_loop_v6.assess", "session_id": sid,
                               "stream_id": stream_id, "after_step": step["id"],
                               "assessment": ctrl.get("assessment", ""),
@@ -26921,6 +26979,17 @@ async def cap_dag_agent_loop_v6(
     # stepwise-reviewed: a critique still running when the run is over informs nothing.
     if _critic is not None:
         _critic.cancel()
+    # A3: a plan review that never landed informs nothing either; record what it did.
+    if _plan_crit_task is not None:
+        _landed = _plan_crit_task.done() and not _plan_crit_task.cancelled()
+        if not _plan_crit_task.done():
+            _plan_crit_task.cancel()
+        try:
+            await emit_event({"type": "agent_loop_v6.plan_critique_outcome", "session_id": sid,
+                              "stream_id": stream_id, "landed": bool(_landed),
+                              "delivered_after_step": _plan_crit_state["delivered_after"]})
+        except Exception:
+            pass
     return {
         "goal": goal, "steps": results,
         "blackboard": {str(k): v for k, v in blackboard.items()},
@@ -27243,6 +27312,7 @@ async def workshop_agent_loop_stream(request: Request):
     v6_deliverable_review = bool(body.get("deliverable_review", False))
     v6_answer_check = bool(body.get("answer_check", False))
     v6_intel_prefacts = bool(body.get("intel_prefacts", False))
+    v6_plan_critique = bool(body.get("plan_critique", False))
     v6_claim_nli = (body.get("claim_nli", "off") or "off").strip().lower()
     if v6_claim_nli not in ("off", "shadow", "hint"):
         v6_claim_nli = "off"
@@ -27411,6 +27481,7 @@ async def workshop_agent_loop_stream(request: Request):
             deliverable_review=v6_deliverable_review,
             answer_check=v6_answer_check,
             intel_prefacts=v6_intel_prefacts,
+            plan_critique=v6_plan_critique,
             claim_nli=v6_claim_nli,
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
