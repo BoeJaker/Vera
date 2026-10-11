@@ -11920,8 +11920,15 @@ Your task: decide what to do next to advance toward the goal.
     const d=String(n.created_at||n.updated_at||'').slice(0,10);
     return /^\d{4}-\d\d-\d\d$/.test(d)?' · '+d:'';
   }
-  function buildCtxInj(forMsg){
+  // ONE memory injection per turn (owner, 2026-10-11): an agent with memory_inject gets its memory from the server's
+  // two-tier recall (agents.py get_agent_memory_context_v2 - agent-scoped, the vector leg next turn, decay, usage);
+  // the page then leaves ITS memory nodes out of "[Retrieved Context]" and keeps the rest (fabric, web, notes). Every
+  // real chat turn in the week to 11 Oct ran on aide, the one agent with memory_inject, and got memory twice.
+  const _CTX_MEM_SRCS=new Set(['memory','vector','both','graph']);
+  function _ctxSkipMem(agentRec){ return !!(agentRec&&agentRec.memory_inject); }
+  function buildCtxInj(forMsg, agentRec){
     if(!document.getElementById('ctxInject')?.checked)return'';
+    const _skipMem=_ctxSkipMem(agentRec);
     // In live-context mode CTX_NODES is query-driven: never inject context that
     // was retrieved for a DIFFERENT message. If the user edited the input and
     // sent before the debounced fetch caught up, CTX_NODES may still hold the
@@ -11936,6 +11943,8 @@ Your task: decide what to do next to advance toward the goal.
       // In live web mode the server owns web/news context — never double-inject
       // any web/news nodes still lingering in the graph from a prior fetch.
       .filter(n=>!(_webLive&&(n.source==='web'||n.source==='news')))
+      // ...and when the server injects the agent's memory, never inject memory a second time
+      .filter(n=>!(_skipMem&&_CTX_MEM_SRCS.has(n.source)))
       .slice(0,k)
       .map(n=>{
         const src=n.source==='web'||n.source==='news'?`${n.source} "${n.label}"${n.url?' '+n.url:''}`:n.source;
@@ -11948,9 +11957,10 @@ Your task: decide what to do next to advance toward the goal.
   }
   // the memory records buildCtxInj put in this turn's prompt (the same filters), so the server can count whether the
   // reply drew on them (context-and-ui CU-M.2 usage signals); only real memory ids - not web, fabric or synthetic rows
-  function _ctxInjIds(forMsg){
+  function _ctxInjIds(forMsg, agentRec){
     try{
       if(!document.getElementById('ctxInject')?.checked) return [];
+      if(_ctxSkipMem(agentRec)) return [];          // its memory came from the server, which counts its own usage
       if(forMsg!==undefined && _ctxLiveOn() && !_ctxMatches(forMsg)) return [];
       const minSim=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
       const k=parseInt(document.getElementById('ctxK')?.value||'8');
@@ -12339,7 +12349,7 @@ Your task: decide what to do next to advance toward the goal.
     const ctxBlock=await _ctxBlockP;
     // Recompute injection now that context is guaranteed to match this msg,
     // then reconcile the "+N ctx" pill on the already-painted user message.
-    ctxInj=buildCtxInj(msg);
+    ctxInj=buildCtxInj(msg, a);
     /* The turn's context is captured HERE, at send, because this is the only moment it is certainly the set
        that went with THIS question. The save used to re-read live CTX_NODES when the reply landed, by which
        time it can hold the next question's context or be empty - and it was gated on that set being non-empty,
@@ -12511,7 +12521,7 @@ Your task: decide what to do next to advance toward the goal.
           // what the turn is doing, as it happens (the throbber names it); the turn's id ties the frames to it
           phase_frames:_phasesOn()||undefined, turn_id:_phaseTurnId(aMsg.wrap)||undefined,
           // the memory records this prompt carries, for usage signals (whether the reply drew on them)
-          ctx_ids:(ctxInj?_ctxInjIds(msg):[]),
+          ctx_ids:(ctxInj?_ctxInjIds(msg, a):[]),
         })
       });
       if(!resp.ok){bubEl.textContent='✗ HTTP '+resp.status;return;}
