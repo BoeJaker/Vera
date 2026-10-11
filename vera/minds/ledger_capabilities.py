@@ -261,8 +261,15 @@ def _rows_arg(rows: Any) -> List[Dict[str, Any]]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "decide.record", http_method="POST", http_path="/decide/record", http_tags=["minds"],
+    contract=_MC.contract("decision.record", effects=["write"], idempotency="idempotent"),
     memory="off", silent=True,
     description="Record one Decision v0 or Outcome v0 row in the decision ledger (four-minds FM-0.2). "
                 "The row is checked against the frozen v0 shape (ROADMAP §5.1) and appended to a Redis "
@@ -290,6 +297,7 @@ def _training_state():
 
 @capability(
     "decide.ledger.import", http_method="POST", http_path="/decide/ledger/import", http_tags=["minds"],
+    contract=_MC.contract("decision.ledger.import", effects=["write"], idempotency="idempotent"),
     memory="off",
     description="Import Decision v0 / Outcome v0 rows kept by an early emitter (intel's own store) into "
                 "the decision ledger, unchanged. Input: rows (list, JSON array, or JSONL), dry_run "

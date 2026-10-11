@@ -422,6 +422,12 @@ def _report_url(rid: str, *, public: bool = False) -> str:
 
 # ── topics ───────────────────────────────────────────────────────────────────
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability("intel.topic.list", http_method="GET", http_path="/intel/topic/list", http_tags=["intel"],
             memory="off", silent=True,
             description="List tracked intelligence topics with live stats (signals in 24h, latest headline, due). "
@@ -4288,6 +4294,7 @@ async def cap_decisions_export(since: str = "", limit: int = 5000, trace_id=None
 
 
 @capability("intel.decisions.backfill_inputs", http_method="POST", http_path="/intel/decisions/backfill_inputs",
+            contract=_MC.contract("intel.decision.inputs.backfill", effects=["read", "write"], idempotency="idempotent"),
             http_tags=["intel"], memory="off",
             description="Give past signal decisions (signal_relevant, page_genre, enrich_worth) what they saw in the "
                         "training store, rebuilt from the stored signal and its topic, so they can be rated in "

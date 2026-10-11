@@ -135,6 +135,12 @@ async def _sync_job() -> None:
 schedule(_sync_job, interval=120, name="discovery_page_search_sync", singleton=True)
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "discovery.recall_index.status", http_method="GET", http_path="/discovery/recall_index/status",
     http_tags=["fabric", "discovery"], memory="off", silent=True,
@@ -156,6 +162,7 @@ async def cap_recall_index_status(trace_id=None) -> Dict[str, Any]:
 
 @capability(
     "discovery.recall_index.sync", http_method="POST", http_path="/discovery/recall_index/sync",
+    contract=_MC.contract("discovery.recall_index.sync", effects=["read", "write"], idempotency="idempotent"),
     http_tags=["fabric", "discovery"], memory="off",
     description="Copy discovery pages past the watermark into the Postgres search index now (the job does it every "
                 "2 minutes). Input: max_rows (int=20000). Output: {ok, copied, watermark}.",

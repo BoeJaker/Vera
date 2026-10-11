@@ -39,6 +39,12 @@ async def read_global() -> Dict[str, Any]:
         return {}
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "minds.switch.list", http_method="GET", http_path="/minds/switches",
     http_tags=["minds"], memory="off", silent=True,
@@ -63,6 +69,7 @@ async def cap_minds_switch_get(trace_id=None) -> Dict[str, Any]:
 
 @capability(
     "minds.switch.set", http_method="POST", http_path="/minds/switch",
+    contract=_MC.contract("switchboard.switch.set", effects=["write"], idempotency="idempotent"),
     http_tags=["minds"], memory="off",
     description="Set one switch in the global layer. Inputs: id (str! - a registered switch, "
                 "or '*' with mode 'default' for the kill switch that puts every behaviour back "

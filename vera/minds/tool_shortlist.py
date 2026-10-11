@@ -149,6 +149,12 @@ _SERVES_SHORTLIST = _bind(
     limits="work unlike any past step; picking a model (use model.pick).")
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "caps.shortlist", serves=_SERVES_SHORTLIST, http_method="POST", http_path="/caps/shortlist", http_tags=["minds", "caps"],
     memory="off", silent=True,
@@ -181,6 +187,7 @@ async def cap_caps_shortlist(text: str = "", k: int = 10, exclude_run: str = "",
 
 @capability(
     "caps.shortlist.index", http_method="POST", http_path="/caps/shortlist/index", http_tags=["minds", "caps"],
+    contract=_MC.contract("tool.shortlist.index", effects=["read", "write", "model"], idempotency="idempotent"),
     memory="off",
     description="Index the steps of recent loop runs for caps.shortlist (title, MiniLM vector, tools used, from "
                 "run traces; embeddings only, no LLM). Runs nightly by itself; use this for a first fill. Input: "
@@ -320,6 +327,7 @@ async def cap_shortlist_chat_report(limit: int = 2000, trace_id=None) -> Dict[st
 
 @capability(
     "caps.shortlist.replay", http_method="POST", http_path="/caps/shortlist/replay", http_tags=["minds", "caps"],
+    contract=_MC.contract("tool.shortlist.replay", effects=["read", "write"], idempotency="at_least_once"),
     memory="off", silent=True,
     description="The tool shortlist's offline replay (four-minds FM-3.2): every indexed loop step asks caps.shortlist "
                 "again with its own run held out - recall@5/10/16/24/28, hit@5, MRR, median position and the "

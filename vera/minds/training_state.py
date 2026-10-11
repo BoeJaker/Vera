@@ -169,6 +169,12 @@ schedule(_retention_job, interval=86400, name="decide_training_state_retention",
          skip_in_sandbox=True)
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "decide.training_state", http_method="GET", http_path="/decide/training_state", http_tags=["minds"],
     memory="off", silent=True,
@@ -216,6 +222,7 @@ async def cap_decide_training_state(question_id: str = "", samples: int = 3, tra
 
 @capability(
     "decide.purge", http_method="POST", http_path="/decide/purge", http_tags=["minds"],
+    contract=_MC.contract("decision.inputs.purge", effects=["delete"], idempotency="idempotent", approval="confirm_argument"),
     memory="off",
     description="Delete stored decision inputs from the training store (four-minds FM-0.2). Input: surface, "
                 "session_id (str), before (ISO date) - at least one; confirm (bool, default false: count "
