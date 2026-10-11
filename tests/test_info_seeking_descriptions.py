@@ -84,3 +84,13 @@ def test_an_untouched_aide_is_upgraded_and_a_customised_one_is_not():
     seed = seed[:seed.index("\n# ───")]
     assert 'hashlib.sha1((existing.system_prompt or "").encode()).hexdigest() in _AIDE_PRIOR_PROMPTS' in seed
     assert "not in _AIDE_RETIRED_CAPS" in seed
+
+
+def test_pre_answer_snippets_send_the_model_to_info_seek():
+    # owner 2026-10-11: info.seek is never triggered before the answer - the model calls it; the quick snippet
+    # pre-fetch must say it is not the evidence
+    src = _src("agents", "agents.py")
+    body = src[src.index("def _format_web_context"):src.index("async def _safe_gen")]
+    assert "Ground your answer in these results" not in body
+    assert "SNIPPETS only" in body and "call info.seek before answering" in body
+    assert "info.seek" not in src[src.index("async def _run_web_search"):src.index("_web_task = asyncio.create_task")]

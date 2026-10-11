@@ -2078,12 +2078,16 @@ async def agent_chat_stream_endpoint(request: Request):
             url   = (r.get("url") or "").strip()
             snip  = " ".join((r.get("snippet") or "").split())[:400]
             lines.append(f"[{i}] {title}\n{url}\n{snip}")
+        # owner 2026-10-11: the model calls info.seek itself - nothing heavier runs before the answer. These quick
+        # snippets are a head start, not the evidence: pages unread, mostly undated (info-seeking plan SK-2.4).
         lines.append(
-            "\nGround your answer in these results and cite sources as [n] where "
-            "relevant. If they don't cover the question, say so rather than guessing.")
+            "\nThese are search SNIPPETS only - the pages were not read and most carry no date. Use them for what "
+            "they plainly state, cited as [n]. For anything current, a figure, a date or 'the latest' on something, "
+            "call info.seek before answering: it reads the pages and returns numbered, dated evidence. Never fill "
+            "a gap from memory or a guess.")
         if _web_auto:
             lines.append("This search was run for you before you answered; do not call web.search again for the "
-                         "same thing.")
+                         "same thing (info.seek is the next step, not another web.search).")
         return "\n".join(lines)
 
     async def _safe_gen():
