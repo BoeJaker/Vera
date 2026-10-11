@@ -1132,6 +1132,23 @@ async def cap_web_research(
     max_chars = max(200, min(MAX_PAGE_CHARS, int(max_chars)))
     t0 = time.monotonic()
 
+    # HOW IT STANDS, AS IT GOES (WSU-41): the same info.seek.step events info.seek sends - the stage, what
+    # it has checked, the pages in hand (read or not yet) - keyed by the query, which is the question the chat's live
+    # item for this call holds. Best effort: a lost event changes nothing.
+    checked: List[str] = []
+    have: List[Dict[str, Any]] = []
+    async def step(stage: str) -> None:
+        try:
+            await emit_event({"type": "info.seek.step", "question": query[:300], "need": "lookup", "subject": query[:120],
+                              "trace_id": str(trace_id or ""),   # the call's own key (DA-04a: lookups matched by trace)
+                              "stage": stage, "checked": checked[-8:], "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                              "items": [{"title": str(h.get("title") or "")[:160], "url": h.get("url") or "",
+                                         "site": h.get("site") or h.get("domain") or "", "published": h.get("published") or "",
+                                         "read": bool(h.get("read"))} for h in have[:12]]})
+        except Exception:
+            pass
+    await step("searching the web")
+
     # 1. Broad search. discover="off" — we do our own content pull below and don't
     #    want to also kick off the background snippet/crawl processing here. Ask for
     #    more hits than we fetch so `more_links` has real follow-up candidates.
@@ -1139,6 +1156,9 @@ async def cap_web_research(
                               engine=engine, discover="off")
     hits = [h for h in (sr.get("results") or []) if h.get("url")]
     top  = hits[:results]
+    checked.append(f"search: {len(hits)} results" + (f" ({sr.get('engine_used')})" if sr.get("engine_used") else ""))
+    have.extend({"title": h.get("title") or "", "url": h.get("url"), "domain": h.get("domain") or ""} for h in top)
+    await step(f"reading the top {len(top)} pages" if top else "no results")
 
     # 2. Pull the useful content from the top results IN PARALLEL. ingest_to_fabric
     #    stays False — this is a fast read, not a crawl-and-store.
@@ -1162,7 +1182,20 @@ async def cap_web_research(
                 log.debug("web.research reader [%s]: %s", h.get("url"), e)
         return await cap_web_fetch(url=h["url"], timeout=fetch_timeout, max_chars=max_chars, ingest_to_fabric=False)
 
-    fetches = await asyncio.gather(*[_read(h) for h in top], return_exceptions=True)
+    async def _read_told(i, h):
+        f = await _read(h)
+        try:                                                     # this page is in hand: the item shows it read
+            ok = isinstance(f, dict) and not f.get("error")
+            have[i]["read"] = ok and bool(f.get("text"))
+            if ok and f.get("published"):
+                have[i]["published"] = f["published"]
+            n = sum(1 for x in have if x.get("read"))
+            await step(f"read {n} of {len(top)} pages")
+        except Exception:
+            pass
+        return f
+
+    fetches = await asyncio.gather(*[_read_told(i, h) for i, h in enumerate(top)], return_exceptions=True)
 
     sources: List[Dict[str, Any]] = []
     for h, f in zip(top, fetches):
@@ -1189,6 +1222,8 @@ async def cap_web_research(
         sources.append(src)
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
+    checked.append(f"read: {sum(1 for x in sources if x.get('chars'))} of {len(sources)} pages")
+    await step("done")
     await emit_event({
         "type":       "web.research.done",
         "query":      query[:100],
