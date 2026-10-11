@@ -95,6 +95,10 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "(default) = SQLite LIKE per word, newest first; 'pg' = the Postgres page search index (weighted tsvector, "
        "ranked; synced from the SQLite pages every 2 minutes), falling back to LIKE when the index cannot answer. "
        "Owner 2026-10-11: Postgres, not SQLite FTS5."),
+    _f("memory.seek_cache", ("off", "on"), "memory", "FM-7.1",
+       "memory.seek's result cache: the same seek (query, scope, since, k, size, memory merge) within 10 minutes "
+       "and the same fabric generation - a counter every fabric ingest bumps - answers from Redis. 'off' (default) "
+       "= every seek searches; 'on' = cached answers carry cached=true; session-memory hits can lag by up to 10 min."),
     _f("plan.precedent", ("off", "on"), "loop", "FM-4.2",
        "Precedent for the planner: up to 2 past runs of similar goals that went well, and 1 warning from one that "
        "did not (plan.precedent, searched on an NLP node), added to what the planner reads as reference with the "

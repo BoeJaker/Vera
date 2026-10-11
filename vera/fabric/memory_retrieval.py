@@ -75,6 +75,10 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.fabric import fusion_core as _fc
 except ImportError:                      # pragma: no cover
     from vera.fabric import fusion_core as _fc   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.fabric import seek_cache_core as _scc
+except ImportError:                      # pragma: no cover
+    from vera.fabric import seek_cache_core as _scc   # type: ignore
 try:                                     # the retrieval eval set (FM-7.0): seeks + reads as labels
     from Vera.vera.fabric import retrieval_eval as _reval
 except Exception:                        # pragma: no cover
@@ -450,6 +454,49 @@ def _render_seek(query: str, selected: List[Dict], candidates: int,
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _seek_redis():
+    try:
+        import Vera.vera.capability_orchestration as _o
+        return getattr(_o, "REDIS", None)
+    except Exception:
+        return None
+
+
+async def _seek_cache_key(query, scope, since, k, max_chars, include_memory) -> Optional[str]:
+    """The cache key when the switch `memory.seek_cache` is on and Redis answers, else None (FM-7.1)."""
+    try:
+        eff = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        if not eff or str((((await eff()) or {}).get("modes") or {}).get("memory.seek_cache") or "off") != "on":
+            return None
+        r = _seek_redis()
+        if r is None:
+            return None
+        gen = await r.get(_scc.GEN_KEY)
+        if isinstance(gen, bytes):
+            gen = gen.decode()
+        return _scc.key(query, scope, since, k, max_chars, include_memory, gen or 0)
+    except Exception as e:
+        log.debug("seek cache key: %s", e)
+        return None
+
+
+async def _seek_cache_get(ck: str) -> Optional[Dict]:
+    try:
+        raw = await _seek_redis().get(ck)
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+async def _seek_cache_put(ck: Optional[str], out: Dict) -> Dict:
+    if ck:
+        try:
+            await _seek_redis().setex(ck, _scc.TTL_S, json.dumps(out, default=str))
+        except Exception as e:
+            log.debug("seek cache put: %s", e)
+    return out
+
+
 @capability(
     "memory.seek",
     http_method="POST", http_path="/memory/seek", http_tags=["memory", "fabric"],
@@ -489,6 +536,16 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
     scope = (scope or "").strip()
     scope_prefix = scope.rstrip(".") if scope else ""
     since_dt = _parse_since(since)
+
+    # FM-7.1 seek result cache (switch memory.seek_cache, default off): the same seek within 10 minutes and the same
+    # fabric generation answers from Redis; the retrieval eval still sees it as a seek
+    ck = await _seek_cache_key(query, scope, since, k, max_chars, include_memory)
+    if ck:
+        hit = await _seek_cache_get(ck)
+        if hit is not None:
+            if _reval is not None:
+                _reval.on_seek(query, [r.get("id") for r in hit.get("results") or [] if r.get("id")])
+            return dict(hit, cached=True)
 
     pool = _CANDIDATE_POOL
     env = _rtc.Envelope("memory.seek")
@@ -570,9 +627,9 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
 
     if not cands:
         _record(env)
-        return {"text": _render_seek(query, [], 0, 0, max_chars),
-                "results": [], "count": 0, "candidates": 0,
-                "collapsed": 0, "datasets": []}
+        return await _seek_cache_put(ck, {"text": _render_seek(query, [], 0, 0, max_chars),
+                                          "results": [], "count": 0, "candidates": 0,
+                                          "collapsed": 0, "datasets": []})
 
     # Normalise fused scores to ~0..1 for display, apply mild recency boost.
     top = max(c["score"] for c in cands) or 1.0
@@ -625,7 +682,7 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
         out["note"] = ("No strongly-relevant stored knowledge — the closest matches are "
                        "below the relevance floor. Treat this as little/no data on the topic "
                        "rather than authoritative context.")
-    return out
+    return await _seek_cache_put(ck, out)
 
 
 @capability(
