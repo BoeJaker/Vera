@@ -2987,6 +2987,19 @@
       const all = []; c.groups.forEach((g) => (Array.isArray(g.entities) ? g.entities : []).forEach((e) => { if (e && e.text) all.push(e); }));
       const types = {}; all.forEach((e) => { const t = e.type || 'other'; types[t] = (types[t] || 0) + (e.count || 1); }); if (n(types) >= 2) dive('types', 'By type', 'donut', top(types, 8));
       const names = {}; all.forEach((e) => { names[e.text] = (names[e.text] || 0) + (e.count || 1); }); if (n(names) >= 3) dive('names', 'Most mentioned', 'ranked', top(names, 12));
+    } else if (b && /^(markdown|note|source)$/.test(b.type || '')) {
+      /* a document (DA-09): its sections by length, its key terms, where its links go - read off its own text */
+      const t = String(c.md || c.text || c.markdown || c.excerpt || ''); if (t.length < 200) return out;
+      const secs = {}; let cur = null; t.split('\n').forEach((ln) => { const h = ln.match(/^\s{0,3}#{1,4}\s+(.+?)\s*#*\s*$/);
+        if (h) { cur = h[1].replace(/[*_`]/g, '').slice(0, 50); if (!(cur in secs)) secs[cur] = 0; return; }
+        if (cur != null) secs[cur] += (ln.match(/[A-Za-z0-9][\w'-]*/g) || []).length; });
+      if (n(secs) >= 2) dive('sections', 'Sections', 'ranked', secs, 'words per section');
+      const STOP = new Set('about after again also among been before being below between both could does doing during each from further have having here into itself just more most much must only other over same should some such than that their them then there these they this those through under until very were what when where which while will with within without would your yours https http www html'.split(' '));
+      const words = count((t.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/https?:\/\/\S+/g, ' ').toLowerCase().match(/[a-z][a-z'-]{3,}/g) || []).filter((w) => !STOP.has(w)));
+      const terms = {}; Object.keys(words).filter((w) => words[w] >= 2).forEach((w) => { terms[w] = words[w]; });
+      if (n(terms) >= 3) dive('terms', 'Key terms', 'ranked', top(terms, 12), 'words used most');
+      const hosts = count((t.match(/https?:\/\/[^\s)\]>"']+/g) || []).map((u) => { try { return new URL(u).host.replace(/^www\./, ''); } catch (e) { return ''; } }));
+      if (n(hosts) >= 2) dive('links', 'Links', 'ranked', top(hosts, 12), 'links per site');
     }
     return out; };
   /* the kinds whose drawer already draws a head — name, state and the controls that belong to that kind. The card
