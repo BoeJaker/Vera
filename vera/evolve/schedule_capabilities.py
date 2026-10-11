@@ -410,6 +410,14 @@ def _in_background(run_id: str, rec: Dict[str, Any], coro, *, exclusive: bool = 
         t.add_done_callback(lambda _t: _EXCLUSIVE_BG.pop(run_id, None))
 
 
+def _bg(run_id: str, rec: Dict[str, Any], coro, label: str) -> Dict[str, Any]:
+    """Start `coro` as a background run (DEEP-21 D21-1): the tick never waits on the work it starts - a
+    pipeline gate or a board dispatch ran inline under _TICK_LOCK for minutes and stopped window-end
+    yields. Exclusive schedules keep censuses off the box while they run (RF-09)."""
+    _in_background(run_id, rec, coro, exclusive=bool(rec.get("exclusive", True)))
+    return {"ok": True, "state": f"{label} running", "background": True}
+
+
 async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") -> Dict[str, Any]:
     kind, t = action["kind"], dict(action.get("target") or {})
     if kind == "census":
@@ -435,23 +443,28 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
                               "minds_label": str(t.get("minds_label") or "")})
         return res
     if kind == "suite":
-        return await _call("evolve.suite.start", tag=t.get("tag", ""), profile=t.get("profile", ""),
-                           assess=bool(t.get("assess", False)))
+        return _bg(run_id, rec, _call("evolve.suite.start", tag=t.get("tag", ""), profile=t.get("profile", ""),
+                                      assess=bool(t.get("assess", False))), "suite %s" % t.get("tag", ""))
     if kind == "task":
-        return await _call("evolve.task.run", id=t.get("id", ""), assess=bool(t.get("assess", False)))
+        return _bg(run_id, rec, _call("evolve.task.run", id=t.get("id", ""), assess=bool(t.get("assess", False))),
+                   "task %s" % t.get("id", ""))
     if kind == "pipeline":
         a = t.get("action", "test")
         if a == "test":
-            return await _call("evolve.pipeline.test", id=t.get("id", ""))
+            return _bg(run_id, rec, _call("evolve.pipeline.test", id=t.get("id", "")),
+                       "pipeline test %s" % t.get("id", ""))
         if a == "adopt":
-            return await _call("evolve.pipeline.adopt", branch=t.get("branch", ""), to="bleeding-edge",
-                               title=rec.get("title", ""), summary="scheduled by Loop Lab")
+            return _bg(run_id, rec, _call("evolve.pipeline.adopt", branch=t.get("branch", ""), to="bleeding-edge",
+                                          title=rec.get("title", ""), summary="scheduled by Loop Lab"),
+                       "pipeline adopt %s" % t.get("branch", ""))
         if a == "promote":
-            return await _call("evolve.pipeline.promote", id=t.get("id", ""), to="bleeding-edge")
+            return _bg(run_id, rec, _call("evolve.pipeline.promote", id=t.get("id", ""), to="bleeding-edge"),
+                       "pipeline promote %s" % t.get("id", ""))
         return {"error": f"unknown pipeline action {a!r}"}
     if kind == "board":
-        return await _call("board.dispatch", id=t.get("id", ""), executor=t.get("executor", "deterministic"),
-                           agent=t.get("agent", "orchestrator"))
+        return _bg(run_id, rec, _call("board.dispatch", id=t.get("id", ""),
+                                      executor=t.get("executor", "deterministic"),
+                                      agent=t.get("agent", "orchestrator")), "board %s" % t.get("id", ""))
     if kind == "loop":
         _in_background(run_id, rec, _call("loops.run", profile=t.get("profile") or "coding", goal=t.get("goal", ""),
                                           model=t.get("model", ""), session_id=f"sched:{rec['id']}:{run_id}"))
