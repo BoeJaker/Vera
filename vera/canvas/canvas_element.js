@@ -3100,7 +3100,7 @@
       const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!st) return false;
       let c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)); if (!c) return false;
       /* a tab behind the front of a combined card (see _deskGroups) comes to the front to be shown */
-      if (c.classList.contains('cmp-behind')) { const m = this._cmpGet(); m[String(key)] = Date.now(); this._cmpSet(m); this._placeNow();
+      if (c.classList.contains('cmp-behind')) { const m = this._cmpGet(); m[String(key)] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[String(key)] = Date.now(); this._placeNow();
         c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)) || c; }
       c.classList.remove('desk-flash'); void c.offsetWidth; c.classList.add('desk-flash');
       const z = c.style.zIndex; c.style.zIndex = '180';
@@ -3308,7 +3308,18 @@
           const g = list.slice(i, i + 8); if (g.length < 2) continue;
           /* a member never seen in a group before is the newest: it comes to the front */
           g.forEach((c) => { if (act[c.dataset.key] == null) { act[c.dataset.key] = now; stamped = true; } });
-          const front = g.reduce((a, c) => ((act[c.dataset.key] || 0) >= (act[a.dataset.key] || 0) ? c : a), g[0]);
+          /* THE TAB THE CONVERSATION IS ABOUT IS IN FRONT (WSU-71, owner 2026-10-11: "the actual bitcoin price chart which
+             should have stayed open did not, and closed. The other unrelated chart stayed open"): two charts on one subject
+             are one card, and the card stays in when any tab is in the topic - but the front was only the last one
+             touched, so the card stayed showing the unrelated chart with the bitcoin one behind it. The front is now the
+             member the turn's topic ranks best; a tab the person picked after the topic was set still wins. */
+          const T = this._topic; let front = g.reduce((a, c) => ((act[c.dataset.key] || 0) >= (act[a.dataset.key] || 0) ? c : a), g[0]);
+          if (T && T.keys && T.keys.size) {
+            const tRank = (c) => { const i = T.order.indexOf(c.dataset.key || ''); return i >= 0 ? i : (T.mid && (c.dataset.mid === T.mid || c.dataset.from === T.mid) ? T.order.length : Infinity); };
+            const inT = g.filter((c) => tRank(c) !== Infinity).sort((a, b) => tRank(a) - tRank(b));
+            const pickedSince = ((this._cmpPick || {})[front.dataset.key] || 0) > (this._topicAt || 0);   /* the person clicked its tab after the topic moved */
+            if (inT.length && !pickedSince) front = inT[0];
+          }
           res.membersOf.set(front, g); res.groups.push(g.map((c) => c.dataset.key));
           g.forEach((c) => { if (c !== front) { res.behind.add(c); c.classList.add('cmp-behind'); } });
           front.classList.add('cmp-front'); front.dataset.cmpN = String(g.length);
@@ -3861,6 +3872,7 @@
       const sig = (mid || '') + '|' + (ks ? ks.join(',') : '-');
       if (sig === this._topicSig) return false; this._topicSig = sig;
       this._topic = ks ? { keys: new Set(ks), order: ks.slice().sort((a, b) => val(b) - val(a)), mid: mid || '' } : null;
+      this._topicAt = Date.now();   /* a combined card's tab picked after this wins over the topic's choice (WSU-71) */
       if (this.deskAlign()) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
       try { this.dispatchEvent(new CustomEvent('vera:canvas:topic', { bubbles: true, detail: { mid: mid || '', keys: ks || [] } })); } catch (e) { /* no listener */ }
       return true;
@@ -4655,7 +4667,7 @@
       if (act === 'pill') { this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
       if (act === 'cmptab' || act === 'cmpsep' || act === 'cmpjoin') {
-        if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); }
+        if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now(); }
         else this._sepSet(key, act === 'cmpsep');
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
