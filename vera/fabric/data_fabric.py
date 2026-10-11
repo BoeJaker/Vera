@@ -52,6 +52,15 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+
+# ONE module object, whatever name it is imported by. The module loader loads this file as `data_fabric`; an
+# `import Vera.vera.fabric.data_fabric` elsewhere would otherwise execute it a SECOND time - a second FABRIC_PG /
+# FABRIC_CHROMA, a second set of capabilities, and a second schedule("fabric_startup") that REPLACES the first by
+# name, so the copy 40+ call sites use (sys.modules["data_fabric"]) never connected. Seen 11 Oct 2026: memory.seek's
+# Chroma leg empty in 0.2 ms and its Postgres leg "unavailable" after a new module imported the full name at the
+# scheduler's first tick. Both names now point at this one object before anything else runs.
+for _alias in ("data_fabric", "Vera.vera.fabric.data_fabric"):
+    sys.modules.setdefault(_alias, sys.modules[__name__])
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple

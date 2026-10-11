@@ -24,6 +24,15 @@ except Exception:                        # worktree / app-free import
     from vera.fabric import page_search_core as PS   # type: ignore
 
 log = logging.getLogger("vera.fabric.page_search")
+
+
+def _df():
+    """The LIVE data_fabric module (the one the loader connected), never a fresh import of a second copy."""
+    import sys
+    m = sys.modules.get("data_fabric") or sys.modules.get("Vera.vera.fabric.data_fabric")
+    if m is None:
+        raise RuntimeError("data_fabric is not loaded yet")
+    return m
 BATCH = 500
 MAX_PER_RUN = 20_000
 _SCHEMA_READY = False
@@ -45,13 +54,13 @@ async def _ensure_schema(pool) -> None:
 
 
 def _sqlite_batch(after: int, n: int) -> List[Any]:
-    import Vera.vera.fabric.data_fabric as df
+    df = _df()
     conn = df._sqlite_conn()
     return conn.execute(PS.SQLITE_BATCH, (int(after), int(n))).fetchall()
 
 
 def _sqlite_extent() -> List[int]:
-    import Vera.vera.fabric.data_fabric as df
+    df = _df()
     conn = df._sqlite_conn()
     row = conn.execute(PS.SQLITE_MAX_ROWID).fetchone()
     return [int(row[0] or 0), int(row[1] or 0)]
