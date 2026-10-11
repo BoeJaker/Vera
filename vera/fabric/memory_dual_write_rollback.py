@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
 from .memory_dual_write_readiness import MemoryRollbackRehearsalReceipt
-from .memory_dual_write_runtime import store_public_memory_with_revision_canary
+from .memory_dual_write_runtime import (
+    default_memory_dual_write_receipt_path,
+    store_public_memory_with_revision_canary,
+)
 from .memory_dual_write_store import MemoryDualWriteReceiptStore, MemoryReceiptConflict
 
 
@@ -27,7 +30,7 @@ async def run_memory_rollback_rehearsal(
     """Bind the deterministic producer to the configured evidence journal."""
     env = os.environ if environ is None else environ
     path = Path(str(env.get("VERA_MEMORY_DUAL_WRITE_RECEIPTS") or
-                    Path(__file__).with_name("memory_dual_write_receipts.db")))
+                    default_memory_dual_write_receipt_path()))
     store = MemoryDualWriteReceiptStore(path)
     return await produce_memory_rollback_rehearsal(
         store=store, rehearsal_id=rehearsal_id,

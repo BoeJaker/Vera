@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -8,6 +9,7 @@ from vera.fabric.memory_dual_write_readiness import (
 )
 from vera.fabric.memory_dual_write_receipt import create_memory_dual_write_receipt
 from vera.fabric.memory_dual_write_repair_runtime import read_memory_authority_readiness
+from vera.fabric.memory_dual_write_rollback import run_memory_rollback_rehearsal
 from vera.fabric.memory_dual_write_store import (
     MemoryDualWriteReceiptStore,
     MemoryReceiptConflict,
@@ -147,6 +149,22 @@ def test_readiness_runtime_does_not_create_missing_journal(tmp_path):
     }
     assert result["ready_for_activation_review"] is False
     assert result["authority_switch_allowed"] is False
+
+
+def test_default_rehearsal_and_readiness_share_one_state_journal(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("VERA_STATE_DIR", str(tmp_path / "state"))
+    rehearsal = asyncio.run(run_memory_rollback_rehearsal(
+        rehearsal_id="shared-default", source_commit="abcdef12",
+        completed_at="2026-01-01T23:30:00Z"))
+    assert rehearsal["created"] is True
+
+    result = read_memory_authority_readiness(
+        assessed_at=NOW, expected_source_commit="abcdef12",
+        min_receipts=1, max_evidence_age_seconds=7200)
+    assert result["rollback_receipt_id"] == rehearsal["receipt"]["receipt_id"]
+    assert set(result["reasons"]) == {
+        "insufficient_receipts", "evidence_time_missing"}
 
 
 @pytest.mark.parametrize("changes,match", [
