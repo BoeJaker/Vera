@@ -23009,8 +23009,14 @@ def _v7_tier_rank(t: str) -> int:
         return 1
 
 
-def _v7_tier_heuristic(goal: str) -> str:
-    """Cheap, deterministic tier floor from the goal text alone — no LLM call."""
+def _v7_tier_heuristic(goal: str, lower: bool = False) -> str:
+    """Cheap, deterministic tier floor from the goal text alone — no LLM call.
+
+    `lower` (switch plan.tier_lower, four-minds FM-4.3, off by default): a goal that the
+    floor would call 'complex' ONLY because of its conjunction count - no complex hint, under
+    60 words - falls through to the length rules instead. Measured 11 Oct (tier_share.py):
+    73% of finished complex-tier census runs executed <= 2 steps, 36 of 37 at quality >= 0.9.
+    The LLM pre-pass can still raise the tier."""
     g = (goal or "").lower().strip()
     if not g:
         return "simple"
@@ -23018,7 +23024,8 @@ def _v7_tier_heuristic(goal: str) -> str:
     conj = g.count(" and ") + g.count(" then ") + g.count(";") + g.count("\n") + g.count(", ")
     if any(h in g for h in _V7_STRATEGIC_HINTS) or _V7_STRATEGIC_RE.search(g):
         return "strategic"
-    if any(h in g for h in _V7_COMPLEX_HINTS) or conj >= 3 or words >= 60:
+    hinted = any(h in g for h in _V7_COMPLEX_HINTS)
+    if hinted or words >= 60 or (conj >= 3 and not lower):
         return "complex"
     if words <= 12 and conj == 0 and any(h in g for h in _V7_SIMPLE_HINTS):
         return "single"
@@ -23096,7 +23103,12 @@ async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
     if forced in _V7_TIERS:
         return {"tier": forced, "suggested": forced, "heuristic": forced, "llm": "",
                 "reason": "forced by plan_tier", "escalation_suppressed": False}
-    heur = _v7_tier_heuristic(goal)
+    _lower = False
+    try:
+        _lower = _minds_core is not None and _minds_core.mode_of("plan.tier_lower") == "on"
+    except Exception:
+        _lower = False
+    heur = _v7_tier_heuristic(goal, lower=_lower)
     llm = ""
     reason = ""
     if use_llm:
@@ -23111,7 +23123,7 @@ async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
         tier = "complex"
         suppressed = True
     return {"tier": tier, "suggested": suggested, "heuristic": heur, "llm": llm,
-            "reason": reason, "escalation_suppressed": suppressed}
+            "reason": reason, "escalation_suppressed": suppressed, "tier_lower": _lower}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

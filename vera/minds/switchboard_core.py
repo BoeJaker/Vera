@@ -99,6 +99,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "memory.seek's result cache: the same seek (query, scope, since, k, size, memory merge) within 10 minutes "
        "and the same fabric generation - a counter every fabric ingest bumps - answers from Redis. 'off' (default) "
        "= every seek searches; 'on' = cached answers carry cached=true; session-memory hits can lag by up to 10 min."),
+    _f("plan.tier_lower", ("off", "on"), "loop", "FM-4.3",
+       "Tier lowering: the deterministic tier floor no longer calls a goal 'complex' only because it "
+       "has three or more conjunctions (no complex hint, under 60 words) - it falls to the length rules "
+       "(simple under 40 words). The LLM pre-pass can still raise it. 'off' (default) = the old floor; "
+       "'on' = lowered. Measured 11 Oct: 73% of complex-tier census runs executed <= 2 steps."),
     _f("plan.precedent", ("off", "on"), "loop", "FM-4.2",
        "Precedent for the planner: up to 2 past runs of similar goals that went well, and 1 warning from one that "
        "did not (plan.precedent, searched on an NLP node), added to what the planner reads as reference with the "
