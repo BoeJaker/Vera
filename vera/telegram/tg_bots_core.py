@@ -138,7 +138,8 @@ def redact_token(t: Any) -> str:
     t = str(t or "")
     if not t:
         return ""
-    return (t[:6] + "…" + t[-4:]) if len(t) > 12 else "***"
+    # the bot id (before the colon) identifies it; no character of the secret part is shown
+    return (t.split(":", 1)[0][:12] + ":…") if ":" in t else "***"
 
 
 def redacted_config(cfg: Dict[str, Any]) -> Dict[str, Any]:

@@ -191,6 +191,58 @@ async def target_fields(registry: Dict[str, Any], pid: str) -> Dict[str, Any]:
     return dict((got or {}).get("resolved") or {})
 
 
+async def prime(registry: Dict[str, Any], *values: Any) -> None:
+    """Make sure the in-process copy holds these references before sync code opens them (an async getter calls
+    this, then the module's sync opener works even just after a restart)."""
+    for v in values:
+        if is_ref(v):
+            await secret_value(registry, v)
+
+
+def _dig(rec: Dict[str, Any], path: str):
+    cur: Any = rec
+    parts = path.split(".")
+    for p in parts[:-1]:
+        cur = cur.get(p) if isinstance(cur, dict) else None
+    return cur, parts[-1]
+
+
+async def adopt_json_hash(registry: Dict[str, Any], redis: Any, hash_key: str, fields: Any, prefix: str,
+                          dry_run: bool, label: str = "") -> list:
+    """The adopter for the usual layout - a Redis hash of JSON records with secret fields (dotted paths allowed):
+    each old sealed value moves to the store as <prefix>_<record>_<field>."""
+    import json
+    if redis is None:
+        return []
+    moved = []
+    raw = await redis.hgetall(hash_key)
+    for k, v in (raw or {}).items():
+        rid = k.decode() if isinstance(k, bytes) else str(k)
+        try:
+            rec = json.loads(v.decode() if isinstance(v, bytes) else v)
+        except Exception:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        changed = False
+        for f in fields:
+            parent, leaf = _dig(rec, f)
+            val = parent.get(leaf) if isinstance(parent, dict) else None
+            if not needs_adopting(val):
+                continue
+            key = key_for(prefix, rid, f)
+            moved.append({"record": rid, "field": f, "key": key})
+            if dry_run:
+                continue
+            new = await adopt_value(registry, key, val, f"{label or prefix} {rec.get('label') or rid} {f}")
+            if new != val:
+                parent[leaf] = new
+                changed = True
+        if changed:
+            await redis.hset(hash_key, rid, json.dumps(rec))
+    return moved
+
+
 def register_adopter(name: str, fn: Any) -> None:
     """`fn(dry_run: bool) -> [{record, field, key}]` moves this module's old sealed values into the store."""
     _ADOPTERS[str(name)] = fn

@@ -89,7 +89,48 @@ MODULES = {
     "integrations": "vera/integrations/integrations_capabilities.py",
     "ha": "vera/homeassistant/ha_capabilities.py",
     "n8n": "vera/n8n/n8n_capabilities.py",
+    "providers": "vera/providers/providers_capabilities.py",
+    "portainer": "vera/remote/portainer_capabilities.py",
+    "prometheus": "vera/remote/metrics_capabilities.py",
+    "proxmox": "vera/proxmox/proxmox_capabilities.py",
+    "ssh_enrol": "vera/provisioning/enroll_capabilities.py",
+    "accounts": "vera/accounts/accounts_capabilities.py",
+    "telegram": "vera/telegram/telegram_capabilities.py",
+    "foundry": "vera/foundry/foundry_capabilities.py",
 }
+# sync writers: the old seal stays on save (no await there) and the adopter moves it; reads accept references
+SYNC_WRITERS = {
+    "remote_ide": "vera/ide/ide_remote_capabilities.py",
+    "vscode": "vera/ide/vscode_capabilities.py",
+    "ssh_exec": "vera/execution/exec_capabilities.py",
+    "commerce": "vera/commerce/commerce_platforms.py",
+}
+
+
+def test_sync_writers_read_references_and_register_an_adopter():
+    for name, rel in SYNC_WRITERS.items():
+        s = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+        assert f'register_adopter("{name}", _adopt)' in s, name
+        assert re.search(r"_pa\(\)\.(open_value_sync|open_any_sync|is_ref)\(", s), name
+
+
+def test_commerce_keeps_a_reference_while_its_value_is_unchanged():
+    s = open(os.path.join(ROOT, SYNC_WRITERS["commerce"]), encoding="utf-8").read()
+    assert "_store_form(" in s and "if _pa().is_ref(raw) and new == _open_field(raw):" in s
+
+
+def test_ssh_exec_adopts_decoded_values_not_xor_text():
+    s = open(os.path.join(ROOT, SYNC_WRITERS["ssh_exec"]), encoding="utf-8").read()
+    body = s[s.index("async def _adopt(dry_run: bool):"):s.index('_pa().register_adopter("ssh_exec"')]
+    assert "plain = _deobfuscate(v)" in body and "adopt_value" not in body
+
+
+def test_telegram_mask_shows_no_secret_characters():
+    sys.path.insert(0, ROOT)
+    from vera.telegram import tg_bots_core as T
+    tok = "123456789:AAH-secretpartXYZW"
+    shown = T.redact_token(tok)
+    assert shown.startswith("123456789:") and "XYZW" not in shown and "AAH" not in shown
 
 
 def test_each_module_saves_to_the_store_reads_both_and_registers_an_adopter():
