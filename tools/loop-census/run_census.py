@@ -380,13 +380,16 @@ def reserve_census_run(template, done_rows):
     return "run%d" % n if t == "default" else "%s-run%d" % (t, n)
 
 
-_INGEST = {"unavailable": False}
+# `pending`: rows whose ingest found prod down (no response - a restart, a release). Roadmap E3
+# (28 Sep, done 11 Oct): one silent prod restart used to switch ingest off for the rest of the
+# census; now such rows are queued and retried after the next good ingest and at the end.
+# Only a prod WITHOUT the capability ("unknown capability") turns ingest off.
+_INGEST = {"unavailable": False, "pending": []}
 
 
-def ingest_row(rec, template, census_run):
-    """Post one finished goal to evolve.result.ingest. Best effort, never raises."""
-    if _INGEST["unavailable"] or not isinstance(rec, dict) or not rec.get("id"):
-        return
+def _ingest_once(rec, template, census_run):
+    """One post. 'ok' | 'down' (no answer - retry later) | 'missing' (prod lacks the cap) |
+    'refused' (prod answered with an error)."""
     try:
         body = json.dumps({"name": "evolve.result.ingest",
                            "arguments": {"template": template, "census_run": census_run, "row": rec},
@@ -396,18 +399,49 @@ def ingest_row(rec, template, census_run):
         resp = json.loads(out) if out else {}
     except Exception as e:
         log("  ingest failed: %s" % e)
-        return
+        return "down"
     res = resp.get("content") if isinstance(resp, dict) else None
     if isinstance(res, dict) and res.get("ok"):
         log("  ingested as run record %s (%s) in %s" % (
             rec.get("session_id") or "-", "added" if res.get("added") else "replaced", census_run))
-        return
+        return "ok"
+    if not resp:
+        return "down"
     # A prod that predates the capability answers {"detail": "Unknown capability"}.
     err = str((res or {}).get("error") if isinstance(res, dict) else
               (resp.get("detail") if isinstance(resp, dict) else "") or "no response")[:160]
     log("  ingest unavailable: %s (rows stay the record; ingest_census.py can post the archive later)" % err)
-    if not resp or "unknown" in err.lower() or "not available" in err.lower() or "not found" in err.lower():
+    if "unknown" in err.lower() or "not available" in err.lower() or "not found" in err.lower():
+        return "missing"
+    return "refused"
+
+
+def flush_pending():
+    """Retry every queued row once; the ones still not taken stay queued."""
+    left = []
+    for rec, template, census_run in list(_INGEST["pending"]):
+        st = _ingest_once(rec, template, census_run)
+        if st == "missing":
+            _INGEST["unavailable"] = True
+            return
+        if st == "down":
+            left.append((rec, template, census_run))
+    _INGEST["pending"] = left
+
+
+def ingest_row(rec, template, census_run):
+    """Post one finished goal to evolve.result.ingest. Best effort, never raises; a row that found
+    prod down is queued and retried (E3)."""
+    if _INGEST["unavailable"] or not isinstance(rec, dict) or not rec.get("id"):
+        return
+    st = _ingest_once(rec, template, census_run)
+    if st == "missing":
         _INGEST["unavailable"] = True
+    elif st == "down":
+        _INGEST["pending"].append((rec, template, census_run))
+        log("  ingest queued (prod did not answer); %d row(s) waiting" % len(_INGEST["pending"]))
+    elif st == "ok" and _INGEST["pending"]:
+        flush_pending()
 
 
 _ACTIVE = {}
@@ -1302,6 +1336,11 @@ def main():
         done.add(g["id"])
         write_active(goals_done=len(done), current_goal="", session_id="")
         ingest_row(rec, series, census_run)
+    if _INGEST["pending"] and not _INGEST["unavailable"]:
+        flush_pending()
+        if _INGEST["pending"]:
+            log("  %d row(s) never ingested (prod down at the end too) - post the archive with "
+                "ingest_census.py" % len(_INGEST["pending"]))
     write_active(state="done", current_goal="", session_id="")
     log("census complete")
 
