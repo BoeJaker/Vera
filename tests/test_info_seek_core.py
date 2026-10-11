@@ -309,3 +309,30 @@ def test_latest_records_and_reads_the_last_look():
     assert latest.index("await _last_seek(subject)") < latest.index("await _last_seek(subject, now.isoformat(")
     helper = src[src.index("async def _last_seek"):src.index("def _report_seller")]
     assert "except Exception" in helper and "ex=_LAST_SEEK_TTL" in helper
+
+
+# caps.search (plan SK-1.2): measured on prod 11 Oct - "latest news about MCP" -> mcp.register_server first,
+# "what is the bank of england base rate" -> evolve.delegate.rate, "find out about the EU AI Act" -> operator caps
+@pytest.mark.parametrize("q,want", [
+    ("latest news about MCP", True), ("what is the bank of england base rate", True),
+    ("find out about the EU AI Act", True), ("who won the f1 race", True), ("latest updates on UK house prices", True),
+    ("find tools for sending email", False), ("what caps handle image generation", False),
+    ("what is the census status", False), ("send an email to bob", False), ("create a dashboard panel", False),
+])
+def test_info_intent(q, want):
+    assert C.info_intent(q) is want
+
+
+def test_boost_puts_the_information_caps_first():
+    res = [("mcp.register_server", 8.7), ("mcp.tools", 8.6), ("web.research", 6.0), ("x", 1.0)]
+    out = C.boost_info(res, {"info.seek", "web.research", "intel.lookup", "mcp.tools"}, 5)
+    assert [n for n, _ in out] == ["info.seek", "web.research", "intel.lookup", "mcp.register_server", "mcp.tools"]
+    assert out[0][1] > out[1][1] > out[2][1] > 8.7
+    assert [n for n, _ in C.boost_info(res, {"web.research"}, 3)] == ["web.research", "mcp.register_server", "mcp.tools"]
+
+
+def test_caps_search_applies_the_boost_only_without_filters():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "dag" / "dag_store.py").read_text(encoding="utf-8")
+    body = src[src.index("async def caps_search"):src.index("def caps_list_categories")]
+    assert "if not category and not tags:" in body and "_isc.boost_info(results, CAPABILITY_REGISTRY.keys(), top_k)" in body

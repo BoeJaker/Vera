@@ -61,6 +61,32 @@ def classify_need(text: str) -> Dict[str, str]:
     return {"need": "fact", "reason": "a specific question"}
 
 
+_INFO_ASK = re.compile(r"^\s*(what|who|when|where|which|how (much|many|does|do|is|are))\b|\b(find out|look up|tell me about|"
+                       r"research|news|price of|prices?|rate|latest|update|explain)\b", re.I)
+# a question about Vera itself, or a request for a tool, is not a question about the world
+_INTERNAL = re.compile(r"\b(vera|census|loop ?lab|sandbox|pipeline|worktree|board item|capabilit|caps?|panel|dashboard|"
+                       r"canvas|widget|tools? (for|to|that)|skill|my (notes|memory|calendar|inbox|topics?))\b", re.I)
+INFO_CAPS = ("info.seek", "web.research", "intel.lookup")
+
+
+def info_intent(text: str) -> bool:
+    """True when `text` asks about the outside world - the latest on something, a fact, a price, "find out about" -
+    rather than about Vera's own parts or for a tool. caps.search uses it to put the information caps first (plan
+    SK-1.2: "latest news about MCP" ranked mcp.register_server first, "what is the base rate" evolve.delegate.rate)."""
+    t = " ".join(str(text or "").split())
+    return bool(t) and bool(_INFO_ASK.search(t)) and not _INTERNAL.search(t)
+
+
+def boost_info(results: Sequence[Any], available: Iterable[str], top_k: int) -> List[Any]:
+    """(name, score) results with the information caps first, in INFO_CAPS order, scored just above the best."""
+    have = set(available)
+    rows = [(str(n), float(s)) for n, s in results]
+    top = max([s for _, s in rows] + [0.0])
+    lead = [(n, round(top + 1.0 - 0.2 * i, 3)) for i, n in enumerate(c for c in INFO_CAPS if c in have)]
+    names = {n for n, _ in lead}
+    return (lead + [(n, s) for n, s in rows if n not in names])[:max(1, int(top_k))]
+
+
 def subject_of(text: str) -> str:
     """The subject inside a request: "what's the latest on the EU AI Act?" -> "the EU AI Act" -> "EU AI Act"."""
     s = " ".join(str(text or "").split())
