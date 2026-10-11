@@ -823,13 +823,23 @@ CONTROL_WAIT_MAX_S = 300.0
         "sys.dev.restart writes a pause itself (default) or a drop "
         "(resume_census=false) before it re-execs. Inputs: action (str! - pause|"
         "resume|drop|yield), reason (str), by (str), wait_s (int, 0-300: block until "
-        "the harness has acted on a pause/yield/drop, or this long). Output: {ok, "
+        "the harness has acted on a pause/yield/drop, or this long), hours (float - a "
+        "pause/yield that ENDS BY ITSELF after this long: the harness resumes and the "
+        "scheduler stops seeing it; 0 = until someone resumes). Output: {ok, "
         "wrote, state, active, acked, waited_s}."),
 )
 async def cap_census_control_set(action: str = "", reason: str = "", by: str = "",
-                                 wait_s: int = 0, trace_id=None) -> Dict[str, Any]:
+                                 wait_s: int = 0, hours: float = 0, trace_id=None) -> Dict[str, Any]:
+    until = ""
     try:
-        data = _ctl.make_control(action, reason=reason, by=by or "census.control.set")
+        h = float(hours or 0)
+    except (TypeError, ValueError):
+        h = 0.0
+    if h > 0:
+        from datetime import datetime, timedelta, timezone
+        until = (datetime.now(timezone.utc) + timedelta(hours=min(h, 72.0))).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        data = _ctl.make_control(action, reason=reason, by=by or "census.control.set", until=until)
     except ValueError as e:
         return {"ok": False, "error": str(e)}
     ok = await asyncio.to_thread(_ctl.write_json, _control_path(), data)
