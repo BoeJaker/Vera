@@ -69,6 +69,9 @@ LAYOUTS = {
     # NLI claim check (compute-roles P3, 11 Oct 2026): I2 + claim_nli shadow (recorded) / hint (to the checker)
     "N0": {"info_first": True, "answer_check": True, "claim_nli": "shadow"},
     "N1": {"info_first": True, "answer_check": True, "claim_nli": "hint"},
+    # P1b known dated facts from intel.lookup before planning (11 Oct 2026): alone / on top of I2
+    "F1": {"intel_prefacts": True},
+    "F2": {"info_first": True, "answer_check": True, "intel_prefacts": True},
     # A3 plan critique (11 Oct 2026): the CPU 35B reviews the whole plan beside the run
     "R1": {"plan_critique": True},
     # the loop's role-less stages placed on CPU nodes (stage_models, 10 Oct 2026)
