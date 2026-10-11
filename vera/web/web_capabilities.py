@@ -1325,6 +1325,41 @@ async def _searxng_news(query: str, limit: int = 10, time_range: str = "month") 
     return []
 
 
+async def _feed_hits(subject: str, limit: int = 8) -> List[Dict[str, Any]]:
+    """Recent items from the feeds Vera follows (the trade press, BBC... added as fabric sources through intel) whose
+    title or summary names every content word of the subject - so a subject nobody tracks still gets what those feeds
+    carried (plan SK-3.5). Bounded: at most 12 feeds, 40 items each, 6 s per call."""
+    try:
+        try:
+            from Vera.vera.intel import intel_sources_core as _isrc
+        except Exception:
+            from vera.intel import intel_sources_core as _isrc
+    except Exception:
+        return []
+    # plural words match their stem ("prices" -> "price": "UK house price growth halves" names "house prices")
+    words = [(w[:-1] if len(w) > 4 and w.endswith("s") and not w.endswith("ss") else w)
+             for w in (x.lower() for x in _seek.keywords_of(subject).split()) if len(w) > 2]
+    if not words:
+        return []
+    src = await _seek_call("fabric.sources", 6)
+    feeds = [s for s in (src.get("sources") or []) if str(s.get("id") or "").startswith("intel-src-")
+             and s.get("dataset_id")][:12]
+
+    async def one(s: Dict[str, Any]) -> List[Dict[str, Any]]:
+        r = await _seek_call("fabric.browse", 6, dataset_id=s["dataset_id"], limit=40)
+        out = []
+        for rec in r.get("records") or []:
+            hit = _isrc.record_hit(rec, kind="feed")
+            if not hit or not hit.get("url"):
+                continue
+            text = f"{hit.get('title') or ''} {hit.get('snippet') or ''}".lower()
+            if all(w in text for w in words):
+                out.append(dict(hit, kind="web", engine="feed: " + str(s.get("label") or s.get("name") or s["id"])))
+        return out
+    got = await asyncio.gather(*[one(s) for s in feeds], return_exceptions=True)
+    return [h for g in got if isinstance(g, list) for h in g][:limit]
+
+
 async def _seek_read(items: List[Dict[str, Any]], n: int, chars: int) -> int:
     """Read up to `n` items through the reader (article text, cached), in order, in parallel. A page that cannot be
     read - blocked by an anti-bot challenge, no article - is marked and the next result is read in its place (a
@@ -1441,15 +1476,22 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
         queries = _seek.latest_queries(subject, question, now)
         span = "week" if (now - (_seek.parse_date(since) or now)).days <= 8 else "month"
         news_task = asyncio.create_task(_searxng_news(subject, 12, span))
+        feed_task = asyncio.create_task(_feed_hits(subject))
         res = await _seek_searches(queries, first_slot=1)        # the news search has slot 0
         try:
             news = await asyncio.wait_for(news_task, 20)
         except Exception:
             news = []
-        # news first: it is what is current; the general results add depth and the explainers
-        hits = _seek.merge_hits([news] + [r.get("results") or [] for r in res])
+        try:
+            feeds = await asyncio.wait_for(feed_task, 15)
+        except Exception:
+            feeds = []
+        # news first: it is what is current; then the feeds Vera follows; the general results add depth
+        hits = _seek.merge_hits([news, feeds] + [r.get("results") or [] for r in res])
         engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
         checked.append(f"news: {len(news)} headlines from the past {span}")
+        if feeds:
+            checked.append(f"feeds Vera follows: {len(feeds)} items naming '{subject}'")
         checked.append(f"web: {len(queries)} searches ({', '.join(engines) or 'no engine answered'}), {len(hits)} results")
         _seek.fill_dates(hits, now)
         dropped = [h for h in hits if _report_seller(h.get("title"), h.get("snippet"))]

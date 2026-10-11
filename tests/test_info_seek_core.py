@@ -336,3 +336,30 @@ def test_caps_search_applies_the_boost_only_without_filters():
     src = (Path(__file__).resolve().parents[1] / "vera" / "dag" / "dag_store.py").read_text(encoding="utf-8")
     body = src[src.index("async def caps_search"):src.index("def caps_list_categories")]
     assert "if not category and not tags:" in body and "_isc.boost_info(results, CAPABILITY_REGISTRY.keys(), top_k)" in body
+
+
+def test_feed_hits_match_the_feeds_vera_follows():
+    # plan SK-3.5: an untracked subject still gets what the followed feeds carried (live 11 Oct: the Guardian property
+    # feed had "UK house prices flatline..." for "UK house prices")
+    import asyncio
+    from pathlib import Path
+    from vera.intel import intel_sources_core as isrc
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    fn = src[src.index("async def _feed_hits"):src.index("async def _seek_read")]
+    recs = [{"data": {"title": "UK house prices flatline as rising mortgage costs weigh", "link": "https://g.co/a",
+                      "published": "Wed, 07 Oct 2026 07:56:02 GMT"}, "created_at": "2026-10-07T08:00:00Z"},
+            {"data": {"title": "UK house price growth halves", "link": "https://g.co/b"}, "created_at": "x"},
+            {"data": {"title": "Office rents rise in London", "link": "https://g.co/c"}, "created_at": "x"}]
+
+    async def call(name, timeout, **kw):
+        if name == "fabric.sources":
+            return {"sources": [{"id": "intel-src-1", "label": "Guardian: property", "dataset_id": "d1"},
+                                {"id": "other-src", "dataset_id": "d2"}]}
+        assert kw["dataset_id"] == "d1"                      # only the feeds intel added
+        return {"records": recs}
+    ns = {"asyncio": asyncio, "List": list, "Dict": dict, "Any": object, "_seek_call": call, "_seek": C}
+    exec(fn, ns)
+    hits = asyncio.run(ns["_feed_hits"]("UK house prices"))
+    assert [h["url"] for h in hits] == ["https://g.co/a", "https://g.co/b"]
+    assert hits[0]["engine"] == "feed: Guardian: property" and hits[0]["published"].startswith("2026-10-07")
+    assert "feed_task = asyncio.create_task(_feed_hits(subject))" in src
