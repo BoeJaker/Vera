@@ -86,6 +86,12 @@ async def _widget_content(cap: str, args: Dict[str, Any], res: Any, title: str) 
     return dict(r, widget=r.get("form"), form=r.get("form"), title=title, record=r)
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "canvas.enrich", memory="off",
     http_method="POST", http_path="/canvas/enrich", http_tags=["canvas"],
@@ -516,12 +522,17 @@ def _redis():
     return getattr(sys.modules.get("Vera.vera.capability_orchestration"), "REDIS", None)
 
 
+_EMBED_ID: Dict[str, Any] = {"model": "", "dim": 0}    # what made the last vectors (nlp.embed reports it)
+
+
 async def _embed_many(texts: List[str]) -> List[Optional[List[float]]]:
     out: List[Optional[List[float]]] = []
     for i in range(0, len(texts), 64):
         chunk = texts[i:i + 64]
         res = await _call_raw("nlp.embed", texts=chunk)
         vecs = res.get("embeddings") if isinstance(res, dict) and isinstance(res.get("embeddings"), list) else []
+        if vecs and isinstance(res, dict) and res.get("model"):
+            _EMBED_ID.update(model=str(res["model"]), dim=int(res.get("dim") or len(vecs[0] or [])))
         out += vecs if len(vecs) == len(chunk) else [None] * len(chunk)
     return out
 
@@ -551,7 +562,8 @@ async def _surface_cards(idx: Dict[str, Any]) -> Dict[str, Any]:
                 return {}                              # the NLP tier is down: try again next turn
             rnd = lambda v: [round(float(x), 4) for x in v]  # noqa: E731
             got = {"domains": {k: rnd(v) for k, v in zip(dk, vecs[:len(dk)])},
-                   "surfaces": {k: rnd(v) for k, v in zip(sk, vecs[len(dk):])}}
+                   "surfaces": {k: rnd(v) for k, v in zip(sk, vecs[len(dk):])},
+                   "model": _EMBED_ID["model"], "dim": _EMBED_ID["dim"]}       # which model made them
             if r is not None:
                 try:
                     await r.set(src.CARDS_KEY + h, _json.dumps(got), ex=7 * 86400)
@@ -600,6 +612,7 @@ def _surface_rank_shadow(text: str, found: Dict[str, Any], k: int) -> None:
 
 @capability(
     "canvas.surface_rank.report", memory="off", silent=True,
+    contract=_MC.contract("canvas.surface_rank.report", effects=["read"], idempotency="idempotent"),
     http_method="GET", http_path="/canvas/surface_rank/report", http_tags=["canvas"],
     description="The canvas curator's first questions in shadow (four-minds FM-6.2/6.3, switch canvas.surface_rank): "
                 "over recorded turns, how often the turn's Frame vector (cosine against domain and surface cards) "

@@ -1806,9 +1806,13 @@ class FabricPostgres:
                 if state:
                     did = "present"
                 else:
+                    from datetime import datetime as _dt
+                    if _tix.in_dump_window(_dt.now().hour):
+                        return "deferred: backup window"   # the leg keeps ILIKE until a later start
                     if state is False:
                         await conn.execute(_tix.DROP)
                     await conn.execute("SET maintenance_work_mem = '512MB'")
+                    await conn.execute("SET lock_timeout = '5s'")
                     await conn.execute(_tix.CREATE, timeout=1800)
                     did = "built"
             self._tix_checked = 0.0
@@ -3174,6 +3178,12 @@ async def _get_dataset_processing_config(dataset_id: str) -> Dict:
 # QUERY DSL
 # ─────────────────────────────────────────────────────────────────────────────
 
+# fabric.query's result cache, counted (backbone review 11 Oct, fix list #11): it sits beside memory.seek's
+# generation-keyed cache; this one is NOT invalidated by an ingest (TTL only). The counts decide whether to fold the
+# two into one generation-keyed cache.
+_QUERY_CACHE_STATS: Dict[str, int] = {"hits": 0, "misses": 0, "sets": 0}
+
+
 def _cache_key(q: Dict) -> str:
     return "fabric:cache:" + hashlib.md5(
         json.dumps(q, sort_keys=True, default=str).encode()
@@ -3200,8 +3210,10 @@ async def execute_query(q: Dict) -> Dict:
     if q.get("cache", True):
         cached = await _cache_get(_cache_key(q))
         if cached:
+            _QUERY_CACHE_STATS["hits"] += 1
             cached["cached"] = True
             return cached
+        _QUERY_CACHE_STATS["misses"] += 1
 
     top_k      = int(q.get("top_k", 10))
     vector_q   = q.get("vector","") or q.get("text","")
@@ -3418,6 +3430,7 @@ async def execute_query(q: Dict) -> Dict:
                           "widen with a lower min_score, or gather the information another way.")
     if q.get("cache", True):
         await _cache_set(_cache_key(q), output, int(q.get("cache_ttl", FABRIC_CACHE_TTL)))
+        _QUERY_CACHE_STATS["sets"] += 1
     return output
 
 
@@ -6210,7 +6223,16 @@ async def cap_fabric_stats(trace_id=None) -> Dict:
         "neo4j":        {"available": FABRIC_NEO.available},
         "sqlite":       {"available": True, "path": SQLITE_PATH},
         "object_store": {"available": OBJECT_STORE.available, "mode": FABRIC_OBJECT_STORE},
+        # the two retrieval caches side by side, this process since its start (fix list #11)
+        "caches": {"fabric_query": dict(_QUERY_CACHE_STATS, ttl_s=FABRIC_CACHE_TTL, invalidated_by_ingest=False),
+                   "memory_seek": _seek_cache_stats()},
     }
+
+
+def _seek_cache_stats() -> Dict[str, Any]:
+    mr = sys.modules.get("memory_retrieval") or sys.modules.get("Vera.vera.fabric.memory_retrieval")
+    st = getattr(mr, "_SEEK_CACHE_STATS", None)
+    return dict(st, ttl_s=600, invalidated_by_ingest=True) if isinstance(st, dict) else {"loaded": False}
 
 
 @capability(
@@ -9872,8 +9894,10 @@ async def _startup():
     # Start auto-pull loop AND deferred index migration (off-thread, won't block)
     asyncio.create_task(_auto_pull_loop())
     asyncio.create_task(_sqlite_index_migration_async())
-    # seek's keyword-leg index (FM-7.1): built once if missing, in the background (a no-op when present)
-    if FABRIC_PG.available:
+    # seek's keyword-leg index (FM-7.1): built once if missing, in the background (a no-op when present) - by prod's
+    # host process only: never from a dev sandbox or a node worker, which share no business building on this database
+    # (backbone review, 11 Oct 2026)
+    if FABRIC_PG.available and _tix_build_allowed():
         asyncio.create_task(FABRIC_PG.ensure_text_index())
 
     # Hydrate the optional in-RAM FAISS tier from Chroma (background) — without
@@ -9890,6 +9914,14 @@ async def _startup():
                                ("object_store", OBJECT_STORE.available)] if ok]
     log.info("data_fabric ready — backends: %s (sqlite always on)", active or ["sqlite only"])
     await emit_event({"type": "fabric.ready", "backends": ["sqlite"] + active})
+
+
+def _tix_build_allowed() -> bool:
+    try:
+        import Vera.vera.capability_orchestration as _o
+        return not (_o.is_dev_sandbox() or getattr(_o, "_IS_WORKER", False))
+    except Exception:
+        return False
 
 
 schedule(_startup, interval=999999, name="fabric_startup")
