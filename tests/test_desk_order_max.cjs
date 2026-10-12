@@ -8,7 +8,7 @@ const a = C.indexOf('let nowOrder = ranked.map('), b = C.indexOf('this._deskOrde
 t('the kept order is merged before it is saved', a > 0 && b > a);
 const body = C.slice(a, b);
 t('a card left out of the pass but still on the canvas is held', body.includes("const held = kept.filter((k) => !here.has(k) && !!this._blockOf(k));"));
-t('it keeps its index; a new card joins at the end', body.includes("nowOrder = kept.filter((k) => here.has(k) || held.indexOf(k) >= 0).concat(nowOrder.filter((k) => !ks.has(k)));"));
+t('it keeps its index; the cards of the pass keep their rank (a combined card by its best member)', body.includes("held.forEach((k) => val.set(k, pos[k]));") && body.includes("nowOrder = [...val.keys()].sort((a, b) => val.get(a) - val.get(b));"));
 // the merge itself, on the shapes the harness saw
 const merge = (kept, now, alive) => { const here = new Set(now), ks = new Set(kept); const held = kept.filter((k) => !here.has(k) && alive.has(k));
   return held.length ? kept.filter((k) => here.has(k) || held.indexOf(k) >= 0).concat(now.filter((k) => !ks.has(k))) : now; };
