@@ -8173,10 +8173,17 @@ async def cap_obs_provenance(trace_id=None):
             mcp_expose=False,
             description="List all registered capabilities (MCP tool manifest).")
 async def mcp_tools(trace_id=None):
+    # a capability that declares how its answer is drawn carries it here (DA-01a); the others are listed as before
+    from .capability_contract_core import project_presentation
+    def _pres(v):
+        c = v.get("contract")
+        if not isinstance(c, dict) or "presentation" not in c:
+            return {}
+        return {"presentation": project_presentation(c, c.get("output_schema"))}
     return [
         {"name":k,"description":v.get("description",""),"schema":v.get("schema",{}),
          "mode":v.get("mode","local"),"source":v.get("source","local"),
-         "streams":v.get("streams",[]),"tags":v.get("tags",[])}
+         "streams":v.get("streams",[]),"tags":v.get("tags",[]), **_pres(v)}
         for k,v in CAPABILITY_REGISTRY.items()
         if v.get("mcp_expose",True)
     ]
