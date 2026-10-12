@@ -237,6 +237,17 @@ def test_night_note_only_when_the_night_did_not_finish():
     assert ops.night_note({}) == ""
 
 
+def test_night_note_names_what_held_the_queue():
+    # 12 Oct: censuses and probes filled the night; the note blamed "while Vera is in use"
+    n = {"stats": {"topics": 12}, "pending": ["a"] * 12}
+    assert "a census was running" in ops.night_note(n, "a census is running")
+    assert "you were using Vera" in ops.night_note(n, "interactive use in the last 180s")
+    assert "ten quiet minutes" in ops.night_note(n, "only 40s of quiet so far, need 600s (a census leaves...)")
+    assert "models were busy" in ops.night_note(n, "the GPU gate was held 30s ago (interactive work is bursty)")
+    assert "waits until Vera is quiet" in ops.night_note(n) and "in use" not in ops.night_note(n)
+    assert ops.blocker_phrase("") == "" and ops.blocker_phrase("something new") == "other work was running"
+
+
 def test_headline_hubs_are_indexes_not_stories():
     # the two "signals" at the top of the 5 Oct brief, and two real stories
     assert ops.index_hint("https://newsnow.co.uk/h/Business+&+Finance/UK+Housing+Market", "UK Housing Market News & House Price News - NewsNow")

@@ -499,17 +499,36 @@ def apply_brief(doc: Dict[str, Any], parsed: Optional[Dict[str, Any]]) -> Dict[s
     return out
 
 
-def night_note(night: Dict[str, Any]) -> str:
+#: The background queue's busy reasons (background_work.defer_reason / quiet_gate), said for a reader.
+#: First match wins - the quiet-gate and GPU-cooldown reasons mention "census" and "interactive" in passing.
+_BLOCKERS = (("of quiet so far", "the box never had ten quiet minutes"), ("gpu gate", "the models were busy"),
+             ("census", "a census was running"), ("agent loop", "an agent loop was running"),
+             ("dream", "a dream cycle was running"), ("interactive", "you were using Vera"))
+
+
+def blocker_phrase(reason: str) -> str:
+    """The background queue's busy reason as a short phrase for the brief; '' when there is none."""
+    r = str(reason or "").lower()
+    if not r:
+        return ""
+    return next((say for key, say in _BLOCKERS if key in r), "other work was running")
+
+
+def night_note(night: Dict[str, Any], blocker: str = "") -> str:
     """What the morning brief owes the reader when the night did not finish:
-    how much was refreshed and that the rest follows."""
+    how much was refreshed, why the rest waited (the queue's busy reason at brief
+    time, when known) and that the rest follows."""
     n = night or {}
     total = int((n.get("stats") or {}).get("topics") or 0)
     left = len(n.get("pending") or [])
     if not total or not left:
         return ""
     done = max(0, total - left)
-    return (f"Overnight: {done} of {total} topics refreshed. The other {left} are still queued - background work "
-            f"waits while Vera is in use - and will follow in a later message.")
+    why = blocker_phrase(blocker)
+    why = (f"background work needs ten quiet minutes and the night had none (at brief time {why})" if why
+           else "background work waits until Vera is quiet")
+    return (f"Overnight: {done} of {total} topics refreshed. The other {left} are still queued - {why} - and will "
+            f"follow in a later message.")
 
 
 def night_summary(stats: Dict[str, Any]) -> str:
