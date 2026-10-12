@@ -1621,6 +1621,7 @@ async def _train_loop(job_id: str, job: dict):
                    if job.get("data_ref") else
                    {"X_train": X_tr, "y_train": y_tr, "X_val": X_va, "y_val": y_va}),
                 "config": cfg_t}, label=f"ml.train {module_id}",
+                avoid=tuple(cfg_t.get("avoid_nodes") or ()),
                 on_progress=on_progress, stop=lambda: bool(job.get("stop")))
             res = {**out, "weights": {nid: w for nid, w in out["weights"]}}
             job["trained_on"] = out.get("_node") or out.get("_where", "")

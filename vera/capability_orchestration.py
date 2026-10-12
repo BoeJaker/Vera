@@ -12352,6 +12352,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "machine learning/ml_workshop.py"),
         os.path.join(_here, "machine learning/ml_training.py"),
         os.path.join(_here, "machine learning/ml_onnx.py"),
+        os.path.join(_here, "machine learning/student_training.py"),
         os.path.join(_here, "markets/markets_capabilities.py"),
         os.path.join(_here, "markets/markets_data_capabilities.py"),
         os.path.join(_here, "markets/markets_analysis_capabilities.py"),
