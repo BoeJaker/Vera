@@ -179,9 +179,16 @@ def materialize(
             if receipt["state"] == "applied":
                 existing += 1
                 continue
-            if receipt["state"] != "pending":
+            from_state = receipt["state"]
+            if from_state in {"failed", "stale", "removed"}:
+                revision_path.store.transition(
+                    item.revision.revision_id, "chroma",
+                    from_state=from_state, to_state="rebuilding",
+                    occurred_at=occurred_at())
+                from_state = "rebuilding"
+            if from_state not in {"pending", "rebuilding"}:
                 failed += 1
-                errors[receipt["state"]] = errors.get(receipt["state"], 0) + 1
+                errors[from_state] = errors.get(from_state, 0) + 1
                 continue
             chroma_upsert(
                 ids=[item.revision.record_id], documents=[item.document],
@@ -196,7 +203,7 @@ def materialize(
                     "source_record_id": item.source_record_id,
                 }])
             revision_path.store.transition(
-                item.revision.revision_id, "chroma", from_state="pending",
+                item.revision.revision_id, "chroma", from_state=from_state,
                 to_state="applied", occurred_at=occurred_at(),
                 projection_revision=f"chroma:{item.revision.revision_id}")
             applied += 1
@@ -208,9 +215,10 @@ def materialize(
             try:
                 receipt = revision_path.store.receipt(
                     item.revision.revision_id, "chroma")
-                if receipt["state"] == "pending":
+                if receipt["state"] in {"pending", "rebuilding"}:
                     revision_path.store.transition(
-                        item.revision.revision_id, "chroma", from_state="pending",
+                        item.revision.revision_id, "chroma",
+                        from_state=receipt["state"],
                         to_state="failed", occurred_at=occurred_at(),
                         error_code=code or "projection_failed")
             except Exception:

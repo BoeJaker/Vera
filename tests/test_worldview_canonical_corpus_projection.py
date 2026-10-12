@@ -123,6 +123,40 @@ def test_materialize_refuses_stale_plan_before_any_write(tmp_path):
     assert path.store.current(candidates[0].revision.record_id) is None
 
 
+def test_materialize_retries_a_failed_projection_receipt(tmp_path):
+    values = _source()
+    values["ids"] = values["ids"][:1]
+    values["documents"] = values["documents"][:1]
+    values["metadatas"] = values["metadatas"][:1]
+    values["embeddings"] = values["embeddings"][:1]
+    candidates, skipped = build_candidates(**values)
+    summary = plan_summary(
+        source_dataset_id=values["source_dataset_id"],
+        target_dataset_id=values["target_dataset_id"],
+        requested=1, candidates=candidates, skipped=skipped)
+    path = RevisionPath(RevisionStore(tmp_path / "revisions.sqlite3"),
+                        lambda action, actor, resource: True)
+
+    failed = materialize(
+        candidates=candidates, expected_digest=summary["plan_digest"],
+        summary=summary, revision_path=path, actor="codex",
+        chroma_upsert=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("down")),
+        occurred_at=lambda: "2026-10-01T11:00:00Z")
+    assert failed["failed"] == 1
+    revision_id = candidates[0].revision.revision_id
+    assert path.store.receipt(revision_id, "chroma")["state"] == "failed"
+
+    writes = []
+    retried = materialize(
+        candidates=candidates, expected_digest=summary["plan_digest"],
+        summary=summary, revision_path=path, actor="codex",
+        chroma_upsert=lambda **kwargs: writes.append(kwargs),
+        occurred_at=lambda: "2026-10-01T12:00:00Z")
+    assert retried["ok"] is True and retried["applied"] == 1
+    assert len(writes) == 1
+    assert path.store.receipt(revision_id, "chroma")["state"] == "applied"
+
+
 def test_invalid_or_same_dataset_is_rejected():
     values = _source()
     values["target_dataset_id"] = values["source_dataset_id"]
