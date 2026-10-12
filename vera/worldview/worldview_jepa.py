@@ -1681,26 +1681,40 @@ async def _fabric_load_checkpoint_meta() -> Dict[str, Any]:
 async def _persist_to_fabric() -> Dict:
     if not MODEL.ready:
         return {"ok": False, "error": "model not ready"}
+    previous_persist = MODEL.last_fabric_persist
+    binding = _verified_retrieval_provenance()
+    # A bound checkpoint is content-addressed evidence. Re-copying that exact
+    # checkpoint must retain its identity; a changed model fails verification
+    # above and receives a fresh persistence timestamp and blob identity.
+    persisted_at = previous_persist if binding is not None and previous_persist \
+        else now_iso()
+    MODEL.last_fabric_persist = persisted_at
     try:
         MODEL.save()
     except Exception:
         pass
     blob = MODEL.serialize_bytes()
     if not blob:
+        MODEL.last_fabric_persist = previous_persist
         return {"ok": False, "error": "serialize failed"}
     meta = {
         "train_steps": MODEL.train_steps, "num_concepts": MODEL.num_concepts,
         "embed_dim": MODEL.embed_dim, "records": len(MODEL.record_concepts),
-        "saved_at": now_iso(),
+        "saved_at": persisted_at,
     }
-    binding = _verified_retrieval_provenance(blob)
+    if binding is not None and not binding.verifies_runtime(
+            checkpoint_blob=blob,
+            indexed_record_ids=_active_index_record_ids()):
+        binding = None
     if binding is not None:
         meta["retrieval_provenance"] = binding.to_dict()
     res = await _fabric_store_checkpoint(blob, meta)
     if res.get("sqlite") or res.get("postgres"):
-        MODEL.last_fabric_persist = now_iso()
+        MODEL.last_fabric_persist = persisted_at
         log.info("worldview: checkpoint persisted to fabric (%s)",
                  ", ".join(k for k in ("sqlite", "postgres") if res.get(k)))
+    else:
+        MODEL.last_fabric_persist = previous_persist
     return {
         "ok": bool(res.get("sqlite") or res.get("postgres")),
         "stores": res, "bytes": res.get("bytes", 0),
@@ -1747,9 +1761,26 @@ async def _worldview_startup_load():
         await _load_loss_history()
         _restore_index_from_cached_latents()
         try:
+            checkpoint_meta = await _fabric_load_checkpoint_meta()
             local_blob = MODEL.serialize_bytes()
-            _restore_retrieval_provenance(
-                await _fabric_load_checkpoint_meta(), local_blob)
+            provenance_ready = _restore_retrieval_provenance(
+                checkpoint_meta, local_blob)
+            # A local checkpoint may predate an explicitly bound Fabric
+            # checkpoint. If its bytes do not match the persisted binding,
+            # restore the exact bound artifact instead of silently discarding
+            # restart-safe retrieval provenance.
+            if not provenance_ready and isinstance(
+                    checkpoint_meta.get("retrieval_provenance"), dict):
+                fabric_blob = await _fabric_load_checkpoint()
+                if fabric_blob and MODEL.load_bytes(fabric_blob):
+                    WV_INDEX.connect()
+                    _restore_index_from_cached_latents()
+                    provenance_ready = _restore_retrieval_provenance(
+                        checkpoint_meta, fabric_blob)
+                    if provenance_ready:
+                        MODEL.last_fabric_load = now_iso()
+                        log.info("worldview: restored exact retrieval-bound "
+                                 "Fabric checkpoint over stale local state")
         except Exception:
             # A legacy local checkpoint remains usable, but not as pinned
             # retrieval-comparison evidence.
@@ -4808,12 +4839,19 @@ async def cap_worldview_retrieval_bind(
     if not MODEL.ready or not WV_INDEX.available:
         return {"ok": False, "eligible": False,
                 "error_code": "worldview_not_ready"}
+    previous_persist = MODEL.last_fabric_persist
+    binding_saved_at = now_iso()
     try:
         snapshot = _dataset_snapshot_from_dict(
             _bounded_json_input(snapshot_json, "snapshot_json"))
         records = _bounded_json_input(records_json, "records_json")
         if not isinstance(records, list):
             raise ValueError("records_json must contain a list")
+        # ``saved_at`` is part of the serialized checkpoint. Set it before
+        # hashing and storing so an immediate status/query reserialization has
+        # exactly the identity that was bound. Updating it only after the
+        # store made every successful binding invalidate itself immediately.
+        MODEL.last_fabric_persist = binding_saved_at
         blob = await asyncio.to_thread(MODEL.serialize_bytes)
         binding = JepaRetrievalProvenance.create(
             snapshot=snapshot,
@@ -4825,6 +4863,7 @@ async def cap_worldview_retrieval_bind(
             training_run_id=training_run_id,
         )
     except (TypeError, ValueError) as exc:
+        MODEL.last_fabric_persist = previous_persist
         log.info("worldview retrieval provenance rejected: %s", exc)
         return {"ok": False, "eligible": False,
                 "error_code": "provenance_validation_failed"}
@@ -4833,15 +4872,22 @@ async def cap_worldview_retrieval_bind(
         "num_concepts": MODEL.num_concepts,
         "embed_dim": MODEL.embed_dim,
         "records": len(MODEL.record_concepts),
-        "saved_at": now_iso(),
+        "saved_at": binding_saved_at,
         "retrieval_provenance": binding.to_dict(),
     }
     stored = await _fabric_store_checkpoint(blob, meta)
     if not (stored.get("sqlite") or stored.get("postgres")):
+        MODEL.last_fabric_persist = previous_persist
         return {"ok": False, "eligible": False,
                 "error_code": "checkpoint_store_failed"}
+    try:
+        MODEL.save()
+    except Exception:
+        # Fabric is the durable binding store; an unavailable local cache must
+        # not turn a successful exact Fabric write into a false error.
+        pass
     _WV_RETRIEVAL_PROVENANCE = binding
-    MODEL.last_fabric_persist = now_iso()
+    MODEL.last_fabric_persist = binding_saved_at
     return {
         "ok": True,
         "eligible": True,
