@@ -555,6 +555,25 @@ async def _seek_cache_key(query, scope, since, k, max_chars, include_memory) -> 
 _RERANK_TIMEOUT_S = float(os.getenv("VERA_SEEK_RERANK_TIMEOUT_S", "1.5") or 1.5)
 
 
+def _live_chat_seek() -> bool:
+    """This seek is a live chat turn's own tool call: the browser called memory.seek directly over /mcp/call (no
+    caller kind) and nothing else is running around it. Research, discovery, loops, evals and MCP agents call it
+    nested in another capability, or name their caller kind."""
+    orch = sys.modules.get("Vera.vera.capability_orchestration")
+    try:
+        caps = orch.RUNNING_CAPS.get() if orch is not None else ()
+        kind = orch.CALLER_KIND.get() if orch is not None else ""
+    except Exception:
+        return False
+    return bool(caps) and caps[0] == "memory.seek" and not kind
+
+
+def _rerank_wanted(mode: str) -> bool:
+    """memory.rerank: 'on' everywhere; 'not_chat' (owner, 12 Oct: research, discovery, loops and background, where
+    nobody waits on the reply) everywhere but a live chat turn's own seek; 'off' nowhere."""
+    return mode == "on" or (mode == "not_chat" and not _live_chat_seek())
+
+
 async def _rerank_head(query: str, cands: List[Dict], env=None) -> None:
     """FM-7.3 (switch memory.rerank): the cross-encoder re-reads the top fused candidates (one node call) and
     decides their order; they stay above the rest. Bounded at _RERANK_TIMEOUT_S; any failure keeps the fused order.
@@ -757,7 +776,7 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
                                           "collapsed": 0, "datasets": [],
                                           "legs": list(env.stages), "fabric": _df_evidence(df)})
 
-    if await _switch("memory.rerank") == "on":
+    if _rerank_wanted(await _switch("memory.rerank")):
         await _rerank_head(query, cands, env)
 
     # Normalise fused scores to ~0..1 for display, then age them: per dataset class and the question's temporal

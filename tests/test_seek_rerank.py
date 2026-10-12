@@ -24,7 +24,7 @@ def test_the_cross_encoder_orders_the_head_above_the_rest():
 def test_seek_reranks_before_it_normalises_and_keeps_the_fused_order_on_failure():
     src = open(os.path.join(ROOT, "vera", "fabric", "memory_retrieval.py"), encoding="utf-8").read()
     body = src[src.index("async def cap_memory_seek("):src.index("async def cap_memory_read(")]
-    assert body.index('await _switch("memory.rerank") == "on"') < body.index("# Normalise fused scores")
+    assert body.index('if _rerank_wanted(await _switch("memory.rerank")):') < body.index("# Normalise fused scores")
     helper = src[src.index("async def _rerank_head("):src.index("async def _seek_cache_get(")]
     assert 'cap.get("raw") or cap.get("func")' in helper and "asyncio.wait_for(" in helper
     assert "_fc.RERANK_TOP" in helper and "if len(by_idx) == len(head):" in helper
@@ -36,4 +36,37 @@ def test_seek_reranks_before_it_normalises_and_keeps_the_fused_order_on_failure(
 def test_the_switch_is_registered_off():
     from vera.minds import switchboard_core as SB
     f = SB.REGISTRY["memory.rerank"]
-    assert f.modes == ("off", "on") and f.default == "off" and f.package == "FM-7.3"
+    assert f.modes == ("off", "on", "not_chat") and f.default == "off" and f.package == "FM-7.3"
+
+
+def test_not_chat_reranks_everywhere_but_a_live_chat_turns_own_seek(monkeypatch):
+    # owner 12 Oct: rerank where nobody waits on the reply (research, discovery, loops, background), not in live chat
+    import ast
+    import contextvars
+    import types
+    src = open(os.path.join(ROOT, "vera", "fabric", "memory_retrieval.py"), encoding="utf-8").read()
+    tree = ast.parse(src)
+    ns = {"sys": sys}
+    for fn in ("_live_chat_seek", "_rerank_wanted"):
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == fn)
+        exec(compile(ast.get_source_segment(src, node), "memory_retrieval.py", "exec"), ns)
+    orch = types.SimpleNamespace(RUNNING_CAPS=contextvars.ContextVar("rc", default=()),
+                                 CALLER_KIND=contextvars.ContextVar("ck", default=""))
+    monkeypatch.setitem(sys.modules, "Vera.vera.capability_orchestration", orch)
+    want = ns["_rerank_wanted"]
+
+    def case(caps, kind=""):
+        ctx = contextvars.copy_context()
+        def run():
+            orch.RUNNING_CAPS.set(caps)
+            orch.CALLER_KIND.set(kind)
+            return want("not_chat")
+        return ctx.run(run)
+
+    assert case(("memory.seek",)) is False                              # the browser's chat tool call
+    assert case(("memory.seek",), "claude") is True                     # an MCP agent
+    assert case(("research.run", "memory.seek")) is True                # research
+    assert case(("discovery.topic", "memory.seek")) is True             # discovery
+    assert case(("dag.agent_loop_v7", "memory.seek")) is True           # a loop
+    assert case(()) is True                                             # no capability context (a job)
+    assert want("on") is True and want("off") is False
