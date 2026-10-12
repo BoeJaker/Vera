@@ -1142,7 +1142,9 @@ async def record_turn_usage(session_id: str, reply: str, page_ids: Optional[List
         out = {"injected": len(verdicts), "used": sum(1 for v in verdicts if v["used"]), "revived": len(revived)}
         try:
             await emit_event({"type": "memory.feedback", "session_id": session_id, **out,
-                              "used_ids": [v["id"] for v in verdicts if v["used"]][:20]})
+                              "used_ids": [v["id"] for v in verdicts if v["used"]][:20],
+                              # what the turn was given, so the chat can drop the runs of what it did not use (WSU-62)
+                              "injected_ids": [v["id"] for v in verdicts][:60]})
         except Exception:
             pass
     except Exception as e:

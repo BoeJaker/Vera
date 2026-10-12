@@ -9248,8 +9248,35 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   }
   document.addEventListener('transitionstart', _runsGlide, true);
   document.addEventListener('click', ev=>{ try{ const t=ev.target; if(t&&t.closest&&(t.closest('#rightRail .lhm-rail .lhm-ico')||t.closest('#hdrMore')||t.closest('.cmw'))) _runsLook(); }catch(_){} }, true);
+  /* WHAT THE REPLY USED (WSU-62, owner 2026-10-11: "context -> chat edges from what was actually used"). After a turn the
+     server judges every memory it gave the model against the reply and says so (memory.feedback: injected_ids, used_ids -
+     memory_hooks.record_turn_usage). The runs then leave out a memory the turn was given and did not use; anything without
+     a verdict (fabric, web, capabilities, a turn not yet judged) runs as before. One socket per page instance. */
+  const _CTX_USED={}; let _ctxUseEs=null, _ctxUseSid='';
+  function _ctxUseListen(){
+    if(!SID||(_ctxUseEs&&_ctxUseSid===SID)) return;
+    if(_ctxUseEs){ try{ _ctxUseEs.close(); }catch(_){} _ctxUseEs=null; }
+    _ctxUseSid=SID;
+    let es; try{ es=new WebSocket(location.origin.replace(/^http/,'ws')+'/ws/mcp'); }catch(_){ return; } _ctxUseEs=es;
+    es.onopen=()=>{ try{ es.send(JSON.stringify({ action:'subscribe_events' })); }catch(_){} };
+    es.onmessage=(ev)=>{ let w; try{ w=JSON.parse(ev.data); }catch(_){ return; } if(!w||w.type!=='event'||!w.data) return; const m=w.data;
+      if((m.event||m.type)!=='memory.feedback'||String(m.session_id||'')!==String(SID||'')) return; _ctxUseNote(m); };
+    es.onclose=()=>{ if(_ctxUseEs===es) _ctxUseEs=null; };
+    es.onerror=()=>{ try{ es.close(); }catch(_){} };
+  }
+  function _ctxUseNote(m){
+    const inj=(m.injected_ids||[]).map(String); if(!inj.length) return;
+    const v={ used:new Set((m.used_ids||[]).map(String)), injected:new Set(inj) }, keys=new Set();
+    /* the turn just judged: the newest frame's question and answer, the newest blocks, and in the menu page the turn in focus */
+    try{ const fr=CTX_FRAMES[CTX_FRAMES.length-1]; if(fr){ if(fr.mid) keys.add(String(fr.mid)); if(fr.amid) keys.add(String(fr.amid)); } }catch(_){}
+    try{ const ws=[...document.querySelectorAll('#msgs .mwrap[data-mid]')].reverse(); const la=ws.find(w=>w.classList.contains('a')), lu=ws.find(w=>w.classList.contains('u')); if(la) keys.add(la.dataset.mid); if(lu) keys.add(lu.dataset.mid); }catch(_){}
+    try{ if(_EMBED.only==='menu'&&_grFocusMid) keys.add(String(_grFocusMid)); }catch(_){}
+    keys.forEach(k=>{ _CTX_USED[k]=v; });
+    try{ _ctxRunsDraw(); }catch(_){}
+  }
   function _ctxRunsDraw(){
     const svg=document.getElementById('ctxRunsOverlay'); if(!svg) return;
+    try{ _ctxUseListen(); }catch(_){}
     if(_runsOff.ctx||_runsBlocked()){ _ctxRunsStand(svg); return; }
     // Zen keeps the words and nothing else — the canvas runs have always read the tier, and these now read it too
     if(_den()==='zen'){ _ctxRunsStand(svg); return; }
@@ -9280,7 +9307,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const TT=_ctxRunsTargets();
     // lane per type and side, so a type read by both has two runs, each to its own block; a block scrolled out of view
     // lends its runs to the other
-    const bySrc={}; all.filter(p=>p.lit).forEach(p=>{ const side=(p.by==='a'&&TT.a)?'a':(TT.u?'u':(TT.a?'a':'u')); const k=p.source+'|'+side; (bySrc[k]=bySrc[k]||{src:p.source, side, col:p.col, nodes:[]}).nodes.push(p); });
+    /* a memory the turn was given and did not use has no run (WSU-62); without a verdict, every lit record runs */
+    const _uv=[TT.u&&TT.u.mid, TT.a&&TT.a.mid].filter(Boolean).map(k=>_CTX_USED[String(k)]).find(Boolean);
+    const bySrc={}; all.filter(p=>p.lit&&!(_uv&&_uv.injected.has(String(p.id))&&!_uv.used.has(String(p.id)))).forEach(p=>{ const side=(p.by==='a'&&TT.a)?'a':(TT.u?'u':(TT.a?'a':'u')); const k=p.source+'|'+side; (bySrc[k]=bySrc[k]||{src:p.source, side, col:p.col, nodes:[]}).nodes.push(p); });
     let G=Object.keys(bySrc).map(k=>bySrc[k]).filter(g=>TT[g.side]);
     // Hover draws only what you are pointing at: the type under the pointer on the plot, or — pointing at the block in
     // focus — everything it read. Full draws them all; Zen returned above. (The canvas runs pick the same way.)
@@ -22202,7 +22231,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _cmpChip,_cmpSync,_paOpen,_paCopy,
     _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvTellToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
-    _persistMediaCfg,_persistCanvasCfg,_cvRelevance,_genThinkPhrases,_resetThinkPhrases,_artPop,
+    _persistMediaCfg,_persistCanvasCfg,_ctxUseNote,_cvRelevance,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
     setBase:url=>{BASE=url;},
