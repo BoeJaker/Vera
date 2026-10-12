@@ -119,6 +119,12 @@ async def _serve_desk_layout_js():
     return _script("desk_layout_core.js")
 
 
+# the page's one live channel (window.VeraLive, DA-03b): one /ws/mcp socket, filtered subscriptions, reconnect + catch-up
+@APP.get("/ui/live.js", include_in_schema=False)
+async def _serve_live_js():
+    return _script("live.js")
+
+
 # the Desk Lab (owner 2026-10-11, the desk design framework's step F3): widget forms side by side on fixtures, at every
 # size and state, in either theme, with a performance readout - a page for judging designs by measurement. Read-only:
 # it draws sample or pasted data and never calls a capability. shared-planning/context-and-ui/DESK-DESIGN-FRAMEWORK-PLAN.md
