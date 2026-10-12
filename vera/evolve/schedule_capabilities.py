@@ -303,11 +303,16 @@ def _clear_own_control_sync() -> None:
 
 
 def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = "",
-                        minds: Optional[Dict[str, str]] = None, minds_label: str = "") -> Dict[str, Any]:
+                        minds: Optional[Dict[str, str]] = None, minds_label: str = "",
+                        schedule_id: str = "") -> Dict[str, Any]:
     d = Path(_CENSUS_DIR)
     _clear_own_control_sync()
     env = dict(os.environ)
     env["CENSUS_TEMPLATES"] = template or "default"
+    # who drove it (DEEP-21 D21-14): the scheduler, not a hard-coded Claude session
+    env["CENSUS_OPERATOR"] = "vera-scheduler"
+    env["VERA_CENSUS_TOOL"] = "sched"
+    env["CENSUS_SESSION_ID"] = "sched:%s" % (schedule_id or "unknown")
     # A forced planning style: run_census.py applies it to every goal and
     # reserves the run in its own series (census.<template>-style-<s>-runN),
     # which census_all.sh archives under that reservation. Never inherited from
@@ -434,7 +439,8 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
                                       str(t.get("plan_style") or ""),
                                       str(t.get("intent_core") or ""),
                                       dict(t.get("minds") or {}),
-                                      str(t.get("minds_label") or ""))
+                                      str(t.get("minds_label") or ""),
+                                      str(rec.get("id") or ""))
         if res.get("ok"):
             await _set_owner({"schedule_id": rec["id"], "started_at": core.iso(_now()),
                               "pid": res.get("pid"), "template": t.get("template", "default"),
