@@ -189,6 +189,9 @@ def digest_events(events: Sequence[Dict[str, Any]],
             ver.add(f"{e.get('ver')}@{e.get('br')}")
         if t.endswith(".tier"):
             plan["tier"] = e.get("tier")
+            if "tier_lower" in e:                 # FM-4.3: was the switch on, and did it change the tier
+                plan["tier_lower"] = bool(e.get("tier_lower"))
+                plan["tier_lower_applied"] = bool(e.get("tier_lower_applied"))
         elif t.endswith(".intent"):
             plan["intent"] = e.get("intent")
         elif t.endswith(".plan_style"):

@@ -1202,6 +1202,10 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
         "cycles_per_step": co.get("cycles_per_step"),
         "stage_calls": co.get("stage_calls"),
         "plan_tier": (tr.get("plan") or {}).get("tier"),
+        # plan.tier_lower (FM-4.3): on, and whether it changed this goal's tier - an arm whose goals
+        # never qualify is otherwise blind (12 Oct 2026)
+        "tier_lower": (tr.get("plan") or {}).get("tier_lower"),
+        "tier_lower_applied": (tr.get("plan") or {}).get("tier_lower_applied"),
         "plan_intent": (tr.get("plan") or {}).get("intent"),
         # Planning style: what this census ASKED for, and what the loop says it
         # USED (they differ on a fallback). A row from a loop that predates
