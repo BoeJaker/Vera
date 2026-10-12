@@ -36,7 +36,8 @@ def _rows(n_pos=40, n_neg=20, n_test=8):
     for i in range(n_pos + n_neg):
         rows.append({"id": f"d{i}", "question": {"id": "loop.step_done"}, "gold": "end" if i < n_pos else "continue",
                      "split": "test" if i % ((n_pos + n_neg) // n_test) == 0 else "train",
-                     "state": {"step": "s", "step_goal": "g", "result": f"r{i}"}})
+                     "state": {"step": "s", "step_goal": "g",
+                               "result": f"r{i} " + ("finished" if i < n_pos else "unfinished")}})
     return rows
 
 
@@ -70,6 +71,12 @@ def test_features_metrics_and_pruning():
     assert m["accuracy"] == 1.0 and m["auc"] == 1.0 and m["coverage_at_0_8"] == 1.0
     assert core.metrics([0.6, 0.6], [1, 0])["auc"] == 0.5
     assert core.prune([("a", 1), ("b", 3), ("c", 2), ("d", 4)], keep=2) == ["c", "a"]
+    folds = core.stratified_folds([1.0] * 12 + [0.0] * 10)
+    assert len(folds) == core.FOLDS and sorted(i for f in folds for i in f) == list(range(22))
+    assert all(sum(1 for i in f if i >= 12) >= 2 for f in folds), "each fold holds both classes"
+    th = core.thresholds(0.72)
+    assert th["accuracy"] == (0.72, "maximize") and th["auc"] == (core.AUC_MIN, "maximize")
+    assert core.thresholds(0.2)["accuracy"][0] == 0.8, "majority either way"
     mod = core.head_module("loop.step_done")
     assert mod["id"] == "student-loop-step-done" and mod["nodes"][0]["params"]["activation"] == "sigmoid"
 
@@ -80,13 +87,15 @@ def test_a_student_binding_says_what_it_answers(monkeypatch):
     t = {"student": True, "questions": ["loop.step_done"], "tier": 3, "auc": 0.81, "accuracy": 0.75,
          "task": "binary_classification"}
     uses = mo.model_uses("student-loop-step-done", t)
-    assert "System 1 student for loop.step_done (shadow only)" in uses and "AUC 0.81" in uses
+    assert "System 1 student for loop.step_done (shadow only)" in uses and "held-out AUC 0.81" in uses
+    assert "5-fold CV AUC 0.81" in mo.model_uses("m", dict(t, eval="5-fold CV"))
     b = mb.binding("binary_classification", "onnx", uses=uses, io_in="vectors", io_out="labels",
                    questions=["loop.step_done"], tier=3)
     assert mb.validate(b) == []
 
 
-def test_the_whole_w2_path_with_faked_capabilities(tmp_path, monkeypatch):
+@pytest.mark.parametrize("signal", [True, False], ids=["learns-is-bound", "chance-is-unbound"])
+def test_the_whole_w2_path_with_faked_capabilities(tmp_path, monkeypatch, signal):
     np = pytest.importorskip("numpy")
     st_mod = None
     calls = []
@@ -99,7 +108,9 @@ def test_the_whole_w2_path_with_faked_capabilities(tmp_path, monkeypatch):
         return {"ok": True, "snapshot_id": "snap_" + "a" * 64, "path": str(snap)}
 
     async def nlp_embed(texts):
-        return {"embeddings": [[0.01 * (i % 7)] * core.DIM for i, _ in enumerate(texts)]}
+        # first feature says the answer (only the "unfinished" rows lack it)
+        return {"embeddings": [[0.0 if "unfinished" in t else 1.0] + [0.01 * (i % 7)] * (core.DIM - 1)
+                               for i, t in enumerate(texts)]}
 
     async def ml_create(**a):
         calls.append(("create", a["module_id"]))
@@ -118,6 +129,15 @@ def test_the_whole_w2_path_with_faked_capabilities(tmp_path, monkeypatch):
     async def ml_stop(job_id):
         return {"ok": True}
 
+    async def ml_predict(module_id, X):
+        rows = json.loads(X)
+        calls.append(("predict", module_id))
+        return {"ok": True, "predictions": [[(0.9 if r[0] > 0.5 else 0.1) if signal else 0.6] for r in rows]}
+
+    async def ml_delete(id):
+        calls.append(("delete", id))
+        return {"ok": True}
+
     onnx_dir = tmp_path / "onnx"
     onnx_dir.mkdir()
 
@@ -129,17 +149,14 @@ def test_the_whole_w2_path_with_faked_capabilities(tmp_path, monkeypatch):
     async def hosts():
         return {"hosts": [{"id": "gpu-host", "host": "10.0.0.250"}, {"id": "cpu", "host": "10.0.0.246"}]}
 
-    async def run_artifact(slug, X):
-        n = len(json.loads(X))
-        return {"ok": True, "predictions": [[0.9 if i % 2 else 0.2] for i in range(n)], "ran_on": "cpu-246"}
-
-    bound = {}
-    fake_onnx = types.SimpleNamespace(ONNX_DIR=str(onnx_dir), _safe=lambda s: s, _run_artifact=run_artifact,
-                                      trained_for=lambda mid: {}, bind_student=lambda slug, mid, t: bound.update(t))
+    binds = []
+    fake_onnx = types.SimpleNamespace(ONNX_DIR=str(onnx_dir), _safe=lambda s: s, trained_for=lambda mid: {},
+                                      bind_student=lambda slug, mid, t, bound=True: binds.append((t, bound)))
     reg = {n: {"func": f} for n, f in (("decide.export", decide_export), ("nlp.embed", nlp_embed),
                                         ("ml.create", ml_create), ("ml.train", ml_train),
                                         ("ml.train.status", ml_status), ("ml.train.stop", ml_stop),
-                                        ("ml.export.onnx", ml_export), ("exec.ssh.hosts.list", hosts))}
+                                        ("ml.export.onnx", ml_export), ("exec.ssh.hosts.list", hosts),
+                                        ("ml.train.predict", ml_predict), ("ml.delete", ml_delete))}
 
     class R:
         def __init__(self): self.kv, self.lists = {}, {}
@@ -189,16 +206,25 @@ def test_the_whole_w2_path_with_faked_capabilities(tmp_path, monkeypatch):
     monkeypatch.setattr(st_mod, "POLL_S", 0)
 
     dry = asyncio.run(st_mod.train_student("loop.step_done", dry_run=True))
-    assert dry["ok"] and dry["dry_run"] and dry["features"]["train"] > 0 and not any(c[0] == "train" for c in calls)
+    assert dry["ok"] and dry["dry_run"] and dry["features"]["rows"] == 60 and not any(c[0] == "train" for c in calls)
+    assert dry["features"]["folds"] == core.FOLDS
 
     res = asyncio.run(st_mod.train_student("loop.step_done", dry_run=False, force=True))
     assert res["ok"], res
-    assert res["state"] == "trained" and res["package_id"] and res["report_id"].startswith("eval_")
-    assert bound["questions"] == ["loop.step_done"] and bound["tier"] == 3 and bound["student"]
+    assert res["state"] == ("trained" if signal else "trained_not_bound") and res["bound"] is signal
+    assert res["package_id"] and res["report_id"].startswith("eval_")
+    t, b = binds[-1]
+    assert b is signal and t["questions"] == ["loop.step_done"] and t["tier"] == 3 and t["student"]
+    assert t["package_id"] == res["package_id"] and t["eval"] == "5-fold CV"
+    assert (res["metrics"]["auc"] == 1.0) if signal else (res["metrics"]["auc"] == 0.5)
+    cv = [c[1] for c in calls if c[0] == "train" and "-cv" in c[1]]
+    assert len(cv) == core.FOLDS and sorted(c[1] for c in calls if c[0] == "delete") == sorted(cv)
     pkg = PS.SQLiteModelPackageRegistry(tmp_path / "state" / "packages.sqlite3").get(res["package_id"])
     assert pkg is not None and pkg.format == "onnx"
     reports = list((tmp_path / "state" / "eval" / "students" / "student-loop-step-done").glob("eval_*.json"))
-    assert len(reports) == 1 and json.loads(reports[0].read_text())["report"]["status"] == "completed"
+    body = json.loads(reports[0].read_text())
+    assert len(reports) == 1 and body["report"]["status"] == "completed" and body["report"]["passed"] is signal
+    assert body["report"]["provider_id"] == "vera.students.cv5" and body["report"]["evaluated_cases"] == 60
     assert ("train", "student-loop-step-done") in calls and ("event", "decide.student.trained") in calls
     # outside the window, not forced: skipped and recorded, nothing trained
     monkeypatch.setattr(st_mod.core, "in_window", lambda h, w=None: False)
