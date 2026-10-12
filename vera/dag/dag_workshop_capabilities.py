@@ -23351,6 +23351,9 @@ async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
     except Exception:
         _lower = False
     heur = _v7_tier_heuristic(goal, lower=_lower)
+    # Whether the lowered floor CHANGED this goal's tier (12 Oct 2026: a census arm with the switch on
+    # never fired once - its goals have no conjunction-only 'complex' - and nothing said so).
+    _lower_applied = bool(_lower) and heur != _v7_tier_heuristic(goal)
     llm = ""
     reason = ""
     if use_llm:
@@ -23365,7 +23368,8 @@ async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
         tier = "complex"
         suppressed = True
     return {"tier": tier, "suggested": suggested, "heuristic": heur, "llm": llm,
-            "reason": reason, "escalation_suppressed": suppressed, "tier_lower": _lower}
+            "reason": reason, "escalation_suppressed": suppressed, "tier_lower": _lower,
+            "tier_lower_applied": _lower_applied}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -25371,7 +25375,9 @@ async def cap_dag_agent_loop_v6(
                           "heuristic": tier_info.get("heuristic", ""),
                           "llm": tier_info.get("llm", ""),
                           "reason": tier_info.get("reason", ""),
-                          "escalation_suppressed": tier_info.get("escalation_suppressed", False)})
+                          "escalation_suppressed": tier_info.get("escalation_suppressed", False),
+                          "tier_lower": bool(tier_info.get("tier_lower")),
+                          "tier_lower_applied": bool(tier_info.get("tier_lower_applied"))})
         if _dl is not None:
             _dl.tier(tier, tier_info, model=str(model or ""), inputs={"goal": goal})
         # GOAL INTENT (build/research/action/mixed) — the KIND of work, which
