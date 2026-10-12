@@ -30,6 +30,10 @@ KINDS = ("census", "suite", "task", "pipeline", "board", "loop", "tests", "cap")
 # Kinds whose work outlives the tick that started it: run in the background, the run record closed when it ends,
 # and the next start held while one is still going.
 BACKGROUND_KINDS = ("loop", "tests")
+#: Every kind but census now starts in the background (DEEP-21 D21-1): a run still going holds the
+#: schedule's next start back, whatever the kind. BACKGROUND_KINDS keeps its narrower meaning for the
+#: `continuous` repeat rule (cooldown vs interval) so existing schedules keep their cadence.
+RUN_TRACKED_KINDS = ("suite", "task", "pipeline", "board", "loop", "tests", "cap")
 STILL_RUNNING_HOURS = 6                 # a background run older than this no longer holds the next one back
 REPEATS = ("continuous", "once_per_window", "every")
 WINDOW_END = ("finish", "yield", "drop")
@@ -446,7 +450,7 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
             every = timedelta(minutes=int(rec.get("every_minutes") or 60))
             if last_started and now - last_started < every:
                 return False, "interval not elapsed"
-        if kind in BACKGROUND_KINDS and last_started:
+        if kind in RUN_TRACKED_KINDS and last_started:
             last_fin = parse_iso(rec.get("last_finished_at") or "")
             if (not last_fin or last_fin < last_started) and now - last_started < timedelta(hours=STILL_RUNNING_HOURS):
                 return False, "previous run still going"
@@ -497,6 +501,19 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
     elif kind == "cap" and rec.get("exclusive", True) and int(state.get("loops_running") or 0) > 0:
         return False, "an agent loop is running"                      # RF-09: caps wait for loops
     return True, "due"
+
+
+def interrupted_runs(runs: List[Dict[str, Any]], process_started: datetime) -> List[Dict[str, Any]]:
+    """Background runs a restart killed (DEEP-21 D21-5): not census, no finished_at, started before
+    this process - nothing is left alive to close them, and each holds its schedule back."""
+    out = []
+    for r in runs or []:
+        if not isinstance(r, dict) or r.get("kind") == "census" or r.get("finished_at"):
+            continue
+        st = parse_iso(r.get("started_at") or "")
+        if st is not None and st < process_started:
+            out.append(r)
+    return out
 
 
 def plan_tick(schedules: Iterable[Dict[str, Any]], now: datetime, state: Dict[str, Any],
