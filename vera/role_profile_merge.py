@@ -32,3 +32,38 @@ def inherit_declared_fields(declared: dict, supplied: dict) -> dict:
         if k not in out:
             out[k] = dv
     return out
+
+
+# -- one model, named once (owner, 12 Oct 2026) ------------------------------------------------------
+# A role's `model` may name ANOTHER role of the same profile: "@executor" means "whatever model the
+# executor role uses". Owner: "make sure the model it uses is the same so you don't have to update 2
+# places" - the loop's coder now follows the executor, so changing the executor's model changes both.
+# One hop only: a reference to a role that is itself a reference (or missing) resolves to "" (the
+# caller's default model), never a loop.
+
+def model_ref(rule) -> str:
+    """The role a rule's model refers to ("executor" for "@executor"), else ""."""
+    m = str((rule or {}).get("model") or "").strip()
+    return m[1:].strip() if m.startswith("@") and len(m) > 1 else ""
+
+
+def follow_model_ref(rule, lookup):
+    """`rule` with an "@<role>" model replaced by that role's model (`lookup(role)` -> its rule).
+    The reference is kept as `model_ref` so the UI can show it. Other rules come back unchanged."""
+    target = model_ref(rule)
+    if not target:
+        return rule
+    other = lookup(target) or {}
+    model = str(other.get("model") or "").strip()
+    if model.startswith("@"):
+        model = ""
+    out = dict(rule)
+    out["model"] = model
+    out["model_ref"] = "@" + target
+    return out
+
+
+def follow_model_refs(roles: dict) -> dict:
+    """Every role in one profile's roles dict with its "@role" model resolved."""
+    roles = dict(roles or {})
+    return {name: follow_model_ref(rule, roles.get) for name, rule in roles.items()}

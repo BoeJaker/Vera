@@ -1117,9 +1117,13 @@ ROLE_PROFILES_USER: Dict[str, dict] = {}
 
 try:
     from Vera.vera.role_profile_merge import inherit_declared_fields as _inherit_declared_fields
+    from Vera.vera.role_profile_merge import follow_model_ref as _follow_model_ref
+    from Vera.vera.role_profile_merge import follow_model_refs as _follow_model_refs
 except Exception:                                     # pragma: no cover
     try:
         from vera.role_profile_merge import inherit_declared_fields as _inherit_declared_fields
+        from vera.role_profile_merge import follow_model_ref as _follow_model_ref
+        from vera.role_profile_merge import follow_model_refs as _follow_model_refs
     except Exception:
         def _inherit_declared_fields(declared: dict, supplied: dict) -> dict:
             return dict(supplied or {})               # degrade to previous behaviour
@@ -1168,21 +1172,30 @@ def _effective_role_profiles() -> Dict[str, dict]:
         user = ROLE_PROFILES_USER.get(name) or {}
         for role, r in (user.get("roles") or {}).items():
             merged["roles"][role] = r
+        merged["roles"] = _follow_model_refs(merged["roles"])     # "@executor" models (12 Oct 2026)
         out[name] = merged
     for name, prof in ROLE_PROFILES_USER.items():
         if name not in out:
             out[name] = {"name": name, "label": prof.get("label", name),
                          "owner": prof.get("owner", "user"),
-                         "roles": dict(prof.get("roles") or {})}
+                         "roles": _follow_model_refs(dict(prof.get("roles") or {}))}
     return out
 
 
-def resolve_role_rule(profile: str, role: str) -> Optional[dict]:
-    """Effective rule for a profile role: USER override, else DECLARED."""
+def _resolve_role_rule_raw(profile: str, role: str) -> Optional[dict]:
     user = (ROLE_PROFILES_USER.get(profile) or {}).get("roles") or {}
     if role in user:
         return user[role]
     return ((ROLE_PROFILES_DECLARED.get(profile) or {}).get("roles") or {}).get(role)
+
+
+def resolve_role_rule(profile: str, role: str) -> Optional[dict]:
+    """Effective rule for a profile role: USER override, else DECLARED; a model written as
+    "@<role>" is that role's model in the same profile (role_profile_merge.follow_model_ref)."""
+    rule = _resolve_role_rule_raw(profile, role)
+    if rule is None:
+        return None
+    return _follow_model_ref(rule, lambda r: _resolve_role_rule_raw(profile, r))
 
 
 def _merge_rule_over_base(rule: Optional[dict], base: dict,
