@@ -2434,6 +2434,7 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
 <script src="/ui/elements/vera_markdown.js"></script>
 <script src="/ui/elements/vera_output.js"></script>
 <script src="/ui/widgets/widget_element.js"></script>
+<script src="/ui/live.js"></script>   <!-- window.VeraLive: the page's one live channel (DA-03b/c) -->
     <vera-session-notes id="ctxNotesEl" scope="chat" title="Chat session memory"></vera-session-notes>
     <!-- what memory may forget, and how quickly (owner, 2026-10-05); filled by _fadeLoad from memory.fade.policy -->
     <div class="sec" style="margin-top:5px">Memory fading</div>
@@ -7465,18 +7466,23 @@ IMPORTANT:
     _cvLookEs.onopen=()=>{ try{ _cvLookEs.send(JSON.stringify({ action:'subscribe_events' })); }catch(_){} };
     _cvLookEs.onmessage=(ev)=>{ let w; try{ w=JSON.parse(ev.data); }catch(_){ return; } if(!w||w.type!=='event'||!w.data) return; const m=w.data; const t=m.event||m.type||'';
       if(t!=='info.seek.step') return; const q=String(m.question||'').replace(/\s+/g,' ').trim();
-      const h=Object.values(_cvLook).find(x=>x.state==='running'&&x.q&&(x.q===q||q.startsWith(x.q.slice(0,120)))); if(!h) return;
-      h.stage=String(m.stage||''); h.need=m.need||h.need; h.subject=m.subject||h.subject; if(Array.isArray(m.checked)) h.checked=m.checked.map(String);
-      if(Array.isArray(m.items)&&m.items.length) h.items=m.items.filter(x=>x&&x.url).map((x,i)=>({ id:x.url, n:i+1, url:x.url, domain:String(x.site||'').replace(/^www\./,''), title:String(x.title||x.url), when:x.published||undefined, meta:x.read?{ read:'page read' }:{} }));
-      _cvLookDraw(h, true); };
+      const h=Object.values(_cvLook).find(x=>x.state==='running'&&!x.tid&&x.q&&(x.q===q||q.startsWith(x.q.slice(0,120)))); if(!h) return;
+      _cvLookStep(h, m); };
     _cvLookEs.onerror=()=>{ try{ _cvLookEs.close(); }catch(_){} _cvLookEs=null; };
+  }
+  /* one stage of a lookup into its item - from its own trace (VeraLive, DA-03c) or, on a page without it, by its question */
+  function _cvLookStep(h, m){
+    if(!h||h.state!=='running') return;
+    h.stage=String(m.stage||''); h.need=m.need||h.need; h.subject=m.subject||h.subject; if(Array.isArray(m.checked)) h.checked=m.checked.map(String);
+    if(Array.isArray(m.items)&&m.items.length) h.items=m.items.filter(x=>x&&x.url).map((x,i)=>({ id:x.url, n:i+1, url:x.url, domain:String(x.site||'').replace(/^www\./,''), title:String(x.title||x.url), when:x.published||undefined, meta:x.read?{ read:'page read' }:{} }));
+    _cvLookDraw(h, true);
   }
   function _cvLookStart(el, cap, args){
     if(!SID||!_cvEnrichOn()||!_CV_LOOK_RE.test(String(cap||''))) return null; const mid=_cvActMid(el); if(!mid) return null;
     /* its first stages go out before the live socket is subscribed: the item says what a lookup does first */
     const h={ key:'lookup:'+mid+':'+(++_cvLookN), mid, cap:String(cap), q:_cvLookQ(args), state:'running', stage:/^intel\./.test(String(cap))?'checking what Vera tracks':'searching the web and the news', items:[], checked:[], t0:Date.now(), added:false };
     _cvLook[h.key]=h; h.el=el; try{ el.__cvLookKey=h.key; }catch(_){}
-    _cvLookDraw(h, true); _cvLookListen(); return h;
+    _cvLookDraw(h, true); if(!window.VeraLive) _cvLookListen(); return h;   /* with VeraLive the call's own trace feeds it (executeCapInline) */
   }
   function _cvLookEnd(h, ok, content, args){
     if(!h) return; h.state=ok?'done':'error'; h.ms=Date.now()-h.t0;
@@ -9306,7 +9312,11 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      memory_hooks.record_turn_usage). The runs then leave out a memory the turn was given and did not use; anything without
      a verdict (fabric, web, capabilities, a turn not yet judged) runs as before. One socket per page instance. */
   const _CTX_USED={}; let _ctxUseEs=null, _ctxUseSid='';
+  let _ctxUseSub=null;
   function _ctxUseListen(){
+    /* on the page's one live channel, filtered on the server to this session's verdicts (DA-03c) */
+    if(window.VeraLive){ if(!SID||(_ctxUseSub&&_ctxUseSid===SID)) return; if(_ctxUseSub){ try{ _ctxUseSub.close(); }catch(_){} } _ctxUseSid=SID;
+      _ctxUseSub=VeraLive.subscribe({ types:['memory.feedback'], sid:SID }, (m)=>{ if(String(m.session_id||m.sid||'')===String(SID||'')) _ctxUseNote(m); }); return; }
     if(!SID||(_ctxUseEs&&_ctxUseSid===SID)) return;
     if(_ctxUseEs){ try{ _ctxUseEs.close(); }catch(_){} _ctxUseEs=null; }
     _ctxUseSid=SID;
@@ -11343,6 +11353,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(capName==='ui.directive'&&content&&typeof content==='object'&&content.row){ try{ el.innerHTML=_drvChipHtml(content, resultId, previewClean); el.classList.add('drv'); }catch(_){} try{ _cvDrvRibbon(content); }catch(_){} }   // …and the ribbon on the surface it drove
     return _rep;
   }
+  let _capTraceN=0;   // the page's own trace ids for its calls (DA-03c)
   async function executeCapInline(el,capName,capArgs,{silent=false}={}){
     // Guard: stop button aborts in-progress cap chains
     if(_GLOBAL_ABORT.signal.aborted) return;
@@ -11374,18 +11385,24 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     let res=null,httpStatus=200;
     const _act=(()=>{ try{ return _cvActStart(el, capName, coercedArgs); }catch(_){ return null; } })();   // the desk's activity line for this call
     const _look=(()=>{ try{ return _cvLookStart(el, capName, coercedArgs); }catch(_){ return null; } })();   // a lookup's own item, from its start
+    /* THE CALL'S OWN TRACE (DA-03c, DESK-SPINE §3.1): the page makes the trace id and sends it with the call; a lookup's
+       stages are that trace's events on the page's one live channel - not matched by their question's text */
+    const _tid='t-'+String(SID||'page')+'-'+Date.now().toString(36)+'-'+(++_capTraceN);
+    let _lookSub=null;
+    if(_look&&window.VeraLive){ try{ _look.tid=_tid; _lookSub=VeraLive.subscribe({ trace:[_tid] }, (m)=>{ if((m.event||m.type)==='info.seek.step') _cvLookStep(_look, m); }); await VeraLive.ready(1500); }catch(_){ _lookSub=null; } }
     try{
       // session_id rides along so the backend can route the call into this
       // session's sandbox container (and scope its events) — the /mcp/call
       // handler injects it into caps that accept it and sets the trigger chain.
       const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({name:capName,arguments:coercedArgs,session_id:SID||''})});
+        body:JSON.stringify({name:capName,arguments:coercedArgs,session_id:SID||'',trace_id:_tid})});
       httpStatus=r.status;
       res=await r.json();
     }catch(e){res=null;}
     try{ const c=res&&res.type==='tool_result'?res.content:null; const bad=!res||res.type!=='tool_result'||(c&&typeof c==='object'&&(c.ok===false||(c.error!=null&&c.error!==''&&c.error!==false)));
       _cvActEnd(_act, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer');
       _cvLookEnd(_look, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer', coercedArgs); }catch(_){}
+    if(_lookSub) setTimeout(()=>{ try{ _lookSub.close(); }catch(_){} }, 1500);   // a stage may trail the answer
 
     // Build a persistent cap header showing what was run (never vanishes)
     const argsSummary=Object.entries(coercedArgs).filter(([k])=>k!=='trace_id').map(([k,v])=>`${k}=${JSON.stringify(v).slice(0,20)}`).slice(0,3).join(' ');
@@ -22289,7 +22306,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     _cmpChip,_cmpSync,_paOpen,_paCopy,
     _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvTellToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
-    _persistMediaCfg,_persistCanvasCfg,_ctxUseNote,_cvRelevance,_genThinkPhrases,_resetThinkPhrases,_artPop,
+    _persistMediaCfg,_persistCanvasCfg,_ctxUseNote,_cvLookStep,_cvRelevance,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
     setContext:txt=>{_parentCtx=txt;},
     setBase:url=>{BASE=url;},

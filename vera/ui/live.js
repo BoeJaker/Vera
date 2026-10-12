@@ -43,7 +43,8 @@
   function schedulePush() { if (pushQ) return; pushQ = true; Promise.resolve().then(() => { pushQ = false; pushFilter(); }); }
   /* one event to every subscription it matches, once (a catch-up and the socket may both bring it) */
   function dispatch(ev) {
-    const id = String(ev.ts || '') + '|' + String(ev.type || '') + '|' + String(ev.trace_id || '') + '|' + String(ev.stage || ev.name || '');
+    let body = ''; try { body = JSON.stringify(ev); } catch (_) { body = String(ev.type || ''); }
+    const id = String(ev.ts || '') + '|' + body.length + '|' + body.slice(0, 160);   /* the same event, not merely the same moment */
     if (S.seen.indexOf(id) >= 0) return; S.seen.push(id); if (S.seen.length > 400) S.seen.splice(0, 200);
     if (ev.ts && String(ev.ts) > S.lastTs) S.lastTs = String(ev.ts);
     S.subs.forEach((s) => { if (match(ev, s.f)) { try { s.fn(ev); } catch (_) { /* a subscriber's own error */ } } });
@@ -77,6 +78,10 @@
     return { id, close() { if (!live) return; live = false; S.subs.delete(id); if (!S.subs.size) stop(); else schedulePush(); },
       update(f) { const s = S.subs.get(id); if (s) { s.f = norm(f); schedulePush(); } } };
   }
+  /* resolves when the socket is open and told the current filter (at most ms - a socket that does not open never holds
+     a caller); a page that makes its own call subscribes first, then awaits this, then calls */
+  function ready(ms) { if (S.open) { pushFilter(); return Promise.resolve(true); }
+    return new Promise((res) => { let done = false; const go = (v) => { if (!done) { done = true; res(v); } }; S.waiting.push(() => go(true)); setTimeout(() => go(false), ms == null ? 1500 : ms); }); }
   /* a call that is followed live: its trace id is made here and subscribed to before the call goes out */
   async function call(cap, args, opts) {
     opts = opts || {}; const sid = String(opts.sid || root.SID || 'page');
@@ -84,8 +89,7 @@
     const sub = subscribe(Object.assign({ trace: [tid] }, opts.types ? { types: opts.types } : {}), (ev) => { if (opts.onEvent) opts.onEvent(ev); });
     /* the socket is open and told this trace before the call goes out - its first steps would be lost otherwise (a
        first connection has nothing to catch up from); a socket that does not open in 1.5 s does not hold the call */
-    if (!S.open) await new Promise((res) => { let done = false; const go = () => { if (!done) { done = true; res(); } }; S.waiting.push(go); setTimeout(go, opts.wait == null ? 1500 : opts.wait); });
-    else await Promise.resolve();
+    await ready(opts.wait);
     try {
       const r = await root.fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: cap, arguments: args || {}, trace_id: tid }) });
       const j = await r.json(); const ans = j && j.type === 'tool_result' && 'content' in j ? j.content : j;
@@ -93,5 +97,5 @@
       return ans;
     } finally { setTimeout(() => sub.close(), opts.linger == null ? 1500 : opts.linger); }   // a step may trail the answer
   }
-  root.VeraLive = { subscribe, call, match, cover, state: () => ({ socket: !!S.ws, open: S.open, subs: S.subs.size, backoff: S.backoff, lastTs: S.lastTs, filter: S.sentFilter ? JSON.parse(S.sentFilter) : null }), version: 1 };
+  root.VeraLive = { subscribe, call, ready, match, cover, state: () => ({ socket: !!S.ws, open: S.open, subs: S.subs.size, backoff: S.backoff, lastTs: S.lastTs, filter: S.sentFilter ? JSON.parse(S.sentFilter) : null }), version: 1 };
 })();

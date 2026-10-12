@@ -450,6 +450,15 @@
       subscribe: function(prefix, cb){
         var entry = {prefix: prefix, cb: cb};
         listeners.push(entry);
+        /* the page's one live channel when it has one (window.VeraLive, DA-03c): this prefix only, filtered on the server */
+        if (window.VeraLive && typeof window.VeraLive.subscribe === 'function') {
+          var live = window.VeraLive.subscribe({ types: [prefix] }, function(ev){ try { cb(ev); } catch(_){} });
+          return function unsubscribe(){
+            var i = listeners.indexOf(entry);
+            if (i >= 0) listeners.splice(i, 1);
+            try { live.close(); } catch(_){}
+          };
+        }
         ensureWs();
         return function unsubscribe(){
           var i = listeners.indexOf(entry);
