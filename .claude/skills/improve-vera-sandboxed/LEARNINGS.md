@@ -157,3 +157,20 @@ rules; new ones start here. Newest at the bottom.
 - evidence: traces `c6142d3a-e40b-4fc1-a409-b240d923fdeb` and
   `ccb2aae7-a13c-439c-8517-2739fa3dfc5d`
 - status: folded into SKILL.md v2
+
+## 2026-10-13 — standalone and pipeline critical callers did not share execution
+- task: validate the JEPA retrieval-binding durability repair (SW-09, pipeline
+  `a9e77ffd`)
+- what happened: `evolve.unittest.run` began the exact 1,019-file critical
+  tier, then `evolve.pipeline.test` with identical paths, marker, timeout and no
+  extra arguments waited instead of joining. After the first 12-shard run
+  completed 7,400/0, the pipeline launched a second 12-shard run.
+- cause: the documented cross-caller single-flight assumption is not true in
+  the deployed Loop Lab implementation, even though each caller is internally
+  single-flight.
+- rule now: use one authoritative gate caller only: `pipeline.test` for a
+  pipeline-managed change, or `unittest.run` for an independent branch; never
+  sequence both for the same gate.
+- evidence: pipeline `a9e77ffd`; unittest history at
+  `2026-10-12T22:55:00Z`; board `loop-lab-critical-single-flight-join`
+- status: folded into SKILL.md v3

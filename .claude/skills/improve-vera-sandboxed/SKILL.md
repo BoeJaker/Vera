@@ -462,14 +462,16 @@ there anyway, but pass it — explicit beats relying on a default that could
 change again).
 
 The critical tier currently exceeds the historical 900-second starter ceiling.
-Never launch duplicate runners to work around that. `evolve.unittest.run` is
-single-flight by exact worktree plus pytest tokens (the timeout is deliberately
-not part of the key): start one exact `paths="tests", markers="critical"` run
-with `timeout=1800`, then call `evolve.pipeline.test` while it is active so the
-pipeline joins the same execution and records the shared JUnit receipt. Do not
-change `extra` between those calls; that creates a different key and therefore
-a second container. A client timeout is not a test failure and not permission
-to re-fire—inspect test history/pipeline state and running containers first.
+Never launch duplicate runners to work around that. Use exactly one gate caller:
+for a pipeline created or adopted through Loop Lab, call only
+`evolve.pipeline.test(id=..., paths="tests", markers="critical", timeout=1800)`;
+for an independent branch with no pipeline, call only `evolve.unittest.run`
+with those exact test tokens. Do not start `unittest.run` and then call
+`pipeline.test`: as observed on 2026-10-13, the two callers can miss the shared
+single-flight execution and launch a second 12-shard gate even with identical
+tokens (board `loop-lab-critical-single-flight-join`). A client timeout is not
+a test failure and not permission to re-fire—inspect test history, pipeline
+state and running containers first.
 
 **`gate_passed` is TWO checks, not one** (as of the 2026-08-16 M3 work — the
 description on the cap itself is the source of truth if this drifts):
