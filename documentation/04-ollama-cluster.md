@@ -857,8 +857,8 @@ Inference waits at most 20 s for a node with room, then runs on the host's execu
 **Several jobs per node.** A node worker runs compute jobs side by side, up to its `compute_slots` (default: its
 cores minus 2; `VERA_COMPUTE_SLOTS` overrides it). It publishes `compute_running`, and other tasks still run one at a
 time. Admission takes a node while it has a free slot, and only if its free CPU and memory beyond the reserve cover
-the job. A job just sent counts on top of the node's metrics only until they are 15 s newer than the send, by which
-time they show its load. Workers on older code publish no slots and keep the one-job rule. Each reply says where it ran (`ran_on`). `onnx.run` goes only to workers whose venv has onnxruntime: the worker pip list installs it, pinned to the host's release.
+the job. A job counts against its node for its whole run: a node container's psutil reads the whole Proxmox host,
+so its metrics do not show its own jobs. Workers on older code publish no slots and keep the one-job rule. Each reply says where it ran (`ran_on`). `onnx.run` goes only to workers whose venv has onnxruntime: the worker pip list installs it, pinned to the host's release.
 
 ### Scheduling
 
