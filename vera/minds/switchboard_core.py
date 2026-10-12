@@ -110,10 +110,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "has three or more conjunctions (no complex hint, under 60 words) - it falls to the length rules "
        "(simple under 40 words). The LLM pre-pass can still raise it. 'off' (default) = the old floor; "
        "'on' = lowered. Measured 11 Oct: 73% of complex-tier census runs executed <= 2 steps."),
-    _f("memory.rerank", ("off", "on"), "memory", "FM-7.3",
+    _f("memory.rerank", ("off", "on", "not_chat"), "memory", "FM-7.3",
        "memory.seek's head reranked by the cross-encoder: the top 30 fused candidates re-read in one nlp.rerank call "
        "on a node (bounded at 1.5 s), their order decided by it, still above the rest. 'off' (default) = fused order; "
-       "'on' = reranked. Exit: nDCG@10 +5 pts on the known-item set with p95 seek latency <= baseline + 200 ms."),
+       "'on' = reranked everywhere; 'not_chat' = reranked everywhere but a live chat turn's own seek (research, "
+       "discovery, loops, background - owner 12 Oct). Measured 11 Oct (known-item pg1): nDCG@10 +11.6 pts, p50 +0.8 s."),
     _f("memory.rank", ("off", "on"), "memory", "FM-7.2",
        "How memory.seek ages what it found: 'off' (default) = one mild recency boost for every record (+25% at most, "
        "45-day e-folding); 'on' = rank_core - relevance x a half-life per dataset class (news 3 d, chat 14 d, research "
