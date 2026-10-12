@@ -232,6 +232,11 @@ _LOOP_SESSION_CV: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 #   controller/ generate+adapt — pinned to a CPU reasoning model so the GPU stays
 #   tier        free for the generative step work.
 #   coder       code generation inside coding steps — a coding model, warmer temp.
+#               Since 12 Oct 2026 the FIXES: parse/runtime repairs, edits, rewrites.
+#   drafter     a file's FIRST draft (code.author's whole-file pass and code-gen tool
+#               calls) - the executor's model ("@executor"), so it runs on the GPU
+#               where the executor is resident (owner, 12 Oct 2026: "GPU 9B drafts,
+#               30b fixes").
 #   writer      long-form prose/report generation — warmest temp.
 LOOP_ROUTING_PROFILE = "loop"
 # Planning/orchestration model. Default is the GPU-resident 9B so every dev
@@ -272,6 +277,10 @@ register_routing_profile(
                        # penalises the legitimate token repetition code is full of);
                        # temp 0.7 matches the chat that writes clean code.
                        "model": "qwen2.5-coder:14b",
+                       "options": {"temperature": 0.7, "top_p": 0.9}},
+        # First drafts on the executor's model (one place to change it: the executor role).
+        # Its own job type, so loop_coder route stats (editor_output_bound) stay the fixer's.
+        "drafter":    {"job_type": "loop_drafter", "prefer_gpu": True, "model": "@executor",
                        "options": {"temperature": 0.7, "top_p": 0.9}},
         "writer":     {"job_type": "loop_writer", "prefer_gpu": True,
                        "options": {"temperature": 0.7, "top_p": 0.9}},
@@ -8822,6 +8831,16 @@ def _v5_prompt_file_refs(text: str) -> List[str]:
     return out[:6]
 
 
+_V5_FIX_PROMPT_RE = re.compile(r"\b(fix|fixes|fixing|repair|debug|refactor|patch)\b", re.I)
+
+
+def _v5_code_role(args: Dict[str, Any]) -> str:
+    """`drafter` for a first draft, `coder` for a fix (owner, 12 Oct 2026: the GPU 9B drafts,
+    the 30b coder fixes)."""
+    blob = (str(args.get("prompt") or "") + "\n" + str(args.get("system") or ""))[:2000]
+    return "coder" if _V5_FIX_PROMPT_RE.search(blob) else "drafter"
+
+
 def _v5_apply_code_routing(tool: str, args: Any) -> bool:
     """Route a code-authoring generative call to the coding cohort: drop any pinned
     run model (so the `coder` role routes the model), stamp profile/role, AND attach
@@ -8830,9 +8849,9 @@ def _v5_apply_code_routing(tool: str, args: Any) -> bool:
     returns True when applied."""
     if not (_LOOP_CODE_ROLE_ON and isinstance(args, dict) and _v5_is_code_gen(tool, args)):
         return False
-    args.pop("model", None)                 # let the coder role route the model
-    args["profile"] = LOOP_ROUTING_PROFILE   # role carries job_type=loop_coder + temp
-    args["role"] = "coder"
+    args.pop("model", None)                 # let the role route the model
+    args["profile"] = LOOP_ROUTING_PROFILE   # role carries job_type + temp
+    args["role"] = _v5_code_role(args)
     # An output_format meant for DATA or prose turns a code request into that
     # shape — `output_format="json"` on "write a Python script" made the model
     # return {"script": "import json\\n…"}: escaped code inside a JSON envelope,
@@ -11341,8 +11360,9 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         _last_result_stream_at = time.perf_counter()
 
     try:
+        # the first draft: the drafter (executor's model, GPU); every repair below is the coder's
         res = await fn(prompt=prompt, system=sys_prompt, output_format="code",
-                       profile=LOOP_ROUTING_PROFILE, role="coder",
+                       profile=LOOP_ROUTING_PROFILE, role="drafter",
                        # Sampling passed at the CALL so it applies even when the coder
                        # role options are overridden empty on the Model Routing page
                        # (which they are in prod). Aligned to the chat/aide config —
