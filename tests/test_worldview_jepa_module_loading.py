@@ -105,14 +105,28 @@ class Model:
     }
     last_fabric_persist = ""
     def serialize_bytes(self):
-        return b"exact-checkpoint"
+        return ("exact-checkpoint:" + self.last_fabric_persist).encode()
+    def save(self):
+        return None
+    def load_bytes(self, blob):
+        prefix = b"exact-checkpoint:"
+        if not blob.startswith(prefix):
+            return False
+        self.last_fabric_persist = blob[len(prefix):].decode()
+        return True
 
 class Index:
     available = True
     _ids = ["r1", "r2"]
+    def connect(self):
+        return True
 
+stored = {}
 async def store(blob, meta):
-    assert blob == b"exact-checkpoint"
+    stored["blob"] = blob
+    stored["meta"] = meta
+    assert blob == ("exact-checkpoint:" + state["MODEL"].last_fabric_persist).encode()
+    assert meta["saved_at"] == state["MODEL"].last_fabric_persist
     assert meta["retrieval_provenance"]["snapshot"]["snapshot_id"] == snapshot.snapshot_id
     return {"sqlite": True, "postgres": False, "bytes": len(blob)}
 
@@ -140,8 +154,37 @@ bound = asyncio.run(bind_cap(
     records_json=json.dumps(list(frozen)),
 ))
 assert bound["ok"] is True and bound["eligible"] is True, bound
+assert state["MODEL"].last_fabric_persist
+assert stored["blob"] == state["MODEL"].serialize_bytes()
 status = asyncio.run(status_cap())
 assert status["eligible"] is True, status
+persisted = asyncio.run(state["_persist_to_fabric"]())
+assert persisted["ok"] is True, persisted
+assert stored["meta"]["retrieval_provenance"]["snapshot"]["snapshot_id"] == snapshot.snapshot_id
+status_after_persist = asyncio.run(status_cap())
+assert status_after_persist["eligible"] is True, status_after_persist
+
+# Restart loading must prefer the exact Fabric artifact when a stale local
+# checkpoint would otherwise discard a valid persisted binding.
+exact_blob = stored["blob"]
+exact_meta = stored["meta"]
+state["_WV_RETRIEVAL_PROVENANCE"] = None
+state["MODEL"].last_fabric_persist = "stale-local"
+state["MODEL"].last_fabric_load = ""
+async def load_meta(): return exact_meta
+async def load_blob(): return exact_blob
+async def no_async_work(): return None
+state["_fabric_load_checkpoint_meta"] = load_meta
+state["_fabric_load_checkpoint"] = load_blob
+state["_load_loss_history"] = no_async_work
+state["_maybe_autostart_stream"] = no_async_work
+state["_restore_index_from_cached_latents"] = lambda: None
+state["HAS_TORCH"] = True
+state["_wv_startup_done"] = False
+asyncio.run(state["_worldview_startup_load"]())
+assert state["MODEL"].last_fabric_persist != "stale-local"
+status_after_restart = asyncio.run(status_cap())
+assert status_after_restart["eligible"] is True, status_after_restart
 
 state["cap_worldview_query"] = query
 result = asyncio.run(query_cap(
