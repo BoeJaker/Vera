@@ -34,3 +34,20 @@ def test_the_judge_is_recorded_and_queued_nightly():
     night = src[src.index("async def _night_job("):]
     assert night.index('"decide.shadow.knn"') < night.index('"decide.shadow.cards"')
     assert JC.CARD_IMPL == "card:minilm"
+
+
+def test_the_card_judge_is_bound_and_vectors_say_what_made_them():
+    # backbone review 11 Oct: decide.shadow.cards had no serves= binding (B3 picks candidates from bindings), and
+    # cached MiniLM vectors carried no model or dimension (W2-05/W2-06)
+    import os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    src = open(_os.path.join(root, "vera", "minds", "judge.py"), encoding="utf-8").read()
+    cards = src[src.index("_SERVES_CARDS = _bind("):src.index("_SERVES_KNN = _bind(")]
+    assert '"nlp"' in cards and "tier=3" in cards and 'placement="nlp"' in cards and "JC.CARD_IMPL" in cards
+    assert '"decide.shadow.cards", serves=_SERVES_CARDS' in src
+    assert "ADD COLUMN IF NOT EXISTS model TEXT" in src and "ADD COLUMN IF NOT EXISTS dim INTEGER" in src
+    assert "INSERT INTO decision_vectors (decision_id, question_id, vec, model, dim)" in src
+    sense = open(_os.path.join(root, "vera", "minds", "sense_capabilities.py"), encoding="utf-8").read()
+    assert '"vectors": cards}' in sense and 'isinstance(got.get("vectors"), dict)' in sense
+    canvas = open(_os.path.join(root, "vera", "canvas", "enrich_capabilities.py"), encoding="utf-8").read()
+    assert '"model": _EMBED_ID["model"], "dim": _EMBED_ID["dim"]' in canvas
