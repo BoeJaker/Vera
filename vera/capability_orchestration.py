@@ -632,6 +632,8 @@ CAPABILITY_REGISTRY: Dict[str, dict]           = {}
 WORKER_REGISTRY:     Dict[str, dict]           = {}
 STREAM_SUBS:         Dict[str, List[Callable]] = {}
 WS_CONNECTIONS:      List[tuple]               = []
+# a /ws/mcp event subscriber's filter (DA-03a, live_events_core): id(ws) -> {sid, trace, types}; none = every event
+WS_EVENT_FILTERS:    Dict[int, dict]           = {}
 SCHEDULED_TASKS:     List[dict]                = []
 PENDING_RESULTS:     Dict[str, asyncio.Future] = {}
 RUNNING_TASKS:       Dict[str, asyncio.Task]   = {}   # task_id -> in-flight cap Task (for cancel)
@@ -5788,9 +5790,14 @@ async def emit_event(event: dict):
     # the actual sending.
     _seen = set()
     payload = {"type": "event", "data": event}
+    from .live_events_core import event_matches as _ev_match
     for ws, sub in list(WS_CONNECTIONS):
         if sub == "__events__" and id(ws) not in _seen:
             _seen.add(id(ws))
+            # a subscriber that asked for some events gets those (DA-03a); one that did not, every event as before
+            _flt = WS_EVENT_FILTERS.get(id(ws))
+            if _flt and not _ev_match(event, _flt):
+                continue
             _ws_enqueue(ws, payload)
 
 async def emit_stream(name: str, trace_id: str, payload: Any, capability: str):
@@ -13804,10 +13811,18 @@ async def ws_mcp(ws: WebSocket):
                 WS_CONNECTIONS.append((ws,msg.get("stream")))
                 _ws_enqueue(ws, {"type":"subscribed","stream":msg.get("stream")})
             elif action=="subscribe_events":
-                WS_CONNECTIONS.append((ws,"__events__"))
-                _ws_enqueue(ws, {"type":"subscribed","stream":"__events__"})
+                # {filter: {sid?, trace?: [...], types?: [prefixes]}} - only those events (DA-03a); no filter, all of them.
+                # Subscribing again replaces the filter (a page adds its new call's trace as it goes).
+                from .live_events_core import normalize_event_filter, filter_summary
+                _flt = normalize_event_filter(msg.get("filter"))
+                if _flt: WS_EVENT_FILTERS[id(ws)] = _flt
+                else: WS_EVENT_FILTERS.pop(id(ws), None)
+                if (ws,"__events__") not in WS_CONNECTIONS:
+                    WS_CONNECTIONS.append((ws,"__events__"))
+                _ws_enqueue(ws, {"type":"subscribed","stream":"__events__","filter":filter_summary(_flt)})
             elif action=="unsubscribe":
                 _remove_ws(ws,msg.get("stream"))
+                if msg.get("stream")=="__events__": WS_EVENT_FILTERS.pop(id(ws), None)
                 _ws_enqueue(ws, {"type":"unsubscribed","stream":msg.get("stream")})
 
             elif action=="dag_run":
@@ -13847,6 +13862,7 @@ async def ws_mcp(ws: WebSocket):
     except Exception as e: log.error("WS error [%s]: %s",client_id,e)
     finally:
         WS_CONNECTIONS[:]=[p for p in WS_CONNECTIONS if p[0] is not ws]
+        WS_EVENT_FILTERS.pop(id(ws), None)
         _ws_stop_writer(ws)
 
 
