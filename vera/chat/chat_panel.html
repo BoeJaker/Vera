@@ -5084,6 +5084,8 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     _dirVocabLoad();
     const res=await api('/mcp/tools');
     ALL_CAPS=Array.isArray(res)?res:(res?.tools||[]);
+    // the capabilities that declare how their answer is drawn (DA-01a) - the chat reads those through VeraWidget.present (DA-02c)
+    try{ if(window.VeraWidget&&typeof VeraWidget.presentations==='function') VeraWidget.presentations(ALL_CAPS); }catch(_){}
     const cnt=ALL_CAPS.length;
     if(cnt){
       _capsRetryCount=0;
@@ -7851,11 +7853,56 @@ IMPORTANT:
     const ns=n.split('.')[0]+'.*';
     return CV_CAP_KIND[ns];
   }
+  /* A DECLARED ANSWER IS READ AS DECLARED (DA-02c, DESK-SPINE rule 2): a capability whose Contract v2 says how its answer
+     is drawn (presentation, carried by /mcp/tools - VeraWidget.presentations is fed from ALL_CAPS) goes through
+     VeraWidget.present, the one reading the canvas and the server share, and becomes the item its element names. A
+     capability with no declaration gets undefined here and the adapters below, unchanged. */
+  function _cvPresented(capName, result, args){
+    const W=(typeof window!=='undefined'&&window.VeraWidget)||null; if(!W||typeof W.present!=='function'||typeof W.presentationOf!=='function') return undefined;
+    const cap=String(capName||''); if(!cap||!W.presentationOf(cap)) return undefined;
+    let pr=null; try{ pr=W.present(cap, result, { args:args||{} }); }catch(_){ return undefined; }
+    if(!pr) return undefined;
+    // nothing drawable, a receipt (it updates what it acted on - DA-08) or a job (its live item follows): no item
+    if(pr.element==='none'||pr.element==='receipt'||pr.element==='job'||!pr.records.length) return null;
+    const title=String(pr.title||cap), r0=pr.records[0];
+    const drawn=(r)=>{ try{ return W.dataFor(W.mapped(r, r.form, r.data), r.form); }catch(_){ return r.data; } };
+    const widget=(r)=>({ kind:'widget', n:String(r.title||title).slice(0,52), k:'widget', col:'#a78bfa', d:'widget · '+r.form,
+      content:Object.assign({}, r, { widget:r.form, form:r.form, title:r.title||title, record:r }) });
+    const rowsOf=(v)=>Array.isArray(v)?v:(v&&typeof v==='object'?(Array.isArray(v.rows)?v.rows:[]):[]);
+    switch(pr.element){
+      case 'table': { const rows=rowsOf(drawn(r0)).filter(x=>x&&typeof x==='object'); if(!rows.length) return null;
+        const columns=Object.keys(rows[0]).filter(k=>rows[0][k]==null||typeof rows[0][k]!=='object').slice(0,8);   /* as _cvCapTable */
+        const body=rows.slice(0,80).map(x=>columns.map(c=>{ const v=x[c]; return v==null?'':String(v).slice(0,120); }));
+        return { kind:'table', n:title+' · '+body.length+' rows', k:'table', col:'#38bdf8', d:'table · '+body.length+' rows',
+                 content:{ columns, rows:body, caption:title } }; }
+      case 'records': { const items=(Array.isArray(r0.data)?r0.data:[]).filter(x=>x&&typeof x==='object').map((x,i)=>({ id:String(x.id!=null?x.id:(x.url||i)), url:x.url||'',
+          domain:x.domain||(String(x.url||'').match(/^https?:\/\/([^/]+)/)||[])[1]||'', title:String(x.title||x.url||''), snippet:String(x.snippet||'').slice(0,1200),
+          text:typeof x.text==='string'&&x.text.length>=200?x.text.slice(0,20000):undefined, when:x.when||undefined, score:typeof x.score==='number'?x.score:undefined }));
+        if(!items.length) return null;
+        return { kind:'records', n:items.length+' '+(pr.kind==='reading'?'pages':'records'), k:'records', col:'#7aa2d6', d:'records · '+items.length,
+                 content:{ title, kind:pr.kind==='reading'?'web':'records', items, total:items.length } }; }
+      case 'markdown': { const md=String(r0.data||''); return { kind:'markdown', n:(md.replace(/^#+\s*/,'').split('\n').find(x=>x.trim())||title).slice(0,52), k:'prose', col:'var(--acc2)', d:'written', content:{ md:md.slice(0,20000) } }; }
+      case 'code': { const d=r0.data||{}; if(pr.kind==='diff'){ const t=String(d.diff||''); return { kind:'code', n:'diff · '+t.split('\n').length+' lines', k:'code', col:'#fb923c', d:'diff', content:{ code:t.slice(0,120000), lang:'diff', filename:'' } }; }
+        const code=String(d.code||''), p=String(d.path||''), lang=String(d.lang||'');
+        return { kind:'code', n:(p?p.split('/').pop():(lang||'code'))+' · '+code.split('\n').length+' lines', k:'code', col:'#fb923c', d:'code', content:{ code:code.slice(0,120000), lang, filename:p?p.split('/').pop():'', path:p } }; }
+      case 'session': { const ls=(r0.data&&r0.data.lines)||[]; const cmd=ls.length&&/^\$ /.test(ls[0])?ls[0].slice(2):''; const out=(cmd?ls.slice(1):ls).join('\n');
+        return { kind:'session', n:(cmd||title).slice(0,52), k:'term', col:'#7dd3fc', d:'terminal'+(r0.data&&r0.data.state?' · '+r0.data.state:''), content:{ command:cmd, output:out.slice(0,16000) } }; }
+      case 'image': { const d=r0.data||{}; const url=d.image_b64?('data:image/png;base64,'+d.image_b64):String(d.url||''); if(!url) return null;
+        return { kind:'image', n:String(d.caption||title), k:'image', col:'#e879f9', d:'image', content:{ url, alt:String(d.caption||title), caption:String(d.caption||'') } }; }
+      case 'kv': { const f=r0.data; if(!f||typeof f!=='object') return null; return { kind:'kv', n:title, k:'kv', col:'#94a3b8', d:'record · '+Object.keys(f).length+' fields', content:{ title, fields:f } }; }
+      case 'calendar': { const evs=(Array.isArray(r0.data)?r0.data:[]).filter(x=>x&&x.start).map(x=>Object.assign({}, x, { title:String(x.title||'') })); if(!evs.length) return null;
+        return { kind:'calendar', n:'Calendar', k:'calendar', col:'#9fe1e7', d:'calendar · '+evs.length+' event'+(evs.length===1?'':'s'), key:'calendar:month',
+                 content:{ title:title||'Calendar', month:_cvCalMonth(evs), selected:'', events:evs } }; }
+      case 'composite': return pr.records.map(widget);
+      default: return widget(r0);   // widget-drawn kinds (status, metric, series, log, progress, graph) and entities (json for now)
+    }
+  }
   // the one entry point: a result in, a canvas item (or several, or nothing) out
   function _cvAdapt(capName, result, args){
     if(result==null) return null;
     const ov=_cvOverride(capName);
     if(ov==='') return null;                       // named as "never draw this"
+    { const dp=_cvPresented(capName, result, args); if(dp!==undefined) return dp; }   /* declared first (DA-02c) */
     const ctx={ cap:String(capName||''), args:args||{}, declared:_cvDeclared(capName) };
     for(let i=0;i<CV_ADAPTERS.length;i++){
       const a=CV_ADAPTERS[i];
