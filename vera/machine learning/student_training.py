@@ -27,7 +27,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, emit_event, schedule
@@ -176,6 +176,67 @@ async def _record(rec: Dict[str, Any]) -> None:
         pass
 
 
+_DONE = ("complete", "completed", "done", "succeeded")
+_FAILED = ("error", "failed", "stopped", "cancelled")
+
+
+async def _cross_validate(q: str, mod: Dict[str, Any], X: List[List[float]], y: List[List[float]],
+                          folds: List[List[int]], avoid: List[str]) -> Tuple[List[float], List[str]]:
+    """Out-of-fold p(positive) for every row: one temporary head per fold,
+    trained with ml.train (on a node) and scored with ml.train.predict, then
+    deleted. Sequential - five small jobs, kind to a shared box."""
+    oof: List[float] = [0.0] * len(X)
+    ran_on: List[str] = []
+    mt = _mod("ml_training", "Vera.vera.machine learning.ml_training")
+    for k, held in enumerate(folds):
+        fid = f"{core.module_id(q)}-cv{k}"
+        hs = set(held)
+        Xk = [X[i] for i in range(len(X)) if i not in hs]
+        yk = [y[i] for i in range(len(y)) if i not in hs]
+        Xa, ya, Xv, yv = core.split_val(Xk, yk)
+        created = await _cap("ml.create")(name=f"{mod['name']} cv{k}", nodes=json.dumps(mod["nodes"]),
+                                          edges="[]", description=f"CV fold {k} (temporary)",
+                                          tags="student,cv", module_id=fid)
+        if (created or {}).get("error"):
+            raise RuntimeError(f"ml.create {fid}: {created['error']}")
+        try:
+            if mt is not None:
+                getattr(mt, "_WEIGHTS", {}).pop(fid, None)
+            cfg = {"epochs": core.EPOCHS, "lr": core.LR, "batch_size": 16, "loss": "bce",
+                   "avoid_nodes": avoid}
+            job = await _cap("ml.train")(module_id=fid, X_train=json.dumps(Xa), y_train=json.dumps(ya),
+                                         X_val=json.dumps(Xv), y_val=json.dumps(yv), config=json.dumps(cfg),
+                                         dataset_id="vera.decide", task=f"student {q} cv{k}")
+            if not (job or {}).get("job_id"):
+                raise RuntimeError(f"ml.train {fid}: {(job or {}).get('error') or job}")
+            t0 = time.time()
+            while True:
+                st = await _cap("ml.train.status")(job_id=job["job_id"]) or {}
+                s = str(st.get("status") or "")
+                if s in _DONE:
+                    ran_on.append(str(st.get("trained_on") or ""))
+                    break
+                if s in _FAILED:
+                    raise RuntimeError(f"CV fold {k}: {st.get('error') or s}")
+                if time.time() - t0 > TRAIN_TIMEOUT_S:
+                    await _cap("ml.train.stop")(job_id=job["job_id"])
+                    raise RuntimeError(f"CV fold {k} did not finish within the timeout")
+                await asyncio.sleep(POLL_S)
+            pr = await _cap("ml.train.predict")(module_id=fid, X=json.dumps([X[i] for i in held]))
+            if (pr or {}).get("error"):
+                raise RuntimeError(f"ml.train.predict {fid}: {pr['error']}")
+            for i, v in zip(held, pr["predictions"]):
+                oof[i] = float(v[0] if isinstance(v, list) else v)
+        finally:
+            try:
+                await _cap("ml.delete")(id=fid)
+            except Exception as e:
+                log.info("students: deleting %s: %s", fid, e)
+            if mt is not None:
+                getattr(mt, "_WEIGHTS", {}).pop(fid, None)
+    return oof, ran_on
+
+
 async def train_student(question_id: str, *, dry_run: bool = True, force: bool = False) -> Dict[str, Any]:
     """One student training run for one question (see the module doc)."""
     I = _imports()
@@ -205,9 +266,13 @@ async def train_student(question_id: str, *, dry_run: bool = True, force: bool =
         return {"ok": False, "not_trainable": True, "why": tr_why, "counts": counts}
     vecs = await _vectors(q, rows)
     xy = core.build_xy(rows, vecs, positive)
-    Xtr, ytr, _ = xy["train"]
-    Xte, yte, _ = xy["test"]
-    rec.update(features={"train": len(Xtr), "test": len(Xte), "skipped": xy["skipped"]})
+    # every gold row: evaluated by stratified k-fold CV, then the final head is
+    # trained on all of them (the export's test split is too small to score on)
+    Xall = xy["train"][0] + xy["test"][0]
+    yall = xy["train"][1] + xy["test"][1]
+    folds = core.stratified_folds([v[0] for v in yall])
+    rec.update(features={"rows": len(Xall), "skipped": xy["skipped"], "folds": len(folds),
+                         "fold_sizes": [len(f) for f in folds]})
     if dry_run:
         return {"ok": True, "dry_run": True, "guard": why, "would_train": ok, **rec}
 
@@ -222,7 +287,8 @@ async def train_student(question_id: str, *, dry_run: bool = True, force: bool =
     if mt is not None:
         getattr(mt, "_WEIGHTS", {}).pop(mid, None)       # every night from fresh weights
     avoid = await _gpu_avoid()
-    Xa, ya, Xv, yv = core.split_val(Xtr, ytr)
+    oof, cv_on = await _cross_validate(q, mod, Xall, yall, folds, avoid)
+    Xa, ya, Xv, yv = core.split_val(Xall, yall)
 
     async def resolve(revision):
         return {"dataset_revision_id": revision, "X_train": Xa, "y_train": ya, "X_val": Xv, "y_val": yv}
@@ -282,35 +348,37 @@ async def train_student(question_id: str, *, dry_run: bool = True, force: bool =
     pkg_id = run.output_model_package_id
     rec["package_id"] = pkg_id
 
-    # evaluate the exported model on the held-out split (an ONNX run on a node)
+    # the report: out-of-fold predictions from the k CV heads (same recipe as
+    # the packaged head, which saw every row)
     slug = mo._safe(mid)
-    res = await mo._run_artifact(slug, json.dumps(Xte))
-    if res.get("error"):
-        raise RuntimeError(f"evaluating the export: {res['error']}")
-    p = [float(v[0] if isinstance(v, list) else v) for v in res["predictions"]]
-    y = [v[0] for v in yte]
-    m = core.metrics(p, y)
-    th = core.thresholds()
+    y = [v[0] for v in yall]
+    m = core.metrics(oof, y)
+    th = core.thresholds(sum(y) / len(y) if y else 0.5)
     report = I["EvaluationReport"](
         request=I["EvaluationRequest"](subject_kind="model_package", subject_id=pkg_id,
                                        dataset_revision_id=ex["snapshot_id"], metric_ids=core.METRICS),
-        provider_id="vera.students.holdout", status="completed",
+        provider_id=f"vera.students.cv{len(folds)}", status="completed",
         metrics=tuple(I["MetricResult"](k, m[k], th[k][0], th[k][1]) for k in core.METRICS),
         evaluated_cases=len(y))
     rdir = I["state_dir"]("eval", "students", mid)
     rdir.mkdir(parents=True, exist_ok=True)
     body = {"report": report.to_dict(), "question": q, "package_id": pkg_id, "snapshot_id": ex["snapshot_id"],
-            "training_run_id": run.training_run_id, "counts": counts, "evaluated_on": res.get("ran_on"),
+            "training_run_id": run.training_run_id, "counts": counts, "cv_trained_on": cv_on,
+            "thresholds": {k: v[0] for k, v in th.items()},
             "created": datetime.utcnow().isoformat() + "Z"}
     (rdir / f"{report.evaluation_report_id}.json").write_text(json.dumps(body, indent=1, default=str))
-    rec.update(report_id=report.evaluation_report_id, metrics=m)
+    rec.update(report_id=report.evaluation_report_id, metrics=m, passed=report.passed)
 
-    # bind: questions + tier 3, so model.callable question=<q> lists it (shadow only)
+    # bind only a student whose report passes: questions + tier 3, so
+    # model.callable question=<q> lists it (shadow only). A failing one is
+    # unbound (and stays unbound across restarts) - its package and report stay.
     trained = dict(mo.trained_for(mid)) if hasattr(mo, "trained_for") else {}
     trained.update({"task": "binary_classification", "questions": [q], "tier": 3,
-                    "dataset_id": ex["snapshot_id"], "student": True, "package_id": pkg_id, "auc": m["auc"], "accuracy": m["accuracy"]})
-    mo.bind_student(slug, mid, trained)
-    rec["cap"] = f"ml.onnx.model.{slug}"
+                    "dataset_id": ex["snapshot_id"], "student": True, "package_id": pkg_id,
+                    "auc": m["auc"], "accuracy": m["accuracy"], "eval": f"{len(folds)}-fold CV",
+                    "report_id": report.evaluation_report_id})
+    mo.bind_student(slug, mid, trained, bound=report.passed)
+    rec.update(cap=f"ml.onnx.model.{slug}" if report.passed else "", bound=report.passed)
 
     # keep the last KEEP artifacts per question
     old = core.prune([(str(f), f.stat().st_mtime) for f in store.glob("*.onnx")])
@@ -319,10 +387,11 @@ async def train_student(question_id: str, *, dry_run: bool = True, force: bool =
             os.remove(f)
         except OSError:
             pass
-    rec.update(state="trained", pruned=len(old), finished=datetime.utcnow().isoformat() + "Z")
+    rec.update(state="trained" if report.passed else "trained_not_bound", pruned=len(old),
+               finished=datetime.utcnow().isoformat() + "Z")
     await _record(rec)
     await emit_event({"type": "decide.student.trained", "question": q, "package_id": pkg_id,
-                      "metrics": m, "report_id": report.evaluation_report_id})
+                      "metrics": m, "report_id": report.evaluation_report_id, "bound": report.passed})
     return {"ok": True, **rec}
 
 
@@ -334,7 +403,9 @@ async def train_student(question_id: str, *, dry_run: bool = True, force: bool =
         "Train a System 1 student head for one decision question with the ML Workshop "
         "(four-minds FM-2.4 / MW-6): decide.export gold -> MiniLM-384 state vectors -> a "
         "logistic head trained on a CPU node (never the GPU node) -> ONNX ModelPackage -> an "
-        "EvaluationReport on the held-out split -> bound with questions + tier 3. SHADOW ONLY. "
+        "EvaluationReport from stratified 5-fold cross-validation (accuracy must match the "
+        "majority-label rate, AUC >= 0.7) -> bound with questions + tier 3 ONLY if it passes "
+        "(a failing student is unbound; package and report stay). SHADOW ONLY. "
         "Runs only 01:00-06:00 and not while a census or loop runs, unless force=true (the "
         "disk rule always applies). Inputs: question_id (str='loop.step_done'), dry_run "
         "(bool=true: check the guard, data and features, train nothing), force (bool). Output: "

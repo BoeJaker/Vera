@@ -23,7 +23,9 @@ QUESTIONS: Tuple[str, ...] = ("loop.step_done",)
 #: night only, not during the owner's 18:00-01:00 load).
 WINDOW = (1, 6)
 MIN_GOLD = 50            # below this a question is not trained
-MIN_CLASS = 10           # nor when either class has fewer examples
+MIN_CLASS = 10           # nor when either class has fewer examples (>= 2 per class in each CV fold)
+FOLDS = 5                # stratified cross-validation folds (the evaluation)
+AUC_MIN = 0.7            # a student below this is not bound
 KEEP = 3                 # artifacts kept per question
 DISK_MAX_PCT = 90.0      # nothing written above this
 DIM = 384                # MiniLM-L6 (nlp.embed)
@@ -145,12 +147,26 @@ def metrics(p: Sequence[float], y: Sequence[float]) -> Dict[str, float]:
             "precision_at_0_8": round(prec, 4), "coverage_at_0_8": round(len(sure) / n, 4)}
 
 
-def thresholds() -> Dict[str, Tuple[float, str]]:
-    """What a report checks (metric -> (threshold, direction)). Informational:
-    a pass does not promote anything (four-minds' FM-2.5 rule does)."""
-    return {"accuracy": (0.5, "maximize"), "auc": (0.5, "maximize"),
+def thresholds(base_rate: float = 0.5) -> Dict[str, Tuple[float, str]]:
+    """What a report checks (metric -> (threshold, direction)). Accuracy must at
+    least match always answering the majority label (`base_rate` = share of the
+    positive label). A passing report gets the student bound (shadow only); it
+    promotes nothing (four-minds' FM-2.5 rule does)."""
+    majority = round(max(base_rate, 1.0 - base_rate), 4)
+    return {"accuracy": (max(0.5, majority), "maximize"), "auc": (AUC_MIN, "maximize"),
             "ece": (0.2, "minimize"), "precision_at_0_8": (0.5, "maximize"),
             "coverage_at_0_8": (0.0, "maximize")}
+
+
+def stratified_folds(y: Sequence[float], k: int = FOLDS) -> List[List[int]]:
+    """k folds of row indexes, each class dealt round-robin in order (the export
+    order is stable, so the folds are too)."""
+    folds: List[List[int]] = [[] for _ in range(k)]
+    for cls in (1.0, 0.0):
+        idx = [i for i, v in enumerate(y) if (1.0 if float(v) >= 0.5 else 0.0) == cls]
+        for j, i in enumerate(idx):
+            folds[j % k].append(i)
+    return [sorted(f) for f in folds]
 
 
 def prune(paths: Iterable[Tuple[str, float]], keep: int = KEEP) -> List[str]:
