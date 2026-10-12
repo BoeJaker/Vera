@@ -1,0 +1,46 @@
+{
+ "cap": "demo.host",
+ "args": {
+  "host": "ct126"
+ },
+ "presentation": {
+  "kind": "composite",
+  "title": "{host}",
+  "parts": [
+   {
+    "kind": "metric",
+    "map": {
+     "value": "load"
+    },
+    "title": "Load"
+   },
+   {
+    "kind": "log",
+    "map": {
+     "events": "lines",
+     "t": "ts",
+     "text": "msg"
+    },
+    "title": "Log"
+   }
+  ]
+ },
+ "result": {
+  "load": 0.6,
+  "lines": [
+   {
+    "ts": "2026-10-12T10:00:00",
+    "msg": "ok"
+   }
+  ]
+ },
+ "expect": {
+  "element": "composite",
+  "kind": "composite",
+  "title": "ct126",
+  "forms": [
+   "hero",
+   "log"
+  ]
+ }
+}

@@ -1,0 +1,40 @@
+{
+ "cap": "demo.search",
+ "args": {
+  "q": "vector db"
+ },
+ "presentation": {
+  "kind": "records",
+  "map": {
+   "rows": "hits",
+   "title": "name",
+   "url": "link"
+  },
+  "title": "{q}"
+ },
+ "result": {
+  "hits": [
+   {
+    "name": "A",
+    "link": "https://a.example/x",
+    "snippet": "s"
+   },
+   {
+    "name": "B",
+    "link": "https://b.example/y"
+   }
+  ]
+ },
+ "expect": {
+  "element": "records",
+  "kind": "records",
+  "title": "vector db",
+  "forms": [
+   "reading"
+  ],
+  "first": {
+   "title": "A",
+   "url": "https://a.example/x"
+  }
+ }
+}

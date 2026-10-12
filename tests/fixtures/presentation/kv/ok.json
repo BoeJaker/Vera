@@ -1,0 +1,24 @@
+{
+ "cap": "demo.info",
+ "args": {},
+ "presentation": {
+  "kind": "kv",
+  "map": {
+   "fields": "info"
+  }
+ },
+ "result": {
+  "info": {
+   "host": "ct126",
+   "cores": 16
+  }
+ },
+ "expect": {
+  "element": "kv",
+  "kind": "kv",
+  "title": "demo.info",
+  "forms": [
+   "kv"
+  ]
+ }
+}

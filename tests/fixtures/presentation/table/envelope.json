@@ -1,0 +1,22 @@
+{
+ "cap": "demo.quotes",
+ "args": {},
+ "presentation": {
+  "kind": "table",
+  "map": {
+   "rows": "quotes"
+  }
+ },
+ "result": {
+  "type": "tool_result",
+  "content": "{\"ok\": true, \"result\": {\"data\": {\"quotes\": [{\"symbol\": \"BTC\", \"last\": 61000, \"pct\": 1.2}, {\"symbol\": \"ETH\", \"last\": 2400, \"pct\": -0.4}]}}}"
+ },
+ "expect": {
+  "element": "table",
+  "kind": "table",
+  "title": "demo.quotes",
+  "forms": [
+   "table"
+  ]
+ }
+}

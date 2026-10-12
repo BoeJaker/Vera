@@ -1,0 +1,27 @@
+{
+ "cap": "demo.load",
+ "args": {},
+ "presentation": {
+  "kind": "metric",
+  "map": {
+   "value": "cpu.pct",
+   "max": "cpu.max",
+   "unit": "cpu.unit"
+  }
+ },
+ "result": {
+  "cpu": {
+   "pct": 62,
+   "max": 100,
+   "unit": "%"
+  }
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "metric",
+  "title": "demo.load",
+  "forms": [
+   "ring"
+  ]
+ }
+}

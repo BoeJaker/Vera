@@ -1,0 +1,38 @@
+{
+ "cap": "demo.topo",
+ "args": {},
+ "presentation": {
+  "kind": "graph",
+  "map": {
+   "nodes": "hosts",
+   "edges": "links",
+   "node_id": "host",
+   "edge_from": "a",
+   "edge_to": "b"
+  }
+ },
+ "result": {
+  "hosts": [
+   {
+    "host": "ct126"
+   },
+   {
+    "host": "ct121"
+   }
+  ],
+  "links": [
+   {
+    "a": "ct126",
+    "b": "ct121"
+   }
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "graph",
+  "title": "demo.topo",
+  "forms": [
+   "vgraph"
+  ]
+ }
+}

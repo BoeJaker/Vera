@@ -1,0 +1,32 @@
+{
+ "cap": "demo.build",
+ "args": {},
+ "presentation": {
+  "kind": "progress",
+  "map": {
+   "steps": "phases",
+   "name": "label",
+   "status": "state"
+  }
+ },
+ "result": {
+  "phases": [
+   {
+    "label": "fetch",
+    "state": "done"
+   },
+   {
+    "label": "build",
+    "state": "running"
+   }
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "progress",
+  "title": "demo.build",
+  "forms": [
+   "progress"
+  ]
+ }
+}

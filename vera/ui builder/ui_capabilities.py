@@ -566,7 +566,13 @@ async def _serve_widget_element_js():
     from pathlib import Path
     p = Path(__file__).parent.parent / "widgets" / "widget_element.js"
     if p.exists():
-        return Response(content=p.read_text(encoding="utf-8"),
+        body = p.read_text(encoding="utf-8")
+        # VeraWidget.present (DA-02a): one reading of a capability's answer, in its own file beside the shared one -
+        # served with it so every page that draws widgets has it, with no second request to wait for
+        extra = p.parent / "present.js"
+        if extra.exists():
+            body += chr(10) + extra.read_text(encoding="utf-8")
+        return Response(content=body,
                         media_type="application/javascript",
                         headers={"Cache-Control": "no-cache"})
     return Response(content="console.warn('widget_element.js not found');",

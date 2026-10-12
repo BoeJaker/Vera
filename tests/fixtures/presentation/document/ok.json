@@ -1,0 +1,23 @@
+{
+ "cap": "demo.report",
+ "args": {},
+ "presentation": {
+  "kind": "document",
+  "map": {
+   "body": "report.md"
+  }
+ },
+ "result": {
+  "report": {
+   "md": "# Title\n\nBody text."
+  }
+ },
+ "expect": {
+  "element": "markdown",
+  "kind": "document",
+  "title": "demo.report",
+  "forms": [
+   "markdown"
+  ]
+ }
+}
