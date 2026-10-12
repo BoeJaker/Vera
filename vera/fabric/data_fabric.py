@@ -1490,6 +1490,23 @@ class FabricChromaStore:
         # reconnected
         self.errors: Dict[str, int] = {}
         self._throttle = _chroma_bound.Throttle(300.0)
+        # a connect that failed (12 Oct 2026: Chroma slow during a restart, "FabricChromaStore: timed out") left the
+        # store unconnected until the next restart - every seek without its vector leg, every vector write dropped.
+        # A store that is not connected now retries, at most once a minute.
+        self._last_connect = 0.0
+
+    RECONNECT_EVERY_S = 60.0
+
+    def _ready(self) -> bool:
+        """Connected, or a throttled reconnect attempt succeeded."""
+        if self._col is not None:
+            return True
+        if time.monotonic() - self._last_connect < self.RECONNECT_EVERY_S:
+            return False
+        ok = self.connect()
+        if ok:
+            log.info("FabricChromaStore: reconnected after a failed start")
+        return ok
 
     def _failed(self, op: str, e: BaseException) -> None:
         self.errors[op] = self.errors.get(op, 0) + 1
@@ -1509,6 +1526,7 @@ class FabricChromaStore:
 
     def connect(self) -> bool:
         if not HAS_CHROMA: return False
+        self._last_connect = time.monotonic()
         try:
             # a failed attempt must not leave its client's connection open (RF-82)
             with _chroma_bound.discard_on_failure():
@@ -1523,7 +1541,7 @@ class FabricChromaStore:
             log.warning("FabricChromaStore: %s", e); return False
 
     def upsert(self, record: DataRecord) -> bool:
-        if not self._col: return False
+        if not self._ready(): return False
         if _sbx_write_blocked():
             _sbx_note("chroma"); return False
         if not record.embedding:
@@ -1557,7 +1575,7 @@ class FabricChromaStore:
 
     def search(self, embedding: List[float], dataset_id: Optional[str] = None,
                top_k: int = 10, filters: Optional[Dict] = None) -> List[Tuple[str, float]]:
-        if not self._col: return []
+        if not self._ready(): return []
         try:
             where: dict = {}
             if dataset_id:
