@@ -590,9 +590,13 @@ async def _rerank_head(query: str, cands: List[Dict], env=None) -> None:
         env.stage("rerank", env.mark(), outcome, n)
 
 
+_SEEK_CACHE_STATS: Dict[str, int] = {"hits": 0, "misses": 0}   # read by fabric.stats (fix list #11)
+
+
 async def _seek_cache_get(ck: str) -> Optional[Dict]:
     try:
         raw = await _seek_redis().get(ck)
+        _SEEK_CACHE_STATS["hits" if raw else "misses"] += 1
         return json.loads(raw) if raw else None
     except Exception:
         return None

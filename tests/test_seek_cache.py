@@ -104,3 +104,16 @@ def test_seek_prefers_the_connected_fabric(monkeypatch):
     assert ev["used"].startswith("Vera.vera.fabric.data_fabric@") and len(ev["candidates"]) >= 2
     monkeypatch.setitem(sys.modules, "Vera.vera.fabric.data_fabric", dead)
     assert MR._df() is dead                                  # nothing connected: the first, as before
+
+
+def test_both_retrieval_caches_are_counted_side_by_side():
+    # backbone review 11 Oct (fix list #11): fabric.query's TTL-only cache beside seek's generation-keyed one - count
+    # both before folding them into one
+    import os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    df = open(_os.path.join(root, "vera", "fabric", "data_fabric.py"), encoding="utf-8").read()
+    q = df[df.index("async def execute_query("):df.index("    top_k      = int(q.get(\"top_k\", 10))")]
+    assert q.index('_QUERY_CACHE_STATS["hits"] += 1') < q.index("return cached") < q.index('_QUERY_CACHE_STATS["misses"] += 1')
+    assert '"caches": {"fabric_query": dict(_QUERY_CACHE_STATS' in df and '"memory_seek": _seek_cache_stats()' in df
+    mr = open(_os.path.join(root, "vera", "fabric", "memory_retrieval.py"), encoding="utf-8").read()
+    assert '_SEEK_CACHE_STATS["hits" if raw else "misses"] += 1' in mr
