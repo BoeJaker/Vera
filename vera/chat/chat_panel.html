@@ -957,6 +957,8 @@ body[data-cols~="canvas"] #canvasColumnBody{padding-left:var(--cv-gutter,18px)}
 /* a type's branches are hairlines, its trunk carries the colour; the type under the pointer lights up, the rest recede */
 #ctxRunsOverlay line.br{stroke-opacity:.35;stroke-width:1}
 #ctxRunsOverlay line.tr{stroke-opacity:.85;stroke-width:1.5}
+/* the context -> chat runs are relations, dotted like the canvas's runs (WSU-61) */
+#ctxRunsOverlay line.run{stroke-dasharray:1.5 4}
 #ctxRunsOverlay[data-lit] line{stroke-opacity:.16}
 #ctxRunsOverlay[data-lit] line.lit.tr{stroke-opacity:1;stroke-width:2}
 #ctxRunsOverlay[data-lit] line.lit.br{stroke-opacity:.7}
@@ -8826,11 +8828,14 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
        reply moved to the canvas left a chip there; the run leaves that chip, level with it, when it is on screen */
     routes.forEach(r=>{ try{ const ph=msgs.querySelector('.cv-moved[data-cv-key="'+(window.CSS&&CSS.escape?CSS.escape(r.it.key):r.it.key)+'"]'); if(!ph) return;
       const q=ph.getBoundingClientRect(); if(!(q.height>0)||q.bottom<MB.top||q.top>MB.bottom) return;
-      r.M={left:q.left, top:q.top, right:Math.min(q.right, MB.right-1), bottom:q.bottom}; r.my=q.top+q.height/2; r.fromChip=true; }catch(_){} });
+      r.M={left:q.left, top:q.top, right:Math.min(q.right, MB.right-1), bottom:q.bottom}; r.my=Math.min(MB.bottom-1, q.bottom+3); r.fromChip=true; }catch(_){} });   /* under its row (WSU-61): not through the chip beside it */
     // the channel: from the transcript's (or the scene's) edge to the first card; the lanes spread about its middle,
     // 9 px a side per run
     const edge0=(_xpl.on&&_xplEl&&document.body.classList.contains('exploded'))?document.getElementById('xplHost').getBoundingClientRect().right:MB.right;
-    const chan0=Math.min.apply(null, [edge0].concat(routes.map(r=>r.M.right))), chan1=Math.min.apply(null, [C.left+_cvRunsGutter(n)+12].concat(all.filter(it=>!it.out).map(it=>it.rect.left)));
+    /* the lanes run where no reply's text is (WSU-61, measured: text to 810 px, lanes at 667-721 over it): from the right
+       edge of the replies in view - their text, never past the transcript - to the first card */
+    const txtR=(()=>{ let x=0; msgs.querySelectorAll('.msg-body').forEach(b=>{ const q=b.getBoundingClientRect(); if(q.height>0&&q.bottom>MB.top&&q.top<MB.bottom&&q.right>x) x=q.right; }); return Math.min(edge0, x); })();
+    const chan0=Math.max(txtR, Math.min.apply(null, [edge0].concat(routes.map(r=>r.M.right)))), chan1=Math.min.apply(null, [C.left+_cvRunsGutter(n)+12].concat(all.filter(it=>!it.out).map(it=>it.rect.left)));
     const G1=(chan0+chan1)/2, HW=Math.max(0, (chan1-chan0)/2-9), cap=9*Math.max(0, n-1);
     // the lanes: the runs going down (target below departure), the furthest first, then the runs going up
     const dn=routes.filter(r=>r.iy>=r.my), up=routes.filter(r=>r.iy<r.my);
@@ -8844,12 +8849,24 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
         if(it.col>0){ const col0=rects.filter(rc=>{ const o=all.find(x=>x.key===rc.key); return o&&o.col===0&&o.state==='now'; });
           const free=y=>!col0.some(rc=>y>rc.y0+1&&y<rc.y1-1); const cands=[iy, it.rect.top-6].concat(col0.flatMap(rc=>[rc.y0-4, rc.y1+4])).filter(y=>y>=it.rect.top-60&&y<=it.rect.bottom&&free(y));
           const gapX=it.rect.left-5+u; if(cands.length){ const fy=cands.sort((a,b)=>Math.abs(a-iy)-Math.abs(b-iy))[0]; pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:fy},{x:gapX, y:fy},{x:gapX, y:iy},{x:it.rect.left, y:iy}]; } }
-        if(cvDesk){ const ex=C.left+2, ey=Math.max(C.top+4, Math.min(C.bottom-4, iy)); pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:ey},{x:ex, y:ey}]; }
+        if(cvDesk){ const ex=C.left+2, ey=Math.max(C.top+4, Math.min(C.bottom-4, iy)); pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:ey},{x:ex, y:ey}];
+          /* ON TO THE ITEM (WSU-61, owner 2026-10-11: "route well, reach the desk"): from the desk's edge the run goes along a
+             band no other card is in, then down (or up) beside the item into its left edge - never across a card. With no
+             free band it stops at the desk's edge as before, and the item carries the mark. */
+          const others=rects.filter(rc=>rc.key!==it.key), pad=4;
+          const hFree=(y,x0,x1)=>!others.some(rc=>y>rc.y0-pad&&y<rc.y1+pad&&Math.max(x0,x1)>rc.x0-pad&&Math.min(x0,x1)<rc.x1+pad);
+          const vFree=(x,y0,y1)=>{ const a=Math.min(y0,y1), b=Math.max(y0,y1); return !others.some(rc=>x>rc.x0-pad&&x<rc.x1+pad&&b>rc.y0-pad&&a<rc.y1+pad); };
+          const tx=it.rect.left, ty=Math.max(it.rect.top+2, Math.min(it.rect.bottom-2, iy)), lx=tx-6-(r.lane%4)*3;
+          const inDesk=(y)=>y>C.top+4&&y<C.bottom-4;
+          const cands=[ty].concat(others.flatMap(rc=>[rc.y0-6, rc.y1+6]), [it.rect.top-6, it.rect.bottom+6]).filter(inDesk).sort((a,b)=>Math.abs(a-ty)-Math.abs(b-ty));
+          const band=lx>ex+8?cands.find(y=>hFree(y, ex, lx)&&vFree(lx, y, ty)):null;
+          if(band!=null) pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:band},{x:lx, y:band},{x:lx, y:ty},{x:tx, y:ty}].filter((p,i,a)=>!(i>0&&p.x===a[i-1].x&&p.y===a[i-1].y)); }
         const cls='run'+(it.inFocus?'':' dim');
         out+='<polyline class="'+cls+'" data-key="'+esc(it.key)+'" data-mid="'+esc(mid)+'" data-lane="'+r.lane+'" points="'+pts.map(p=>(p.x-R.left).toFixed(1)+','+(p.y-R.top).toFixed(1)).join(' ')+'"><title>'+esc(it.key)+' · turn '+esc(mid)+'</title></polyline>';
         drawn.push({key:it.key, pts, from:{key:'turn:'+mid, x0:M.left, y0:M.top, x1:M.right, y1:M.bottom}, to:{key:it.key, x0:it.rect.left, y0:it.rect.top, x1:it.rect.right, y1:it.rect.bottom}}); });
     try{ if(typeof cv.runTargets==='function') cv.runTargets(cvDesk?routes.map(r=>r.it.key):[]); }catch(_){}
-    svg.innerHTML='<g fill="none" stroke="var(--acc,#9b8dfa)" stroke-width="1.5" stroke-opacity=".85" stroke-linecap="round" stroke-linejoin="round">'+out+'</g>';
+    /* dotted (WSU-61): a run is a relation, not a part of either end */
+    svg.innerHTML='<g fill="none" stroke="var(--acc,#9b8dfa)" stroke-width="1.5" stroke-opacity=".85" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="1.5 4">'+out+'</g>';
     try{ _cvLastCheck=Object.assign(window.VeraCanvas.checkRoutes(drawn, rects), {tier:den, lanes:routes.map(r=>r.lane)}); }catch(_){ _cvLastCheck=null; }
   }
   // the graph column: the design's context graph — the Context menu grown into the full graph, beside the transcript.
