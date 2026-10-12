@@ -1,0 +1,19 @@
+{
+ "cap": "demo.long",
+ "args": {},
+ "presentation": {
+  "kind": "job",
+  "map": {
+   "job_id": "id"
+  }
+ },
+ "result": {
+  "id": "j-42"
+ },
+ "expect": {
+  "element": "job",
+  "kind": "job",
+  "title": "demo.long",
+  "forms": []
+ }
+}

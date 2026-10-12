@@ -1,0 +1,25 @@
+{
+ "cap": "demo.read",
+ "args": {},
+ "presentation": {
+  "kind": "code",
+  "map": {
+   "code": "text",
+   "lang": "language",
+   "path": "file"
+  }
+ },
+ "result": {
+  "text": "print(1)",
+  "language": "python",
+  "file": "a.py"
+ },
+ "expect": {
+  "element": "code",
+  "kind": "code",
+  "title": "demo.read",
+  "forms": [
+   "code"
+  ]
+ }
+}
