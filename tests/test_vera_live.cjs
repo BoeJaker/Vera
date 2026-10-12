@@ -27,7 +27,8 @@ const last = (ws) => ws.sent[ws.sent.length - 1];
   const ws = sockets[0]; ws.open(); await tick();
   t('on open it asks the server for that subscription\'s events', JSON.stringify(last(ws)) === JSON.stringify({ action: 'subscribe_events', filter: { trace: ['t-1'] } }));
   const b = L.subscribe({ trace: ['t-2'], types: ['info.seek.'] }, (e) => got.b.push(e.type)); await tick();
-  t('a second subscription: still one socket, the filter widened to cover both', sockets.length === 1 && JSON.stringify(last(ws).filter) === JSON.stringify({ trace: ['t-1', 't-2'] }));
+  t('a second subscription: still one socket, the server told both as alternatives', sockets.length === 1 && JSON.stringify(last(ws).filter) === JSON.stringify({ any: [{ trace: ['t-1'] }, { trace: ['t-2'], types: ['info.seek.'] }] }), JSON.stringify(last(ws).filter));
+{ const all = L.subscribe({}, () => {}); await tick(); t('a subscription with no filter: the server sends everything', JSON.stringify(last(ws).filter) === '{}'); all.close(); await tick(); }
   ws.emit({ type: 'cap.ok', trace_id: 't-1', ts: '2026-10-12T10:00:01' });
   ws.emit({ type: 'cap.ok', trace_id: 't-2', ts: '2026-10-12T10:00:02' });
   ws.emit({ type: 'info.seek.step', trace_id: 't-2', ts: '2026-10-12T10:00:03' });

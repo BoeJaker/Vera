@@ -14,6 +14,7 @@ from typing import Any, Dict, Mapping, Optional
 
 MAX_TRACES = 200      # a page follows its own calls; more than this is a client bug, not a filter
 MAX_TYPES = 50
+MAX_ALTERNATIVES = 50   # {any: [filter, ...]} - one per subscription of a page (DA-03d)
 
 
 def _strs(value: Any, limit: int) -> tuple:
@@ -33,9 +34,18 @@ def _strs(value: Any, limit: int) -> tuple:
 
 def normalize_event_filter(raw: Any) -> Optional[Dict[str, Any]]:
     """A subscriber's filter in one shape - {sid, trace (set), types (tuple of prefixes)} - or None for no filter
-    (a missing, empty or unusable filter: the subscriber gets every event, as before)."""
+    (a missing, empty or unusable filter: the subscriber gets every event, as before). {any: [filter, ...]} is the
+    union of its alternatives (a page with several subscriptions, DA-03d); an alternative with no filter is everything."""
     if not isinstance(raw, Mapping):
         return None
+    if isinstance(raw.get("any"), (list, tuple)):
+        alts = []
+        for item in list(raw["any"])[:MAX_ALTERNATIVES]:
+            one = normalize_event_filter(item if not (isinstance(item, Mapping) and "any" in item) else None)
+            if one is None:
+                return None          # one alternative takes every event: so does the union
+            alts.append(one)
+        return {"any": tuple(alts)} if alts else None
     sid = str(raw.get("sid") or "").strip()
     trace = frozenset(_strs(raw.get("trace"), MAX_TRACES))
     types = _strs(raw.get("types"), MAX_TYPES)
@@ -50,6 +60,8 @@ def event_matches(event: Mapping[str, Any], flt: Optional[Mapping[str, Any]]) ->
         return True
     if not isinstance(event, Mapping):
         return False
+    if "any" in flt:
+        return any(event_matches(event, one) for one in flt.get("any") or ())
     sid = flt.get("sid") or ""
     if sid and str(event.get("sid") or event.get("session_id") or "") != sid:
         return False
@@ -68,4 +80,6 @@ def filter_summary(flt: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     """What the server says back on subscribe: the filter as it applies it (lists, not sets)."""
     if not flt:
         return {}
+    if "any" in flt:
+        return {"any": [filter_summary(one) for one in flt.get("any") or ()]}
     return {"sid": flt.get("sid") or "", "trace": sorted(flt.get("trace") or ()), "types": list(flt.get("types") or ())}

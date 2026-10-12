@@ -24,9 +24,16 @@
     if (f.types && f.types.length) { const t = String(ev.type || ''); if (!f.types.some((p) => t.indexOf(p) === 0)) return false; }
     return true;
   }
-  /* the widest server filter that covers every subscription */
+  /* the server filter for every subscription: one of them as it is; several as alternatives {any: [...]} (DA-03d - an
+     older server ignores `any` and sends everything, matched here); a subscription with no filter is everything. When
+     the alternatives would be too many, the widest single filter that covers them all. */
   function cover() {
     const all = [...S.subs.values()].map((s) => s.f); if (!all.length) return null;
+    const bare = (f) => { const o = {}; if (f.sid) o.sid = f.sid; if (f.trace.length) o.trace = f.trace.slice(0, 200); if (f.types.length) o.types = f.types.slice(0, 50); return o; };
+    if (all.some((f) => !f.sid && !f.trace.length && !f.types.length)) return {};
+    const uniq = [...new Map(all.map((f) => { const b = bare(f); return [JSON.stringify(b), b]; })).values()];
+    if (uniq.length === 1) return uniq[0];
+    if (uniq.length <= 50) return { any: uniq };
     const out = {};
     const sids = new Set(all.map((f) => f.sid)); if (sids.size === 1 && !sids.has('')) out.sid = all[0].sid;
     if (all.every((f) => f.trace.length)) out.trace = [...new Set([].concat(...all.map((f) => f.trace)))].slice(0, 200);
