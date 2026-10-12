@@ -3587,7 +3587,12 @@
         ranked.sort((a, b) => { const ka = a.c.dataset.key || '', kb = b.c.dataset.key || '';
           return (at[ka] != null ? at[ka] : 1e6 + nat.get(a)) - (at[kb] != null ? at[kb] : 1e6 + nat.get(b)); });
       }
-      const nowOrder = ranked.map((x) => x.c.dataset.key || '').filter(Boolean);
+      let nowOrder = ranked.map((x) => x.c.dataset.key || '').filter(Boolean);
+      /* ...and a card out of this pass but still on the canvas (the maximised one) keeps its place in it: the pass while it
+         was maximised dropped it, it came back at the end, and a long code card restored after an edit stood somewhere else
+         at 1080 px instead of 488 (WSU-59's open item) */
+      if (kept) { const here = new Set(nowOrder), ks = new Set(kept); const held = kept.filter((k) => !here.has(k) && !!this._blockOf(k));
+        if (held.length) nowOrder = kept.filter((k) => here.has(k) || held.indexOf(k) >= 0).concat(nowOrder.filter((k) => !ks.has(k))); }
       if (!kept || nowOrder.length !== kept.length || nowOrder.some((k, i) => kept[i] !== k)) this._deskOrderSet(nowOrder);
       /* the primary topic leads (see setTopic): its items, best first, then the rest in the kept order - each of those
          marked for the border. Pinned (in context) items count as in the topic. Only on a desk that brings items in. */
