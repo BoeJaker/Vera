@@ -1164,7 +1164,16 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
         except Exception:
             _resp_obj = {}
         answer = _answer_text(_resp_obj)
-        quality = _q_eval(g.get("checks"), got, answer)
+        # the tools the run called (trace steps' calls) - for `tool_called` checks
+        _tools = None
+        if any("tool_called" in (c or {}) for c in (g.get("checks") or [])):
+            try:
+                _tr0 = mcp("workshop.agent_loop.trace", {"session_id": sid}, timeout=120) or {}
+                _tools = [str(c.get("tool")) for s in (_tr0.get("steps") or []) for c in (s.get("calls") or [])
+                          if c.get("tool")]
+            except Exception:
+                _tools = None
+        quality = _q_eval(g.get("checks"), got, answer, tools=_tools)
         quality["files_found"] = sorted(got)
         quality["files_missing"] = [f for f in wanted if f not in got]
     except Exception as e:
