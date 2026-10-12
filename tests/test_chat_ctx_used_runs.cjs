@@ -12,6 +12,6 @@ t('the verdict is kept for the turn just judged (frame question/answer, newest b
   H.includes('const fr=CTX_FRAMES[CTX_FRAMES.length-1]; if(fr){ if(fr.mid) keys.add(String(fr.mid)); if(fr.amid) keys.add(String(fr.amid)); }'));
 t('a given-but-unused memory has no run; without a verdict every lit record runs',
   H.includes('all.filter(p=>p.lit&&!(_uv&&_uv.injected.has(String(p.id))&&!_uv.used.has(String(p.id)))).forEach'));
-t('the harness can feed a verdict (CH._ctxUseNote)', H.includes('_persistCanvasCfg,_ctxUseNote,_cvRelevance,'));
+t('the harness can feed a verdict (CH._ctxUseNote)', H.includes('_persistCanvasCfg,_ctxUseNote,_cvLookStep,_cvRelevance,'));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
