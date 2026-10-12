@@ -438,6 +438,9 @@
   function sample(x) {
     const k = String(x || '').toLowerCase();
     if (SAMPLE[k] && !DRAWN[k]) return SAMPLE[k]();
+    // an iso form named in full (gallery@iso) draws its base form's data - it fell to the STRING sample and drew
+    // "a gallery needs items" with its own sample (SM-4)
+    if (/@iso$/.test(k) && !FORM_SAMPLE[k]) return sample(k.slice(0, -4));
     const f = canon(k); if (FORM_SAMPLE[f]) return FORM_SAMPLE[f]();
     const sh = DRAWN[f] || k; return (SAMPLE[sh] || SAMPLE.string)();
   }
