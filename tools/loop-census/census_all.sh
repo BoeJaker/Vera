@@ -32,7 +32,11 @@
 # posted whole to Vera's task system (ingest_census.py -> evolve.result.ingest):
 # a census run is a driver run beside the suites, and the rows stay the baseline.
 
-SID="c4cceff0-829e-4853-b114-5abce77afbad"
+# Who drives it (DEEP-21 D21-14): the scheduler passes CENSUS_OPERATOR=vera-scheduler,
+# VERA_CENSUS_TOOL=sched and CENSUS_SESSION_ID=sched:<schedule id>; a hand launch keeps the old values.
+SID="${CENSUS_SESSION_ID:-c4cceff0-829e-4853-b114-5abce77afbad}"
+OPERATOR="${CENSUS_OPERATOR:-claude}"
+TOOL="${VERA_CENSUS_TOOL:-census_all.sh}"
 BASE="${CENSUS_BASE:-https://localhost:8999}"
 CODE="$(cd "$(dirname "$0")" && pwd)"            # this harness's code (the repo)
 # Its DATA - archives, logs, state, templates - is not the code folder:
@@ -127,10 +131,18 @@ fi
 for t in $TEMPLATES; do
   if [ ! -f "$HERE/templates/$t.json" ]; then log "SKIP $t: no template file"; continue; fi
   if [ "$(control_drop)" = "1" ]; then log "DROP on file before $t - stopping the set"; echo "dropped $(date -u +%FT%TZ) before $t" > "$STATE"; exit 3; fi
+  # D21-14: a census on an unhealthy prod records 'skipped: box busy' rows that read as results.
+  # Wait up to 10 min for /health, then stop the set instead.
+  h=0
+  while [ "$(health)" != "200" ] && [ $h -lt 60 ]; do sleep 10; h=$((h+1)); done
+  if [ "$(health)" != "200" ]; then
+    log "ABORT before $t: prod unhealthy for 10 min - no rows recorded"
+    echo "aborted $(date -u +%FT%TZ) before $t: prod unhealthy" > "$STATE"; exit 4
+  fi
   echo "running $t since $(date -u +%FT%TZ)" > "$STATE"
   log "=== census $t: $(goals_in "$t") goals, starting"
   ( cd "$HERE" && "$PY" "$CODE/run_census.py" --template "$t" \
-      --operator claude --skill improve-vera-sandboxed --tool census_all.sh \
+      --operator "$OPERATOR" --skill improve-vera-sandboxed --tool "$TOOL" \
       --session-id "$SID" >> "$HERE/census_all.runner.out" 2>&1 )
   rc=$?
   log "=== census $t: runner exit $rc"
