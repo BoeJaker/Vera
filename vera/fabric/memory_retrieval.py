@@ -553,6 +553,10 @@ async def _seek_cache_key(query, scope, since, k, max_chars, include_memory) -> 
 
 
 _RERANK_TIMEOUT_S = float(os.getenv("VERA_SEEK_RERANK_TIMEOUT_S", "1.5") or 1.5)
+# where nobody waits on the reply (memory.rerank=not_chat outside a live chat turn) the cross-encoder gets longer: on
+# 12 Oct at night its node (cpu-247, beside the 35B) answered in 2.7-2.9 s, so a 1.5 s bound made every rerank a
+# timeout - 1.5 s spent, nothing gained
+_RERANK_BACKGROUND_TIMEOUT_S = float(os.getenv("VERA_SEEK_RERANK_BACKGROUND_TIMEOUT_S", "6") or 6)
 
 
 def _live_chat_seek() -> bool:
@@ -574,7 +578,7 @@ def _rerank_wanted(mode: str) -> bool:
     return mode == "on" or (mode == "not_chat" and not _live_chat_seek())
 
 
-async def _rerank_head(query: str, cands: List[Dict], env=None) -> None:
+async def _rerank_head(query: str, cands: List[Dict], env=None, timeout_s: Optional[float] = None) -> None:
     """FM-7.3 (switch memory.rerank): the cross-encoder re-reads the top fused candidates (one node call) and
     decides their order; they stay above the rest. Bounded at _RERANK_TIMEOUT_S; any failure keeps the fused order.
     Calls nlp.rerank's bare function, so a seek writes no activity record for it."""
@@ -587,7 +591,7 @@ async def _rerank_head(query: str, cands: List[Dict], env=None) -> None:
     if fn:
         try:
             res = await asyncio.wait_for(fn(query=query, documents=[(c["text"] or "")[:1000] for c in head], top_k=0),
-                                         _RERANK_TIMEOUT_S)
+                                         timeout_s or _RERANK_TIMEOUT_S)
             ranked = (res or {}).get("ranked") if isinstance(res, dict) else None
             if ranked:
                 by_idx = {int(r["index"]): float(r["score"]) for r in ranked if "index" in r}
@@ -776,8 +780,10 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
                                           "collapsed": 0, "datasets": [],
                                           "legs": list(env.stages), "fabric": _df_evidence(df)})
 
-    if _rerank_wanted(await _switch("memory.rerank")):
-        await _rerank_head(query, cands, env)
+    _rr_mode = await _switch("memory.rerank")
+    if _rerank_wanted(_rr_mode):
+        await _rerank_head(query, cands, env,
+                           _RERANK_BACKGROUND_TIMEOUT_S if _rr_mode == "not_chat" else _RERANK_TIMEOUT_S)
 
     # Normalise fused scores to ~0..1 for display, then age them: per dataset class and the question's temporal
     # intent with memory.rank on (FM-7.2, rank_core), else the old mild recency boost.
