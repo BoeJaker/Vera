@@ -124,7 +124,8 @@ def test_the_whole_w2_path_with_faked_capabilities(tmp_path, monkeypatch, signal
         return {"ok": True, "job_id": "j1", "module_id": a["module_id"]}
 
     async def ml_status(job_id):
-        return {"job_id": job_id, "module_id": trained_jobs[job_id], "status": "complete"}
+        # ml_training reports early stopping as its own finished state (prod, 2026-10-12)
+        return {"job_id": job_id, "module_id": trained_jobs[job_id], "status": "early_stopped"}
 
     async def ml_stop(job_id):
         return {"ok": True}
@@ -197,6 +198,7 @@ def test_the_whole_w2_path_with_faked_capabilities(tmp_path, monkeypatch, signal
                 "MLWorkshopONNXOutputBinding": BR.MLWorkshopONNXOutputBinding,
                 "MLWorkshopONNXPublisher": BR.MLWorkshopONNXPublisher,
                 "MLWorkshopTrainingBinding": TA.MLWorkshopTrainingBinding,
+                "MLWorkshopTrainingRuntime": TA.MLWorkshopTrainingRuntime,
                 "SQLiteModelPackageRegistry": PS.SQLiteModelPackageRegistry,
                 "EvaluationReport": TC.EvaluationReport, "EvaluationRequest": TC.EvaluationRequest,
                 "MetricResult": TC.MetricResult, "TrainingRequest": TC.TrainingRequest,
